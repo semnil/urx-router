@@ -145,3 +145,17 @@ test("a path trace does not outlive the plan it was traced on", async ({ page })
   await expect(page.locator("#model-picker")).toHaveValue("URX22");
   await expect(page.locator('#graph-host g.node[opacity="0.3"]')).toHaveCount(0);
 });
+
+test("a path trace follows an edit made in the traced node's own panel", async ({ page }) => {
+  await longPress(page, "bus.stereo");
+  await expect(node(page, "in.aux")).toHaveAttribute("opacity", "0.3");
+  // The long press selected STEREO, so its panel is the one on screen. Switching the bus
+  // OFF leaves nothing live feeding it, and the trace ends with it.
+  await page
+    .locator("#inspector .param")
+    .filter({ has: page.locator(".toggle") })
+    .filter({ hasText: "Channel" })
+    .getByRole("button", { name: "OFF", exact: true })
+    .click();
+  await expect(node(page, "in.aux")).toHaveAttribute("opacity", "1");
+});

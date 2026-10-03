@@ -381,6 +381,51 @@ describe("path trace", () => {
     expect(fadedNodes()).toEqual([]);
     expect(fx.host.querySelectorAll('.wire-hit + path[opacity="0.16"]').length).toBe(0);
   });
+
+  const send = (plan: Plan, from: string, to: string): NonNullable<Plan["connections"][number]> =>
+    plan.connections.find((c) => c.from === from && c.to === to)!;
+
+  // An undo or a device read that raises a send into the traced bus redraws through
+  // refresh(); the channel it now carries is on the path and stops fading.
+  it("takes the trace again when the wiring under it changes", () => {
+    fx = graphFixture({ seed: (plan) => void (send(plan, "ch2:out", "bus.mix1:in").params = { level: 0 }) });
+    trace("bus.mix1");
+    expect(fadedNodes()).toContain("ch1");
+    send(fx.plan, "ch1:out", "bus.mix1:in").params = { level: 0 };
+    fx.graph.refresh();
+    expect(fadedNodes()).not.toContain("ch1");
+    expect(nodeEl(fx.host, "ch1")!.getAttribute("opacity")).toBe("1");
+  });
+
+  // Switching the traced bus off from its own panel repaints nodes and wires only; nothing
+  // feeds it through live wiring any more, so the trace ends rather than framing its former
+  // feeders.
+  it("ends the trace when nothing live feeds its node any more", () => {
+    fx = graphFixture({ seed: (plan) => void (send(plan, "ch2:out", "bus.mix1:in").params = { level: 0 }) });
+    trace("bus.mix1");
+    expect(faceplate(fx.host, "ch2")!.getAttribute("stroke-width")).toBe("2");
+    fx.plan.nodeParams["bus.mix1"] = { ...fx.plan.nodeParams["bus.mix1"], on: false };
+    fx.graph.repaintNodes();
+    fx.graph.repaintWires();
+    expect([...fx.host.querySelectorAll('g.node > rect[stroke-width="2"]')]).toEqual([]);
+    expect(fadedNodes()).toEqual([]);
+  });
+
+  // A fine-grained follow repaint mutes a feeder: it leaves the path, and fades.
+  it("takes a feeder off the path on a fine-grained repaint", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        send(plan, "ch1:out", "bus.mix1:in").params = { level: 0 };
+        send(plan, "ch3:out", "bus.mix1:in").params = { level: 0 };
+      },
+    });
+    trace("bus.mix1");
+    expect(fadedNodes()).not.toContain("ch3");
+    fx.plan.nodeParams["ch3"] = { ...fx.plan.nodeParams["ch3"], on: false };
+    fx.graph.repaintDirtyNodes(["ch3"]);
+    expect(faceplate(fx.host, "ch3")!.getAttribute("stroke-width")).not.toBe("2");
+    expect(fadedNodes()).toContain("ch3");
+  });
 });
 
 describe("hide and show", () => {

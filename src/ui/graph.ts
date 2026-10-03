@@ -348,6 +348,9 @@ export class Graph {
   // Empty when no trace is active. Independent of the selection; cleared by any
   // selection change so it never lingers behind a fresh focus.
   private pathNodes = new Set<string>();
+  // The node the trace was taken for. The closure is taken again from it before every
+  // wire and node repaint, so an edit, an undo or a device read under the trace moves it.
+  private pathRoot: string | null = null;
 
   // transient interaction state. `link` is a STEREO-linked, visible partner that
   // moves with the dragged node (keeping its offset), plus the pair to redraw the
@@ -419,7 +422,7 @@ export class Graph {
     this.selection = null;
     this.selectedNodes.clear();
     // A trace belongs to the selection it was taken from, which goes here too.
-    this.pathNodes.clear();
+    this.clearTrace();
     this.adoptPlanState();
     // Before the draw and the fit: a document arriving with a pair already STEREO-linked
     // had no edit funnel to snap its partner, so this is where the two loading paths
@@ -1572,6 +1575,7 @@ export class Graph {
   }
 
   private redrawWires(): void {
+    this.retrace();
     this.wireLayer.replaceChildren();
     // Partition the visible wires into off / on in one pass. Off / -∞ sends paint
     // first (behind) and the live (on) wires last (on top), so in the dense always-
@@ -1737,7 +1741,7 @@ export class Graph {
   private select(sel: Selection): void {
     this.selection = sel;
     this.selectedNodes.clear();
-    this.pathNodes.clear();
+    this.clearTrace();
     if (sel?.type === "node") this.selectedNodes.add(sel.id);
     this.redrawWires();
     this.highlightSelectedNode();
@@ -1749,7 +1753,7 @@ export class Graph {
    *  it, so several nodes can be shelved at once. The anchor (shown in the
    *  inspector) follows the most recently touched node. */
   private toggleNodeSelection(id: string): void {
-    this.pathNodes.clear();
+    this.clearTrace();
     if (this.selectedNodes.has(id)) {
       this.selectedNodes.delete(id);
       if (this.selection?.type === "node" && this.selection.id === id) {
@@ -1771,16 +1775,39 @@ export class Graph {
    *  sends are not followed, or the always-wired mesh would light the whole board).
    *  The node stays selected; a leaf with no upstream just reports it. */
   private highlightPath(id: string): void {
-    const closure = upstreamNodes(this.plan, id, (c) => !this.isOffSend(c));
+    const closure = this.upstreamOf(id);
     // A leaf (an input) has only itself: nothing upstream to light.
     const hasPath = closure.size > 1;
-    if (hasPath) this.pathNodes = closure;
-    else this.pathNodes.clear();
+    this.clearTrace();
+    if (hasPath) {
+      this.pathNodes = closure;
+      this.pathRoot = id;
+    }
     this.redrawWires();
     this.highlightSelectedNode();
     this.cb.onStatus(
       hasPath ? t().status.pathTraced(this.labelOf(id), closure.size) : t().status.pathNone(this.labelOf(id)),
     );
+  }
+
+  /** The live signal closure feeding `id`, the node included. */
+  private upstreamOf(id: string): Set<string> {
+    return upstreamNodes(this.plan, id, (c) => !this.isOffSend(c));
+  }
+
+  private clearTrace(): void {
+    this.pathNodes.clear();
+    this.pathRoot = null;
+  }
+
+  /** Take the trace again from its root against the plan as it stands. A root no longer on
+   *  the board, or one nothing feeds any more, ends the trace. */
+  private retrace(): void {
+    const root = this.pathRoot;
+    if (root === null) return;
+    const closure = this.isHidden(root) ? null : this.upstreamOf(root);
+    if (closure && closure.size > 1) this.pathNodes = closure;
+    else this.clearTrace();
   }
 
   /** Clear any selection (used by the canvas, the action bar, and Escape). */
@@ -1790,6 +1817,7 @@ export class Graph {
   }
 
   private highlightSelectedNode(): void {
+    this.retrace();
     const anchor = this.selection?.type === "node" ? this.selection.id : null;
     // While a path trace is active, fade the off-path nodes so the lit chain stands
     // out in the node layer too — the same lit / faded split the wires already use.
@@ -2614,7 +2642,7 @@ export class Graph {
     for (const id of [...this.selectedNodes]) if (this.isHidden(id)) this.selectedNodes.delete(id);
     if (this.selectionIsStale()) {
       this.selection = null;
-      this.pathNodes.clear();
+      this.clearTrace();
       this.cb.onSelect(null);
     }
   }

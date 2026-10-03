@@ -868,7 +868,11 @@ wires and nodes off the path fade (the same lit / faded split a multi-selection 
 by a factor of its resting opacity, derived from node state by `restingOpacity` (the same precedence
 `makeNode` dims it: rate-disabled > inactive > unread > plain), so a muted / unread node keeps its own
 dim instead of having it clobbered. The trace is a state (`pathNodes`)
-independent of the selection, cleared by any selection change, Escape, or an empty-canvas click. A
+independent of the selection, cleared by any selection change, Escape, an empty-canvas click, or the
+board being handed a plan (`setModel`: Fetch, the Live-sync read, a `.urxf` import, a file, a model
+switch). It keeps the node it was taken for (`pathRoot`) and takes the closure again from it before
+every wire and node repaint, so an edit, an undo, a MIDI move or a device read under the trace moves
+it with the wiring; a root shelved or left with nothing live feeding it ends the trace. A
 node with no upstream (an input) just reports it on the status bar and lights nothing. The closure is
 route-accurate, not per-node: a stereo input mirrors its source onto a channel pair, so muting one
 half of the pair leaves the muted channel off the path while its shared input stays lit through the
