@@ -5,8 +5,8 @@
 import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
-import { clipNodeName, processorOn, SSMCS_INITIAL } from "../core/plan";
-import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
+import { clipNodeName, LEVEL_MIN_DB, LEVEL_OFF_DB, processorOn, SSMCS_INITIAL } from "../core/plan";
+import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
 import { channelGainRange, hiZPatch, inputOnRefused } from "../core/input-lock";
 import { formatHz, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 
@@ -91,7 +91,7 @@ import type { RecentEntry } from "../core/storage";
 import type { Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
 import { setLevelText } from "./glyph";
-import { holdInertOnBlur, isHoldingInert, labelId, onInertHoldsEnd, wheelStep } from "./dom";
+import { holdInertOnBlur, isHoldingInert, labelId, onInertHoldsEnd, onWheelStep, wheelStep } from "./dom";
 import { dynOpenLabel } from "./dyn-registry";
 import { insertFxScreenFamily } from "./insert-fx-screen";
 import type { DynKind } from "./dyn-registry";
@@ -1368,6 +1368,12 @@ function mergeSsmcs(actions: InspectorActions, plan: Plan, nodeId: string, patch
 // A range slider over discrete integer positions: the slider walks [0, posMax] by
 // 1, and toPos/fromPos map a domain value (dB, Hz, …) to and from a position. Used
 // where the domain is non-linear or a fixed grid, so every stop is a real value.
+//
+// With `step`, the keys and the wheel move from the value the row holds rather than from
+// the slider's position, which is the grid point NEAREST that value: `step(from, delta)`
+// answers the value `delta` grid points away. Arrow keys move one point (Up / Right raise),
+// PageUp / PageDown six, Home / End go to position 0 / posMax, and each wheel detent is one
+// point, the wheel-step preference deciding how many detents a notch is.
 function snappedSlider(
   label: string,
   cur: number,
@@ -1376,6 +1382,7 @@ function snappedSlider(
   fromPos: (pos: number) => number,
   fmt: (v: number) => string,
   onChange: (v: number) => void,
+  step?: (from: number, delta: number) => number,
 ): HTMLElement {
   const { row, value, labelId: id } = paramBlock(label, fmt(cur));
   const slider = document.createElement("input");
@@ -1387,13 +1394,50 @@ function snappedSlider(
   nameBy(slider, id);
   // The position is a grid index; what it stands for is the value the readout prints.
   slider.setAttribute("aria-valuetext", fmt(cur));
-  slider.addEventListener("input", () => {
-    const v = fromPos(Number(slider.value));
+  let held = cur;
+  const show = (v: number): void => {
+    held = v;
     setLevelText(value, fmt(v));
     slider.setAttribute("aria-valuetext", fmt(v));
+  };
+  slider.addEventListener("input", () => {
+    const v = fromPos(Number(slider.value));
+    show(v);
     onChange(v);
   });
-  wheelStep(slider);
+  if (step) {
+    const go = (next: number): void => {
+      if (slider.disabled || next === held) return;
+      slider.value = String(toPos(next));
+      show(next);
+      onChange(next);
+    };
+    const KEY_STEPS: Record<string, number> = {
+      ArrowUp: 1,
+      ArrowRight: 1,
+      ArrowDown: -1,
+      ArrowLeft: -1,
+      PageUp: 6,
+      PageDown: -6,
+    };
+    slider.addEventListener("keydown", (e) => {
+      const delta = KEY_STEPS[e.key];
+      const next =
+        delta !== undefined
+          ? step(held, delta)
+          : e.key === "Home"
+            ? fromPos(0)
+            : e.key === "End"
+              ? fromPos(posMax)
+              : null;
+      if (next === null) return;
+      e.preventDefault();
+      go(next);
+    });
+    onWheelStep(slider, (dir) => go(step(held, dir)));
+  } else {
+    wheelStep(slider);
+  }
   holdInertOnBlur(slider);
   row.append(slider);
   return row;
@@ -1409,8 +1453,12 @@ function eqFreqControl(cur: number, onChange: (hz: number) => void): HTMLElement
 // grid (LEVEL_STEPS_DB) instead of a uniform dB step — the hardware only stores
 // those detents, so a 0.5 dB step would offer unsettable values (e.g. -15.0).
 // The slider index maps to a grid position: 0 = -∞ (off), 1..N = LEVEL_STEPS_DB.
+// Its keys and wheel step through stepLevel from the plan's own value, so a level between two
+// detents moves to the adjacent one; a level below the floor steps from -∞.
 function levelSlider(label: string, cur: number, onChange: (v: number) => void): HTMLElement {
-  return snappedSlider(label, cur, LEVEL_POS_MAX, levelToPos, posToLevel, formatDb, onChange);
+  return snappedSlider(label, cur, LEVEL_POS_MAX, levelToPos, posToLevel, formatDb, onChange, (from, delta) =>
+    stepLevel(from < LEVEL_MIN_DB ? LEVEL_OFF_DB : from, delta),
+  );
 }
 
 // Node-level bus output fader (STEREO master / MIX / MONITOR): the level_gain

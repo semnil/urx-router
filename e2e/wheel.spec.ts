@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { wheelOver } from "./graph-helpers";
+import { planParamZ } from "./plan-param";
 
 // Mouse-wheel adjust on hover: every continuous control (inspector native-range
 // sliders + the console faders / knobs) nudges one detent per wheel notch, matching
@@ -104,6 +105,40 @@ test.describe("graph inspector", () => {
     await expect(value).toHaveText("10.0");
     await wheelOver(page, slider, -100); // wheel up past the ceiling
     await expect(value).toHaveText("10.0"); // clamped, unchanged
+  });
+});
+
+// A level the plan holds between two detents (a loaded plan, a device read) steps to the
+// adjacent detent in the direction of travel: the slider's native ArrowDown steps from the
+// NEAREST detent instead, and from -15.5 that is -16, so it used to land on -18.
+test.describe("an off-grid level in the Inspector", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("urx-lang", "en");
+      localStorage.setItem("urx-theme", "dark");
+    });
+    const plan = {
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { "bus.stereo": { level: -15.5 } },
+    };
+    await page.goto(`/?plan=${planParamZ(plan)}`);
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await node(page, "bus.stereo").click();
+  });
+
+  test("ArrowDown and a wheel notch each land on the adjacent detent", async ({ page }) => {
+    const row = param(page, "Level").first();
+    const value = row.locator(".param-val");
+    const slider = row.locator("input[type=range]");
+    await expect(value).toHaveText(/15\.5/);
+    await slider.focus();
+    await slider.press("ArrowDown");
+    await expect(value).toHaveText(/16\.0/);
+    await wheelOver(page, slider, 100);
+    await expect(value).toHaveText(/18\.0/);
   });
 });
 

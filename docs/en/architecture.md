@@ -1285,7 +1285,11 @@ console knob reads the modifier per event (drag rebases when Shift flips mid-ges
 leaving fine never jumps the value), and its keys and wheel step to the adjacent grid point in the
 direction of travel, so a value fine mode left between two coarse points moves one point, not two (the
 drag and the double-click reset keep the nearest point). Faders, sends and every other parameter keep their normal grids — the
-device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set.
+device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set. The level rows step the same way on
+both surfaces: the CONSOLE faders and the Inspector's Level sliders (a bus master, MONITOR, every send) take their
+keys and wheel through `stepLevel` from the plan's own value, so a level a loaded plan or a device read keeps between
+two detents moves to the adjacent detent in the direction of travel rather than past it from the nearest one, and a
+drag lands on the nearest.
 
 - **Meter point (per-strip tap)** — a node exposes several observable meter tap points along its signal
   chain, and each strip picks which one its meter (and the live readout) shows. An amber badge — carrying a

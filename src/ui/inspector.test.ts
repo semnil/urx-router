@@ -1079,6 +1079,79 @@ describe("section fold state", () => {
   });
 });
 
+// The level rows step from the plan's own value, the CONSOLE's rule: from a level between two
+// detents one press or notch lands on the adjacent detent in the direction of travel. Their
+// slider position is the NEAREST detent, so stepping from it skipped one (-15.5 down gave -18).
+describe("level stepping from an off-grid value", () => {
+  const levelSlider = (): HTMLInputElement =>
+    [...panel.querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.level)!
+      .querySelector<HTMLInputElement>('input[type="range"]')!;
+  const stereoAt = (level: number): void => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.stereo"] = { ...plan.nodeParams["bus.stereo"], level };
+    renderInspector(panel, model, plan, nodeSel("bus.stereo"), act);
+  };
+  const lastLevel = (): number | undefined =>
+    (vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)?.[1] as { level?: number } | undefined)?.level;
+  const key = (k: string): void =>
+    void levelSlider().dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  const wheel = (deltaY: number): void =>
+    void levelSlider().dispatchEvent(new WheelEvent("wheel", { deltaY, bubbles: true, cancelable: true }));
+
+  it.each([
+    [-15.5, "ArrowDown", -16],
+    [0.2, "ArrowDown", 0],
+    [-14.5, "ArrowUp", -14],
+    [9.5, "ArrowUp", 10],
+    [-95, "ArrowDown", -96],
+    [-16, "ArrowDown", -18],
+  ])("steps %s by %s to %s", (from, k, to) => {
+    stereoAt(from);
+    key(k);
+    expect(lastLevel()).toBe(to);
+    expect(levelSlider().getAttribute("aria-valuetext")).toContain(String(Math.abs(to)));
+  });
+
+  it.each([
+    [-14.5, -1, -14],
+    [-15.5, 1, -16],
+    [9.5, -1, 10],
+  ])("steps %s by a wheel notch of deltaY %s to %s", (from, deltaY, to) => {
+    stereoAt(from);
+    wheel(deltaY);
+    expect(lastLevel()).toBe(to);
+  });
+
+  // The wheel-step preference still decides how many detents one notch is.
+  it("takes the wheel-step preference's detents per notch, each from the last", () => {
+    updateSettings({ wheelSteps: 2 });
+    stereoAt(-15.5);
+    wheel(1);
+    expect(vi.mocked(act.onUpdateNodeParams).mock.calls.map((c) => (c[1] as { level: number }).level)).toEqual([
+      -16, -18,
+    ]);
+  });
+
+  it("writes nothing for a step past the top", () => {
+    stereoAt(10);
+    key("ArrowUp");
+    wheel(-1);
+    expect(act.onUpdateNodeParams).not.toHaveBeenCalled();
+  });
+
+  it("steps a send's Level from its own value too", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const conn = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    conn.params = { ...conn.params, level: -15.5 };
+    renderInspector(panel, model, plan, connSel(conn.from, conn.to), act);
+    key("ArrowDown");
+    expect(vi.mocked(act.onUpdateParams).mock.calls.at(-1)?.[2]).toEqual({ level: -16 });
+  });
+});
+
 describe("live-connected presentation", () => {
   // The tap is always editable in the planner — the plan records intent — and is
   // turned read-only only while live and the device cannot accept the write.
