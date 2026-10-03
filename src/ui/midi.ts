@@ -244,8 +244,8 @@ export class MidiControl {
         hooks.onApplied(control, pairMirrored || insFxMirrored, keys);
         this.scheduleFeedback();
       },
-      // Reached only from `runFeedback`'s synchronous pass, which returns before the
-      // engine runs when no output port is open.
+      // Reached only from `runFeedback`'s synchronous pass, and only on a pass that
+      // delivers, which needs an open output port.
       send: (bytes) => {
         this.traceLog?.(`tx [${bytes.join(" ")}]`);
         midiProbe?.tx(bytes);
@@ -438,7 +438,7 @@ export class MidiControl {
   /** Batch a feedback pass after a plan edit (debounced; called from the shared
    *  change funnel, so UI / follow / MIDI edits all land here). */
   scheduleFeedback(): void {
-    if (!this.outputPort || this.feedbackTimer) return;
+    if (this.feedbackTimer) return;
     this.feedbackTimer = window.setTimeout(() => {
       this.feedbackTimer = 0;
       this.runFeedback(null);
@@ -671,9 +671,9 @@ export class MidiControl {
     // The pass still RUNS — `feedback(resync, deliver)` skips the wire and the two
     // caches that describe it, and keeps what it owes the receive side (a plan value
     // that moved un-engages a pickup binding whether or not the controller heard).
-    // Returning here instead left an engaged pickup binding engaged for the whole
-    // offline stretch, so the next twitch of a physical fader tracked from wherever it
-    // stood and pulled the plan value with it.
+    // That holds with no output port open as well, which delivers nothing whatever the
+    // readback established. An engagement left standing tracks the next twitch of a
+    // physical fader from wherever it stood and pulls the plan value with it.
     //
     // Through `note` rather than `midiProbe`: `midiProbe` is a dev build's, and a release
     // build's own diagnostic (`urx-midi-log`) would otherwise show incoming messages
@@ -697,11 +697,8 @@ export class MidiControl {
       midiProbe?.note(`feedback suspended — learn armed (resync=${resync})`);
       return;
     }
-    if (!this.outputPort) {
-      midiProbe?.note(`feedback skipped — no output port (resync=${resync})`);
-      return;
-    }
-    const deferred = this.engine.feedback(resync, this.deviceStateKnown);
+    if (!this.outputPort) midiProbe?.note(`feedback held — no output port (resync=${resync})`);
+    const deferred = this.engine.feedback(resync, this.deviceStateKnown && this.outputPort !== null);
     if (deferred) midiProbe?.note("feedback deferred behind an in-progress sweep");
     if (deferred && !this.settleTimer) {
       this.settleTimer = window.setTimeout(() => {

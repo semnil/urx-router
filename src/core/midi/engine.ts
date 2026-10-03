@@ -24,7 +24,7 @@ export interface EngineHooks {
   refused?(reason: string): void;
   /** A write the control itself refused (`BoundControl.refuses`): nothing was edited. */
   declined?(control: BoundControl, why: ControlRefusal): void;
-  /** Send feedback bytes out (caller no-ops when no output port is open). */
+  /** Send feedback bytes out. Called only on a pass that delivers (see `feedback`). */
   send(bytes: number[]): void;
   /** MIDI-learn resolved an address. */
   learned(addr: MidiAddr): void;
@@ -470,7 +470,7 @@ export class MidiEngine {
       const raw = wireRaw(mapping.addr, after);
       this.lastSent.set(key, raw);
       // The pass's own record of the plan, kept here as well: a pass may not have run
-      // for this address yet (no output port, or an offline stretch), and without a
+      // for this address yet (no plan change has scheduled one), and without a
       // value to compare against the first one that does cannot tell a plan that moved
       // under the physical control from one it has simply never watched.
       this.lastSeen.set(key, raw);

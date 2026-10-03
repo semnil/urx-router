@@ -1632,8 +1632,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   was last told: touch that fader before a session opens the output side and its stale position is applied to
   the freshly fetched plan. Pickup mode is the per-mapping answer, and the alternative — letting a fetch open
   it — is the one this rule exists to refuse, since a plan that agreed with the unit at the instant of a read
-  is not a plan anything holds to it afterwards. A pass that is HELD still runs: what it owes the receive side
-  (a moved plan value un-engages a pickup binding) does not depend on the controller having heard. The receive side mirrors the guard: for 50 ms (`ECHO_MS`) after
+  is not a plan anything holds to it afterwards. A pass that is HELD — no readback settled yet, or no output port open — still runs: what it owes the
+  receive side (a moved plan value un-engages a pickup binding) does not depend on the controller having heard. The receive side mirrors the guard: for 50 ms (`ECHO_MS`) after
   feedback goes out, the first incoming value equal to it on the same address is dropped as an echo and the guard
   disarms (a shared virtual MIDI bus, or a controller that re-sends its state when feedback changes it,
   would otherwise flip an edge-mode toggle straight back; consuming the echo one-shot keeps an equal real

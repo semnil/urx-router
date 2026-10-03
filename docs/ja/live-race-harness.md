@@ -294,7 +294,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | --- | --- | --- |
 | `midi-vs-main-fader-absolute` | midi | MIDI の反映が、捕捉中のポインタの下でストリップを差し替える |
 | `midi-vs-send-fader-relative-baseline` | midi | 相対ドラッグは MIDI 書込を上書きではなく算術で消す |
-| `midi-pickup-without-output-port` | midi | 出力ポートが開いていないと pickup が解除されない |
+| `midi-pickup-without-output-port` | midi | 出力ポートが開いていなくても、盤面値が動けば pickup が解除される |
 | `midi-toggle-echo-window-ladder` | midi | 1 発限りの防御が、本物の押下とループバックを区別できない |
 | `midi-continuous-echo-reaches-the-unit` | midi | 同じ防御をフェーダーで。防御が無いとエコーがそのまま実機書込になる |
 | `midi-gang-fanout-and-head-reelection` | midi | 1 対多の書き手と、無関係な編集が所有権を移す |

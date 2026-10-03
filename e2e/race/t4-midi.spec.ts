@@ -451,20 +451,17 @@ test.describe("T4 midi", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // midi-pickup-without-output-port — pickup engagement is cleared only inside
-  // MidiEngine.feedback()'s emit branch, and runFeedback returns immediately when no
-  // output port is open. With a controller that has no MIDI IN (or simply none
-  // selected), the engagement outlives the UI edit that invalidated it: the fader is
-  // yanked back to the physical control's position by the next twitch.
+  // midi-pickup-without-output-port — pickup engagement is cleared by a feedback pass
+  // that sees the plan move away from the physical control, and that pass runs whether
+  // or not an output port is open: with no port it puts nothing on the wire and still
+  // un-engages the binding. A controller with no MIDI IN (or simply none selected)
+  // then swallows the next twitch of its fader instead of yanking the plan back to it.
   //
   // Scope of the measurement: ONE binding (ch1/level, CC 7, pickup), two UI edit →
-  // twitch cycles in one session. Two cycles is what makes "the engagement is never
-  // cleared" more than a single reading — it is not a survey of the control catalog,
-  // and nothing here observes a third.
+  // twitch cycles with no output port and one with it, in one session — not a survey
+  // of the control catalog.
   // ---------------------------------------------------------------------------
-  test("pickup does not disengage on a UI edit while no output port is open, and a later plan move fixes it", async ({
-    page,
-  }) => {
+  test("pickup disengages on a UI edit whether or not an output port is open", async ({ page }) => {
     await installFake(page, {
       storage: midiStore([{ control: "ch1/level", addr: CC7, mode: "pickup" }], { input: "Fake In" }),
     });
@@ -488,39 +485,48 @@ test.describe("T4 midi", () => {
     await faderOf(page, "CH 1").focus();
     for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowDown");
     await expect(readout).toHaveText("+2.0");
+    // The address received input moments ago, so the pass defers behind RECENT_MS and
+    // lands on the 350 ms settle retry.
+    await page.waitForTimeout(700);
 
     await mark(page, "twitch-no-output");
     await pushMidi(page, [cc7(122)]); // 0.961: neither near nor crossing the plan's 0.825
-    // Pinned defect: the plan is yanked back to the physical control's position. A
-    // disengaged pickup would have swallowed this exactly as it swallowed CC 40.
+    await page.waitForTimeout(200);
+    // Swallowed, exactly as CC 40 was: the pass with no port un-engaged the binding.
+    expect(await readout.textContent()).toBe("+2.0");
+    // …and the binding still takes over where the physical control crosses the plan value.
+    await pushMidi(page, [cc7(100)]); // 0.787: crosses 0.825 from above → engaged → pos 31
+    await expect(readout).toHaveText("+0.4");
+    await pushMidi(page, [cc7(120)]); // tracks → pos 38
     await expect(readout).toHaveText("+7.2");
 
-    // Second cycle, same session and same binding: the engagement is still there. The
-    // reflect above replaced the strip, so the fader has to be focused again.
+    // Second cycle, same session and same binding. The reflects above replaced the strip,
+    // so the fader has to be focused again.
     await faderOf(page, "CH 1").focus();
     for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowDown");
     await expect(readout).toHaveText("+3.2"); // pos 34
+    await page.waitForTimeout(700); // the debounce, then the settle retry behind RECENT_MS
     await mark(page, "twitch-no-output-2");
     await pushMidi(page, [cc7(118)]); // 0.929: again neither near nor crossing 0.85
-    await expect(readout).toHaveText("+6.0"); // pos 37 — yanked back a second time
+    await page.waitForTimeout(200);
+    expect(await readout.textContent()).toBe("+3.2"); // swallowed a second time
+    await pushMidi(page, [cc7(100)]); // 0.787: crosses 0.85 from above → engaged → pos 31
+    await expect(readout).toHaveText("+0.4");
+    await pushMidi(page, [cc7(118)]); // tracks → pos 37
+    await expect(readout).toHaveText("+6.0");
 
     // Open the output port. Nothing goes on the wire — the output side stays shut until
-    // a live readback establishes the plan — but the pass still RUNS, and deleting the
-    // pickup engagement is what it owes the receive side either way.
+    // a live readback establishes the plan — and the pass runs as it did without one.
     const win = await openMidiWindow(page);
     await chooseOption(win.locator(".mw-out"), "Fake Out");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.outPort)).toBe("Fake Out");
     await win.close();
-    // The address received input moments ago, so the pass defers behind RECENT_MS and
-    // lands on the 350 ms settle retry.
     await page.waitForTimeout(700);
     expect(await midiSentOf(page)).toEqual([]);
 
-    // Nothing is un-engaged yet, and that is the rule rather than the defect: what drops
-    // the engagement is a pass seeing the plan MOVE away from the physical control, and
-    // at this instant the plan holds exactly what the last twitch put there. The port
-    // opening used to drop it by emitting; with the output side shut until a session
-    // establishes the plan, there is no emit to hang it on.
+    // Opening the port un-engages nothing: what drops the engagement is a pass seeing the
+    // plan MOVE away from the physical control, and the plan holds exactly what the last
+    // message put there.
     await mark(page, "edit-with-output");
     await faderOf(page, "CH 1").focus();
     for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");

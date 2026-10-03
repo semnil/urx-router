@@ -234,6 +234,36 @@ describe("feedback to the controller", () => {
     expect(level()).toBe(-20);
   });
 
+  // The same, for a controller used as an input alone: no output port is open, so nothing
+  // can go on the wire, and the pass still runs for what it owes the receive side.
+  it("un-engages a pickup binding with no output port open", async () => {
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V: [{ ...MAPPING, mode: "pickup" }] } }));
+    const { control, hooks } = install();
+    await attached();
+    await openInput();
+    // A settled readback: the one state in which a pass with a port would deliver.
+    control.liveReadSettled();
+    vi.useFakeTimers();
+    const level = (): number | undefined =>
+      hooks.getPlan().connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")?.params?.level;
+    const parked = level();
+
+    mocks.inputReceiver!([0xb0, 7, 20]);
+    expect(level()).toBe(parked); // swallowed, lastIn seeded
+    mocks.inputReceiver!([0xb0, 7, 127]);
+    expect(level()).not.toBe(parked); // crossed: engaged, and tracking
+
+    const conn = hooks.getPlan().connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    conn.params = { ...conn.params, level: -20 };
+    control.scheduleFeedback();
+    await vi.advanceTimersByTimeAsync(600); // the debounce, then past RECENT_MS
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+
+    mocks.inputReceiver!([0xb0, 7, 110]);
+    expect(level()).toBe(-20);
+    expect(hooks.onApplied).toHaveBeenCalledTimes(1); // the crossing alone
+  });
+
   // Live sync ending is not a claim that the plan is wrong, but nothing keeps the two
   // together from there — so the output side closes again rather than going on stating
   // values whose provenance has run out.
