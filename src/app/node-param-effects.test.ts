@@ -110,6 +110,7 @@ describe("inspector re-render: the toggles", () => {
     ["clip safe", { clipSafe: true }],
     ["Hi-Z", { hiZ: true }],
     ["insert FX", { insertFx: 512 }],
+    ["insert FX bypass", { insertFxOn: false }],
     ["COMP/EQ type", { compEqType: 1 }],
     ["EQ on", { eqOn: true }],
     ["GATE on", { gateOn: true }],

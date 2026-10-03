@@ -740,10 +740,16 @@ test("selecting an effect reveals the ON/OFF (bypass) toggle; bypass keeps the s
   await expect(onRow.locator("button.on")).toHaveText("ON"); // ships engaged
   await onRow.getByRole("button", { name: "OFF", exact: true }).click();
   await expect(onRow.locator("button.on")).toHaveText("OFF");
+  // The section's lamp and fold follow the switch inside it, as GATE / COMP / EQ do.
+  const lamp = insertFxSection(page).locator(".sec-led");
+  await expect(lamp).not.toHaveClass(/\bon\b/);
+  await expect(insertFxSection(page)).toHaveJSProperty("open", false);
   await expect(insertSelect(page)).toHaveValue("1794"); // bypass never clears the selector
   // Re-selecting an effect mirrors the device's auto-engage.
+  await openInsertFxSection(page);
   await chooseOption(insertSelect(page), { label: "Compander-H" });
   await expect(insertFxBypass(page).locator("button.on")).toHaveText("ON");
+  await expect(lamp).toHaveClass(/\bon\b/);
 });
 
 // Choosing a type has to reveal the way onward THERE AND THEN. The panel holds a rebuild
