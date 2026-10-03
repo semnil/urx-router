@@ -1358,8 +1358,9 @@ drag lands on the nearest.
   switched on); it carries a **LEVEL
   rotary knob** (−96…0 dB, the shared device level; its indicator's horizontal marks read -50 left / -8 right)
   in place of a fader; **STREAMING** carries a **DELAY on/off chip** (`delay.on`) and a **TIME knob** (the delay
-  time, 1…1000 ms; holding Shift steps the device's 0.02 ms fine grid, and the inspector keeps the full
-  0.01 ms grid) so the otherwise-bare head reads as a purposeful
+  time, 1…1000 ms; holding Shift steps the device's 0.02 ms fine grid, and the inspector steps the same
+  0.02 ms grid — a held value off it prints as itself and is written as held until the row moves) so the
+  otherwise-bare head reads as a purposeful
   strip. The choice persists per model in
   `localStorage` (`urx-metertap`). The readout has two captioned cells: **FADER** (the set level, white) and
   **METER** (the selected tap's live value, amber); default tap = the most downstream point.

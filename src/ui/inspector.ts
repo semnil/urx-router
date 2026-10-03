@@ -68,6 +68,7 @@ import {
   PAN_MAX,
   DELAY_TIME_MIN_MS,
   DELAY_TIME_MAX_MS,
+  DELAY_TIME_GRID_MS,
   PHONES_LEVEL_MIN,
   PHONES_LEVEL_MAX,
   PHONES_LEVEL_DEFAULT,
@@ -938,12 +939,15 @@ export function renderInspector(
         ),
       );
       ps.body.append(boolToggle(m.inspector.delayOn, delay.on ?? false, (v) => setDelay({ on: v })));
+      // The 0.02 ms grid every time the unit's own knobs write is on. A held value off it
+      // prints as itself and is written as held; the thumb rests on the grid point the range
+      // rounds it to (halfway goes up), so the first move lands on the grid.
       ps.body.append(
         rangeSlider(
           m.inspector.delayTime,
           DELAY_TIME_MIN_MS,
           DELAY_TIME_MAX_MS,
-          0.01,
+          DELAY_TIME_GRID_MS,
           delay.time ?? DELAY_TIME_MIN_MS,
           (v) => `${v.toFixed(2)} ms`,
           (v) => setDelay({ time: v }),

@@ -781,6 +781,41 @@ describe("renderInspector — a stored value outside its control's range", () =>
   });
 });
 
+// The STREAMING Delay Time steps the 0.02 ms grid the unit's own knobs write on. A value off it
+// — an odd centi-ms, which an earlier build's 0.01 ms slider could write — prints as the value
+// held and goes out as held; nothing is written for it until the row moves. Where the thumb
+// rests is the engine's (a range rounds a value off its step to the nearer valid one, halfway
+// up), which jsdom does not do, so that half is asked in e2e/streamingdelay.spec.ts.
+describe("renderInspector — the STREAMING Delay Time", () => {
+  const slider = (): HTMLInputElement =>
+    [...panel.querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.delayTime)!
+      .querySelector<HTMLInputElement>('input[type="range"]')!;
+  const withTime = (time: number): Plan => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.stream"] = { ...plan.nodeParams["bus.stream"], delay: { on: true, time } };
+    return plan;
+  };
+
+  it("steps the unit's 0.02 ms grid across 1.00 to 1000.00 ms", () => {
+    renderInspector(panel, getModel("URX44V"), withTime(45.86), nodeSel("bus.stream"), act);
+    expect([slider().min, slider().max, slider().step]).toEqual(["1", "1000", "0.02"]);
+    slider().dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true, cancelable: true }));
+    const [, patch] = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)!;
+    expect(patch.delay?.time).toBe(45.88);
+  });
+
+  it("prints an off-grid value as held, and sends it as held until the row moves", () => {
+    const plan = withTime(45.87);
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("bus.stream"), act);
+    const row = slider().closest<HTMLElement>(".param")!;
+    expect(row.querySelector(".param-val")?.textContent).toBe("45.87 ms");
+    expect(slider().getAttribute("aria-valuetext")).toBe("45.87 ms");
+    expect(act.onUpdateNodeParams).not.toHaveBeenCalled();
+    expect(planToCommands(getModel("URX44V"), plan).find((c) => c.paramId === 708)?.vdValue).toBe(4587);
+  });
+});
+
 // The panel and the write path answer "what is this FX channel set to" DIFFERENTLY when the
 // plan does not describe the channel, and that is recorded here rather than left to be
 // noticed. The panel reads an absent fxEffect as `{}` and draws the effect's own defaults;
