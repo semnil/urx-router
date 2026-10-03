@@ -1,7 +1,8 @@
-// The compressor Ratio ladder, in a module of its own because both of the layers that
-// need it are inside an import cycle: `vd.ts` sizes the SSMCS raw range from the table
-// and `translate.ts` builds the channel COMP field from it, both at module scope, and a
-// binding read there is only reliable when the module it comes from imports nothing.
+// The compressor Ratio ladder, in a module of its own because two layers read it at module
+// scope: `translate.ts`, which is inside an import cycle, builds the channel COMP field from
+// it, and `vd.ts`, which imports nothing from that cycle, sizes the SSMCS raw range from it.
+// A binding read at module scope is only reliable when the module it comes from imports
+// nothing.
 //
 // The channel COMP (`36`) and the SSMCS strip's compressor (`98`) stop on the same
 // ratios and write them differently: `98` carries the index into this table, `36`

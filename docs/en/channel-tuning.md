@@ -296,7 +296,8 @@ stops from 0.02 to 1960 ms; GATE Decay (`33`) and COMP Release (`40`) are one ta
 to 999 ms; DUCKER Decay (`263`) is 122 stops from 1.3 to 5000 ms. `core/control/dyn-time-stops.ts` holds
 the four whole, in each parameter's raw unit (µs, ms×100, ms×10), and hands the plan their milliseconds;
 the encoders' windows in `vd.ts` are the tables' ends. It is a module of its own for the reason
-`comp-ratio.ts` is: `vd.ts` and `translate.ts` both read it at module scope inside an import cycle.
+`comp-ratio.ts` is: `vd.ts` and `translate.ts` both read it at module scope, and `translate.ts` sits inside an
+import cycle.
 
 Each field carries its table as `steps`, the shape the Ratio has below: the slider's position is an
 index, every position it can take is a stop, and both ends are positions — the top (80 ms, 1960 ms,
@@ -397,8 +398,8 @@ The unit's Ratio is a ladder of detents rather than a range with one step: the s
 then `INF:1`. The channel COMP (`36`) and the SSMCS strip's compressor (`98`) stop on the same ratios
 and write them differently — `98` carries the INDEX of the stop, which is what its 0…120 descriptor
 range counts, and `36` carries ratio×100. `core/control/comp-ratio.ts` holds the one table both read,
-in a module of its own because `vd.ts` and `translate.ts` both read it at module scope and the two
-sit inside an import cycle.
+in a module of its own because `vd.ts` and `translate.ts` both read it at module scope and `translate.ts`
+sits inside an import cycle.
 
 The field carries the ladder as a `steps` table, so the slider's position is an index and every
 position it can take is a stop the unit has — a linear range would offer values the unit stops on
