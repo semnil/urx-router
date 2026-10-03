@@ -946,6 +946,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param: "insertFxOn",
       kind: "toggle",
+      writes: { kind: "node", path: "insertFxOn" },
       get: () =>
         rateLocked() || !insertFxEngaged({ insertFx: insFxSel, insertFxOn: plan.nodeParams[id]?.insertFxOn }) ? 0 : 1,
       set: (v) => {
