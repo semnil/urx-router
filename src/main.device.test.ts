@@ -3042,6 +3042,41 @@ describe("the live session", () => {
     await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 10_000 });
   });
 
+  // A ledger line the shell cannot write is said on the status line, in the app's language:
+  // the shell's code goes through the same translation every other framed cause does.
+  it("names a ledger write failure in words rather than by its code", SLOW, async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const table = deviceCommands({
+      "plugin:dialog|message": "Ok",
+      append_link_log: () => {
+        throw new Error("file-denied");
+      },
+    });
+    const get = table.vd_get as (a: Record<string, unknown>) => number;
+    let first = true;
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        // The start's first read is held, so the line the ledger's failure wrote is still the
+        // one on screen when it is read.
+        vd_get: async (a: Record<string, unknown>) => {
+          if (first) {
+            first = false;
+            await held;
+          }
+          return get(a);
+        },
+      },
+    }))!;
+    $("btn-live").click();
+    await invoked(shell, "append_link_log");
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.linkLogFailed(t().error.shell.fileDenied)));
+    expect(statusText()).not.toContain("file-denied");
+    release();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 20_000 });
+  });
+
   // The undo history survives a reconcile that authored nothing.
   //
   // Pinned HERE rather than only in the race tier because that tier uploads no

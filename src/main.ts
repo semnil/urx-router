@@ -389,7 +389,7 @@ let linkStatsView: LinkStatsView | null = null;
 // own latch) and every time in the console (see architecture.md "Aborting on failure").
 function warnLinkLog(message: string): void {
   console.warn("link ledger:", message);
-  setStatus(t().status.linkLogFailed(message));
+  setStatus(t().status.linkLogFailed(errorText(message)));
 }
 
 /** Start the ledger for a session. Called on the connect rather than once the session
