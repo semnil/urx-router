@@ -1156,7 +1156,8 @@ pixel-identical.
 - **An outline.** An engaged control takes `3px double CanvasText`, a weight measured to keep its three
   pixel rows distinct under the system palette (the other widths of a double border were not measured).
   Two controls take it without changing size: the FOLLOW USB badge gives the rim's extra width back out
-  of its padding, and the INS FX popover's held row draws it as an inset outline. Anything whose job is to mark a position or a path — the knob
+  of its padding, and the INS FX popover's held row draws it as an inset outline, which turns dashed while
+  the keyboard focus is on that row, since the focus ring and the held state share the one outline. Anything whose job is to mark a position or a path — the knob
   pointer, the fader and mini-fader cap bars, the 0-dB lines, the slot each cap rides in, and the
   parameter sliders' track — trades its fill for an outline of the same geometry.
 - **An island.** A surface whose colours ARE the reading — the scribble's device colour, the meters'
