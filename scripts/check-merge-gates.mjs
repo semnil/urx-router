@@ -14,6 +14,11 @@
 // neither success nor failure, so nothing turns red and the pull request merely stops
 // being mergeable — which is why a group that cancels has to be keyed per run.
 //
+// One rule here is about no gate at all, and reaches every workflow: a step that fetches
+// from a host outside GitHub carries a `timeout-minutes` of its own, and a step `uses:`
+// an action this file does not classify is refused until it is classified (see
+// checkStepBounds).
+//
 //   node scripts/check-merge-gates.mjs            check .github/workflows against the manifest
 //   node scripts/check-merge-gates.mjs --ruleset  also diff the manifest against the live branch
 //                                                 ruleset (needs `gh` authenticated as an admin)
@@ -694,6 +699,155 @@ function checkPullRequestFieldConsumers(workflows) {
   }
 }
 
+// --- step bounds ---------------------------------------------------------------
+
+// The steps that fetch from a host outside GitHub, by the action they use. Each carries a
+// `timeout-minutes` of its own, so a stall there fails that step, named, inside its job's
+// budget — rather than running the job out and reporting only "cancelled". What each
+// fetches from, and the readings each bound is sized from, are in
+// .github/actions/install-browsers/action.yml's header.
+const FETCHING_ACTIONS = new Set([
+  "pnpm/action-setup",
+  "dtolnay/rust-toolchain",
+  "taiki-e/cache-cargo-install-action",
+  "tauri-apps/tauri-action",
+  "codecov/codecov-action",
+  "./.github/actions/install-browsers",
+]);
+
+// The actions whose fetches stay on GitHub (its repositories, its cache, its artifact and
+// Pages services, its API), and the local ones that fetch nothing. A step using one of
+// these needs no bound of its own.
+const GITHUB_ONLY_ACTIONS = new Set([
+  "actions/checkout",
+  "actions/setup-node",
+  "actions/upload-artifact",
+  "actions/download-artifact",
+  "actions/upload-pages-artifact",
+  "actions/deploy-pages",
+  "actions/github-script",
+  "swatinem/rust-cache",
+  "./.github/actions/playwright-version",
+]);
+
+// The commands a `run:` fetches from outside GitHub with, matched in the step's script
+// with its shell comment lines left out. `cargo build` is matched with or without
+// `--release`, since a debug build fetches the same crates.
+const FETCHING_COMMANDS = [
+  ["pnpm install", /\bpnpm\s+install\b/],
+  ["cargo about generate", /\bcargo\s+about\s+generate\b/],
+  ["cargo test", /\bcargo\s+test\b/],
+  ["cargo build", /\bcargo\s+build\b/],
+];
+
+const BLOCK_SCALAR = /^[|>][-+0-9]*$/;
+
+/**
+ * The steps of one job, each as the keys written at its own column — read here from the
+ * job's `steps:` lines, since the reader above keeps no node for a sequence item. A key's
+ * nested lines (`with:`, `env:`) belong to that key and are not the step's; `run:` keeps
+ * its whole script, inline or as a block. A step written as a flow mapping is returned
+ * with `flow` set rather than read.
+ */
+function stepsOf(root, job) {
+  const node = job.children.get("steps");
+  if (!node) return [];
+  const steps = [];
+  let itemIndent = -1;
+  let step = null;
+  let column = -1;
+  let key = null;
+  for (let n = node.from + 1; n < node.to; n++) {
+    const raw = root.lines[n];
+    if (!raw.trim()) continue;
+    const indent = raw.length - raw.trimStart().length;
+    if (step && key === "run" && indent > column) {
+      step.run.push(raw.trim());
+      continue;
+    }
+    const line = stripComment(raw);
+    if (!line.trim()) continue;
+    const body = line.trim();
+    const isItem = body === "-" || body.startsWith("- ");
+    if (isItem && (itemIndent === -1 || indent === itemIndent)) {
+      itemIndent = indent;
+      const content = body.slice(1).trimStart();
+      step = { line: n + 1, keys: new Map(), run: [], flow: content.startsWith("{") };
+      steps.push(step);
+      column = indent + (body.length - content.length);
+      key = null;
+      if (!content || step.flow) continue;
+      const match = KEY.exec(content);
+      if (!match) continue;
+      key = unquote(match[1]);
+      const value = (match[2] ?? "").trim();
+      step.keys.set(key, value);
+      if (key === "run" && !BLOCK_SCALAR.test(value)) step.run.push(value);
+      continue;
+    }
+    if (!step || indent !== column) continue;
+    const match = KEY.exec(body);
+    if (!match) continue;
+    key = unquote(match[1]);
+    const value = (match[2] ?? "").trim();
+    step.keys.set(key, value);
+    if (key === "run" && !BLOCK_SCALAR.test(value)) step.run.push(value);
+  }
+  return steps;
+}
+
+/** The action a step's `uses:` names, without its ref. */
+const actionOf = (uses) => {
+  const name = unquote(uses);
+  return name.startsWith("./") || name.startsWith("docker://") ? name : name.replace(/@.*$/, "");
+};
+
+// Every step of every workflow is asked what it fetches. A listed action or command is a
+// fetch from outside GitHub and has to carry its own `timeout-minutes` — on the STEP: the
+// job's bound is the hang detector for the whole job, and a step that has none of its own
+// is exactly the one whose stall is reported as "cancelled" with the reason in the log.
+// An action in neither list is refused by name, so one that fetches from outside GitHub
+// cannot arrive without someone deciding which list it belongs to.
+//
+// Read lexically: a `run:` that reaches a fetch through a script file or a package script
+// (`pnpm some-script` running `cargo test`) is not seen.
+function checkStepBounds(workflows) {
+  for (const workflow of workflows) {
+    if (!workflow.root) continue;
+    for (const [id, job] of workflow.jobs) {
+      for (const step of stepsOf(workflow.root, job)) {
+        const where = `${workflow.path}:${step.line} (${id})`;
+        if (step.flow) {
+          finding(where, "a step written as a flow mapping; write it in block form so this checker can read it");
+          continue;
+        }
+        const fetches = [];
+        if (step.keys.has("uses")) {
+          const action = actionOf(step.keys.get("uses"));
+          if (FETCHING_ACTIONS.has(action)) fetches.push(action);
+          else if (!GITHUB_ONLY_ACTIONS.has(action)) {
+            finding(
+              where,
+              `uses \`${action}\`, which this checker does not classify. If it fetches from a host outside GitHub, ` +
+                `add it to FETCHING_ACTIONS in scripts/check-merge-gates.mjs and give the step a \`timeout-minutes\`; ` +
+                `if everything it fetches is GitHub's, add it to GITHUB_ONLY_ACTIONS`,
+            );
+          }
+        }
+        const script = step.run.filter((line) => !line.startsWith("#")).join("\n");
+        for (const [name, pattern] of FETCHING_COMMANDS) if (pattern.test(script)) fetches.push(`\`${name}\``);
+        if (!fetches.length || step.keys.get("timeout-minutes")) continue;
+        finding(
+          where,
+          `fetches from outside GitHub (${fetches.join(", ")}) but carries no step \`timeout-minutes\` — a stall ` +
+            `there runs the job out and reports only "cancelled". Bound the step; the readings to size it from are ` +
+            `in .github/actions/install-browsers/action.yml`,
+        );
+      }
+    }
+  }
+}
+
 // --- the manifest -------------------------------------------------------------
 
 function readManifestSource() {
@@ -964,6 +1118,7 @@ export function inspect({ workflowSources, manifestSource, ruleset = null }) {
   const seen = checkWorkflows(workflows, required);
   checkPreconditionChains(workflows);
   checkPullRequestFieldConsumers(workflows);
+  checkStepBounds(workflows);
   const notes = ruleset ? compareRulesets(ruleset, required, integrationId) : [];
   return { findings: findings.slice(), required, workflows, seen, notes };
 }
@@ -1011,7 +1166,8 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   const silent = prWorkflows.filter((workflow) => ![...run.seen.values()].includes(workflow.path));
   console.log(
     `OK: ${run.required.size} required context(s) over ${prWorkflows.length} pull-request workflow(s), ` +
-      `all reportable on every pull request; declared preconditions hold across ${run.workflows.length} workflow(s)`,
+      `all reportable on every pull request; declared preconditions and step bounds hold across ` +
+      `${run.workflows.length} workflow(s)`,
   );
   for (const [context, path] of run.seen) console.log(`    ${context} <- ${path}`);
   if (silent.length) console.log(`    advisory only (no required context): ${silent.map((w) => w.path).join(", ")}`);

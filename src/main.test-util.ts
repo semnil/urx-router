@@ -74,8 +74,15 @@ export interface TauriShell {
    *  did anything, and it does not look at `payload` — a payload shaped wrong for the
    *  event still delivers and still counts, and the handler will read it as empty. A case
    *  whose outcome is an ABSENCE has to pin something else as well, or it passes on a
-   *  delivery the app ignored. */
-  emit: (event: string, payload?: unknown) => number;
+   *  delivery the app ignored.
+   *
+   *  `from` is the window the shell raises the event for — the app's own, `"main"`, unless
+   *  named. A handler registered for every emitter (`{ kind: "Any" }`) takes it from any
+   *  window; one registered for a named window takes it only when that name is `from`, the
+   *  way the shell's event plugin filters an event a window raises for itself. A handler
+   *  registered with no target takes nothing here, as the shell would not have accepted
+   *  that registration. */
+  emit: (event: string, payload?: unknown, from?: string) => number;
 }
 
 /** The boot-time queries every launch answers, and the registrations a Live session
@@ -286,11 +293,21 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
   // function to `transformCallback` and then names the id it gets back when it registers,
   // so holding both halves is what makes an event deliverable at all.
   const callbacks = new Map<number, (message: unknown) => void>();
-  const listeners = new Map<string, number[]>();
+  const listeners = new Map<string, Array<{ handler: number; target: unknown }>>();
   let nextCallback = 1;
+  const reaches = (target: unknown, from: string): boolean => {
+    const t = target as { kind?: unknown; label?: unknown } | undefined;
+    if (t?.kind === "Any") return true;
+    const named =
+      t?.kind === "WebviewWindow" || t?.kind === "Window" || t?.kind === "Webview" || t?.kind === "AnyLabel";
+    return named && t?.label === from;
+  };
 
   (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
     Channel,
+    // The labels the shell writes into every page before it runs; the app entry is the
+    // main window's page.
+    metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
     transformCallback: (fn: (payload: unknown) => void) => {
       const id = nextCallback++;
       callbacks.set(id, fn as (message: unknown) => void);
@@ -312,7 +329,7 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
       // NOT covered by this — the recording is above the call — but nothing answers this
       // command with a function today.
       if (cmd === "plugin:event|listen" && typeof a?.event === "string" && typeof a.handler === "number") {
-        listeners.set(a.event, [...(listeners.get(a.event) ?? []), a.handler]);
+        listeners.set(a.event, [...(listeners.get(a.event) ?? []), { handler: a.handler, target: a.target }]);
       }
       const v = table[cmd];
       if (typeof v !== "function") return Promise.resolve(v);
@@ -334,9 +351,10 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     answer: (cmd, value) => void (table[cmd] = guard && DEVICE_TRAFFIC.includes(cmd) ? guard(value) : value),
     failOnce: (cmd, err) => void once.set(cmd, err),
     count: (cmd) => invokes.filter((c) => c === cmd).length,
-    emit: (event, payload) => {
+    emit: (event, payload, from = "main") => {
       let delivered = 0;
-      for (const id of listeners.get(event) ?? []) {
+      for (const { handler: id, target } of listeners.get(event) ?? []) {
+        if (!reaches(target, from)) continue;
         const fn = callbacks.get(id);
         if (!fn) continue;
         // The shape `listenEvent` unwraps: it reads `.payload` off the message and hands

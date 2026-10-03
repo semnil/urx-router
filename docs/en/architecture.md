@@ -514,8 +514,9 @@ carries a one-line map of the same directories and points here.
   osc.on) with the off-state dimmed via the shared `isNodeInactive`; live meters only during Live sync, ~10
   Hz) / `glyph.ts` wraps the `∞` glyph in a `.glyph-inf` span to compensate the reduced x-height of mono
   fonts (shared by console readouts and inspector values) / `dropzone.ts` drag & drop onto the window (two
-  paths: the shell's `tauri://drag-*` events carrying real paths on desktop, DOM drag events carrying `File`
-  objects in a browser; DOM handlers registered only outside Tauri so a drop is never handled twice) /
+  paths: the shell's `tauri://drag-*` events carrying real paths on desktop, taken only for the main window,
+  DOM drag events carrying `File` objects in a browser; DOM handlers registered only outside Tauri so a drop
+  is never handled twice) /
   `consent.ts` first-launch consent gate (fullscreen inert modal, disclaimer text, persisted in
   `localStorage`, declining exits the app; desktop only) / `load-report.ts` copyable report modal for plan
   load failures (`?plan=` decode failures, routing validation failures) / `rate-choice.ts` three-way modal
@@ -1046,7 +1047,7 @@ address, a broker URI. Both sides of the shell raise them:
 
 | Source                          | Codes                                                                                                                                                                                  |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src-tauri/src/lib.rs` (file IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`                                                                                                                       |
+| `src-tauri/src/lib.rs` (file IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`, `file-no-temp`                                                                                                       |
 | `src-tauri/src/vd.rs` (broker)  | `broker-unreachable`, `no-device`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-rejected`, `broker-bad-response`, `broker-io`      |
 | `src-tauri/src/midi.rs`         | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                              |
 | `src-tauri/src/keepawake.rs`    | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                          |
@@ -1554,7 +1555,9 @@ gone rather than handed to the row that moved into its place — and the status 
 the window's life, written in place only when its text changes. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond the relay pair — its capability grants those two commands
-and, of core, only a debug build's devtools hotkey, so it cannot emit an event the main window listens for. Where it sits is the shell's to remember (see
+and, of core, only a debug build's devtools hotkey, so it cannot emit an event the main window listens for. A file dropped onto it
+opens nothing: the shell raises the drag events for the window the file was dropped on, and the main window takes only those
+raised for itself (see "Opening files: drag & drop, and settings files"). Where it sits is the shell's to remember (see
 "Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by platform —
 a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where an AppKit parent was measured
 and is not used. Closing the main window closes it; closing it drops learn mode, which would
@@ -2611,7 +2614,7 @@ to a broker that ACKs writes with no unit attached and answers reads from its ca
 command fails until a reconnect, with the cause the drop was met with (`broker-closed`, `device-lost`, `broker-io`, …).
 The worker stays up to answer them — a drop the idle pump meets stops the pump, not the worker — so an action with a
 dialog open between its connect and its first command reports what happened to the link rather than
-`control-worker-gone`, and a link watch asked for once the session is lost is refused with that cause.
+`control-worker-gone`.
 
 ### Reset chains, and what a converge round sends
 
@@ -3994,12 +3997,15 @@ native save/open dialogs (`tauri-plugin-dialog`) plus a recent-plans list; file 
 app commands (`read_text_file` / `read_binary_file` / `write_text_file` / `write_binary_file`), each
 `async` with the `std::fs` work on a worker thread (`spawn_blocking`, like the vd commands) and each
 enforcing an extension allowlist (read text: `json`; read binary: `urxf`; write text: `json` / `md`;
-write binary: `png` / `pdf`).
+write binary: `png` / `pdf`), asked of the name the dialog returned and again of the file it resolves to — a
+link named like a plan does not make the file it points at one to read or write.
 A write fills a temp file and renames it into place, so a failure leaves the previous file whole. Over an
-existing file it goes through to the file the path resolves to — a symlink keeps naming it, and the allowlist
-is asked of that file too — and keeps what was set on it: the mode, on macOS the extended attributes (Finder
-tags) and the ACL, on Windows the ACL, attributes and alternate data streams (`ReplaceFileW`). A directory
-the app cannot write fails the save; nothing is written in place.
+existing file it goes through to the file the path resolves to — a symlink keeps naming it — and keeps what
+was set on it: the mode, on macOS the extended attributes (Finder tags) and the ACL, on Windows the ACL,
+attributes and alternate data streams (`ReplaceFileW`). A symlink that points at nothing yet is followed too:
+the file it names is created and the link stays a link. A directory the app cannot write fails the save;
+nothing is written in place. A file with more than one hard link is replaced the same way: the name saved to
+gets the new file, and its other names keep the old contents.
 `write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
 array — with the destination path in a percent-encoded `x-file-path` request header. The webview
 itself runs under a strict CSP (`security.csp` + `devCsp` in `tauri.conf.json`): scripts from
@@ -4247,7 +4253,10 @@ them:
 | Payload | real file paths | `File` objects, no path |
 | Consequence | a dropped plan joins the recent list, exactly as if opened from the dialog | no recent-list entry (there is no path to record) |
 
-The DOM handlers are registered only outside Tauri, so a drop is never handled twice. Both paths
+The DOM handlers are registered only outside Tauri, so a drop is never handled twice. On desktop the
+shell raises the three drag events for the window a file is dragged onto, and the main window takes
+only the ones raised for itself: a file dropped onto the MIDI control window shows no overlay and
+opens nothing. Both paths
 funnel into the same check: the extension has to be one the build accepts, and exactly one file may
 be dropped — a multi-file drop is refused rather than resolved by guessing which one was meant.
 A refused drop reports on the status line (a routine "not that file"); a dropped plan that fails to
@@ -4255,7 +4264,11 @@ parse raises the same modal File > Open would.
 
 `listenEvent` drives the event plugin directly through
 `window.__TAURI_INTERNALS__.transformCallback` + `plugin:event|listen`, keeping the frontend free of
-npm runtime dependencies like the dialog / updater calls.
+npm runtime dependencies like the dialog / updater calls. Its scope is what selects the window: the
+default `"any"` registers for every emitter (the Edit menu's event), while the drop zone's `"window"`
+names the page's own window — the label the shell writes into `__TAURI_INTERNALS__.metadata` — as the
+target, and a page with no such label is refused that registration rather than widened to every
+window.
 
 ### Settings file (`.urxf`) import — experimental
 
