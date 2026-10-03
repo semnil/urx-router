@@ -41,12 +41,17 @@ tauri-plugin-window-state = "2"
 # Power-management bindings for the idle-sleep hold (keepawake.rs). Both are
 # already in their platform's tree (core-foundation via midir -> coremidi,
 # windows-sys via tokio and muda), so neither adds a crate to the build.
+# A file save keeps what was set on the file it replaces (lib.rs
+# write_atomic) through libc's copyfile on macOS (libc is already in the tree)
+# and ReplaceFileW, windows-sys's FileSystem feature, on Windows.
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
+libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
+  "Win32_Storage_FileSystem",
   "Win32_System_Power",
   "Win32_System_Threading",
 ] }

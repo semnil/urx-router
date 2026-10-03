@@ -535,7 +535,9 @@ carries a one-line map of the same directories and points here.
   window) — which is a **view**: it renders a pushed state and reports intents (`ui/midi-protocol.ts`),
   because a MIDI input port delivers its bursts to the window that opened it and only the main window has a
   plan. Both directions are Tauri Channels through one Rust relay (`src-tauri/src/midiwin.rs`), so the
-  second window needs no capability beyond core. It raises itself when learn turns ON and deliberately NOT
+  second window needs no capability beyond the relay pair: `capabilities/midi-window.json` grants the two relay
+  commands and, of core, only the devtools hotkey a debug build injects — no event emit or listen, so a script
+  in it cannot raise an event the main window listens for. It raises itself when learn turns ON and deliberately NOT
   when a binding lands — measured on macOS: a click on a window that is not active does not reach the
   webview (`accept_first_mouse` defaults to false), so raising per binding would make every following assignment
   two clicks; gang members render contiguously below their head with a Linked tag, and the Behavior column's
@@ -707,8 +709,13 @@ carries a one-line map of the same directories and points here.
   make the menu agree with the chord. macOS only; no other platform installs a menu). The installer's
   consent page is `bundle.licenseFile` (`LICENSE.txt` = disclaimer + trademarks + MIT); exiting on
   consent-gate rejection requires the `process:allow-exit` permission. `build.rs` is the crate's build
-  script and nothing else (`tauri_build::build()`): it is what turns `tauri.conf.json` and
-  `capabilities/*.json` into the code `tauri::generate_context!` expands to, so a capability added to the
+  script, and it declares the app's own command set (`tauri_build::try_build` with `AppManifest::commands`) —
+  which is what gives each app command a permission the capability files can grant. A new command therefore
+  takes three edits: `generate_handler!` in `lib.rs`, the list in `build.rs`, and an `allow-<command>` grant
+  in the capability of the window that may call it (`capabilities/default.json`, or `midi-window.json`);
+  `every_app_command_is_declared_and_granted_to_the_window_that_may_call_it` in `lib.rs` fails when one is
+  missing, and the header of `build.rs` carries why the list exists. It is also what turns `tauri.conf.json`
+  and `capabilities/*.json` into the code `tauri::generate_context!` expands to, so a capability added to the
   configuration reaches the binary through it rather than through any Rust under `src/`
 
 
@@ -1543,7 +1550,8 @@ operator was on — found again by its class and the assignment row it sits in, 
 gone rather than handed to the row that moved into its place — and the status line is one live region for
 the window's life, written in place only when its text changes. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
-`invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
+`invoke`, so the second window needs no capability beyond the relay pair — its capability grants those two commands
+and, of core, only a debug build's devtools hotkey, so it cannot emit an event the main window listens for. Where it sits is the shell's to remember (see
 "Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by platform —
 a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where an AppKit parent was measured
 and is not used. Closing the main window closes it; closing it drops learn mode, which would
@@ -2571,14 +2579,17 @@ A link that drops *during* a command surfaces on the next operation as a broker 
 sitting **idle** (live sync with no edits) would go unnoticed. Unplugging *only the URX* is also invisible to a
 socket check: the broker socket stays up and keeps ACKing writes (a success reply with no unit attached), so neither
 a socket drop nor a write error reveals it. To close both gaps the Rust worker watches, in `pump` (the idle socket
-drain) and in the read/write round-trip loops (`do_set` / `do_get_value`), for (a) a socket drop and (b) the
+drain) and in the read/write round-trip loops (`do_set` / `do_get_value`, the late drain after a deadline included), for (a) a socket drop and (b) the
 `/vd/synchronize` frame Device Center spontaneously sends at the moment of disconnect (`sync_status` flipping away
 from `online` — distinct from the handshake / sync_status reads that fetch it on purpose). On either, it pushes a
 single `LinkEvent` to the frontend (`vdWatchLink`), or fails the in-flight command, and the frontend tears the live
-session down. That drop is also **latched** in the worker: the `/vd/synchronize` push arrives exactly once, so
+session down. That drop is also **latched** in the worker, whichever reader met it: the `/vd/synchronize` push arrives exactly once, so
 without latching only the command that consumed it could ever notice, and every command after it would keep talking
 to a broker that ACKs writes with no unit attached and answers reads from its cache. Once latched, every later
-command fails until a reconnect.
+command fails until a reconnect, with the cause the drop was met with (`broker-closed`, `device-lost`, `broker-io`, …).
+The worker stays up to answer them — a drop the idle pump meets stops the pump, not the worker — so an action with a
+dialog open between its connect and its first command reports what happened to the link rather than
+`control-worker-gone`, and a link watch asked for once the session is lost is refused with that cause.
 
 ### Reset chains, and what a converge round sends
 
@@ -3944,6 +3955,11 @@ app commands (`read_text_file` / `read_binary_file` / `write_text_file` / `write
 `async` with the `std::fs` work on a worker thread (`spawn_blocking`, like the vd commands) and each
 enforcing an extension allowlist (read text: `json`; read binary: `urxf`; write text: `json` / `md`;
 write binary: `png` / `pdf`).
+A write fills a temp file and renames it into place, so a failure leaves the previous file whole. Over an
+existing file it goes through to the file the path resolves to — a symlink keeps naming it, and the allowlist
+is asked of that file too — and keeps what was set on it: the mode, on macOS the extended attributes (Finder
+tags) and the ACL, on Windows the ACL, attributes and alternate data streams (`ReplaceFileW`). A directory
+the app cannot write fails the save; nothing is written in place.
 `write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
 array — with the destination path in a percent-encoded `x-file-path` request header. The webview
 itself runs under a strict CSP (`security.csp` + `devCsp` in `tauri.conf.json`): scripts from

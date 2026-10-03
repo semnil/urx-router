@@ -490,8 +490,10 @@ flowchart TD
   `ui/midi-window-view.ts` が担うので、どちらもウィンドウなしで駆動できる) — それは**ビュー**である: 押し出された
   状態を描き、意図を報告する (`ui/midi-protocol.ts`)。MIDI 入力ポートはそれを開いたウィンドウへバーストを
   届け、プランを持つのはメインウィンドウだけだからである。双方向とも 1 つの Rust リレー
-  (`src-tauri/src/midiwin.rs`) を通る Tauri Channel なので、2 つ目のウィンドウは core 以外の capability を
-  必要としない。learn が ON になったときは自分を前面に出し、割当が着地したときは**意図的に出さない** — macOS で
+  (`src-tauri/src/midiwin.rs`) を通る Tauri Channel なので、2 つ目のウィンドウはリレーの 2 コマンド以外の
+  capability を必要としない: `capabilities/midi-window.json` が許可するのはリレーの 2 コマンドと、core からは
+  デバッグビルドが注入する devtools のホットキーだけで、イベントの emit / listen は含まない。そのためこの窓の
+  スクリプトは、メインウィンドウが待ち受けるイベントを発生させられない。learn が ON になったときは自分を前面に出し、割当が着地したときは**意図的に出さない** — macOS で
   実測: アクティブでないウィンドウへのクリックは webview に届かない (`accept_first_mouse` の既定は false) ので、
   割当ごとに前面化すると次の割当が毎回 2 クリックになってしまう。ギャングのメンバーはヘッドの直下に連続して並び
   Linked タグを付ける。Behavior 列の語彙は表の下に凡例として印字する — リストが実際に使う語彙についてだけ。
@@ -652,9 +654,15 @@ flowchart TD
   無効を切り替えられないので、置き換えることがメニューをコードと一致させる唯一の方法である。macOS のみ。
   他のプラットフォームはメニューを入れない)。インストーラの同意ページは `bundle.licenseFile`
   (`LICENSE.txt` = 免責 + 商標 + MIT)。同意ゲートの拒否で終了するには `process:allow-exit` 権限が要る。
-  `build.rs` はこのクレートのビルドスクリプトそのもの (`tauri_build::build()` だけ) で、`tauri.conf.json` と
-  `capabilities/*.json` を `tauri::generate_context!` が展開するコードへ変換する。設定に足した capability が
-  バイナリへ届く経路は `src/` 配下の Rust ではなくここである
+  `build.rs` はこのクレートのビルドスクリプトで、アプリ自身のコマンド一式を宣言する
+  (`tauri_build::try_build` と `AppManifest::commands`) — capability ファイルが許可できる権限が各アプリコマンドに
+  生まれるのはこれによる。したがって新しいコマンドには 3 箇所の編集が要る: `lib.rs` の `generate_handler!`、
+  `build.rs` の一覧、そしてそのコマンドを呼んでよいウィンドウの capability (`capabilities/default.json`、または
+  `midi-window.json`) への `allow-<command>` の許可。1 つでも欠けると `lib.rs` の
+  `every_app_command_is_declared_and_granted_to_the_window_that_may_call_it` が落ち、一覧がある理由は
+  `build.rs` の冒頭に書いてある。`tauri.conf.json` と `capabilities/*.json` を `tauri::generate_context!` が
+  展開するコードへ変換するのもここで、設定に足した capability がバイナリへ届く経路は `src/` 配下の Rust では
+  なくここである
 
 ## データモデル
 
@@ -1260,7 +1268,9 @@ Vite エントリで、デモビルドでは出力しない (MIDI はデスク�
 その行が消えたときは、代わりにその位置へ来た行へは渡さず落とす)、ステータス行はウィンドウの寿命を通じて 1 つの
 ライブリージョンで、文言が変わったときだけその場で書き換える。双方向とも Rust の中継
 (`src-tauri/src/midiwin.rs`) を通した Tauri **Channel** で、メーター / パラメータ通知 / MIDI 入力と同じ作法 —
-これにより通信は `invoke` の内側に留まり、2 つ目のウィンドウに core 以上の capability が要らない。位置とサイズは
+これにより通信は `invoke` の内側に留まり、2 つ目のウィンドウにはリレーの 2 コマンド以上の capability が要らない —
+その capability が許可するのはその 2 コマンドと、core からはデバッグビルドの devtools のホットキーだけなので、
+メインウィンドウが待ち受けるイベントを emit できない。位置とサイズは
 シェルが覚える (「ウィンドウの配置」を参照)。メインウィンドウの前面に留める仕組みはプラットフォームで
 異なり、Windows では Win32 の**所有者 (owner)**、macOS ではラーンが armed の間だけのピンである。macOS では
 AppKit の親子関係の代償を実測したうえで、それを使っていない。メインウィンドウを閉じると
@@ -2211,13 +2221,16 @@ SETUP > GENERAL の 13 アドレス。本体設定画面が自前で読み書き
 リンクがコマンド実行中に切れた場合は次の操作が broker エラーを返して surface するが、保持接続の**アイドル時**
 (Live sync 中で編集がない間) は無通知になる。さらに **URX だけを物理切断**した場合は broker ソケットは生きたままで、
 書き込みも broker が受理し続ける (実機不在でも成功応答を返す) ため、ソケット断や書き込みエラーでは検知できない。
-これらを埋めるため Rust ワーカーは `pump` (アイドル時のソケット排出) と読み書きの往復ループ (`do_set` / `do_get_value`) で、
+これらを埋めるため Rust ワーカーは `pump` (アイドル時のソケット排出) と読み書きの往復ループ (`do_set` / `do_get_value`。期限切れ後の遅延排出を含む) で、
 (a) ソケット断と、(b) Device Center が切断の瞬間に自発送出する `/vd/synchronize` フレーム (`sync_status` が `online` 以外へ
 遷移するもの。handshake / sync_status が意図的に読む経路とは区別する) の両方を検知する。いずれかを見た瞬間に
 `LinkEvent` を 1 度フロントへ push し (`vdWatchLink`)、または往復中なら当該コマンドをエラーにして、フロントは Live
-セッションを解除する。この切断は worker 側で **latch** される: `/vd/synchronize` の push は 1 度しか来ないため、
+セッションを解除する。この切断は、どの読み手が見つけたものでも worker 側で **latch** される: `/vd/synchronize` の push は 1 度しか来ないため、
 latch しないとそれを消費したコマンドだけが気づける状態になり、以降のコマンドは「ユニット未接続でも書込を ACK し
-読取はキャッシュで答えるブローカー」と会話し続けてしまう。latch 後は再接続まで全コマンドが即座に失敗する。
+読取はキャッシュで答えるブローカー」と会話し続けてしまう。latch 後は再接続まで全コマンドが、切断を見つけたときの原因
+(`broker-closed`・`device-lost`・`broker-io` など) で即座に失敗する。worker はそれに答えるために残る — アイドルの `pump` が
+切断を見つけたときに止まるのは `pump` だけで、worker は動き続ける — ので、接続から最初のコマンドまでの間にダイアログを挟む操作も
+`control-worker-gone` ではなくリンクに起きたことを報告し、セッションが失われた後に求めたリンク監視はその原因で拒否される。
 
 ### リセット連鎖と、収束ラウンドが送るもの
 
@@ -3490,7 +3503,12 @@ localStorage レコード (`urx-settings`、`core/settings.ts`。`?reset` のク
 ファイル IO は小さな自前 command (`read_text_file` / `read_binary_file` / `write_text_file` / `write_binary_file`)。
 いずれも `async` で `std::fs` 処理をワーカースレッドに逃がし (`spawn_blocking`・vd command と同方式)、
 拡張子の許可リストを強制する
-(テキスト読込: `json`・バイナリ読込: `urxf`・テキスト書込: `json` / `md`・バイナリ書込: `png` / `pdf`)。`write_binary_file` は PNG/PDF の
+(テキスト読込: `json`・バイナリ読込: `urxf`・テキスト書込: `json` / `md`・バイナリ書込: `png` / `pdf`)。
+書込は一時ファイルを埋めてから rename で置き換えるので、失敗しても元のファイルはそのまま残る。既存ファイルへの書込は
+パスが解決する先のファイルへ通す — シンボリックリンクはそのファイルを指したまま残り、許可リストはそのファイルにも
+問う — そのファイルに設定されていたもの (モード、macOS では拡張属性 (Finder タグ) と ACL、Windows では ACL・属性・
+代替データストリーム (`ReplaceFileW`)) を引き継ぐ。アプリが書き込めないディレクトリでは保存が失敗し、その場への
+上書きはしない。`write_binary_file` は PNG/PDF の
 バイト列を IPC リクエストの raw ボディで受け取り (JSON の数値配列は使わない)、保存先パスはパーセントエンコードした
 `x-file-path` リクエストヘッダで渡す。webview 自体は厳格な CSP の下で動く (`tauri.conf.json` の `security.csp` +
 `devCsp`): スクリプトは `'self'` のみ、インラインスタイルは許可、画像は出力用ラスタライザとノイズテクスチャのため `blob:` / `data:` を許可、`connect-src` は Tauri IPC の
