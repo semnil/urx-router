@@ -40,10 +40,10 @@
 //     hang, and the address must not be read before it does.
 //
 // Every `sideEffect: "refetch"` head ends its wait on its own notify, and the refetch that
-// follows reads what the write made the unit recompute. That rests on the head's own notify
-// being the boundary for its dependents too — a dependent still in flight when the refetch
-// reads it would be read stale — and it is what each of the eight heads below has on the unit
-// (architecture.md, "A write is not readable when it is acked", carries the readings):
+// follows reads what the write made the unit recompute. That assumes those values are
+// readable by the time the refetch reads them — a dependent still in flight then would be
+// read stale. architecture.md, "A write is not readable when it is acked", carries the
+// readings each of the eight heads below rests on:
 //
 //   EQ_ONE_KNOB_ON      recomputes no band: the ON transition leaves the curve where it is.
 //   EQ_ONE_KNOB_TYPE    loads the type's preset into the band registers of the same node.
