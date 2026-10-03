@@ -34,7 +34,17 @@ import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, STEREO_FADER } from
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
-import { channelControl, insertFxControl, nameControl, planToCommands, sendControl } from "./core/control/translate";
+import {
+  channelControl,
+  cmdAddr,
+  insertFxControl,
+  nameControl,
+  nodeLeafRules,
+  planToCommandOrigins,
+  planToCommands,
+  sendControl,
+} from "./core/control/translate";
+import { nodeParamContestPath } from "./core/plan-history";
 import { getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { DeviceModel } from "./models/types";
@@ -4958,6 +4968,26 @@ describe("Write to device", () => {
 // Offered after the disconnect rather than during it (why, in `offerErrorReport`'s own
 // comment in main.ts). The write's read-failure case above covers the arm where the offer
 // is taken and a file appears; these are the two that leave nothing behind.
+
+/** A table seed holding the factory plan's value at every address a node-param leaf the write
+ *  bounds is sent to, so a read of the unit finds each of those leaves inside its rule. */
+function boundedLeavesAtFactory(): Record<string, number> {
+  const model = getModel("URX44V");
+  const factory = defaultPlan("URX44V");
+  const leaves = new Set(
+    model.nodes.flatMap((n) =>
+      nodeLeafRules(model, n.id, factory.nodeParams[n.id]).map(([path]) => nodeParamContestPath(n.id, path)),
+    ),
+  );
+  const origins = planToCommandOrigins(model, factory);
+  const seed: Record<string, number> = {};
+  for (const c of planToCommands(model, factory)) {
+    const origin = origins.get(cmdAddr(c));
+    if (typeof origin === "string" && leaves.has(origin)) seed[`${c.paramId}/${c.x}/${c.y}`] = c.vdValue;
+  }
+  return seed;
+}
+
 // A raw the unit holds and this app cannot write. The load path repairs a document, so the way
 // one reaches the plan is a DEVICE read: the unit's own encoder stops where the window does,
 // but the wire does not, and an earlier build of this app could put one there.
@@ -4971,9 +5001,12 @@ describe("a value the unit holds and the app cannot write", () => {
   const BELOW = lpf.rawMin! - 1;
   // BOTH channels' slots are seeded, from the catalogue rather than by hand: a slot the
   // table has not been told about reads 0, and 0 is outside several of these windows too, so
-  // a partial seed would move the count this case asserts for a reason it is not about.
-  const unitHoldingLowLpf = (): Record<string, number> => {
-    const seed: Record<string, number> = { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 };
+  // a partial seed would move the count this case asserts for a reason it is not about. Every
+  // node-param leaf the write bounds is seeded at the factory plan's value for the same reason —
+  // a GATE attack, a stereo channel's Rec Point and the oscillator interval all read 0 otherwise,
+  // and the write takes each of those back as well.
+  const unitInRule = (): Record<string, number> => {
+    const seed: Record<string, number> = { ...boundedLeavesAtFactory(), [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 };
     for (const [typeId, arrId, type] of [
       [679, 681, 0],
       [683, 685, 1024],
@@ -4981,9 +5014,9 @@ describe("a value the unit holds and the app cannot write", () => {
       seed[`${typeId}/0/0`] = type;
       for (const d of fxParams(type)) seed[`${arrId}/0/${d.slot}`] = d.def;
     }
-    seed[`685/0/${lpf.slot}`] = BELOW;
     return seed;
   };
+  const unitHoldingLowLpf = (): Record<string, number> => ({ ...unitInRule(), [`685/0/${lpf.slot}`]: BELOW });
   // Read off the surface rather than out of module state: what the operator sees IS the
   // question. The effect's parameters are drawn by the FX EFFECT tuning screen, so the node is
   // selected, its launcher pressed, the readout taken and the screen closed again — reopened
@@ -5047,6 +5080,46 @@ describe("a value the unit holds and the app cannot write", () => {
     // …and the write's own value is what the plan ends up holding, so the panel and the unit
     // name the same setting from here on.
     expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+  });
+
+  // A node's own params take the same path: a read files an insert-FX engine's values under the
+  // bare slot as the unit reported them, and the write sends the slot's own bound. Read back
+  // through two saves, since the document is where the plan's value goes on living.
+  it("takes an insert-FX raw the read stored verbatim back once the device confirmed it", SLOW, async () => {
+    const { ENGINE_COMPANDER_INPUT, insertFxDefaults } = await import("./core/control/insert-fx-effect");
+    const ifx = insertFxControl(getModel("URX44V"), "ch1")!;
+    const seed = unitInRule();
+    seed[`${ifx.param}/0/${ifx.instances[0]}`] = denormalizeInsertFx(COMPANDER_H);
+    for (const [slot, v] of Object.entries(insertFxDefaults("compander", COMPANDER_H)))
+      seed[`${ENGINE_COMPANDER_INPUT}/0/${slot}`] = v;
+    const PAST = 99_999;
+    seed[`${ENGINE_COMPANDER_INPUT}/0/7`] = PAST;
+    const shell = await bootDevice(SAVES, true, seed);
+    const saved = async (): Promise<unknown> => {
+      const before = shell.count("write_text_file");
+      $("btn-save").click();
+      await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
+      const doc = JSON.parse(
+        String((shell.args[shell.invokes.lastIndexOf("write_text_file")] as { contents: string }).contents),
+      );
+      return doc.nodeParams.ch1.insertFxParams["7"];
+    };
+
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(await saved(), "the read is verbatim").toBe(PAST);
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    const sent = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set" ? shell.args[i] : undefined))
+      .filter((a): a is Record<string, unknown> => !!a && a.paramId === ENGINE_COMPANDER_INPUT && a.y === 7);
+    expect(
+      sent.map((a) => a.value),
+      "the write sends the slot's bound",
+    ).toEqual([2000]);
+    expect(statusText()).toContain(t().status.paramsBounded(1));
+    expect(await saved()).toBe(2000);
   });
 
   // The recorder tail runs in a FINALLY, after the write has written its outcome. A read that

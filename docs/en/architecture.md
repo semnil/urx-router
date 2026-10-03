@@ -4181,11 +4181,16 @@ The value is authored FROM the device (`authorFromDevice`), the seat a device-si
 takes, rather than pushed as an edit: it is the write path's value rather than the operator's, and an undo
 that put the unwritable raw back would only have it normalised again on the next write.
 
-**SCOPE: the FX channel effect, and nothing else.** The load bounds every node-param leaf the write
-bounds as well (`paramRangeProblems`), but only an FX `params` entry is taken back here: `paramRangeAddrs`
-answers for that entry alone, and a node-param repair carries no address. The reachable sibling is insert FX,
-whose engine slots are bounded at the emit while `readback.ts` stores the unit's raw verbatim: a plan holding
-such a raw from a device read diverges the same way, and `comparePlan` sees it no better.
+**SCOPE: an FX `params` entry, and every node-param leaf the write bounds** — the leaves the load
+bounds too (`paramRangeProblems`). The node-param case a plan reaches here with is an insert-FX engine slot:
+`readback.ts` stores the unit's raw verbatim, the emit bounds it, and the write's confirmation is what brings
+the plan onto the bound. A node-param leaf has no `paramRangeAddrs` entry; its addresses are the commands
+whose value came from it (`planToCommandOrigins`), so a value the emit sends to every linked instance — a
+MIX bus's 1-knob level, a stereo channel's gain — is taken back only once each of them is confirmed. It is
+taken back only where holding the bound sends what was sent at those addresses, which a leaf the load bounds
+to a narrower window than its encoder does (a gain, the oscillator level, the HPF frequency) meets only where
+the encoder's clamp lands on the bound; elsewhere the unit holds the value the write let through
+(`app/adopt-writes.ts`).
 
 A value is **rewritten** rather than dropped in the loader, after validation, whose repairs are listed under `plan-validate.ts` in "Source layout". Among
 them, an FX value outside what the app can write is bounded, and one there is nothing to bound is dropped: a
