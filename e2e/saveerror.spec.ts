@@ -2,6 +2,7 @@ import { test, expect } from "./fixtures";
 import type { Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
 import { answerTimingOf, installAnswerQueue } from "./tauri-stub";
+import { en } from "../src/i18n/en";
 
 // A native save / image export that fails after the dialog returned a path must
 // surface as an error dialog, keep the plan dirty and show no success status — a
@@ -73,7 +74,10 @@ test("a failed native save shows an error and keeps the plan dirty (Tauri)", asy
   // The write rejection surfaces as a modal, and no success status is shown.
   await expect.poll(() => shownDialogs(page)).toContainEqual(expect.stringContaining("Save error:"));
   expect(await shownDialogs(page)).toContainEqual(expect.stringContaining("disk full"));
-  await expect(page.locator("#statusbar")).not.toContainText("saved");
+  // Neither success message is on the status line; the dialog answers a path, so a save
+  // that went through would name the file.
+  for (const saved of [en.status.savedTo("urx-e2e-out"), en.status.planSaved])
+    await expect(page.locator("#statusbar")).not.toContainText(saved);
 
   // The plan stayed dirty: creating a new plan asks to discard the changes.
   await page.click("#btn-file");

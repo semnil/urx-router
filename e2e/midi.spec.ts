@@ -1281,6 +1281,10 @@ test("a port closed from the shell stops being offered as the chosen one", async
   await win.close();
   await expect.poll(() => page.evaluate(() => window.__midiTest.windowOpened)).toBe(true);
   const again = await openMidiWindow(page);
+  // The window paints an empty state before any push reaches it, and every push ahead of
+  // the open-ports answer still names the closed port, so the selection is read once the
+  // ports are listed.
+  await portsListed(again);
   await expect(again.locator(".mw-in")).toHaveValue("");
 
   // And the choice is live again: picking the port reopens it for real.
