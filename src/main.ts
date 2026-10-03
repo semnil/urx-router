@@ -4632,13 +4632,14 @@ function modalOpen(): boolean {
  * graph's selection, and the inspector's contents with it, were cleared for an Escape
  * addressed to Preferences, the licences notice or Device setup. This listener is
  * registered in the capture phase on `window`, which is the first thing the event
- * reaches, so it records the state the operator's key was actually aimed at.
+ * reaches, so it records the state the operator's key was actually aimed at. The link
+ * ledger's panel dismisses on Escape the same way, so an open one consumes the key too.
  */
 let escapeConsumed = false;
 window.addEventListener(
   "keydown",
   (e) => {
-    if (e.key === "Escape") escapeConsumed = modalOpen();
+    if (e.key === "Escape") escapeConsumed = modalOpen() || document.querySelector(".linkbar-pop") !== null;
   },
   true,
 );

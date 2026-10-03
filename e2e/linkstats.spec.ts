@@ -136,6 +136,71 @@ test("the panel closes on Escape and the readout says so", async ({ page }) => {
   await expect(page.locator(".linkbar-open")).toHaveAttribute("aria-expanded", "false");
 });
 
+// Closing the panel from inside it removes the element focus was on. The keyboard goes back
+// to the readout that opened it, not to <body>.
+test("Escape from inside the panel puts focus back on the readout", async ({ page }) => {
+  await liveWithLedger(page);
+  await page.click(".linkbar-open");
+  await page.locator("[data-ledger-copy]").focus();
+  await expect(page.locator("[data-ledger-copy]")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".linkbar-pop")).toHaveCount(0);
+  await expect(page.locator(".linkbar-open")).toBeFocused();
+});
+
+// A modal opened from the keyboard leaves the panel open, since no press dismissed it. The
+// modal's hold covers the app the panel belongs to, so the panel is out of the tab order
+// behind the scrim, and an Escape aimed at the modal closes the modal alone.
+test("a modal over the open panel holds it with the app", async ({ page }) => {
+  await liveWithLedger(page);
+  await page.click(".linkbar-open");
+  await expect(page.locator(".linkbar-pop")).toBeVisible();
+  await page.locator("#btn-prefs").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#prefs-modal")).toBeVisible();
+  await expect(page.locator(".linkbar-pop")).toBeVisible();
+
+  expect(await page.locator("[data-ledger-copy]").evaluate((el) => el.closest("[inert]")?.id ?? null)).toBe("app");
+  // Tab past the dialog's last control leaves the document, which reads as <body>; every other
+  // stop has to be inside the dialog.
+  const stops = new Set<string>();
+  for (let i = 0; i < 40; i++) {
+    await page.keyboard.press("Tab");
+    stops.add(
+      await page.evaluate(() =>
+        document.activeElement?.closest("#prefs-modal")
+          ? "prefs"
+          : document.activeElement?.matches("[data-ledger-copy]")
+            ? "copy"
+            : (document.activeElement?.tagName ?? "null"),
+      ),
+    );
+  }
+  expect([...stops].sort()).toEqual(["BODY", "prefs"]);
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#prefs-modal")).toBeHidden();
+  await expect(page.locator(".linkbar-pop")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".linkbar-pop")).toHaveCount(0);
+});
+
+// The Escape that closes the panel is the panel's: the graph's selection behind it stays.
+test("Escape aimed at the panel leaves the graph's selection alone", async ({ page }) => {
+  await liveWithLedger(page);
+  const ch1 = page.locator('#graph-host g.node[data-id="ch1"]');
+  await ch1.click();
+  await expect(ch1).toHaveAttribute("aria-pressed", "true");
+  await page.click(".linkbar-open");
+  await expect(page.locator(".linkbar-pop")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".linkbar-pop")).toHaveCount(0);
+  await expect(ch1).toHaveAttribute("aria-pressed", "true");
+  // The positive control: with no panel open the same key clears the selection.
+  await page.keyboard.press("Escape");
+  await expect(ch1).toHaveAttribute("aria-pressed", "false");
+});
+
 test("copying the ledger reports on the status line", async ({ page }) => {
   await liveWithLedger(page);
   // The headless context has no clipboard permission by default; stub the write so

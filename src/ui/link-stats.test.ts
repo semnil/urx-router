@@ -36,6 +36,7 @@ vi.mock("../i18n", () => ({
 }));
 
 import { LINK_BAR_KEYS, LINK_LEDGER_KEYS, type LinkLedger } from "../core/control/link-stats";
+import { holdAppInert } from "./dom";
 import { LinkStatsView } from "./link-stats";
 
 const LEDGER: LinkLedger = {
@@ -55,9 +56,18 @@ async function settle(): Promise<void> {
   await vi.advanceTimersByTimeAsync(0);
 }
 
-function installView(options: { logPath?: string | null; ledger?: LinkLedger } = {}) {
+function installView(options: { logPath?: string | null; ledger?: LinkLedger; inApp?: boolean } = {}) {
   const host = document.createElement("div");
-  document.body.append(host);
+  if (options.inApp) {
+    // The page's own shape: the readout sits in #app's status bar, and a modal's scrim is a
+    // sibling of #app.
+    const app = document.createElement("div");
+    app.id = "app";
+    app.append(host);
+    document.body.append(app);
+  } else {
+    document.body.append(host);
+  }
   const read = vi.fn(async () => options.ledger ?? LEDGER);
   const onCopied = vi.fn();
   let logPath = options.logPath ?? null;
@@ -191,5 +201,48 @@ describe("LinkStatsView", () => {
     button.click();
     view.setSession(false);
     expect(document.querySelector(".linkbar-pop")).toBeNull();
+  });
+
+  // Removing the panel removes the element focus was on, which leaves the keyboard on
+  // <body>; the readout that opened the panel is where it goes back to instead.
+  it("puts focus back on the readout when the panel closes from inside", async () => {
+    const { host, view } = installView({ inApp: true });
+    view.setSession(true);
+    await settle();
+    const button = host.querySelector(".linkbar-open") as HTMLButtonElement;
+    button.click();
+    const copy = document.querySelector<HTMLButtonElement>("[data-ledger-copy]")!;
+    copy.focus();
+    expect(document.activeElement).toBe(copy);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(document.querySelector(".linkbar-pop")).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  // A modal's hold inerts #app and the scrims under it. The panel is part of the app, so it
+  // is held with it: out of reach behind the scrim, and deaf to the Escape aimed at the modal.
+  it("is held inert with the app while a modal is up", async () => {
+    const { host, view } = installView({ inApp: true });
+    view.setSession(true);
+    await settle();
+    (host.querySelector(".linkbar-open") as HTMLButtonElement).click();
+    const pop = document.querySelector<HTMLElement>(".linkbar-pop")!;
+    expect(pop.parentElement?.id).toBe("app");
+
+    const scrim = document.createElement("div");
+    document.body.append(scrim);
+    const release = holdAppInert(scrim);
+    try {
+      expect(pop.closest<HTMLElement>("#app")?.inert).toBe(true);
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      expect(pop.isConnected).toBe(true);
+    } finally {
+      release();
+    }
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(pop.isConnected).toBe(false);
   });
 });
