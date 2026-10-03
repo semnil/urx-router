@@ -547,6 +547,15 @@ describe("channel tuning screen parameters", () => {
     expect(bindControl(model, plan, "ch_5_6/oneKnob@eq")!.set(1)).toBe(false);
     // A mono channel's EQ is unaffected by the rate.
     expect(bindControl(model, plan, "ch1/gain@eq.low")!.set(0.25)).toBe(true);
+    // The 1-knob Level carries a lock of its own (the knob being off), which the rate joins.
+    // With the knob on, the rate is the only thing that refuses it.
+    plan.nodeParams.ch_5_6 = { ...plan.nodeParams.ch_5_6, eqOneKnob: { on: true, type: 0, level: 20 } };
+    const level = (): boolean => bindControl(model, plan, "ch_5_6/oneKnobLevel@eq")!.set(0.4);
+    expect(level(), "at 192 kHz with the knob on").toBe(false);
+    expect(plan.nodeParams.ch_5_6?.eqOneKnob?.level).toBe(20);
+    plan.sampleRate = 48000;
+    expect(level(), "at 48 kHz with the knob on").toBe(true);
+    expect(plan.nodeParams.ch_5_6?.eqOneKnob?.level).not.toBe(20);
   });
 
   it("drops COMP entirely in SSMCS mode, keeping GATE and losing the EQ", () => {
