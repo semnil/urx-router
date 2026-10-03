@@ -1693,14 +1693,13 @@ fixed or withdrawn.
 - The macOS native menu itself, real drag-and-drop path resolution and the OS-refusal semantics of the
   sleep hold stay outside automation
 - The codebase has no test-id vocabulary, so every case depends on the current DOM ids and class names
-- **A case cannot import from `src/core/control/` or `src/core/plan.ts`.** Those sit in a module cycle
-  — `plan` → `control/insert-fx-effect` → `translate` → `vd` → `plan` — that resolves only because the
-  app's own entry point orders it. Playwright loads a spec directly, so entering the cycle at the wrong
-  end fails the whole project at collection with `Cannot access 'GATE_RANGE_OFF_DB' before
-  initialization` — **no tests found**, not one red case. The src imports the harness does have
-  (`core/levels`, `core/plan-history`) are leaves and are safe. The cost is real: `deviceLevelText` in
-  `e2e/race/ui.ts` restates the off sentinel and the centi-dB scale that `vd.ts` already owns, and
-  `FLUSH_TAIL_MS` copies `DEBOUNCE_MS` rather than deriving from it. Both say so at their definition
+- **`deviceLevelText` in `e2e/race/ui.ts` restates the console's level formatting.** `src/ui/console.ts`
+  is a DOM module and a spec runs in Node, so the formatting is written out there; the off sentinel and
+  the centi-dB decode underneath it are `src/core/control/vd.ts`'s own. A case imports from `src/core/`
+  freely otherwise: the one import cycle there — `plan`, `constraints`, `control/translate`,
+  `plan-history`, `routing`, `scene-scope` — evaluates alike whichever member a spec enters first
+  (`src/core/module-order.contract.test.ts` holds that), so `tzb-tail.spec.ts` derives `FLUSH_TAIL_MS`
+  from `live.ts`'s own `DEBOUNCE_MS`, and the harness imports `core/levels` and `core/plan-history`
 - **A plan EDIT never appears in the IPC trace** — only its write does, lagged by up to the 120 ms
   flush window and continuing after the read has resolved. So no predicate over the trace can decide
   "did an edit land inside the read's window", which became a load-bearing question once the readback

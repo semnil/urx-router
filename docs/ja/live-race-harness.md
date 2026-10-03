@@ -1574,15 +1574,14 @@ ACK から次の移動までの数ミリ秒 — か、リリース後に始ま�
 - macOS のネイティブメニュー本体、実パスのドラッグ & ドロップ、スリープ抑止の OS 拒否は
   自動化の外に残る
 - コードベースにテスト用 id の語彙が無く、全ケースが現行の DOM id とクラス名に依存している
-- **ケースから `src/core/control/` と `src/core/plan.ts` は import できない。** これらは
-  `plan` → `control/insert-fx-effect` → `translate` → `vd` → `plan` の循環の中にあり、解けているのは
-  アプリ自身のエントリポイントが順序を決めているから。Playwright はスペックを直接読むので、循環に
-  間違った端から入るとプロジェクト全体が収集時に落ちる — `Cannot access 'GATE_RANGE_OFF_DB' before
-  initialization` で **No tests found**、赤いケースが 1 件出るのではない。ハーネスが持っている src
-  import (`core/levels`・`core/plan-history`) はいずれも葉なので安全。代償は実在する:
-  `e2e/race/ui.ts` の `deviceLevelText` は `vd.ts` が持つ off センチネルと centi-dB スケールを
-  書き直しているし、`FLUSH_TAIL_MS` は `DEBOUNCE_MS` を導出せず写している。どちらも定義箇所に
-  その旨を書いてある
+- **`e2e/race/ui.ts` の `deviceLevelText` はコンソールのレベル表記を書き直している。**
+  `src/ui/console.ts` は DOM モジュールでスペックは Node で走るため表記はそこに書き出しており、その下の
+  off センチネルと centi-dB の復号は `src/core/control/vd.ts` 自身のものを使う。それ以外ではケースは
+  `src/core/` から自由に import できる: そこにある唯一の import 循環 — `plan`・`constraints`・
+  `control/translate`・`plan-history`・`routing`・`scene-scope` — はスペックがどのメンバーから入っても
+  同じように評価され (`src/core/module-order.contract.test.ts` がそれを保持する)、`tzb-tail.spec.ts` は
+  `FLUSH_TAIL_MS` を `live.ts` 自身の `DEBOUNCE_MS` から導出し、ハーネスは `core/levels` と
+  `core/plan-history` も import する
 - **プランの「編集」は IPC トレースに現れない**。現れるのはその書込だけで、フラッシュ窓 (最大 120 ms)
   分だけ遅れ、読みが解決した後も続く。したがって「編集が読み窓の内側に落ちたか」をトレースだけで
   決める述語は作れない。読み戻しマージが入ってからこれが判定の分かれ目になったケースが 1 件ある

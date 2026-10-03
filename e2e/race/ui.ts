@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { insertFxSection, openInsertFxSection } from "../insert-fx-section";
+import { VD_LEVEL_OFF, vdToLevel } from "../../src/core/control/vd";
 
 export { insertFxSection, openInsertFxSection };
 
@@ -130,21 +131,12 @@ export const CH1_HPF_ADDR = CH1_HPF_FREQ.join(":");
 
 /** The fake's stored raw value rendered the way the console renders the plan's
  *  (src/ui/console.ts fmtDb over src/core/control/vd.ts vdToLevel), so "the screen shows
- *  what the device holds" is one string comparison.
- *
- *  Restated rather than imported, and it is not a choice: `src/core/control/vd.ts` and
- *  `src/core/plan.ts` are both inside a module cycle (plan -> control/insert-fx-effect
- *  -> translate -> vd -> plan) that only resolves when the app's own entry point orders
- *  it. Importing either from here — and this module is the first thing every race spec
- *  loads — enters that cycle at the wrong end and the whole project fails to collect
- *  with `Cannot access 'GATE_RANGE_OFF_DB' before initialization`. The src imports the
- *  harness DOES have (`core/levels`, `core/plan-history`) are leaves. The cost is that
- *  the sentinel and the scale are stated twice; the clamp deliberately is not, since
- *  nothing here feeds the fake a level outside the plan's range. */
+ *  what the device holds" is one string comparison. The sentinel and the decode are vd.ts's
+ *  own; the formatting is restated, since console.ts is a DOM module. */
 export function deviceLevelText(raw: number | undefined): string {
   const v = raw ?? 0;
-  if (v <= -32768) return "-∞";
-  const db = v / 100;
+  if (v <= VD_LEVEL_OFF) return "-∞";
+  const db = vdToLevel(v);
   return (db > 0 ? "+" : "") + db.toFixed(1);
 }
 

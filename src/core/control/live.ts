@@ -41,7 +41,7 @@ import type { PlanWriteWatch } from "../plan-history";
 // move. One flush costs a whole-plan translate + diff, measured at 0.20 ms for
 // the URX44V default plan (782 commands) in both V8 and WebKit, so flushing per
 // window rather than per gesture is 0.2% of a core.
-const DEBOUNCE_MS = 120;
+export const DEBOUNCE_MS = 120;
 
 // Params whose write makes the device move other values (the catalog flags these with
 // sideEffect), split by who owns what moved. CONVERGE = the device reset values the plan
