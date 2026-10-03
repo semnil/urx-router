@@ -103,6 +103,10 @@ export interface DiffResult {
   /** Per-command read failures (e.g. timeout). A non-empty list means the
    *  comparison is incomplete and the caller must not write on it. */
   errors: string[];
+  /** The same failures' own messages, in the same order, without the command name `errors`
+   *  prefixes them with — a shell code at the head of each, which is what a caller that
+   *  puts one in a localized frame resolves (`errorText`). */
+  causes: string[];
   /** The commands behind those failures. `errors` carries a name and a message, which
    *  is what a report prints; a caller that has to decide something PER ADDRESS — the
    *  self-test, deciding whether a guessed mapping round-tripped — cannot get there
@@ -155,6 +159,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
   const { signal, stopOnError = false, scope = "all", emit = {}, exclude, matched } = opts;
   const diffs: CommandDiff[] = [];
   const errors: string[] = [];
+  const causes: string[] = [];
   const unread: VdCommand[] = [];
   for (const command of planToCommands(model, plan, scope, emit)) {
     if (exclude?.has(cmdAddr(command))) continue;
@@ -166,12 +171,14 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
         matched?.delete(cmdAddr(command));
       } else matched?.add(cmdAddr(command));
     } catch (e) {
-      errors.push(`${command.name}: ${e instanceof Error ? e.message : String(e)}`);
+      const cause = e instanceof Error ? e.message : String(e);
+      errors.push(`${command.name}: ${cause}`);
+      causes.push(cause);
       unread.push(command);
       if (stopOnError) break;
     }
   }
-  return { diffs, errors, unread };
+  return { diffs, errors, causes, unread };
 }
 
 /**
@@ -501,6 +508,8 @@ export interface ConvergeResult {
    *  stopped early because the device's state could no longer be confirmed, so
    *  `residual` is what was known at that point rather than a settled answer. */
   readErrors: string[];
+  /** Their own messages, in the same order (see DiffResult.causes). */
+  readCauses: string[];
   /** The commands behind them (see DiffResult.unread), so a caller can decide per
    *  address rather than per message. */
   unread: VdCommand[];
@@ -673,6 +682,7 @@ export async function sendConverging(
   } = opts;
   const outcomes: SendOutcome[] = [];
   const readErrors: string[] = [];
+  const readCauses: string[] = [];
   const unread: VdCommand[] = [];
   const trace: ConvergeRound[] = [];
   const matched = ledger.matched;
@@ -693,6 +703,7 @@ export async function sendConverging(
       });
     const seed = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude, matched });
     readErrors.push(...seed.errors);
+    readCauses.push(...seed.causes);
     unread.push(...seed.unread);
     residual = seed.diffs;
   }
@@ -753,11 +764,12 @@ export async function sendConverging(
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
     const next = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude, matched });
     readErrors.push(...next.errors);
+    readCauses.push(...next.causes);
     unread.push(...next.unread);
     residual = next.diffs;
     record(residual);
   }
-  return { outcomes, rounds, trace, residual, readErrors, unread, ledger };
+  return { outcomes, rounds, trace, residual, readErrors, readCauses, unread, ledger };
 }
 
 /**

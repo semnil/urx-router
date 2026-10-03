@@ -1290,6 +1290,7 @@ export const en = {
       pngEncode: tr("the image could not be encoded as PNG"),
       canvasUnavailable: tr("the drawing canvas is unavailable, so the image could not be rendered"),
       svgRasterize: tr("the board could not be drawn as an image"),
+      convergeFailed: tr("a write to the device failed without giving a reason"),
       midiPortNotFound: tr("That MIDI port is no longer available. Reconnect the device and pick it again."),
       midiOutputNotOpen: tr("no MIDI output port is open"),
       midiInitFailed: (detail: string): string => `the MIDI subsystem could not be started (${detail})`,

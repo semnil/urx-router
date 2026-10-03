@@ -1012,6 +1012,7 @@ export const ja: Messages = {
       pngEncode: "画像を PNG に変換できませんでした",
       canvasUnavailable: "描画キャンバスを利用できないため画像を生成できませんでした",
       svgRasterize: "盤面を画像として描画できませんでした",
+      convergeFailed: "デバイスへの書き込みが理由を示さずに失敗しました",
       midiPortNotFound: "その MIDI ポートは使用できません。デバイスを接続し直して選び直してください。",
       midiOutputNotOpen: "MIDI 出力ポートが開いていません",
       midiInitFailed: (detail: string): string => `MIDI サブシステムを開始できませんでした (${detail})`,

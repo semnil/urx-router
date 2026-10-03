@@ -1049,6 +1049,7 @@ address, a broker URI. Both sides of the shell raise them:
 | `src-tauri/src/midi.rs`         | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                              |
 | `src-tauri/src/keepawake.rs`    | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                          |
 | `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`, `svg-rasterize`                                                                                                                                    |
+| `core/control/live.ts` (converge) | `converge-failed`                                                                                                                                                                    |
 
 `errorText` (`i18n/index.ts`) resolves a code against `error.shell` and hands the detail to the
 entries that take one; an unrecognized message passes through unchanged, so an unexpected JS error

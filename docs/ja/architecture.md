@@ -822,6 +822,7 @@ UI は英語を基本とし、日本語ローカライズに対応する。実�
 | `src-tauri/src/midi.rs`            | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                         |
 | `src-tauri/src/keepawake.rs`       | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                     |
 | `core/storage.ts` (画像出力)       | `png-encode`, `canvas-unavailable`, `svg-rasterize`                                                                                                                               |
+| `core/control/live.ts` (converge)  | `converge-failed`                                                                                                                                                                 |
 
 `errorText` (`i18n/index.ts`) がコードを `error.shell` で解決し、詳細を受け取るエントリにはそれを渡す。未知の
 メッセージはそのまま通すため、想定外の JS エラーを握り潰さない。ローカライズ済みの枠に原因を差し込む箇所は

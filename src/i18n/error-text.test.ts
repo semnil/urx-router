@@ -180,6 +180,7 @@ describe("errorText", () => {
       "file-bad-extension: json, md",
       "png-encode",
       "svg-rasterize",
+      "converge-failed",
       "canvas-unavailable",
       "midi-port-not-found",
       "midi-output-not-open",

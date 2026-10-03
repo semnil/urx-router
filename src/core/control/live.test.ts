@@ -756,8 +756,30 @@ describe("LiveSync sideEffect converge", () => {
     await vi.advanceTimersByTimeAsync(2000);
     void flushed;
     expect(errors).toHaveLength(1);
-    expect(errors[0]).not.toBe("");
+    // A code the error catalogue resolves, so the teardown dialog reads in the app's language.
+    expect(errors[0]).toBe("converge-failed");
     expect(live.isActive()).toBe(false);
+  });
+
+  // A converge read the link fails reports the shell's own code, as a direct write's failure
+  // does, rather than the report entry that puts the parameter's name in front of it.
+  it("reports the shell's code when a converge read fails", async () => {
+    const plan = basePlan();
+    const errors: string[] = [];
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: (m) => errors.push(m),
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    vi.mocked(vdGet).mockRejectedValue(new Error("device-lost: sync_status offline"));
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(errors).toEqual(["device-lost: sync_status offline"]);
   });
 });
 

@@ -1311,8 +1311,9 @@ export class LiveSync {
         if (failed || r.readErrors.length) {
           // `||` throughout: an empty message is what a rejection with no reason
           // leaves behind, and `new Error("")` here would end the session with a
-          // teardown that names nothing.
-          throw new Error(failed?.error || r.readErrors[0] || "converge failed");
+          // teardown that names nothing. The read's own message rather than the report
+          // entry, which carries the parameter's name in front of the shell's code.
+          throw new Error(failed?.error || r.readCauses[0] || "converge-failed");
         }
         this.capture(converged, since, undefined, new Set([...ownOns, ...unsentHeads.keys()]));
         for (const [k, v] of unsentHeads) if (v === undefined) this.snapshot.delete(k);
