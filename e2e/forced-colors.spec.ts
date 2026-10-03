@@ -222,6 +222,35 @@ test("the view tab, the INS FX popover's held row and a section's ON LED keep th
   expect(off.border, "the unlit LED keeps a rim").toBe("solid");
 });
 
+// The held row's state and the keyboard focus share its one outline, and the mode flattens a
+// colour change: focused, the held row's rim turns dashed. Left for another row, it is double
+// again, and that row's own ring is neither.
+test("the INS FX popover's held row shows the keyboard focus as a dashed rim", async ({ page }) => {
+  const outline = (el: Locator) => el.evaluate((node) => getComputedStyle(node).outlineStyle);
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.click("#btn-view-console");
+  const opener = strip(page, "CH 1").locator(".con-ifxopen");
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  const pop = page.locator(".con-ifxpop");
+  const held = pop.locator(".irow.active");
+  await expect(held, "the premise: the keyboard open puts the focus on the held row").toBeFocused();
+  expect(await outline(held)).toBe("dashed");
+
+  await page.keyboard.press("ArrowDown");
+  const next = pop.locator(".irow:focus");
+  await expect(next).not.toHaveClass(/\bactive\b/);
+  expect(await outline(held)).toBe("double");
+  expect(await outline(next)).not.toBe("dashed");
+  expect(await outline(next)).not.toBe("double");
+
+  // The positive control for the mode: outside it, the focused held row keeps the solid ring.
+  await page.keyboard.press("ArrowUp");
+  await expect(held).toBeFocused();
+  await page.emulateMedia({ forcedColors: "none" });
+  expect(await outline(held)).toBe("solid");
+});
+
 // The badge sits in the toolbar beside the rate it governs, so its state must not move
 // the controls around it: the rim's extra width comes out of its padding.
 test("Follow USB on keeps the badge's size and shows its state", async ({ page }) => {

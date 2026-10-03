@@ -898,6 +898,34 @@ test("the console INS FX disclosure opened from the keyboard puts the focus on t
   await expect(strip.locator(".con-ifxface")).toHaveClass(/\bvacant\b/);
 });
 
+// Inside the list the arrow keys walk the rows the operator can pick: from No Effect, Down reaches
+// the first effect and Enter on it selects it, with no pointer at all.
+test("the arrow keys walk the console INS FX list, and Enter picks the row reached", async ({ page }) => {
+  await page.click("#btn-view-console");
+  const strip = page.locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) });
+  const opener = strip.locator(".con-ifxopen");
+  const pop = page.locator(".con-ifxpop");
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  const rows = pop.locator(".irow[tabindex='0']");
+  await expect(rows.nth(0), "the premise: No Effect, the checked row, leads the list").toBeFocused();
+  const next = (await rows.nth(1).locator(".nm").textContent())!;
+  await page.keyboard.press("ArrowDown");
+  await expect(rows.nth(1)).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(rows.nth(0)).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(rows.last()).toBeFocused();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await closeScreen(page);
+  await expect(strip.locator(".con-ifxface")).not.toHaveClass(/\bvacant\b/);
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  await expect(pop.locator('.irow[aria-checked="true"] .nm')).toHaveText(next);
+});
+
 // The launcher asks whether the SCREEN would open, not whether the strip holds something.
 // It used to ask the second, which the multi-band compressor satisfied while the screen
 // refused it — so on that strip the row was live, said "open me" and did nothing when

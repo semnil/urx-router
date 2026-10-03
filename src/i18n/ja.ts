@@ -728,6 +728,8 @@ export const ja: Messages = {
     selfTestRunning: "デバイスのセルフテストを実行中… 切断しないでください (メニューから中止できます)",
     selfTestRefused:
       "セルフテストを開始しませんでした — 復元に必要なパラメーターの一部を事前に読み取れませんでした。デバイスには何も書き込んでいません。",
+    selfTestRefusedHead:
+      "セルフテストを開始しませんでした — 書き込むと他の設定も変わる設定をデバイスから読み取れませんでした。デバイスには何も書き込んでいません。",
     selfTestModelMismatch: (device: string, model: string): string =>
       `セルフテストを開始しませんでした — 接続中のデバイスは ${device} で、${model} ではありません。デバイスには触れていません。`,
     selfTestCancelled: "セルフテストを中止しました — デバイスは無音状態です。元に戻すには再度取得してください",

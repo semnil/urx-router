@@ -89,3 +89,69 @@ describe("confirmedAdoptions", () => {
     ).toEqual(["bus.fx1/revxLpf", "bus.fx2/delayHpf", "bus.fx2/delayLpf"]);
   });
 });
+
+// A node's own params: what a device read stores as the unit reported it — an insert-FX engine
+// raw under the bare slot — and every other leaf the write bounds.
+describe("confirmedAdoptions — node-param leaves", () => {
+  /** URX44V with `nodeParams` merged over the empty plan's. */
+  const withNodes = (nodeParams: Record<string, Record<string, unknown>>): Plan => {
+    const plan = emptyPlan("URX44V");
+    for (const [id, np] of Object.entries(nodeParams)) plan.nodeParams[id] = { ...plan.nodeParams[id], ...np };
+    return plan;
+  };
+  /** The address of every command `plan` sends under `name` for `node` at instance `y`. */
+  const addrsOf = (plan: Plan, node: string, name: string, ys: number[]): number[] =>
+    planToCommands(model, plan)
+      .filter((c) => c.node === node && c.name === name && ys.includes(c.y))
+      .map(cmdAddr);
+  // Compander-H on CH 2, its slot 7 holding a raw past the window — the shape a device read
+  // leaves, since it files the engine's values under the bare slot.
+  const compander = (raw: number): Plan => withNodes({ ch2: { insertFx: 1793, insertFxParams: { "7": raw } } });
+
+  it("takes an insert-FX raw back once the address it was sent to is confirmed", () => {
+    const sent = compander(99_999);
+    const [addr] = addrsOf(sent, "ch2", "INSERT_FX_EFFECT", [7]);
+    expect(addr, "the slot is sent").toBeDefined();
+    const taken = confirmedAdoptions(model, sent, sent, new Set([addr!]));
+    expect(taken.map((p) => [p.node, p.key, p.bound])).toEqual([["ch2", "insertFxParams.7", 2000]]);
+    // The value the plan takes is the one the write sent there.
+    const sentValue = planToCommands(model, sent).find((c) => cmdAddr(c) === addr)!.vdValue;
+    expect(sentValue).toBe(2000);
+  });
+
+  it("takes nothing for a node leaf whose address was not confirmed, or that moved since", () => {
+    const sent = compander(99_999);
+    const [addr] = addrsOf(sent, "ch2", "INSERT_FX_EFFECT", [7]);
+    expect(confirmedAdoptions(model, sent, sent, new Set([addr! + 1]))).toEqual([]);
+    expect(confirmedAdoptions(model, sent, compander(99_998), new Set([addr!]))).toEqual([]);
+    // The positive control for the second: unmoved, it is taken.
+    expect(confirmedAdoptions(model, sent, compander(99_999), new Set([addr!]))).toHaveLength(1);
+  });
+
+  // A MIX bus's 1-knob level goes to both of its instances, and the plan holds one value for
+  // the two. Taken back only once each of them holds what the write sent.
+  it("takes a leaf sent to several addresses only once every one of them is confirmed", () => {
+    const sent = withNodes({ "bus.mix1": { eqOneKnob: { level: 150 } } });
+    const addrs = addrsOf(sent, "bus.mix1", "EQ_ONE_KNOB_LEVEL", [0, 1]);
+    expect(addrs, "the premise: one value, two instances").toHaveLength(2);
+    expect(confirmedAdoptions(model, sent, sent, new Set([addrs[0]!]))).toEqual([]);
+    expect(confirmedAdoptions(model, sent, sent, new Set(addrs)).map((p) => [p.key, p.bound])).toEqual([
+      ["eqOneKnob.level", 100],
+    ]);
+  });
+
+  // The load bounds a gain to the channel's own range, which is narrower than the window the
+  // encoder clamps the write to. Below -8 dB on an A.Gain channel the write sends the document's
+  // value and the unit is not at the bound; above +70 dB the encoder's clamp lands on the bound.
+  it("takes a bound only where it is the value the write sent", () => {
+    const below = withNodes({ ch1: { gain: -12 } });
+    const [low] = addrsOf(below, "ch1", "HA_GAIN", [0]);
+    expect(confirmedAdoptions(model, below, below, new Set([low!]))).toEqual([]);
+
+    const above = withNodes({ ch1: { gain: 80 } });
+    const [high] = addrsOf(above, "ch1", "HA_GAIN", [0]);
+    expect(confirmedAdoptions(model, above, above, new Set([high!])).map((p) => [p.key, p.bound])).toEqual([
+      ["gain", 70],
+    ]);
+  });
+});

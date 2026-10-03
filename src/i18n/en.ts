@@ -945,6 +945,9 @@ export const en = {
     selfTestRefused: tr(
       "Self-test did not start — some parameters it would have to restore could not be read first. The device was not touched.",
     ),
+    selfTestRefusedHead: tr(
+      "Self-test did not start — a setting whose write changes other settings could not be read from the device. The device was not touched.",
+    ),
     selfTestModelMismatch: (device: string, model: string): string =>
       `Self-test did not start — the connected device is ${device}, not ${model}. The device was not touched.`,
     selfTestCancelled: tr("Self-test canceled — device left silent; fetch again to restore your state"),

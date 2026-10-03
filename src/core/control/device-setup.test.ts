@@ -333,6 +333,24 @@ describe("readDeviceSetup", () => {
     expect(vi.mocked(vdGetStr).mock.calls.filter(([id, , y]) => id === PARAMS.UDK_PARAM1.id && y === 0)).toEqual([]);
   });
 
+  // The same for a Monitor / Phones knob's Parameter 1: reduced to Monitor 1, an off-catalog
+  // "Monitor 3" read as the knob already being on Monitor 1, and choosing Monitor 1 sent nothing.
+  it("keeps a Parameter 1 the catalog does not have as the unit holds it, and compares it raw", async () => {
+    strFor.set(`${PARAMS.UDK_FUNCTION.id}:0`, "Monitor");
+    strFor.set(`${PARAMS.UDK_PARAM1.id}:0`, "Monitor 3");
+    const setup = await readDeviceSetup(V);
+    expect(setup.knobs[0]).toEqual({ fn: "Monitor", p1: "Monitor 3", p2: "Level" });
+
+    expect(diffDeviceSetup(V, setup, structuredClone(setup))).toEqual([]);
+    const next = structuredClone(setup);
+    next.knobs[0] = { fn: "Monitor", p1: "Monitor 1", p2: "Level" };
+    expect(diffDeviceSetup(V, setup, next)).toEqual([
+      { kind: "str", name: "UDK_FUNCTION", y: 0, value: "Monitor" },
+      { kind: "str", name: "UDK_PARAM1", y: 0, value: "Monitor 1" },
+      { kind: "str", name: "UDK_PARAM2", y: 0, value: "Level" },
+    ]);
+  });
+
   // A partial read cannot be diffed against without inviting a write of values that
   // were never established.
   it("rejects on the first failure rather than reporting a partial screen", async () => {

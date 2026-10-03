@@ -166,6 +166,32 @@ test("a knob assignment writes its three columns together", async ({ page }) => 
   expect(await writesOf(page)).toEqual([]);
 });
 
+// A Monitor knob the unit reports on a Parameter 1 the catalog does not have is shown as that
+// value rather than as Monitor 1, so nothing is pending on open and picking Monitor 1 writes it.
+test("a knob's Parameter 1 off the catalog opens as unknown, and the one picked for it is written", async ({
+  page,
+}) => {
+  await stubTauriDevice(page, {
+    values: DEVICE_VALUES,
+    strings: { [`${UDK_FUNCTION}:0`]: "Monitor", [`${UDK_PARAM1}:0`]: "Monitor 3" },
+  });
+  await page.goto("/");
+  await openSetup(page);
+
+  const p1 = page.locator(".udk-row").first().locator("select").nth(1);
+  await expect(p1.locator("option:checked")).toHaveText("unknown (Monitor 3)");
+  await expect(page.locator("#device-setup-pending")).toHaveText("");
+  await chooseOption(p1, "Monitor 1");
+  await expect(page.locator("#device-setup-pending")).toHaveText("1 unapplied change");
+  await page.click("#device-setup-apply");
+
+  expect(await strWritesOf(page)).toEqual([
+    [UDK_FUNCTION, 0, "Monitor"],
+    [UDK_PARAM1, 0, "Monitor 1"],
+    [UDK_PARAM2, 0, "Level"],
+  ]);
+});
+
 test("switching banks addresses the knob slots behind it", async ({ page }) => {
   await stubTauriDevice(page, { values: DEVICE_VALUES });
   await page.goto("/");

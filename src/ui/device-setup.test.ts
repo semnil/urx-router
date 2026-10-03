@@ -105,6 +105,37 @@ describe("DeviceSetupPanel", () => {
     expect(hooks.apply).toHaveBeenCalledWith([{ kind: "num", name: "DEVICE_LANGUAGE", y: 0, value: 1 }], 1);
   });
 
+  // A Monitor knob the unit reports on "Monitor 3": shown as Monitor 1 it read as already being
+  // there, and picking Monitor 1 sent nothing.
+  it("shows a Parameter 1 off the catalog as unknown, and writes the one picked for it", async () => {
+    const { panel, hooks } = install();
+    const setup = defaultDeviceSetup();
+    setup.knobs[0] = { fn: "Monitor", p1: "Monitor 3", p2: "Level" };
+    panel.open(setup);
+
+    const p1 = () => document.querySelectorAll<HTMLSelectElement>(".udk-row")[0]!.querySelectorAll("select")[1]!;
+    expect(p1().selectedOptions[0]?.textContent).toBe(t().deviceSetup.unknownValue("Monitor 3"));
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
+
+    // Picked away and back, it is the reading again, with nothing pending.
+    change(p1(), "Monitor 2");
+    expect(document.querySelector("#device-setup-pending")?.textContent).not.toBe("");
+    change(p1(), "Monitor 3");
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
+
+    change(p1(), "Monitor 1");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledOnce());
+    expect(hooks.apply).toHaveBeenCalledWith(
+      [
+        { kind: "str", name: "UDK_FUNCTION", y: 0, value: "Monitor" },
+        { kind: "str", name: "UDK_PARAM1", y: 0, value: "Monitor 1" },
+        { kind: "str", name: "UDK_PARAM2", y: 0, value: "Level" },
+      ],
+      1,
+    );
+  });
+
   it("shows a knob function off the catalog as unknown, and clears it with three writes", async () => {
     const { panel, hooks } = install();
     const setup = defaultDeviceSetup();

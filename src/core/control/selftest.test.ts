@@ -104,6 +104,18 @@ function pairPlan({ linked, differ }: { linked: boolean; differ: boolean }): Pla
 
 // Faithful mock device: a value table seeded from a plan; vdSet writes, vdGet
 // reads (an unset port-ref address reads the NONE sentinel, like the broker).
+/** What the mock answers at an address nothing has written: a routing selector on NONE, an insert-FX
+ *  selector holding no effect, and 0 everywhere else. */
+const INSERT_FX_SELECTORS: ReadonlySet<number> = new Set([
+  PARAMS.INSERT_FX.id,
+  PARAMS.OUTPUT_INSERT_FX_STEREO.id,
+  PARAMS.OUTPUT_INSERT_FX_MIX.id,
+]);
+function unwrittenAnswer(id: number): number {
+  if (PORT_REF_PARAMS.has(id)) return PORT_REF_NONE;
+  return INSERT_FX_SELECTORS.has(id) ? denormalizeInsertFx(INSERT_FX_NONE) : 0;
+}
+
 function installMockDevice(seed: Plan): Map<string, number> {
   const table = new Map<string, number>();
   for (const c of planToCommands(model, seed)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
@@ -111,7 +123,7 @@ function installMockDevice(seed: Plan): Map<string, number> {
   vi.mocked(vdDisconnect).mockResolvedValue(undefined);
   vi.mocked(vdGet).mockImplementation((id, x, y) => {
     const k = `${id}:${x}:${y}`;
-    return Promise.resolve(table.has(k) ? table.get(k)! : PORT_REF_PARAMS.has(id) ? PORT_REF_NONE : 0);
+    return Promise.resolve(table.has(k) ? table.get(k)! : unwrittenAnswer(id));
   });
   vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
     table.set(`${id}:${x}:${y}`, v);
@@ -218,16 +230,16 @@ describe("runSelfTest with STREAMING's source not captured", () => {
     expect(report.restored).toBe(true);
   });
 
-  // The other side of that line: a capture that did not read STREAMING's DELAY or CH 1's fader
-  // did read both nodes' sources, so both stay in the plan the run sweeps and restores from — CH 1's
-  // is written by the passes and put back, STREAMING's is left where it is — and the issues name
-  // the two failed reads and nothing else.
-  it("keeps the sources of nodes whose other values went unread", async () => {
+  // The other side of that line: a capture that did not read STREAMING's DELAY did read its
+  // source, so it stays in the plan the run sweeps and restores from and is left where it is,
+  // while CH 1's source is written by the passes and put back — and the issues name the failed
+  // read and nothing else. A channel whose other values went unread is a run that does not
+  // start at all (its strip carries heads; the partial-capture cases below).
+  it("keeps the source of a node whose other values went unread", async () => {
     const seed = populatedPlan();
     setExclusiveConnection(seed, "bus.mix1:out", "bus.stream:in", "source");
     setExclusiveConnection(seed, `${selectableInputIds(model)[0]}:out`, "ch1:in", "source");
     const table = installMockDevice(seed);
-    const faderY = channelControl(model, "ch1")!.y;
     const ch1Source = planToCommands(model, seed)
       .filter((c) => c.node === "ch1" && c.name === "INPUT_SOURCE")
       .map((c) => `${c.paramId}:${c.x}:${c.y}`);
@@ -236,12 +248,12 @@ describe("runSelfTest with STREAMING's source not captured", () => {
     expect(held.slice(-2), "the premise: the unit is on MIX 1").toEqual(MIX1);
     expect(ch1Source.length, "the premise: CH 1 has a source slot").toBeGreaterThan(0);
     expect(held.slice(0, -2), "the premise: CH 1 holds a source").not.toContain(PORT_REF_NONE);
-    // Each of the two refuses its first read only, which is the capture's.
+    // Refuses its first read only, which is the capture's.
     const answer = vi.mocked(vdGet).getMockImplementation()!;
     const refused = new Set<string>();
     vi.mocked(vdGet).mockImplementation((id, x, y) => {
       const k = `${id}:${x}:${y}`;
-      const refuse = id === PARAMS.STREAM_DELAY_TIME.id || (id === PARAMS.CH_FADER.id && y === faderY);
+      const refuse = id === PARAMS.STREAM_DELAY_TIME.id;
       if (!refuse || refused.has(k)) return answer(id, x, y);
       refused.add(k);
       return Promise.reject(new Error("read timeout"));
@@ -249,7 +261,7 @@ describe("runSelfTest with STREAMING's source not captured", () => {
 
     const report = await runSelfTest(model, 0);
     expect(report.phase).toBe("done");
-    expect(report.errors).toEqual(["CH 1: read timeout", "STREAMING DELAY: read timeout"]);
+    expect(report.errors).toEqual(["STREAMING DELAY: read timeout"]);
     const writesTo = (k: string): number =>
       vi.mocked(vdSet).mock.calls.filter(([id, x, y]) => `${id}:${x}:${y}` === k).length;
     expect(
@@ -279,7 +291,11 @@ describe("runSelfTest after a partial capture", () => {
     return table;
   }
 
-  it("puts back a channel whose fader the capture could not read, not the plan's unity", async () => {
+  // A channel's fader is read with the rest of its strip, and the strip carries its heads — Signal
+  // Type and PAN / BAL on CH 1 — so a capture that missed the fader missed those too. The run
+  // declines rather than putting the strip back around them, and the channel keeps its fader, its
+  // pan and its assign.
+  it("does not start when the capture could not read a channel's fader, which the strip's heads go with", async () => {
     const y = channelControl(model, "ch1")!.y;
     const seed = populatedPlan();
     const main = seed.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
@@ -291,10 +307,11 @@ describe("runSelfTest after a partial capture", () => {
 
     const report = await runSelfTest(model, 0);
 
-    expect(report.phase).toBe("done");
-    expect(report.errors).toEqual(["CH 1: read timeout"]);
+    expect(report.phase).toBe("refused");
+    expect(report.refusal).toBe("sideEffectUnheld");
+    expect(report.errors[0]).toBe("CH 1: read timeout");
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect((["CH_FADER", "CH_PAN", "STEREO_ASSIGN_ON"] as const).map((n) => table.get(at(n)))).toEqual(held);
-    expect(report.restored).toBe(true);
   });
 
   it("puts back an output patch the capture could not read, not NONE", async () => {
@@ -315,19 +332,59 @@ describe("runSelfTest after a partial capture", () => {
   });
 
   // …and an address that cannot be read before the sweep either has no record of what it
-  // held at all, so the run declines to start and writes nothing.
+  // held at all, so the run declines to start and writes nothing. An output patch, which
+  // carries no head, so the refusal is this one rather than the one above.
   it("does not start when an address the capture could not read cannot be read before the sweep", async () => {
-    const y = channelControl(model, "ch1")!.y;
-    const table = installMockDevice(populatedPlan());
+    const seed = populatedPlan();
+    seed.connections.push({ from: "bus.stereo:out", to: "out.main:in", kind: "patch" });
+    const table = installMockDevice(seed);
     const before = new Map(table);
     const answer = vi.mocked(vdGet).getMockImplementation()!;
     vi.mocked(vdGet).mockImplementation((id, x, yy) =>
-      id === PARAMS.CH_FADER.id && yy === y ? Promise.reject(new Error("read timeout")) : answer(id, x, yy),
+      id === PARAMS.OUT_PATCH_MAIN.id && yy === 1 ? Promise.reject(new Error("read timeout")) : answer(id, x, yy),
     );
 
     const report = await runSelfTest(model, 0);
 
     expect(report.phase).toBe("refused");
+    expect(report.refusal).toBe("unreadable");
+    expect(report.written).toBe(0);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect([...table]).toEqual([...before]);
+  });
+
+  // A head the capture missed would be put back after the restore like any other address, and
+  // what writing it refills or resets on the unit would be compared by nothing. So the run
+  // declines before the sweep, whichever head it is — the two the unit lays others out by here.
+  it.each([
+    [
+      "an insert-FX selector",
+      "INSERT_FX",
+      (plan: Plan): void => {
+        plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 1793, insertFxOn: true };
+      },
+    ],
+    [
+      "Signal Type",
+      "SIGNAL_TYPE",
+      (plan: Plan): void => {
+        plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true };
+      },
+    ],
+  ] as const)("does not start when the capture could not read %s", async (_what, name, seedWith) => {
+    const seed = populatedPlan();
+    seedWith(seed);
+    const head = planToCommands(model, seed).find((c) => c.name === name && c.node === "ch1")!;
+    expect(head, "the premise: the unit holds the head").toBeDefined();
+    expect(PARAMS[name].sideEffect, "the premise: its write moves others").toBeDefined();
+    const table = failingOnce(seed, [`${head.paramId}:${head.x}:${head.y}`]);
+    const before = new Map(table);
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("refused");
+    expect(report.refusal).toBe("sideEffectUnheld");
+    expect(report.errors.some((e) => e.startsWith("refusing to sweep") && e.includes(`${name} `))).toBe(true);
     expect(report.written).toBe(0);
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect([...table]).toEqual([...before]);
@@ -654,7 +711,7 @@ describe("runSelfTest", () => {
     // "never written" and "written back to that value" compare equal instead of reading
     // as a change the run did not make.
     const valueAt = (t: Map<string, number>, k: string): number =>
-      t.has(k) ? t.get(k)! : PORT_REF_PARAMS.has(Number(k.split(":")[0])) ? PORT_REF_NONE : 0;
+      t.has(k) ? t.get(k)! : unwrittenAnswer(Number(k.split(":")[0]));
     const before = new Map(table);
 
     const report = await runSelfTest(model, 0);
@@ -1202,7 +1259,7 @@ describe("unverified-guess workflow (URX22)", () => {
     vi.mocked(vdDisconnect).mockResolvedValue(undefined);
     vi.mocked(vdGet).mockImplementation((id, x, y) => {
       const k = `${id}:${x}:${y}`;
-      return Promise.resolve(table.has(k) ? table.get(k)! : PORT_REF_PARAMS.has(id) ? PORT_REF_NONE : 0);
+      return Promise.resolve(table.has(k) ? table.get(k)! : unwrittenAnswer(id));
     });
     vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
       table.set(`${id}:${x}:${y}`, v);
@@ -1524,9 +1581,10 @@ describe("unverified-guess workflow (URX22)", () => {
   });
 
   // A capture that could not read a channel leaves the plan nothing to write at that
-  // channel's guess address, so no pass emits it and nothing round-trips there. Counted
-  // from the registry instead, the guess read as round-tripped on the strength of a write
-  // that never went out.
+  // channel's guess address, and the strip's heads went unread with it, so the run does not
+  // start: no pass writes the address and no guess is credited. Counted from the registry
+  // instead, the guess would read as round-tripped on the strength of a write that never went
+  // out.
   it("does not credit a guess whose address no pass wrote", async () => {
     installMock22(seed22());
     const realGet = vi.mocked(vdGet).getMockImplementation()!;
@@ -1548,7 +1606,8 @@ describe("unverified-guess workflow (URX22)", () => {
       vi.mocked(vdSet).mock.calls.filter(([id, , yy]) => id === paramId && yy === y),
       "the premise: no pass wrote it",
     ).toEqual([]);
-    expect(report.unverified.find((u) => u.key === "hiz-channel")!.outcome).toBe("unexercised");
+    expect(report.refusal).toBe("sideEffectUnheld");
+    expect(report.unverified.filter((u) => u.outcome === "confirmed" || u.outcome === "roundTripped")).toEqual([]);
   });
 
   // Param 22 carries the MONO IN channels' sources; a stereo channel's go out on 209 / 210.

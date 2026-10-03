@@ -64,6 +64,30 @@ test("the badge opened from the keyboard puts the focus on the checked row", asy
   await expect(badge).toHaveAttribute("aria-expanded", "false");
 });
 
+// Inside the menu the arrow keys walk the rows the way the toolbar menus answer them, wrapping at
+// the ends, with Home / End to the first and last; Enter on the row reached picks it.
+test("the arrow keys walk the meter point's rows, and Enter picks the one reached", async ({ page }) => {
+  const badge = strip(page, "CH 1").locator(".con-tap");
+  await badge.focus();
+  await page.keyboard.press("Enter");
+  const rows = page.getByRole("menu", { name: "METER POINT", exact: true }).getByRole("menuitemradio");
+  const last = (await rows.count()) - 1;
+  await expect(rows.nth(last), "the premise: POST, the checked row, is the last").toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(rows.nth(last - 1)).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(rows.nth(last)).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(rows.nth(0), "down from the last row is the first").toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(rows.nth(last), "up from the first row is the last").toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(rows.nth(0)).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".con-tappop")).toBeHidden();
+  await expect(badge).toContainText("INPUT");
+});
+
 test("selecting a tap updates the badge and persists across reload", async ({ page }) => {
   await strip(page, "CH 1").locator(".con-tap").click();
   await page.locator(".con-tappop .crow", { has: page.getByText("PRE EQ", { exact: true }) }).click();

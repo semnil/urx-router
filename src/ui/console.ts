@@ -98,6 +98,7 @@ import {
 import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
 import { el, focusables, onWheelStep, popLeft, popTop, preserveFocus, scrubFloat } from "./dom";
+import { isChord } from "./keys";
 import { fineActive, fineTag } from "./fine";
 import { t } from "../i18n";
 
@@ -997,6 +998,7 @@ export class Console {
     const chain = el("div", "chain");
     chain.setAttribute("role", "menu");
     chain.setAttribute("aria-label", t().console.meterPoint);
+    this.wireRowKeys(chain);
     for (const tp of tapsFor(id, this.hooks.getModel().id)) {
       const row = el("div", "crow" + (tp.key === cur ? " active" : ""));
       row.dataset.ctl = "tap:" + tp.key;
@@ -1040,6 +1042,34 @@ export class Console {
     const rows = focusables(pop);
     const checked = rows.find((r) => r.getAttribute("aria-checked") === "true");
     (checked ?? rows[0])?.focus({ preventScroll: true });
+  }
+
+  /**
+   * The keys a popover's list of rows answers, the ones the toolbar menus answer: Down / Up move
+   * the focus to the next / previous row that takes it, wrapping at the ends, and Home / End to
+   * the first / last. A row that cannot be picked takes no focus, so it is passed over. Tab still
+   * walks the rows and leaves the list; a key held with a command modifier is left alone.
+   */
+  private wireRowKeys(list: HTMLElement): void {
+    list.addEventListener("keydown", (e) => {
+      if (isChord(e)) return;
+      const rows = focusables(list);
+      const at = rows.indexOf(document.activeElement as HTMLElement);
+      if (at < 0) return;
+      const to =
+        e.key === "ArrowDown"
+          ? (at + 1) % rows.length
+          : e.key === "ArrowUp"
+            ? (at - 1 + rows.length) % rows.length
+            : e.key === "Home"
+              ? 0
+              : e.key === "End"
+                ? rows.length - 1
+                : null;
+      if (to === null) return;
+      e.preventDefault();
+      rows[to].focus();
+    });
   }
 
   private closeTapPop(restore = false): void {
@@ -1519,6 +1549,7 @@ export class Console {
 
     const list = el("div", "ilist");
     list.setAttribute("role", "menu");
+    this.wireRowKeys(list);
     for (const entry of menu) {
       const isNone = entry.option.value === INSERT_FX_NONE;
       const current = entry.option.value === eff;
@@ -1686,6 +1717,7 @@ export class Console {
 
     const list = el("div", "ilist");
     list.setAttribute("role", "menu");
+    this.wireRowKeys(list);
     for (const option of fxEffectTypes(fxIndex)) {
       const current = option.value === cur;
       const row = el("div", "irow" + (current ? " active" : ""));

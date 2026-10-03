@@ -4575,7 +4575,9 @@ if (!DEMO) {
               report.phase === "refused"
               ? report.refusal === "modelMismatch"
                 ? t().status.selfTestModelMismatch(report.device, modelId)
-                : t().status.selfTestRefused
+                : report.refusal === "sideEffectUnheld"
+                  ? t().status.selfTestRefusedHead
+                  : t().status.selfTestRefused
               : !report.restored
                 ? t().status.selfTestRestoreFail
                 : report.unverified.length

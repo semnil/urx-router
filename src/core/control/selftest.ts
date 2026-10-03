@@ -242,9 +242,10 @@ export interface SelfTestReport {
    *  restore (it is false because nothing was restored, not because something is left
    *  perturbed). */
   phase: "connect" | "readback" | "write" | "verify" | "restore" | "done" | "refused";
-  /** Why a "refused" run declined: the connected unit is another model, or an address it
-   *  would have to put back could not be read first. Absent on every other phase. */
-  refusal?: "modelMismatch" | "unreadable";
+  /** Why a "refused" run declined: the connected unit is another model, the capture could not
+   *  read a param whose write moves others (`ParamSpec.sideEffect`), or an address it would
+   *  have to put back could not be read first. Absent on every other phase. */
+  refusal?: "modelMismatch" | "sideEffectUnheld" | "unreadable";
   /**
    * DIAGNOSTIC — the restore's own account of itself, small enough to ride the report
    * line the headless launch already prints. It exists because a run that reported
@@ -654,7 +655,14 @@ export async function captureDeviceState(
   model: DeviceModel,
   deviceModel: string,
   signal?: AbortSignal,
-): Promise<{ ok: boolean; plan: Plan; applied: number; errors: string[]; sourceUnread: string[] }> {
+): Promise<{
+  ok: boolean;
+  plan: Plan;
+  applied: number;
+  errors: string[];
+  sourceUnread: string[];
+  unreadNodes: ReadonlySet<string>;
+}> {
   const plan = emptyPlan(model.id);
   if (deviceModel !== model.id) {
     return {
@@ -663,10 +671,18 @@ export async function captureDeviceState(
       applied: 0,
       errors: [`connected device is ${deviceModel}, not ${model.id}`],
       sourceUnread: [],
+      unreadNodes: new Set(),
     };
   }
   const r = await applyDeviceState(model, plan, signal);
-  return { ok: true, plan, applied: r.applied, errors: r.errors, sourceUnread: r.sourceUnread ?? [] };
+  return {
+    ok: true,
+    plan,
+    applied: r.applied,
+    errors: r.errors,
+    sourceUnread: r.sourceUnread ?? [],
+    unreadNodes: r.unreadNodes,
+  };
 }
 
 /**
@@ -815,6 +831,27 @@ export async function runSelfTest(
     for (const command of [...held.diffs.map((d) => d.command), ...held.unread]) {
       writeBack.set(cmdAddr(command), command);
       report.diag.captureUnheld.push(`${command.name} ${formatAddrKey(cmdAddr(command))}`);
+    }
+    // A head among them on a node the capture could not read — an insert-FX selector, Signal
+    // Type, any param whose write moves others — would be written back after the restore,
+    // whether the captured plan holds a default there or sends nothing there at all, and what
+    // that write refills or resets on the unit is then compared by nothing. The run does not
+    // start.
+    const unheldHeads = [...writeBack.values()]
+      .filter(
+        (c) =>
+          (PARAMS as Record<string, ParamSpec>)[c.name]?.sideEffect !== undefined &&
+          c.node !== undefined &&
+          cap.unreadNodes.has(c.node),
+      )
+      .map((c) => `${c.name} ${formatAddrKey(cmdAddr(c))}`);
+    if (unheldHeads.length) {
+      report.errors.push(
+        `refusing to sweep: the capture could not read ${unheldHeads.length} param(s) whose write moves others: ${unheldHeads.join(", ")}`,
+      );
+      report.phase = "refused";
+      report.refusal = "sideEffectUnheld";
+      return report;
     }
     // Through phaseStep like every other await here: a cancel inside this loop is a
     // cancel, and without it the abort escapes runSelfTest and reaches the user as a

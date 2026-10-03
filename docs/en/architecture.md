@@ -1157,7 +1157,8 @@ pixel-identical.
 - **An outline.** An engaged control takes `3px double CanvasText`, a weight measured to keep its three
   pixel rows distinct under the system palette (the other widths of a double border were not measured).
   Two controls take it without changing size: the FOLLOW USB badge gives the rim's extra width back out
-  of its padding, and the INS FX popover's held row draws it as an inset outline. Anything whose job is to mark a position or a path — the knob
+  of its padding, and the INS FX popover's held row draws it as an inset outline, which turns dashed while
+  the keyboard focus is on that row, since the focus ring and the held state share the one outline. Anything whose job is to mark a position or a path — the knob
   pointer, the fader and mini-fader cap bars, the 0-dB lines, the slot each cap rides in, and the
   parameter sliders' track — trades its fill for an outline of the same geometry.
 - **An island.** A surface whose colours ARE the reading — the scribble's device colour, the meters'
@@ -2833,7 +2834,13 @@ listed here so they are not proposed as gaps:
    onto. So before the sweep the captured plan is diffed against the unit, and every address it finds
    different or cannot read joins the ones the restore has no command for — read before the sweep and
    written back after the restore, with an address that cannot be read then refusing the run (`diag.captureUnheld`
-   lists them).
+   lists them). **A head is not put back that way: the run refuses instead** (`refusal: "sideEffectUnheld"`).
+   When an address bound for that write-back is a `sideEffect` param — an insert-FX selector, Signal Type, a
+   COMP/EQ order, an EQ 1-knob switch — on a node the capture could not read, writing it after the restore
+   would refill or reset values that nothing then compares, so the run declines before the sweep, writes
+   nothing, and the status line says which refusal it was. That covers a head the captured plan sends nothing
+   to as well as one it holds a default at: a capture that missed CH 1's strip leaves a plan that sends no
+   Signal Type or PAN / BAL there, while the passes do.
 2. **`translate.ts`'s value coercion clamps instead of refusing.** It is the last line before the hardware, and
    a coerced in-range value is a better outcome than an out-of-range one reaching the unit. The clamp is
    deliberately NOT applied to the readout beside it: the panel shows what the plan holds, which after a
@@ -3106,7 +3113,8 @@ edit → apply:
    accent dot, and the footer counts the pending settings. Each edit and each bank tab rebuilds the
    modal, keeping the focused control and the grid's scroll offset as Preferences does. The screen
    holds the reading **as the unit reported it**: a value the app's catalog does not have — a Time Zone index past the city list, a knob
-   Function string the unit stores verbatim — is offered as `unknown (N)` rather than shown as the nearest
+   Function string the unit stores verbatim, a Monitor / Phones knob's Parameter 1 — is offered as `unknown (N)`
+   rather than shown as the nearest
    entry, and the diff compares the draft against that reading. An edit coerces only the field it sets,
    so a value off the catalog is written only once the operator picks something for that row.
 3. `Apply to device` connects, sends **only the differences**, and disconnects. Only a clean apply moves
@@ -3470,7 +3478,9 @@ an export) as rail-colored chips; clicking a chip restores that one, and "Show a
   that partner. Such a node moves to the foot of its column — below every free-standing node standing
   across that column, advanced by each one's `rowsFor`, the step Arrange takes — together with its
   linked partner when it has one on the board (the pair keeps its slot, so a later `alignLinkedPairs`
-  leaves it there). "Lands on" is an overlap of more than the sub-pixel tolerance `inPairSlot` uses,
+  leaves it there). A hung child takes its place from its parent, so one that comes back onto another node
+  moves its parent there with it — DUCKER 1 brought back after an Arrange that gave its row to CH 7/8 takes
+  CH 5/6 to the foot of the channel column. "Lands on" is an overlap of more than the sub-pixel tolerance `inPairSlot` uses,
   and only a node that came back from the shelf is asked: a unit whose returning nodes stand clear stays
   where it is, and a Show all with nothing to restack writes no position.
 
@@ -4194,11 +4204,16 @@ The value is authored FROM the device (`authorFromDevice`), the seat a device-si
 takes, rather than pushed as an edit: it is the write path's value rather than the operator's, and an undo
 that put the unwritable raw back would only have it normalised again on the next write.
 
-**SCOPE: the FX channel effect, and nothing else.** The load bounds every node-param leaf the write
-bounds as well (`paramRangeProblems`), but only an FX `params` entry is taken back here: `paramRangeAddrs`
-answers for that entry alone, and a node-param repair carries no address. The reachable sibling is insert FX,
-whose engine slots are bounded at the emit while `readback.ts` stores the unit's raw verbatim: a plan holding
-such a raw from a device read diverges the same way, and `comparePlan` sees it no better.
+**SCOPE: an FX `params` entry, and every node-param leaf the write bounds** — the leaves the load
+bounds too (`paramRangeProblems`). The node-param case a plan reaches here with is an insert-FX engine slot:
+`readback.ts` stores the unit's raw verbatim, the emit bounds it, and the write's confirmation is what brings
+the plan onto the bound. A node-param leaf has no `paramRangeAddrs` entry; its addresses are the commands
+whose value came from it (`planToCommandOrigins`), so a value the emit sends to every linked instance — a
+MIX bus's 1-knob level, a stereo channel's gain — is taken back only once each of them is confirmed. It is
+taken back only where holding the bound sends what was sent at those addresses, which a leaf the load bounds
+to a narrower window than its encoder does (a gain, the oscillator level, the HPF frequency) meets only where
+the encoder's clamp lands on the bound; elsewhere the unit holds the value the write let through
+(`app/adopt-writes.ts`).
 
 A value is **rewritten** rather than dropped in the loader, after validation, whose repairs are listed under `plan-validate.ts` in "Source layout". Among
 them, an FX value outside what the app can write is bounded, and one there is nothing to bound is dropped: a
