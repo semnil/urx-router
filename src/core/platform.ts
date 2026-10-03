@@ -648,6 +648,13 @@ export function installUpdate(rid: number, onProgress?: (e: DownloadEvent) => vo
   });
 }
 
+/** What the app's own exit puts on disk and closes, done ahead of an install: the window
+ *  geometry and its scales are saved, and the broker session is closed. On Windows the
+ *  updater ends the process from inside the install, past the shell's own exit handler. */
+export function prepareForExit(): Promise<void> {
+  return invoke<void>("prepare_for_exit");
+}
+
 /** Restart the app (process plugin) to launch the freshly installed bundle. */
 export function restartApp(): Promise<never> {
   return invoke<never>("plugin:process|restart");

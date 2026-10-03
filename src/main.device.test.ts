@@ -6621,14 +6621,20 @@ describe("the update check", () => {
   // Preferences, which nothing here reaches — so the title claims the two halves that are
   // asserted below and not the third.
   it("downloads and restarts when the update is accepted", SLOW, async () => {
+    let refuse!: (e: Error) => void;
     const shell = await bootDevice({
       "plugin:updater|check": { rid: 7, version: "9.9.9" },
+      prepare_for_exit: null,
       "plugin:updater|download_and_install": null,
-      "plugin:process|restart": () => new Promise(() => {}),
+      "plugin:process|restart": () => new Promise((_, r) => (refuse = r)),
     });
     await invoked(shell, "plugin:process|restart");
     expect(shell.count("plugin:updater|download_and_install")).toBe(1);
     expect(statusText()).toBe(t().status.updateDownloading);
+    // The real relaunch never answers; this one is refused so the link the install took is
+    // given back before the next case.
+    refuse(new Error("teardown"));
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 10_000 });
   });
 
   // Once accepted, "Downloading update…" is on screen with the modal closed, so a
@@ -6638,6 +6644,7 @@ describe("the update check", () => {
   it("surfaces a download that failed after the update was accepted", SLOW, async () => {
     const shell = await bootDevice({
       "plugin:updater|check": { rid: 7, version: "9.9.9" },
+      prepare_for_exit: null,
       "plugin:updater|download_and_install": () => {
         throw new Error("half-written");
       },
@@ -6660,6 +6667,7 @@ describe("the update check", () => {
   it("says the update is installed when only the relaunch failed", SLOW, async () => {
     const shell = await bootDevice({
       "plugin:updater|check": { rid: 7, version: "9.9.9" },
+      prepare_for_exit: null,
       "plugin:updater|download_and_install": null,
       "plugin:process|restart": () => {
         throw new Error("relaunch refused");
@@ -6670,24 +6678,92 @@ describe("the update check", () => {
     expect(errors(shell).at(-1)).toBe(t().status.updateRestartFailed("relaunch refused"));
   });
 
+  // The install ends the app, so it asks about unsaved edits first — before anything is
+  // downloaded — and declining keeps them and installs nothing.
+  it("asks the discard confirm before installing over unsaved edits", SLOW, async () => {
+    const shell = await bootDevice({
+      "plugin:updater|check": null,
+      prepare_for_exit: null,
+      "plugin:updater|download_and_install": null,
+      "plugin:dialog|message": byMessage((m) => m !== t().confirm.discard),
+    });
+    await invoked(shell, "plugin:updater|check");
+    shell.answer("plugin:updater|check", { rid: 7, version: "9.9.9" });
+    chooseRate(96_000); // unsaved
+    $("btn-prefs").click();
+    $<HTMLButtonElement>("prefs-update-now").click();
+    await vi.waitFor(() => expect(confirms(shell)).toEqual([t().confirm.update("9.9.9"), t().confirm.discard]), {
+      timeout: 10_000,
+    });
+    await vi.waitFor(() => expect($("prefs-update-note").textContent).toBe(t().prefs.updateAvailable("9.9.9")), {
+      timeout: 10_000,
+    });
+    expect(shell.count("prepare_for_exit")).toBe(0);
+    expect(shell.count("plugin:updater|download_and_install")).toBe(0);
+  });
+
+  // The install also ends a device action, so it takes the link: refused while one holds it,
+  // and nothing can start one while the bundle downloads.
+  it("refuses to install while Live sync holds the link", SLOW, async () => {
+    const shell = await bootDevice({
+      "plugin:updater|check": null,
+      prepare_for_exit: null,
+      "plugin:updater|download_and_install": null,
+    });
+    await invoked(shell, "plugin:updater|check");
+    shell.answer("plugin:updater|check", { rid: 7, version: "9.9.9" });
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    $("btn-prefs").click();
+    $<HTMLButtonElement>("prefs-update-now").click();
+    await vi.waitFor(() => expect($("prefs-update-note").textContent).toBe(t().status.deviceLinkBusy), {
+      timeout: 10_000,
+    });
+    expect(shell.count("plugin:updater|download_and_install")).toBe(0);
+    $("prefs-modal").querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
+  });
+
+  it("saves and closes what the exit would, then holds the link through the download", SLOW, async () => {
+    let fail!: (e: Error) => void;
+    const shell = await bootDevice({
+      "plugin:updater|check": { rid: 7, version: "9.9.9" },
+      prepare_for_exit: null,
+      "plugin:updater|download_and_install": () => new Promise((_, r) => (fail = r)),
+    });
+    await invoked(shell, "plugin:updater|download_and_install");
+    expect(shell.invokes.indexOf("prepare_for_exit")).toBeGreaterThan(-1);
+    expect(shell.invokes.indexOf("prepare_for_exit")).toBeLessThan(
+      shell.invokes.indexOf("plugin:updater|download_and_install"),
+    );
+    expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(true);
+    expect($<HTMLButtonElement>("btn-live").disabled).toBe(true);
+    // …and a download that fails gives the link back.
+    fail(new Error("half-written"));
+    await vi.waitFor(() => expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false), { timeout: 10_000 });
+  });
+
   // The Preferences lock covers the check and its confirm, not the download an accepted update
   // runs after it: a modal reopened while the bundle is still downloading closes as any other.
   it("leaves a Preferences reopened during an accepted download closable", SLOW, async () => {
+    let fail!: (e: Error) => void;
     const shell = await bootDevice({
-      "plugin:updater|check": { rid: 7, version: "9.9.9" },
-      "plugin:updater|download_and_install": () => new Promise(() => {}),
+      "plugin:updater|check": null,
+      prepare_for_exit: null,
+      "plugin:updater|download_and_install": () => new Promise((_, r) => (fail = r)),
     });
-    // The launch check runs first and takes its own accept; a second, from Preferences, is
-    // the one this case is about.
-    await invoked(shell, "plugin:updater|download_and_install");
+    // The launch check finds nothing; the one from Preferences finds the update.
+    await invoked(shell, "plugin:updater|check");
+    shell.answer("plugin:updater|check", { rid: 7, version: "9.9.9" });
     $("btn-prefs").click();
     $<HTMLButtonElement>("prefs-update-now").click();
-    await invoked(shell, "plugin:updater|download_and_install", 2);
+    await invoked(shell, "plugin:updater|download_and_install");
     expect($("prefs-modal").hidden).toBe(true);
     $("btn-prefs").click();
     expect($("prefs-modal").hidden).toBe(false);
     $("prefs-modal").querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
     expect($("prefs-modal").hidden).toBe(true);
+    fail(new Error("teardown"));
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 10_000 });
   });
 });
 

@@ -47,7 +47,12 @@ export type ThemeMode = "light" | "dark" | "auto";
 /** What a manual update check came to, for the inline note beside the version.
  *  "installing" is nominal only — an accepted update restarts the app. */
 export type UpdateCheckOutcome =
-  { kind: "upToDate" } | { kind: "failed" } | { kind: "declined"; version: string } | { kind: "installing" };
+  | { kind: "upToDate" }
+  | { kind: "failed" }
+  | { kind: "declined"; version: string }
+  | { kind: "installing" }
+  // Accepted, and refused because a device action holds the link the install takes.
+  | { kind: "busy" };
 
 export interface PrefsHooks {
   /** Live sync is up: the device scope is part of the held session (snapshot +
@@ -380,6 +385,9 @@ export class PrefsPanel {
     } else if (outcome.kind === "failed") {
       note.classList.add("warn");
       note.textContent = m.updateCheckFailed;
+    } else if (outcome.kind === "busy") {
+      note.classList.add("warn");
+      note.textContent = t().status.deviceLinkBusy;
     } else {
       note.textContent = "";
     }

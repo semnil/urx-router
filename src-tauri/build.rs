@@ -38,6 +38,7 @@ fn main() {
             "vd_params_unsubscribe",
             "vd_watch_link",
             "vd_disconnect",
+            "prepare_for_exit",
             "vd_link_stats",
             "append_link_log",
             "append_midi_log",

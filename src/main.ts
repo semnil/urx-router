@@ -134,6 +134,7 @@ import {
   exitApp,
   installUpdate,
   isTauri,
+  prepareForExit,
   restartApp,
   experimentalEnabled,
   selfTestRequested,
@@ -1361,7 +1362,7 @@ function setView(next: ViewName): void {
 // refuses while it is held — the UI lock below is the affordance, this is what makes
 // it true. A holder name rather than a flag, because the entry that holds it is also
 // its own way out (its Cancel; for a session, its stop) and must stay usable.
-type LinkHolder = "fetch" | "write" | "compare" | "device-setup" | "follow-usb" | "live" | "run";
+type LinkHolder = "fetch" | "write" | "compare" | "device-setup" | "follow-usb" | "live" | "run" | "update";
 let deviceLinkHolder: LinkHolder | null = null;
 
 // Each device entry and the holder it belongs to. While the link is held, every
@@ -5029,11 +5030,17 @@ async function checkForUpdates(): Promise<UpdateCheckOutcome> {
     if (!(await confirmDialog(t().confirm.update(update.version)))) {
       return { kind: "declined", version: update.version };
     }
+    // The install ends the app, so unsaved edits are asked about first, as a New or an
+    // Open asks; declining keeps them and installs nothing.
+    if (!(await confirmDiscard())) return { kind: "declined", version: update.version };
   } catch {
     // Best-effort — offline, or no release published yet: the launch check stays silent
     // and a manual check reports it through the Preferences inline note.
     return { kind: "failed" };
   }
+  // The install also ends whatever device action is running, so it takes the link: one
+  // already holding it refuses the install, and none can start while the bundle downloads.
+  if (!holdDeviceLink("update")) return { kind: "busy" };
   // An accepted update is the one outcome that leaves the Preferences modal:
   // the scrim would hide the download status. No-op at the launch check.
   prefs.close();
@@ -5047,8 +5054,12 @@ async function checkForUpdates(): Promise<UpdateCheckOutcome> {
 // download that never ends.
 async function installAccepted(update: UpdateInfo): Promise<void> {
   try {
+    // What the app's own exit would save and close, first: on Windows the install ends the
+    // process from inside itself.
+    await prepareForExit();
     await installUpdate(update.rid);
   } catch (err) {
+    releaseDeviceLink("update");
     showError(t().status.updateInstallFailed(errorText(err)));
     return;
   }
@@ -5057,6 +5068,7 @@ async function installAccepted(update: UpdateInfo): Promise<void> {
   try {
     await restartApp();
   } catch (err) {
+    releaseDeviceLink("update");
     showError(t().status.updateRestartFailed(errorText(err)));
   }
 }

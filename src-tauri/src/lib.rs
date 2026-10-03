@@ -1033,6 +1033,23 @@ fn vd_disconnect(state: State<vd::VdState>, epoch: u64) {
     vd::disconnect(&state, epoch);
 }
 
+/// What the app's own exit does at `RunEvent::Exit`, done ahead of an update install:
+/// the window geometry and its scales go to disk, and the broker session is closed
+/// (bounded, the same wait the exit takes). On Windows the updater ends the process
+/// from inside its install command, where no `RunEvent::Exit` follows. Async, so the
+/// bounded wait runs off the main thread the window reads are answered on.
+#[tauri::command]
+async fn prepare_for_exit(app: tauri::AppHandle) {
+    use tauri::Manager;
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_window_state::AppHandleExt;
+        let _ = app.save_window_state(WINDOW_STATE_FLAGS);
+        save_window_scales(&app);
+    }
+    vd::shutdown_blocking(&app.state::<vd::VdState>());
+}
+
 // External MIDI control: the frontend maps incoming MIDI messages onto console
 // controls and sends feedback back to the controller. All calls are local OS-API
 // round-trips (no broker / network), so they stay synchronous — see midi.rs.
@@ -1403,6 +1420,7 @@ pub fn run() {
             vd_params_unsubscribe,
             vd_watch_link,
             vd_disconnect,
+            prepare_for_exit,
             vd_link_stats,
             append_link_log,
             append_midi_log,

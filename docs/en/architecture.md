@@ -1841,7 +1841,7 @@ the captured original living only in the dead call stack — the same unrecovera
 during a run.
 
 **So the link is held by exactly one thing at a time, named.** `deviceLinkHolder` is one of `fetch` /
-`write` / `compare` / `device-setup` / `follow-usb` / `live` / `run`; `holdDeviceLink` takes it or refuses,
+`write` / `compare` / `device-setup` / `follow-usb` / `live` / `run` / `update`; `holdDeviceLink` takes it or refuses,
 `releaseDeviceLink` gives it back and ignores a release that does not name the current holder (the same
 rule the epoch enforces on the Rust side). **A live session gives it back when the LINK goes, not when the
 toggle does**: `releaseLive` waits out a follow read still doing round trips, and a read carries no epoch of
@@ -3026,7 +3026,10 @@ The app's exit is the case that needs more than telling: `lib.rs` builds the app
 `RunEvent::Exit` handler that calls `vd::shutdown_blocking`, which **waits** (bounded, 1.5 s) for the
 unregisters and the close to reach the wire. Everywhere else the worker outlives the caller and finishes on its
 own; at exit it does not, and "told to close" and "closed" are the same thing only when something outlives the
-telling.
+telling. An update install is the one exit that does not reach that handler on every platform — on Windows the
+updater ends the process from inside its install command — so the frontend calls `prepare_for_exit` before the
+download: it saves the window geometry and its scales and runs the same `vd::shutdown_blocking`, which is what
+the exit handler would have done.
 
 **A page load is the other teardown, and it is scoped to what that page owns.** `on_page_load`
 (`PageLoadEvent::Started`) shuts the worker down, closes both MIDI ports and releases the idle-sleep hold:
@@ -4411,7 +4414,10 @@ same way as the dialog calls (no added npm runtime dependency). When an update e
 dialog, then downloads, installs, and restarts. The download carries a total deadline
 (`UPDATE_DOWNLOAD_TIMEOUT_MS` in `platform.ts`), passed to the plugin as its request timeout — the update
 a check returns carries none of its own, so a stalled download would otherwise never settle; a download
-that outlives it fails and is reported like any other. A failure after the accept names what failed and
+that outlives it fails and is reported like any other. An accepted update ends the app, so it asks the discard confirm first when the plan has unsaved edits (declining
+installs nothing), and it takes the device link as holder `update` for the download and the relaunch: an
+install accepted while another action holds the link is refused (`status.deviceLinkBusy`, on the Preferences
+note for a manual check), and no device action can start while the bundle downloads. A failure after the accept names what failed and
 why: the download or install (`status.updateInstallFailed`, with the cause), or the relaunch after an install
 that succeeded (`status.updateRestartFailed`, which says to reopen the app). Browser / demo builds disable this via the `DEMO`
 branch, which is eliminated as dead code.
