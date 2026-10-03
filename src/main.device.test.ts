@@ -6439,6 +6439,29 @@ describe("the Follow USB badge", () => {
     expect(shell.count("vd_set")).toBe(0);
   });
 
+  // A file that opens a plan of ANOTHER model switches the model as the picker does, and the
+  // badge answers for the unit it was read from: back to unknown, so the next press reads.
+  it("goes back to unknown when an opened plan switches the model", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const shell = await bootDevice({
+      vd_get: clockReads(true, 48_000),
+      read_text_file: () => serialize(defaultPlan("URX22")),
+    });
+    badge().click();
+    await invoked(shell, "vd_disconnect");
+    expect(badge().dataset.state).toBe("on");
+
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/urx22.json"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.openedFrom("urx22.json")), { timeout: 10_000 });
+    expect($<HTMLSelectElement>("model-picker").value).toBe("URX22");
+    expect(badge().dataset.state).toBe("unknown");
+
+    // The next press reads rather than toggling from the other unit's state.
+    badge().click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(followUsbWrites(shell)).toEqual([]);
+  });
+
   // …and a first press whose read FAILS is reported as the read it was. Nothing was written,
   // so a dialog naming a failed write would tell the operator the clock policy may have moved.
   it("reports a failed first-press read as a read", SLOW, async () => {

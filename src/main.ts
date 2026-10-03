@@ -2374,6 +2374,9 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
     // gesture stamps, which is an app edit.
     traceProbe?.sample("load");
     dirty = false;
+    // A different model is plausibly a different unit, so what the badge read from the last
+    // one is no longer a claim the app can make, whichever entry switched it.
+    if (modelId !== prevModelId) setFollowUsbBadge(null);
   } catch (err) {
     // Put the previous document back on screen and report, rather than throwing: three
     // of the four callers pass an app-generated plan and do not catch, so a throw would
@@ -2696,13 +2699,11 @@ function readTarget(switchTo: Plan | null): () => Plan {
 }
 
 // Replace the plan on screen with the switch's plan, which a read has just landed in.
-// False when the replacement did not happen (loadPlan reported why). The badge goes
-// back to unknown, as in a switch from the model picker; the read's own Follow USB
-// value is set after this.
+// False when the replacement did not happen (loadPlan reported why). loadPlan puts the
+// badge back to unknown for the new model; the read's own Follow USB value is set after
+// this.
 function applyModelSwitch(next: Plan): boolean {
-  if (!loadPlan(next, { readHoldsLatch: true })) return false;
-  setFollowUsbBadge(null);
-  return true;
+  return loadPlan(next, { readHoldsLatch: true });
 }
 
 // Refuse to act on a device whose model differs from the plan's — the plan's
@@ -2726,9 +2727,6 @@ picker.addEventListener("change", async () => {
   const switched = await fileFlow(async () => {
     if (!(await confirmDiscard())) return false;
     loadPlan(newPlanAtLastRate(next));
-    // A different model is plausibly a different unit, so what was read from the last
-    // one is no longer a claim we can make.
-    setFollowUsbBadge(null);
     setStatus(t().status.switchedModel(next));
     return true;
   });

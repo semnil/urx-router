@@ -2901,7 +2901,9 @@ shows and toggles the state. Before any device has been read it is drawn as a da
 reads the state rather than toggling), never as "off", and in the desktop build it is never hidden — hiding it until a device action
 would mean the warning only arrives once the operator has already committed to one. It is session-scoped rather than persisted, since a
 remembered value would be a claim about
-hardware that may not even be attached. The Rate picker itself locks while Live sync is on, because re-clocking
+hardware that may not even be attached. For the same reason it goes back to unknown whenever the plan switches
+to another model, whichever entry switched it — the model picker, File > Open, a drop, a recent row, or the
+switch a Fetch or a Live-sync start offers. The Rate picker itself locks while Live sync is on, because re-clocking
 renegotiates the USB stream, interrupting audio and putting the held connection at risk. The badge stays live:
 toggling Follow USB only re-clocks when the host is on a different rate, and the connection survived it on a URX44V.
 

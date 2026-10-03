@@ -166,6 +166,29 @@ test("a first press whose read fails says the read failed and leaves the badge u
   expect(await writesOf(page)).toEqual([]);
 });
 
+// The badge answers for the unit it was read from. A file that opens a plan of another model
+// switches the model, and the badge goes back to unknown, so the next press reads.
+test("the badge goes back to unknown when an opened plan switches the model", async ({ page }) => {
+  const urx22 = JSON.stringify({ format: "urx-router-plan", version: 2, modelId: "URX22", connections: [] });
+  await stubTauriDevice(page, {
+    values: { [SAMPLE_RATE]: 48000, [FOLLOW_USB]: 1 },
+    commands: { read_text_file: urx22 },
+  });
+  await page.addInitScript(
+    (entries) => localStorage.setItem("urx-recent", JSON.stringify(entries)),
+    [{ path: "/tmp/urx22.json", name: "urx22.json", modelId: "URX22" }],
+  );
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  const badge = page.locator("#follow-usb");
+  await badge.click();
+  await expect(badge).toHaveAttribute("data-state", "on");
+
+  await page.locator(".recent-row").click();
+  await expect(page.locator("#model-picker")).toHaveValue("URX22");
+  await expect(badge).toHaveAttribute("data-state", "unknown");
+});
+
 test("clicking the badge while unknown reads the device instead of toggling it", async ({ page }) => {
   await stubDevice(page, { deviceRate: 48000, followUsb: true });
   await page.goto("/");
