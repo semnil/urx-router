@@ -23,7 +23,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deserialize, PLAN_VERSION } from "../src/core/plan";
+import { decodePlanParam, deserialize, deserializeDocument, PLAN_VERSION } from "../src/core/plan";
 import { insertFxPairProblems, paramRangeProblems } from "../src/core/plan-validate";
 import { getModel, MODEL_IDS } from "../src/models";
 import {
@@ -216,6 +216,72 @@ describe.skipIf(!python)("plan_tool.py's output", () => {
     const r = validate({ ...doc({}), connections: "x" });
     expect(r.status, r.stdout).toBe(0);
     expect(r.stderr).toContain("connections is not an array — the app loads the plan with no wires at all");
+  });
+});
+
+// Python's JSON reader also takes NaN, Infinity and -Infinity, which the app's JSON.parse refuses,
+// and it reads an overflowing literal such as -1e400 as an infinity that a re-serialisation writes
+// back as -Infinity. So both halves of the tool are asked of the same TEXT — written by hand, since
+// JSON.stringify can spell none of these — against the app: `validate`'s exit code against whether
+// the app's deserialize takes the file, and the link `url` prints against the file it was made
+// from, whose own spelling of every number it carries.
+describe.skipIf(!python)("plan_tool.py on a number the two JSON readers disagree about", () => {
+  const dir = mkdtempSync(join(tmpdir(), "urx-plan-tool-json-"));
+  const head = `"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V"`;
+  const send = (level) =>
+    `{${head},"connections":[{"from":"ch1:out","to":"bus.mix1:in","kind":"send","params":{"level":${level}}}]}`;
+  const TEXTS = [
+    ["a send level written as -Infinity", send("-Infinity")],
+    ["a send level written as NaN", send("NaN")],
+    ["a node param written as Infinity", `{${head},"connections":[],"nodeParams":{"ch1":{"level":Infinity}}}`],
+    // Valid JSON, which the app reads as -Infinity and drops the wire for.
+    ["a send level that overflows", send("-1e400")],
+    ["a send level written in exponent form", send("-3.0e0")],
+    ["a send level the app writes itself", send("-96.5")],
+    ["a document cut short", send("-3").slice(0, -2)],
+  ];
+
+  const tool = (cmd, text) => {
+    const file = join(dir, "plan.json");
+    writeFileSync(file, text);
+    return spawnSync(python, [TOOL, cmd, file], { encoding: "utf8" });
+  };
+  const appRead = (text) => {
+    try {
+      return JSON.stringify(deserializeDocument(text).plan);
+    } catch {
+      return null;
+    }
+  };
+
+  for (const [name, text] of TEXTS) {
+    it(name, async () => {
+      const fromFile = appRead(text);
+      const checked = tool("validate", text);
+      expect(checked.status === 0, `the app ${fromFile === null ? "refuses" : "loads"} it`).toBe(fromFile !== null);
+      const linked = tool("url", text);
+      if (fromFile === null) {
+        // Refused as the app refuses a document: a report naming it, never a traceback.
+        for (const run of [checked, linked]) {
+          expect(run.status).toBe(1);
+          expect(run.stdout).toContain("URX Router plan validation failed");
+          expect(run.stdout).toContain("[notPlanFile] not JSON");
+          expect(run.stderr).not.toContain("Traceback");
+        }
+        return;
+      }
+      expect(linked.status, linked.stderr).toBe(0);
+      const decoded = await decodePlanParam(new URL(linked.stdout.trim()).searchParams.get("plan"));
+      expect(decoded, "the link carries the file's own text").toBe(text);
+      expect(appRead(decoded), "the app reads the plan from the link that it reads from the file").toBe(fromFile);
+    });
+  }
+
+  // The overflow is the case a re-serialised link gets wrong, and it is one only while the app
+  // reads the file as a dropped wire rather than refusing it; the app's own spelling is the control.
+  it("is asked of a document the app loads with the wire dropped", () => {
+    expect(JSON.parse(appRead(send("-1e400"))).connections).toEqual([]);
+    expect(JSON.parse(appRead(send("-96.5"))).connections).toHaveLength(1);
   });
 });
 

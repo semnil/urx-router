@@ -49,6 +49,10 @@ the unit and edit that.
   (default `48000`; any other value, `96` written in kHz included, loads as `48000`,
   which the validator says). Some features (insert FX, FX2, stereo-channel EQ)
   warn/disable above 96 kHz — the app shows those notes; the plan still loads.
+  Pitch Fix stops lower: it runs only up to 48 kHz, so it is unavailable at 88.2 /
+  96 kHz too, while the other insert effects run up to 96 kHz. No load note and no
+  validator warning says so; only the node's own controls in the app show it forced
+  off.
 - `scope` — **never author it**; it appears only on a plan the user saved
   scene-scoped (Preferences → *Plan files* → *Save scope*, which also applies to
   the share URL and the JSON download). Such a document carries `"scope": "scene"`
@@ -236,10 +240,11 @@ or inside a group — is written `true` / `false`: a number there loads converte
   The unit keeps ONE selector, one bypass and one engine for such a pair, so
   **`insertFx`, `insertFxOn` and `insertFxParams` must all three match across the two
   members** — author them on both or on neither. Omitting one side is not "on
-  neither": the app fills the absent member with the factory value (No Effect) and
-  the write then clears the pair. A pair that disagrees describes no state the unit
-  can be in, so the app REFUSES the document and `plan_tool.py validate` exits
-  non-zero naming the keys. WHICH effect is legal there it still cannot see: the bundled
+  neither": the app compares the pair as the fill leaves it, which gives the absent
+  member the factory value (No Effect), so the two members disagree. A pair that
+  disagrees describes no state the unit can be in, so the app REFUSES the document —
+  nothing is loaded or written — and `plan_tool.py validate` exits non-zero naming
+  the keys (`[insertFxPair]`). WHICH effect is legal there it still cannot see: the bundled
   data carries each selector's engine slots, not the menu a node or a linked pair may
   choose from.
   Changing `stereoLink` in either direction clears the pair's insert effect on the unit.
@@ -346,7 +351,7 @@ values removed:
 | a leaf that is not a finite number (a boolean, an object) | DROPPED, so the selected type's own default applies |
 | `type` the channel's menu does not offer | DROPPED — a menu has no nearest member, and the app resolves an absent type to the channel's default |
 | `params` that is not an object | DROPPED whole; every parameter goes with it |
-| `fxEffect` that is not an object | DROPPED whole; the channel keeps whatever the unit holds |
+| `fxEffect` that is not an object | DROPPED whole; the load fills the channel's factory effect, and the write sends it — the EFFECT TYPE selector included |
 
 The last two matter because the sanitiser keeps a boolean and a non-empty object
 under any key, so an unreadable effect object survives the load and every reader

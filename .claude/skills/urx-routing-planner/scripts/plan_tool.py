@@ -4,6 +4,9 @@
 This mirrors the app exactly so that "the script says OK" implies "URX Router
 loads the plan as authored":
 
+- the text is read by the JSON grammar the app's JSON.parse reads, so a document
+  carrying NaN, Infinity or -Infinity — or anything else that is not JSON — is refused
+  (notPlanFile) as the app refuses it,
 - the document gate matches core/plan.ts `deserializeDocument` plus the model
   check the app runs right after it: a file refused there never reaches the
   routing check (notPlanFile / planVersionUnsupported / unknownModel), and a
@@ -55,7 +58,8 @@ loads the plan as authored":
   warning, and
 - the URL encoding matches core/plan.ts `encodePlanParam` ("z" + URL-safe base64
   of the raw-deflated UTF-8 JSON, padding stripped), read back by `?plan=` on
-  startup. Compression keeps full plans inside GitHub Pages' ~8 KB URL limit;
+  startup; the JSON it deflates is the document's own text, so the link carries
+  each number as the file spells it. Compression keeps full plans inside GitHub Pages' ~8 KB URL limit;
   the app also still decodes the legacy uncompressed base64 form.
 
 Routing ground truth lives in scripts/models.json (extracted from the device
@@ -1923,8 +1927,27 @@ def format_report(plan, problems):
     return "\n".join(lines)
 
 
-def encode_plan_param(plan):
-    raw = json.dumps(plan, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+class NotJson(ValueError):
+    """Text the app's JSON.parse refuses."""
+
+
+def refuse_constant(name):
+    raise NotJson(f"{name} is not a JSON value")
+
+
+def parse_document(text):
+    """The plan in `text`, read by the grammar the app's JSON.parse reads: NaN, Infinity and
+    -Infinity raise NotJson like any other text that is not JSON."""
+    try:
+        return json.loads(text, parse_constant=refuse_constant)
+    except json.JSONDecodeError as err:
+        raise NotJson(str(err)) from err
+
+
+def encode_plan_param(text):
+    """The `?plan=` value for a document's own text, carried as written, so every number keeps
+    the spelling the document gave it."""
+    raw = text.encode("utf-8")
     co = zlib.compressobj(9, zlib.DEFLATED, -15)  # raw deflate = CompressionStream "deflate-raw"
     deflated = co.compress(raw) + co.flush()
     return "z" + base64.urlsafe_b64encode(deflated).rstrip(b"=").decode("ascii")
@@ -1948,7 +1971,12 @@ def main(argv=None):
 
     # utf-8-sig drops one leading byte-order mark, as the app's loader does.
     with open(args.plan, encoding="utf-8-sig") as fh:
-        plan = json.load(fh)
+        text = fh.read()
+    try:
+        plan = parse_document(text)
+    except NotJson as err:
+        print(format_report(None, [("notPlanFile", f"not JSON: {err}", "")]))
+        return 1
     models = load_models()
     problems, warnings = validate(plan, models)
 
@@ -1964,7 +1992,7 @@ def main(argv=None):
         return 0
 
     base = args.base if args.base.endswith("/") else args.base + "/"
-    print(f"{base}?plan={encode_plan_param(plan)}")
+    print(f"{base}?plan={encode_plan_param(text)}")
     return 0
 
 

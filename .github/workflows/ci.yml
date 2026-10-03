@@ -141,6 +141,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -183,6 +184,7 @@ jobs:
       - run: pnpm test:coverage
       - name: Upload frontend coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
         with:
           fail_ci_if_error: false
           files: ./coverage/lcov.info
@@ -232,11 +234,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
         with:
           toolchain: stable
       - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -254,6 +258,7 @@ jobs:
       - run: echo "" > src-tauri/THIRD_PARTY_LICENSES.html
       - run: cargo test
         working-directory: src-tauri
+        timeout-minutes: 15 # hang detector, not a budget — see .github/actions/install-browsers
 
   # The ordinary E2E suite (--project=chromium). It is cheap enough on a two-worker runner
   # that the alternative — a net firing only once the change is already on main — costs more
@@ -273,8 +278,8 @@ jobs:
     # The browsers and their system libraries come from the image rather than from the
     # runner's Ubuntu mirror. Pulling the image costs about what `--with-deps chromium`
     # costs on a good day — so the change is free in time and takes a whole run of
-    # sequential .deb fetches out of every pull request. The measurements behind that,
-    # dated, are in .github/actions/install-browsers and are not restated here.
+    # sequential .deb fetches out of every pull request. The readings behind that are in
+    # .github/actions/install-browsers and are not restated here.
     container: mcr.microsoft.com/playwright:v${{ needs.preflight.outputs.version }}-noble
     timeout-minutes: 15
     # Split across runners rather than across workers on one. Playwright's default takes
@@ -298,6 +303,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -321,6 +327,7 @@ jobs:
       # shard that uploaded nothing is still visible as itself.
       - name: Upload frontend E2E coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
         with:
           fail_ci_if_error: false
           files: ./coverage/e2e/lcov.info
@@ -363,6 +370,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24

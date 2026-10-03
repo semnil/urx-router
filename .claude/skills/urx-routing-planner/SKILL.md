@@ -97,7 +97,11 @@ check it by reading `stereoLink` beside `insertFx` yourself.
 insert FX and the FX2 bus are unavailable and the stereo channels' EQ is forced
 off. The plan still loads — the app warns and disables FX2 — but flag this when a
 request combines `sampleRate` 176400/192000 with insert FX, FX2 sends, or
-stereo-channel EQ.
+stereo-channel EQ. Pitch Fix stops lower: it runs only up to 48 kHz, so it is
+unavailable at 88.2 / 96 kHz as well, where the guitar amps, the companders and the
+Multi-Band Compressor still run. Flag Pitch Fix (`insertFx` 512) with `sampleRate`
+88200 / 96000 too: neither the app's load notes nor `plan_tool.py` mention that one
+— only the node's own controls in the app show Pitch Fix forced off.
 
 **Building a plan.** Emit the plan JSON only once the requirements are settled.
 Vague requests usually leave gaps that change the routing — which model, which
@@ -204,7 +208,8 @@ Ducker params placed on a non-ducker node (move them to the channel's `out.ducke
 id), and for the parameters that need care on hardware (see step 6).
 
 **5. Self-correct from the report.** If validation fails, the report lists each
-illegal wire in the same format the app's viewer shows — so a report pasted back
+illegal wire (and each STEREO-linked pair whose insert effect disagrees with
+itself) in the same format the app's viewer shows — so a report pasted back
 by the user is directly actionable:
 
 ```
@@ -224,9 +229,15 @@ Reason codes:
      source nor the two channels of one MONO IN pair. Keep one source, or exactly
      the pair's two channels.
    - `duplicate` — the same `from -> to` is listed twice. Drop the repeat.
+   - `insertFxPair` — a STEREO-linked MONO IN pair whose two members disagree
+     about its insert effect; the row names the pair and the keys
+     (`[insertFxPair] ch1 / ch2: <keys>`). Give both members the same `insertFx`,
+     `insertFxOn` and `insertFxParams`, or leave all three out on both — an effect
+     on one member alone disagrees, since the other is filled with No Effect.
    - `notPlanFile` / `planVersionUnsupported` / `unknownModel` — the document
-     itself is refused, before the routing is even looked at: `format` must be
-     exactly `urx-router-plan`, `version` must not exceed what `plan_tool.py`'s
+     itself is refused, before the routing is even looked at: the text must be
+     JSON (`NaN` and `Infinity` are not — an off / -∞ level is `-96.5`), `format`
+     must be exactly `urx-router-plan`, `version` must not exceed what `plan_tool.py`'s
      `PLAN_VERSION` currently accepts (its `planVersionUnsupported` message states
      the exact bound), and `modelId` must be one of the three models.
 
@@ -282,7 +293,10 @@ and the apply options. See `references/device-apply.md` for the full hardware
 write / Live sync procedure. Lead with the link (instant visual check, no
 hardware) and note that device writes are desktop-only. The opened link's
 Download JSON button saves the same plan as a file, which the desktop app
-opens via File → Open — the no-copy-paste route onto hardware.
+opens via File → Open — the no-copy-paste route onto hardware. Write to device
+is what puts that plan on the unit: Live sync starts by reading the unit INTO the
+plan, replacing what was opened, so it comes after the write and never instead of
+it.
 
 ## Output format
 
@@ -301,9 +315,10 @@ opens via File → Open — the no-copy-paste route onto hardware.
 2. The **plan JSON** in a code block.
 3. The **`?plan=` deep link**.
 4. **Apply options**: open the link to visualize; or open the JSON in the desktop
-   URX Router and use Device → Write to device / Live sync (point to
-   `references/device-apply.md`). The JSON file can come straight from the
-   opened link via its Download JSON button.
+   URX Router and use Device → Write to device, then Live sync to keep editing
+   live — never Live sync alone, which starts by reading the unit into the plan
+   and replaces it (point to `references/device-apply.md`). The JSON file can come
+   straight from the opened link via its Download JSON button.
 5. Any **warnings** from step 6 (raw-encoded values, an effect selector that
    resets the unit's effect parameters).
 
@@ -325,7 +340,7 @@ app and tooling parse, not prose:
   names each name it would shorten),
 - the `?plan=` deep link,
 - the validator's reason codes (`noRule`, `singleInput`, `monoPairOnly`,
-  `duplicate`, and the document-level ones in step 5).
+  `duplicate`, `insertFxPair`, and the document-level ones in step 5).
 
 The desktop app's menu labels follow whatever UI language the user has selected,
 so name a menu in the user's language and you may add the English label in
