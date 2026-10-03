@@ -100,6 +100,10 @@ const LONG_PRESS_TOLERANCE = 6;
 const ZOOM_MIN = 0.3;
 const ZOOM_MAX = 2.5;
 
+// A wheel gesture ends when no wheel event has arrived for this long (ms); the next event
+// starts a new one, which takes its own axis.
+const WHEEL_GESTURE_GAP_MS = 150;
+
 const LABEL_FONT = '"SF Mono", "SFMono-Regular", "Menlo", "Cascadia Code", "Consolas", monospace';
 
 // Label geometry. The label starts at LABEL_X and must clear the header button,
@@ -387,6 +391,9 @@ export class Graph {
   // (the pinch transforms an inner <g>), so reading it once avoids a forced
   // reflow on every move frame.
   private pinch: { lastDist: number; lastCx: number; lastCy: number; left: number; top: number } | null = null;
+  // The wheel gesture under way: the axis its first event moved along, and when its latest
+  // event arrived. A horizontal gesture pans the board, a vertical one zooms it.
+  private wheelGesture: { axis: "x" | "y"; last: number } | null = null;
   // Floating HTML textarea for editing a node's note in place on the canvas.
   private noteEditor: { id: string; el: HTMLTextAreaElement } | null = null;
   // In-flight long-press on a node: a timer that traces the node's signal path if
@@ -2293,8 +2300,25 @@ export class Graph {
     this.zoom = z;
   }
 
+  /** A wheel gesture keeps the axis of its first event until it ends: a horizontal one (a
+   *  trackpad swipe sideways, a tilt wheel, Shift + wheel) pans the board by deltaX, a vertical
+   *  one zooms about the pointer, and a ctrl+wheel event — what a trackpad pinch arrives as —
+   *  zooms whichever axis the gesture holds. An event that does not move along the axis it is
+   *  read on does nothing. */
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
+    const now = performance.now();
+    const g = this.wheelGesture;
+    if (g && now - g.last <= WHEEL_GESTURE_GAP_MS) g.last = now;
+    else this.wheelGesture = { axis: Math.abs(e.deltaX) > Math.abs(e.deltaY) ? "x" : "y", last: now };
+    if (!e.ctrlKey && this.wheelGesture!.axis === "x") {
+      if (e.deltaX === 0) return;
+      this.autoFit = false;
+      this.pan.x -= e.deltaX;
+      this.applyTransform();
+      return;
+    }
+    if (e.deltaY === 0) return;
     this.autoFit = false;
     const rect = this.svg.getBoundingClientRect();
     const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;

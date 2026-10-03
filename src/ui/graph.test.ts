@@ -1541,6 +1541,83 @@ describe("view transform", () => {
     expect(top).toBeLessThanOrEqual(2.5);
   });
 
+  describe("a wheel gesture's axis", () => {
+    let clock = 0;
+    const view = (): { zoom: number; pan: { x: number; y: number } } =>
+      fx.graph as unknown as { zoom: number; pan: { x: number; y: number } };
+    // One wheel event `after` ms past the previous one.
+    const wheel = (deltaX: number, deltaY: number, after = 16, init: WheelEventInit = {}): void => {
+      clock += after;
+      fx.svg.dispatchEvent(
+        new WheelEvent("wheel", { deltaX, deltaY, clientX: 50, clientY: 50, bubbles: true, cancelable: true, ...init }),
+      );
+    };
+    beforeEach(() => {
+      clock = 1000;
+      vi.spyOn(performance, "now").mockImplementation(() => clock);
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    // A tilt wheel reports deltaX alone, and Shift + wheel is remapped onto deltaX.
+    it("pans by deltaX for a horizontal gesture, in either direction", () => {
+      fx = graphFixture();
+      const x0 = view().pan.x;
+      wheel(30, 0);
+      wheel(30, 0);
+      expect(view().pan.x).toBe(x0 - 60);
+      wheel(-100, 0, 400, { shiftKey: true });
+      expect(view().pan.x).toBe(x0 + 40);
+      expect(view().zoom).toBe(1);
+    });
+
+    // A trackpad swipe carries the other axis too: a sideways one keeps panning however much
+    // deltaY a later event carries, and a vertical one keeps zooming.
+    it("keeps the axis of the gesture's first event", () => {
+      fx = graphFixture();
+      wheel(-9, 0);
+      wheel(-2, 3);
+      wheel(0, 2);
+      expect(view().zoom).toBe(1);
+      wheel(0, -4, 200);
+      const zoomed = view().zoom;
+      expect(zoomed).toBeGreaterThan(1);
+      wheel(-9, -1);
+      expect(view().zoom).toBeGreaterThan(zoomed);
+    });
+
+    it("starts a new gesture after a gap, with its own axis", () => {
+      fx = graphFixture();
+      wheel(0, -4);
+      const before = { zoom: view().zoom, x: view().pan.x };
+      wheel(-9, 0, 150);
+      expect({ zoom: view().zoom, x: view().pan.x }, "inside the gap: still the vertical gesture").toEqual(before);
+      wheel(-9, 0, 151);
+      expect(view().pan.x).toBe(before.x + 9);
+      expect(view().zoom).toBe(before.zoom);
+    });
+
+    // A trackpad pinch arrives as ctrl+wheel, and zooms in the middle of a sideways swipe too.
+    it("zooms on a ctrl+wheel event whatever the gesture's axis", () => {
+      fx = graphFixture();
+      wheel(-9, 0);
+      wheel(0, -5, 16, { ctrlKey: true });
+      expect(view().zoom).toBeGreaterThan(1);
+    });
+
+    it("reads an event with no movement on the gesture's axis as nothing", () => {
+      fx = graphFixture();
+      wheel(0, 0);
+      wheel(5, 0);
+      expect(view().zoom).toBe(1);
+      wheel(0, -3, 400);
+      const z = view().zoom;
+      const pan = { ...view().pan };
+      wheel(0, 0);
+      expect(view().zoom).toBe(z);
+      expect(view().pan).toEqual(pan);
+    });
+  });
+
   it("pans the canvas from a drag on empty space", () => {
     fx = graphFixture();
     const before = { ...(fx.graph as unknown as { pan: { x: number; y: number } }).pan };

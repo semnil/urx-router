@@ -3227,6 +3227,20 @@ works by mouse wheel (desktop) and two-finger pinch (touch); both share one "zoo
 routine (`zoomAt` in `graph.ts`). `viewport-fit=cover` plus `env(safe-area-inset-bottom)` clears the
 notch / home indicator.
 
+**A wheel gesture keeps the axis of its first event.** The board reads a gesture — wheel events with no
+gap longer than 150 ms between them (`WHEEL_GESTURE_GAP_MS`) — along the axis its first event moved
+on: a horizontal gesture (a trackpad swipe sideways, a tilt wheel, Shift + wheel) pans the board by
+`deltaX`, a vertical one zooms as above, and a `ctrl`+wheel event, which is what a trackpad pinch
+arrives as, zooms whichever axis the gesture holds. An event that does not move along the axis it is
+read on does nothing, so a `deltaY` of 0 is no longer a step out. Per event the deltas cannot decide
+it: measured on macOS's WKWebView (2026-10-03, a console probe counting one gesture at a time, `deltaMode`
+0 throughout), a two-finger sideways swipe gave 206 events with the larger `deltaX`, 1 with the larger
+`deltaY` and 32 equal, and a vertical swipe 2 / 80 / 12, while the first event of each lay on the
+swipe's own axis; a pinch arrived as `ctrl`+wheel with `deltaX` 0; a tilt wheel carried `deltaX` alone.
+The 150 ms sits between the longest gap measured inside one trackpad gesture, momentum included
+(78 ms, over four gestures), and a deliberate second flick after the first had visibly stopped, which
+arrived 250 ms after the first one's last event (one sample).
+
 **A select takes the comfortable target as a height.** The same breakpoint gives the rack's and the
 inspector's controls a 40px minimum height, and a `<select>` does not take it that way: WebKit keeps these
 selects at the platform's own height whatever `min-height` says. It does take a `height`, and keeps the

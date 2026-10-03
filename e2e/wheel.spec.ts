@@ -138,3 +138,44 @@ test.describe("device-locked guard", () => {
     await expect(value).toHaveText(before ?? "");
   });
 });
+
+// The board reads a wheel gesture along the axis its first event moved on: sideways pans it,
+// up and down zooms it. A sideways scroll used to read its deltaY of 0 as a step out.
+test.describe("graph board", () => {
+  const viewport = (page: Page) => page.locator("#graph-host svg > g").first();
+  const transform = async (page: Page): Promise<{ x: number; scale: number }> => {
+    const m = /translate\(([-\d.e]+) [-\d.e]+\) scale\(([-\d.e]+)\)/.exec(
+      (await viewport(page).getAttribute("transform")) ?? "",
+    );
+    if (!m) throw new Error("no viewport transform");
+    return { x: Number(m[1]), scale: Number(m[2]) };
+  };
+  const hoverBoard = async (page: Page): Promise<void> => {
+    const box = (await page.locator("#graph-host").boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  };
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("urx-lang", "en");
+      localStorage.setItem("urx-theme", "dark");
+    });
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  });
+
+  test("a sideways wheel pans the board and leaves its zoom alone", async ({ page }) => {
+    await hoverBoard(page);
+    const before = await transform(page);
+    await page.mouse.wheel(60, 0);
+    await expect.poll(async () => (await transform(page)).x).toBe(before.x - 60);
+    expect((await transform(page)).scale).toBe(before.scale);
+  });
+
+  test("an upward wheel zooms the board in", async ({ page }) => {
+    await hoverBoard(page);
+    const before = await transform(page);
+    await page.mouse.wheel(0, -100);
+    await expect.poll(async () => (await transform(page)).scale).toBeGreaterThan(before.scale);
+  });
+});
