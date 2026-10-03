@@ -56,7 +56,8 @@ import {
   COMP_EQ_SSMCS,
   COMP_KNEE_DEFAULT,
   COMP_KNEE_OPTIONS,
-  COMP_ONE_KNOB_DRIVEN,
+  COMP_AUTO_MAKEUP_DRIVEN,
+  compDeviceDriven,
   DELAY_FRAME_RATE_DEFAULT,
   DELAY_FRAME_RATE_OPTIONS,
   denormalizeInsertFx,
@@ -2293,21 +2294,20 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     if (dyn) {
       if (np.gate) pushDynCommands(out, dyn.gate, dyn.y, np.gate as Record<string, number | undefined>);
       if (dyn.comp && np.comp) {
-        // While the COMP 1-knob is on the device owns the values in COMP_ONE_KNOB_DRIVEN,
-        // so they are skipped for the same reason the EQ bands are above. Emitting them is
-        // not merely redundant: anything that re-sends the plan's copy after the knob has
-        // computed puts the operator's pre-knob values back on the unit, which is what a
-        // converge sharing the flush does (it reads the unit, sees the computed values
-        // differ from the plan, and writes the plan's). Attack, release and auto-makeup
-        // stay authored — the knob leaves those where the operator put them.
-        const comp = np.comp;
-        const deviceDriven = (key: string): boolean =>
-          !emit.includeDeviceDriven && comp.oneKnob === true && COMP_ONE_KNOB_DRIVEN.has(key);
+        // While the COMP 1-knob or Auto Makeup is on the device owns the values
+        // `compDeviceDriven` names, so they are skipped for the same reason the EQ bands are
+        // above. Emitting them is not merely redundant: anything that re-sends the plan's copy
+        // after the unit has computed puts the operator's earlier values back on the unit,
+        // which is what a converge sharing the flush does (it reads the unit, sees the
+        // computed values differ from the plan, and writes the plan's). Attack, release and
+        // the two switches stay authored — neither moves those.
+        const driven = emit.includeDeviceDriven ? new Set<string>() : compDeviceDriven(np.comp);
+        const deviceDriven = (key: string): boolean => driven.has(key);
         pushDynCommands(
           out,
           dyn.comp.filter((f) => !deviceDriven(f.key)),
           dyn.y,
-          comp as Record<string, number | undefined>,
+          np.comp as Record<string, number | undefined>,
         );
         if (np.comp.knee !== undefined && !deviceDriven("knee"))
           out.push(command("COMP_KNEE", dyn.y, boundEnum(np.comp.knee, COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)));
@@ -2804,6 +2804,18 @@ export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: Wri
       const sc = sendControl(model, node.id, bus.id);
       if (!sc || sendTapWritable(model, ref(node.id, "out"), ref(bus.id, "in"))) continue;
       out.push({ param: sc.tap, x: 0, y: sc.y, name: "SEND_TAP", node: node.id });
+    }
+  }
+  // The COMP gain Auto Makeup is computing right now. The writer leaves it out
+  // (`compDeviceDriven`) and the unit announces each recompute there, so it is registered
+  // here or nothing hears it. The 1-knob's values need no entry: its level is a refetch head.
+  for (const node of model.nodes) {
+    const np = plan.nodeParams[node.id];
+    const dyn = channelDynamics(model, node.id, np?.compEqType ?? COMP_EQ_COMP_FIRST);
+    if (!dyn?.comp || compDeviceDriven(np?.comp) !== COMP_AUTO_MAKEUP_DRIVEN) continue;
+    for (const f of dyn.comp) {
+      if (COMP_AUTO_MAKEUP_DRIVEN.has(f.key))
+        out.push({ param: PARAMS[f.name].id, x: 0, y: dyn.y, name: f.name, node: node.id });
     }
   }
   // microSD Rec Track Count: the broker caps it at 1, so the only values software can

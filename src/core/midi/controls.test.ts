@@ -853,6 +853,24 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     );
   });
 
+  // Auto Makeup computes the gain, so a mapping's write to it is refused the way the screen
+  // locks the row and the writer leaves it out — and only the gain: the threshold it computes
+  // the gain from stays the operator's.
+  it("refuses the COMP gain while Auto Makeup is on, and takes it back when it is off", () => {
+    const gain = controlId("ch1", "gain", "comp");
+    const threshold = controlId("ch1", "threshold", "comp");
+    const comp = (autoMakeup: boolean): void => {
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { gain: 6, threshold: -20, autoMakeup, oneKnob: false } };
+    };
+    comp(true);
+    expect(push(gain, 0.75), "while Auto Makeup is on").toBe(false);
+    expect(plan.nodeParams.ch1?.comp?.gain).toBe(6);
+    expect(push(threshold, 0.75), "the threshold stays the operator's").toBe(true);
+    comp(false);
+    expect(push(gain, 0.75), "with Auto Makeup off").toBe(true);
+    expect(plan.nodeParams.ch1?.comp?.gain).not.toBe(6);
+  });
+
   it("refuses the 1-knob's own Level while the knob is off", () => {
     const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${MBC_ONE_KNOB.level.slot}`);
     holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [MBC_ONE_KNOB.level.slot]: 4 }, "mbc");

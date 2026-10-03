@@ -311,7 +311,8 @@ answers the same problem better, and a merged lane is on that column's ruler by 
 threshold / ratio / gain / knee — it computes the first three from a single level, and takes the
 knee when the knob engages; with Auto Makeup on, it computes the gain. Each
 recomputation is announced per address (measured), so those rows stay on screen and keep updating —
-tagged, dimmed and read-only — rather than being hidden or recomputed here.
+tagged, dimmed and read-only — rather than being hidden or recomputed here, and the writer does not
+send them (`compDeviceDriven`, below).
 
 **The 1-knob is a section above the parameters, not three rows inside them.** It decides whose the
 rows below it are, which is a different kind of thing from a value they set — and it is how the unit
@@ -2216,7 +2217,7 @@ Which way it gives depends on **who authors the values**:
 
 | The plan… | What closes it | Heads |
 | --- | --- | --- |
-| only **mirrors** them | the plan stops emitting those addresses while the head is engaged, so nothing can push them back | EQ 1-knob (its four bands), COMP 1-knob (`COMP_ONE_KNOB_DRIVEN`, which is also the set the COMP screen locks and tags, so the writer and the screen cannot disagree about who owns a row) |
+| only **mirrors** them | the plan stops emitting those addresses while the head is engaged, so nothing can push them back | EQ 1-knob (its four bands), COMP 1-knob and Auto Makeup (`compDeviceDriven`: the 1-knob's four values, or the gain alone while Auto Makeup is on — Auto Makeup is not a refetch head, so that gain is registered to be followed instead (`planToFollowOnlyAddrs`); the same set the COMP screen locks and tags and the MIDI catalogue refuses, so none of the three can disagree about who owns a row) |
 | genuinely **authors** them | the head declares what it hands to the device (`ParamSpec.drives`) and the converge is told to leave exactly those alone, for that flush and that node | SSMCS Morphing, SSMCS Sweet Spot Data |
 
 **One of those heads is a string.** Selecting a Sweet Spot Data preset recomputes the same

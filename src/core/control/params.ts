@@ -1086,6 +1086,26 @@ export const COMP_KNEE_OPTIONS = [
  */
 export const COMP_ONE_KNOB_DRIVEN: ReadonlySet<string> = new Set(["threshold", "ratio", "gain", "knee"]);
 
+/** The COMP value Auto Makeup computes while it is on: the gain, recomputed whenever the
+ *  threshold or the ratio moves and when Auto Makeup is switched on. */
+export const COMP_AUTO_MAKEUP_DRIVEN: ReadonlySet<string> = new Set(["gain"]);
+const COMP_NOTHING_DRIVEN: ReadonlySet<string> = new Set();
+
+/**
+ * The COMP values the unit owns for a comp group, by their `NodeParams.comp` key: the
+ * 1-knob's while it is on, otherwise the gain while Auto Makeup is on, otherwise none. Each
+ * switch is read the way the writer sends it, for truth.
+ *
+ * One predicate with three consumers that must not disagree: `translate.ts` stops EMITTING
+ * these (and registers Auto Makeup's gain to be followed instead), the COMP tuning screen
+ * locks and tags the same rows, and the MIDI catalogue refuses a mapping's write to them.
+ */
+export function compDeviceDriven(comp: { oneKnob?: unknown; autoMakeup?: unknown } | undefined): ReadonlySet<string> {
+  if (comp?.oneKnob) return COMP_ONE_KNOB_DRIVEN;
+  if (comp?.autoMakeup) return COMP_AUTO_MAKEUP_DRIVEN;
+  return COMP_NOTHING_DRIVEN;
+}
+
 // Oscillator mode (param 712). Frequency control applies to Sine Wave; Burst
 // Noise adds width (param 714) / interval (param 715), both confirmed by live
 // snapshot-diff and in the write catalog above.

@@ -8,6 +8,7 @@ import {
   COLOR_OFF,
   COLOR_OFF_INDEX,
   COLOR_PALETTE,
+  COMP_EQ_COMP_FIRST,
   EQ_TYPE_PASS,
   PARAMS,
   colorIndexToHex,
@@ -809,6 +810,40 @@ describe("planToCommands", () => {
     plan.nodeParams.ch1 = { comp: { ...comp, oneKnob: true, oneKnobLevel: 50 } };
     const all = planToCommands(model, plan, "all", { includeDeviceDriven: true }).filter((c) => c.node === "ch1");
     for (const name of ["COMP_THRESHOLD", "COMP_RATIO", "COMP_GAIN", "COMP_KNEE"]) expect(has(all, name)).toBe(true);
+  });
+
+  // Auto Makeup computes the gain whenever the threshold or the ratio moves, so the writer
+  // leaves the gain to the unit while it is on and follows it instead. Sent, a converge
+  // sharing the flush writes the plan's stale gain back over the one the unit computed.
+  it("skips the COMP gain Auto Makeup drives while it is on, and follows it", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    const comp = { threshold: -18, ratio: 3, gain: 6, knee: 1, attack: 20, release: 150, oneKnob: false };
+    const ch1 = (p: Plan): string[] =>
+      planToCommands(model, p)
+        .filter((c) => c.node === "ch1")
+        .map((c) => c.name);
+    const followed = (p: Plan): string[] =>
+      planToFollowOnlyAddrs(model, p)
+        .filter((f) => f.node === "ch1" && f.name.startsWith("COMP_"))
+        .map((f) => `${f.name} ${f.param}:${f.x}:${f.y}`);
+    const y = channelDynamics(model, "ch1", COMP_EQ_COMP_FIRST)!.y;
+
+    plan.nodeParams.ch1 = { comp: { ...comp, autoMakeup: true } };
+    expect(ch1(plan)).not.toContain("COMP_GAIN");
+    for (const name of ["COMP_THRESHOLD", "COMP_RATIO", "COMP_KNEE", "COMP_ATTACK", "COMP_RELEASE", "COMP_AUTO_MAKEUP"])
+      expect(ch1(plan), name).toContain(name);
+    expect(followed(plan)).toEqual([`COMP_GAIN ${PARAMS.COMP_GAIN.id}:0:${y}`]);
+
+    // Off: the plan authors the gain again, and nothing is followed in its place.
+    plan.nodeParams.ch1 = { comp: { ...comp, autoMakeup: false } };
+    expect(ch1(plan)).toContain("COMP_GAIN");
+    expect(followed(plan)).toEqual([]);
+
+    // With the 1-knob on as well it is the knob's set, whose level is a refetch head.
+    plan.nodeParams.ch1 = { comp: { ...comp, autoMakeup: true, oneKnob: true, oneKnobLevel: 50 } };
+    expect(ch1(plan)).not.toContain("COMP_GAIN");
+    expect(followed(plan)).toEqual([]);
   });
 
   it("drops COMP detail in SSMCS mode but keeps GATE", () => {
