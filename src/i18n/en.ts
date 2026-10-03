@@ -1286,6 +1286,7 @@ export const en = {
       fileDenied: tr("access to the file was denied"),
       fileIo: (detail: string): string => `the file could not be read or written (${detail})`,
       fileBadExtension: (detail: string): string => `unsupported file extension (this action takes: ${detail})`,
+      fileNoTemp: tr("no temporary file could be created beside the file, as every name for one is already taken"),
       pngEncode: tr("the image could not be encoded as PNG"),
       canvasUnavailable: tr("the drawing canvas is unavailable, so the image could not be rendered"),
       svgRasterize: tr("the board could not be drawn as an image"),

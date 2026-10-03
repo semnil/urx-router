@@ -1008,6 +1008,7 @@ export const ja: Messages = {
       fileDenied: "ファイルへのアクセスが拒否されました",
       fileIo: (detail: string): string => `ファイルの読み書きに失敗しました (${detail})`,
       fileBadExtension: (detail: string): string => `対応していない拡張子です (この操作で扱えるのは ${detail})`,
+      fileNoTemp: "一時ファイルの名前がすべて使われているため、ファイルの隣に一時ファイルを作れませんでした",
       pngEncode: "画像を PNG に変換できませんでした",
       canvasUnavailable: "描画キャンバスを利用できないため画像を生成できませんでした",
       svgRasterize: "盤面を画像として描画できませんでした",

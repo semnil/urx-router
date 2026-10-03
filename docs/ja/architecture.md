@@ -818,7 +818,7 @@ UI は英語を基本とし、日本語ローカライズに対応する。実�
 
 | 発生源                             | コード                                                                                                                                                                            |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src-tauri/src/lib.rs` (ファイル IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`                                                                                                                  |
+| `src-tauri/src/lib.rs` (ファイル IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`, `file-no-temp`                                                                                                  |
 | `src-tauri/src/vd.rs` (broker)     | `broker-unreachable`, `no-device`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-rejected`, `broker-bad-response`, `broker-io` |
 | `src-tauri/src/midi.rs`            | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                         |
 | `src-tauri/src/keepawake.rs`       | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                     |

@@ -31,7 +31,8 @@ const RESET_STORAGE_FLAG: &str = "--reset-storage";
 // by ": " and a technical detail (an OS message, a path, an address). The frontend
 // localizes the code and shows the detail as-is (src/i18n error.shell) — a raw
 // message would reach a Japanese dialog in English. Codes here: file-not-found,
-// file-denied, file-io, file-bad-extension; vd.rs and midi.rs carry their own.
+// file-denied, file-io, file-bad-extension, file-no-temp; vd.rs and midi.rs carry
+// their own.
 // menu-absent / menu-io are the exception: the Edit menu is a nicety, so its caller
 // logs them and they are deliberately absent from the localized set.
 
@@ -137,7 +138,7 @@ fn write_atomic(path: &str, bytes: &[u8], allowed: &[&str]) -> Result<(), String
     // operator file that happened to be named `plan.json.tmp`.
     let mut tmp = PathBuf::new();
     let mut file = None;
-    for n in 0..64u32 {
+    for n in 0..TEMP_NAMES {
         let mut candidate = target.clone().into_os_string();
         candidate.push(format!(".{}.{n}.tmp", std::process::id()));
         let candidate = PathBuf::from(candidate);
@@ -156,7 +157,7 @@ fn write_atomic(path: &str, bytes: &[u8], allowed: &[&str]) -> Result<(), String
         }
     }
     let Some(mut file) = file else {
-        return Err("io-error: could not create a temporary file".into());
+        return Err("file-no-temp".into());
     };
     {
         use std::io::Write;
@@ -206,6 +207,10 @@ fn write_destination(path: &str) -> Result<(PathBuf, bool), String> {
     }
     Err(file_io("too many levels of symbolic links"))
 }
+
+/// How many temp names `write_atomic` tries beside a destination: `{target}.{pid}.{n}.tmp`
+/// for each `n` below this.
+const TEMP_NAMES: u32 = 64;
 
 /// How many symlinks `write_destination` follows before it gives up on a chain.
 const LINK_HOPS: usize = 32;
@@ -1913,6 +1918,37 @@ mod tests {
             block_on(super::read_text_file(link("open.json", "real.json"))),
             Ok("{}".to_string())
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Every temp name a write may use is taken: the save is refused with its own code,
+    // and neither the destination nor any of the files holding those names is touched.
+    #[test]
+    fn a_write_with_every_temp_name_taken_is_refused_by_code() {
+        let dir = scratch_dir("atomic-no-temp");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("plan.json");
+        std::fs::write(&target, b"old").unwrap();
+        let real = std::fs::canonicalize(&target).unwrap();
+        let taken: Vec<_> = (0..super::TEMP_NAMES)
+            .map(|n| {
+                let mut name = real.clone().into_os_string();
+                name.push(format!(".{}.{n}.tmp", std::process::id()));
+                std::path::PathBuf::from(name)
+            })
+            .collect();
+        for t in &taken {
+            std::fs::write(t, b"someone else's").unwrap();
+        }
+
+        let e = super::write_atomic(target.to_str().unwrap(), b"new", &["json"]).unwrap_err();
+
+        assert_eq!(e, "file-no-temp");
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        for t in &taken {
+            assert_eq!(std::fs::read(t).unwrap(), b"someone else's");
+        }
+        assert_eq!(names_in(&dir).len(), taken.len() + 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

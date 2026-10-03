@@ -86,6 +86,7 @@ export const SHELL_CODES: Record<string, keyof Messages["error"]["shell"]> = {
   "file-denied": "fileDenied",
   "file-io": "fileIo",
   "file-bad-extension": "fileBadExtension",
+  "file-no-temp": "fileNoTemp",
   "png-encode": "pngEncode",
   "canvas-unavailable": "canvasUnavailable",
   "svg-rasterize": "svgRasterize",
