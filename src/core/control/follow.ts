@@ -147,6 +147,12 @@ export class DeviceFollow {
   // released everywhere that is: an armed source with no stream behind it would make
   // the settle report every write as unannounced for the rest of the session.
   private settleSource: (() => void) | null = null;
+  // The one sink this SESSION hands the write settle, made in `begin()` and armed again by
+  // every registration of that session. The settle tells "the same sink coming back" from
+  // another listener by identity, so a sink made per registration lost every report armed
+  // before a re-registration that moved the address set, while one made per session still
+  // keeps a new session from taking an old one's report.
+  private settleSink: (() => void) | null = null;
   /**
    * Which session a registration belongs to, bumped by `begin` and by `end`.
    *
@@ -177,6 +183,7 @@ export class DeviceFollow {
   async begin(): Promise<void> {
     this.active = true;
     this.gen++;
+    this.settleSink = () => this.armIdle();
     await this.subscribe();
   }
 
@@ -231,6 +238,7 @@ export class DeviceFollow {
     this.unsub = null;
     this.settleSource?.();
     this.settleSource = null;
+    this.settleSink = null;
   }
 
   // Register the current follow address set for notifies. The set rarely changes
@@ -321,7 +329,7 @@ export class DeviceFollow {
     // side owns the only full reconcile. The idle net is the right one — it already
     // exists, it is the missed-notify safety net by construction, and a burst of these
     // during a drag costs one sweep after the drag rather than one each.
-    this.settleSource = writeSettle.arm(() => this.armIdle());
+    if (this.settleSink) this.settleSource = writeSettle.arm(this.settleSink);
   }
 
   private clearWindow(): void {

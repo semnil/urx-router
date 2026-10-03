@@ -341,8 +341,10 @@ export class WriteSettle {
     // full sweep it has no reason for.
     //
     // So: a sink that was listening at arm time gets the report if it is still
-    // listening. If nobody was — the re-registration gap, and nothing else — it goes
-    // to whoever is listening now, which is the same sink coming back.
+    // listening. A sink is compared by identity, and `DeviceFollow` arms ONE function per
+    // session at each of its registrations, so a re-registration inside the window is still
+    // that sink. If nobody was — the re-registration gap, and nothing else — it goes to
+    // whoever is listening now, which is the same sink coming back.
     const armed = new Set(this.sinks);
     // Registered at ARM time, not at the bound: a notify can arrive before this watch is
     // armed, and one that arrives after must be able to see every obligation it might be

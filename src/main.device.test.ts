@@ -8785,17 +8785,24 @@ describe("+48V and Hi-Z on one channel", () => {
         timeout: 25_000,
         interval: 50,
       });
+      // The idle full read starts its delay again at every arm, and the settle's report of a
+      // write the unit did not announce is one, so it is waited for by its own first read
+      // rather than by a quiet window shorter than that delay.
+      await vi.waitFor(
+        () =>
+          expect(
+            shell.invokes.some(
+              (cmd, i) =>
+                i >= announced &&
+                cmd === "vd_get" &&
+                shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
+                shell.args[i]?.y === CH1_Y,
+            ),
+            "the premise: the full read ran behind the scoped one",
+          ).toBe(true),
+        { timeout: 25_000, interval: 50 },
+      );
       await quiet(shell);
-      expect(
-        shell.invokes.some(
-          (cmd, i) =>
-            i >= announced &&
-            cmd === "vd_get" &&
-            shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
-            shell.args[i]?.y === CH1_Y,
-        ),
-        "the premise: the full read ran behind the scoped one",
-      ).toBe(true);
       expect(gainShown(), "the gain the press lowered is the unit's again").toBe("+60 dB");
       expect(statusText().startsWith(`${t().status.hiZRefusedByRead("CH 3")} — `), statusText()).toBe(true);
       expect({
