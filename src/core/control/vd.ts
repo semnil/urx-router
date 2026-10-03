@@ -17,6 +17,7 @@
 // and a binding read there is initialised whichever module is imported first only when it
 // comes from outside that cycle.
 import { COMP_RATIO_INF, COMP_RATIO_STEPS } from "./comp-ratio";
+import { DUCKER_DECAY_STOPS_MS, DYN_ATTACK_STOPS_MS, DYN_HOLD_STOPS_MS, DYN_RELEASE_STOPS_MS } from "./dyn-time-stops";
 
 // LEVEL fader / send range in dB (the device level_gain table, shared by every
 // fader, send and the monitor — UG "Range: -∞ dB to +10.00 dB"). The slider's
@@ -79,25 +80,28 @@ export const EQ_GAIN_MAX_DB = 18;
 //   release   : ms×10,         broker 93 … 9990   → 9.3 … 999 ms (gate decay too).
 //   ratio     : ratio×100,     broker 100 … 65535 → 1.0 : 1 … the unit's INF:1, which it puts
 //               on the widest raw the field holds.
-export const DYN_ATTACK_MIN_MS = 0.092;
-export const DYN_ATTACK_MAX_MS = 80;
-export const DYN_HOLD_MIN_MS = 0.02;
-export const DYN_HOLD_MAX_MS = 1960;
-export const DYN_RELEASE_MIN_MS = 9.3;
-export const DYN_RELEASE_MAX_MS = 999;
+// The time ranges are the ends of the unit's own stop tables (dyn-time-stops.ts).
+export const DYN_ATTACK_MIN_MS = DYN_ATTACK_STOPS_MS[0];
+export const DYN_ATTACK_MAX_MS = DYN_ATTACK_STOPS_MS[DYN_ATTACK_STOPS_MS.length - 1];
+export const DYN_HOLD_MIN_MS = DYN_HOLD_STOPS_MS[0];
+export const DYN_HOLD_MAX_MS = DYN_HOLD_STOPS_MS[DYN_HOLD_STOPS_MS.length - 1];
+export const DYN_RELEASE_MIN_MS = DYN_RELEASE_STOPS_MS[0];
+export const DYN_RELEASE_MAX_MS = DYN_RELEASE_STOPS_MS[DYN_RELEASE_STOPS_MS.length - 1];
 export const DYN_RATIO_MIN = 1;
 // The same fact as the ladder's top stop: 65535 is both the widest raw the encoding can carry
 // and the one the unit reads as INF:1, so the ceiling is not a second number.
 export const DYN_RATIO_MAX = COMP_RATIO_INF;
 // Ducker decay shares the ×10 release scale but with a wider range than gate/comp.
-export const DUCKER_DECAY_MIN_MS = 1.3;
-export const DUCKER_DECAY_MAX_MS = 5000;
+export const DUCKER_DECAY_MIN_MS = DUCKER_DECAY_STOPS_MS[0];
+export const DUCKER_DECAY_MAX_MS = DUCKER_DECAY_STOPS_MS[DUCKER_DECAY_STOPS_MS.length - 1];
 
 // STREAMING DELAY time (param 708): broker value is ms×100 (centi-ms). Range
 // 100 … 100000 = 1.00 … 1000.00 ms, default 100 (= 1.00 ms), 0.01 ms resolution
 // (confirmed by live snapshot-diff: ms 100.0 on the LCD reads back as 10000).
 export const DELAY_TIME_MIN_MS = 1;
 export const DELAY_TIME_MAX_MS = 1000;
+/** The grid every Delay Time the unit's own knobs write lands on: an even centi-ms. */
+export const DELAY_TIME_GRID_MS = 0.02;
 
 // PHONES output level (param 725, y0 = PHONES 1, y1 = PHONES 2). The device shows
 // a unit-less 0.0 … 10.0 volume scale (NOT dB — distinct from the monitor fader);

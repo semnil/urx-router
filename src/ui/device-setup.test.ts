@@ -379,6 +379,36 @@ describe("DeviceSetupPanel", () => {
     expect(grid().scrollTop).toBe(400);
   });
 
+  // The knob tabs open on the bank the unit reported, so the rows on screen are the slots of
+  // the bank the unit's knobs are on; a reading naming none of the four opens on bank 1.
+  it("opens the knob tabs on the bank the unit is on", async () => {
+    const pressed = (): number[] =>
+      [...document.querySelectorAll<HTMLButtonElement>("#device-setup-banks button")].flatMap((b, i) =>
+        b.getAttribute("aria-pressed") === "true" ? [i] : [],
+      );
+    const { panel, hooks } = install();
+    panel.open({ ...defaultDeviceSetup(), knobBank: 2 });
+    expect(pressed()).toEqual([2]);
+    change(document.querySelector<HTMLSelectElement>(".udk-row select")!, "Oscillator");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledOnce());
+    // Bank 3, knob A is slot 8, and the bank itself is no write.
+    expect(vi.mocked(hooks.apply).mock.calls[0][0]).toEqual([
+      { kind: "str", name: "UDK_FUNCTION", y: 8, value: "Oscillator" },
+      { kind: "str", name: "UDK_PARAM1", y: 8, value: "Level" },
+      { kind: "str", name: "UDK_PARAM2", y: 8, value: "" },
+    ]);
+    panel.close();
+
+    for (const knobBank of [7, -1, 1.5, NaN]) {
+      panel.open({ ...defaultDeviceSetup(), knobBank });
+      expect(pressed(), String(knobBank)).toEqual([0]);
+      panel.close();
+    }
+    panel.open({ ...defaultDeviceSetup(), knobBank: 3 });
+    expect(pressed()).toEqual([3]);
+  });
+
   it("edits the selected user-defined-knob bank as one three-column write", async () => {
     const { panel, hooks } = install();
     panel.open(defaultDeviceSetup());

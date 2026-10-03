@@ -620,12 +620,12 @@ describe("every writable control reaches the device", () => {
 // value snaps to a DIFFERENT plan value, the echo of that message is an edit rather than a
 // no-op, and under Live sync it reaches the unit. At 7 bits a whole class of controls does
 // (the tuning screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release,
-// DUCKER attack / decay), which is why the engine arms a one-shot echo guard on the 7-bit
-// forms; architecture.md "External MIDI control" carries the reading. At 14 bits the engine
+// DUCKER attack), which is why the engine arms a one-shot echo guard on the 7-bit forms;
+// architecture.md "External MIDI control" carries the reading. At 14 bits the engine
 // refuses an incoming position equal to the one the plan's value encodes to, and the last
 // case here drives that through the engine on the values a plan holds. The cases before it
 // pin the codecs: a position `set` lands on reads back as that position, a field's own
-// maximum holds, and a stop table is hit at every position.
+// ends hold, and a stop table is hit at every position.
 describe("feedback round trip", () => {
   const STEPS = 257; // finer than 7-bit, so every CC bucket is entered from both sides
   /** Any 14-bit address; `wireRaw` reads only its resolution here. */
@@ -668,43 +668,16 @@ describe("feedback round trip", () => {
     expect(raw(), "and no further: the snapped value is on the grid").toBe(settled);
   });
 
-  // Where a field's span is not a whole number of steps, the top position rounds either way.
-  // FALL SHORT and it is the last value on the grid, like every other position. OVERSHOOT and
-  // `linearCodec` bounds it to the field's own maximum rather than snapping down to that grid
-  // value — and which of the two it lands on is not a detail of the bound: the unit reports its
-  // own ceiling AS that maximum (`vdToHold(196000)` is 1960), so full scale on a controller is
-  // the unit's own ceiling, and a write of the position that ceiling reads at leaves it there.
-  // The sweep below cannot see that: it only ever offers values `set` produced, and the unit's
-  // ceiling is not one of them.
-  it.each(["URX22", "URX44", "URX44V"] as const)("holds a field's own maximum through an echo on %s", (id) => {
+  /** Every GATE / COMP / DUCKER field a model binds a control for, with its id and where the
+   *  plan keeps its value. */
+  type Row = { cid: string; node: string; scope: string; f: DynField };
+  const dynRows = (id: "URX22" | "URX44" | "URX44V", p: Plan): Row[] => {
     const m = getModel(id);
-    const p = seeded(id);
-    ensureFixedConnections(m, p);
-    const held = (nodeId: string, scope: string, key: string): number | undefined =>
-      ((p.nodeParams[nodeId] ?? {}) as Record<string, Record<string, number> | undefined>)[scope]?.[key];
-    const seedAt = (nodeId: string, scope: string, key: string, v: number): void => {
-      const np = (p.nodeParams[nodeId] ??= {}) as Record<string, Record<string, number>>;
-      np[scope] = { ...(np[scope] ?? {}), [key]: v };
-    };
-
-    // Derived rather than listed, and split by what the arithmetic actually does: which fields
-    // overshoot moves with the tables, and a table that stops overshooting should take its rows
-    // to the other side rather than fail the case.
-    type Row = { cid: string; node: string; scope: string; f: DynField; top: number; grid: number };
-    const over: Row[] = [];
-    const short: Row[] = [];
+    const rows: Row[] = [];
     const collect = (node: string, scope: string, fields: readonly DynField[]): void => {
       for (const f of fields) {
-        // Both kinds that carry POSITIONS are out: the arithmetic below is about a field
-        // whose grid is min / max / step, and neither of those has one.
-        if (f.logSteps !== undefined || f.steps !== undefined) continue;
-        const span = f.max - f.min;
         const cid = controlId(node, f.key as ControlParam, scope);
-        if (!bindControl(m, p, cid)) continue;
-        const top = Number((f.min + Math.round(span / f.step) * f.step).toFixed(4));
-        const grid = Number((f.min + Math.floor(span / f.step) * f.step).toFixed(4));
-        if (top > f.max) over.push({ cid, node, scope, f, top, grid });
-        else if (grid < f.max) short.push({ cid, node, scope, f, top, grid });
+        if (bindControl(m, p, cid)) rows.push({ cid, node, scope, f });
       }
     };
     for (const n of m.nodes) {
@@ -714,58 +687,97 @@ describe("feedback round trip", () => {
       collect(n.id, GATE_SCOPE, dyn.gate);
       if (dyn.comp) collect(n.id, COMP_SCOPE, dyn.comp);
     }
-    // The positive controls: every assertion below is about a population, and an empty one
-    // satisfies all of them. Both halves of the rule need a member to be a rule at all.
-    expect(over.length, "no field on this model overshoots its maximum").toBeGreaterThan(0);
-    expect(short.length, "no field on this model falls short of its maximum").toBeGreaterThan(0);
+    return rows;
+  };
 
-    for (const { cid, node, scope, f } of over) {
+  // Both ends of every field are reachable from the wire and hold through an echo. Full scale
+  // is the field's own maximum and zero its minimum — for a field with a stop table, its top
+  // and bottom stops, which are the unit's own ceiling and floor — and a reading the UNIT
+  // reports at either end is a fixed point: `vdToHold(196000)` is 1960, and a write of the
+  // position that reading sits at lands back on 1960. The sweep below cannot see that: it only
+  // ever offers values `set` produced, and a seeded reading is not one of them.
+  it.each(["URX22", "URX44", "URX44V"] as const)("holds a field's own ends through an echo on %s", (id) => {
+    const m = getModel(id);
+    const p = seeded(id);
+    ensureFixedConnections(m, p);
+    const held = (nodeId: string, scope: string, key: string): number | undefined =>
+      ((p.nodeParams[nodeId] ?? {}) as Record<string, Record<string, number> | undefined>)[scope]?.[key];
+    const seedAt = (nodeId: string, scope: string, key: string, v: number): void => {
+      const np = (p.nodeParams[nodeId] ??= {}) as Record<string, Record<string, number>>;
+      np[scope] = { ...(np[scope] ?? {}), [key]: v };
+    };
+    const rows = dynRows(id, p);
+    // The positive controls: both kinds of field are in the population, or the assertions
+    // below are about whichever kind is left.
+    expect(rows.filter((r) => r.f.steps !== undefined).length, "no field carries a stop table").toBeGreaterThan(0);
+    expect(rows.filter((r) => r.f.steps === undefined).length, "every field carries a stop table").toBeGreaterThan(0);
+
+    for (const { cid, node, scope, f } of rows) {
       const c = bindControl(m, p, cid)!;
-      // Full scale lands on the field's own maximum, not on the last value of the grid.
-      expect(c.set(1), cid).toBe(true);
-      expect(held(node, scope, f.key), cid).toBe(f.max);
-
-      // …and one 14-bit echo of that maximum leaves it there. Seeded directly: this is the
-      // reading the UNIT reports at its ceiling, which does not arrive through `set`.
-      seedAt(node, scope, f.key, f.max);
-      expect(c.set(wireRaw(PAIR, c.get()) / wireSteps(PAIR)), cid).toBe(true);
-      expect(held(node, scope, f.key), `${cid} moved under a 14-bit echo of its own maximum`).toBe(f.max);
-    }
-
-    // The other half, which is what keeps the rule about the ARITHMETIC rather than about a
-    // ragged span: a top position that falls short is the grid value, and the bound is inert.
-    for (const { cid, node, scope, f, grid } of short) {
-      const c = bindControl(m, p, cid)!;
-      expect(c.set(1), cid).toBe(true);
-      expect(held(node, scope, f.key), `${cid} is below its maximum, so nothing bounds it`).toBe(grid);
+      for (const [v, end] of [
+        [1, f.max],
+        [0, f.min],
+      ] as const) {
+        expect(c.set(v), cid).toBe(true);
+        expect(held(node, scope, f.key), `${cid} at ${v}`).toBe(end);
+        seedAt(node, scope, f.key, end);
+        expect(c.set(wireRaw(PAIR, c.get()) / wireSteps(PAIR)), cid).toBe(true);
+        expect(held(node, scope, f.key), `${cid} moved under a 14-bit echo of ${end}`).toBe(end);
+      }
     }
   });
 
   // A field whose values are a STOP TABLE is driven by the same codec, and what it must not
   // do is land between two stops: the unit has no setting there, and a controller sweeping
-  // the fader would author one at every position the ladder does not hold. Asked in both
-  // directions — nothing off the table is reachable, and nothing on it is unreachable —
-  // because a codec that answered one value for every input would satisfy only the first.
+  // the fader would author one at every position the table does not hold. Asked at every
+  // position of both wire resolutions, and in both directions — nothing off the table is
+  // reachable, and at 14 bits nothing on it is unreachable — because a codec that answered
+  // one value for every input would satisfy only the first. A 7-bit controller has fewer
+  // positions than the longer tables have stops, so there the ends are what is asked.
   it.each(["URX22", "URX44", "URX44V"] as const)("lands on a stop at every wire position on %s", (id) => {
     const m = getModel(id);
     const p = seeded(id);
     ensureFixedConnections(m, p);
-    const dyn = channelDynamics(m, "ch2", COMP_EQ_COMP_FIRST);
-    const f = dyn?.comp?.find((x) => x.key === "ratio");
-    expect(f?.steps, "the COMP ratio field carries a stop table").toBeDefined();
-    const stops = f!.steps!;
-    const c = bindControl(m, p, controlId("ch2", "ratio" as ControlParam, COMP_SCOPE))!;
-    const reached = new Set<number>();
-    for (let i = 0; i < STEPS; i++) {
-      expect(c.set(i / (STEPS - 1))).toBe(true);
-      const v = p.nodeParams.ch2?.comp?.ratio as number;
-      expect(stops, `wire ${i} landed off the ladder at ${v}`).toContain(v);
-      reached.add(v);
+    const held = (nodeId: string, scope: string, key: string): number =>
+      ((p.nodeParams[nodeId] ?? {}) as Record<string, Record<string, number>>)[scope][key];
+    const rows = dynRows(id, p).filter((r) => r.f.steps !== undefined);
+    // The ratio and the seven time values, on the first channel that has them and the first
+    // ducker: the codec is one per field table, so another channel asks nothing new.
+    const firstOf = new Map<string, Row>();
+    for (const r of rows) {
+      const kind = `${r.scope}/${r.f.key}`;
+      if (!firstOf.has(kind)) firstOf.set(kind, r);
     }
+    const wanted = ["ratio@comp", "attack@comp", "release@comp", "attack@gate", "hold@gate", "decay@gate"];
+    if (m.nodes.some((n) => n.kind === "ducker")) wanted.push("attack@ducker", "decay@ducker");
     expect(
-      [...reached].sort((a, b) => a - b),
-      "every stop is reachable from the wire",
-    ).toEqual([...stops]);
+      [...firstOf.values()].map((r) => `${r.f.key}@${r.scope}`).sort(),
+      "the fields carrying a stop table",
+    ).toEqual(wanted.sort());
+
+    for (const { cid, node, scope, f } of firstOf.values()) {
+      const stops = f.steps!;
+      const table = new Set(stops);
+      const c = bindControl(m, p, cid)!;
+      for (const steps of [127, 16383]) {
+        const reached = new Set<number>();
+        const off: string[] = [];
+        for (let i = 0; i <= steps; i++) {
+          if (!c.set(i / steps)) off.push(`wire ${i}/${steps} refused`);
+          const v = held(node, scope, f.key);
+          if (!table.has(v)) off.push(`wire ${i}/${steps} landed at ${v}`);
+          reached.add(v);
+        }
+        expect(off, `${cid}: off the table`).toEqual([]);
+        expect(reached.has(stops[0]), `${cid}: the bottom stop at ${steps}`).toBe(true);
+        expect(reached.has(stops[stops.length - 1]), `${cid}: the top stop at ${steps}`).toBe(true);
+        if (steps === 16383)
+          expect(
+            [...reached].sort((a, b) => a - b),
+            `${cid}: every stop is reachable from a 14-bit wire`,
+          ).toEqual([...stops]);
+      }
+    }
   });
 
   it.each(["URX22", "URX44", "URX44V"] as const)("is exact at 14 bits for every %s control", (id) => {

@@ -173,6 +173,12 @@ or inside a group — is written `true` / `false`: a number there loads converte
   level 0–100). When on, the device drives the 4 bands, so do not also set
   `eqBands`.
 - `gate` — `{ threshold, range (dB), attack, hold, decay (ms) }`; `gateOn` (bool).
+  Every time value — the `gate`'s `attack`, `hold` and `decay`, the `comp`'s
+  `attack` and `release`, the `ducker`'s `attack` and `decay` — is a stop of the
+  unit's own table rather than a free range (`leafRules` in `models.json` lists
+  each table): attack 0.092–80 ms, hold 0.02–1960 ms, gate decay and comp release
+  9.3–999 ms, ducker decay 1.3–5000 ms. A value between two stops is moved on load
+  to the nearer stop, which is what the write sends, so write one of them.
 - `comp` — `{ threshold, ratio, knee (0/1/2), gain, attack, release,
   autoMakeup, oneKnob, oneKnobLevel }`; `compOn` (bool).
   `ratio` is a ladder of stops rather than a free range: 0.05 spacing from 1.00
@@ -359,7 +365,8 @@ below treats it as absent.
 
 Outside `fxEffect`, every node-param value the write bounds is bounded on load to the value the
 write sends, and counted with the values moved: the `gate`, `comp` and `ducker` values to their
-windows (a COMP `ratio` to the nearest stop of its ladder), the `ssmcs` raws and the
+windows (a COMP `ratio` to the nearest stop of its ladder, a time value to the nearest stop of
+its table), the `ssmcs` raws and the
 `insertFxParams` engine values to whole numbers inside their windows (an engine key by the family
 its own name gives, a bare slot by the one the selector names), the EQ 1-knob and COMP 1-knob
 levels to 0–100, the oscillator's `interval` to 1–30 and its `level` to -96–0, a channel's

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
+import { planParamZ } from "./plan-param";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
@@ -45,4 +46,40 @@ test("DELAY settings persist after reselecting the streaming bus", async ({ page
   await node(page, "bus.stream").click();
   await expect(frameRateSelect(page)).toHaveValue("7");
   await expect(delayToggle(page).locator("button.on")).toHaveText("ON");
+});
+
+const delayTime = (page: Page) => param(page, "Delay Time");
+
+test("Delay Time steps the unit's 0.02 ms grid", async ({ page }) => {
+  await node(page, "bus.stream").click();
+  const slider = delayTime(page).locator("input[type=range]");
+  await expect(slider).toHaveAttribute("step", "0.02");
+  await expect(delayTime(page).locator(".param-val")).toHaveText("1.00 ms");
+  await slider.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(delayTime(page).locator(".param-val")).toHaveText("1.02 ms");
+});
+
+// A held value off the grid — an odd centi-ms — prints as itself. The thumb rests on the grid
+// point the range rounds it to, halfway up, so the first move lands on the grid from there.
+test("an off-grid Delay Time prints as held, and the first move lands on the grid", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 2,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { "bus.stream": { delay: { on: true, time: 45.87 } } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await node(page, "bus.stream").click();
+  const slider = delayTime(page).locator("input[type=range]");
+  await expect(delayTime(page).locator(".param-val")).toHaveText("45.87 ms");
+  await expect(slider).toHaveValue("45.88");
+  await slider.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(delayTime(page).locator(".param-val")).toHaveText("45.90 ms");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await expect(delayTime(page).locator(".param-val")).toHaveText("45.86 ms");
 });

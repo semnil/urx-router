@@ -258,6 +258,10 @@ carries a one-line map of the same directories and points here.
       strip's compressor stop on the same ones and write them differently, and a module of its own is what
       lets both of the layers below read the table at module scope (channel-tuning.md "Ratio stops where
       the unit's control stops") /
+      `dyn-time-stops.ts` the stops the GATE / COMP / DUCKER time controls turn through, as the unit's own
+      raw tables — one attack table for all three processors, one for GATE decay and COMP release, GATE hold
+      and DUCKER decay each their own — in a module of its own for the same reason (channel-tuning.md "Time
+      values stop where the unit's controls stop") /
       `vd.ts` value encoding / `translate.ts` plan→commands (**one device address yields exactly one
       command**: an insert effect's parameters live in one engine array per effect family with no channel
       axis, so two nodes holding the same family emit the same addresses — `collapseSharedAddrs` keeps the
@@ -1315,7 +1319,7 @@ taps reset it".
 **Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
 step while Shift is held, mirroring the hardware's (undocumented) push-and-turn fine mode: the tuning screens'
 EQ band Gain and COMP Gain sliders step 0.1 dB (coarse 0.5 dB), and the STREAMING TIME knob steps 0.02 ms
-(coarse 1 ms; the fine step is fixed — it does not follow the sample rate, matching the device). Every
+(coarse 1.00 ms; the fine step is fixed — it does not follow the sample rate, matching the device). Every
 fine-eligible control carries a printed `FINE` legend at all times — silkscreen-dim, so eligibility reads
 before any interaction, and placed so it can never shift the control's layout by appearing (pinned
 beside the static label in the tuning screen's row — anchored to the value readout it would jitter with the
@@ -1354,9 +1358,13 @@ drag lands on the nearest.
   switched on); it carries a **LEVEL
   rotary knob** (−96…0 dB, the shared device level; its indicator's horizontal marks read -50 left / -8 right)
   in place of a fader; **STREAMING** carries a **DELAY on/off chip** (`delay.on`) and a **TIME knob** (the delay
-  time, 1…1000 ms; holding Shift steps the device's 0.02 ms fine grid, and the inspector keeps the full
-  0.01 ms grid) so the otherwise-bare head reads as a purposeful
-  strip. The choice persists per model in
+  time, 1…1000 ms). The knob moves the way the unit's own Delay Time knob does: a key or a wheel notch moves
+  1.00 ms and keeps the hundredths (45.86 → 46.86), holding Shift moves the device's 0.02 ms fine grid, a drag
+  keeps its own mapping, and every time it writes is rounded to the 0.02 ms grid, halfway up — so a held odd
+  centi-ms moves from the grid point above it — and stops at 1.00 and 1000.00 ms (`KnobSpec.grid`; LEVEL, PAN
+  and the gain knobs snap to their step). The inspector steps the same 0.02 ms grid — a held value off it
+  prints as itself and is written as held until the row moves. The chip and the knob are what make the
+  otherwise-bare head read as a purposeful strip. The choice persists per model in
   `localStorage` (`urx-metertap`). The readout has two captioned cells: **FADER** (the set level, white) and
   **METER** (the selected tap's live value, amber); default tap = the most downstream point.
 - **Shared edit path** — fader / chip / gain edits mutate the plan directly and flow through the same change
@@ -1730,16 +1738,17 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   editing another way: an incoming 14-bit position equal to the one the control's plan value encodes to edits
   nothing, and a feedback pass that sends a cc14 records both halves as the pair's state, so each echoed half
   assembles to the position that was sent rather than against a stale half. That covers the values a plan
-  holds off the codec's grid — the factory capture and a value read from the unit (GATE attack 20.17 ms against
-  its 0.1 ms steps, 1000 Hz between two of an EQ band's log positions), a 0.1 dB fine-mode gain, a setting
+  holds off the codec's grid — the factory capture and a value read from the unit (1000 Hz between two of an
+  EQ band's log positions), a 0.1 dB fine-mode gain, a setting
   finer than the wire (the Mono Delay time, the companders' Release) — which the echo would otherwise move
   and, while live, write to the unit (`core/midi/controls.test.ts` drives it through the engine on the continuous
   controls the factory plan lists, the morphing bank's, and those of each insert effect and each FX type). Only a pass that actually sends records the
   pair: one that delivers nothing tells the controller nothing. At 7 bits the codecs alone would not hold
-  the value either (measured 2026-09-23, 97 of 311 controls on a URX44V do not round-trip — the tuning
-  screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack / decay. COMP
-  **ratio** is not on that list because its field is the unit's own stop ladder — the ladder holds fewer stops
-  than the wire holds positions, so a 7-bit echo decodes onto the stop it left from).
+  the value either (measured 2026-10-04, 93 of 311 controls on a URX44V do not round-trip — the tuning
+  screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack. COMP
+  **ratio** and DUCKER **decay** are not on that list because each field is a stop table of the unit's that
+  holds fewer stops than the wire holds positions, so a 7-bit echo decodes onto the stop it left from; the
+  attack, hold and decay / release tables hold more).
   Setting `localStorage["urx-midi-log"]` traces every rx/tx
   byte string and the engine's per-message decision (drop/ignore/apply) to the console; a dev build also
   carries `window.__urxMidiProbe` (`ui/midi-probe.ts`), which records the same stream **with timestamps** on
@@ -3122,8 +3131,10 @@ scope in Preferences is how the app draws the same line the other way.
 edit → apply:
 
 1. Opening connects, confirms the firmware, refuses a model mismatch, reads the whole set, and
-   disconnects. A read failure leaves the screen **unopened** — a half-established baseline would invite
-   applying a diff against values that were never read (see "Aborting on failure").
+   disconnects. The set includes the User Defined Knobs bank the unit is on, and the knob tabs open on
+   it. A read failure — that bank's included — leaves the screen **unopened** — a half-established
+   baseline would invite applying a diff against values that were never read (see "Aborting on
+   failure").
 2. Edits accumulate in the modal. A row whose value differs from what the device reported takes the
    accent dot, and the footer counts the pending settings. Each edit and each bank tab rebuilds the
    modal, keeping the focused control and the grid's scroll offset as Preferences does. The screen
@@ -3156,7 +3167,11 @@ from 76 onward.
 free-form strings (`Function` / `Parameter 1` / `Parameter 2`) that the device stores verbatim and never
 validates, so the app owns the exact user-guide spelling: picking a function re-seeds both parameter
 columns from the catalog, and all three are always written together. A partial write is not reconciled by
-the device — it would leave the unit showing a triple no menu could have produced.
+the device — it would leave the unit showing a triple no menu could have produced. The bank tabs open on the
+bank the unit is on (`769`, raw 0..3 = banks 1..4, read on every model with the rest of the set), and on bank
+1 for a reading that names none of the four. That address is read and never written: the catalog flags it
+**`readOnly`**, which keeps it out of `WritableParamName` and so out of every setup write, and moving between
+the tabs is the screen's own and changes nothing on the unit.
 
 ## Window geometry
 

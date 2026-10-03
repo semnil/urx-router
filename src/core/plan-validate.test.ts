@@ -773,6 +773,31 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
     ]);
   });
 
+  // The time values became stop tables the same way, after documents had been saved on the
+  // linear grid (attack 0.1 ms, the rest 1 ms), so a shipped document can hold one between two
+  // stops — on each of the seven, the ducker's included. A value already on a stop is left, and
+  // one exactly halfway goes to the lower stop (the ducker decay's 1050), as on the ratio ladder.
+  it("bounds a time value between two stops to the stop the write sends", () => {
+    const plan = load({
+      ch1: { gate: { attack: 20.1, hold: 12, decay: 100 }, comp: { attack: 34.58, release: 200 } },
+      "out.ducker1": { ducker: { attack: 25, decay: 1050 } },
+    });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)} (${p.action})`)
+        .sort(),
+    ).toEqual(
+      [
+        "ch1.gate.attack 20.1 -> 20.17 (bound)",
+        "ch1.gate.hold 12 -> 11.8 (bound)",
+        "ch1.gate.decay 100 -> 100.1 (bound)",
+        "ch1.comp.release 200 -> 200.3 (bound)",
+        "out.ducker1.ducker.attack 25 -> 24.87 (bound)",
+        "out.ducker1.ducker.decay 1050 -> 1000 (bound)",
+      ].sort(),
+    );
+  });
+
   it("bounds a raw to an integer inside its window, and an insert-FX slot by the family its key names", () => {
     const plan = load({
       ch1: { compEqType: 1, ssmcs: { compDrive: 10.5, comp: { ratio: 999 } }, gate: { threshold: -90 } },
