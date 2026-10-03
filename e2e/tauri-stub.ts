@@ -84,6 +84,9 @@ export interface DeviceStubOptions {
   firmware?: string | null;
   /** Broker reads, by param id. Returning undefined falls through to `get`. */
   values?: Record<number, number>;
+  /** String reads, by "paramId:y" — a user-defined knob's Function and Parameter 1, say. An address
+   *  not named here answers the `vd_get_str` constant. */
+  strings?: Record<string, string>;
   /** Reject every vd_get not covered by `values` (a dead/failing link). */
   failReads?: boolean;
   /** What every confirm answers. Default "Cancel" — a spec that reaches one has
@@ -218,6 +221,10 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
             instance[slotKey(args)] = Number(args?.value);
             writes.push([Number(args?.paramId), Number(args?.value)]);
             return Promise.resolve(null);
+          }
+          if (cmd === "vd_get_str") {
+            const s = o.strings?.[`${Number(args?.paramId)}:${Number(args?.y ?? 0)}`];
+            if (s !== undefined) return Promise.resolve(s);
           }
           // Recorded with its y: the string params that need it (CH SETTING names,
           // the user-defined knob triples) are addressed per instance, so a spec

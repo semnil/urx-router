@@ -3102,7 +3102,8 @@ edit → apply:
    accent dot, and the footer counts the pending settings. Each edit and each bank tab rebuilds the
    modal, keeping the focused control and the grid's scroll offset as Preferences does. The screen
    holds the reading **as the unit reported it**: a value the app's catalog does not have — a Time Zone index past the city list, a knob
-   Function string the unit stores verbatim — is offered as `unknown (N)` rather than shown as the nearest
+   Function string the unit stores verbatim, a Monitor / Phones knob's Parameter 1 — is offered as `unknown (N)`
+   rather than shown as the nearest
    entry, and the diff compares the draft against that reading. An edit coerces only the field it sets,
    so a value off the catalog is written only once the operator picks something for that row.
 3. `Apply to device` connects, sends **only the differences**, and disconnects. Only a clean apply moves

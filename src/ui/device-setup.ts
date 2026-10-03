@@ -476,10 +476,16 @@ export class DeviceSetupPanel {
     const entry = UDK_FUNCTIONS.find((f) => f.fn === a.fn);
     const read = this.baseline.knobs[y] ?? UDK_UNASSIGNED;
     const known = UDK_FUNCTIONS.map((f) => f.fn);
+    const readEntry = UDK_FUNCTIONS.find((f) => f.fn === read.fn);
+    // Where the function offers a choice of Parameter 1, the value the unit reported for it,
+    // when the catalog does not have that value.
+    const readP1Off = readEntry !== undefined && readEntry.p1.length > 1 && !readEntry.p1.includes(read.p1);
+    const p1Choices = entry && a.fn === read.fn && readP1Off ? [read.p1, ...entry.p1] : (entry?.p1 ?? []);
     const set = (next: UdkAssignment): void => {
       const knobs = this.draft.knobs.slice();
-      // A Function off the catalog, picked back, is the reading again.
-      knobs[y] = next.fn === read.fn && !known.includes(read.fn) ? structuredClone(read) : normalizeUdk(next);
+      // A Function, or a Parameter 1, off the catalog, picked back, is the reading again.
+      const back = next.fn === read.fn && (!readEntry || (readP1Off && next.p1 === read.p1));
+      knobs[y] = back ? structuredClone(read) : normalizeUdk(next);
       this.edit({ knobs });
     };
     // Picking a function re-seeds the two parameter columns from the catalog: the
@@ -493,9 +499,9 @@ export class DeviceSetupPanel {
         (fn) => set({ fn, p1: "", p2: "" }),
       ),
       settingsSelect(
-        entry?.p1 ?? [],
+        p1Choices,
         a.p1,
-        (v) => v,
+        (v) => (entry?.p1.includes(v) ? v : m.unknownValue(v)),
         (p1) => set({ ...a, p1 }),
         m.unset,
       ),

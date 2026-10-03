@@ -214,11 +214,17 @@ export async function readDeviceSetup(model: DeviceModel): Promise<DeviceSetup> 
     // than one value — normalizeUdk would overwrite whatever came back, so reading
     // it would cost a round trip for a value that is discarded. On a factory unit
     // (every knob No Assign) that skips 32 of the 58 reads this screen makes.
-    const p1 = entry && entry.p1.length > 1 ? await str("UDK_PARAM1", y) : "";
+    const chooses = entry !== undefined && entry.p1.length > 1;
+    const p1 = chooses ? await str("UDK_PARAM1", y) : "";
     // A Function the catalog does not have is kept as the unit holds it, so the screen
     // can say the knob is on something it does not offer rather than name an assignment
-    // the unit is not on; its two parameters are not read.
-    setup.knobs[y] = entry ? normalizeUdk({ fn, p1, p2: "" }) : { fn, p1: "", p2: "" };
+    // the unit is not on; its two parameters are not read. A Parameter 1 the function
+    // offers a choice for is kept as read the same way, catalog or not.
+    setup.knobs[y] = !entry
+      ? { fn, p1: "", p2: "" }
+      : chooses
+        ? { ...normalizeUdk({ fn, p1, p2: "" }), p1 }
+        : normalizeUdk({ fn, p1, p2: "" });
   }
   return setup;
 }
