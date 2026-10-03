@@ -815,9 +815,11 @@ export const INSERT_FX_ANNOUNCED: ReadonlySet<ParamName> = new Set<ParamName>([
 export const INSERT_FX_NONE = -1;
 const INSERT_FX_VD_NONE = 0xffffffff;
 /**
- * Resource slot an insert FX consumes. Each slot is device-wide 1-of: only one
- * MONO IN channel can hold the guitar amp, Pitch Fix, or compander at a time
- * (user guide p.180: "Number of simultaneous uses: 1 slot"). No Effect = none.
+ * Resource slot an insert FX consumes. Each slot is device-wide 1-of: the user
+ * guide's Effect list gives one MONO IN channel at a time the guitar amp, Pitch
+ * Fix, or compander ("Number of simultaneous uses: 1 slot"), and the app's menus
+ * hold that rule. The control link accepts a second compander holder. No Effect
+ * = none.
  */
 export type InsertFxSlot = "amp" | "pitch" | "compander" | "out-dyn";
 

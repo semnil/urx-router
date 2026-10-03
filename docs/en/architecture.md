@@ -2418,14 +2418,16 @@ An insert effect's parameters live in **one engine array per effect family**, ad
 channel axis (`control/insert-fx-effect.ts`). Two nodes holding the same family therefore write the same
 addresses with their own values.
 
-**A conforming unit never gets into that state.** The user guide's Effect list gives each effect a "Number of
-simultaneous uses", and the compander's is "MONO IN channels: 1 slot; output channels: 1 slot", with the
-Supported-channels row adding that it "cannot be inserted into two mono channels". The 1-of slot rule in
-`control/params.ts` (`InsertFxSlot`) is that documented constraint, not an app policy, and the inspector and the
-console are defined over it (`insertFxMenu`). The plan loader warns about a file that carries the collision
-and opens it on the operator's word (`planProblems` in `core/plan-validate.ts`) — a refusal would make
-Fetch → Save → reopen impossible for the app's own document, since a **device readback** and a `.urxf`
-import deliberately do not validate; neither can produce it from a unit that honours its own spec.
+The user guide's Effect list gives each effect a "Number of simultaneous uses", and the compander's is "MONO
+IN channels: 1 slot; output channels: 1 slot", with the Supported-channels row adding that it "cannot be
+inserted into two mono channels". The 1-of slot rule in `control/params.ts` (`InsertFxSlot`) is that documented
+constraint, not an app policy, and the inspector and the console are defined over it (`insertFxMenu`). **The
+unit's control link does not enforce it**: with one MONO IN channel holding the compander, a second channel
+selecting it is accepted, both channels switch the effect on, and both point at the one engine array. The plan
+loader warns about a file that carries the collision and opens it on the operator's word (`planProblems` in
+`core/plan-validate.ts`), and a Write of such a plan puts the unit into that state. A **device readback** and a
+`.urxf` import deliberately do not validate, so reading a unit in that state produces the two-owner plan — and a
+refusal at the loader would make Fetch → Save → reopen impossible for the app's own document.
 
 A **STEREO-linked MONO IN pair** is one holder, not two, and the census counts it as one: measured on the unit,
 a linked pair's two members mirror the selector both ways and point at a single engine instance, and the link
@@ -2433,10 +2435,10 @@ transition clears the effect on both. The census reads `stereoLink`, not PAN/BAL
 both modes. Counting it as a collision would lock the pair's own menu against a selection the app itself
 authored (see the pair rules above).
 
-The collapse below is therefore not a repair of a state the hardware reports. It is an invariant on the app's
-own emission: `Plan` is free to hold two owners for one address — nothing in its type prevents it, and a
-hand-edited file or a future family that shares an engine would — and **a command list with two values for one
-address is never correct to send**, whatever put them there.
+The collapse below is an invariant on the app's own emission rather than a repair of what a read reports:
+`Plan` is free to hold two owners for one address — nothing in its type prevents it, and a hand-edited file, a
+read of a unit holding two or a future family that shares an engine would — and **a command list with two values
+for one address is never correct to send**, whatever put them there.
 
 The emitted set therefore collapses a repeated address to its **last** command, kept at its own position
 (`collapseSharedAddrs` in `control/translate.ts`):

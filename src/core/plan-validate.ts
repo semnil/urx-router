@@ -64,7 +64,8 @@ export interface InsertFxSlotProblem {
 
 // Insert-FX slot collisions in a whole plan. The screens cannot author one
 // (insertFxMenu locks a slot another node holds), so a plan carrying one came
-// from outside — a file, a ?plan= link, a generator. Unlike an illegal wire this
+// from outside — a file, a ?plan= link, a generator, or a read of a unit that holds
+// two, since its control link accepts a second selection. Unlike an illegal wire this
 // does not refuse the document: the loader reports it and offers to open it anyway,
 // since the plan is otherwise usable and only the unit decides what it runs.
 // A device readback deliberately does not run this: the unit is the authority for

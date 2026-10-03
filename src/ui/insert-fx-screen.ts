@@ -572,8 +572,9 @@ function lanesOf(ctx: DynCtx, isOutput: boolean): DynLane[] {
   // holders it carries the one whose selector was written last and ignores the other
   // entirely — so on that other one's screen the lane would draw its neighbour's number,
   // which is a value and looks like an answer. The app's own menu makes the compander a device-wide slot and locks every
-  // other node out of it, so one holder is the ordinary case; two is reachable only by
-  // loading a plan whose slot conflict the operator waved through.
+  // other node out of it, so one holder is the ordinary case; two is reachable by loading
+  // a plan whose slot conflict the operator waved through, or by reading a unit that
+  // holds two, which its control link accepts.
   if (hasReduction(fam) && (isOutput || (insertFxCensus(ctx.model, ctx.plan).get("compander")?.length ?? 0) <= 1)) {
     lanes.push({
       key: "gr",
