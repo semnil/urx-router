@@ -4583,12 +4583,20 @@ function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
   });
   // Each item runs its own action listener; close the menu once one is chosen.
   // Delegated to the panel so items enabled after setup (the experimental device
-  // self-test, disabled at this point) is covered too. An item's async action
-  // yields at its first await, so this runs and hides the menu before any
-  // confirm dialog renders.
-  panel.addEventListener("click", (e) => {
-    if ((e.target as Element).closest(MENU_ITEM)) setOpen(false);
-  });
+  // self-test, disabled at this point) is covered too. Capture phase, so the menu
+  // is hidden and focus is back on the trigger, as Escape leaves it, before the
+  // item's own listener runs: a modal the action opens — after an await or
+  // without one — records the trigger as the place to return to on close, not
+  // the item this hides, and no confirm dialog renders over an open menu.
+  panel.addEventListener(
+    "click",
+    (e) => {
+      if (!(e.target as Element).closest(MENU_ITEM)) return;
+      setOpen(false);
+      trigger.focus();
+    },
+    true,
+  );
 }
 
 onLangChange(() => {

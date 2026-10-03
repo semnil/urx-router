@@ -68,6 +68,28 @@ test("a press outside the box or Escape dismisses the notice", async ({ page }) 
   await expect(page.locator("#licenses-modal")).toBeHidden();
 });
 
+// The notice opens on an await, by which time choosing the item has already hidden it with
+// the rest of the menu. The modal's close puts focus back where it was when the modal
+// opened, so that has to be the File trigger — a hidden item cannot take focus, and the
+// keyboard would be left on <body>.
+test("closing the notice opened from the keyboard returns focus to the File trigger", async ({ page }) => {
+  await stubTauriBoot(page, { third_party_licenses: NOTICE });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.focus("#btn-file");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#btn-new")).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(page.locator("#btn-licenses")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#licenses-modal")).toBeVisible();
+  await expect(page.locator("#licenses-close")).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#licenses-modal")).toBeHidden();
+  await expect(page.locator("#btn-file")).toBeFocused();
+});
+
 test("an unparseable notice lands in the error dialog, not an empty modal", async ({ page }) => {
   await stubTauriBoot(page, { third_party_licenses: "<h1>not a notice</h1>", "plugin:dialog|message": null });
   await page.goto("/");
