@@ -7594,6 +7594,24 @@ describe("dropping a file onto the window", () => {
     expect(localStorage.getItem("urx-recent")).toContain(PLAN_PATH);
   });
 
+  // A file dragged onto the MIDI control window is raised by the shell for THAT window, and
+  // this window takes only the drag events raised for itself: no advert and no load follow
+  // here. The same drop raised for this window is the positive control — without it a stub
+  // that delivered nothing would satisfy every absence above it.
+  it("ignores a file dropped on the MIDI control window", SLOW, async () => {
+    const shell = await bootDevice({ read_text_file: () => droppedPlan });
+
+    expect(shell.emit("tauri://drag-enter", undefined, "midi")).toBe(0);
+    expect(advert().hidden).toBe(true);
+    expect(shell.emit("tauri://drag-drop", { paths: [PLAN_PATH] }, "midi")).toBe(0);
+    await settle();
+    expect(shell.count("read_text_file")).toBe(0);
+    expect(rate()).toBe("48000");
+
+    expect(shell.emit("tauri://drag-drop", { paths: [PLAN_PATH] })).toBe(1);
+    await vi.waitFor(() => expect(rate()).toBe("96000"), { timeout: 10_000 });
+  });
+
   // A file is a load as a link is: a document naming no STREAMING source opens with the STEREO
   // a new plan carries, drawn on the board, and the note leads the line that names the file.
   it("gives a dropped plan naming no STREAMING source STEREO, and says so ahead of the file", SLOW, async () => {

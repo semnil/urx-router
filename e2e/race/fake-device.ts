@@ -1114,6 +1114,9 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       }
       (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
         Channel,
+        // The page's window label, which a window-scoped listenEvent (the drop zone's)
+        // names as its target and refuses to register without.
+        metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
         // The event plugin: without transformCallback, listenEvent returns early and
         // dropzone.ts registers no DOM handlers either, so a drop is unreachable from
         // both directions and menu://edit never fires.

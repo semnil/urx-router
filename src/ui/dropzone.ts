@@ -68,24 +68,30 @@ export function initDropzone(opts: DropzoneOptions): Dropzone {
   };
 
   if (isTauri()) {
-    // The shell's own drag events. Registration failures leave the app without
+    // The shell's own drag events, taken only for this window: a file dragged onto
+    // the MIDI control window raises the same events for that window, and neither
+    // shows this overlay nor loads here. Registration failures leave the app without
     // drag & drop but with the File menu intact, so they are reported rather than
     // allowed to abort startup.
     void Promise.all([
-      listenEvent("tauri://drag-enter", show),
-      listenEvent("tauri://drag-leave", hide),
-      listenEvent<{ paths?: string[] }>("tauri://drag-drop", (payload) => {
-        const paths = payload.paths ?? [];
-        take(paths, () => {
-          const path = paths[0];
-          return {
-            name: baseName(path),
-            path,
-            text: () => readTextByPath(path),
-            bytes: () => readBinaryByPath(path),
-          };
-        });
-      }),
+      listenEvent("tauri://drag-enter", show, "window"),
+      listenEvent("tauri://drag-leave", hide, "window"),
+      listenEvent<{ paths?: string[] }>(
+        "tauri://drag-drop",
+        (payload) => {
+          const paths = payload.paths ?? [];
+          take(paths, () => {
+            const path = paths[0];
+            return {
+              name: baseName(path),
+              path,
+              text: () => readTextByPath(path),
+              bytes: () => readBinaryByPath(path),
+            };
+          });
+        },
+        "window",
+      ),
     ]).catch((err) => console.warn("drag & drop unavailable:", err));
     return { register: (ext, onDrop) => void handlers.set(ext, onDrop) };
   }

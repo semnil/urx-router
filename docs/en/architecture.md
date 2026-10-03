@@ -512,8 +512,9 @@ carries a one-line map of the same directories and points here.
   osc.on) with the off-state dimmed via the shared `isNodeInactive`; live meters only during Live sync, ~10
   Hz) / `glyph.ts` wraps the `∞` glyph in a `.glyph-inf` span to compensate the reduced x-height of mono
   fonts (shared by console readouts and inspector values) / `dropzone.ts` drag & drop onto the window (two
-  paths: the shell's `tauri://drag-*` events carrying real paths on desktop, DOM drag events carrying `File`
-  objects in a browser; DOM handlers registered only outside Tauri so a drop is never handled twice) /
+  paths: the shell's `tauri://drag-*` events carrying real paths on desktop, taken only for the main window,
+  DOM drag events carrying `File` objects in a browser; DOM handlers registered only outside Tauri so a drop
+  is never handled twice) /
   `consent.ts` first-launch consent gate (fullscreen inert modal, disclaimer text, persisted in
   `localStorage`, declining exits the app; desktop only) / `load-report.ts` copyable report modal for plan
   load failures (`?plan=` decode failures, routing validation failures) / `rate-choice.ts` three-way modal
@@ -1551,7 +1552,9 @@ gone rather than handed to the row that moved into its place — and the status 
 the window's life, written in place only when its text changes. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond the relay pair — its capability grants those two commands
-and, of core, only a debug build's devtools hotkey, so it cannot emit an event the main window listens for. Where it sits is the shell's to remember (see
+and, of core, only a debug build's devtools hotkey, so it cannot emit an event the main window listens for. A file dropped onto it
+opens nothing: the shell raises the drag events for the window the file was dropped on, and the main window takes only those
+raised for itself (see "Opening files: drag & drop, and settings files"). Where it sits is the shell's to remember (see
 "Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by platform —
 a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where an AppKit parent was measured
 and is not used. Closing the main window closes it; closing it drops learn mode, which would
@@ -4205,7 +4208,10 @@ them:
 | Payload | real file paths | `File` objects, no path |
 | Consequence | a dropped plan joins the recent list, exactly as if opened from the dialog | no recent-list entry (there is no path to record) |
 
-The DOM handlers are registered only outside Tauri, so a drop is never handled twice. Both paths
+The DOM handlers are registered only outside Tauri, so a drop is never handled twice. On desktop the
+shell raises the three drag events for the window a file is dragged onto, and the main window takes
+only the ones raised for itself: a file dropped onto the MIDI control window shows no overlay and
+opens nothing. Both paths
 funnel into the same check: the extension has to be one the build accepts, and exactly one file may
 be dropped — a multi-file drop is refused rather than resolved by guessing which one was meant.
 A refused drop reports on the status line (a routine "not that file"); a dropped plan that fails to
@@ -4213,7 +4219,11 @@ parse raises the same modal File > Open would.
 
 `listenEvent` drives the event plugin directly through
 `window.__TAURI_INTERNALS__.transformCallback` + `plugin:event|listen`, keeping the frontend free of
-npm runtime dependencies like the dialog / updater calls.
+npm runtime dependencies like the dialog / updater calls. Its scope is what selects the window: the
+default `"any"` registers for every emitter (the Edit menu's event), while the drop zone's `"window"`
+names the page's own window — the label the shell writes into `__TAURI_INTERNALS__.metadata` — as the
+target, and a page with no such label is refused that registration rather than widened to every
+window.
 
 ### Settings file (`.urxf`) import — experimental
 
