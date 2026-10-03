@@ -26,8 +26,9 @@ export interface MidiUiRow {
    *  control takes a take-in mode and a toggle a button behaviour — except on an
    *  address that can never fire a toggle (pitch bend and a 14-bit CC pair, which
    *  `toggleTarget` refuses), where offering one would suggest the binding does
-   *  something. Decided in the main window: which addresses those are is engine
-   *  knowledge, and this window holds none. */
+   *  something, and a continuous control on an address a switch also drives, which takes
+   *  Absolute alone. Decided in the main window: which addresses those are is engine
+   *  and plan knowledge, and this window holds none. */
   option?: "mode" | "button";
   mode: TakeMode;
   button?: ButtonMode;

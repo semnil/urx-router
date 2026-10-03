@@ -731,7 +731,42 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     await learnOnto(control, "ch2/level", 20);
     expect(control.isMapped("ch2/level")).toBe(false);
     expect(Object.keys(storedModes())).toEqual(["gone/level"]);
-    expect(vi.mocked(hooks.onStatus).mock.calls.at(-1)?.[0]).toMatch(/^Not assigned: CH 2 · Level cannot be compared/);
+    expect(vi.mocked(hooks.onStatus).mock.calls.at(-1)?.[0]).toBe(
+      t().midi.learnUnresolved("CH 2 · Level", "CH 1 CC 20"),
+    );
+  });
+
+  // The armed control itself can stop resolving between the arming and the move — an edit
+  // takes away the insert effect its switch belongs to. Bound, it would edit nothing, so it
+  // is refused on an address nothing drives as well, for the same reason.
+  it("refuses learning an armed control the plan has stopped carrying onto a new address", async () => {
+    const { control, hooks, plan } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[1].value };
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+    dispatch({ type: "learn", on: true });
+    control.arm("ch1/insertFxOn");
+    expect(control.armedId()).toBe("ch1/insertFxOn");
+
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[0].value };
+    mocks.inputReceiver!([0xb0, 30, 10]);
+    mocks.inputReceiver!([0xb0, 30, 11]);
+    expect(control.isMapped("ch1/insertFxOn")).toBe(false);
+    expect(control.armedId()).toBeNull();
+    expect(JSON.parse(localStorage.getItem("urx-midi")!).models?.URX44V ?? []).toEqual([]);
+    expect(vi.mocked(hooks.onStatus).mock.calls.at(-1)?.[0]).toBe(
+      t().midi.learnUnresolved("CH 1 · INS FX", "CH 1 CC 30"),
+    );
+
+    // …while the same learn with the effect still held binds, which is what makes the refusal
+    // above about the plan rather than about the address.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[1].value };
+    control.arm("ch1/insertFxOn");
+    mocks.inputReceiver!([0xb0, 30, 10]);
+    mocks.inputReceiver!([0xb0, 30, 11]);
+    expect(control.isMapped("ch1/insertFxOn")).toBe(true);
   });
 
   // A gang that mixes the two kinds was savable before the refusal above existed. On load it is
@@ -750,17 +785,106 @@ describe("MidiControl, the races and vocabularies around a port", () => {
         },
       }),
     );
-    const { control, hooks } = install();
+    const { hooks } = install();
     expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.mixedGangAbsolute("CH 1 CC 7"));
     expect(storedModes()).toEqual({ "ch1/mute": "absolute", "ch2/level": "absolute", "ch3/level": "pickup" });
     await attached();
     dispatch({ type: "ready" });
-    // …and a Pickup chosen for it in the window is put back the same way.
+    // The window offers no take-in mode on that gang's continuous row, while the switch keeps
+    // its button behaviour and a continuous control on an address of its own keeps its mode.
+    const option = (control: string) => lastState().rows.find((r) => r.control === control)?.option;
+    expect(option("ch2/level")).toBeUndefined();
+    expect(option("ch1/mute")).toBe("button");
+    expect(option("ch3/level")).toBe("mode");
+    // A Pickup that reaches this side for that row all the same — from a window not yet
+    // repainted — changes nothing and says nothing; the window is repainted instead.
     vi.mocked(hooks.onStatus).mockClear();
+    mocks.midiUiToWindow.mockClear();
     dispatch({ type: "mode", control: "ch2/level", mode: "pickup" });
     expect(storedModes()["ch2/level"]).toBe("absolute");
+    expect(hooks.onStatus).not.toHaveBeenCalled();
+    expect(option("ch2/level")).toBeUndefined();
+    // …while the same intent on the lone continuous control is taken, which is what makes the
+    // refusal above about the gang rather than about the intent.
+    dispatch({ type: "mode", control: "ch3/level", mode: "absolute" });
+    expect(storedModes()["ch3/level"]).toBe("absolute");
+  });
+
+  // A load judges a gang against the plan as it is then, and an insert effect's switch
+  // resolves only while its node holds one: with CH 1 holding none, this gang is one
+  // continuous control and keeps its Pickup. Selecting an effect later completes the gang,
+  // and it is judged then, the way the load judges it.
+  const switchGang = (mode: "absolute" | "pickup") => {
+    const cc7 = { type: "cc", channel: 0, controller: 7 };
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({
+        models: {
+          URX44V: [
+            { control: "ch1/insertFxOn", addr: cc7, mode },
+            { control: "ch3/level", addr: cc7, mode },
+          ],
+        },
+      }),
+    );
+  };
+  const option = (control: string) => lastState().rows.find((r) => r.control === control)?.option;
+  // Past the port refresh the window's "ready" starts, whose push lands after an await and
+  // would otherwise carry the plan change itself.
+  const openedWindow = async (): Promise<void> => {
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["Controller Out"]));
+  };
+
+  it("sets a gang a plan change makes mixed to Absolute, says so, and stops offering Pickup", async () => {
+    switchGang("pickup");
+    const { control, hooks, plan } = install();
+    await openedWindow();
+    expect(storedModes()).toEqual({ "ch1/insertFxOn": "pickup", "ch3/level": "pickup" });
+    expect(option("ch3/level")).toBe("mode");
+
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[1].value };
+    control.scheduleFeedback();
+    await vi.waitFor(() => expect(storedModes()).toEqual({ "ch1/insertFxOn": "absolute", "ch3/level": "absolute" }));
     expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.mixedGangAbsolute("CH 1 CC 7"));
-    void control;
+    expect(option("ch3/level")).toBeUndefined();
+    // …and the fader behind the switch now follows the physical control, where in Pickup it
+    // would wait for an engagement only a continuous head creates.
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+    mocks.inputReceiver!([0xb0, 7, 100]);
+    const moved = vi.mocked(hooks.onApplied).mock.calls.map(([c]) => c.id);
+    expect(moved).toContain("ch3/level");
+  });
+
+  // Already Absolute, the gang has nothing to set — but the window still has to stop offering
+  // the take-in mode on the row the plan change put behind a switch.
+  it("repaints the window when a plan change makes an Absolute gang mixed, saying nothing", async () => {
+    switchGang("absolute");
+    const { control, hooks, plan } = install();
+    await openedWindow();
+    expect(option("ch3/level")).toBe("mode");
+
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[1].value };
+    control.scheduleFeedback();
+    await vi.waitFor(() => expect(option("ch3/level")).toBeUndefined());
+    expect(hooks.onStatus).not.toHaveBeenCalledWith(t().midi.mixedGangAbsolute("CH 1 CC 7"));
+  });
+
+  // Judged once a run of edits settles rather than on each one: an incoming sweep reaches the
+  // change funnel once per message, and each judgement resolves every binding.
+  it("judges the gangs once for a run of plan edits", async () => {
+    switchGang("pickup");
+    const { control, plan } = install();
+    await openedWindow();
+    const judged = vi.spyOn(control as unknown as { judgeGangs: () => void }, "judgeGangs");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[1].value };
+    for (let i = 0; i < 20; i++) control.scheduleFeedback();
+    await vi.waitFor(() => expect(storedModes()["ch3/level"]).toBe("absolute"));
+    // The coercion's own save schedules one more judgement, which finds nothing to do.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(judged.mock.calls.length).toBeLessThanOrEqual(2);
   });
 
   // Read before the control's own binding is dropped: re-learning the one control an address

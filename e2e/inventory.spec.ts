@@ -1228,7 +1228,7 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
     [0xbe, 0, 64],
     [0xbe, 0, 65],
   ]);
-  await expect(win.locator(".mw-status")).toContainText("cannot be compared");
+  await expect(win.locator(".mw-status")).toContainText("already drives, is not in the current plan");
   await inv.take(win, "#midi-window");
 
   // The empty list, whose own line replaces the table. The window is a view — the

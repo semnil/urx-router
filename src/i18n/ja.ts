@@ -193,7 +193,7 @@ export const ja: Messages = {
     learnKindMismatch: (control: string, addr: string): string =>
       `割り当てません: ${addr} は ${control} と種類の違うコントロールを既に動かしています — スイッチと連続値のコントロールは 1 つの MIDI コントロールを共有できません`,
     learnUnresolved: (control: string, addr: string): string =>
-      `割り当てません: ${control} と ${addr} が既に動かしているものを比べられません — 現在のプランにないものがあります`,
+      `割り当てません: ${control}、または ${addr} が既に動かしているものが現在のプランにありません`,
     mixedGangAbsolute: (addrs: string): string =>
       `${addrs} の取り込みモードを Absolute にしました: スイッチと連続値のコントロールが共有しており、スイッチの後ろでは Pickup が効きません`,
     windowError: (message: string): string => `MIDI コントロールウィンドウを開けませんでした: ${message}`,

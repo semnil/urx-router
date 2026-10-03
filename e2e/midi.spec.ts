@@ -603,6 +603,53 @@ test("a fader cannot join the MIDI control a switch is bound to", async ({ page 
   await expect(strip(page, "CH 1").locator(".con-fader")).not.toHaveClass(/\bmidi-armed\b/);
 });
 
+// A gang saved before that rule existed can still mix the two kinds. Its fader row offers no
+// take-in mode — Absolute is the one a fader works in behind a switch — while the switch keeps
+// its button behaviour and a fader on a MIDI control of its own keeps the select.
+test("the MIDI window offers no take-in mode on a fader that shares a switch's MIDI control", async ({ page }) => {
+  await page.addInitScript(() => {
+    const cc = (controller: number) => ({ type: "cc", channel: 0, controller });
+    const URX44V = [
+      { control: "ch1/mute", addr: cc(20), mode: "pickup" },
+      { control: "ch2/level", addr: cc(20), mode: "pickup" },
+      { control: "ch3/level", addr: cc(21), mode: "pickup" },
+    ];
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V } }));
+  });
+  await page.reload();
+  const win = await openMidiWindow(page);
+  await expect(mapRow(win, "ch2/level")).toHaveClass(/\blinked\b/);
+  await expect(mapRow(win, "ch2/level").locator(".mw-mode, .mw-btn")).toHaveCount(0);
+  await expect(mapRow(win, "ch1/mute").locator(".mw-btn")).toHaveCount(1);
+  await expect(mapRow(win, "ch3/level").locator(".mw-mode")).toHaveValue("pickup");
+});
+
+// An insert effect's switch is a control only while its strip holds an effect, so a gang
+// saved with one beside a fader is no mix of kinds until an effect is chosen. Choosing one
+// makes it one, and it is set to Absolute and said then, as a load does.
+test("choosing an insert effect sets a fader ganged with its switch to Absolute", async ({ page }) => {
+  await page.addInitScript(() => {
+    const addr = { type: "cc", channel: 0, controller: 22 };
+    const URX44V = [
+      { control: "ch1/insertFxOn", addr, mode: "pickup" },
+      { control: "ch3/level", addr, mode: "pickup" },
+    ];
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V } }));
+  });
+  await page.reload();
+  await page.click("#btn-view-console");
+  const win = await openMidiWindow(page);
+  await expect(mapRow(win, "ch3/level").locator(".mw-mode")).toHaveValue("pickup");
+
+  await strip(page, "CH 1").locator(".con-ifxopen").click();
+  await page.locator(".con-ifxpop .irow", { hasText: "Clean" }).first().click();
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+  const said = "Take-in mode set to Absolute on CH 1 CC 22";
+  await expect(win.locator(".mw-status")).toContainText(said);
+  await expect(page.locator("#statusbar")).toContainText(said);
+  await expect(mapRow(win, "ch3/level").locator(".mw-mode, .mw-btn")).toHaveCount(0);
+});
+
 test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
@@ -1462,4 +1509,33 @@ test("the INS FX face arms, and its assignment names the strip and the insert", 
   await expect(face, "one press bypasses it").toHaveAttribute("aria-pressed", "false");
   await sendMidi(page, [0xb0, 42, 127]);
   await expect(face, "and the next brings it back").toHaveAttribute("aria-pressed", "true");
+});
+
+// The face is a control only while its strip holds an effect. Armed, and then left with no
+// effect to switch, it is not bound to the MIDI control moved next — even one nothing drives
+// yet — and both status lines say why.
+test("an armed INS FX face whose effect is released is not bound", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch1: { insertFx: 256, insertFxOn: true } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await page.click("#btn-view-console");
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
+  await strip(page, "CH 1").locator(".con-ifxface").click();
+  await expect(win.locator(".mw-hint")).toContainText("CH 1 · INS FX");
+
+  await strip(page, "CH 1").locator(".con-ifxopen").click();
+  await page.locator(".con-ifxpop .irow", { hasText: "No Effect" }).click();
+  await expect(strip(page, "CH 1").locator(".con-ifxface")).toHaveClass(/\bvacant\b/);
+  await sendMidi(page, [0xb0, 30, 10], [0xb0, 30, 11]);
+  const said = "Not assigned: CH 1 · INS FX, or something CH 1 CC 30 already drives, is not in the current plan";
+  await expect(win.locator(".mw-status")).toContainText(said);
+  await expect(page.locator("#statusbar")).toContainText(said);
+  await expect(mapRow(win, "ch1/insertFxOn")).toHaveCount(0);
 });

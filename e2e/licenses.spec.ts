@@ -72,9 +72,11 @@ test("a press outside the box or Escape dismisses the notice", async ({ page }) 
 // The notice opens on an await, by which time choosing the item has already hidden it with
 // the rest of the menu. The modal's close puts focus back where it was when the modal
 // opened, so that has to be the File trigger — a hidden item cannot take focus, and the
-// keyboard would be left on <body>.
+// keyboard would be left on <body>. The resource read is answered on a later task, as the
+// shell answers it: the menu's own click listener runs between the item's action and the
+// answer, and that order is what this case is about.
 test("closing the notice opened from the keyboard returns focus to the File trigger", async ({ page }) => {
-  await stubTauriBoot(page, { third_party_licenses: NOTICE });
+  await stubTauriBoot(page, { third_party_licenses: NOTICE }, { laterTask: true });
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.focus("#btn-file");

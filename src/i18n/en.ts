@@ -274,10 +274,11 @@ export const en = {
     // control behind one physical control leave the continuous one's Pickup unable to engage.
     learnKindMismatch: (control: string, addr: string): string =>
       `Not assigned: ${addr} already drives a different kind of control than ${control} — a switch and a continuous control cannot share one MIDI control`,
-    // …and one refused because what the address already drives is not in the current plan
-    // (or the armed control has stopped being in it), so the two kinds cannot be compared.
+    // …and one refused because the armed control has stopped being in the current plan — on
+    // any address, one nothing drives included — or because something the address already
+    // drives is not in it, so the two kinds cannot be compared.
     learnUnresolved: (control: string, addr: string): string =>
-      `Not assigned: ${control} cannot be compared with what ${addr} already drives — not all of it is in the current plan`,
+      `Not assigned: ${control}, or something ${addr} already drives, is not in the current plan`,
     // Saved gangs that mixed the two kinds, put back to Absolute when they were read.
     mixedGangAbsolute: (addrs: string): string =>
       `Take-in mode set to Absolute on ${addrs}: switches and continuous controls share it, and Pickup does not engage behind a switch`,
