@@ -119,9 +119,8 @@ describe("binding", () => {
       expect(keyTapOf(4)).toBe("prefader");
     });
 
-    // PRE FADER is the device default, so an unset Rec Point is that tap. This is not
-    // only a crafted-plan case: the factory plan seeds no `recPoint` on the STEREO
-    // channels at all, so keying a ducker from CH 7/8 takes it on a fresh plan.
+    // PRE FADER is the device default, so an unset Rec Point is that tap — the state of a
+    // node a device read could not reach, which the load's fill does not complete.
     it("falls back to PRE FADER when the source names no Rec Point", () => {
       expect(keyTapOf(undefined)).toBe("prefader");
       expect(keyTapOf(undefined, "ch_7_8")).toBe("prefader");
@@ -138,8 +137,8 @@ describe("binding", () => {
     });
 
     // A mono-only Rec Point on a stereo strip names a tap that strip has not got. The
-    // inspector cannot offer that pairing, but nothing range-checks an enum on load, so
-    // a hand-edited plan, a `?plan=` link or an unexpected device value all reach it.
+    // inspector cannot offer that pairing and the load moves a document's to PRE FADER, but an
+    // unexpected device value still reaches it.
     // The last resort has to be PRE FADER: falling through to `tapFor` would answer
     // POST, which is after the source's own ducker.
     it("keeps a stereo source off POST when its Rec Point names a tap it has not got", () => {

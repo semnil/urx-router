@@ -43,6 +43,10 @@ export const HI_Z_A_GAIN_MAX_DB = 40;
 export const D_GAIN_MIN_DB = -24;
 export const D_GAIN_MAX_DB = 24;
 
+/** The oscillator level's range (param 711), in dB. */
+export const OSC_LEVEL_MIN_DB = -96;
+export const OSC_LEVEL_MAX_DB = 0;
+
 /** Plan pan range, matching the inspector slider and the device scale L63 – C –
  *  R63 (1:1 with the broker ±63). */
 export const PAN_MIN = -63;
@@ -110,6 +114,22 @@ export function clamp(v: number, lo: number, hi: number): number {
   // reaching vdSet would serialize to null (a malformed broker write).
   if (Number.isNaN(v)) return lo;
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+// Bound a RAW / enum value to its catalog range — the last line before an
+// out-of-range value reaches the device, since encodeValue's "raw" and "enum"
+// cases are pure passthroughs (every numeric encoder here clamps internally,
+// these two cannot: their range lives in the effect / option catalogs, not in the
+// encoder). The inspector already constrains the same bounds, so this only bites
+// on a hand-edited or `?plan=` payload. Rounded first: a raw is a broker integer,
+// and the shell refuses a write carrying a fraction. A value that is not a finite
+// number is the caller's to skip (translate.ts `isRaw`), since what stands in for one
+// differs by whether a catalog default exists to fall back on.
+export function boundRaw(raw: number, lo?: number, hi?: number): number {
+  const v = Math.round(raw);
+  if (lo !== undefined && v < lo) return lo;
+  if (hi !== undefined && v > hi) return hi;
+  return v;
 }
 
 /** Plan PHONES level (0.0 … 10.0 scale) → broker raw (×10). */
@@ -251,8 +271,8 @@ export function vdToPan(value: number): number {
   return clamp(Math.round(value), PAN_MIN, PAN_MAX);
 }
 
-// HA gain converters clamp to the union of the analog/digital ranges; the UI
-// slider enforces the tighter per-type bounds.
+// HA gain converters clamp to the union of the analog/digital ranges; the channel's own
+// range is `channelGainRange` (input-lock.ts), which the load and the UI bound a value to.
 const GAIN_MIN_DB = D_GAIN_MIN_DB; // -24, the lower of the two
 const GAIN_MAX_DB = A_GAIN_MAX_DB; // +70, the higher of the two
 

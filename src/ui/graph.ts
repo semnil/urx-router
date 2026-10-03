@@ -30,7 +30,7 @@ import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
 import { getSettings } from "../core/settings";
 import type { ExportOptions, SaveResult } from "../core/storage";
 import { oscAssign } from "../core/control/translate";
-import { SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
+import { planColorHex, SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
 import { trackCountCeiling } from "../core/constraints";
 import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale, notePanelHeight } from "./graph-text";
 import { sendlessNote } from "./send-fields";
@@ -339,9 +339,9 @@ export class Graph {
   // The microSD Rec slots the node layer was last built without because Track Count or the
   // rate's ceiling gates them. A rate change moves that set as well as the disabled one.
   private drawnGated = new Set<string>();
-  // Nodes still showing their plan default after a device readback (a body read
-  // failed). Mirrors plan.unreadNodes; empty when the plan has no device
-  // provenance (new / loaded / hand-edited plan).
+  // Nodes still showing their plan value after a device readback (a read of their
+  // settings or selector failed). Mirrors plan.unreadNodes; empty when the plan has
+  // no device provenance (new / loaded / hand-edited plan).
   private unreadNodes = new Set<string>();
   // Node ids collapsed off the canvas into the bottom shelf. Kept in sync with
   // plan.hidden; a shelved node is hidden along with its wires.
@@ -486,8 +486,8 @@ export class Graph {
   }
 
   // The view state mirrored out of the plan: the shelved set, the note-collapse set,
-  // and the device provenance (plan.unreadNodes holds exactly the nodes whose body read
-  // failed; no provenance — a plan never fetched — means nothing is flagged). Every
+  // and the device provenance (plan.unreadNodes holds exactly the nodes a read failed
+  // on; no provenance — a plan never fetched — means nothing is flagged). Every
   // place that adopts a plan goes through here so none of the three is forgotten.
   private adoptPlanState(): void {
     this.hidden = new Set(this.plan.hidden);
@@ -1316,7 +1316,7 @@ export class Graph {
 
     // User color override (plan.nodeColors): a thin accent cap along the top
     // edge. Keeps the kind rail intact, so the cap is purely additional.
-    const capColor = this.plan.nodeColors?.[node.id];
+    const capColor = planColorHex(this.plan.nodeColors?.[node.id]);
     if (capColor) g.append(svgRect(6, 0, NODE_W - 6, 3, 1.5, capColor));
 
     for (const sx of [12, NODE_W - 12]) {

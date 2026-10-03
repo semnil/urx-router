@@ -16,10 +16,17 @@ import type { ConsoleMidiHooks } from "./console";
 import { sendConnection } from "../core/plan";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { nodeParamContestPath } from "../core/plan-history";
-import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, insertFxSelected } from "../core/control/params";
+import {
+  COLOR_OFF,
+  COLOR_PALETTE,
+  INSERT_FX_OPTIONS,
+  OUTPUT_INSERT_FX_OPTIONS,
+  insertFxSelected,
+} from "../core/control/params";
 import { insertFxControl, planToCommands } from "../core/control/translate";
 import { getModel } from "../models";
 import { fxEffectTypes } from "../core/control/fx-effect";
+import { insertFxDefaults, insertFxWritableSlots } from "../core/control/insert-fx-effect";
 import { defaultPlan } from "../models/initial-state";
 import { t } from "../i18n";
 
@@ -806,15 +813,54 @@ describe("the INS FX chip", () => {
       expect(now.insertFxOn).toBe(true);
       // The half that says the press was not merely cosmetic: the selector the unit is
       // given now carries the chosen effect, where the stale value was sent as No Effect.
-      // Asserted on the SELECTOR and not on the engine array — translate writes only the
-      // slots the plan carries, and a freshly chosen effect carries none, so a count there
-      // would be zero for the right reason and prove nothing.
       const sent = planToCommands(getModel("URX44V"), h.plan)
         .filter((c) => c.name === "INSERT_FX")
         .map((c) => c.planValue);
       expect(sent).toContain(now.insertFx);
       expect(sent).not.toContain(stale);
     });
+  });
+
+  // The scribble paints a plan colour as its palette swatch and nothing else: Off is the unit's
+  // no-colour, and a string that is no plan colour — which the load drops, and nothing else writes —
+  // never reaches the style, where a url() would be fetched and a short hex inked white.
+  it("paints a scribble only with a palette colour", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeColors = {
+      ...plan.nodeColors,
+      ch1: COLOR_OFF,
+      ch2: "url(https://example.invalid/x)",
+      ch3: "#ff0",
+      ch4: COLOR_PALETTE[6].hex.toUpperCase(),
+    };
+    h = consoleHost({ plan });
+    const scribble = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-scribble")!;
+    for (const id of ["ch1", "ch2", "ch3"]) {
+      expect(scribble(id).style.background, id).toBe("");
+      expect(scribble(id).getAttribute("style") ?? "", id).not.toContain("url(");
+    }
+    expect(scribble("ch4").style.background).not.toBe("");
+  });
+
+  // The unit fills the engine with the type's defaults on the transition into it and not on a  // The unit fills the engine with the type's defaults on the transition into it and not on a
+  // same-value write, so the selection puts them in the plan, where the screen reads them and the
+  // write sends them — and names them as defaults rather than as values the operator chose.
+  it("seeds the chosen type's defaults and names them as defaults", () => {
+    h = consoleHost();
+    openerOf("ch1").click();
+    popRow("Compander-S").click();
+    const expected = insertFxDefaults("compander", 1794);
+    const slots = insertFxWritableSlots("compander").map((s) => s.slot);
+    expect(h.plan.nodeParams.ch1!.insertFxParams).toEqual(
+      Object.fromEntries(slots.map((slot) => [`compander:${slot}`, expected[slot]])),
+    );
+    expect([...h.changeDefaults().at(-1)!].map(([id, path]) => `${id} ${path}`).sort()).toEqual(
+      slots.map((slot) => `ch1 insertFxParams.compander:${slot}`).sort(),
+    );
+    const engine = planToCommands(getModel("URX44V"), h.plan).filter(
+      (c) => c.node === "ch1" && c.name === "INSERT_FX_EFFECT",
+    );
+    expect(engine.length).toBeGreaterThanOrEqual(slots.length);
   });
 
   // The positive control for the pair above: an effect the node's own control DOES carry

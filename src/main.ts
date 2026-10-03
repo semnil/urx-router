@@ -43,6 +43,7 @@ import {
   applyPatch,
   clonePlanState,
   connectionContestKey,
+  connParamContestKey,
   diffPlans,
   nodeParamContestPath,
   PlanWriteWitness,
@@ -186,10 +187,15 @@ import {
   type SendOutcome,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
-import { cmdAddr, collisionOwners } from "./core/control/translate";
+import { cmdAddr, collisionOwners, unnamedNodes } from "./core/control/translate";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
-import { markParamSource as markSource } from "./app/param-source";
+import {
+  markAuthored,
+  markParamSource as markSource,
+  noteSeededDefaults,
+  type SeededDefault,
+} from "./app/param-source";
 import type { SharedOwners, WriteScope } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
@@ -198,7 +204,7 @@ import { LinkLedgerTracker } from "./core/control/link-stats";
 import type { LinkSessionEnd } from "./core/control/link-stats";
 import { LinkStatsView } from "./ui/link-stats";
 import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
-import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
+import { cancelledBeforeWriting, formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
 import { runPrepareModified } from "./core/control/prepare";
 import { DeviceSetupPanel } from "./ui/device-setup";
 import { readDeviceSetup, sendDeviceSetup } from "./core/control/device-setup";
@@ -357,8 +363,8 @@ function sharedSettingText(owners: SharedOwners[]): string {
  *  Every strip by name, not the first few and a count: the list is bounded by the model, and a
  *  name is the only part of this the operator can act on — a count tells them something is
  *  wrong somewhere and leaves them the whole board to look through. */
-function unauthoredNoteFor(changing: ReadonlySet<number>, scope: WriteScope): string {
-  const nodes = unauthoredWriteNodes(getModel(modelId), plan, scope, changing);
+function unauthoredNoteFor(changing: ReadonlySet<number>, scope: WriteScope, renaming?: ReadonlySet<string>): string {
+  const nodes = unauthoredWriteNodes(getModel(modelId), plan, scope, changing, renaming);
   if (!nodes.length) return "";
   return t().confirm.unauthoredWrite(nodes.map((id) => graph.labelOf(id)).join(", "));
 }
@@ -499,7 +505,7 @@ const live = DEMO
             // The one caller that skips the names, and it says so itself — the reconciles
             // below carry pending writes too, and reading names is what makes a rename
             // made on the unit arrive (readback.ts's name section).
-            applyNodeState(getModel(modelId), into, nodeIds, signal, pending, true),
+            applyNodeStateScoped(into, nodeIds, signal, pending, true),
           edits,
         );
         // The plan this read was issued for is gone (a file flow replaced it): its
@@ -632,7 +638,10 @@ const consoleView = new Console(consoleHost, {
   // A console edit changed the plan: flag dirty + schedule live sync. The console
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
-  onChange: (written) => markChanged("ui", written),
+  onChange: (written, defaults) => {
+    noteSeededDefaults(plan, seededDefaults, defaults ?? []);
+    markChanged("ui", written);
+  },
   // The meter stream failed to register. Floor-stuck bars read as "no signal",
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
@@ -1239,7 +1248,7 @@ const follow =
           // value the device does not hold until the idle sweep re-reads past it.
           const pending = live?.recentPending(nodeIds);
           const merged = await followRead("device-follow scoped readback", (into, signal) =>
-            applyNodeState(getModel(modelId), into, nodeIds, signal, pending),
+            applyNodeStateScoped(into, nodeIds, signal, pending),
           );
           if (!merged) return;
           // A Signal Type moved on the unit's own panel reaches the plan here, with no edit
@@ -1507,6 +1516,9 @@ async function applyPreventSleep(on: boolean): Promise<string | null> {
 // Undo / redo over the plan. Assigned below (after the views it re-renders exist),
 // so every funnel reaches it optionally — the same shape as live / midi.
 let planHistory: PlanHistory | null = null;
+// The engine slots an effect selection seeded with its type's defaults, held until the history
+// entry carrying them closes, when they are recorded as the fill's rather than the operator's.
+const seededDefaults = new Map<string, SeededDefault>();
 
 // A device read that carries a model switch (Fetch / Live-sync start) runs against a plan of
 // the unit's model, and that plan replaces the one on screen once the read lands — so while
@@ -1711,7 +1723,7 @@ const inspectorActions = {
     // ducked-channel PRE-send note appears/clears with the tap.
     if (patch.oscL !== undefined || patch.oscR !== undefined || patch.tap !== undefined) refreshInspector();
   },
-  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[]) => {
+  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[], defaults?: readonly string[]) => {
     const prev = plan.nodeParams[id];
     const partner = partnerChannel(getModel(modelId), id);
     plan.nodeParams[id] = { ...prev, ...patch };
@@ -1735,6 +1747,10 @@ const inspectorActions = {
     // The insert FX takes a pass of its own beside it, which is what names the pair's
     // three insert-FX keys whatever this edit was. Both write the same values.
     const insFxMirrored = mirrorLinkedInsertFx(getModel(modelId), plan, id);
+    // The insert-FX mirror copies the engine values, defaults included.
+    const seeded = (defaults ?? []).map((path) => [id, path] as const);
+    if (partner && insFxMirrored) seeded.push(...(defaults ?? []).map((path) => [partner, path] as const));
+    noteSeededDefaults(plan, seededDefaults, seeded);
     // The patch's own keys, not only the ones whose value moved: this funnel asserts
     // every member it carries, and a device read in flight must not take back one that
     // happened to already hold the asserted value.
@@ -2252,6 +2268,25 @@ async function applyDeviceStateScoped(
   return result;
 }
 
+/** A read of a few nodes under the device scope, for the two scoped reads a live session
+ *  takes (a follow reconcile and a sideEffect refetch). Under "Scene only" the plan's
+ *  scene-external values are put back afterwards, as `applyDeviceStateScoped` does for a
+ *  whole-device read: a node read here carries some of them (an oscillator assign into
+ *  STEREO, a MIX or an FX channel), and the two reads must not disagree about one value
+ *  under one setting. */
+async function applyNodeStateScoped(
+  target: Plan,
+  nodeIds: ReadonlySet<string>,
+  signal: AbortSignal | undefined,
+  pending: PendingWrites | undefined,
+  skipNames = false,
+): Promise<ReadbackResult> {
+  const keep = getSettings().deviceScope === "scene" ? captureSceneExternal(target) : null;
+  const result = await applyNodeState(getModel(target.modelId), target, nodeIds, signal, pending, skipNames);
+  if (keep) applySceneExternal(target, keep);
+  return result;
+}
+
 // A fresh plan, opened at the rate this session last worked at. The model picker
 // already keeps the last model across New; the rate belongs to the same rig and
 // does not change because a new plan was started. newPlan itself stays at the
@@ -2284,6 +2319,8 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
   // Replacing the whole plan invalidates the live snapshot; leave sync first.
   // (Live's own enable path calls loadPlan before begin(), so this is a no-op there.)
   deactivateLive();
+  // A seeded slot names a node of the plan being replaced.
+  seededDefaults.clear();
   // deactivateLive drops the subscription and the timers, but a reconcile / refetch
   // already awaiting the device is not reachable from there — the read itself is what
   // still points at the plan being replaced.
@@ -2374,6 +2411,8 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
     ...problems.map((p) => {
       if (p.reason === "insertFxSlot") return `[${p.reason}] ${p.slot}: ${p.nodes.join(", ")}`;
       if (p.reason === "insertFxPair") return `[${p.reason}] ${p.nodes.join(" / ")}: ${p.keys.join(", ")}`;
+      if (p.reason === "linkedPair")
+        return `[${p.reason}] ${p.nodes.join(" / ")}: ${[...p.keys, ...p.sends.map((to) => `send -> ${to}`)].join(", ")}`;
       if (p.reason === "paramRange") {
         // JSON rather than String(): a stored value is a number in the ordinary case but can be
         // a boolean or an object, and `[object Object]` names neither what was there nor why.
@@ -2383,6 +2422,9 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
       if (p.reason === "linkedSendPan")
         return `[${p.reason}] ${p.from} -> ${p.to}: ${p.stored ?? "(none)"} -> ${p.pan}`;
       if (p.reason === "booleanParam") return `[${p.reason}] ${p.node}.${p.path}: ${p.stored} -> ${p.value}`;
+      if (p.reason === "nodeColor") return `[${p.reason}] ${p.node}: ${JSON.stringify(p.stored)} -> (dropped)`;
+      if (p.reason === "documentText")
+        return `[${p.reason}] ${p.field}.${p.node}: ${JSON.stringify(p.stored)} -> ${JSON.stringify(p.value)}`;
       return `[${p.reason}] ${p.from} -> ${p.to}`;
     }),
   ].join("\n");
@@ -2429,7 +2471,11 @@ function loadFromText(text: string, path?: string): boolean | null {
     // omits is a key the panel draws a default for and the write does not send. The DEVICE
     // paths do not come through here: a fetch fills from the unit, and a node it could not
     // read stays absent on purpose.
-    const { booleans, ranged, supplied, linkedPans } = prepareLoadedPlan(getModel(next.modelId), next, problems);
+    const { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, colors, texts } = prepareLoadedPlan(
+      getModel(next.modelId),
+      next,
+      problems,
+    );
     // A STREAMING source the load supplied is recorded as the fill's, so the write confirm
     // names that receiver when the write moves it.
     markSource(
@@ -2445,11 +2491,19 @@ function loadFromText(text: string, path?: string): boolean | null {
       for (const name of sceneExternalParamNames(next)) {
         markSource(next, [name], plan.paramSource?.get(name) ?? "default");
       }
-      // The same for the device-wide wires, whose record is the one a load completion leaves.
+      // The same for the device-wide wires, whose record is the one a load completion leaves,
+      // and for the params they carry, which answer to the wire's record where they have none
+      // of their own — so one with no record here has none there either.
       for (const c of next.connections.filter(isSceneExternalConnection)) {
         const name = connectionContestKey(c.from, c.to);
         const from = plan.paramSource?.get(name);
         if (from !== undefined) markSource(next, [name], from);
+        for (const key of Object.keys(c.params ?? {})) {
+          const leaf = connParamContestKey(c.from, c.to, key);
+          const leafFrom = plan.paramSource?.get(leaf);
+          if (leafFrom !== undefined) markSource(next, [leaf], leafFrom);
+          else next.paramSource?.delete(leaf);
+        }
       }
     }
     const finishLoad = (): boolean => {
@@ -2471,7 +2525,11 @@ function loadFromText(text: string, path?: string): boolean | null {
         ...(boundCount > 0 ? [t().status.paramsBounded(boundCount)] : []),
         ...(dropCount > 0 ? [t().status.paramsDropped(dropCount)] : []),
         ...(supplied.length > 0 ? [t().status.streamingSourceSupplied] : []),
+        ...(sendLevels.length > 0 ? [t().status.sendLevelsSupplied(sendLevels.length)] : []),
+        ...(linkedPairs.length > 0 ? [t().status.linkedPairsAligned(linkedPairs.length)] : []),
         ...(linkedPans.length > 0 ? [t().status.linkedSendPansAligned(linkedPans.length)] : []),
+        ...(colors.length > 0 ? [t().status.colorsDropped(colors.length)] : []),
+        ...(texts.length > 0 ? [t().status.textsRewritten(texts.length)] : []),
       ];
       const line = (what: string): string => [...notes, what].join(" — ");
       if (path) {
@@ -2905,7 +2963,7 @@ planHistory = new PlanHistory({
   reflect: (touch) => reflectHistory(touch),
   labelOf: (id) => graph.labelOf(id),
   onStatus: (msg) => setStatus(msg),
-  onAuthored: (names) => markSource(plan, names, "manual"),
+  onAuthored: (names) => markAuthored(plan, names, seededDefaults),
   // A device read merges into `plan` across many awaits and re-bases the live snapshot
   // from its own copy, and a file flow can replace the plan outright: patching under
   // either acts on a premise that is still moving. Every read that RE-AUTHORS the plan
@@ -3273,8 +3331,8 @@ if (!DEMO) {
           // A link that dropped part-way leaves the badge unknown, as a session's drop does
           // (stopLiveOnError).
           setFollowUsbBadge(linkFailureIn(merged.errors) ? null : followUsb);
-          // Per-node provenance: nodes whose body read failed still show their plan
-          // default, so the graph/inspector flag them as not read from the device.
+          // Per-node provenance: nodes a read failed on still show their plan
+          // value, so the graph/inspector flag them as not read from the device.
           plan.unreadNodes = merged.unreadNodes;
           rerenderPlan();
           dirty = true;
@@ -3557,12 +3615,18 @@ if (!DEMO) {
             // owner's, which reports "no changes to write".
             const owners = collisionOwners(dryRun(getModel(modelId), plan));
             const sharedNote = owners.length ? sharedSettingText(owners) : "";
+            // A node whose name is empty has no name to send, and the unit keeps its own: said
+            // rather than counted as a match, since nothing here knows whether the two agree.
+            const unnamed = unnamedNodes(getModel(modelId), plan);
+            const unnamedLabels = unnamed.map((id) => graph.labelOf(id)).join(", ");
             if (total === 0) {
-              setStatus(
-                (sharedNote ? `${t().status.writeNoChanges} ${sharedNote}` : t().status.writeNoChanges) + adoptedNote(),
-              );
+              const nothing = unnamed.length
+                ? t().status.writeNamesNotSent(unnamedLabels, unnamed.length)
+                : t().status.writeNoChanges;
+              setStatus((sharedNote ? `${nothing} ${sharedNote}` : nothing) + adoptedNote());
               return null;
             }
+            const renaming = new Set(nameWrites.filter((w) => w.name === undefined).map((w) => w.node));
             // What the operator never chose, from the addresses that will actually move. The
             // plan is dense, so a write carries keys nobody set; naming the strips is what makes
             // that a decision rather than a surprise. Built inside the ask, since a retry is the
@@ -3570,7 +3634,8 @@ if (!DEMO) {
             const ask = (): string =>
               [
                 sharedNote,
-                unauthoredNoteFor(new Set(diffs.map((d) => cmdAddr(d.command))), scope),
+                unauthoredNoteFor(new Set(diffs.map((d) => cmdAddr(d.command))), scope, renaming),
+                unnamed.length ? t().confirm.namesNotSent(unnamedLabels, unnamed.length) : "",
                 t().confirm.write(total),
               ]
                 .filter(Boolean)
@@ -4365,17 +4430,26 @@ if (!DEMO) {
         const neverCompared = report.residual.length - divergence;
         setStatus(
           report.aborted
-            ? t().status.selfTestCancelled
+            ? cancelledBeforeWriting(report)
+              ? t().status.selfTestCancelledUntouched
+              : t().status.selfTestCancelled
             : // Before the restore verdict: a refusal wrote nothing, so `restored` is
               // false only because there was nothing to restore — reading it as a failed
               // restore tells the operator their unit may be left perturbed when it was
               // never touched.
               report.phase === "refused"
-              ? t().status.selfTestRefused
+              ? report.refusal === "modelMismatch"
+                ? t().status.selfTestModelMismatch(report.device, modelId)
+                : t().status.selfTestRefused
               : !report.restored
                 ? t().status.selfTestRestoreFail
                 : report.unverified.length
-                  ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
+                  ? t().status.selfTestUnverified(
+                      verdicts.confirmed,
+                      verdicts.roundTripped,
+                      verdicts.refuted,
+                      verdicts.untestable,
+                    )
                   : report.ok
                     ? t().status.selfTestPass(report.written)
                     : // `residual` holds two things once a pass can stop partway: what the

@@ -1,8 +1,6 @@
 // Read the device's current settings back into the plan: the reverse of
 // translate.ts. For each confirmed parameter we can both read and show in the
 // UI, fetch the live value, decode it to plan units, and write it onto the plan.
-// Today that is each channel's main fader / pan (CH_FADER / CH_PAN), reflected
-// onto its fixed STEREO send so the inspector shows the on-device level and pan.
 
 import type { DeviceModel } from "../../models/types";
 import { isSingleInput, ref } from "../../models/types";
@@ -45,7 +43,7 @@ import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
 import { silentKey } from "./params";
 import type { SilentFamily } from "./params";
 import {
-  colorIndexToHex,
+  colorIndexToPlan,
   COMP_EQ_SSMCS,
   FX_STEREO_ASSIGN_ON,
   insertFxAvailable,
@@ -204,6 +202,28 @@ function writeOverlay(source: ParamSource, announced?: ReadonlyMap<number, numbe
   };
 }
 
+/**
+ * What the unit announced, less every layout head on the model — each FX channel's EFFECT
+ * TYPE and each node's insert-FX selector, every instance. A family read checks its head
+ * against the unit a second time behind the values the head lays out (`readWithStableHead`),
+ * and an answer taken from the announcement makes that check a constant: a selector moved
+ * on the panel while the values were being read would file the other layout's raws under the
+ * announced one's keys. The settle has already waited for these addresses, so a read of
+ * them is the unit's value after the write.
+ */
+function withoutLayoutHeads(
+  model: DeviceModel,
+  announced?: ReadonlyMap<number, number>,
+): ReadonlyMap<number, number> | undefined {
+  if (!announced?.size) return announced;
+  const heads = new Set<number>(FX_EFFECT_TYPE_PARAM.map((id) => addrKey(id, 0, 0)));
+  for (const node of model.nodes) {
+    const ifx = insertFxControl(model, node.id);
+    if (ifx) for (const y of ifx.instances) heads.add(addrKey(ifx.param, 0, y));
+  }
+  return new Map([...announced].filter(([addr]) => !heads.has(addr)));
+}
+
 export interface ReadbackResult {
   /**
    * Count of node/parameter groups successfully read and applied to the plan
@@ -214,11 +234,13 @@ export interface ReadbackResult {
   /** Per-group read failures (e.g. timeout, unknown source port), if any. */
   errors: string[];
   /**
-   * Ids of nodes a body-parameter group attempted to read but failed on, so the
-   * UI can flag a node still showing its plan default as not read from the
-   * device. Only body groups (a node's own settings) take part: nodes that hold
-   * no body parameters (inputs, record-track slots) are never attempted and so
-   * never appear here. Transient: not serialized into the plan.
+   * Ids of nodes a read attempted but failed on, so the UI can flag a node still
+   * showing its plan value as not read from the device. Body groups (a node's own
+   * settings) take part, and so do the exclusive selectors — source, routing
+   * receivers, record-track slots and ducker key — whose failed or undecodable read
+   * leaves the plan's own wire in place (see applyDeviceState). Physical input
+   * nodes are never attempted and so never appear here. Transient: not serialized
+   * into the plan.
    */
   unreadNodes: Set<string>;
   /**
@@ -260,10 +282,10 @@ function mainSendConn(plan: Plan, nodeId: string): PlanConnection | undefined {
 }
 
 /**
- * Pull the connected device's channel levels and pans into the plan, mutating it
- * in place. The caller must have connected first (platform.vdConnect) and should
- * re-render afterwards. Read failures are collected, not thrown, so one bad
- * channel does not abort the rest.
+ * Pull the connected device's settings into the plan, mutating it in place. The
+ * caller must have connected first (platform.vdConnect) and should re-render
+ * afterwards. Read failures are collected, not thrown, so one bad channel does not
+ * abort the rest.
  *
  * Provenance tracks body-parameter groups (a node's own settings): each marks a
  * node `attempted` before reading and, if any of its body groups throws, the node
@@ -351,7 +373,15 @@ export async function applyDeviceState(
         signal,
       })
     : undefined;
-  return readPass(writeOverlay(LIVE_SOURCE, announced), model, plan, signal, only, skipNames, skipSceneExternal);
+  return readPass(
+    writeOverlay(LIVE_SOURCE, withoutLayoutHeads(model, announced)),
+    model,
+    plan,
+    signal,
+    only,
+    skipNames,
+    skipSceneExternal,
+  );
 }
 
 /**
@@ -548,7 +578,7 @@ export async function applySilentState(
         signal,
       })
     : undefined;
-  const base = writeOverlay(LIVE_SOURCE, announced);
+  const base = writeOverlay(LIVE_SOURCE, withoutLayoutHeads(model, announced));
   const errors: string[] = [];
   const attempted = new Set<string>();
   const failed = new Set<string>();
@@ -604,8 +634,10 @@ export async function applySilentState(
     head: readonly [number, number, number],
     what: string,
     read: (laidOut: ParamSource) => Promise<FamilyRead>,
-  ): Promise<FamilyRead> =>
-    readWithStableHead(
+  ): Promise<FamilyRead> => {
+    // The head `source`'s emit was laid out by: the one read ahead of the pass.
+    const laidOutBy = heads.get(addrKey(head[0], head[1], head[2]));
+    return readWithStableHead(
       base,
       head,
       what,
@@ -613,10 +645,13 @@ export async function applySilentState(
       // bypass — since a type says nothing about what that means. It is the addresses
       // BEHIND the head that a moved one makes incomparable, and `agrees`
       // asks that of the head the unit holds NOW, which is what an attempt whose head moved
-      // leaves behind for the next one.
-      () => read(agrees(head) ? source : plain),
+      // leaves behind for the next one. The emit is only comparable while that head is
+      // also the one it was laid out by: a head that moved and came back to the sent one
+      // agrees with the snapshot while the emit still describes the other layout.
+      () => read(agrees(head) && heads.get(addrKey(head[0], head[1], head[2])) === laidOutBy ? source : plain),
       (now) => heads.set(addrKey(head[0], head[1], head[2]), now),
     );
+  };
 
   for (const node of model.nodes) {
     signal?.throwIfAborted();
@@ -916,8 +951,8 @@ async function readPass(
     const cc = colorControl(model, node.id);
     if (!cc) continue;
     try {
-      const hex = colorIndexToHex(await vdGet(cc.param, 0, cc.instances[0]));
-      if (hex) plan.nodeColors[node.id] = hex;
+      const color = colorIndexToPlan(await vdGet(cc.param, 0, cc.instances[0]));
+      if (color) plan.nodeColors[node.id] = color;
       else delete plan.nodeColors[node.id];
       applied++;
     } catch (e) {
@@ -1401,8 +1436,9 @@ async function readPass(
       errors.push(`SD Rec track count: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  // A node is unread when a body group tried it but at least one failed; nodes
-  // never attempted (inputs, record-track slots) and fully-read nodes stay out.
+  // A node is unread when a body group or an exclusive selector tried it and at
+  // least one read failed; nodes never attempted (physical inputs) and fully-read
+  // nodes stay out.
   const unreadNodes = new Set<string>();
   for (const id of attempted) if (failed.has(id)) unreadNodes.add(id);
   return {

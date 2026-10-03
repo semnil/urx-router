@@ -22,6 +22,7 @@ import {
   DELAY_FRAME_RATE_DEFAULT,
   INSERT_FX_NONE,
   REC_POINT_DEFAULT,
+  REC_POINT_PRE_COMP,
   denormalizeInsertFx,
 } from "./params";
 import { PORT_REF_NONE, SSMCS_MORPHING_MAX, tagPortRef, vdToPortRef } from "./vd";
@@ -93,6 +94,20 @@ describe("FX / Insert-FX raw emit path is bounded to the calibrated catalog rang
     expect(cmd?.vdValue).toBe(REC_POINT_DEFAULT);
   });
 
+  // A stage the channel's own Rec Point list does not offer: a mono-only stage on a stereo
+  // channel is PRE FADER, and PRE EQ on a channel in SSMCS mode is PRE COMP, the unit's own move.
+  it("sends a channel only a Rec Point stage its own list offers", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["ch_5_6"] = { recPoint: 0 };
+    plan.nodeParams["ch1"] = { compEqType: 1, recPoint: 2 };
+    plan.nodeParams["ch2"] = { compEqType: 0, recPoint: 2 };
+    const sent = (node: string) =>
+      planToCommands(model, plan).find((c) => c.name === "REC_POINT" && c.node === node)?.vdValue;
+    expect(sent("ch_5_6")).toBe(REC_POINT_DEFAULT);
+    expect(sent("ch1")).toBe(REC_POINT_PRE_COMP);
+    expect(sent("ch2")).toBe(2);
+  });
+
   it("coerces an off-menu BUS Type enum back to VARI", () => {
     const plan = emptyPlan("URX44V");
     plan.nodeParams["bus.mix1"] = { busType: 42 };
@@ -105,6 +120,56 @@ describe("FX / Insert-FX raw emit path is bounded to the calibrated catalog rang
     plan.nodeParams["bus.stream"] = { delay: { frameRate: 42 } };
     const cmd = planToCommands(model, plan).find((c) => c.name === "STREAM_DELAY_FRAME_RATE");
     expect(cmd?.vdValue).toBe(DELAY_FRAME_RATE_DEFAULT);
+  });
+});
+
+// vd_set takes an integer, so a fraction or a boolean reaching a command's vdValue is a write
+// the shell refuses before it reaches the unit, and the write stops there. Every raw family is
+// fed a fractional leaf and a boolean one through a plan no load repaired.
+describe("every emitted vdValue is an integer", () => {
+  const rawPlan = (leaf: number | boolean): ReturnType<typeof emptyPlan> => {
+    const plan = emptyPlan("URX44V");
+    const v = leaf as number;
+    plan.nodeParams["ch1"] = { compEqType: 0, comp: { oneKnobLevel: v } };
+    plan.nodeParams["ch2"] = {
+      compEqType: 1,
+      ssmcs: {
+        compDrive: v,
+        morphing: v,
+        outGain: v,
+        comp: { attack: v, release: v, ratio: v, threshold: v, makeup: v },
+        sc: { q: v, freq: v, gain: v },
+        eq: { low: { freq: v, gain: v }, mid: { q: v, freq: v, gain: v }, high: { freq: v, gain: v } },
+      },
+    };
+    plan.nodeParams["ch3"] = { insertFx: 1793, insertFxParams: { "compander:6": v, "compander:7": v } };
+    plan.nodeParams["bus.stereo"] = { eqOneKnob: { level: v } };
+    plan.nodeParams["bus.osc"] = { osc: { interval: v } };
+    return plan;
+  };
+
+  it("rounds a fractional raw before it is bounded", () => {
+    const cmds = planToCommands(model, rawPlan(10.5));
+    const families = [
+      "COMP_ONE_KNOB_LEVEL",
+      "SSMCS_COMP_DRIVE",
+      "INSERT_FX_EFFECT",
+      "EQ_ONE_KNOB_LEVEL",
+      "OSC_BURST_INTERVAL",
+    ];
+    // The positive control: each family is emitted at all, so an integer check below is not
+    // satisfied by a family that went missing.
+    for (const name of families)
+      expect(
+        cmds.some((c) => c.name === name),
+        name,
+      ).toBe(true);
+    expect(cmds.filter((c) => !Number.isInteger(c.vdValue)).map((c) => `${c.name} ${c.vdValue}`)).toEqual([]);
+  });
+
+  it("sends no command for a raw that is not a number", () => {
+    const cmds = planToCommands(model, rawPlan(true));
+    expect(cmds.filter((c) => !Number.isInteger(c.vdValue)).map((c) => `${c.name} ${c.vdValue}`)).toEqual([]);
   });
 });
 

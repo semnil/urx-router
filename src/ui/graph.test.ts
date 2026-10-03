@@ -45,7 +45,7 @@ import { rateConstraints } from "../core/constraints";
 import type { Plan } from "../core/plan";
 import { defaultPlan } from "../models/initial-state";
 import { isFixedConnection } from "../core/routing";
-import { BUS_TYPE_FIXED } from "../core/control/params";
+import { BUS_TYPE_FIXED, COLOR_OFF, COLOR_PALETTE } from "../core/control/params";
 import { getModel } from "../models";
 import type { ModelId } from "../models/types";
 import { getSettings, resetSettingsCache, updateSettings } from "../core/settings";
@@ -95,6 +95,23 @@ describe("construction", () => {
     expect(tapHit(fx.host, "ch1:out")).not.toBeNull();
     expect(tapHit(fx.host, "ch1:out")).not.toBe(portHit(fx.host, "ch1:out"));
     expect(fx.host.querySelectorAll(".port-tap").length).toBeGreaterThan(0);
+  });
+
+  // The colour cap is a palette swatch: Off draws none, and so does a string that is no plan
+  // colour, which never reaches the fill.
+  it("caps a node only with a palette colour", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        plan.nodeColors.ch1 = COLOR_OFF;
+        plan.nodeColors.ch2 = "url(https://example.invalid/x)";
+        plan.nodeColors.ch3 = COLOR_PALETTE[6].hex;
+      },
+    });
+    const fills = (id: string): string[] =>
+      [...nodeEl(fx.host, id)!.querySelectorAll("rect")].map((r) => r.getAttribute("fill") ?? "");
+    expect(fills("ch1")).not.toContain(COLOR_OFF);
+    expect(fills("ch2").some((f) => f.includes("url("))).toBe(false);
+    expect(fills("ch3")).toContain(COLOR_PALETTE[6].hex);
   });
 
   it("draws a hit path per wire, addressed by its endpoints", () => {

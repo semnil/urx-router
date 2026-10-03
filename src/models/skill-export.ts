@@ -9,14 +9,44 @@
 import { MODEL_IDS, getModel } from "./index";
 import { fullLabel } from "./types";
 import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
-import { INSERT_FX_OPTIONS } from "../core/control/params";
-import { isPlainRecord } from "../core/plan";
-import { factoryNodeParams } from "./initial-state";
-import { monoPairsInto } from "../core/routing";
-import { hasHiZInput } from "../core/control/translate";
-import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
-import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams } from "../core/control/fx-effect";
 import {
+  COLOR_OFF,
+  COLOR_PALETTE,
+  COMP_EQ_SSMCS,
+  INSERT_FX_OPTIONS,
+  OUTPUT_INSERT_FX_OPTIONS,
+  PAN_BAL_BAL,
+} from "../core/control/params";
+import {
+  fixedConnection,
+  isPlainRecord,
+  SDREC_NODE_ID,
+  SEND_LEVEL_UNNAMED_DB,
+  type ConnParams,
+  type NodeParams,
+} from "../core/plan";
+import { factoryNodeColors, factoryNodeNames, factoryNodeParams } from "./initial-state";
+import { INSERT_FX_PAIR_KEYS, monoPairsInto, PAIR_OWN_NODE_KEYS } from "../core/routing";
+import { isRackSend } from "../core/plan-validate";
+import {
+  channelControl,
+  colorControl,
+  hasHiZInput,
+  nameControl,
+  nodeLeafRules,
+  type LeafRule,
+} from "../core/control/translate";
+import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
+import {
+  FX_CHANNEL_NODE_INDEX,
+  fxEffectTypes,
+  fxParams,
+  legacyFxRenames,
+  resolveFxEffectType,
+} from "../core/control/fx-effect";
+import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES, trackCountCeiling } from "../core/constraints";
+import {
+  insertFxDefaults,
   insertFxDeviceDriven,
   insertFxDriverSlots,
   insertFxFamilyOf,
@@ -42,7 +72,11 @@ export interface SkillModel {
    *  the app's load gives a document that names none. Carried so the validator reports that
    *  completion from the model rather than spelling STREAMING out itself. */
   requiredSources: Record<string, string>;
-  /** Per channel insert-FX selector: everything a reader needs to work out what a write
+  /** The fixed sends the write sends a level for — the CONSOLE's send rack, into the MIX and FX
+   *  buses — as `<from> -> <to>`. The load gives one a document lists without a level the level the
+   *  write sends (`sendLevelProblems`); a main path into STEREO is not one of them. */
+  rackSends: string[];
+  /** Per insert-FX selector, the channels' and the output buses': everything a reader needs to work out what a write
    *  SENDS for that effect's engine values. Model-INDEPENDENT — carried per model because the
    *  file is keyed by model id, and a key beside those would read as a fourth model to
    *  anything that asks `modelId in models`.
@@ -57,9 +91,10 @@ export interface SkillModel {
     {
       /** The namespace stored values live under (`guitar-clean`, `pitch`, …). */
       family: string;
-      /** Every slot a write can send, with the range it is bounded to, the second slot a
-       *  mirrored value also goes to, and whether it is sent under the DRIVER name. */
-      slots: { slot: number; rawMin: number; rawMax: number; mirror?: number; driver?: true }[];
+      /** Every slot a write can send, with the range it is bounded to, the default the load
+       *  gives a slot the document leaves out (`seedInsertFxParams`), the second slot a mirrored
+       *  value also goes to, and whether it is sent under the DRIVER name. */
+      slots: { slot: number; rawMin: number; rawMax: number; def: number; mirror?: number; driver?: true }[];
       /** The slots the unit drives ITSELF while `gate` is non-zero, which the write then
        *  leaves out. Absent for a family that drives nothing. */
       driven?: { gate: number; slots: number[] };
@@ -80,8 +115,17 @@ export interface SkillModel {
     {
       types: number[];
       params: Record<string, { control: string; rawMin?: number; rawMax?: number; options?: number[] }>;
+      /** The type an absent `type`, or one the menu does not offer, resolves to. */
+      defaultType: number;
+      /** Per type, the renames a version-1 document's parameters take on load
+       *  (`legacyFxRenames`), as [stored key, key the build reads] pairs. */
+      legacyRenames: Record<string, Array<[string, string]>>;
     }
   >;
+  /** The rates a plan may name (`SAMPLE_RATES`) — the load reads any other as `defaultRate` —
+   *  and, per rate, the Track Count ceiling the load lowers the recorder's count to
+   *  (`trackCountCeiling`), the recorder being the node `recorder`. */
+  rates: { rates: number[]; defaultRate: number; trackCountCeiling: Record<string, number>; recorder: string };
   /** The channels carrying the HI-Z switch, and A.Gain's upper bound while it is on. With HI-Z
    *  on, the load turns +48V off and bounds A.Gain to that value. */
   hiZ: { channels: string[]; gainMaxDb: number };
@@ -89,6 +133,45 @@ export interface SkillModel {
    *  spelling (`eqBands[0].on`). The load converts a number written at one of them to on, or to
    *  off for 0 (`booleanParamProblems`). */
   booleanLeaves: Record<string, string[]>;
+  /** The model's factory values, which the load completes a document from. Per node, the
+   *  params `factoryNodeParams` answers; the load drops a value whose kind is not the factory
+   *  value's at the same path (`paramRangeProblems`). And per nameable node, the name the load
+   *  gives one the document leaves unnamed (`completeNodeNames`) — a node absent here carries
+   *  no name on the unit. And per colourable node, the colour the load gives one the document
+   *  leaves without a colour (`completeNodeColors`). */
+  factory: {
+    nodeParams: Record<string, NodeParams>;
+    nodeNames: Record<string, string>;
+    nodeColors: Record<string, string>;
+  };
+  /** The colours a plan may hold (`isPlanColor`): the unit's palette, as hexes compared without
+   *  case, and the spelling of its Off. The load drops any other. */
+  colors: { palette: string[]; off: string };
+  /** Per node, every leaf the write bounds, in the validator's path spelling, with the rule it
+   *  is bounded by (`nodeLeafRules`): a window, an integer window, a window whose value then
+   *  moves to the nearest of `steps`, a menu with its default, or a leaf the write never sends
+   *  (`unsent`). The load bounds a value outside it to the value the write sends, and removes an
+   *  unsent one (`paramRangeProblems`). A rule that depends on the node's own state carries the
+   *  rule that state gives under the state's name — `hiZ` while HI-Z is on, `linked` while a
+   *  pair's primary holds `stereoLink` on, `ssmcs` while a MONO IN's `compEqType` is SSMCS —
+   *  beside the rule the factory state gives. A menu rule may carry a `map` from a value off the
+   *  menu to the one it stands for, which wins over the default. The insert-FX engine keys are not here: which rule a key takes is its
+   *  family's, which `insertFxParamSpace` carries. */
+  leafRules: Record<string, Record<string, LeafRule & Partial<Record<LeafContext, LeafRule>>>>;
+  /** What the load's linked-pair repair reads (`linkedPairProblems`). A STEREO-linked pair holds
+   *  one set of values, and the load copies the primary's onto the secondary: every node param
+   *  but `own` — the pair-level flags and the input stage each member keeps — and `insertFx`, the
+   *  insert effect, which the refusal answers for instead; and each pair of fixed sends' level,
+   *  on/off and PRE/POST, plus the pan when the primary's `panBal` is `bal`. A send is read the
+   *  way the write reads it: one the document omits as the params the install seeds it with
+   *  (`sendSeeds`, keyed `<from> -> <to>`), and a missing level as `unnamedSendLevel`. */
+  linkedPairs: {
+    own: string[];
+    insertFx: string[];
+    bal: number;
+    sendSeeds: Record<string, ConnParams>;
+    unnamedSendLevel: number;
+  };
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -100,14 +183,90 @@ function skillModel(model: DeviceModel): SkillModel {
     rules: model.rules.map((r) => [r.from, r.to, r.kind, Boolean(r.fixed)]),
     channelPairs: model.channelPairs.map(([a, b]) => [a, b]),
     requiredSources: { ...model.requiredSources },
+    rackSends: model.rules.filter((r) => isRackSend(model, r.from, r.to)).map((r) => `${r.from} -> ${r.to}`),
     insertFxParamSpace: insertFxParamSpaceBySelector(),
     fxChannels: fxChannelCatalogue(),
+    rates: {
+      rates: [...SAMPLE_RATES],
+      defaultRate: DEFAULT_SAMPLE_RATE,
+      trackCountCeiling: Object.fromEntries(SAMPLE_RATES.map((r) => [String(r), trackCountCeiling(r)])),
+      recorder: SDREC_NODE_ID,
+    },
     hiZ: {
       channels: model.nodes.filter((n) => hasHiZInput(model.id, n.id)).map((n) => n.id),
       gainMaxDb: HI_Z_A_GAIN_MAX_DB,
     },
     booleanLeaves: booleanLeaves(model),
+    factory: {
+      nodeParams: factoryParams(model),
+      nodeNames: Object.fromEntries(
+        model.nodes
+          .filter((n) => nameControl(model, n.id) && factoryNodeNames(model.id)[n.id])
+          .map((n) => [n.id, factoryNodeNames(model.id)[n.id]]),
+      ),
+      nodeColors: Object.fromEntries(
+        model.nodes
+          .filter((n) => colorControl(model, n.id) && factoryNodeColors(model.id)[n.id])
+          .map((n) => [n.id, factoryNodeColors(model.id)[n.id]]),
+      ),
+    },
+    colors: { palette: COLOR_PALETTE.map((c) => c.hex), off: COLOR_OFF },
+    leafRules: leafRules(model),
+    linkedPairs: {
+      own: [...PAIR_OWN_NODE_KEYS],
+      insertFx: [...INSERT_FX_PAIR_KEYS],
+      bal: PAN_BAL_BAL,
+      sendSeeds: Object.fromEntries(
+        model.rules
+          .filter((r) => r.fixed && r.kind === "send")
+          .map((r) => [`${r.from} -> ${r.to}`, fixedConnection(model, r).params ?? {}]),
+      ),
+      unnamedSendLevel: SEND_LEVEL_UNNAMED_DB,
+    },
   };
+}
+
+/** Each node's bounded leaves, asked of the emit's own rule table with the factory params. */
+function leafRules(model: DeviceModel): SkillModel["leafRules"] {
+  const out: SkillModel["leafRules"] = {};
+  for (const n of model.nodes) {
+    const factory = factoryNodeParams(model.id, n.id);
+    const rules: SkillModel["leafRules"][string] = {};
+    for (const [path, rule] of nodeLeafRules(model, n.id, factory)) {
+      const entry: SkillModel["leafRules"][string][string] = { ...rule };
+      // The same table asked again under each state that changes a rule, and the rule kept
+      // where it differs.
+      for (const [context, state] of leafContexts(model, n.id)) {
+        const other = nodeLeafRules(model, n.id, { ...factory, ...state }).find(([p]) => p === path)?.[1];
+        if (other && JSON.stringify(other) !== JSON.stringify(rule)) entry[context] = other;
+      }
+      rules[path.replace(/\.([0-9]+)(?=\.|$)/g, "[$1]")] = entry;
+    }
+    if (Object.keys(rules).length > 0) out[n.id] = rules;
+  }
+  return out;
+}
+
+/** A node state a rule can depend on, by the name the validator asks it under. */
+type LeafContext = "hiZ" | "linked" | "ssmcs";
+
+/** The states that change a node's rules, each as the params that put the node in it. */
+function leafContexts(model: DeviceModel, nodeId: string): [LeafContext, NodeParams][] {
+  const out: [LeafContext, NodeParams][] = [];
+  if (hasHiZInput(model.id, nodeId)) out.push(["hiZ", { hiZ: true }]);
+  if (model.channelPairs.some(([primary]) => primary === nodeId)) out.push(["linked", { stereoLink: true }]);
+  if (channelControl(model, nodeId)?.hasMicStrip) out.push(["ssmcs", { compEqType: COMP_EQ_SSMCS }]);
+  return out;
+}
+
+/** Each node's factory params, for every node the model's factory values describe. */
+function factoryParams(model: DeviceModel): SkillModel["factory"]["nodeParams"] {
+  const out: SkillModel["factory"]["nodeParams"] = {};
+  for (const n of model.nodes) {
+    const np = factoryNodeParams(model.id, n.id);
+    if (np) out[n.id] = np;
+  }
+  return out;
 }
 
 /** The on/off leaves of each node's factory values, the set `booleanParamProblems` reads. */
@@ -143,7 +302,13 @@ function fxChannelCatalogue(): SkillModel["fxChannels"] {
         };
       }
     }
-    out[nodeId] = { types: fxEffectTypes(fxIndex).map((o) => o.value), params };
+    const types = fxEffectTypes(fxIndex).map((o) => o.value);
+    out[nodeId] = {
+      types,
+      params,
+      defaultType: resolveFxEffectType(fxIndex, undefined),
+      legacyRenames: Object.fromEntries(types.map((t) => [String(t), legacyFxRenames(fxIndex, t)])),
+    };
   }
   return out;
 }
@@ -164,16 +329,19 @@ function fxChannelCatalogue(): SkillModel["fxChannels"] {
  */
 function insertFxParamSpaceBySelector(): SkillModel["insertFxParamSpace"] {
   const out: SkillModel["insertFxParamSpace"] = {};
-  for (const option of INSERT_FX_OPTIONS) {
+  for (const option of [...INSERT_FX_OPTIONS, ...OUTPUT_INSERT_FX_OPTIONS]) {
+    if (String(option.value) in out) continue;
     const family = insertFxFamilyOf(option.value);
     if (!family) continue;
     const drivers = insertFxDriverSlots(family);
+    const defaults = insertFxDefaults(family, option.value);
     const slots = [...insertFxWritableSlots(family)]
       .sort((a, b) => a.slot - b.slot)
       .map((s) => ({
         slot: s.slot,
         rawMin: s.rawMin,
         rawMax: s.rawMax,
+        def: defaults[s.slot],
         ...(s.mirror !== undefined ? { mirror: s.mirror } : {}),
         ...(drivers.has(s.slot) ? { driver: true as const } : {}),
       }));
@@ -241,7 +409,8 @@ export function renderModelMarkdown(model: DeviceModel): string {
   lines.push(
     "Each row is a legal wire from -> to with its kind. fixed wires are structural:",
     "they always exist (seeded into every plan) and cannot be removed; you may set",
-    "their params (level/pan/on) but not delete them.",
+    "their params (level/pan/on) but not delete them. *(fixed)* after a destination marks",
+    "every source in that row; after a source, that source alone.",
     "",
   );
   for (const kind of ROUTE_KIND_ORDER) {
@@ -250,14 +419,15 @@ export function renderModelMarkdown(model: DeviceModel): string {
     lines.push(`### kind: \`${kind}\``, `_${ROUTE_KIND_DESC[kind]}_`, "");
     // Rows are grouped by destination (sorted) so the same selector's sources sit
     // together; sources within a row keep model order. fixed marks a destination
-    // any of whose wires is structural.
+    // all of whose wires are structural; a row that mixes structural and removable
+    // wires marks each structural source instead.
     // A destination that takes a MONO IN pair as two wires says which pairs, and which
     // channel's slot each half is written with.
     const dests = [...new Set(group.map((r) => r.to))].sort();
     for (const to of dests) {
       const into = group.filter((r) => r.to === to);
-      const fixed = into.some((r) => r.fixed);
-      const sources = into.map((r) => `\`${r.from}\``).join(", ");
+      const fixed = into.every((r) => r.fixed);
+      const sources = into.map((r) => `\`${r.from}\`${!fixed && r.fixed ? " *(fixed)*" : ""}`).join(", ");
       const pairs = kind === "patch" ? monoPairsInto(model, to) : [];
       const pairNote = pairs.length
         ? ` — or two wires, one from each channel of a MONO IN pair (${pairs

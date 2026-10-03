@@ -37,6 +37,10 @@ export const SDREC_NODE_ID = "out.sdrec";
 // here as well, as part of the plan's own vocabulary.
 export { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB };
 
+/** The level a fixed send carries when its wire names none: unity, what the write sends for
+ *  it. The load completes a document's wire with it (`plan-validate.ts`). */
+export const SEND_LEVEL_UNNAMED_DB = 0;
+
 export interface ConnParams {
   level?: number;
   pan?: number;
@@ -254,9 +258,10 @@ export interface NodeParams {
   /** Insert-FX effect parameters: RAW broker values keyed by effect FAMILY + engine
    *  array slot (`insertFxParamKey`, see control/insert-fx-effect.ts), mirroring the
    *  device so a captured plan round-trips. The selected `insertFx` value picks which
-   *  family's entries are read; absent slots fall back to the family's factory
-   *  defaults. A bare slot number is the device-shaped namespace a readback writes and
-   *  reads as the currently selected family's. */
+   *  family's entries are read; a slot the map does not hold reads as the selected type's
+   *  default, which a selection and a load put in the map (`seedInsertFxParams`). A bare
+   *  slot number is the device-shaped namespace a readback writes and reads as the
+   *  currently selected family's. */
   insertFxParams?: Record<string, number>;
   /** COMP_EQ_TYPE: 0 = COMP->EQ, 1 = SSMCS (MONO IN channels). Absent = COMP->EQ. */
   compEqType?: number;
@@ -359,8 +364,9 @@ export interface Plan {
   /** User-chosen channel/bus name overrides, keyed by node id (mirrors the
    *  device CH SETTING name). Absent / empty = the model's default label. */
   nodeNames: Record<string, string>;
-  /** User-chosen channel/bus color overrides (hex), keyed by node id (mirrors
-   *  the device CH SETTING color). Drawn as a top accent cap; absent = none. */
+  /** Channel/bus colors, keyed by node id (mirrors the device CH SETTING color): a palette
+   *  hex, or `COLOR_OFF` for the device Off (`isPlanColor`). Drawn as a top accent cap; Off
+   *  and absent draw none, and an absent one is not written. */
   nodeColors: Record<string, string>;
   /** Node ids the user collapsed off the canvas (shelved by hand or via "hide unused"). */
   hidden: string[];
@@ -369,9 +375,11 @@ export interface Plan {
   /** Node ids whose in-frame note panel is minimized to the header. */
   noteCollapsed: string[];
   /**
-   * Ids of nodes whose body parameters a device readback tried but failed to
-   * read on the last fetch, so they still show their plan default. Present only
-   * after a device readback; absent on new / loaded / hand-edited plans.
+   * Ids of nodes a device readback tried but failed to read on the last fetch —
+   * a body-parameter group or an exclusive selector (source, routing receiver,
+   * record-track slot, ducker key) — so they still show their plan value.
+   * Present only after a device readback; absent on new / loaded / hand-edited
+   * plans.
    * Transient provenance, never serialized: nodes in this set are flagged in the
    * UI as not read from the device.
    */
@@ -512,7 +520,9 @@ export function deserialize(text: string): Plan {
 }
 
 export function deserializeDocument(text: string): PlanDocument {
-  const data = JSON.parse(text) as Record<string, unknown>;
+  // One leading byte-order mark is dropped: a desktop read keeps it and a browser read does
+  // not, and every entry point reaches this function.
+  const data = JSON.parse(text.startsWith("﻿") ? text.slice(1) : text) as Record<string, unknown>;
   if (data.format !== PLAN_FORMAT) {
     throw new PlanError("notPlanFile");
   }
@@ -538,7 +548,7 @@ export function deserializeDocument(text: string): PlanDocument {
     positions: posRecord(data.positions),
     connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection).map(rebuildConn) : [],
     nodeParams: sanitizeNodeParams(data.nodeParams, version),
-    nodeNames: nameRecord(data.nodeNames),
+    nodeNames: stringRecord(data.nodeNames),
     nodeColors: stringRecord(data.nodeColors),
     hidden: stringArray(data.hidden),
     notes: stringRecord(data.notes),
@@ -663,8 +673,9 @@ function stringRecord(v: unknown): Record<string, string> {
  *  code points via the string iterator, so a surrogate pair is one character and the
  *  result is never half of one. Names are the one plan string that leaves the app on
  *  the device link, and they left it uncut — the numeric leaves have `boundRaw`
- *  between them and the wire, and nothing played that part for strings. Notes and
- *  colors are the app's own and stay unbounded. */
+ *  between them and the wire, and nothing played that part for strings. Notes are the
+ *  app's own and stay unbounded; a colour is one of the unit's palette values
+ *  (`isPlanColor`). */
 export function clipNodeName(name: string): string {
   const chars = [...name];
   return chars.length <= NODE_NAME_MAX_CHARS ? name : chars.slice(0, NODE_NAME_MAX_CHARS).join("");
@@ -689,10 +700,21 @@ export function normalizeNodeName(name: string): string {
   return clipNodeName(name).trimEnd();
 }
 
-function nameRecord(v: unknown): Record<string, string> {
-  const out = stringRecord(v);
-  for (const [k, name] of Object.entries(out)) out[k] = normalizeNodeName(name);
-  return out;
+/** The code points XML 1.0 refuses, raw or as a reference: the C0 controls other than tab,
+ *  newline and carriage return, and U+FFFE / U+FFFF. A string carrying one cannot be the text
+ *  of an SVG an export serializes. */
+const XML_INVALID_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g;
+
+/** `text` without the code points XML 1.0 refuses. */
+export function stripXmlInvalid(text: string): string {
+  return text.replace(XML_INVALID_CHARS, "");
+}
+
+/** A node name as a document load keeps it: `normalizeNodeName` of the name without the code
+ *  points an export cannot carry. A name read from the unit takes `normalizeNodeName` alone, so
+ *  no write rewrites the unit's own name for that. */
+export function normalizeDocumentName(name: string): string {
+  return normalizeNodeName(stripXmlInvalid(name));
 }
 
 function stringArray(v: unknown): string[] {

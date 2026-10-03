@@ -1,8 +1,10 @@
-// Catalog of confirmed URX44V control parameters. Each entry binds a semantic
-// name to the broker's numeric param_id and the value encoding (see vd.ts). Only
-// parameters validated against the broker dump (reference/work/vd/vd-params.md)
-// are listed here; inferred-but-unconfirmed ids are deliberately omitted so live
-// control never writes a guessed address to hardware.
+// Catalog of the control parameters live control writes and reads. Each entry
+// binds a semantic name to the broker's numeric param_id and the value encoding
+// (see vd.ts). An address is listed under CLAUDE.md Conventions "Write only
+// confirmed parameters": a value written to it is read back from the unit. The
+// URX44V map is the confirmed one; an address that is still a guess on another
+// model is registered in UNVERIFIED_MAPPINGS (translate.ts), which the self-test
+// reports a verdict for.
 
 /** Value encoding, mapping to the converters in vd.ts. */
 export type ParamEncoding =
@@ -670,9 +672,9 @@ export const PARAMS = {
   // brightness 10 and the auto-power-off timer are exactly the values that must
   // not be nudged. core/control/device-setup.ts owns reading and writing them,
   // through the Follow USB (848) shape: bare vdGet / vdSet, no diff engine.
-  /** SETUP > Brightness > Screen (global, y0): raw 1..10, 1:1 with the readout.
-   *  The dump's min is 0, which the unit's own range never offers; the app clamps
-   *  to 1 rather than testing what a 0 does to a screen it cannot un-blank. */
+  /** SETUP > Brightness > Screen (global, y0): raw 0..10, 1:1 with the readout. 0 is
+   *  a real setting the unit holds; the floor the app writes is BRIGHTNESS_MIN in
+   *  device-setup.ts. */
   BRIGHTNESS: { id: 758, encoding: "raw", sceneExternal: true, planExternal: true },
   /** SETUP > Power Management > Auto Power Off [Enable] (global, y0). Factory ON;
    *  the dump's default_value 0 is wrong (measured against a factory-init file). */
@@ -751,6 +753,37 @@ export function hexToColorIndex(hex: string): number | null {
   return i === -1 ? null : i;
 }
 
+/** The plan's spelling of the device Off colour: no cap, written as `COLOR_OFF_INDEX`. A plan
+ *  colour is one of the palette hexes or this; an absent one is a colour nobody set. */
+export const COLOR_OFF = "off";
+
+/** Whether `value` is a colour a plan may hold: a palette hex, in any case, or `COLOR_OFF`.
+ *  The one admission rule — the load, the emit, every surface that paints one and the skill's
+ *  validator (through the generated data) all ask it. */
+export function isPlanColor(value: unknown): value is string {
+  return typeof value === "string" && planColorIndex(value) !== null;
+}
+
+/** A plan colour as the unit's palette index — `COLOR_OFF_INDEX` for Off — or null for anything
+ *  that is not one. */
+export function planColorIndex(value: string | undefined): number | null {
+  if (value === COLOR_OFF) return COLOR_OFF_INDEX;
+  return value === undefined ? null : hexToColorIndex(value);
+}
+
+/** A palette index as a plan colour: the swatch hex, `COLOR_OFF` for Off, or null for an index
+ *  the palette does not carry. */
+export function colorIndexToPlan(index: number): string | null {
+  return index === COLOR_OFF_INDEX ? COLOR_OFF : colorIndexToHex(index);
+}
+
+/** The swatch a plan colour paints, or null where it paints none: Off, absent, or a value that
+ *  is not a plan colour. */
+export function planColorHex(value: string | undefined): string | null {
+  const index = planColorIndex(value);
+  return index === null ? null : colorIndexToHex(index);
+}
+
 /** Ids of the port-ref selectors (raw or tagged), derived from the registry. An
  *  unread selector address defaults to the broker's NONE sentinel, not 0. */
 export const PORT_REF_PARAM_IDS: ReadonlySet<number> = new Set(
@@ -782,9 +815,11 @@ export const INSERT_FX_ANNOUNCED: ReadonlySet<ParamName> = new Set<ParamName>([
 export const INSERT_FX_NONE = -1;
 const INSERT_FX_VD_NONE = 0xffffffff;
 /**
- * Resource slot an insert FX consumes. Each slot is device-wide 1-of: only one
- * MONO IN channel can hold the guitar amp, Pitch Fix, or compander at a time
- * (user guide p.180: "Number of simultaneous uses: 1 slot"). No Effect = none.
+ * Resource slot an insert FX consumes. Each slot is device-wide 1-of: the user
+ * guide's Effect list gives one MONO IN channel at a time the guitar amp, Pitch
+ * Fix, or compander ("Number of simultaneous uses: 1 slot"), and the app's menus
+ * hold that rule. The control link accepts a second compander holder. No Effect
+ * = none.
  */
 export type InsertFxSlot = "amp" | "pitch" | "compander" | "out-dyn";
 
@@ -945,6 +980,13 @@ export const REC_POINT_OPTIONS = [
   { value: 4, label: "PRE FADER", stereo: true },
 ];
 
+/** The Rec Point stages one channel offers: a stereo channel the two `stereo` ones, a MONO IN
+ *  every stage, and a MONO IN in SSMCS mode every stage but PRE EQ. The one answer the
+ *  Inspector's menu, the write and the self-test's sweep share. */
+export function recPointOptionsFor(stereo: boolean, ssmcs: boolean): typeof REC_POINT_OPTIONS {
+  return REC_POINT_OPTIONS.filter((o) => (!stereo || o.stereo) && !(ssmcs && o.value === REC_POINT_PRE_EQ));
+}
+
 // BUS Type for MIX 1 / MIX 2 (CH SETTING): VARI = variable per-send level (the
 // default, what the tool models), FIXED = a fixed send level (sends carry no
 // adjustable level). Labels are the device strings. Control address = param 587
@@ -1044,6 +1086,26 @@ export const COMP_KNEE_OPTIONS = [
  */
 export const COMP_ONE_KNOB_DRIVEN: ReadonlySet<string> = new Set(["threshold", "ratio", "gain", "knee"]);
 
+/** The COMP value Auto Makeup computes while it is on: the gain, recomputed whenever the
+ *  threshold or the ratio moves and when Auto Makeup is switched on. */
+export const COMP_AUTO_MAKEUP_DRIVEN: ReadonlySet<string> = new Set(["gain"]);
+const COMP_NOTHING_DRIVEN: ReadonlySet<string> = new Set();
+
+/**
+ * The COMP values the unit owns for a comp group, by their `NodeParams.comp` key: the
+ * 1-knob's while it is on, otherwise the gain while Auto Makeup is on, otherwise none. Each
+ * switch is read the way the writer sends it, for truth.
+ *
+ * One predicate with three consumers that must not disagree: `translate.ts` stops EMITTING
+ * these (and registers Auto Makeup's gain to be followed instead), the COMP tuning screen
+ * locks and tags the same rows, and the MIDI catalogue refuses a mapping's write to them.
+ */
+export function compDeviceDriven(comp: { oneKnob?: unknown; autoMakeup?: unknown } | undefined): ReadonlySet<string> {
+  if (comp?.oneKnob) return COMP_ONE_KNOB_DRIVEN;
+  if (comp?.autoMakeup) return COMP_AUTO_MAKEUP_DRIVEN;
+  return COMP_NOTHING_DRIVEN;
+}
+
 // Oscillator mode (param 712). Frequency control applies to Sine Wave; Burst
 // Noise adds width (param 714) / interval (param 715), both confirmed by live
 // snapshot-diff and in the write catalog above.
@@ -1071,23 +1133,18 @@ export const DELAY_FRAME_RATE_OPTIONS = [
 ];
 export const DELAY_FRAME_RATE_DEFAULT = 5;
 
-// Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain): each
-// stereo channel has its own dedicated param, written to both L/R instances
-// (y = 0 and 1) which the device keeps linked. The block is the consecutive ids
-// 9..17 (all ±2400 centi-dB = ±24 dB range); URX44V occupies {9,13,14,15},
-// confirmed by a live broker probe (per-id sentinel write → on-device D.Gain
-// readout: CH5/6=9, CH7/8=13, CH9/10=14, CH11/12=15). URX44 shares that map.
+// Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain). The unit keeps
+// one D.Gain per INPUT SOURCE, not per channel — ids 9 and 11..17, ±2400 centi-dB (±24 dB) —
+// and every channel reading a source shows and applies that source's value. The app writes
+// y = 0 and 1, which the unit keeps linked.
 //
-// Keyed by MODEL because the broker indexes stereo channels by pair POSITION, not
-// by displayed label. The URX22 meter verification on real hardware (PR #173)
-// showed the stereo meter address is the pair position (URX22's CH5/6 is position
-// 1, NOT the same slot as URX44V's CH5/6 = position 0), and the stereo fader/ON/pan
-// (266/267/268) and source (209/210) blocks are already position-indexed. So the
-// D.Gain block is very likely positional too: URX22's four stereo pairs (CH3/4,
-// CH5/6, CH7/8, CH9/10 = positions 0..3) reuse the SAME confirmed ids {9,13,14,15}
-// BY POSITION — CH3/4 = 9, retiring the old free-slot guess (11). This is the
-// leading, meter-corroborated hypothesis but is NOT yet confirmed on a real URX22:
-// tracked in UNVERIFIED_MAPPINGS ("dgain-urx22") and settled by one sentinel write.
+// These maps send a stereo channel's gain to the D.Gain of the source that channel reads at
+// the factory — on URX44V and URX44, CH5/6 = AUX IN (9), CH7/8 = USB MAIN A (13), CH9/10 =
+// USB MAIN B (14), CH11/12 = USB MAIN C (15) — so a write reaches the channel only while it
+// reads that source, and reaches every other channel reading the same source. URX22's map
+// puts the same ids on its stereo pairs by position (CH3/4 = 9 … CH9/10 = 15) and is
+// registered in UNVERIFIED_MAPPINGS ("dgain-urx22"). A self-test round trip shows the ids
+// take a value, not which channel each one reaches.
 const D_GAIN_URX44V: Record<string, number> = {
   ch_5_6: 9,
   ch_7_8: 13,

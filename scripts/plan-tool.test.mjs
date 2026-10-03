@@ -26,8 +26,15 @@ import { fileURLToPath } from "node:url";
 import { deserialize, PLAN_VERSION } from "../src/core/plan";
 import { insertFxPairProblems, paramRangeProblems } from "../src/core/plan-validate";
 import { getModel, MODEL_IDS } from "../src/models";
-import { BUS_TYPE_FIXED, INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "../src/core/control/params";
+import {
+  BUS_TYPE_FIXED,
+  INSERT_FX_NONE,
+  INSERT_FX_OPTIONS,
+  PAN_BAL_BAL,
+  PAN_BAL_PAN,
+} from "../src/core/control/params";
 import { insertFxWritableSlots } from "../src/core/control/insert-fx-effect";
+import { fxParams } from "../src/core/control/fx-effect";
 import { atLeast, newestPython } from "./python.test-util.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -68,6 +75,13 @@ const toolWarnings = (dir, plan) => {
 const warningPath = (line) => {
   const m = /^WARNING: node param (.+?): the app (?:drops|bounds) this value on load/.exec(line);
   return m ? m[1] : null;
+};
+
+/** The same, for the lines that say a value is REMOVED — the question the removal tables ask,
+ *  where a value the load moves is a different answer. */
+const removalPath = (line) => {
+  const m = /^WARNING: node param (.+?): the app drops this value on load/.exec(line);
+  return m ? m[1].replace(/\[(\d+)\]/g, ".$1") : null;
 };
 
 /** The paths the tool says the app removes. Node-level advice (selector warnings, "verify on
@@ -177,6 +191,25 @@ describe.skipIf(!python)("plan_tool.py's output", () => {
     expect(r.stderr).not.toContain("Traceback");
     expect(r.status).toBe(1);
     expect(r.stdout).toContain("model: URX44Vé—");
+  });
+
+  // The app's loader drops one leading byte-order mark, so a document saved with one has to
+  // read the same here as it does there.
+  it("reads a document behind a byte-order mark as the app does", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const dir = mkdtempSync(join(tmpdir(), "urx-plan-tool-bom-"));
+    const text = JSON.stringify(doc({ type: 0, params: { revxLpf: 40 } }));
+    const run = (body) => {
+      const file = join(dir, "plan.json");
+      writeFileSync(file, body);
+      return spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+    };
+    expect(() => deserializeDocument("\uFEFF" + text)).not.toThrow();
+    const plain = run(text);
+    const bom = run("\uFEFF" + text);
+    expect(bom.status, bom.stderr).toBe(0);
+    expect(bom.stdout).toBe(plain.stdout);
+    expect(bom.stderr).toBe(plain.stderr);
   });
 
   it("writes a warning's dash as the character, not as its escape", () => {
@@ -382,8 +415,9 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       "bus.fx1, bus.fx2: carry no usable fxEffect",
       false,
     ],
-    ["a boolean where the selector goes", { ch1: { insertFx: true } }, "ch1, ch2", true],
-    ["a selector the document wrote", { ch1: { insertFx: 1793 } }, "ch1, ch2", false],
+    // The insert-FX list alone names ch4 beside bus.stereo; the name list puts the stereo channels between.
+    ["a boolean where the selector goes", { ch1: { insertFx: true } }, "ch1, ch2, ch3, ch4, bus.stereo", true],
+    ["a selector the document wrote", { ch1: { insertFx: 1793 } }, "ch1, ch2, ch3, ch4, bus.stereo", false],
   ])("%s", (_name, nodeParams, needle, warned) => {
     const out = toolWarnings(dir, {
       format: "urx-router-plan",
@@ -590,6 +624,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       expect(spec, `selector ${selector} has a slot with a range`).toBeDefined();
       const [lo, hi] = [spec.rawMin, spec.rawMax];
       const slot = spec.slot;
+      const def = space.slots.find((x) => x.slot === slot).def;
       const q = `${space.family}:${slot}`;
       const ask = (ch1, ch2) => {
         const plan = {
@@ -646,7 +681,9 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         [`above ${q} max`, { [q]: hi }, { [q]: hi + 1 }, true],
         // A boolean is not a finite number, so the write sends neither.
         [`boolean ${q} against boolean`, { [q]: true }, { [q]: false }, true],
-        [`boolean ${q} against omitted`, { [q]: true }, {}, true],
+        // …while a slot the document leaves out takes the type's default, which it does send.
+        [`boolean ${q} against omitted`, { [q]: true }, {}, false],
+        [`${q} at the type's default against omitted`, { [q]: def }, {}, true],
         // The control for the three above: inside the range, two numbers still differ.
         [`${q} inside the range`, { [q]: lo }, { [q]: hi }, false],
       ];
@@ -1136,8 +1173,9 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     const { deserializeDocument } = await import("../src/core/plan.ts");
     const { paramRangeProblems: prp, applyParamRange } = await import("../src/core/plan-validate.ts");
 
+    // An array is walked by index, since a band's own key can be what the load removes.
     const removed = (wrote, got, path, out) => {
-      if (wrote === null || typeof wrote !== "object" || Array.isArray(wrote)) return out;
+      if (wrote === null || typeof wrote !== "object") return out;
       for (const k of Object.keys(wrote)) {
         const here = path ? `${path}.${k}` : k;
         const has = got !== null && typeof got === "object" && Object.prototype.hasOwnProperty.call(got, k);
@@ -1200,10 +1238,29 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       '{"ch1":{"gate":{"on":{}}}}',
       '{"ch1":{"gate":{"__proto__":1,"on":true}}}',
       '{"ch1":{"ssmcs":{}}}',
+      // A value whose kind is not the factory value's at its path goes whole, named at that
+      // path: an on/off or a group where a number belongs, a group or a list where an on/off
+      // does, a scalar where a group does and a group where a list does. A group that is half
+      // gone to the sanitiser is still named once, at the group.
+      '{"ch1":{"gain":true}}',
+      '{"ch1":{"gain":{"x":30}}}',
+      '{"ch1":{"gain":{"x":1,"y":"s"}}}',
+      '{"ch1":{"gain":[{}]}}',
+      '{"ch1":{"hpf":{"x":true}}}',
+      '{"ch1":{"comp":{"oneKnobLevel":true}}}',
+      '{"ch1":{"eqOneKnob":true}}',
+      '{"ch1":{"eqBands":{"a":{"b":1}}}}',
+      '{"bus.stream":{"delay":true}}',
+      '{"bus.mon1":{"phonesLevel":true}}',
+      '{"ch3":{"hiZ":{"a":1},"phantom":true}}',
+      // A filter type on a fixed-peaking band, which the write never sends.
+      '{"ch1":{"eqBands":[{},{"type":2},{},{}]}}',
+      '{"bus.mix1":{"eqBands":[{},{},{"type":0},{}]}}',
       // …and the documents nothing may be said about, so a checker that reported everything
       // would fail here rather than passing every row above.
       '{"ch1":{"gate":{"threshold":-20}}}',
       '{"ch1":{"eqBands":[]}}',
+      '{"ch1":{"gain":12,"hpf":1,"extra":{"a":true}}}',
       '{"bus.fx1":{"fxEffect":{"type":0,"params":{"revxLpf":40}}}}',
     ];
 
@@ -1213,7 +1270,10 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
         `"positions":{},"connections":[],"nodeParams":${np}}`;
       const loaded = deserializeDocument(text).plan;
-      applyParamRange(loaded, prp(loaded));
+      applyParamRange(
+        loaded,
+        prp(loaded).filter((p) => p.action === "drop"),
+      );
       const app = removed(JSON.parse(text).nodeParams, loaded.nodeParams, "", []).sort();
       removals += app.length;
 
@@ -1223,7 +1283,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       expect(r.status, r.stdout).toBe(0);
       const tool = r.stderr
         .split(/\r?\n/)
-        .map(warningPath)
+        .map(removalPath)
         .filter((p) => p !== null)
         .sort();
       expect(tool, `the removals of ${np}`).toEqual(app);
@@ -1309,7 +1369,10 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           `{"format":"urx-router-plan","version":${PLAN_VERSION},"modelId":"URX44V",` +
           `"positions":{},"connections":[],"nodeParams":${np}}`;
         const loaded = deserializeDocument(text).plan;
-        applyParamRange(loaded, prp(loaded));
+        applyParamRange(
+          loaded,
+          prp(loaded).filter((p) => p.action === "drop"),
+        );
         const app = removedIn(JSON.parse(text).nodeParams, loaded.nodeParams, "", []).sort();
         if (app.length) outcomes.removed += 1;
         else outcomes.kept += 1;
@@ -1320,7 +1383,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         expect(r.status, r.stdout).toBe(0);
         const tool = r.stderr
           .split(/\r?\n/)
-          .map(warningPath)
+          .map(removalPath)
           .filter((p) => p !== null)
           .sort();
         expect(tool, `${sname} / ${mname}`).toEqual(app);
@@ -1336,7 +1399,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
   it("names the collection entries the app never copies", () => {
     for (const [key, entry] of [
       ["nodeNames", '"__proto__":"x","ch1":"Vox"'],
-      ["nodeColors", '"__proto__":"x","ch1":"#ffffff"'],
+      ["nodeColors", '"__proto__":"x","ch1":"#4a78c0"'],
       ["notes", '"__proto__":"x","ch1":"hi"'],
       ["positions", '"__proto__":{"x":1,"y":2},"ch1":{"x":1,"y":2}'],
     ]) {
@@ -1402,23 +1465,45 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       expect(on.tool, `the tool, ${what} with MIDI Control on\n${on.stdout}`).toBe(true);
     }
 
-    // The gate is read for TRUTH, not for the number 1: the app takes whatever the slot
-    // holds and asks `on ?`, so a boolean gates exactly as a 1 does. Read as `== 1` the
-    // Scale comes back into the write and the pair reads as a contradiction again.
+    // The gate is read as the raw the WRITE sends at it, not for truth: a boolean is not sent
+    // at all, so it gates nothing, the Scale comes back into the write, and the pair reads as
+    // a contradiction. Read for truth — `True` in a language where `True == 1` — the Scale
+    // would be left out of a write that never switched MIDI Control on.
     const truthy = ask(
       { stereoLink: true, ...pitch(true, { [`pitch:${scale}`]: 0 }) },
       pitch(true, { [`pitch:${scale}`]: 1 }),
     );
-    expect(truthy.app, "the app, a boolean MIDI Control").toBe(true);
-    expect(truthy.tool, `the tool, a boolean MIDI Control\n${truthy.stdout}`).toBe(true);
+    expect(truthy.app, "the app, a boolean MIDI Control").toBe(false);
+    expect(truthy.tool, `the tool, a boolean MIDI Control\n${truthy.stdout}`).toBe(false);
 
-    // …and a truthy value that is not 1, which is what separates "read for truth" from
-    // "read as 1" in a language where `True == 1`. The gate's own slot is bounded to 1 on
-    // the way out, so both members still SEND the same gate — what moves is whether the
-    // Scale is left out.
+    // …a number the write sends as 0 gates nothing either, though it is truthy.
+    const negative = ask(
+      { stereoLink: true, ...pitch(-1, { [`pitch:${scale}`]: 0 }) },
+      pitch(-1, { [`pitch:${scale}`]: 1 }),
+    );
+    expect(negative.app, "the app, a MIDI Control sent as 0").toBe(false);
+    expect(negative.tool, `the tool, a MIDI Control sent as 0\n${negative.stdout}`).toBe(false);
+
+    // …and a value past its own range is bounded to 1 on the way out, so both members SEND
+    // the gate and the Scale is left out of both.
     const two = ask({ stereoLink: true, ...pitch(2, { [`pitch:${scale}`]: 0 }) }, pitch(2, { [`pitch:${scale}`]: 1 }));
     expect(two.app, "the app, a MIDI Control past its own range").toBe(true);
     expect(two.tool, `the tool, a MIDI Control past its own range\n${two.stdout}`).toBe(true);
+
+    // A fraction is rounded on the way out, the gate's and a value's alike: 0.5 is sent as 1,
+    // and two values the write rounds to one integer are one state.
+    const half = ask(
+      { stereoLink: true, ...pitch(0.5, { [`pitch:${scale}`]: 0 }) },
+      pitch(0.5, { [`pitch:${scale}`]: 1 }),
+    );
+    expect(half.app, "the app, a MIDI Control rounded to 1").toBe(true);
+    expect(half.tool, `the tool, a MIDI Control rounded to 1\n${half.stdout}`).toBe(true);
+    const rounds = ask(
+      { stereoLink: true, ...pitch(0, { [`pitch:${scale}`]: 0 }) },
+      pitch(0, { [`pitch:${scale}`]: 0.4 }),
+    );
+    expect(rounds.app, "the app, two values sent as one integer").toBe(true);
+    expect(rounds.tool, `the tool, two values sent as one integer\n${rounds.stdout}`).toBe(true);
 
     // The gate itself is still sent, so disagreeing about IT is a contradiction either way.
     const gates = ask({ stereoLink: true, ...pitch(1, {}) }, pitch(0, {}));
@@ -1532,6 +1617,10 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         "a STREAMING wire the loader drops for its params",
         { connections: into("bus.mix1:out", "source", { params: "x" }) },
       ],
+      [
+        "a STREAMING wire whose params are null, which the loader drops too",
+        { connections: into("bus.mix1:out", "source", { params: null }) },
+      ],
       ["a STREAMING wire the loader drops for its kind", { connections: into("bus.mix1:out", "bogus") }],
       ["a wire into MONITOR 1 only", { connections: [{ from: "bus.mix1:out", to: "bus.mon1:in", kind: "source" }] }],
       ["a scene-scoped document", { scope: "scene", connections: [] }],
@@ -1581,11 +1670,540 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     expect(added.no).toBeGreaterThan(0);
   });
 
+  // A name is cut to the unit's screen and loses its trailing padding, and neither a name nor a
+  // note keeps a code point XML refuses; the load rewrites both and says so. The texts the app
+  // rewrites are compared with the ones the tool names: a control character in a name and in a
+  // note, a long name, trailing padding, a cut that lands on a space, and a name nothing is left
+  // of — beside a leading space, a tab in a note, and plain text, which nothing may be said about.
+  it("agrees with the app about the names and notes the load rewrites", async () => {
+    const { planProblems } = await import("../src/core/plan-validate.ts");
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const corpus = [
+      ["a control character in a name", { ch1: "Vo\u0001x" }, {}],
+      ["a control character in a note", {}, { ch1: "Vocal mic\u0007 check" }],
+      ["U+FFFE in a note", {}, { ch2: "a\ufffeb" }],
+      ["a long name", { ch1: "Long name past eight" }, {}],
+      ["trailing padding", { ch1: "Kick  " }, {}],
+      ["a cut onto a space", { ch1: "1234567  9" }, {}],
+      ["a name nothing is left of", { ch1: "\u0001\u0002" }, {}],
+      // …and the texts nothing may be said about.
+      ["a leading space", { ch_5_6: " 5/ 6" }, {}],
+      ["a tab in a note", {}, { ch1: "a\tb" }],
+      ["plain text", { ch1: "Vox" }, { ch1: "hello" }],
+    ];
+    const seen = { yes: 0, no: 0 };
+    for (const [name, nodeNames, notes] of corpus) {
+      const plan = {
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: "URX44V",
+        connections: [],
+        nodeNames,
+        notes,
+      };
+      const read = deserializeDocument(JSON.stringify(plan)).plan;
+      const app = planProblems(getModel("URX44V"), read)
+        .filter((p) => p.reason === "documentText")
+        .map((p) => `${p.field}[${p.node}]`)
+        .sort();
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, `${name}\n${r.stdout}`).toBe(0);
+      const tool = [
+        ...new Set(
+          r.stderr
+            .split(/\r?\n/)
+            .map((l) => /^WARNING: ((?:nodeNames|notes)\[[^\]]+\]): the app (?:removes|cuts|strips)/.exec(l)?.[1])
+            .filter((k) => k !== undefined),
+        ),
+      ].sort();
+      expect(tool, `${name}\n${r.stderr}`).toEqual(app);
+      seen[app.length > 0 ? "yes" : "no"]++;
+    }
+    expect(seen.yes).toBeGreaterThan(0);
+    expect(seen.no).toBeGreaterThan(0);
+  });
+
+  // Three rewrites belong to the document rather than to a node's own values: a rate the unit does
+  // not run at loads as the default, a recorder Track Count above the ceiling at the rate the plan
+  // loads at is lowered, and a version-1 document's FX parameters move from their old shared names
+  // (and are then bounded like any other). Each document is asked whether the app's load leaves the
+  // field as written, and whether the tool says anything about it — the two answers must agree,
+  // with a control beside each case that the app keeps.
+  it("agrees with the app about the rate, the Track Count and a version-1 document's FX keys", async () => {
+    const revxLpf = fxParams(0).find((d) => d.key === "revxLpf");
+    const base = { format: "urx-router-plan", modelId: "URX44V", connections: [] };
+    const sdrec = (count) => ({ "out.sdrec": { sdRecTrackCount: count } });
+    const fx1 = (params, type = 0) => ({ "bus.fx1": { fxEffect: { type, params } } });
+    const corpus = [
+      ["a rate in kHz", { ...base, version: PLAN_VERSION, sampleRate: 96 }, (p) => p.sampleRate, (d) => d.sampleRate],
+      [
+        "a rate the unit runs at",
+        { ...base, version: PLAN_VERSION, sampleRate: 96000 },
+        (p) => p.sampleRate,
+        (d) => d.sampleRate,
+      ],
+      [
+        "a rate written as text",
+        { ...base, version: PLAN_VERSION, sampleRate: "96000" },
+        (p) => p.sampleRate,
+        () => "96000",
+      ],
+      ...[
+        [192000, 16],
+        [96000, 16],
+        [48000, 16],
+        [96000, 8],
+      ].map(([rate, count]) => [
+        `${count} tracks at ${rate}`,
+        { ...base, version: PLAN_VERSION, sampleRate: rate, nodeParams: sdrec(count) },
+        (p) => p.nodeParams["out.sdrec"]?.sdRecTrackCount,
+        (d) => d.nodeParams["out.sdrec"].sdRecTrackCount,
+      ]),
+      [
+        "a version-1 lpf in the window",
+        { ...base, version: 1, nodeParams: fx1({ lpf: revxLpf.rawMax }) },
+        (p) => JSON.stringify(p.nodeParams["bus.fx1"].fxEffect.params),
+        (d) => JSON.stringify(d.nodeParams["bus.fx1"].fxEffect.params),
+      ],
+      [
+        "a version-1 lpf below the window",
+        { ...base, version: 1, nodeParams: fx1({ lpf: revxLpf.rawMin - 1 }) },
+        (p) => JSON.stringify(p.nodeParams["bus.fx1"].fxEffect.params),
+        (d) => JSON.stringify(d.nodeParams["bus.fx1"].fxEffect.params),
+      ],
+      [
+        "a version-1 Ping Pong delay",
+        { ...base, version: 1, nodeParams: { "bus.fx2": { fxEffect: { type: 1025, params: { delay: 100 } } } } },
+        (p) => JSON.stringify(p.nodeParams["bus.fx2"].fxEffect.params),
+        (d) => JSON.stringify(d.nodeParams["bus.fx2"].fxEffect.params),
+      ],
+      [
+        "the same keys at the current version",
+        { ...base, version: PLAN_VERSION, nodeParams: fx1({ revxLpf: revxLpf.rawMax }) },
+        (p) => JSON.stringify(p.nodeParams["bus.fx1"].fxEffect.params),
+        (d) => JSON.stringify(d.nodeParams["bus.fx1"].fxEffect.params),
+      ],
+    ];
+    const seen = { rewritten: 0, kept: 0 };
+    for (const [name, plan, loadedOf, writtenOf] of corpus) {
+      const loaded = await appLoad(plan, false);
+      const rewritten = String(loadedOf(loaded)) !== String(writtenOf(plan));
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, `${name}\n${r.stdout}`).toBe(0);
+      const said = r.stderr
+        .split(/\r?\n/)
+        .some(
+          (l) =>
+            l.startsWith("WARNING: sampleRate:") ||
+            l.startsWith("WARNING: node param out.sdrec.sdRecTrackCount:") ||
+            /^WARNING: node param bus\.fx[12]\.fxEffect\.params\./.test(l),
+        );
+      expect(said, `${name}\n${r.stderr}`).toBe(rewritten);
+      seen[rewritten ? "rewritten" : "kept"]++;
+    }
+    expect(seen.rewritten).toBeGreaterThan(0);
+    expect(seen.kept).toBeGreaterThan(0);
+  });
+
+  // The trailing whitespace the load strips is the JavaScript set, not Python's: a byte-order mark
+  // goes, while the information separators and NEL stay. For each name the tool warns about some
+  // rewrite exactly when the app's loaded name differs from the one written.
+  it("warns about a name's rewrite exactly when the app's loaded name differs", async () => {
+    const { planProblems, prepareLoadedPlan } = await import("../src/core/plan-validate.ts");
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const names = ["Vox\ufeff", "Gtr\u001f", "Bas\u0085", "Key\u3000", "Kick ", "Vox"];
+    const outcome = { differs: 0, same: 0 };
+    for (const written of names) {
+      const plan = {
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: "URX44V",
+        connections: [],
+        nodeNames: { ch1: written },
+      };
+      const read = deserializeDocument(JSON.stringify(plan)).plan;
+      prepareLoadedPlan(getModel("URX44V"), read, planProblems(getModel("URX44V"), read));
+      const differs = read.nodeNames.ch1 !== written;
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, r.stdout).toBe(0);
+      const warned = r.stderr.split(/\r?\n/).some((l) => l.startsWith("WARNING: nodeNames[ch1]: the app "));
+      expect(warned, JSON.stringify(written)).toBe(differs);
+      outcome[differs ? "differs" : "same"]++;
+    }
+    expect(outcome.differs).toBeGreaterThan(0);
+    expect(outcome.same).toBeGreaterThan(0);
+  });
+
+  // A colour is one of the unit's palette entries or its Off, and the load drops any other; a
+  // colourable node left without one is given its factory colour, which the write sends. The nodes
+  // whose colour the app drops, and the ones it colours, are compared with the tool's two lists:
+  // no colours at all, an off-palette hex, a url(), a short hex, a value that is not a string,
+  // Off, and a palette hex in another case — beside a document colouring every node.
+  it("agrees with the app about the colours the load drops and supplies", async () => {
+    const { nodeColorContestKey } = await import("../src/core/plan-history.ts");
+    const { defaultPlan } = await import("../src/models/initial-state.ts");
+    const seen = { dropped: 0, filled: 0, none: 0 };
+    for (const modelId of MODEL_IDS) {
+      const every = defaultPlan(modelId).nodeColors;
+      const corpus = [
+        ["no colours at all", undefined],
+        ["an off-palette hex", { ...every, ch1: "#ff0000" }],
+        ["a url()", { ...every, ch1: "url(https://example.invalid/x)" }],
+        ["a short hex", { ...every, ch1: "#ff0" }],
+        ["a value that is not a string", { ...every, ch1: 5 }],
+        ["Off", { ...every, ch1: "off" }],
+        ["a palette hex in another case", { ...every, ch1: every.ch1.toUpperCase() }],
+        ["every node coloured", every],
+      ];
+      for (const [name, nodeColors] of corpus) {
+        const plan = {
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          connections: [],
+          nodeParams: {},
+          ...(nodeColors === undefined ? {} : { nodeColors }),
+        };
+        const loaded = await appLoad(plan, true);
+        const { planProblems } = await import("../src/core/plan-validate.ts");
+        const { deserializeDocument } = await import("../src/core/plan.ts");
+        const read = deserializeDocument(JSON.stringify(plan)).plan;
+        const appDropped = planProblems(getModel(modelId), read)
+          .filter((p) => p.reason === "nodeColor")
+          .map((p) => p.node)
+          .sort();
+        const appFilled = [...loaded.paramSource]
+          .filter(([key, from]) => from === "default" && key.startsWith(nodeColorContestKey("")))
+          .map(([key]) => key)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const lines = r.stderr.split(/\r?\n/);
+        const toolDropped = lines
+          .map((l) => /^WARNING: nodeColors\[(\S+)\]: the app drops this colour on load/.exec(l)?.[1])
+          .filter((id) => id !== undefined)
+          .sort();
+        const toolFilled = lines
+          .map((l) =>
+            /^WARNING: nodeColors: the app gives the colourable nodes .* on load, and the write sends them \((.*)\)$/.exec(
+              l,
+            ),
+          )
+          .filter((m) => m !== null)
+          .flatMap((m) => m[1].split(", ").map((id) => nodeColorContestKey(id)))
+          .sort();
+        expect(toolDropped, `${modelId} ${name}\n${r.stderr}`).toEqual(appDropped);
+        expect(toolFilled, `${modelId} ${name}\n${r.stderr}`).toEqual(appFilled);
+        if (appDropped.length) seen.dropped++;
+        if (appFilled.length) seen.filled++;
+        if (!appDropped.length && !appFilled.length) seen.none++;
+      }
+    }
+    // Each answer is a real population.
+    expect(seen.dropped).toBeGreaterThan(0);
+    expect(seen.filled).toBeGreaterThan(0);
+    expect(seen.none).toBeGreaterThan(0);
+  });
+
+  // The load gives every nameable node a document leaves unnamed its factory name, which the write
+  // sends. The nodes the app names are compared with the ones the tool says it names: no names at
+  // all, some, an empty entry, a blank one, one past the field width whose cut is blank, and a name
+  // that is not a string — beside a document naming every node. Every model, since which nodes
+  // carry a name is a model fact.
+  it("agrees with the app about the names the load supplies", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { nodeNameContestKey } = await import("../src/core/plan-history.ts");
+    const { defaultPlan } = await import("../src/models/initial-state.ts");
+    const supplied = { yes: 0, no: 0 };
+    for (const modelId of MODEL_IDS) {
+      const every = defaultPlan(modelId).nodeNames;
+      const corpus = [
+        ["no names at all", undefined],
+        ["some names", { ch1: "Vox", ch2: "Gtr" }],
+        ["an empty entry", { ...every, ch1: "" }],
+        ["a blank entry", { ...every, ch1: "   " }],
+        ["a blank cut", { ...every, ch1: "        x" }],
+        ["a name that is not a string", { ...every, ch1: 5 }],
+        ["every node named", every],
+      ];
+      for (const [name, nodeNames] of corpus) {
+        const plan = {
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          connections: [],
+          nodeParams: {},
+          ...(nodeNames === undefined ? {} : { nodeNames }),
+        };
+        expect(deserializeDocument(JSON.stringify(plan)).plan.modelId).toBe(modelId);
+        const loaded = await appLoad(plan, true);
+        const app = [...loaded.paramSource]
+          .filter(([key, from]) => from === "default" && key.startsWith(nodeNameContestKey("")))
+          .map(([key]) => key)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) =>
+            /^WARNING: nodeNames: the app gives the nodes this plan leaves unnamed their factory names on load, and the write sends them \((.*)\)$/.exec(
+              l,
+            ),
+          )
+          .filter((m) => m !== null)
+          .flatMap((m) => m[1].split(", ").map((id) => nodeNameContestKey(id)))
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        supplied[app.length > 0 ? "yes" : "no"]++;
+      }
+    }
+    // Both answers are real populations: documents the load names, and documents it leaves.
+    expect(supplied.yes).toBeGreaterThan(0);
+    expect(supplied.no).toBeGreaterThan(0);
+  });
+
+  // The load gives a selected insert effect every engine slot the document leaves out, at the
+  // type's own default, and the write sends them. The keys the app adds are compared with the ones
+  // the tool says it fills: an effect with no engine values, with some, with a bare slot number,
+  // on an output bus and on a channel — beside the documents nothing may be said about: every slot
+  // written, No Effect, an effect off the node's own menu, and a stereo channel, which has no
+  // insert effect at all.
+  it("agrees with the app about the insert-FX engine slots the load fills", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { nodeParamContestPath } = await import("../src/core/plan-history.ts");
+    const full = Object.fromEntries(SPACE["1793"].slots.map((x) => [`compander:${x.slot}`, x.def]));
+    const corpus = [
+      ["a compander with no engine values", { ch1: { insertFx: 1793 } }],
+      ["a compander with one", { ch1: { insertFx: 1794, insertFxParams: { "compander:6": -900 } } }],
+      ["a bare slot number", { ch3: { insertFx: 1793, insertFxParams: { 7: 500 } } }],
+      ["Pitch Fix", { ch2: { insertFx: 512 } }],
+      ["a guitar amp", { ch1: { insertFx: 256 } }],
+      ["the multi-band compressor on STEREO", { "bus.stereo": { insertFx: 1792 } }],
+      // …and the documents nothing may be said about.
+      ["every slot written", { ch1: { insertFx: 1793, insertFxParams: full } }],
+      ["No Effect", { ch1: { insertFx: -1 } }],
+      ["an effect off the channel's menu", { ch1: { insertFx: 1792 } }],
+      ["an off-menu value", { ch1: { insertFx: 4242 } }],
+      ["a stereo channel", { ch_5_6: { insertFx: 1793 } }],
+    ];
+    const filled = { yes: 0, no: 0 };
+    for (const [name, nodeParams] of corpus) {
+      const plan = {
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: "URX44V",
+        positions: {},
+        connections: [],
+        nodeParams,
+      };
+      const loaded = await appLoad(plan, true);
+      const app = [...loaded.paramSource]
+        .filter(([key, from]) => from === "default" && key.includes(`${"\u0000"}insertFxParams${"\u0000"}`))
+        .map(([key]) => key)
+        .sort();
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, `${name}\n${r.stdout}`).toBe(0);
+      const tool = r.stderr
+        .split(/\r?\n/)
+        .map((l) =>
+          /^WARNING: node (\S+): the app fills insertFxParams (.*) with the selected effect's own defaults/.exec(l),
+        )
+        .filter((m) => m !== null)
+        .flatMap((m) => m[2].split(", ").map((key) => nodeParamContestPath(m[1], `insertFxParams.${key}`)))
+        .sort();
+      expect(tool, `${name}\n${r.stderr}`).toEqual(app);
+      filled[app.length > 0 ? "yes" : "no"]++;
+    }
+    // Both answers are real populations: documents the load completes, and documents it leaves.
+    expect(filled.yes).toBeGreaterThan(0);
+    expect(filled.no).toBeGreaterThan(0);
+  });
+
+  // A fixed send the document lists without a level goes out at unity, and the app's load writes
+  // that level into the plan. The sends whose level the load SUPPLIES are compared with the ones
+  // the tool says it sets: a send carrying only a pan, only a tap, or no params at all, into a MIX
+  // and into an FX bus, and one written under the wrong kind, which the load restates — beside the
+  // documents nothing may be said about: a send carrying a level, a main path into STEREO (the
+  // channel's fader, read at unity without one), the TO ST switch, a source wire, and the wires the
+  // loader drops. Every model, since the rule table is a model fact.
+  it("agrees with the app about the send levels the load supplies", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const send = (from, to, extra = {}) => ({ from, to, kind: "send", ...extra });
+    const corpus = [
+      ["a send with a pan only", [send("ch1:out", "bus.mix1:in", { params: { pan: -20 } })]],
+      ["a send with a tap only", [send("ch1:out", "bus.mix2:in", { params: { tap: "pre" } })]],
+      ["a send with no params", [send("ch1:out", "bus.fx1:in")]],
+      ["a send written as a source", [{ from: "ch1:out", to: "bus.mix1:in", kind: "source" }]],
+      // …and the documents nothing may be said about.
+      ["a send with a level", [send("ch1:out", "bus.mix1:in", { params: { level: -96.5 } })]],
+      ["a main path with no level", [send("ch1:out", "bus.stereo:in", { params: { pan: 10 } })]],
+      ["the TO ST switch", [{ from: "bus.mix1:out", to: "bus.stereo:in", kind: "sendSwitch" }]],
+      ["a source wire", [{ from: "bus.stereo:out", to: "bus.stream:in", kind: "source" }]],
+      ["a send the loader drops for its params", [send("ch1:out", "bus.mix1:in", { params: "x" })]],
+      ["a send whose level is null", [send("ch1:out", "bus.mix1:in", { params: { level: null } })]],
+      ["a send whose level is text", [send("ch1:out", "bus.mix1:in", { params: { level: "0" } })]],
+    ];
+    const supplied = { yes: 0, no: 0 };
+    for (const modelId of MODEL_IDS) {
+      for (const [name, connections] of corpus) {
+        const plan = { format: "urx-router-plan", version: PLAN_VERSION, modelId, positions: {}, connections };
+        const before = deserializeDocument(JSON.stringify(plan)).plan.connections;
+        const loaded = await appLoad(plan, false);
+        const app = loaded.connections
+          .filter((c) => {
+            const was = before.find((b) => b.from === c.from && b.to === c.to);
+            return was !== undefined && was.params?.level === undefined && c.params?.level !== undefined;
+          })
+          .map((c) => `${c.from} -> ${c.to} = ${c.params.level}`)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) => /^WARNING: connection (\S+ -> \S+): the app sets this send's level to (\S+) on load/.exec(l))
+          .filter((m) => m !== null)
+          .map((m) => `${m[1]} = ${m[2]}`)
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        supplied[app.length > 0 ? "yes" : "no"]++;
+      }
+    }
+    // Both answers are real populations: documents whose send levels the load supplies, and
+    // documents it leaves as written.
+    expect(supplied.yes).toBeGreaterThan(0);
+    expect(supplied.no).toBeGreaterThan(0);
+  });
+
+  // A STEREO-linked pair holds one set of values, and the app's load copies the primary's onto a
+  // secondary that disagrees. The pairs the app copies, and what it names, are compared with the
+  // ones the tool says it copies: a pair split on a dynamics group and the HPF, a document naming
+  // only the primary, a link written as a number, a value of the wrong kind, a pair of sends in PAN
+  // mode and in BAL, an ON one member omits — beside the documents nothing may be said about: an
+  // agreeing pair, an unlinked one, one differing only in each member's own input stage or in an
+  // insert effect stored but not sent, and a scalar where a group belongs, which the fill replaces.
+  // Every model, since the pairs are a model fact.
+  it("agrees with the app about the linked pairs the load aligns", async () => {
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const { planProblems } = await import("../src/core/plan-validate.ts");
+    const send = (from, to, params) => ({
+      from: `${from}:out`,
+      to: `${to}:in`,
+      kind: "send",
+      ...(params ? { params } : {}),
+    });
+    const corpus = [
+      [
+        "a pair split on the gate and the HPF",
+        {
+          ch1: { stereoLink: true, panBal: PAN_BAL_PAN, gate: { threshold: -50 }, hpfFreq: 100 },
+          ch2: { gate: { threshold: -30 }, hpfFreq: 60 },
+        },
+      ],
+      [
+        "a document naming only the primary",
+        { ch1: { stereoLink: true, panBal: PAN_BAL_BAL, gateOn: true, gate: { threshold: -40 } } },
+      ],
+      ["a link written as a number", { ch1: { stereoLink: 1, hpfFreq: 100 } }],
+      ["a value of the wrong kind on the secondary", { ch1: { stereoLink: true }, ch2: { hpfFreq: true } }],
+      [
+        "a pair of sends in PAN mode",
+        { ch1: { stereoLink: true, panBal: PAN_BAL_PAN } },
+        [
+          send("ch1", "bus.mix1", { level: -10 }),
+          send("ch1", "bus.stereo", { pan: -63 }),
+          send("ch2", "bus.stereo", { pan: 63 }),
+        ],
+      ],
+      [
+        "a pair of mains in BAL",
+        { ch1: { stereoLink: true, panBal: PAN_BAL_BAL } },
+        [send("ch1", "bus.stereo", { pan: -25 }), send("ch2", "bus.stereo", { pan: 40 })],
+      ],
+      [
+        "an ON the primary omits",
+        { ch1: { stereoLink: true } },
+        [send("ch2", "bus.mix2", { level: -96.5, on: false })],
+      ],
+      // …and the documents nothing may be said about.
+      ["an agreeing pair", { ch1: { stereoLink: true, hpfFreq: 100 }, ch2: { hpfFreq: 100 } }],
+      ["an unlinked pair", { ch1: { hpfFreq: 100 }, ch2: { hpfFreq: 60 } }],
+      ["a link written off", { ch1: { stereoLink: false, hpfFreq: 100 } }],
+      ["a pair apart in its input stages", { ch1: { stereoLink: true, gain: 10, phantom: true }, ch2: { gain: 30 } }],
+      [
+        "an insert effect stored but not sent",
+        {
+          ch1: { stereoLink: true, insertFx: INSERT_FX_NONE },
+          ch2: { insertFx: INSERT_FX_NONE, insertFxParams: { stray: 5 } },
+        },
+      ],
+      ["a scalar where a group belongs", { ch1: { stereoLink: true }, ch2: { gate: 5 } }],
+      [
+        "mains apart in PAN mode",
+        { ch1: { stereoLink: true, panBal: PAN_BAL_PAN } },
+        [send("ch1", "bus.stereo", { pan: -63 }), send("ch2", "bus.stereo", { pan: 63 })],
+      ],
+    ];
+    const aligned = { yes: 0, no: 0 };
+    for (const modelId of MODEL_IDS) {
+      for (const [name, nodeParams, connections = []] of corpus) {
+        const plan = {
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          connections,
+          nodeParams,
+        };
+        const loaded = deserializeDocument(JSON.stringify(plan)).plan;
+        const app = planProblems(getModel(modelId), loaded)
+          .filter((p) => p.reason === "linkedPair")
+          .map(
+            (p) =>
+              `${p.nodes[1]} <- ${p.nodes[0]}: ${[...p.keys, ...p.sends.map((to) => `send -> ${to}`)].sort().join(", ")}`,
+          )
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) => /^WARNING: node (\S+): the app copies (\S+)'s values onto it on load \((.*)\) — /.exec(l))
+          .filter((m) => m !== null)
+          .map((m) => `${m[1]} <- ${m[2]}: ${m[3].split(", ").sort().join(", ")}`)
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        aligned[app.length > 0 ? "yes" : "no"]++;
+      }
+    }
+    // Both answers are real populations: documents whose pairs the load aligns, and documents it
+    // leaves as written.
+    expect(aligned.yes).toBeGreaterThan(0);
+    expect(aligned.no).toBeGreaterThan(0);
+  });
+
   // While a MIX bus's Pan Link is on, the unit holds every send pan into it at its source's own
   // pan / balance, and the app's load sets the document's there. The sends whose pan the load
   // CHANGES — or adds, where the document omits the send — are compared with the ones the tool
   // says it sets, value included, so neither half can be read off the other's problem list: a
-  // mono, a stereo and an FX source, a STEREO-linked pair in PAN and in BAL, a FIXED MIX with the
+  // mono, a stereo and an FX source, a STEREO-linked pair in PAN and in BAL — one in BAL whose two
+  // balances disagree, which the linked-pair copy settles first — a FIXED MIX with the
   // link on, a pan, a send or a main path the document omits, and a link written as a number,
   // which the load converts to on before it asks, beside the documents nothing may be said
   // about — an unlinked MIX, a link written off, one written as 0, and sends already at their
@@ -1609,6 +2227,11 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       [
         "a STEREO-linked pair in BAL",
         [main("ch1", -25), main("ch2", -25), send("ch1", "bus.mix1", -40), send("ch2", "bus.mix1", -40)],
+        { ...pair(PAN_BAL_BAL), ...linked() },
+      ],
+      [
+        "a STEREO-linked pair in BAL whose mains disagree",
+        [main("ch1", -25), main("ch2", 40), send("ch1", "bus.mix1", 10), send("ch2", "bus.mix1", 10)],
         { ...pair(PAN_BAL_BAL), ...linked() },
       ],
       [
@@ -1762,6 +2385,96 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     expect(toolWarnings(dir, doc(1)), "the control: the real value is warned about").toContain("carry no usable ssmcs");
   });
 
+  // Every leaf the write bounds is bounded on load to the value the write sends, through the
+  // rule the emit uses. The values the load MOVES — path and value — are compared with the ones
+  // the tool says it bounds: every bounded leaf of every node on every model pushed past each end
+  // of its rule and between two of its settings, and the insert-FX engine keys under a selected
+  // family, a bare slot the load re-keys and a family the key names itself, beside the factory
+  // document nothing may be said about.
+  it("agrees with the app about the node-param values it bounds on load", async () => {
+    const { deserializeDocument, serialize } = await import("../src/core/plan.ts");
+    const { planProblems } = await import("../src/core/plan-validate.ts");
+    const { defaultPlan, factoryNodeParams } = await import("../src/models/initial-state.ts");
+    const { nodeLeafRules } = await import("../src/core/control/translate.ts");
+    const set = (np, path, v) => {
+      const keys = path.replace(/\[(\d+)\]/g, ".$1").split(".");
+      let holder = np;
+      for (const k of keys.slice(0, -1)) holder = holder[k] ??= {};
+      holder[keys[keys.length - 1]] = v;
+    };
+    let bounded = 0;
+    for (const modelId of MODEL_IDS) {
+      const factory = JSON.parse(serialize(defaultPlan(modelId)));
+      // The leaves come from the app's own table rather than from models.json, so a rule the
+      // export leaves out is a leaf the tool is asked about and cannot answer.
+      const model = getModel(modelId);
+      const rules = Object.fromEntries(
+        model.nodes.map((n) => [
+          n.id,
+          Object.fromEntries(nodeLeafRules(model, n.id, factoryNodeParams(modelId, n.id))),
+        ]),
+      );
+      const moved = (pick) => {
+        const np = structuredClone(factory.nodeParams);
+        for (const [node, leaves] of Object.entries(rules))
+          for (const [path, rule] of Object.entries(leaves)) {
+            const v = pick(rule);
+            if (v !== undefined) set((np[node] ??= {}), path, v);
+          }
+        return np;
+      };
+      const engine = {
+        ...structuredClone(factory.nodeParams),
+        ch1: {
+          ...factory.nodeParams.ch1,
+          insertFx: 1793,
+          insertFxParams: { 6: 5, "compander:7": 99999, "pitch:16": -3 },
+        },
+        "bus.stereo": { ...factory.nodeParams["bus.stereo"], insertFx: 1792, insertFxParams: { 25: 99 } },
+      };
+      const corpus = [
+        [
+          "every bounded leaf above its rule",
+          moved((r) => (r.unsent ? undefined : r.menu ? Math.max(...r.menu) + 1 : r.max + 1.25)),
+        ],
+        [
+          "every bounded leaf below its rule",
+          moved((r) => (r.unsent ? undefined : r.menu ? Math.min(...r.menu) - 1 : r.min - 1.25)),
+        ],
+        [
+          "every menu, integer, gridded or stepped leaf between two settings",
+          moved((r) =>
+            r.menu ? r.menu[0] + 0.5 : r.integer || r.steps || r.grid ? (r.min + r.max) / 2 + 0.3 : undefined,
+          ),
+        ],
+        ["insert-FX engine keys", engine],
+        ["the factory document", structuredClone(factory.nodeParams)],
+      ];
+      for (const [name, nodeParams] of corpus) {
+        const plan = { ...factory, nodeParams };
+        const read = deserializeDocument(JSON.stringify(plan)).plan;
+        const app = planProblems(getModel(modelId), read)
+          .filter((p) => p.reason === "paramRange" && p.action === "bound" && p.where === "node")
+          .map((p) => `${p.node}.${p.key} = ${Number(p.bound)}`)
+          .sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) => /^WARNING: node param (\S+): the app bounds this value on load — .* is bounded to (\S+)$/.exec(l))
+          .filter((m) => m !== null)
+          .map((m) => `${m[1].replace(/\[(\d+)\]/g, ".$1")} = ${Number(m[2])}`)
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        bounded += app.length;
+        if (name === "the factory document") expect(app, modelId).toEqual([]);
+      }
+    }
+    expect(bounded, "the corpus reaches documents the load bounds").toBeGreaterThan(0);
+  });
+
   // A channel carrying HI-Z with HI-Z on opens with +48V off and A.Gain no higher than +40 dB.
   // The leaves the app's repair CHANGES are compared with the paths the tool says it bounds,
   // with the documents the repair must leave alone beside them.
@@ -1772,6 +2485,16 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       '{"ch3":{"hiZ":true,"phantom":true,"gain":60}}',
       '{"ch4":{"hiZ":1,"phantom":1,"gain":41}}',
       '{"ch3":{"hiZ":true,"phantom":false,"gain":70},"ch4":{"hiZ":true,"phantom":true}}',
+      // …and a gain past its channel's own range, with HI-Z off, on an A.Gain and a D.Gain
+      // channel, beside the oscillator level.
+      '{"ch1":{"gain":-12},"ch2":{"gain":71},"ch_5_6":{"gain":30},"bus.osc":{"osc":{"level":5}}}',
+      // …and PAN/BAL, which an unlinked pair holds at PAN; the secondary's is never sent.
+      '{"ch1":{"stereoLink":false,"panBal":1}}',
+      '{"ch1":{"stereoLink":true,"panBal":1},"ch2":{"panBal":1}}',
+      // …and a Rec Point stage the channel's own list does not offer, whose list a comp/EQ
+      // order off its menu does not change.
+      '{"ch_5_6":{"recPoint":0},"ch1":{"compEqType":1,"recPoint":2},"ch2":{"recPoint":2}}',
+      '{"ch1":{"compEqType":5,"recPoint":2}}',
       // …and the documents nothing may be said about.
       '{"ch3":{"hiZ":true,"gain":40}}',
       '{"ch3":{"hiZ":false,"phantom":true,"gain":70}}',

@@ -121,15 +121,35 @@ carries a one-line map of the same directories and points here.
   window, or DROPPED where there is nothing to bound: a leaf that is not a finite number (the window is
   shared across a channel's types and the DEFAULT is not), a `type` the channel's menu does not offer (a
   menu has no nearest member), and an `fxEffect` or its `params` that is not an object at all, which the
-  sanitiser keeps and every reader below then treats as absent. A drop of the effect OBJECT is the one
+  sanitiser keeps and every reader below then treats as absent. On every node the model's factory values
+  describe, a value whose kind is not the factory value's at that path is dropped the same way and the fill
+  supplies the factory value — a value that is not a number where a number belongs, a group or a list where
+  an on/off does, anything but a group where a group does (a number where an on/off belongs is converted
+  instead, below). Every node-param leaf the write bounds is bounded the same way, to the value the write
+  sends, by the one rule the write bounds it by (`nodeLeafRules` / `admitLeaf` in `translate.ts`) — an enum
+  off its menu to the menu's default — and a leaf the write never sends at all, a filter type on one of the
+  PEQ's two fixed-peaking bands, is dropped. That reaches the oscillator, which is scene-external: under the
+  Scene-only device scope the write does not carry it, while the load still moves it and says so. A drop of
+  the effect OBJECT is the one
   repair that changes what is sent, and in the safe direction — see "An FX channel the plan does not
   describe". The two actions are counted and said
   separately, since a value moved to the nearest one the app can send and a value removed are different
   events. A receiver the unit never leaves without a source that the document gives no wire — STREAMING —
   is completed the same way, with its default source, and said on the same line (`requiredSourceProblems`;
-  see "A plan that names no STREAMING source"). A send into a MIX bus whose Pan Link is on that carries a pan
-  other than its source's own is set to the source's value the same way and said on the same line
-  (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). An on/off written as a
+  see "A plan that names no STREAMING source"). A fixed send into a MIX or FX bus the document lists without a
+  level — which the write sends at unity while the CONSOLE's send rack and the MIDI feedback read a send with no
+  level as off; a main path into STEREO is the fader, which every reader takes at unity, and is left as written —
+  is given that unity level the same way, recorded as the fill's so the write confirm names its strip when
+  that level would move the unit, and said on the same line (`sendLevelProblems`). A STEREO-linked pair whose
+  members disagree about a value the pair holds once — a node param `pairSharesNodeKey` calls shared, as the
+  fill completes it, or a pair of sends' level, on/off and PRE/POST, and the pan in BAL — has the primary's
+  values copied onto the secondary the same way, the copy the unit makes when a pair is linked and the one
+  `mirrorLinkedPair` makes on an edit, and is said on the same line (`linkedPairProblems`). A document naming
+  only the primary is that repair too, and a valid shape: the secondary takes the primary's values rather
+  than its own factory ones. The insert effect stays the refusal's. A send into a MIX bus
+  whose Pan Link is on that carries a pan other than its source's own is set to the source's value the same
+  way and said on the same line, reading the pair as its copy leaves it, since in BAL the copy moves the
+  balance the send is held at (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). An on/off written as a
   number — a leaf the model's factory values hold as a boolean, at the same path on the same node — is
   converted to the on/off the write sends, off for 0 and on for any other number, and said on the same
   line (`booleanParamProblems`). It comes first, and every other check reads the document as it leaves it,
@@ -273,7 +293,9 @@ carries a one-line map of the same directories and points here.
       from **what the unit announced** for them, since the unit does not answer a GET for a write that early
       — every other read path hands over nothing, and names are the one class the overlay never answers for:
       `readPass` skips them entirely while `pending` is present, for the reason given under `settle.ts`
-      below / `settle.ts` the post-write settle: **a write is acked
+      below. The layout heads (each FX channel's EFFECT TYPE, each insert-FX selector) are read off the unit
+      even when announced: the family read checks its head a second time behind the values it lays out, and
+      an answer from the announcement would make that check a constant / `settle.ts` the post-write settle: **a write is acked
       before its value is readable**, and the boundary is that write's own device notify (measured on a
       URX44V, 9-204 ms from the write's issue, 87 value-paired samples on six addresses, independent of the
       parameter's class; on hardware a 1-knob drag ended at the notify 10/10, 42-203 ms, never at the
@@ -633,14 +655,17 @@ carries a one-line map of the same directories and points here.
   plan take back — it takes the plan the converge SENT as well as the live one, since the live flush clones
   before its await and one address is a different key under a different effect type /
   `param-source.ts` where each of a plan's parameter values came from — the fill records `load` /
-  `default` as it goes, an edit records `manual`, and a settled read or a landed write records
+  `default` as it goes, an edit records `manual` — the engine slots an effect selection seeds with
+  the type's defaults excepted, which are `default` — and a settled read or a landed write records
   `device` for everything they reached. Transient, and never serialized: the document holds state,
   not a record of how it was operated /
   `unauthored-writes.ts` which of a write's changes the operator never chose. The plan is dense — the
   loader completes a document from the model's factory values — so a write carries keys nobody set, and
   this names the strips they are on by re-emitting the plan with those keys blanked: an address that
   survives that emit is one an authored key asks for. `load` counts as authored (the document named the
-  value); `default` and `device` do not. A routing selector is named only for a wire the app completed —
+  value); `default` and `device` do not. A wire's params are asked the same way — a send level the load
+  completed is `default`, and a fixed send the document left out, which the install seeds, carries no
+  record — with the wire's own record standing for a param nothing recorded separately. A routing selector is named only for a wire the app completed —
   the load, or a Fetch / Live-sync start that found the unit on NONE (see "A plan that names no STREAMING
   source")
 
@@ -700,13 +725,22 @@ carries a one-line map of the same directories and points here.
 - **Plan** — the mutable state the user creates. It holds `modelId`, node positions (`positions`),
   connections (`connections`), per-connection parameters (level / pan / pre-post, etc.),
   node name overrides (`nodeNames`, the device's CH SETTING name — read and written over the string
-  IPC for the same nodes that carry a color; an empty name falls back to the model's default label).
+  IPC for the same nodes that carry a color; an empty name falls back to the model's default label.
+  An empty name is never sent — Live sync stops sending a name the moment its field is emptied and
+  resumes with the next name it holds, the unit keeping the last one sent, and Device > Write says
+  which names are empty and not sent instead of reporting a match. The load gives every nameable node a
+  document leaves unnamed — no entry, or an empty one — its factory name, recorded as the fill's, so
+  the write confirm names the strip when that name would move the unit: `completeNodeNames`).
   The toolbar's labels toggle chooses whether the canvas shows the planner's fixed labels ("CH 1",
   the default) or these device names ("ch 1"); model mode ignores `nodeNames` entirely),
   node color overrides
   (`nodeColors`, the device CH SETTING color, drawn as a thin top accent cap; the picker offers the
-  device's fixed palette so a chosen color is read and written 1:1 to hardware — input channels,
-  MIX, STEREO, FX and STREAMING; the CH SETTING **Icon**, a sibling of name and color, is
+  device's fixed palette and its Off — the plan's `"off"`, written as palette index 10 — so a chosen
+  color is read and written 1:1 to hardware — input channels, MIX, STEREO, FX and STREAMING. A plan
+  holds one of those eleven values or none (`isPlanColor`): the load drops any other string and says
+  so, and gives every colorable node a document leaves without a color its factory color, recorded as
+  the fill's so the write confirm names the strip when that color would move the unit
+  (`nodeColorProblems`, `completeNodeColors`); the CH SETTING **Icon**, a sibling of name and color, is
   intentionally not modeled — every node kind exposes it, but its value is a bare glyph id that
   would have to be calibrated against the unit's screen first), hidden nodes (`hidden`),
   and per-node notes (`notes`) with their minimized state (`noteCollapsed`). It serializes to JSON.
@@ -776,8 +810,8 @@ The constraint core (`core/routing.ts`):
   It therefore takes a mirror pass of its own (`mirrorLinkedInsertFx`) beside the node mirror: the two share
   the `stereoLink` gate and write the same values, and the separate pass is what names the three pair keys as
   the edit's own writes whatever that edit touched.
-  `applyPairTransition` clears `insertFx` / `insertFxOn` / `insertFxParams` on both members at the transition,
-  the mirror carries them whenever the pair is linked, and the 1-of slot census (`insertFxCensus`) counts a
+  `applyPairTransition` sets `insertFx` to No Effect and `insertFxOn` to off and removes `insertFxParams` on
+  both members at the transition (an absent selector is one the write sends nothing for), the mirror carries them whenever the pair is linked, and the 1-of slot census (`insertFxCensus`) counts a
   linked pair as a single holder — the app follows what the device does instead of modelling a second copy of
   the rule ([What the app models, and what it leaves to the unit](#what-the-app-models-and-what-it-leaves-to-the-unit)).
   **What a linked pair may take is the companders and nothing else.** The guitar amps and Pitch Fix are
@@ -1007,7 +1041,7 @@ address, a broker URI. Both sides of the shell raise them:
 | `src-tauri/src/vd.rs` (broker)  | `broker-unreachable`, `no-device`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-rejected`, `broker-bad-response`, `broker-io`      |
 | `src-tauri/src/midi.rs`         | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                              |
 | `src-tauri/src/keepawake.rs`    | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                          |
-| `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`                                                                                                                                                     |
+| `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`, `svg-rasterize`                                                                                                                                    |
 
 `errorText` (`i18n/index.ts`) resolves a code against `error.shell` and hands the detail to the
 entries that take one; an unrecognized message passes through unchanged, so an unexpected JS error
@@ -2437,14 +2471,16 @@ An insert effect's parameters live in **one engine array per effect family**, ad
 channel axis (`control/insert-fx-effect.ts`). Two nodes holding the same family therefore write the same
 addresses with their own values.
 
-**A conforming unit never gets into that state.** The user guide's Effect list gives each effect a "Number of
-simultaneous uses", and the compander's is "MONO IN channels: 1 slot; output channels: 1 slot", with the
-Supported-channels row adding that it "cannot be inserted into two mono channels". The 1-of slot rule in
-`control/params.ts` (`InsertFxSlot`) is that documented constraint, not an app policy, and the inspector and the
-console are defined over it (`insertFxMenu`). The plan loader warns about a file that carries the collision
-and opens it on the operator's word (`planProblems` in `core/plan-validate.ts`) — a refusal would make
-Fetch → Save → reopen impossible for the app's own document, since a **device readback** and a `.urxf`
-import deliberately do not validate; neither can produce it from a unit that honours its own spec.
+The user guide's Effect list gives each effect a "Number of simultaneous uses", and the compander's is "MONO
+IN channels: 1 slot; output channels: 1 slot", with the Supported-channels row adding that it "cannot be
+inserted into two mono channels". The 1-of slot rule in `control/params.ts` (`InsertFxSlot`) is that documented
+constraint, not an app policy, and the inspector and the console are defined over it (`insertFxMenu`). **The
+unit's control link does not enforce it**: with one MONO IN channel holding the compander, a second channel
+selecting it is accepted, both channels switch the effect on, and both point at the one engine array. The plan
+loader warns about a file that carries the collision and opens it on the operator's word (`planProblems` in
+`core/plan-validate.ts`), and a Write of such a plan puts the unit into that state. A **device readback** and a
+`.urxf` import deliberately do not validate, so reading a unit in that state produces the two-owner plan — and a
+refusal at the loader would make Fetch → Save → reopen impossible for the app's own document.
 
 A **STEREO-linked MONO IN pair** is one holder, not two, and the census counts it as one: measured on the unit,
 a linked pair's two members mirror the selector both ways and point at a single engine instance, and the link
@@ -2452,10 +2488,10 @@ transition clears the effect on both. The census reads `stereoLink`, not PAN/BAL
 both modes. Counting it as a collision would lock the pair's own menu against a selection the app itself
 authored (see the pair rules above).
 
-The collapse below is therefore not a repair of a state the hardware reports. It is an invariant on the app's
-own emission: `Plan` is free to hold two owners for one address — nothing in its type prevents it, and a
-hand-edited file or a future family that shares an engine would — and **a command list with two values for one
-address is never correct to send**, whatever put them there.
+The collapse below is an invariant on the app's own emission rather than a repair of what a read reports:
+`Plan` is free to hold two owners for one address — nothing in its type prevents it, and a hand-edited file, a
+read of a unit holding two or a future family that shares an engine would — and **a command list with two values
+for one address is never correct to send**, whatever put them there.
 
 The emitted set therefore collapses a repeated address to its **last** command, kept at its own position
 (`collapseSharedAddrs` in `control/translate.ts`):
@@ -2744,7 +2780,13 @@ listed here so they are not proposed as gaps:
    **One selector a partial capture leaves alone instead: STREAMING's source.** A capture that did not read it
    (`ReadbackResult.sourceUnread`) keeps no STREAMING wire in the plan it restores from, so no pass and not the
    restore write that selector — the unit keeps the source it held — and the report says so among its issues.
-   Every other address of a partial capture is still swept and restored as above.
+   Every other address of a partial capture is still swept, and **put back from the unit's own value rather
+   than from the plan's default**: a read the capture could not make leaves the captured plan's default there
+   (no source on a selector, unity on a fader, -inf on a send), which the restore would converge the unit
+   onto. So before the sweep the captured plan is diffed against the unit, and every address it finds
+   different or cannot read joins the ones the restore has no command for — read before the sweep and
+   written back after the restore, with an address that cannot be read then refusing the run (`diag.captureUnheld`
+   lists them).
 2. **`translate.ts`'s value coercion clamps instead of refusing.** It is the last line before the hardware, and
    a coerced in-range value is a better outcome than an out-of-range one reaching the unit. The clamp is
    deliberately NOT applied to the readout beside it: the panel shows what the plan holds, which after a
@@ -3009,7 +3051,11 @@ edit → apply:
    applying a diff against values that were never read (see "Aborting on failure").
 2. Edits accumulate in the modal. A row whose value differs from what the device reported takes the
    accent dot, and the footer counts the pending settings. Each edit and each bank tab rebuilds the
-   modal, keeping the focused control and the grid's scroll offset as Preferences does.
+   modal, keeping the focused control and the grid's scroll offset as Preferences does. The screen
+   holds the reading **as the unit reported it**: a value the app's catalog does not have — a Time Zone index past the city list, a knob
+   Function string the unit stores verbatim — is offered as `unknown (N)` rather than shown as the nearest
+   entry, and the diff compares the draft against that reading. An edit coerces only the field it sets,
+   so a value off the catalog is written only once the operator picks something for that row.
 3. `Apply to device` connects, sends **only the differences**, and disconnects. Only a clean apply moves
    the baseline, and only to the draft it sent; after a failure the draft still differs from what the
    device holds, which is what a retry needs. The rows stay editable while the apply is in flight, and an
@@ -3837,7 +3883,10 @@ what the desktop app offers.
   address (see "One device address, more than one owner"), and it does so **before** the scope
   filter, so the scene subset stays the full list filtered by ParamName. Reads stay full — a scoped fetch reads every
   parameter (reads are side-effect free) and then restores the kept values
-  (`applyDeviceStateScoped` in `main.ts`). The diagnostics (compare / self-test / prepare) always
+  (`applyDeviceStateScoped` in `main.ts`), and the two reads a live session scopes to a few nodes — a follow
+  reconcile and a `sideEffect: "refetch"` read — take the same keep and restore (`applyNodeStateScoped`), since a
+  node read there carries scene-external values of its own (the oscillator's assign into STEREO, a MIX or an FX
+  channel). The diagnostics (compare / self-test / prepare) always
   run at full scope, and the control locks while Live sync is up, since the scope is part of the
   held session's snapshot and notify registration. A scene-only write also skips the sample-rate
   settle: the rate is out of scope, so the device keeps its own clock.
@@ -3913,7 +3962,8 @@ corrupt input at two levels. A collection that is not the right container at all
 empty default (`positions` included, symmetrically); within a collection each element is validated on
 its own and a non-conforming one is dropped rather than the document refused — a wire that is null,
 wrong-typed or carries an unknown `kind`; a node parameter leaf that is not a finite number or a
-boolean; a note, name or colour that is not a string; a hidden / note-collapsed id that is not a
+boolean; a note, name or colour that is not a string (a colour that is a string but not one the
+unit has is the load funnel's, which drops it and says so); a hidden / note-collapsed id that is not a
 string; a position whose coordinates are not both finite. This keeps garbled values from a hand edit,
 a generator or an older build out of the plan, where they would break routing invariants or reach a
 formatter that throws on them — a note written as an object would load cleanly and then take the
@@ -3932,7 +3982,7 @@ type's defaults, and selecting the old type back does not bring the old values w
 is put in front of the operator instead of being taken by a document's silence:
 `app/unauthored-writes.ts` reports the strips a write moves at addresses whose value the operator
 did not choose, and the write confirm names them. The join is `planToCommandOrigins`: the emit runs
-once over a plan whose node parameters record their reads, and `rawCommand` — the one seat holding
+once over a plan whose node parameters and wire params record their reads, and `rawCommand` — the one seat holding
 both a command and the value it carries — writes the key onto the command as it builds it. Carried
 there rather than in a table beside it, because the shared-address collapse hands back a COPY of
 the command that survives it.
@@ -3944,9 +3994,8 @@ LEVEL go out as one chain — therefore gives each its own key, which reading th
 not. What the command CARRIES need not be what the key holds: the emit inverts (the SSMCS bank's
 COMP and EQ send ON as 0), rounds and clamps, and each of those is that key's value going out. A
 run of commands sending one value to every linked instance takes the name from the one before it,
-matched on the parameter as well as the value — matched on the value alone, a channel's fader, which
-comes off a connection rather than a node parameter, would take whichever parameter had last been read
-carrying a zero.
+matched on the parameter as well as the value — matched on the value alone, a command the emit supplies
+itself would take whichever parameter had last been read carrying the same value.
 
 Three answers, not two. A key the plan does not carry names nothing: the emit asks before it decides
 whether to send one, then supplies the value itself, and that is nobody's to have chosen — except at a
@@ -4074,17 +4123,13 @@ The value is authored FROM the device (`authorFromDevice`), the seat a device-si
 takes, rather than pushed as an edit: it is the write path's value rather than the operator's, and an undo
 that put the unwritable raw back would only have it normalised again on the next write.
 
-**SCOPE: the FX channel effect, and nothing else.** The premise holds wherever the emit normalises —
-`translate.ts` has eighteen `boundRaw` and ten `boundEnum` call sites against the two FX ones — and the
-reachable sibling is insert FX, whose engine slots are bounded at the emit while `readback.ts` stores the
-unit's raw verbatim. That case is untouched here: it diverges the same way and `comparePlan` sees it no
-better. The mechanism is bounded to `paramRangeProblems`' own walk for the same reason that walk is
-(`plan-validate.ts`'s SCOPE note): the FX catalogue is the family whose windows have actually moved.
-The walk's two node keys — a HI-Z channel's +48V and A.Gain — are not taken back: `paramRangeAddrs`
-answers only for an FX `params` entry, and the emit sends both keys as the plan holds them.
+**SCOPE: the FX channel effect, and nothing else.** The load bounds every node-param leaf the write
+bounds as well (`paramRangeProblems`), but only an FX `params` entry is taken back here: `paramRangeAddrs`
+answers for that entry alone, and a node-param repair carries no address. The reachable sibling is insert FX,
+whose engine slots are bounded at the emit while `readback.ts` stores the unit's raw verbatim: a plan holding
+such a raw from a device read diverges the same way, and `comparePlan` sees it no better.
 
-A value is **rewritten** rather than dropped in the DESERIALIZER (the node name, below) and in the loader one
-layer later, after validation, whose repairs are listed under `plan-validate.ts` in "Source layout". Among
+A value is **rewritten** rather than dropped in the loader, after validation, whose repairs are listed under `plan-validate.ts` in "Source layout". Among
 them, an FX value outside what the app can write is bounded, and one there is nothing to bound is dropped: a
 leaf that is not a finite number (so the selected type's own default applies rather than one type's guessed
 in), a `type` no menu offers, and an `fxEffect` or `params` that is not an object. That last pair is why this
@@ -4092,9 +4137,12 @@ repair reaches past the leaves — the
 sanitiser above keeps a boolean and a non-empty object under any key, so an unreadable effect object loads
 and every reader below reads it as absent, and a truthy one is worse still, since the write path then sends
 that channel's factory defaults over whatever the unit holds. Both actions are reported (`plan-validate.ts`), in
-two sentences rather than one count. The same step bounds two keys of a channel whose HI-Z is on — +48V to
-off and A.Gain to +40 dB (`input-lock.ts`) — and counts them with the bounded FX values. In the deserializer: a **node name** is cut to
-**8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
+two sentences rather than one count. The same step drops a node-param value whose kind is not the factory
+value's at its path, bounds every node-param leaf the write bounds to the value the write sends, by the rule
+the write bounds it by (`nodeLeafRules` / `admitLeaf` in `translate.ts`), and bounds two keys of a channel whose
+HI-Z is on — +48V to off and A.Gain to +40 dB (`input-lock.ts`) — counting each with the dropped or bounded FX
+values. The same step rewrites a document's names and notes (`documentTextProblems`), and says so: a **node
+name** is cut to **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
 would lose a name for being long, and keeping one the unit could not have produced puts a label on
 the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: measured
 on a URX44V, the broker accepts a 20-character name and reads it back unchanged, and the settings
@@ -4103,8 +4151,13 @@ limit would be a mistake. The name is also the one plan string the unit is sent 
 (`planToNameWrites`: the SSMCS Sweet Spot Data preset rides the same path, but the plan holds it as a numeric index,
 and an enum string such as a send's `tap` goes out as a number). The numeric leaves have `boundRaw` and a string has
 no bound of its own, so the cut is applied again at the emit site: a name reaches the plan from a device read and from a rename made on
-the unit itself, neither of which passes this funnel. Notes and colours are the app's own and stay
-unbounded.
+the unit itself, neither of which passes this funnel. Notes are the app's own and stay unbounded, and a
+colour is one of the unit's palette values. Before the cut, a document's names and notes lose every code
+point XML 1.0 refuses (`stripXmlInvalid`): an image export serializes both into an SVG, and one such
+character fails the whole export. A name read from the unit is not cleaned that way
+(`normalizeDocumentName` against `normalizeNodeName`), so no write rewrites the unit's own name for it,
+and the rasterizer removes the same code points from the serialized markup (`rasterizeSvg`), which is what
+covers a name that reaches the board from the unit.
 
 The cut carries a second rule, and the order between them is load-bearing: **trailing whitespace is
 stripped after the cut**, never before. A leading space is kept — the unit right-aligns the numbers
@@ -4162,7 +4215,9 @@ Format notes that shape the reader (full spec: the private reference repository)
 - **Endianness alternates by level.** Record headers and the F descriptor records are big-endian;
   block headers and every value in the D block are little-endian.
 - **D is a frameless concatenation** walked only with its own F table. `Σ(elemSize × count) == D
-  length` and `record bytes == F length` are the file's only integrity checks, so both are asserted.
+  length` and `record bytes == F length` are the file's only integrity checks, so both are asserted. A
+  descriptor with an element size of 0 is refused: it spans no bytes whatever its count says, so it would
+  pass both checks while turning one descriptor into up to 65535 values.
 - **Branch on `typecode`, never on element size** — a 4-byte unsigned bitmask and a 4-byte ASCII
   field are the same width, and reading either by width alone gives a wrong value silently.
 - **An x axis is stored flattened onto consecutive ids** (id + band), folded back into an `(id, x)`

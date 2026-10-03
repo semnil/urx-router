@@ -908,6 +908,208 @@ describe("Fetch from device", () => {
     expect(stripsNamed(asked[0])).toEqual([fullLabel(stream)]);
   });
 
+  // A send the document lists without a level loads at the unity the write sends, and that level
+  // is the fill's: the write that moves the unit's send there names the strip, said on the load's
+  // status line first. The control is the same document with the level written, on the same unit.
+  it.each([
+    ["names the strip whose send level the load supplied", false],
+    ["names nothing when the document wrote that level", true],
+  ])("%s", SLOW, async (_name, writesLevel) => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const model = getModel("URX44V");
+    const written = defaultPlan("URX44V");
+    const send = written.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in")!;
+    send.params = writesLevel ? { ...send.params, level: 0 } : { pan: send.params?.pan ?? 0 };
+    const levels = sendControl(model, "ch1", "bus.mix1")!.level;
+    const read = clockReads(false, 48_000);
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({
+        "plugin:dialog|message": "Ok",
+        // The unit holds that send at -10 dB, which a write of unity moves.
+        vd_get: (a: Record<string, unknown>) =>
+          levels.includes(Number(a.paramId) + Number(a.x ?? 0)) ? levelToVd(-10) : read(a),
+      }),
+    }))!;
+    await vi.waitFor(
+      () =>
+        expect(statusText()).toBe(
+          writesLevel ? t().status.planLoaded : [t().status.sendLevelsSupplied(1), t().status.planLoaded].join(" — "),
+        ),
+      { timeout: 10_000 },
+    );
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const ch1 = model.nodes.find((n) => n.id === "ch1")!;
+    expect(stripsNamed(asked[0])).toEqual(writesLevel ? [] : [fullLabel(ch1)]);
+  });
+
+  // The unit fills an engine with the type's defaults only on the transition into it, so a write
+  // of a selector it already holds moves nothing there. A selection made in the app puts those
+  // defaults in the plan: the write over a unit already running that effect, tuned otherwise,
+  // sends them, and its confirm names the strip, since they are the type's and not the operator's.
+  it("sends a chosen effect's defaults over a unit already running it, and names the strip", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const { ENGINE_COMPANDER_INPUT, insertFxDefaults } = await import("./core/control/insert-fx-effect");
+    const model = getModel("URX44V");
+    const ifx = insertFxControl(model, "ch1")!;
+    const read = clockReads(false, 48_000);
+    const held: Record<number, number> = { 6: -2000, 7: 800 };
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(defaultPlan("URX44V")), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({
+        "plugin:dialog|message": "Ok",
+        // CH 1 runs Compander-H with a threshold and a ratio of its own.
+        vd_get: (a: Record<string, unknown>) =>
+          a.paramId === ifx.param
+            ? 1793
+            : a.paramId === ENGINE_COMPANDER_INPUT && held[Number(a.y)] !== undefined
+              ? held[Number(a.y)]
+              : read(a),
+      }),
+    }))!;
+    selectNode("ch1");
+    const sel = [...document.querySelectorAll<HTMLElement>("#inspector .param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.insertFxType)!
+      .querySelector("select")!;
+    sel.value = "1793";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    expect(stripsNamed(asked[0])).toEqual([fullLabel(model.nodes.find((n) => n.id === "ch1")!)]);
+    const sent = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set" ? shell.args[i] : undefined))
+      .filter((a): a is Record<string, unknown> => !!a && a.paramId === ENGINE_COMPANDER_INPUT && a.y === 6);
+    expect(sent.map((a) => a.value)).toContain(insertFxDefaults("compander", 1793)[6]);
+  });
+
+  // A document that leaves a name out loads with the model's factory name, which the write then
+  // sends: that name is the fill's, so the write moving the unit onto it names the strip, while a
+  // name the document wrote does not.
+  it.each([
+    ["names the strip whose name the load filled", false],
+    ["names nothing when the document wrote that name", true],
+  ])("%s", SLOW, async (_name, writesName) => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const model = getModel("URX44V");
+    const written = defaultPlan("URX44V");
+    if (!writesName) delete written.nodeNames.ch1;
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: clockReads(false, 48_000) }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const sentNames = shell.invokes.flatMap((cmd, i) => (cmd === "vd_set_str" ? [shell.args[i]!.value] : []));
+    expect(sentNames, "the premise: the factory name goes out").toContain(defaultPlan("URX44V").nodeNames.ch1);
+    expect(stripsNamed(asked[0])).toEqual(writesName ? [] : [fullLabel(model.nodes.find((n) => n.id === "ch1")!)]);
+  });
+
+  // A document that leaves a colour out loads with the model's factory colour, which the write
+  // then sends — the fill's, so the write moving the unit onto it names the strip, while a colour
+  // the document wrote does not. Off goes out as the unit's Off index.
+  it.each([
+    ["names the strip whose colour the load filled", false],
+    ["names nothing when the document wrote that colour", true],
+  ])("%s", SLOW, async (_name, writesColor) => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const { COLOR_OFF, COLOR_OFF_INDEX, planColorIndex } = await import("./core/control/params");
+    const model = getModel("URX44V");
+    const written = defaultPlan("URX44V");
+    // The unit answers 0 at an address nothing wrote, so STEREO's factory colour moves it.
+    expect(planColorIndex(written.nodeColors["bus.stereo"]), "the premise").not.toBe(0);
+    if (!writesColor) delete written.nodeColors["bus.stereo"];
+    written.nodeColors.ch1 = COLOR_OFF;
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: clockReads(false, 48_000) }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const stereo = fullLabel(model.nodes.find((n) => n.id === "bus.stereo")!);
+    expect(stripsNamed(asked[0])).toEqual(writesColor ? [] : [stereo]);
+    const offSent = shell.invokes.some(
+      (cmd, i) =>
+        cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.CH_COLOR.id && shell.args[i]?.value === COLOR_OFF_INDEX,
+    );
+    expect(offSent, "Off goes out as the Off index").toBe(true);
+  });
+
+  // An empty name has no value to send, and the unit keeps its own. Said by the write rather than
+  // counted as a match: on its own it is what the write reports instead of "already matches",
+  // and beside other changes it is a line of the confirm.
+  it("says which names are empty and not sent, instead of reporting a match", SLOW, async () => {
+    const shell = await bootDevice();
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(statusText(), "the premise: the unit matches the plan").toContain(t().status.writeNoChanges);
+
+    selectNode("ch1");
+    const field = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.value = "";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    const namesSent = (): number => shell.invokes.filter((cmd) => cmd === "vd_set_str").length;
+    const before = namesSent();
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 3);
+    const { fullLabel } = await import("./models/types");
+    const label = fullLabel(getModel("URX44V").nodes.find((n) => n.id === "ch1")!);
+    expect(statusText()).toBe(t().status.writeNamesNotSent(label, 1));
+    expect(namesSent(), "nothing is sent for it").toBe(before);
+
+    // Beside a change that does go out, the confirm says it.
+    selectNode("ch2");
+    const other = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+    other.value = "Kick";
+    other.dispatchEvent(new Event("input", { bubbles: true }));
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 4);
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked.at(-1)).toContain(t().confirm.namesNotSent(label, 1));
+  });
+
+  // The params of a wire a scene-scoped document carries over are the plan on screen's as the wire
+  // is: the OSC assign into STEREO of a plan nothing vouches for stays unvouched-for after a scene
+  // file is dropped over it, so the write moving the unit's assign names STEREO.
+  it("keeps the record of a carried-over wire's params", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const scene = serialize(defaultPlan("URX44V"), { sceneOnly: true });
+    expect(JSON.parse(scene).connections.some((c: { from: string }) => c.from === "bus.osc:out")).toBe(false);
+    const shell = (await bootApp({
+      tauri: deviceCommands({
+        "plugin:dialog|message": "Ok",
+        vd_get: clockReads(false, 48_000),
+        read_text_file: () => scene,
+      }),
+    }))!;
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/scene.json"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.openedFrom("scene.json")), { timeout: 10_000 });
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const stereo = getModel("URX44V").nodes.find((n) => n.id === "bus.stereo")!;
+    expect(stripsNamed(asked[0])).toContain(fullLabel(stereo));
+  });
+
   // A scene-scoped document leaves STREAMING's source to the plan on screen, and that wire keeps
   // the record it had there: the one the load supplied is still named by the next write.
   it("still names that source after a scene-scoped document carries it over", SLOW, async () => {
@@ -4032,8 +4234,13 @@ describe("Write to device", () => {
     const described = emptyPlan("URX44V");
     described.nodeParams["ch1"] = { level: -10 };
     // The factory values, but WRITTEN IN the document: same numbers on the wire, different
-    // provenance — which is the whole distinction the note is drawn from.
-    for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    // provenance — which is the whole distinction the note is drawn from. The channels' sends
+    // and names are theirs too, and the write carries them on the same strips.
+    for (const id of ["bus.fx1", "bus.fx2"]) {
+      described.nodeParams[id] = factory.nodeParams[id]!;
+      described.nodeNames[id] = factory.nodeNames[id]!;
+    }
+    described.connections = factory.connections.filter((c) => c.from === "bus.fx1:out" || c.from === "bus.fx2:out");
     const told = await runWrite(described);
     expect(told.count("vd_set"), "the positive control").toBeGreaterThan(0);
     expect(confirms(told).filter((m) => stripsNamed(m).includes(fxLabel("bus.fx1")))).toEqual([]);
@@ -4053,8 +4260,13 @@ describe("Write to device", () => {
     const factory = defaultPlan("URX44V");
     const described = emptyPlan("URX44V");
     described.nodeParams["ch1"] = { level: -10 };
-    // The FX channels are what the document names; everything else is left to the fill.
-    for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    // The FX channels are what the document names — their params, their sends and their names;
+    // everything else is left to the fill.
+    for (const id of ["bus.fx1", "bus.fx2"]) {
+      described.nodeParams[id] = factory.nodeParams[id]!;
+      described.nodeNames[id] = factory.nodeNames[id]!;
+    }
+    described.connections = factory.connections.filter((c) => c.from === "bus.fx1:out" || c.from === "bus.fx2:out");
     const link = encodeURIComponent(Buffer.from(serialize(described), "utf8").toString("base64url"));
     // Reads that never reflect a write: every address answers its clock value or 0, so the
     // converge runs out with a residual and the write is not a landing.
@@ -6792,6 +7004,40 @@ describe("the device self-test", () => {
     }
   });
 
+  // A cancel taken while the capture is still reading is a run that never wrote: the status
+  // says the unit was not touched, rather than that it was left silent and needs a fetch.
+  it("says a cancel taken before the first write left the unit untouched", SLOW, async () => {
+    const shell = await bootExperimental();
+    let ask = (): void => {};
+    const asked = new Promise<void>((r) => (ask = r));
+    let release = (): void => {};
+    const released = new Promise<void>((r) => (release = r));
+    shell.answer("vd_get", () => (ask(), released.then(() => 0)));
+    const btn = await selfTestBtn();
+    btn.click();
+    await asked;
+    expect(btn.textContent, "the premise: the run is under way").toBe(t().toolbar.selfTestCancel);
+
+    btn.click();
+    release();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestCancelledUntouched), { timeout: 25_000 });
+    expect(shell.count("vd_set")).toBe(0);
+    expect(btn.textContent).toBe(t().toolbar.selfTest);
+  });
+
+  // A unit of another model is a run that did not start: nothing read and nothing written. The
+  // status names the mismatch, rather than reading the restore that never ran as a failed one.
+  it("says a run on a unit of another model did not start", SLOW, async () => {
+    const shell = await bootExperimental(connectAs("URX22"));
+    const btn = await selfTestBtn();
+    btn.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestModelMismatch("URX22", "URX44V")), {
+      timeout: 25_000,
+    });
+    expect(shell.count("vd_set")).toBe(0);
+    expect(shell.count("vd_get")).toBe(0);
+  });
+
   // A run that cannot open its own link surfaces as a dialog and lets the latch go.
   it("reports a run that cannot open its own link, and holds nothing afterwards", SLOW, async () => {
     const log = captureWarnings();
@@ -8542,17 +8788,24 @@ describe("+48V and Hi-Z on one channel", () => {
         timeout: 25_000,
         interval: 50,
       });
+      // The idle full read starts its delay again at every arm, and the settle's report of a
+      // write the unit did not announce is one, so it is waited for by its own first read
+      // rather than by a quiet window shorter than that delay.
+      await vi.waitFor(
+        () =>
+          expect(
+            shell.invokes.some(
+              (cmd, i) =>
+                i >= announced &&
+                cmd === "vd_get" &&
+                shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
+                shell.args[i]?.y === CH1_Y,
+            ),
+            "the premise: the full read ran behind the scoped one",
+          ).toBe(true),
+        { timeout: 25_000, interval: 50 },
+      );
       await quiet(shell);
-      expect(
-        shell.invokes.some(
-          (cmd, i) =>
-            i >= announced &&
-            cmd === "vd_get" &&
-            shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
-            shell.args[i]?.y === CH1_Y,
-        ),
-        "the premise: the full read ran behind the scoped one",
-      ).toBe(true);
       expect(gainShown(), "the gain the press lowered is the unit's again").toBe("+60 dB");
       expect(statusText().startsWith(`${t().status.hiZRefusedByRead("CH 3")} — `), statusText()).toBe(true);
       expect({
@@ -8763,5 +9016,77 @@ describe("+48V and Hi-Z on one channel", () => {
         JSON.stringify(seen),
       ).toBe(false);
     });
+  });
+});
+
+// Under the Scene only device scope a whole-device read puts the plan's scene-external values
+// back afterwards. A read scoped to a few nodes — a follow reconcile, or the refetch a
+// `sideEffect: "refetch"` write takes — reads those nodes' oscillator assigns as well, so it
+// takes the same keep and restore, or the two reads disagree about one value under one
+// setting and the unit's assign replaces the plan's.
+describe("a scoped read under the Scene only device scope", () => {
+  const model = (): DeviceModel => getModel("URX44V");
+  /** The oscillator's assigns the board draws, by the bus they go into. */
+  const oscDrawn = (): string[] =>
+    [...$("graph-host").querySelectorAll('.wire-hit[data-from="bus.osc:out"]')]
+      .map((w) => (w as SVGElement).dataset.to ?? "")
+      .sort();
+  const readsOf = (shell: TauriShell, paramId: number): number =>
+    shell.invokes.filter((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === paramId).length;
+  const liveUp = (): Promise<void> =>
+    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+  /** A unit whose oscillator goes into FX 1 and not into STEREO — the plan's own assign is the
+   *  other way round — with the session up under the scene scope. */
+  const sceneSession = async (): Promise<TauriShell> => {
+    const shell = (await bootApp({
+      seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) },
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok" }, { [`${PARAMS.OSC_ASSIGN_FX.id}/0/0`]: 1 }),
+    }))!;
+    expect(oscDrawn(), "the premise: the plan's oscillator goes into STEREO").toEqual(["bus.stereo:in"]);
+    live().click();
+    await liveUp();
+    await quiet(shell);
+    expect(oscDrawn(), "the premise: the session's start read kept it").toEqual(["bus.stereo:in"]);
+    return shell;
+  };
+
+  it("keeps the plan's assigns through a follow read of an FX channel", SLOW, async () => {
+    const shell = await sceneSession();
+    const send = planToCommands(model(), defaultPlan("URX44V")).find(
+      (c) => c.node === "bus.fx1" && c.name === "SEND_LEVEL",
+    )!;
+    const before = readsOf(shell, PARAMS.OSC_ASSIGN_FX.id);
+    // A send level moved on the unit's own panel, which the follow layer answers with a read of
+    // FX 1.
+    notifyChannel(shell).onmessage([{ param_id: send.paramId, x: send.x, y: send.y, value: -1000 }]);
+    await vi.waitFor(
+      () => expect(readsOf(shell, PARAMS.OSC_ASSIGN_FX.id), "the premise: FX 1 was read").toBeGreaterThan(before),
+      { timeout: 10_000 },
+    );
+    await quiet(shell);
+    expect(oscDrawn()).toEqual(["bus.stereo:in"]);
+  });
+
+  it("keeps the plan's assigns through the refetch a STEREO EQ 1-knob takes", SLOW, async () => {
+    const shell = await sceneSession();
+    const before = readsOf(shell, PARAMS.OSC_ASSIGN_STEREO.id);
+    selectNode("bus.stereo");
+    $("inspector").querySelector<HTMLButtonElement>("#btn-eq-screen")!.click();
+    $("dyn-screen-box")
+      .querySelector<HTMLElement>("#dyn-oneknob-level")!
+      .closest(".prefs-section")!
+      .querySelectorAll<HTMLButtonElement>(".prefs-toggle button")[0]
+      .click(); // ON
+    await vi.waitFor(
+      () =>
+        expect(readsOf(shell, PARAMS.OSC_ASSIGN_STEREO.id), "the premise: STEREO was read back").toBeGreaterThan(
+          before,
+        ),
+      { timeout: 10_000 },
+    );
+    $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions .consent-btn-secondary")!.click();
+    await quiet(shell);
+    expect(oscDrawn()).toEqual(["bus.stereo:in"]);
   });
 });

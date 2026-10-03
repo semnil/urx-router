@@ -174,7 +174,10 @@ the unit does not apply a value written above +40. The Inspector slider, the
 CONSOLE knob and a MIDI control's full throw take the same range while HI-Z is on.
 Turning HI-Z on in the app with A.Gain above +40 lowers it to +40 in the same edit
 (one undo step restores both), and a plan holding HI-Z on with A.Gain above +40
-opens with A.Gain at +40, reported like the +48V repair. HI-Z is written ahead of
+opens with A.Gain at +40, reported like the +48V repair — as a plan holding any gain
+outside its channel's own range opens with it at the nearer end (A.Gain -8 … +70,
+D.Gain -24 … +24): the unit does not apply an A.Gain below -8 and refuses a value
+past its descriptor. HI-Z is written ahead of
 A.Gain, and whichever of +48V / HI-Z the plan holds off is written ahead of the
 other, so a write never has both on in between.
 

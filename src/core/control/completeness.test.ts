@@ -14,7 +14,8 @@
 // software twin of the live idempotent double-write check.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getModel } from "../../models";
+import { getModel, MODEL_IDS } from "../../models";
+import { defaultPlan } from "../../models/initial-state";
 import { emptyPlan, ensureFixedConnections, supplyRequiredSources } from "../plan";
 import { ref } from "../../models/types";
 
@@ -158,5 +159,27 @@ describe("planToCommands absolute-state completeness", () => {
       [0, 2],
       [1, 3],
     ]);
+  });
+});
+
+// A new plan is what the factory fill completes a document with, so every address a write can
+// send has to be one it carries a value for: a key the factory lacks is one the panel draws a
+// default for while the write sends nothing, and a unit holding anything else keeps it. A full
+// read of a unit holding the new plan's own values sets every key the read covers, so the two
+// emits have to name the same addresses.
+describe("a new plan", () => {
+  it.each(MODEL_IDS)("%s writes every address a device read of it covers", async (id) => {
+    const m = getModel(id);
+    // Installed the way every plan is, which seeds the fixed wires the factory list leaves out.
+    const installed = defaultPlan(id);
+    ensureFixedConnections(m, installed);
+    const fresh = planToCommands(m, installed);
+    mockDevice(tableFrom(fresh));
+    const plan = emptyPlan(id);
+    await applyDeviceState(m, plan);
+    const addrs = (cmds: VdCommand[]): string[] =>
+      [...new Set(cmds.map((c) => `${c.name} ${c.paramId}:${c.x}:${c.y}`))].sort();
+    const read = addrs(planToCommands(m, plan));
+    expect(read.filter((a) => !addrs(fresh).includes(a))).toEqual([]);
   });
 });

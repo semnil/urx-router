@@ -32,7 +32,15 @@ import {
 import { connParamContestKey, nodeParamContestKey } from "./plan-history";
 import { emptyPlan, type Plan, type PlanConnection } from "./plan";
 import { defaultPlan } from "../models/initial-state";
-import { BUS_TYPE_FIXED, BUS_TYPE_VARI, INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "./control/params";
+import {
+  BUS_TYPE_FIXED,
+  BUS_TYPE_VARI,
+  INSERT_FX_NONE,
+  INSERT_FX_OPTIONS,
+  PAN_BAL_BAL,
+  PAN_BAL_PAN,
+} from "./control/params";
+import { planToCommands } from "./control/translate";
 
 const u44 = MODELS.URX44;
 // Any effect claiming a 1-of slot: the pair rules never read the value itself.
@@ -427,8 +435,8 @@ describe("applyPairTransition", () => {
     };
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true };
     applyPairTransition(u44, plan, "ch1", { stereoLink: true });
-    expect(heldInsertFx("ch1")).toEqual([undefined, undefined, undefined]);
-    expect(heldInsertFx("ch2")).toEqual([undefined, undefined, undefined]);
+    expect(heldInsertFx("ch1")).toEqual([INSERT_FX_NONE, false, undefined]);
+    expect(heldInsertFx("ch2")).toEqual([INSERT_FX_NONE, false, undefined]);
   });
 
   it("clears both channels' insert FX when the pair is unlinked", () => {
@@ -443,8 +451,28 @@ describe("applyPairTransition", () => {
     plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX, insertFxOn: true };
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: false };
     applyPairTransition(u44, plan, "ch1", { stereoLink: false });
-    expect(heldInsertFx("ch1")).toEqual([undefined, undefined, undefined]);
-    expect(heldInsertFx("ch2")).toEqual([undefined, undefined, undefined]);
+    expect(heldInsertFx("ch1")).toEqual([INSERT_FX_NONE, false, undefined]);
+    expect(heldInsertFx("ch2")).toEqual([INSERT_FX_NONE, false, undefined]);
+  });
+
+  // A loaded plan is dense, so a member left WITHOUT the selector key is one the write sends
+  // nothing for. Linked and unlinked again offline, both members still have to write No
+  // Effect, or a unit holding an effect keeps it while both panels show none.
+  it("leaves both members writing No Effect after a link and an unlink", () => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX, insertFxOn: true };
+    for (const stereoLink of [true, false]) {
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink };
+      applyPairTransition(u44, plan, "ch1", { stereoLink });
+      mirrorLinkedPair(u44, plan, "ch1");
+      mirrorLinkedInsertFx(u44, plan, "ch1");
+    }
+    const selectors = planToCommands(u44, plan).filter((c) => c.name === "INSERT_FX" && c.node?.startsWith("ch"));
+    for (const ch of ["ch1", "ch2"]) {
+      expect(
+        selectors.filter((c) => c.node === ch).map((c) => c.planValue),
+        ch,
+      ).toEqual([INSERT_FX_NONE]);
+    }
   });
 
   // Measured: a PAN/BAL toggle on its own leaves the pair holding its effect — only a

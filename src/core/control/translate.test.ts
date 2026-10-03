@@ -4,7 +4,18 @@ import { defaultPlan } from "../../models/initial-state";
 import type { ModelId } from "../../models/types";
 import { emptyPlan, ensureFixedConnections } from "../plan";
 import type { Plan } from "../plan";
-import { COLOR_OFF_INDEX, COLOR_PALETTE, EQ_TYPE_PASS, PARAMS, colorIndexToHex, hexToColorIndex } from "./params";
+import {
+  COLOR_OFF,
+  COLOR_OFF_INDEX,
+  COLOR_PALETTE,
+  COMP_EQ_COMP_FIRST,
+  EQ_TYPE_PASS,
+  PARAMS,
+  colorIndexToHex,
+  colorIndexToPlan,
+  hexToColorIndex,
+  isPlanColor,
+} from "./params";
 import type { ParamSpec } from "./params";
 import {
   addrKey,
@@ -801,6 +812,40 @@ describe("planToCommands", () => {
     for (const name of ["COMP_THRESHOLD", "COMP_RATIO", "COMP_GAIN", "COMP_KNEE"]) expect(has(all, name)).toBe(true);
   });
 
+  // Auto Makeup computes the gain whenever the threshold or the ratio moves, so the writer
+  // leaves the gain to the unit while it is on and follows it instead. Sent, a converge
+  // sharing the flush writes the plan's stale gain back over the one the unit computed.
+  it("skips the COMP gain Auto Makeup drives while it is on, and follows it", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    const comp = { threshold: -18, ratio: 3, gain: 6, knee: 1, attack: 20, release: 150, oneKnob: false };
+    const ch1 = (p: Plan): string[] =>
+      planToCommands(model, p)
+        .filter((c) => c.node === "ch1")
+        .map((c) => c.name);
+    const followed = (p: Plan): string[] =>
+      planToFollowOnlyAddrs(model, p)
+        .filter((f) => f.node === "ch1" && f.name.startsWith("COMP_"))
+        .map((f) => `${f.name} ${f.param}:${f.x}:${f.y}`);
+    const y = channelDynamics(model, "ch1", COMP_EQ_COMP_FIRST)!.y;
+
+    plan.nodeParams.ch1 = { comp: { ...comp, autoMakeup: true } };
+    expect(ch1(plan)).not.toContain("COMP_GAIN");
+    for (const name of ["COMP_THRESHOLD", "COMP_RATIO", "COMP_KNEE", "COMP_ATTACK", "COMP_RELEASE", "COMP_AUTO_MAKEUP"])
+      expect(ch1(plan), name).toContain(name);
+    expect(followed(plan)).toEqual([`COMP_GAIN ${PARAMS.COMP_GAIN.id}:0:${y}`]);
+
+    // Off: the plan authors the gain again, and nothing is followed in its place.
+    plan.nodeParams.ch1 = { comp: { ...comp, autoMakeup: false } };
+    expect(ch1(plan)).toContain("COMP_GAIN");
+    expect(followed(plan)).toEqual([]);
+
+    // With the 1-knob on as well it is the knob's set, whose level is a refetch head.
+    plan.nodeParams.ch1 = { comp: { ...comp, autoMakeup: true, oneKnob: true, oneKnobLevel: 50 } };
+    expect(ch1(plan)).not.toContain("COMP_GAIN");
+    expect(followed(plan)).toEqual([]);
+  });
+
   it("drops COMP detail in SSMCS mode but keeps GATE", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
@@ -1475,6 +1520,26 @@ describe("CH SETTING color", () => {
     const stream = cmds.filter((c) => c.name === "STREAM_COLOR");
     expect(stream.map((c) => c.y)).toEqual([0, 1]);
     expect(stream.every((c) => c.paramId === 704 && c.vdValue === 1)).toBe(true);
+  });
+
+  // The unit's Off is palette index 10 on every colour param: written as itself, never left to
+  // the unit, and the one plan value besides the ten palette hexes.
+  it("writes Off as the Off index, on every instance", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeColors.ch1 = COLOR_OFF;
+    plan.nodeColors["bus.stereo"] = COLOR_OFF;
+    const cmds = planToCommands(model, plan).filter((c) => c.name === "CH_COLOR" || c.name === "STEREO_COLOR");
+    expect(cmds.length).toBeGreaterThan(1);
+    expect(cmds.every((c) => c.vdValue === COLOR_OFF_INDEX)).toBe(true);
+    expect([isPlanColor(COLOR_OFF), isPlanColor("#4A78C0"), isPlanColor("#abcdef"), isPlanColor("url(x)")]).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
+    expect(colorIndexToPlan(COLOR_OFF_INDEX)).toBe(COLOR_OFF);
+    expect(colorIndexToPlan(11)).toBeNull();
   });
 
   it("skips uncolored nodes and non-palette hex (never guesses a write)", () => {

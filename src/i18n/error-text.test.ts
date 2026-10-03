@@ -179,6 +179,7 @@ describe("errorText", () => {
       "file-io: No space left on device (os error 28)",
       "file-bad-extension: json, md",
       "png-encode",
+      "svg-rasterize",
       "canvas-unavailable",
       "midi-port-not-found",
       "midi-output-not-open",

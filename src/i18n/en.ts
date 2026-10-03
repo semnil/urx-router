@@ -209,6 +209,7 @@ export const en = {
     param2: dev("Parameter 2"),
     knobsNote: tr("Banks match the unit's own bank switching."),
     unset: tr("—"),
+    unknownValue: (v: number | string): string => `unknown (${v})`,
   },
   midi: {
     menuItem: tr("MIDI control"),
@@ -851,8 +852,16 @@ export const en = {
     paramsBounded: (count: number): string =>
       `${count} stored ${count === 1 ? "value was" : "values were"} outside what this app can write, and now read as the nearest value it can send`,
     paramsDropped: (count: number): string =>
-      `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the effect's own default`,
+      `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the default`,
     streamingSourceSupplied: tr("The plan named no STREAMING source, so STREAMING takes STEREO"),
+    textsRewritten: (count: number): string =>
+      `${count} ${count === 1 ? "name or note was" : "names or notes were"} rewritten to what the unit's name screen and an image export can take`,
+    colorsDropped: (count: number): string =>
+      `${count} ${count === 1 ? "node color was" : "node colors were"} not one the unit has, and now ${count === 1 ? "reads" : "read"} as the default`,
+    linkedPairsAligned: (count: number): string =>
+      `${count} STEREO-linked ${count === 1 ? "pair now holds" : "pairs now hold"} the odd channel's shared settings on both channels, as the unit does`,
+    sendLevelsSupplied: (count: number): string =>
+      `${count} ${count === 1 ? "send was" : "sends were"} listed without a level, and now ${count === 1 ? "reads" : "read"} 0 dB, the level a write sends`,
     booleanParamsConverted: (count: number): string =>
       `${count} on/off ${count === 1 ? "value written as a number was" : "values written as numbers were"} converted to on/off`,
     linkedSendPansAligned: (count: number): string =>
@@ -914,6 +923,8 @@ export const en = {
       `+48V and Hi-Z are both on for ${channels} — turn one of them off before writing to the device; nothing was sent`,
     writeConnecting: tr("Connecting to the device…"),
     writeNoChanges: tr("Device already matches the plan — nothing to write"),
+    writeNamesNotSent: (strips: string, count: number): string =>
+      `Nothing to write — ${count === 1 ? "the name of" : "the names of"} ${strips} ${count === 1 ? "is" : "are"} empty and not sent, so the device keeps its own`,
     written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
     writePartial: (n: number, failed: number): string => `Wrote ${n}, ${failed} failed`,
     writeStopped: (n: number, notSent: number): string =>
@@ -932,7 +943,10 @@ export const en = {
     selfTestRefused: tr(
       "Self-test did not start — some parameters it would have to restore could not be read first. The device was not touched.",
     ),
+    selfTestModelMismatch: (device: string, model: string): string =>
+      `Self-test did not start — the connected device is ${device}, not ${model}. The device was not touched.`,
     selfTestCancelled: tr("Self-test canceled — device left silent; fetch again to restore your state"),
+    selfTestCancelledUntouched: tr("Self-test canceled before it wrote anything — the device was not touched"),
     selfTestPass: (n: number): string => `Self-test passed: ${n} params written and read back identically`,
     selfTestFail: (n: number): string => `Self-test FAILED: ${n} param${n === 1 ? "" : "s"} did not match after write`,
     // "did not match after write" is a claim about the device, and a run that stopped
@@ -940,8 +954,8 @@ export const en = {
     selfTestIncomplete: (n: number): string =>
       `Self-test did not complete: ${n} param${n === 1 ? "" : "s"} still differed when the run stopped — see the report`,
     selfTestRestoreFail: tr("Self-test: device may not be restored — fetch again to check"),
-    selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
-      `Self-test guesses: ${confirmed} confirmed, ${refuted} refuted, ${untestable} untestable`,
+    selfTestUnverified: (confirmed: number, roundTripped: number, refuted: number, untestable: number): string =>
+      `Self-test guesses: ${confirmed} confirmed, ${roundTripped} round-tripped only, ${refuted} refuted, ${untestable} untestable`,
     selfTestError: (message: string): string => `Self-test error: ${message}`,
     liveConnecting: tr("Connecting for live sync…"),
     liveOn: (model: string, n: number): string => `Live sync on · ${model} · ${n} setting${n === 1 ? "" : "s"} read`,
@@ -1013,6 +1027,8 @@ export const en = {
       `Write ${n} change${n === 1 ? "" : "s"} to the device? This overwrites the device's current settings.`,
     unauthoredWrite: (strips: string): string =>
       `The write also changes settings you did not edit — values the plan filled in for you, or values the device has moved since it was read.\nAffected: ${strips}`,
+    namesNotSent: (strips: string, count: number): string =>
+      `${count === 1 ? "The name of" : "The names of"} ${strips} ${count === 1 ? "is" : "are"} empty and not sent — the device keeps its own.`,
     firmwareMismatch: (device: string, supported: string): string =>
       `The connected device's firmware (${device}) differs from the version this app was tested with (${supported}). It may not work correctly. Continue anyway?`,
     selfTest: tr(
@@ -1272,6 +1288,7 @@ export const en = {
       fileBadExtension: (detail: string): string => `unsupported file extension (this action takes: ${detail})`,
       pngEncode: tr("the image could not be encoded as PNG"),
       canvasUnavailable: tr("the drawing canvas is unavailable, so the image could not be rendered"),
+      svgRasterize: tr("the board could not be drawn as an image"),
       midiPortNotFound: tr("That MIDI port is no longer available. Reconnect the device and pick it again."),
       midiOutputNotOpen: tr("no MIDI output port is open"),
       midiInitFailed: (detail: string): string => `the MIDI subsystem could not be started (${detail})`,

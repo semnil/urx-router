@@ -15,7 +15,15 @@ vi.mock("../platform", () => ({
 }));
 
 import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
-import { auditUnverified, channelControl, eqOneKnob, inputEq, planToCommands, unverifiedAddresses } from "./translate";
+import {
+  auditUnverified,
+  channelControl,
+  eqOneKnob,
+  inputEq,
+  planToCommands,
+  UNVERIFIED_MAPPINGS,
+  unverifiedAddresses,
+} from "./translate";
 import { planProblems } from "../plan-validate";
 import {
   denormalizeInsertFx,
@@ -27,9 +35,12 @@ import {
   PAN_BAL_PAN,
   PARAMS,
   PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
+  COMP_EQ_SSMCS,
+  recPointOptionsFor,
 } from "./params";
 import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
 import {
+  cancelledBeforeWriting,
   formatSelfTestReport,
   linkedPassesFor,
   passesFor,
@@ -249,6 +260,80 @@ describe("runSelfTest with STREAMING's source not captured", () => {
   });
 });
 
+// A read the capture could not make leaves the captured plan's default at that address — no
+// source on a selector, unity on a fader, -inf on a send — and the restore converges the unit
+// onto it. So those addresses are read again before the sweep and the unit's own value is
+// written back after the restore; one that cannot be read then is a run that does not start.
+describe("runSelfTest after a partial capture", () => {
+  /** A unit answering `seed`, whose read of each address in `once` fails the first time. */
+  function failingOnce(seed: Plan, once: readonly string[]): Map<string, number> {
+    const table = installMockDevice(seed);
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    const failed = new Set<string>();
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      const k = `${id}:${x}:${y}`;
+      if (!once.includes(k) || failed.has(k)) return answer(id, x, y);
+      failed.add(k);
+      return Promise.reject(new Error("read timeout"));
+    });
+    return table;
+  }
+
+  it("puts back a channel whose fader the capture could not read, not the plan's unity", async () => {
+    const y = channelControl(model, "ch1")!.y;
+    const seed = populatedPlan();
+    const main = seed.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    main.params = { ...main.params, level: -Infinity, pan: 30, on: false };
+    const at = (name: keyof typeof PARAMS): string => `${PARAMS[name].id}:0:${y}`;
+    const table = failingOnce(seed, [at("CH_FADER")]);
+    const held = (["CH_FADER", "CH_PAN", "STEREO_ASSIGN_ON"] as const).map((n) => table.get(at(n)));
+    expect(held, "the premise: silenced, panned and off the STEREO bus").toEqual([VD_LEVEL_OFF, 30, 0]);
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("done");
+    expect(report.errors).toEqual(["CH 1: read timeout"]);
+    expect((["CH_FADER", "CH_PAN", "STEREO_ASSIGN_ON"] as const).map((n) => table.get(at(n)))).toEqual(held);
+    expect(report.restored).toBe(true);
+  });
+
+  it("puts back an output patch the capture could not read, not NONE", async () => {
+    const seed = populatedPlan();
+    seed.connections.push({ from: "bus.stereo:out", to: "out.main:in", kind: "patch" });
+    const table = failingOnce(seed, [`${PARAMS.OUT_PATCH_MAIN.id}:0:1`]);
+    const patch = [0, 1].map((y) => table.get(`${PARAMS.OUT_PATCH_MAIN.id}:0:${y}`));
+    expect(
+      patch.every((v) => v !== undefined && v !== PORT_REF_NONE),
+      "the premise: the main outputs are patched",
+    ).toBe(true);
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("done");
+    expect([0, 1].map((y) => table.get(`${PARAMS.OUT_PATCH_MAIN.id}:0:${y}`))).toEqual(patch);
+    expect(report.restored).toBe(true);
+  });
+
+  // …and an address that cannot be read before the sweep either has no record of what it
+  // held at all, so the run declines to start and writes nothing.
+  it("does not start when an address the capture could not read cannot be read before the sweep", async () => {
+    const y = channelControl(model, "ch1")!.y;
+    const table = installMockDevice(populatedPlan());
+    const before = new Map(table);
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation((id, x, yy) =>
+      id === PARAMS.CH_FADER.id && yy === y ? Promise.reject(new Error("read timeout")) : answer(id, x, yy),
+    );
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("refused");
+    expect(report.written).toBe(0);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect([...table]).toEqual([...before]);
+  });
+});
+
 describe("passesFor (model-driven sweep count)", () => {
   // Port refs the input-source sweep writes over `passes` passes (NONE sentinel
   // excluded) — the physical ports the run actually exercises.
@@ -283,6 +368,43 @@ describe("passesFor (model-driven sweep count)", () => {
     expect(passesFor(getModel("URX44V"))).toBeGreaterThan(PASSES);
     expect(passesFor(getModel("URX44"))).toBeGreaterThan(PASSES);
   });
+});
+
+// A stereo channel offers two Rec Point stages and a MONO IN in SSMCS mode four, and the unit's
+// own list offers no other: the sweep writes each channel only the stages it offers, given the
+// comp/EQ order the same pass gives it, and over the run every one of them.
+describe("Rec Point sweep", () => {
+  for (const id of ["URX44V", "URX22"] as const) {
+    it(`${id}: writes each channel only the stages it offers, and every one of them`, () => {
+      const m = getModel(id);
+      const seed = defaultPlan(id);
+      ensureFixedConnections(m, seed);
+      const seen = new Map<string, Set<number>>();
+      const outside: string[] = [];
+      for (let pass = 0; pass < passesFor(m); pass++) {
+        const plan = perturbedPlan(m, seed, pass);
+        for (const node of m.nodes) {
+          const cc = channelControl(m, node.id);
+          const rp = plan.nodeParams[node.id]?.recPoint;
+          if (!cc || rp === undefined) continue;
+          const ssmcs = cc.hasMicStrip && plan.nodeParams[node.id]?.compEqType === COMP_EQ_SSMCS;
+          const stages = recPointOptionsFor(!cc.hasMicStrip, ssmcs).map((o) => o.value);
+          if (!stages.includes(rp)) outside.push(`p${pass} ${node.id} ${rp}${ssmcs ? " (SSMCS)" : ""}`);
+          seen.set(node.id, (seen.get(node.id) ?? new Set()).add(rp));
+        }
+      }
+      expect(outside).toEqual([]);
+      for (const [node, values] of seen) {
+        const cc = channelControl(m, node)!;
+        expect([...values].sort(), node).toEqual(
+          recPointOptionsFor(!cc.hasMicStrip, false)
+            .map((o) => o.value)
+            .sort(),
+        );
+      }
+      expect(seen.size, "channels swept").toBeGreaterThan(0);
+    });
+  }
 });
 
 // The sweep writes the MONO IN pairs' Signal Type, so what it hands the device in each
@@ -809,8 +931,9 @@ describe("runSelfTest", () => {
     expect(report.errors.some((e) => e.startsWith("restore ch1: its Sweet Spot preset rebuilt the strip"))).toBe(true);
     // The refused preset, the node the accepted one left unconfirmed, and each address the
     // restore did not write back that the sweep had left different.
+    const writtenBack = [...report.diag.unrestorable, ...report.diag.captureUnheld];
     const leftBehind = report.residual.filter(
-      (m) => m.pass === -1 && report.diag.unrestorable.some((u) => u.endsWith(` ${m.paramId}:${m.x}:${m.y}`)),
+      (m) => m.pass === -1 && writtenBack.some((u) => u.endsWith(` ${m.paramId}:${m.x}:${m.y}`)),
     );
     expect(leftBehind.length).toBeGreaterThan(0);
     expect(report.restoreResidual).toBe(2 + leftBehind.length);
@@ -942,8 +1065,32 @@ describe("runSelfTest", () => {
     expect(report.written).toBe(0);
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
+    // …and it says the unit was not touched, rather than a restore that did not happen.
+    expect(cancelledBeforeWriting(report)).toBe(true);
+    expect(formatSelfTestReport(report)).toContain(
+      "- Restored: not applicable — the run was canceled before it wrote anything",
+    );
   });
 
+  // A cancel inside the first pass is NOT one of those: commands have gone out, though
+  // `written` is still 0 there, since the pass that sent them never reached its tally.
+  it("does not call a cancel inside the sweep one that wrote nothing", async () => {
+    installMockDevice(populatedPlan());
+    const controller = new AbortController();
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      controller.abort();
+      return realSet(id, x, y, v);
+    });
+    const report = await runSelfTest(model, 0, controller.signal);
+    expect(report.aborted).toBe(true);
+    expect(vi.mocked(vdSet)).toHaveBeenCalled();
+    expect(cancelledBeforeWriting(report)).toBe(false);
+  });
+
+  // Nothing was read and nothing was written, so it is a run that did not start — the same
+  // "refused" a pre-sweep refusal is, with its own reason so the status can name it, and not
+  // a restore the run failed to make.
   it("aborts on model mismatch without writing, and disconnects", async () => {
     installMockDevice(populatedPlan());
     vi.mocked(vdConnect).mockResolvedValue({ model: "URX22", label: "URX22", firmware: "", epoch: 1 });
@@ -952,6 +1099,9 @@ describe("runSelfTest", () => {
     expect(report.errors.join(" ")).toContain("URX22");
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
+    expect(report.phase).toBe("refused");
+    expect(report.refusal).toBe("modelMismatch");
+    expect(formatSelfTestReport(report)).toContain("- Restored: not applicable — the run refused to start");
   });
 
   it("sweeps insert FX one node per kind and writes the modeled ON/OFF after the selector", () => {
@@ -1147,8 +1297,12 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(verdicts.refuted).toBe(0);
     expect(verdicts.untestable).toBeGreaterThan(0);
     expect(formatSelfTestReport(report)).not.toContain("REFUTED");
-    // Per address, not a blanket downgrade: the readable guesses still confirm.
-    expect(verdicts.confirmed).toBeGreaterThan(0);
+    // Per address, not a blanket downgrade: "unread" names the one guess whose own read
+    // failed and no other…
+    expect(report.unverified.filter((u) => u.outcome === "unread").map((u) => u.key)).toEqual(["hiz-channel"]);
+    // …and none is credited with a round trip either: the hi-Z read fails in every pass, so
+    // no pass in this run completed, and a completed pass is what a round trip rests on.
+    expect(verdicts.confirmed + verdicts.roundTripped).toBe(0);
     // What a read-stopped residual actually contains, which is the opposite of what it
     // sounds like: `diffPlan` keeps reading past a failure, so the entries left are ones
     // that WERE read and did differ, and the address that could not be read is not among
@@ -1332,7 +1486,11 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.errors.some((e) => /^restore \d+ command\(s\) never sent/.test(e))).toBe(true);
   });
 
-  it("confirms every unverified guess on a faithful device (no collisions)", async () => {
+  // Every guess registered today asks which instance an address reaches or what a value
+  // means there, and writing y and reading y back passes whichever one it is. So a faithful
+  // device round-trips all four and confirms none: a CONFIRMED here would be the promotion
+  // to "verified on hardware" for a question the run never asked.
+  it("reports every unverified guess as round-tripped, not confirmed, on a faithful device", async () => {
     installMock22(seed22());
     const report = await runSelfTest(m22, 0);
     expect(report.device).toBe("URX22");
@@ -1340,21 +1498,72 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.unverified.map((u) => u.key).sort()).toEqual(
       ["dgain-urx22", "hiz-channel", "input-ports", "stereo-block"].sort(),
     );
-    for (const u of report.unverified) {
-      expect(u.outcome).not.toBe("collision");
-      // A round trip confirms every guess on a faithful device, which is why CONFIRMED
-      // is not the whole story for a guess about WHICH instance a y addresses: writing y
-      // and reading y back passes whichever one it is. `stereo-block` is still such a
-      // guess — its y is stereoIndexMap's, the same map `ducker-block` rode before it
-      // was accepted outside the round trip on 2026-08-13 (see duckerControl and the
-      // entry's own comment). So a CONFIRMED here means the ids take values, and says
-      // nothing about pair 0 being `ch_3_4` on a URX22.
-      expect(u.outcome).toBe("confirmed");
-    }
+    for (const u of report.unverified) expect(u.outcome, u.key).toBe("roundTripped");
     expect(report.restored).toBe(true);
     // The exported report leads with the per-guess verdicts.
     const md = formatSelfTestReport(report);
     expect(md).toContain("# URX self-test report — URX22");
-    expect(md).toContain("CONFIRMED");
+    expect(md).toContain("ROUND-TRIPPED");
+    expect(md).not.toContain("CONFIRMED");
+    expect(summarizeVerdicts(report.unverified)).toEqual({ confirmed: 0, roundTripped: 4, refuted: 0, untestable: 0 });
+  });
+
+  // …and CONFIRMED is still what a round trip earns where it does answer the question. The
+  // positive control for the branch no entry takes today.
+  it("confirms a guess a round trip settles", async () => {
+    installMock22(seed22());
+    const entry = UNVERIFIED_MAPPINGS.find((m) => m.key === "stereo-block")!;
+    entry.roundTripSettles = true;
+    try {
+      const report = await runSelfTest(m22, 0);
+      expect(report.unverified.find((u) => u.key === "stereo-block")!.outcome).toBe("confirmed");
+      expect(report.unverified.find((u) => u.key === "hiz-channel")!.outcome).toBe("roundTripped");
+    } finally {
+      entry.roundTripSettles = false;
+    }
+  });
+
+  // A capture that could not read a channel leaves the plan nothing to write at that
+  // channel's guess address, so no pass emits it and nothing round-trips there. Counted
+  // from the registry instead, the guess read as round-tripped on the strength of a write
+  // that never went out.
+  it("does not credit a guess whose address no pass wrote", async () => {
+    installMock22(seed22());
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    const hiZ = [...unverifiedAddresses(m22)].find(([, key]) => key === "hiz-channel")!;
+    const [paramId, y] = hiZ[0].split(":").map(Number);
+    let refused = false;
+    vi.mocked(vdGet).mockImplementation((id, x, yy) => {
+      if (id === paramId && yy === y && !refused) {
+        refused = true;
+        return Promise.reject(new Error("response_code 500"));
+      }
+      return realGet(id, x, yy);
+    });
+
+    const report = await runSelfTest(m22, 0);
+
+    expect(refused, "the premise: the capture's read of it failed").toBe(true);
+    expect(
+      vi.mocked(vdSet).mock.calls.filter(([id, , yy]) => id === paramId && yy === y),
+      "the premise: no pass wrote it",
+    ).toEqual([]);
+    expect(report.unverified.find((u) => u.key === "hiz-channel")!.outcome).toBe("unexercised");
+  });
+
+  // Param 22 carries the MONO IN channels' sources; a stereo channel's go out on 209 / 210.
+  // Registered for every channel, the guess held slots no pass ever writes.
+  it.each(["URX22", "URX44"] as const)("%s: registers only input-ports slots a pass writes", (id) => {
+    const m = getModel(id);
+    const seed = emptyPlan(id);
+    ensureFixedConnections(m, seed);
+    const written = new Set<string>();
+    for (let pass = 0; pass < passesFor(m); pass++) {
+      for (const c of planToCommands(m, perturbedPlan(m, seed, pass)))
+        if (c.x === 0) written.add(`${c.paramId}:${c.y}`);
+    }
+    const slots = [...unverifiedAddresses(m)].filter(([, key]) => key === "input-ports").map(([addr]) => addr);
+    expect(slots.length).toBeGreaterThan(0);
+    expect(slots.filter((addr) => !written.has(addr))).toEqual([]);
   });
 });

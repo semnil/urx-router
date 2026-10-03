@@ -8,7 +8,14 @@ import { ref } from "../../models/types";
 vi.mock("../platform", () => ({ vdGet: vi.fn(), vdGetStr: vi.fn() }));
 
 import { vdGet, vdGetStr } from "../platform";
-import { COLOR_PALETTE, dGainParam, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS, silentKey } from "./params";
+import {
+  COLOR_OFF,
+  COLOR_PALETTE,
+  dGainParam,
+  PARAMS,
+  PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
+  silentKey,
+} from "./params";
 import { fxEffectTypes, fxParams } from "./fx-effect";
 import { defaultPlan } from "../../models/initial-state";
 import { applyDeviceState, applySilentState, formatReadbackReport, heldByHold } from "./readback";
@@ -553,6 +560,7 @@ describe("applyDeviceState round-trip", () => {
         // difference is the scope rather than the seeding.
         const all = await applyDeviceState(model, pairPlan());
         expect(all.errors.some((e) => e.includes("unknown record source port 7777"))).toBe(true);
+        expect(all.unreadNodes.has("out.sdrec.t1")).toBe(true);
       });
     });
   });
@@ -1012,6 +1020,49 @@ describe("applyDeviceState write overlay", () => {
     expect(wasRead(cmd)).toBe(true);
   });
 
+  // A layout head is read off the unit even where it was announced. The read checks the head
+  // against the unit a second time behind the values it lays out, and an answer taken from
+  // the announcement makes that check a constant: a selector switched on the panel while the
+  // engine was being read would file the other effect's raws under the announced family.
+  it.each([
+    [
+      "a refetch",
+      (plan: Plan, pending: PendingWrites) =>
+        applyDeviceState(model, plan, undefined, new Set(["bus.stereo"]), pending),
+    ],
+    ["the silent park", (plan: Plan, pending: PendingWrites) => applySilentState(model, plan, undefined, pending)],
+  ])("reads an announced layout head off the unit, through %s", async (_name, read) => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.stereo"] = {
+      ...plan.nodeParams["bus.stereo"],
+      insertFx: 1792,
+      insertFxOn: true,
+      insertFxParams: { "mbc:14": 97 },
+    };
+    const ifx = insertFxControl(model, "bus.stereo")!;
+    const selector = { paramId: ifx.param, x: 0, y: ifx.instances[0] };
+    const table = deviceTableFor(plan);
+    // The panel: the compander chosen once the engine read has begun, refilling the engine
+    // the multi-band compressor shares with it.
+    let switched = false;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 693 && !switched) {
+        switched = true;
+        table.set(`${selector.paramId}:0:${selector.y}`, 1793);
+        for (const k of [...table.keys()]) if (k.startsWith("693:")) table.set(k, 222);
+      }
+      const hit = table.get(`${paramId}:${x}:${y}`);
+      return Promise.resolve(hit ?? (PORT_REF_PARAMS.has(paramId) ? PORT_REF_NONE : 0));
+    });
+
+    const r = await read(plan, announced(selector, 1792));
+
+    expect(switched, "the premise: the panel moved during the read").toBe(true);
+    expect(r.errors).toEqual([]);
+    expect(plan.nodeParams["bus.stereo"]?.insertFx, "the selector the unit holds").toBe(1793);
+    expect(plan.nodeParams["bus.stereo"]?.insertFxParams?.["mbc:14"], "the multi-band compressor's own value").toBe(97);
+  });
+
   // The wait is taken here rather than by the caller: readIntoPlan clones the plan at
   // the call, so a wait taken outside is a window in which an operator edit lands in
   // neither that clone nor the witness that protects an edit made during the read —
@@ -1298,6 +1349,18 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(target.nodeColors["bus.stereo"]).toBe(COLOR_PALETTE[6].hex);
     // An unset colorable node reads the device default index 0 = Blue.
     expect(target.nodeColors.ch2).toBe(COLOR_PALETTE[0].hex);
+  });
+
+  // The unit's Off reads back as the plan's Off, which the next write sends as Off — not as an
+  // absent colour, which would send nothing and leave whatever the unit then holds.
+  it("reads the Off index back as Off", async () => {
+    const source = emptyPlan("URX44V");
+    ensureFixedConnections(model, source);
+    source.nodeColors.ch1 = COLOR_OFF;
+    mockVdGetFrom(deviceTableFor(source));
+    const target = emptyPlan("URX44V");
+    await applyDeviceState(model, target);
+    expect(target.nodeColors.ch1).toBe(COLOR_OFF);
   });
 
   // A name arrives bounded, like one typed into the app. The unit's own screen takes
@@ -1709,6 +1772,45 @@ describe("applySilentState", () => {
     expect(plan.nodeParams["bus.fx1"]?.fxEffect?.type).toBe(delay.value);
     expect(Object.keys(plan.nodeParams["bus.fx1"]?.fxEffect?.params ?? {})).toEqual(
       expect.arrayContaining(fxParams(delay.value).map((d) => d.key)),
+    );
+  });
+
+  // The head can also come BACK. The emit the guard answers from is laid out by the head the
+  // park read first, so a head taken off what this session sent and returned while the
+  // family is being read agrees with the snapshot again while that emit still describes the
+  // other layout: each slot where the unit's refill equals the snapshot would read as the
+  // other layout's value.
+  it("reads the unit's values when its head returns to the sent one under the read", async () => {
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const sentPlan = defaultPlan("URX44V");
+    expect(sentPlan.nodeParams["bus.fx1"]!.fxEffect!.type, "the premise: two families").not.toBe(delay.value);
+    sentPlan.nodeParams["bus.fx1"]!.fxEffect!.type = delay.value;
+    const snapshot = deviceTableFor(sentPlan);
+    const sent = (id: number, x: number, y: number, raw: number): boolean => snapshot.get(`${id}:${x}:${y}`) === raw;
+
+    // What the park lands on while the unit holds what this session sent throughout.
+    const control = structuredClone(sentPlan);
+    mockVdGetFrom(new Map(snapshot));
+    expect((await applySilentState(model, control, undefined, undefined, sent)).errors).toEqual([]);
+
+    // The panel: on the other family when the park reads the head, back on the delay — with
+    // the delay's values refilled — once the array read has begun.
+    const table = deviceTableFor(defaultPlan("URX44V"));
+    let returned = false;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 681 && !returned) {
+        returned = true;
+        for (const [k, v] of snapshot) if (k.startsWith("679:") || k.startsWith("681:")) table.set(k, v);
+      }
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const plan = structuredClone(sentPlan);
+    const r = await applySilentState(model, plan, undefined, undefined, sent);
+
+    expect(returned, "the premise: the head moved during the read").toBe(true);
+    expect(r.errors).toEqual([]);
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect, "the delay's values as the unit holds them").toEqual(
+      control.nodeParams["bus.fx1"]?.fxEffect,
     );
   });
 

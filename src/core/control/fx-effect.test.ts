@@ -662,6 +662,26 @@ describe("fx-effect parameter keys", () => {
     });
   });
 
+  // A version-1 document whose parameter map is a number or `true` reaches the migration
+  // before the load-time repair that drops a non-object map, so the migration has to leave
+  // it for that repair rather than reading it as a map.
+  it("leaves a version-1 parameter map that is not an object to the load repair", () => {
+    for (const params of [5, true]) {
+      const plan = emptyPlan("URX44V");
+      const legacy = JSON.stringify({
+        ...JSON.parse(serialize(plan)),
+        version: 1,
+        nodeParams: { "bus.fx1": { fxEffect: { type: 0, params } } },
+      });
+      const loaded = deserialize(legacy);
+      expect(loaded.nodeParams["bus.fx1"]?.fxEffect?.params, String(params)).toBe(params);
+      expect(
+        paramRangeProblems(loaded).map((p) => [p.node, p.where, p.key, p.action]),
+        String(params),
+      ).toContainEqual(["bus.fx1", "field", "params", "drop"]);
+    }
+  });
+
   it("keeps an already-qualified value and a key the saved family does not have", () => {
     const fx = { type: 0, params: { hpf: 9, revxHpf: 4, feedback: 20 } };
     migrateFxEffectParams(fx, 0, 1);

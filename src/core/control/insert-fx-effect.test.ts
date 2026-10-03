@@ -26,12 +26,15 @@ import {
   MBC_RELEASE_MS,
   MBC_XOVER_LM_RANGE,
   MBC_XOVER_MH_RANGE,
+  insertFxDefaults,
   insertFxEngine,
   insertFxFamilyOf,
+  insertFxLockedSlots,
   insertFxParamKey,
   insertFxParams,
   mbcDeviceDriven,
   mergeReadInsertFxParams,
+  PITCH_SCALE_CHROMATIC,
   PITCH_SCALE_SLOT,
   PITCH_NOTE_SLOTS,
   PITCH_MIDI_ENABLE_SLOT,
@@ -43,8 +46,10 @@ import {
   mbcXoverLabel,
   midiNoteName,
   qualifyInsertFxParams,
+  seedInsertFxParams,
   type InsertFxFamily,
 } from "./insert-fx-effect";
+import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "./params";
 
 const model = getModel("URX44V");
 
@@ -193,6 +198,20 @@ describe("insert-fx family / engine / slot mapping", () => {
     // …and it reads the bare slot a readback writes, as well as the qualified key.
     expect(pitchDeviceDriven({ [String(PITCH_MIDI_ENABLE_SLOT)]: 1 }).size).toBeGreaterThan(0);
   });
+
+  // The mode is asked of the raw the write sends at its enable bit, as the multi-band
+  // compressor's switch is: `true` sent nothing there and still took the Scale and the mask
+  // out of the write.
+  it.each([[true], [false], [-1], [0.4], [0.5], [1], [2], ["1"]])(
+    "reads a MIDI Control enable holding %j the way the write sends it",
+    (v) => {
+      const plan = emptyPlan("URX44V");
+      const params = { [insertFxParamKey("pitch", PITCH_MIDI_ENABLE_SLOT)]: v as number };
+      plan.nodeParams[monoInput] = { insertFx: 512, insertFxParams: params };
+      const sent = engineWrites(planToCommands(model, plan), ENGINE_PITCH).get(PITCH_MIDI_ENABLE_SLOT);
+      expect(pitchDeviceDriven(params).size > 0).toBe(sent === 1);
+    },
+  );
 });
 
 describe("the multi-band compressor's Band Bypass", () => {
@@ -306,6 +325,83 @@ describe("insert-fx effect emission", () => {
 // a different law: Compander-H Threshold -3000 is MBC's 1-knob switch (a bool), its
 // ratio, its band width. INSERT_FX is a converge side effect, so the emit path re-sends
 // that until the device agrees — it never reads the device back into the plan.
+// The unit fills the engine with the selected type's defaults on the transition into a type and
+// not on a same-value write, so the plan holds them: a selection and a load put every writable
+// slot of the type in the plan at its default, which is what the screen shows for it.
+describe("the defaults a selection and a load give the plan", () => {
+  const SELECTORS = [...new Set([...INSERT_FX_OPTIONS, ...OUTPUT_INSERT_FX_OPTIONS].map((o) => o.value))].filter(
+    (v) => insertFxFamilyOf(v) !== null,
+  );
+
+  it("gives every writable slot of every type a default inside its own range", () => {
+    expect(SELECTORS.length, "the premise: the catalogue has effects").toBeGreaterThan(1);
+    for (const selector of SELECTORS) {
+      const family = insertFxFamilyOf(selector)!;
+      const defaults = insertFxDefaults(family, selector);
+      for (const s of insertFxWritableSlots(family)) {
+        const def = defaults[s.slot];
+        expect(Number.isInteger(def), `${selector} slot ${s.slot}`).toBe(true);
+        expect(def, `${selector} slot ${s.slot}`).toBeGreaterThanOrEqual(s.rawMin);
+        expect(def, `${selector} slot ${s.slot}`).toBeLessThanOrEqual(s.rawMax);
+      }
+    }
+  });
+
+  // The slots no descriptor row carries, at what the unit comes up at.
+  it("carries Pitch Fix's MIDI Control off, Scale Chromatic and every note on", () => {
+    const defaults = insertFxDefaults("pitch");
+    expect([defaults[PITCH_MIDI_ENABLE_SLOT], defaults[PITCH_MIDI_REALTIME_SLOT]]).toEqual([0, 0]);
+    expect(defaults[PITCH_SCALE_SLOT]).toBe(PITCH_SCALE_CHROMATIC);
+    expect(PITCH_NOTE_SLOTS.map((s) => defaults[s])).toEqual(PITCH_NOTE_SLOTS.map(() => 1));
+  });
+
+  it("asks the compander's of the selector", () => {
+    const h = insertFxDefaults("compander", 1793);
+    const s = insertFxDefaults("compander", 1794);
+    expect(h[6]).not.toBe(s[6]);
+  });
+
+  it("seeds every slot the map does not hold, under the family's key, and keeps every one it does", () => {
+    const params = { "compander:6": -1500, "7": 500, "pitch:16": 3 };
+    const { params: next, seeded } = seedInsertFxParams(params, 1794);
+    const defaults = insertFxDefaults("compander", 1794);
+    const slots = insertFxWritableSlots("compander").map((s) => s.slot);
+    expect(seeded.sort()).toEqual(
+      slots
+        .filter((s) => s !== 6 && s !== 7)
+        .map((s) => insertFxParamKey("compander", s))
+        .sort(),
+    );
+    for (const key of seeded) expect(next![key]).toBe(defaults[Number(key.split(":")[1])]);
+    expect(next!["compander:6"]).toBe(-1500);
+    expect(next!["7"], "a bare slot answers for its slot").toBe(500);
+    expect(next!["compander:7"]).toBeUndefined();
+    expect(next!["pitch:16"], "another family's value stays where it is").toBe(3);
+    expect(params, "the map it was given is not written").toEqual({ "compander:6": -1500, "7": 500, "pitch:16": 3 });
+  });
+
+  it("seeds nothing for No Effect, an unknown selector, or a map holding every slot", () => {
+    expect(seedInsertFxParams(undefined, INSERT_FX_NONE)).toEqual({ params: undefined, seeded: [] });
+    expect(seedInsertFxParams(undefined, 4242)).toEqual({ params: undefined, seeded: [] });
+    const full = seedInsertFxParams(undefined, 1793).params;
+    expect(seedInsertFxParams(full, 1793)).toEqual({ params: full, seeded: [] });
+  });
+
+  // What the plan then holds is what the write sends: every writable slot goes out.
+  it("makes the write send every slot of a selection that carried none", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams[monoInput] = { insertFx: 1793, insertFxOn: true };
+    expect(engineWrites(planToCommands(model, plan), ENGINE_COMPANDER_INPUT).size, "the premise").toBe(0);
+    plan.nodeParams[monoInput]!.insertFxParams = seedInsertFxParams(undefined, 1793).params;
+    const writes = engineWrites(planToCommands(model, plan), ENGINE_COMPANDER_INPUT);
+    expect([...writes.keys()].sort((a, b) => a - b)).toEqual(
+      insertFxWritableSlots("compander")
+        .flatMap((s) => (s.mirror === undefined ? [s.slot] : [s.slot, s.mirror]))
+        .sort((a, b) => a - b),
+    );
+  });
+});
+
 describe("insert-fx plan storage is qualified by family", () => {
   const stereo = model.nodes.find((n) => n.id === "bus.stereo")?.id ?? model.nodes.find((n) => n.kind === "bus")!.id;
 
@@ -470,6 +566,21 @@ describe("the multi-band compressor's 1-knob", () => {
     );
     expect(on.has(band)).toBe(false);
   });
+
+  // Every reader of the switch asks what the WRITE sends there. A value the write sends as 0,
+  // or does not send at all (a boolean, a string), drives nothing; one it sends as 1 drives the
+  // set. Read for truth instead, `true` and `-1` locked eighteen rows the writer then skipped
+  // while the unit never had the knob switched on.
+  it.each([[true], [false], [-1], [0.4], [0.5], [1], [2], ["1"]])(
+    "reads a switch holding %j the way the write sends it",
+    (v) => {
+      const params = { [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]: v as number };
+      const sent = engineWrites(planToCommands(model, mbcPlan(params)), ENGINE_OUTPUT).get(MBC_GLOBAL.oneKnobOn);
+      const on = sent === 1;
+      expect(mbcDeviceDriven(params).size > 0, "the writer's driven set").toBe(on);
+      expect(insertFxLockedSlots("mbc", params).has(MBC_BANDS[0].threshold), "the lock").toBe(on);
+    },
+  );
 
   it("reads the knob under the bare slot a readback writes, as well as the qualified key", () => {
     const band = MBC_BANDS[0].threshold;

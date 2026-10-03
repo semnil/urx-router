@@ -3,15 +3,17 @@
 // dry-run preview (what would be written to hardware) and the payload list for
 // the eventual transport. Pure and language-agnostic.
 //
-// Scope: only mappings whose param_id is confirmed against the broker dump are
-// emitted, so a dry-run never proposes a guessed hardware write. Today that is
-// each channel's main fader / pan (its fixed send into STEREO → CH_FADER / CH_PAN).
-// Bus sends and channel-strip processing land here as their ids are confirmed.
+// Scope: the PARAMS entries (params.ts) that carry a plan's values; the
+// planExternal ones belong to device-setup.ts. Every address emitted for a URX44V
+// is a confirmed one. On the URX22 / URX44 the addresses that are still guesses
+// are registered in UNVERIFIED_MAPPINGS below, and a dry-run or write for those
+// models carries them.
 
 import type { ConnectionKind, DeviceModel, ModelId } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
 import type {
   CompParams,
+  ConnParams,
   EqBand,
   EqOneKnobParams,
   FxEffectParams,
@@ -20,9 +22,9 @@ import type {
   SsmcsBand,
   SsmcsParams,
 } from "../plan";
-import { incomingConnection, normalizeNodeName, SSMCS_INITIAL } from "../plan";
+import { incomingConnection, normalizeNodeName, SEND_LEVEL_UNNAMED_DB, SSMCS_INITIAL } from "../plan";
 import type { NodeParams } from "../plan";
-import { nodeParamContestPath } from "../plan-history";
+import { connParamContestKey, nodeColorContestKey, nodeParamContestPath } from "../plan-history";
 import type { ParamRangeProblem } from "../plan-validate";
 import {
   FX_CHANNEL_NODE_INDEX,
@@ -38,11 +40,13 @@ import {
   insertFxEngine,
   insertFxFamilyOf,
   insertFxParamKey,
+  insertFxSlotRaw,
   insertFxWritableSlots,
   insertFxDeviceDriven,
   insertFxDriverSlots,
 } from "./insert-fx-effect";
 import { isFixedConnection, monoPairOf, requiresSource, sendTapWritable } from "../routing";
+import { channelGainRange } from "../input-lock";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
   BUS_TYPE_OPTIONS,
@@ -52,7 +56,8 @@ import {
   COMP_EQ_SSMCS,
   COMP_KNEE_DEFAULT,
   COMP_KNEE_OPTIONS,
-  COMP_ONE_KNOB_DRIVEN,
+  COMP_AUTO_MAKEUP_DRIVEN,
+  compDeviceDriven,
   DELAY_FRAME_RATE_DEFAULT,
   DELAY_FRAME_RATE_OPTIONS,
   denormalizeInsertFx,
@@ -67,7 +72,7 @@ import {
   EQ_TYPE_LOW_OPTIONS,
   EQ_TYPE_SHELVING,
   FX_STEREO_ASSIGN_ON,
-  hexToColorIndex,
+  planColorIndex,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   OSC_MODE_OPTIONS,
@@ -78,7 +83,9 @@ import {
   paramNameForId,
   PARAMS,
   REC_POINT_DEFAULT,
-  REC_POINT_OPTIONS,
+  REC_POINT_PRE_COMP,
+  REC_POINT_PRE_EQ,
+  recPointOptionsFor,
   STEREO_ASSIGN_ON_STEREO,
   STEREO_FADER,
   STEREO_ON,
@@ -96,6 +103,7 @@ import {
   A_GAIN_MIN_DB,
   attackToVd,
   boolToVd,
+  boundRaw,
   burstWidthToVd,
   centiDbToVd,
   D_GAIN_MAX_DB,
@@ -123,7 +131,12 @@ import {
   GATE_RANGE_OFF_DB,
   gateRangeToVd,
   holdToVd,
+  HPF_FREQ_MAX_HZ,
+  HPF_FREQ_MIN_HZ,
+  HPF_FREQ_STEP_HZ,
   levelToVd,
+  OSC_LEVEL_MAX_DB,
+  OSC_LEVEL_MIN_DB,
   panToVd,
   phonesLevelToVd,
   PORT_REF_NONE,
@@ -302,8 +315,8 @@ function stampOrigin(command: VdCommand, planValue: number): VdCommand {
   } else {
     // No read of its own. One value going to every linked instance is a run of commands with
     // the SAME parameter and the same value, so only the one immediately before it can lend a
-    // name — matching on the value alone attributed a channel's fader, which comes off a
-    // connection, to whichever parameter had last been read carrying a zero.
+    // name — matching on the value alone would attribute a value the emit supplies itself to
+    // whichever parameter had last been read carrying the same value.
     const before = originCursor.previous;
     origin = before && before.name === command.name && before.planValue === planValue ? before.origin : null;
   }
@@ -1177,12 +1190,151 @@ function pushDynCommands(
   for (const f of fields) {
     const v = vals[f.key];
     if (v === undefined) continue;
-    const bounded = v < f.min ? f.min : v > f.max ? f.max : v;
     // A field with a stop table sends a stop. The control offers nothing else, but a plan
     // saved before it had one — or hand-edited — can hold a value between two, and the unit
     // has no setting there.
-    out.push(command(f.name, y, f.steps ? f.steps[nearestStepIndex(f.steps, bounded)] : bounded));
+    out.push(command(f.name, y, admitLeaf(dynRule(f), v)));
   }
+}
+
+/**
+ * What one stored node-param leaf can hold, as the write sends it: a window, an INTEGER window
+ * (a broker raw, rounded first), a window whose value then moves to the nearest of a stop
+ * table, or a MENU, where a value off it is sent as the menu's default. The emit bounds each
+ * leaf through the rule here (`admitLeaf`), and the load bounds a document to the same answer
+ * (`plan-validate.ts` `paramRangeProblems`), so the plan, the screen and the wire read one
+ * value.
+ */
+export type BoundRule =
+  | { min: number; max: number; integer?: true; steps?: readonly number[]; grid?: number }
+  | { menu: readonly number[]; def: number; map?: Readonly<Record<number, number>> };
+
+/** A bound rule, or a leaf the write never sends at all (a filter type on a fixed-peaking band),
+ *  which the load removes. */
+export type LeafRule = BoundRule | { unsent: true };
+
+/** The value a rule admits for `v`, which is the value the write sends for it. */
+export function admitLeaf(rule: BoundRule, v: number): number {
+  if ("menu" in rule) return rule.menu.includes(v) ? v : (rule.map?.[v] ?? rule.def);
+  const x = rule.integer ? Math.round(v) : v;
+  const bounded = x < rule.min ? rule.min : x > rule.max ? rule.max : x;
+  if (rule.grid !== undefined) return rule.min + rule.grid * Math.round((bounded - rule.min) / rule.grid);
+  return rule.steps ? rule.steps[nearestStepIndex(rule.steps, bounded)] : bounded;
+}
+
+const menuRule = (options: readonly { value: number }[], def: number): BoundRule => ({
+  menu: options.map((o) => o.value),
+  def,
+});
+
+/** A channel's Rec Point as the write sends it: a stage the channel offers stands; in SSMCS mode
+ *  a PRE EQ is PRE COMP, the move the unit makes itself on that switch; anything else is PRE
+ *  FADER. */
+export function recPointRule(stereo: boolean, ssmcs: boolean): BoundRule {
+  return {
+    ...menuRule(recPointOptionsFor(stereo, ssmcs), REC_POINT_DEFAULT),
+    ...(ssmcs ? { map: { [REC_POINT_PRE_EQ]: REC_POINT_PRE_COMP } } : {}),
+  };
+}
+
+const dynRule = (f: DynField): BoundRule => ({ min: f.min, max: f.max, ...(f.steps ? { steps: f.steps } : {}) });
+const rawRule = (min: number, max: number): BoundRule => ({ min, max, integer: true });
+
+/** An insert-FX engine key's family and slot: the family its own key names, or — for a bare
+ *  slot number — the family the node's selector names. Null for a key that is neither. */
+function insertFxKeySlot(
+  key: string,
+  selected: import("./insert-fx-effect").InsertFxFamily | null,
+): { family: import("./insert-fx-effect").InsertFxFamily; slot: number } | null {
+  const qualified = /^(.+):([0-9]+)$/.exec(key);
+  if (qualified) {
+    // Every family, from the catalogue's own selectors.
+    const family = [...INSERT_FX_OPTIONS, ...OUTPUT_INSERT_FX_OPTIONS]
+      .map((o) => insertFxFamilyOf(o.value))
+      .find((f) => f === qualified[1]);
+    return family ? { family, slot: Number(qualified[2]) } : null;
+  }
+  return /^[0-9]+$/.test(key) && selected ? { family: selected, slot: Number(key) } : null;
+}
+
+/**
+ * Every leaf of one node's params that the write bounds, by dotted path, with the rule it is
+ * bounded by. `np` is the node as stored; the insert-FX engine keys come from it, since the map
+ * carries one namespace per family.
+ */
+export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams | undefined): [string, LeafRule][] {
+  const out: [string, LeafRule][] = [];
+  const cc = channelControl(model, nodeId);
+  if (cc) {
+    const compEqType = admitLeaf(menuRule(COMP_EQ_OPTIONS, COMP_EQ_COMP_FIRST), np?.compEqType ?? COMP_EQ_COMP_FIRST);
+    out.push(["recPoint", recPointRule(!cc.hasMicStrip, cc.hasMicStrip && compEqType === COMP_EQ_SSMCS)]);
+  }
+  const gain = channelGainRange(model, nodeId, np);
+  if (gain) out.push(["gain", { min: gain.minDb, max: gain.maxDb }]);
+  if (cc?.hasHpf) out.push(["hpfFreq", { min: HPF_FREQ_MIN_HZ, max: HPF_FREQ_MAX_HZ, grid: HPF_FREQ_STEP_HZ }]);
+  // PAN/BAL exists only while the pair is linked; an unlinked pair reads PAN.
+  if (model.channelPairs.some(([primary]) => primary === nodeId))
+    out.push([
+      "panBal",
+      np?.stereoLink === true ? menuRule(PAN_BAL_OPTIONS, PAN_BAL_PAN) : { menu: [PAN_BAL_PAN], def: PAN_BAL_PAN },
+    ]);
+  if (cc?.hasMicStrip) {
+    out.push(["compEqType", menuRule(COMP_EQ_OPTIONS, COMP_EQ_COMP_FIRST)]);
+    for (const f of GATE_FIELDS) out.push([`gate.${f.key}`, dynRule(f)]);
+    for (const f of COMP_FIELDS) out.push([`comp.${f.key}`, dynRule(f)]);
+    out.push(["comp.knee", menuRule(COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)]);
+    out.push(["comp.oneKnobLevel", rawRule(0, 100)]);
+    out.push(["ssmcs.comp.knee", menuRule(COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)]);
+    for (const f of ssmcsMainFields()) out.push([`ssmcs.${f.key}`, rawRule(f.min, f.max)]);
+    for (const f of ssmcsCompFields()) {
+      const group = isSsmcsScKey(f.key) ? "sc" : "comp";
+      out.push([`ssmcs.${group}.${ssmcsPlanKey(f.key)}`, rawRule(f.min, f.max)]);
+    }
+    out.push(["ssmcs.comp.threshold", rawRule(SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)]);
+    out.push(["ssmcs.comp.makeup", rawRule(SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)]);
+    for (const band of SSMCS_EQ_BAND_NAMES) {
+      for (const f of ssmcsEqBandFields(band)) {
+        if (f.key === "q" && !ssmcsEqBandHasQ(band)) continue;
+        out.push([`ssmcs.eq.${band}.${f.key}`, rawRule(f.min, f.max)]);
+      }
+    }
+  }
+  const peq = inputEq(model, nodeId, COMP_EQ_COMP_FIRST) ?? outputEq(nodeId);
+  for (const band of peq?.bands ?? []) {
+    const at = `eqBands.${band.index}`;
+    if (band.type === null) out.push([`${at}.type`, { unsent: true }]);
+    else
+      out.push([
+        `${at}.type`,
+        menuRule(band.name === "low" ? EQ_TYPE_LOW_OPTIONS : EQ_TYPE_HIGH_OPTIONS, EQ_TYPE_SHELVING),
+      ]);
+    for (const f of eqBandFields(band.index)) out.push([`${at}.${f.key}`, dynRule(f)]);
+  }
+  if (eqOneKnob(model, nodeId, COMP_EQ_COMP_FIRST)) {
+    out.push(["eqOneKnob.type", menuRule(EQ_ONE_KNOB_TYPE_ALL_OPTIONS, EQ_ONE_KNOB_TYPE_DEFAULT)]);
+    out.push(["eqOneKnob.level", rawRule(EQ_ONE_KNOB_LEVEL_MIN, EQ_ONE_KNOB_LEVEL_MAX)]);
+  }
+  if (MIX_FADER_INSTANCES[nodeId]) out.push(["busType", menuRule(BUS_TYPE_OPTIONS, BUS_TYPE_VARI)]);
+  if (duckerControl(model, nodeId)) for (const f of DUCKER_FIELDS) out.push([`ducker.${f.key}`, dynRule(f)]);
+  if (nodeId === "bus.osc") {
+    out.push(["osc.level", { min: OSC_LEVEL_MIN_DB, max: OSC_LEVEL_MAX_DB }]);
+    out.push(["osc.mode", menuRule(OSC_MODE_OPTIONS, OSC_MODE_SINE)]);
+    out.push(["osc.interval", rawRule(1, 30)]);
+  }
+  if (nodeId === "bus.stream")
+    out.push(["delay.frameRate", menuRule(DELAY_FRAME_RATE_OPTIONS, DELAY_FRAME_RATE_DEFAULT)]);
+  const ifx = insertFxControl(model, nodeId);
+  const params = np?.insertFxParams;
+  if (ifx && params && typeof params === "object") {
+    const sel = np?.insertFx;
+    const selected = typeof sel === "number" && ifx.options.some((o) => o.value === sel) ? insertFxFamilyOf(sel) : null;
+    for (const key of Object.keys(params)) {
+      const at = insertFxKeySlot(key, selected);
+      const spec = at && insertFxWritableSlots(at.family).find((sp) => sp.slot === at.slot);
+      if (spec) out.push([`insertFxParams.${key}`, rawRule(spec.rawMin, spec.rawMax)]);
+    }
+  }
+  return out;
 }
 
 // Push the SSMCS detail value-set commands for one MONO IN channel. Values are
@@ -1201,9 +1353,9 @@ function pushSsmcsBand(
 ): void {
   if (!b) return;
   if (b.on !== undefined) out.push(command(onName, y, b.on ? 1 : 0));
-  if (qName && b.q !== undefined) out.push(command(qName, y, boundRaw(b.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX)));
-  if (b.freq !== undefined) out.push(command(freqName, y, boundRaw(b.freq, freqMin, freqMax)));
-  if (b.gain !== undefined) out.push(command(gainName, y, boundRaw(b.gain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
+  if (qName && isRaw(b.q)) out.push(command(qName, y, boundRaw(b.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX)));
+  if (isRaw(b.freq)) out.push(command(freqName, y, boundRaw(b.freq, freqMin, freqMax)));
+  if (isRaw(b.gain)) out.push(command(gainName, y, boundRaw(b.gain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
 }
 
 // FX-channel effect: the EFFECT TYPE selector (679/683 at y0) plus the effect
@@ -1211,18 +1363,11 @@ function pushSsmcsBand(
 // effect's family; raw values pass straight through (the plan stores raw). The
 // type is a sideEffect (writing it repopulates the array on the device), so live
 // converges + re-reads. fxIndex = 0 (FX1) / 1 (FX2).
-// Bound a RAW / enum value to its catalog range — the last line before an
-// out-of-range value reaches the device, since encodeValue's "raw" and "enum"
-// cases are pure passthroughs (every numeric encoder in vd.ts clamps internally,
-// these two cannot: their range lives in the effect / option catalogs, not in the
-// encoder). The inspector already constrains the same bounds, so this only bites
-// on a hand-edited or `?plan=` payload. Range only — callers state their own
-// policy for a non-finite value, which differs by whether a catalog default
-// exists to fall back on.
-function boundRaw(raw: number, lo?: number, hi?: number): number {
-  if (lo !== undefined && raw < lo) return lo;
-  if (hi !== undefined && raw > hi) return hi;
-  return raw;
+
+/** Whether a plan value can go out as a raw at all: a finite number. Anything else is not
+ *  sent, since the shell refuses a write whose value is not an integer. */
+function isRaw(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
 }
 
 // A plan-sourced raw with a catalog default: a non-finite value takes the default
@@ -1235,7 +1380,7 @@ function planRaw(v: number | undefined, def: number): number {
 // passthrough encoding. An off-menu value would otherwise be written verbatim and
 // select something the plan never named.
 function boundEnum(v: number, options: readonly { value: number }[], def: number): number {
-  return options.some((o) => o.value === v) ? v : def;
+  return admitLeaf(menuRule(options, def), v);
 }
 
 function pushFxEffectCommands(
@@ -1274,12 +1419,13 @@ function pushFxEffectCommands(
 // (guitar 697 / pitch 701 / compander 689 / output 693). Slots + defaults from
 // the calibrated catalog; mirror slots (Pitch Coarse/Fine/Formant) get the same
 // raw. The selector (emitted by the caller) binds the engine first.
-// Only slots the plan explicitly carries are written; absent slots are left to
-// the device's per-type defaults populated by the selector (guitar-amp common
-// params differ per type, so a single catalog default would clobber them). The
-// writable list is a deliberate subset of what a readback fills: a slot the unit
-// answers but this app must not write back is in insertFxReadableSlots and not
-// here, so a read does not round-trip in full.
+// Only slots the plan carries are written. A selection and a load put every writable
+// slot of the selected type in the plan at that type's own default
+// (`seedInsertFxParams`), so the plan holds what the screen shows. The slots
+// iterated here are the ones a readback fills too: insertFxReadableSlots returns
+// this list, and no slot is read-only. What a read fills and this does not send is
+// the driven set skipped below, so a slot to stop writing belongs in that set
+// rather than out of the writable list, which would stop the read as well.
 // A slot is read under the selected family's own key, then under the bare slot
 // number — the device-shaped namespace a readback writes, which is by construction
 // the family the selector named at the time. Anything the plan stored for ANOTHER
@@ -1313,11 +1459,10 @@ function pushInsertFxEffectCommands(
   const drivers = insertFxDriverSlots(family);
   for (const s of insertFxWritableSlots(family)) {
     if (driven.has(s.slot)) continue;
-    const v = params[insertFxParamKey(family, s.slot)] ?? params[String(s.slot)];
-    // No catalog default to fall back on here (an absent slot is left to the
-    // device's per-type default), so a non-finite raw is dropped, not substituted.
-    if (!Number.isFinite(v)) continue;
-    const raw = boundRaw(v, s.rawMin, s.rawMax);
+    // A slot the plan does not hold as a finite raw sends nothing; no default is
+    // substituted here.
+    const raw = insertFxSlotRaw(params[insertFxParamKey(family, s.slot)] ?? params[String(s.slot)], s);
+    if (raw === undefined) continue;
     const name = drivers.has(s.slot) ? "INSERT_FX_DRIVER" : "INSERT_FX_EFFECT";
     out.push(rawCommand(name, engine, "raw", s.slot, raw));
     if (s.mirror !== undefined) out.push(rawCommand(name, engine, "raw", s.mirror, raw));
@@ -1330,36 +1475,35 @@ function pushSsmcsCommands(out: VdCommand[], y: number, s: SsmcsParams | undefin
   // carries the same firewall as the FX / DynFields paths: a hand-edited / ?plan=
   // raw is bounded to the calibrated vd.ts range before it reaches the device.
   if (s.on !== undefined) out.push(command("SSMCS_ON", y, s.on ? 1 : 0));
-  if (s.compDrive !== undefined)
+  if (isRaw(s.compDrive))
     out.push(command("SSMCS_COMP_DRIVE", y, boundRaw(s.compDrive, SSMCS_COMP_DRIVE_MIN, SSMCS_COMP_DRIVE_MAX)));
-  if (s.morphing !== undefined)
+  if (isRaw(s.morphing))
     out.push(command("SSMCS_MORPHING", y, boundRaw(s.morphing, SSMCS_MORPHING_MIN, SSMCS_MORPHING_MAX)));
-  if (s.outGain !== undefined)
-    out.push(command("SSMCS_OUT_GAIN", y, boundRaw(s.outGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
+  if (isRaw(s.outGain)) out.push(command("SSMCS_OUT_GAIN", y, boundRaw(s.outGain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
   const c = s.comp;
   if (c) {
-    if (c.attack !== undefined)
+    if (isRaw(c.attack))
       out.push(command("SSMCS_COMP_ATTACK", y, boundRaw(c.attack, SSMCS_ATTACK_RAW_MIN, SSMCS_ATTACK_RAW_MAX)));
-    if (c.release !== undefined)
+    if (isRaw(c.release))
       out.push(command("SSMCS_COMP_RELEASE", y, boundRaw(c.release, SSMCS_RELEASE_RAW_MIN, SSMCS_RELEASE_RAW_MAX)));
-    if (c.ratio !== undefined)
+    if (isRaw(c.ratio))
       out.push(command("SSMCS_COMP_RATIO", y, boundRaw(c.ratio, SSMCS_RATIO_RAW_MIN, SSMCS_RATIO_RAW_MAX)));
     if (c.knee !== undefined)
       out.push(command("SSMCS_COMP_KNEE", y, boundEnum(c.knee, COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)));
-    if (c.threshold !== undefined)
+    if (isRaw(c.threshold))
       out.push(
         command("SSMCS_COMP_THRESHOLD", y, boundRaw(c.threshold, SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)),
       );
-    if (c.makeup !== undefined)
+    if (isRaw(c.makeup))
       out.push(command("SSMCS_COMP_MAKEUP", y, boundRaw(c.makeup, SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)));
   }
   const sc = s.sc;
   if (sc) {
     if (sc.on !== undefined) out.push(command("SSMCS_SC_ON", y, sc.on ? 1 : 0));
-    if (sc.q !== undefined) out.push(command("SSMCS_SC_Q", y, boundRaw(sc.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX)));
-    if (sc.freq !== undefined)
+    if (isRaw(sc.q)) out.push(command("SSMCS_SC_Q", y, boundRaw(sc.q, SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX)));
+    if (isRaw(sc.freq))
       out.push(command("SSMCS_SC_FREQ", y, boundRaw(sc.freq, SSMCS_FREQ_RAW_MIN, SSMCS_FREQ_RAW_MAX)));
-    if (sc.gain !== undefined) out.push(command("SSMCS_SC_GAIN", y, boundRaw(sc.gain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
+    if (isRaw(sc.gain)) out.push(command("SSMCS_SC_GAIN", y, boundRaw(sc.gain, SSMCS_GAIN_MIN, SSMCS_GAIN_MAX)));
   }
   const eq = s.eq;
   if (eq) {
@@ -1407,15 +1551,18 @@ function pushEqBandCommands(out: VdCommand[], ctrl: EqControl, bands: EqBand[]):
   for (const band of ctrl.bands) {
     const v = bands[band.index];
     if (!v) continue;
+    const [q, freq, gain] = eqBandFields(band.index).map(dynRule);
     for (const inst of ctrl.instances) {
       if (v.on !== undefined) out.push(rawCommand("EQ_BAND_ON", band.on, "bool", inst, v.on ? 1 : 0));
       if (v.type !== undefined && band.type !== null) {
         const opts = band.name === "low" ? EQ_TYPE_LOW_OPTIONS : EQ_TYPE_HIGH_OPTIONS;
         out.push(rawCommand("EQ_BAND_TYPE", band.type, "enum", inst, boundEnum(v.type, opts, EQ_TYPE_SHELVING)));
       }
-      if (v.q !== undefined) out.push(rawCommand("EQ_BAND_Q", band.q, "q", inst, v.q));
-      if (v.freq !== undefined) out.push(rawCommand("EQ_BAND_FREQ", band.freq, "eqFreq", inst, v.freq));
-      if (v.gain !== undefined) out.push(rawCommand("EQ_BAND_GAIN", band.gain, "eqGain", inst, v.gain));
+      if (v.q !== undefined) out.push(rawCommand("EQ_BAND_Q", band.q, "q", inst, admitLeaf(q, v.q)));
+      if (v.freq !== undefined)
+        out.push(rawCommand("EQ_BAND_FREQ", band.freq, "eqFreq", inst, admitLeaf(freq, v.freq)));
+      if (v.gain !== undefined)
+        out.push(rawCommand("EQ_BAND_GAIN", band.gain, "eqGain", inst, admitLeaf(gain, v.gain)));
     }
   }
 }
@@ -1435,8 +1582,8 @@ function pushEqOneKnobCommands(out: VdCommand[], ctrl: EqOneKnobControl, ok: EqO
   for (const inst of ctrl.instances) {
     const chain: VdCommand[] = [];
     if (ok.on !== undefined) chain.push(rawCommand("EQ_ONE_KNOB_ON", ctrl.on, "bool", inst, ok.on ? 1 : 0));
-    // The preset enum is shared across every EQ instance; each screen exposes only
-    // its applicable subset, so the menu here is the union of both subsets.
+    // The preset enum is shared across every EQ instance, and every instance offers
+    // all three types, so the bound is the instance's own menu.
     if (ok.type !== undefined) {
       const type = boundEnum(ok.type, EQ_ONE_KNOB_TYPE_ALL_OPTIONS, EQ_ONE_KNOB_TYPE_DEFAULT);
       chain.push(rawCommand("EQ_ONE_KNOB_TYPE", ctrl.type, "enum", inst, type));
@@ -1973,23 +2120,46 @@ function recordingParams(
   nodeParams: Plan["nodeParams"],
   read: (name: string, value: unknown) => void,
 ): Plan["nodeParams"] {
-  const wrap = (value: unknown, path: string[]): unknown => {
-    if (value === null || typeof value !== "object") return value;
-    return new Proxy(value as object, {
-      get(target, prop, receiver) {
-        const held = Reflect.get(target, prop, receiver);
-        if (typeof prop !== "string") return held;
-        if (held !== null && typeof held === "object") return wrap(held, [...path, prop]);
-        read([...path, prop].join("."), held);
-        return held;
-      },
-    });
-  };
   const out: Plan["nodeParams"] = {};
   for (const [nodeId, params] of Object.entries(nodeParams)) {
-    out[nodeId] = wrap(params, []) as NodeParams;
+    out[nodeId] = recording(params, (path) => nodeParamContestPath(nodeId, path.join(".")), read) as NodeParams;
   }
   return out;
+}
+
+/** The same for each wire's params, named the way the differ names one. A wire's endpoints and
+ *  kind are read too, to find it, and are not values a command carries. */
+function recordingConnections(
+  connections: Plan["connections"],
+  read: (name: string, value: unknown) => void,
+): Plan["connections"] {
+  return connections.map((c) =>
+    c.params
+      ? {
+          ...c,
+          params: recording(c.params, (path) => connParamContestKey(c.from, c.to, path.join(".")), read) as ConnParams,
+        }
+      : c,
+  );
+}
+
+/** `value`, recording every read of a leaf it carries under the name `nameOf` gives its path. */
+function recording(
+  value: unknown,
+  nameOf: (path: string[]) => string,
+  read: (name: string, value: unknown) => void,
+  path: string[] = [],
+): unknown {
+  if (value === null || typeof value !== "object") return value;
+  return new Proxy(value as object, {
+    get(target, prop, receiver) {
+      const held = Reflect.get(target, prop, receiver);
+      if (typeof prop !== "string") return held;
+      if (held !== null && typeof held === "object") return recording(held, nameOf, read, [...path, prop]);
+      read(nameOf([...path, prop]), held);
+      return held;
+    },
+  });
 }
 
 /**
@@ -2013,11 +2183,14 @@ export function planToCommandOrigins(
   scope: WriteScope = "all",
 ): Map<number, string | null | undefined> {
   const cursor: NonNullable<typeof originCursor> = {};
+  const read = (name: string, value: unknown): void => {
+    cursor.fresh = { name, value };
+  };
   const proxied = {
     ...plan,
-    nodeParams: recordingParams(plan.nodeParams, (name, value) => {
-      cursor.fresh = { name, value };
-    }),
+    nodeParams: recordingParams(plan.nodeParams, read),
+    connections: recordingConnections(plan.connections, read),
+    nodeColors: recording(plan.nodeColors, ([id]) => nodeColorContestKey(id), read) as Plan["nodeColors"],
   };
   originCursor = cursor;
   let commands: VdCommand[];
@@ -2029,8 +2202,7 @@ export function planToCommandOrigins(
   const origins = new Map<number, string | null | undefined>();
   for (const c of collapseSharedAddrs(commands)) {
     if (scope !== "all" && (PARAMS[c.name] as ParamSpec).sceneExternal === true) continue;
-    const key = c.origin;
-    origins.set(cmdAddr(c), key === undefined || key === null ? key : nodeParamContestPath(c.node ?? "", key));
+    origins.set(cmdAddr(c), c.origin);
   }
   return origins;
 }
@@ -2092,16 +2264,18 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       out.push(command("COMP_EQ_TYPE", cc.y, boundEnum(np.compEqType, COMP_EQ_OPTIONS, COMP_EQ_COMP_FIRST)));
     // Rec Point: per-channel record / direct-out tap (cc.recPoint = mono 137 /
     // stereo 264, resolved by channelControl like fader/on/pan).
-    if (np.recPoint !== undefined)
+    if (np.recPoint !== undefined) {
+      const ssmcs = cc.hasMicStrip && (np.compEqType ?? COMP_EQ_COMP_FIRST) === COMP_EQ_SSMCS;
       out.push(
         rawCommand(
           "REC_POINT",
           cc.recPoint,
           "enum",
           cc.y,
-          boundEnum(np.recPoint, REC_POINT_OPTIONS, REC_POINT_DEFAULT),
+          admitLeaf(recPointRule(!cc.hasMicStrip, ssmcs), np.recPoint),
         ),
       );
+    }
     // Channel-strip section ON (GATE/COMP/EQ). The active COMP/EQ bank follows the
     // type; polarity per toggle. Stereo channels expose only EQ.
     for (const sec of channelSections(model, node.id, np.compEqType ?? COMP_EQ_COMP_FIRST)) {
@@ -2120,28 +2294,27 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     if (dyn) {
       if (np.gate) pushDynCommands(out, dyn.gate, dyn.y, np.gate as Record<string, number | undefined>);
       if (dyn.comp && np.comp) {
-        // While the COMP 1-knob is on the device owns the values in COMP_ONE_KNOB_DRIVEN,
-        // so they are skipped for the same reason the EQ bands are above. Emitting them is
-        // not merely redundant: anything that re-sends the plan's copy after the knob has
-        // computed puts the operator's pre-knob values back on the unit, which is what a
-        // converge sharing the flush does (it reads the unit, sees the computed values
-        // differ from the plan, and writes the plan's). Attack, release and auto-makeup
-        // stay authored — the knob leaves those where the operator put them.
-        const comp = np.comp;
-        const deviceDriven = (key: string): boolean =>
-          !emit.includeDeviceDriven && comp.oneKnob === true && COMP_ONE_KNOB_DRIVEN.has(key);
+        // While the COMP 1-knob or Auto Makeup is on the device owns the values
+        // `compDeviceDriven` names, so they are skipped for the same reason the EQ bands are
+        // above. Emitting them is not merely redundant: anything that re-sends the plan's copy
+        // after the unit has computed puts the operator's earlier values back on the unit,
+        // which is what a converge sharing the flush does (it reads the unit, sees the
+        // computed values differ from the plan, and writes the plan's). Attack, release and
+        // the two switches stay authored — neither moves those.
+        const driven = emit.includeDeviceDriven ? new Set<string>() : compDeviceDriven(np.comp);
+        const deviceDriven = (key: string): boolean => driven.has(key);
         pushDynCommands(
           out,
           dyn.comp.filter((f) => !deviceDriven(f.key)),
           dyn.y,
-          comp as Record<string, number | undefined>,
+          np.comp as Record<string, number | undefined>,
         );
         if (np.comp.knee !== undefined && !deviceDriven("knee"))
           out.push(command("COMP_KNEE", dyn.y, boundEnum(np.comp.knee, COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)));
         if (np.comp.autoMakeup !== undefined) out.push(command("COMP_AUTO_MAKEUP", dyn.y, np.comp.autoMakeup ? 1 : 0));
         if (np.comp.oneKnob !== undefined) out.push(command("COMP_ONE_KNOB", dyn.y, np.comp.oneKnob ? 1 : 0));
         // COMP 1-knob level is a passthrough 0..100 raw (enum encoding), bounded here.
-        if (np.comp.oneKnobLevel !== undefined)
+        if (isRaw(np.comp.oneKnobLevel))
           out.push(command("COMP_ONE_KNOB_LEVEL", dyn.y, boundRaw(np.comp.oneKnobLevel, 0, 100)));
       }
       // SSMCS detail (MONO IN, SSMCS mode). Comp/EQ section ON are emitted above
@@ -2218,7 +2391,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     const fromId = parseRef(conn.from).nodeId;
     const cc = channelControl(model, fromId);
     if (cc) {
-      out.push(rawCommand("CH_FADER", cc.fader, "level", cc.y, conn.params?.level ?? 0));
+      out.push(rawCommand("CH_FADER", cc.fader, "level", cc.y, conn.params?.level ?? SEND_LEVEL_UNNAMED_DB));
       out.push(rawCommand("CH_PAN", cc.pan, "pan", cc.y, conn.params?.pan ?? 0));
       // → STEREO bus assign ON (post-fader, firmware V1.3). Ships ON; distinct from
       // the channel master CH_ON (emitted above from np.on).
@@ -2227,7 +2400,15 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       const fxY = fxChannelIndex(fromId);
       const mixL = MIX_FADER_INSTANCES[fromId]?.[0];
       if (fxY !== null) {
-        out.push(rawCommand("FX_CHANNEL_FADER", PARAMS.FX_CHANNEL_FADER.id, "level", fxY, conn.params?.level ?? 0));
+        out.push(
+          rawCommand(
+            "FX_CHANNEL_FADER",
+            PARAMS.FX_CHANNEL_FADER.id,
+            "level",
+            fxY,
+            conn.params?.level ?? SEND_LEVEL_UNNAMED_DB,
+          ),
+        );
         out.push(rawCommand("FX_CHANNEL_BAL", PARAMS.FX_CHANNEL_BAL.id, "pan", fxY, conn.params?.pan ?? 0));
         out.push(rawCommand("STEREO_ASSIGN_ON", FX_STEREO_ASSIGN_ON, "bool", fxY, (conn.params?.on ?? true) ? 1 : 0));
       } else if (mixL !== undefined) {
@@ -2256,11 +2437,11 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
         for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, 0));
         continue;
       }
-      const on = (conn.params?.on ?? true) ? 1 : 0;
-      for (const p of sc.level) out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? 0));
+      for (const p of sc.level)
+        out.push(rawCommand("SEND_LEVEL", p, "level", sc.y, conn.params?.level ?? SEND_LEVEL_UNNAMED_DB));
       if (!panLinked.has(bus.id))
         for (const p of sc.pan) out.push(rawCommand("SEND_PAN", p, "pan", sc.y, conn.params?.pan ?? 0));
-      for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, on));
+      for (const p of sc.on) out.push(rawCommand("SEND_ON", p, "bool", sc.y, (conn.params?.on ?? true) ? 1 : 0));
       // CH -> FX taps are read-only (broker max_value=0 rejects a PRE write); they
       // are read back but never written. Other taps are settable. See sendTapWritable.
       if (sendTapWritable(model, conn.from, conn.to))
@@ -2505,7 +2686,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   // only on the device, but emitted whenever present (like freq for Sine). The
   // interval is a passthrough raw (1..30 s), so it carries the emit-path firewall.
   if (osc?.width !== undefined) out.push(command("OSC_BURST_WIDTH", 0, osc.width));
-  if (osc?.interval !== undefined) out.push(command("OSC_BURST_INTERVAL", 0, boundRaw(osc.interval, 1, 30)));
+  if (isRaw(osc?.interval)) out.push(command("OSC_BURST_INTERVAL", 0, boundRaw(osc.interval, 1, 30)));
   own("bus.osc");
 
   // STREAMING DELAY (bus.stream node, global y = 0): on / time / frame rate.
@@ -2537,15 +2718,14 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   }
 
   // CH SETTING color (palette index): input channels (20) and MIX/STEREO buses
-  // (586 / 496), written to every linked instance. Emitted only when the node
-  // carries a color, so an uncolored node leaves the device's color untouched; a
-  // hex outside the device palette is skipped rather than guessed.
+  // (586 / 496), written to every linked instance — a palette hex as its index and
+  // `COLOR_OFF` as the Off index. A node the plan gives no color sends nothing, and a
+  // value that is no plan color is skipped rather than guessed; the load completes an
+  // absent color and drops an off-palette one, so neither reaches here from a document.
   for (const node of model.nodes) {
-    const hex = plan.nodeColors[node.id];
-    if (!hex) continue;
     const cc = colorControl(model, node.id);
     if (!cc) continue;
-    const index = hexToColorIndex(hex);
+    const index = planColorIndex(plan.nodeColors[node.id]);
     if (index === null) continue;
     for (const inst of cc.instances) out.push(rawCommand(cc.name, cc.param, "raw", inst, index));
     own(node.id);
@@ -2626,6 +2806,18 @@ export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: Wri
       out.push({ param: sc.tap, x: 0, y: sc.y, name: "SEND_TAP", node: node.id });
     }
   }
+  // The COMP gain Auto Makeup is computing right now. The writer leaves it out
+  // (`compDeviceDriven`) and the unit announces each recompute there, so it is registered
+  // here or nothing hears it. The 1-knob's values need no entry: its level is a refetch head.
+  for (const node of model.nodes) {
+    const np = plan.nodeParams[node.id];
+    const dyn = channelDynamics(model, node.id, np?.compEqType ?? COMP_EQ_COMP_FIRST);
+    if (!dyn?.comp || compDeviceDriven(np?.comp) !== COMP_AUTO_MAKEUP_DRIVEN) continue;
+    for (const f of dyn.comp) {
+      if (COMP_AUTO_MAKEUP_DRIVEN.has(f.key))
+        out.push({ param: PARAMS[f.name].id, x: 0, y: dyn.y, name: f.name, node: node.id });
+    }
+  }
   // microSD Rec Track Count: the broker caps it at 1, so the only values software can
   // reach are "two tracks" and one the unit has no meaning for. Read onto out.sdrec's
   // node params, which is the node whose scoped read repairs it.
@@ -2685,6 +2877,12 @@ export interface NameWrite {
  * pass through on the way to the wire. It is what `diffNames` compares the device's
  * value against, so a value that is not normalized here can never match one.
  */
+/** The nameable nodes the plan gives no name, which `planToNameWrites` sends nothing for — the
+ *  unit keeps whatever name it holds there. In the model's order. */
+export function unnamedNodes(model: DeviceModel, plan: Plan): string[] {
+  return model.nodes.filter((n) => !plan.nodeNames[n.id] && nameControl(model, n.id) !== null).map((n) => n.id);
+}
+
 export function planToNameWrites(model: DeviceModel, plan: Plan): NameWrite[] {
   const out: NameWrite[] = [];
   for (const node of model.nodes) {
@@ -2717,8 +2915,10 @@ export function planToNameWrites(model: DeviceModel, plan: Plan): NameWrite[] {
 
 // --- Unverified-mapping registry -------------------------------------------
 // Device mappings confirmed only on URX44V (the captured unit) that remain
-// educated guesses on the other models, pending confirmation by an owner via the
-// device self-test. Each entry is self-contained: it resolves the device
+// educated guesses on the other models, pending confirmation by an owner: through
+// the device self-test where a round trip answers the guess's question, and by
+// reading the unit's own screen where it does not (`roundTripSettles`). Each entry
+// is self-contained: it resolves the device
 // addresses it writes on a model (so the self-test can tag a finding with the
 // guess it confirms or refutes), names the param ids it invents (so the static
 // collision audit can vet them), and — when it invents a colliding id — knows how
@@ -2738,6 +2938,12 @@ export interface UnverifiedMapping {
   models: ModelId[];
   /** Device addresses this guess writes on the model (empty if absent on it). */
   addresses(model: DeviceModel): GuessAddress[];
+  /** Whether a round trip answers the guess's question. False where the question is which
+   *  instance an address reaches or what a value means there: a unit stores the value the
+   *  same way whether the guess is right or wrong, so a run where every address held what
+   *  was written reports `roundTripped` rather than `confirmed`. Stated per entry, with no
+   *  default, so a new guess has to say which kind it is. */
+  roundTripSettles: boolean;
   /** Param ids this guess INVENTS — subject to the collision audit. A guess that
    *  only reuses a confirmed param's id (value/instance guess) leaves this empty. */
   guessedIds: number[];
@@ -2750,12 +2956,13 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     // URX22 D.Gain channel→id map is the positional hypothesis (CH3/4, CH5/6,
     // CH7/8, CH9/10 = ids 9, 13, 14, 15 by stereo-pair position — see D_GAIN maps
     // in params.ts). It reuses URX44V-confirmed ids, so it invents none (empty
-    // guessedIds); what is unverified is the assignment on a real URX22. The
-    // self-test writes each channel's sentinel and reads it back to settle it.
+    // guessedIds); what is unverified is the assignment on a real URX22. A round
+    // trip shows the ids take a value, not which channel each one reaches.
     key: "dgain-urx22",
     label: "URX22 D.Gain channel→id map (positional: CH3/4,5/6,7/8,9/10 = 9,13,14,15)",
     models: ["URX22"],
     guessedIds: [],
+    roundTripSettles: false,
     addresses: (model) =>
       [...stereoIndexMap(model).keys()].flatMap((nodeId) => {
         const id = dGainParam(model.id, nodeId);
@@ -2768,10 +2975,13 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     },
   },
   {
+    // Which channel carries the Hi-Z switch. A value that holds at the address says the
+    // address takes one, not that the channel has the switch.
     key: "hiz-channel",
     label: "URX22 Hi-Z (instrument) input channel",
     models: ["URX22"],
     guessedIds: [],
+    roundTripSettles: false,
     addresses: (model) =>
       model.nodes.flatMap((node) => {
         const cc = channelControl(model, node.id);
@@ -2791,19 +3001,28 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     label: "Stereo channel fader/on/pan block (266/267/268)",
     models: ["URX22", "URX44"],
     guessedIds: [STEREO_FADER, STEREO_ON, STEREO_PAN],
+    roundTripSettles: false,
     addresses: (model) => {
       const ys = [...stereoIndexMap(model).values()];
       return [STEREO_FADER, STEREO_ON, STEREO_PAN].flatMap((id) => ys.map((y) => [id, y] as GuessAddress));
     },
   },
   {
+    // Which physical port each value of param 22 names. A permuted numbering stores and
+    // reads back the same, so the round trip says the values are kept, not that each one
+    // names the port the plan means. Param 22 carries the MONO IN channels' sources only —
+    // a stereo channel's go out as STEREO_INPUT_SOURCE_L/R — so those slots are its
+    // addresses.
     key: "input-ports",
     label: "Physical input source port map (param 22 values)",
     models: ["URX22", "URX44"],
     guessedIds: [],
+    roundTripSettles: false,
     addresses: (model) =>
       model.nodes.flatMap((node) =>
-        (channelInputSlots(model, node.id) ?? []).map((s) => [PARAMS.INPUT_SOURCE.id, s] as GuessAddress),
+        node.kind === "channel" && !isStereoChannel(node.id)
+          ? (channelInputSlots(model, node.id) ?? []).map((s) => [PARAMS.INPUT_SOURCE.id, s] as GuessAddress)
+          : [],
       ),
   },
 ];

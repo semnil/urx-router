@@ -770,10 +770,10 @@ describe("DeviceFollow", () => {
     expect(staleUnsub).toHaveBeenCalledTimes(1);
   });
 
-  // The settle cannot tell a re-registration from a new session — from there both are
-  // a release followed by an arm — so a watch armed under the old session can fire
-  // into the new one's sink. The stamp is what stops it arming a sweep that session
-  // has no reason for.
+  // From the settle, a re-registration and a new session are both a release followed by an
+  // arm; what tells them apart is the sink, which is one function per session. So a watch
+  // armed under the old session does not fire into the new one's sink and arm a sweep that
+  // session has no reason for.
   it("ignores a settle report armed under a session that has since ended", async () => {
     const reconcileAll = vi.fn(async () => {});
     const follow = followFor({ reconcileAll });
@@ -788,6 +788,29 @@ describe("DeviceFollow", () => {
     await settled;
     await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 900);
     expect(reconcileAll).not.toHaveBeenCalled();
+    follow.end();
+  });
+
+  // …but a re-registration inside ONE session is the same listener coming back. A refresh
+  // that moves the address set releases the sink before its await and arms again after, so
+  // a watch armed in between has to reach the same session's idle net — or a write the unit
+  // acked and discarded before a set-moving flush ended is reported to nobody.
+  it("delivers a settle report armed before a same-session re-registration", async () => {
+    const reconcileAll = vi.fn(async () => {});
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const follow = followFor({ reconcileAll, addrs: () => addrs });
+    await follow.begin();
+    const k = addrKey(9002, 0, 0);
+    const settled = writeSettle.settle(new Map([[k, writeSettle.mark()]]), {
+      mustSettle: new Set(),
+      mustAnnounce: new Set([k]),
+    });
+    addrs = [ADDR, [9002, 0, 0]];
+    await follow.refresh();
+    expect(h.subscribeCalls, "the premise: the set moved, so the sink was armed again").toBe(2);
+    await settled;
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 900);
+    expect(reconcileAll).toHaveBeenCalledTimes(1);
     follow.end();
   });
 

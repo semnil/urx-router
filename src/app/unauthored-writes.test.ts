@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { cmdAddr, planToCommands } from "../core/control/translate";
-import { connectionContestKey, nodeParamContestPath } from "../core/plan-history";
+import {
+  connectionContestKey,
+  connParamContestKey,
+  nodeColorContestKey,
+  nodeNameContestKey,
+  nodeParamContestPath,
+} from "../core/plan-history";
 import { markParamSource } from "./param-source";
 import type { ParamSource, Plan } from "../core/plan";
 import { getModel } from "../models";
@@ -13,12 +19,19 @@ const MODEL = getModel("URX44V");
 
 const everyAddr = (plan: Plan): Set<number> => new Set(planToCommands(MODEL, plan, "all").map(cmdAddr));
 
-/** Re-mark every key of one node, the way an edit or a device read would. */
+/** Re-mark every key of one node, the way an edit or a device read would — its own params, its
+ *  colour and those of the sends it owns, which the write carries on the node's strip. */
 function markNode(plan: Plan, nodeId: string, source: ParamSource): number {
   const prefix = nodeParamContestPath(nodeId, "");
+  const sends = new Set(
+    plan.connections
+      .filter((c) => c.from === `${nodeId}:out`)
+      .flatMap((c) => Object.keys(c.params ?? {}).map((key) => connParamContestKey(c.from, c.to, key))),
+  );
+  sends.add(nodeColorContestKey(nodeId));
   let n = 0;
   for (const key of plan.paramSource!.keys()) {
-    if (key.startsWith(prefix)) {
+    if (key.startsWith(prefix) || sends.has(key)) {
       plan.paramSource!.set(key, source);
       n++;
     }
@@ -456,5 +469,74 @@ describe("a routing wire the load completed", () => {
     markParamSource(plan, [STREAM_WIRE], "default");
     expect(unauthoredWriteNodes(MODEL, plan, "all", everyAddr(plan))).toContain("bus.stream");
     expect(unauthoredWriteNodes(MODEL, plan, "scene", everyAddr(plan))).not.toContain("bus.stream");
+  });
+});
+
+// A send's level is a value the write carries like any node's, and the load completes one a
+// document listed without it. That completion is the fill's, so the strip is named when the level
+// would move the unit — while a level the document wrote, and a wire's param nothing recorded on a
+// wire the operator drew, stay theirs.
+describe("a send level", () => {
+  const SEND = ["ch1:out", "bus.mix1:in"] as const;
+  const LEVEL = connParamContestKey(...SEND, "level");
+  const authored = (): Plan => {
+    const plan = filledPlan();
+    for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "load");
+    return plan;
+  };
+  const levelAddrs = (plan: Plan): Set<number> => {
+    const level = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch1" && c.name === "SEND_LEVEL");
+    const wire = plan.connections.find((c) => c.from === SEND[0] && c.to === SEND[1]);
+    expect(wire?.params?.level, "the premise: the factory wire carries a level").toBeTypeOf("number");
+    expect(level.length, "the premise: the level reaches the wire").toBeGreaterThan(0);
+    return new Set(level.filter((c) => c.planValue === wire!.params!.level).map(cmdAddr));
+  };
+
+  it.each<[ParamSource, boolean]>([
+    ["default", true],
+    ["device", true],
+    ["load", false],
+    ["manual", false],
+  ])("names the strip for a level recorded as %s: %s", (source, reported) => {
+    const plan = authored();
+    plan.paramSource!.set(LEVEL, source);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", levelAddrs(plan)).includes("ch1")).toBe(reported);
+  });
+
+  it.each<[ParamSource | undefined, boolean]>([
+    ["manual", false],
+    ["load", false],
+    ["device", true],
+    [undefined, true],
+  ])("answers a level nothing recorded with the wire's own record, %s: %s", (source, reported) => {
+    const plan = authored();
+    plan.paramSource!.delete(LEVEL);
+    if (source) markParamSource(plan, [connectionContestKey(...SEND)], source);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", levelAddrs(plan)).includes("ch1")).toBe(reported);
+  });
+});
+
+// A name goes out on the string path, not as an address, so the write hands over which nodes it
+// renames. One the load filled from the factory is named like any value nobody chose; one the
+// document or an edit wrote is not.
+describe("a name the write changes", () => {
+  it.each<[ParamSource | undefined, boolean]>([
+    ["default", true],
+    ["device", true],
+    [undefined, true],
+    ["load", false],
+    ["manual", false],
+  ])("names the node whose name is recorded as %s: %s", (source, reported) => {
+    const plan = filledPlan();
+    for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "load");
+    if (source) markParamSource(plan, [nodeNameContestKey("ch2")], source);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(), new Set(["ch2"])).includes("ch2")).toBe(reported);
+  });
+
+  it("says nothing about a name the write does not change", () => {
+    const plan = filledPlan();
+    for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "load");
+    markParamSource(plan, [nodeNameContestKey("ch2")], "default");
+    expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(), new Set())).toEqual([]);
   });
 });

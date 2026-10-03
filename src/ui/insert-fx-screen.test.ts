@@ -1419,6 +1419,20 @@ describe("the multi-band compressor", () => {
     }
   });
 
+  // The switch is drawn from the raw the write sends there, the same question the lock below it
+  // asks: a value that sends nothing (a boolean) or sends 0 shows OFF with the Level locked,
+  // rather than ON over a Level the lock says the knob is not driving.
+  it.each([[false], [true], [-1]])("draws a 1-knob switch holding %j as the write sends it", (v) => {
+    mbc(MAIN, { [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]: v as unknown as number });
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "bus.mix1");
+    const rows = [...h.box.querySelectorAll<HTMLElement>(".prefs-section .prefs-row")];
+    const pressed = rows[0].querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
+    expect(pressed?.textContent).toBe(t().inspector.off);
+    expect(rows[1].classList.contains("locked")).toBe(true);
+    screen.close();
+  });
+
   it("locks the Level while the knob is off, which is the COMP knob's own treatment", () => {
     // It drives nothing there. The row STAYS rather than being dropped, so the section does
     // not change height on a switch — the same rule COMP's own 1-knob rows follow.

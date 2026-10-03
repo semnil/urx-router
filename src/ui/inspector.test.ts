@@ -15,6 +15,7 @@ import { insertFxMenu } from "../core/constraints";
 import { insertFxControl } from "../core/control/translate";
 import {
   BUS_TYPE_FIXED,
+  COLOR_OFF,
   COLOR_PALETTE,
   COMP_EQ_SSMCS,
   INSERT_FX_NONE,
@@ -23,6 +24,7 @@ import {
 } from "../core/control/params";
 import { planToCommands } from "../core/control/translate";
 import { fxParams } from "../core/control/fx-effect";
+import { insertFxDefaults, insertFxWritableSlots } from "../core/control/insert-fx-effect";
 import type { DeviceModel } from "../models/types";
 import { setLang, t } from "../i18n";
 
@@ -815,7 +817,9 @@ describe("node controls report their edits", () => {
     expect(act.onRenameNode).toHaveBeenLastCalledWith("ch1", "あ".repeat(8));
   });
 
-  it("recolors a node from a swatch and clears it from the none swatch", () => {
+  // The none swatch is the unit's Off, written as Off: a colour the plan merely left out would
+  // send nothing, and the unit would keep the colour it has.
+  it("recolors a node from a swatch and sets Off from the none swatch", () => {
     renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
     const swatches = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];
     expect(swatches.length).toBeGreaterThan(1);
@@ -824,7 +828,21 @@ describe("node controls report their edits", () => {
     const calls = vi.mocked(act.onRecolorNode).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls.every(([id]) => id === "ch1")).toBe(true);
-    expect(calls.some(([, color]) => color === null)).toBe(true);
+    expect(calls.map(([, color]) => color)).toEqual([COLOR_PALETTE.at(-1)!.hex, COLOR_OFF]);
+  });
+
+  it("rings the none swatch for Off, and sets Off from a second press on the active one", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeColors.ch1 = COLOR_OFF;
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("ch1"), act);
+    const swatches = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];
+    expect(swatches.filter((b) => b.classList.contains("sel"))).toEqual([swatches[0]]);
+    plan.nodeColors.ch1 = COLOR_PALETTE[0].hex.toUpperCase();
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("ch1"), act);
+    const again = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];
+    expect(again.filter((b) => b.classList.contains("sel"))).toEqual([again[1]]);
+    again[1].click();
+    expect(vi.mocked(act.onRecolorNode).mock.calls.at(-1)).toEqual(["ch1", COLOR_OFF]);
   });
 
   it("hides a node and closes the panel from their own buttons", () => {
@@ -1034,6 +1052,29 @@ describe("insert FX", () => {
     const patch = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)![1];
     expect(patch.insertFxParams).toBeDefined();
     expect(Object.keys(patch.insertFxParams!)).not.toContain("3");
+  });
+
+  // The unit fills the engine with the type's defaults on the transition into it and not on a
+  // same-value write, so a selection that carried no engine values left a write that sends
+  // nothing there while the screen printed the defaults. The selection seeds them, and names them
+  // as defaults rather than as values the operator chose.
+  it("seeds the selected type's defaults and names them as defaults", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    const sel = [...panel.querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.insertFxType)!
+      .querySelector("select")!;
+    sel.value = "1794";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    const [id, patch, , defaults] = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)!;
+    expect(id).toBe("ch1");
+    const expected = insertFxDefaults("compander", 1794);
+    const slots = insertFxWritableSlots("compander").map((s) => s.slot);
+    expect(patch.insertFxParams).toEqual(
+      Object.fromEntries(slots.map((slot) => [`compander:${slot}`, expected[slot]])),
+    );
+    expect([...(defaults ?? [])].sort()).toEqual(slots.map((slot) => `insertFxParams.compander:${slot}`).sort());
   });
 });
 

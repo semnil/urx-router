@@ -94,7 +94,11 @@ const SURFACES: Record<SurfaceName, Surface> = {
       "status.paramsBounded",
       "status.paramsDropped",
       "status.streamingSourceSupplied",
+      "status.sendLevelsSupplied",
+      "status.linkedPairsAligned",
       "status.linkedSendPansAligned",
+      "status.colorsDropped",
+      "status.textsRewritten",
       "status.planLoaded",
     ],
     composed: ["status.streamingSourceSupplied", "status.planLoaded"],
@@ -368,8 +372,10 @@ test("the load report shows all three framings and both Copy faces", async ({ pa
 });
 
 // One document the load repairs every way it can: two on/off values written as numbers, two FX
-// values bounded and two dropped, no STREAMING source, and two send pans into a MIX whose Pan Link
-// is on — two of each, since a counted note is read in its plural wording. The Pan Link is one of
+// values bounded and two dropped, no STREAMING source, sends listed without a level, two
+// STEREO-linked pairs whose members disagree, two send pans into a MIX whose Pan Link is on, two
+// node colours that are not the unit's, and two names the load rewrites — two or more of each,
+// since a counted note is read in its plural wording. The Pan Link is one of
 // the numbers, so the send pans are set only because the conversion ran first.
 test("the status line after a load names every repair the load made", async ({ page }) => {
   const revxLpf = fxParams(0).find((d) => d.key === "revxLpf")!;
@@ -388,8 +394,13 @@ test("the status line after a load names every repair the load made", async ({ p
       "bus.fx1": { fxEffect: { type: 0, params: { revxLpf: revxLpf.rawMin! - 1, revxHpf: false } } },
       "bus.fx2": { fxEffect: { type: 1024, params: { delayLpf: delayLpf.rawMin! - 1, delayHiRatio: false } } },
       "bus.mix1": { panLink: 1 },
-      ch3: { hpf: 0 },
+      ch1: { stereoLink: true, panBal: 0 },
+      ch2: { hpf: true },
+      ch3: { hpf: 0, stereoLink: true, panBal: 0 },
+      ch4: { hpf: true },
     },
+    nodeColors: { ch1: "#ff0000", ch2: "url(https://example.invalid/x)" },
+    nodeNames: { ch1: "Long name past eight", ch2: "Vo\u0001x" },
   };
   await page.goto(`/?plan=${planParam(plan)}`);
   await expect(page.locator("#statusbar")).toContainText(en.status.planLoaded);
@@ -507,6 +518,13 @@ test("the device setup screen shows every page, on the model that has it and the
   await page.locator("#device-setup-brightness").dispatchEvent("change");
   await chooseOption(page.locator("#device-setup-apo-time"), { index: 1 });
   await expect(page.locator("#device-setup-pending")).toContainText("unapplied changes");
+  await inv.take(page, "#device-setup-modal");
+
+  // A unit holding a Time Zone index past the city list, which the screen offers as unknown.
+  await stubTauriDevice(page, { values: { 831: 200 } });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await openSetup();
   await inv.take(page, "#device-setup-modal");
 
   // The URX22 has neither Date/Time nor HDMI, and says so where those pages were.

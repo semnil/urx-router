@@ -222,10 +222,15 @@ function readDescriptors(view: DataView, bytes: Uint8Array, at: number, len: num
     if (flag !== 0x00 && flag !== 0x40) throw new UrxfError("badDescriptor", `flag ${flag} at ${cursor}`);
     const array = flag === 0x40;
     if (array) require(bytes, cursor, 8);
+    const id = view.getUint16(cursor, false);
+    const elemSize = view.getUint16(cursor + 4, false);
+    // A zero-width element spans no bytes whatever the count says, so it would pass
+    // both length checks and turn one descriptor into up to 65535 values.
+    if (elemSize === 0) throw new UrxfError("badDescriptor", `element size 0 on parameter ${id}`);
     table.push({
-      id: view.getUint16(cursor, false),
+      id,
       typecode: view.getUint8(cursor + 3),
-      elemSize: view.getUint16(cursor + 4, false),
+      elemSize,
       count: array ? view.getUint16(cursor + 6, false) : 1,
     });
     cursor += array ? 8 : 6;

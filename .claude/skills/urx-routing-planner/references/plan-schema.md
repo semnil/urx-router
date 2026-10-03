@@ -41,11 +41,14 @@ the unit and edit that.
   refuses the document before it looks at the routing.
 - `version` — always `4` for a plan written today. A document tagged newer than
   the app's version is refused; an older one is migrated forward on load, and an
-  absent one reads as current.
+  absent one reads as current. A version-1 document's FX parameters stored under
+  their old shared names (`lpf`, `hpf`, … and a Ping Pong `delay`) move to the names
+  the build reads; the validator names each one.
 - `modelId` — `"URX22"`, `"URX44"`, or `"URX44V"`. Any other string is refused.
 - `sampleRate` — Hz, one of `44100, 48000, 88200, 96000, 176400, 192000`
-  (default `48000`). Some features (insert FX, FX2, stereo-channel EQ) warn/disable
-  above 96 kHz — the app shows those notes; the plan still loads.
+  (default `48000`; any other value, `96` written in kHz included, loads as `48000`,
+  which the validator says). Some features (insert FX, FX2, stereo-channel EQ)
+  warn/disable above 96 kHz — the app shows those notes; the plan still loads.
 - `scope` — **never author it**; it appears only on a plan the user saved
   scene-scoped (Preferences → *Plan files* → *Save scope*, which also applies to
   the share URL and the JSON download). Such a document carries `"scope": "scene"`
@@ -78,7 +81,9 @@ Each wire is one object:
   - `send` — channel/FX → bus summing send (many allowed; carries level/pan/tap).
   - `sendSwitch` — ON/OFF assign into a bus, no level/pan (e.g. MIX → STEREO
     "TO ST", oscillator assigns).
-- `params` (optional) — per-wire values, see below.
+- `params` (optional) — per-wire values, see below. Leave the key out for a wire
+  with none: `"params": null` is not an omission, and the app drops the whole wire
+  (`plan_tool.py` warns about it).
 
 **Single-input rule:** a `source`/`patch`/`record`/`key` destination accepts at
 most one incoming wire. Two wires into the same `:in` of that kind is the
@@ -106,8 +111,11 @@ cannot be removed; you only set their `params` (e.g. raise a send `level`, or
 turn a `sendSwitch` `on`). A fixed wire you leave out keeps the app's seed: unity
 for a channel's main path into STEREO, `-96.5` (off / -∞) for every other fixed
 send, and off for MIX→STEREO. **Listing one is not the same as leaving it out** —
-a listed wire with no `level` writes 0 dB (unity), so list a fixed send only with
-the params you mean.
+a listed send into a MIX or FX bus with no `level` loads at 0 dB (unity) — the load
+writes that level into the plan and the validator warns that it does — so list a fixed
+send only with the params you mean. A listed main path into STEREO with no `level` is the
+channel's fader at unity, as the seed is. Either way the level is the app's rather than the document's, and
+the write confirm names the strip when writing it would move the unit.
 
 ### connection params (ConnParams)
 
@@ -141,9 +149,11 @@ or inside a group — is written `true` / `false`: a number there loads converte
 
 **Stable, human-readable (author these freely):**
 - `on` — channel / STEREO master / FX channel / MONITOR on. `false` = muted.
-- `hpf` (bool), `hpfFreq` (Hz, 40–120, default 80).
-- `gain` — head-amp input gain in dB (-8 … +70), analog mic channels; -8 … +40
-  while `hiZ` is on.
+- `hpf` (bool), `hpfFreq` (Hz, 40–120 in 20 Hz steps — 40 / 60 / 80 / 100 / 120 —
+  default 80; a value between two steps opens at the nearer one, a tie going up).
+- `gain` — head-amp input gain in dB: -8 … +70 on an analog mic channel (A.Gain),
+  -8 … +40 while `hiZ` is on, -24 … +24 on a stereo channel (D.Gain). A gain past
+  its channel's range opens at the nearer end.
 - `phantom`, `phase`, `phaseL`, `phaseR`, `clipSafe`, `hiZ` (bool). `phantom` and
   `hiZ` are never on together: on a channel carrying HI-Z (CH 3/4 on URX44/44V,
   CH 2 on URX22) with `hiZ` on, the app opens the plan with `phantom` off and
@@ -152,8 +162,9 @@ or inside a group — is written `true` / `false`: a number there loads converte
 - `pan` — output-bus master balance (STEREO / MIX), `-63` … `0` … `+63`. Absent =
   center. Distinct from a send's `pan`, which is a connection param.
 - `eqOn` (bool); `eqBands` — array of up to 4 `{ on, type, freq, q, gain }`
-  (freq Hz, q 0.50–16.00, gain ±18 dB; `type` is the filter-type enum on the
-  LOW/HIGH bands only).
+  (freq Hz 20–20000, q 0.50–16.00, gain ±18 dB; `type` is the filter-type enum —
+  0 Peaking / 1 Shelving / 2 HPF or LPF — on the LOW/HIGH bands only: a `type`
+  on one of the two mid bands is never sent, and the load removes it).
 - `eqOneKnob` — `{ on, type, level }` (type 0 Intensity / 1 Vocal / 2 Loudness;
   level 0–100). When on, the device drives the 4 bands, so do not also set
   `eqBands`.
@@ -163,7 +174,8 @@ or inside a group — is written `true` / `false`: a number there loads converte
   `ratio` is a ladder of stops rather than a free range: 0.05 spacing from 1.00
   to 4.00, then 0.1 to 5.0, 0.2 to 7.0, 0.5 to 10, 1 to 20, 2 to 40, 5 to 70,
   10 to 100, then 150, 200, 300, 500 and the top stop. A value between two stops
-  loads unchanged but reaches the unit as the nearer stop, so write one of them.
+  is moved on load to the nearer stop, which is what the write sends, so write one
+  of them.
   The top stop is the unit's `INF:1` and is written as **655.35** (JSON has no
   infinity to carry).
 - `ducker` — `{ threshold, range (dB), attack, decay (ms) }`; `duckerOn` (bool).
@@ -172,9 +184,21 @@ or inside a group — is written `true` / `false`: a number there loads converte
   carrying `duckerOn` loads but has no effect. The `key` wire only picks the
   trigger; the ducked signal is always the ducker's own channel.
 - `compEqType` — 0 COMP→EQ, 1 SSMCS.
-- `recPoint` — channel record/direct-out tap (enum; absent = PRE FADER).
+- `recPoint` — channel record/direct-out tap: 0 PRE GATE / 1 PRE COMP / 2 PRE EQ /
+  3 PRE INS FX / 4 PRE FADER on a MONO IN (no PRE EQ while `compEqType` is SSMCS),
+  2 PRE EQ / 4 PRE FADER on a stereo channel; absent = PRE FADER. A stage the
+  channel does not offer opens at PRE FADER — a PRE EQ in SSMCS mode at PRE COMP.
 - `stereoLink` — stereo-link a MONO IN pair (set on the odd/primary channel).
-- `panBal` — 0 PAN / 1 BAL for a linked pair.
+  A linked pair holds one set of values, the primary's: everything but `stereoLink`,
+  `panBal`, the input stage (`gain`, `clipSafe`, `phase`, `phantom`, `hiZ`) and the
+  insert effect is the pair's, and so are its sends' `level`, `on` and `tap` (and
+  `pan` in BAL). Writing the values on the primary alone is enough — the load copies
+  them onto the secondary, which then holds the primary's rather than its own
+  factory values — and a secondary written differently is overwritten the same way
+  (the validator warns that the app copies it).
+- `panBal` — 0 PAN / 1 BAL for a linked pair, on the primary. An unlinked pair
+  holds PAN (the unit's control exists only while the pair is linked), so a
+  document carrying BAL there opens at PAN.
 - `busType` — MIX 1/2: 0 VARI / 1 FIXED. On a FIXED bus a send into it keeps only
   its `on`: the unit takes it after the source's fader at a fixed level, placed by
   the source's own PAN / BAL, so the send's `level`, `pan` and `tap` have no effect — no
@@ -225,7 +249,9 @@ or inside a group — is written `true` / `false`: a number there loads converte
 - `sdRecTrackCount` — even 2–16. **Never written to the device**: a write does
   reach the unit, but the broker refuses every value above two tracks, so the app
   reads it back and emits nothing. Set it on the unit's front panel. In a plan it
-  only gates how many record-track slots show.
+  only gates how many record-track slots show. The rate caps it — 16 up to 48 kHz,
+  8 at 88.2 / 96 kHz, 2 above — and a count above the cap at the plan's rate loads
+  lowered to it (the validator says so).
 
 **Raw-encoded — author with caution (see warnings):**
 - `ssmcs` — the SSMCS channel-strip values are RAW broker integers on a non-public
@@ -246,7 +272,9 @@ or inside a group — is written `true` / `false`: a number there loads converte
   modes): while it is anything but Off, the app stops writing the Scale (slot 16) and
   the twelve note-mask slots (22–33), because switching the mode on clears that mask
   on the unit. In both cases the skipped slots are dropped from the write silently
-  and the app's tuning screen locks the same rows.
+  and the app's tuning screen locks the same rows. "On" means the number the write
+  sends to the switch is 1: a finite number of 0.5 or more (rounded, and bounded to
+  0..1). A boolean or any other non-number is not written at all and counts as off.
 
   Either switch also makes the app READ the node back after writing it, because the
   unit recomputes the skipped slots when the switch moves. So a plan carrying one of
@@ -260,7 +288,11 @@ wherever that raw value happens to sit on the device's curve, so have the user d
 the effect in on the device and fetch it back rather than authoring one.
 
 **For `ssmcs` and `insertFxParams`, omitting a key keeps nothing.** The loader fills
-it from the model's factory values and the write sends it, the same as any other key.
+it and the write sends it, the same as any other key — an `ssmcs` key from the model's
+factory values, and an `insertFxParams` slot of the selected effect from that effect's
+own defaults (the validator lists the slots it fills). The unit fills an engine with
+those defaults only when the selector moves INTO a type, so a plan selecting an effect
+the unit already runs still overwrites the unit's engine values with them.
 What a plan cannot do is author one either — the numbers are the device's own internal
 units and a hand-written value lands wherever it happens to sit on the unit's curve.
 So where these matter, have the user dial the effect in on the unit and fetch the plan
@@ -277,8 +309,17 @@ the section's presence for that reason, not only on a `type` written into it.
 
 ## nodeNames / nodeColors / notes
 
-- `nodeNames` — display/CH-SETTING name override per node id (string).
-- `nodeColors` — hex accent color per node id (e.g. `"#4a78c0"`).
+- `nodeNames` — display/CH-SETTING name override per node id (string). A nameable node
+  the document leaves unnamed — no entry, or an empty one — loads with the model's
+  factory name (`ch 1`, …), and the write sends it; the validator lists the nodes it
+  names. A name is never written empty, so omitting one does not keep the unit's name.
+- `nodeColors` — the CH SETTING color per node id: one of the unit's ten palette
+  colors — Blue `#4a78c0`, Orange `#e8913a`, Yellow `#d9b441`, Purple `#8e6fc0`,
+  Cyan `#3fa6a0`, Magenta `#c0628f`, Red `#d9534f`, Green `#5c9e64`, LtGreen
+  `#8ec46a`, White `#d8dce0` (case does not matter) — or `"off"`, the unit's Off.
+  Any other string is dropped on load and reported, and a colorable node left without
+  a color loads with the model's factory color, which the write sends; the validator
+  lists both. The list itself is in `scripts/models.json` (`colors`).
 - `notes` — free-text annotation per node id; `noteCollapsed` lists ids shown
   minimized.
 - `hidden` — node ids collapsed off the canvas.
@@ -310,6 +351,26 @@ values removed:
 The last two matter because the sanitiser keeps a boolean and a non-empty object
 under any key, so an unreadable effect object survives the load and every reader
 below treats it as absent.
+
+Outside `fxEffect`, every node-param value the write bounds is bounded on load to the value the
+write sends, and counted with the values moved: the `gate`, `comp` and `ducker` values to their
+windows (a COMP `ratio` to the nearest stop of its ladder), the `ssmcs` raws and the
+`insertFxParams` engine values to whole numbers inside their windows (an engine key by the family
+its own name gives, a bare slot by the one the selector names), the EQ 1-knob and COMP 1-knob
+levels to 0–100, the oscillator's `interval` to 1–30 and its `level` to -96–0, a channel's
+`gain` to its own range, an `hpfFreq` to the nearest of its five steps, an EQ band's `q`,
+`freq` and `gain` to their windows, and an enum
+off its menu — a LOW / HIGH band's `type`, `compEqType`,
+`recPoint`, `panBal`, `busType`, a COMP `knee`, an EQ 1-knob `type`, the oscillator's `mode`, the
+STREAMING delay's `frameRate` — to the menu's default, which is what the write sends for it.
+`plan_tool.py` warns about each one, from the rules `models.json` carries (`leafRules`). A
+repair reaches the oscillator too, which the Scene-only device scope does not write.
+
+The same step drops, on every node, a value whose KIND is not the factory value's at that
+path, and the factory value is filled in: an on/off or a group where a number belongs
+(`"gain": true`, `"gain": {"x": 30}`), a group or a list where an on/off belongs, and anything
+but a group where a group belongs (`"eqOneKnob": true`) — counted with the values removed. A
+number where an on/off belongs is converted instead (the nodeParams section above).
 
 The same step also repairs two keys outside `fxEffect`: on a channel carrying HI-Z
 with `hiZ` on, `phantom` is turned off and a `gain` above +40 is bounded to +40 (the `gain` /
@@ -379,9 +440,12 @@ A `nodeNames` value longer than
 takes no more (`ch 1xxxx`), and a longer name also draws a node label across its
 neighbours on the canvas. Counted in characters, not bytes, so a Japanese name
 also gets 8. Nothing in the protocol enforces this (the broker stores a
-20-character name and reads it back unchanged), and nothing is reported here
-either, so `plan_tool.py validate` warns about each name it would shorten; emit a
-name within the bound rather than relying on the cut.
+20-character name and reads it back unchanged); the load says it did on the status
+line, and `plan_tool.py validate` warns about each name it would shorten. Emit a
+name within the bound rather than relying on the cut. Before the cut, a name and a
+note both lose any control character other than tab, newline and carriage return
+(and U+FFFE / U+FFFF): an image export cannot carry one, and the validator names
+each text it would clean.
 
 The same rewrite drops **trailing** whitespace, after the cut rather than before
 it (so a name cut onto a space does not keep one). A leading space is kept — the

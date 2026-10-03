@@ -61,6 +61,26 @@ describe("urx-routing-planner skill data stays in sync with the device model", (
     }
   });
 
+  // The reference marks a wire fixed either at its row (every source in it fixed) or at the
+  // source itself, and an agent reads either as "seeded, cannot be removed". Each source the
+  // rendered text calls fixed has to be a rule the model calls fixed, and the reverse.
+  it("marks fixed exactly the wires whose rule is fixed", () => {
+    for (const id of MODEL_IDS) {
+      const model = getModel(id);
+      const said = new Set<string>();
+      for (const line of renderModelMarkdown(model).split("\n")) {
+        const row = /^- \*\*-> `([^`]+)`\*\*( \*\(fixed\)\*)?: (.*)$/.exec(line);
+        if (!row) continue;
+        const sources = row[3].split(" — ")[0];
+        for (const m of sources.matchAll(/`([^`]+)`( \*\(fixed\)\*)?/g)) {
+          if (row[2] || m[2]) said.add(`${m[1]} -> ${row[1]}`);
+        }
+      }
+      const fixed = model.rules.filter((r) => r.fixed).map((r) => `${r.from} -> ${r.to}`);
+      expect([...said].sort(), id).toEqual([...new Set(fixed)].sort());
+    }
+  });
+
   // The drift guard above is a pure equality check, so the renderers must be
   // deterministic: rendering the same model twice (the same process, back to back)
   // has to yield byte-identical output. This catches a stray Set/Object iteration

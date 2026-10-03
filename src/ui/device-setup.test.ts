@@ -5,6 +5,7 @@ import { BRIGHTNESS_MAX, defaultDeviceSetup, type DeviceSetup } from "../core/co
 import { getModel } from "../models";
 import { DeviceSetupPanel, type DeviceSetupHooks } from "./device-setup";
 import { resetSettingsCache } from "../core/settings";
+import { TIME_ZONE_CITIES } from "../core/control/timezones";
 import { t } from "../i18n";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -40,7 +41,7 @@ beforeEach(() => {
 });
 
 describe("DeviceSetupPanel", () => {
-  it("opens from a coerced snapshot and locks settings absent from the model", () => {
+  it("opens on the reading as reported and locks settings absent from the model", () => {
     const { panel } = install("URX22");
     const setup: DeviceSetup = { ...defaultDeviceSetup(), brightness: 999, timeZone: 999 };
 
@@ -48,7 +49,10 @@ describe("DeviceSetupPanel", () => {
 
     expect(panel.isOpen()).toBe(true);
     expect(document.querySelector("#device-setup-title")).not.toBeNull();
+    // The range input cannot show 999 and puts its thumb at the top; the readout says what
+    // the unit reported, and nothing is pending for it.
     expect((document.querySelector("#device-setup-brightness") as HTMLInputElement).value).toBe(String(BRIGHTNESS_MAX));
+    expect(document.querySelector(".dev-slider .param-val")?.textContent).toBe("999");
     expect((document.querySelector("#device-setup-timezone") as HTMLSelectElement).disabled).toBe(true);
     expect(document.querySelectorAll(".prefs-row.locked").length).toBeGreaterThanOrEqual(5);
     expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
@@ -60,6 +64,68 @@ describe("DeviceSetupPanel", () => {
     expect(document.querySelector("#device-setup-box")?.childElementCount).toBe(0);
     panel.refresh();
     expect(document.querySelector("#device-setup-box")?.childElementCount).toBe(0);
+  });
+
+  // A value the app's catalog does not have is the unit's own state, not the nearest entry:
+  // shown as that entry, nothing was pending for it and choosing that entry wrote nothing.
+  it("shows a time zone off the catalog as unknown, and writes the entry picked for it", async () => {
+    const { panel, hooks } = install();
+    panel.open({ ...defaultDeviceSetup(), timeZone: 200 });
+
+    const zone = document.querySelector("#device-setup-timezone") as HTMLSelectElement;
+    expect(zone.value).toBe("200");
+    expect(zone.selectedOptions[0]?.textContent).toBe(t().deviceSetup.unknownValue(200));
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
+
+    change(zone, String(TIME_ZONE_CITIES.length - 1));
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe(t().deviceSetup.pending(1));
+    // …and picked back, it is the reading again rather than its nearest entry.
+    change(document.querySelector("#device-setup-timezone") as HTMLSelectElement, "200");
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
+
+    change(document.querySelector("#device-setup-timezone") as HTMLSelectElement, String(TIME_ZONE_CITIES.length - 1));
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledOnce());
+    expect(hooks.apply).toHaveBeenCalledWith(
+      [{ kind: "num", name: "TIME_ZONE", y: 0, value: TIME_ZONE_CITIES.length - 1 }],
+      1,
+    );
+  });
+
+  it("writes nothing for a value off the catalog when another row is edited", async () => {
+    const { panel, hooks } = install();
+    panel.open({ ...defaultDeviceSetup(), timeZone: 200, autoPowerOffTime: 30 });
+    expect(
+      (document.querySelector("#device-setup-apo-time") as HTMLSelectElement).selectedOptions[0]?.textContent,
+    ).toBe(t().deviceSetup.unknownValue(30));
+
+    change(document.querySelector("#device-setup-language") as HTMLSelectElement, "1");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledOnce());
+    expect(hooks.apply).toHaveBeenCalledWith([{ kind: "num", name: "DEVICE_LANGUAGE", y: 0, value: 1 }], 1);
+  });
+
+  it("shows a knob function off the catalog as unknown, and clears it with three writes", async () => {
+    const { panel, hooks } = install();
+    const setup = defaultDeviceSetup();
+    setup.knobs[0] = { fn: "Warp Drive", p1: "", p2: "" };
+    panel.open(setup);
+
+    const fn = document.querySelector(".udk-row select") as HTMLSelectElement;
+    expect(fn.selectedOptions[0]?.textContent).toBe(t().deviceSetup.unknownValue("Warp Drive"));
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
+
+    change(fn, "No Assign");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledOnce());
+    expect(hooks.apply).toHaveBeenCalledWith(
+      [
+        { kind: "str", name: "UDK_FUNCTION", y: 0, value: "No Assign" },
+        { kind: "str", name: "UDK_PARAM1", y: 0, value: "" },
+        { kind: "str", name: "UDK_PARAM2", y: 0, value: "" },
+      ],
+      1,
+    );
   });
 
   // `onWheelStep` calls back once per configured wheel step, and the first `edit()`

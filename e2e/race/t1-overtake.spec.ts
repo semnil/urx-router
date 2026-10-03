@@ -268,9 +268,9 @@ test.describe("T1 overtake", () => {
     await mark(page, "select-compander");
     await chooseOption(await insertFxSelect(page), { label: "Compander-H" });
     await settleAfter(page, "select-compander", 1800);
-    // One authored engine value. translate writes only the slots the plan carries, so
-    // without this the engine array is not in the write set and the re-apply below has
-    // two stages to reproduce rather than three. Settled from its own mark rather than
+    // One authored engine value. The selection put every slot of the type in the plan at its
+    // default, so the re-apply below re-sends the whole array either way; the authored slot is
+    // what tells the plan's tuning from the default the unit would refill. Settled from its own mark rather than
     // waited quiet: an edit's flush is debounced, so the quiet a `waitQuiet` finds is
     // the one BEFORE it — measured, the slot write then landed 119 ms after the next
     // mark and read as part of the re-apply.
@@ -322,7 +322,8 @@ test.describe("T1 overtake", () => {
     // The VALUES, not just the addresses: an effect re-selected and then re-sent bypassed
     // is restored and muted, which is the failure the emit order exists to prevent, and a
     // re-sent engine slot at the type's default is the plan's tuning quietly gone.
-    expect(engine.map((s) => s.value)).toEqual([slotValue]);
+    const tuned = slotWrites[slotWrites.length - 1]!.addr;
+    expect(engine.filter((s) => s.addr === tuned).map((s) => s.value)).toEqual([slotValue]);
     expect(reOn?.value).toBe(1);
     // …and in the order the unit takes it: selector, the values it applies to, then the
     // bypass intent (t2-shape-change pins the same order for an ordinary selection).

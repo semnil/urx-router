@@ -43,8 +43,7 @@ import {
   OSC_MODE_OPTIONS,
   OSC_MODE_SINE,
   REC_POINT_DEFAULT,
-  REC_POINT_OPTIONS,
-  REC_POINT_PRE_EQ,
+  recPointOptionsFor,
   BUS_TYPE_VARI,
   BUS_TYPE_OPTIONS,
   SD_REC_TRACK_COUNT_DEFAULT,
@@ -53,7 +52,9 @@ import {
   PAN_BAL_PAN,
   PAN_BAL_OPTIONS,
   COMP_EQ_SSMCS,
+  COLOR_OFF,
   COLOR_PALETTE,
+  planColorHex,
   DELAY_FRAME_RATE_OPTIONS,
   DELAY_FRAME_RATE_DEFAULT,
   insertFxEngaged,
@@ -99,7 +100,7 @@ import { EQ_FREQ_POS_MAX, eqFreqToPos, eqPosToHz, formatDb, formatGainDb, format
 import { clearSectionOverride, recordSectionOpen, resolveSectionOpen } from "./inspector-sections";
 import { isBalanceChannel, sendFields, sendlessNote } from "./send-fields";
 import type { ParamField } from "./send-fields";
-import { parkOutgoingInsertFxParams } from "./insert-fx-model";
+import { parkOutgoingInsertFxParams, seedInsertFxParams } from "./insert-fx-model";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 
@@ -109,8 +110,15 @@ export interface InspectorActions {
   /** `written` names what the edit ASSERTED, as dotted paths (`"osc.on"`), for the
    *  funnel's write witness. Give it wherever the patch REBUILDS a nested group: the
    *  patch key alone names the whole group, which claims every sibling the rebuild
-   *  merely copied. Absent means the patch's own keys, which is right for a scalar. */
-  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[]) => void;
+   *  merely copied. Absent means the patch's own keys, which is right for a scalar.
+   *  `defaults` names, the same way, the values the edit put in as a type's defaults rather
+   *  than as anything the operator chose — an effect selection's seeded engine slots. */
+  onUpdateNodeParams: (
+    id: string,
+    patch: NodeParams,
+    written?: readonly string[],
+    defaults?: readonly string[],
+  ) => void;
   onRenameNode: (id: string, name: string) => void;
   onRecolorNode: (id: string, color: string | null) => void;
   onOpenRecent: (path: string) => void;
@@ -424,11 +432,9 @@ export function renderInspector(
     if (node.kind === "channel") {
       // MONO IN exposes all five tap stages; ST IN only the `stereo` ones. In
       // SSMCS mode the device drops PRE EQ (no discrete EQ stage to tap ahead of).
-      const isMono = channelControl(model, node.id)?.hasMicStrip;
+      const isMono = channelControl(model, node.id)?.hasMicStrip === true;
       const inSsmcs = isMono && plan.nodeParams[node.id]?.compEqType === COMP_EQ_SSMCS;
-      const recOptions = REC_POINT_OPTIONS.filter(
-        (o) => (isMono || o.stereo) && !(inSsmcs && o.value === REC_POINT_PRE_EQ),
-      );
+      const recOptions = recPointOptionsFor(!isMono, inSsmcs);
       host.append(
         enumSelect(m.inspector.recPoint, recOptions, plan.nodeParams[node.id]?.recPoint ?? REC_POINT_DEFAULT, (v) =>
           actions.onUpdateNodeParams(node.id, { recPoint: v }),
@@ -516,7 +522,7 @@ export function renderInspector(
     }
 
     // After a device readback, a node in plan.unreadNodes still shows its plan
-    // default (its body read failed); warn that its values are not the device's.
+    // value (a read failed on it); warn that its values are not the device's.
     // No provenance (a plan never fetched) shows nothing.
     if (plan.unreadNodes?.has(node.id)) {
       host.append(notReadBadge(m.inspector.notReadFromDevice));
@@ -949,8 +955,16 @@ export function renderInspector(
             const sel = Number(v);
             const patch: NodeParams = sel === INSERT_FX_NONE ? { insertFx: sel } : { insertFx: sel, insertFxOn: true };
             const parked = parkOutgoingInsertFxParams(plan.nodeParams[node.id]);
-            if (parked) patch.insertFxParams = parked;
-            actions.onUpdateNodeParams(node.id, patch);
+            // The plan takes the selected type's defaults for every slot it does not hold,
+            // which is what the screen shows and what the unit fills the engine with.
+            const { params, seeded } = seedInsertFxParams(parked ?? undefined, sel);
+            if (parked || seeded.length > 0) patch.insertFxParams = params;
+            actions.onUpdateNodeParams(
+              node.id,
+              patch,
+              undefined,
+              seeded.map((key) => `insertFxParams.${key}`),
+            );
           },
         ),
       );
@@ -1615,9 +1629,9 @@ export function colorNames(m: Messages): string[] {
   return [c.blue, c.orange, c.yellow, c.purple, c.cyan, c.magenta, c.red, c.green, c.ltGreen, c.white];
 }
 
-// A row of color swatches plus a "none" clear option. The active color (or none)
-// is ringed and pressed; each swatch is named the way the unit's picker names it.
-// Selecting toggles: clicking the active color clears it.
+// A row of color swatches plus a "none" option, which sets the device Off. The active color
+// (or none) is ringed and pressed; each swatch is named the way the unit's picker names it.
+// Selecting toggles: clicking the active color sets Off.
 function colorSwatches(
   label: string,
   current: string | undefined,
@@ -1628,6 +1642,8 @@ function colorSwatches(
   strip.className = "swatches";
   strip.setAttribute("role", "group");
   nameBy(strip, id);
+  // What the plan holds, as the swatch it paints: none for Off and for a node with no color.
+  const shown = planColorHex(current);
   const swatch = (name: string, selected: boolean): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
@@ -1637,15 +1653,15 @@ function colorSwatches(
     b.setAttribute("aria-pressed", String(selected));
     return b;
   };
-  const none = swatch(t().inspector.colorName.off, !current);
+  const none = swatch(t().inspector.colorName.off, !shown);
   none.classList.add("swatch-none");
-  none.addEventListener("click", () => onPick(null));
+  none.addEventListener("click", () => onPick(COLOR_OFF));
   strip.append(none);
   const names = colorNames(t());
   for (const [i, c] of NODE_COLORS.entries()) {
-    const b = swatch(names[i], current === c);
+    const b = swatch(names[i], shown === c);
     b.style.background = c;
-    b.addEventListener("click", () => onPick(current === c ? null : c));
+    b.addEventListener("click", () => onPick(shown === c ? COLOR_OFF : c));
     strip.append(b);
   }
   row.append(strip);

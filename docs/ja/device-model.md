@@ -366,6 +366,9 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   PRE EQ / PRE FADER。既定は PRE FADER。配線ではなくチャンネルごとのパラメータとして保持する。
   SSMCS モードでは選択肢から PRE EQ が外れ (モーフィング処理に独立した EQ 段がないため)、
   PRE EQ 選択中に SSMCS へ切り替えるとタップは PRE COMP へ移る (実機挙動。プランナーも同じ動作)。
+  書込はチャンネル自身の一覧にある段だけを送る (`core/control/params.ts` の `recPointOptionsFor`。
+  インスペクタのメニューとセルフテストの掃引も同じものを使う): 一覧に無い段は PRE FADER、SSMCS モードの
+  PRE EQ は PRE COMP として送り、そうした段を持つ文書を読み込むとそこで開いて報告する。
   - **USB MAIN / SUB・microSD Rec へのチャンネルダイレクトアウトはこの Rec Point でタップする**
     (= フェーダー・Ducker より前段)。フェーダー / Ducker を通した信号をこれらの出力へ送るには
     STEREO / MIX Bus を経由する必要がある (Bus は Ducker 後段)。プランナーはこれを注記で示す

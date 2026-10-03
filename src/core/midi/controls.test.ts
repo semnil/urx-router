@@ -962,6 +962,41 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(slotVal("bus.stereo", "mbc", th)).not.toBe(100);
   });
 
+  // A controller is told the switch the way the write sends it, which is the question the lock
+  // above asks of the same slot: a value the write sends as 0, or not at all, reads OFF here
+  // and leaves the bands writable, rather than lighting the switch over unlocked bands.
+  it.each([
+    [true, 0],
+    [-1, 0],
+    [1, 1],
+  ])("tells a controller a 1-knob switch holding %j as %i", (v, told) => {
+    const th = MBC_BANDS[0].threshold;
+    holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: v as number, [th]: 100 }, "mbc");
+    const sw = bindControl(model, plan, controlId("bus.stereo", "insfx", `insfx.mbc.${MBC_ONE_KNOB.on.slot}`))!;
+    expect(sw.get()).toBe(told);
+    expect(push(controlId("bus.stereo", "insfx", `insfx.mbc.${th}`), 0.75), "a band, as the lock reads it").toBe(
+      told === 0,
+    );
+  });
+
+  // Auto Makeup computes the gain, so a mapping's write to it is refused the way the screen
+  // locks the row and the writer leaves it out — and only the gain: the threshold it computes
+  // the gain from stays the operator's.
+  it("refuses the COMP gain while Auto Makeup is on, and takes it back when it is off", () => {
+    const gain = controlId("ch1", "gain", "comp");
+    const threshold = controlId("ch1", "threshold", "comp");
+    const comp = (autoMakeup: boolean): void => {
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { gain: 6, threshold: -20, autoMakeup, oneKnob: false } };
+    };
+    comp(true);
+    expect(push(gain, 0.75), "while Auto Makeup is on").toBe(false);
+    expect(plan.nodeParams.ch1?.comp?.gain).toBe(6);
+    expect(push(threshold, 0.75), "the threshold stays the operator's").toBe(true);
+    comp(false);
+    expect(push(gain, 0.75), "with Auto Makeup off").toBe(true);
+    expect(plan.nodeParams.ch1?.comp?.gain).not.toBe(6);
+  });
+
   it("refuses the 1-knob's own Level while the knob is off", () => {
     const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${MBC_ONE_KNOB.level.slot}`);
     holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [MBC_ONE_KNOB.level.slot]: 4 }, "mbc");
@@ -1522,9 +1557,11 @@ describe("what a mirrored pair covers", () => {
         },
       }),
     );
-    // Reachable, like the insert-FX pair: nothing makes the two agree before a press arrives.
+    // Reachable, like the insert-FX pair: the codec keeps it, and while a DOCUMENT carrying it is
+    // repaired on load — the primary's value copied onto the secondary — a device read that
+    // reached one member alone still brings it.
     expect([back.nodeParams.ch1?.on, back.nodeParams.ch2?.on]).toEqual([true, false]);
-    expect(planProblems(model, back)).toEqual([]);
+    expect(planProblems(model, back).map((p) => p.reason)).toEqual(["linkedPair"]);
 
     const a = press("ch1", PAN_BAL_BAL, true, false);
     const b = press("ch2", PAN_BAL_BAL, true, false);

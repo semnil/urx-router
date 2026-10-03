@@ -40,8 +40,9 @@ import {
   UDK_BANKS,
   UDK_FUNCTIONS,
   UDK_KNOBS,
+  UDK_UNASSIGNED,
   USB_SUPPRESSION_LABELS,
-  coerceDeviceSetup,
+  coerceDeviceSetupFields,
   defaultDeviceSetup,
   deviceSetupChanges,
   knobField,
@@ -101,11 +102,12 @@ export class DeviceSetupPanel {
     this.box = document.getElementById("device-setup-box") as HTMLElement;
   }
 
-  /** Open on values just read from the device. Both copies start equal, so the
-   *  screen opens with nothing pending. */
+  /** Open on values just read from the device, as the unit reported them: a value the
+   *  app's catalog does not have is shown as unknown rather than as the nearest entry.
+   *  Both copies start equal, so the screen opens with nothing pending. */
   open(setup: DeviceSetup): void {
-    this.baseline = coerceDeviceSetup(setup);
-    this.draft = structuredClone(this.baseline);
+    this.baseline = structuredClone(setup);
+    this.draft = structuredClone(setup);
     this.bank = 0;
     this.render();
     this.releaseInert ??= holdAppInert(this.scrim);
@@ -155,8 +157,10 @@ export class DeviceSetupPanel {
     };
   }
 
+  /** Coerces the fields the patch carries and no others, so a value the unit holds off the
+   *  catalog stays as read until the operator picks something for that row. */
   private edit(patch: Partial<DeviceSetup>): void {
-    this.draft = coerceDeviceSetup({ ...this.draft, ...patch });
+    this.draft = { ...this.draft, ...coerceDeviceSetupFields(patch, this.baseline) };
     this.render();
   }
 
@@ -201,7 +205,7 @@ export class DeviceSetupPanel {
     const left = el("div", "prefs-col");
     {
       const sec = this.section(m.languageSection);
-      const sel = this.indexSelect(DEVICE_LANGUAGE_LABELS, s.language, (v) => this.edit({ language: v }));
+      const sel = this.indexSelect(DEVICE_LANGUAGE_LABELS, "language", (v) => this.edit({ language: v }));
       sel.id = "device-setup-language";
       sec.append(this.row(m.displayLanguage, sel, "language"), this.note(m.languageNote));
       left.append(sec);
@@ -214,9 +218,9 @@ export class DeviceSetupPanel {
     {
       const sec = this.section(m.powerSection);
       const time = settingsSelect(
-        AUTO_POWER_OFF_TIMES,
+        this.withReading(AUTO_POWER_OFF_TIMES, this.baseline.autoPowerOffTime),
         s.autoPowerOffTime,
-        (v) => m.minutes(v),
+        (v) => (AUTO_POWER_OFF_TIMES.includes(v) ? m.minutes(v) : m.unknownValue(v)),
         (v) => this.edit({ autoPowerOffTime: v }),
       );
       time.id = "device-setup-apo-time";
@@ -234,14 +238,14 @@ export class DeviceSetupPanel {
     {
       const locked = !support.dateTime;
       const sec = this.section(m.dateTimeSection, locked ? m.onlyOn("URX44V / URX44") : undefined);
-      const zone = this.indexSelect(TIME_ZONE_CITIES, s.timeZone, (v) => this.edit({ timeZone: v }));
+      const zone = this.indexSelect(TIME_ZONE_CITIES, "timeZone", (v) => this.edit({ timeZone: v }));
       zone.id = "device-setup-timezone";
       sec.append(
         this.row(m.timeZone, zone, "timeZone", locked),
         this.sub(m.displayFormat),
         this.row(
           m.date,
-          this.indexSelect(DATE_FORMAT_LABELS, s.dateFormat, (v) => this.edit({ dateFormat: v })),
+          this.indexSelect(DATE_FORMAT_LABELS, "dateFormat", (v) => this.edit({ dateFormat: v })),
           "dateFormat",
           locked,
         ),
@@ -352,14 +356,29 @@ export class DeviceSetupPanel {
   }
 
   /** A select over an index into a label list — the shape every enum on this screen
-   *  has, because the device value IS the position in the catalog. */
-  private indexSelect(labels: readonly string[], current: number, apply: (v: number) => void): HTMLSelectElement {
+   *  has, because the device value IS the position in the catalog. A reading past the
+   *  list is offered as unknown (`withReading`). */
+  private indexSelect(
+    labels: readonly string[],
+    field: "language" | "timeZone" | "dateFormat",
+    apply: (v: number) => void,
+  ): HTMLSelectElement {
     return settingsSelect(
-      labels.map((_, i) => i),
-      current,
-      (v) => labels[v] ?? String(v),
+      this.withReading(
+        labels.map((_, i) => i),
+        this.baseline[field],
+      ),
+      this.draft[field],
+      (v) => labels[v] ?? t().deviceSetup.unknownValue(v),
       apply,
     );
+  }
+
+  /** `choices`, with the device's reading in front of them when the catalog does not
+   *  have it: the select then shows the unit's own value as unknown rather than naming a
+   *  setting the unit is not on, and picking it back is the reading again. */
+  private withReading<T extends string | number>(choices: readonly T[], reading: T): readonly T[] {
+    return choices.includes(reading) ? choices : [reading, ...choices];
   }
 
   /** Brightness: a level, so a slider with its value beside it, on the same wheel
@@ -455,9 +474,12 @@ export class DeviceSetupPanel {
     const sel = el("div", "udk-sel");
 
     const entry = UDK_FUNCTIONS.find((f) => f.fn === a.fn);
+    const read = this.baseline.knobs[y] ?? UDK_UNASSIGNED;
+    const known = UDK_FUNCTIONS.map((f) => f.fn);
     const set = (next: UdkAssignment): void => {
       const knobs = this.draft.knobs.slice();
-      knobs[y] = normalizeUdk(next);
+      // A Function off the catalog, picked back, is the reading again.
+      knobs[y] = next.fn === read.fn && !known.includes(read.fn) ? structuredClone(read) : normalizeUdk(next);
       this.edit({ knobs });
     };
     // Picking a function re-seeds the two parameter columns from the catalog: the
@@ -465,9 +487,9 @@ export class DeviceSetupPanel {
     // on the unit verbatim. Each select is named by its knob and its column's head.
     sel.append(
       settingsSelect(
-        UDK_FUNCTIONS.map((f) => f.fn),
+        this.withReading(known, read.fn),
         a.fn,
-        (fn) => fn,
+        (fn) => (known.includes(fn) ? fn : m.unknownValue(fn)),
         (fn) => set({ fn, p1: "", p2: "" }),
       ),
       settingsSelect(

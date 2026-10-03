@@ -9,22 +9,33 @@ import {
   insertFxPairProblems,
   insertFxSlotProblems,
   isRefusal,
+  linkedPairProblems,
   linkedSendPanProblems,
+  nodeColorProblems,
   needsDecision,
   paramRangeProblems,
   planProblems,
   prepareLoadedPlan,
   requiredSourceProblems,
+  sendLevelProblems,
 } from "./plan-validate";
 import { trackCountAtRate } from "./constraints";
 import { fxEffectTypes, fxParams } from "./control/fx-effect";
-import { planToCommands } from "./control/translate";
+import { colorControl, nameControl, nodeLeafRules, planToCommands } from "./control/translate";
+import { eqResponse } from "./eq-response";
+import {
+  insertFxDefaults,
+  insertFxDriverSlots,
+  insertFxFamilyOf,
+  insertFxWritableSlots,
+} from "./control/insert-fx-effect";
 import { sendPansToSources, validatePlan } from "./routing";
 import { deserialize, emptyPlan, ensureFixedConnections, fixedConnection, PLAN_VERSION, serialize } from "./plan";
-import type { Plan, PlanConnection } from "./plan";
+import type { NodeParams, Plan, PlanConnection } from "./plan";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { ref } from "../models/types";
+import { connParamContestKey, nodeColorContestKey, nodeNameContestKey, nodeParamContestPath } from "./plan-history";
 import {
   BUS_TYPE_FIXED,
   INSERT_FX_NONE,
@@ -118,7 +129,9 @@ describe("insertFxSlotProblems", () => {
     const COMP_S = INSERT_FX_OPTIONS.find((o) => o.label === "Compander-S")!.value;
 
     it.each([
-      ["the selector", { insertFx: COMP_H }, { insertFx: COMP_S }, ["insertFx"]],
+      // The load gives each selected effect its own type's defaults, and the two companders
+      // come up at different ones, so the engine values the write sends differ as well.
+      ["the selector", { insertFx: COMP_H }, { insertFx: COMP_S }, ["insertFx", "insertFxParams"]],
       ["the bypass", { insertFx: COMP_H, insertFxOn: true }, { insertFx: COMP_H, insertFxOn: false }, ["insertFxOn"]],
       [
         // Slot 6 is the compander's Threshold — a slot the write SENDS. Slot 0 is the
@@ -131,8 +144,9 @@ describe("insertFxSlotProblems", () => {
       ],
       // The member the document leaves out is filled with the factory value, so omitting
       // one side is a disagreement too — and the report has to say so, since "I only set
-      // it on one channel" is the likeliest way to author this by hand.
-      ["one side omitted", { insertFx: COMP_H, insertFxOn: true }, {}, ["insertFx", "insertFxOn"]],
+      // it on one channel" is the likeliest way to author this by hand. The named side's
+      // engine values are its type's defaults, which No Effect sends none of.
+      ["one side omitted", { insertFx: COMP_H, insertFxOn: true }, {}, ["insertFx", "insertFxOn", "insertFxParams"]],
       // Several at once: every disagreeing key is named, not just the first.
       [
         "all three",
@@ -162,6 +176,13 @@ describe("insertFxSlotProblems", () => {
         "the engine values match",
         { insertFx: COMP_H, insertFxParams: { "0": 12 } },
         { insertFx: COMP_H, insertFxParams: { "0": 12 } },
+      ],
+      // The side that names no engine value is given the type's defaults, which is what the
+      // other side wrote.
+      [
+        "one side writes the type's defaults and the other none",
+        { insertFx: COMP_H, insertFxParams: { "compander:6": -1000, "compander:7": 350 } },
+        { insertFx: COMP_H },
       ],
     ])("says nothing when %s", (_name, ch1, ch2) => {
       expect(insertFxPairProblems(u44v, linked(ch1, ch2))).toEqual([]);
@@ -678,6 +699,335 @@ describe("paramRangeProblems", () => {
   });
 });
 
+// A value of the wrong kind for its key: the sanitiser keeps an on/off and a non-empty group
+// under any key and the fill keeps what the document wrote at a scalar, so without this the
+// write encodes one (an on/off at A.Gain goes out as +1 dB, a group as the encoder's floor)
+// and the Inspector's number formatters throw on it.
+describe("paramRangeProblems — a value whose kind is not the factory value's", () => {
+  const load = (nodeParams: unknown): Plan =>
+    deserialize(JSON.stringify({ format: "urx-router-plan", version: PLAN_VERSION, modelId: "URX44V", nodeParams }));
+  const kinds = (plan: Plan): string[] =>
+    paramRangeProblems(plan)
+      .filter((p) => p.where === "node")
+      .map((p) => `${p.node}.${p.key} ${p.action}`);
+
+  it("drops a non-number where the factory holds a number, and a group where it holds an on/off", () => {
+    const plan = load({
+      ch1: { gain: true, hpfFreq: { a: 1 }, comp: { oneKnobLevel: true }, hpf: { x: true } },
+      "bus.stereo": { level: { a: 1 } },
+      "bus.mon1": { phonesLevel: true },
+      "bus.osc": { osc: { interval: true } },
+    });
+    expect(kinds(plan).sort()).toEqual(
+      [
+        "ch1.gain drop",
+        "ch1.hpfFreq drop",
+        "ch1.comp.oneKnobLevel drop",
+        "ch1.hpf drop",
+        "bus.stereo.level drop",
+        "bus.mon1.phonesLevel drop",
+        "bus.osc.osc.interval drop",
+      ].sort(),
+    );
+  });
+
+  it("drops a scalar where the factory holds a group, and an object where it holds an array", () => {
+    const plan = load({ ch1: { eqOneKnob: true, eqBands: { a: { b: 1 } } }, "bus.stream": { delay: true } });
+    expect(kinds(plan).sort()).toEqual(["bus.stream.delay drop", "ch1.eqBands drop", "ch1.eqOneKnob drop"]);
+  });
+
+  it("completes each dropped value from the factory values, so the write sends what the panel draws", () => {
+    const plan = load({ ch1: { gain: true, eqOneKnob: true }, "bus.osc": { osc: { interval: true, level: -10 } } });
+    const factory = defaultPlan("URX44V");
+    prepareLoadedPlan(getModel("URX44V"), plan, planProblems(getModel("URX44V"), plan));
+    expect(plan.nodeParams.ch1?.gain).toBe(factory.nodeParams.ch1?.gain);
+    expect(plan.nodeParams.ch1?.eqOneKnob).toEqual(factory.nodeParams.ch1?.eqOneKnob);
+    expect(plan.nodeParams["bus.osc"]?.osc).toEqual({ ...factory.nodeParams["bus.osc"]?.osc, level: -10 });
+    expect(planToCommands(getModel("URX44V"), plan).filter((c) => typeof c.vdValue !== "number")).toEqual([]);
+  });
+
+  it("leaves a matching kind, a number at an on/off, and a key the factory does not carry alone", () => {
+    const plan = load({ ch1: { gain: 12, hpf: 1, extra: { a: true } }, "bus.nope": { gain: true } });
+    expect(kinds(plan)).toEqual([]);
+    for (const id of MODEL_IDS) expect(paramRangeProblems(defaultPlan(id)), id).toEqual([]);
+  });
+
+  it("reads the node the drop leaves: a dropped HI-Z is not on", () => {
+    const plan = load({ ch3: { hiZ: { a: 1 }, phantom: true, gain: 60 } });
+    expect(paramRangeProblems(plan).map((p) => `${p.key} ${p.action}`)).toEqual(["hiZ drop"]);
+  });
+});
+
+// Every leaf the write bounds is bounded at the load to the same value, through the one rule
+// the emit itself uses (`nodeLeafRules` / `admitLeaf`), so the plan, the screen and the wire
+// read one value.
+describe("paramRangeProblems — the node-param leaves the write bounds", () => {
+  const load = (nodeParams: unknown): Plan =>
+    deserialize(JSON.stringify({ format: "urx-router-plan", version: PLAN_VERSION, modelId: "URX44V", nodeParams }));
+
+  // The COMP Ratio became a stop ladder after documents had been saved on the linear field, so
+  // a shipped document can hold a ratio the unit stops on nowhere.
+  it("bounds a COMP Ratio between two stops to the stop the write sends", () => {
+    expect(paramRangeProblems(load({ ch1: { comp: { ratio: 7.3 } } }))).toEqual([
+      { reason: "paramRange", node: "ch1", where: "node", key: "comp.ratio", stored: 7.3, action: "bound", bound: 7.5 },
+    ]);
+  });
+
+  it("bounds a raw to an integer inside its window, and an insert-FX slot by the family its key names", () => {
+    const plan = load({
+      ch1: { compEqType: 1, ssmcs: { compDrive: 10.5, comp: { ratio: 999 } }, gate: { threshold: -90 } },
+      ch2: { insertFx: 1793, insertFxParams: { "6": 5, "compander:7": 99999 } },
+      "bus.osc": { osc: { interval: 0 } },
+      "bus.stereo": { eqOneKnob: { level: 150 } },
+    });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
+        .sort(),
+    ).toEqual(
+      [
+        "ch1.ssmcs.compDrive 10.5 -> 11",
+        "ch1.ssmcs.comp.ratio 999 -> 120",
+        "ch1.gate.threshold -90 -> -72",
+        "ch2.insertFxParams.compander:6 5 -> 0",
+        "ch2.insertFxParams.compander:7 99999 -> 2000",
+        "bus.osc.osc.interval 0 -> 1",
+        "bus.stereo.eqOneKnob.level 150 -> 100",
+      ].sort(),
+    );
+  });
+
+  // The encoder clamps a gain only to the union of the A.Gain and D.Gain windows, so a document
+  // past a channel's own range was sent as it stood: below -8 dB A.Gain the preamp keeps its
+  // previous gain, and past ±24 dB D.Gain or below the A.Gain descriptor the write is refused.
+  // The oscillator level's encoder clamps to int16 alone. Both go to the range the unit's own
+  // panel sets, the HI-Z ceiling included.
+  it("bounds a gain to the channel's own range and the oscillator level to -96..0 dB", () => {
+    const plan = load({
+      ch1: { gain: -12 },
+      ch2: { gain: 80 },
+      ch3: { hiZ: true, gain: 60 },
+      ch_5_6: { gain: 30 },
+      ch_7_8: { gain: -30 },
+      "bus.osc": { osc: { level: 5 } },
+    });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
+        .sort(),
+    ).toEqual(
+      [
+        "ch1.gain -12 -> -8",
+        "ch2.gain 80 -> 70",
+        "ch3.gain 60 -> 40",
+        "ch_5_6.gain 30 -> 24",
+        "ch_7_8.gain -30 -> -24",
+        "bus.osc.osc.level 5 -> 0",
+      ].sort(),
+    );
+    applyParamRange(plan, paramRangeProblems(plan));
+    const sent = planToCommands(getModel("URX44V"), plan);
+    expect(sent.find((c) => c.name === "HA_GAIN" && c.node === "ch_5_6")?.vdValue).toBe(2400);
+    expect(sent.find((c) => c.name === "OSC_LEVEL")?.vdValue).toBe(0);
+  });
+
+  // PAN/BAL is a linked pair's mode: the unit's control and the app's exist only while the pair
+  // is linked, and unlinking leaves PAN. A document holding BAL on an unlinked pair loads PAN.
+  it("sets PAN on an unlinked pair, and leaves a linked pair's BAL alone", () => {
+    expect(paramRangeProblems(load({ ch1: { stereoLink: false, panBal: 1 } }))).toEqual([
+      { reason: "paramRange", node: "ch1", where: "node", key: "panBal", stored: 1, action: "bound", bound: 0 },
+    ]);
+    expect(paramRangeProblems(load({ ch1: { panBal: 1 } })).map((p) => p.key)).toEqual(["panBal"]);
+    expect(paramRangeProblems(load({ ch1: { stereoLink: true, panBal: 1 } }))).toEqual([]);
+    // A link written as a number is a link to every check that reads the converted document.
+    const numbered = load({ ch1: { stereoLink: 1, panBal: 1 } });
+    expect(planProblems(getModel("URX44V"), numbered).filter((p) => p.reason === "paramRange")).toEqual([]);
+  });
+
+  // A Rec Point stage a channel's own list does not offer: the write sends PRE FADER for a
+  // mono-only stage on a stereo channel and PRE COMP for a PRE EQ in SSMCS mode, and the load
+  // takes the document there, so the Inspector's menu has the value it holds.
+  it("moves a Rec Point stage a channel does not offer to the one the write sends", () => {
+    const plan = load({ ch_5_6: { recPoint: 0 }, ch1: { compEqType: 1, recPoint: 2 }, ch2: { recPoint: 2 } });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
+        .sort(),
+    ).toEqual(["ch1.recPoint 2 -> 1", "ch_5_6.recPoint 0 -> 4"]);
+  });
+
+  // The HPF stops on five frequencies 20 Hz apart. A document between two of them was written
+  // as it stood, a cutoff the unit's own encoder cannot reach, while the slider sat on a
+  // detent and the readout said the document's number; one past the window read one value and
+  // sent another. Both go to the nearest detent, a tie going up as the slider rounds.
+  it("moves an HPF frequency to the nearest of its five detents, inside 40..120 Hz", () => {
+    const plan = load({ ch1: { hpfFreq: 70 }, ch2: { hpfFreq: 200 }, ch3: { hpfFreq: 39 }, ch4: { hpfFreq: 100 } });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
+        .sort(),
+    ).toEqual(["ch1.hpfFreq 70 -> 80", "ch2.hpfFreq 200 -> 120", "ch3.hpfFreq 39 -> 40"]);
+  });
+
+  // An enum off its menu drew a blank select, and hid or mislabelled the rows that depend on it,
+  // while the write sent the menu's default. The oscillator is in it, scene-external as it is.
+  it("bounds an enum off its menu to the default the write sends", () => {
+    const plan = load({
+      ch1: { compEqType: 2, panBal: 2, comp: { knee: 7 }, eqOneKnob: { type: 5 } },
+      ch2: { insertFx: 256, insertFxParams: { "guitar-clean:19": 3 } },
+      "bus.mix1": { busType: 2 },
+      "bus.osc": { osc: { mode: 3 } },
+      "bus.stream": { delay: { frameRate: 9 } },
+    });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
+        .sort(),
+    ).toEqual(
+      [
+        "ch1.compEqType 2 -> 0",
+        "ch1.panBal 2 -> 0",
+        "ch1.comp.knee 7 -> 1",
+        "ch1.eqOneKnob.type 5 -> 0",
+        "ch2.insertFxParams.guitar-clean:19 3 -> 2",
+        "bus.mix1.busType 2 -> 0",
+        "bus.osc.osc.mode 3 -> 0",
+        "bus.stream.delay.frameRate 9 -> 5",
+      ].sort(),
+    );
+  });
+
+  // A band the write bounds (and a LOW / HIGH type off its menu, sent as Shelving) used to load
+  // as written, so the response plot drew one filter while the unit ran another — and a Q of 0
+  // blanked the whole curve. A type parked on a mid band is never sent, and goes.
+  it("bounds an EQ band to what the write sends, and drops a type on a fixed-peaking band", () => {
+    const factory = defaultPlan("URX44V").nodeParams.ch1!.eqBands!;
+    const plan = load({
+      ch1: {
+        eqBands: [
+          { ...factory[0], type: 7, gain: 30, freq: 30000, q: 0 },
+          { ...factory[1], type: 2 },
+          factory[2],
+          factory[3],
+        ],
+      },
+    });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${p.action === "drop" ? "(dropped)" : String(p.bound)}`)
+        .sort(),
+    ).toEqual(
+      [
+        "ch1.eqBands.0.type 7 -> 1",
+        "ch1.eqBands.0.q 0 -> 0.5",
+        "ch1.eqBands.0.freq 30000 -> 20000",
+        "ch1.eqBands.0.gain 30 -> 18",
+        "ch1.eqBands.1.type 2 -> (dropped)",
+      ].sort(),
+    );
+    applyParamRange(plan, paramRangeProblems(plan));
+    expect(plan.nodeParams.ch1!.eqBands![1]).not.toHaveProperty("type");
+    const curve = eqResponse(plan.nodeParams.ch1!.eqBands!.map((b, index) => ({ ...b, index }) as never));
+    expect(Number.isFinite(curve(1000))).toBe(true);
+  });
+
+  // The claim the repair rests on: what the load writes down is what the write was already
+  // sending, for every leaf of every node, in each shape a document can be outside it in.
+  it("never changes what the write path sends, and settles in one pass", () => {
+    const offenders: string[] = [];
+    for (const id of ["URX44V", "URX22"] as const) {
+      const model = getModel(id);
+      const base = defaultPlan(id);
+      ensureFixedConnections(model, base);
+      const seeded = (node: string, np: Record<string, unknown>): Plan => {
+        const plan = structuredClone(base);
+        plan.nodeParams[node] = { ...plan.nodeParams[node], ...np } as never;
+        return plan;
+      };
+      const cases: [string, Plan, boolean, boolean][] = [];
+      for (const node of model.nodes) {
+        const insertCases: Record<string, unknown>[] = [{}];
+        if (node.id === "ch1") for (const sel of [256, 512, 1793]) insertCases.push({ insertFx: sel });
+        if (node.id === "bus.stereo") for (const sel of [1792, 1794]) insertCases.push({ insertFx: sel });
+        for (const extra of insertCases) {
+          const at: NodeParams = { ...base.nodeParams[node.id], ...extra };
+          const withSlots: NodeParams =
+            typeof extra.insertFx === "number" ? { ...at, insertFxParams: engineSlotsOf(extra.insertFx) } : at;
+          for (const [path, rule] of nodeLeafRules(model, node.id, withSlots)) {
+            const shapes: [string, number, boolean][] =
+              "unsent" in rule
+                ? [["unsent", 1, true]]
+                : "menu" in rule
+                  ? [
+                      ["off the menu", Math.max(...rule.menu) + 1, true],
+                      ["between", rule.menu[0] + 0.5, true],
+                    ]
+                  : [
+                      ["below", rule.min - 1.25, true],
+                      ["above", rule.max + 1.25, true],
+                      // Inside a plain window there is nothing to move.
+                      [
+                        "between",
+                        (rule.min + rule.max) / 2 + 0.3,
+                        rule.integer === true || rule.steps !== undefined || rule.grid !== undefined,
+                      ],
+                    ];
+            for (const [shape, v, outside] of shapes) {
+              const np = structuredClone(withSlots) as Record<string, unknown>;
+              const keys = path.split(".");
+              let holder = np;
+              for (const k of keys.slice(0, -1)) holder = (holder[k] ??= {}) as Record<string, unknown>;
+              holder[keys[keys.length - 1]] = v;
+              cases.push([
+                `${id} ${node.id} ${path} ${shape}`,
+                seeded(node.id, np),
+                outside,
+                driverPath(path) || LOAD_ONLY.has(path),
+              ]);
+            }
+          }
+        }
+      }
+      for (const [name, plan, outside, driver] of cases) {
+        const before = planToCommands(model, plan).map((c) => `${c.paramId}:${c.y}=${c.vdValue}`);
+        const problems = paramRangeProblems(plan);
+        if (outside && !problems.length) offenders.push(`${name}: nothing reported`);
+        applyParamRange(plan, problems);
+        const after = planToCommands(model, plan).map((c) => `${c.paramId}:${c.y}=${c.vdValue}`);
+        // A slot that decides which others are the unit's is read for that by its stored value,
+        // which the repair moves to the value the write sends for the slot itself; and a value
+        // the load bounds to a narrower window than its encoder's is one the repair moves.
+        if (!driver && after.join() !== before.join()) offenders.push(`${name}: the write moved`);
+        if (paramRangeProblems(plan).length) offenders.push(`${name}: still reported`);
+      }
+      expect(cases.length, id).toBeGreaterThan(100);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("finds nothing in any model's shipped default plan", () => {
+    for (const id of MODEL_IDS) expect(paramRangeProblems(defaultPlan(id)), id).toEqual([]);
+  });
+});
+
+/** The leaves the load bounds to the range the unit's own panel can set, which is narrower than
+ *  the window their encoder clamps the write to. */
+const LOAD_ONLY: ReadonlySet<string> = new Set(["gain", "osc.level", "hpfFreq", "panBal"]);
+
+/** Whether a path is an insert-FX slot that drives which other slots the unit owns. */
+function driverPath(path: string): boolean {
+  const m = /^insertFxParams\.(.+):([0-9]+)$/.exec(path);
+  const fam = m ? (m[1] as Parameters<typeof insertFxDriverSlots>[0]) : null;
+  return fam !== null && insertFxDriverSlots(fam).has(Number(m![2]));
+}
+
+/** One qualified engine key per writable slot of the family `selector` names, each at a value
+ *  inside its window, for a case that needs every slot to exist. */
+function engineSlotsOf(selector: number): Record<string, number> {
+  const fam = insertFxFamilyOf(selector);
+  return fam ? Object.fromEntries(insertFxWritableSlots(fam).map((s) => [`${fam}:${s.slot}`, s.rawMin])) : {};
+}
+
 // STREAMING's list on the unit has no None, so a document that gives it no wire is completed
 // with the STEREO a new plan carries, and the load says so. Any wire into it counts, whatever
 // kind it was written under — the install restates the kind — and a wire the sanitiser drops
@@ -732,6 +1082,236 @@ describe("requiredSourceProblems", () => {
     expect(problem).toBeDefined();
     expect(isRefusal(problem)).toBe(false);
     expect(needsDecision(problem)).toBe(false);
+  });
+});
+
+// A fixed send the document lists without a level: the write sends it at unity, while the CONSOLE's
+// send rack and the MIDI feedback read a send with no level as off. The load gives it the level
+// the write sends, records that level as the fill's, and says so.
+describe("sendLevelProblems", () => {
+  const u44v = getModel("URX44V");
+  const doc = (connections: unknown, modelId = "URX44V"): Plan =>
+    deserialize(JSON.stringify({ format: "urx-router-plan", version: PLAN_VERSION, modelId, connections }));
+  // The one send the document lists is the only one with a level on the wire: a send a plan is
+  // missing goes out as SEND_ON 0 alone.
+  const sent = (m: ReturnType<typeof getModel>, plan: Plan) =>
+    planToCommands(m, plan)
+      .filter((c) => c.name === "SEND_LEVEL")
+      .map((c) => `${c.paramId}:${c.vdValue}`);
+
+  it.each(MODEL_IDS)("%s: completes a listed send with no level at the level the write sends", (id) => {
+    const m = getModel(id);
+    const rule = m.rules.find((r) => r.fixed && r.kind === "send" && r.to === "bus.mix1:in")!;
+    expect(rule, "the premise: the model has a fixed send into MIX 1").toBeDefined();
+    for (const params of [{ pan: -20 }, { tap: "pre" }, undefined]) {
+      const plan = doc([{ from: rule.from, to: rule.to, kind: "send", ...(params ? { params } : {}) }], id);
+      const before = sent(m, plan);
+      expect(before.length, "the premise: the send reaches the wire").toBeGreaterThan(0);
+      const problems = sendLevelProblems(m, plan);
+      expect(problems, JSON.stringify(params)).toEqual([{ reason: "sendLevel", from: rule.from, to: rule.to }]);
+      expect(planProblems(m, plan).filter((p) => p.reason === "sendLevel")).toEqual(problems);
+      prepareLoadedPlan(m, plan, planProblems(m, plan));
+      const wire = plan.connections.find((c) => c.from === rule.from && c.to === rule.to)!;
+      expect(wire.params).toEqual({ ...params, level: 0 });
+      // What the write sends does not move: the completion writes down the level it already sent.
+      expect(sent(m, plan)).toEqual(before);
+      expect(plan.paramSource?.get(connParamContestKey(rule.from, rule.to, "level"))).toBe("default");
+      for (const key of Object.keys(params ?? {})) {
+        expect(plan.paramSource?.get(connParamContestKey(rule.from, rule.to, key)), key).toBe("load");
+      }
+      expect(sendLevelProblems(m, plan)).toEqual([]);
+    }
+  });
+
+  // A main path into STEREO is the channel's fader, which every reader takes at unity without a
+  // level, as the write does — and which the app itself saves without one.
+  it("leaves a send that carries a level, a main path, and a wire that is not a send, alone", () => {
+    const plan = doc([
+      { from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { level: -96.5 } },
+      { from: "ch2:out", to: "bus.stereo:in", kind: "send", params: { pan: 10 } },
+      { from: "bus.fx1:out", to: "bus.stereo:in", kind: "send" },
+      { from: "bus.stereo:out", to: "bus.stream:in", kind: "source" },
+      { from: "bus.mix1:out", to: "bus.stereo:in", kind: "sendSwitch", params: { on: true } },
+    ]);
+    expect(plan.connections, "the premise: every wire survives the sanitiser").toHaveLength(5);
+    expect(sendLevelProblems(u44v, plan)).toEqual([]);
+  });
+
+  it("finds nothing in a new plan or the factory plan, as the app saves either", () => {
+    for (const id of MODEL_IDS) {
+      for (const plan of [emptyPlan(id), defaultPlan(id)]) {
+        ensureFixedConnections(getModel(id), plan);
+        expect(sendLevelProblems(getModel(id), plan), id).toEqual([]);
+        expect(sendLevelProblems(getModel(id), deserialize(serialize(plan))), id).toEqual([]);
+      }
+    }
+  });
+
+  it("neither refuses the document nor asks the operator about it", () => {
+    const [problem] = sendLevelProblems(u44v, doc([{ from: "ch1:out", to: "bus.mix1:in", kind: "send" }]));
+    expect(problem).toBeDefined();
+    expect(isRefusal(problem)).toBe(false);
+    expect(needsDecision(problem)).toBe(false);
+  });
+});
+
+// A STEREO-linked pair holds one set of values on the unit, which copies the odd channel's onto the
+// even one when the pair is linked. A document whose members disagree is two values the unit cannot
+// hold, so the load copies the primary's onto the secondary and says so — a document naming only the
+// primary included, whose secondary would otherwise take its own factory values.
+describe("linkedPairProblems", () => {
+  const u44v = getModel("URX44V");
+  const doc = (nodeParams: unknown, connections: unknown[] = []): Plan =>
+    deserialize(
+      JSON.stringify({ format: "urx-router-plan", version: PLAN_VERSION, modelId: "URX44V", nodeParams, connections }),
+    );
+  const load = (plan: Plan) => prepareLoadedPlan(u44v, plan, planProblems(u44v, plan));
+  /** What the write sends for one param on each member, by the address's y. */
+  const sentPair = (plan: Plan, name: string): number[] =>
+    planToCommands(u44v, plan)
+      .filter((c) => c.name === name && (c.node === "ch1" || c.node === "ch2"))
+      .map((c) => c.vdValue);
+  const send = (from: string, to: string, params?: Record<string, unknown>) => ({
+    from: `${from}:out`,
+    to: `${to}:in`,
+    kind: "send",
+    ...(params ? { params } : {}),
+  });
+
+  it("copies the primary's shared values onto a secondary that disagrees, and says which", () => {
+    const plan = doc({
+      ch1: { stereoLink: true, panBal: PAN_BAL_PAN, gate: { threshold: -50 }, hpfFreq: 100, gain: 20 },
+      ch2: { gate: { threshold: -30 }, hpfFreq: 60, gain: 40 },
+    });
+    expect(sentPair(plan, "GATE_THRESHOLD"), "the premise: the write sends two thresholds").toHaveLength(2);
+    const problems = linkedPairProblems(u44v, plan);
+    expect(problems.map((p) => [p.nodes, [...p.keys].sort(), p.sends])).toEqual([
+      [["ch1", "ch2"], ["gate", "hpfFreq"], []],
+    ]);
+    expect(planProblems(u44v, plan).filter((p) => p.reason === "linkedPair")).toEqual(problems);
+    const repairs = load(plan);
+    expect(repairs.linkedPairs).toEqual(problems);
+    expect(plan.nodeParams.ch2?.gate).toEqual(plan.nodeParams.ch1?.gate);
+    expect(plan.nodeParams.ch2?.hpfFreq).toBe(100);
+    // The input stage is each member's own.
+    expect(plan.nodeParams.ch2?.gain).toBe(40);
+    for (const name of ["GATE_THRESHOLD", "HPF_FREQ"]) {
+      const [a, b] = sentPair(plan, name);
+      expect(b, name).toBe(a);
+    }
+    expect(linkedPairProblems(u44v, plan)).toEqual([]);
+  });
+
+  it("gives the secondary of a document naming only the primary the primary's values", () => {
+    const plan = doc({ ch1: { stereoLink: true, panBal: PAN_BAL_BAL, gateOn: true, gate: { threshold: -40 } } });
+    expect(plan.nodeParams.ch2, "the premise: the document names only the primary").toBeUndefined();
+    const [problem] = linkedPairProblems(u44v, plan);
+    expect(problem?.keys.sort()).toEqual(["gate", "gateOn"]);
+    expect(isRefusal(problem)).toBe(false);
+    expect(needsDecision(problem)).toBe(false);
+    load(plan);
+    expect(plan.nodeParams.ch2?.gateOn).toBe(true);
+    expect(plan.nodeParams.ch2?.gate?.threshold).toBe(-40);
+    expect(plan.nodeParams.ch2?.gain, "the factory input stage").toBe(defaultPlan("URX44V").nodeParams.ch2?.gain);
+  });
+
+  it("leaves an agreeing pair, an unlinked one and a pair differing only in its own values alone", () => {
+    const shared = { gate: { threshold: -40 }, hpfFreq: 100 };
+    expect(linkedPairProblems(u44v, doc({ ch1: { stereoLink: true, ...shared }, ch2: shared }))).toEqual([]);
+    expect(linkedPairProblems(u44v, doc({ ch1: { ...shared }, ch2: { hpfFreq: 60 } }))).toEqual([]);
+    expect(linkedPairProblems(u44v, doc({ ch1: { stereoLink: false }, ch2: { hpfFreq: 60 } }))).toEqual([]);
+    const own = doc({
+      ch1: { stereoLink: true, gain: 10, phase: true, phantom: true },
+      ch2: { gain: 30, phase: false, phantom: false },
+    });
+    expect(linkedPairProblems(u44v, own)).toEqual([]);
+  });
+
+  // The insert effect is the refusal's: a pair disagreeing about what the write sends there is
+  // refused, and one agreeing about it keeps what each member stores.
+  it("neither compares nor copies the insert effect", () => {
+    const fx = INSERT_FX_OPTIONS[1].value;
+    const plan = doc({
+      ch1: { stereoLink: true, insertFx: fx, insertFxOn: true },
+      ch2: { insertFx: fx, insertFxOn: true, insertFxParams: { stray: 5 } },
+    });
+    expect(linkedPairProblems(u44v, plan)).toEqual([]);
+    const split = doc({
+      ch1: { stereoLink: true, insertFx: fx, insertFxOn: true, hpfFreq: 100 },
+      ch2: { insertFx: fx },
+    });
+    const [problem] = linkedPairProblems(u44v, split);
+    expect(problem?.keys).toEqual(["hpfFreq"]);
+    load(split);
+    expect(split.nodeParams.ch2?.insertFxOn, "the secondary keeps its own").not.toBe(true);
+  });
+
+  it("copies each pair of sends the way the write reads them, the pan in BAL only", () => {
+    const panMode = doc({ ch1: { stereoLink: true, panBal: PAN_BAL_PAN } }, [
+      send("ch1", "bus.mix1", { level: -10 }),
+      send("ch1", "bus.stereo", { pan: -63 }),
+      send("ch2", "bus.stereo", { pan: 63 }),
+      send("ch2", "bus.mix2", { level: -96.5, on: false }),
+    ]);
+    const [problem] = linkedPairProblems(u44v, panMode);
+    // MIX 1: the secondary omits it and takes the seed. MIX 2: absent ON is on.
+    expect(problem?.sends).toEqual(["bus.mix1:in", "bus.mix2:in"]);
+    load(panMode);
+    const wire = (from: string, to: string) => panMode.connections.find((c) => c.from === from && c.to === to);
+    expect(wire("ch2:out", "bus.mix1:in")?.params?.level).toBe(-10);
+    expect(wire("ch2:out", "bus.mix2:in")?.params?.on).toBeUndefined();
+    expect(wire("ch1:out", "bus.mix2:in"), "the primary's seed, added to copy from").toBeDefined();
+    expect(wire("ch2:out", "bus.mix2:in")?.params?.level).toBe(wire("ch1:out", "bus.mix2:in")?.params?.level);
+    // Each member's own position outside BAL.
+    expect([wire("ch1:out", "bus.stereo:in")?.params?.pan, wire("ch2:out", "bus.stereo:in")?.params?.pan]).toEqual([
+      -63, 63,
+    ]);
+
+    const bal = doc({ ch1: { stereoLink: true, panBal: PAN_BAL_BAL } }, [
+      send("ch1", "bus.stereo", { pan: -25 }),
+      send("ch2", "bus.stereo", { pan: 40 }),
+    ]);
+    expect(linkedPairProblems(u44v, bal)[0]?.sends).toEqual(["bus.stereo:in"]);
+    load(bal);
+    expect(bal.connections.find((c) => c.from === "ch2:out" && c.to === "bus.stereo:in")?.params?.pan).toBe(-25);
+  });
+
+  // In BAL the copy moves the secondary's balance, which is the pan a linked MIX holds its send at,
+  // so the send-pan repair reads the pair as the copy leaves it.
+  it("comes before the send pans a Pan Link sets", () => {
+    const plan = doc({ ch1: { stereoLink: true, panBal: PAN_BAL_BAL }, "bus.mix1": { panLink: true } }, [
+      send("ch1", "bus.stereo", { pan: -25 }),
+      send("ch2", "bus.stereo", { pan: 40 }),
+      send("ch1", "bus.mix1", { pan: 10 }),
+      send("ch2", "bus.mix1", { pan: 10 }),
+    ]);
+    const pans = planProblems(u44v, plan).filter((p) => p.reason === "linkedSendPan");
+    expect(pans.map((p) => `${p.from} ${p.pan}`)).toEqual(["ch1:out -25", "ch2:out -25"]);
+    load(plan);
+    expect(plan.connections.find((c) => c.from === "ch2:out" && c.to === "bus.mix1:in")?.params?.pan).toBe(-25);
+  });
+
+  it("gives a copied send param the primary's record of where it came from", () => {
+    const plan = doc({ ch1: { stereoLink: true } }, [
+      send("ch1", "bus.mix1", { level: -10 }),
+      send("ch2", "bus.mix1", { level: -20 }),
+    ]);
+    load(plan);
+    expect(plan.paramSource?.get(connParamContestKey("ch2:out", "bus.mix1:in", "level"))).toBe("load");
+    const seeded = doc({ ch1: { stereoLink: true } }, [send("ch2", "bus.mix1", { level: -20 })]);
+    load(seeded);
+    expect(seeded.paramSource?.has(connParamContestKey("ch2:out", "bus.mix1:in", "level"))).toBe(false);
+  });
+
+  it("finds nothing in a new plan or the factory plan", () => {
+    for (const id of MODEL_IDS) {
+      const factory = defaultPlan(id);
+      for (const [a] of getModel(id).channelPairs)
+        factory.nodeParams[a] = { ...factory.nodeParams[a], stereoLink: true };
+      ensureFixedConnections(getModel(id), factory);
+      expect(linkedPairProblems(getModel(id), factory), id).toEqual([]);
+      expect(linkedPairProblems(getModel(id), emptyPlan(id)), id).toEqual([]);
+    }
   });
 });
 
@@ -1044,6 +1624,97 @@ describe("prepareLoadedPlan", () => {
     const loaded = doc();
     load(loaded);
     expect(loaded.nodeParams["bus.fx1"]?.fxEffect?.type).toBe(factoryType);
+  });
+
+  // The unit fills an engine with the type's defaults only on the transition into it, so a slot
+  // the document leaves out is one the write would send nothing for while the screen prints the
+  // default. The load puts the default in the plan, recorded as the fill's.
+  it("gives a selected insert effect every engine slot the document leaves out, recorded as the fill's", () => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams.ch1 = { insertFx: 1794, insertFxParams: { "compander:6": -900 } };
+    plan.nodeParams["bus.stereo"] = { insertFx: 1792 };
+    // An effect off the node's own menu reaches the unit as No Effect, so nothing is filled.
+    plan.nodeParams.ch3 = { insertFx: 1792 };
+    load(plan);
+    const at = (node: string, key: string) => nodeParamContestPath(node, `insertFxParams.${key}`);
+    const ch1 = plan.nodeParams.ch1!.insertFxParams!;
+    expect(ch1["compander:6"]).toBe(-900);
+    expect(plan.paramSource?.get(at("ch1", "compander:6"))).toBe("load");
+    const defaults = insertFxDefaults("compander", 1794);
+    for (const { slot } of insertFxWritableSlots("compander").filter((s) => s.slot !== 6)) {
+      expect(ch1[`compander:${slot}`], `slot ${slot}`).toBe(defaults[slot]);
+      expect(plan.paramSource?.get(at("ch1", `compander:${slot}`)), `slot ${slot}`).toBe("default");
+    }
+    expect(Object.keys(plan.nodeParams["bus.stereo"]!.insertFxParams ?? {})).toHaveLength(
+      insertFxWritableSlots("mbc").length,
+    );
+    expect(plan.nodeParams.ch3!.insertFxParams).toBeUndefined();
+    expect(plan.nodeParams.ch2!.insertFxParams, "No Effect, the factory selection").toBeUndefined();
+  });
+
+  // A name the write does not send is one the unit keeps, while every surface draws the node's
+  // label there. The load gives each nameable node a document leaves unnamed — no entry, or an
+  // empty one — its factory name, recorded as the fill's; a name the document wrote is its own.
+  it.each(MODEL_IDS)("%s: names every nameable node a document leaves unnamed, recorded as the fill's", (id) => {
+    const m = getModel(id);
+    const factory = defaultPlan(id).nodeNames;
+    const plan = deserialize(
+      JSON.stringify({
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: id,
+        nodeNames: { ch1: "Vox", ch2: "" },
+      }),
+    );
+    expect(plan.nodeNames.ch2, "the premise: an empty entry survives the sanitiser").toBe("");
+    prepareLoadedPlan(m, plan, planProblems(m, plan));
+    expect(plan.nodeNames.ch1).toBe("Vox");
+    expect(plan.paramSource?.get(nodeNameContestKey("ch1"))).toBe("load");
+    const nameable = m.nodes.filter((n) => nameControl(m, n.id)).map((n) => n.id);
+    expect(nameable.length, "the premise: the model has names to fill").toBeGreaterThan(2);
+    for (const node of nameable.filter((n) => n !== "ch1")) {
+      expect(plan.nodeNames[node], node).toBe(factory[node]);
+      expect(plan.paramSource?.get(nodeNameContestKey(node)), node).toBe("default");
+    }
+    // Nothing is named that the unit has no name for.
+    expect(Object.keys(plan.nodeNames).sort()).toEqual(nameable.sort());
+  });
+
+  // A colour is one of the unit's ten palette entries or its Off. Anything else is dropped and
+  // reported, and a colourable node left without one — dropped or never written — takes its
+  // factory colour, recorded as the fill's; Off and a palette hex in any case are the document's.
+  it.each(MODEL_IDS)("%s: drops a colour the unit has not and colours every colourable node", (id) => {
+    const m = getModel(id);
+    const factory = defaultPlan(id).nodeColors;
+    const plan = deserialize(
+      JSON.stringify({
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: id,
+        nodeColors: {
+          ch1: "url(https://example.invalid/x)",
+          ch2: "#FF0000",
+          "bus.stereo": "off",
+          "bus.mix1": "#4A78C0",
+        },
+      }),
+    );
+    const problems = planProblems(m, plan);
+    const colors = problems.filter((p) => p.reason === "nodeColor");
+    expect(colors.map((p) => p.node).sort()).toEqual(["ch1", "ch2"]);
+    expect(colors.some(isRefusal)).toBe(false);
+    expect(colors.some(needsDecision)).toBe(false);
+    const repairs = prepareLoadedPlan(m, plan, problems);
+    expect(repairs.colors).toEqual(colors);
+    expect(plan.nodeColors["bus.stereo"]).toBe("off");
+    expect(plan.nodeColors["bus.mix1"]).toBe("#4A78C0");
+    expect(plan.paramSource?.get(nodeColorContestKey("bus.stereo"))).toBe("load");
+    const colourable = m.nodes.filter((n) => colorControl(m, n.id)).map((n) => n.id);
+    for (const node of colourable.filter((n) => n !== "bus.stereo" && n !== "bus.mix1")) {
+      expect(plan.nodeColors[node], node).toBe(factory[node]);
+      expect(plan.paramSource?.get(nodeColorContestKey(node)), node).toBe("default");
+    }
+    expect(nodeColorProblems(plan)).toEqual([]);
   });
 
   it("puts a Track Count the completion supplies back through the rate rule", () => {

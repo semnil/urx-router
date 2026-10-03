@@ -311,7 +311,8 @@ answers the same problem better, and a merged lane is on that column's ruler by 
 threshold / ratio / gain / knee — it computes the first three from a single level, and takes the
 knee when the knob engages; with Auto Makeup on, it computes the gain. Each
 recomputation is announced per address (measured), so those rows stay on screen and keep updating —
-tagged, dimmed and read-only — rather than being hidden or recomputed here.
+tagged, dimmed and read-only — rather than being hidden or recomputed here, and the writer does not
+send them (`compDeviceDriven`, below).
 
 **The 1-knob is a section above the parameters, not three rows inside them.** It decides whose the
 rows below it are, which is a different kind of thing from a value they set — and it is how the unit
@@ -1522,6 +1523,12 @@ disagree about who owns a row. Emitting them would not be merely redundant: anyt
 plan's copy after the knob has computed puts the operator's pre-knob values back on the unit, which
 is what a converge sharing the flush does.
 
+**Whether a driver switch is on is asked of the raw the write sends there** (`insertFxDriverOn`):
+the stored value rounded and bounded to the switch's 0..1, with a value the write does not send at
+all — a boolean, a string — counted as off. The driven sets, `insertFxLockedSlots`, the 1-knob's own
+switch on this screen and Pitch Fix's MIDI Control mode all take it from there, so a value the write
+sends as 0, or not at all, cannot lock eighteen rows the unit is not driving.
+
 The locked rows are **not tagged**, which is this screen's one departure from COMP's treatment. A tag
 says why THIS row cannot be touched and earns its space where some rows carry one and others do not;
 here it is every row of a band face and all but one of MAIN's, for one reason the panel's own line
@@ -1531,7 +1538,11 @@ under the pointer that "no row is ever removed" exists to stop.
 
 ### Where the catalogue's defaults come from
 
-**A `def` is what the screen prints before a device read has filled the plan**, so it is the
+**A `def` is what a selection and a load put in the plan for a slot nobody named, and what the
+screen prints for one the plan does not hold** (`seedInsertFxParams`) — the unit fills an engine
+with those values on the transition into a type and not on a same-value write, so the plan holds
+them rather than leaving the slot to the unit. Pitch Fix's MIDI Control, Scale and note mask have no
+descriptor row and carry theirs in the same catalogue (`insertFxDefaults`). So it is the
 unit's own number or it is a guess — and a guess has a shape no measurement produces: mid-scale
 round numbers, or one value repeated where the unit gives each band its own. The defaults here are
 the unit's.
@@ -1664,9 +1675,10 @@ factory plan and 93 on a URX44 / URX44V, against a converge scope of 618 / 782 c
 reaches the plan until a pair agrees**: an attempt answers with what it WOULD write and only the
 matching one is applied, so a discarded attempt leaves none of its layout behind and a node that fails
 every attempt arrives at its caller holding exactly what it held before. The guard itself is dropped, while the unit's head is not the one
-the SNAPSHOT holds, for the addresses that head LAYS OUT and no others: moved on the panel, the
-snapshot's raws describe the previous layout there, and a slot whose two layouts agree on a number read
-as "still what this session sent". An insert effect's bypass is not laid out by anything — it means
+the SNAPSHOT holds or is not the head the emit was laid out by, for the addresses that head LAYS OUT and
+no others: moved on the panel, the snapshot's raws describe the previous layout there, and a slot whose two
+layouts agree on a number read as "still what this session sent" — and a head that moved and came back to
+the sent one agrees with the snapshot while the emit still describes the layout the park read first. An insert effect's bypass is not laid out by anything — it means
 the same under every effect — so it keeps it, and an unsent edit to it survives an effect the operator
 changed on the unit.
 
@@ -2239,7 +2251,7 @@ Which way it gives depends on **who authors the values**:
 
 | The plan… | What closes it | Heads |
 | --- | --- | --- |
-| only **mirrors** them | the plan stops emitting those addresses while the head is engaged, so nothing can push them back | EQ 1-knob (its four bands), COMP 1-knob (`COMP_ONE_KNOB_DRIVEN`, which is also the set the COMP screen locks and tags, so the writer and the screen cannot disagree about who owns a row) |
+| only **mirrors** them | the plan stops emitting those addresses while the head is engaged, so nothing can push them back | EQ 1-knob (its four bands), COMP 1-knob and Auto Makeup (`compDeviceDriven`: the 1-knob's four values, or the gain alone while Auto Makeup is on — Auto Makeup is not a refetch head, so that gain is registered to be followed instead (`planToFollowOnlyAddrs`); the same set the COMP screen locks and tags and the MIDI catalogue refuses, so none of the three can disagree about who owns a row) |
 | genuinely **authors** them | the head declares what it hands to the device (`ParamSpec.drives`) and the converge is told to leave exactly those alone, for that flush and that node | SSMCS Morphing, SSMCS Sweet Spot Data |
 
 **One of those heads is a string.** Selecting a Sweet Spot Data preset recomputes the same

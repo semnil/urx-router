@@ -141,6 +141,7 @@ export const ja: Messages = {
     param2: "Parameter 2",
     knobsNote: "BANK は本体のバンク切替と同じ単位です。",
     unset: "—",
+    unknownValue: (v: number | string): string => `不明 (${v})`,
   },
   midi: {
     menuItem: "MIDI コントロール",
@@ -646,8 +647,15 @@ export const ja: Messages = {
     paramsBounded: (count: number): string =>
       `このアプリが書き込める範囲の外にあった保存値 ${count} 件を、送信できる最も近い値に寄せました`,
     paramsDropped: (count: number): string =>
-      `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、エフェクト自身の既定値を使います`,
+      `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、既定値を使います`,
     streamingSourceSupplied: "計画に STREAMING のソースが無かったため、STREAMING を STEREO にしました",
+    textsRewritten: (count: number): string =>
+      `名前・メモ ${count} 件を、本体の名前画面と画像出力が扱える形に書き換えました`,
+    colorsDropped: (count: number): string => `本体に無いノードの色 ${count} 件を削除し、既定の色を使います`,
+    linkedPairsAligned: (count: number): string =>
+      `STEREO リンクしたペア ${count} 組で、共有する設定を本体と同じく奇数チャンネルの値にそろえました`,
+    sendLevelsSupplied: (count: number): string =>
+      `レベルの書かれていなかった Send ${count} 件を、書き込みが送る 0 dB にしました`,
     booleanParamsConverted: (count: number): string =>
       `数値で書かれていたオン/オフの値 ${count} 件を、オン/オフの値に変換しました`,
     linkedSendPansAligned: (count: number): string =>
@@ -702,6 +710,8 @@ export const ja: Messages = {
       `${channels} で +48V と Hi-Z が両方オンになっています — どちらかを切ってから書き込んでください。何も送信していません`,
     writeConnecting: "デバイスに接続しています…",
     writeNoChanges: "デバイスは計画と一致しています — 書き込む変更はありません",
+    writeNamesNotSent: (strips: string): string =>
+      `書き込む変更はありません — ${strips} の名前は空のため送信せず、デバイスは自身の名前を保ちます`,
     written: (n: number): string => `${n} 件の設定をデバイスに書き込みました`,
     writePartial: (n: number, failed: number): string => `${n} 件書き込み、${failed} 件失敗`,
     writeStopped: (n: number, notSent: number): string => `失敗のため書き込みを停止: ${n} 件送信、${notSent} 件未送信`,
@@ -717,14 +727,17 @@ export const ja: Messages = {
     selfTestRunning: "デバイスのセルフテストを実行中… 切断しないでください (メニューから中止できます)",
     selfTestRefused:
       "セルフテストを開始しませんでした — 復元に必要なパラメーターの一部を事前に読み取れませんでした。デバイスには何も書き込んでいません。",
+    selfTestModelMismatch: (device: string, model: string): string =>
+      `セルフテストを開始しませんでした — 接続中のデバイスは ${device} で、${model} ではありません。デバイスには触れていません。`,
     selfTestCancelled: "セルフテストを中止しました — デバイスは無音状態です。元に戻すには再度取得してください",
+    selfTestCancelledUntouched: "セルフテストを書き込み前に中止しました — デバイスには触れていません",
     selfTestPass: (n: number): string => `セルフテスト合格: ${n} 件のパラメータを書き込み、同一に読み戻しました`,
     selfTestFail: (n: number): string => `セルフテスト失敗: 書き込み後に ${n} 件が一致しませんでした`,
     selfTestIncomplete: (n: number): string =>
       `セルフテスト中断: 停止した時点で ${n} 件が差分のままです — レポートを確認してください`,
     selfTestRestoreFail: "セルフテスト: デバイスが復元されていない可能性があります — 再度取得して確認してください",
-    selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
-      `セルフテストの推測: 確認 ${confirmed} 件・否定 ${refuted} 件・検証不能 ${untestable} 件`,
+    selfTestUnverified: (confirmed: number, roundTripped: number, refuted: number, untestable: number): string =>
+      `セルフテストの推測: 確認 ${confirmed} 件・往復のみ ${roundTripped} 件・否定 ${refuted} 件・検証不能 ${untestable} 件`,
     selfTestError: (message: string): string => `セルフテストのエラー: ${message}`,
     liveConnecting: "ライブ同期のため接続中…",
     liveOn: (model: string, n: number): string => `ライブ同期 オン · ${model} · ${n} 件読込`,
@@ -790,6 +803,8 @@ export const ja: Messages = {
     write: (n: number): string => `${n} 件の変更をデバイスに書き込みますか? デバイスの現在の設定を上書きします。`,
     unauthoredWrite: (strips: string): string =>
       `操作していない設定も変更されます — プランが補った既定値、または読み込み後にデバイス側で変わった値です。\n対象: ${strips}`,
+    namesNotSent: (strips: string): string =>
+      `${strips} の名前は空のため送信しません — デバイスは自身の名前を保ちます。`,
     firmwareMismatch: (device: string, supported: string): string =>
       `接続中のデバイスのファームウェア (${device}) は、このアプリの動作確認バージョン (${supported}) と異なります。正しく動作しない可能性があります。続行しますか?`,
     selfTest:
@@ -995,6 +1010,7 @@ export const ja: Messages = {
       fileBadExtension: (detail: string): string => `対応していない拡張子です (この操作で扱えるのは ${detail})`,
       pngEncode: "画像を PNG に変換できませんでした",
       canvasUnavailable: "描画キャンバスを利用できないため画像を生成できませんでした",
+      svgRasterize: "盤面を画像として描画できませんでした",
       midiPortNotFound: "その MIDI ポートは使用できません。デバイスを接続し直して選び直してください。",
       midiOutputNotOpen: "MIDI 出力ポートが開いていません",
       midiInitFailed: (detail: string): string => `MIDI サブシステムを開始できませんでした (${detail})`,

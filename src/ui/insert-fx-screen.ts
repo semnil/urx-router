@@ -18,9 +18,11 @@
 // a default or an enum.
 
 import {
+  insertFxDefaults,
   insertFxDeviceDriven,
   insertFxInactiveSlots,
   insertFxLockedSlots,
+  insertFxDriverOn,
   insertFxFamilyOf,
   insertFxParamKey,
   insertFxParams,
@@ -659,8 +661,9 @@ function lanesOf(ctx: DynCtx, isOutput: boolean): DynLane[] {
   // holders it carries the one whose selector was written last and ignores the other
   // entirely — so on that other one's screen the lane would draw its neighbour's number,
   // which is a value and looks like an answer. The app's own menu makes the compander a device-wide slot and locks every
-  // other node out of it, so one holder is the ordinary case; two is reachable only by
-  // loading a plan whose slot conflict the operator waved through.
+  // other node out of it, so one holder is the ordinary case; two is reachable by loading
+  // a plan whose slot conflict the operator waved through, or by reading a unit that
+  // holds two, which its control link accepts.
   if (hasReduction(fam) && (isOutput || (insertFxCensus(ctx.model, ctx.plan).get("compander")?.length ?? 0) <= 1)) {
     lanes.push({
       key: "gr",
@@ -1206,8 +1209,11 @@ function drawMbcBands(
 const slotPatch = (patch: Record<number, number>): Record<string, number> =>
   Object.fromEntries(Object.entries(patch).map(([slot, raw]) => [slotKey("pitch", Number(slot)), raw]));
 
+/** What Pitch Fix's slots come up at, for a slot the plan does not hold. */
+const PITCH_DEFAULTS = insertFxDefaults("pitch");
+
 const scaleOf = (ctx: DynCtx): number =>
-  insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_SCALE_SLOT, PITCH_SCALE_CHROMATIC);
+  insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_SCALE_SLOT, PITCH_DEFAULTS[PITCH_SCALE_SLOT]);
 
 /**
  * The Scale selector, beside the Key it is rooted at.
@@ -1257,14 +1263,14 @@ function pitchNotesRow(ctx: DynRowCtx, owned: SettingsRowOptions | undefined): H
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = SEMITONE_NAMES[i];
-    const on = insertFxVal(ctx.plan, ctx.nodeId, "pitch", slot, 1) !== 0;
+    const on = insertFxVal(ctx.plan, ctx.nodeId, "pitch", slot, PITCH_DEFAULTS[slot]) !== 0;
     b.classList.toggle("on", on);
     b.setAttribute("aria-pressed", String(on));
     // What the button SHOWS is the value it was drawn from; what it WRITES is the negation
     // of the value the plan holds when it is pressed. A follow that moved this note under a
     // deferred rebuild would otherwise be written straight back.
     b.addEventListener("click", () => {
-      const now = insertFxVal(ctx.live().plan, ctx.nodeId, "pitch", slot, 1) !== 0;
+      const now = insertFxVal(ctx.live().plan, ctx.nodeId, "pitch", slot, PITCH_DEFAULTS[slot]) !== 0;
       ctx.set({ [slotKey("pitch", slot)]: now ? 0 : 1, [slotKey("pitch", PITCH_SCALE_SLOT)]: PITCH_SCALE_CUSTOM });
     });
     notes.append(b);
@@ -1286,7 +1292,7 @@ function pitchNotesRow(ctx: DynRowCtx, owned: SettingsRowOptions | undefined): H
 function mbcOneKnobSection(ctx: DynRowCtx): HTMLElement {
   const t = ctx.m.inspector.insertFxEffect;
   const raw = (slot: number): number => insertFxVal(ctx.plan, ctx.nodeId, "mbc", slot, 0);
-  const on = raw(MBC_ONE_KNOB.on.slot) !== 0;
+  const on = insertFxDriverOn(ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams, "mbc", MBC_ONE_KNOB.on.slot);
   const locked = insertFxLockedSlots("mbc", ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams);
   const set = (slot: number, v: number): void => ctx.set({ [slotKey("mbc", slot)]: v });
   // A CONTINUOUS value writes without rebuilding. `set` re-renders the screen, which
@@ -1352,8 +1358,8 @@ function deviceOwned(ctx: DynRowCtx): SettingsRowOptions | undefined {
 function pitchMidiRow(ctx: DynRowCtx): HTMLElement {
   const t = ctx.m.inspector.insertFxEffect;
   const mode = pitchMidiMode(
-    insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_ENABLE_SLOT, 0),
-    insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_REALTIME_SLOT, 0),
+    insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_ENABLE_SLOT, PITCH_DEFAULTS[PITCH_MIDI_ENABLE_SLOT]),
+    insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_REALTIME_SLOT, PITCH_DEFAULTS[PITCH_MIDI_REALTIME_SLOT]),
   );
   // A select, like the Key and the Scale above it: three buttons do not fit the row, and
   // "Real Time" wrapped onto a second line, which moved everything below it.

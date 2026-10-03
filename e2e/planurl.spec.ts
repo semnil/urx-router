@@ -121,18 +121,19 @@ test("a plan naming its STREAMING source opens with that one, and says nothing a
 // While MIX 1's Pan Link is on, the unit holds each send pan into it at its source's own PAN and
 // the write sends none of them. A document carrying another value opens with the source's on the
 // read-only SEND PAN knob, and the status line says how many ahead of the load; the MIX whose link
-// is off keeps what the document wrote.
+// is off keeps what the document wrote. Every send carries its level, so the pans are all the load
+// has to say anything about.
 const sendPanPlan = (panLink: boolean) => ({
   format: "urx-router-plan",
   version: 1,
   modelId: "URX44V",
   connections: [
     { from: "bus.stereo:out", to: "bus.stream:in", kind: "source" },
-    { from: "ch1:out", to: "bus.stereo:in", kind: "send", params: { pan: -13 } },
-    { from: "ch2:out", to: "bus.stereo:in", kind: "send", params: { pan: 20 } },
-    { from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { pan: 40 } },
-    { from: "ch2:out", to: "bus.mix1:in", kind: "send", params: { pan: 40 } },
-    { from: "ch1:out", to: "bus.mix2:in", kind: "send", params: { pan: 40 } },
+    { from: "ch1:out", to: "bus.stereo:in", kind: "send", params: { level: 0, pan: -13 } },
+    { from: "ch2:out", to: "bus.stereo:in", kind: "send", params: { level: 0, pan: 20 } },
+    { from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { level: 0, pan: 40 } },
+    { from: "ch2:out", to: "bus.mix1:in", kind: "send", params: { level: 0, pan: 40 } },
+    { from: "ch1:out", to: "bus.mix2:in", kind: "send", params: { level: 0, pan: 40 } },
   ],
   nodeParams: { "bus.mix1": { panLink } },
 });
