@@ -3746,7 +3746,10 @@ what the desktop app offers.
   address (see "One device address, more than one owner"), and it does so **before** the scope
   filter, so the scene subset stays the full list filtered by ParamName. Reads stay full — a scoped fetch reads every
   parameter (reads are side-effect free) and then restores the kept values
-  (`applyDeviceStateScoped` in `main.ts`). The diagnostics (compare / self-test / prepare) always
+  (`applyDeviceStateScoped` in `main.ts`), and the two reads a live session scopes to a few nodes — a follow
+  reconcile and a `sideEffect: "refetch"` read — take the same keep and restore (`applyNodeStateScoped`), since a
+  node read there carries scene-external values of its own (the oscillator's assign into STEREO, a MIX or an FX
+  channel). The diagnostics (compare / self-test / prepare) always
   run at full scope, and the control locks while Live sync is up, since the scope is part of the
   held session's snapshot and notify registration. A scene-only write also skips the sample-rate
   settle: the rate is out of scope, so the device keeps its own clock.

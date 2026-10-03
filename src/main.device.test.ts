@@ -8974,3 +8974,75 @@ describe("+48V and Hi-Z on one channel", () => {
     });
   });
 });
+
+// Under the Scene only device scope a whole-device read puts the plan's scene-external values
+// back afterwards. A read scoped to a few nodes — a follow reconcile, or the refetch a
+// `sideEffect: "refetch"` write takes — reads those nodes' oscillator assigns as well, so it
+// takes the same keep and restore, or the two reads disagree about one value under one
+// setting and the unit's assign replaces the plan's.
+describe("a scoped read under the Scene only device scope", () => {
+  const model = (): DeviceModel => getModel("URX44V");
+  /** The oscillator's assigns the board draws, by the bus they go into. */
+  const oscDrawn = (): string[] =>
+    [...$("graph-host").querySelectorAll('.wire-hit[data-from="bus.osc:out"]')]
+      .map((w) => (w as SVGElement).dataset.to ?? "")
+      .sort();
+  const readsOf = (shell: TauriShell, paramId: number): number =>
+    shell.invokes.filter((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === paramId).length;
+  const liveUp = (): Promise<void> =>
+    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+
+  /** A unit whose oscillator goes into FX 1 and not into STEREO — the plan's own assign is the
+   *  other way round — with the session up under the scene scope. */
+  const sceneSession = async (): Promise<TauriShell> => {
+    const shell = (await bootApp({
+      seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) },
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok" }, { [`${PARAMS.OSC_ASSIGN_FX.id}/0/0`]: 1 }),
+    }))!;
+    expect(oscDrawn(), "the premise: the plan's oscillator goes into STEREO").toEqual(["bus.stereo:in"]);
+    live().click();
+    await liveUp();
+    await quiet(shell);
+    expect(oscDrawn(), "the premise: the session's start read kept it").toEqual(["bus.stereo:in"]);
+    return shell;
+  };
+
+  it("keeps the plan's assigns through a follow read of an FX channel", SLOW, async () => {
+    const shell = await sceneSession();
+    const send = planToCommands(model(), defaultPlan("URX44V")).find(
+      (c) => c.node === "bus.fx1" && c.name === "SEND_LEVEL",
+    )!;
+    const before = readsOf(shell, PARAMS.OSC_ASSIGN_FX.id);
+    // A send level moved on the unit's own panel, which the follow layer answers with a read of
+    // FX 1.
+    notifyChannel(shell).onmessage([{ param_id: send.paramId, x: send.x, y: send.y, value: -1000 }]);
+    await vi.waitFor(
+      () => expect(readsOf(shell, PARAMS.OSC_ASSIGN_FX.id), "the premise: FX 1 was read").toBeGreaterThan(before),
+      { timeout: 10_000 },
+    );
+    await quiet(shell);
+    expect(oscDrawn()).toEqual(["bus.stereo:in"]);
+  });
+
+  it("keeps the plan's assigns through the refetch a STEREO EQ 1-knob takes", SLOW, async () => {
+    const shell = await sceneSession();
+    const before = readsOf(shell, PARAMS.OSC_ASSIGN_STEREO.id);
+    selectNode("bus.stereo");
+    $("inspector").querySelector<HTMLButtonElement>("#btn-eq-screen")!.click();
+    $("dyn-screen-box")
+      .querySelector<HTMLElement>("#dyn-oneknob-level")!
+      .closest(".prefs-section")!
+      .querySelectorAll<HTMLButtonElement>(".prefs-toggle button")[0]
+      .click(); // ON
+    await vi.waitFor(
+      () =>
+        expect(readsOf(shell, PARAMS.OSC_ASSIGN_STEREO.id), "the premise: STEREO was read back").toBeGreaterThan(
+          before,
+        ),
+      { timeout: 10_000 },
+    );
+    $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions .consent-btn-secondary")!.click();
+    await quiet(shell);
+    expect(oscDrawn()).toEqual(["bus.stereo:in"]);
+  });
+});

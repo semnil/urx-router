@@ -505,7 +505,7 @@ const live = DEMO
             // The one caller that skips the names, and it says so itself — the reconciles
             // below carry pending writes too, and reading names is what makes a rename
             // made on the unit arrive (readback.ts's name section).
-            applyNodeState(getModel(modelId), into, nodeIds, signal, pending, true),
+            applyNodeStateScoped(into, nodeIds, signal, pending, true),
           edits,
         );
         // The plan this read was issued for is gone (a file flow replaced it): its
@@ -1248,7 +1248,7 @@ const follow =
           // value the device does not hold until the idle sweep re-reads past it.
           const pending = live?.recentPending(nodeIds);
           const merged = await followRead("device-follow scoped readback", (into, signal) =>
-            applyNodeState(getModel(modelId), into, nodeIds, signal, pending),
+            applyNodeStateScoped(into, nodeIds, signal, pending),
           );
           if (!merged) return;
           // A Signal Type moved on the unit's own panel reaches the plan here, with no edit
@@ -2251,6 +2251,25 @@ async function applyDeviceStateScoped(
     false,
     keep !== null,
   );
+  if (keep) applySceneExternal(target, keep);
+  return result;
+}
+
+/** A read of a few nodes under the device scope, for the two scoped reads a live session
+ *  takes (a follow reconcile and a sideEffect refetch). Under "Scene only" the plan's
+ *  scene-external values are put back afterwards, as `applyDeviceStateScoped` does for a
+ *  whole-device read: a node read here carries some of them (an oscillator assign into
+ *  STEREO, a MIX or an FX channel), and the two reads must not disagree about one value
+ *  under one setting. */
+async function applyNodeStateScoped(
+  target: Plan,
+  nodeIds: ReadonlySet<string>,
+  signal: AbortSignal | undefined,
+  pending: PendingWrites | undefined,
+  skipNames = false,
+): Promise<ReadbackResult> {
+  const keep = getSettings().deviceScope === "scene" ? captureSceneExternal(target) : null;
+  const result = await applyNodeState(getModel(target.modelId), target, nodeIds, signal, pending, skipNames);
   if (keep) applySceneExternal(target, keep);
   return result;
 }
