@@ -28,14 +28,19 @@ export interface Item {
   key: string;
   texts: string[];
   /** A function leaf: its `texts` are fragments of one rendered run, never the
-   *  whole of it, so it is matched by containment rather than by equality. */
+   *  whole of it, so it is matched against `template` rather than by equality. */
   interpolated: boolean;
+  /** A function leaf's whole wording with each argument replaced by `ARG`. */
+  template?: string;
 }
 
 // Stands in for a message's arguments while its static wording is extracted. A
 // private-use code point: it cannot occur in a translated string, so splitting on
 // it cannot cut a message in half.
 const ARG = "\uE000";
+
+/** A message with every argument replaced by `ARG`. */
+const fill = (fn: (...args: string[]) => string): string => fn(...(Array(fn.length).fill(ARG) as string[]));
 
 /** Segments of an interpolated message that no argument can change. Short ones
  *  ("…", " to ") are dropped — they match anything and would assert nothing.
@@ -45,8 +50,7 @@ const ARG = "\uE000";
  *  surface has to be driven into that branch for the check to mean anything. The
  *  singular wording of such a message is not covered here. */
 function staticSegments(key: string, fn: (...args: string[]) => string): string[] {
-  const filled = fn(...(Array(fn.length).fill(ARG) as string[]));
-  const segments = filled
+  const segments = fill(fn)
     .split(ARG)
     .map((s) => s.trim())
     .filter((s) => s.length >= 3);
@@ -60,9 +64,10 @@ function staticSegments(key: string, fn: (...args: string[]) => string): string[
 function collect(node: unknown, path: string[], out: Item[]): void {
   const key = path.join(".");
   if (typeof node === "string") out.push({ key, texts: [node], interpolated: false });
-  else if (typeof node === "function")
-    out.push({ key, texts: staticSegments(key, node as (...a: string[]) => string), interpolated: true });
-  else if (Array.isArray(node)) node.forEach((v, i) => collect(v, [...path, String(i)], out));
+  else if (typeof node === "function") {
+    const fn = node as (...a: string[]) => string;
+    out.push({ key, texts: staticSegments(key, fn), interpolated: true, template: fill(fn) });
+  } else if (Array.isArray(node)) node.forEach((v, i) => collect(v, [...path, String(i)], out));
   else if (node && typeof node === "object") for (const [k, v] of Object.entries(node)) collect(v, [...path, k], out);
 }
 
@@ -115,7 +120,8 @@ interface Shown {
  * Separate runs are what make a short label checkable: against a container's whole
  * text, "ON" is satisfied by four letters of "MIDI CONTROL" and "Copy" by a
  * sentence that happens to say "Copy the report below", so the item can no longer
- * fail. Against runs, a label has to BE somebody's label.
+ * fail. Against runs, a plain label has to BE somebody's label, and a composed one
+ * has to sit between the separators its composer puts around it (`Inventory`).
  *
  * Visibility is the point — an item still in the DOM behind `hidden`, inside a
  * closed `<details>` or under `display: none` is not being displayed, and the
@@ -180,11 +186,28 @@ export interface InventoryOptions {
   viaAttribute?: readonly string[];
   /**
    * Messages rendered INSIDE a larger run — two notes joined into one paragraph,
-   * a prefix in front of a value, a vocabulary composed into a label. They are
-   * matched by containment; every other plain message must be a run of its own.
+   * a prefix in front of a value, a vocabulary composed into a label. Each is found
+   * where its composer puts it: at the run's start or end, or against one of the
+   * separators the composer joins with (`sep`, default " · " and " — "). Every other
+   * message must be a run of its own.
    */
-  composed?: readonly string[];
+  composed?: readonly ComposedEntry[];
 }
+
+/** A composed message or group, by key, with the separators its composer joins with. */
+export type ComposedEntry = string | { key: string; sep: readonly string[] };
+
+const DEFAULT_SEPARATORS = [" · ", " — "];
+
+export const composedKey = (entry: ComposedEntry): string => (typeof entry === "string" ? entry : entry.key);
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** A message's wording as a pattern: its static text literal, each argument any text. */
+const bodyOf = (item: Item): string =>
+  item.template === undefined
+    ? escapeRe(flatten(item.texts[0]))
+    : flatten(item.template).split(ARG).map(escapeRe).join(".+");
 
 /** Both lists name either a leaf or a whole group, so a vocabulary composed the
  *  same way everywhere is one entry rather than forty. */
@@ -202,14 +225,26 @@ const covers = (list: ReadonlySet<string>, key: string): boolean => {
 export class Inventory {
   private readonly seen: Shown = { text: [], attrs: [] };
   private readonly viaAttribute: ReadonlySet<string>;
-  private readonly composed: ReadonlySet<string>;
+  private readonly composed: ReadonlyMap<string, readonly string[]>;
+  /** The surface's own plain messages: a run that IS one of them is that message, and an
+   *  interpolated item is not matched against it ("KEY · NONE" is not "KEY · <source>"). */
+  private readonly plain: ReadonlySet<string>;
 
   constructor(
     private readonly expected: Item[],
     opts: InventoryOptions = {},
   ) {
     this.viaAttribute = new Set(opts.viaAttribute ?? []);
-    this.composed = new Set(opts.composed ?? []);
+    this.composed = new Map(
+      (opts.composed ?? []).map((e) => [composedKey(e), typeof e === "string" ? DEFAULT_SEPARATORS : e.sep]),
+    );
+    this.plain = new Set(expected.filter((i) => !i.interpolated).map((i) => flatten(i.texts[0])));
+  }
+
+  /** The separators a composed key is joined with, or undefined for a message of its own. */
+  private separatorsOf(key: string): readonly string[] | undefined {
+    for (const [entry, sep] of this.composed) if (key === entry || key.startsWith(`${entry}.`)) return sep;
+    return undefined;
   }
 
   /** Record everything the given container is showing right now. */
@@ -219,10 +254,23 @@ export class Inventory {
     this.seen.attrs.push(...parts.attrs.map(flatten));
   }
 
+  // Text decides only between DIFFERENT wordings. Where the catalog holds one string twice —
+  // midi.param.gateOn and midi.scope.gate both "GATE", duckerOn and scope.ducker both
+  // "DUCKER" — the run that shows either shows both, and no matcher over text can tell
+  // which of the two put it there.
   private shows(item: Item): boolean {
-    const runs = covers(this.viaAttribute, item.key) ? [...this.seen.text, ...this.seen.attrs] : this.seen.text;
-    if (item.interpolated || covers(this.composed, item.key))
-      return item.texts.every((t) => runs.some((run) => run.includes(flatten(t))));
+    const all = covers(this.viaAttribute, item.key) ? [...this.seen.text, ...this.seen.attrs] : this.seen.text;
+    const runs = item.interpolated ? all.filter((run) => !this.plain.has(run)) : all;
+    const sep = this.separatorsOf(item.key);
+    if (sep) {
+      const edge = sep.map(escapeRe).join("|");
+      const re = new RegExp(`(?:^|${edge})${bodyOf(item)}(?=$|${edge})`, "u");
+      return runs.some((run) => re.test(run));
+    }
+    if (item.interpolated) {
+      const re = new RegExp(`^${bodyOf(item)}$`, "u");
+      return runs.some((run) => re.test(run));
+    }
     return runs.some((run) => run === flatten(item.texts[0]));
   }
 
