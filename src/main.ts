@@ -648,6 +648,9 @@ const consoleView = new Console(consoleHost, {
   onChange: (written, defaults) => {
     noteSeededDefaults(plan, seededDefaults, defaults ?? []);
     markChanged("ui", written);
+    // The panel this view hides was drawn before the edit, and its locks and ranges are
+    // taken at draw time: it is rebuilt on the way back to the graph.
+    inspectorDeferred = true;
   },
   // The meter stream failed to register. Floor-stuck bars read as "no signal",
   // so end the session rather than let the operator trust a dead display.

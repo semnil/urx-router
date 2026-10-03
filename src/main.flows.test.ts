@@ -1362,6 +1362,48 @@ describe("the inspector's Hi-Z switch and the gain it caps", () => {
   });
 });
 
+// The panel is hidden for as long as the CONSOLE is up, and its locks are taken when it is
+// drawn. An edit made on the CONSOLE has to reach the panel the operator returns to without
+// selecting the node again.
+describe("the panel after edits made on the CONSOLE", () => {
+  const consoleChip = (stripLabel: string, chip: string): HTMLElement => {
+    const strip = [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")].find(
+      (s) => s.getAttribute("aria-label") === stripLabel,
+    );
+    expect(strip, `the CONSOLE draws a "${stripLabel}" strip`).toBeDefined();
+    const found = [...strip!.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === chip);
+    expect(found, `the "${stripLabel}" strip carries a "${chip}" chip`).toBeDefined();
+    return found!;
+  };
+
+  it("locks Hi-Z once +48V was turned on there", async () => {
+    await boot();
+    selectNode("ch3");
+    const hiZ = (): HTMLButtonElement[] => [...row(t().inspector.hiZ).querySelectorAll<HTMLButtonElement>("button")];
+    expect(
+      hiZ().every((b) => !b.disabled),
+      "the premise: Hi-Z is free while +48V is off",
+    ).toBe(true);
+    $("btn-view-console").click();
+    consoleChip("CH 3", "+48").click();
+    $("btn-view-graph").click();
+    expect(row(t().inspector.hiZ).title).toBe(t().inspector.hiZLockedByPhantom);
+    expect(hiZ().every((b) => b.disabled)).toBe(true);
+  });
+
+  it("caps the A.Gain range once Hi-Z was turned on there", async () => {
+    await boot();
+    selectNode("ch4");
+    const slider = (): HTMLInputElement =>
+      row(t().inspector.gainAnalog).querySelector<HTMLInputElement>('input[type="range"]')!;
+    expect(slider().max, "the premise: the full range while Hi-Z is off").toBe("70");
+    $("btn-view-console").click();
+    consoleChip("CH 4", "Hi-Z").click();
+    $("btn-view-graph").click();
+    expect(slider().max).toBe("40");
+  });
+});
+
 describe("menu keyboard navigation", () => {
   // The same selector the entry's own key handler applies, so this addresses the list the
   // app navigates rather than a wider one of its own. The File menu already carries a

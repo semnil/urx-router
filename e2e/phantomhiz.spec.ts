@@ -102,6 +102,20 @@ test("the CONSOLE chips follow the same rule, and the A.GAIN knob stops at +40 u
   await expect(chip(page, "Hi-Z")).toHaveAttribute("title", LOCKED_HIZ);
 });
 
+// The Inspector is hidden while the CONSOLE is up and keeps the locks it was drawn with, so an
+// edit made on a strip has to reach the panel the operator returns to without a new selection.
+test("an Inspector drawn before a CONSOLE edit takes the lock that edit set", async ({ page }) => {
+  await open(page, { hiZ: false, phantom: false, gain: 30 });
+  await selectCh3(page);
+  await expect(row(page, "Hi-Z").getByRole("button", { name: "ON", exact: true })).toBeEnabled();
+  await page.click("#btn-view-console");
+  await chip(page, "+48").click();
+  await expect(chip(page, "+48")).toHaveAttribute("aria-pressed", "true");
+  await page.click("#btn-view-graph");
+  await expect(row(page, "Hi-Z")).toHaveAttribute("title", LOCKED_HIZ);
+  await expect(row(page, "Hi-Z").getByRole("button", { name: "ON", exact: true })).toBeDisabled();
+});
+
 test("a document holding both on opens with +48V off and says so", async ({ page }) => {
   await open(page, { hiZ: true, phantom: true, gain: 60 });
   await expect(page.locator("#statusbar")).toContainText(
