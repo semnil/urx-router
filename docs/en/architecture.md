@@ -2391,7 +2391,7 @@ it read included; a reconcile reads the names of the nodes it covers and takes t
 | Session start | `begin` from the starting read's clone | `reset` |
 | App edit, `markChanged` | per address, as its own write returns | entry opened, closed at the gesture boundary |
 | Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands, and an entry already recorded takes a nested `nodeParams` / `connParams` leaf only where its `before` AND its `after` both hold what the read measured from — both sides then take the read's value, and a whole field is never folded |
-| Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect |
+| Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect, when the read authored at least one key (`followAuthored`) |
 | Side-effect refetch | `capture` from the read's clone for the nodes it read, their names excepted since the read carries none, then the same journal replay | `absorb` of the device-authored keys only |
 | Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel | untouched |
 
@@ -2426,9 +2426,10 @@ sequenceDiagram
 ```
 
 The reflect is coalesced across *producers*, so it cannot know what the device authored — which is why the
-history is settled at each producer's own site (see the table above) and not here. Its full branch does call
-`PlanHistory.reset`, because a readback of any breadth re-authored the plan's values and no earlier entry
-describes a state it can return to.
+history is settled at each producer's own site (see the table above) and not here. Its full branch calls
+`PlanHistory.reset` when the reconciles behind it authored at least one key (`followAuthored`), because such a
+readback re-authored the plan's values and no earlier entry describes a state it can return to; a reconcile that
+agreed with the plan at every key leaves both stacks as they were.
 
 #### What is discarded, and where
 
@@ -3723,9 +3724,10 @@ An undo is refused, with the reason on the status line and **without spending th
   full reconciles and Live sync's 1-knob refetch do the same. A converge round is not one of them —
   it reads the whole write scope but writes nothing back into the plan. The refusal is taken before
   the open entry is **closed**, not merely before it is consumed, so the press is exact when it is
-  retried; note that the two reconciles reset the history in their reflect a moment later, so for
-  those the refused entry is one the operator loses — visibly, rather than as an edit that may or may
-  not have reached the unit. Those three deliberately do **not** refuse a file flow: they start on
+  retried. A reconcile whose read changed a value resets the history in its reflect a moment later, so
+  there the refused entry is one the operator loses — visibly, rather than as an edit that may or may
+  not have reached the unit; a reconcile that agreed with the plan at every key leaves the entry for the
+  retry. Those three deliberately do **not** refuse a file flow: they start on
   their own and nothing on screen names them, so the plan-replacement side is handled at the read
   instead (`loadPlan` ends the session and abandons the read; the read is bound to the plan it was
   issued for and drops its result if that plan is gone). The 1-knob refetch holds the refusal
@@ -3762,8 +3764,9 @@ Both stacks are dropped, and the baseline re-taken, when no earlier entry descri
 can return to: a **new document** (`loadPlan` — New / Open / a drop / a recent row / the model picker
 / the model switch a Fetch or Live-sync start offers, applied once its read has landed complete / the `?plan=`
 deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch, Live-sync start
-and the `.urxf` import; plus device-follow's full reconcile). A one-node follow readback only re-takes
-the baseline, keeping the entries already recorded. A read that refuses a +48V / HI-Z ON — made while it was in
+and the `.urxf` import; plus device-follow's reconciles, scoped or full, once their read has authored at least one
+key). A side-effect refetch only takes the keys the device authored into the baseline, keeping the entries already
+recorded. A read that refuses a +48V / HI-Z ON — made while it was in
 flight, or held back by a live flush and never sent — takes that one edit out instead (`PlanHistory.retract`):
 the newest entry carrying each key it took back loses the key when that entry still holds the refused value, an
 entry left empty leaves the stack, and the baseline takes the refusal so it is not recorded as an edit of its own.

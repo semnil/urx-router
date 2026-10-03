@@ -933,7 +933,11 @@ agreement, zero findings.
   now absorbs the keys the notify authored; measured after the fix at Δ = 5 / 40 / 95 ms inside the
   100 ms notify interval, the edit undoes to where the press found it and the pre-sweep entry is still
   beneath it
-- An undo fired inside a held reconcile is applied, and the reconcile then wipes both stacks
+- **An undo fired inside a held reconcile was applied, and the reconcile then wiped both stacks —
+  fixed.** The press is now refused while the read holds the plan, without spending the entry, and the
+  reconcile's reflect resets the stacks only when its read authored a key, so after a reconcile that
+  agreed with the plan everywhere the same press applies (`t3-undo.spec.ts`, the scoped and full
+  reconcile cells)
 - The apply order is correct: the persisted mirror moves before any repaint, the viewport is untouched,
   and `markChanged` runs last
 
