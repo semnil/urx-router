@@ -5333,6 +5333,57 @@ describe("a value the unit holds and the app cannot write", () => {
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
   });
 
+  // A session that ENDS on a failed converge after that converge confirmed the address. The
+  // count is held for the line the flush writes once it has sent, and that line never comes;
+  // the next session's first flush must not print it as its own.
+  it("leaves a failed session's taken-back count behind with that session", SLOW, async () => {
+    // The FX 2 type selector is accepted and not kept twice — by the flush's head write and by
+    // the converge's first round — and refused on the third, which is the converge's second
+    // round: the LPF is confirmed by the first round's re-read, then the loop fails.
+    let typeWrites = 0;
+    const base = deviceCommands({ "plugin:dialog|message": "Ok" }, unitHoldingLowLpf());
+    const set = base.vd_set as (a: Record<string, unknown>) => void;
+    const shell = (await bootApp({
+      tauri: {
+        ...base,
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId !== 683) return set(a);
+          if (++typeWrites > 2) throw new Error(`broker-rejected: ${a.paramId}:${a.x}:${a.y}`);
+          return null;
+        },
+      },
+    }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+    sel.value = "1025";
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    // The session ended on the refusal, and the converge had taken the value back first.
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 20_000 });
+    expect(typeWrites).toBe(3);
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 20_000 });
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+
+    // The next session, and an unrelated edit in it.
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 20_000 });
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 20_000 });
+    const sets = shell.count("vd_set");
+    pressNode("bus.stereo");
+    const fader = paramRow(t().inspector.level).querySelector<HTMLInputElement>("input[type=range]")!;
+    fader.value = String(Number(fader.value) - 3);
+    fader.dispatchEvent(new Event("input", { bubbles: true }));
+    fader.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(sets), { timeout: 20_000 });
+    // The line that flush wrote is its own count and nothing else.
+    await vi.waitFor(() => expect(countFor(statusText(), t().status.liveSynced)).toBeGreaterThan(0), {
+      timeout: 20_000,
+    });
+    expect(statusText()).not.toContain(t().status.paramsBounded(1));
+  });
+
   // …and the same, with a flush whose converge DID confirm a set — just not this address. The
   // case above cannot separate "the set does not carry it" from "there is no set", because a
   // plain fader flush runs no converge and the set is empty. An effect-type change on the OTHER

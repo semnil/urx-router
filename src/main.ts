@@ -1467,6 +1467,7 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   live?.end();
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
+  liveAdopted = 0;
   void releaseLive(liveEpoch, end);
   setLiveUi(false);
   // A CH → FX tap shown read-only while live becomes editable again off-line.
@@ -4027,6 +4028,9 @@ if (!DEMO) {
         // the session's control (syncDeviceActionUi) — the only Follow USB control while
         // live.
         setFollowUsbBadge(followUsb);
+        // A count left by a session that ended without the line that would have carried it
+        // belongs to that session; this one's first flush starts from nothing.
+        liveAdopted = 0;
         // The copy the starting read ran against: without it an edit made during the
         // multi-second read is snapshotted as a value the device was already given.
         live.begin(merged.deviceView);
