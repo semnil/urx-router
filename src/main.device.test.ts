@@ -6647,10 +6647,27 @@ describe("the update check", () => {
     // "Downloading…" is gone rather than merely covered.
     await vi.waitFor(() => expect(statusText()).toBe(""), { timeout: 10_000 });
     expect(shell.count("plugin:process|restart")).toBe(0);
-    // An error dialog, and the one that names this failure. A cleared status line on its
-    // own is also what a silent swallow leaves behind.
+    // An error dialog, and the one that names this failure — the install, not the check that
+    // found the update — with its cause. A cleared status line on its own is also what a
+    // silent swallow leaves behind.
     await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
-    expect(errors(shell).at(-1)).toBe(t().prefs.updateCheckFailed);
+    expect(errors(shell).at(-1)).toBe(t().status.updateInstallFailed("half-written"));
+    expect(errors(shell).at(-1)).toContain("half-written");
+  });
+
+  // An install that succeeded and a relaunch that did not: the new bundle is on disk, so the
+  // line says to reopen the app rather than that the update failed.
+  it("says the update is installed when only the relaunch failed", SLOW, async () => {
+    const shell = await bootDevice({
+      "plugin:updater|check": { rid: 7, version: "9.9.9" },
+      "plugin:updater|download_and_install": null,
+      "plugin:process|restart": () => {
+        throw new Error("relaunch refused");
+      },
+    });
+    await invoked(shell, "plugin:process|restart");
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
+    expect(errors(shell).at(-1)).toBe(t().status.updateRestartFailed("relaunch refused"));
   });
 
   // The Preferences lock covers the check and its confirm, not the download an accepted update

@@ -3888,7 +3888,9 @@ PNG / PDF 出力をツールバーから隠す (`src/core/env.ts` の `DEMO` フ
 ダウンロード → インストール → 再起動する。ダウンロードには全体の期限 (`platform.ts` の
 `UPDATE_DOWNLOAD_TIMEOUT_MS`) をプラグインのリクエストタイムアウトとして渡す — 確認が返す更新は自前の期限を
 持たないので、無いと止まったダウンロードがいつまでも決着しない。期限を越えたダウンロードは失敗し、他の失敗と
-同じく報告する。ブラウザ / デモビルドでは `DEMO` 分岐で無効化され、関連コードはデッドコードとして除去される。
+同じく報告する。受諾後の失敗は何がなぜ失敗したかを示す: ダウンロードかインストール
+(`status.updateInstallFailed`。原因付き) か、インストールは成功した後の再起動 (`status.updateRestartFailed`。
+アプリを開き直すよう案内する) か。ブラウザ / デモビルドでは `DEMO` 分岐で無効化され、関連コードはデッドコードとして除去される。
 
 配信は GitHub Releases を使う。`tauri.conf.json` の `bundle.createUpdaterArtifacts` を有効化すると
 `tauri-action` が署名済みバンドルと `latest.json` を生成し、`plugins.updater.endpoints` が指す

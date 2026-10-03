@@ -5048,10 +5048,16 @@ async function checkForUpdates(): Promise<UpdateCheckOutcome> {
 async function installAccepted(update: UpdateInfo): Promise<void> {
   try {
     await installUpdate(update.rid);
-    // The new bundle is installed; relaunch into it. Nothing runs past here.
+  } catch (err) {
+    showError(t().status.updateInstallFailed(errorText(err)));
+    return;
+  }
+  // The new bundle is installed; relaunch into it. Nothing runs past here. A relaunch that
+  // fails leaves the installed bundle waiting for the next start, which its line says.
+  try {
     await restartApp();
-  } catch {
-    showError(t().prefs.updateCheckFailed);
+  } catch (err) {
+    showError(t().status.updateRestartFailed(errorText(err)));
   }
 }
 

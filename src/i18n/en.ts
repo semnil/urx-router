@@ -1017,6 +1017,9 @@ export const en = {
     saveError: (message: string): string => `Save error: ${message}`,
     exportError: (message: string): string => `Export error: ${message}`,
     updateDownloading: tr("Downloading update… the app will restart"),
+    updateInstallFailed: (message: string): string => `The update could not be downloaded and installed: ${message}`,
+    updateRestartFailed: (message: string): string =>
+      `The update was installed, but the app could not restart (${message}). Quit the app and open it again to use the new version.`,
   },
   confirm: {
     discard: tr("You have unsaved changes. Discard them?"),

@@ -4411,7 +4411,9 @@ same way as the dialog calls (no added npm runtime dependency). When an update e
 dialog, then downloads, installs, and restarts. The download carries a total deadline
 (`UPDATE_DOWNLOAD_TIMEOUT_MS` in `platform.ts`), passed to the plugin as its request timeout — the update
 a check returns carries none of its own, so a stalled download would otherwise never settle; a download
-that outlives it fails and is reported like any other. Browser / demo builds disable this via the `DEMO`
+that outlives it fails and is reported like any other. A failure after the accept names what failed and
+why: the download or install (`status.updateInstallFailed`, with the cause), or the relaunch after an install
+that succeeded (`status.updateRestartFailed`, which says to reopen the app). Browser / demo builds disable this via the `DEMO`
 branch, which is eliminated as dead code.
 
 Distribution rides on GitHub Releases. Enabling `bundle.createUpdaterArtifacts` in `tauri.conf.json` makes

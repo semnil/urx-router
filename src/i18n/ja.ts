@@ -794,6 +794,9 @@ export const ja: Messages = {
     saveError: (message: string): string => `保存エラー: ${message}`,
     exportError: (message: string): string => `出力エラー: ${message}`,
     updateDownloading: "更新をダウンロード中… 完了後にアプリを再起動します",
+    updateInstallFailed: (message: string): string => `更新をダウンロード・インストールできませんでした: ${message}`,
+    updateRestartFailed: (message: string): string =>
+      `更新はインストールしましたが、アプリを再起動できませんでした (${message})。新しいバージョンを使うにはアプリを終了して開き直してください。`,
   },
   confirm: {
     discard: "保存していない変更があります。破棄してよろしいですか?",
