@@ -1049,8 +1049,10 @@ export class Console {
    * the focus to the next / previous row that takes it, wrapping at the ends, and Home / End to
    * the first / last. A row that cannot be picked takes no focus, so it is passed over. Tab still
    * walks the rows and leaves the list; a key held with a command modifier is left alone.
+   * `ends` false answers Down / Up alone and leaves Home / End to the focused control — the SEND
+   * PAN knobs, walked by Down / Up while Left / Right step the focused one's value.
    */
-  private wireRowKeys(list: HTMLElement): void {
+  private wireRowKeys(list: HTMLElement, ends = true): void {
     list.addEventListener("keydown", (e) => {
       if (isChord(e)) return;
       const rows = focusables(list);
@@ -1061,9 +1063,9 @@ export class Console {
           ? (at + 1) % rows.length
           : e.key === "ArrowUp"
             ? (at - 1 + rows.length) % rows.length
-            : e.key === "Home"
+            : ends && e.key === "Home"
               ? 0
-              : e.key === "End"
+              : ends && e.key === "End"
                 ? rows.length - 1
                 : null;
       if (to === null) return;
@@ -1464,6 +1466,7 @@ export class Console {
     who.textContent = this.toStripModel(stripId).label;
     ph.append(cat, who);
     const grid = el("div", "pcols");
+    this.wireRowKeys(grid, false);
     for (const target of this.sendSlots()) {
       if (!this.isMixBus(target) || !this.hasSend(stripId, target)) continue;
       const pcol = el("div", "pcol");
@@ -1482,7 +1485,8 @@ export class Console {
         busFixed ? t().inspector.busFixedSend : panLinked ? t().inspector.panLinked : undefined,
       );
       // partnerSync off: the mirror is handled by commit; a re-render would tear down
-      // this popover, and no partner send-pan control is on screen.
+      // this popover, and no partner send-pan control is on screen. Horizontal: the
+      // knob steps on Left / Right, and Up / Down walk the popover's knobs.
       const { knob, val } = this.buildKnob(
         spec,
         SEND_LABEL[target],
@@ -1490,6 +1494,7 @@ export class Console {
         "rv",
         controlId(stripId, "pan", target),
         false,
+        true,
       );
       pcol.append(capEl, knob, val);
       grid.append(pcol);
@@ -3704,8 +3709,9 @@ export class Console {
 
   // The knob primitive: the con-knob element + its value span (readonly / aria /
   // tabindex plumbing), wired via wireKnob. addKnob wraps it in the head's con-gain
-  // box; the SEND PAN popover wraps it in a pcol (with a "rv" value class). A
-  // device-locked knob shows its value but takes no input (wireKnob skips handlers).
+  // box; the SEND PAN popover wraps it in a pcol (with a "rv" value class) and makes it
+  // `horizontal`. A device-locked knob shows its value but takes no input (wireKnob
+  // skips handlers).
   private buildKnob(
     k: KnobSpec,
     ariaLabel: string,
@@ -3713,12 +3719,14 @@ export class Console {
     valCls: string,
     midiId?: string,
     partnerSync = true,
+    horizontal = false,
   ): { knob: HTMLElement; val: HTMLElement } {
     const knob = el("div", "con-knob" + (k.readonlyTitle ? " readonly" : ""));
     knob.setAttribute("role", "slider");
     knob.setAttribute("aria-label", ariaLabel);
     knob.setAttribute("aria-valuemin", String(k.min));
     knob.setAttribute("aria-valuemax", String(k.max));
+    if (horizontal) knob.setAttribute("aria-orientation", "horizontal");
     knob.dataset.ctl = midiId ?? "knob:" + ariaLabel;
     knob.append(el("i", "ind"));
     const val = el("span", valCls);
@@ -3728,7 +3736,7 @@ export class Console {
     } else {
       knob.tabIndex = 0;
     }
-    this.wireKnob(knob, val, k, id, midiId, partnerSync);
+    this.wireKnob(knob, val, k, id, midiId, partnerSync, horizontal);
     return { knob, val };
   }
 
@@ -3738,7 +3746,8 @@ export class Console {
   // `partnerSync` (default on) re-renders after a linked-pair edit so the partner
   // strip's head knob catches up; the SEND PAN popover knob turns it OFF, since a
   // render would tear the popover down and no partner send-pan control is on screen
-  // (the plan mirror via `commit` is enough).
+  // (the plan mirror via `commit` is enough). `horizontal` steps on Left / Right
+  // alone and leaves Up / Down to the container; otherwise both axes step.
   private wireKnob(
     knob: HTMLElement,
     val: HTMLElement,
@@ -3746,6 +3755,7 @@ export class Console {
     id: string,
     midiId?: string,
     partnerSync = true,
+    horizontal = false,
   ): void {
     const angle = k.angle ?? ((v: number): number => -135 + ((v - k.min) / (k.max - k.min)) * 270);
     // Step for an interaction: fine while Shift is held — the event's own modifier
@@ -3807,8 +3817,8 @@ export class Console {
     knob.addEventListener("keydown", (e) => {
       if (this.midiLearnKey(e, midiId)) return;
       const st = stepFor(e);
-      if (e.key === "ArrowUp" || e.key === "ArrowRight") stepBy(1, st);
-      else if (e.key === "ArrowDown" || e.key === "ArrowLeft") stepBy(-1, st);
+      if (e.key === "ArrowRight" || (!horizontal && e.key === "ArrowUp")) stepBy(1, st);
+      else if (e.key === "ArrowLeft" || (!horizontal && e.key === "ArrowDown")) stepBy(-1, st);
       else return;
       e.preventDefault();
       syncPartner();

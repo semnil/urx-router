@@ -493,6 +493,41 @@ test("the PAN ▾ button opened from the keyboard puts the focus on the first SE
   await expect(btn).toHaveAttribute("aria-expanded", "false");
 });
 
+// Inside the popover Up / Down walk the knobs, wrapping at the ends, and Left / Right step the
+// focused knob's value; Tab still reaches them.
+test("the arrow keys walk the SEND PAN knobs on Up / Down and step the focused one on Left / Right", async ({
+  page,
+}) => {
+  const pop = page.locator(".con-spop");
+  const knob = (mix: string) => pop.locator(".pcol", { hasText: mix }).locator(".con-knob");
+  const val = (mix: string) => pop.locator(".pcol", { hasText: mix }).locator(".rv");
+  await strip(page, "CH 1").locator(".con-panbtn").focus();
+  await page.keyboard.press("Enter");
+  await expect(knob("MIX 1")).toBeFocused();
+  await expect(val("MIX 1"), "the premise: a fresh send is centred").toHaveText("C");
+  await expect(val("MIX 2"), "the premise: a fresh send is centred").toHaveText("C");
+
+  await page.keyboard.press("ArrowDown");
+  await expect(knob("MIX 2")).toBeFocused();
+  await expect(val("MIX 1"), "the walk stepped nothing").toHaveText("C");
+  await page.keyboard.press("ArrowDown");
+  await expect(knob("MIX 1"), "down from the last knob is the first").toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(knob("MIX 2"), "up from the first knob is the last").toBeFocused();
+  await expect(val("MIX 2")).toHaveText("C");
+
+  await page.keyboard.press("ArrowLeft");
+  await expect(val("MIX 2")).toHaveText("L1");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await expect(val("MIX 2")).toHaveText("R1");
+  await expect(knob("MIX 2")).toBeFocused();
+  await expect(val("MIX 1")).toHaveText("C");
+
+  await page.keyboard.press("Shift+Tab");
+  await expect(knob("MIX 1"), "Tab still walks the knobs").toBeFocused();
+});
+
 // A device-side change to CH 1 rebuilds its strip under an open SEND PAN popover and re-opens
 // the popover against the fresh button. The button that had the focus is removed by that
 // rebuild, which is not the operator moving the focus: the popover stays open.
