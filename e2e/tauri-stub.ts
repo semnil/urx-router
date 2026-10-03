@@ -9,9 +9,20 @@ import type { ModelId } from "../src/models/types";
  * For a spec that needs a connected device (reads, writes, dialogs), use
  * stubTauriDevice below. Specs needing genuinely stateful handlers (midi.spec.ts
  * captures the input channel and records sent bytes) keep their own stub.
+ *
+ * Every answer settles in a microtask unless `opts.laterTask` is set, which makes each one
+ * settle on a task of its own, in the order asked — as the shell's IPC answers. A microtask
+ * answer settles between two listeners of the native event whose handler sent the command,
+ * so a chain of awaited commands started by one listener runs to its end before the next
+ * listener of that event; a case whose subject is that ordering sets the option.
  */
-export async function stubTauriBoot(page: Page, commands: Record<string, unknown> = {}): Promise<void> {
-  await page.addInitScript((extra) => {
+export async function stubTauriBoot(
+  page: Page,
+  commands: Record<string, unknown> = {},
+  opts: { laterTask?: boolean } = {},
+): Promise<void> {
+  const arg = { extra: commands, laterTask: opts.laterTask ?? false };
+  await page.addInitScript(({ extra, laterTask }) => {
     localStorage.setItem("urx-lang", "en");
     localStorage.setItem("urx-model", "URX44V");
     localStorage.setItem("urx-disclaimer-accepted", "1"); // skip the consent gate
@@ -28,18 +39,29 @@ export async function stubTauriBoot(page: Page, commands: Record<string, unknown
     // after it is an absence of anything at all.
     const invokes: string[] = [];
     (window as unknown as { __urxInvokes: string[] }).__urxInvokes = invokes;
+    // One message-port task per answer, in the order asked, with no timer clamp between them.
+    const port = new MessageChannel();
+    const due: Array<() => void> = [];
+    port.port1.onmessage = () => due.shift()?.();
+    const settle = (answer: () => void): void => {
+      if (!laterTask) return answer();
+      due.push(answer);
+      port.port2.postMessage(null);
+    };
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
       Channel: class {
         onmessage: (data: unknown) => void = () => {};
       },
       invoke: (cmd: string) => {
         invokes.push(cmd);
-        return cmd in responses
-          ? Promise.resolve(responses[cmd])
-          : Promise.reject(new Error(`stub: unhandled command ${cmd}`));
+        return new Promise((resolve, reject) =>
+          settle(() =>
+            cmd in responses ? resolve(responses[cmd]) : reject(new Error(`stub: unhandled command ${cmd}`)),
+          ),
+        );
       },
     };
-  }, commands);
+  }, arg);
 }
 
 /**
