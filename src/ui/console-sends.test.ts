@@ -15,6 +15,7 @@ import { sendConnection } from "../core/plan";
 import type { ConsoleMidiHooks } from "./console";
 import { BUS_TYPE_FIXED, PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { t } from "../i18n";
+import { defaultPlan } from "../models/initial-state";
 
 let h: ConsoleHost;
 
@@ -1136,5 +1137,84 @@ describe("a popover the keyboard opens", () => {
     document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
     focusout(row, null);
     expect(tapPop().hidden, "the press is over").toBe(true);
+  });
+});
+
+// Inside a popover's list the arrow keys walk the rows, the way the toolbar menus answer them:
+// Down / Up to the next / previous row, wrapping at the ends, Home / End to the first / last. A
+// row that cannot be picked takes no focus and is passed over. Tab still reaches the rows.
+describe("the arrow keys inside a popover's list", () => {
+  const tapBadge = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-tap")!;
+  const focused = (): HTMLElement => document.activeElement as HTMLElement;
+
+  it("walk the meter point's rows, wrapping at the ends", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    const rows = [...h.host.querySelectorAll<HTMLElement>(".con-tappop .crow")];
+    expect(rows.length, "the premise: a list to walk").toBeGreaterThan(2);
+    const start = rows.indexOf(focused());
+    expect(start, "the premise: the focus is on a row").toBeGreaterThanOrEqual(0);
+
+    expect(key(focused(), "ArrowDown").defaultPrevented).toBe(true);
+    expect(focused()).toBe(rows[(start + 1) % rows.length]);
+    key(focused(), "ArrowUp");
+    expect(focused()).toBe(rows[start]);
+    key(focused(), "End");
+    expect(focused()).toBe(rows[rows.length - 1]);
+    key(focused(), "ArrowDown");
+    expect(focused(), "down from the last row is the first").toBe(rows[0]);
+    key(focused(), "ArrowUp");
+    expect(focused(), "up from the first row is the last").toBe(rows[rows.length - 1]);
+    key(focused(), "Home");
+    expect(focused()).toBe(rows[0]);
+  });
+
+  it("leave a key held with a command modifier, and any other key, to the row", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    const row = focused();
+    expect(key(row, "ArrowDown", { metaKey: true }).defaultPrevented).toBe(false);
+    expect(key(row, "ArrowRight").defaultPrevented).toBe(false);
+    expect(focused()).toBe(row);
+  });
+
+  // CH 1 holding the compander takes the one slot it has, so CH 2's INS FX list carries rows that
+  // take no focus between the ones that do.
+  it("pass over the INS FX rows that cannot be picked", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 1793 };
+    h = consoleHost({ plan });
+    const opener = h.strip("ch2").root.querySelector<HTMLElement>(".con-ifxopen")!;
+    opener.focus();
+    key(opener, "Enter");
+    const list = h.host.querySelector<HTMLElement>(".con-ifxpop .ilist")!;
+    const all = [...list.querySelectorAll<HTMLElement>(".irow")];
+    const live = all.filter((r) => r.tabIndex === 0);
+    expect(all.length - live.length, "the premise: rows that cannot be picked").toBeGreaterThan(0);
+    expect(live.length, "the premise: more than one row to walk").toBeGreaterThan(1);
+    expect(live).toContain(focused());
+
+    const seen: HTMLElement[] = [];
+    key(focused(), "Home");
+    for (let i = 0; i < live.length; i++) {
+      seen.push(focused());
+      key(focused(), "ArrowDown");
+    }
+    expect(seen).toEqual(live);
+    expect(focused(), "and round to the first again").toBe(live[0]);
+  });
+
+  it("walk the EFFECT TYPE rows of an FX channel", () => {
+    h = consoleHost();
+    const opener = h.strip("bus.fx1").root.querySelector<HTMLElement>(".con-fxopen")!;
+    opener.focus();
+    key(opener, "Enter");
+    const rows = [...h.host.querySelectorAll<HTMLElement>(".con-ifxpop .ilist .irow")];
+    const start = rows.indexOf(focused());
+    expect(start).toBeGreaterThanOrEqual(0);
+    key(focused(), "ArrowDown");
+    expect(focused()).toBe(rows[(start + 1) % rows.length]);
   });
 });
