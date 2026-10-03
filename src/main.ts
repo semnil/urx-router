@@ -1752,6 +1752,10 @@ const inspectorActions = {
         : patch.panLink !== undefined && patch.panLink !== (prev?.panLink === true)
           ? sendPansToSources(plan, id)
           : [];
+    const fx = nodeParamEffects(patch, prev);
+    // A COMP/EQ Type change loads the destination bank, ahead of the pair mirror for the
+    // reason the transition above is: the partner takes the settled bank.
+    if (fx.resetCompEqBank) resetCompEqBank(id, patch.compEqType as number);
     // A STEREO-linked pair moves as one: copy this channel's params to the partner
     // (the pair-level Signal Type / PAN-BAL fields stay on the primary).
     const mirrored = mirrorLinkedPair(getModel(modelId), plan, id);
@@ -1792,12 +1796,11 @@ const inspectorActions = {
     if (insFxMirrored) for (const key of INSERT_FX_PAIR_KEYS) mirroredKeys.add(key);
     if (partner) for (const name of mirroredKeys) keys.push(nodeParamContestPath(partner, name));
     markChanged("ui", keys);
-    // Two of the side effects below write the plan AFTER markChanged took the ledger
-    // sample, so their keys would land in whatever samples next — under live follow a
-    // device notify, which invariant 13 then reads as the device authoring a key the
-    // operator moved. Re-sampled as this edit once the last of them has run.
+    // The pair snap below writes the plan AFTER markChanged took the ledger sample, so its
+    // keys would land in whatever samples next — under live follow a device notify, which
+    // invariant 13 then reads as the device authoring a key the operator moved. Re-sampled
+    // as this edit once it has run.
     let lateWrite = false;
-    const fx = nodeParamEffects(patch, prev);
     // Linking a pair snaps its partner next to the kept node so the tie isn't drawn
     // across a gap an earlier manual move may have opened.
     if (fx.alignStereoPair) {
@@ -1808,10 +1811,6 @@ const inspectorActions = {
     if (fx.repaintWires) graph.repaintWires();
     if (fx.rerender) graph.render();
     if (mirrored || insFxMirrored) consoleView.refresh();
-    if (fx.resetCompEqBank) {
-      resetCompEqBank(id, patch.compEqType as number);
-      lateWrite = true;
-    }
     if (lateWrite) traceProbe?.sample("ui");
     if (fx.refreshInspector) refreshInspector();
   },

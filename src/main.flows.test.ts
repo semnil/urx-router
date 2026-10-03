@@ -1297,6 +1297,40 @@ describe("editing a node through the inspector", () => {
     expect(document.activeElement).toBe(after[at]);
   });
 
+  // A STEREO-linked pair holds one bank on the unit, so the reset the type change mirrors
+  // has to reach both members: the partner takes the edited member's settled record rather
+  // than keeping the outgoing bank's section ONs and Rec Point.
+  it("resets both members of a linked pair when the type enters SSMCS", async () => {
+    await boot();
+    selectNode("ch1");
+    const signalType = row("Signal Type").querySelector<HTMLSelectElement>("select")!;
+    signalType.value = "1"; // STEREO
+    signalType.dispatchEvent(new Event("change", { bubbles: true }));
+    const recPoint = (): HTMLSelectElement => row(t().inspector.recPoint).querySelector<HTMLSelectElement>("select")!;
+    recPoint().value = String(REC_POINT_PRE_EQ);
+    recPoint().dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_EQ)), APP_SETTLE);
+    const type = row(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = String(COMP_EQ_SSMCS);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_COMP)), APP_SETTLE);
+
+    const saves = vi.mocked(saveTextDocument).mock.calls.length;
+    $("btn-save").click();
+    await vi.waitFor(() => expect(vi.mocked(saveTextDocument).mock.calls.length).toBe(saves + 1), APP_SETTLE);
+    const saved = JSON.parse(vi.mocked(saveTextDocument).mock.calls.at(-1)![1]) as {
+      nodeParams: Record<string, Record<string, unknown>>;
+    };
+    const bank = (id: string) => {
+      const np = saved.nodeParams[id];
+      return { compEqType: np.compEqType, compOn: np.compOn, eqOn: np.eqOn, recPoint: np.recPoint, ssmcs: np.ssmcs };
+    };
+    expect(saved.nodeParams.ch1.stereoLink, "the premise: the pair is linked").toBe(true);
+    expect(bank("ch1").compOn).toBe(true);
+    expect(bank("ch1").recPoint).toBe(REC_POINT_PRE_COMP);
+    expect(bank("ch2")).toEqual(bank("ch1"));
+  });
+
   it("moves a PRE EQ rec point to PRE COMP when the channel enters SSMCS", async () => {
     await boot();
     selectNode("ch1");
