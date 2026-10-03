@@ -48,6 +48,25 @@ test("opens on the values read from the device and writes nothing", async ({ pag
   expect(await strWritesOf(page)).toEqual([]);
 });
 
+// A Time Zone index past the city list is the unit's own state — the broker stores one
+// verbatim — and not the nearest city. Shown as that city, nothing was pending for it and
+// choosing the city wrote nothing, so the unit stayed where it was.
+test("a time zone past the city list opens as unknown, and the city picked for it is written", async ({ page }) => {
+  await stubTauriDevice(page, { values: { ...DEVICE_VALUES, [TIME_ZONE]: 200 } });
+  await page.goto("/");
+  await openSetup(page);
+
+  await expect(page.locator("#device-setup-timezone")).toHaveValue("200");
+  await expect(page.locator("#device-setup-timezone option:checked")).toHaveText("unknown (200)");
+  await expect(page.locator("#device-setup-apply")).toBeDisabled();
+
+  await chooseOption(page.locator("#device-setup-timezone"), "153");
+  await expect(page.locator("#device-setup-pending")).toHaveText("1 unapplied change");
+  await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
+  expect(await writesOf(page)).toEqual([[TIME_ZONE, 153]]);
+});
+
 // Brightness 0 is the unit's own floor, not a dump artefact (hardware: the LCD
 // stays readable there). With the floor at 1 the screen coerced the value it read
 // on open, so a unit sitting at 0 was reported as 1 and 0 could never be sent back.

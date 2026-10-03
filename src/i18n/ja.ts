@@ -141,6 +141,7 @@ export const ja: Messages = {
     param2: "Parameter 2",
     knobsNote: "BANK は本体のバンク切替と同じ単位です。",
     unset: "—",
+    unknownValue: (v: number | string): string => `不明 (${v})`,
   },
   midi: {
     menuItem: "MIDI コントロール",

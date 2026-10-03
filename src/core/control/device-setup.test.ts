@@ -154,6 +154,32 @@ describe("diffDeviceSetup", () => {
     expect(writes).toEqual([{ kind: "num", name: "TIME_ZONE", y: 0, value: TIME_ZONE_CITIES.length - 1 }]);
   });
 
+  // The reading is the baseline as the unit reported it. Coerced as well, an index past the
+  // catalog read as its nearest entry: nothing was pending for it, and choosing that entry
+  // wrote nothing either, so the unit stayed where it was.
+  it("compares against the reading itself, so a value off the catalog is written only once changed", () => {
+    const read = setup({ timeZone: 200, autoPowerOffTime: 30 });
+    expect(diffDeviceSetup(V, read, structuredClone(read)), "nothing edited").toEqual([]);
+    expect(diffDeviceSetup(V, read, { ...read, timeZone: TIME_ZONE_CITIES.length - 1 })).toEqual([
+      { kind: "num", name: "TIME_ZONE", y: 0, value: TIME_ZONE_CITIES.length - 1 },
+    ]);
+    expect(diffDeviceSetup(V, read, { ...read, brightness: 3 }), "another row").toEqual([
+      { kind: "num", name: "BRIGHTNESS", y: 0, value: 3 },
+    ]);
+  });
+
+  it("writes all three columns when an unknown function is cleared to No Assign", () => {
+    const read = setup();
+    read.knobs[0] = { fn: "Warp Drive", p1: "", p2: "" };
+    const next = structuredClone(read);
+    next.knobs[0] = { ...UDK_UNASSIGNED };
+    expect(diffDeviceSetup(V, read, next)).toEqual([
+      { kind: "str", name: "UDK_FUNCTION", y: 0, value: "No Assign" },
+      { kind: "str", name: "UDK_PARAM1", y: 0, value: "" },
+      { kind: "str", name: "UDK_PARAM2", y: 0, value: "" },
+    ]);
+  });
+
   it("normalizes an inconsistent triple before sending it", () => {
     const knobs = defaultDeviceSetup().knobs.slice();
     knobs[0] = { fn: "Oscillator", p1: "Phones 1", p2: "Level" };
@@ -297,10 +323,14 @@ describe("readDeviceSetup", () => {
     expect(setup.knobs[0].fn).toBe("Oscillator");
   });
 
-  it("reduces a function the catalog does not have to No Assign", async () => {
+  // The unit stores and shows an unknown Function verbatim, which is not the state No Assign
+  // is, so the reading keeps it: reduced to No Assign here, the screen named an assignment
+  // the unit was not on, and choosing No Assign to clear it sent nothing.
+  it("keeps a function the catalog does not have as the unit holds it, reading no parameter", async () => {
     strFor.set(`${PARAMS.UDK_FUNCTION.id}:0`, "Warp Drive");
     const setup = await readDeviceSetup(V);
-    expect(setup.knobs[0]).toEqual({ ...UDK_UNASSIGNED });
+    expect(setup.knobs[0]).toEqual({ fn: "Warp Drive", p1: "", p2: "" });
+    expect(vi.mocked(vdGetStr).mock.calls.filter(([id, , y]) => id === PARAMS.UDK_PARAM1.id && y === 0)).toEqual([]);
   });
 
   // A partial read cannot be diffed against without inviting a write of values that

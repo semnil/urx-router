@@ -515,6 +515,13 @@ test("the device setup screen shows every page, on the model that has it and the
   await expect(page.locator("#device-setup-pending")).toContainText("unapplied changes");
   await inv.take(page, "#device-setup-modal");
 
+  // A unit holding a Time Zone index past the city list, which the screen offers as unknown.
+  await stubTauriDevice(page, { values: { 831: 200 } });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await openSetup();
+  await inv.take(page, "#device-setup-modal");
+
   // The URX22 has neither Date/Time nor HDMI, and says so where those pages were.
   await stubTauriDevice(page, { model: "URX22" });
   await page.goto("/");

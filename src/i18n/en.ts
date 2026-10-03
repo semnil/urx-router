@@ -209,6 +209,7 @@ export const en = {
     param2: dev("Parameter 2"),
     knobsNote: tr("Banks match the unit's own bank switching."),
     unset: tr("—"),
+    unknownValue: (v: number | string): string => `unknown (${v})`,
   },
   midi: {
     menuItem: tr("MIDI control"),

@@ -2990,7 +2990,11 @@ edit → apply:
    disconnects. A read failure leaves the screen **unopened** — a half-established baseline would invite
    applying a diff against values that were never read (see "Aborting on failure").
 2. Edits accumulate in the modal. A row whose value differs from what the device reported takes the
-   accent dot, and the footer counts the pending settings.
+   accent dot, and the footer counts the pending settings. The screen holds the reading **as the unit
+   reported it**: a value the app's catalog does not have — a Time Zone index past the city list, a knob
+   Function string the unit stores verbatim — is offered as `unknown (N)` rather than shown as the nearest
+   entry, and the diff compares the draft against that reading. An edit coerces only the field it sets,
+   so a value off the catalog is written only once the operator picks something for that row.
 3. `Apply to device` connects, sends **only the differences**, and disconnects. Only a clean apply moves
    the baseline; after a failure the draft still differs from what the device holds, which is what a
    retry needs.
