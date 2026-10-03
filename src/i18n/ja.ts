@@ -707,8 +707,8 @@ export const ja: Messages = {
     selfTestIncomplete: (n: number): string =>
       `セルフテスト中断: 停止した時点で ${n} 件が差分のままです — レポートを確認してください`,
     selfTestRestoreFail: "セルフテスト: デバイスが復元されていない可能性があります — 再度取得して確認してください",
-    selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
-      `セルフテストの推測: 確認 ${confirmed} 件・否定 ${refuted} 件・検証不能 ${untestable} 件`,
+    selfTestUnverified: (confirmed: number, roundTripped: number, refuted: number, untestable: number): string =>
+      `セルフテストの推測: 確認 ${confirmed} 件・往復のみ ${roundTripped} 件・否定 ${refuted} 件・検証不能 ${untestable} 件`,
     selfTestError: (message: string): string => `セルフテストのエラー: ${message}`,
     liveConnecting: "ライブ同期のため接続中…",
     liveOn: (model: string, n: number): string => `ライブ同期 オン · ${model} · ${n} 件読込`,

@@ -15,7 +15,15 @@ vi.mock("../platform", () => ({
 }));
 
 import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
-import { auditUnverified, channelControl, eqOneKnob, inputEq, planToCommands, unverifiedAddresses } from "./translate";
+import {
+  auditUnverified,
+  channelControl,
+  eqOneKnob,
+  inputEq,
+  planToCommands,
+  UNVERIFIED_MAPPINGS,
+  unverifiedAddresses,
+} from "./translate";
 import { planProblems } from "../plan-validate";
 import {
   denormalizeInsertFx,
@@ -1186,8 +1194,12 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(verdicts.refuted).toBe(0);
     expect(verdicts.untestable).toBeGreaterThan(0);
     expect(formatSelfTestReport(report)).not.toContain("REFUTED");
-    // Per address, not a blanket downgrade: the readable guesses still confirm.
-    expect(verdicts.confirmed).toBeGreaterThan(0);
+    // Per address, not a blanket downgrade: "unread" names the one guess whose own read
+    // failed and no other…
+    expect(report.unverified.filter((u) => u.outcome === "unread").map((u) => u.key)).toEqual(["hiz-channel"]);
+    // …and none is credited with a round trip either: the hi-Z read fails in every pass, so
+    // no pass in this run completed, and a completed pass is what a round trip rests on.
+    expect(verdicts.confirmed + verdicts.roundTripped).toBe(0);
     // What a read-stopped residual actually contains, which is the opposite of what it
     // sounds like: `diffPlan` keeps reading past a failure, so the entries left are ones
     // that WERE read and did differ, and the address that could not be read is not among
@@ -1371,7 +1383,11 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.errors.some((e) => /^restore \d+ command\(s\) never sent/.test(e))).toBe(true);
   });
 
-  it("confirms every unverified guess on a faithful device (no collisions)", async () => {
+  // Every guess registered today asks which instance an address reaches or what a value
+  // means there, and writing y and reading y back passes whichever one it is. So a faithful
+  // device round-trips all four and confirms none: a CONFIRMED here would be the promotion
+  // to "verified on hardware" for a question the run never asked.
+  it("reports every unverified guess as round-tripped, not confirmed, on a faithful device", async () => {
     installMock22(seed22());
     const report = await runSelfTest(m22, 0);
     expect(report.device).toBe("URX22");
@@ -1379,21 +1395,72 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.unverified.map((u) => u.key).sort()).toEqual(
       ["dgain-urx22", "hiz-channel", "input-ports", "stereo-block"].sort(),
     );
-    for (const u of report.unverified) {
-      expect(u.outcome).not.toBe("collision");
-      // A round trip confirms every guess on a faithful device, which is why CONFIRMED
-      // is not the whole story for a guess about WHICH instance a y addresses: writing y
-      // and reading y back passes whichever one it is. `stereo-block` is still such a
-      // guess — its y is stereoIndexMap's, the same map `ducker-block` rode before it
-      // was accepted outside the round trip on 2026-08-13 (see duckerControl and the
-      // entry's own comment). So a CONFIRMED here means the ids take values, and says
-      // nothing about pair 0 being `ch_3_4` on a URX22.
-      expect(u.outcome).toBe("confirmed");
-    }
+    for (const u of report.unverified) expect(u.outcome, u.key).toBe("roundTripped");
     expect(report.restored).toBe(true);
     // The exported report leads with the per-guess verdicts.
     const md = formatSelfTestReport(report);
     expect(md).toContain("# URX self-test report — URX22");
-    expect(md).toContain("CONFIRMED");
+    expect(md).toContain("ROUND-TRIPPED");
+    expect(md).not.toContain("CONFIRMED");
+    expect(summarizeVerdicts(report.unverified)).toEqual({ confirmed: 0, roundTripped: 4, refuted: 0, untestable: 0 });
+  });
+
+  // …and CONFIRMED is still what a round trip earns where it does answer the question. The
+  // positive control for the branch no entry takes today.
+  it("confirms a guess a round trip settles", async () => {
+    installMock22(seed22());
+    const entry = UNVERIFIED_MAPPINGS.find((m) => m.key === "stereo-block")!;
+    entry.roundTripSettles = true;
+    try {
+      const report = await runSelfTest(m22, 0);
+      expect(report.unverified.find((u) => u.key === "stereo-block")!.outcome).toBe("confirmed");
+      expect(report.unverified.find((u) => u.key === "hiz-channel")!.outcome).toBe("roundTripped");
+    } finally {
+      entry.roundTripSettles = false;
+    }
+  });
+
+  // A capture that could not read a channel leaves the plan nothing to write at that
+  // channel's guess address, so no pass emits it and nothing round-trips there. Counted
+  // from the registry instead, the guess read as round-tripped on the strength of a write
+  // that never went out.
+  it("does not credit a guess whose address no pass wrote", async () => {
+    installMock22(seed22());
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    const hiZ = [...unverifiedAddresses(m22)].find(([, key]) => key === "hiz-channel")!;
+    const [paramId, y] = hiZ[0].split(":").map(Number);
+    let refused = false;
+    vi.mocked(vdGet).mockImplementation((id, x, yy) => {
+      if (id === paramId && yy === y && !refused) {
+        refused = true;
+        return Promise.reject(new Error("response_code 500"));
+      }
+      return realGet(id, x, yy);
+    });
+
+    const report = await runSelfTest(m22, 0);
+
+    expect(refused, "the premise: the capture's read of it failed").toBe(true);
+    expect(
+      vi.mocked(vdSet).mock.calls.filter(([id, , yy]) => id === paramId && yy === y),
+      "the premise: no pass wrote it",
+    ).toEqual([]);
+    expect(report.unverified.find((u) => u.key === "hiz-channel")!.outcome).toBe("unexercised");
+  });
+
+  // Param 22 carries the MONO IN channels' sources; a stereo channel's go out on 209 / 210.
+  // Registered for every channel, the guess held slots no pass ever writes.
+  it.each(["URX22", "URX44"] as const)("%s: registers only input-ports slots a pass writes", (id) => {
+    const m = getModel(id);
+    const seed = emptyPlan(id);
+    ensureFixedConnections(m, seed);
+    const written = new Set<string>();
+    for (let pass = 0; pass < passesFor(m); pass++) {
+      for (const c of planToCommands(m, perturbedPlan(m, seed, pass)))
+        if (c.x === 0) written.add(`${c.paramId}:${c.y}`);
+    }
+    const slots = [...unverifiedAddresses(m)].filter(([, key]) => key === "input-ports").map(([addr]) => addr);
+    expect(slots.length).toBeGreaterThan(0);
+    expect(slots.filter((addr) => !written.has(addr))).toEqual([]);
   });
 });

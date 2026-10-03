@@ -2915,8 +2915,10 @@ export function planToNameWrites(model: DeviceModel, plan: Plan): NameWrite[] {
 
 // --- Unverified-mapping registry -------------------------------------------
 // Device mappings confirmed only on URX44V (the captured unit) that remain
-// educated guesses on the other models, pending confirmation by an owner via the
-// device self-test. Each entry is self-contained: it resolves the device
+// educated guesses on the other models, pending confirmation by an owner: through
+// the device self-test where a round trip answers the guess's question, and by
+// reading the unit's own screen where it does not (`roundTripSettles`). Each entry
+// is self-contained: it resolves the device
 // addresses it writes on a model (so the self-test can tag a finding with the
 // guess it confirms or refutes), names the param ids it invents (so the static
 // collision audit can vet them), and — when it invents a colliding id — knows how
@@ -2936,6 +2938,12 @@ export interface UnverifiedMapping {
   models: ModelId[];
   /** Device addresses this guess writes on the model (empty if absent on it). */
   addresses(model: DeviceModel): GuessAddress[];
+  /** Whether a round trip answers the guess's question. False where the question is which
+   *  instance an address reaches or what a value means there: a unit stores the value the
+   *  same way whether the guess is right or wrong, so a run where every address held what
+   *  was written reports `roundTripped` rather than `confirmed`. Stated per entry, with no
+   *  default, so a new guess has to say which kind it is. */
+  roundTripSettles: boolean;
   /** Param ids this guess INVENTS — subject to the collision audit. A guess that
    *  only reuses a confirmed param's id (value/instance guess) leaves this empty. */
   guessedIds: number[];
@@ -2948,12 +2956,13 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     // URX22 D.Gain channel→id map is the positional hypothesis (CH3/4, CH5/6,
     // CH7/8, CH9/10 = ids 9, 13, 14, 15 by stereo-pair position — see D_GAIN maps
     // in params.ts). It reuses URX44V-confirmed ids, so it invents none (empty
-    // guessedIds); what is unverified is the assignment on a real URX22. The
-    // self-test writes each channel's sentinel and reads it back to settle it.
+    // guessedIds); what is unverified is the assignment on a real URX22. A round
+    // trip shows the ids take a value, not which channel each one reaches.
     key: "dgain-urx22",
     label: "URX22 D.Gain channel→id map (positional: CH3/4,5/6,7/8,9/10 = 9,13,14,15)",
     models: ["URX22"],
     guessedIds: [],
+    roundTripSettles: false,
     addresses: (model) =>
       [...stereoIndexMap(model).keys()].flatMap((nodeId) => {
         const id = dGainParam(model.id, nodeId);
@@ -2966,10 +2975,13 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     },
   },
   {
+    // Which channel carries the Hi-Z switch. A value that holds at the address says the
+    // address takes one, not that the channel has the switch.
     key: "hiz-channel",
     label: "URX22 Hi-Z (instrument) input channel",
     models: ["URX22"],
     guessedIds: [],
+    roundTripSettles: false,
     addresses: (model) =>
       model.nodes.flatMap((node) => {
         const cc = channelControl(model, node.id);
@@ -2989,19 +3001,28 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     label: "Stereo channel fader/on/pan block (266/267/268)",
     models: ["URX22", "URX44"],
     guessedIds: [STEREO_FADER, STEREO_ON, STEREO_PAN],
+    roundTripSettles: false,
     addresses: (model) => {
       const ys = [...stereoIndexMap(model).values()];
       return [STEREO_FADER, STEREO_ON, STEREO_PAN].flatMap((id) => ys.map((y) => [id, y] as GuessAddress));
     },
   },
   {
+    // Which physical port each value of param 22 names. A permuted numbering stores and
+    // reads back the same, so the round trip says the values are kept, not that each one
+    // names the port the plan means. Param 22 carries the MONO IN channels' sources only —
+    // a stereo channel's go out as STEREO_INPUT_SOURCE_L/R — so those slots are its
+    // addresses.
     key: "input-ports",
     label: "Physical input source port map (param 22 values)",
     models: ["URX22", "URX44"],
     guessedIds: [],
+    roundTripSettles: false,
     addresses: (model) =>
       model.nodes.flatMap((node) =>
-        (channelInputSlots(model, node.id) ?? []).map((s) => [PARAMS.INPUT_SOURCE.id, s] as GuessAddress),
+        node.kind === "channel" && !isStereoChannel(node.id)
+          ? (channelInputSlots(model, node.id) ?? []).map((s) => [PARAMS.INPUT_SOURCE.id, s] as GuessAddress)
+          : [],
       ),
   },
 ];

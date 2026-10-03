@@ -917,8 +917,8 @@ export const en = {
     selfTestIncomplete: (n: number): string =>
       `Self-test did not complete: ${n} param${n === 1 ? "" : "s"} still differed when the run stopped — see the report`,
     selfTestRestoreFail: tr("Self-test: device may not be restored — fetch again to check"),
-    selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
-      `Self-test guesses: ${confirmed} confirmed, ${refuted} refuted, ${untestable} untestable`,
+    selfTestUnverified: (confirmed: number, roundTripped: number, refuted: number, untestable: number): string =>
+      `Self-test guesses: ${confirmed} confirmed, ${roundTripped} round-tripped only, ${refuted} refuted, ${untestable} untestable`,
     selfTestError: (message: string): string => `Self-test error: ${message}`,
     liveConnecting: tr("Connecting for live sync…"),
     liveOn: (model: string, n: number): string => `Live sync on · ${model} · ${n} setting${n === 1 ? "" : "s"} read`,

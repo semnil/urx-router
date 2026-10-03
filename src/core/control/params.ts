@@ -1149,7 +1149,8 @@ export const DELAY_FRAME_RATE_DEFAULT = 5;
 // CH5/6, CH7/8, CH9/10 = positions 0..3) reuse the SAME confirmed ids {9,13,14,15}
 // BY POSITION — CH3/4 = 9, retiring the old free-slot guess (11). This is the
 // leading, meter-corroborated hypothesis but is NOT yet confirmed on a real URX22:
-// tracked in UNVERIFIED_MAPPINGS ("dgain-urx22") and settled by one sentinel write.
+// tracked in UNVERIFIED_MAPPINGS ("dgain-urx22"). A self-test round trip shows the ids
+// take a value, not which channel each one reaches.
 const D_GAIN_URX44V: Record<string, number> = {
   ch_5_6: 9,
   ch_7_8: 13,

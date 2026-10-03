@@ -4415,7 +4415,12 @@ if (!DEMO) {
               : !report.restored
                 ? t().status.selfTestRestoreFail
                 : report.unverified.length
-                  ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
+                  ? t().status.selfTestUnverified(
+                      verdicts.confirmed,
+                      verdicts.roundTripped,
+                      verdicts.refuted,
+                      verdicts.untestable,
+                    )
                   : report.ok
                     ? t().status.selfTestPass(report.written)
                     : // `residual` holds two things once a pass can stop partway: what the

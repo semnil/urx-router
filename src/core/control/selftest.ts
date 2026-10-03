@@ -44,9 +44,10 @@
 // guessed id a confirmed param already owns — that outcome is `collision`, it settles
 // the guess before anything is written, and its writes are suppressed so the test never
 // misaddresses hardware. The rest are exercised, and each round-trip result is reported
-// per guess: confirmed, refuted, or one of the three the round trip did not settle (see
-// UnverifiedOutcome), so an owner can confirm them. This is the live counterpart of that
-// confirmation workflow.
+// per guess: confirmed where a round trip answers the guess's question, round-tripped where
+// it does not (`roundTripSettles`), refuted, or one of the three the round trip did not
+// settle (see UnverifiedOutcome), so an owner can confirm them. This is the live
+// counterpart of that confirmation workflow.
 
 import type { DeviceModel } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
@@ -127,7 +128,12 @@ export interface SelfTestMismatch {
  * contradicted — and every future reason for not-confirmed would have landed there too.
  * REFUTED is a claim about the device; it needs its own evidence.
  *
- *   confirmed   every address round-tripped
+ *   confirmed   every address was written and read back unchanged in a pass that completed,
+ *               for a guess whose question that answers
+ *   roundTripped the same, for a guess whose question it does not answer — which channel an
+ *               address reaches, or what a value means there (`roundTripSettles` false). A
+ *               unit stores the value the same way whether the guess is right or wrong, so
+ *               this is the most a run can say about it, and it is not a confirmation
  *   refuted     at least one did not, in a pass that completed — `mismatches` says which
  *   unread      one of ITS OWN addresses could not be read, so nothing about it round-
  *               tripped. This is the one per-address reason, taken from the failed reads
@@ -139,7 +145,9 @@ export interface SelfTestMismatch {
  *               answered; a read that failed elsewhere says nothing about an address that
  *               read fine. Naming the cause here printed exactly those two lies. The
  *               cause is in Issues, and the difference under "Not settled"
- *   unexercised the guess has no address on this model, so the run never wrote it
+ *   unexercised not every one of its addresses was written and read back in a pass that
+ *               completed: the guess has none on this model, or no pass emitted one (a
+ *               capture that could not read its node leaves the plan nothing to write there)
  *   collision   a confirmed param already owns the guessed id (static audit; the
  *               guess is wrong, and its writes were suppressed for safety)
  *
@@ -147,7 +155,8 @@ export interface SelfTestMismatch {
  * everything and still saw a divergence has settled the guess, and a read failure in
  * some later pass says nothing about the round trip that pass already observed.
  */
-export type UnverifiedOutcome = "confirmed" | "refuted" | "unread" | "incomplete" | "unexercised" | "collision";
+export type UnverifiedOutcome =
+  "confirmed" | "roundTripped" | "refuted" | "unread" | "incomplete" | "unexercised" | "collision";
 
 export interface UnverifiedFinding {
   key: string;
@@ -208,7 +217,7 @@ export interface SelfTestReport {
   traces: SelfTestPassTrace[];
   /** Guessed ids that collide with a confirmed param (static audit; the guess is wrong). */
   collisions: UnverifiedCollision[];
-  /** Per-unverified-mapping outcome; see UnverifiedOutcome for all six. */
+  /** Per-unverified-mapping outcome; see UnverifiedOutcome for all seven. */
   unverified: UnverifiedFinding[];
   /** True when the user cancelled the run before it finished (remaining passes and
    *  the restore are skipped; the device is left in its last silent perturbed state). */
@@ -722,6 +731,9 @@ export async function runSelfTest(
   // carried: how the pass ended is a fact about the pass, and attributing it to each
   // address in the residual claims things the run did not observe (see UnverifiedOutcome).
   const stoppedKeys = new Set<string>();
+  // Guess addresses a pass that completed wrote and read: what `confirmed` and
+  // `roundTripped` rest on. A registered address no pass emitted was never asked about.
+  const compared = new Set<string>();
   // Commands the device reached and refused. `residual` covers the same runs today, but
   // via a coupling in sendConverging rather than as a stated fact (see report.ok).
   let sendFailures = 0;
@@ -850,6 +862,13 @@ export async function runSelfTest(
         : outcomes.some(reachedAndFailed)
           ? "write"
           : null;
+      if (stoppedOn === null) {
+        const unread = new Set(result.unread.map((c) => cmdAddr(c)));
+        for (const c of planToCommands(model, plan)) {
+          const guessAddr = `${c.paramId}:${c.y}`;
+          if (c.x === 0 && addresses.has(guessAddr) && !unread.has(cmdAddr(c))) compared.add(guessAddr);
+        }
+      }
       for (const d of residual) {
         const unverifiedKey = d.command.x === 0 ? addresses.get(`${d.command.paramId}:${d.command.y}`) : undefined;
         if (unverifiedKey) {
@@ -879,9 +898,13 @@ export async function runSelfTest(
     // is known wrong before any hardware; a divergence a complete pass observed settles
     // the guess and nothing later takes it back; short of that, one of its own addresses
     // was unreadable, or it differed in a pass that did not finish — and only the first
-    // of those two is a fact about the guess; a guess with no address on this model was
-    // never tested.
-    const exercised = new Set(addresses.values());
+    // of those two is a fact about the guess; a guess whose every address a completed pass
+    // wrote and read held is confirmed where a round trip answers its question and
+    // round-tripped where it does not; anything short of every address was never tested.
+    const exercised = (key: string): boolean => {
+      const own = [...addresses].filter(([, k]) => k === key).map(([addr]) => addr);
+      return own.length > 0 && own.every((addr) => compared.has(addr));
+    };
     report.unverified = UNVERIFIED_MAPPINGS.filter((m) => m.models.includes(model.id)).map((m) => {
       // Only what a completed pass observed. The outcome already turns on that, but the
       // DETAIL did not: a guess refuted in pass 0 also collected every stopped pass's
@@ -896,8 +919,10 @@ export async function runSelfTest(
             ? "unread"
             : stoppedKeys.has(m.key)
               ? "incomplete"
-              : exercised.has(m.key)
-                ? "confirmed"
+              : exercised(m.key)
+                ? m.roundTripSettles
+                  ? "confirmed"
+                  : "roundTripped"
                 : "unexercised";
       return { key: m.key, label: m.label, outcome, mismatches };
     });
@@ -1177,14 +1202,16 @@ async function restoreUnsent(
 /** Tally the per-guess verdicts in one pass (for the status line / report). */
 export function summarizeVerdicts(unverified: UnverifiedFinding[]): {
   confirmed: number;
+  roundTripped: number;
   refuted: number;
   untestable: number;
 } {
   // No fall-through: "refuted" is counted only where the run said so. It was the
   // default once, which turned every other reason into a claim about the device.
-  const counts = { confirmed: 0, refuted: 0, untestable: 0 };
+  const counts = { confirmed: 0, roundTripped: 0, refuted: 0, untestable: 0 };
   for (const u of unverified) {
     if (u.outcome === "confirmed") counts.confirmed++;
+    else if (u.outcome === "roundTripped") counts.roundTripped++;
     else if (u.outcome === "refuted") counts.refuted++;
     else counts.untestable++;
   }
@@ -1231,8 +1258,11 @@ export function formatSelfTestReport(report: SelfTestReport): string {
         unread: "COULD NOT TEST — one of its addresses could not be read, so nothing about it round-tripped",
         incomplete:
           "COULD NOT TEST — it differed in a pass that did not finish; the difference is under Not settled, and what stopped the run under Issues",
-        unexercised: "COULD NOT TEST — no address on this model, so the run never wrote it",
+        unexercised:
+          "COULD NOT TEST — not every one of its addresses was written and read back (none on this model, or the capture left a pass nothing to write there)",
         confirmed: "CONFIRMED — round-tripped on the device",
+        roundTripped:
+          "ROUND-TRIPPED — every address held what was written, which cannot say which channel or meaning it reached; this does not confirm it",
         refuted: `REFUTED — ${u.mismatches.length} address(es) did not round-trip`,
       }[u.outcome];
       lines.push(`- **${u.label}** (${u.key}): ${verdict}`);
