@@ -227,7 +227,8 @@ carries a one-line map of the same directories and points here.
     flush's refetch await, and not learn),
     reported to the status line once per gated window rather than once per message; MIDI-learn state
     machine, feedback (diff against a sent cache + 300 ms echo suppression while receiving + a one-shot
-    receive-side echo guard for toggles); several mappings sharing one address form a gang (`byKey`) — one
+    receive-side echo guard on every 7-bit address, toggles and continuous controls alike, the plain-CC
+    halves a 14-bit emission lands on included); several mappings sharing one address form a gang (`byKey`) — one
     physical control drives every member (incoming messages fan out to all), while the gang's HEAD owns
     feedback/echo/pickup (`headOf`: the first learned member the current plan can resolve, not simply the
     first learned one, so a mapping for a processor this node no longer holds does not take the role and
