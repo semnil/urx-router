@@ -35,6 +35,7 @@ import { trackCountCeiling } from "../core/constraints";
 import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale, notePanelHeight } from "./graph-text";
 import { sendlessNote } from "./send-fields";
 import { isChord } from "./keys";
+import { preserveFocus } from "./dom";
 import { t } from "../i18n";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -363,6 +364,9 @@ export class Graph {
   // the same plan only: the node it stood on belongs to a replaced plan, and a key still held
   // there must reach nothing in the one that took its place.
   private builtFor: Plan | null = null;
+  // The plan the shelf and the selection bar were each last built for. Focus on a chip or a
+  // bar button is carried across a rebuild of the same plan only, as on the board.
+  private chromeBuiltFor = new WeakMap<HTMLElement, Plan>();
   // Ctrl/Cmd-click builds a multi-selection of nodes to shelve together. The
   // anchor (shown in the inspector) is selection.id; this set holds it plus any
   // others. Empty whenever selection is a connection or null.
@@ -949,12 +953,33 @@ export class Graph {
 
   /** One node of the board is in the tab order at a time. */
   private syncRovingNode(): void {
+    const pick = this.rovingId();
+    for (const [id, el] of this.nodeEls) el.setAttribute("tabindex", id === pick ? "0" : "-1");
+  }
+
+  /** The node the board puts in the tab order. */
+  private rovingId(): string | null {
     const anchor = this.selection?.type === "node" ? this.selection.id : null;
-    const pick =
+    return (
       [this.focusNode, anchor].find((id): id is string => id !== null && this.nodeEls.has(id)) ??
       this.nodeEls.keys().next().value ??
-      null;
-    for (const [id, el] of this.nodeEls) el.setAttribute("tabindex", id === pick ? "0" : "-1");
+      null
+    );
+  }
+
+  /** Rebuild the shelf or the selection bar with `build`, handing keyboard focus on one of
+   *  its buttons to the same button afterwards — a chip by the node it restores, Show all
+   *  and the bar's buttons by their class — for as long as the plan is the one it was last
+   *  built for. A button the rebuild no longer offers takes the focus with it. */
+  private rebuildChrome(bar: HTMLElement, build: () => void): void {
+    const keyOf = (el: HTMLElement): string | null =>
+      el.dataset.node ? `node:${el.dataset.node}` : el.className || null;
+    const restore = preserveFocus(bar, keyOf, (key) =>
+      [...bar.querySelectorAll<HTMLElement>("button")].find((b) => keyOf(b) === key),
+    );
+    build();
+    if (this.chromeBuiltFor.get(bar) === this.plan) restore();
+    this.chromeBuiltFor.set(bar, this.plan);
   }
 
   /** Enter / Space select the focused node as a press does; the arrow keys walk focus through
@@ -2790,6 +2815,9 @@ export class Graph {
    * parent is placed — the child's position derives from it. */
   showNode(id: string): void {
     if (!this.cb.mayEdit()) return;
+    // A chip activated from the keyboard is gone once its node is back, so focus moves on.
+    const fromShelf = this.shelf.contains(document.activeElement);
+    const at = this.shelfChips().findIndex((c) => c.dataset.node === id);
     const parent = this.parentOf(id);
     let changed = this.hidden.delete(id);
     if (parent) {
@@ -2818,14 +2846,27 @@ export class Graph {
       [parent, partner].filter((x): x is string => x !== undefined && x !== null),
     );
     this.select({ type: "node", id });
+    // To the chip that took its place in the row (the last one when it was last), or, with
+    // the shelf now empty, to the node it brought back.
+    if (fromShelf) {
+      const chips = this.shelfChips();
+      const next = chips.length ? chips[Math.min(Math.max(at, 0), chips.length - 1)] : this.nodeEls.get(id);
+      next?.focus({ preventScroll: true });
+    }
     this.cb.onChange();
     this.cb.onStatus(t().status.shownNode(this.labelOf(id)));
+  }
+
+  /** The shelf's chips, in the order it shows them. */
+  private shelfChips(): HTMLButtonElement[] {
+    return [...this.shelf.querySelectorAll<HTMLButtonElement>("button.chip")];
   }
 
   /** Bring every shelved node back and re-frame the diagram. */
   showAll(): void {
     if (!this.hidden.size) return;
     if (!this.cb.mayEdit()) return;
+    const fromShelf = this.shelf.contains(document.activeElement);
     const returning = new Set(this.hidden);
     this.hidden.clear();
     this.commitHidden();
@@ -2844,6 +2885,11 @@ export class Graph {
     this.restackReturning(returning);
     this.render();
     this.fitView();
+    // The shelf closes with every chip and Show all on it, so focus goes to the board's tab stop.
+    if (fromShelf) {
+      const stop = this.rovingId();
+      if (stop !== null) this.nodeEls.get(stop)?.focus({ preventScroll: true });
+    }
     this.cb.onChange();
     this.cb.onStatus(t().status.shownAll);
   }
@@ -3027,6 +3073,10 @@ export class Graph {
    * hidden alongside its (also hidden) parent gets no chip of its own — the
    * parent's chip restores the whole unit. */
   private renderShelf(): void {
+    this.rebuildChrome(this.shelf, () => this.buildShelf());
+  }
+
+  private buildShelf(): void {
     const ids = this.model.nodes
       // Chip every USER-shelved node (not merely hidden — a Track-Count-inactive
       // slot is hidden but gated, not shelved, so it gets no chip). A node whose
@@ -3054,6 +3104,7 @@ export class Graph {
       const chip = document.createElement("button");
       chip.type = "button";
       chip.className = "chip";
+      chip.dataset.node = id;
       chip.style.setProperty("--rail", this.palette.rail[node.kind]);
       chip.title = m.shelf.restore(fullLabel(node));
       const name = document.createElement("span");
@@ -3081,6 +3132,10 @@ export class Graph {
    *  nodes selected (a single selection keeps using the inspector). The hide
    *  button shelves every selected node. */
   private renderSelBar(): void {
+    this.rebuildChrome(this.selbar, () => this.buildSelBar());
+  }
+
+  private buildSelBar(): void {
     // Only count nodes still on the canvas — a stale shelved id never inflates it.
     const ids = [...this.selectedNodes].filter((id) => this.nodeEls.has(id));
     if (ids.length < 2) {

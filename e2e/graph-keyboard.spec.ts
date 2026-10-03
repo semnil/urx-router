@@ -103,3 +103,18 @@ test("the Inspector selects and deletes a wire from the keyboard", async ({ page
   await page.keyboard.press("Enter");
   await expect(wire(page, "in.micline_1_2:out", "ch1:in")).toHaveCount(0);
 });
+
+// Restoring from a chip with Enter takes that chip away: focus goes to the chip that took its
+// place, and from the last one to the node it brought back.
+test("restoring shelved nodes from the keyboard keeps the focus on the shelf, then on the node", async ({ page }) => {
+  for (const id of ["ch1", "ch3"]) {
+    await node(page, id).click();
+    await page.locator("#inspector button.subtle").click();
+  }
+  const chip = (id: string) => page.locator(`.hidden-shelf button.chip[data-node="${id}"]`);
+  await chip("ch1").focus();
+  await page.keyboard.press("Enter");
+  await expect(chip("ch3")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(node(page, "ch3")).toBeFocused();
+});

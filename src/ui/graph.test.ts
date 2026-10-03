@@ -647,6 +647,70 @@ describe("connecting without a drag", () => {
   });
 });
 
+// The shelf and the multi-select bar are rebuilt by every render: a device-follow reflect, an
+// undo, an OS theme flip. Focus on one of their buttons stays on that button.
+describe("focus on the shelf and the selection bar", () => {
+  const chip = (id: string): HTMLButtonElement | null =>
+    fx.host.querySelector<HTMLButtonElement>(`.hidden-shelf button.chip[data-node="${id}"]`);
+  const active = (): Element | null => document.activeElement;
+  const shelve = (plan: Plan): void => void (plan.hidden = ["ch1", "ch3"]);
+
+  it("keeps focus on a chip through refresh, a theme switch and a relocalization", () => {
+    fx = graphFixture({ seed: shelve });
+    chip("ch3")!.focus();
+    fx.graph.refresh();
+    expect(active()).toBe(chip("ch3"));
+    fx.graph.setTheme("light");
+    expect(active()).toBe(chip("ch3"));
+    fx.graph.relocalizeChrome();
+    expect(active()).toBe(chip("ch3"));
+    fx.host.querySelector<HTMLButtonElement>(".shelf-showall")!.focus();
+    fx.graph.refresh();
+    expect(active()).toBe(fx.host.querySelector(".shelf-showall"));
+  });
+
+  it("keeps focus on a selection-bar button through refresh", () => {
+    fx = graphFixture();
+    const g = fx.graph as unknown as { toggleNodeSelection: (id: string) => void };
+    g.toggleNodeSelection("ch1");
+    g.toggleNodeSelection("ch2");
+    fx.host.querySelector<HTMLButtonElement>(".selbar-clear")!.focus();
+    fx.graph.refresh();
+    expect(active()).toBe(fx.host.querySelector(".selbar-clear"));
+  });
+
+  it("does not carry focus onto the shelf of a plan that replaced the one it was on", () => {
+    fx = graphFixture({ seed: shelve });
+    chip("ch3")!.focus();
+    const next = defaultPlan("URX44V");
+    shelve(next);
+    fx.graph.setModel(getModel("URX44V"), next);
+    expect(chip("ch3")).not.toBeNull();
+    expect(active()).not.toBe(chip("ch3"));
+  });
+
+  // Restoring from a chip takes that chip away: focus goes to the chip that took its place,
+  // and from the last chip to the node it brought back.
+  it("moves focus on from a chip it restored, to the next chip and then to the node", () => {
+    fx = graphFixture({ seed: shelve });
+    chip("ch1")!.focus();
+    chip("ch1")!.click();
+    expect(active()).toBe(chip("ch3"));
+    chip("ch3")!.click();
+    expect(active()).toBe(nodeEl(fx.host, "ch3"));
+  });
+
+  it("moves focus to the board's tab stop when Show all closes the shelf", () => {
+    fx = graphFixture({ seed: shelve });
+    const showAll = fx.host.querySelector<HTMLButtonElement>(".shelf-showall")!;
+    showAll.focus();
+    showAll.click();
+    const stop = fx.host.querySelector('g.node[tabindex="0"]');
+    expect(stop).not.toBeNull();
+    expect(active()).toBe(stop);
+  });
+});
+
 describe("hide and show", () => {
   it("shelves a node and gives it a chip", () => {
     fx = graphFixture();

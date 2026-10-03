@@ -3763,7 +3763,10 @@ dims its ring with it, while a badged node's ring sits beside its dimmed body. F
 every rebuild of the node layer (`renderNodes`), a single node's (`repaintNode`) and the re-append that raises the
 selected node, for as long as the board draws the same plan: measured on macOS's WKWebView (2026-10-03), re-appending
 the focused group moved focus to `<body>`, and Tab reached `<g tabindex="0">` with the OS keyboard-navigation setting
-at its default (off).
+at its default (off). The shelf and the selection bar are rebuilt by the same renders and carry focus the same way, a
+chip by the node it restores and Show all and the bar's buttons by their class (`rebuildChrome`); a chip that restores
+its node hands focus to the chip that took its place, or to that node when it was the last, and Show all, which closes
+the shelf, hands it to the board's tab stop.
 
 **Wiring from the keyboard goes through the Inspector.** A node's Routing section lists its wires, and each one the
 board draws is a button that selects it as a press on the wire does (`selectConnection`): focus moves into the wire's
