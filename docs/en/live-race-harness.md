@@ -377,8 +377,8 @@ unguarded reconcile.
 
 ## The fake device's contract
 
-The current E2E stub resolves on the next microtask, so none of the windows above exists. The fake
-must provide the following.
+The current E2E stub answers each command on a later task with no latency of its own, so none of the
+windows above exists. The fake must provide the following.
 
 | Item | Requirement |
 | --- | --- |

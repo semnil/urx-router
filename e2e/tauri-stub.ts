@@ -2,6 +2,37 @@ import type { Page } from "@playwright/test";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "../src/core/control/firmware";
 import type { ModelId } from "../src/models/types";
 
+type AnswerLater = (answer: Promise<unknown>) => Promise<unknown>;
+type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+/**
+ * The answer queue both stubs below settle through: each answer settles on a message-port
+ * task of its own, in the order asked, as the shell's IPC answers — never in the microtask
+ * that sent the command. What a command records (a write, a dialog, a read's value) is taken
+ * when it is sent; only the answer waits. Installed as an init script of its own beside each
+ * stub and looked up when a command is sent, since Playwright does not order init scripts.
+ */
+function installAnswerQueue(): void {
+  const w = window as unknown as { __urxAnswerLater?: AnswerLater };
+  if (w.__urxAnswerLater) return;
+  // One message-port task per answer, with no timer clamp between them.
+  const port = new MessageChannel();
+  const due: Array<() => void> = [];
+  port.port1.onmessage = () => due.shift()?.();
+  const queue = (settle: () => void): void => {
+    due.push(settle);
+    port.port2.postMessage(null);
+  };
+  // The handlers are attached at once, so a refusal is never an unhandled rejection while it waits.
+  w.__urxAnswerLater = (answer) =>
+    new Promise((resolve, reject) => {
+      answer.then(
+        (v) => queue(() => resolve(v)),
+        (e: unknown) => queue(() => reject(e)),
+      );
+    });
+}
+
 /**
  * Boot-time Tauri IPC stub for desktop-only UI: seeds the language / model /
  * consent gate and answers the constant boot-time queries. `commands` extends
@@ -10,19 +41,14 @@ import type { ModelId } from "../src/models/types";
  * stubTauriDevice below. Specs needing genuinely stateful handlers (midi.spec.ts
  * captures the input channel and records sent bytes) keep their own stub.
  *
- * Every answer settles in a microtask unless `opts.laterTask` is set, which makes each one
- * settle on a task of its own, in the order asked — as the shell's IPC answers. A microtask
- * answer settles between two listeners of the native event whose handler sent the command,
- * so a chain of awaited commands started by one listener runs to its end before the next
- * listener of that event; a case whose subject is that ordering sets the option.
+ * Every answer settles on a later task (`installAnswerQueue`). A microtask answer would
+ * settle between two listeners of the native event whose handler sent the command, so a
+ * chain of awaited commands started by one listener would run to its end before the next
+ * listener of that event — an order the shell never produces.
  */
-export async function stubTauriBoot(
-  page: Page,
-  commands: Record<string, unknown> = {},
-  opts: { laterTask?: boolean } = {},
-): Promise<void> {
-  const arg = { extra: commands, laterTask: opts.laterTask ?? false };
-  await page.addInitScript(({ extra, laterTask }) => {
+export async function stubTauriBoot(page: Page, commands: Record<string, unknown> = {}): Promise<void> {
+  await page.addInitScript(installAnswerQueue);
+  await page.addInitScript((extra) => {
     localStorage.setItem("urx-lang", "en");
     localStorage.setItem("urx-model", "URX44V");
     localStorage.setItem("urx-disclaimer-accepted", "1"); // skip the consent gate
@@ -39,29 +65,21 @@ export async function stubTauriBoot(
     // after it is an absence of anything at all.
     const invokes: string[] = [];
     (window as unknown as { __urxInvokes: string[] }).__urxInvokes = invokes;
-    // One message-port task per answer, in the order asked, with no timer clamp between them.
-    const port = new MessageChannel();
-    const due: Array<() => void> = [];
-    port.port1.onmessage = () => due.shift()?.();
-    const settle = (answer: () => void): void => {
-      if (!laterTask) return answer();
-      due.push(answer);
-      port.port2.postMessage(null);
-    };
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
       Channel: class {
         onmessage: (data: unknown) => void = () => {};
       },
       invoke: (cmd: string) => {
         invokes.push(cmd);
-        return new Promise((resolve, reject) =>
-          settle(() =>
-            cmd in responses ? resolve(responses[cmd]) : reject(new Error(`stub: unhandled command ${cmd}`)),
-          ),
+        const later = (window as unknown as { __urxAnswerLater: AnswerLater }).__urxAnswerLater;
+        return later(
+          cmd in responses
+            ? Promise.resolve(responses[cmd])
+            : Promise.reject(new Error(`stub: unhandled command ${cmd}`)),
         );
       },
     };
-  }, arg);
+  }, commands);
 }
 
 /**
@@ -134,6 +152,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
   // tracks the firmware gate (SUPPORTED_SYSTEM_FIRMWARE) automatically on a bump,
   // instead of hardcoding a version that drifts and trips the mismatch dialog.
   const firmware = opts.firmware === undefined ? SUPPORTED_SYSTEM_FIRMWARE : opts.firmware;
+  await page.addInitScript(installAnswerQueue);
   await page.addInitScript(
     (o: DeviceStubOptions) => {
       localStorage.setItem("urx-lang", "en");
@@ -275,6 +294,12 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
             : Promise.reject(new Error(`stub: unhandled command ${cmd}`));
         },
       };
+      // The table above records and answers a command when it is sent; the answer itself settles
+      // through the queue.
+      const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }).__TAURI_INTERNALS__;
+      const answer = internals.invoke;
+      internals.invoke = (cmd, args) =>
+        (window as unknown as { __urxAnswerLater: AnswerLater }).__urxAnswerLater(answer(cmd, args));
     },
     { ...opts, firmware },
   );

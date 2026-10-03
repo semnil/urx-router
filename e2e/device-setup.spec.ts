@@ -89,6 +89,7 @@ test("brightness 0 can be applied to a device that is brighter", async ({ page }
   await page.locator("#device-setup-brightness").fill("0");
   await page.locator("#device-setup-brightness").dispatchEvent("change");
   await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
 
   expect(await writesOf(page)).toEqual([[BRIGHTNESS, 0]]);
 });
@@ -157,6 +158,7 @@ test("a knob assignment writes its three columns together", async ({ page }) => 
   await chooseOption(page.locator(".udk-row").first().locator("select").first(), "Monitor");
   await expect(page.locator("#device-setup-pending")).toHaveText("1 unapplied change");
   await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
 
   expect(await strWritesOf(page)).toEqual([
     [UDK_FUNCTION, 0, "Monitor"],
@@ -184,6 +186,7 @@ test("a knob's Parameter 1 off the catalog opens as unknown, and the one picked 
   await chooseOption(p1, "Monitor 1");
   await expect(page.locator("#device-setup-pending")).toHaveText("1 unapplied change");
   await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
 
   expect(await strWritesOf(page)).toEqual([
     [UDK_FUNCTION, 0, "Monitor"],
@@ -201,6 +204,7 @@ test("switching banks addresses the knob slots behind it", async ({ page }) => {
   await page.locator("#device-setup-banks button").nth(2).click();
   await chooseOption(page.locator(".udk-row").nth(1).locator("select").first(), "Oscillator");
   await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
 
   expect(await strWritesOf(page)).toEqual([
     [UDK_FUNCTION, 9, "Oscillator"],
@@ -297,8 +301,9 @@ test("a failed read leaves the screen unopened", async ({ page }) => {
   await page.click("#btn-device");
   await page.click("#btn-device-setup");
 
+  await expect.poll(async () => (await dialogsOf(page)).join("\n")).toContain("Could not read the device's settings");
+  // The dialog is the flow's end, so the screen not showing is now an observation.
   await expect(page.locator("#device-setup-modal")).toBeHidden();
-  expect((await dialogsOf(page)).join("\n")).toContain("Could not read the device's settings");
 });
 
 test("rows for a page the model does not have are locked, not hidden", async ({ page }) => {
@@ -318,6 +323,7 @@ test("rows for a page the model does not have are locked, not hidden", async ({ 
   await page.locator("#device-setup-brightness").fill("2");
   await page.locator("#device-setup-brightness").dispatchEvent("change");
   await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
   expect(await writesOf(page)).toEqual([[BRIGHTNESS, 2]]);
 });
 
@@ -352,5 +358,6 @@ test("a brightness drag interrupted by a window blur is committed, and the row i
   await page.mouse.up();
   await expect(page.locator("#device-setup-brightness")).toBeEnabled();
   await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
   expect(await writesOf(page)).toEqual([[BRIGHTNESS, Number(dragged)]]);
 });

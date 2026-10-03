@@ -243,11 +243,13 @@ test("the session is logged, and its last line says how it ended", async ({ page
   await page.click("#btn-device");
   await page.click("#btn-live");
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
-  const lines = await expect
-    .poll(async () => (await linkLogOf(page)).length)
-    .toBeGreaterThan(0)
-    .then(() => linkLogOf(page));
-  const last = JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+  // A running session appends lines with no end reason; the session's own last line carries one.
+  const lastLine = async (): Promise<Record<string, unknown> | null> => {
+    const lines = await linkLogOf(page);
+    return lines.length > 0 ? (JSON.parse(lines[lines.length - 1]) as Record<string, unknown>) : null;
+  };
+  await expect.poll(async () => (await lastLine())?.end ?? null).not.toBeNull();
+  const last = (await lastLine())!;
   // The counters this session ended with, and how it ended — the two halves the log
   // exists to pair. A line written after the disconnect would carry zeros instead.
   expect(last.end).toBe("off");
