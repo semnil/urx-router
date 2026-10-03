@@ -2786,7 +2786,10 @@ also normalises a document naming a rate and a count that cannot both be true. A
 than when the count is read: a read-time clamp would hand 16 back the moment the rate came down, and the plan would
 then describe a recorder the unit does not have. The Inspector offers only the counts the rate allows and says why
 the menu is short, and the graph gates the recorder's track slots on the ceiling as well as on the stored value, so
-no plan can offer a slot to wire against a track the unit has no room for.
+no plan can offer a slot to wire against a track the unit has no room for. A rate pick redraws the board when the
+slots it gates move even where the rate-disabled set does not (48 to 96 kHz moves only the slots), and a selection on
+a node or wire the rate took off the board is dropped with it — with the CONSOLE view up too, so the Inspector and
+`Delete` are never left holding a wire the board no longer draws (`setDisabledNodes`, `hasDisabledNodes`).
 
 **The rate settle also names what the change costs the microSD recorder**, which is the one rate side effect the
 unit ACTS on rather than merely refuses: it lowers its own Track Count to fit a rate it cannot carry (16 tracks at

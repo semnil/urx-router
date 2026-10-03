@@ -40,7 +40,8 @@ import type { GraphFixture, GraphOptions } from "./graph.test-util";
  *  strength beside it), on the node itself otherwise. */
 const restingDim = (node: SVGGElement): string | null =>
   (node.querySelector(":scope > .node-body") ?? node).getAttribute("opacity");
-import { LEVEL_MIN_DB } from "../core/plan";
+import { LEVEL_MIN_DB, setPlanSampleRate } from "../core/plan";
+import { rateConstraints } from "../core/constraints";
 import type { Plan } from "../core/plan";
 import { defaultPlan } from "../models/initial-state";
 import { isFixedConnection } from "../core/routing";
@@ -265,6 +266,50 @@ describe("appearance", () => {
     fx.host.hidden = false;
     fx.graph.refresh();
     expect(restingDim(nodeEl(fx.host, "bus.fx2")!)).toBe("0.62");
+  });
+
+  // 48 to 96 kHz leaves the disabled set as it was and lowers Track Count from 16 to 8, so the
+  // record slots t5..t8 leave the board: that is a moved board, and it is drawn again.
+  describe("a rate change that gates record slots", () => {
+    const SLOTS = ["out.sdrec.t1", "out.sdrec.t4", "out.sdrec.t5", "out.sdrec.t8"];
+    const pick = (rate: number): string[] => {
+      setPlanSampleRate(fx.plan, rate);
+      const disabled = rateConstraints(getModel("URX44V"), rate).disabledNodes;
+      fx.graph.setDisabledNodes(disabled);
+      return disabled;
+    };
+
+    it("redraws the board without the slots the rate gates", () => {
+      fx = graphFixture();
+      expect(SLOTS.map((id) => nodeEl(fx.host, id) !== null)).toEqual([true, true, true, true]);
+      pick(96000);
+      expect(SLOTS.map((id) => nodeEl(fx.host, id) !== null)).toEqual([true, true, false, false]);
+      expect(portHit(fx.host, "out.sdrec.t7:in")).toBeNull();
+    });
+
+    // A wire into a gated slot is no longer drawn, so a selection on it would leave the
+    // Inspector showing it and Delete removing it. It is dropped with the console view up too.
+    it("drops a selection on a wire the rate takes off the board, the board hidden or not", () => {
+      for (const hidden of [false, true]) {
+        if (hidden) fx.restore();
+        fx = graphFixture();
+        wireHit(fx.host, "bus.stereo:out", "out.sdrec.t8:in")!.dispatchEvent(
+          new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }),
+        );
+        expect(fx.cb.onSelect).toHaveBeenLastCalledWith({
+          type: "conn",
+          from: "bus.stereo:out",
+          to: "out.sdrec.t8:in",
+        });
+        fx.host.hidden = hidden;
+        const disabled = pick(96000);
+        expect(fx.cb.onSelect, `hidden=${hidden}`).toHaveBeenLastCalledWith(null);
+        fx.graph.deleteSelection();
+        expect(fx.plan.connections.some((c) => c.to === "out.sdrec.t8:in")).toBe(true);
+        // While hidden the board is still the one drawn before the pick, and says so.
+        expect(fx.graph.hasDisabledNodes(disabled)).toBe(!hidden);
+      }
+    });
   });
 
   // The question is whether the board is drawn against this set, so the comparison is

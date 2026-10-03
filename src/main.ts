@@ -2123,9 +2123,10 @@ function actionsFor(built: Plan): typeof inspectorActions {
 // board is deferred while the console view is up, the panel while the graph view is.
 function applyRateConstraints(): void {
   const c = rateConstraints(getModel(modelId), plan.sampleRate);
-  // Asked before the store, so the answer is about the board on screen. A set that
-  // moved while the console view is up owes the graph a repaint it must not do here:
-  // graphDirty is the same deferral the follow reflect uses two lines from its own.
+  // Asked before the store, so the answer is about the board on screen. A set — or a set
+  // of gated record slots — that moved while the console view is up owes the graph a
+  // repaint it must not do here: graphDirty is the same deferral the follow reflect uses
+  // two lines from its own.
   if (graphHost.hidden && !graph.hasDisabledNodes(c.disabledNodes)) graphDirty = true;
   graph.setDisabledNodes(c.disabledNodes);
   refreshInspector();

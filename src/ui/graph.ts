@@ -325,6 +325,9 @@ export class Graph {
   // a board where most of the always-wired CH → MIX/FX sends sit at -∞.
   private hideOffSends = false;
   private disabledNodes = new Set<string>();
+  // The microSD Rec slots the node layer was last built without because Track Count or the
+  // rate's ceiling gates them. A rate change moves that set as well as the disabled one.
+  private drawnGated = new Set<string>();
   // Nodes still showing their plan default after a device readback (a body read
   // failed). Mirrors plan.unreadNodes; empty when the plan has no device
   // provenance (new / loaded / hand-edited plan).
@@ -494,22 +497,32 @@ export class Graph {
     this.redrawWires();
   }
 
-  /** Whether the board is already drawn against this disabled set. The dim and the
-   *  dashed outline are all the set contributes, so an equal one draws the same board. */
+  /** Whether the board is already drawn against this disabled set and against the plan's
+   *  gated record slots. The dim and the dashed outline are all the set contributes, and the
+   *  slots Track Count and the rate's ceiling leave out are all the rate contributes besides,
+   *  so with both equal the board drawn is the same one. */
   hasDisabledNodes(ids: string[]): boolean {
-    const next = new Set(ids);
-    return next.size === this.disabledNodes.size && [...next].every((id) => this.disabledNodes.has(id));
+    return sameSet(new Set(ids), this.disabledNodes) && sameSet(this.gatedSlots(), this.drawnGated);
   }
 
   /** Mark nodes unavailable at the current sample rate (dimmed + dashed outline). The
-   *  set is stored either way. The board is redrawn only when the set moved AND the host
-   *  is on screen: an unchanged set draws the same board, and a hidden one is redrawn
-   *  from the plan when the view comes back (the caller carries that with graphDirty). */
+   *  set is stored either way, and a selection the rate has taken off the board is dropped
+   *  whether or not the host is on screen. The board is redrawn only when the set or the
+   *  gated record slots moved AND the host is on screen: an unchanged pair draws the same
+   *  board, and a hidden one is redrawn from the plan when the view comes back (the caller
+   *  carries that with graphDirty). */
   setDisabledNodes(ids: string[]): void {
     const same = this.hasDisabledNodes(ids);
     this.disabledNodes = new Set(ids);
-    if (same || this.host.hidden) return;
+    const selected = this.selection;
+    this.dropSelectionIfHidden();
+    if ((same && this.selection === selected) || this.host.hidden) return;
     this.render();
+  }
+
+  /** The microSD Rec slots Track Count and the rate's ceiling leave off the board now. */
+  private gatedSlots(): Set<string> {
+    return new Set(this.model.nodes.filter((n) => this.sdRecSlotInactive(n.id)).map((n) => n.id));
   }
 
   /** Repaint nodes after a node-parameter change (e.g. a channel muted). */
@@ -855,6 +868,7 @@ export class Graph {
   }
 
   private renderNodes(): void {
+    this.drawnGated = this.gatedSlots();
     this.nodeLayer.replaceChildren();
     this.nodeEls.clear();
     this.portEls.clear();
@@ -3037,6 +3051,10 @@ export class Graph {
     const res = await exportSvgToPdf(svg, filename, opts, { ext: "pdf", label: t().filter.pdf });
     this.cb.onStatus(exportStatus(res, t().status.pdfExported));
   }
+}
+
+function sameSet<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
+  return a.size === b.size && [...a].every((x) => b.has(x));
 }
 
 /** Map a save result to a status line: the saved path, generic done, or cancel. */
