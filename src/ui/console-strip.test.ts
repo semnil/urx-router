@@ -410,12 +410,12 @@ describe("a head knob", () => {
     window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
   });
 
-  // A key or a wheel notch steps to the next grid point in the direction of travel. The
-  // TIME knob's own fine mode and the Inspector's 0.01 ms slider both leave the value
-  // between two 1 ms points, and a nearest-snap of the stepped sum lands one point past
-  // the adjacent one from there. On-grid values are the control: they step one point
-  // either way.
-  it("steps a key or a wheel notch to the adjacent grid point from a value between two", () => {
+  // The TIME knob moves the way the unit's own Delay Time knob does: a key or a wheel notch
+  // moves 1.00 ms and keeps the hundredths (45.86 -> 46.86), the fine (Shift) step moves
+  // 0.02 ms, and every time it writes is rounded to the 0.02 ms grid, halfway up — so a held
+  // odd centi-ms (45.87) moves from 45.88. The ends stop at 1.00 and 1000.00 ms. On-grid
+  // whole values are the control: they step one millisecond either way.
+  it("moves the TIME knob 1.00 ms keeping the hundredths, and 0.02 ms in fine mode", () => {
     h = consoleHost();
     const time = (): number | undefined => h.plan.nodeParams["bus.stream"]?.delay?.time;
     const knob = (): HTMLElement =>
@@ -432,27 +432,93 @@ describe("a head knob", () => {
     key(from(12), "ArrowUp");
     expect(time()).toBe(13);
 
-    key(from(12.34), "ArrowDown");
-    expect(time()).toBe(12);
-    key(from(12.34), "ArrowUp");
-    expect(time()).toBe(13);
-    key(from(12.6), "ArrowUp");
-    expect(time()).toBe(13);
-    key(from(12.5), "ArrowUp");
-    expect(time()).toBe(13);
-    key(from(12.6), "ArrowDown");
-    expect(time()).toBe(12);
-    wheel(from(12.34), -1);
-    expect(time()).toBe(12);
-    wheel(from(2.04), -1);
-    expect(time()).toBe(2);
-    key(from(1.03), "ArrowUp", { shiftKey: true });
-    expect(time()).toBe(1.04);
-    key(from(1.03), "ArrowDown", { shiftKey: true });
-    expect(time()).toBe(1.02);
+    key(from(45.86), "ArrowUp");
+    expect(time()).toBe(46.86);
+    key(from(45.86), "ArrowDown");
+    expect(time()).toBe(44.86);
+    wheel(from(45.86), 1);
+    expect(time()).toBe(46.86);
+    wheel(from(45.86), -1);
+    expect(time()).toBe(44.86);
+    key(from(45.86), "ArrowUp", { shiftKey: true });
+    expect(time()).toBe(45.88);
+    key(from(45.86), "ArrowDown", { shiftKey: true });
+    expect(time()).toBe(45.84);
+
+    key(from(45.87), "ArrowUp");
+    expect(time()).toBe(46.88);
+    key(from(45.87), "ArrowDown");
+    expect(time()).toBe(44.88);
+    key(from(45.87), "ArrowUp", { shiftKey: true });
+    expect(time()).toBe(45.9);
+    key(from(45.87), "ArrowDown", { shiftKey: true });
+    expect(time()).toBe(45.86);
+
+    key(from(999.5), "ArrowUp");
+    expect(time()).toBe(1000);
+    key(from(1.5), "ArrowDown");
+    expect(time()).toBe(1);
+    key(from(1000), "ArrowUp");
+    expect(time()).toBe(1000);
+    key(from(1), "ArrowDown", { shiftKey: true });
+    expect(time()).toBe(1);
+
     // The double-click still resets to the factory value.
-    from(12.34).dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    from(45.86).dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     expect(time()).toBe(defaultPlan("URX44V").nodeParams["bus.stream"]?.delay?.time);
+  });
+
+  // A drag keeps its own mapping (the full range over 150 px coarse, one fine step per pixel
+  // in fine mode) and lands on the 0.02 ms grid in both.
+  it("lands a TIME knob drag on the 0.02 ms grid", () => {
+    h = consoleHost();
+    const knob = h.strip("bus.stream").root.querySelector<HTMLElement>(".con-gain.has-fine .con-knob")!;
+    const time = (): number => h.plan.nodeParams["bus.stream"]!.delay!.time!;
+    const onGrid = (v: number): boolean => Math.abs(v * 50 - Math.round(v * 50)) < 1e-6;
+    for (const [dy, shift] of [
+      [1, false],
+      [7, false],
+      [3, true],
+      [11, true],
+    ] as const) {
+      knob.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      dragY(knob, dy, { shift });
+      expect(time(), `${dy} px${shift ? " fine" : ""}`).toBeGreaterThan(1);
+      expect(onGrid(time()), `${time()} after ${dy} px${shift ? " fine" : ""}`).toBe(true);
+    }
+    knob.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    dragY(knob, 1);
+    // One pixel coarse is the range over 150 px, 6.66 ms, on the grid at 7.66 ms.
+    expect(time()).toBe(7.66);
+  });
+
+  // A knob with no grid of its own snaps a key or a wheel notch in the direction of travel:
+  // from a value between two step points the next point that way, never the nearest one past
+  // it. The OSCILLATOR LEVEL knob steps 1 dB; on-grid values are the control.
+  it("steps a knob with no grid to the adjacent step point from a value between two", () => {
+    h = consoleHost();
+    const level = (): number | undefined => h.plan.nodeParams["bus.osc"]?.osc?.level;
+    const from = (v: number): HTMLElement => {
+      const np = (h.plan.nodeParams["bus.osc"] ??= {});
+      np.osc = { ...np.osc, level: v };
+      h.view.refresh();
+      return h.strip("bus.osc").root.querySelector<HTMLElement>(".con-gain .con-knob")!;
+    };
+
+    key(from(-14), "ArrowDown");
+    expect(level()).toBe(-15);
+    key(from(-14), "ArrowUp");
+    expect(level()).toBe(-13);
+    key(from(-14.34), "ArrowDown");
+    expect(level()).toBe(-15);
+    key(from(-14.34), "ArrowUp");
+    expect(level()).toBe(-14);
+    key(from(-14.6), "ArrowUp");
+    expect(level()).toBe(-14);
+    key(from(-14.6), "ArrowDown");
+    expect(level()).toBe(-15);
+    wheel(from(-14.34), -1);
+    expect(level()).toBe(-15);
   });
 
   it("arms for MIDI instead of moving while learn is on", () => {

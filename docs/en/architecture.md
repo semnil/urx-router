@@ -1319,7 +1319,7 @@ taps reset it".
 **Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
 step while Shift is held, mirroring the hardware's (undocumented) push-and-turn fine mode: the tuning screens'
 EQ band Gain and COMP Gain sliders step 0.1 dB (coarse 0.5 dB), and the STREAMING TIME knob steps 0.02 ms
-(coarse 1 ms; the fine step is fixed — it does not follow the sample rate, matching the device). Every
+(coarse 1.00 ms; the fine step is fixed — it does not follow the sample rate, matching the device). Every
 fine-eligible control carries a printed `FINE` legend at all times — silkscreen-dim, so eligibility reads
 before any interaction, and placed so it can never shift the control's layout by appearing (pinned
 beside the static label in the tuning screen's row — anchored to the value readout it would jitter with the
@@ -1358,10 +1358,13 @@ drag lands on the nearest.
   switched on); it carries a **LEVEL
   rotary knob** (−96…0 dB, the shared device level; its indicator's horizontal marks read -50 left / -8 right)
   in place of a fader; **STREAMING** carries a **DELAY on/off chip** (`delay.on`) and a **TIME knob** (the delay
-  time, 1…1000 ms; holding Shift steps the device's 0.02 ms fine grid, and the inspector steps the same
-  0.02 ms grid — a held value off it prints as itself and is written as held until the row moves) so the
-  otherwise-bare head reads as a purposeful
-  strip. The choice persists per model in
+  time, 1…1000 ms). The knob moves the way the unit's own Delay Time knob does: a key or a wheel notch moves
+  1.00 ms and keeps the hundredths (45.86 → 46.86), holding Shift moves the device's 0.02 ms fine grid, a drag
+  keeps its own mapping, and every time it writes is rounded to the 0.02 ms grid, halfway up — so a held odd
+  centi-ms moves from the grid point above it — and stops at 1.00 and 1000.00 ms (`KnobSpec.grid`; LEVEL, PAN
+  and the gain knobs snap to their step). The inspector steps the same 0.02 ms grid — a held value off it
+  prints as itself and is written as held until the row moves. The chip and the knob are what make the
+  otherwise-bare head read as a purposeful strip. The choice persists per model in
   `localStorage` (`urx-metertap`). The readout has two captioned cells: **FADER** (the set level, white) and
   **METER** (the selected tap's live value, amber); default tap = the most downstream point.
 - **Shared edit path** — fader / chip / gain edits mutate the plan directly and flow through the same change

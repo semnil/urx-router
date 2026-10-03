@@ -172,9 +172,9 @@ test.describe("console view", () => {
     await expect(val).toHaveText("2.04");
     await page.keyboard.up("Shift");
     await wheelOver(page, time, 100);
-    // Coarse again: the notch steps to the adjacent 1 ms point in the direction it turns,
-    // not to the nearest point past it.
-    await expect(val).toHaveText("2.0");
+    // Coarse again: the notch moves 1.00 ms and keeps the hundredths, as the unit's own
+    // Delay Time knob does.
+    await expect(val).toHaveText("1.04");
   });
 
   test("the main fader keeps its detent grid under Shift", async ({ page }) => {

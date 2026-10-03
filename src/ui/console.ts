@@ -85,6 +85,7 @@ import { INSERT_FX_NONE, insertFxEngaged, insertFxSelected } from "../core/contr
 import { parkOutgoingInsertFxParams, seedInsertFxParams } from "./insert-fx-model";
 import { insertFxScreenFamily } from "./insert-fx-screen";
 import {
+  DELAY_TIME_GRID_MS,
   DELAY_TIME_MAX_MS,
   DELAY_TIME_MIN_MS,
   PAN_MAX,
@@ -432,6 +433,11 @@ interface KnobSpec {
    *  `.con-gain .fine-tag`) — a knob with content directly above (a stacked
    *  PAN/BAL row) would need a new anchor before opting in. */
   fine?: number;
+  /** The grid every value the knob writes lands on, finer than `step`. A key or a wheel
+   *  notch then moves the held value by `step` (or `fine`) and keeps what it holds below a
+   *  step, a drag lands on the grid, and a value is rounded to it halfway up. Absent, a
+   *  value lands on `step` itself (the STREAMING TIME knob sets 0.02 ms). */
+  grid?: number;
   format: (v: number) => string;
   reset: number;
   /** Indicator angle (deg) for a value; default is a -135°..+135° sweep over the
@@ -2256,8 +2262,9 @@ export class Console {
     }
     // STREAMING: a DELAY on/off chip and a TIME knob (the delay time, 1…1000 ms).
     // Gives the otherwise-bare head controls so the strip reads as purposeful, and
-    // mirrors the OSCILLATOR's ON + LEVEL pairing. Finer time steps stay in the
-    // inspector; holding Shift steps the device's 0.02 ms fine grid (push-and-turn).
+    // mirrors the OSCILLATOR's ON + LEVEL pairing. A key or a notch moves 1.00 ms and
+    // keeps the hundredths, holding Shift steps the device's 0.02 ms fine grid
+    // (push-and-turn), and every time the knob writes is on that 0.02 ms grid.
     if (m.isStream) {
       const chips = el("div", "con-chips");
       const delayOn = (): boolean => this.hooks.getPlan().nodeParams[m.id]?.delay?.on ?? false;
@@ -2290,8 +2297,9 @@ export class Console {
           keys: ["delay.time"],
           min: DELAY_TIME_MIN_MS,
           max: DELAY_TIME_MAX_MS,
-          step: 1, // whole-ms on the knob; the inspector keeps the 0.01 ms grid
-          fine: 0.02, // device-verified fine grid (fixed, rate-independent)
+          step: 1, // ±1.00 ms per detent, keeping the hundredths
+          fine: DELAY_TIME_GRID_MS, // device-verified fine grid (fixed, rate-independent)
+          grid: DELAY_TIME_GRID_MS,
           // Digits by need: off-grid (fine / inspector-set) values get both
           // decimals; whole values keep the original compact display.
           format: (v) => v.toFixed(v % 1 ? 2 : v < 100 ? 1 : 0),
@@ -3741,8 +3749,9 @@ export class Console {
   }
 
   // Rotary knob: vertical drag (≈ full range over 150px) and arrow keys edit the
-  // value (snapped to `step`); the indicator rotates over a 270° sweep; a
-  // double-click resets to `reset`. Reads/writes via the spec's get/set.
+  // value (snapped to `step`, or to `grid` where the spec sets one); the indicator
+  // rotates over a 270° sweep; a double-click resets to `reset`. Reads/writes via the
+  // spec's get/set.
   // `partnerSync` (default on) re-renders after a linked-pair edit so the partner
   // strip's head knob catches up; the SEND PAN popover knob turns it OFF, since a
   // render would tear the popover down and no partner send-pan control is on screen
@@ -3770,15 +3779,21 @@ export class Console {
       knob.setAttribute("aria-valuetext", k.format(v));
     };
     const apply = (raw: number, st = k.step): void => {
-      const v = Math.max(k.min, Math.min(k.max, scrubFloat(Math.round(raw / st) * st)));
+      const to = k.grid ?? st;
+      const v = Math.max(k.min, Math.min(k.max, scrubFloat(Math.round(scrubFloat(raw / to)) * to)));
       k.set(v);
       show(v);
       this.commit(id, k.keys);
     };
-    // One step for a key or a wheel notch, snapped in the direction of travel: from a value
-    // between two grid points the next point that way, never the nearest one past it. The
-    // drag and the double-click reset keep `apply`'s nearest snap.
+    // One step for a key or a wheel notch. On a knob with a `grid` it moves the held value by
+    // the step and keeps what it holds below a step. Otherwise it is snapped in the direction
+    // of travel: from a value between two grid points the next point that way, never the
+    // nearest one past it. The drag and the double-click reset keep `apply`'s nearest snap.
     const stepBy = (dir: 1 | -1, st: number): void => {
+      if (k.grid !== undefined) {
+        apply(k.get() + dir * st, st);
+        return;
+      }
       const at = k.get() / st;
       apply((dir > 0 ? Math.floor(at + 1e-9) + 1 : Math.ceil(at - 1e-9) - 1) * st, st);
     };
