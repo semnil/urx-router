@@ -111,7 +111,9 @@ test("guitar amp (Clean) reveals common params + cabinet list", async ({ page })
   // The cabinet is on the SAME face, between the amp and Output — where the effect guide's
   // own common table puts it — so both halves are reachable without a switch.
   await expect(screenRow(page, "Gate Level")).toBeVisible();
-  await expect(screenBox(page).locator(".gt-facebar button")).toHaveCount(0);
+  // No bar to a second face: the bar's space holds the reserved, inert one alone.
+  await expect(screenBox(page).locator(".gt-modes.inert")).toHaveCount(1);
+  await expect(screenBox(page).locator(".gt-modes button:not([disabled])")).toHaveCount(0);
   // SP Type lists the eight cabinets in order.
   await expect(screenSelect(page, "SP Type").locator("option")).toHaveText([
     "BS 4x12",
@@ -186,9 +188,11 @@ test("a guitar amp's values are knobs, on one face with no bar", async ({ page }
   // Distortion ships at its minimum and Blend at mid, so the two must not point the same way.
   expect(await rot("Distortion")).not.toBe(await rot("Blend"));
 
-  // No bar at all: the cabinet joined the amp on one face, and a bar with one item is a
-  // control that does nothing. The display column is still the lane rack.
-  await expect(screenBox(page).locator(".gt-facebar button")).toHaveCount(0);
+  // No bar to reach: the cabinet joined the amp on one face, and a bar with one item is a
+  // control that does nothing, so the bar's space holds the reserved, inert one alone. The
+  // display column is still the lane rack.
+  await expect(screenBox(page).locator(".gt-modes.inert")).toHaveCount(1);
+  await expect(screenBox(page).locator(".gt-modes button:not([disabled])")).toHaveCount(0);
   await expect(screenBox(page).locator(".gt-splitdisplay, .gt-ladderbox").first()).toBeVisible();
   await closeScreen(page);
 });
