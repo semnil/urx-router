@@ -433,9 +433,12 @@ A `nodeNames` value longer than
 takes no more (`ch 1xxxx`), and a longer name also draws a node label across its
 neighbours on the canvas. Counted in characters, not bytes, so a Japanese name
 also gets 8. Nothing in the protocol enforces this (the broker stores a
-20-character name and reads it back unchanged), and nothing is reported here
-either, so `plan_tool.py validate` warns about each name it would shorten; emit a
-name within the bound rather than relying on the cut.
+20-character name and reads it back unchanged); the load says it did on the status
+line, and `plan_tool.py validate` warns about each name it would shorten. Emit a
+name within the bound rather than relying on the cut. Before the cut, a name and a
+note both lose any control character other than tab, newline and carriage return
+(and U+FFFE / U+FFFF): an image export cannot carry one, and the validator names
+each text it would clean.
 
 The same rewrite drops **trailing** whitespace, after the cut rather than before
 it (so a name cut onto a space does not keep one). A leading space is kept — the

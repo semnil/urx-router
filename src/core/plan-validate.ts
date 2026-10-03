@@ -13,7 +13,15 @@ import { getModel, MODEL_IDS } from "../models";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
 import { isPlanColor, type InsertFxSlot } from "./control/params";
-import { fixedConnection, isPlainRecord, requiredSourceWire, SEND_LEVEL_UNNAMED_DB, setPlanSampleRate } from "./plan";
+import {
+  fixedConnection,
+  isPlainRecord,
+  normalizeDocumentName,
+  requiredSourceWire,
+  SEND_LEVEL_UNNAMED_DB,
+  setPlanSampleRate,
+  stripXmlInvalid,
+} from "./plan";
 import {
   connParamContestKey,
   deepEqual,
@@ -662,6 +670,45 @@ export function applyNodeColors(plan: Plan, problems: NodeColorProblem[]): void 
   for (const p of problems) delete plan.nodeColors[p.node];
 }
 
+/** A node name or a note the document carries in a form the app does not keep. A name is cut to
+ *  what the unit's own CH SETTING screen takes and loses its trailing padding — the form every
+ *  read of the unit gives it back in — and neither text keeps a code point XML refuses, since an
+ *  image export serializes both into an SVG and one such character fails the whole export. The
+ *  loader rewrites it and says so. A name read from the unit is not cleaned this way
+ *  (`normalizeDocumentName`). Like every check in this file it does NOT run on a device readback. */
+export interface DocumentTextProblem {
+  reason: "documentText";
+  field: "nodeNames" | "notes";
+  node: string;
+  /** The text the document carries. */
+  stored: string;
+  /** What the load keeps — empty where nothing is left, which for a name is no name. */
+  value: string;
+}
+
+/** Every name and note the load rewrites, names first, each in the plan's own order. */
+export function documentTextProblems(plan: Plan): DocumentTextProblem[] {
+  const out: DocumentTextProblem[] = [];
+  for (const [node, stored] of Object.entries(plan.nodeNames)) {
+    const value = normalizeDocumentName(stored);
+    if (value !== stored) out.push({ reason: "documentText", field: "nodeNames", node, stored, value });
+  }
+  for (const [node, stored] of Object.entries(plan.notes)) {
+    const value = stripXmlInvalid(stored);
+    if (value !== stored) out.push({ reason: "documentText", field: "notes", node, stored, value });
+  }
+  return out;
+}
+
+/** Write each reported text, removing a name nothing is left of. Separate from finding them for
+ *  the reason `applyParamRange` is. */
+export function applyDocumentText(plan: Plan, problems: DocumentTextProblem[]): void {
+  for (const p of problems) {
+    if (p.field === "nodeNames" && !p.value) delete plan.nodeNames[p.node];
+    else plan[p.field][p.node] = p.value;
+  }
+}
+
 /** An on/off leaf written as a number. The document sanitiser keeps any finite number, and the
  *  write sends one where an on/off belongs as on unless it is 0. The loader converts it to that
  *  on/off, so every reader of the plan holds a boolean there and reads what the write sends,
@@ -718,8 +765,9 @@ export function applyBooleanParams(plan: Plan, problems: BooleanParamProblem[]):
  *  given no source (completed, then reported), a send listed without a level (completed,
  *  then reported), a linked pair whose members disagree (the primary copied onto the
  *  secondary, then reported), a linked send pan off its source's value (set to it, then
- *  reported), an on/off written as a number (converted, then reported), or a colour that is no
- *  plan colour (dropped, then reported). */
+ *  reported), an on/off written as a number (converted, then reported), a colour that is no
+ *  plan colour (dropped, then reported), or a name or note in a form the app does not keep
+ *  (rewritten, then reported). */
 export type LoadProblem =
   | PlanProblem
   | InsertFxSlotProblem
@@ -730,7 +778,8 @@ export type LoadProblem =
   | LinkedPairProblem
   | LinkedSendPanProblem
   | BooleanParamProblem
-  | NodeColorProblem;
+  | NodeColorProblem
+  | DocumentTextProblem;
 
 // Every violation the plan loader reports on a file / ?plan= link / drop, in one
 // list so a load path cannot pick up half of them. The caller splits them by
@@ -759,6 +808,7 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
     ...pairs,
     ...linkedSendPanProblems(model, paired),
     ...nodeColorProblems(read),
+    ...documentTextProblems(read),
   ];
 }
 
@@ -775,7 +825,8 @@ export function isRefusal(problem: LoadProblem): boolean {
     problem.reason !== "linkedPair" &&
     problem.reason !== "linkedSendPan" &&
     problem.reason !== "booleanParam" &&
-    problem.reason !== "nodeColor"
+    problem.reason !== "nodeColor" &&
+    problem.reason !== "documentText"
   );
 }
 
@@ -798,6 +849,7 @@ export interface LoadRepairs {
   linkedPairs: LinkedPairProblem[];
   linkedPans: LinkedSendPanProblem[];
   colors: NodeColorProblem[];
+  texts: DocumentTextProblem[];
 }
 
 /** Apply every repair `planProblems` reported, in the order `planProblems` reads them: an on/off
@@ -805,7 +857,8 @@ export interface LoadRepairs {
  *  bounded or dropped, a receiver the unit never leaves without a source gets the one a new plan
  *  carries, a send listed without a level gets the one the write sends, a linked pair's
  *  secondary takes its primary's shared values, a send into a MIX whose Pan Link is on
- *  takes its source's own pan / balance, and a colour that is no plan colour is dropped.
+ *  takes its source's own pan / balance, a colour that is no plan colour is dropped, and a name
+ *  or a note is rewritten to the form the app keeps.
  *  Refusals and decisions are the caller's; the reasons they carry are not repaired here. */
 export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
   const booleans = problems.filter((p) => p.reason === "booleanParam");
@@ -822,7 +875,9 @@ export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadP
   applyLinkedSendPans(model, plan, linkedPans);
   const colors = problems.filter((p) => p.reason === "nodeColor");
   applyNodeColors(plan, colors);
-  return { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, colors };
+  const texts = problems.filter((p) => p.reason === "documentText");
+  applyDocumentText(plan, texts);
+  return { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, colors, texts };
 }
 
 /** Give each node's selected insert effect every engine slot it leaves out, at that type's own

@@ -546,7 +546,7 @@ export function deserializeDocument(text: string): PlanDocument {
     positions: posRecord(data.positions),
     connections: Array.isArray(data.connections) ? data.connections.filter(isPlanConnection).map(rebuildConn) : [],
     nodeParams: sanitizeNodeParams(data.nodeParams, version),
-    nodeNames: nameRecord(data.nodeNames),
+    nodeNames: stringRecord(data.nodeNames),
     nodeColors: stringRecord(data.nodeColors),
     hidden: stringArray(data.hidden),
     notes: stringRecord(data.notes),
@@ -698,10 +698,21 @@ export function normalizeNodeName(name: string): string {
   return clipNodeName(name).trimEnd();
 }
 
-function nameRecord(v: unknown): Record<string, string> {
-  const out = stringRecord(v);
-  for (const [k, name] of Object.entries(out)) out[k] = normalizeNodeName(name);
-  return out;
+/** The code points XML 1.0 refuses, raw or as a reference: the C0 controls other than tab,
+ *  newline and carriage return, and U+FFFE / U+FFFF. A string carrying one cannot be the text
+ *  of an SVG an export serializes. */
+const XML_INVALID_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g;
+
+/** `text` without the code points XML 1.0 refuses. */
+export function stripXmlInvalid(text: string): string {
+  return text.replace(XML_INVALID_CHARS, "");
+}
+
+/** A node name as a document load keeps it: `normalizeNodeName` of the name without the code
+ *  points an export cannot carry. A name read from the unit takes `normalizeNodeName` alone, so
+ *  no write rewrites the unit's own name for that. */
+export function normalizeDocumentName(name: string): string {
+  return normalizeNodeName(stripXmlInvalid(name));
 }
 
 function stringArray(v: unknown): string[] {

@@ -27,7 +27,10 @@ vi.mock("./platform", () => ({
   nativeWriteBinary: mocks.nativeWriteBinary,
   nativeWriteText: mocks.nativeWriteText,
 }));
-vi.mock("./plan", () => ({ pipeBytes: mocks.pipeBytes }));
+vi.mock("./plan", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./plan")>()),
+  pipeBytes: mocks.pipeBytes,
+}));
 
 import {
   downloadText,
@@ -219,6 +222,27 @@ describe("SVG export", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:test");
   });
 
+  // The serializer writes a control character out as it is, and an image whose markup carries one
+  // fails to load at all — so a note or a name holding one would fail every export. The markup the
+  // image is handed has none.
+  it("hands the image a markup without the code points XML refuses", async () => {
+    installRaster();
+    const blobs: Blob[] = [];
+    vi.mocked(URL.createObjectURL).mockImplementation((blob) => {
+      blobs.push(blob as Blob);
+      return "blob:test";
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.textContent = "Vocal\u0007 mic\u0001\ufffe";
+    svg.append(text);
+    await exportSvgToPng(svg, "board.png", { width: 1, height: 1 }, PNG_FILTER);
+    const markup = await blobs[0]!.text();
+    expect(markup).toContain("Vocal mic");
+    expect(markup).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/);
+  });
+
   it("builds a one-page RGB PDF and downloads it in the browser", async () => {
     const raster = installRaster();
     let downloaded: Blob | null = null;
@@ -254,9 +278,7 @@ describe("SVG export", () => {
   it("distinguishes image, canvas and PNG encoding failures from user cancellation", async () => {
     let raster = installRaster({ imageError: true });
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    await expect(exportSvgToPng(svg, "bad.png", { width: 1, height: 1 }, PNG_FILTER)).rejects.toThrow(
-      "svg rasterize failed",
-    );
+    await expect(exportSvgToPng(svg, "bad.png", { width: 1, height: 1 }, PNG_FILTER)).rejects.toThrow("svg-rasterize");
 
     vi.restoreAllMocks();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:test") });

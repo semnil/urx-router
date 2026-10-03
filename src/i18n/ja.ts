@@ -622,6 +622,8 @@ export const ja: Messages = {
     paramsDropped: (count: number): string =>
       `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、既定値を使います`,
     streamingSourceSupplied: "計画に STREAMING のソースが無かったため、STREAMING を STEREO にしました",
+    textsRewritten: (count: number): string =>
+      `名前・メモ ${count} 件を、本体の名前画面と画像出力が扱える形に書き換えました`,
     colorsDropped: (count: number): string => `本体に無いノードの色 ${count} 件を削除し、既定の色を使います`,
     linkedPairsAligned: (count: number): string =>
       `STEREO リンクしたペア ${count} 組で、共有する設定を本体と同じく奇数チャンネルの値にそろえました`,
@@ -978,6 +980,7 @@ export const ja: Messages = {
       fileBadExtension: (detail: string): string => `対応していない拡張子です (この操作で扱えるのは ${detail})`,
       pngEncode: "画像を PNG に変換できませんでした",
       canvasUnavailable: "描画キャンバスを利用できないため画像を生成できませんでした",
+      svgRasterize: "盤面を画像として描画できませんでした",
       midiPortNotFound: "その MIDI ポートは使用できません。デバイスを接続し直して選び直してください。",
       midiOutputNotOpen: "MIDI 出力ポートが開いていません",
       midiInitFailed: (detail: string): string => `MIDI サブシステムを開始できませんでした (${detail})`,

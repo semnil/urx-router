@@ -1031,7 +1031,7 @@ address, a broker URI. Both sides of the shell raise them:
 | `src-tauri/src/vd.rs` (broker)  | `broker-unreachable`, `no-device`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-rejected`, `broker-bad-response`, `broker-io`      |
 | `src-tauri/src/midi.rs`         | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                              |
 | `src-tauri/src/keepawake.rs`    | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                          |
-| `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`                                                                                                                                                     |
+| `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`, `svg-rasterize`                                                                                                                                    |
 
 `errorText` (`i18n/index.ts`) resolves a code against `error.shell` and hands the detail to the
 entries that take one; an unrecognized message passes through unchanged, so an unexpected JS error
@@ -3985,8 +3985,7 @@ answers for that entry alone, and a node-param repair carries no address. The re
 whose engine slots are bounded at the emit while `readback.ts` stores the unit's raw verbatim: a plan holding
 such a raw from a device read diverges the same way, and `comparePlan` sees it no better.
 
-A value is **rewritten** rather than dropped in the DESERIALIZER (the node name, below) and in the loader one
-layer later, after validation, whose repairs are listed under `plan-validate.ts` in "Source layout". Among
+A value is **rewritten** rather than dropped in the loader, after validation, whose repairs are listed under `plan-validate.ts` in "Source layout". Among
 them, an FX value outside what the app can write is bounded, and one there is nothing to bound is dropped: a
 leaf that is not a finite number (so the selected type's own default applies rather than one type's guessed
 in), a `type` no menu offers, and an `fxEffect` or `params` that is not an object. That last pair is why this
@@ -3998,8 +3997,8 @@ two sentences rather than one count. The same step drops a node-param value whos
 value's at its path, bounds every node-param leaf the write bounds to the value the write sends, by the rule
 the write bounds it by (`nodeLeafRules` / `admitLeaf` in `translate.ts`), and bounds two keys of a channel whose
 HI-Z is on — +48V to off and A.Gain to +40 dB (`input-lock.ts`) — counting each with the dropped or bounded FX
-values. In the deserializer: a **node name** is cut to
-**8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
+values. The same step rewrites a document's names and notes (`documentTextProblems`), and says so: a **node
+name** is cut to **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
 would lose a name for being long, and keeping one the unit could not have produced puts a label on
 the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: measured
 on a URX44V, the broker accepts a 20-character name and reads it back unchanged, and the settings
@@ -4008,8 +4007,13 @@ limit would be a mistake. The name is also the one plan string the unit is sent 
 (`planToNameWrites`: the SSMCS Sweet Spot Data preset rides the same path, but the plan holds it as a numeric index,
 and an enum string such as a send's `tap` goes out as a number). The numeric leaves have `boundRaw` and a string has
 no bound of its own, so the cut is applied again at the emit site: a name reaches the plan from a device read and from a rename made on
-the unit itself, neither of which passes this funnel. Notes and colours are the app's own and stay
-unbounded.
+the unit itself, neither of which passes this funnel. Notes are the app's own and stay unbounded, and a
+colour is one of the unit's palette values. Before the cut, a document's names and notes lose every code
+point XML 1.0 refuses (`stripXmlInvalid`): an image export serializes both into an SVG, and one such
+character fails the whole export. A name read from the unit is not cleaned that way
+(`normalizeDocumentName` against `normalizeNodeName`), so no write rewrites the unit's own name for it,
+and the rasterizer removes the same code points from the serialized markup (`rasterizeSvg`), which is what
+covers a name that reaches the board from the unit.
 
 The cut carries a second rule, and the order between them is load-bearing: **trailing whitespace is
 stripped after the cut**, never before. A leading space is kept — the unit right-aligns the numbers

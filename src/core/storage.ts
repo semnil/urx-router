@@ -4,7 +4,7 @@
 // runtime dependency is needed; deflate comes from the platform CompressionStream.
 //
 // Export failures throw an Error whose message is a stable code (png-encode /
-// canvas-unavailable), matching what the Rust shell returns: core stays
+// canvas-unavailable / svg-rasterize), matching what the Rust shell returns: core stays
 // language-independent and the UI localizes the code (src/i18n error.shell).
 
 import {
@@ -17,7 +17,7 @@ import {
   nativeWriteText,
 } from "./platform";
 import type { FileFilter } from "./platform";
-import { pipeBytes } from "./plan";
+import { pipeBytes, stripXmlInvalid } from "./plan";
 
 /** Outcome of a save: not saved means the user canceled the native dialog. */
 export interface SaveResult {
@@ -178,11 +178,13 @@ export async function exportSvgToPdf(
   return saveBlob(filename, blob, filter);
 }
 
-/** Render an SVG element onto a canvas, filling the active canvas background. */
+/** Render an SVG element onto a canvas, filling the active canvas background. The serialized
+ *  markup loses every code point XML refuses first: the serializer writes one out as it is, and
+ *  the image then fails to load as a whole. */
 function rasterizeSvg(svg: SVGSVGElement, opts: ExportOptions): Promise<HTMLCanvasElement> {
   const { width, height } = opts;
   const scale = opts.scale ?? 2;
-  const xml = new XMLSerializer().serializeToString(svg);
+  const xml = stripXmlInvalid(new XMLSerializer().serializeToString(svg));
   const svgUrl = URL.createObjectURL(new Blob([xml], { type: "image/svg+xml;charset=utf-8" }));
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -203,7 +205,7 @@ function rasterizeSvg(svg: SVGSVGElement, opts: ExportOptions): Promise<HTMLCanv
     };
     img.onerror = (): void => {
       URL.revokeObjectURL(svgUrl);
-      reject(new Error("svg rasterize failed"));
+      reject(new Error("svg-rasterize"));
     };
     img.src = svgUrl;
   });

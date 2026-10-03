@@ -1647,6 +1647,61 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     expect(added.no).toBeGreaterThan(0);
   });
 
+  // A name is cut to the unit's screen and loses its trailing padding, and neither a name nor a
+  // note keeps a code point XML refuses; the load rewrites both and says so. The texts the app
+  // rewrites are compared with the ones the tool names: a control character in a name and in a
+  // note, a long name, trailing padding, a cut that lands on a space, and a name nothing is left
+  // of — beside a leading space, a tab in a note, and plain text, which nothing may be said about.
+  it("agrees with the app about the names and notes the load rewrites", async () => {
+    const { planProblems } = await import("../src/core/plan-validate.ts");
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const corpus = [
+      ["a control character in a name", { ch1: "Vo\u0001x" }, {}],
+      ["a control character in a note", {}, { ch1: "Vocal mic\u0007 check" }],
+      ["U+FFFE in a note", {}, { ch2: "a\ufffeb" }],
+      ["a long name", { ch1: "Long name past eight" }, {}],
+      ["trailing padding", { ch1: "Kick  " }, {}],
+      ["a cut onto a space", { ch1: "1234567  9" }, {}],
+      ["a name nothing is left of", { ch1: "\u0001\u0002" }, {}],
+      // …and the texts nothing may be said about.
+      ["a leading space", { ch_5_6: " 5/ 6" }, {}],
+      ["a tab in a note", {}, { ch1: "a\tb" }],
+      ["plain text", { ch1: "Vox" }, { ch1: "hello" }],
+    ];
+    const seen = { yes: 0, no: 0 };
+    for (const [name, nodeNames, notes] of corpus) {
+      const plan = {
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: "URX44V",
+        connections: [],
+        nodeNames,
+        notes,
+      };
+      const read = deserializeDocument(JSON.stringify(plan)).plan;
+      const app = planProblems(getModel("URX44V"), read)
+        .filter((p) => p.reason === "documentText")
+        .map((p) => `${p.field}[${p.node}]`)
+        .sort();
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, `${name}\n${r.stdout}`).toBe(0);
+      const tool = [
+        ...new Set(
+          r.stderr
+            .split(/\r?\n/)
+            .map((l) => /^WARNING: ((?:nodeNames|notes)\[[^\]]+\]): the app (?:removes|cuts|strips)/.exec(l)?.[1])
+            .filter((k) => k !== undefined),
+        ),
+      ].sort();
+      expect(tool, `${name}\n${r.stderr}`).toEqual(app);
+      seen[app.length > 0 ? "yes" : "no"]++;
+    }
+    expect(seen.yes).toBeGreaterThan(0);
+    expect(seen.no).toBeGreaterThan(0);
+  });
+
   // A colour is one of the unit's palette entries or its Off, and the load drops any other; a
   // colourable node left without one is given its factory colour, which the write sends. The nodes
   // whose colour the app drops, and the ones it colours, are compared with the tool's two lists:

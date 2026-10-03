@@ -597,21 +597,47 @@ def collection_warnings(plan):
 NODE_NAME_MAX_CHARS = 8
 
 
-def name_warnings(plan):
-    """The names the app rewrites on load (and again on the way to the device).
+# The code points XML 1.0 refuses, raw or as a reference (core/plan.ts `stripXmlInvalid`): an image
+# export serializes every name and note into an SVG, and one of these fails the whole export.
+XML_INVALID_RE = re.compile("[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]")
 
-    Two rewrites, in this order: cut to the bound, then strip TRAILING whitespace.
-    A leading space survives — the unit right-aligns its stereo pair labels, so
-    " 5/ 6" is the real name — and the order matters, since cutting can land on a
-    space the trim then has to take.
+
+def document_name(value):
+    """A node name as the app's load keeps it (core/plan.ts `normalizeDocumentName`): without the
+    code points XML refuses, cut to the bound, trailing whitespace stripped."""
+    return XML_INVALID_RE.sub("", value)[:NODE_NAME_MAX_CHARS].rstrip()
+
+
+def name_warnings(plan):
+    """The names and notes the app rewrites on load (core/plan-validate.ts
+    `documentTextProblems`).
+
+    A name takes three rewrites, in this order: the code points XML refuses are removed, the
+    rest is cut to the bound, then TRAILING whitespace is stripped. A leading space survives —
+    the unit right-aligns its stereo pair labels, so " 5/ 6" is the real name — and the order
+    matters, since cutting can land on a space the trim then has to take. A note takes the
+    first alone.
     """
     out = []
+    notes = plan.get("notes")
+    for node_id, value in (notes.items() if isinstance(notes, dict) else []):
+        if node_id != "__proto__" and isinstance(value, str) and XML_INVALID_RE.search(value):
+            out.append(
+                f"notes[{node_id}]: the app removes the control characters from this note on load — "
+                "an image export cannot carry them"
+            )
     names = plan.get("nodeNames")
     if not isinstance(names, dict):
         return out
     for node_id, value in names.items():
-        if not isinstance(value, str):
+        if not isinstance(value, str) or node_id == "__proto__":
             continue
+        if XML_INVALID_RE.search(value):
+            out.append(
+                f"nodeNames[{node_id}]: the app removes the control characters from this name on load — "
+                "an image export cannot carry them"
+            )
+            value = XML_INVALID_RE.sub("", value)
         size = len(value)
         if size > NODE_NAME_MAX_CHARS:
             out.append(
@@ -638,7 +664,7 @@ def name_fill_warnings(plan, factory_names):
     filled = []
     for node_id in factory_names or {}:
         value = names.get(node_id)
-        if not isinstance(value, str) or not value[:NODE_NAME_MAX_CHARS].rstrip():
+        if not isinstance(value, str) or not document_name(value):
             filled.append(node_id)
     if not filled:
         return []

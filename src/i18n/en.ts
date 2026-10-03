@@ -819,6 +819,8 @@ export const en = {
     paramsDropped: (count: number): string =>
       `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the default`,
     streamingSourceSupplied: tr("The plan named no STREAMING source, so STREAMING takes STEREO"),
+    textsRewritten: (count: number): string =>
+      `${count} ${count === 1 ? "name or note was" : "names or notes were"} rewritten to what the unit's name screen and an image export can take`,
     colorsDropped: (count: number): string =>
       `${count} ${count === 1 ? "node color was" : "node colors were"} not one the unit has, and now ${count === 1 ? "reads" : "read"} as the default`,
     linkedPairsAligned: (count: number): string =>
@@ -1248,6 +1250,7 @@ export const en = {
       fileBadExtension: (detail: string): string => `unsupported file extension (this action takes: ${detail})`,
       pngEncode: tr("the image could not be encoded as PNG"),
       canvasUnavailable: tr("the drawing canvas is unavailable, so the image could not be rendered"),
+      svgRasterize: tr("the board could not be drawn as an image"),
       midiPortNotFound: tr("That MIDI port is no longer available. Reconnect the device and pick it again."),
       midiOutputNotOpen: tr("no MIDI output port is open"),
       midiInitFailed: (detail: string): string => `the MIDI subsystem could not be started (${detail})`,

@@ -88,6 +88,7 @@ export const SHELL_CODES: Record<string, keyof Messages["error"]["shell"]> = {
   "file-bad-extension": "fileBadExtension",
   "png-encode": "pngEncode",
   "canvas-unavailable": "canvasUnavailable",
+  "svg-rasterize": "svgRasterize",
   "midi-port-not-found": "midiPortNotFound",
   "midi-output-not-open": "midiOutputNotOpen",
   "midi-init-failed": "midiInitFailed",
