@@ -7691,6 +7691,29 @@ describe("the device self-test", () => {
     expect(shell.count("vd_get")).toBe(0);
   });
 
+  // A capture that missed CH 1's strip missed the heads on it, and putting one of those back
+  // after the restore would move what nothing then checks: the run does not start, and the
+  // status says which refusal it was rather than the one about an address it could not read.
+  it("says a run whose capture missed a setting that moves others did not start", SLOW, async () => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok", experimental_enabled: true });
+    const read = table.vd_get as (a: Record<string, unknown>) => number;
+    const faderY = channelControl(getModel("URX44V"), "ch1")!.y;
+    let failed = false;
+    table.vd_get = (a: Record<string, unknown>) => {
+      if (!failed && a.paramId === PARAMS.CH_FADER.id && a.y === faderY) {
+        failed = true;
+        throw new Error("timeout");
+      }
+      return read(a);
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+    const btn = await selfTestBtn();
+    btn.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestRefusedHead), { timeout: 25_000 });
+    expect(failed, "the premise: the capture's read of the fader failed").toBe(true);
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
   // A run that cannot open its own link surfaces as a dialog and lets the latch go.
   it("reports a run that cannot open its own link, and holds nothing afterwards", SLOW, async () => {
     const log = captureWarnings();

@@ -2823,7 +2823,13 @@ listed here so they are not proposed as gaps:
    onto. So before the sweep the captured plan is diffed against the unit, and every address it finds
    different or cannot read joins the ones the restore has no command for — read before the sweep and
    written back after the restore, with an address that cannot be read then refusing the run (`diag.captureUnheld`
-   lists them).
+   lists them). **A head is not put back that way: the run refuses instead** (`refusal: "sideEffectUnheld"`).
+   When an address bound for that write-back is a `sideEffect` param — an insert-FX selector, Signal Type, a
+   COMP/EQ order, an EQ 1-knob switch — on a node the capture could not read, writing it after the restore
+   would refill or reset values that nothing then compares, so the run declines before the sweep, writes
+   nothing, and the status line says which refusal it was. That covers a head the captured plan sends nothing
+   to as well as one it holds a default at: a capture that missed CH 1's strip leaves a plan that sends no
+   Signal Type or PAN / BAL there, while the passes do.
 2. **`translate.ts`'s value coercion clamps instead of refusing.** It is the last line before the hardware, and
    a coerced in-range value is a better outcome than an out-of-range one reaching the unit. The clamp is
    deliberately NOT applied to the readout beside it: the panel shows what the plan holds, which after a
