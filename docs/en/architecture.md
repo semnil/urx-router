@@ -293,7 +293,9 @@ carries a one-line map of the same directories and points here.
       from **what the unit announced** for them, since the unit does not answer a GET for a write that early
       — every other read path hands over nothing, and names are the one class the overlay never answers for:
       `readPass` skips them entirely while `pending` is present, for the reason given under `settle.ts`
-      below / `settle.ts` the post-write settle: **a write is acked
+      below. The layout heads (each FX channel's EFFECT TYPE, each insert-FX selector) are read off the unit
+      even when announced: the family read checks its head a second time behind the values it lays out, and
+      an answer from the announcement would make that check a constant / `settle.ts` the post-write settle: **a write is acked
       before its value is readable**, and the boundary is that write's own device notify (measured on a
       URX44V, 9-204 ms from the write's issue, 87 value-paired samples on six addresses, independent of the
       parameter's class; on hardware a 1-knob drag ended at the notify 10/10, 42-203 ms, never at the

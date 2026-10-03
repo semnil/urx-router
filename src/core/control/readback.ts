@@ -202,6 +202,28 @@ function writeOverlay(source: ParamSource, announced?: ReadonlyMap<number, numbe
   };
 }
 
+/**
+ * What the unit announced, less every layout head on the model — each FX channel's EFFECT
+ * TYPE and each node's insert-FX selector, every instance. A family read checks its head
+ * against the unit a second time behind the values the head lays out (`readWithStableHead`),
+ * and an answer taken from the announcement makes that check a constant: a selector moved
+ * on the panel while the values were being read would file the other layout's raws under the
+ * announced one's keys. The settle has already waited for these addresses, so a read of
+ * them is the unit's value after the write.
+ */
+function withoutLayoutHeads(
+  model: DeviceModel,
+  announced?: ReadonlyMap<number, number>,
+): ReadonlyMap<number, number> | undefined {
+  if (!announced?.size) return announced;
+  const heads = new Set<number>(FX_EFFECT_TYPE_PARAM.map((id) => addrKey(id, 0, 0)));
+  for (const node of model.nodes) {
+    const ifx = insertFxControl(model, node.id);
+    if (ifx) for (const y of ifx.instances) heads.add(addrKey(ifx.param, 0, y));
+  }
+  return new Map([...announced].filter(([addr]) => !heads.has(addr)));
+}
+
 export interface ReadbackResult {
   /**
    * Count of node/parameter groups successfully read and applied to the plan
@@ -351,7 +373,15 @@ export async function applyDeviceState(
         signal,
       })
     : undefined;
-  return readPass(writeOverlay(LIVE_SOURCE, announced), model, plan, signal, only, skipNames, skipSceneExternal);
+  return readPass(
+    writeOverlay(LIVE_SOURCE, withoutLayoutHeads(model, announced)),
+    model,
+    plan,
+    signal,
+    only,
+    skipNames,
+    skipSceneExternal,
+  );
 }
 
 /**
@@ -548,7 +578,7 @@ export async function applySilentState(
         signal,
       })
     : undefined;
-  const base = writeOverlay(LIVE_SOURCE, announced);
+  const base = writeOverlay(LIVE_SOURCE, withoutLayoutHeads(model, announced));
   const errors: string[] = [];
   const attempted = new Set<string>();
   const failed = new Set<string>();

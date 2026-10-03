@@ -1020,6 +1020,49 @@ describe("applyDeviceState write overlay", () => {
     expect(wasRead(cmd)).toBe(true);
   });
 
+  // A layout head is read off the unit even where it was announced. The read checks the head
+  // against the unit a second time behind the values it lays out, and an answer taken from
+  // the announcement makes that check a constant: a selector switched on the panel while the
+  // engine was being read would file the other effect's raws under the announced family.
+  it.each([
+    [
+      "a refetch",
+      (plan: Plan, pending: PendingWrites) =>
+        applyDeviceState(model, plan, undefined, new Set(["bus.stereo"]), pending),
+    ],
+    ["the silent park", (plan: Plan, pending: PendingWrites) => applySilentState(model, plan, undefined, pending)],
+  ])("reads an announced layout head off the unit, through %s", async (_name, read) => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.stereo"] = {
+      ...plan.nodeParams["bus.stereo"],
+      insertFx: 1792,
+      insertFxOn: true,
+      insertFxParams: { "mbc:14": 97 },
+    };
+    const ifx = insertFxControl(model, "bus.stereo")!;
+    const selector = { paramId: ifx.param, x: 0, y: ifx.instances[0] };
+    const table = deviceTableFor(plan);
+    // The panel: the compander chosen once the engine read has begun, refilling the engine
+    // the multi-band compressor shares with it.
+    let switched = false;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 693 && !switched) {
+        switched = true;
+        table.set(`${selector.paramId}:0:${selector.y}`, 1793);
+        for (const k of [...table.keys()]) if (k.startsWith("693:")) table.set(k, 222);
+      }
+      const hit = table.get(`${paramId}:${x}:${y}`);
+      return Promise.resolve(hit ?? (PORT_REF_PARAMS.has(paramId) ? PORT_REF_NONE : 0));
+    });
+
+    const r = await read(plan, announced(selector, 1792));
+
+    expect(switched, "the premise: the panel moved during the read").toBe(true);
+    expect(r.errors).toEqual([]);
+    expect(plan.nodeParams["bus.stereo"]?.insertFx, "the selector the unit holds").toBe(1793);
+    expect(plan.nodeParams["bus.stereo"]?.insertFxParams?.["mbc:14"], "the multi-band compressor's own value").toBe(97);
+  });
+
   // The wait is taken here rather than by the caller: readIntoPlan clones the plan at
   // the call, so a wait taken outside is a window in which an operator edit lands in
   // neither that clone nor the witness that protects an edit made during the read —
