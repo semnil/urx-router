@@ -29,6 +29,7 @@ import {
   insertFxDefaults,
   insertFxEngine,
   insertFxFamilyOf,
+  insertFxLockedSlots,
   insertFxParamKey,
   insertFxParams,
   mbcDeviceDriven,
@@ -197,6 +198,20 @@ describe("insert-fx family / engine / slot mapping", () => {
     // …and it reads the bare slot a readback writes, as well as the qualified key.
     expect(pitchDeviceDriven({ [String(PITCH_MIDI_ENABLE_SLOT)]: 1 }).size).toBeGreaterThan(0);
   });
+
+  // The mode is asked of the raw the write sends at its enable bit, as the multi-band
+  // compressor's switch is: `true` sent nothing there and still took the Scale and the mask
+  // out of the write.
+  it.each([[true], [false], [-1], [0.4], [0.5], [1], [2], ["1"]])(
+    "reads a MIDI Control enable holding %j the way the write sends it",
+    (v) => {
+      const plan = emptyPlan("URX44V");
+      const params = { [insertFxParamKey("pitch", PITCH_MIDI_ENABLE_SLOT)]: v as number };
+      plan.nodeParams[monoInput] = { insertFx: 512, insertFxParams: params };
+      const sent = engineWrites(planToCommands(model, plan), ENGINE_PITCH).get(PITCH_MIDI_ENABLE_SLOT);
+      expect(pitchDeviceDriven(params).size > 0).toBe(sent === 1);
+    },
+  );
 });
 
 describe("the multi-band compressor's Band Bypass", () => {
@@ -551,6 +566,21 @@ describe("the multi-band compressor's 1-knob", () => {
     );
     expect(on.has(band)).toBe(false);
   });
+
+  // Every reader of the switch asks what the WRITE sends there. A value the write sends as 0,
+  // or does not send at all (a boolean, a string), drives nothing; one it sends as 1 drives the
+  // set. Read for truth instead, `true` and `-1` locked eighteen rows the writer then skipped
+  // while the unit never had the knob switched on.
+  it.each([[true], [false], [-1], [0.4], [0.5], [1], [2], ["1"]])(
+    "reads a switch holding %j the way the write sends it",
+    (v) => {
+      const params = { [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]: v as number };
+      const sent = engineWrites(planToCommands(model, mbcPlan(params)), ENGINE_OUTPUT).get(MBC_GLOBAL.oneKnobOn);
+      const on = sent === 1;
+      expect(mbcDeviceDriven(params).size > 0, "the writer's driven set").toBe(on);
+      expect(insertFxLockedSlots("mbc", params).has(MBC_BANDS[0].threshold), "the lock").toBe(on);
+    },
+  );
 
   it("reads the knob under the bare slot a readback writes, as well as the qualified key", () => {
     const band = MBC_BANDS[0].threshold;

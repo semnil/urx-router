@@ -836,6 +836,23 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(slotVal("bus.stereo", "mbc", th)).not.toBe(100);
   });
 
+  // A controller is told the switch the way the write sends it, which is the question the lock
+  // above asks of the same slot: a value the write sends as 0, or not at all, reads OFF here
+  // and leaves the bands writable, rather than lighting the switch over unlocked bands.
+  it.each([
+    [true, 0],
+    [-1, 0],
+    [1, 1],
+  ])("tells a controller a 1-knob switch holding %j as %i", (v, told) => {
+    const th = MBC_BANDS[0].threshold;
+    holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: v as number, [th]: 100 }, "mbc");
+    const sw = bindControl(model, plan, controlId("bus.stereo", "insfx", `insfx.mbc.${MBC_ONE_KNOB.on.slot}`))!;
+    expect(sw.get()).toBe(told);
+    expect(push(controlId("bus.stereo", "insfx", `insfx.mbc.${th}`), 0.75), "a band, as the lock reads it").toBe(
+      told === 0,
+    );
+  });
+
   it("refuses the 1-knob's own Level while the knob is off", () => {
     const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${MBC_ONE_KNOB.level.slot}`);
     holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [MBC_ONE_KNOB.level.slot]: 4 }, "mbc");

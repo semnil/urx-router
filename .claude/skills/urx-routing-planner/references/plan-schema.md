@@ -272,7 +272,9 @@ or inside a group — is written `true` / `false`: a number there loads converte
   modes): while it is anything but Off, the app stops writing the Scale (slot 16) and
   the twelve note-mask slots (22–33), because switching the mode on clears that mask
   on the unit. In both cases the skipped slots are dropped from the write silently
-  and the app's tuning screen locks the same rows.
+  and the app's tuning screen locks the same rows. "On" means the number the write
+  sends to the switch is 1: a finite number of 0.5 or more (rounded, and bounded to
+  0..1). A boolean or any other non-number is not written at all and counts as off.
 
   Either switch also makes the app READ the node back after writing it, because the
   unit recomputes the skipped slots when the switch moves. So a plan carrying one of

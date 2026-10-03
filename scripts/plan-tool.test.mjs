@@ -1465,23 +1465,45 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       expect(on.tool, `the tool, ${what} with MIDI Control on\n${on.stdout}`).toBe(true);
     }
 
-    // The gate is read for TRUTH, not for the number 1: the app takes whatever the slot
-    // holds and asks `on ?`, so a boolean gates exactly as a 1 does. Read as `== 1` the
-    // Scale comes back into the write and the pair reads as a contradiction again.
+    // The gate is read as the raw the WRITE sends at it, not for truth: a boolean is not sent
+    // at all, so it gates nothing, the Scale comes back into the write, and the pair reads as
+    // a contradiction. Read for truth — `True` in a language where `True == 1` — the Scale
+    // would be left out of a write that never switched MIDI Control on.
     const truthy = ask(
       { stereoLink: true, ...pitch(true, { [`pitch:${scale}`]: 0 }) },
       pitch(true, { [`pitch:${scale}`]: 1 }),
     );
-    expect(truthy.app, "the app, a boolean MIDI Control").toBe(true);
-    expect(truthy.tool, `the tool, a boolean MIDI Control\n${truthy.stdout}`).toBe(true);
+    expect(truthy.app, "the app, a boolean MIDI Control").toBe(false);
+    expect(truthy.tool, `the tool, a boolean MIDI Control\n${truthy.stdout}`).toBe(false);
 
-    // …and a truthy value that is not 1, which is what separates "read for truth" from
-    // "read as 1" in a language where `True == 1`. The gate's own slot is bounded to 1 on
-    // the way out, so both members still SEND the same gate — what moves is whether the
-    // Scale is left out.
+    // …a number the write sends as 0 gates nothing either, though it is truthy.
+    const negative = ask(
+      { stereoLink: true, ...pitch(-1, { [`pitch:${scale}`]: 0 }) },
+      pitch(-1, { [`pitch:${scale}`]: 1 }),
+    );
+    expect(negative.app, "the app, a MIDI Control sent as 0").toBe(false);
+    expect(negative.tool, `the tool, a MIDI Control sent as 0\n${negative.stdout}`).toBe(false);
+
+    // …and a value past its own range is bounded to 1 on the way out, so both members SEND
+    // the gate and the Scale is left out of both.
     const two = ask({ stereoLink: true, ...pitch(2, { [`pitch:${scale}`]: 0 }) }, pitch(2, { [`pitch:${scale}`]: 1 }));
     expect(two.app, "the app, a MIDI Control past its own range").toBe(true);
     expect(two.tool, `the tool, a MIDI Control past its own range\n${two.stdout}`).toBe(true);
+
+    // A fraction is rounded on the way out, the gate's and a value's alike: 0.5 is sent as 1,
+    // and two values the write rounds to one integer are one state.
+    const half = ask(
+      { stereoLink: true, ...pitch(0.5, { [`pitch:${scale}`]: 0 }) },
+      pitch(0.5, { [`pitch:${scale}`]: 1 }),
+    );
+    expect(half.app, "the app, a MIDI Control rounded to 1").toBe(true);
+    expect(half.tool, `the tool, a MIDI Control rounded to 1\n${half.stdout}`).toBe(true);
+    const rounds = ask(
+      { stereoLink: true, ...pitch(0, { [`pitch:${scale}`]: 0 }) },
+      pitch(0, { [`pitch:${scale}`]: 0.4 }),
+    );
+    expect(rounds.app, "the app, two values sent as one integer").toBe(true);
+    expect(rounds.tool, `the tool, two values sent as one integer\n${rounds.stdout}`).toBe(true);
 
     // The gate itself is still sent, so disagreeing about IT is a contradiction either way.
     const gates = ask({ stereoLink: true, ...pitch(1, {}) }, pitch(0, {}));

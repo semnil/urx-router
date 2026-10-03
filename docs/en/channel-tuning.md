@@ -1505,6 +1505,12 @@ disagree about who owns a row. Emitting them would not be merely redundant: anyt
 plan's copy after the knob has computed puts the operator's pre-knob values back on the unit, which
 is what a converge sharing the flush does.
 
+**Whether a driver switch is on is asked of the raw the write sends there** (`insertFxDriverOn`):
+the stored value rounded and bounded to the switch's 0..1, with a value the write does not send at
+all — a boolean, a string — counted as off. The driven sets, `insertFxLockedSlots`, the 1-knob's own
+switch on this screen and Pitch Fix's MIDI Control mode all take it from there, so a value the write
+sends as 0, or not at all, cannot lock eighteen rows the unit is not driving.
+
 The locked rows are **not tagged**, which is this screen's one departure from COMP's treatment. A tag
 says why THIS row cannot be touched and earns its space where some rows carry one and others do not;
 here it is every row of a band face and all but one of MAIN's, for one reason the panel's own line

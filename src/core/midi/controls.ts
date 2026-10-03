@@ -67,6 +67,7 @@ import {
   insertFxLockedSlots,
   insertFxParams,
   insertFxSlotVal,
+  insertFxSwitchOn,
   reKeyInsertFxParams,
   MBC_ONE_KNOB,
 } from "../control/insert-fx-effect";
@@ -1000,7 +1001,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           scope,
           kind: "toggle",
           governedBy,
-          get: () => (cur() ? 1 : 0),
+          // As the write sends it: the same reading the locks take of the 1-knob switch.
+          get: () => (insertFxSwitchOn(cur()) ? 1 : 0),
           set: (v) => {
             if (lockedNow()) return false;
             write(v >= 0.5 ? 1 : 0);

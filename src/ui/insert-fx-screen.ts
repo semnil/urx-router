@@ -22,6 +22,7 @@ import {
   insertFxDeviceDriven,
   insertFxInactiveSlots,
   insertFxLockedSlots,
+  insertFxDriverOn,
   insertFxFamilyOf,
   insertFxParamKey,
   insertFxParams,
@@ -1188,7 +1189,7 @@ function pitchNotesRow(ctx: DynRowCtx, owned: SettingsRowOptions | undefined): H
 function mbcOneKnobSection(ctx: DynRowCtx): HTMLElement {
   const t = ctx.m.inspector.insertFxEffect;
   const raw = (slot: number): number => insertFxVal(ctx.plan, ctx.nodeId, "mbc", slot, 0);
-  const on = raw(MBC_ONE_KNOB.on.slot) !== 0;
+  const on = insertFxDriverOn(ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams, "mbc", MBC_ONE_KNOB.on.slot);
   const locked = insertFxLockedSlots("mbc", ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams);
   const set = (slot: number, v: number): void => ctx.set({ [slotKey("mbc", slot)]: v });
   // A CONTINUOUS value writes without rebuilding. `set` re-renders the screen, which

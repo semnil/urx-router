@@ -45,6 +45,7 @@
 // and write them all back explicitly; re-selecting the old type does not restore.
 
 import { preferredNumber, R40 } from "./preferred-numbers";
+import { boundRaw } from "./vd";
 
 // Engine array param_id each effect family binds (confirmed by the live pointer
 // read; the selector/enable/pointer params themselves live in params.ts).
@@ -830,7 +831,7 @@ export interface InsertFxSlotSpec {
   mirror?: number;
   /** Calibrated raw bounds, carried from the catalog so the emit path can bound a
    *  hand-edited plan to the same range the inspector enforces. Every slot states
-   *  them: an absent bound is an opt-out of that firewall (translate.ts boundRaw
+   *  them: an absent bound is an opt-out of that firewall (vd.ts boundRaw
    *  passes the raw through), which is silent at the catalog and audible at the
    *  device. */
   rawMin: number;
@@ -1003,6 +1004,35 @@ export function seedInsertFxParams(
   return { params: seeded.length > 0 ? next : params, seeded };
 }
 
+/** The raw the emit sends for a stored engine-slot value: a finite number, rounded and bounded
+ *  to the slot's window. Undefined for anything else, which the emit does not send. */
+export function insertFxSlotRaw(v: unknown, spec: Pick<InsertFxSlotSpec, "rawMin" | "rawMax">): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? boundRaw(v, spec.rawMin, spec.rawMax) : undefined;
+}
+
+const SWITCH_WINDOW = { rawMin: 0, rawMax: 1 } as const;
+
+/** Whether a 0..1 switch slot holding `v` is on: the raw the emit sends there is not 0. A
+ *  value the emit does not send (a boolean, a string) counts as off. */
+export function insertFxSwitchOn(v: unknown): boolean {
+  return (insertFxSlotRaw(v, SWITCH_WINDOW) ?? 0) !== 0;
+}
+
+/**
+ * Whether a driver slot — the multi-band compressor's 1-knob On, Pitch Fix's MIDI Control
+ * bits — is on, answered from the raw the emit sends there (`insertFxSwitchOn`). The driven
+ * sets the writer skips, the locks the screen and the MIDI catalogue draw, and the screen's
+ * own switch and mode all ask this one question, so none of them can call a value on that
+ * the write sends as off, or the other way round.
+ */
+export function insertFxDriverOn(
+  params: Record<string, number> | undefined,
+  family: InsertFxFamily,
+  slot: number,
+): boolean {
+  return insertFxSwitchOn(insertFxSlotVal(params, family, slot, 0));
+}
+
 export function insertFxDeviceDriven(
   family: InsertFxFamily,
   params: Record<string, number> | undefined,
@@ -1011,8 +1041,7 @@ export function insertFxDeviceDriven(
 }
 
 export function mbcDeviceDriven(params: Record<string, number> | undefined): ReadonlySet<number> {
-  const on = insertFxSlotVal(params, "mbc", MBC_ONE_KNOB.on.slot, 0);
-  return on ? MBC_LEVEL_DRIVEN : EMPTY_SLOTS;
+  return insertFxDriverOn(params, "mbc", MBC_ONE_KNOB.on.slot) ? MBC_LEVEL_DRIVEN : EMPTY_SLOTS;
 }
 const MBC_LEVEL_DRIVEN: ReadonlySet<number> = new Set([
   // EVERY per-band slot, read off the descriptors rather than named here: that is the rule
@@ -1091,7 +1120,7 @@ export function insertFxLockedSlots(
   params: Record<string, number> | undefined,
 ): ReadonlySet<number> {
   if (family === "mbc") {
-    return insertFxSlotVal(params, family, MBC_ONE_KNOB.on.slot, 0) ? mbcDeviceDriven(params) : ONE_KNOB_LEVEL_ONLY;
+    return insertFxDriverOn(params, family, MBC_ONE_KNOB.on.slot) ? mbcDeviceDriven(params) : ONE_KNOB_LEVEL_ONLY;
   }
   if (family === "pitch") return pitchDeviceDriven(params);
   return EMPTY_SLOTS;
@@ -1100,8 +1129,7 @@ const ONE_KNOB_LEVEL_ONLY: ReadonlySet<number> = new Set([MBC_ONE_KNOB.level.slo
 const MOD_GATED: ReadonlySet<number> = new Set([GUITAR_MOD.speed, GUITAR_MOD.depth]);
 
 export function pitchDeviceDriven(params: Record<string, number> | undefined): ReadonlySet<number> {
-  const on = insertFxSlotVal(params, "pitch", PITCH_MIDI_ENABLE_SLOT, 0);
-  return on ? PITCH_MIDI_DRIVEN : EMPTY_SLOTS;
+  return insertFxDriverOn(params, "pitch", PITCH_MIDI_ENABLE_SLOT) ? PITCH_MIDI_DRIVEN : EMPTY_SLOTS;
 }
 const PITCH_MIDI_DRIVEN: ReadonlySet<number> = new Set([PITCH_SCALE_SLOT, ...PITCH_NOTE_SLOTS]);
 const EMPTY_SLOTS: ReadonlySet<number> = new Set();

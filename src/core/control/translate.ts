@@ -40,6 +40,7 @@ import {
   insertFxEngine,
   insertFxFamilyOf,
   insertFxParamKey,
+  insertFxSlotRaw,
   insertFxWritableSlots,
   insertFxDeviceDriven,
   insertFxDriverSlots,
@@ -101,6 +102,7 @@ import {
   A_GAIN_MIN_DB,
   attackToVd,
   boolToVd,
+  boundRaw,
   burstWidthToVd,
   centiDbToVd,
   D_GAIN_MAX_DB,
@@ -1360,21 +1362,6 @@ function pushSsmcsBand(
 // effect's family; raw values pass straight through (the plan stores raw). The
 // type is a sideEffect (writing it repopulates the array on the device), so live
 // converges + re-reads. fxIndex = 0 (FX1) / 1 (FX2).
-// Bound a RAW / enum value to its catalog range — the last line before an
-// out-of-range value reaches the device, since encodeValue's "raw" and "enum"
-// cases are pure passthroughs (every numeric encoder in vd.ts clamps internally,
-// these two cannot: their range lives in the effect / option catalogs, not in the
-// encoder). The inspector already constrains the same bounds, so this only bites
-// on a hand-edited or `?plan=` payload. Rounded first: a raw is a broker integer,
-// and the shell refuses a write carrying a fraction. A value that is not a finite
-// number is the caller's to skip (`isRaw`), since what stands in for one differs by
-// whether a catalog default exists to fall back on.
-function boundRaw(raw: number, lo?: number, hi?: number): number {
-  const v = Math.round(raw);
-  if (lo !== undefined && v < lo) return lo;
-  if (hi !== undefined && v > hi) return hi;
-  return v;
-}
 
 /** Whether a plan value can go out as a raw at all: a finite number. Anything else is not
  *  sent, since the shell refuses a write whose value is not an integer. */
@@ -1471,11 +1458,10 @@ function pushInsertFxEffectCommands(
   const drivers = insertFxDriverSlots(family);
   for (const s of insertFxWritableSlots(family)) {
     if (driven.has(s.slot)) continue;
-    const v = params[insertFxParamKey(family, s.slot)] ?? params[String(s.slot)];
     // A slot the plan does not hold as a finite raw sends nothing; no default is
     // substituted here.
-    if (!Number.isFinite(v)) continue;
-    const raw = boundRaw(v, s.rawMin, s.rawMax);
+    const raw = insertFxSlotRaw(params[insertFxParamKey(family, s.slot)] ?? params[String(s.slot)], s);
+    if (raw === undefined) continue;
     const name = drivers.has(s.slot) ? "INSERT_FX_DRIVER" : "INSERT_FX_EFFECT";
     out.push(rawCommand(name, engine, "raw", s.slot, raw));
     if (s.mirror !== undefined) out.push(rawCommand(name, engine, "raw", s.mirror, raw));

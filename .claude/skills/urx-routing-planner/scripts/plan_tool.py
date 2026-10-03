@@ -913,11 +913,12 @@ def insert_fx_pair_params(node_params, node_id, selector, param_space):
       neither is the type's default, which the load fills it with;
     - a value that is not a finite number is not sent at all — a boolean included, since
       `Number.isFinite(true)` is false in the app;
-    - what IS sent is the value bounded to that slot's own range, so two numbers past the
-      same end arrive as one;
+    - what IS sent is the value rounded and bounded to that slot's own range, so two numbers
+      past the same end, or rounding to one integer, arrive as one;
     - a slot the unit drives itself is skipped while its gate is on (Pitch Fix clears the
       Scale and the note mask when MIDI Control is switched on, and re-sending the plan's
-      copy would put them back);
+      copy would put them back) — and the gate is on when the raw the write sends at it is
+      not 0, so a gate the write does not send (a boolean) gates nothing;
     - a driver slot goes out under its own command name.
 
     The emit's mirrored slots are left out: a mirror repeats a value this tuple already
@@ -938,13 +939,21 @@ def insert_fx_pair_params(node_params, node_id, selector, param_space):
     carried = node_params.get(node_id)
     params = sanitized_params(carried.get("insertFxParams") if isinstance(carried, dict) else None)
 
+    def sent(value, spec):
+        # The raw the write sends for a stored value (`insertFxSlotRaw`), or None for one it
+        # does not send.
+        if not is_number(value):
+            return None
+        return min(max(js_round(value), spec.get("rawMin")), spec.get("rawMax"))
+
     driven = set()
     gate_spec = space.get("driven")
     if isinstance(gate_spec, dict):
-        gate = insert_fx_slot_value(params, family, gate_spec.get("gate"))
-        # The app reads the gate as a bare truthiness with 0 for an absent one, so a boolean
-        # gates exactly as a 1 does.
-        if gate:
+        gate_slot = gate_spec.get("gate")
+        gate_window = next((s for s in slots if isinstance(s, dict) and s.get("slot") == gate_slot), None)
+        gate = insert_fx_slot_value(params, family, gate_slot)
+        # On where the write sends the gate as anything but 0 (`insertFxDriverOn`).
+        if gate_window is not None and (sent(gate, gate_window) or 0) != 0:
             driven = {s for s in gate_spec.get("slots") or []}
 
     out = []
@@ -961,9 +970,9 @@ def insert_fx_pair_params(node_params, node_id, selector, param_space):
             value = spec.get("def")
         # `Number.isFinite` in the app, which a boolean is not — and `is_number` already
         # draws that line for the same reason, so it is asked rather than re-stated.
-        if not is_number(value):
+        raw = sent(value, spec)
+        if raw is None:
             continue
-        raw = min(max(value, spec.get("rawMin")), spec.get("rawMax"))
         name = "INSERT_FX_DRIVER" if spec.get("driver") else "INSERT_FX_EFFECT"
         out.append((name, slot, raw))
     return tuple(out)

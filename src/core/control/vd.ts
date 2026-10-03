@@ -116,6 +116,22 @@ export function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+// Bound a RAW / enum value to its catalog range — the last line before an
+// out-of-range value reaches the device, since encodeValue's "raw" and "enum"
+// cases are pure passthroughs (every numeric encoder here clamps internally,
+// these two cannot: their range lives in the effect / option catalogs, not in the
+// encoder). The inspector already constrains the same bounds, so this only bites
+// on a hand-edited or `?plan=` payload. Rounded first: a raw is a broker integer,
+// and the shell refuses a write carrying a fraction. A value that is not a finite
+// number is the caller's to skip (translate.ts `isRaw`), since what stands in for one
+// differs by whether a catalog default exists to fall back on.
+export function boundRaw(raw: number, lo?: number, hi?: number): number {
+  const v = Math.round(raw);
+  if (lo !== undefined && v < lo) return lo;
+  if (hi !== undefined && v > hi) return hi;
+  return v;
+}
+
 /** Plan PHONES level (0.0 … 10.0 scale) → broker raw (×10). */
 export function phonesLevelToVd(value: number): number {
   return clamp(Math.round(value * 10), PHONES_LEVEL_MIN * 10, PHONES_LEVEL_MAX * 10);

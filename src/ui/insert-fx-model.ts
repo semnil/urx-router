@@ -8,6 +8,7 @@ import type { NodeParams, Plan } from "../core/plan";
 import {
   insertFxFamilyOf,
   insertFxSlotVal,
+  insertFxSwitchOn,
   qualifyInsertFxParams,
   PITCH_KEY_SLOT,
   PITCH_MIDI_ENABLE_SLOT,
@@ -79,8 +80,8 @@ export function pitchKeyPatch(scale: number, key: number): Record<number, number
  * listens for arrive on a USB-MIDI port of the unit's own, which is not the port this app
  * reads external control from. The app shows the mode and leaves the setting to the unit.
  */
-export function pitchMidiMode(enable: number, realtime: number): 0 | 1 | 2 {
-  return enable === 0 ? 0 : realtime === 0 ? 1 : 2;
+export function pitchMidiMode(enable: unknown, realtime: unknown): 0 | 1 | 2 {
+  return !insertFxSwitchOn(enable) ? 0 : !insertFxSwitchOn(realtime) ? 1 : 2;
 }
 
 /**
