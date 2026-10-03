@@ -7,10 +7,11 @@
 // all inherit it. Two entry styles (the fineLatch preference): hold — Shift down
 // enters, keyup / window blur / tab hide leave, so a missed keyup can never leave
 // fine mode latched; latch — each Shift press flips it, and only a preference
-// change (resetFine) or a page hide clears it deliberately.
+// change (resetFine) or a page hide clears it deliberately. A Shift typed into a text
+// surface or pressed during an IME composition enters neither.
 
 import { el } from "./dom";
-import { isChord } from "./keys";
+import { isChord, ownsNativeUndo } from "./keys";
 import { t } from "../i18n";
 import { getSettings } from "../core/settings";
 
@@ -65,6 +66,9 @@ export function initFineMode(): void {
     // is not a bug in this file. The keyup below stays unfiltered, so a hold that did
     // enter always leaves — even when Shift is released with Cmd still down.
     if (e.key !== "Shift" || isChord(e)) return;
+    // A Shift typed into a text surface is a capital letter, and one pressed during an IME
+    // composition belongs to the composition: neither is a fine-mode press.
+    if (ownsNativeUndo(e.target) || e.isComposing) return;
     // Latch: one flip per physical press (keydown auto-repeats while held).
     if (getSettings().fineLatch) {
       if (!e.repeat) setFine(!fine);

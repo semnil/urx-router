@@ -3691,7 +3691,7 @@ per drag, and each report crosses the IPC boundary to set a native item's state.
 | `Ctrl/Cmd+Shift+Z`, `Ctrl/Cmd+Y` | Redo (macOS: also Edit ▸ Redo) |
 | `Delete`, `Backspace` | Delete the graph's selection (GRAPH view only, and not past a modal) |
 | `Escape` | Clear the graph's selection; dismiss a dismissable overlay; close the note editor |
-| `Shift` (hold, or latch) | Fine-tuning mode ([above](#node-notes) — `ui/fine.ts`) |
+| `Shift` (hold, or latch) | Fine-tuning mode ([above](#node-notes) — `ui/fine.ts`); not a Shift typed into a text field or pressed during an IME composition |
 
 The undo branch runs before the `Delete` / `Escape` handling and applies its own target test, because
 that handler's broader "focus is in a field" bail is wrong for the shortcut: a focused range slider or

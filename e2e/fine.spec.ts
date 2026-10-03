@@ -187,3 +187,22 @@ test.describe("console view", () => {
     await expect(readout).toHaveText("+0.4"); // one level_gain detent — no fine grid on faders
   });
 });
+
+// A capital letter typed into the Inspector's Name field is a Shift the field owns: in latch
+// mode it must not flip fine-tuning on. A bare Shift with the field left behind still does.
+test("in latch mode a capital typed into the Name field leaves fine mode alone", async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem("urx-settings", JSON.stringify({ fineLatch: true })));
+  await page.reload();
+  await page.locator("#model-picker").waitFor();
+  await node(page, "ch1").click();
+  const name = page.locator('#inspector input[type="text"]').first();
+  await name.click();
+  // Shift held over the V, the way a capital is typed: keyboard.type sends no Shift at all.
+  await page.keyboard.press("Shift+V");
+  await page.keyboard.type("ox");
+  await expect(name).toHaveValue(/Vox$/);
+  await expect(page.locator("html")).not.toHaveClass(/\bfine-mode\b/);
+  await name.evaluate((el) => (el as HTMLInputElement).blur());
+  await page.keyboard.press("Shift");
+  await expect(page.locator("html")).toHaveClass(/\bfine-mode\b/);
+});
