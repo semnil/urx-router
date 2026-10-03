@@ -624,6 +624,32 @@ test("the MIDI window offers no take-in mode on a fader that shares a switch's M
   await expect(mapRow(win, "ch3/level").locator(".mw-mode")).toHaveValue("pickup");
 });
 
+// An insert effect's switch is a control only while its strip holds an effect, so a gang
+// saved with one beside a fader is no mix of kinds until an effect is chosen. Choosing one
+// makes it one, and it is set to Absolute and said then, as a load does.
+test("choosing an insert effect sets a fader ganged with its switch to Absolute", async ({ page }) => {
+  await page.addInitScript(() => {
+    const addr = { type: "cc", channel: 0, controller: 22 };
+    const URX44V = [
+      { control: "ch1/insertFxOn", addr, mode: "pickup" },
+      { control: "ch3/level", addr, mode: "pickup" },
+    ];
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V } }));
+  });
+  await page.reload();
+  await page.click("#btn-view-console");
+  const win = await openMidiWindow(page);
+  await expect(mapRow(win, "ch3/level").locator(".mw-mode")).toHaveValue("pickup");
+
+  await strip(page, "CH 1").locator(".con-ifxopen").click();
+  await page.locator(".con-ifxpop .irow", { hasText: "Clean" }).first().click();
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+  const said = "Take-in mode set to Absolute on CH 1 CC 22";
+  await expect(win.locator(".mw-status")).toContainText(said);
+  await expect(page.locator("#statusbar")).toContainText(said);
+  await expect(mapRow(win, "ch3/level").locator(".mw-mode, .mw-btn")).toHaveCount(0);
+});
+
 test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);

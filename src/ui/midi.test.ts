@@ -775,6 +775,83 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     expect(storedModes()["ch3/level"]).toBe("absolute");
   });
 
+  // A load judges a gang against the plan as it is then, and an insert effect's switch
+  // resolves only while its node holds one: with CH 1 holding none, this gang is one
+  // continuous control and keeps its Pickup. Selecting an effect later completes the gang,
+  // and it is judged then, the way the load judges it.
+  const switchGang = (mode: "absolute" | "pickup") => {
+    const cc7 = { type: "cc", channel: 0, controller: 7 };
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({
+        models: {
+          URX44V: [
+            { control: "ch1/insertFxOn", addr: cc7, mode },
+            { control: "ch3/level", addr: cc7, mode },
+          ],
+        },
+      }),
+    );
+  };
+  const option = (control: string) => lastState().rows.find((r) => r.control === control)?.option;
+  // Past the port refresh the window's "ready" starts, whose push lands after an await and
+  // would otherwise carry the plan change itself.
+  const openedWindow = async (): Promise<void> => {
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["Controller Out"]));
+  };
+
+  it("sets a gang a plan change makes mixed to Absolute, says so, and stops offering Pickup", async () => {
+    switchGang("pickup");
+    const { control, hooks, plan } = install();
+    await openedWindow();
+    expect(storedModes()).toEqual({ "ch1/insertFxOn": "pickup", "ch3/level": "pickup" });
+    expect(option("ch3/level")).toBe("mode");
+
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[1].value };
+    control.scheduleFeedback();
+    await vi.waitFor(() => expect(storedModes()).toEqual({ "ch1/insertFxOn": "absolute", "ch3/level": "absolute" }));
+    expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.mixedGangAbsolute("CH 1 CC 7"));
+    expect(option("ch3/level")).toBeUndefined();
+    // …and the fader behind the switch now follows the physical control, where in Pickup it
+    // would wait for an engagement only a continuous head creates.
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+    mocks.inputReceiver!([0xb0, 7, 100]);
+    const moved = vi.mocked(hooks.onApplied).mock.calls.map(([c]) => c.id);
+    expect(moved).toContain("ch3/level");
+  });
+
+  // Already Absolute, the gang has nothing to set — but the window still has to stop offering
+  // the take-in mode on the row the plan change put behind a switch.
+  it("repaints the window when a plan change makes an Absolute gang mixed, saying nothing", async () => {
+    switchGang("absolute");
+    const { control, hooks, plan } = install();
+    await openedWindow();
+    expect(option("ch3/level")).toBe("mode");
+
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[1].value };
+    control.scheduleFeedback();
+    await vi.waitFor(() => expect(option("ch3/level")).toBeUndefined());
+    expect(hooks.onStatus).not.toHaveBeenCalledWith(t().midi.mixedGangAbsolute("CH 1 CC 7"));
+  });
+
+  // Judged once a run of edits settles rather than on each one: an incoming sweep reaches the
+  // change funnel once per message, and each judgement resolves every binding.
+  it("judges the gangs once for a run of plan edits", async () => {
+    switchGang("pickup");
+    const { control, plan } = install();
+    await openedWindow();
+    const judged = vi.spyOn(control as unknown as { judgeGangs: () => void }, "judgeGangs");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[1].value };
+    for (let i = 0; i < 20; i++) control.scheduleFeedback();
+    await vi.waitFor(() => expect(storedModes()["ch3/level"]).toBe("absolute"));
+    // The coercion's own save schedules one more judgement, which finds nothing to do.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(judged.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
   // Read before the control's own binding is dropped: re-learning the one control an address
   // carries keeps the mode that address was given.
   it("keeps the take-in mode when the only control on an address is learned onto it again", async () => {

@@ -56,7 +56,7 @@ import { isPlainRecord, sendConnection } from "../core/plan";
 import { insertFxControlLabel } from "./insert-fx-screen";
 import { fxControlLabel } from "./fx-effect-screen";
 import { parseRelay } from "./midi-protocol";
-import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
+import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
 import { errorCode, errorText, getLang, t } from "../i18n";
 
 /** The contest keys an applied control's write lands on, named for `node` — the member the
@@ -184,6 +184,8 @@ export class MidiControl {
   private deviceStateKnown = false;
   private settleTimer = 0;
   private learnFlushTimer = 0;
+  /** The pending judgement of the gangs after a run of plan edits (see `judgeGangs`). */
+  private gangTimer = 0;
   /** True between the window's "ready" and its "closed": what makes a state push
    *  worth sending, and the only thing this side trusts about the window's life. */
   private windowOpen = false;
@@ -192,6 +194,9 @@ export class MidiControl {
   /** The last thing worth saying, mirrored into the window (its own status line) as
    *  well as the app's — the window is where the operator is looking while binding. */
   private status = "";
+  /** The assignment rows the last push carried, serialized — what `judgeGangs` compares
+   *  against to tell whether a plan edit moved what the window's list shows. */
+  private shownRows = "";
 
   /** One line about what the MIDI layer just decided, to whichever diagnostics are
    *  there. Left undefined when neither is, so `hooks.trace?.()` never even builds the
@@ -442,13 +447,41 @@ export class MidiControl {
   }
 
   /** Batch a feedback pass after a plan edit (debounced; called from the shared
-   *  change funnel, so UI / follow / MIDI edits all land here). */
+   *  change funnel, so UI / follow / MIDI edits all land here). The same edits are what
+   *  can make a binding start resolving, so the gangs are judged again as well. */
   scheduleFeedback(): void {
+    this.scheduleGangCheck();
     if (this.feedbackTimer) return;
     this.feedbackTimer = window.setTimeout(() => {
       this.feedbackTimer = 0;
       this.runFeedback(null);
     }, FEEDBACK_DEBOUNCE_MS);
+  }
+
+  /** Judge the gangs once a run of plan edits settles: one judgement per run, however many
+   *  edits — or incoming MIDI messages — it holds. On a timer of its own, which closing the
+   *  output port does not cancel the way it cancels the feedback pass. */
+  private scheduleGangCheck(): void {
+    if (this.gangTimer) return;
+    this.gangTimer = window.setTimeout(() => {
+      this.gangTimer = 0;
+      this.judgeGangs();
+    }, FEEDBACK_DEBOUNCE_MS);
+  }
+
+  /** A plan edit can make a binding resolve that did not (an insert effect selected on the
+   *  node a switch belongs to), and with it a gang can come to mix a switch and a continuous
+   *  control. Such a gang is set to Absolute, saved and said, as a load does. Otherwise the
+   *  window is repainted when what its list shows has moved — a gang that became mixed while
+   *  already Absolute stops offering the take-in mode. */
+  private judgeGangs(): void {
+    const { list, addrs } = this.absoluteOnMixedGangs(this.engine.getMappings());
+    if (addrs.length > 0) {
+      this.applyMappings(list);
+      this.say(t().midi.mixedGangAbsolute(addrs.join(", ")));
+      return;
+    }
+    if (this.windowOpen && JSON.stringify(this.rows()) !== this.shownRows) this.pushState();
   }
 
   // ---- ports ----
@@ -1014,32 +1047,14 @@ export class MidiControl {
    *  tens of rows and the window rebuilds from it, so there is no diff to get wrong. */
   private pushState(): void {
     if (!this.windowOpen) return;
-    const mappings = this.engine.getGangedMappings();
-    const mixed = this.mixedGangs(mappings);
+    const rows = this.rows();
+    this.shownRows = JSON.stringify(rows);
     const state: MidiUiState = {
       inputs: this.inputs,
       outputs: this.outputs,
       input: this.inputPort,
       output: this.outputPort,
-      rows: mappings.map((m) => {
-        // An unbindable id (a mapping saved for another model) still has to be
-        // listed and removable, so it falls back to the toggle column.
-        const kind = this.resolve(m.control)?.kind ?? "toggle";
-        const option = optionOf(kind, m, mixed.has(addrKey(m.addr)));
-        const linked = this.engine.isLinkedMember(m);
-        return {
-          control: m.control,
-          label: this.labelOf(m.control),
-          // A gang member shares the head's physical control, so it carries no
-          // address of its own — the window prints its "Linked" marker instead.
-          ...(linked ? {} : { addr: addrLabel(m.addr) }),
-          kind,
-          ...(option ? { option } : {}),
-          mode: m.mode,
-          ...(m.button ? { button: m.button } : {}),
-          linked,
-        };
-      }),
+      rows,
       learnOn: this.learnOn,
       armed: this.armed ? this.labelOf(this.armed) : null,
       status: this.status,
@@ -1047,6 +1062,31 @@ export class MidiControl {
       theme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
     };
     void midiUiToWindow(JSON.stringify(state)).catch(() => {});
+  }
+
+  /** The assignment list as the window shows it, resolved against the plan as it is now. */
+  private rows(): MidiUiRow[] {
+    const mappings = this.engine.getGangedMappings();
+    const mixed = this.mixedGangs(mappings);
+    return mappings.map((m) => {
+      // An unbindable id (a mapping saved for another model) still has to be
+      // listed and removable, so it falls back to the toggle column.
+      const kind = this.resolve(m.control)?.kind ?? "toggle";
+      const option = optionOf(kind, m, mixed.has(addrKey(m.addr)));
+      const linked = this.engine.isLinkedMember(m);
+      return {
+        control: m.control,
+        label: this.labelOf(m.control),
+        // A gang member shares the head's physical control, so it carries no
+        // address of its own — the window prints its "Linked" marker instead.
+        ...(linked ? {} : { addr: addrLabel(m.addr) }),
+        kind,
+        ...(option ? { option } : {}),
+        mode: m.mode,
+        ...(m.button ? { button: m.button } : {}),
+        linked,
+      };
+    });
   }
 
   /** Raise the window, so one that drifted behind the app comes back. Called when

@@ -1663,7 +1663,11 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   one whose bindings include a control the current plan or model does not carry, whose kind cannot be
   compared. A saved gang that mixes the two kinds is set to Absolute when the mappings load, and says so on
   the status line; the window offers no take-in mode on such a gang's continuous rows, Absolute being the one
-  they work in there, and refuses a mode it receives for one. A control on a hung node (a ducker, which sits under its stereo channel and is labeled
+  they work in there, and refuses a mode it receives for one. A binding counts toward the mix only while the
+  current plan resolves it — an insert effect's switch only while its strip holds an effect — so the gangs are
+  judged again once a run of plan edits settles (one judgement per run, on the 120 ms feedback debounce): a gang
+  an edit made mixed is set to Absolute and said then, and the window is repainted when what its list shows
+  moved. A control on a hung node (a ducker, which sits under its stereo channel and is labeled
   only "Ducker") is named by its parent channel in the list, so the binding reads e.g. `CH 5/6 · DUCKER`.
   Replacing the plan or model (a model switch, a plan load) cancels an in-flight
   learn, dropping the armed control instead of committing it under the new model's mapping key.
