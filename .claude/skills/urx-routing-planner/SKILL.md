@@ -97,7 +97,11 @@ check it by reading `stereoLink` beside `insertFx` yourself.
 insert FX and the FX2 bus are unavailable and the stereo channels' EQ is forced
 off. The plan still loads — the app warns and disables FX2 — but flag this when a
 request combines `sampleRate` 176400/192000 with insert FX, FX2 sends, or
-stereo-channel EQ.
+stereo-channel EQ. Pitch Fix stops lower: it runs only up to 48 kHz, so it is
+unavailable at 88.2 / 96 kHz as well, where the guitar amps, the companders and the
+Multi-Band Compressor still run. Flag Pitch Fix (`insertFx` 512) with `sampleRate`
+88200 / 96000 too: neither the app's load notes nor `plan_tool.py` mention that one
+— only the node's own controls in the app show Pitch Fix forced off.
 
 **Building a plan.** Emit the plan JSON only once the requirements are settled.
 Vague requests usually leave gaps that change the routing — which model, which

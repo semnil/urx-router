@@ -49,6 +49,10 @@ the unit and edit that.
   (default `48000`; any other value, `96` written in kHz included, loads as `48000`,
   which the validator says). Some features (insert FX, FX2, stereo-channel EQ)
   warn/disable above 96 kHz — the app shows those notes; the plan still loads.
+  Pitch Fix stops lower: it runs only up to 48 kHz, so it is unavailable at 88.2 /
+  96 kHz too, while the other insert effects run up to 96 kHz. No load note and no
+  validator warning says so; only the node's own controls in the app show it forced
+  off.
 - `scope` — **never author it**; it appears only on a plan the user saved
   scene-scoped (Preferences → *Plan files* → *Save scope*, which also applies to
   the share URL and the JSON download). Such a document carries `"scope": "scene"`
