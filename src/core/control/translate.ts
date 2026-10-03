@@ -3,10 +3,11 @@
 // dry-run preview (what would be written to hardware) and the payload list for
 // the eventual transport. Pure and language-agnostic.
 //
-// Scope: only mappings whose param_id is confirmed against the broker dump are
-// emitted, so a dry-run never proposes a guessed hardware write. Today that is
-// each channel's main fader / pan (its fixed send into STEREO → CH_FADER / CH_PAN).
-// Bus sends and channel-strip processing land here as their ids are confirmed.
+// Scope: the PARAMS entries (params.ts) that carry a plan's values; the
+// planExternal ones belong to device-setup.ts. Every address emitted for a URX44V
+// is a confirmed one. On the URX22 / URX44 the addresses that are still guesses
+// are registered in UNVERIFIED_MAPPINGS below, and a dry-run or write for those
+// models carries them.
 
 import type { ConnectionKind, DeviceModel, ModelId } from "../../models/types";
 import { parseRef, ref } from "../../models/types";

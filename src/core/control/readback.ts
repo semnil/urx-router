@@ -1,8 +1,6 @@
 // Read the device's current settings back into the plan: the reverse of
 // translate.ts. For each confirmed parameter we can both read and show in the
 // UI, fetch the live value, decode it to plan units, and write it onto the plan.
-// Today that is each channel's main fader / pan (CH_FADER / CH_PAN), reflected
-// onto its fixed STEREO send so the inspector shows the on-device level and pan.
 
 import type { DeviceModel } from "../../models/types";
 import { isSingleInput, ref } from "../../models/types";
@@ -260,10 +258,10 @@ function mainSendConn(plan: Plan, nodeId: string): PlanConnection | undefined {
 }
 
 /**
- * Pull the connected device's channel levels and pans into the plan, mutating it
- * in place. The caller must have connected first (platform.vdConnect) and should
- * re-render afterwards. Read failures are collected, not thrown, so one bad
- * channel does not abort the rest.
+ * Pull the connected device's settings into the plan, mutating it in place. The
+ * caller must have connected first (platform.vdConnect) and should re-render
+ * afterwards. Read failures are collected, not thrown, so one bad channel does not
+ * abort the rest.
  *
  * Provenance tracks body-parameter groups (a node's own settings): each marks a
  * node `attempted` before reading and, if any of its body groups throws, the node

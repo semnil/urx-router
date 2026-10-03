@@ -1,8 +1,10 @@
-// Catalog of confirmed URX44V control parameters. Each entry binds a semantic
-// name to the broker's numeric param_id and the value encoding (see vd.ts). Only
-// parameters validated against the broker dump (reference/work/vd/vd-params.md)
-// are listed here; inferred-but-unconfirmed ids are deliberately omitted so live
-// control never writes a guessed address to hardware.
+// Catalog of the control parameters live control writes and reads. Each entry
+// binds a semantic name to the broker's numeric param_id and the value encoding
+// (see vd.ts). An address is listed under CLAUDE.md Conventions "Write only
+// confirmed parameters": a value written to it is read back from the unit. The
+// URX44V map is the confirmed one; an address that is still a guess on another
+// model is registered in UNVERIFIED_MAPPINGS (translate.ts), which the self-test
+// reports a verdict for.
 
 /** Value encoding, mapping to the converters in vd.ts. */
 export type ParamEncoding =
