@@ -778,6 +778,27 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     await learnOnto(control, "ch1/level", 7);
     expect(storedModes()).toEqual({ "ch1/level": "pickup" });
   });
+
+  // The store is an object the app writes named fields onto. An array stored there (by
+  // anything but this app) would take them as named properties, which JSON drops, so every
+  // later learn and port pick would read back as nothing at the next launch. It reads as an
+  // empty store instead, and the next write replaces it.
+  it("reads a stored array as an empty store, so a learned binding and the ports persist", async () => {
+    localStorage.setItem("urx-midi", "[]");
+    const { control } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["Controller In"]));
+    await learnOnto(control, "ch1/level", 7);
+    expect(control.isMapped("ch1/level")).toBe(true);
+    dispatch({ type: "port", dir: "out", name: "Controller Out" });
+    await vi.waitFor(() => expect(lastState().output).toBe("Controller Out"));
+
+    const stored = JSON.parse(localStorage.getItem("urx-midi")!);
+    expect(Array.isArray(stored)).toBe(false);
+    expect(stored.models.URX44V).toEqual([expect.objectContaining({ control: "ch1/level" })]);
+    expect(stored).toMatchObject({ input: "Controller In", output: "Controller Out" });
+  });
 });
 
 // On a reflecting transport our own feedback comes straight back, and the learn branch

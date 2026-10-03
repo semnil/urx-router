@@ -8,16 +8,19 @@
 // below is loaded once and re-persisted on every write, so clearing localStorage
 // alone does not put a later render back at the defaults.
 
+import { isPlainRecord } from "../core/plan";
 import { loadJson, saveJson } from "../core/storage";
 
 const SECTION_STATE_KEY = "urx-inspector-sections";
 type SectionState = Record<string, boolean>;
 let sectionState: SectionState | null = null;
 
+/** The stored overrides, or none when what is stored is not a plain object — an array
+ *  included, whose named entries JSON would drop on the next write. */
 function sectionOverrides(): SectionState {
   if (sectionState === null) {
     const v = loadJson<unknown>(SECTION_STATE_KEY, null);
-    sectionState = v && typeof v === "object" ? (v as SectionState) : {};
+    sectionState = isPlainRecord(v) ? (v as SectionState) : {};
   }
   return sectionState;
 }

@@ -52,7 +52,7 @@ import {
   partnerChannel,
 } from "../core/routing";
 import { connParamContestKey, nodeParamContestPath } from "../core/plan-history";
-import { sendConnection } from "../core/plan";
+import { isPlainRecord, sendConnection } from "../core/plan";
 import { insertFxControlLabel } from "./insert-fx-screen";
 import { fxControlLabel } from "./fx-effect-screen";
 import { parseRelay } from "./midi-protocol";
@@ -784,9 +784,11 @@ export class MidiControl {
 
   // ---- mappings ----
 
+  /** The persisted record, or an empty one when what is stored is not a plain object — an
+   *  array included, whose named fields JSON would drop on the next write. */
   private store(): MidiStore {
     const raw = loadJson<MidiStore>(STORE_KEY, {});
-    return typeof raw === "object" && raw !== null ? raw : {};
+    return isPlainRecord(raw) ? raw : {};
   }
 
   /** This model's saved mappings, with every gang that mixes the two kinds of control set to

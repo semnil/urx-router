@@ -88,6 +88,17 @@ describe("persistence", () => {
     expect(resolveSectionOpen("gate", true)).toBe(true);
   });
 
+  // An array passes a typeof check, and the next fold would then be written onto it as a named
+  // property, which JSON drops: the fold would never reach storage. Read as no record, the
+  // next fold replaces it.
+  it("ignores a stored array, and the next fold replaces it", () => {
+    localStorage.setItem(STORE, "[]");
+    resetSectionCache();
+    expect(resolveSectionOpen("gate", true)).toBe(true);
+    recordSectionOpen("eq", false);
+    expect(JSON.parse(localStorage.getItem(STORE)!)).toEqual({ eq: false });
+  });
+
   it("ignores unparseable storage", () => {
     localStorage.setItem(STORE, "{");
     resetSectionCache();
