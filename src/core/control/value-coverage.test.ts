@@ -235,6 +235,24 @@ describe("enum options round-trip", () => {
     }
   });
 
+  // The COMP keys whose emit is conditional on the key being present: each value has to come
+  // back from the read, or the next write sends nothing for it. Knee is the unit's own while the
+  // 1-knob is on, so it is swept with the knob off.
+  it("COMP knee, Auto Makeup and the 1-knob — every value round-trips", async () => {
+    for (const comp of [
+      { knee: 0, autoMakeup: false, oneKnob: false, oneKnobLevel: 0 },
+      { knee: 1, autoMakeup: true, oneKnob: false, oneKnobLevel: 100 },
+      { knee: 2, autoMakeup: false, oneKnob: false, oneKnobLevel: 37 },
+      { autoMakeup: false, oneKnob: true, oneKnobLevel: 0 },
+      { autoMakeup: true, oneKnob: true, oneKnobLevel: 100 },
+    ]) {
+      const plan = base();
+      plan.nodeParams["ch1"] = { compEqType: 0, comp };
+      const back = await roundTrip(plan);
+      expect(back.nodeParams["ch1"]?.comp, JSON.stringify(comp)).toMatchObject(comp);
+    }
+  });
+
   it("STREAMING DELAY frame rate — every option round-trips", async () => {
     for (const opt of DELAY_FRAME_RATE_OPTIONS) {
       const plan = base();
