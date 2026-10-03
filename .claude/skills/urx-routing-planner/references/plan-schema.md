@@ -344,7 +344,7 @@ values removed:
 | a leaf that is not a finite number (a boolean, an object) | DROPPED, so the selected type's own default applies |
 | `type` the channel's menu does not offer | DROPPED — a menu has no nearest member, and the app resolves an absent type to the channel's default |
 | `params` that is not an object | DROPPED whole; every parameter goes with it |
-| `fxEffect` that is not an object | DROPPED whole; the channel keeps whatever the unit holds |
+| `fxEffect` that is not an object | DROPPED whole; the load fills the channel's factory effect, and the write sends it — the EFFECT TYPE selector included |
 
 The last two matter because the sanitiser keeps a boolean and a non-empty object
 under any key, so an unreadable effect object survives the load and every reader
