@@ -670,9 +670,9 @@ export const PARAMS = {
   // brightness 10 and the auto-power-off timer are exactly the values that must
   // not be nudged. core/control/device-setup.ts owns reading and writing them,
   // through the Follow USB (848) shape: bare vdGet / vdSet, no diff engine.
-  /** SETUP > Brightness > Screen (global, y0): raw 1..10, 1:1 with the readout.
-   *  The dump's min is 0, which the unit's own range never offers; the app clamps
-   *  to 1 rather than testing what a 0 does to a screen it cannot un-blank. */
+  /** SETUP > Brightness > Screen (global, y0): raw 0..10, 1:1 with the readout. 0 is
+   *  a real setting the unit holds; the floor the app writes is BRIGHTNESS_MIN in
+   *  device-setup.ts. */
   BRIGHTNESS: { id: 758, encoding: "raw", sceneExternal: true, planExternal: true },
   /** SETUP > Power Management > Auto Power Off [Enable] (global, y0). Factory ON;
    *  the dump's default_value 0 is wrong (measured against a factory-init file). */
