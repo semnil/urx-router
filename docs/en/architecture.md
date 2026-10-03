@@ -4246,7 +4246,9 @@ parses the file and exposes one chunk as a `ParamSource`, and `readback.ts` runs
 source travels as a parameter: the pass and each reading helper bind their own `vdGet` / `vdGetStr`
 from it, so a device follow reconcile and a file import cannot read each other's source and need no
 guard against overlapping. Because an import replaces every value at once — which Live sync cannot
-follow — it is refused while a session is up, the same rule fetch and write already follow.
+follow — it is refused while a session is up, the same rule fetch and write already follow. It is refused
+while any other device action holds the link as well (a Live sync still connecting holds it with no session up
+yet), and the import asks again once its confirms are answered, since the window keeps running behind them.
 
 Format notes that shape the reader (full spec: the private reference repository):
 

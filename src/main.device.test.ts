@@ -7544,6 +7544,82 @@ describe("the device self-test", () => {
 //
 // Driven through the shell rather than through a module mock: the dialog and the file read
 // are two Tauri commands, so answering them is the same seam every other case here uses.
+// A `.urxf` dropped on the window while a device action holds the link. The menu entry greys
+// for every holder; the drop has to be refused the same way, at its entry and again once its
+// confirms are answered, since the window keeps running behind them.
+describe("a settings file dropped while a device action holds the link", () => {
+  const PATH = "C:/urx/backup.urxf";
+  const boot = (over: Record<string, unknown> = {}): Promise<TauriShell> =>
+    bootDevice({
+      experimental_enabled: true,
+      read_binary_file: () => sampleUrxf().buffer,
+      "plugin:dialog|save": null,
+      ...over,
+    });
+
+  it("refuses the drop while Live sync is still connecting", SLOW, async () => {
+    let connect!: () => void;
+    const connecting = new Promise<void>((r) => (connect = r));
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" });
+    const vdConnect = table.vd_connect as (a: Record<string, unknown>) => unknown;
+    const shell = await boot({
+      vd_connect: async (a: Record<string, unknown>) => {
+        await connecting;
+        return vdConnect(a);
+      },
+      vd_disconnect: table.vd_disconnect,
+    });
+    await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
+    $("btn-live").click();
+    await invoked(shell, "vd_connect");
+    expect(shell.emit("tauri://drag-drop", { paths: [PATH] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.deviceLinkBusy), { timeout: 10_000 });
+    expect(shell.count("read_binary_file")).toBe(0);
+    expect(confirms(shell)).toEqual([]);
+    connect();
+  });
+
+  // A Live-sync start or a Fetch refuses to read while the import's flow runs, but a write
+  // does not consult it: one started behind the import's confirm holds the link when that
+  // confirm is answered, and is converging the plan the import would overwrite.
+  it("refuses the import when a write took the link behind its confirm", SLOW, async () => {
+    let answer!: (v: string) => void;
+    const importing = new Promise<string>((r) => (answer = r));
+    const importHead = t().confirm.importSettings("\u0000", "URX44V").split("\u0000")[0]!;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked!: () => void;
+    const reading = new Promise<void>((r) => (asked = r));
+    const table = deviceCommands({});
+    const vdGet = table.vd_get as (a: Record<string, unknown>) => unknown;
+    let first = true;
+    const shell = await boot({
+      "plugin:dialog|message": (a: Record<string, unknown>) =>
+        a.buttons === "OkCancel" && String(a.message ?? "").startsWith(importHead) ? importing : "Ok",
+      vd_get: async (a: Record<string, unknown>) => {
+        if (first) {
+          first = false;
+          asked();
+          await held;
+        }
+        return vdGet(a);
+      },
+    });
+    await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
+    expect(shell.emit("tauri://drag-drop", { paths: [PATH] })).toBe(1);
+    await vi.waitFor(() => expect(confirms(shell).length).toBe(1), { timeout: 10_000 });
+    $("btn-write").click();
+    await reading;
+    const rate = $<HTMLSelectElement>("rate-picker").value;
+    answer("Ok");
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.deviceLinkBusy), { timeout: 10_000 });
+    expect($<HTMLSelectElement>("rate-picker").value).toBe(rate);
+    release();
+    await vi.waitFor(() => expect($("btn-write").textContent).toBe(t().toolbar.writeDevice), { timeout: 20_000 });
+    expect(statusText()).not.toContain(countedHead(t().status.settingsPartial(0, 0, 0)));
+  });
+});
+
 describe("importing a settings file", () => {
   const PATH = "C:/urx/backup.urxf";
 

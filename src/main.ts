@@ -4330,9 +4330,15 @@ if (!DEMO) {
   async function importSettingsFlow(load: () => Promise<{ bytes: Uint8Array; name: string } | null>): Promise<void> {
     // Replacing every value at once is what Live sync cannot follow, so the import
     // is refused while a session is up — the same rule fetch and write follow, which
-    // setLiveUi enforces on the menu entry. The drop target needs it stated here.
+    // setLiveUi enforces on the menu entry. The drop target needs it stated here, and it
+    // greys for every link holder, so the drop is refused for every one of them too: a
+    // Live sync that is still connecting holds the link with no session up yet.
     if (liveSessionUp) {
       showError(t().error.notWhileLive);
+      return;
+    }
+    if (deviceLinkHolder !== null) {
+      setStatus(t().status.deviceLinkBusy);
       return;
     }
     let name = "";
@@ -4357,15 +4363,21 @@ if (!DEMO) {
     // Re-checked HERE, not only at the flow's entry. This is the one wholesale plan
     // replacement that does not go through `loadPlan` — it mutates the module plan in
     // place — so it has no share of that backstop, and the entry check is separated
-    // from the mutation by two confirm dialogs. The UI stays clickable during those
-    // (the confirm's own comment says so), so an operator can start a Fetch or Live
-    // sync in between: the read raises the latch and spends seconds merging into the
-    // same plan object this is about to overwrite key by key. Neither side reports
-    // anything, the import does not pass `markChanged` so the write witness has no
-    // entry for it, and what is left is a mixture with a history and a live snapshot
-    // that describe neither half.
+    // from the mutation by two confirm dialogs. Those leave the window running, so a
+    // device action can take the link behind them — a write converging the plan object
+    // this is about to overwrite key by key, a read merging into it, a session that would
+    // take every imported value, the sample rate included, on its next flush with no
+    // confirm.
+    if (liveSessionUp) {
+      showError(t().error.notWhileLive);
+      return;
+    }
     if (flow.deviceReadInFlight) {
       setStatus(t().status.busyDeviceRead);
+      return;
+    }
+    if (deviceLinkHolder !== null) {
+      setStatus(t().status.deviceLinkBusy);
       return;
     }
     let result: ReadbackResult;
