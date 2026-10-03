@@ -163,8 +163,9 @@ test("clicking the badge while unknown reads the device instead of toggling it",
 // The unit lowers its own Track Count to fit a rate it cannot carry, and nothing the app
 // can write raises it again. The two arms of this dialog do not share that cost: releasing
 // writes the PLAN's rate and can pay it, adopting takes the rate the device is already
-// running and pays nothing. So the warning sits on the release arm rather than in the
-// note, which speaks for the whole dialog.
+// running and pays nothing. So the warning is the release arm's own line, worded to name
+// that arm, rather than in the note, which speaks for the whole dialog. Both lines sit above
+// the three buttons, so the wording is all that ties the warning to its arm.
 test("the release arm names what the plan's rate costs the recorder, and the shared note does not", async ({
   page,
 }) => {
@@ -183,6 +184,7 @@ test("the release arm names what the plan's rate costs the recorder, and the sha
   await expect(releaseNote).toBeVisible();
   await expect(releaseNote).toContainText("16");
   await expect(releaseNote).toContainText("8");
+  await expect(releaseNote).toContainText("Turning Follow USB off");
   // Where it must NOT be: the note belongs to every arm, adopting included.
   await expect(page.locator("#rate-choice-note")).not.toContainText("Track Count");
 

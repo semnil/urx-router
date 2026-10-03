@@ -2827,8 +2827,8 @@ the DEVICE rather than the plan: an offline plan's count is whatever was last au
 drops and invent false ones. A count that already fits is silent, because a loss notice shown to someone losing
 nothing is how a notice stops being read, and a read that fails cancels the write, as a failed clock read does.
 Three paths carry it — the plain re-clock confirm, the three-way's RELEASE arm (its own
-element under that button, since adopting the device's rate costs nothing and the shared note speaks for both
-arms), and the Follow USB toggle, which gets the numberless form because the host's rate is not something this app
+element above the actions row, worded to name the release arm, since adopting the device's rate costs nothing
+and the shared note speaks for both arms), and the Follow USB toggle, which gets the numberless form because the host's rate is not something this app
 can read. **URX22 has no recorder and is silent throughout.** Afterwards the write's own epilogue re-reads the
 recorder node: the unit does the lowering itself, and whether it announces one has not been measured here, so the
 plan is refreshed rather than left waiting for a notify that may never come. The epilogue is armed from the rate

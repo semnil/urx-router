@@ -3419,10 +3419,11 @@ if (!DEMO) {
     // The note belongs to the whole dialog, so it may only say what is true of every arm.
     // `limits` is: adopting the device's high rate and releasing to the plan's each leave
     // those features out. The Track Count warning is NOT — it is what RELEASING costs, and
-    // adopting costs nothing — so it goes on that button rather than into the note.
+    // adopting costs nothing — so it gets a line of its own rather than going into the note,
+    // worded to name the release arm.
     const note = limits ? t().rateChoice.hiRateNote(limits) : null;
     // Its own wording, not the confirm's: this arm is one of three answers and the sentence
-    // has to say which one it is about. `trackWarning` decides WHETHER, the message decides
+    // has to say which one it is about. `trackCost` decides WHETHER, the message decides
     // how it reads here.
     const releaseNote = trackCost ? t().rateChoice.trackCountDrop(trackCost.from, trackCost.to) : "";
     const choice = await askRateChoice(planRate, deviceRate, note, releaseNote);

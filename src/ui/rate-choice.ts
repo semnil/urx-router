@@ -19,10 +19,11 @@ export type RateChoice = "adopt" | "release" | "cancel";
  * unwritten, so choosing `adopt` is not a surprise. The plan keeps them either way.
  */
 /**
- * `releaseNote` belongs to the RELEASE arm alone and is rendered under that button, not in
- * the shared note: it is what writing the plan's rate costs, and adopting the device's rate
- * costs nothing. A cost put in the shared note would read as true of the choice the
- * operator makes to AVOID it.
+ * `releaseNote` belongs to the RELEASE arm alone, not to the shared note: it is what writing
+ * the plan's rate costs, and adopting the device's rate costs nothing. It is its own line,
+ * set above the actions row that all three buttons share rather than beside the RELEASE
+ * button, so its wording has to name the arm it is about. A cost put in the shared note, or
+ * worded without its arm, would read as true of the choice the operator makes to AVOID it.
  */
 export function askRateChoice(
   planRate: string,
