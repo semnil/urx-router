@@ -2208,7 +2208,11 @@ whenever `end()` lands inside it — reading the generation at its turn would ma
 run as the NEXT session's, alongside the one that session already has on the wire, which is the pile-up the queue
 exists to prevent. And a rejection leaves the registration by exception, so it never reaches the post-await
 generation guard: `refresh`'s catch compares the generation it started with before it stops anything, or a refusal
-arriving after its session ended stops the live one instead, with nothing to restart it.
+arriving after its session ended stops the live one instead, with nothing to restart it. A reconcile's catch
+(`runReconcile`) and a flush's catch (`LiveSync.flush`) compare it the same way, and neither holds the next session
+back: a reconcile still running for an ended session does not make the next session's reconciles wait behind it,
+and a flush asked for in the next session while an ended session's write is still out is sent once that write is
+answered.
 
 **Four follow-only cases join for the same reason as the names**: an address the app only READS is in no
 registration unless it is listed here, so the unit's announcement would reach nobody and the value would catch up

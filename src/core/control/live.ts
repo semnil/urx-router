@@ -911,13 +911,14 @@ export class LiveSync {
     this.flushing = true;
     // Asked again by this flush: a held ON it still cannot send sets it back.
     this.onHeld = false;
+    // The session this flush is for. `model` and `plan` below are captured once and the
+    // re-take at the head of the loop reads those captures, so once the generation moves
+    // both describe a document that is no longer open — which is the same instant at
+    // which nothing may be sent any more. One check answers both, and the catch asks it
+    // too.
+    const gen = this.sessionGen;
     let edits: PlanWriteWatch | undefined;
     try {
-      // The session this flush is for. `model` and `plan` below are captured once and the
-      // re-take at the head of the loop reads those captures, so once the generation moves
-      // both describe a document that is no longer open — which is the same instant at
-      // which nothing may be sent any more. One check answers both.
-      const gen = this.sessionGen;
       const model = this.hooks.getModel();
       const plan = this.hooks.getPlan();
       let sent = 0;
@@ -1424,16 +1425,23 @@ export class LiveSync {
         }
       }
     } catch (e) {
+      // A failure that arrives once its session has ended — a write the link answered late,
+      // or one cut by the end itself — is that session's, and the one running now is not
+      // stopped by it.
+      if (this.sessionGen !== gen) return;
       this.active = false;
       this.hooks.onError(e instanceof Error ? e.message : String(e));
       return;
     } finally {
       edits?.close();
       this.flushing = false;
-    }
-    if (this.pending) {
-      this.pending = false;
-      void this.flush();
+      // A flush asked for while this one ran. end() clears the request, so one standing here
+      // after the session moved on is the next session's, and it is sent whichever way this
+      // flush left — a flush whose session is stopped returns at its own entry.
+      if (this.pending) {
+        this.pending = false;
+        void this.flush();
+      }
     }
   }
 }

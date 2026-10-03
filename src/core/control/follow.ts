@@ -120,7 +120,9 @@ export class DeviceFollow {
   private unsub: (() => void) | null = null;
   private settleTimer: ReturnType<typeof setTimeout> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
-  private reconciling = false;
+  // The generation whose reconcile is in flight, or null. A reconcile still running for a
+  // session that has ended holds back nothing in the next one.
+  private reconcilingGen: number | null = null;
   private pending = false;
   // A full (idle safety net) reconcile arrived while one was in flight: the replay
   // must keep the full scope rather than downgrade to a scoped/no-op pass.
@@ -255,7 +257,7 @@ export class DeviceFollow {
   // a set the broker does not hold, which is this file's own defect class.
   //
   // `refresh()` is what made that reachable: `begin()` is awaited at session start and
-  // `runReconcile`'s call is inside `reconciling`, but a flush ends whenever it ends.
+  // `runReconcile`'s call is inside its own reconcile, but a flush ends whenever it ends.
   // Queued rather than dropped, so `begin()` still returns only once ITS registration has
   // landed, and a queued call reads the address set when its turn comes rather than when
   // it was asked. With nothing in flight the registration is issued in this same tick, as
@@ -433,7 +435,7 @@ export class DeviceFollow {
 
   private async runReconcile(idle: boolean): Promise<void> {
     if (!this.active) return;
-    if (this.reconciling) {
+    if (this.reconcilingGen === this.gen) {
       this.pending = true;
       if (idle) this.pendingFull = true;
       return;
@@ -460,7 +462,8 @@ export class DeviceFollow {
       this.hooks.flushDirect();
       return;
     }
-    this.reconciling = true;
+    const gen = this.gen;
+    this.reconcilingGen = gen;
     try {
       if (full) await this.hooks.reconcileAll();
       else await this.hooks.reconcileNodes(nodes);
@@ -468,12 +471,18 @@ export class DeviceFollow {
       // address set), so re-register against the post-reconcile set.
       await this.subscribe();
     } catch (e) {
+      // The same rule `refresh()` keeps: a failure that arrives once its session has ended
+      // stops nothing in the one that followed.
+      if (this.gen !== gen) return;
       this.active = false;
       this.hooks.onError(e instanceof Error ? e.message : String(e));
       return;
     } finally {
-      this.reconciling = false;
+      if (this.reconcilingGen === gen) this.reconcilingGen = null;
     }
+    // A replay this reconcile owes belongs to its own session; end() clears it, and the next
+    // session's reconciles replay their own.
+    if (this.gen !== gen) return;
     if (this.pending) {
       this.pending = false;
       const replayFull = this.pendingFull;

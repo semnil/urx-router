@@ -735,6 +735,67 @@ describe("LiveSync flush error", () => {
   });
 });
 
+// A write the link answers late can outlive the session that sent it, and the next session
+// can begin before it settles. Its answer belongs to the session that is gone.
+describe("LiveSync across a session that ended under its own flush", () => {
+  const liveWith = (plan: Plan, onError: (m: string) => void): LiveSync =>
+    new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError,
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+
+  it("does not stop the next session when the ended one's write fails late", async () => {
+    const plan = basePlan();
+    const onError = vi.fn();
+    const live = liveWith(plan, onError);
+    let reject!: (e: Error) => void;
+    vi.mocked(vdSet).mockImplementationOnce(() => new Promise<void>((_, r) => (reject = r)));
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1); // the first session's write, unanswered
+
+    live.end();
+    live.begin();
+    reject(new Error("broker-timeout: write at 139:0:0"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onError).not.toHaveBeenCalled();
+    expect(live.isActive()).toBe(true);
+  });
+
+  it("sends the next session's edit once the ended one's write is answered", async () => {
+    const plan = basePlan();
+    const live = liveWith(plan, () => {});
+    let resolve!: () => void;
+    vi.mocked(vdSet).mockImplementationOnce(() => new Promise<void>((r) => (resolve = r)));
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+
+    live.end();
+    live.begin();
+    setCh1Fader(plan, -12);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120); // queued behind the write still out
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+
+    resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(vdSet).mock.calls[1]![3]).toBe(
+      planToCommands(model, plan).find((c) => c.name === "CH_FADER")!.vdValue,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(live.isWriting()).toBe(false);
+  });
+});
+
 describe("LiveSync device-follow snapshot", () => {
   it("noteDirect patches one entry so a device-followed value is not re-sent", async () => {
     // The ch1 CH_FADER address + device value a -6 dB fader maps to.

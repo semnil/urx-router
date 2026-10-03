@@ -628,6 +628,34 @@ describe("DeviceFollow", () => {
     expect(follow.isActive()).toBe(true);
   });
 
+  // The reconcile half of the same rule. A reconcile still running when its session ends
+  // holds back nothing in the next one, and its late failure stops nothing there.
+  it("does not stop, or hold back, the session that FOLLOWED the one a failed reconcile belonged to", async () => {
+    let reject!: (e: Error) => void;
+    const stalled = new Promise<void>((_, r) => (reject = r));
+    const reconcileNodes = vi.fn<DeviceFollowHooks["reconcileNodes"]>(async () => {});
+    reconcileNodes.mockImplementationOnce(() => stalled);
+    const onError = vi.fn();
+    const follow = followFor({ reconcileNodes, onError });
+    await follow.begin();
+    notify(5);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(reconcileNodes).toHaveBeenCalledTimes(1); // A's, held open
+
+    follow.end();
+    await follow.begin(); // B
+    notify(6);
+    await vi.advanceTimersByTimeAsync(400);
+    // B's own reconcile ran rather than waiting behind A's.
+    expect(reconcileNodes).toHaveBeenCalledTimes(2);
+
+    reject(new Error("late"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onError).not.toHaveBeenCalled();
+    expect(follow.isActive()).toBe(true);
+    follow.end();
+  });
+
   it("stops and reports when a re-registration fails", async () => {
     // The rule a failed reconcile takes, on the path a structural edit now reaches every
     // time. `subscribe` releases the old handle BEFORE it awaits, so a throw leaves the
