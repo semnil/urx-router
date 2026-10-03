@@ -164,6 +164,37 @@ test("switching banks addresses the knob slots behind it", async ({ page }) => {
   ]);
 });
 
+// Every edit and every bank tab rebuilds the screen, and the grid it rebuilds is the
+// scrolling region. The control the operator used and the offset they scrolled to both
+// survive it, or a keyboard user starts again from the top of the box after every pick.
+test("an edit or a bank tab keeps the focused control and the grid's scroll offset", async ({ page }) => {
+  await stubTauriDevice(page, { values: DEVICE_VALUES });
+  await page.goto("/");
+  await openSetup(page);
+  // Shrunk after the menu is used, so the grid has an offset to keep.
+  await page.setViewportSize({ width: 1280, height: 420 });
+  const grid = page.locator("#device-setup-box .prefs-grid");
+
+  const tab = page.locator("#device-setup-banks button").nth(2);
+  await tab.focus();
+  const before = await grid.evaluate((el) => el.scrollTop);
+  // The premise: focusing the tab scrolled the grid, so there is an offset to lose.
+  expect(before).toBeGreaterThan(0);
+  await page.keyboard.press("Enter");
+  await expect(tab).toHaveAttribute("aria-pressed", "true");
+  await expect(tab).toBeFocused();
+  expect(await grid.evaluate((el) => el.scrollTop)).toBe(before);
+
+  const fn = page.locator(".udk-row").nth(1).locator("select").first();
+  await fn.focus();
+  const at = await grid.evaluate((el) => el.scrollTop);
+  await chooseOption(fn, "Oscillator");
+  await expect(fn).toHaveValue("Oscillator");
+  await expect(fn).toBeFocused();
+  expect(await grid.evaluate((el) => el.scrollTop)).toBe(at);
+  expect(await writesOf(page)).toEqual([]);
+});
+
 test("closing with unapplied edits asks before discarding them", async ({ page }) => {
   await stubTauriDevice(page, { values: DEVICE_VALUES });
   await page.goto("/");

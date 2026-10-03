@@ -20,6 +20,7 @@ import {
   holdInertOnBlur,
   labelId,
   onWheelStep,
+  preserveSettingsView,
   settingsChoice,
   settingsNote,
   settingsRow,
@@ -185,6 +186,9 @@ export class DeviceSetupPanel {
     // cannot disagree.
     const pending = this.pending();
     this.dirty = pending.fields;
+    // Every edit and bank tab rebuilds the box; a rebuild of the open screen keeps the
+    // focused control and the grid's scroll offset.
+    const carry = this.isOpen() ? preserveSettingsView(this.box) : null;
     this.box.replaceChildren();
 
     const title = el("h2", "");
@@ -310,6 +314,7 @@ export class DeviceSetupPanel {
     actions.append(count, close, apply);
 
     this.box.append(title, note, grid, actions);
+    carry?.();
   }
 
   // ---- builders ---------------------------------------------------------------

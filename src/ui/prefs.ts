@@ -4,7 +4,8 @@
 // are the exception: they keep their own stores (`urx-lang` in i18n, `urx-theme`
 // in the shell), read before settings load so the first paint is already right.
 // The content is rebuilt on every open and on refresh(), so it always reflects
-// the current language, the live-sync lock, and the stored values. Rows that
+// the current language, the live-sync lock, and the stored values; a refresh keeps
+// the focused control and the grid's scroll offset. Rows that
 // need the desktop shell (device scope, updates, firmware warning, computer
 // sleep, recent plans) render disabled with a "Desktop app only" tag elsewhere,
 // per build:
@@ -15,6 +16,7 @@ import { version } from "../../package.json";
 import {
   el,
   holdAppInert,
+  preserveSettingsView,
   settingsChoice,
   settingsNote,
   settingsRow,
@@ -138,6 +140,7 @@ export class PrefsPanel {
     const m = t().prefs;
     const s = getSettings();
     const desktop = isTauri();
+    const carry = this.isOpen() ? preserveSettingsView(this.box) : null;
     this.box.replaceChildren();
 
     const title = el("h2", "");
@@ -332,6 +335,7 @@ export class PrefsPanel {
     actions.append(close);
 
     this.box.append(title, grid, actions);
+    carry?.();
   }
 
   // Manual update check, reported inline beside the version — the modal stays

@@ -146,6 +146,33 @@ test.describe("plain browser", () => {
     await close.click();
     await expect(page.locator("#prefs-modal")).toBeHidden();
   });
+
+  // A change rebuilds the modal, and the grid it rebuilds is the scrolling region. The
+  // control the operator used and the offset they scrolled to both survive it, or the next
+  // Tab starts again from the top of the box and a scrolled grid jumps back to its start.
+  test("a change keeps the focused control and the grid's scroll offset", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 420 });
+    await page.click("#btn-prefs");
+    const grid = page.locator(".prefs-grid");
+    const scale = page.getByRole("combobox", { name: "Export scale", exact: true });
+    await scale.focus();
+    const before = await grid.evaluate((el) => el.scrollTop);
+    // The premise: focusing the row scrolled the grid, so there is an offset to lose.
+    expect(before).toBeGreaterThan(0);
+    await chooseOption(scale, "3");
+    await expect(scale).toHaveValue("3");
+    await expect(scale).toBeFocused();
+    expect(await grid.evaluate((el) => el.scrollTop)).toBe(before);
+
+    // A face pressed from the keyboard rebuilds the modal the same way.
+    const latch = page.locator('#prefs-fine button:has-text("Latch")');
+    await latch.focus();
+    const at = await grid.evaluate((el) => el.scrollTop);
+    await page.keyboard.press("Space");
+    await expect(latch).toHaveAttribute("aria-pressed", "true");
+    await expect(latch).toBeFocused();
+    expect(await grid.evaluate((el) => el.scrollTop)).toBe(at);
+  });
 });
 
 test("the desktop shell unlocks the device rows (stubbed Tauri)", async ({ page }) => {

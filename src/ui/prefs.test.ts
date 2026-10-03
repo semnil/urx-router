@@ -171,6 +171,48 @@ describe("PrefsPanel", () => {
     expect(scope.querySelector(".prefs-lock")).toBeNull();
   });
 
+  // Every committed change rebuilds the box, and so does a Live sync start or end while it
+  // is open. The grid the rebuild replaces is the box's scrolling region, so neither the
+  // control the operator used nor the offset they scrolled to may go with it: focus left
+  // on <body> sends the next Tab back to the top of the modal.
+  it("keeps the focused control and the grid's scroll offset across a rebuild", () => {
+    const { panel, setLive } = install();
+    panel.open();
+    const grid = (): HTMLElement => document.querySelector(".prefs-grid") as HTMLElement;
+    const first = grid();
+    first.scrollTop = 300;
+
+    const latch = (): HTMLButtonElement => document.querySelectorAll<HTMLButtonElement>("#prefs-fine button")[1];
+    const pressed = latch();
+    pressed.focus();
+    pressed.click();
+    expect(getSettings().fineLatch).toBe(true);
+    expect(grid()).not.toBe(first); // the press really rebuilt the grid
+    expect(document.activeElement).toBe(latch());
+    expect(document.activeElement).not.toBe(pressed);
+    expect(grid().scrollTop).toBe(300);
+
+    const wheel = (): HTMLSelectElement => document.querySelector("#prefs-wheel") as HTMLSelectElement;
+    const changed = wheel();
+    changed.focus();
+    change(changed, "4");
+    expect(getSettings().wheelSteps).toBe(4);
+    expect(document.activeElement).toBe(wheel());
+    expect(document.activeElement).not.toBe(changed);
+    expect(grid().scrollTop).toBe(300);
+
+    // A rebuild with no input at all: Live sync coming up while the modal is open.
+    const save = (): HTMLButtonElement => document.querySelectorAll<HTMLButtonElement>("#prefs-save-scope button")[0];
+    const held = save();
+    held.focus();
+    setLive(true);
+    panel.refresh();
+    expect(row(t().prefs.scope).classList.contains("locked")).toBe(true);
+    expect(document.activeElement).toBe(save());
+    expect(document.activeElement).not.toBe(held);
+    expect(grid().scrollTop).toBe(300);
+  });
+
   it("stores the sleep preference only when the OS hold succeeds", async () => {
     const { panel, hooks } = install();
     vi.mocked(hooks.setPreventSleep).mockResolvedValueOnce("permission denied").mockResolvedValueOnce(null);

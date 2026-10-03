@@ -491,6 +491,31 @@ export function preserveFocus<K>(
 // stays out: its controls wrap `paramBlock()`, a different row shape with its own
 // wheel and fine-mode hooks.
 
+/** Carry the operator's place across a rebuild of a settings modal's box: the focused
+ *  control, and the scroll offset of `.prefs-grid`, the box's scrolling region. Called
+ *  BEFORE the rebuild; the restore runs once the new grid is in place.
+ *
+ *  A control is keyed by its position among `focusables`, which holds because both modals
+ *  build the same control list on every pass — a locked row and an empty select are built
+ *  disabled, not left out. The offset is written to the NEW grid: `preserveFocus`'s own
+ *  `scrollTop` writes the host, and the box itself never scrolls. */
+export function preserveSettingsView(box: HTMLElement): () => void {
+  const top = box.querySelector<HTMLElement>(".prefs-grid")?.scrollTop ?? 0;
+  const restoreFocus = preserveFocus(
+    box,
+    (active) => {
+      const at = focusables(box).indexOf(active);
+      return at < 0 ? null : at;
+    },
+    (at) => focusables(box)[at],
+  );
+  return () => {
+    const grid = box.querySelector<HTMLElement>(".prefs-grid");
+    if (grid && top !== 0) grid.scrollTop = top;
+    restoreFocus();
+  };
+}
+
 /** A section heading, optionally carrying a dashed tag pill ("Desktop app only", a model
  *  name) that stays readable while the rows below it dim. `{ text, shown: false }` keeps the
  *  pill and hides it, which holds the heading's height — a pill makes it taller, so dropping

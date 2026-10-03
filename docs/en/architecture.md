@@ -3008,7 +3008,8 @@ edit → apply:
    disconnects. A read failure leaves the screen **unopened** — a half-established baseline would invite
    applying a diff against values that were never read (see "Aborting on failure").
 2. Edits accumulate in the modal. A row whose value differs from what the device reported takes the
-   accent dot, and the footer counts the pending settings.
+   accent dot, and the footer counts the pending settings. Each edit and each bank tab rebuilds the
+   modal, keeping the focused control and the grid's scroll offset as Preferences does.
 3. `Apply to device` connects, sends **only the differences**, and disconnects. Only a clean apply moves
    the baseline, and only to the draft it sent; after a failure the draft still differs from what the
    device holds, which is what a retry needs. The rows stay editable while the apply is in flight, and an
@@ -3807,7 +3808,10 @@ The toolbar gear opens the Preferences modal (`ui/prefs.ts`), available in every
 consent-box family (`.prefs-box`, `min(1180px, 100%)`, two columns), and the box itself never
 scrolls: it is a fixed column with the title on top and the Close action pinned at the bottom, and
 the grid between them is the only scrolling region, so a shrunken window height cannot hide Close
-behind a scroll. Since every setting applies the moment
+behind a scroll. Every change but the theme's (which the palette restyles in place) rebuilds the
+box, and so do a Live sync start or end and a language switch while it is open; the rebuild keeps
+the focused control and the grid's scroll offset (`preserveSettingsView` in `ui/dom.ts`, which
+Device setup shares). Since every setting applies the moment
 it is changed, a press outside the box or Escape dismisses the modal like the MIDI panel and the
 licenses modal — the capture-phase wiring all three share lives in `ui/dom.ts` (`wireDismiss`).
 Settings persist as one

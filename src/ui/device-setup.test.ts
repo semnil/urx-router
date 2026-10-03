@@ -242,6 +242,46 @@ describe("DeviceSetupPanel", () => {
     expect(hooks.confirmDiscard).toHaveBeenCalledTimes(2);
   });
 
+  // Every edit and every bank tab rebuilds the box, including a brightness step taken from
+  // the keyboard. The grid the rebuild replaces is the box's scrolling region, so neither
+  // the control the operator used nor the offset they scrolled to may go with it.
+  it("keeps the focused control and the grid's scroll offset across a rebuild", () => {
+    const { panel } = install();
+    panel.open(defaultDeviceSetup());
+    const grid = (): HTMLElement => document.querySelector("#device-setup-box .prefs-grid") as HTMLElement;
+    const first = grid();
+    first.scrollTop = 400;
+
+    const tab = (): HTMLButtonElement => document.querySelectorAll<HTMLButtonElement>("#device-setup-banks button")[2];
+    const pressed = tab();
+    pressed.focus();
+    pressed.click();
+    expect(grid()).not.toBe(first); // the tab really rebuilt the grid
+    expect(tab().getAttribute("aria-pressed")).toBe("true");
+    expect(document.activeElement).toBe(tab());
+    expect(document.activeElement).not.toBe(pressed);
+    expect(grid().scrollTop).toBe(400);
+
+    const fn = (): HTMLSelectElement => document.querySelector<HTMLSelectElement>(".udk-row select")!;
+    const picked = fn();
+    picked.focus();
+    change(picked, "Monitor");
+    expect(fn().value).toBe("Monitor");
+    expect(document.activeElement).toBe(fn());
+    expect(document.activeElement).not.toBe(picked);
+    expect(grid().scrollTop).toBe(400);
+
+    const slider = (): HTMLInputElement => document.querySelector("#device-setup-brightness") as HTMLInputElement;
+    const stepped = slider();
+    stepped.focus();
+    stepped.value = "4";
+    stepped.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(slider().value).toBe("4");
+    expect(document.activeElement).toBe(slider());
+    expect(document.activeElement).not.toBe(stepped);
+    expect(grid().scrollTop).toBe(400);
+  });
+
   it("edits the selected user-defined-knob bank as one three-column write", async () => {
     const { panel, hooks } = install();
     panel.open(defaultDeviceSetup());
