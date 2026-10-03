@@ -1433,10 +1433,11 @@ function pushFxEffectCommands(
 // raw. The selector (emitted by the caller) binds the engine first.
 // Only slots the plan carries are written. A selection and a load put every writable
 // slot of the selected type in the plan at that type's own default
-// (`seedInsertFxParams`), so the plan holds what the screen shows. The
-// writable list is a deliberate subset of what a readback fills: a slot the unit
-// answers but this app must not write back is in insertFxReadableSlots and not
-// here, so a read does not round-trip in full.
+// (`seedInsertFxParams`), so the plan holds what the screen shows. The slots
+// iterated here are the ones a readback fills too: insertFxReadableSlots returns
+// this list, and no slot is read-only. What a read fills and this does not send is
+// the driven set skipped below, so a slot to stop writing belongs in that set
+// rather than out of the writable list, which would stop the read as well.
 // A slot is read under the selected family's own key, then under the bare slot
 // number — the device-shaped namespace a readback writes, which is by construction
 // the family the selector named at the time. Anything the plan stored for ANOTHER
