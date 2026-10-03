@@ -25,16 +25,8 @@ export const param = (page: Page, label: string): Locator => page.locator("#insp
 export const paramExact = (page: Page, label: string): Locator =>
   page.locator("#inspector .param", { has: page.getByText(label, { exact: true }) });
 
-/** The inspector's Insert FX section. It is a disclosure like every other section and it
- *  follows its own ON state, so a node holding nothing — or holding a BYPASSED effect —
- *  ships with it CLOSED and the controls inside are then not focusable at all. */
-
-/** Open that section if it is folded, which is what the operator does before reaching the
- *  selector inside it. Every case that reads or writes the effect type goes through here:
- *  a closed disclosure answers "no such control" rather than "the control is not visible",
- *  which reads in a failure as the feature being gone. */
-
-/** The EFFECT TYPE selector, with its section opened first. */
+/** The EFFECT TYPE selector, with its section opened first: the section folds with its own ON
+ *  state, and `chooseOption` refuses a select inside a folded one. */
 export async function insertFxSelect(page: Page): Promise<Locator> {
   await openInsertFxSection(page);
   return paramExact(page, "EFFECT TYPE").locator("select");

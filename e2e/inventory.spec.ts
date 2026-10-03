@@ -675,6 +675,7 @@ test("the channel tuning screens show every processor, both displays and their n
   // selected, and the launcher's own wording is only on screen from that moment.
   const openInsFx = async (id: string, effect: string, faces: string[] = [], bypass = false): Promise<void> => {
     await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
+    await openInsertFxSection(page);
     await chooseOption(page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select"), {
       label: effect,
     });
