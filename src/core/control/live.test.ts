@@ -467,6 +467,57 @@ describe("LiveSync sideEffect converge", () => {
     expect(vi.mocked(vdGet), "and no seed read").not.toHaveBeenCalled();
   });
 
+  // …and the same once the converge is RUNNING: it is a loop of reads, sends and settles, and
+  // the session ending inside it stops it at its next round trip, with nothing reported.
+  it("stops a converge the session ended under, between its own reads", async () => {
+    const plan = basePlan();
+    const errors: string[] = [];
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: (m) => errors.push(m),
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    let gets = 0;
+    let setsAtEnd = -1;
+    vi.mocked(vdGet).mockImplementation(async () => {
+      if (++gets === 3) {
+        setsAtEnd = vi.mocked(vdSet).mock.calls.length;
+        live.end();
+      }
+      return 0;
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
+    expect(setsAtEnd, "the premise: the converge reached its reads").toBeGreaterThan(0);
+    expect(gets).toBe(3);
+    expect(vi.mocked(vdSet).mock.calls.length).toBe(setsAtEnd);
+    expect(errors).toEqual([]);
+  });
+
+  it("answers idle once the flush in flight has finished", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    let resolve!: () => void;
+    vi.mocked(vdSet).mockImplementationOnce(() => new Promise<void>((r) => (resolve = r)));
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    let idle = false;
+    void live.idle().then(() => (idle = true));
+    live.end();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle, "the write the flush has on the wire is still unanswered").toBe(false);
+    resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle).toBe(true);
+  });
+
   it("hands the confirmed addresses over even when a later round's send fails", async () => {
     // The failure ends the session, and what earlier rounds confirmed is the plan's only chance
     // at those values: the write that landed is what stops the address differing, so no later

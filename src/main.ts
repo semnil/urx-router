@@ -428,8 +428,12 @@ function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   // in front of it beginning. allSettled rather than all: a ledger that rejects still has
   // to release the link.
   const reads = Promise.all([...followReads].map((r) => r.done));
+  // …and so does the session's own flush: end() stops it at its next round trip, and the
+  // command it has on the wire then is answered over this connection rather than over one
+  // another action installs after the disconnect.
+  const flush = live?.idle() ?? Promise.resolve();
   return (
-    Promise.allSettled([ledger, reads])
+    Promise.allSettled([ledger, reads, flush])
       .then(() => vdDisconnect(epoch))
       // The holder goes back HERE and not in deactivateLive, because it is what stops
       // another action from connecting: an install replaces the worker, and the read still

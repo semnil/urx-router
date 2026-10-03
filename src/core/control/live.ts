@@ -208,6 +208,12 @@ export class LiveSync {
   // flag, because a session that ended and began again inside one await leaves the flag
   // at the value the flush entered on while every snapshot under it has been rebuilt.
   private sessionGen = 0;
+  // Aborted by end(), and handed to a flush's converge: a converge is a loop of reads, sends
+  // and settles, and the generation is asked only once it returns, so this is what stops it
+  // between its own round trips. Replaced by begin(), so a session's signal is its own.
+  private sessionAbort = new AbortController();
+  // The flush in flight, settled when it finishes — what `idle()` answers.
+  private flushDone: Promise<void> = Promise.resolve();
   private readonly snapshot = new Map<number, number>();
   private readonly nameSnapshot = new Map<string, string>();
   // Name address -> owner node. Kept apart from `index` because a name is not a
@@ -376,6 +382,14 @@ export class LiveSync {
     return this.timer !== null || this.flushing;
   }
 
+  /** Settles once the flush running now, if any, has finished — what a teardown waits on
+   *  before it disconnects, so the flush's last command goes over the link it started on. A
+   *  flush the session ended under stops at its next generation check, and a converge inside
+   *  it at its next round trip. */
+  idle(): Promise<void> {
+    return this.flushDone;
+  }
+
   private scope(): WriteScope {
     return this.hooks.getScope?.() ?? "all";
   }
@@ -403,6 +417,7 @@ export class LiveSync {
     // The caller subscribes for this session itself (main.ts: live.begin then follow.begin),
     // so the capture above is already accounted for and must not make the next flush ask again.
     this.followSetStale = false;
+    this.sessionAbort = new AbortController();
     this.active = true;
     this.sessionGen++;
   }
@@ -640,6 +655,7 @@ export class LiveSync {
   end(): void {
     this.active = false;
     this.sessionGen++;
+    this.sessionAbort.abort();
     this.announced.clear();
     this.onHeld = false;
     this.pendingValues.clear();
@@ -917,6 +933,9 @@ export class LiveSync {
     // which nothing may be sent any more. One check answers both, and the catch asks it
     // too.
     const gen = this.sessionGen;
+    const signal = this.sessionAbort.signal;
+    let finished = (): void => {};
+    this.flushDone = new Promise<void>((resolve) => (finished = resolve));
     let edits: PlanWriteWatch | undefined;
     try {
       const model = this.hooks.getModel();
@@ -1269,6 +1288,7 @@ export class LiveSync {
           scope: this.scope(),
           pending: seedPending,
           exclude,
+          signal,
         }).finally(() => {
           this.converge = null;
         });
@@ -1426,7 +1446,7 @@ export class LiveSync {
       }
     } catch (e) {
       // A failure that arrives once its session has ended — a write the link answered late,
-      // or one cut by the end itself — is that session's, and the one running now is not
+      // or a converge the end aborted — is that session's, and the one running now is not
       // stopped by it.
       if (this.sessionGen !== gen) return;
       this.active = false;
@@ -1435,6 +1455,7 @@ export class LiveSync {
     } finally {
       edits?.close();
       this.flushing = false;
+      finished();
       // A flush asked for while this one ran. end() clears the request, so one standing here
       // after the session moved on is the next session's, and it is sent whichever way this
       // flush left — a flush whose session is stopped returns at its own entry.

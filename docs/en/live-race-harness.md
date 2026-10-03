@@ -1337,7 +1337,10 @@ replacement it was re-taking from a document nothing holds any more.
 
 `LiveSync` now carries a `sessionGen`, bumped by `begin()` and by `end()`, and the loop compares it after
 every await — the two sends, the converge and the refetch — returning rather than throwing, because a
-teardown is not a failure and there is nobody left to report one to. It returns **before** recording the
+teardown is not a failure and there is nobody left to report one to. The converge is a loop of its own (reads,
+sends and settles), so the generation alone stops it only once it returns: `end()` also aborts the session's
+signal, which the converge is handed, so it stops at its next round trip and its abort is returned as the
+teardown it is. It returns **before** recording the
 write in the snapshot: a session that ended and began again inside one await has already rebuilt that
 snapshot from a device read, and writing a dead flush's value into it would poison the new session's
 device truth. A generation rather than the flag for the same reason — across a stop/start the flag reads
@@ -1347,7 +1350,9 @@ The teardown chains the disconnect rather than awaiting it (`vd_disconnect` retu
 its epoch guard is what makes a late one safe. The window between `end()` and the disconnect landing in Rust
 is therefore open — what the generation closes is the app's own decision to keep sending into it. That window
 is no longer the ledger's flush alone: `releaseLive` waits out a follow read still doing round trips before it
-disconnects, since a session that merely ends lets its read finish and the link it reads over is the session's.
+disconnects, since a session that merely ends lets its read finish and the link it reads over is the session's,
+and the session's own flush (`LiveSync.idle()`) for the same reason — its command on the wire is answered over
+that link.
 Nothing else may connect for its duration — the link holder goes back at the end of that release rather than at
 the toggle — because a read carries no epoch and would otherwise go on over the worker an intervening action
 installed.

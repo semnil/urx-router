@@ -3077,6 +3077,44 @@ describe("the live session", () => {
     await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 20_000 });
   });
 
+  // Turning Live sync off while a flush has a write on the wire: the disconnect waits for the
+  // flush to finish, so its last command is answered over the session's own connection.
+  it("disconnects only once the flush in flight has finished", SLOW, async () => {
+    let release!: () => void;
+    let holding = false;
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" });
+    const set = table.vd_set as (a: Record<string, unknown>) => unknown;
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        vd_set: async (a: Record<string, unknown>) => {
+          if (holding) {
+            holding = false;
+            await new Promise<void>((r) => (release = r));
+          }
+          return set(a);
+        },
+      },
+    }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    const sets = shell.count("vd_set");
+    holding = true;
+    selectNode("bus.stereo");
+    const fader = row(t().inspector.level).querySelector<HTMLInputElement>("input[type=range]")!;
+    fader.value = String(Number(fader.value) - 3);
+    fader.dispatchEvent(new Event("input", { bubbles: true }));
+    await invoked(shell, "vd_set", sets + 1);
+
+    const disconnects = shell.count("vd_disconnect");
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(shell.count("vd_disconnect"), "the write is still unanswered").toBe(disconnects);
+    release();
+    await invoked(shell, "vd_disconnect", disconnects + 1);
+  });
+
   // The undo history survives a reconcile that authored nothing.
   //
   // Pinned HERE rather than only in the race tier because that tier uploads no

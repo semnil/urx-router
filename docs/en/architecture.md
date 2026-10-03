@@ -3002,7 +3002,8 @@ socket's first read timeout: an empty read means the peer has nothing queued, an
 frame budget would spend seconds of the operator's Quit on a broker that has already gone quiet.
 
 On the app side the same is true of the connection: `releaseLive` in `main.ts` is the one release, so "read the
-ledger's final counters, wait out a follow read still on the wire, drop the link, then hand the holder back" is
+ledger's final counters, wait out a follow read and the session's own flush still on the wire, drop the link,
+then hand the holder back" is
 a property of the code rather than a rule each of the three exits re-implements. The wait is what makes
 `abandonFollowWork`'s split hold at the link as well as in the plan — a session that merely ends lets its read
 finish, so the link it reads over has to outlive the session — and the holder going last is what stops another
