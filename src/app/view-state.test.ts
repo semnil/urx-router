@@ -197,6 +197,21 @@ describe("shelved nodes", () => {
     expect(loadHidden("URX44V")).toEqual([]);
   });
 
+  // A container that is not an object: what `loadJson` hands back for each of these is
+  // the stored value itself, and indexing or assigning into it throws or goes nowhere.
+  it.each([["null"], ['"x"'], ["5"], ["false"], ["[]"]])("survives a stored %s and replaces it on write", (stored) => {
+    localStorage.setItem("urx-hidden", stored);
+    expect(loadHidden("URX44V")).toEqual([]);
+    rememberHidden("URX44V", ["bus.mix2"]);
+    expect(loadHidden("URX44V")).toEqual(["bus.mix2"]);
+    expect(JSON.parse(localStorage.getItem("urx-hidden")!)).toEqual({ URX44V: ["bus.mix2"] });
+  });
+
+  it("drops the entries of a stored shelf that are not node ids", () => {
+    localStorage.setItem("urx-hidden", JSON.stringify({ URX44V: ["bus.mix2", 5, null] }));
+    expect(loadHidden("URX44V")).toEqual(["bus.mix2"]);
+  });
+
   it("replaces a model's shelf rather than merging into it", () => {
     rememberHidden("URX44V", ["a", "b"]);
     rememberHidden("URX44V", ["c"]);
