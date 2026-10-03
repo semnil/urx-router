@@ -521,8 +521,8 @@ test.describe("T5 drop", () => {
     console.log(`dialogs: ${dialogs.map((d) => d.slice(0, 48)).join(" | ")}`);
 
     // The standing device-link rule, confirmed: a failed command aborts the whole
-    // operation. Six landed, the seventh was rejected, and the rest of the burst —
-    // nearly two hundred commands — was never sent.
+    // operation. Six landed, the seventh was rejected, and the rest of the burst was
+    // never sent.
     expect(attempt1).toHaveLength(7);
     expect(landed).toHaveLength(6);
     expect(trace.some((e) => e.kind === "status" && (e.detail ?? "").includes("Write stopped after a failure"))).toBe(
@@ -531,10 +531,21 @@ test.describe("T5 drop", () => {
     // The retry was offered rather than reported as a breakdown…
     expect(dialogs.some((d) => d.includes("The write stopped after a failure"))).toBe(true);
     // …and it re-read the whole device and re-diffed rather than replaying the tail,
-    // so not one of the six that already landed is written a second time.
+    // so not one of the six that already landed is written a second time, while what the
+    // first attempt left unsent — the count its own status line gives — goes out, with the
+    // rejected command beside it where the retry finds the unit not holding its value.
     expect(rediffReads.length).toBeGreaterThan(500);
     expect(attempt2.filter((s) => landed.includes(s.addr!))).toHaveLength(0);
-    expect(attempt2.length).toBeGreaterThan(100);
+    const stopped = trace
+      .map((e) =>
+        e.kind === "status" ? /Write stopped after a failure: (\d+) sent, (\d+) not sent/.exec(e.detail ?? "") : null,
+      )
+      .find((m) => m !== null);
+    expect(stopped, "the first attempt's own count").toBeTruthy();
+    expect(Number(stopped![1])).toBe(landed.length);
+    const rejectedResent = attempt2.some((s) => s.addr === attempt1.at(-1)!.addr);
+    expect(attempt2.length).toBeGreaterThan(0);
+    expect(attempt2.length).toBe(Number(stopped![2]) + (rejectedResent ? 1 : 0));
     // NOTE (harness, not app): the fake applies a vd_set at the queue point, before
     // the refusal check, so the value of the rejected 7th command is in its state map
     // even though the command failed. The retry therefore does not see that address as

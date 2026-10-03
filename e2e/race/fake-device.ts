@@ -1,6 +1,11 @@
 import { expect } from "@playwright/test";
 import { FAKE_LAUNCH_FLAGS_OFF } from "./fake-flags";
 import type { Locator, Page } from "@playwright/test";
+import { getModel } from "../../src/models";
+import { defaultPlan } from "../../src/models/initial-state";
+import type { ModelId } from "../../src/models/types";
+import { cmdAddr, planToCommandOrigins, planToCommands } from "../../src/core/control/translate";
+import { nodeParamContestPath, walkParamLeaves } from "../../src/core/plan-history";
 
 // Fake URX device for the live-sync race harness (docs/{en,ja}/live-race-harness.md).
 //
@@ -80,6 +85,32 @@ export interface FakeConfig {
   announceMs: number;
   /** The Pan Link groups this session models (see PanLinkGroup). Empty unless a case asks. */
   panLink: PanLinkGroup[];
+  /** What the state map holds before anything is written: `factoryNodeParamMem`. */
+  factory: Record<string, number>;
+}
+
+/**
+ * The model's factory value at every address a node-param leaf is written to, as the app's own
+ * write would send it: `defaultPlan`'s node params emitted through `planToCommands`, kept where
+ * `planToCommandOrigins` names one of those leaves as the command's source. A unit holds a value
+ * at each of these whether or not anything wrote it, and a value the control cannot take is not
+ * one it holds — read as one, the app bounds it and the write's confirmation takes the bound back
+ * into the plan. Everything else nothing wrote reads 0: routing selectors, wire params, colours.
+ */
+function factoryNodeParamMem(modelId: string): Record<string, number> {
+  const model = getModel(modelId as ModelId);
+  const plan = defaultPlan(modelId as ModelId);
+  const leaves = new Set<string>();
+  for (const [nodeId, params] of Object.entries(plan.nodeParams)) {
+    walkParamLeaves(params, (path) => leaves.add(nodeParamContestPath(nodeId, path)));
+  }
+  const origins = planToCommandOrigins(model, plan);
+  const mem: Record<string, number> = {};
+  for (const c of planToCommands(model, plan)) {
+    const origin = origins.get(cmdAddr(c));
+    if (typeof origin === "string" && leaves.has(origin)) mem[`${c.paramId}:${c.x}:${c.y}`] = c.vdValue;
+  }
+  return mem;
 }
 
 /**
@@ -274,14 +305,16 @@ export interface InstallOptions {
 }
 
 export async function installFake(page: Page, opts: InstallOptions = {}): Promise<void> {
+  const model = opts.model ?? "URX44V";
   const cfg: FakeConfig = {
-    model: opts.model ?? "URX44V",
+    model,
     firmware: opts.firmware ?? "",
     latency: { ...DEFAULT_LATENCY, ...(opts.latency ?? {}) },
     jitter: opts.jitter ?? 0,
     seed: opts.seed ?? 1,
     announceMs: opts.announceMs ?? ANNOUNCE_MS,
     panLink: opts.panLink ?? [],
+    factory: factoryNodeParamMem(model),
   };
   // On the CONTEXT, not the page: MIDI control is a second window, which is a second
   // page here, and it needs the same bridge before its bundle resolves.
@@ -367,10 +400,11 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         cfg: config,
         t0,
         log,
-        // An address nothing wrote reads 0, except STREAMING's source (705 / 706): its list
+        // A node-param leaf's address starts at its factory value (FakeConfig.factory), and any
+        // other address nothing wrote reads 0, except STREAMING's source (705 / 706): its list
         // on the unit offers STEREO / MIX 1 / MIX 2, so it starts on the factory STEREO, as
         // tagged port refs.
-        mem: { "705:0:0": 0x80000100, "706:0:0": 0x80000101 },
+        mem: { ...config.factory, "705:0:0": 0x80000100, "706:0:0": 0x80000101 },
         memStr: {},
         paramAddrs: [],
         meterAddrs: [],

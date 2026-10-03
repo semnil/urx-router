@@ -1950,9 +1950,9 @@ screen asks for the launcher by what it opens and for which node (`focusOpener`)
 the inspector shows that node, or the opener on that node's CONSOLE strip. The same plan rule applies: an
 opener on a plan that has since been replaced is not asked for.
 
-The inspector defers on the same signal, through the gate that already waits out an IME composition and
-an open `<select>` picker. That one is worth naming because a held row is the only one of the three with
-no end event of its own: a composition ends, a picker closes, and a hold ends on a pointer release the
+The inspector defers on the same signal, through the gate that already waits out an IME composition, an
+open `<select>` picker and a press inside the panel. That one is worth naming because a held row has no
+end event at the panel: a composition ends and a picker closes, while a hold ends on a pointer release the
 panel never hears — so the gate subscribes to the hold bookkeeping directly.
 
 ## Meter subscription ownership

@@ -258,6 +258,7 @@ single source of truth. This table states what each case measures.
 | `overtake-direct-scoped-coalesce-boundary` | console | Whether a reconcile resolving inside the coalesce upgrades an unrelated direct reflect |
 | `overtake-drag-flush-backpressure` | console | A realistic gesture on a realistic link, and the convergence latency an operator perceives |
 | `overtake-refetch-reads-before-the-write-settles` | tuning | The one window the fake had no state for: a write the unit accepted and cannot yet report. `t1c-refetch-stale.spec.ts` |
+| `overtake-held-repaint-vs-the-next-gesture` | inspector | A device change the inspector holds while a select keeps the focus, released by the operator's next click, Tab or tap: whether that gesture still lands — its write sent, its focus on a control the rebuild kept. `t1e-held-repaint.spec.ts` |
 
 ### T2 shape-change — params that reshape the writable address set
 
@@ -399,6 +400,7 @@ must provide the following.
 | o | The announcement itself, which is unconditional and needs no case to arm it: a write that CHANGES the value the unit reports is announced `cfg.announceMs` (100, the measured median) after its **ack**. Three silences, all from the one rule — a same-value write (measured: 18 acked in 0-1 ms, none announced), an `ignoreWrites` address (acked and never stored, so nothing it reports moved) and a `diverge`d address (the unit goes on asserting what it already held) |
 | p | The same window on the NAME path: `staleAfterWrite` applies to a string address too, so the next `n` reads of it after a `vd_set_str` answer the name it replaced. Measured on a URX44V — 81 ms, so the string path is not exempt and the fake modelled it as exempt for its whole life. **The announcement follows item o's rule too, and both halves of it are measured on this path rather than carried over**: a name write that changes the reported name is announced `announceMs` after its ack and closes the window (32 writes over two runs announced after their own ack, 32/32, at ack+1-102 ms — most of them 66-102, with 2 of the 32 under 10 ms, a low tail the numeric spread does not have and whose cause is not identified), and a same-value name write announces nothing (acked in 0 ms, silent for 2000 ms, bracketed by a changing write on each side so a dead stream could not pass for a silent device). The app hears it, because name addresses joined the registration set when the follow learned to carry a device-side rename; Sweet Spot Data (param 91) joined it too — the SSMCS mode change's own flush subscribes to it (`t2b-shape-change`). `t1d-name-window` is the case that needed the window |
 | q | Pan Link's silent rewrites, for the groups a case names (`installFake`'s `panLink: [{ link, source, sends }]`): writing the switch on sets every send pan in the group to its source's pan; while it is on, a source written carries the sends and a send written moves the source (and the other sends) to that value; writing it off leaves them where they are. None of it is announced — only the written address is, by item o's rule. The unit settles a send-pan write about 2 s after it; the fake settles it at the queue point, the stricter of the two for a case asking whether a send pan was written at all. Where the group names its MIX's BUS Type address (`busType`), a write of FIXED there turns the switch off, unannounced as well; a write of VARI leaves it. A `seedMem` of the switch is a state and rewrites nothing. `shape-pan-link-send-pans` is the case that needed it |
+| r | The state map's starting contents: every address a node-param leaf is written to holds the model's factory value — `defaultPlan`'s node params emitted through `planToCommands`, kept where `planToCommandOrigins` names a node-param leaf as the command's source — so a read there answers what a unit nobody has written holds, and the app finds nothing to bound. Every other address nothing wrote reads 0 — routing selectors, wire params (a channel's fader and pan are its STEREO send's), colours — except STREAMING's source (705 / 706), which starts on the factory STEREO. A case that needs another state seeds it (`setMemAt`, or a spec's own `seedMem`) |
 Plus a **barrier**: `blockAt({ cmd, nth })` holds a specific command, and `release()` lets it through.
 
 Items n, o and p are the ones the fake lived **without** for its whole life, and the omission was not neutral — see
@@ -745,12 +747,15 @@ can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
 
-**The current array.** `[44, 48, 87]` is derived from the race run of the 179-case corpus
-(2026-09-29), which timed 172 of them and left the 7 declared skips at zero. Measured against that
-run's durations, under the two-worker model, its three shards run 284 / 305 / 305 s, against 286 s for
-a division with no contiguity constraint at all, and the runner reproduced the plan case for case. The
-point of re-deriving is not that remaining gap but that the cut is a duration reading again rather than
-the residue of an edit, since nothing reports an array whose durations have moved.
+**The current array.** `[48, 48, 87]` is the array derived from the race run of the 179-case corpus
+(2026-09-29), `[44, 48, 87]`, with the four cases of `t1e-held-repaint.spec.ts` — collected inside its
+first shard — added to that shard, so every cut falls on the case it fell on in that run. That run timed
+172 of its cases and left the 7 declared skips at zero. Measured against its durations, under the
+two-worker model, its three shards ran 284 / 305 / 305 s, against 286 s for a division with no contiguity
+constraint at all, and the runner reproduced the plan case for case. The four added cases are in no
+reading: the first shard's cut is the residue of that edit. The point of re-deriving is not the remaining
+gap but that the cut is a duration reading again, since nothing reports an array whose durations have
+moved.
 
 A log assembled from two runs is the case none of that reaches on its own: where the halves overlap, a
 case timed twice with no retry between them gives it away, but halves that do not overlap cover the
@@ -902,6 +907,14 @@ agreement, zero findings.
   — and with it the three stages leave in order: `135:0:0=1793`, `689:0:6=-990`, `134:0:0=1`. The case asserts
   on the writes rather than on the screen, because at 192 kHz every option is rate-locked and the inspector row
   stops being a select; that the effect is still the plan's is read from the screen once the rate comes back
+
+- **A device change held behind a focused select was released inside the next gesture — fixed.** Choosing
+  Compander-H on CH 1 leaves its select focused, a device-side change to CH 1's HPF frequency is then held, and a
+  press on the bypass OFF button ends the hold with its `focusout`. The rebuild ran inside that `focusout`, so the
+  button the press began on was gone by the release: no click was dispatched and nothing was written (Chromium and
+  WebKit). A Tab from the select left the focus on the body (Chromium), and a tap lost its click the same way
+  (Chromium and WebKit). Measured 2026-10-03 at `39ae84ea`, and the click in Chromium on main at `9b808411`; §15
+  below carries the fix
 
 **T2 — address-set shape**
 
@@ -1487,6 +1500,29 @@ and the read after the release takes what the unit then holds. In both, the scre
 value, which the cases assert with the recall taken into the fake's state at the instant it is
 announced, so a later write lands on it as it does on the unit.
 
+### 15. Running a held inspector rebuild after the gesture that releases it (`inspector.ts` / `dom.ts`)
+
+The inspector's gate holds a rebuild while a select in the panel is focused, and the `focusout` that ends that
+hold ran the held rebuild at once. The `focusout` fires partway through the gesture that moves the focus, so the
+rebuild replaced the control that gesture was going to: a mouse press on the bypass OFF button lost its click, a
+Tab from the select lost its focus and a tap lost its click (the T1 finding above).
+
+The fix: the `focusout` runs the release in the next task, once the focus has landed, and a press that began inside
+the panel is a fourth thing the gate holds for — from its `pointerdown` until its click has reached the target's own
+handlers, or, for a press that produces no click in the panel, until the task after the next pointer release, or the
+window coming back from a release it never heard. A press on a `<select>` is left to the picker's own hold. The press
+does not wait for the app-wide count of pointers down that `dom.ts` keeps for the inert holds to reach zero: the
+ordinary tier's `selectWire` dispatches a `pointerdown` no release follows. Measured 2026-10-03: with the hold released
+on that count, four ordinary-tier cases failed (two in `directout.spec.ts`, one in `midi.spec.ts`, one in
+`inventory.spec.ts`); in the first `directout.spec.ts` case the `pointerdown` was still counted when the panel stopped
+rebuilding, and a window `focus` dispatched before the press, which clears the count, made it pass. Released on any
+release, the same four pass, in a run of those three spec files whole. `overtake-held-repaint-vs-the-next-gesture` drives the click pair (a
+device change held, and a control run with none) in Chromium and WebKit, and the Tab and the tap in Chromium, and
+asserts the one bypass write and the device's HPF value on screen. Measured 2026-10-03 at `39ae84ea`: with the gate
+change reverted, the click pair, the Tab and the tap fail; with the node-param take-back of `74c4b97e` reverted as
+well, the control run passes and the other cases fail; with only the next-task release reverted, the Tab and the tap
+fail in Chromium; with only the press hold removed, the click pair fails in WebKit.
+
 ## What the harness itself got wrong
 
 The audits found harness errors before they found app defects. They are recorded so the next tier does
@@ -1618,6 +1654,20 @@ not repeat them.
   defect to reproduce, which fix 11 above deleted in `3ba19c4` — so the `vd_link_stats` link is now
   unfalsifiable as well as unestablished. Every one of the 16 harness runs since those fixes landed
   has reported **flaky 0**
+- **An address nothing wrote read 0, and at a node-param leaf 0 is often a value its control cannot
+  take.** A session's readback took each such 0 into the plan, and once the write-time take-back reached
+  node-param leaves (`74c4b97e`), the first converge — an insert-FX selection's, for one — bounded 41 of
+  them and took the bounds back into the plan, which the write's status line reported. That reflect
+  marked CH 1 changed and its repaint was held behind the focused Insert FX select, so
+  `shape-insert-fx-select-ordering` and `shape-pan-bal-mode-switch` failed on the defect §15 fixes, with
+  no device change in either. The fake now starts each address a node-param leaf is written to at the
+  model's factory value (contract item r), which is what a unit nobody has written holds. Measured 2026-10-03: with that change
+  alone and the inspector gate as it was before §15, those two cases pass, and so does the control run of
+  `overtake-held-repaint-vs-the-next-gesture`, which asserts the selection's write takes nothing back since
+  the control depends on it. Three cases had stated a value the zeros produced and now state the fact it
+  stood for: `shape-fx-effect-type-slot-family` the authored values as detents from what the unit held,
+  `midi-bal-mirror-clobbers-partner` the clobbering write as ch1's threshold on the unit, and
+  `drop-write-reject-mid-send` the retry as the remainder its first attempt's own status line counts
 - **A precondition is not a gesture, and a page-wide fail-fast bound reaches it anyway.** `t0b-sweeps`
   sets a 4 s `page.setDefaultTimeout` in its `boot()` so an unreachable control lands in the sweep's
   error column by name — and Playwright applies a page default to every later action, including

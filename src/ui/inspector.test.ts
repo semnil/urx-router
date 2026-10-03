@@ -253,6 +253,8 @@ describe("compositionGate", () => {
   const fire = (el: HTMLElement, type: string): void => {
     el.querySelector("input")!.dispatchEvent(new Event(type, { bubbles: true }));
   };
+  /** The task after this one — where a release the gate defers to its next task has run. */
+  const nextTask = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
   it("lets a rebuild through when nothing is composing", () => {
     let rebuilds = 0;
@@ -376,8 +378,10 @@ describe("compositionGate", () => {
     sel.append(document.createElement("option"));
     const slider = document.createElement("input");
     slider.type = "range";
-    el.append(sel, slider);
-    document.body.replaceChildren(el);
+    el.append(sel);
+    // Outside the panel, so the hold is the only thing holding it: a press on a slider
+    // inside it is held as a press as well (the cases further down).
+    document.body.replaceChildren(el, slider);
     holdInertOnBlur(slider);
     const gate = compositionGate(el, () => rebuilds++);
 
@@ -416,7 +420,7 @@ describe("compositionGate", () => {
     const el = host();
     const slider = document.createElement("input");
     slider.type = "range";
-    el.append(slider);
+    document.body.append(slider); // outside the panel: a slider inside it is held as a press too
     holdInertOnBlur(slider);
     const gate = compositionGate(el, () => rebuilds++);
 
@@ -441,7 +445,7 @@ describe("compositionGate", () => {
     const el = host();
     const slider = document.createElement("input");
     slider.type = "range";
-    el.append(slider);
+    document.body.append(slider); // outside the panel: a slider inside it is held as a press too
     holdInertOnBlur(slider);
     const gate = compositionGate(el, () => rebuilds++);
 
@@ -467,18 +471,152 @@ describe("compositionGate", () => {
     expect(rebuilds).toBe(0);
   });
 
-  it("releases on focusout, so a field that goes away cannot wedge the panel", () => {
+  it("releases on focusout, so a field that goes away cannot wedge the panel", async () => {
     let rebuilds = 0;
     const el = host();
     const gate = compositionGate(el, () => rebuilds++);
     fire(el, "compositionstart");
     expect(gate.held()).toBe(true);
     fire(el, "focusout");
+    await nextTask();
     expect(rebuilds).toBe(1);
     expect(gate.held()).toBe(false);
     // And the composition's own end afterwards is not a second rebuild.
     fire(el, "compositionend");
     expect(rebuilds).toBe(1);
+  });
+
+  // The release a focus move gives is the one that lands inside a gesture: the focusout
+  // fires partway through the Tab, the click or the tap that moves the focus, and a rebuild
+  // there replaces the control the gesture is going to — the Tab's focus lands on a removed
+  // button, and the click a press produces is dispatched to one. The panel below rebuilds
+  // the way the app's does, by replacing its children, so "the control is still there" is
+  // something these cases can ask.
+  describe("the gesture a release lands in", () => {
+    let el: HTMLElement;
+    let sel: HTMLSelectElement;
+    let button: HTMLButtonElement;
+    let rebuilds: number;
+    let gate: ReturnType<typeof compositionGate>;
+    /** A select holding the focus with a rebuild held behind it — a device follow that
+     *  arrived while an Insert FX choice left its select focused. */
+    const heldBehindSelect = (): void => {
+      sel.focus();
+      expect(gate.held()).toBe(true);
+    };
+    beforeEach(() => {
+      el = document.createElement("div");
+      sel = document.createElement("select");
+      sel.append(document.createElement("option"));
+      button = document.createElement("button");
+      el.append(sel, button);
+      document.body.replaceChildren(el);
+      rebuilds = 0;
+      gate = compositionGate(el, () => {
+        rebuilds++;
+        const fresh = button.cloneNode(true) as HTMLButtonElement;
+        el.replaceChildren(sel.cloneNode(true), fresh);
+      });
+    });
+
+    it("runs the rebuild a focus move releases only once the focus has landed", async () => {
+      heldBehindSelect();
+      button.focus(); // a Tab from the select to the next control
+      expect(rebuilds, "not inside the focusout, while the focus is on its way").toBe(0);
+      expect(document.activeElement).toBe(button);
+      await nextTask();
+      expect(rebuilds).toBe(1);
+    });
+
+    it("holds every rebuild while a press inside the panel is down, and runs one after its click", async () => {
+      heldBehindSelect();
+      const landed: boolean[] = [];
+      button.addEventListener("click", () => {
+        landed.push(button.isConnected);
+        expect(gate.held(), "the click's own refresh is held to the end of the click").toBe(true);
+      });
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      button.focus(); // a mouse press moves the focus at its start
+      await nextTask();
+      expect(rebuilds, "the focus move's release, with the press still down").toBe(0);
+      expect(gate.held(), "a follow arriving mid-press").toBe(true);
+
+      button.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+      expect(rebuilds).toBe(0);
+      button.click();
+      expect(landed, "the click reached the button the press began on").toEqual([true]);
+      expect(rebuilds, "one rebuild, run as the click leaves the panel").toBe(1);
+      await nextTask();
+      expect(rebuilds).toBe(1);
+    });
+
+    // A tap delivers its click after the touch is already released, and moves the focus in
+    // the same task as that click.
+    it("lets a tap's click land when the focus move comes after the release", async () => {
+      heldBehindSelect();
+      let reached = false;
+      button.addEventListener("click", () => (reached = button.isConnected));
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 2 }));
+      button.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 2 }));
+      await nextTask();
+      button.focus();
+      button.click();
+      expect(reached).toBe(true);
+      await nextTask();
+      expect(rebuilds).toBe(1);
+    });
+
+    it("releases a press that produces no click here in the task after the release", async () => {
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      expect(gate.held()).toBe(true);
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+      expect(rebuilds).toBe(0);
+      await nextTask();
+      expect(rebuilds).toBe(1);
+      expect(gate.held()).toBe(false);
+    });
+
+    // A pointer the app saw pressed and never saw released — a synthetic pointerdown, or a
+    // release another window took — is still down by any count of pointers. The panel's own
+    // press must not wait for it: held on that count, the panel stops updating for as long
+    // as the window keeps its focus.
+    it("releases a press on its own release while another pointer was never released", async () => {
+      heldBehindSelect();
+      const outside = document.createElement("div");
+      document.body.append(outside);
+      outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 7 }));
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      button.focus();
+      button.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+      await nextTask();
+      expect(rebuilds).toBe(1);
+    });
+
+    it("releases a press whose release never arrived when the window comes back", () => {
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      expect(gate.held()).toBe(true);
+      window.dispatchEvent(new FocusEvent("focus"));
+      expect(rebuilds).toBe(1);
+      expect(gate.held()).toBe(false);
+    });
+
+    // A press on a select opens its picker, which focus already holds the panel for, and
+    // the picker's change has to release it even when the press's own release never
+    // reaches the page.
+    it("leaves a press on a select to the picker's own hold", () => {
+      sel.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      sel.focus();
+      expect(gate.held()).toBe(true);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      expect(rebuilds).toBe(1);
+    });
+
+    it("does not hold for a press outside the panel", () => {
+      const outside = document.createElement("button");
+      document.body.append(outside);
+      outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      expect(gate.held()).toBe(false);
+    });
   });
 });
 

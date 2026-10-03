@@ -1535,6 +1535,21 @@ focus, not one that is removed — so nothing releases the gate if the composing
 and what makes that unreachable is that `renderInspector` has exactly **one** call site, behind the gate. A second
 one would latch the gate for the rest of the session and the panel would silently stop updating.
 
+The same gate holds while a `<select>` inside the panel has focus (a rebuild closes an open picker), while a row is
+held inert, and while a press that began inside the panel is down — the click a press produces is dispatched to the
+element the press began on, and a rebuild in between removes it. **What releases a hold is usually the operator's
+next gesture, so a held rebuild runs after that gesture rather than inside it.** A focus move ends the select's hold,
+and the rebuild it releases runs in the task after the `focusout`: the `focusout` fires partway through the gesture
+that moves the focus — a mouse press before its click, a Tab before the focus lands, a tap before its click — and a
+rebuild there would remove the control the gesture is going to, so the click would reach nothing and the Tab's focus
+would land on a removed button. A press ends at its click, after the target's own handlers, or, for a press that
+produces no click in the panel, in the task after the next pointer release, or when the window comes back from a
+release it never heard. It does not wait for the app-wide count of pointers down to reach zero: a pointer whose
+release the page never received keeps that count above zero, and the panel would stop updating with it. A press on a
+`<select>` is left to the picker's hold, which its `change` releases. The race harness's `overtake-held-repaint-vs-the-next-gesture` drives
+the three gestures against a device change held behind a focused select
+([live-race-harness.md](live-race-harness.md)).
+
 ## External MIDI control
 
 The CONSOLE view's controls (faders / send levels / MUTE / PAN-BAL / GAIN / PHONES / the toggles) and every
