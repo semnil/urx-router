@@ -6439,6 +6439,23 @@ describe("the Follow USB badge", () => {
     expect(shell.count("vd_set")).toBe(0);
   });
 
+  // …and a first press whose read FAILS is reported as the read it was. Nothing was written,
+  // so a dialog naming a failed write would tell the operator the clock policy may have moved.
+  it("reports a failed first-press read as a read", SLOW, async () => {
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId === PARAMS.FOLLOW_USB.id) throw new Error("broker-timeout: value at 848:0:0");
+        return unwrittenRead(a);
+      },
+    });
+    badge().click();
+    await vi.waitFor(() => expect(errors(shell).length).toBe(1), { timeout: 10_000 });
+    expect(errors(shell)[0]).toBe(t().error.followUsbRead(t().error.shell.brokerTimeout("value at 848:0:0")));
+    expect(errors(shell)[0]).not.toContain(t().status.writeError("").trim());
+    expect(badge().dataset.state).toBe("unknown");
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
   // Turning it ON hands the clock back to the USB host, which re-clocks the hardware
   // then and there when the host runs another rate — so it confirms. Declining has to
   // leave the state as READ, not as asked for.

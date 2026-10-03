@@ -3186,9 +3186,9 @@ if (!DEMO) {
       // unknown would have to guess which way, and the operator's first question here
       // is "what is it?", not "change it".
       if (followUsbState === null) {
-        // A read that fails is reported through withDevice like any other device read,
-        // and the badge stays unknown.
-        await withDevice("follow-usb", t().status.writeConnecting, t().status.writeError, async () => {
+        // A read that fails is reported through withDevice as a failed READ, and the badge
+        // stays unknown.
+        await withDevice("follow-usb", t().status.fetchConnecting, t().error.followUsbRead, async () => {
           setFollowUsbBadge(await readFollowUsb());
         });
         return;

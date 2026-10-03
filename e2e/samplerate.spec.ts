@@ -149,6 +149,23 @@ test("the badge's label clears AA when on, in the light theme", async ({ page })
   expect(await textContrast(page, badge)).toBeGreaterThanOrEqual(4.5);
 });
 
+// A first press reads the unit, so a read that fails is reported as a read: nothing was
+// written, and the badge stays unknown.
+test("a first press whose read fails says the read failed and leaves the badge unknown", async ({ page }) => {
+  await stubDevice(page, { deviceRate: 48000, failClockRead: true });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+
+  const badge = page.locator("#follow-usb");
+  await badge.click();
+  await expect
+    .poll(() => dialogsOf(page))
+    .toContainEqual(expect.stringContaining("Could not read the device's Follow USB setting"));
+  expect(await dialogsOf(page)).not.toContainEqual(expect.stringMatching(/write/i));
+  await expect(badge).toHaveAttribute("data-state", "unknown");
+  expect(await writesOf(page)).toEqual([]);
+});
+
 test("clicking the badge while unknown reads the device instead of toggling it", async ({ page }) => {
   await stubDevice(page, { deviceRate: 48000, followUsb: true });
   await page.goto("/");

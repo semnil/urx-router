@@ -1241,6 +1241,7 @@ export const en = {
     trackCountReread: (message: string): string =>
       `A sample rate write went out, but the microSD recorder's Track Count could not be read back afterwards: ${message}. The unit lowers it by itself when the rate cannot carry it, so what the panel shows may be the value from before the change — read the device to find out.`,
     deviceSetupRead: (message: string): string => `Could not read the device's settings: ${message}`,
+    followUsbRead: (message: string): string => `Could not read the device's Follow USB setting: ${message}`,
     deviceSetupWrite: (message: string): string => `Could not apply the settings: ${message}`,
     noRule: tr("This route cannot be connected"),
     duplicate: tr("Already connected"),
