@@ -9034,7 +9034,7 @@ describe("a scoped read under the Scene only device scope", () => {
   const readsOf = (shell: TauriShell, paramId: number): number =>
     shell.invokes.filter((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === paramId).length;
   const liveUp = (): Promise<void> =>
-    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
   /** A unit whose oscillator goes into FX 1 and not into STEREO — the plan's own assign is the
    *  other way round — with the session up under the scene scope. */
