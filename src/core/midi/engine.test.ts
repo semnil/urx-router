@@ -857,29 +857,56 @@ describe("gang (several controls on one address)", () => {
 // wrote it to the unit while live. Its own corrective feedback then echoed back into
 // the fader's unguarded LSB half.
 describe("cc14 feedback and a plain-CC binding on the same controller", () => {
-  it("arms the plain-CC guards the emission actually touches", () => {
+  // The knob on either half: CC 7 takes the MSB byte, CC 39 the LSB byte.
+  it.each([
+    [7, 64],
+    [39, 32],
+  ])("arms the plain-CC guards the emission actually touches (knob on CC %i)", (knobCc, echoed) => {
     const fader = fake("ch1/level", "continuous", 0, 1 / 16383);
-    const knob = fake("ch2/level", "continuous", 0.5);
+    const knob = fake("ch2/level", "continuous", 0.2);
     controls.set(fader.id, fader);
     controls.set(knob.id, knob);
     map(fader.id, { type: "cc14", channel: 0, controller: 7 });
-    map(knob.id, { type: "cc", channel: 0, controller: 39 });
+    map(knob.id, { type: "cc", channel: 0, controller: knobCc });
 
     // A first pass sends both, so each address' cache holds its own value.
     engine.feedback();
     sent.length = 0;
 
-    // Now only the FADER moves: the pass emits the cc14 pair alone, and its LSB byte
-    // goes out on CC 39 — the knob's address, which the knob itself did not send.
+    // Now only the FADER moves: the pass emits the cc14 pair alone, and one of its bytes
+    // goes out on the knob's address, which the knob itself did not send.
     fader.value = ((64 << 7) | 32) / 16383;
     engine.feedback();
     expect(sent).toEqual([encodeCc(0, 7, 64), encodeCc(0, 39, 32)]);
 
-    // That LSB coming back off a reflecting bus must not edit the knob.
+    // That byte coming back off a reflecting bus must not edit the knob.
     const before = knob.value;
     clock += 5;
-    engine.onMessage(encodeCc(0, 39, 32));
+    engine.onMessage(encodeCc(0, knobCc, echoed));
     expect(knob.value).toBe(before);
     expect(applied).not.toContain(knob.id);
+  });
+
+  // A held pass sends nothing, so neither half has an echo to expect: a press carrying the
+  // byte the pass would have sent is the operator's.
+  it.each([
+    [7, 64],
+    [39, 32],
+  ])("does not arm them on a held pass (knob on CC %i)", (knobCc, pressed) => {
+    const fader = fake("ch1/level", "continuous", 0, 1 / 16383);
+    const knob = fake("ch2/level", "continuous", 0.2);
+    controls.set(fader.id, fader);
+    controls.set(knob.id, knob);
+    map(fader.id, { type: "cc14", channel: 0, controller: 7 });
+    map(knob.id, { type: "cc", channel: 0, controller: knobCc });
+
+    fader.value = ((64 << 7) | 32) / 16383;
+    engine.feedback(false, false);
+    expect(sent).toEqual([]);
+
+    clock += 5;
+    engine.onMessage(encodeCc(0, knobCc, pressed));
+    expect(knob.value).not.toBe(0.2);
+    expect(applied).toContain(knob.id);
   });
 });
