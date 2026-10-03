@@ -1595,8 +1595,8 @@ function pushEqOneKnobCommands(out: VdCommand[], ctrl: EqOneKnobControl, ok: EqO
   for (const inst of ctrl.instances) {
     const chain: VdCommand[] = [];
     if (ok.on !== undefined) chain.push(rawCommand("EQ_ONE_KNOB_ON", ctrl.on, "bool", inst, ok.on ? 1 : 0));
-    // The preset enum is shared across every EQ instance; each screen exposes only
-    // its applicable subset, so the menu here is the union of both subsets.
+    // The preset enum is shared across every EQ instance, and every instance offers
+    // all three types, so the bound is the instance's own menu.
     if (ok.type !== undefined) {
       const type = boundEnum(ok.type, EQ_ONE_KNOB_TYPE_ALL_OPTIONS, EQ_ONE_KNOB_TYPE_DEFAULT);
       chain.push(rawCommand("EQ_ONE_KNOB_TYPE", ctrl.type, "enum", inst, type));
