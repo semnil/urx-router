@@ -8359,6 +8359,89 @@ describe("replacing the plan while a write holds the link", () => {
   });
 });
 
+// A document that needs a decision opens a report whose "Load anyway" runs later, from the
+// modal, after the flow that opened it has let the latch go. Two surfaces still reach the plan
+// under the modal — a MIDI controller and a drop — so the proceed asks again what the opening
+// flow asked, and a replaced plan takes the report down with it.
+describe("a load report's Load anyway", () => {
+  const CC = 24;
+  /** A plan two mono channels claim one 1-of insert-FX slot in: it loads only on request. */
+  const contended = async (): Promise<string> => {
+    const { serialize } = await import("./core/plan");
+    const plan = defaultPlan("URX44V");
+    const params = plan.nodeParams as Record<string, Record<string, unknown>>;
+    params.ch1 = { ...params.ch1, insertFx: 512 };
+    params.ch3 = { ...params.ch3, insertFx: 512 };
+    return serialize(plan);
+  };
+  const bootWith = async (files: Record<string, string>, agree: (m: string) => boolean): Promise<TauriShell> =>
+    (await bootApp({
+      seed: {
+        "urx-midi": JSON.stringify({
+          input: "Controller In",
+          models: {
+            URX44V: [
+              {
+                control: "ch1/mute",
+                addr: { type: "cc", channel: 0, controller: CC },
+                mode: "absolute",
+                button: "edge",
+              },
+            ],
+          },
+        }),
+      },
+      tauri: deviceCommands({
+        "plugin:dialog|message": byMessage(agree),
+        midi_list_inputs: ["Controller In"],
+        midi_open_input: null,
+        midi_close_input: null,
+        read_text_file: (a: Record<string, unknown>) => files[String(a.path)],
+      }),
+    }))!;
+  const proceed = (): HTMLButtonElement => $("load-report").querySelector<HTMLButtonElement>("#load-report-proceed")!;
+
+  it("asks the discard confirm again for an edit made while the report was up", SLOW, async () => {
+    const shell = await bootWith({ "C:/urx/contended.json": await contended() }, () => false);
+    await invoked(shell, "midi_open_input");
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/contended.json"] })).toBe(1);
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), { timeout: 10_000 });
+
+    const opened = shell.args[shell.invokes.indexOf("midi_open_input")] as {
+      channel: { onmessage: (d: unknown) => void };
+    };
+    opened.channel.onmessage([{ bytes: [0xb0, CC, 127] }]);
+    // The edit landed: CH 1 is muted, and its main send is drawn dashed.
+    await vi.waitFor(
+      () =>
+        expect(
+          $("graph-host")
+            .querySelector('g:has(> .wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]) path:not(.wire-hit)')
+            ?.getAttribute("stroke-dasharray"),
+        ).toBe("1.5 4"),
+      { timeout: 10_000 },
+    );
+    expect(confirms(shell)).toEqual([]);
+    proceed().click();
+    // Declined: the document does not load over the edit.
+    await vi.waitFor(() => expect(confirms(shell)).toEqual([t().confirm.discard]), { timeout: 10_000 });
+    expect(statusText()).not.toBe(t().status.openedFrom("contended.json"));
+  });
+
+  it("takes the report down when another plan replaces the one it was about", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const shell = await bootWith(
+      { "C:/urx/contended.json": await contended(), "C:/urx/other.json": serialize(defaultPlan("URX44V")) },
+      () => true,
+    );
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/contended.json"] })).toBe(1);
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), { timeout: 10_000 });
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/other.json"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.openedFrom("other.json")), { timeout: 10_000 });
+    expect($("load-report").hidden).toBe(true);
+  });
+});
+
 // A file flow that is already running when a Fetch's connect lands holds the plan as it stood
 // when the flow began. The read does not start under it; the flow finishes on the plan it began
 // with. Each case holds the connect, starts the file flow, then lets the connect land — and holds

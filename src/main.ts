@@ -91,7 +91,7 @@ import { initFineMode } from "./ui/fine";
 import { installEditMenu } from "./ui/edit-menu";
 import { PlanHistory } from "./ui/history";
 import { installKeyProbe } from "./ui/keyprobe";
-import { showLoadReport } from "./ui/load-report";
+import { closeLoadReport, showLoadReport } from "./ui/load-report";
 import { showErrorBox } from "./ui/error-box";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
@@ -2371,6 +2371,8 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
   deactivateLive();
   // A seeded slot names a node of the plan being replaced.
   seededDefaults.clear();
+  // …and a decision report still up was about a document this one replaces.
+  closeLoadReport();
   // deactivateLive drops the subscription and the timers, but a reconcile / refetch
   // already awaiting the device is not reachable from there — the read itself is what
   // still points at the plan being replaced.
@@ -2599,13 +2601,34 @@ function loadFromText(text: string, path?: string): boolean | null {
     const decisions = problems.filter(needsDecision);
     if (decisions.length > 0) {
       const m = t().loadReport;
+      // What the decision is about: the plan on screen as it stood when the report opened,
+      // whose discard has already been confirmed.
+      const onScreen = plan;
+      const stateAtOpen = clonePlanState(plan);
       showLoadReport(buildPlanReport(next.modelId, problems, false), {
         title: m.slotTitle,
         intro: m.slotIntro,
-        // This one runs from the modal's click handler, outside the try below — which
-        // has already returned by then. Safe because the only step it takes that can
-        // fail is `loadPlan`, and that reports and returns false rather than throwing.
-        proceed: { label: m.loadAnyway, run: () => void finishLoad() },
+        // This one runs from the modal's click handler, after the flow that opened the
+        // report has let the latch go, so it takes the latch again — and it asks again what
+        // the opening flow asked: a plan replaced since is refused (loadPlan closes the
+        // report when one is), and one edited since asks the discard confirm once more. The
+        // only step that can fail is `loadPlan`, which reports and returns rather than
+        // throwing.
+        proceed: {
+          label: m.loadAnyway,
+          run: () =>
+            void fileFlow(
+              async () => {
+                if (plan !== onScreen) {
+                  setStatus(t().status.canceled);
+                  return;
+                }
+                if (diffPlans(stateAtOpen, plan).length && !(await confirmDiscard())) return;
+                finishLoad();
+              },
+              { replaces: true },
+            ),
+        },
       });
       // Neither loaded nor failed: the decision is on screen. Null rather than false,
       // so a recent entry pointing at a file that opens perfectly well is not dropped

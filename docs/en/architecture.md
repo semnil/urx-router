@@ -116,7 +116,8 @@ carries a one-line map of the same directories and points here.
   state a WRITE would leave rather than over what the document stores — `insertFxWireState` in `translate.ts`
   is that projection, and it sits in the emit path so the comparison and the write cannot drift apart);
   an insert-FX slot collision only warns and
-  offers to open it anyway; a stored value outside what the app can write is repaired before the document
+  offers to open it anyway (the offer is about the plan on screen when it was made: a plan replaced since
+  takes the report down, and one edited since asks the discard confirm again); a stored value outside what the app can write is repaired before the document
   opens and reported on the status line, since nothing failed and nothing is being asked — bounded to the
   window, or DROPPED where there is nothing to bound: a leaf that is not a finite number (the window is
   shared across a channel's types and the DEFAULT is not), a `type` the channel's menu does not offer (a

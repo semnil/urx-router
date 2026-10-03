@@ -12,7 +12,7 @@ vi.mock("./dom", async (importOriginal) => ({
 }));
 
 import { t } from "../i18n";
-import { showLoadReport } from "./load-report";
+import { closeLoadReport, showLoadReport } from "./load-report";
 
 function installDom(): void {
   document.body.innerHTML = `
@@ -80,6 +80,23 @@ describe("showLoadReport", () => {
     proceed.click();
     expect(run).toHaveBeenCalledOnce();
     expect(document.getElementById("load-report-proceed")).toBeNull();
+  });
+
+  // A decision is about the document it was raised for, so closing on a replacement takes a
+  // decision down and leaves a report that offers nothing where it is.
+  it("closes a decision report on request and leaves an informational one", () => {
+    const scrim = document.getElementById("load-report") as HTMLElement;
+    const run = vi.fn();
+    showLoadReport("slot", { title: "T", intro: "I", proceed: { label: "Load anyway", run } });
+    closeLoadReport();
+    expect(scrim.hidden).toBe(true);
+    expect(document.getElementById("app")!.inert).toBe(false);
+    expect(document.getElementById("load-report-proceed")).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+
+    showLoadReport("invalid connection");
+    closeLoadReport();
+    expect(scrim.hidden).toBe(false);
   });
 
   it("removes a stale proceed button when the next report is informational", () => {

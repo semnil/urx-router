@@ -20,6 +20,15 @@ import { copyText, holdAppInert } from "./dom";
 // on screen until a reload.
 let releaseInert: (() => void) | null = null;
 let detachPrevious: (() => void) | null = null;
+// The close of a DECISION showing (one that offers to proceed), while it is on screen.
+let closeDecision: (() => void) | null = null;
+
+/** Close a decision report still on screen: what it offers to proceed with is a document it
+ *  was about, and a plan replaced since is no longer the one that decision was about. A
+ *  report that offers nothing stays. */
+export function closeLoadReport(): void {
+  closeDecision?.();
+}
 
 export function showLoadReport(
   report: string,
@@ -88,10 +97,12 @@ export function showLoadReport(
     copy.textContent = m.copy;
     detach();
     proceed?.remove();
+    if (closeDecision === onClose) closeDecision = null;
   };
   copy.addEventListener("click", onCopy);
   close.addEventListener("click", onClose);
   detachPrevious = detach;
+  closeDecision = proceed ? onClose : null;
   // Dismissed first, so whatever proceeding raises (a status line, a dialog of its
   // own) is not left behind this modal.
   if (proceed && proceedRun)
