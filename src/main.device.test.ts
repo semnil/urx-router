@@ -8359,6 +8359,89 @@ describe("replacing the plan while a write holds the link", () => {
   });
 });
 
+// A MIDI edit is an app edit: it goes through the history like any other, so it is undoable
+// and its keys are recorded as the operator's — which is what keeps the write confirm from
+// naming the strip the operator moved as one carrying "settings you did not edit".
+describe("an edit made through MIDI", () => {
+  const CC = 25;
+  const bootMidi = async (): Promise<TauriShell> => {
+    const shell = (await bootApp({
+      seed: {
+        "urx-midi": JSON.stringify({
+          input: "Controller In",
+          models: {
+            URX44V: [
+              {
+                control: "ch1/mute",
+                addr: { type: "cc", channel: 0, controller: CC },
+                mode: "absolute",
+                button: "edge",
+              },
+            ],
+          },
+        }),
+      },
+      tauri: deviceCommands(
+        {
+          "plugin:dialog|message": "Ok",
+          midi_list_inputs: ["Controller In"],
+          midi_open_input: null,
+          midi_close_input: null,
+        },
+        { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 },
+      ),
+    }))!;
+    await invoked(shell, "midi_open_input");
+    return shell;
+  };
+  const sendCc = (shell: TauriShell): void =>
+    (
+      shell.args[shell.invokes.indexOf("midi_open_input")] as { channel: { onmessage: (d: unknown) => void } }
+    ).channel.onmessage([{ bytes: [0xb0, CC, 127] }]);
+  const mainSendDash = (): string | null | undefined =>
+    $("graph-host")
+      .querySelector('g:has(> .wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]) path:not(.wire-hit)')
+      ?.getAttribute("stroke-dasharray");
+  /** A press and release on the window, the boundary a click anywhere is: it closes the open
+   *  entry one macrotask later, and the timer below is queued behind that one. */
+  const boundary = async (): Promise<void> => {
+    window.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 9 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 9 }));
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  it("is not named by the write confirm as a setting the operator did not edit", SLOW, async () => {
+    const { fullLabel } = await import("./models/types");
+    const shell = await bootMidi();
+    // A first write puts the unit on the plan, so the second one carries the MIDI edit alone.
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(() => expect($("btn-write").textContent).toBe(t().toolbar.writeDevice), { timeout: 20_000 });
+    sendCc(shell);
+    await vi.waitFor(() => expect(mainSendDash()).toBe("1.5 4"), { timeout: 10_000 });
+    await boundary();
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    const asked = confirms(shell).filter((m) => m.includes(WRITE_ASK));
+    expect(asked, "the premise: both writes asked").toHaveLength(2);
+    expect(asked[1]).toContain(invariantOf(t().confirm.write(1)));
+    const ch1 = getModel("URX44V").nodes.find((n) => n.id === "ch1")!;
+    expect(stripsNamed(asked[0]), "the premise: the first write names the strip").toContain(fullLabel(ch1));
+    expect(stripsNamed(asked[1])).not.toContain(fullLabel(ch1));
+  });
+
+  it("is undone by Ctrl+Z", SLOW, async () => {
+    const shell = await bootMidi();
+    expect(mainSendDash(), "the premise: the send is drawn live").toBeNull();
+    sendCc(shell);
+    await vi.waitFor(() => expect(mainSendDash()).toBe("1.5 4"), { timeout: 10_000 });
+    await boundary();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(mainSendDash()).toBeNull(), { timeout: 10_000 });
+  });
+});
+
 // A document that needs a decision opens a report whose "Load anyway" runs later, from the
 // modal, after the flow that opened it has let the latch go. Two surfaces still reach the plan
 // under the modal — a MIDI controller and a drop — so the proceed asks again what the opening

@@ -311,7 +311,7 @@ single source of truth. This table states what each case measures.
 | `midi-gang-fanout-and-head-reelection` | midi | The only many-to-one writer, and an unrelated edit reassigning ownership |
 | `midi-learn-arm-during-rerender` | midi | The only case where the second operator's configuration races the device |
 | `midi-write-during-refetch-snapshot` | midi | An ungated writer combined with a snapshot re-base |
-| `midi-rebase-eats-ui-entry-ladder` | midi | The only writer classified two contradictory ways at once |
+| `midi-edit-enters-history-ladder` | midi | A MIDI edit inside and outside an open undo entry: it joins the entry or opens its own, and is undoable either way |
 | `midi-14bit-pair-and-cross-binding` | midi | Message-level decoding, including a binding that can never fire |
 | `midi-bal-mirror-clobbers-partner` | midi | Collisions mediated by a mirror — between two app-side writers, and between a mirror's no-op write and the read that reported the partner otherwise |
 
@@ -1200,8 +1200,9 @@ keeps an unmeasured hardware fact out of the verdict.
 
 The coalesced reflect joins several producers and cannot know what the device authored, so
 `planReadFromDevice` splits into `planValuesChanged` (probe + MIDI feedback) and the history settle,
-and the reflect calls only the first. **The `rebase()` MIDI relied on was relocated verbatim** to its
-own site, so this change moves one behaviour and not two.
+and the reflect calls only the first. The `rebase()` MIDI relied on was first relocated verbatim to its
+own site, so that change moved one behaviour and not two; it has since been removed, and a MIDI edit
+now commits through the history like any other edit (`midi-edit-enters-history-ladder`).
 
 The **direct-follow apply** is the same rule at the one other site that writes device values into the
 plan outside a readback, and it kept its whole-plan `rebase()` until the sweep case named the cost: an

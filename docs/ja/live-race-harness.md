@@ -300,7 +300,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | `midi-gang-fanout-and-head-reelection` | midi | 1 対多の書き手と、無関係な編集が所有権を移す |
 | `midi-learn-arm-during-rerender` | midi | 第 2 操作者の**設定**がデバイスと競合する唯一のケース |
 | `midi-write-during-refetch-snapshot` | midi | 門を持たない書き手と、スナップショット再基準化の組み合わせ |
-| `midi-rebase-eats-ui-entry-ladder` | midi | 単一の書き手が 2 つの矛盾する分類を受ける唯一の場所 |
+| `midi-edit-enters-history-ladder` | midi | 開いている undo エントリの内外での MIDI 編集: エントリに合流するか自分のエントリを開き、どちらでも元に戻せる |
 | `midi-14bit-pair-and-cross-binding` | midi | 値の方針ではなくメッセージの復号。永久に発火しない割当も作れる |
 | `midi-bal-mirror-clobbers-partner` | midi | 鏡映を介した衝突 — アプリ側 2 者間のものと、値を動かさない鏡映の書き込みと相方を別の値で報告した読み出しとの間のもの |
 
@@ -1125,8 +1125,9 @@ MONITOR の絞り込みが避けているコストそのものである。
 
 まとめ反映 (`reflectFollow`) は生産者を跨いで合流するため何が実機由来か知り得ない。よって
 `planReadFromDevice` を `planValuesChanged` (probe + MIDI フィードバック) と履歴の確定に分け、
-反映側は前者だけを呼ぶ。**MIDI が依存していた `rebase()` はその場へ逐語的に移設**したので、
-この変更が動かす挙動は 1 つだけになる。
+反映側は前者だけを呼ぶ。MIDI が依存していた `rebase()` はまずその場へ逐語的に移設したので、
+その変更が動かした挙動は 1 つだけだった。その後この `rebase()` は取り除き、MIDI 編集は他の編集と同じく
+履歴を通って確定する (`midi-edit-enters-history-ladder`)。
 
 **direct 追従の適用**は、読み戻し以外で実機の値をプランへ書く唯一のもう 1 箇所であり、同じ規則が
 当てはまる。ここはプラン全体の `rebase()` のままだったが、掃引のケースがその代償を名指しした —

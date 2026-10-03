@@ -4225,12 +4225,8 @@ if (!DEMO) {
       const partner = mirrored ? partnerChannel(getModel(modelId), control.node) : undefined;
       if (partner) followDirtyNodes.add(partner);
       requestReflect();
-      // Kept exactly where the coalesced reflect used to make it, so moving that call
-      // out changes one behaviour and not two: a MIDI message inside the idle window
-      // drops the operator's open entry (pinned by T4's midi-rebase ladder). That is a
-      // defect of its own — a MIDI apply is an app edit through markChanged, not a
-      // device read — and removing it is a separate decision with its own cells.
-      planHistory?.rebase();
+      // An app edit like any other: the entry markChanged opened commits at its own
+      // boundary, which records the keys as the operator's and makes the edit undoable.
       // No wire repaint here: the reflect requested above redraws them. Its direct
       // branch ends in graph.repaintDirtyNodes, whose own tail is redrawWires, and both
       // sites carry the same `!graphHost.hidden` guard — so a toggle's wire dimming
