@@ -1702,6 +1702,37 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     expect(seen.no).toBeGreaterThan(0);
   });
 
+  // The trailing whitespace the load strips is the JavaScript set, not Python's: a byte-order mark
+  // goes, while the information separators and NEL stay. For each name the tool warns about some
+  // rewrite exactly when the app's loaded name differs from the one written.
+  it("warns about a name's rewrite exactly when the app's loaded name differs", async () => {
+    const { planProblems, prepareLoadedPlan } = await import("../src/core/plan-validate.ts");
+    const { deserializeDocument } = await import("../src/core/plan.ts");
+    const names = ["Vox\ufeff", "Gtr\u001f", "Bas\u0085", "Key\u3000", "Kick ", "Vox"];
+    const outcome = { differs: 0, same: 0 };
+    for (const written of names) {
+      const plan = {
+        format: "urx-router-plan",
+        version: PLAN_VERSION,
+        modelId: "URX44V",
+        connections: [],
+        nodeNames: { ch1: written },
+      };
+      const read = deserializeDocument(JSON.stringify(plan)).plan;
+      prepareLoadedPlan(getModel("URX44V"), read, planProblems(getModel("URX44V"), read));
+      const differs = read.nodeNames.ch1 !== written;
+      const file = join(dir, "plan.json");
+      writeFileSync(file, JSON.stringify(plan));
+      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      expect(r.status, r.stdout).toBe(0);
+      const warned = r.stderr.split(/\r?\n/).some((l) => l.startsWith("WARNING: nodeNames[ch1]: the app "));
+      expect(warned, JSON.stringify(written)).toBe(differs);
+      outcome[differs ? "differs" : "same"]++;
+    }
+    expect(outcome.differs).toBeGreaterThan(0);
+    expect(outcome.same).toBeGreaterThan(0);
+  });
+
   // A colour is one of the unit's palette entries or its Off, and the load drops any other; a
   // colourable node left without one is given its factory colour, which the write sends. The nodes
   // whose colour the app drops, and the ones it colours, are compared with the tool's two lists:

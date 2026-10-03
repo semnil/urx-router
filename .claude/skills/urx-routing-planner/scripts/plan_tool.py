@@ -602,10 +602,18 @@ NODE_NAME_MAX_CHARS = 8
 XML_INVALID_RE = re.compile("[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]")
 
 
+# The characters the app's `trimEnd` strips: ECMAScript WhiteSpace and LineTerminator. Python's
+# bare `rstrip` reads str.isspace instead, which takes U+001C-U+001F and U+0085 and leaves U+FEFF.
+JS_WHITESPACE = (
+    "\t\n\v\f\r \xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+
+
 def document_name(value):
     """A node name as the app's load keeps it (core/plan.ts `normalizeDocumentName`): without the
     code points XML refuses, cut to the bound, trailing whitespace stripped."""
-    return XML_INVALID_RE.sub("", value)[:NODE_NAME_MAX_CHARS].rstrip()
+    return XML_INVALID_RE.sub("", value)[:NODE_NAME_MAX_CHARS].rstrip(JS_WHITESPACE)
 
 
 def name_warnings(plan):
@@ -645,7 +653,7 @@ def name_warnings(plan):
                 f"({size} given) — the unit's own name screen takes no more"
             )
         cut = value[:NODE_NAME_MAX_CHARS]
-        if cut != cut.rstrip():
+        if cut != cut.rstrip(JS_WHITESPACE):
             out.append(
                 f"nodeNames[{node_id}]: the app strips the trailing whitespace from this on load — "
                 "the unit STORES a trailing space rather than padding it away, while every path that "
