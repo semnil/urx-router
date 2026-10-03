@@ -1671,8 +1671,9 @@ export interface HoldContext {
    *  a cause of its own, and the hold — which exists for the announced-nothing case —
    *  leaves it alone. */
   announced?: ReadonlySet<string>;
-  /** Every sample rate the UNIT announced since the previous read finished, in notify
-   *  order. The read's own rate is one moment out of a sweep that takes hundreds of
+  /** Every sample rate the UNIT announced since the previous read that established one
+   *  finished — the session's own starting read included, so an announcement a session
+   *  that has ended was told about is not in it — in notify order. The read's own rate is one moment out of a sweep that takes hundreds of
    *  milliseconds, and the excursion that clears an effect can be over before the rate
    *  address is even asked: 48 → 96 → 48 leaves the read holding 48, at which the effect
    *  runs, and the clearing then reads exactly like an operator's own No Effect. The

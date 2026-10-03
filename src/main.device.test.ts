@@ -3309,6 +3309,54 @@ describe("the live session", () => {
     }
   });
 
+  // A rate the unit announced in a session that ended before any read took it is that
+  // session's evidence. The next session's own starting read establishes the rate, so a
+  // clearing the operator then makes on the unit's panel is adopted, not held against the
+  // rate the ended session heard.
+  it("forgets a rate an ended session was told about once the next session has read the unit", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 });
+    await heldByExcursion(shell);
+    const channelOf = (i: number) => (shell.args[i] as { channel: { onmessage: (d: unknown) => void } }).channel;
+    // Announced, and the session ended inside the settle that would have read it.
+    channelOf(shell.invokes.lastIndexOf("vd_params_subscribe")).onmessage([
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
+    ]);
+    await endLive();
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 25_000 });
+
+    // The next session reads the unit at 48 kHz with CH 1 still on the effect.
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    await quiet(shell);
+
+    // The operator clears CH 1's effect at the unit's panel — the address the selection wrote.
+    const selector = shell.invokes.reduce(
+      (last, cmd, i) =>
+        cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.INSERT_FX.id && shell.args[i]?.value === COMPANDER_H
+          ? i
+          : last,
+      -1,
+    );
+    const { x, y } = shell.args[selector] as { x: number; y: number };
+    const none = denormalizeInsertFx(INSERT_FX_NONE);
+    const invoke = (
+      window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a: unknown) => Promise<unknown> } }
+    ).__TAURI_INTERNALS__.invoke;
+    await invoke("vd_set", { paramId: PARAMS.INSERT_FX.id, x, y, value: none });
+    const written = insertFxWrites(shell).filter((v) => v === COMPANDER_H).length;
+    channelOf(shell.invokes.lastIndexOf("vd_params_subscribe")).onmessage([
+      { param_id: PARAMS.INSERT_FX.id, x, y, value: none },
+    ]);
+
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
+    await quiet(shell);
+    expect(insertFxWrites(shell).filter((v) => v === COMPANDER_H).length).toBe(written);
+    await endLive();
+  });
+
   // The OTHER half of the same rule, and the one that made the split worth stating: a
   // session that merely ends lets its read finish, but a plan REPLACED under it does not —
   // the document is gone, so the read is filling something nothing shows. Nothing else in

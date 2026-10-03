@@ -4039,6 +4039,10 @@ if (!DEMO) {
         // the session is still registering stays undoable, and a read that did not land
         // (cancelled, failed, stopped before it, or incomplete) leaves the history alone.
         planReadFromDevice();
+        // This read established the unit's rate, so a rate an earlier session was told about
+        // decides nothing in this one. No follow read is in flight here and no notify can
+        // arrive before follow.begin() below.
+        announcedRates.length = 0;
         noteMergeConflicts(merged);
         notePatchFromDevice(merged.devicePatch);
         takeRefusedEdits(merged);

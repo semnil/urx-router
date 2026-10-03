@@ -1928,6 +1928,9 @@ written at all:
   asks the read's rate AND every rate the unit announced on the way (`HoldContext.ratesSeen`). That list is
   deliberately NOT scoped to the read's own window, unlike the announcements above: the rate notify that
   escalated to the read arrives before it starts, and it is the one carrying the rate that did the clearing.
+  It does not outlive a session, though: a Live-sync start's own read establishes the unit's rate, so the list
+  is emptied once that read lands, and a rate a session that has ended was told about decides nothing in the
+  next one.
   It also survives a read that established no rate, rather than being emptied by whichever read ends first —
   reconciles run one at a time, so a SCOPED read for another node sits between the notify and the full read
   it escalates to. That scoped read is where both halves matter: it never asks for the rate address, and it
