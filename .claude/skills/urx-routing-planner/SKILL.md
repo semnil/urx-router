@@ -282,7 +282,10 @@ and the apply options. See `references/device-apply.md` for the full hardware
 write / Live sync procedure. Lead with the link (instant visual check, no
 hardware) and note that device writes are desktop-only. The opened link's
 Download JSON button saves the same plan as a file, which the desktop app
-opens via File → Open — the no-copy-paste route onto hardware.
+opens via File → Open — the no-copy-paste route onto hardware. Write to device
+is what puts that plan on the unit: Live sync starts by reading the unit INTO the
+plan, replacing what was opened, so it comes after the write and never instead of
+it.
 
 ## Output format
 
@@ -301,9 +304,10 @@ opens via File → Open — the no-copy-paste route onto hardware.
 2. The **plan JSON** in a code block.
 3. The **`?plan=` deep link**.
 4. **Apply options**: open the link to visualize; or open the JSON in the desktop
-   URX Router and use Device → Write to device / Live sync (point to
-   `references/device-apply.md`). The JSON file can come straight from the
-   opened link via its Download JSON button.
+   URX Router and use Device → Write to device, then Live sync to keep editing
+   live — never Live sync alone, which starts by reading the unit into the plan
+   and replaces it (point to `references/device-apply.md`). The JSON file can come
+   straight from the opened link via its Download JSON button.
 5. Any **warnings** from step 6 (raw-encoded values, an effect selector that
    resets the unit's effect parameters).
 
