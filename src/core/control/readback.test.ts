@@ -1732,6 +1732,45 @@ describe("applySilentState", () => {
     );
   });
 
+  // The head can also come BACK. The emit the guard answers from is laid out by the head the
+  // park read first, so a head taken off what this session sent and returned while the
+  // family is being read agrees with the snapshot again while that emit still describes the
+  // other layout: each slot where the unit's refill equals the snapshot would read as the
+  // other layout's value.
+  it("reads the unit's values when its head returns to the sent one under the read", async () => {
+    const delay = fxEffectTypes(0).find((o) => o.family === "delay")!;
+    const sentPlan = defaultPlan("URX44V");
+    expect(sentPlan.nodeParams["bus.fx1"]!.fxEffect!.type, "the premise: two families").not.toBe(delay.value);
+    sentPlan.nodeParams["bus.fx1"]!.fxEffect!.type = delay.value;
+    const snapshot = deviceTableFor(sentPlan);
+    const sent = (id: number, x: number, y: number, raw: number): boolean => snapshot.get(`${id}:${x}:${y}`) === raw;
+
+    // What the park lands on while the unit holds what this session sent throughout.
+    const control = structuredClone(sentPlan);
+    mockVdGetFrom(new Map(snapshot));
+    expect((await applySilentState(model, control, undefined, undefined, sent)).errors).toEqual([]);
+
+    // The panel: on the other family when the park reads the head, back on the delay — with
+    // the delay's values refilled — once the array read has begun.
+    const table = deviceTableFor(defaultPlan("URX44V"));
+    let returned = false;
+    vi.mocked(vdGet).mockImplementation((paramId: number, x: number, y: number) => {
+      if (paramId === 681 && !returned) {
+        returned = true;
+        for (const [k, v] of snapshot) if (k.startsWith("679:") || k.startsWith("681:")) table.set(k, v);
+      }
+      return Promise.resolve(table.get(`${paramId}:${x}:${y}`) ?? 0);
+    });
+    const plan = structuredClone(sentPlan);
+    const r = await applySilentState(model, plan, undefined, undefined, sent);
+
+    expect(returned, "the premise: the head moved during the read").toBe(true);
+    expect(r.errors).toEqual([]);
+    expect(plan.nodeParams["bus.fx1"]?.fxEffect, "the delay's values as the unit holds them").toEqual(
+      control.nodeParams["bus.fx1"]?.fxEffect,
+    );
+  });
+
   // …and a head that will not settle is a family this read cannot answer for. Failing the
   // node is what the caller acts on — the write behind the park is the destructive half.
   it("fails the node when its head will not settle", async () => {

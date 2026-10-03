@@ -604,8 +604,10 @@ export async function applySilentState(
     head: readonly [number, number, number],
     what: string,
     read: (laidOut: ParamSource) => Promise<FamilyRead>,
-  ): Promise<FamilyRead> =>
-    readWithStableHead(
+  ): Promise<FamilyRead> => {
+    // The head `source`'s emit was laid out by: the one read ahead of the pass.
+    const laidOutBy = heads.get(addrKey(head[0], head[1], head[2]));
+    return readWithStableHead(
       base,
       head,
       what,
@@ -613,10 +615,13 @@ export async function applySilentState(
       // bypass — since a type says nothing about what that means. It is the addresses
       // BEHIND the head that a moved one makes incomparable, and `agrees`
       // asks that of the head the unit holds NOW, which is what an attempt whose head moved
-      // leaves behind for the next one.
-      () => read(agrees(head) ? source : plain),
+      // leaves behind for the next one. The emit is only comparable while that head is
+      // also the one it was laid out by: a head that moved and came back to the sent one
+      // agrees with the snapshot while the emit still describes the other layout.
+      () => read(agrees(head) && heads.get(addrKey(head[0], head[1], head[2])) === laidOutBy ? source : plain),
       (now) => heads.set(addrKey(head[0], head[1], head[2]), now),
     );
+  };
 
   for (const node of model.nodes) {
     signal?.throwIfAborted();

@@ -1651,9 +1651,10 @@ factory plan and 93 on a URX44 / URX44V, against a converge scope of 618 / 782 c
 reaches the plan until a pair agrees**: an attempt answers with what it WOULD write and only the
 matching one is applied, so a discarded attempt leaves none of its layout behind and a node that fails
 every attempt arrives at its caller holding exactly what it held before. The guard itself is dropped, while the unit's head is not the one
-the SNAPSHOT holds, for the addresses that head LAYS OUT and no others: moved on the panel, the
-snapshot's raws describe the previous layout there, and a slot whose two layouts agree on a number read
-as "still what this session sent". An insert effect's bypass is not laid out by anything — it means
+the SNAPSHOT holds or is not the head the emit was laid out by, for the addresses that head LAYS OUT and
+no others: moved on the panel, the snapshot's raws describe the previous layout there, and a slot whose two
+layouts agree on a number read as "still what this session sent" — and a head that moved and came back to
+the sent one agrees with the snapshot while the emit still describes the layout the park read first. An insert effect's bypass is not laid out by anything — it means
 the same under every effect — so it keeps it, and an unsent edit to it survives an effect the operator
 changed on the unit.
 
