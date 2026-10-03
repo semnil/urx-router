@@ -32,6 +32,50 @@ description: >
 # second attempt would fail on the lock rather than on the mirror, turning one clear
 # failure into a confusing one. Re-running the job is a click and gets a clean VM, and
 # a 15-minute degradation would not have been ridden out by a retry anyway.
+#
+# The one home for every external fetch's readings.
+#
+# The same attribution argument puts a step bound on every other step that fetches from a
+# host outside GitHub, and the durations behind those bounds are written here and in no
+# other file: each such step carries a bare `timeout-minutes` whose comment points at this
+# header. Every bound is a hang detector inside its job's own budget, and every one but
+# pnpm/action-setup's (below the table) is several times the slowest successful run of its
+# step.
+#
+# The readings are GitHub's own step timings for the last completed runs of each workflow:
+# ci.yml 33867471824-36715253011 (300 runs), race.yml 34580218248-36714307969 (120),
+# format.yml 34578996323-36714308006 (120), post-merge.yml 33853025493-36715253366 (73),
+# pages.yml 29575646143-36718216146 (39) and release.yml 29674297590-36716230166 (40).
+# Successful steps only, in seconds; a range is the spread across the platforms the step
+# runs on, and the run named is the slowest one's.
+#
+#   step                                 fetches from               median   slowest (run)      bound
+#   pnpm/action-setup                    registry.npmjs.org         4-20     313 (33870176139)  10 min
+#   pnpm install                         registry.npmjs.org         1-2      23 (30270005336)   10 min
+#   dtolnay/rust-toolchain               static.rust-lang.org       1-7      41 (31840214550)   5 min
+#   taiki-e/cache-cargo-install-action   crates.io, on a cache miss 1        135 (36281855474)  10 min
+#   cargo about generate                 crates.io                  60       70 (34674781972)   10 min
+#   cargo test                           crates.io, on a cache miss 21       54 (36445916228)   15 min
+#   cargo build --release                crates.io, on a cache miss 71-126   258 (34516796080)  20 min
+#   tauri-apps/tauri-action              crates.io; Apple's notary  160-162  378 (30153131483)  30 min
+#   codecov/codecov-action               cli.codecov.io, codecov.io 3        33 (34644529460)   5 min
+#
+# Every pnpm/action-setup step over 150 s — 15 of its 2517 successful ones — falls in one
+# stretch of six runs (33853025493-33870176139), on all three platforms, up to 313 s, and
+# each of them finished; outside that stretch its slowest was 86 s (34084200901). Its
+# 10-minute bound is about twice that stretch's slowest rather than several times 86 s, so a
+# run that slow still passes.
+#
+# Not bounded, because what they fetch is GitHub's: actions/setup-node (Node from the
+# runner's tool cache, which a job container mounts too, and the pnpm store from GitHub's
+# cache service), swatinem/rust-cache (GitHub's cache service), and the artifact and Pages
+# actions.
+#
+# A job's `container:` image (mcr.microsoft.com) is pulled in the runner's "Initialize
+# containers" phase, before any step exists, so no step bound can reach it: the job's own
+# `timeout-minutes` is what stops a stalled pull, and that phase's log is where it shows.
+# Its timings over 1580 pulls in ci.yml and race.yml: median 27 s, slowest 59 s
+# (35786445982).
 
 inputs:
   browser:
