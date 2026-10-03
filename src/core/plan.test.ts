@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   emptyPlan,
   ensureFixedConnections,
@@ -105,6 +106,17 @@ describe("serialize / deserialize round-trip", () => {
     const doc = JSON.parse(serialize(emptyPlan("URX22")));
     expect(doc.format).toBe(PLAN_FORMAT);
     expect(doc.version).toBe(PLAN_VERSION);
+  });
+
+  // The documented format is the shape a hand-written document copies, and a version below
+  // the current one runs the older format's migration over it.
+  it.each(["en", "ja"])("writes the format and version the example in docs/%s/architecture.md shows", (lang) => {
+    const doc = readFileSync(new URL(`../../docs/${lang}/architecture.md`, import.meta.url), "utf8");
+    const example = doc.match(/```jsonc\n(\{\n {2}"format": "urx-router-plan",[\s\S]*?\n\})\n```/);
+    expect(example, "the persistence format example").not.toBeNull();
+    const shown = JSON.parse(example![1]!) as { format: string; version: number };
+    expect(shown.format).toBe(PLAN_FORMAT);
+    expect(shown.version).toBe(PLAN_VERSION);
   });
 
   it("drops the transient unreadNodes provenance — it is never persisted", () => {

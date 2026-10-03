@@ -3940,7 +3940,7 @@ what the desktop app offers.
 ```jsonc
 {
   "format": "urx-router-plan",
-  "version": 1,
+  "version": 4,
   "modelId": "URX44V",
   "sampleRate": 48000,
   "positions": { "ch1": { "x": 1, "y": 0 } },
@@ -3981,7 +3981,9 @@ keeps the plan dirty. A recent-plans entry whose file no longer loads (moved / d
 corrupted) is dropped from the list automatically — keeping it would only reproduce the same
 error — and the status line says so; declining the discard confirm attempts nothing and keeps
 the entry. The `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
-`noteCollapsed` fields are optional (a file without them gets their defaults on load). Loading (`deserialize`) is tolerant of
+`noteCollapsed` fields are optional (a file without them gets their defaults on load). `version` is the format
+the file was written in (`PLAN_VERSION` in `src/core/plan.ts`): a newer one is refused (`planVersionUnsupported`),
+an absent or non-numeric one is read as the current format, and an older one is migrated forward on load. Loading (`deserialize`) is tolerant of
 corrupt input at two levels. A collection that is not the right container at all falls back to its
 empty default (`positions` included, symmetrically); within a collection each element is validated on
 its own and a non-conforming one is dropped rather than the document refused — a wire that is null,
