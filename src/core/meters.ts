@@ -136,8 +136,9 @@ const NODE_TAPS_URX44: Record<string, MeterTap[]> = {
   "bus.mix2": busTaps(105, 122, 124, 126, 2),
   "bus.fx1": fxTaps(0, 0),
   "bus.fx2": fxTaps(1, 2),
-  // STREAMING has no level fader; its pre/post-DELAY meters read the same level
-  // (delay is lossless), so one output meter is enough — shown on a meter-only strip.
+  // STREAMING has no level fader, and the device exposes only its post-DELAY meter
+  // (127:0/1; known-issues.md "The STREAMING pre-DELAY meter is not readable"), so it
+  // has one output meter — shown on a meter-only strip.
   "bus.stream": single([127, 0], [127, 1]),
   "bus.mon1": single([129, 0], [129, 1]),
   "bus.mon2": single([129, 2], [129, 3]),
