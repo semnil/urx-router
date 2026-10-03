@@ -3947,9 +3947,11 @@ if (!DEMO) {
         await releaseLive(device.epoch, "error");
         showError(message, supplied ?? "");
       };
-      if (!(await confirmFirmware(device))) return await abort(t().status.canceled);
-      if (!(await confirmDiscard())) return await abort(t().status.canceled);
       try {
+        // Inside the try, so a confirm that rejects instead of answering takes the same exit a
+        // failure does and the connection and the ledger close behind it.
+        if (!(await confirmFirmware(device))) return await abort(t().status.canceled);
+        if (!(await confirmDiscard())) return await abort(t().status.canceled);
         // A device of a different model maps onto the wrong channels; offer to
         // switch the UI to a fresh plan of the device's model (mirrors fetch).
         const switchTo = await offerModelSwitch(device);

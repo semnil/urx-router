@@ -3018,6 +3018,30 @@ describe("the live session", () => {
     expect(live().getAttribute("aria-checked")).not.toBe("true");
   });
 
+  // A confirm that REJECTS rather than answering, on the way into a session that has already
+  // connected. Its exit has to close the connection it opened, as every other exit does.
+  it("closes the connection when a start's confirm rejects", SLOW, async () => {
+    const shell = await bootDevice({
+      "plugin:dialog|message": (a: Record<string, unknown>) => {
+        if (a.buttons === "OkCancel") throw new Error("dialog unavailable");
+        return "Ok";
+      },
+    });
+    // A dirty plan, so the start asks the discard confirm.
+    chooseRate(96_000);
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+    // Released by the epoch it was opened with: the stub closes only a matching one, so a
+    // device command after it is refused.
+    const invoke = (
+      window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a: unknown) => Promise<unknown> } }
+    ).__TAURI_INTERNALS__.invoke;
+    await expect(invoke("vd_get", { paramId: 1, x: 0, y: 0 })).rejects.toThrow("not-connected");
+    expect(confirms(shell)).toEqual([t().confirm.discard]);
+    expect(live().getAttribute("aria-checked")).not.toBe("true");
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 10_000 });
+  });
+
   // The undo history survives a reconcile that authored nothing.
   //
   // Pinned HERE rather than only in the race tier because that tier uploads no
