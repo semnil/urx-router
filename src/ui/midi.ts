@@ -752,8 +752,15 @@ export class MidiControl {
     // One binding per console control (replace the control's old binding). An
     // address may be shared: learning several controls to one physical control
     // gangs them, and the first-learned (list head) owns that address' feedback.
-    const next = this.engine.getMappings().filter((m) => m.control !== id);
-    next.push({ control: id, addr, mode: "absolute" });
+    const all = this.engine.getMappings();
+    // The take-in mode is the address's (see patchMapping), so the new binding takes the
+    // one already there — read before this control's own old binding is dropped, so the
+    // one control an address carries keeps its mode when it is learned onto it again.
+    // Absolute on an address nothing is bound to yet.
+    const key = addrKey(addr);
+    const mode = all.find((m) => addrKey(m.addr) === key)?.mode ?? "absolute";
+    const next = all.filter((m) => m.control !== id);
+    next.push({ control: id, addr, mode });
     this.applyMappings(next);
     this.hooks.onLearnChanged();
     this.say(t().midi.bound(this.labelOf(id), addrLabel(addr)));

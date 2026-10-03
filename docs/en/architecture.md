@@ -1582,8 +1582,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   on while the other is on for the channel is refused by the control itself (`refuses`) and reported on the
   status line rather than dropped, and the CONSOLE chip that rule locks stays a learn target
   (known-issues.md "The unit lets +48V and HI-Z be on together; the app does not").
-- **Engine (`engine.ts`)** — routes incoming events onto bound controls. Take-in modes are per-mapping:
-  absolute / pickup (swallowed until the physical value reaches or crosses the plan value). 14-bit CC assembles the MSB/LSB
+- **Engine (`engine.ts`)** — routes incoming events onto bound controls. A take-in mode belongs to the
+  physical control rather than to one binding — every binding on one address carries the same one, which a
+  learn onto the address takes and a change in the window sets for all of them: absolute / pickup (swallowed until the physical value reaches or crosses the plan value). 14-bit CC assembles the MSB/LSB
   pair (n / n+32); an LSB that arrives while the pair's MSB is unknown — none received, and none sent by a feedback
   pass, since the mappings were last set, which a boot, a learn, an edit of the list and a plan load all do —
   edits nothing and is kept for the MSB that follows. Toggles carry a per-mapping button behavior instead of a take-in mode, named after the
@@ -1630,7 +1631,7 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   being up rather than off reaching the `finally` all three land in — and Live sync ending, or the plan being
   replaced, closes it again. **What the fetch exclusion costs** is a motorised controller left showing what it
   was last told: touch that fader before a session opens the output side and its stale position is applied to
-  the freshly fetched plan. Pickup mode is the per-mapping answer, and the alternative — letting a fetch open
+  the freshly fetched plan. Pickup mode is the answer to that, and the alternative — letting a fetch open
   it — is the one this rule exists to refuse, since a plan that agreed with the unit at the instant of a read
   is not a plan anything holds to it afterwards. A pass that is HELD — no readback settled yet, or no output port open — still runs: what it owes the
   receive side (a moved plan value un-engages a pickup binding) does not depend on the controller having heard. The receive side mirrors the guard: for 50 ms (`ECHO_MS`) after

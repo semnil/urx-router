@@ -625,6 +625,63 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     // …and only that address: a binding on another controller is untouched.
     expect(stored.find((m) => m.control === "ch3/level")!.mode).toBe("absolute");
   });
+
+  // Learn is the other writer of the list, and the mode is the address's there too: a control
+  // learned onto a Pickup gang takes Pickup, or it jumps to the physical position while every
+  // other member waits for the crossing.
+  const learnOnto = async (control: MidiControl, id: string, controller: number): Promise<void> => {
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+    dispatch({ type: "learn", on: true });
+    control.arm(id);
+    mocks.inputReceiver!([0xb0, controller, 10]);
+    mocks.inputReceiver!([0xb0, controller, 11]); // the same CC twice binds a 7-bit CC
+  };
+  const storedModes = (): Record<string, string> =>
+    Object.fromEntries(
+      (JSON.parse(localStorage.getItem("urx-midi")!).models.URX44V as Array<{ control: string; mode: string }>).map(
+        (m) => [m.control, m.mode],
+      ),
+    );
+
+  it("gives a control learned onto a gang the take-in mode of that address", async () => {
+    const cc7 = { type: "cc", channel: 0, controller: 7 };
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({
+        models: {
+          URX44V: [
+            { control: "ch1/level", addr: cc7, mode: "pickup" },
+            { control: "ch2/level", addr: cc7, mode: "pickup" },
+          ],
+        },
+      }),
+    );
+    const { control } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await learnOnto(control, "ch3/level", 7);
+    expect(storedModes()).toEqual({ "ch1/level": "pickup", "ch2/level": "pickup", "ch3/level": "pickup" });
+    // A new address has no mode of its own to give, and starts at Absolute.
+    await learnOnto(control, "ch4/level", 9);
+    expect(storedModes()["ch4/level"]).toBe("absolute");
+  });
+
+  // Read before the control's own binding is dropped: re-learning the one control an address
+  // carries keeps the mode that address was given.
+  it("keeps the take-in mode when the only control on an address is learned onto it again", async () => {
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({
+        models: { URX44V: [{ control: "ch1/level", addr: { type: "cc", channel: 0, controller: 7 }, mode: "pickup" }] },
+      }),
+    );
+    const { control } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await learnOnto(control, "ch1/level", 7);
+    expect(storedModes()).toEqual({ "ch1/level": "pickup" });
+  });
 });
 
 // On a reflecting transport our own feedback comes straight back, and the learn branch
