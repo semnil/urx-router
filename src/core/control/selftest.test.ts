@@ -40,6 +40,7 @@ import {
 } from "./params";
 import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
 import {
+  cancelledBeforeWriting,
   formatSelfTestReport,
   linkedPassesFor,
   passesFor,
@@ -1064,8 +1065,32 @@ describe("runSelfTest", () => {
     expect(report.written).toBe(0);
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
+    // …and it says the unit was not touched, rather than a restore that did not happen.
+    expect(cancelledBeforeWriting(report)).toBe(true);
+    expect(formatSelfTestReport(report)).toContain(
+      "- Restored: not applicable — the run was canceled before it wrote anything",
+    );
   });
 
+  // A cancel inside the first pass is NOT one of those: commands have gone out, though
+  // `written` is still 0 there, since the pass that sent them never reached its tally.
+  it("does not call a cancel inside the sweep one that wrote nothing", async () => {
+    installMockDevice(populatedPlan());
+    const controller = new AbortController();
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      controller.abort();
+      return realSet(id, x, y, v);
+    });
+    const report = await runSelfTest(model, 0, controller.signal);
+    expect(report.aborted).toBe(true);
+    expect(vi.mocked(vdSet)).toHaveBeenCalled();
+    expect(cancelledBeforeWriting(report)).toBe(false);
+  });
+
+  // Nothing was read and nothing was written, so it is a run that did not start — the same
+  // "refused" a pre-sweep refusal is, with its own reason so the status can name it, and not
+  // a restore the run failed to make.
   it("aborts on model mismatch without writing, and disconnects", async () => {
     installMockDevice(populatedPlan());
     vi.mocked(vdConnect).mockResolvedValue({ model: "URX22", label: "URX22", firmware: "", epoch: 1 });
@@ -1074,6 +1099,9 @@ describe("runSelfTest", () => {
     expect(report.errors.join(" ")).toContain("URX22");
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
+    expect(report.phase).toBe("refused");
+    expect(report.refusal).toBe("modelMismatch");
+    expect(formatSelfTestReport(report)).toContain("- Restored: not applicable — the run refused to start");
   });
 
   it("sweeps insert FX one node per kind and writes the modeled ON/OFF after the selector", () => {

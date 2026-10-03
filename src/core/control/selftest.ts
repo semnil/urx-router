@@ -242,6 +242,9 @@ export interface SelfTestReport {
    *  restore (it is false because nothing was restored, not because something is left
    *  perturbed). */
   phase: "connect" | "readback" | "write" | "verify" | "restore" | "done" | "refused";
+  /** Why a "refused" run declined: the connected unit is another model, or an address it
+   *  would have to put back could not be read first. Absent on every other phase. */
+  refusal?: "modelMismatch" | "unreadable";
   /**
    * DIAGNOSTIC — the restore's own account of itself, small enough to ride the report
    * line the headless launch already prints. It exists because a run that reported
@@ -758,7 +761,12 @@ export async function runSelfTest(
     if (!cap) return report; // cancelled during capture
     report.applied = cap.applied;
     report.errors.push(...cap.errors);
-    if (!cap.ok) return report; // connected device is not this model
+    // Connected device is not this model: nothing read, nothing written.
+    if (!cap.ok) {
+      report.phase = "refused";
+      report.refusal = "modelMismatch";
+      return report;
+    }
     const original = cap.plan;
     // A STREAMING source the capture did not read is written by nothing in the run: with no
     // wire there the emit sends nothing to its selector, so no pass moves it, the restore has
@@ -823,6 +831,7 @@ export async function runSelfTest(
         `refusing to sweep: ${writeBack.size - preSweep.size} address(es) the restore cannot put back could not be read first`,
       );
       report.phase = "refused";
+      report.refusal = "unreadable";
       return report;
     }
 
@@ -1215,6 +1224,13 @@ async function restoreUnsent(
   return residual;
 }
 
+/** Whether a cancelled run stopped before anything was written: in the capture or the
+ *  reads ahead of the sweep. Asked of the phase rather than of `written`, which a cancel
+ *  inside the first pass leaves at 0 after commands have gone out. */
+export function cancelledBeforeWriting(report: SelfTestReport): boolean {
+  return report.aborted && (report.phase === "connect" || report.phase === "readback");
+}
+
 /** Tally the per-guess verdicts in one pass (for the status line / report). */
 export function summarizeVerdicts(unverified: UnverifiedFinding[]): {
   confirmed: number;
@@ -1257,7 +1273,9 @@ export function formatSelfTestReport(report: SelfTestReport): string {
   lines.push(
     report.phase === "refused"
       ? "- Restored: not applicable — the run refused to start and wrote nothing"
-      : `- Restored: ${report.restored ? "yes" : `NO — ${report.restoreResidual} param(s) differ`}`,
+      : cancelledBeforeWriting(report)
+        ? "- Restored: not applicable — the run was canceled before it wrote anything"
+        : `- Restored: ${report.restored ? "yes" : `NO — ${report.restoreResidual} param(s) differ`}`,
   );
 
   if (report.unverified.length) {

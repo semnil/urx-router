@@ -7001,6 +7001,40 @@ describe("the device self-test", () => {
     }
   });
 
+  // A cancel taken while the capture is still reading is a run that never wrote: the status
+  // says the unit was not touched, rather than that it was left silent and needs a fetch.
+  it("says a cancel taken before the first write left the unit untouched", SLOW, async () => {
+    const shell = await bootExperimental();
+    let ask = (): void => {};
+    const asked = new Promise<void>((r) => (ask = r));
+    let release = (): void => {};
+    const released = new Promise<void>((r) => (release = r));
+    shell.answer("vd_get", () => (ask(), released.then(() => 0)));
+    const btn = await selfTestBtn();
+    btn.click();
+    await asked;
+    expect(btn.textContent, "the premise: the run is under way").toBe(t().toolbar.selfTestCancel);
+
+    btn.click();
+    release();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestCancelledUntouched), { timeout: 25_000 });
+    expect(shell.count("vd_set")).toBe(0);
+    expect(btn.textContent).toBe(t().toolbar.selfTest);
+  });
+
+  // A unit of another model is a run that did not start: nothing read and nothing written. The
+  // status names the mismatch, rather than reading the restore that never ran as a failed one.
+  it("says a run on a unit of another model did not start", SLOW, async () => {
+    const shell = await bootExperimental(connectAs("URX22"));
+    const btn = await selfTestBtn();
+    btn.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestModelMismatch("URX22", "URX44V")), {
+      timeout: 25_000,
+    });
+    expect(shell.count("vd_set")).toBe(0);
+    expect(shell.count("vd_get")).toBe(0);
+  });
+
   // A run that cannot open its own link surfaces as a dialog and lets the latch go.
   it("reports a run that cannot open its own link, and holds nothing afterwards", SLOW, async () => {
     const log = captureWarnings();

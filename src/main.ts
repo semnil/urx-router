@@ -204,7 +204,7 @@ import { LinkLedgerTracker } from "./core/control/link-stats";
 import type { LinkSessionEnd } from "./core/control/link-stats";
 import { LinkStatsView } from "./ui/link-stats";
 import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
-import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
+import { cancelledBeforeWriting, formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
 import { runPrepareModified } from "./core/control/prepare";
 import { DeviceSetupPanel } from "./ui/device-setup";
 import { readDeviceSetup, sendDeviceSetup } from "./core/control/device-setup";
@@ -4405,13 +4405,17 @@ if (!DEMO) {
         const neverCompared = report.residual.length - divergence;
         setStatus(
           report.aborted
-            ? t().status.selfTestCancelled
+            ? cancelledBeforeWriting(report)
+              ? t().status.selfTestCancelledUntouched
+              : t().status.selfTestCancelled
             : // Before the restore verdict: a refusal wrote nothing, so `restored` is
               // false only because there was nothing to restore — reading it as a failed
               // restore tells the operator their unit may be left perturbed when it was
               // never touched.
               report.phase === "refused"
-              ? t().status.selfTestRefused
+              ? report.refusal === "modelMismatch"
+                ? t().status.selfTestModelMismatch(report.device, modelId)
+                : t().status.selfTestRefused
               : !report.restored
                 ? t().status.selfTestRestoreFail
                 : report.unverified.length
