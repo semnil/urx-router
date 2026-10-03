@@ -798,7 +798,7 @@ export class MidiControl {
     // Absolute on an address nothing is bound to yet.
     const key = addrKey(addr);
     const mode = all.find((m) => addrKey(m.addr) === key)?.mode ?? "absolute";
-    const refusal = this.gangRefusal(id, addr, all);
+    const refusal = this.learnRefusal(id, addr, all);
     if (refusal !== null) {
       this.hooks.onLearnChanged(); // the armed ring comes off
       this.say(refusal);
@@ -851,22 +851,27 @@ export class MidiControl {
   }
 
   /**
-   * Why `id` may not join the bindings already on `addr`, or null when it may.
+   * Why the armed `id` may not be bound to `addr`, or null when it may.
+   *
+   * An armed control that has stopped resolving — a plan edit since the arming took away the
+   * insert effect or the processor it belongs to — is refused on any address, one nothing is
+   * bound to included: bound, it would edit nothing.
    *
    * A gang holds one kind of control. Pickup engages only behind a continuous head, and a
    * gang's head is whichever member resolves first, so a switch ganged with a continuous
    * control can come to stand in front of it and leave its Pickup never engaging. A member
-   * whose kind cannot be resolved now — one the current plan or model does not carry — and
-   * an armed control that has stopped resolving cannot be compared, and refuse as well.
+   * whose kind cannot be resolved now — one the current plan or model does not carry —
+   * cannot be compared, and refuses as well.
    */
-  private gangRefusal(id: string, addr: MidiAddr, all: MidiMapping[]): string | null {
-    const key = addrKey(addr);
-    const members = all.filter((m) => m.control !== id && addrKey(m.addr) === key);
-    if (members.length === 0) return null;
-    const kind = this.resolve(id)?.kind;
-    const kinds = members.map((m) => this.resolve(m.control)?.kind);
+  private learnRefusal(id: string, addr: MidiAddr, all: MidiMapping[]): string | null {
     const m = t().midi;
-    if (kind === undefined || kinds.includes(undefined)) return m.learnUnresolved(this.labelOf(id), addrLabel(addr));
+    const kind = this.resolve(id)?.kind;
+    if (kind === undefined) return m.learnUnresolved(this.labelOf(id), addrLabel(addr));
+    const key = addrKey(addr);
+    const kinds = all
+      .filter((x) => x.control !== id && addrKey(x.addr) === key)
+      .map((x) => this.resolve(x.control)?.kind);
+    if (kinds.includes(undefined)) return m.learnUnresolved(this.labelOf(id), addrLabel(addr));
     if (kinds.some((k) => k !== kind)) return m.learnKindMismatch(this.labelOf(id), addrLabel(addr));
     return null;
   }
@@ -1121,7 +1126,7 @@ export class MidiControl {
     //
     // A SWITCH head is a different shape, which one mode does not cover: a switch never runs
     // the pickup engagement at all, so no mode makes a continuous member behind it engage.
-    // That is why a gang holds one kind of control (`gangRefusal`), why a saved gang that
+    // That is why a gang holds one kind of control (`learnRefusal`), why a saved gang that
     // mixes the two is put back to Absolute on load, and why the window offers no take-in
     // mode on such a gang's rows (`optionOf`) — a mode for one stops in `onIntent`.
     //

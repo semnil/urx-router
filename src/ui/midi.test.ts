@@ -731,7 +731,42 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     await learnOnto(control, "ch2/level", 20);
     expect(control.isMapped("ch2/level")).toBe(false);
     expect(Object.keys(storedModes())).toEqual(["gone/level"]);
-    expect(vi.mocked(hooks.onStatus).mock.calls.at(-1)?.[0]).toMatch(/^Not assigned: CH 2 · Level cannot be compared/);
+    expect(vi.mocked(hooks.onStatus).mock.calls.at(-1)?.[0]).toBe(
+      t().midi.learnUnresolved("CH 2 · Level", "CH 1 CC 20"),
+    );
+  });
+
+  // The armed control itself can stop resolving between the arming and the move — an edit
+  // takes away the insert effect its switch belongs to. Bound, it would edit nothing, so it
+  // is refused on an address nothing drives as well, for the same reason.
+  it("refuses learning an armed control the plan has stopped carrying onto a new address", async () => {
+    const { control, hooks, plan } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[1].value };
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+    dispatch({ type: "learn", on: true });
+    control.arm("ch1/insertFxOn");
+    expect(control.armedId()).toBe("ch1/insertFxOn");
+
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[0].value };
+    mocks.inputReceiver!([0xb0, 30, 10]);
+    mocks.inputReceiver!([0xb0, 30, 11]);
+    expect(control.isMapped("ch1/insertFxOn")).toBe(false);
+    expect(control.armedId()).toBeNull();
+    expect(JSON.parse(localStorage.getItem("urx-midi")!).models?.URX44V ?? []).toEqual([]);
+    expect(vi.mocked(hooks.onStatus).mock.calls.at(-1)?.[0]).toBe(
+      t().midi.learnUnresolved("CH 1 · INS FX", "CH 1 CC 30"),
+    );
+
+    // …while the same learn with the effect still held binds, which is what makes the refusal
+    // above about the plan rather than about the address.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: INSERT_FX_OPTIONS[1].value };
+    control.arm("ch1/insertFxOn");
+    mocks.inputReceiver!([0xb0, 30, 10]);
+    mocks.inputReceiver!([0xb0, 30, 11]);
+    expect(control.isMapped("ch1/insertFxOn")).toBe(true);
   });
 
   // A gang that mixes the two kinds was savable before the refusal above existed. On load it is

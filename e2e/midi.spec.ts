@@ -1510,3 +1510,32 @@ test("the INS FX face arms, and its assignment names the strip and the insert", 
   await sendMidi(page, [0xb0, 42, 127]);
   await expect(face, "and the next brings it back").toHaveAttribute("aria-pressed", "true");
 });
+
+// The face is a control only while its strip holds an effect. Armed, and then left with no
+// effect to switch, it is not bound to the MIDI control moved next — even one nothing drives
+// yet — and both status lines say why.
+test("an armed INS FX face whose effect is released is not bound", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch1: { insertFx: 256, insertFxOn: true } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await page.click("#btn-view-console");
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
+  await strip(page, "CH 1").locator(".con-ifxface").click();
+  await expect(win.locator(".mw-hint")).toContainText("CH 1 · INS FX");
+
+  await strip(page, "CH 1").locator(".con-ifxopen").click();
+  await page.locator(".con-ifxpop .irow", { hasText: "No Effect" }).click();
+  await expect(strip(page, "CH 1").locator(".con-ifxface")).toHaveClass(/\bvacant\b/);
+  await sendMidi(page, [0xb0, 30, 10], [0xb0, 30, 11]);
+  const said = "Not assigned: CH 1 · INS FX, or something CH 1 CC 30 already drives, is not in the current plan";
+  await expect(win.locator(".mw-status")).toContainText(said);
+  await expect(page.locator("#statusbar")).toContainText(said);
+  await expect(mapRow(win, "ch1/insertFxOn")).toHaveCount(0);
+});
