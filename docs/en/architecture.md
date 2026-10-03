@@ -3957,12 +3957,15 @@ native save/open dialogs (`tauri-plugin-dialog`) plus a recent-plans list; file 
 app commands (`read_text_file` / `read_binary_file` / `write_text_file` / `write_binary_file`), each
 `async` with the `std::fs` work on a worker thread (`spawn_blocking`, like the vd commands) and each
 enforcing an extension allowlist (read text: `json`; read binary: `urxf`; write text: `json` / `md`;
-write binary: `png` / `pdf`).
+write binary: `png` / `pdf`), asked of the name the dialog returned and again of the file it resolves to — a
+link named like a plan does not make the file it points at one to read or write.
 A write fills a temp file and renames it into place, so a failure leaves the previous file whole. Over an
-existing file it goes through to the file the path resolves to — a symlink keeps naming it, and the allowlist
-is asked of that file too — and keeps what was set on it: the mode, on macOS the extended attributes (Finder
-tags) and the ACL, on Windows the ACL, attributes and alternate data streams (`ReplaceFileW`). A directory
-the app cannot write fails the save; nothing is written in place.
+existing file it goes through to the file the path resolves to — a symlink keeps naming it — and keeps what
+was set on it: the mode, on macOS the extended attributes (Finder tags) and the ACL, on Windows the ACL,
+attributes and alternate data streams (`ReplaceFileW`). A symlink that points at nothing yet is followed too:
+the file it names is created and the link stays a link. A directory the app cannot write fails the save;
+nothing is written in place. A file with more than one hard link is replaced the same way: the name saved to
+gets the new file, and its other names keep the old contents.
 `write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
 array — with the destination path in a percent-encoded `x-file-path` request header. The webview
 itself runs under a strict CSP (`security.csp` + `devCsp` in `tauri.conf.json`): scripts from

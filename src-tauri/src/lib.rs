@@ -75,10 +75,19 @@ fn check_extension(path: impl AsRef<Path>, allowed: &[&str]) -> Result<(), Strin
 async fn read_text_file(path: String) -> Result<String, String> {
     check_extension(&path, &["json"])?;
     tauri::async_runtime::spawn_blocking(move || {
-        fs::read_to_string(&path).map_err(|e| io_error(&e))
+        fs::read_to_string(read_source(&path, &["json"])?).map_err(|e| io_error(&e))
     })
     .await
     .map_err(file_io)?
+}
+
+/// The file a read of `path` opens: the path resolved, with the command's extension
+/// allowlist asked again of the resolved file — a link with an allowed name does not
+/// make the file it points at one the command may read.
+fn read_source(path: &str, allowed: &[&str]) -> Result<PathBuf, String> {
+    let real = fs::canonicalize(path).map_err(|e| io_error(&e))?;
+    check_extension(&real, allowed)?;
+    Ok(real)
 }
 
 // Read a URX microSD settings file (.urxf). The bytes travel back as the raw IPC
@@ -87,10 +96,11 @@ async fn read_text_file(path: String) -> Result<String, String> {
 #[tauri::command]
 async fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> {
     check_extension(&path, &["urxf"])?;
-    let bytes =
-        tauri::async_runtime::spawn_blocking(move || fs::read(&path).map_err(|e| io_error(&e)))
-            .await
-            .map_err(file_io)??;
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        fs::read(read_source(&path, &["urxf"])?).map_err(|e| io_error(&e))
+    })
+    .await
+    .map_err(file_io)??;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -101,24 +111,23 @@ async fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> 
 /// no longer helps — there is nothing left to abort back to. The rename is
 /// atomic on the same filesystem, which a sibling temp guarantees.
 ///
-/// An existing destination is resolved first and written THROUGH: a symlink keeps
-/// naming the file it points at, that file receives the new contents, and the
-/// temp sits beside it, so the rename stays on that file's filesystem. What the
-/// operator set on the replaced file carries over to the new one — its mode, and
-/// on macOS its extended attributes (Finder tags) and ACL; on Windows the replace
-/// itself keeps its ACL, attributes and alternate data streams. A directory this
-/// process cannot write fails the save as it stands, with the previous file left
-/// whole: nothing is written in place.
+/// The destination is resolved first and written THROUGH: a symlink keeps naming
+/// the file it points at, that file receives the new contents — and is created
+/// there when the link points at nothing yet — and the temp sits beside it, so the
+/// rename stays on that file's filesystem. What the operator set on the replaced
+/// file carries over to the new one — its mode, and on macOS its extended
+/// attributes (Finder tags) and ACL; on Windows the replace itself keeps its ACL,
+/// attributes and alternate data streams. A directory this process cannot write
+/// fails the save as it stands, with the previous file left whole: nothing is
+/// written in place. A file with more than one hard link is replaced the same way,
+/// so the name the save went to gets the new file and the other names keep the old
+/// contents.
 ///
 /// `allowed` is the calling command's extension allowlist, asked again of the
 /// resolved path — a link with an allowed name does not make the file it points at
 /// one the command may write.
 fn write_atomic(path: &str, bytes: &[u8], allowed: &[&str]) -> Result<(), String> {
-    let (target, existing) = match fs::canonicalize(path) {
-        Ok(real) => (real, true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (PathBuf::from(path), false),
-        Err(e) => return Err(io_error(&e)),
-    };
+    let (target, existing) = write_destination(path)?;
     check_extension(&target, allowed)?;
     // A unique sibling, created exclusively. `{path}.tmp` is a name two writers to the
     // same destination both open — a double-fired save, or a dev build and an installed
@@ -169,6 +178,37 @@ fn write_atomic(path: &str, bytes: &[u8], allowed: &[&str]) -> Result<(), String
     }
     Ok(())
 }
+
+/// The path a write to `path` lands on, and whether a file is there already. An
+/// existing destination is its resolved path. A symlink whose target does not exist
+/// names that target, followed link by link, so the write creates the file the link
+/// points at and the link stays a link. A path that names nothing is itself, new.
+fn write_destination(path: &str) -> Result<(PathBuf, bool), String> {
+    match fs::canonicalize(path) {
+        Ok(real) => return Ok((real, true)),
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(io_error(&e)),
+        Err(_) => {}
+    }
+    let mut at = PathBuf::from(path);
+    for _ in 0..LINK_HOPS {
+        match fs::symlink_metadata(&at) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let next = fs::read_link(&at).map_err(|e| io_error(&e))?;
+                at = match at.parent() {
+                    Some(dir) => dir.join(next),
+                    None => next,
+                };
+            }
+            Ok(_) => return Ok((at, true)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((at, false)),
+            Err(e) => return Err(io_error(&e)),
+        }
+    }
+    Err(file_io("too many levels of symbolic links"))
+}
+
+/// How many symlinks `write_destination` follows before it gives up on a chain.
+const LINK_HOPS: usize = 32;
 
 /// Give the temp file what the operator set on the file it replaces: the mode, and
 /// on macOS the extended attributes and the ACL. `copyfile` is asked for those two
@@ -1772,6 +1812,107 @@ mod tests {
         assert!(e.starts_with("file-bad-extension"), "{e}");
         assert_eq!(std::fs::read(&real).unwrap(), b"keep");
         assert_eq!(names_in(&dir), vec!["notes.txt", "plan.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A link that points at nothing yet is still the operator's choice of where the
+    // save goes: the file it names is created there, through a chain of links and a
+    // relative one, and the link stays a link rather than becoming the file.
+    #[cfg(unix)]
+    #[test]
+    fn an_atomic_write_through_a_dangling_link_creates_the_file_it_names() {
+        let dir = scratch_dir("atomic-dangling");
+        let (here, there) = (dir.join("docs"), dir.join("synced"));
+        std::fs::create_dir_all(&here).unwrap();
+        std::fs::create_dir_all(&there).unwrap();
+        let link = here.join("studio.json");
+        let hop = there.join("studio.json");
+        std::os::unix::fs::symlink("../synced/studio.json", &link).unwrap();
+        std::os::unix::fs::symlink("final.json", &hop).unwrap();
+
+        super::write_atomic(link.to_str().unwrap(), b"new", &["json"]).unwrap();
+
+        for l in [&link, &hop] {
+            assert!(
+                std::fs::symlink_metadata(l)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "{} is still a link",
+                l.display()
+            );
+        }
+        assert_eq!(std::fs::read(there.join("final.json")).unwrap(), b"new");
+        assert_eq!(names_in(&here), vec!["studio.json"]);
+        assert_eq!(names_in(&there), vec!["final.json", "studio.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The allowlist is asked of the file a dangling link would create, as it is of one
+    // that exists: a link named like a plan does not make a text file one to write.
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_with_an_allowed_name_does_not_create_its_target() {
+        let dir = scratch_dir("atomic-dangling-ext");
+        std::fs::create_dir_all(&dir).unwrap();
+        let link = dir.join("plan.json");
+        std::os::unix::fs::symlink("notes.txt", &link).unwrap();
+
+        let e = super::write_atomic(link.to_str().unwrap(), b"{}", &["json"]).unwrap_err();
+
+        assert!(e.starts_with("file-bad-extension"), "{e}");
+        assert_eq!(names_in(&dir), vec!["plan.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A file other names share is replaced like any other: the name the save went to
+    // gets the new file whole, and the other name keeps the old contents.
+    #[test]
+    fn a_hard_linked_file_is_replaced_under_the_name_saved_to() {
+        let dir = scratch_dir("atomic-hard");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("plan.json");
+        let other = dir.join("backup.json");
+        std::fs::write(&target, b"the old contents").unwrap();
+        std::fs::hard_link(&target, &other).unwrap();
+
+        super::write_atomic(target.to_str().unwrap(), b"new", &["json"]).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert_eq!(std::fs::read(&other).unwrap(), b"the old contents");
+        assert_eq!(names_in(&dir), vec!["backup.json", "plan.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A read asks the allowlist of the file it opens as well as of the name it was
+    // handed: a link named like a plan or a settings file does not make the file it
+    // points at one the command may read. The same link onto an allowed file reads it.
+    #[cfg(unix)]
+    #[test]
+    fn a_read_asks_the_allowlist_of_the_file_a_link_names() {
+        use tauri::async_runtime::block_on;
+        let dir = scratch_dir("read-ext");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("notes.txt"), b"not a plan").unwrap();
+        std::fs::write(dir.join("real.json"), b"{}").unwrap();
+        let link = |name: &str, to: &str| -> String {
+            let at = dir.join(name);
+            std::os::unix::fs::symlink(to, &at).unwrap();
+            at.to_str().unwrap().to_string()
+        };
+
+        let e = block_on(super::read_text_file(link("plan.json", "notes.txt"))).unwrap_err();
+        assert!(e.starts_with("file-bad-extension"), "{e}");
+        let e = match block_on(super::read_binary_file(link("backup.urxf", "notes.txt"))) {
+            Ok(_) => panic!("a .txt file was read as a settings file"),
+            Err(e) => e,
+        };
+        assert!(e.starts_with("file-bad-extension"), "{e}");
+
+        assert_eq!(
+            block_on(super::read_text_file(link("open.json", "real.json"))),
+            Ok("{}".to_string())
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
