@@ -162,13 +162,17 @@ export class DeviceSetupPanel {
   private async runApply(): Promise<void> {
     const { writes, count } = this.pending();
     if (writes.length === 0 || this.busy) return;
+    // The draft this diff was taken from. The rows stay editable while the apply is in
+    // flight, and an edit made then is not in `writes`, so it stays pending afterwards.
+    const sent = structuredClone(this.draft);
     this.busy = true;
     this.render();
     const ok = await this.hooks.apply(writes, count);
     this.busy = false;
-    // Only a clean apply moves the baseline. After a failure the draft still
-    // differs from what the device holds, which is exactly what a retry needs.
-    if (ok) this.baseline = structuredClone(this.draft);
+    // Only a clean apply moves the baseline, and only to what it sent. After a failure
+    // the draft still differs from what the device holds, which is exactly what a retry
+    // needs.
+    if (ok) this.baseline = sent;
     this.render();
   }
 

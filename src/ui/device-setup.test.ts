@@ -5,6 +5,7 @@ import { BRIGHTNESS_MAX, defaultDeviceSetup, type DeviceSetup } from "../core/co
 import { getModel } from "../models";
 import { DeviceSetupPanel, type DeviceSetupHooks } from "./device-setup";
 import { resetSettingsCache } from "../core/settings";
+import { t } from "../i18n";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -141,6 +142,61 @@ describe("DeviceSetupPanel", () => {
     await panel.requestClose();
     expect(panel.isOpen()).toBe(false);
     expect(hooks.confirmDiscard).not.toHaveBeenCalled();
+  });
+
+  // The rows stay live while an apply is in flight, and what the apply sends is the diff
+  // taken when it was pressed. An edit made during the flight is not in it, so it has to
+  // stay pending: marked, counted, and asked about on Close — not adopted into the
+  // baseline as though the unit had received it.
+  it("keeps an edit made while the apply is in flight pending", async () => {
+    const flight = deferred<boolean>();
+    const { panel, hooks } = install();
+    vi.mocked(hooks.apply).mockReturnValueOnce(flight.promise);
+    panel.open(defaultDeviceSetup());
+
+    change(document.querySelector("#device-setup-language") as HTMLSelectElement, "1");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await Promise.resolve();
+    expect(hooks.apply).toHaveBeenCalledWith([{ kind: "num", name: "DEVICE_LANGUAGE", y: 0, value: 1 }], 1);
+
+    change(document.querySelector("#device-setup-apo-time") as HTMLSelectElement, "2");
+    flight.resolve(true);
+    await vi.waitFor(() =>
+      expect((document.querySelector("#device-setup-apply") as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe(t().deviceSetup.pending(1));
+    expect(document.querySelectorAll(".prefs-row.dirty")).toHaveLength(1);
+    expect(document.querySelector(".prefs-row.dirty #device-setup-apo-time")).not.toBeNull();
+
+    await panel.requestClose();
+    expect(hooks.confirmDiscard).toHaveBeenCalledOnce();
+  });
+
+  // The same window, edited back to where the baseline was: the unit received 1, so a
+  // screen showing 0 owes it a write — the language row is pending, not settled.
+  it("keeps a row edited back during the flight pending against what was sent", async () => {
+    const flight = deferred<boolean>();
+    const { panel, hooks } = install();
+    vi.mocked(hooks.apply).mockReturnValueOnce(flight.promise);
+    panel.open(defaultDeviceSetup());
+
+    change(document.querySelector("#device-setup-language") as HTMLSelectElement, "1");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await Promise.resolve();
+    change(document.querySelector("#device-setup-language") as HTMLSelectElement, "0");
+    flight.resolve(true);
+    await vi.waitFor(() =>
+      expect((document.querySelector("#device-setup-apply") as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe(t().deviceSetup.pending(1));
+    expect(document.querySelector(".prefs-row.dirty #device-setup-language")).not.toBeNull();
+
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(hooks.apply).mock.calls[1]).toEqual([
+      [{ kind: "num", name: "DEVICE_LANGUAGE", y: 0, value: 0 }],
+      1,
+    ]);
   });
 
   it("keeps a failed apply pending so the same writes can be retried", async () => {

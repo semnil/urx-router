@@ -3010,8 +3010,9 @@ edit → apply:
 2. Edits accumulate in the modal. A row whose value differs from what the device reported takes the
    accent dot, and the footer counts the pending settings.
 3. `Apply to device` connects, sends **only the differences**, and disconnects. Only a clean apply moves
-   the baseline; after a failure the draft still differs from what the device holds, which is what a
-   retry needs.
+   the baseline, and only to the draft it sent; after a failure the draft still differs from what the
+   device holds, which is what a retry needs. The rows stay editable while the apply is in flight, and an
+   edit made then is not part of what was sent, so it stays pending afterwards.
 
 Closing with unapplied edits asks first. The entry disables while Live sync holds the connection, on the
 same list as Fetch / Write / Compare.
