@@ -19,7 +19,8 @@ interface StubOptions {
   deviceRate?: number;
   /** Device-side Follow USB state. */
   followUsb?: boolean;
-  /** Reject the Follow USB read, so the clock state cannot be established. */
+  /** Reject the Follow USB read, so the clock state cannot be established — with every
+   *  other read the stub has no value for, so a case keeping one answerable seeds it. */
   failClockRead?: boolean;
   /** The recorder's Track Count in stereo pairs. Unset reads 0, which is no recorder
    *  state at all and warns about nothing. */
@@ -94,13 +95,16 @@ test("a matching rate goes straight to the write confirm", async ({ page }) => {
 });
 
 test("an unreadable clock state cancels the write before anything is sent", async ({ page }) => {
-  await stubDevice(page, { deviceRate: 96000, failClockRead: true });
+  // The Track Count answers, so the clock read is the one refusal in reach: a flow that got
+  // past it would reach the reclock confirm or the choice rather than another refusal.
+  await stubDevice(page, { deviceRate: 96000, failClockRead: true, trackPairs: 8 });
   await startWrite(page);
 
   await expect(page.locator("#rate-choice")).toBeHidden();
+  // The clock refusal's own wording: "Nothing was written" ends two other refusals as well.
   await expect
     .poll(() => dialogsOf(page))
-    .toEqual(expect.arrayContaining([expect.stringContaining("Nothing was written")]));
+    .toEqual(expect.arrayContaining([expect.stringContaining("sample rate and Follow USB state could not be read")]));
   expect(await writesOf(page)).toEqual([]);
 });
 
