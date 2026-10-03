@@ -99,6 +99,16 @@ import {
   nearestStepIndex,
 } from "./comp-ratio";
 import {
+  DUCKER_DECAY_FINEST_MS,
+  DUCKER_DECAY_STOPS_MS,
+  DYN_ATTACK_FINEST_MS,
+  DYN_ATTACK_STOPS_MS,
+  DYN_HOLD_FINEST_MS,
+  DYN_HOLD_STOPS_MS,
+  DYN_RELEASE_FINEST_MS,
+  DYN_RELEASE_STOPS_MS,
+} from "./dyn-time-stops";
+import {
   A_GAIN_MAX_DB,
   A_GAIN_MIN_DB,
   attackToVd,
@@ -820,8 +830,9 @@ export interface DynField {
   logSteps?: number;
   /** The values the control stops on, where they are neither a linear grid nor a
    *  logarithmic one — the compressor Ratio ladder, whose spacing widens in stages
-   *  across its range. The position is an index into this table, and `step` does not
-   *  reach the control. */
+   *  across its range, and the GATE / COMP / DUCKER time values. The position is an
+   *  index into this table, and `step` (the table's narrowest spacing) does not reach
+   *  the control. */
   steps?: readonly number[];
   /** Step the device's push-and-turn fine mode uses for this value, when it has
    *  one. Confirmed for exactly one dynamics parameter (see the COMP gain row);
@@ -894,6 +905,8 @@ export function ssmcsPlanKey(key: string): string {
 // GATE detail (29-33) and COMP detail (35-40, the COMP->EQ comp bank). Ranges and
 // defaults in plan units (dB / ms / N:1); the broker bounds come from the encoders.
 // The COMP knee (37) is a separate enum dropdown, not a slider, so it is not here.
+// Every time value offers the stops the unit's own control stops on (dyn-time-stops.ts):
+// one attack table for GATE, COMP and DUCKER, and one for GATE decay and COMP release.
 const GATE_FIELDS: EmittedDynField[] = [
   { key: "threshold", name: "GATE_THRESHOLD", min: -72, max: 0, step: 1, def: -50, unit: "db" },
   { key: "range", name: "GATE_RANGE", min: GATE_RANGE_OFF_DB, max: 0, step: 1, def: -56, unit: "db" },
@@ -902,19 +915,30 @@ const GATE_FIELDS: EmittedDynField[] = [
     name: "GATE_ATTACK",
     min: DYN_ATTACK_MIN_MS,
     max: DYN_ATTACK_MAX_MS,
-    step: 0.1,
+    step: DYN_ATTACK_FINEST_MS,
     def: 20.17,
     unit: "ms",
+    steps: DYN_ATTACK_STOPS_MS,
   },
-  { key: "hold", name: "GATE_HOLD", min: DYN_HOLD_MIN_MS, max: DYN_HOLD_MAX_MS, step: 1, def: 15.3, unit: "ms" },
+  {
+    key: "hold",
+    name: "GATE_HOLD",
+    min: DYN_HOLD_MIN_MS,
+    max: DYN_HOLD_MAX_MS,
+    step: DYN_HOLD_FINEST_MS,
+    def: 15.3,
+    unit: "ms",
+    steps: DYN_HOLD_STOPS_MS,
+  },
   {
     key: "decay",
     name: "GATE_DECAY",
     min: DYN_RELEASE_MIN_MS,
     max: DYN_RELEASE_MAX_MS,
-    step: 1,
+    step: DYN_RELEASE_FINEST_MS,
     def: 150.2,
     unit: "ms",
+    steps: DYN_RELEASE_STOPS_MS,
   },
 ];
 // The channel COMP's Ratio (`36`) offers the stops the unit's own control stops on, ending at
@@ -937,18 +961,20 @@ const COMP_FIELDS: EmittedDynField[] = [
     name: "COMP_ATTACK",
     min: DYN_ATTACK_MIN_MS,
     max: DYN_ATTACK_MAX_MS,
-    step: 0.1,
+    step: DYN_ATTACK_FINEST_MS,
     def: 34.58,
     unit: "ms",
+    steps: DYN_ATTACK_STOPS_MS,
   },
   {
     key: "release",
     name: "COMP_RELEASE",
     min: DYN_RELEASE_MIN_MS,
     max: DYN_RELEASE_MAX_MS,
-    step: 1,
+    step: DYN_RELEASE_FINEST_MS,
     def: 218,
     unit: "ms",
+    steps: DYN_RELEASE_STOPS_MS,
   },
 ];
 // Ducker detail (260-263, stereo channel sidechain). Same shapes as GATE but no
@@ -1087,18 +1113,20 @@ export const DUCKER_FIELDS: EmittedDynField[] = [
     name: "DUCKER_ATTACK",
     min: DYN_ATTACK_MIN_MS,
     max: DYN_ATTACK_MAX_MS,
-    step: 0.1,
+    step: DYN_ATTACK_FINEST_MS,
     def: 20.17,
     unit: "ms",
+    steps: DYN_ATTACK_STOPS_MS,
   },
   {
     key: "decay",
     name: "DUCKER_DECAY",
     min: DUCKER_DECAY_MIN_MS,
     max: DUCKER_DECAY_MAX_MS,
-    step: 1,
+    step: DUCKER_DECAY_FINEST_MS,
     def: 1000,
     unit: "ms",
+    steps: DUCKER_DECAY_STOPS_MS,
   },
   { key: "threshold", name: "DUCKER_THRESHOLD", min: -60, max: 0, step: 1, def: -40, unit: "db" },
 ];
@@ -1145,7 +1173,9 @@ export function formatDyn(v: number, unit: DynField["unit"]): string {
   if (unit === "ratio") return formatCompRatio(v, "comp");
   if (unit === "hz") return formatHz(v);
   if (unit === "q") return v.toFixed(2);
-  return v < 1 ? `${v.toFixed(3)} ms` : `${v.toFixed(1)} ms`;
+  // Three decimals below 10 ms, two below 100 ms, one above: every stop of the time tables
+  // prints as itself, and no two neighbouring stops print alike.
+  return v < 10 ? `${v.toFixed(3)} ms` : v < 100 ? `${v.toFixed(2)} ms` : `${v.toFixed(1)} ms`;
 }
 
 /** The display text for a field's current value, including GATE range's -∞ notch

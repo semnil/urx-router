@@ -99,7 +99,7 @@ function richPlan(): Plan {
     gateOn: true,
     compOn: true,
     eqOn: true,
-    gate: { threshold: -40, range: -30, attack: 10, hold: 12, decay: 100 },
+    gate: { threshold: -40, range: -30, attack: 10.12, hold: 11.8, decay: 100.1 },
     comp: { threshold: -30, ratio: 4, gain: 6, attack: 20, release: 200 },
     eqBands: [
       { on: true, freq: 100, q: 1, gain: 3 },
@@ -176,7 +176,13 @@ describe("applyDeviceState round-trip", () => {
     expect(target.nodeParams.ch1.gateOn).toBe(true);
     expect(target.nodeParams.ch1.compOn).toBe(true);
     expect(target.nodeParams.ch1.eqOn).toBe(true);
-    expect(target.nodeParams.ch1.gate).toMatchObject({ threshold: -40, range: -30, decay: 100 });
+    expect(target.nodeParams.ch1.gate).toMatchObject({
+      threshold: -40,
+      range: -30,
+      attack: 10.12,
+      hold: 11.8,
+      decay: 100.1,
+    });
     expect(target.nodeParams.ch1.comp).toMatchObject({ threshold: -30, ratio: 4, gain: 6 });
     expect(target.nodeParams.ch1.eqBands?.[0]).toMatchObject({ on: true, gain: 3 });
 

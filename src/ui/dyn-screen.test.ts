@@ -35,6 +35,12 @@ vi.mock("../core/meters", async (importOriginal) => {
 import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import { COMP_EQ_SSMCS, COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS } from "../core/control/params";
+import {
+  DUCKER_DECAY_STOPS_MS,
+  DYN_ATTACK_STOPS_MS,
+  DYN_HOLD_STOPS_MS,
+  DYN_RELEASE_STOPS_MS,
+} from "../core/control/dyn-time-stops";
 import { barLevels, dynHost, pickBand, readouts, rowsByKey, segments } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import { MeterStore } from "../core/meters";
@@ -580,6 +586,37 @@ describe("parameter rows", () => {
     const keys = [...rowsByKey(host.box).keys()];
     expect(keys).toContain("threshold");
     expect(keys.length).toBeGreaterThan(1);
+  });
+
+  // A time row's position is an index into the unit's own table: every position the slider
+  // can take writes a stop, in order, and the two ends are the table's — so the top
+  // (80 ms attack, 1960 ms hold, 999 ms decay and release, 5000 ms ducker decay) and the
+  // bottom are both reachable, and nothing between two stops is.
+  it.each([
+    ["gate", "ch1", "attack", DYN_ATTACK_STOPS_MS, 80],
+    ["gate", "ch1", "hold", DYN_HOLD_STOPS_MS, 1960],
+    ["gate", "ch1", "decay", DYN_RELEASE_STOPS_MS, 999],
+    ["comp", "ch1", "attack", DYN_ATTACK_STOPS_MS, 80],
+    ["comp", "ch1", "release", DYN_RELEASE_STOPS_MS, 999],
+    ["ducker", "out.ducker1", "attack", DYN_ATTACK_STOPS_MS, 80],
+    ["ducker", "out.ducker1", "decay", DUCKER_DECAY_STOPS_MS, 5000],
+  ] as const)("steps the %s %s's %s row on the unit's stops, both ends included", (kind, node, key, stops, top) => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(DYN_PROCESSORS[kind], node);
+    const row = (): HTMLInputElement => rowsByKey(host.box).get(key)!;
+    expect([row().min, row().max, row().step]).toEqual(["0", String(stops.length - 1), "1"]);
+
+    const written: number[] = [];
+    for (let i = 0; i < stops.length; i++) {
+      const slider = row();
+      slider.value = String(i);
+      slider.dispatchEvent(new Event("input"));
+      written.push((host.patches.at(-1)!.patch as Record<string, Record<string, number>>)[kind][key]);
+    }
+    expect(written).toEqual([...stops]);
+    expect(written[0]).toBe(stops[0]);
+    expect(written[written.length - 1]).toBe(top);
   });
 });
 

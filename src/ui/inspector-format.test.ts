@@ -18,6 +18,12 @@ import { LEVEL_MIN_DB } from "../core/plan";
 import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ } from "../core/control/vd";
 import { COMP_RATIO_INF } from "../core/control/comp-ratio";
 import { formatDyn } from "../core/control/translate";
+import {
+  DUCKER_DECAY_STOPS_MS,
+  DYN_ATTACK_STOPS_MS,
+  DYN_HOLD_STOPS_MS,
+  DYN_RELEASE_STOPS_MS,
+} from "../core/control/dyn-time-stops";
 
 describe("formatDb", () => {
   it("prints one decimal and a leading + above zero", () => {
@@ -62,6 +68,26 @@ describe("fmtSsmcsMs", () => {
     expect(fmtSsmcsMs(99.99)).toBe("99.99 ms");
     expect(fmtSsmcsMs(100)).toBe("100.0 ms");
     expect(fmtSsmcsMs(1500)).toBe("1500.0 ms");
+  });
+});
+
+describe("formatDyn, a time", () => {
+  // The GATE / COMP / DUCKER time rows stop on the unit's tables, whose neighbouring stops
+  // are closer than one decimal between 1 and 10 ms (attack 1.008 / 1.039, hold 1.06 / 1.10).
+  // Every stop prints as itself, so no two neighbours read alike.
+  it("prints every stop of the time tables as itself", () => {
+    const tables = [DYN_ATTACK_STOPS_MS, DYN_HOLD_STOPS_MS, DYN_RELEASE_STOPS_MS, DUCKER_DECAY_STOPS_MS];
+    const misread: string[] = [];
+    for (const stops of tables) {
+      for (const v of stops) {
+        const text = formatDyn(v, "ms");
+        if (Number(text.replace(/ ms$/, "")) !== v) misread.push(`${v} as ${text}`);
+      }
+    }
+    expect(misread).toEqual([]);
+    expect(formatDyn(1.008, "ms")).toBe("1.008 ms");
+    expect(formatDyn(20.17, "ms")).toBe("20.17 ms");
+    expect(formatDyn(150.2, "ms")).toBe("150.2 ms");
   });
 });
 

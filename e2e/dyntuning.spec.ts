@@ -367,6 +367,32 @@ test("the threshold cap moves with the value and shares its ruler", async ({ pag
 // because Playwright emulates focus and no tier can take the OS foreground away. The unit
 // suite is the opposite pair — a real blur listener, no engine drag — so neither alone
 // covers this.
+// A time row stops on the unit's own table: a key moves to the neighbouring stop, Home and End
+// reach the table's ends, and the readout prints the stop it is on.
+test("steps a time row on the unit's stops, both ends included", async ({ page }) => {
+  await openFromInspector(page, "ch1");
+  const box = screenBox(page);
+  const attack = box.locator('input[data-dyn="attack"]');
+  const attackVal = box.locator('[data-dyn-val="attack"]');
+  await expect(attackVal).toHaveText("20.17 ms");
+  await attack.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(attackVal).toHaveText("20.78 ms");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await expect(attackVal).toHaveText("19.57 ms");
+  await page.keyboard.press("End");
+  await expect(attackVal).toHaveText("80.00 ms");
+  await page.keyboard.press("Home");
+  await expect(attackVal).toHaveText("0.092 ms");
+
+  const holdVal = box.locator('[data-dyn-val="hold"]');
+  await expect(holdVal).toHaveText("15.30 ms");
+  await box.locator('input[data-dyn="hold"]').focus();
+  await page.keyboard.press("End");
+  await expect(holdVal).toHaveText("1960.0 ms");
+});
+
 test("a value row stops following the pointer once the window is gone", async ({ page }) => {
   await openFromInspector(page, "ch1");
   const slider = paramRow(page, "Threshold").locator("input[type=range]");

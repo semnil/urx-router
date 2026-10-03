@@ -26,11 +26,10 @@ export function formatGainDb(v: number): string {
   return `${v > 0 ? "+" : ""}${v} dB`;
 }
 
-// SSMCS raw-value display formatters: ms (3-tier to match the device's variable
-// precision) and ratio (the strip's own three-figure field). Hz and dB reuse formatHz /
-// formatDyn.
+// SSMCS raw-value display formatters: ms (the channel time controls' own 3-tier precision)
+// and ratio (the strip's own three-figure field). Hz and dB reuse formatHz / formatDyn.
 export function fmtSsmcsMs(ms: number): string {
-  return ms < 10 ? `${ms.toFixed(3)} ms` : ms < 100 ? `${ms.toFixed(2)} ms` : `${ms.toFixed(1)} ms`;
+  return formatDyn(ms, "ms");
 }
 export function fmtSsmcsRatio(r: number): string {
   return formatCompRatio(r, "ssmcs");

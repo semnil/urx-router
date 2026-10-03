@@ -114,8 +114,8 @@ with the grid between them as the only scrolling region.
 │ ┌────────────────────────┐ ┌──────┐│ PARAMETERS               │
 │ │  transfer curve        │ │0 ┌──┐││ Threshold  ──●──  -50.0 dB
 │ │                     ／ │ │  │  │││ Range      ─●───  -56.0 dB
-│ │                   ／   │ │-50──││← cap        ──●──   20.2 ms
-│ │  _______________／     │ │  │▬▬│││ Hold       ●────   15.3 ms
+│ │                   ／   │ │-50──││← cap        ──●──  20.17 ms
+│ │  _______________／     │ │  │▬▬│││ Hold       ●────  15.30 ms
 │ │                        │ │  │▨▨│││ Decay      ─●───  150.2 ms
 │ │                        │ │-72└──┘│                          │
 │ └────────────────────────┘ │IN  OUT││ METER                   │
@@ -287,6 +287,32 @@ order kept is the one that can be checked against something: the unit's screen.
 
 `lead` and `tail` are there for a row the unit's screen really does put at either end — the
 1-knob sections are built with `sections` instead, being a stage rather than a row.
+
+### Time values stop where the unit's controls stop
+
+The unit's time controls are tables of stops rather than ranges with one step. Attack is 227 stops from
+0.092 to 80 ms and is one table on GATE (`31`), COMP (`39`) and DUCKER (`262`); GATE Hold (`32`) is 214
+stops from 0.02 to 1960 ms; GATE Decay (`33`) and COMP Release (`40`) are one table of 277 stops from 9.3
+to 999 ms; DUCKER Decay (`263`) is 122 stops from 1.3 to 5000 ms. `core/control/dyn-time-stops.ts` holds
+the four whole, in each parameter's raw unit (µs, ms×100, ms×10), and hands the plan their milliseconds;
+the encoders' windows in `vd.ts` are the tables' ends. It is a module of its own for the reason
+`comp-ratio.ts` is: `vd.ts` and `translate.ts` both read it at module scope inside an import cycle.
+
+Each field carries its table as `steps`, the shape the Ratio has below: the slider's position is an
+index, every position it can take is a stop, and both ends are positions — the top (80 ms, 1960 ms,
+999 ms, 5000 ms) as much as the bottom, which a linear grid stepped from the bottom could fall short of.
+MIDI resolves the same index ("MIDI assignment").
+
+**A value between two stops** — in a document saved before the fields had tables or a hand-edited one,
+or in a device read reporting one — is treated the way the Ratio treats one. The load moves it to
+the nearer stop and the load report says so; exactly halfway goes to the lower stop. A device read keeps
+the value the unit reports, with the slider resting on the nearer stop and the readout printing the
+value held. A write sends the nearer stop.
+
+**The readout prints every stop as itself**: three decimals below 10 ms, two below 100 ms, one above —
+the precision the SSMCS strip's times print in (`formatDyn`, which `fmtSsmcsMs` calls). Between 1 and
+10 ms neighbouring stops are closer than one decimal (attack 1.008 and 1.039, hold 1.06 and 1.10), and
+at one decimal two positions read alike.
 
 ## COMP
 
@@ -2074,20 +2100,21 @@ and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catal
   no enum selector.
 - **The grid is the field table's, and each side reaches it its own way.** The **slider** is a native
   range built from the field: a linear one carries its own `min` / `max` / `step` and its value, a
-  logarithmic one carries positions (`0..logSteps` by 1) that `dynToPos` / `dynFromPos` convert. **MIDI**
-  resolves a position too — a logarithmic field through those same two functions, a linear one through
-  `linearCodec`, built on the same three numbers rather than on shared code. So the two cannot land on
-  different values of one grid, and where a logarithmic field is concerned they cannot even take different
-  routes to it.
-- **…and where the last step lands PAST the maximum, the wire stops on the maximum while the slider
-  stops short of it.** A span that is not a whole number of steps rounds either way. Fall short and the
-  top position is the last value on the grid, like every other one (GATE attack, 0.092..80 by 0.1, tops
-  out at 79.992). Overshoot and `linearCodec` bounds its result into the field's own range: a full-scale
-  message lands on `max` — DUCKER decay 5000, GATE hold 1960, GATE decay and COMP release 999 — against
-  slider tops of 4999.3, 1959.02 and 998.3 (measured in Chromium and WebKit). Bounding rather than
-  snapping down to that grid value is what keeps a reading the UNIT reports at its own ceiling a fixed
-  point: `vdToHold(196000)` is 1960, and a write of the position it reads at lands back on 1960 rather
-  than on 1959.02. `controls.test.ts` holds both halves.
+  logarithmic one or one with a stop table carries positions (`0..logSteps`, or the table's indices, by 1)
+  that `dynToPos` / `dynFromPos` convert. **MIDI** resolves a position too — a logarithmic field and a
+  stop table through those same two functions, a linear one through `linearCodec`, built on the same three
+  numbers rather than on shared code. So the two cannot land on different values of one grid, and where a
+  logarithmic field or a stop table is concerned they cannot even take different routes to it.
+- **…and both ends of a field are reachable from the wire, and hold there.** Full scale is the field's
+  `max` and zero its `min`. On a stop table those are its top and bottom stops, which are the unit's own
+  ceiling and floor, so a reading the UNIT reports at either end is a fixed point: `vdToHold(196000)` is
+  1960, and a write of the position that reading sits at lands back on 1960. A linear field's span is a
+  whole number of steps on every GATE / COMP / DUCKER row, so its top is `max` on the grid; `linearCodec`
+  also bounds its result into the field's own range, so a rounded last step never lands past `max`.
+  `controls.test.ts` holds both ends of every GATE / COMP / DUCKER field, and every wire position of each
+  stop table: at 14 bits each stop is a position, while at 7 bits the attack, hold and decay / release
+  tables have more stops than the wire has positions, so a 7-bit controller reaches both ends and lands on
+  a stop everywhere but does not reach every stop.
 - **…except where the control is finer than the wire, and then the WIRE's grid wins.** The Mono Delay
   time runs 1..27000 by 1, which is 27000 settings against a 14-bit controller's 16384 positions, so
   several of its values share a position. Its codec snaps the READING to the wire's grid as well as the

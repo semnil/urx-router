@@ -258,6 +258,10 @@ carries a one-line map of the same directories and points here.
       strip's compressor stop on the same ones and write them differently, and a module of its own is what
       lets both of the layers below read the table at module scope (channel-tuning.md "Ratio stops where
       the unit's control stops") /
+      `dyn-time-stops.ts` the stops the GATE / COMP / DUCKER time controls turn through, as the unit's own
+      raw tables — one attack table for all three processors, one for GATE decay and COMP release, GATE hold
+      and DUCKER decay each their own — in a module of its own for the same reason (channel-tuning.md "Time
+      values stop where the unit's controls stop") /
       `vd.ts` value encoding / `translate.ts` plan→commands (**one device address yields exactly one
       command**: an insert effect's parameters live in one engine array per effect family with no channel
       axis, so two nodes holding the same family emit the same addresses — `collapseSharedAddrs` keeps the
@@ -1730,16 +1734,17 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   editing another way: an incoming 14-bit position equal to the one the control's plan value encodes to edits
   nothing, and a feedback pass that sends a cc14 records both halves as the pair's state, so each echoed half
   assembles to the position that was sent rather than against a stale half. That covers the values a plan
-  holds off the codec's grid — the factory capture and a value read from the unit (GATE attack 20.17 ms against
-  its 0.1 ms steps, 1000 Hz between two of an EQ band's log positions), a 0.1 dB fine-mode gain, a setting
+  holds off the codec's grid — the factory capture and a value read from the unit (1000 Hz between two of an
+  EQ band's log positions), a 0.1 dB fine-mode gain, a setting
   finer than the wire (the Mono Delay time, the companders' Release) — which the echo would otherwise move
   and, while live, write to the unit (`core/midi/controls.test.ts` drives it through the engine on the continuous
   controls the factory plan lists, the morphing bank's, and those of each insert effect and each FX type). Only a pass that actually sends records the
   pair: one that delivers nothing tells the controller nothing. At 7 bits the codecs alone would not hold
-  the value either (measured 2026-09-23, 97 of 311 controls on a URX44V do not round-trip — the tuning
-  screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack / decay. COMP
-  **ratio** is not on that list because its field is the unit's own stop ladder — the ladder holds fewer stops
-  than the wire holds positions, so a 7-bit echo decodes onto the stop it left from).
+  the value either (measured 2026-10-04, 93 of 311 controls on a URX44V do not round-trip — the tuning
+  screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack. COMP
+  **ratio** and DUCKER **decay** are not on that list because each field is a stop table of the unit's that
+  holds fewer stops than the wire holds positions, so a 7-bit echo decodes onto the stop it left from; the
+  attack, hold and decay / release tables hold more).
   Setting `localStorage["urx-midi-log"]` traces every rx/tx
   byte string and the engine's per-message decision (drop/ignore/apply) to the console; a dev build also
   carries `window.__urxMidiProbe` (`ui/midi-probe.ts`), which records the same stream **with timestamps** on
