@@ -7,7 +7,7 @@
 // `send` callback it is handed.
 
 import { t } from "../i18n";
-import { el } from "./dom";
+import { el, preserveFocus } from "./dom";
 import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
 import { BUTTON_MODES, TAKE_MODES } from "../core/midi/mapping";
 
@@ -157,14 +157,41 @@ export function mappingRow(row: MidiUiRow, m: MidiMessages, send: MidiUiSend): H
   return tr;
 }
 
-/** Paint `state` into `host`, replacing whatever was there. Also carries the two
- *  document-level parts of the state — the theme attribute and the window title —
+/** The window's own controls, by the class each carries. */
+const FOCUS_CLASSES = ["mw-in", "mw-out", "mw-learnbtn", "mw-mode", "mw-btn", "mw-del"] as const;
+
+/** What a focused control is, in terms a repaint keeps: its class, and the assignment row it
+ *  sits in (null outside the list). */
+interface FocusKey {
+  cls: (typeof FOCUS_CLASSES)[number];
+  control: string | null;
+}
+
+const rowOf = (node: Element): string | null => node.closest<HTMLElement>("tr[data-control]")?.dataset.control ?? null;
+
+function focusKeyOf(active: HTMLElement): FocusKey | null {
+  const cls = FOCUS_CLASSES.find((c) => active.classList.contains(c));
+  return cls ? { cls, control: rowOf(active) } : null;
+}
+
+function focusTarget(host: HTMLElement, key: FocusKey): HTMLElement | null {
+  return [...host.querySelectorAll<HTMLElement>(`.${key.cls}`)].find((node) => rowOf(node) === key.control) ?? null;
+}
+
+/** Paint `state` into `host`, replacing whatever was there but the status line, which is
+ *  kept and written in place. Keyboard focus stays on the control it was on — found again
+ *  by its class and its assignment row, and dropped when that row is gone. Also carries
+ *  the two document-level parts of the state — the theme attribute and the window title —
  *  since the main window pushes both with every state and there is no other reader. */
 export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: MidiUiSend): void {
   const m = t().midi;
   document.documentElement.setAttribute("data-theme", state.theme);
   document.title = m.title;
-  host.replaceChildren();
+  const restoreFocus = preserveFocus(host, focusKeyOf, (key) => focusTarget(host, key));
+  // The status line is the window's live region: kept for the window's life, so a message
+  // is a change to a region that is already there rather than the content of a new one.
+  const status = [...host.children].find((c): c is HTMLElement => c.classList.contains("mw-status")) ?? statusLine();
+  for (const node of [...host.childNodes]) if (node !== status) node.remove();
 
   const head = el("div", "mw-head");
   const dot = el("span", state.learnOn ? "mw-dot on" : "mw-dot");
@@ -217,9 +244,14 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
 
   body.append(ports, learn, list);
 
+  if (status.parentNode === host) status.before(head, body);
+  else host.append(head, body, status);
+  if (status.textContent !== state.status) status.textContent = state.status;
+  restoreFocus();
+}
+
+function statusLine(): HTMLElement {
   const status = el("div", "mw-status");
   status.setAttribute("role", "status");
-  status.textContent = state.status;
-
-  host.append(head, body, status);
+  return status;
 }

@@ -1504,7 +1504,10 @@ orphan page would ship to GitHub Pages.
 The window is a **view**. It holds no plan, no model, no engine and no port — a MIDI input port delivers its
 bursts to the window that opened it, so a window with no plan must never open one. It renders a state the main
 window pushes and reports intents back (`ui/midi-protocol.ts`); everything that decides what it shows stays in
-`ui/midi.ts`. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
+`ui/midi.ts`. Every push repaints it, and the repaint keeps two things: keyboard focus stays on the control the
+operator was on — found again by its class and the assignment row it sits in, and dropped when that row is
+gone rather than handed to the row that moved into its place — and the status line is one live region for
+the window's life, written in place only when its text changes. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
 "Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by platform —

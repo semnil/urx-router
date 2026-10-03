@@ -8,8 +8,9 @@
     <title>MIDI Control</title>
   </head>
   <body class="midi-window-body">
-    <!-- Rebuilt by src/midi-window.ts on every state push, so it always reflects
-         the current language, theme, ports and assignments. -->
+    <!-- Repainted by src/midi-window.ts on every state push, so it always reflects
+         the current language, theme, ports and assignments; its status line is kept
+         and written in place, and keyboard focus stays on the control it was on. -->
     <div id="midi-window"></div>
     <script type="module" src="/src/midi-window.ts"></script>
   </body>

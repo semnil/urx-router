@@ -77,6 +77,81 @@ describe("renderMidiWindow — shell", () => {
   });
 });
 
+// Every intent the window sends comes back as a full state push, and each push repaints.
+// What a repaint must not do is take the operator's place away: keyboard focus stays on the
+// control it was on, found again by what that control IS — its class and the assignment row
+// it sits in — and the status line stays the one live region, written in place.
+describe("renderMidiWindow — across a repaint", () => {
+  const paint = (host: HTMLElement, state: MidiUiState): void => renderMidiWindow(host, state, () => {});
+  const focused = (): Element | null => document.activeElement;
+
+  it("keeps focus on the Learn button", () => {
+    const { host } = fixture(baseState());
+    (host.querySelector(".mw-learnbtn") as HTMLButtonElement).focus();
+    paint(host, baseState({ learnOn: true }));
+    const btn = host.querySelector(".mw-learnbtn")!;
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    expect(focused()).toBe(btn);
+  });
+
+  it("keeps focus on a port select", () => {
+    const { host } = fixture(baseState({ outputs: ["A Out"] }));
+    (host.querySelector(".mw-out") as HTMLSelectElement).focus();
+    paint(host, baseState({ outputs: ["A Out"], output: "A Out" }));
+    expect(focused()).toBe(host.querySelector(".mw-out"));
+  });
+
+  // By the row's control, not by position: the list below reorders, so the same index
+  // names a different assignment after the repaint.
+  it("keeps focus on the select of the same assignment when the rows move", () => {
+    const a = row({ control: "ch1/level", label: "CH 1 · Level" });
+    const b = row({ control: "ch2/level", label: "CH 2 · Level" });
+    const { host } = fixture(baseState({ rows: [a, b] }));
+    (host.querySelector('tr[data-control="ch2/level"] .mw-mode') as HTMLSelectElement).focus();
+    paint(host, baseState({ rows: [b, { ...a, mode: "pickup" }] }));
+    expect(focused()).toBe(host.querySelector('tr[data-control="ch2/level"] .mw-mode'));
+  });
+
+  it("keeps focus on a toggle row's behavior select", () => {
+    const t1 = row({ control: "ch1/mute", kind: "toggle", option: "button", button: "edge" });
+    const { host } = fixture(baseState({ rows: [t1] }));
+    (host.querySelector(".mw-btn") as HTMLSelectElement).focus();
+    paint(host, baseState({ rows: [{ ...t1, button: "state" }] }));
+    expect(focused()).toBe(host.querySelector(".mw-btn"));
+  });
+
+  // The removed row's delete button has no successor of its own, and handing focus to the
+  // row that moved into its place would aim the next Space at an assignment nobody chose.
+  it("does not hand focus to another row when the focused one is gone", () => {
+    const a = row({ control: "ch1/level" });
+    const b = row({ control: "ch2/level" });
+    const { host } = fixture(baseState({ rows: [a, b] }));
+    (host.querySelector('tr[data-control="ch1/level"] .mw-del') as HTMLButtonElement).focus();
+    paint(host, baseState({ rows: [b] }));
+    expect(focused()).not.toBe(host.querySelector(".mw-del"));
+  });
+
+  it("keeps one status line, and writes it only when its text changes", () => {
+    const { host } = fixture(baseState({ status: "first" }));
+    const status = host.querySelector(".mw-status")!;
+    const seen = new MutationObserver(() => {});
+    seen.observe(status, { childList: true, characterData: true, subtree: true });
+
+    paint(host, baseState({ status: "first", inputs: ["A In"] }));
+    expect(host.querySelector(".mw-status")).toBe(status);
+    expect(seen.takeRecords(), "an unchanged status is not written").toHaveLength(0);
+
+    paint(host, baseState({ status: "second" }));
+    expect(host.querySelector(".mw-status")).toBe(status);
+    expect(status.isConnected).toBe(true);
+    expect(status.getAttribute("role")).toBe("status");
+    expect(status.textContent).toBe("second");
+    expect(seen.takeRecords().length, "a changed status is written into the region").toBeGreaterThan(0);
+    expect(host.lastElementChild).toBe(status);
+    seen.disconnect();
+  });
+});
+
 describe("renderMidiWindow — ports", () => {
   it("offers None plus every listed port, and selects the current one", () => {
     const { host } = fixture(baseState({ inputs: ["A In", "B In"], input: "B In" }));

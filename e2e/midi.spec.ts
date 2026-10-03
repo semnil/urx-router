@@ -347,6 +347,38 @@ test("learn mode's rings and dot read on the light panel", async ({ page }) => {
   expect(await contrastRatio(page, dot, panel), "the bound dot").toBeGreaterThanOrEqual(3);
 });
 
+// Every intent comes back as a state push that repaints the window. Keyboard focus stays on
+// the control the operator used, and the status line stays the one live region.
+test("the MIDI window keeps keyboard focus and its status line across a state push", async ({ page }) => {
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await win.locator(".mw-status").evaluate((node) => node.setAttribute("data-probe", "kept"));
+
+  const learn = win.locator(".mw-learnbtn");
+  await learn.focus();
+  await win.keyboard.press("Space");
+  await expect(learn).toHaveAttribute("aria-pressed", "true");
+  await expect(learn).toBeFocused();
+  await win.keyboard.press("Space"); // lands only because focus came back to the button
+  await expect(learn).toHaveAttribute("aria-pressed", "false");
+  await expect(learn).toBeFocused();
+
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
+  await expect(win.locator(".mw-status")).toContainText("Assigned");
+  await expect(win.locator('.mw-status[data-probe="kept"]')).toHaveCount(1);
+
+  const mode = mapRow(win, "ch1/level").locator(".mw-mode");
+  await chooseOption(mode, "pickup");
+  await expect(mode).toHaveValue("pickup");
+  await expect(mode).toBeFocused();
+});
+
 test("closing the MIDI window drops learn mode", async ({ page }) => {
   const win = await openMidiWindow(page);
   await setLearn(page, win, true);
