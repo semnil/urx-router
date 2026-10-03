@@ -513,7 +513,7 @@ export function renderInspector(
     }
 
     // After a device readback, a node in plan.unreadNodes still shows its plan
-    // default (its body read failed); warn that its values are not the device's.
+    // value (a read failed on it); warn that its values are not the device's.
     // No provenance (a plan never fetched) shows nothing.
     if (plan.unreadNodes?.has(node.id)) {
       host.append(notReadBadge(m.inspector.notReadFromDevice));

@@ -309,9 +309,9 @@ export class Graph {
   // a board where most of the always-wired CH → MIX/FX sends sit at -∞.
   private hideOffSends = false;
   private disabledNodes = new Set<string>();
-  // Nodes still showing their plan default after a device readback (a body read
-  // failed). Mirrors plan.unreadNodes; empty when the plan has no device
-  // provenance (new / loaded / hand-edited plan).
+  // Nodes still showing their plan value after a device readback (a read of their
+  // settings or selector failed). Mirrors plan.unreadNodes; empty when the plan has
+  // no device provenance (new / loaded / hand-edited plan).
   private unreadNodes = new Set<string>();
   // Node ids collapsed off the canvas into the bottom shelf. Kept in sync with
   // plan.hidden; a shelved node is hidden along with its wires.
@@ -435,8 +435,8 @@ export class Graph {
   }
 
   // The view state mirrored out of the plan: the shelved set, the note-collapse set,
-  // and the device provenance (plan.unreadNodes holds exactly the nodes whose body read
-  // failed; no provenance — a plan never fetched — means nothing is flagged). Every
+  // and the device provenance (plan.unreadNodes holds exactly the nodes a read failed
+  // on; no provenance — a plan never fetched — means nothing is flagged). Every
   // place that adopts a plan goes through here so none of the three is forgotten.
   private adoptPlanState(): void {
     this.hidden = new Set(this.plan.hidden);

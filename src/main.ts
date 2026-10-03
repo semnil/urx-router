@@ -3288,8 +3288,8 @@ if (!DEMO) {
           // A link that dropped part-way leaves the badge unknown, as a session's drop does
           // (stopLiveOnError).
           setFollowUsbBadge(linkFailureIn(merged.errors) ? null : followUsb);
-          // Per-node provenance: nodes whose body read failed still show their plan
-          // default, so the graph/inspector flag them as not read from the device.
+          // Per-node provenance: nodes a read failed on still show their plan
+          // value, so the graph/inspector flag them as not read from the device.
           plan.unreadNodes = merged.unreadNodes;
           rerenderPlan();
           dirty = true;

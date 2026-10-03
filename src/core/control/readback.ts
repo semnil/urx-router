@@ -212,11 +212,13 @@ export interface ReadbackResult {
   /** Per-group read failures (e.g. timeout, unknown source port), if any. */
   errors: string[];
   /**
-   * Ids of nodes a body-parameter group attempted to read but failed on, so the
-   * UI can flag a node still showing its plan default as not read from the
-   * device. Only body groups (a node's own settings) take part: nodes that hold
-   * no body parameters (inputs, record-track slots) are never attempted and so
-   * never appear here. Transient: not serialized into the plan.
+   * Ids of nodes a read attempted but failed on, so the UI can flag a node still
+   * showing its plan value as not read from the device. Body groups (a node's own
+   * settings) take part, and so do the exclusive selectors — source, routing
+   * receivers, record-track slots and ducker key — whose failed or undecodable read
+   * leaves the plan's own wire in place (see applyDeviceState). Physical input
+   * nodes are never attempted and so never appear here. Transient: not serialized
+   * into the plan.
    */
   unreadNodes: Set<string>;
   /**
@@ -1399,8 +1401,9 @@ async function readPass(
       errors.push(`SD Rec track count: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  // A node is unread when a body group tried it but at least one failed; nodes
-  // never attempted (inputs, record-track slots) and fully-read nodes stay out.
+  // A node is unread when a body group or an exclusive selector tried it and at
+  // least one read failed; nodes never attempted (physical inputs) and fully-read
+  // nodes stay out.
   const unreadNodes = new Set<string>();
   for (const id of attempted) if (failed.has(id)) unreadNodes.add(id);
   return {

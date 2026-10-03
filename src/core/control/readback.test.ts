@@ -560,6 +560,7 @@ describe("applyDeviceState round-trip", () => {
         // difference is the scope rather than the seeding.
         const all = await applyDeviceState(model, pairPlan());
         expect(all.errors.some((e) => e.includes("unknown record source port 7777"))).toBe(true);
+        expect(all.unreadNodes.has("out.sdrec.t1")).toBe(true);
       });
     });
   });

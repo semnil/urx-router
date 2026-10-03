@@ -375,9 +375,11 @@ export interface Plan {
   /** Node ids whose in-frame note panel is minimized to the header. */
   noteCollapsed: string[];
   /**
-   * Ids of nodes whose body parameters a device readback tried but failed to
-   * read on the last fetch, so they still show their plan default. Present only
-   * after a device readback; absent on new / loaded / hand-edited plans.
+   * Ids of nodes a device readback tried but failed to read on the last fetch —
+   * a body-parameter group or an exclusive selector (source, routing receiver,
+   * record-track slot, ducker key) — so they still show their plan value.
+   * Present only after a device readback; absent on new / loaded / hand-edited
+   * plans.
    * Transient provenance, never serialized: nodes in this set are flagged in the
    * UI as not read from the device.
    */
