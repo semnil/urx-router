@@ -2094,9 +2094,13 @@ is the boundary rather than an estimate of it. From the write's issue the window
 polled every 4 ms; the ack tells nothing about it (one write acked in 2 ms stayed stale for another 31 ms), and it
 is always the ack that lands first. The parameter's class is
 irrelevant: the same behaviour was measured on a `sideEffect` head, a `follow: "direct"` scalar, plain storage and
-the PEQ band gains. Two consequences bound any repair. A side effect goes readable **1-2 ms after** the address that
-caused it, so no separate wait is needed for what a write makes the unit recompute; and a write of a value the unit
-already holds emits **no notify at all**, so a wait for one has to be able to end on a timer.
+the PEQ band gains. Two consequences bound any repair. What a `sideEffect: "refetch"` head makes the unit recompute
+goes readable within a few milliseconds of the head's own notify — **1-2 ms after** it for the EQ 1-knob LEVEL, 2-4 ms
+for the preset its TYPE loads, and announced behind the head within a millisecond for SSMCS Morphing, Sweet Spot Data,
+the COMP 1-knob and its Level, and the insert-FX drivers (the multi-band compressor's 1-knob and Level, Pitch Fix's
+MIDI Control), while the EQ 1-knob ON recomputes no band — so no separate wait is needed for what those writes make
+the unit recompute; and a write of a value the unit already holds emits **no notify at all**, so a wait for one has to
+be able to end on a timer.
 
 `core/control/settle.ts` is that wait, and the whole of it is one sentence: **the answer for an address this flush
 wrote is the value the DEVICE ANNOUNCED for it, never the value that was sent.** An acked write the unit silently
@@ -2292,7 +2296,7 @@ as invariant 4 (channel-tuning.md, "FX EFFECT").
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
 the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
-has ever been measured — the 1-2 ms figure above belongs to the `refetch` family, which never reaches this loop. Its
+has ever been measured — the figures above belong to the `refetch` heads, which never reach this loop. Its
 round also sends `roundCommands`, whole groups, so a wait that ended at the read diff's own notifies would return
 while the rest of a group was still inside its window.
 
