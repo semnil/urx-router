@@ -214,8 +214,18 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
   btn.textContent = m.learn;
   btn.setAttribute("aria-pressed", String(state.learnOn));
   btn.addEventListener("click", () => send({ type: "learn", on: !state.learnOn }));
+  // The hint holds every wording it can show, the idle and learn ones always and the armed
+  // one while a control is armed, stacked in one cell so it keeps the height of the tallest
+  // (style.css, `.mw-hint`). Only the current wording is painted; the others are hidden from
+  // assistive technology as well as from sight.
   const hint = el("div", "mw-hint");
-  hint.textContent = !state.learnOn ? m.hintIdle : state.armed ? m.hintArmed(state.armed) : m.hintLearn;
+  const shown = !state.learnOn ? m.hintIdle : state.armed ? m.hintArmed(state.armed) : m.hintLearn;
+  for (const text of new Set([m.hintIdle, m.hintLearn, shown])) {
+    const line = el("span", "");
+    line.textContent = text;
+    if (text !== shown) line.setAttribute("aria-hidden", "true");
+    hint.append(line);
+  }
   row.append(btn, hint);
   learn.append(row);
 

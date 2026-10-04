@@ -1576,7 +1576,14 @@ window pushes and reports intents back (`ui/midi-protocol.ts`); everything that 
 `ui/midi.ts`. Every push repaints it, and the repaint keeps two things: keyboard focus stays on the control the
 operator was on — found again by its class and the assignment row it sits in, and dropped when that row is
 gone rather than handed to the row that moved into its place — and the status line is one live region for
-the window's life, written in place only when its text changes. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
+the window's life, written in place only when its text changes. The hint beside **Learn** holds every wording
+it can show in one grid cell — the idle and learn ones always, the armed one while a control is armed — so it is as
+tall as the tallest of them and turning learn on or off, or arming a control, moves nothing below it; only the
+current wording is painted, and the others are `aria-hidden` as well as hidden from sight. An armed wording taller
+than both would still grow it. Measured 2026-10-04 in Playwright's Chromium and WebKit builds, in both languages, at
+the 440 px the window opens at and its 360 px minimum: of the 3,378 distinct armed wordings per language — every
+control id the three models' default plans list, plus every insert-FX slot and FX parameter on every node — none
+is taller than the idle one. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond the relay pair — its capability grants those two commands
 and, of core, only a debug build's devtools hotkey, so it cannot emit an event the main window listens for. A file dropped onto it
