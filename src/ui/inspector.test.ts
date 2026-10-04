@@ -600,6 +600,21 @@ describe("compositionGate", () => {
       expect(gate.held()).toBe(false);
     });
 
+    // The native context menu takes the release of the press that opened it, so the page
+    // hears the press and then a mouse moving with no button held. That move releases the
+    // hold; a move with the button held does not.
+    it("releases a press at a mouse move with no button held", () => {
+      const mouse = (type: string, init: PointerEventInit): PointerEvent =>
+        new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: "mouse", ...init });
+      button.dispatchEvent(mouse("pointerdown", { button: 2, buttons: 2 }));
+      window.dispatchEvent(mouse("pointermove", { buttons: 2 }));
+      expect(gate.held(), "a move with the button held").toBe(true);
+      expect(rebuilds).toBe(0);
+      window.dispatchEvent(mouse("pointermove", { buttons: 0 }));
+      expect(rebuilds).toBe(1);
+      expect(gate.held()).toBe(false);
+    });
+
     // A press on a select opens its picker, which focus already holds the panel for, and
     // the picker's change has to release it even when the press's own release never
     // reaches the page.

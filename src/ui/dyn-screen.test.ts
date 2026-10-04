@@ -895,6 +895,64 @@ describe("refresh", () => {
     expect(cv.hasPointerCapture(1)).toBe(false);
   });
 
+  // The native context menu takes the release of the press that opened it, so the page
+  // hears a right press and then a mouse moving with no button held. That move ends the
+  // cap's and the plot's drag, and lands a repaint the press deferred, as a release would; a
+  // move with the button held still drives the drag.
+  describe("a press whose release never arrived", () => {
+    const mouse = (type: string, init: PointerEventInit): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: "mouse", ...init });
+
+    it("ends a cap drag at a mouse move with no button held", () => {
+      host = dynHost();
+      const screen = new DynScreen(host.hooks);
+      screen.open(GATE, "ch1");
+      const cap = host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
+      cap.dispatchEvent(mouse("pointerdown", { clientY: 40, button: 2, buttons: 2 }));
+      cap.dispatchEvent(mouse("pointermove", { clientY: 80, buttons: 2 }));
+      const written = host.patches.length;
+      expect(written).toBeGreaterThan(0);
+      cap.dispatchEvent(mouse("pointermove", { clientY: 120, buttons: 0 }));
+      cap.dispatchEvent(mouse("pointermove", { clientY: 150, buttons: 0 }));
+      expect(host.patches.length).toBe(written);
+      expect(cap.hasPointerCapture(1)).toBe(false);
+    });
+
+    it("ends a plot drag at a mouse move with no button held", () => {
+      host = dynHost();
+      const screen = new DynScreen(host.hooks);
+      screen.open(GATE, "ch1");
+      host.frame();
+      const cv = host.box.querySelector<HTMLCanvasElement>("#dyn-curve")!;
+      const at = (type: string, offsetX: number, buttons: number): PointerEvent => {
+        const ev = mouse(type, { buttons, button: type === "pointerdown" ? 2 : -1 });
+        Object.defineProperty(ev, "offsetX", { value: offsetX });
+        return ev;
+      };
+      cv.dispatchEvent(at("pointerdown", 200, 2));
+      cv.dispatchEvent(at("pointermove", 300, 2));
+      const written = host.patches.length;
+      expect(written).toBeGreaterThan(0);
+      cv.dispatchEvent(at("pointermove", 400, 0));
+      cv.dispatchEvent(at("pointermove", 500, 0));
+      expect(host.patches.length).toBe(written);
+      expect(cv.hasPointerCapture(1)).toBe(false);
+    });
+
+    it("lands the repaint a press deferred at a mouse move with no button held", () => {
+      host = dynHost();
+      const screen = new DynScreen(host.hooks);
+      screen.open(GATE, "ch1");
+      const slider = rowsByKey(host.box).get("threshold")!;
+      host.box.dispatchEvent(mouse("pointerdown", { button: 2, buttons: 2 }));
+      screen.refresh();
+      window.dispatchEvent(mouse("pointermove", { buttons: 2 }));
+      expect(rowsByKey(host.box).get("threshold"), "a move with the button held").toBe(slider);
+      window.dispatchEvent(mouse("pointermove", { buttons: 0 }));
+      expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
+    });
+  });
+
   // Device follow runs on its own clock and, under COMP 1-knob, on every step of a
   // drag. Rebuilding then would replace the control under the pointer.
   it("updates values in place while a pointer is down, and rebuilds on release", () => {

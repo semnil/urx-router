@@ -34,6 +34,7 @@ import {
   el,
   holdAppInert,
   holdInertOnBlur,
+  mouseMovedUnpressed,
   onInertHoldsEnd,
   preserveFocus,
   settingsRow,
@@ -803,6 +804,11 @@ export class DynScreen {
     // prevent for the value rows. The deferral therefore lasts as long as the press, which
     // is what it meant before the blur was added as an end at all.
     window.addEventListener("blur", () => this.endDrag?.());
+    // A mouse moving with no button held is a release too, for a press whose own the page
+    // never heard — the native context menu takes a right press's — so it runs the same
+    // release as `pointerup`. Capture phase, so the cap's and the plot's drags end before
+    // their own move handlers see it.
+    window.addEventListener("pointermove", (e) => void (mouseMovedUnpressed(e) && release()), true);
   }
 
   isOpen(): boolean {

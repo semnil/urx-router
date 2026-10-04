@@ -17,6 +17,7 @@ import { setLang, t } from "../i18n";
 import { en } from "../i18n/en";
 import { ja } from "../i18n/ja";
 import { PrefsPanel, type PrefsHooks, type UpdateCheckOutcome } from "./prefs";
+import { decl, RULES } from "./style-css.test-util";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -306,6 +307,36 @@ describe("PrefsPanel", () => {
       [...document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button")].every((b) => b.disabled),
     ).toBe(true);
     expect((document.querySelector(".consent-btn-secondary") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  // A control the flight disables has to look disabled, whatever kind it is: a toggle or a
+  // select left at its live face reads as usable while it refuses the press. Asked of the
+  // controls the flight actually disables, so a kind added to the grid is covered the day
+  // it is added. A locked row already dims as a whole, so the in-flight dim must not reach
+  // its controls as well.
+  it("gives every control the flight disables a stylesheet dim, and none in a locked row", () => {
+    const flight = deferred<UpdateCheckOutcome>();
+    const { panel, hooks, setLive } = install();
+    setLive(true);
+    vi.mocked(hooks.checkUpdates).mockReturnValueOnce(flight.promise);
+    panel.open();
+    (document.querySelector("#prefs-update-now") as HTMLButtonElement).click();
+    const dims = RULES.filter((r) => decl(r.body, "cursor") === "not-allowed" && decl(r.body, "opacity") !== undefined);
+    const dimmed = (c: Element): boolean => dims.some((r) => r.selector.split(",").some((s) => c.matches(s.trim())));
+    const all = [...document.querySelectorAll<HTMLElement>(".prefs-grid button, .prefs-grid select")];
+    const locked = all.filter((c) => c.closest(".prefs-row.locked"));
+    const flown = all.filter((c) => !c.closest(".prefs-row.locked"));
+    // The premise: every kind of control the grid carries is in flight, and a row is locked.
+    expect(flown.every((c) => (c as HTMLButtonElement).disabled)).toBe(true);
+    for (const kind of [".prefs-btn", ".prefs-toggle button", ".prefs-select"])
+      expect(
+        flown.some((c) => c.matches(kind)),
+        kind,
+      ).toBe(true);
+    expect(locked.length).toBeGreaterThan(0);
+
+    expect(flown.filter((c) => !dimmed(c)).map((c) => c.outerHTML)).toEqual([]);
+    expect(locked.filter(dimmed).map((c) => c.outerHTML)).toEqual([]);
   });
 });
 

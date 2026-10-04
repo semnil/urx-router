@@ -1919,7 +1919,9 @@ window loses focus, because no engine ends them for you: taking the OS foregroun
 down fires `blur`, fires **no** `pointercancel`, and keeps the pointer capture (measured 2026-08-14 on
 Chromium and on the shipping WKWebView). Without it, a press held through an app switch would go on
 writing into the plan and out to the unit while another application is frontmost, and — since
-`history.ts` also ends its press at a `blur` — the remainder would land in a *new* undo entry.
+`history.ts` also ends its press at a `blur` — the remainder would land in a *new* undo entry. The cap
+and the plot also end at a mouse move with no button held, the release the native context menu takes
+from a right press (the app-wide rule is in architecture.md, "Responsive layout (mobile)").
 
 The cap and the plot are the view's own gestures, so ending them is dropping what the view holds. **A
 value row is a native `<input type="range">`, and the engine owns its drag**, which makes it a different
@@ -1950,7 +1952,7 @@ this screen adds is where a deferred refresh lands. The blur ends the gestures t
 leaves `grabbed` set, because the press is still in flight and a rebuild under it would hand the
 still-held pointer a live control — the state the hold exists to prevent. So the deferral outlives the
 blur, and the refresh runs at the **first** release to arrive: this screen's own `pointerup` or
-`pointercancel`, or the end of the last hold anywhere in the app — which the window coming back also
+`pointercancel`, a mouse move with no button held, or the end of the last hold anywhere in the app — which the window coming back also
 produces, so a return with the button still down lands it there. Whichever runs first clears `grabbed`;
 the others find it already cleared. The one refresh that does not wait is a plan **replaced** under the press —
 the model switch a Fetch or a Live-sync start applies: the plan the press began on is gone, so the screen

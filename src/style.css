@@ -4083,10 +4083,14 @@ button.consent-btn-primary {
   display: none;
 }
 /* In-flight disable (the update check): same treatment as a disabled menu
-   item. Locked rows stay out — they already dim wholesale. The modal actions
-   are not listed here any more; they carry the same treatment from the
-   `.consent-actions button` recipe, which reaches every dialog. */
-.prefs-row:not(.locked) .prefs-btn:disabled {
+   item, on every kind of control the flight disables — the buttons, the
+   segmented faces and the selects. Locked rows stay out — they already dim
+   wholesale. The modal actions are not listed here any more; they carry the
+   same treatment from the `.consent-actions button` recipe, which reaches
+   every dialog. */
+.prefs-row:not(.locked) .prefs-btn:disabled,
+.prefs-row:not(.locked) .prefs-toggle button:disabled,
+.prefs-row:not(.locked) .prefs-select:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
@@ -4449,10 +4453,22 @@ button.consent-btn-primary {
   background: var(--led-face);
   color: var(--on-accent-ink);
 }
+/* Every wording the hint can show shares one grid cell, so the hint is as tall as the
+   tallest of them at whatever width the window has, and switching learn on or off, or
+   arming a control, moves nothing below it. Each wording is centred in that height, on
+   the LEARN button's axis; the ones not in effect keep their space and are not painted. */
 .mw-hint {
   flex: 1;
   min-width: 0;
   line-height: 1.5;
+  display: grid;
+}
+.mw-hint > * {
+  grid-area: 1 / 1;
+  align-self: center;
+}
+.mw-hint > [aria-hidden="true"] {
+  visibility: hidden;
 }
 /* The assignment list. A table, not a flex row per assignment: at 360 px the name
    ellipsized and the address competed with the selects on one line, and the whole

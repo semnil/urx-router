@@ -4,6 +4,8 @@ import { LIVE_COMMANDS, answerTimingOf, installAnswerQueue, untilAnswered } from
 import { pickBand, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
 import { selectWire } from "./graph-helpers";
+import { en } from "../src/i18n/en";
+import { ja } from "../src/i18n/ja";
 
 // External MIDI control is desktop-only (isTauri gate), so these tests stub the
 // Tauri IPC bridge before the app boots: invoke() answers the boot-time queries,
@@ -416,6 +418,42 @@ test("learn on, the armed control and learn off are said on the main status line
   await setLearn(page, win, false);
   await expect(status).toHaveText("Learn is off: the console and the tuning screens edit again.");
 });
+
+// The hint beside LEARN changes wording with the learn state, and at the width the window
+// opens at each wording wraps to its own number of lines. The hint keeps the height of the
+// tallest one, so turning learn on, arming a control and turning learn off move nothing below.
+for (const lang of ["en", "ja"] as const) {
+  test(`the learn hint keeps one height through idle, learn and armed (${lang}) @webkit`, async ({ page }) => {
+    const win = await openMidiWindow(page);
+    if (lang === "ja") {
+      await page.click("#btn-prefs");
+      await chooseOption(page.locator("#prefs-lang"), "ja");
+      await page.keyboard.press("Escape");
+      await expect(page.locator("#prefs-modal")).toBeHidden();
+      await expect(win.locator(".mw-title")).toHaveText(ja.midi.title);
+    }
+    // The inner size the shell opens the window at (src-tauri/src/midiwin.rs).
+    await win.setViewportSize({ width: 440, height: 620 });
+    const hint = win.locator(".mw-hint");
+    const below = win.locator(".mw-sec").nth(2);
+    // One wording is painted at a time, and it is the one the state calls for.
+    const painted = hint.locator(":scope > *").filter({ visible: true });
+    const read = async (wording: string | RegExp): Promise<{ hint: number; below: number }> => {
+      await expect(painted).toHaveCount(1);
+      await expect(painted).toHaveText(wording);
+      return { hint: (await hint.boundingBox())!.height, below: (await below.boundingBox())!.y };
+    };
+    const m = (lang === "ja" ? ja : en).midi;
+    const idle = await read(m.hintIdle);
+    await setLearn(page, win, true);
+    const learn = await read(m.hintLearn);
+    await strip(page, "CH 1").locator(".con-fader").click();
+    const armed = await read(m.hintArmed(`CH 1 · ${m.param.level}`));
+    await setLearn(page, win, false);
+    const back = await read(m.hintIdle);
+    expect({ learn, armed, back }).toEqual({ learn: idle, armed: idle, back: idle });
+  });
+}
 
 test("closing the MIDI window drops learn mode", async ({ page }) => {
   const win = await openMidiWindow(page);

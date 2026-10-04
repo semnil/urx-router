@@ -98,7 +98,7 @@ import {
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
-import { el, focusables, onWheelStep, popLeft, popTop, preserveFocus, scrubFloat } from "./dom";
+import { el, focusables, mouseMovedUnpressed, onWheelStep, popLeft, popTop, preserveFocus, scrubFloat } from "./dom";
 import { isChord } from "./keys";
 import { fineActive, fineTag } from "./fine";
 import { t } from "../i18n";
@@ -234,9 +234,11 @@ function trackDrag(
   // The id filter is the second half of the same defect: with none, a second pointer's
   // moves drove this control while the operator was dragging something else.
   const mine = (ev: PointerEvent): boolean => ev.pointerId === e.pointerId;
+  // A mouse moving with no button held has released the press — the native context menu
+  // takes a right press's release — so the drag ends there rather than following it.
   const move = (ev: PointerEvent): void => {
     if (!mine(ev)) return;
-    if (!control.isConnected) return end();
+    if (!control.isConnected || mouseMovedUnpressed(ev)) return end();
     onMove(ev);
   };
   const stop = (ev: PointerEvent): void => {

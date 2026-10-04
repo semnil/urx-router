@@ -93,7 +93,15 @@ import type { RecentEntry } from "../core/storage";
 import type { ConnectOrigin, Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
 import { setLevelText } from "./glyph";
-import { holdInertOnBlur, isHoldingInert, labelId, onInertHoldsEnd, onWheelStep, wheelStep } from "./dom";
+import {
+  holdInertOnBlur,
+  isHoldingInert,
+  labelId,
+  mouseMovedUnpressed,
+  onInertHoldsEnd,
+  onWheelStep,
+  wheelStep,
+} from "./dom";
 import { dynOpenLabel } from "./dyn-registry";
 import { insertFxScreenFamily } from "./insert-fx-screen";
 import type { DynKind } from "./dyn-registry";
@@ -308,11 +316,12 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // A press ends at its click, on this host's bubble phase — after the target's own
   // handlers, so the rebuild the click itself asks for runs there once — and, for a press
   // that produces no click here (released outside the host, a secondary button, a handler
-  // that stops the click), in the task after the next pointer release anywhere, or when the
-  // window comes back from a release it never heard. The click is dispatched in the same
-  // task as the release producing it, so that task comes after it. Any release ends it
-  // rather than the app-wide count of pointers down reaching zero: a pointer that count
-  // never sees released would hold this panel for as long as the window keeps its focus.
+  // that stops the click), in the task after the next pointer release anywhere, at a mouse
+  // move with no button held, or when the window comes back from a release it never heard.
+  // The click is dispatched in the same task as the release producing it, so that task
+  // comes after it. Any release ends it rather than the app-wide count of pointers down
+  // reaching zero: a pointer that count never sees released would hold this panel for as
+  // long as the window keeps its focus.
   // A press on a `<select>` is left out: the picker it opens holds the panel by focus,
   // and its `change` releases that hold whether or not the page hears the press's release.
   const release = (): void => {
@@ -332,6 +341,9 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   host.addEventListener("click", release);
   window.addEventListener("pointerup", releaseNextTask, true);
   window.addEventListener("pointercancel", releaseNextTask, true);
+  // The native context menu takes a right press's release, and no click follows a move, so
+  // the move with no button held releases at once.
+  window.addEventListener("pointermove", (e) => void (pressing && mouseMovedUnpressed(e) && release()), true);
   window.addEventListener("focus", release);
   host.addEventListener("compositionstart", () => {
     composing = true;

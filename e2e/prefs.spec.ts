@@ -223,6 +223,61 @@ test("every dismissal locks while a check is in flight (stubbed Tauri)", async (
   await expect(page.locator("#prefs-modal")).toBeHidden();
 });
 
+// The flight disables every control of the grid, and each one has to look it: a toggle or a
+// select left at its live face reads as usable while it refuses the press.
+test("every control a check disables wears the disabled face while it runs (stubbed Tauri)", async ({ page }) => {
+  await stubTauriBoot(page);
+  // The updater's answer is held until the case releases it.
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      __TAURI_INTERNALS__: { invoke: (cmd: string) => Promise<unknown> };
+      __urxReleaseCheck?: () => void;
+    };
+    const invoke = w.__TAURI_INTERNALS__.invoke.bind(w.__TAURI_INTERNALS__);
+    w.__TAURI_INTERNALS__.invoke = (cmd: string, ...rest: unknown[]) => {
+      if (cmd === "plugin:updater|check") return new Promise((r) => (w.__urxReleaseCheck = () => r(null)));
+      return (invoke as (...a: unknown[]) => Promise<unknown>)(cmd, ...rest);
+    };
+  });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-prefs");
+  // Every control of the grid outside a locked row, with the face it computes.
+  const faces = () =>
+    page.locator(".prefs-grid").evaluate((grid) =>
+      [...grid.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("button, select")]
+        .filter((c) => !c.closest(".prefs-row.locked"))
+        .map((c) => {
+          const s = getComputedStyle(c);
+          return { control: c.id || c.textContent?.trim() || c.className, opacity: s.opacity, cursor: s.cursor };
+        }),
+    );
+  const live = await faces();
+  // The premise: the grid holds the three kinds of control the flight disables.
+  expect(live.map((f) => f.control)).toEqual(expect.arrayContaining(["prefs-lang", "prefs-update-now"]));
+  expect(await page.locator(".prefs-grid .prefs-toggle button").count()).toBeGreaterThan(0);
+  expect(live.filter((f) => f.opacity !== "1")).toEqual([]);
+
+  await page.click("#prefs-update-now");
+  await expect(page.locator("#prefs-update-note")).toHaveText("Checking…");
+  await page.waitForFunction(() => typeof (window as { __urxReleaseCheck?: unknown }).__urxReleaseCheck === "function");
+  await expect(page.locator("#prefs-update-now")).toBeDisabled();
+  const check = await page
+    .locator("#prefs-update-now")
+    .evaluate((c) => ({ opacity: getComputedStyle(c).opacity, cursor: getComputedStyle(c).cursor }));
+  expect(check.cursor).toBe("not-allowed");
+  expect(Number(check.opacity)).toBeLessThan(1);
+  const held = await faces();
+  expect(held.length).toBe(live.length);
+  expect(held.filter((f) => f.opacity !== check.opacity || f.cursor !== check.cursor)).toEqual([]);
+
+  // Settled: the faces come back with the controls.
+  await page.evaluate(() => (window as unknown as { __urxReleaseCheck: () => void }).__urxReleaseCheck());
+  await expect(page.locator("#prefs-update-note")).toHaveText("Already up to date.");
+  await expect(page.locator("#prefs-update-now")).toBeEnabled();
+  expect((await faces()).filter((f) => f.opacity !== "1" || f.cursor === "not-allowed")).toEqual([]);
+});
+
 test("Check now reports 'up to date' inline and keeps the modal open (stubbed Tauri)", async ({ page }) => {
   // stubTauriBoot answers plugin:updater|check with null = no update available.
   await stubTauriBoot(page);
