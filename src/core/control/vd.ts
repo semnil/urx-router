@@ -100,7 +100,7 @@ export const DUCKER_DECAY_MAX_MS = DUCKER_DECAY_STOPS_MS[DUCKER_DECAY_STOPS_MS.l
 // (confirmed by live snapshot-diff: ms 100.0 on the LCD reads back as 10000).
 export const DELAY_TIME_MIN_MS = 1;
 export const DELAY_TIME_MAX_MS = 1000;
-/** The grid every Delay Time the unit's own knobs write lands on: an even centi-ms. */
+/** The Delay Time knob's pressed step, and the grid a drag lands on: an even centi-ms. */
 export const DELAY_TIME_GRID_MS = 0.02;
 
 // PHONES output level (param 725, y0 = PHONES 1, y1 = PHONES 2). The device shows
