@@ -1362,8 +1362,9 @@ drag lands on the nearest.
   exactly 1.00 ms and holding Shift exactly 0.02 ms, each keeping the hundredths (45.86 → 46.86), so a held
   odd centi-ms stays odd (3.41 → 4.41, and 3.43 with Shift); a drag keeps its own mapping and lands on the
   0.02 ms grid, halfway up; and it stops at 1.00 and 1000.00 ms (`KnobSpec.grid`; LEVEL, PAN and the gain
-  knobs snap to their step). The inspector steps the same 0.02 ms grid — a held value off it
-  prints as itself and is written as held until the row moves. The chip and the knob are what make the
+  knobs snap to their step). The inspector's Delay Time row steps 0.02 ms the same way — a key or a
+  wheel notch moves the held value by exactly 0.02 ms, so a value off the grid prints, is written and steps
+  as itself, and a drag lands on the grid. The chip and the knob are what make the
   otherwise-bare head read as a purposeful strip. The choice persists per model in
   `localStorage` (`urx-metertap`). The readout has two captioned cells: **FADER** (the set level, white) and
   **METER** (the selected tap's live value, amber); default tap = the most downstream point.

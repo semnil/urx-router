@@ -60,9 +60,10 @@ test("Delay Time steps the unit's 0.02 ms grid", async ({ page }) => {
   await expect(delayTime(page).locator(".param-val")).toHaveText("1.02 ms");
 });
 
-// A held value off the grid — an odd centi-ms — prints as itself. The thumb rests on the grid
-// point the range rounds it to, halfway up, so the first move lands on the grid from there.
-test("an off-grid Delay Time prints as held, and the first move lands on the grid", async ({ page }) => {
+// A held value off the grid — an odd centi-ms — prints as itself and a key moves it by exactly
+// 0.02 ms, as the unit's own knob does. The thumb rests on the grid point the range rounds it
+// to, halfway up.
+test("an off-grid Delay Time prints as held, and a key steps it as held", async ({ page }) => {
   const plan = {
     format: "urx-router-plan",
     version: 2,
@@ -78,10 +79,10 @@ test("an off-grid Delay Time prints as held, and the first move lands on the gri
   await expect(slider).toHaveValue("45.88");
   await slider.focus();
   await page.keyboard.press("ArrowRight");
-  await expect(delayTime(page).locator(".param-val")).toHaveText("45.90 ms");
+  await expect(delayTime(page).locator(".param-val")).toHaveText("45.89 ms");
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("ArrowLeft");
-  await expect(delayTime(page).locator(".param-val")).toHaveText("45.86 ms");
+  await expect(delayTime(page).locator(".param-val")).toHaveText("45.85 ms");
 });
 
 // The CONSOLE TIME knob moves an off-grid value the way the unit's own Delay Time knob does:

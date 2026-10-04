@@ -264,8 +264,9 @@ source under it. A write of such a plan sends nothing to that selector, so the u
 until a source is drawn onto STREAMING.
 
 The STREAMING channel carries a **DELAY** (the DELAY screen, STREAMING channel only): an on/off, a
-**Delay Time** (1.00 … 1000.00 ms, carried in 0.01 ms; every time the unit's own knobs write is on a
-0.02 ms grid, which the app's controls step on too), and a **Frame rate** selector (24 / 25 / 29.97D /
+**Delay Time** (1.00 … 1000.00 ms, carried in 0.01 ms; the unit's own ms knob steps 1.00 ms, or 0.02 ms
+pressed, keeping the hundredths a value holds, so a value on the 0.02 ms grid stays on it and one off it
+stays off it, and the app's controls step the same way), and a **Frame rate** selector (24 / 25 / 29.97D /
 29.97 / 30D / 30 / 60 / 120). The delay is a single time value; the frame rate only changes how that
 time is shown in frames on the device — it does not alter the delay. Edited on the streaming bus node
 (inspector DELAY section), not a wire.

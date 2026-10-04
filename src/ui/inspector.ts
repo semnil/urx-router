@@ -100,6 +100,7 @@ import {
   mouseMovedUnpressed,
   onInertHoldsEnd,
   onWheelStep,
+  scrubFloat,
   wheelStep,
 } from "./dom";
 import { dynOpenLabel } from "./dyn-registry";
@@ -951,9 +952,9 @@ export function renderInspector(
         ),
       );
       ps.body.append(boolToggle(m.inspector.delayOn, delay.on ?? false, (v) => setDelay({ on: v })));
-      // The 0.02 ms grid every time the unit's own knobs write is on. A held value off it
-      // prints as itself and is written as held; the thumb rests on the grid point the range
-      // rounds it to (halfway goes up), so the first move lands on the grid.
+      // The unit's own pressed-knob step, 0.02 ms. A key or a notch moves the held value by
+      // exactly that, as the unit's knob does, so a value off the 0.02 ms grid prints, is
+      // written and steps as itself; a drag lands on the grid.
       ps.body.append(
         rangeSlider(
           m.inspector.delayTime,
@@ -963,6 +964,7 @@ export function renderInspector(
           delay.time ?? DELAY_TIME_MIN_MS,
           (v) => `${v.toFixed(2)} ms`,
           (v) => setDelay({ time: v }),
+          true,
         ),
       );
       host.append(ps.el);
@@ -1321,6 +1323,11 @@ function paramControl(
 // A labeled range slider that updates its value readout and reports the numeric
 // value on every input. Mutates in place (no re-render) so it keeps focus while
 // dragging. Shared by the connection (panSlider) and node-level controls.
+//
+// With `heldSteps`, an arrow key or a wheel notch moves the value the row holds by exactly
+// `step` and stops at the ends, so a value off the step grid stays off it; a drag lands on
+// the grid. The range itself cannot hold such a value — it rounds one to the nearer step,
+// halfway up — so the row keeps it, and the thumb rests where the range rounds it.
 function rangeSlider(
   label: string,
   min: number,
@@ -1329,6 +1336,7 @@ function rangeSlider(
   cur: number,
   fmt: (v: number) => string,
   onInput: (v: number) => void,
+  heldSteps = false,
 ): HTMLElement {
   const { row, value, labelId: id } = paramBlock(label, fmt(cur));
   const slider = document.createElement("input");
@@ -1339,13 +1347,33 @@ function rangeSlider(
   slider.value = String(cur);
   nameBy(slider, id);
   slider.setAttribute("aria-valuetext", fmt(cur));
-  slider.addEventListener("input", () => {
-    const v = Number(slider.value);
+  let held = cur;
+  const write = (v: number): void => {
+    held = v;
     setLevelText(value, fmt(v));
     slider.setAttribute("aria-valuetext", fmt(v));
     onInput(v);
-  });
-  wheelStep(slider);
+  };
+  slider.addEventListener("input", () => write(Number(slider.value)));
+  if (heldSteps) {
+    const stepHeld = (dir: 1 | -1): void => {
+      if (slider.disabled) return;
+      const next = Math.min(max, Math.max(min, scrubFloat(held + dir * step)));
+      if (next === held) return;
+      slider.value = String(next);
+      write(next);
+    };
+    slider.addEventListener("keydown", (e) => {
+      const dir =
+        e.key === "ArrowUp" || e.key === "ArrowRight" ? 1 : e.key === "ArrowDown" || e.key === "ArrowLeft" ? -1 : 0;
+      if (dir === 0 || e.altKey || e.ctrlKey || e.metaKey) return;
+      e.preventDefault();
+      stepHeld(dir);
+    });
+    onWheelStep(slider, stepHeld);
+  } else {
+    wheelStep(slider);
+  }
   holdInertOnBlur(slider);
   row.append(slider);
   return row;

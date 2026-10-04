@@ -796,11 +796,12 @@ describe("renderInspector — a stored value outside its control's range", () =>
   });
 });
 
-// The STREAMING Delay Time steps the 0.02 ms grid the unit's own knobs write on. A value off it
-// — an odd centi-ms, which an earlier build's 0.01 ms slider could write — prints as the value
-// held and goes out as held; nothing is written for it until the row moves. Where the thumb
-// rests is the engine's (a range rounds a value off its step to the nearer valid one, halfway
-// up), which jsdom does not do, so that half is asked in e2e/streamingdelay.spec.ts.
+// The STREAMING Delay Time steps 0.02 ms, the unit's own pressed-knob step. A value off the
+// 0.02 ms grid — an odd centi-ms, which an earlier build's 0.01 ms slider could write — prints
+// as the value held, goes out as held, and a key or a notch moves it by exactly 0.02 ms, as the
+// unit's knob does (3.41 -> 3.43 -> 3.41 on a URX44V). Where the thumb rests is the engine's (a
+// range rounds a value off its step to the nearer valid one, halfway up), which jsdom does not
+// do, so that half is asked in e2e/streamingdelay.spec.ts.
 describe("renderInspector — the STREAMING Delay Time", () => {
   const slider = (): HTMLInputElement =>
     [...panel.querySelectorAll<HTMLElement>(".param")]
@@ -828,6 +829,33 @@ describe("renderInspector — the STREAMING Delay Time", () => {
     expect(slider().getAttribute("aria-valuetext")).toBe("45.87 ms");
     expect(act.onUpdateNodeParams).not.toHaveBeenCalled();
     expect(planToCommands(getModel("URX44V"), plan).find((c) => c.paramId === 708)?.vdValue).toBe(4587);
+  });
+
+  it("steps an off-grid value by exactly 0.02 ms, and stops at the ends", () => {
+    const sent = (): number | undefined => vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)?.[1].delay?.time;
+    const press = (key: string): void => {
+      slider().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    };
+    renderInspector(panel, getModel("URX44V"), withTime(45.87), nodeSel("bus.stream"), act);
+    press("ArrowRight");
+    expect(sent()).toBe(45.89);
+    press("ArrowLeft");
+    press("ArrowLeft");
+    expect(sent()).toBe(45.85);
+    slider().dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true, cancelable: true }));
+    expect(sent()).toBe(45.87);
+    expect(slider().closest<HTMLElement>(".param")!.querySelector(".param-val")?.textContent).toBe("45.87 ms");
+
+    vi.mocked(act.onUpdateNodeParams).mockClear();
+    renderInspector(panel, getModel("URX44V"), withTime(999.99), nodeSel("bus.stream"), act);
+    press("ArrowUp");
+    expect(sent()).toBe(1000);
+    vi.mocked(act.onUpdateNodeParams).mockClear();
+    press("ArrowUp");
+    expect(act.onUpdateNodeParams).not.toHaveBeenCalled();
+    renderInspector(panel, getModel("URX44V"), withTime(1.01), nodeSel("bus.stream"), act);
+    press("ArrowDown");
+    expect(sent()).toBe(1);
   });
 });
 
