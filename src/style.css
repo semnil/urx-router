@@ -2219,6 +2219,13 @@ input[type="range"]:focus-visible,
      then goes to .con-strips' vertical scroll instead of crushing the fader. */
   min-height: min-content;
 }
+/* The strip root holds the focus when a popover close lands on it, and in WebKit after a
+   click on a control the click does not focus. It wears the rack's inset amber ring: the
+   rack clips what is drawn outside a strip, and the next strip paints over its right edge. */
+.con-strip:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
+}
 /* A node whose master is off (power LED off), or whose bus the rate removes: the parts
    of the strip that carry no text dim — the fader and mini-fader grooves, the meter, the
    knob faces and the scribble's ground — the way the graph dims a muted node. Its

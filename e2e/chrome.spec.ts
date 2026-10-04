@@ -225,6 +225,16 @@ test.describe("focus ring", () => {
     expect(r.color).toBe(await colorToken(page, "--on-accent-ink"));
   });
 
+  test("a CONSOLE strip root that holds the focus wears the rack's inset ring", async ({ page }) => {
+    await page.click("#btn-view-console");
+    const strip = page.locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) }).first();
+    await keyboardFocus(page, strip);
+    const r = await ring(strip);
+    expect(r.style).toBe("solid");
+    expect(r.color).toBe(await colorToken(page, "--led"));
+    expect(parseFloat(r.offset)).toBeLessThan(0);
+  });
+
   test("the selected swatch's ring moves out and lights when it takes focus", async ({ page }) => {
     await page.locator('#graph-host g.node[data-id="ch1"]').click();
     const sel = page.locator("#inspector .swatch.sel");
