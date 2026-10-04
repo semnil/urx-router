@@ -287,6 +287,9 @@ import の循環の中にある。
 SSMCS ストリップの時間が表示する精度 (`formatDyn`。`fmtSsmcsMs` がこれを呼ぶ)。1〜10 ms では隣り合う段の
 差が小数 1 桁より小さく (attack の 1.008 と 1.039、hold の 1.06 と 1.10)、小数 1 桁では 2 つの位置が同じに読める。
 
+**SSMCS ストリップの Attack と Release はチャンネルの表を使う**: Attack の raw 57 + i は Attack の段 i、Release の
+raw 24 + i は Release の段 i (`ssmcsAttackMs` / `ssmcsReleaseMs`) なので、ストリップはチャンネルの COMP と同じ値を表示する。
+
 ## COMP
 
 1 段下流の同じ 3 タップ構成 — PRE COMP (108) 入力 / COMP GR (110) / PRE EQ (111) 出力 — で、

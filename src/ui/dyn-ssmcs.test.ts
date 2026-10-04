@@ -477,8 +477,9 @@ describe("the COMP face", () => {
 
   it("prints every value through its own device curve", () => {
     const text = (key: string): string => h!.box.querySelector(`[data-dyn-val="${key}"]`)?.textContent ?? "";
-    expect(text("attack")).toBe("4.126 ms");
-    expect(text("release")).toBe("91.61 ms");
+    // Attack raw 184 and Release raw 159 are the channel tables' stops 127 and 135.
+    expect(text("attack")).toBe("4.122 ms");
+    expect(text("release")).toBe("92.00 ms");
     expect(text("ratio")).toBe("2.50:1");
     segment(SC_SEG);
     expect(text("scQ")).toBe("1.00");

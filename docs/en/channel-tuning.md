@@ -315,6 +315,10 @@ the precision the SSMCS strip's times print in (`formatDyn`, which `fmtSsmcsMs` 
 10 ms neighbouring stops are closer than one decimal (attack 1.008 and 1.039, hold 1.06 and 1.10), and
 at one decimal two positions read alike.
 
+**The SSMCS strip's Attack and Release are the channel tables**: Attack raw 57 + i is the Attack stop i
+and Release raw 24 + i the Release stop i (`ssmcsAttackMs` / `ssmcsReleaseMs`), so the strip shows the
+values the channel COMP shows.
+
 ## COMP
 
 The same three-tap shape one stage downstream — PRE COMP (108) in, COMP GR (110), PRE EQ (111) out —
