@@ -1359,10 +1359,10 @@ drag lands on the nearest.
   rotary knob** (−96…0 dB, the shared device level; its indicator's horizontal marks read -50 left / -8 right)
   in place of a fader; **STREAMING** carries a **DELAY on/off chip** (`delay.on`) and a **TIME knob** (the delay
   time, 1…1000 ms). The knob moves the way the unit's own Delay Time knob does: a key or a wheel notch moves
-  1.00 ms and keeps the hundredths (45.86 → 46.86), holding Shift moves the device's 0.02 ms fine grid, a drag
-  keeps its own mapping, and every time it writes is rounded to the 0.02 ms grid, halfway up — so a held odd
-  centi-ms moves from the grid point above it — and stops at 1.00 and 1000.00 ms (`KnobSpec.grid`; LEVEL, PAN
-  and the gain knobs snap to their step). The inspector steps the same 0.02 ms grid — a held value off it
+  exactly 1.00 ms and holding Shift exactly 0.02 ms, each keeping the hundredths (45.86 → 46.86), so a held
+  odd centi-ms stays odd (3.41 → 4.41, and 3.43 with Shift); a drag keeps its own mapping and lands on the
+  0.02 ms grid, halfway up; and it stops at 1.00 and 1000.00 ms (`KnobSpec.grid`; LEVEL, PAN and the gain
+  knobs snap to their step). The inspector steps the same 0.02 ms grid — a held value off it
   prints as itself and is written as held until the row moves. The chip and the knob are what make the
   otherwise-bare head read as a purposeful strip. The choice persists per model in
   `localStorage` (`urx-metertap`). The readout has two captioned cells: **FADER** (the set level, white) and

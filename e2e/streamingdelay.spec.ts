@@ -83,3 +83,31 @@ test("an off-grid Delay Time prints as held, and the first move lands on the gri
   await page.keyboard.press("ArrowLeft");
   await expect(delayTime(page).locator(".param-val")).toHaveText("45.86 ms");
 });
+
+// The CONSOLE TIME knob moves an off-grid value the way the unit's own Delay Time knob does:
+// a key moves exactly 1.00 ms, and with Shift exactly 0.02 ms, so an odd centi-ms stays odd.
+test("the CONSOLE TIME knob keeps an off-grid Delay Time off the grid", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 2,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { "bus.stream": { delay: { on: true, time: 3.41 } } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-view-console");
+  const stream = page.locator(".con-strip", { has: page.getByText("STREAMING", { exact: true }) });
+  const time = stream.locator(".con-knob[aria-label='TIME']");
+  const val = stream.locator(".con-gain .val");
+  await expect(val).toHaveText("3.41");
+  await time.focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(val).toHaveText("4.41");
+  await page.keyboard.press("ArrowDown");
+  await expect(val).toHaveText("3.41");
+  await page.keyboard.press("Shift+ArrowUp");
+  await expect(val).toHaveText("3.43");
+  await page.keyboard.press("Shift+ArrowDown");
+  await expect(val).toHaveText("3.41");
+});

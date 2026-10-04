@@ -435,10 +435,10 @@ interface KnobSpec {
    *  `.con-gain .fine-tag`) — a knob with content directly above (a stacked
    *  PAN/BAL row) would need a new anchor before opting in. */
   fine?: number;
-  /** The grid every value the knob writes lands on, finer than `step`. A key or a wheel
-   *  notch then moves the held value by `step` (or `fine`) and keeps what it holds below a
-   *  step, a drag lands on the grid, and a value is rounded to it halfway up. Absent, a
-   *  value lands on `step` itself (the STREAMING TIME knob sets 0.02 ms). */
+  /** The grid a drag and a reset land on, finer than `step`, rounded to halfway up. A key
+   *  or a wheel notch then moves the held value by exactly `step` (or `fine`), so a value
+   *  off the grid stays off it. Absent, a value lands on `step` itself (the STREAMING TIME
+   *  knob sets 0.02 ms). */
   grid?: number;
   format: (v: number) => string;
   reset: number;
@@ -2265,8 +2265,8 @@ export class Console {
     // STREAMING: a DELAY on/off chip and a TIME knob (the delay time, 1…1000 ms).
     // Gives the otherwise-bare head controls so the strip reads as purposeful, and
     // mirrors the OSCILLATOR's ON + LEVEL pairing. A key or a notch moves 1.00 ms and
-    // keeps the hundredths, holding Shift steps the device's 0.02 ms fine grid
-    // (push-and-turn), and every time the knob writes is on that 0.02 ms grid.
+    // holding Shift 0.02 ms (push-and-turn), each keeping the hundredths the way the unit's
+    // own knob does, and a drag lands on that 0.02 ms grid.
     if (m.isStream) {
       const chips = el("div", "con-chips");
       const delayOn = (): boolean => this.hooks.getPlan().nodeParams[m.id]?.delay?.on ?? false;
@@ -3780,20 +3780,23 @@ export class Console {
       // The face's own text ("L63", "C", "+8"), which is what the number means.
       knob.setAttribute("aria-valuetext", k.format(v));
     };
-    const apply = (raw: number, st = k.step): void => {
-      const to = k.grid ?? st;
-      const v = Math.max(k.min, Math.min(k.max, scrubFloat(Math.round(scrubFloat(raw / to)) * to)));
+    const write = (v: number): void => {
       k.set(v);
       show(v);
       this.commit(id, k.keys);
     };
+    const apply = (raw: number, st = k.step): void => {
+      const to = k.grid ?? st;
+      write(Math.max(k.min, Math.min(k.max, scrubFloat(Math.round(scrubFloat(raw / to)) * to))));
+    };
     // One step for a key or a wheel notch. On a knob with a `grid` it moves the held value by
-    // the step and keeps what it holds below a step. Otherwise it is snapped in the direction
-    // of travel: from a value between two grid points the next point that way, never the
-    // nearest one past it. The drag and the double-click reset keep `apply`'s nearest snap.
+    // exactly the step, so a value off the grid stays off it, and stops at the ends. Otherwise
+    // it is snapped in the direction of travel: from a value between two grid points the next
+    // point that way, never the nearest one past it. The drag and the double-click reset keep
+    // `apply`'s nearest snap.
     const stepBy = (dir: 1 | -1, st: number): void => {
       if (k.grid !== undefined) {
-        apply(k.get() + dir * st, st);
+        write(Math.max(k.min, Math.min(k.max, scrubFloat(k.get() + dir * st))));
         return;
       }
       const at = k.get() / st;
