@@ -310,10 +310,17 @@ the nearer stop and the load report says so; exactly halfway goes to the lower s
 the value the unit reports, with the slider resting on the nearer stop and the readout printing the
 value held. A write sends the nearer stop.
 
-**The readout prints every stop as itself**: three decimals below 10 ms, two below 100 ms, one above —
-the precision the SSMCS strip's times print in (`formatDyn`, which `fmtSsmcsMs` calls). Between 1 and
-10 ms neighbouring stops are closer than one decimal (attack 1.008 and 1.039, hold 1.06 and 1.10), and
-at one decimal two positions read alike.
+**The readout prints a time the way the unit's own screen prints that control** (`formatTime`, which
+`formatDyn` calls): Attack — GATE, COMP, DUCKER and the SSMCS strip alike — three decimals below 10 ms
+and two from there; COMP and SSMCS Release and GATE Decay one decimal; GATE Hold two decimals below
+10 ms, one below 1 s, and seconds with two from there; DUCKER Decay one decimal, in seconds from 1 s.
+Every stop prints as itself in its control's readout. Between 1 and 10 ms neighbouring Attack and Hold
+stops are closer than one decimal (attack 1.008 and 1.039, hold 1.06 and 1.10), and that is where the
+readout spends its extra decimals.
+
+**The SSMCS strip's Attack and Release are the channel tables**: Attack raw 57 + i is the Attack stop i
+and Release raw 24 + i the Release stop i (`ssmcsAttackMs` / `ssmcsReleaseMs`), so the strip shows the
+values the channel COMP shows.
 
 ## COMP
 

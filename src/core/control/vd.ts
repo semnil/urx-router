@@ -220,13 +220,22 @@ export function strToSweetSpotData(value: string): number {
 export function ssmcsCompDrive(raw: number): number {
   return raw / 20;
 }
-/** SSMCS comp attack raw → ms (logarithmic 0.092 … 80 ms). */
-export function ssmcsAttackMs(raw: number): number {
-  return 0.092 * Math.pow(80 / 0.092, (raw - SSMCS_ATTACK_RAW_MIN) / 226);
+/** The stop a raw names in a table that starts at raw `first`. A raw outside the table — or
+ *  one that is not a number — reads as the nearest end of it. */
+function stopFrom(stops: readonly number[], first: number, raw: number): number {
+  const i = Math.round(raw) - first;
+  if (!(i > 0)) return stops[0];
+  return stops[Math.min(i, stops.length - 1)];
 }
-/** SSMCS comp release raw → ms (logarithmic 9.3 … 999 ms). */
+/** SSMCS comp attack raw → ms: raw 57 + i is the GATE / COMP / DUCKER Attack stop i
+ *  (0.092 … 80 ms). */
+export function ssmcsAttackMs(raw: number): number {
+  return stopFrom(DYN_ATTACK_STOPS_MS, SSMCS_ATTACK_RAW_MIN, raw);
+}
+/** SSMCS comp release raw → ms: raw 24 + i is the COMP Release / GATE Decay stop i
+ *  (9.3 … 999 ms). */
 export function ssmcsReleaseMs(raw: number): number {
-  return 9.3 * Math.pow(999 / 9.3, (raw - SSMCS_RELEASE_RAW_MIN) / 276);
+  return stopFrom(DYN_RELEASE_STOPS_MS, SSMCS_RELEASE_RAW_MIN, raw);
 }
 /** SSMCS EQ/SC Q raw → value (logarithmic 0.50 … 16.0). */
 export function ssmcsQ(raw: number): number {

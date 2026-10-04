@@ -822,8 +822,9 @@ export interface DynField {
   def: number;
   /** How the number reads. `raw` = a broker integer whose display goes through a
    *  device curve, so the surface printing it supplies the text; `formatDyn` prints
-   *  the integer itself, which is right for the one SSMCS value that has no unit. */
-  unit: "db" | "ms" | "ratio" | "hz" | "q" | "raw";
+   *  the integer itself, which is right for the one SSMCS value that has no unit. A
+   *  time names which of the unit's time readouts it takes (`TimeReadout`). */
+  unit: "db" | TimeReadout | "ratio" | "hz" | "q" | "raw";
   /** Slider positions for a value the device sweeps logarithmically (an EQ band
    *  frequency spans three decades, which a linear slider cannot resolve at the
    *  bottom). Absent = the slider carries the value itself. */
@@ -917,7 +918,7 @@ const GATE_FIELDS: EmittedDynField[] = [
     max: DYN_ATTACK_MAX_MS,
     step: DYN_ATTACK_FINEST_MS,
     def: 20.17,
-    unit: "ms",
+    unit: "attack",
     steps: DYN_ATTACK_STOPS_MS,
   },
   {
@@ -927,7 +928,7 @@ const GATE_FIELDS: EmittedDynField[] = [
     max: DYN_HOLD_MAX_MS,
     step: DYN_HOLD_FINEST_MS,
     def: 15.3,
-    unit: "ms",
+    unit: "hold",
     steps: DYN_HOLD_STOPS_MS,
   },
   {
@@ -937,7 +938,7 @@ const GATE_FIELDS: EmittedDynField[] = [
     max: DYN_RELEASE_MAX_MS,
     step: DYN_RELEASE_FINEST_MS,
     def: 150.2,
-    unit: "ms",
+    unit: "release",
     steps: DYN_RELEASE_STOPS_MS,
   },
 ];
@@ -963,7 +964,7 @@ const COMP_FIELDS: EmittedDynField[] = [
     max: DYN_ATTACK_MAX_MS,
     step: DYN_ATTACK_FINEST_MS,
     def: 34.58,
-    unit: "ms",
+    unit: "attack",
     steps: DYN_ATTACK_STOPS_MS,
   },
   {
@@ -973,7 +974,7 @@ const COMP_FIELDS: EmittedDynField[] = [
     max: DYN_RELEASE_MAX_MS,
     step: DYN_RELEASE_FINEST_MS,
     def: 218,
-    unit: "ms",
+    unit: "release",
     steps: DYN_RELEASE_STOPS_MS,
   },
 ];
@@ -1115,7 +1116,7 @@ export const DUCKER_FIELDS: EmittedDynField[] = [
     max: DYN_ATTACK_MAX_MS,
     step: DYN_ATTACK_FINEST_MS,
     def: 20.17,
-    unit: "ms",
+    unit: "attack",
     steps: DYN_ATTACK_STOPS_MS,
   },
   {
@@ -1125,7 +1126,7 @@ export const DUCKER_FIELDS: EmittedDynField[] = [
     max: DUCKER_DECAY_MAX_MS,
     step: DUCKER_DECAY_FINEST_MS,
     def: 1000,
-    unit: "ms",
+    unit: "duckerDecay",
     steps: DUCKER_DECAY_STOPS_MS,
   },
   { key: "threshold", name: "DUCKER_THRESHOLD", min: -60, max: 0, step: 1, def: -40, unit: "db" },
@@ -1173,9 +1174,30 @@ export function formatDyn(v: number, unit: DynField["unit"]): string {
   if (unit === "ratio") return formatCompRatio(v, "comp");
   if (unit === "hz") return formatHz(v);
   if (unit === "q") return v.toFixed(2);
-  // Three decimals below 10 ms, two below 100 ms, one above: every stop of the time tables
-  // prints as itself, and no two neighbouring stops print alike.
-  return v < 10 ? `${v.toFixed(3)} ms` : v < 100 ? `${v.toFixed(2)} ms` : `${v.toFixed(1)} ms`;
+  return formatTime(v, unit);
+}
+
+/** Which of the unit's time readouts a value takes. Each prints in the decimals the unit's
+ *  own screen gives that control, and every stop of the time tables prints as itself:
+ *  `attack` (GATE / COMP / DUCKER / SSMCS Attack) three decimals below 10 ms and two from
+ *  there; `release` (COMP / SSMCS Release, GATE Decay) one decimal; `hold` (GATE Hold) two
+ *  decimals below 10 ms, one below 1 s and seconds with two from there; `duckerDecay` one
+ *  decimal, in seconds from 1 s. */
+export const TIME_READOUTS = ["attack", "release", "hold", "duckerDecay"] as const;
+export type TimeReadout = (typeof TIME_READOUTS)[number];
+
+/** A time in ms, as the unit prints it for that readout. */
+export function formatTime(ms: number, readout: TimeReadout): string {
+  switch (readout) {
+    case "attack":
+      return `${ms.toFixed(ms < 10 ? 3 : 2)} ms`;
+    case "release":
+      return `${ms.toFixed(1)} ms`;
+    case "hold":
+      return ms < 1000 ? `${ms.toFixed(ms < 10 ? 2 : 1)} ms` : `${(ms / 1000).toFixed(2)} s`;
+    case "duckerDecay":
+      return ms < 1000 ? `${ms.toFixed(1)} ms` : `${(ms / 1000).toFixed(1)} s`;
+  }
 }
 
 /** The display text for a field's current value, including GATE range's -∞ notch

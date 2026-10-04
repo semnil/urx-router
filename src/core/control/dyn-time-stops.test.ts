@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { DUCKER_DECAY_STOPS_MS, DYN_ATTACK_STOPS_MS, DYN_HOLD_STOPS_MS, DYN_RELEASE_STOPS_MS } from "./dyn-time-stops";
 import { attackToVd, holdToVd, releaseToVd, vdToAttack, vdToHold, vdToRelease } from "./vd";
-import { channelDynamics, DUCKER_FIELDS } from "./translate";
+import { channelDynamics, DUCKER_FIELDS, TIME_READOUTS } from "./translate";
 import type { DynField } from "./translate";
 import { COMP_EQ_COMP_FIRST } from "./params";
 import { getModel, MODEL_IDS } from "../../models";
@@ -60,9 +60,10 @@ const TABLES = [
 function timeFields(): Map<string, DynField> {
   const dyn = channelDynamics(getModel("URX44V"), "ch1", COMP_EQ_COMP_FIRST)!;
   const out = new Map<string, DynField>();
-  for (const f of dyn.gate) if (f.unit === "ms") out.set(`gate.${f.key}`, f);
-  for (const f of dyn.comp!) if (f.unit === "ms") out.set(`comp.${f.key}`, f);
-  for (const f of DUCKER_FIELDS) if (f.unit === "ms") out.set(`ducker.${f.key}`, f);
+  const isTime = (f: DynField): boolean => (TIME_READOUTS as readonly string[]).includes(f.unit);
+  for (const f of dyn.gate) if (isTime(f)) out.set(`gate.${f.key}`, f);
+  for (const f of dyn.comp!) if (isTime(f)) out.set(`comp.${f.key}`, f);
+  for (const f of DUCKER_FIELDS) if (isTime(f)) out.set(`ducker.${f.key}`, f);
   return out;
 }
 

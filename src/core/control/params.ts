@@ -244,9 +244,9 @@ export const PARAMS = {
   },
   /** SSMCS Out Gain (raw 0..360; 180 = 0 dB). */
   SSMCS_OUT_GAIN: { id: 117, encoding: "raw" },
-  /** SSMCS comp attack (raw 57..283; logarithmic 0.092..80 ms). */
+  /** SSMCS comp attack (raw 57..283 = the channel Attack stops, 0.092..80 ms). */
   SSMCS_COMP_ATTACK: { id: 96, encoding: "raw" },
-  /** SSMCS comp release (raw 24..300; logarithmic 9.3..999 ms). */
+  /** SSMCS comp release (raw 24..300 = the channel Release stops, 9.3..999 ms). */
   SSMCS_COMP_RELEASE: { id: 97, encoding: "raw" },
   /** SSMCS comp ratio (raw 0..120 = the index of a stop, 1.00:1 … INF:1). */
   SSMCS_COMP_RATIO: { id: 98, encoding: "raw" },

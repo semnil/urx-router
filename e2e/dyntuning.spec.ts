@@ -387,10 +387,10 @@ test("steps a time row on the unit's stops, both ends included", async ({ page }
   await expect(attackVal).toHaveText("0.092 ms");
 
   const holdVal = box.locator('[data-dyn-val="hold"]');
-  await expect(holdVal).toHaveText("15.30 ms");
+  await expect(holdVal).toHaveText("15.3 ms");
   await box.locator('input[data-dyn="hold"]').focus();
   await page.keyboard.press("End");
-  await expect(holdVal).toHaveText("1960.0 ms");
+  await expect(holdVal).toHaveText("1.96 s");
 });
 
 test("a value row stops following the pointer once the window is gone", async ({ page }) => {
