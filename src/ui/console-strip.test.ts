@@ -432,9 +432,9 @@ describe("a head knob", () => {
 
   // The TIME knob moves the way the unit's own Delay Time knob does: a key or a wheel notch
   // moves 1.00 ms and keeps the hundredths (45.86 -> 46.86), the fine (Shift) step moves
-  // 0.02 ms, and every time it writes is rounded to the 0.02 ms grid, halfway up — so a held
-  // odd centi-ms (45.87) moves from 45.88. The ends stop at 1.00 and 1000.00 ms. On-grid
-  // whole values are the control: they step one millisecond either way.
+  // 0.02 ms, and neither rounds — a held odd centi-ms stays odd (3.41 -> 4.41 -> 3.41 and
+  // 3.41 -> 3.43 -> 3.41 on the unit). The ends stop at 1.00 and 1000.00 ms. On-grid whole
+  // values are the control: they step one millisecond either way.
   it("moves the TIME knob 1.00 ms keeping the hundredths, and 0.02 ms in fine mode", () => {
     h = consoleHost();
     const time = (): number | undefined => h.plan.nodeParams["bus.stream"]?.delay?.time;
@@ -465,14 +465,18 @@ describe("a head knob", () => {
     key(from(45.86), "ArrowDown", { shiftKey: true });
     expect(time()).toBe(45.84);
 
+    key(from(3.41), "ArrowUp");
+    expect(time()).toBe(4.41);
+    key(knob(), "ArrowDown");
+    expect(time()).toBe(3.41);
+    key(from(3.41), "ArrowUp", { shiftKey: true });
+    expect(time()).toBe(3.43);
+    key(knob(), "ArrowDown", { shiftKey: true });
+    expect(time()).toBe(3.41);
     key(from(45.87), "ArrowUp");
-    expect(time()).toBe(46.88);
-    key(from(45.87), "ArrowDown");
-    expect(time()).toBe(44.88);
-    key(from(45.87), "ArrowUp", { shiftKey: true });
-    expect(time()).toBe(45.9);
-    key(from(45.87), "ArrowDown", { shiftKey: true });
-    expect(time()).toBe(45.86);
+    expect(time()).toBe(46.87);
+    wheel(from(45.87), -1);
+    expect(time()).toBe(44.87);
 
     key(from(999.5), "ArrowUp");
     expect(time()).toBe(1000);
