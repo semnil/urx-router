@@ -749,16 +749,10 @@ can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
 
-**The current array.** `[49, 48, 87]` is the array derived from the race run of the 179-case corpus
-(2026-09-29), `[44, 48, 87]`, with the four cases of `t1e-held-repaint.spec.ts` and the one of
-`baseline-fake-answer-timing` — all collected inside its first shard — added to that shard, so every cut
-falls on the case it fell on in that run. That run timed
-172 of its cases and left the 7 declared skips at zero. Measured against its durations, under the
-two-worker model, its three shards ran 284 / 305 / 305 s, against 286 s for a division with no contiguity
-constraint at all, and the runner reproduced the plan case for case. The five added cases are in no
-reading: the first shard's cut is the residue of that edit. The point of re-deriving is not the remaining
-gap but that the cut is a duration reading again, since nothing reports an array whose durations have
-moved.
+**The current array.** `[49, 61, 74]` is the array derived from the race run of the 184-case corpus
+(2026-10-04). That run timed 177 of its cases and left the 7 declared skips at zero. Measured against its
+durations, under the two-worker model, its three shards ran 265 / 266 / 270 s, against 260 s if the work
+divided evenly, and the runner reproduced the plan case for case.
 
 A log assembled from two runs is the case none of that reaches on its own: where the halves overlap, a
 case timed twice with no retry between them gives it away, but halves that do not overlap cover the
