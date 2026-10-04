@@ -3997,7 +3997,9 @@ what the desktop app offers.
   dismissal locks (Close disables, an outside press and Escape are inert), for the check and its
   confirm only, which the check's request timeout and the operator's answer bound. Every control of
   the two columns is disabled for the same span, "Check now" among them, so no setting changes under
-  a panel that is not redrawn; when the check settles the modal is drawn again — a language switch
+  a panel that is not redrawn, and each one wears the disabled face for it — the buttons, the
+  segmented faces and the selects alike, dimmed with a `not-allowed` cursor; a row already locked
+  keeps its own dim rather than taking a second one. When the check settles the modal is drawn again — a language switch
   or a live-sync lock that arrived meanwhile lands there — the outcome is written into the fresh row
   and focus returns to "Check now". Only an accepted update closes the modal, since the scrim would hide the download status, and the download runs
   after the lock is released, so a Preferences reopened during it closes as usual.
