@@ -283,9 +283,11 @@ import の循環の中にある。
 実機の読みは実機が報告する値のまま保ち、スライダーは近い方の段に止まり、読み出しは保っている値を表示する。
 書込は近い方の段を送る。
 
-**読み出しはどの段もその値のまま表示する**: 10 ms 未満は小数 3 桁、100 ms 未満は 2 桁、それ以上は 1 桁 —
-SSMCS ストリップの時間が表示する精度 (`formatDyn`。`fmtSsmcsMs` がこれを呼ぶ)。1〜10 ms では隣り合う段の
-差が小数 1 桁より小さく (attack の 1.008 と 1.039、hold の 1.06 と 1.10)、小数 1 桁では 2 つの位置が同じに読める。
+**読み出しは、本体の画面がそのコントロールに使う書式で時間を表示する** (`formatTime`。`formatDyn` がこれを呼ぶ):
+Attack (GATE・COMP・DUCKER・SSMCS ストリップ共通) は 10 ms 未満で小数 3 桁、それ以上で 2 桁。COMP と SSMCS の Release、
+GATE の Decay は小数 1 桁。GATE の Hold は 10 ms 未満で小数 2 桁、1 s 未満で 1 桁、1 s 以上は秒で 2 桁。DUCKER の
+Decay は小数 1 桁で、1 s 以上は秒。どの段もそのコントロールの書式でその値のまま表示される。1〜10 ms では隣り合う
+Attack と Hold の段の差が小数 1 桁より小さく (attack の 1.008 と 1.039、hold の 1.06 と 1.10)、多い桁はそこに使われる。
 
 **SSMCS ストリップの Attack と Release はチャンネルの表を使う**: Attack の raw 57 + i は Attack の段 i、Release の
 raw 24 + i は Release の段 i (`ssmcsAttackMs` / `ssmcsReleaseMs`) なので、ストリップはチャンネルの COMP と同じ値を表示する。

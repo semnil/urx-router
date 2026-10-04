@@ -34,15 +34,7 @@ import {
   SSMCS_EQ_BAND_NAMES,
 } from "../core/control/translate";
 import type { DynField, SsmcsEqBandName } from "../core/control/translate";
-import {
-  ssmcsAttackMs,
-  ssmcsCompDrive,
-  ssmcsFreqHz,
-  ssmcsGainDb,
-  ssmcsQ,
-  ssmcsRatio,
-  ssmcsReleaseMs,
-} from "../core/control/vd";
+import { ssmcsCompDrive, ssmcsFreqHz, ssmcsGainDb, ssmcsQ, ssmcsRatio } from "../core/control/vd";
 import { ssmcsEqResponse, ssmcsScResponse } from "../core/eq-response";
 import type { SsmcsBandState, SsmcsScState } from "../core/eq-response";
 import { sidechainTap } from "../core/meters";
@@ -69,7 +61,14 @@ import {
   pickBandMarker,
 } from "./dyn-freq-plot";
 import type { BandMarker } from "./dyn-freq-plot";
-import { fmtSsmcsGain, fmtSsmcsHz, fmtSsmcsMs, fmtSsmcsQ, fmtSsmcsRatio } from "./inspector-format";
+import {
+  fmtSsmcsAttack,
+  fmtSsmcsGain,
+  fmtSsmcsHz,
+  fmtSsmcsQ,
+  fmtSsmcsRatio,
+  fmtSsmcsRelease,
+} from "./inspector-format";
 import { CURVE_PAD, dbGeo, drawDbAxes, drawLiveDot, drawTransferCurve, kneeResponse, transferPlot } from "./dyn-plot";
 import { PLOT_FONT, splitDisplay } from "./dyn-screen";
 import type { DynBar, DynCtx, DynLane, DynPlotGeo, DynPlotProcessor, DynRows } from "./dyn-screen";
@@ -395,9 +394,9 @@ function ssmcsFieldText(f: DynField, v: number): string | undefined {
     case "gain":
       return fmtSsmcsGain(v);
     case "attack":
-      return fmtSsmcsMs(ssmcsAttackMs(v));
+      return fmtSsmcsAttack(v);
     case "release":
-      return fmtSsmcsMs(ssmcsReleaseMs(v));
+      return fmtSsmcsRelease(v);
     case "ratio":
       return fmtSsmcsRatio(ssmcsRatio(v));
     case "scQ":

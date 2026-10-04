@@ -479,7 +479,7 @@ describe("the COMP face", () => {
     const text = (key: string): string => h!.box.querySelector(`[data-dyn-val="${key}"]`)?.textContent ?? "";
     // Attack raw 184 and Release raw 159 are the channel tables' stops 127 and 135.
     expect(text("attack")).toBe("4.122 ms");
-    expect(text("release")).toBe("92.00 ms");
+    expect(text("release")).toBe("92.0 ms");
     expect(text("ratio")).toBe("2.50:1");
     segment(SC_SEG);
     expect(text("scQ")).toBe("1.00");
