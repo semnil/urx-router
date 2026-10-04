@@ -461,7 +461,7 @@ carries a one-line map of the same directories and points here.
   typing into a textarea / `history.ts` undo / redo (`Ctrl/Cmd+Z`,
   `Ctrl/Cmd+Shift+Z`, `Ctrl/Cmd+Y`): gesture boundaries, the keyboard predicate, and the apply sequence over
   `core/plan-history.ts`. One entry runs from the first edit to the first boundary
-  (`pointerup`/`pointercancel`/a window `blur` a macrotask later, so a `click`-handler edit lands inside it — and the next
+  (`pointerup`/`pointercancel`/a window `blur`/a mouse move with no button held a macrotask later, so a `click`-handler edit lands inside it — and the next
   `pointerdown` lands that commit first, or a late macrotask merges two clicks; a stepping-key `keyup`
   outside a text field and `focusout`, both committed **at once**, since nothing is dispatched after them on
   the gesture's behalf and deferring lets an autorepeat outrun the macrotask; a re-arming 300 ms idle
@@ -1551,7 +1551,8 @@ and the rebuild it releases runs in the task after the `focusout`: the `focusout
 that moves the focus — a mouse press before its click, a Tab before the focus lands, a tap before its click — and a
 rebuild there would remove the control the gesture is going to, so the click would reach nothing and the Tab's focus
 would land on a removed button. A press ends at its click, after the target's own handlers, or, for a press that
-produces no click in the panel, in the task after the next pointer release, or when the window comes back from a
+produces no click in the panel, in the task after the next pointer release, at a mouse move with no button held —
+the release the native context menu takes from a right press — or when the window comes back from a
 release it never heard. It does not wait for the app-wide count of pointers down to reach zero: a pointer whose
 release the page never received keeps that count above zero, and the panel would stop updating with it. A press on a
 `<select>` is left to the picker's hold, which its `change` releases. The race harness's `overtake-held-repaint-vs-the-next-gesture` drives
@@ -3420,12 +3421,21 @@ arrived 250 ms after the first one's last event (one sample).
 **A press ends at a mouse move with no button held.** A pan, a node drag or a connect drag on the
 board follows the pointer only while a mouse button is down: a mouse `pointermove` whose `buttons` is
 0 ends the press there — a pan stops, a connect drag draws nothing, a moved node is reported once —
-so a release lost on any route leaves nothing running. The route that was measured is the native
+so a release lost on any route leaves nothing running. The same move ends every other press the app
+tracks, through one predicate (`mouseMovedUnpressed` in `ui/dom.ts`): the undo history's press
+([Undo / redo](#undo--redo)), the Inspector's press hold
+([above](#the-inspector-repaint-versus-an-ime-composition)), the CONSOLE's fader, send-column and knob
+drags, and the tuning screen's cap and plot drags and the refresh its press defers
+([channel-tuning.md](channel-tuning.md)). A move with the button held is still a drag, and a pointer that
+is not a mouse is left to its own release. The route that was measured is the native
 context menu: on macOS's WKWebView (2026-10-03, a page-side pointer probe beside an OS-level event
 tap), a right press on the empty board delivered `pointerdown` (button 2), `gotpointercapture` and
 `contextmenu`, and no `pointerup`, `pointercancel` or `lostpointercapture` followed; with the menu
 dismissed by Escape the pan it started went on following the buttonless cursor until the next click,
-and only where a window `blur` arrived (`endAllPointers` in `graph.ts`) did it stop.
+and only where a window `blur` arrived (`endAllPointers` in `graph.ts`) did it stop. The same route in
+the Inspector, read by hand in the same engine (2026-10-04): a channel switched with a click, a right
+press on blank Inspector space, the menu dismissed by Escape, then `Cmd+Z` — refused with "Finish the
+current drag before undoing", and the channel stayed as switched.
 
 **A select takes the comfortable target as a height.** The same breakpoint gives the rack's and the
 inspector's controls a 40px minimum height, and a `<select>` does not take it that way: WebKit keeps these
@@ -3736,7 +3746,7 @@ one is an edit that silently cannot be undone.
 
 | Boundary | Ends | Timing |
 | --- | --- | --- |
-| `pointerup` / `pointercancel` / window `blur` | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — measured 2026-08-14 on Chromium (over its own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so without this boundary the CONSOLE fader on the unit-facing build would go on following the pointer, and writing, while another application is frontmost. The drags in `console.ts` / `dyn-screen.ts` end at that same event, confirmed in WKWebView (the same gesture leaves the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely |
+| `pointerup` / `pointercancel` / window `blur` / a mouse `pointermove` with no button held | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — measured 2026-08-14 on Chromium (over its own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so without this boundary the CONSOLE fader on the unit-facing build would go on following the pointer, and writing, while another application is frontmost. The drags in `console.ts` / `dyn-screen.ts` end at that same event, confirmed in WKWebView (the same gesture leaves the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely. The buttonless move ends a press whose release never reached the page — the native context menu takes a right press's — and only while a press stands, so a hover leaves an entry an edit with no gesture of its own left open; the rule and its reading are under [Responsive layout (mobile)](#responsive-layout-mobile) |
 | `keyup` of an Arrow / Page / Home / End / Enter / Space key, outside a text field | Keyboard stepping on a fader or knob, which autorepeats one edit per repeat with no other terminator | At once. Nothing is dispatched after a keyup on the gesture's behalf, and the next press is a new gesture — deferring would let an autorepeat outrun the macrotask and merge two presses |
 | `focusout` | The node-name field and the in-frame note editor, which edit the plan on every keystroke | At once |
 | 300 ms idle, re-arming | A wheel-notch burst and an incoming MIDI sweep, which produce no DOM gesture at all | Only armed for edits with no boundary of their own: suppressed while a pointer is down, and while a text field has focus (its `focusout` is the boundary, so a name typed with a pause between letters must not cost an entry per letter) |
@@ -3824,8 +3834,10 @@ An undo is refused, with the reason on the status line and **without spending th
   discard, bounded by the settle's own window. A fetch or Live-sync start whose read carries a model switch
   names the switch instead (`busySwitchRead`), as the edit funnel does for the same window
   ([Aborting on failure](#aborting-on-failure));
-- a **drag** is in progress (a press that has moved), because it holds start values and element
-  references in its own closures that the repaint would rebuild from under it;
+- a **drag** is in progress (a press that has moved with a button held), because it holds start values
+  and element references in its own closures that the repaint would rebuild from under it. A mouse
+  move with no button held ends the press instead of continuing it, so a right press whose release the
+  context menu took does not leave the refusal standing;
 - a modal is open — none of them edits the plan, except the channel tuning screen, which is exactly
   what its sliders do, so an undo taken with that one open belongs to the plan behind it;
 - the patch touches `sampleRate` while any device action holds the link — the rate picker is locked

@@ -16,6 +16,7 @@ import { t } from "../i18n";
 import type { Plan } from "../core/plan";
 import type { PatchTouch, PlanPatch } from "../core/plan-history";
 import { applyPatch, patchTouch, PlanHistoryStack, patchContestNames } from "../core/plan-history";
+import { mouseMovedUnpressed } from "./dom";
 import { ownsNativeUndo } from "./keys";
 
 /** How long after the last edit an entry closes when no pointer or focus boundary
@@ -115,9 +116,19 @@ export class PlanHistory {
       },
       true,
     );
+    const up = (): void => {
+      this.press = "none";
+      // One macrotask later: click and dblclick are dispatched after pointerup, so
+      // a chip toggle's edit arrives after the gesture that produced it ended.
+      this.commitSoon();
+    };
     window.addEventListener(
       "pointermove",
-      () => {
+      (e) => {
+        if (this.press === "none") return;
+        // A mouse moving with no button held has released the press — the native context
+        // menu takes a right press's release — so the move ends it as the release would.
+        if (mouseMovedUnpressed(e)) return up();
         // Only the transition matters. A press that never moves is not a drag, so a
         // script-dispatched pointerdown with no matching pointerup (how a wire is
         // selected) cannot wedge the refusal.
@@ -127,12 +138,6 @@ export class PlanHistory {
       },
       true,
     );
-    const up = (): void => {
-      this.press = "none";
-      // One macrotask later: click and dblclick are dispatched after pointerup, so
-      // a chip toggle's edit arrives after the gesture that produced it ended.
-      this.commitSoon();
-    };
     window.addEventListener("pointerup", up, true);
     window.addEventListener("pointercancel", up, true);
     // A press that never lifts because the window went away must not leave a drag

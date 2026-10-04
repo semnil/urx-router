@@ -197,6 +197,26 @@ describe("the main fader", () => {
     expect(fader.hasPointerCapture(1)).toBe(false);
   });
 
+  // The native context menu takes the release of the press that opened it, so the page
+  // hears a right press and then a mouse moving with no button held. That move ends the
+  // drag; a move with the button held still drives it.
+  it("ends a fader drag at a mouse move with no button held", () => {
+    h = consoleHost();
+    const fader = h.strip("ch1").fader!;
+    const mouse = (type: string, clientY: number, init: PointerEventInit = {}): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, cancelable: true, clientY, pointerId: 1, pointerType: "mouse", ...init });
+    fader.dispatchEvent(mouse("pointerdown", 100, { button: 2, buttons: 2 }));
+    const pressed = main("ch1");
+    window.dispatchEvent(mouse("pointermove", 70, { buttons: 2 }));
+    const moved = main("ch1");
+    expect(moved).not.toBe(pressed);
+
+    window.dispatchEvent(mouse("pointermove", 40, { buttons: 0 }));
+    window.dispatchEvent(mouse("pointermove", 10, { buttons: 0 }));
+    expect(main("ch1")).toBe(moved);
+    expect(fader.hasPointerCapture(1)).toBe(false);
+  });
+
   // The other half of the same registration, and the one nothing else would notice: a
   // drag that ends normally has to stop listening for blurs too. Left registered, every
   // completed drag keeps its closure alive on the window and each later focus loss

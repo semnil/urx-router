@@ -1,5 +1,8 @@
 import { test, expect, type Page } from "./fixtures";
 import { drag, faceplate, port, selectWire } from "./graph-helpers";
+import { chooseOption } from "./choose-option";
+import { en } from "../src/i18n/en";
+import { ja } from "../src/i18n/ja";
 
 // Undo / redo over the plan. What each test really pins is the number of entries a
 // gesture produces: the boundary rules hang off real pointer, key and focus events,
@@ -287,6 +290,62 @@ test("refuses while a fader drag is still in progress", async ({ page }) => {
   await page.mouse.up();
   await undo(page);
   await expect(readout).toHaveText(before);
+});
+
+// The native context menu takes the release of the press that opened it, so the page hears a
+// right press and then a mouse moving with no button held. Headless Chromium opens no menu,
+// so that move is dispatched here; the press is real.
+test.describe("a right press inside the Inspector whose release never arrived", () => {
+  /** A channel's Channel ON row, by the label the active language gives it. */
+  const channelRow = (page: Page, label: string) =>
+    page
+      .locator("#inspector .param")
+      .filter({ has: page.locator(".toggle") })
+      .filter({ hasText: label });
+
+  /** Press the right button on the row's label and move off it with no button held. */
+  async function lostRightPress(page: Page): Promise<void> {
+    const row = (await channelRow(page, en.inspector.channelOn).boundingBox())!;
+    const x = row.x + 6;
+    const y = row.y + row.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down({ button: "right" });
+    await page.locator("#inspector").dispatchEvent("pointermove", {
+      pointerId: 1,
+      pointerType: "mouse",
+      buttons: 0,
+      clientX: x + 40,
+      clientY: y,
+    });
+  }
+
+  test("does not refuse the undo", async ({ page }) => {
+    await node(page, "ch1").click();
+    const row = channelRow(page, en.inspector.channelOn);
+    await row.getByRole("button", { name: "OFF", exact: true }).click();
+    await expect(row.getByRole("button", { name: "OFF", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await lostRightPress(page);
+    await undo(page);
+    await expect(row.getByRole("button", { name: "ON", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(status(page)).not.toHaveText(en.status.undoBusyDrag);
+    await page.mouse.up({ button: "right" });
+  });
+
+  // The press holds the panel's rebuild until it ends, so what shows the hold released is a
+  // repaint that arrives without a pointer: a language switch made from the keyboard.
+  test("does not hold the Inspector's repaint", async ({ page }) => {
+    await node(page, "ch1").click();
+    await expect(channelRow(page, en.inspector.channelOn)).toHaveCount(1);
+    await lostRightPress(page);
+    await page.locator("#btn-prefs").focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#prefs-modal")).toBeVisible();
+    await chooseOption(page.locator("#prefs-lang"), "ja");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#prefs-modal")).toBeHidden();
+    await expect(channelRow(page, ja.inspector.channelOn)).toHaveCount(1);
+    await page.mouse.up({ button: "right" });
+  });
 });
 
 test("Ctrl+Z inside the name field belongs to the field, not to the plan", async ({ page }) => {

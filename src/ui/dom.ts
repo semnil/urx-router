@@ -315,6 +315,14 @@ export function holdInertOnBlur(
   });
 }
 
+/** A `pointermove` from a mouse with no button held: whatever that mouse pressed has been
+ *  released, whether or not the release reached the page — the native context menu takes
+ *  the right button's. Every press the app tracks ends at such a move, as it would at its
+ *  release. */
+export function mouseMovedUnpressed(e: PointerEvent): boolean {
+  return e.pointerType === "mouse" && e.buttons === 0;
+}
+
 /** Pointers the app currently believes are down, app-wide, and what to run when none are.
  *
  * One place answers "is the gesture over", rather than each hold reading the events for
