@@ -283,7 +283,7 @@ export const ja: Messages = {
     insFxRateLocked: "96 kHz 超では Insert FX は使用不可 — 強制的に OFF。",
     insFxRateLockedAt: (effect: string, maxRate: string): string =>
       `${maxRate} 超では ${effect} は使用不可 — 強制的に OFF。`,
-    fx2RateLocked: "FX2 バスは 96 kHz を超えると使用できません。",
+    fx2RateLocked: "FX2 Bus は 96 kHz を超えると使用できません。",
     phantomLockedByHiZ: "先に Hi-Z を切ってください。+48V と Hi-Z は同時にオンにしません",
     hiZLockedByPhantom: "先に +48V を切ってください。+48V と Hi-Z は同時にオンにしません",
     insFxLinkLocked: "Signal Type が STEREO の間は Compander のみ使用可。",

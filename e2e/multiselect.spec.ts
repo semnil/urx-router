@@ -92,3 +92,14 @@ test("clear and Escape both dismiss the selection", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(bar(page)).toBeHidden();
 });
+
+test("under reduced motion the action bar arrives without its slide-in", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await ctrlClick(page, "in.aux");
+  await ctrlClick(page, "in.micline_1_2");
+  await expect(bar(page)).toBeVisible();
+  await expect.poll(() => bar(page).evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
+  // The pen beside each note-less node changes opacity at once too.
+  const pen = page.locator("#graph-host .note-add").first();
+  await expect.poll(() => pen.evaluate((el) => getComputedStyle(el).transitionDuration)).toBe("0s");
+});

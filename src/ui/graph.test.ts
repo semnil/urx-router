@@ -35,7 +35,7 @@ import {
   wireHit,
 } from "./graph.test-util";
 import type { GraphFixture, GraphOptions } from "./graph.test-util";
-import { LEVEL_MIN_DB } from "../core/plan";
+import { LEVEL_MIN_DB, LEVEL_OFF_DB } from "../core/plan";
 import type { Plan } from "../core/plan";
 import { defaultPlan } from "../models/initial-state";
 import { isFixedConnection } from "../core/routing";
@@ -147,6 +147,52 @@ describe("appearance", () => {
     fx.plan.nodeParams["bus.mix1"] = { ...fx.plan.nodeParams["bus.mix1"], busType: BUS_TYPE_FIXED };
     fx.graph.repaintWires();
     expect(marked()).toEqual({ dashed: false, tagged: false });
+  });
+
+  // A FIXED bus takes the send at a fixed level, so the plan's -∞ there silences
+  // nothing: the wire stays a live one rather than the dotted OFF send.
+  it("does not draw a send into a FIXED bus as OFF for its level", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        const c = plan.connections.find((w) => w.from === "ch1:out" && w.to === "bus.mix1:in")!;
+        c.params = { ...c.params, on: true, level: LEVEL_OFF_DB };
+      },
+    });
+    const dotted = (): boolean =>
+      wireHit(fx.host, "ch1:out", "bus.mix1:in")!
+        .parentElement!.querySelector(".wire-paint")!
+        .getAttribute("stroke-dasharray") === "1.5 4";
+    expect(dotted()).toBe(true);
+    fx.plan.nodeParams["bus.mix1"] = { ...fx.plan.nodeParams["bus.mix1"], busType: BUS_TYPE_FIXED };
+    fx.graph.repaintWires();
+    expect(dotted()).toBe(false);
+  });
+
+  // The hover rule finds the painted wire by class: a lit wire puts its halo between the
+  // hit band and the paint, where a next-sibling rule would thicken the halo instead.
+  it("tags exactly one painted path per wire, after any halo", () => {
+    fx = graphFixture();
+    const conn = fx.plan.connections.find((c) => c.kind === "send")!;
+    press(wireHit(fx.host, conn.from, conn.to)!);
+    let halos = 0;
+    for (const hit of fx.host.querySelectorAll(".wire-hit")) {
+      const paths = [...hit.parentElement!.querySelectorAll(":scope > path")];
+      const paints = paths.filter((p) => p.classList.contains("wire-paint"));
+      expect(paints).toHaveLength(1);
+      expect(paths.at(-1)).toBe(paints[0]);
+      if (paths.length > 2) halos++;
+    }
+    // The selection lit at least one wire, so the case saw a halo between hit and paint.
+    expect(halos).toBeGreaterThan(0);
+  });
+
+  // An export clones the SVG without the stylesheet, so the pen's resting opacity has to
+  // be on the element for the image to match the board.
+  it("writes the note pen's resting opacity on the element", () => {
+    fx = graphFixture();
+    const pens = fx.host.querySelectorAll(".note-add");
+    expect(pens.length).toBeGreaterThan(0);
+    for (const pen of pens) expect(pen.getAttribute("opacity")).toBe("0.42");
   });
 
   it("shows the device name in place of the model label when asked", () => {
