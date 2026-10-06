@@ -498,7 +498,7 @@ fn configured_min_inner(app: &tauri::AppHandle, label: &str) -> (f64, f64) {
 /// `WindowState` are both crate-private: the only public way to reach a saved
 /// rectangle is the restore this window cannot use. The field names are therefore
 /// a dependency's ON-DISK SCHEMA, not an API — read against
-/// tauri-plugin-window-state 2.4.1, and a bump that renames one is what
+/// tauri-plugin-window-state 2.5.0, and a bump that renames one is what
 /// `parse_saved_window`'s test exists to catch.
 #[cfg(desktop)]
 #[derive(serde::Deserialize)]
@@ -1179,10 +1179,11 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
 
-    // Where the operator left each window. Three plugins in a deliberate order —
-    // `PluginStore` runs setups and window hooks in registration order, which is
-    // the whole mechanism: clear the file before it is read, restore from it, then
-    // correct what the restore produced.
+    // Where the operator left each window, in a deliberate order — `PluginStore` runs
+    // setups in registration order, which is the whole mechanism: clear the files before
+    // they are read, load them into the window-state plugin (which only saves; its own
+    // restore is skipped for both windows), then place the main window from the saved
+    // numbers in one pass (`restore_window`).
     #[cfg(desktop)]
     let builder = builder
         .manage(ClosedWindowScales::default())

@@ -108,7 +108,7 @@ The UI is English-first with a Japanese translation, and **a control reproduced 
 unit's own screens is not translated** — the URX is English on those screens whichever of its three
 display languages is selected, so `Threshold`, `Attack`, `Freq`, `Pan` and the rest read the same in
 both app languages. That is enforced by the compiler rather than by review: every string in
-`src/i18n/en.ts` is wrapped in `dev()` (device label), `fixed()` (identical for a layout reason) or
+`src/i18n/en.ts` is wrapped in `dev()` (device label), `fixed()` (identical for a reason that is not the device) or
 `tr()` (this app's own copy), and a translation of a `dev()` string fails the build. See
 [CONTRIBUTING.md](CONTRIBUTING.md#conventions).
 
