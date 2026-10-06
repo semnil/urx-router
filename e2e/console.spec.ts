@@ -320,8 +320,15 @@ test("the global collapse folds every rack and shows active-send dots; it persis
   const host = page.locator("#console-host");
   await expect(host).not.toHaveClass(/sends-collapsed/);
   // Clicking any SENDS header collapses all racks at once.
+  const arrow = () =>
+    strip(page, "CH 1")
+      .locator(".con-sh .ar")
+      .evaluate((el) => getComputedStyle(el, "::after").content);
+  expect(await arrow()).toBe('"▾"');
   await strip(page, "CH 1").locator(".con-sh").click();
   await expect(host).toHaveClass(/sends-collapsed/);
+  // Folded points up: `▸` on a strip means "opens a screen", and this opens nothing.
+  expect(await arrow()).toBe('"▴"');
   // Collapsed, CH 1 shows one amber dot per active send (all four ship on).
   await expect(strip(page, "CH 1").locator(".con-sh .dots i")).toHaveCount(4);
   await expect(strip(page, "FX 1").locator(".con-sh .dots i")).toHaveCount(2); // MIX 1 + MIX 2

@@ -67,6 +67,25 @@ test.describe("theme", () => {
     await expect(page.locator("#prefs-theme")).toHaveValue("light");
   });
 
+  // A modal's title is a screen title, the role the inspector's heading also has: the same
+  // weight and tracking, not the UA's bold.
+  test("a modal title wears the same screen-title type as the inspector heading", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await page.locator('#graph-host g.node[data-id="ch1"]').click();
+    const heading = page.locator("#inspector h2");
+    await page.click("#btn-prefs");
+    const title = page.locator("#prefs-title");
+    await expect(title).toBeVisible();
+    for (const prop of ["font-weight", "letter-spacing"]) {
+      const want = await heading.evaluate((el, p) => getComputedStyle(el).getPropertyValue(p), prop);
+      const got = await title.evaluate((el, p) => getComputedStyle(el).getPropertyValue(p), prop);
+      // letter-spacing is in ems on both, so the 15 / 16px sizes resolve it differently.
+      if (prop === "font-weight") expect(got).toBe(want);
+      else expect(parseFloat(got) / 16).toBeCloseTo(parseFloat(want) / 15, 3);
+    }
+  });
+
   test("auto mode follows a live OS color-scheme change", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" });
     await page.goto("/");
