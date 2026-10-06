@@ -366,7 +366,7 @@ select#rate-picker:disabled {
 .live-tally {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   flex-shrink: 0;
   white-space: nowrap;
   font-family: var(--mono);
@@ -569,7 +569,7 @@ button.consent-btn-secondary {
 .menu-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
 }
 
 .menu-trigger .caret {
@@ -970,7 +970,7 @@ input[type="range"]:focus-visible,
 .conn-row {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   padding: 5px 0;
   font-size: 13px;
   color: var(--text);
@@ -1177,7 +1177,7 @@ input[type="range"]:focus-visible,
 .swatches {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 8px;
 }
 
 /* Scoped to #inspector to outrank the full-width `#inspector button` rule. */
@@ -1362,7 +1362,7 @@ input[type="range"]:focus-visible,
 
 #inspector button.danger:hover,
 .mw-del:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.12);
 }
 
 [data-theme="light"] #inspector button.danger:hover,
@@ -1467,7 +1467,7 @@ input[type="range"]:focus-visible,
   border: 1px solid var(--ctl-border);
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text);
@@ -1783,7 +1783,7 @@ input[type="range"]:focus-visible,
 
 .selbar-hide:hover,
 .selbar-clear:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.12);
 }
 
 [data-theme="light"] .selbar-hide:hover,
@@ -2200,7 +2200,7 @@ input[type="range"]:focus-visible,
 .con-scribble .name {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   font: 700 11px var(--mono);
   line-height: 1.1;
 }
@@ -2900,8 +2900,10 @@ input[type="range"]:focus-visible,
 .con-sh .ar::after {
   content: "▾";
 }
+/* Folded points up, not right: `▸` is the glyph that goes to a screen (the processing
+   chips), and this header opens nothing — it folds the rack in place. */
 .con-root.sends-collapsed .con-sh .ar::after {
-  content: "▸";
+  content: "▴";
 }
 /* Hovering one header previews the global collapse scope by tinting every header. */
 .con-root.sends-hover .con-sh .lb,
@@ -3118,7 +3120,7 @@ input[type="range"]:focus-visible,
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
 }
 .con-spop .pcol .cap {
   font: 700 7px var(--mono);
@@ -3660,10 +3662,14 @@ input[type="range"]:focus-visible,
   color: var(--text);
   font-family: -apple-system, "Segoe UI", "Meiryo", system-ui, sans-serif;
 }
+/* A screen title, the same role as the inspector's heading: 600 and the same tracking,
+   stated rather than left to the UA's bold. */
 .consent-box h2 {
   margin: 0 0 12px;
   font-family: var(--mono);
   font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   color: var(--text);
 }
 .consent-body p {
@@ -4144,8 +4150,9 @@ button.consent-btn-primary {
   cursor: copy;
 }
 /* A screen row's control is the target, so the ring has to clear the readout beside
-   the slider rather than sit under it. */
-#dyn-screen-box .midi-target {
+   the slider rather than sit under it. A knob card's knob is round and keeps its own
+   radius, as the learn ring does everywhere else, or a learn would square it. */
+#dyn-screen-box .midi-target:not(.con-knob) {
   border-radius: 4px;
 }
 /* The mapped dot is anchored to the ROW here rather than to the control. A console
@@ -4865,7 +4872,7 @@ button.consent-btn-primary {
 }
 .gt-ro {
   display: grid;
-  gap: 1px;
+  gap: 2px;
   padding: 6px 9px;
   background: var(--ctl-bg);
   border: 1px solid var(--ctl-border);
