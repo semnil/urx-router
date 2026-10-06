@@ -607,7 +607,9 @@ export function oneKnobLevelRow(opts: {
 /** A plot beside its meters, in signal order left to right, in separate frames — a
  *  response curve and a level ruler share no axis, and overlaying them would invite
  *  reading a gain off the meter's. Every screen with a plot arranges its display this
- *  way; the CSS wraps the pair to two rows when the plot cannot keep its width. */
+ *  way except the SSMCS bank's MAIN face, which shows its two plots alone (its levels
+ *  are readout tiles there); the CSS wraps the pair to two rows when the plot cannot
+ *  keep its width. */
 export function splitDisplay(parts: DynParts): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "gt-splitdisplay";

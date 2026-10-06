@@ -4583,8 +4583,10 @@ button.consent-btn-primary {
   cursor: pointer;
 }
 /* A plot beside its meters, in signal order: the plot takes the width it can get and the
-   rack takes what its lanes need. Every screen with a plot uses it (the rack-only screens
-   below do not) — response and levels are read together, not as alternatives.
+   rack takes what its lanes need. Every screen with a plot uses it but one — the SSMCS
+   bank's MAIN face draws its two plots with no rack, since a rack beside both leaves each
+   plot too narrow to read, and its levels stay as readout tiles; the rack-only screens
+   below do not use it either — response and levels are read together, not as alternatives.
    Outside a bank the row WRAPS when it runs out of width, rather than squeezing the plot
    to a sliver: `min-width` on the plot is the trigger — below it the two take a row each,
    full width — and the plot is half of what the screen is for.
