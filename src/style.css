@@ -18,11 +18,12 @@
   /* The dim tier is a tier, not a fade: it has to stay legible on every ground
      it lands on. Both themes carry the minimum darkness/lightness that clears
      4.5:1 there — the light value on four grounds, the dark one on the panel
-     and the control faces. Against APCA's Lc 60 (the floor below which neither
-     ink carries a 7-10px silkscreen legend) the dark value reaches 60.7 on the
-     panel and falls just short on the control faces: 59.9 on --ctl-bg and 58.5
-     on --ctl-bg2. */
-  --text-dim: #c2b293;
+     and the control faces. The dark value also clears APCA's Lc 60 (the floor
+     below which neither ink carries a 7-10px silkscreen legend) on every dark
+     ground it lands on, the toolbar gradient's lighter stop included: 60.7 on
+     --ctl-bg2 at the least, 63.3 on --canvas-bg at the most. It is the darkest
+     value of this hue that does; style-scale.contract.test.ts holds the floor. */
+  --text-dim: #c6b696;
   --led: #ffc24d;
   /* The accent as INK. Dark needs no separate value — a lit lamp on a dark
      face already clears AA as text. Light does: --led on the light grounds is
