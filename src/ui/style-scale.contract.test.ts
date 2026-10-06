@@ -7,10 +7,25 @@
 //   popover    a popover tied to a control (the z-index 60 rung) casts one shadow
 //   gap        spacing between items takes a value from one scale
 //   learn      the MIDI learn ring keeps a round control's own radius
+//   dim ink    the dim text tier clears APCA Lc 60 on every ground of its theme
 import { describe, expect, it } from "vitest";
-import { RULES, decl } from "./style-css.test-util";
+import { RULES, THEME_SELECTOR, decl, tokensIn } from "./style-css.test-util";
 
 const parts = (selector: string): string[] => selector.split(",").map((s) => s.trim());
+
+// APCA 0.0.98G, light-on-dark and dark-on-light, as the magnitude of Lc.
+const luminance = (hex: string): number => {
+  const n = parseInt(hex.slice(1), 16);
+  const lin = (c: number) => (c / 255) ** 2.4;
+  return 0.2126729 * lin(n >> 16) + 0.7151522 * lin((n >> 8) & 255) + 0.072175 * lin(n & 255);
+};
+const apcaLc = (text: string, ground: string): number => {
+  const clamp = (y: number) => (y > 0.022 ? y : y + (0.022 - y) ** 1.414);
+  const t = clamp(luminance(text));
+  const b = clamp(luminance(ground));
+  const c = b > t ? (b ** 0.56 - t ** 0.57) * 1.14 : (t ** 0.62 - b ** 0.65) * 1.14;
+  return c < 0.1 ? 0 : (c - 0.027) * 100;
+};
 
 describe("the stylesheet keeps to its scales", () => {
   it("a hover brightens by 1.12 in the dark theme and 0.97 in the light one", () => {
@@ -67,4 +82,21 @@ describe("the stylesheet keeps to its scales", () => {
       .filter((part) => !/:not\(\.con-knob\)/.test(part));
     expect(squaring).toEqual([]);
   });
+
+  it.each(Object.keys(THEME_SELECTOR) as (keyof typeof THEME_SELECTOR)[])(
+    "the %s dim ink clears Lc 60 on every ground it lands on",
+    (theme) => {
+      const tok = { ...tokensIn(THEME_SELECTOR.dark), ...tokensIn(THEME_SELECTOR[theme]) };
+      // The flat grounds, plus every stop of the toolbar gradient: its lighter end is the
+      // hardest ground the dim tier sits on there.
+      const grounds = ["--panel", "--canvas-bg", "--bar-solid", "--ctl-bg", "--ctl-bg2"].map((k) => [k, tok[k]]);
+      for (const stop of tok["--bar"].match(/#[0-9a-f]{6}/gi) ?? []) grounds.push(["--bar", stop]);
+      expect(grounds.length, "the --bar gradient carries no hex stop").toBeGreaterThan(6);
+      const off = grounds
+        .map(([k, g]) => [k, g, apcaLc(tok["--text-dim"], g)] as const)
+        .filter(([, , lc]) => lc < 60)
+        .map(([k, g, lc]) => `${tok["--text-dim"]} on ${k} ${g} → Lc ${lc.toFixed(1)}`);
+      expect(off).toEqual([]);
+    },
+  );
 });
