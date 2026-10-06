@@ -18,8 +18,10 @@
   /* The dim tier is a tier, not a fade: it has to stay legible on every ground
      it lands on. Both themes carry the minimum darkness/lightness that clears
      4.5:1 there — the light value on four grounds, the dark one on the panel
-     and the control faces (APCA Lc 60, the floor below which neither ink
-     carries a 7-10px silkscreen legend). */
+     and the control faces. Against APCA's Lc 60 (the floor below which neither
+     ink carries a 7-10px silkscreen legend) the dark value reaches 60.7 on the
+     panel and falls just short on the control faces: 59.9 on --ctl-bg and 58.5
+     on --ctl-bg2. */
   --text-dim: #c2b293;
   --led: #ffc24d;
   /* The accent as INK. Dark needs no separate value — a lit lamp on a dark
@@ -2779,8 +2781,9 @@ input[type="range"]:focus-visible,
   outline-offset: 1px;
   border-radius: 3px;
 }
-/* A device-locked control (FIXED-bus send level / Pan-Link send pan): shows its
-   value but dimmed and non-interactive, mirroring the graph inspector. */
+/* A device-locked control — a FIXED-bus send's level and send pan, a Pan-Linked send pan,
+   a fader on a bus the rate has removed: shows its value, dimmed and non-interactive. The
+   same send's PRE button takes the chip's own read-only rule. */
 .con-fader.readonly,
 .con-vfad.readonly,
 .con-knob.readonly {
@@ -3170,7 +3173,8 @@ input[type="range"]:focus-visible,
   display: grid;
   /* Seven unless the descriptor names another number (`knobCols`): a guitar amp is one run
      of values and its rows fall wherever seven of them do, while the multi-band compressor
-     is three bands of four and a row of four puts one band on each.
+     takes three, which puts its MAIN face (six cards) and each band face (four) on two rows
+     alike, so moving between its faces does not resize the modal.
 
      Seven rather than six because of what the guitar amp's row break made of six: the
      modulation group and the cabinet come to seven cards, which took two rows there and
@@ -3684,8 +3688,8 @@ input[type="range"]:focus-visible,
   font-weight: 600;
   color: var(--text);
 }
-/* Every modal's footer, separator included. It used to be named on two boxes, so
-   four dialogs had the line and three did not — a difference nothing decided. */
+/* Every modal's footer, separator included — one rule for all eight dialogs, so no
+   dialog can carry the line while another does not. */
 .consent-actions {
   display: flex;
   justify-content: flex-end;
@@ -4519,10 +4523,8 @@ button.consent-btn-primary {
      window it has to survive.
 
      The 520px is the shipped bank's number and the default a face gets. A bank whose
-     tallest face needs more says so from its binding, which sets `--gt-face-min` here: the
-     INS FX guitar amp's AMP face measures 614px in English and 622px in Japanese (Chromium,
-     macOS, 1280x900) against its cabinet face's 520, so without one the modal would jump
-     94px on the segment that moves between them — the jump this rule exists to remove. */
+     tallest face needs more says so from its binding (`faceReserve`), which sets
+     `--gt-face-min` here; no bank does today, so every bank takes the 520. */
   min-height: min(var(--gt-face-min, 520px), calc(100vh - 211px));
   /* Below the reserve the panel would CLIP rather than shrink — a column has nowhere to
      put its rows and the box hides what overflows — so the grid takes a scroll instead of
@@ -4581,18 +4583,17 @@ button.consent-btn-primary {
   cursor: pointer;
 }
 /* A plot beside its meters, in signal order: the plot takes the width it can get and the
-   rack takes what its lanes need. Every tuning screen uses it — response and levels are
-   read together, not as alternatives.
+   rack takes what its lanes need. Every screen with a plot uses it (the rack-only screens
+   below do not) — response and levels are read together, not as alternatives.
    Outside a bank the row WRAPS when it runs out of width, rather than squeezing the plot
-   to a sliver: at the window's 960px minimum the DUCKER's four-lane rack left the canvas
-   72px, and the plot is half of what the screen is for. `min-width` on the plot is the
-   trigger — below it the two take a row each, full width.
-   300px is measured, not chosen: at a 1440px window the DUCKER's row has 655px and its
-   lanes take 331, so anything above 316 makes the pair wrap where it still fits side by
-   side. The EQ (168px of lanes) keeps its row down to about 1050px. What that calibration
-   depends on is the WIDEST lane rack that wraps — re-measure when a wider one arrives
-   rather than assuming the constant still holds. Inside a bank nothing wraps at all: see
-   `.gt-faced` above, where the rule is stated instead of measured. */
+   to a sliver: `min-width` on the plot is the trigger — below it the two take a row each,
+   full width — and the plot is half of what the screen is for.
+   300px sets the WINDOW width at which that happens rather than the most a 1440px window
+   can hold: the DUCKER's rack (its reduction shares the output lane's slot, about 222px)
+   plus the gap and 300 make a 530px row, which a window narrower than about 1060px no
+   longer gives, so the 960px minimum wraps while 1080px keeps the pair side by side. A
+   wider rack moves that edge, so re-read it when one arrives. Inside a bank nothing wraps
+   at all: see `.gt-faced` above, where the rule is stated instead. */
 .gt-splitdisplay {
   display: flex;
   flex-wrap: wrap;

@@ -55,8 +55,9 @@ pnpm tauri dev     # desktop app
   has to pick one.** `dev()` is a control reproduced from one of the unit's own screens: the URX
   is English on those screens whichever of its three display languages is selected, so every
   catalogue repeats the same characters and `ja.ts` will not compile with a translation. `fixed()`
-  is identical for a reason that is not the device (only the CONSOLE strip group separators, which
-  are set in vertical writing mode where a full-width glyph moves the rack's geometry). `tr()` is
+  is identical for a reason that is not the device (mostly the CONSOLE strip — the group separators,
+  set in vertical writing mode where a full-width glyph moves the rack's geometry, and the readout
+  captions beside them — plus names the app supplies where the unit prints none). `tr()` is
   this app's own copy — headings, the legend, hints, status and error text — and each language
   supplies its own wording. Leaving a string unwrapped fails the compile with a message naming the
   file. Which of the three a key takes is a judgement the type system cannot make for you, so say

@@ -656,9 +656,7 @@ function insFxFace(): DynProcessor {
         lanes,
         // A guitar amp's panel is a dozen controls and its display is a level rack with
         // nothing else in it, so the two columns swap. The companders keep the ordinary
-        // order: their display is the point of the screen. The reserve rides with it: both
-        // of the amp's faces answer the same number, which is what keeps the modal still
-        // when the segment moves between them.
+        // order: their display is the point of the screen.
         // A guitar amp is a dozen continuous values against a display that is a level rack
         // and nothing else, and the real control it stands for is a row of knobs. Both
         // halves of that arrangement ride together: the columns swap AND the sliders
