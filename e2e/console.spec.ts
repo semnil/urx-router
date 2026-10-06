@@ -1,4 +1,4 @@
-import { test, expect, scrollsByWheel, type Page } from "./fixtures";
+import { test, expect, colorToken, scrollsByWheel, type Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
@@ -60,6 +60,17 @@ test("the longest channel name (CH 11/12) shrinks a step so it fits its scribble
   await expect(txt).toHaveCSS("font-size", "9px");
   const clipped = await txt.evaluate((n) => n.scrollWidth > n.clientWidth);
   expect(clipped).toBe(false);
+});
+
+// The chip rack rings focus inside the face, and in the dark theme the lit face IS the
+// amber the unlit chip rings in — so a lit chip rings in its own ink instead.
+test("a lit chip's focus ring takes the face's ink, not the lamp", async ({ page }) => {
+  const eqChip = strip(page, "CH 5/6").locator(".con-chip", { hasText: "EQ" }).first();
+  await expect(eqChip).toHaveClass(/\bon\b/);
+  await page.keyboard.press("Shift"); // keyboard modality, so the focus below is :focus-visible
+  await eqChip.focus();
+  await expect(eqChip).toHaveCSS("outline-color", await colorToken(page, "--on-accent-ink"));
+  await expect(eqChip).not.toHaveCSS("outline-color", await colorToken(page, "--led"));
 });
 
 test("the stereo-channel EQ chip locks read-only and off at 192 kHz", async ({ page }) => {

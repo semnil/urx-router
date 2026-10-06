@@ -749,6 +749,18 @@ input[type="range"]:focus-visible,
     0 0 0 4px rgba(0, 0, 0, 0.9);
 }
 
+/* A lit face whose ring sits INSIDE it (a packed rack, offset -2px) has no room for the
+   halo the white ring needs, and white on the lamp is under the floor. The ring takes the
+   face's own ink instead, which is what clears the lamp in both themes. */
+.con-chip.on:focus-visible,
+.con-sl.on:focus-visible,
+.con-slp.on:focus-visible,
+.gt-notes button[aria-pressed="true"]:focus-visible,
+.udk-banks button[aria-pressed="true"]:focus-visible,
+.con-ifxpop .irow.active:focus-visible {
+  outline-color: var(--on-accent-ink);
+}
+
 /* ---- stage ---- */
 
 #stage {
@@ -1538,6 +1550,8 @@ input[type="range"]:focus-visible,
   cursor: pointer;
 }
 
+/* The resting 0.42 is written on the element as well (graph.ts), so an export, which
+   carries no stylesheet, draws the pen at the same opacity the board rests it at. */
 .note-add {
   opacity: 0.42;
   transition: opacity 0.12s ease;
@@ -1554,8 +1568,9 @@ input[type="range"]:focus-visible,
 }
 
 /* Wires carry a wide transparent hit band; on hover, thicken and un-fade the
-   painted wire that follows it so the clickable curve is obvious. */
-.wire-hit:hover + path {
+   painted wire in the same group so the clickable curve is obvious. By class, not as
+   the next sibling: a lit wire draws its halo between the two. */
+.wire-hit:hover ~ .wire-paint {
   stroke-width: 4;
   opacity: 1;
 }
@@ -1714,6 +1729,17 @@ input[type="range"]:focus-visible,
   to {
     opacity: 1;
     transform: translate(-50%, 0);
+  }
+}
+
+/* The bar arrives in place, and the note pen changes opacity at once, when motion is
+   reduced. */
+@media (prefers-reduced-motion: reduce) {
+  .sel-bar {
+    animation: none;
+  }
+  .note-add {
+    transition: none;
   }
 }
 

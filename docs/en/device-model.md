@@ -197,7 +197,8 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
 > (FIXED) or the PAN (Pan Link) accordingly and shows a short note for each lock that applies. The console applies the same
 > locks in the SENDS rack (FIXED locks that MIX column's PRE button and mini-fader and its SEND PAN
 > knob; Pan Link locks the SEND PAN knob), and so does MIDI (a mapped control on a locked value
-> writes nothing).
+> writes nothing). The board follows the same rule for a silent send: a send into a FIXED bus is
+> drawn dimmed and dotted only when its ON is off, never for a stored -∞ level the unit does not apply.
 
 > On the canvas a PRE MIX/FX send is drawn **dashed with an amber "PRE" tap marker just after the
 > source**, so it is visible without selecting the connection. POST (the default) is solid and unmarked,

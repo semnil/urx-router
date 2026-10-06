@@ -24,6 +24,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { CSS, RULES, THEME_SELECTOR, decl, faceDecl, tokensIn } from "./style-css.test-util";
+import type { CssRule } from "./style-css.test-util";
 import { NAMED_TOKENS, recorder, vals } from "./dyn-plot.test-util";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import { defaultPlan } from "../models/initial-state";
@@ -121,5 +122,44 @@ describe("a lit face that carries text uses --led-face, not --led or --seg", () 
     // the screen not at all — while staying green. (A curve that only strokes paints no
     // face and writes no text, so the recorder cannot tell those two apart.)
     expect(effectiveInsertFx(getModel("URX44V"), plan, "ch1"), "CH 1 must hold a compander").toBe(COMPANDER_H);
+  });
+});
+
+// A ring drawn INSIDE a lit face in the lamp's own colour is invisible on it: in the dark
+// theme --led-face IS --led. The packed racks draw their ring inside (offset -2px), so every
+// lit state whose unlit control rings that way has to name a ring of its own. Derived from
+// the stylesheet — the lit faces, then the inset amber ring each one's control wears — so a
+// lit state added tomorrow is covered the day it is written.
+describe("a focus ring drawn inside a lit face does not take the lamp's colour", () => {
+  const LIT_STATE = /(\.on|\.active|\[aria-pressed="true"\])$/;
+  const litSelectors = RULES.filter((r) => faceDecl(r.body) === "var(--led-face)")
+    .flatMap((r) => r.selector.split(",").map((s) => s.trim()))
+    .filter((s) => LIT_STATE.test(s));
+  const ringOf = (selector: string): CssRule | undefined =>
+    RULES.filter((r) =>
+      r.selector
+        .split(",")
+        .map((s) => s.trim())
+        .includes(`${selector}:focus-visible`),
+    ).at(-1);
+
+  it("finds lit states to hold", () => {
+    expect(litSelectors.length).toBeGreaterThan(3);
+  });
+
+  it("every lit state whose control rings inside in amber names an ink ring", () => {
+    const inset: string[] = [];
+    const missing: string[] = [];
+    for (const lit of litSelectors) {
+      const base = ringOf(lit.replace(LIT_STATE, ""));
+      if (!base) continue;
+      const offset = parseFloat(decl(base.body, "outline-offset") ?? "0");
+      if (!(offset < 0 && (decl(base.body, "outline") ?? "").includes("var(--led)"))) continue;
+      inset.push(lit);
+      if (decl(ringOf(lit)?.body ?? "", "outline-color") !== "var(--on-accent-ink)") missing.push(lit);
+    }
+    // The positive control: the racks this exists for are found by the derivation.
+    expect(inset).toEqual(expect.arrayContaining([".con-chip.on", ".con-ifxpop .irow.active"]));
+    expect(missing, "give the lit state `outline-color: var(--on-accent-ink)` on focus").toEqual([]);
   });
 });

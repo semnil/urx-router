@@ -15,6 +15,7 @@ import {
   isStereoLinkedPair,
   legalSources,
   legalTargets,
+  mixSendLocks,
   monoPairOf,
   monoPairsInto,
   pairPrimary,
@@ -1065,6 +1066,9 @@ export class Graph {
       return conn.params?.oscL === false && rOff;
     }
     if (conn.kind !== "send") return false;
+    // A FIXED MIX bus takes the send at a fixed level whatever the plan's level holds,
+    // so -∞ there silences nothing; only the send's ON (checked above) can.
+    if (mixSendLocks(this.plan, toId).busFixed) return false;
     return (conn.params?.level ?? 0) <= LEVEL_MIN_DB;
   }
 
@@ -1404,9 +1408,11 @@ export class Graph {
     });
   }
 
-  /** Button that opens the editor on a note-less node (a pen glyph). */
+  /** Button that opens the editor on a note-less node (a pen glyph). Its resting opacity
+   *  is a presentation attribute as well as a CSS rule: the export clone carries no
+   *  stylesheet, and the CSS states (hover, selected) outrank the attribute on screen. */
   private makeNoteAdd(node: DeviceNode): SVGGElement {
-    return this.makeHeaderButton(node, "note-add", t().tooltip.addNote, (cx, cy, ink) => {
+    const g = this.makeHeaderButton(node, "note-add", t().tooltip.addNote, (cx, cy, ink) => {
       const shaft = document.createElementNS(SVGNS, "path");
       shaft.setAttribute("d", `M ${cx - 4} ${cy + 4} L ${cx + 2} ${cy - 2}`);
       shaft.setAttribute("stroke", ink);
@@ -1419,6 +1425,8 @@ export class Graph {
       tip.setAttribute("stroke-linecap", "round");
       return [shaft, tip];
     });
+    g.setAttribute("opacity", "0.42");
+    return g;
   }
 
   /** The in-frame note area below the header: recessed well, seam and text. */
@@ -1649,6 +1657,7 @@ export class Graph {
     }
 
     const path = document.createElementNS(SVGNS, "path");
+    path.classList.add("wire-paint");
     path.setAttribute("d", d);
     path.setAttribute("fill", "none");
     path.setAttribute("stroke", color);
