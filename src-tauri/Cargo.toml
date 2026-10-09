@@ -55,3 +55,10 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_Power",
   "Win32_System_Threading",
 ] }
+
+# midir comes from a fork: the released 0.11.0's CoreMIDI input handler slices
+# past a packet that ends before its message does and aborts the process
+# (Boddlnagg/midir#160). The fork is 0.11.0 plus a bound that ends such a
+# message at the packet's end, pinned by commit.
+[patch.crates-io]
+midir = { git = "https://github.com/semnil/midir", rev = "9c98d83e0657eec7423120557d68d2aabc61d4ae" }
