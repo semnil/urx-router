@@ -13,6 +13,7 @@
 // silently slid to another port would leave Playwright polling the one it was
 // told about, and a run that quietly REUSED a server another checkout started
 // would test that checkout's bundle. Both fail loudly instead.
+import { createServer } from "node:http";
 import { build, preview } from "vite";
 
 const TRACE = process.argv.includes("--trace");
@@ -36,11 +37,37 @@ await build({ mode, build: { outDir } });
 const server = await preview({ mode, build: { outDir }, preview: { port, strictPort: true } });
 console.log(`${outDir} on ${server.resolvedUrls?.local?.[0] ?? `http://localhost:${port}/`}`);
 
+// `localhost` binds ONE loopback, and the browser, which resolves it to both, retries
+// on the other when its connect to the first fails. The same app is served on the
+// other loopback too, so that retry reaches a server. Where that loopback does not
+// exist the twin is skipped; anything else holding the port fails the run, like the
+// preview's own strictPort.
+const twin = await serveOnOtherLoopback(server, port);
+
+/** @returns {Promise<import("node:http").Server | null>} */
+async function serveOnOtherLoopback(served, port) {
+  const bound = served.httpServer.address();
+  if (bound === null || typeof bound === "string") return null;
+  const host = bound.family === "IPv6" ? "127.0.0.1" : "::1";
+  const other = createServer(served.middlewares);
+  return new Promise((resolve, reject) => {
+    other.once("error", (e) => {
+      if (e.code === "EADDRNOTAVAIL" || e.code === "EAFNOSUPPORT") resolve(null);
+      else reject(e);
+    });
+    other.listen(port, host, () => {
+      console.log(`${outDir} also on http://${host.includes(":") ? `[${host}]` : host}:${port}/`);
+      resolve(other);
+    });
+  });
+}
+
 // Playwright stops the web server by signalling this process; close the preview
 // so the port is free for the next run rather than left held by an orphan.
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     server.httpServer.close();
+    twin?.close();
     process.exit(0);
   });
 }
