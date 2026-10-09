@@ -451,6 +451,12 @@ export function focusables(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>('input, select, button, [tabindex="0"]')];
 }
 
+/** Whether a control `focusables` lists is one the Tab key stops on: in the tab order, not
+ *  disabled, and not inside a hidden or inert subtree. */
+export function tabbable(e: HTMLElement): boolean {
+  return e.tabIndex >= 0 && !e.matches(":disabled") && e.closest("[hidden], [inert]") === null;
+}
+
 /** Carry keyboard focus across a rebuild of `host`'s contents. Called BEFORE the
  *  rebuild — it reads the focused element then — and returns the restore to run once
  *  the new DOM is in place, which answers the element it focused (null when there was

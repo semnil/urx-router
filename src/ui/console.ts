@@ -98,7 +98,17 @@ import {
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
-import { el, focusables, mouseMovedUnpressed, onWheelStep, popLeft, popTop, preserveFocus, scrubFloat } from "./dom";
+import {
+  el,
+  focusables,
+  mouseMovedUnpressed,
+  onWheelStep,
+  popLeft,
+  popTop,
+  preserveFocus,
+  scrubFloat,
+  tabbable,
+} from "./dom";
 import { isChord } from "./keys";
 import { fineActive, fineTag } from "./fine";
 import { t } from "../i18n";
@@ -730,6 +740,36 @@ export class Console {
     document.addEventListener("pointerup", pressEnd);
     document.addEventListener("pointercancel", pressEnd);
     this.host.addEventListener("focusout", (e) => this.closeOnFocusLeave(e));
+    this.tapPop.addEventListener("keydown", (e) => this.tabOutOfPopover(e, "tap"));
+    this.sendPanPop.addEventListener("keydown", (e) => this.tabOutOfPopover(e, "pan"));
+    this.typePop.addEventListener("keydown", (e) => this.tabOutOfPopover(e, "ifx"));
+  }
+
+  /**
+   * Leave a popover by Tab at its place in the tab order, which is right after the control
+   * that opened it, rather than at the end of the document where it is appended. Shift+Tab on
+   * its first control closes it and lands on that trigger; Tab on its last control closes it
+   * and lands on the first control after the trigger that takes the focus. Tab between its
+   * own controls is left to the browser.
+   */
+  private tabOutOfPopover(e: KeyboardEvent, kind: "tap" | "pan" | "ifx"): void {
+    if (e.key !== "Tab" || isChord(e)) return;
+    const p = this.popovers.find((x) => x.kind === kind);
+    if (!p || p.openFor === null) return;
+    const rows = focusables(p.box).filter(tabbable);
+    const at = rows.indexOf(document.activeElement as HTMLElement);
+    if (at < 0 || at !== (e.shiftKey ? 0 : rows.length - 1)) return;
+    e.preventDefault();
+    if (kind === "tap") this.closeTapPop(true);
+    else if (kind === "pan") this.closeSendPan(true);
+    else this.closeTypePop(true);
+    const trigger = document.activeElement;
+    if (e.shiftKey || !(trigger instanceof HTMLElement) || !this.host.contains(trigger)) return;
+    const all = focusables(document.body).filter(tabbable);
+    for (const next of all.slice(all.indexOf(trigger) + 1)) {
+      next.focus();
+      if (document.activeElement === next) return;
+    }
   }
 
   /**

@@ -491,6 +491,19 @@ test("the PAN ▾ button opened from the keyboard puts the focus on the first SE
   await page.keyboard.press("Shift+Tab");
   await expect(page.locator(".con-spop")).toBeHidden();
   await expect(btn).toHaveAttribute("aria-expanded", "false");
+  await expect(btn, "Shift+Tab out of the popover lands on the button that opened it").toBeFocused();
+
+  // Tab past the last knob closes it too, and moves on to the control after the button.
+  await page.keyboard.press("Enter");
+  await expect(mix1).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(
+    page.locator('.con-spop .con-knob[aria-label="MIX 2"]'),
+    "up from the first knob is the last",
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".con-spop")).toBeHidden();
+  await expect(strip(page, "CH 1").locator(".con-tap")).toBeFocused();
 });
 
 // Inside the popover Up / Down walk the knobs, wrapping at the ends, and Left / Right step the

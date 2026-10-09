@@ -926,6 +926,30 @@ test("the arrow keys walk the console INS FX list, and Enter picks the row reach
   await expect(pop.locator('.irow[aria-checked="true"] .nm')).toHaveText(next);
 });
 
+// Leaving the list by Tab happens at its place in the tab order, right after the disclosure:
+// Shift+Tab on the first row closes it onto the disclosure, and Tab on the last row closes it and
+// moves on to the control after the disclosure rather than to the top of the document.
+test("Tab out of the console INS FX list lands beside the disclosure that opened it", async ({ page }) => {
+  await page.click("#btn-view-console");
+  const strip = page.locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) });
+  const opener = strip.locator(".con-ifxopen");
+  const pop = page.locator(".con-ifxpop");
+  const rows = pop.locator(".irow[tabindex='0']");
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  await expect(rows.nth(0), "the premise: No Effect, the checked row, leads the list").toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(pop).toBeHidden();
+  await expect(opener).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("End");
+  await expect(rows.last()).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(pop).toBeHidden();
+  await expect(strip.locator('.con-knob[aria-label="A.GAIN"]')).toBeFocused();
+});
+
 // The launcher asks whether the SCREEN would open, not whether the strip holds something.
 // It used to ask the second, which the multi-band compressor satisfied while the screen
 // refused it — so on that strip the row was live, said "open me" and did nothing when

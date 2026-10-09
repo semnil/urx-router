@@ -50,7 +50,8 @@ test("the badge reports its popover open, and the rows sit in a named menu", asy
 });
 
 // From the keyboard the badge puts the focus on the checked row — the popover sits after the
-// whole strip rack in the tab order — and the popover closes once the focus leaves it.
+// whole strip rack in the tab order — and the popover closes once the focus leaves it. Leaving
+// it by Shift+Tab lands on the badge, where the popover stands in the tab order.
 test("the badge opened from the keyboard puts the focus on the checked row", async ({ page }) => {
   const badge = strip(page, "CH 1").locator(".con-tap");
   await badge.focus();
@@ -62,6 +63,22 @@ test("the badge opened from the keyboard puts the focus on the checked row", asy
   await page.keyboard.press("Shift+Tab");
   await expect(page.locator(".con-tappop")).toBeHidden();
   await expect(badge).toHaveAttribute("aria-expanded", "false");
+  await expect(badge).toBeFocused();
+});
+
+// Tab past the last row leaves the popover at its place in the tab order too: it closes, and the
+// focus moves on to the control after the badge on the same strip rather than to the top of the
+// document.
+test("Tab past the meter point's last row closes it and moves on to the strip's fader", async ({ page }) => {
+  const badge = strip(page, "CH 1").locator(".con-tap");
+  await badge.focus();
+  await page.keyboard.press("Enter");
+  const rows = page.getByRole("menu", { name: "METER POINT", exact: true }).getByRole("menuitemradio");
+  await expect(rows.last(), "the premise: POST, the checked row, is the last").toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".con-tappop")).toBeHidden();
+  await expect(badge).toHaveAttribute("aria-expanded", "false");
+  await expect(strip(page, "CH 1").locator(".con-fader")).toBeFocused();
 });
 
 // Inside the menu the arrow keys walk the rows the way the toolbar menus answer them, wrapping at
