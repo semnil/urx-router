@@ -72,7 +72,7 @@ export function drawFreqAxes(c: CanvasRenderingContext2D, g: DynPlotGeo, tok: Re
   c.font = PLOT_FONT;
   c.lineWidth = 1;
   c.strokeStyle = tok["--plot-line"];
-  c.fillStyle = tok["--plot-faint"];
+  c.fillStyle = tok["--plot-dim"];
   c.textAlign = "center";
   for (const hz of FREQ_TICKS) {
     c.beginPath();
@@ -207,9 +207,9 @@ export function drawBandMarkers(
     const { x, y, w, h } = markerRect(c, g, b);
     c.globalAlpha = inert ? 0.3 : b.on ? 1 : 0.35;
     // The ink follows the face. The selected marker is the lit face, so it takes the
-    // dark ink every lit face takes; the rest are the dim face and keep the plot's
-    // ink. Printing --plot-ink on --led left the selected letter at APCA Lc 16.1.
-    c.fillStyle = b.active ? tok["--led-face"] : tok["--plot-dim"];
+    // dark ink every lit face takes; the rest are the faint face, dark enough to carry
+    // the plot's ink.
+    c.fillStyle = b.active ? tok["--led-face"] : tok["--plot-faint"];
     c.beginPath();
     c.roundRect(x - w / 2, y - h / 2, w, h, h / 2);
     c.fill();

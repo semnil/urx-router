@@ -119,9 +119,8 @@ describe("binding", () => {
       expect(keyTapOf(4)).toBe("prefader");
     });
 
-    // PRE FADER is the device default, so an unset Rec Point is that tap. This is not
-    // only a crafted-plan case: the factory plan seeds no `recPoint` on the STEREO
-    // channels at all, so keying a ducker from CH 7/8 takes it on a fresh plan.
+    // PRE FADER is the device default, so an unset Rec Point is that tap — the state of a
+    // node a device read could not reach, which the load's fill does not complete.
     it("falls back to PRE FADER when the source names no Rec Point", () => {
       expect(keyTapOf(undefined)).toBe("prefader");
       expect(keyTapOf(undefined, "ch_7_8")).toBe("prefader");
@@ -138,8 +137,8 @@ describe("binding", () => {
     });
 
     // A mono-only Rec Point on a stereo strip names a tap that strip has not got. The
-    // inspector cannot offer that pairing, but nothing range-checks an enum on load, so
-    // a hand-edited plan, a `?plan=` link or an unexpected device value all reach it.
+    // inspector cannot offer that pairing and the load moves a document's to PRE FADER, but an
+    // unexpected device value still reaches it.
     // The last resort has to be PRE FADER: falling through to `tapFor` would answer
     // POST, which is after the source's own ducker.
     it("keeps a stereo source off POST when its Rec Point names a tap it has not got", () => {
@@ -386,6 +385,36 @@ describe("on screen", () => {
     const withGr = cols.filter((c) => c.querySelector(".gt-shade.gr"));
     expect(withGr.length).toBe(1);
     expect(withGr[0].querySelector(".gt-cap-label")?.textContent).toBe(t().dynTuning.laneOut);
+  });
+
+  // A stereo key reaches the detector summed, so its lane is ONE bar reading that sum —
+  // not two bars, and not one bar reading the L side alone.
+  it("reads a stereo key as the sum the detector takes, on one bar", async () => {
+    const plan = defaultPlan("URX44V");
+    plan.connections.find((c) => c.kind === "key" && c.to === ref(DUCKER, "in"))!.from = ref("bus.stereo", "out");
+    host = dynHost({ live: true, plan });
+    const screen = new DynScreen(host.hooks);
+    screen.open(DUCKER_DYN, DUCKER);
+    const key = DUCKER_DYN.bind(ctxFor(DUCKER, plan))!.lanes[0];
+    expect(key.tap?.r, "the premise: the key tap has two sides").toBeTruthy();
+    await new Promise((r) => setTimeout(r, 0));
+    const [store, , onUpdate] = meterMocks.subscribe.mock.calls.at(-1)! as [
+      { apply(m: { meterId: number; x: number; value: number }): void },
+      unknown,
+      ((m: { meterId: number; x: number; value: number }) => void) | undefined,
+    ];
+    const [l, r] = [key.tap!.l, key.tap!.r!];
+    for (const f of [
+      { meterId: l[0], x: l[1], value: -200 },
+      { meterId: r[0], x: r[1], value: -400 },
+    ]) {
+      store.apply(f);
+      onUpdate?.(f);
+    }
+    for (let i = 0; i < 5; i++) host.frame();
+    const lane = host.box.querySelectorAll(".gt-slot")[0];
+    expect(lane.querySelectorAll(".gt-bar")).toHaveLength(1);
+    expect(readouts(host.box)[0].value).toBe(duckerKeyDb(-20, -40).toFixed(1));
   });
 
   it("subscribes the key, the level pair and the reduction", () => {

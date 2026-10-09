@@ -114,8 +114,8 @@ with the grid between them as the only scrolling region.
 │ ┌────────────────────────┐ ┌──────┐│ PARAMETERS               │
 │ │  transfer curve        │ │0 ┌──┐││ Threshold  ──●──  -50.0 dB
 │ │                     ／ │ │  │  │││ Range      ─●───  -56.0 dB
-│ │                   ／   │ │-50──││← cap        ──●──   20.2 ms
-│ │  _______________／     │ │  │▬▬│││ Hold       ●────   15.3 ms
+│ │                   ／   │ │-50──││← cap        ──●──  20.17 ms
+│ │  _______________／     │ │  │▬▬│││ Hold       ●────  15.30 ms
 │ │                        │ │  │▨▨│││ Decay      ─●───  150.2 ms
 │ │                        │ │-72└──┘│                          │
 │ └────────────────────────┘ │IN  OUT││ METER                   │
@@ -288,6 +288,40 @@ order kept is the one that can be checked against something: the unit's screen.
 `lead` and `tail` are there for a row the unit's screen really does put at either end — the
 1-knob sections are built with `sections` instead, being a stage rather than a row.
 
+### Time values stop where the unit's controls stop
+
+The unit's time controls are tables of stops rather than ranges with one step. Attack is 227 stops from
+0.092 to 80 ms and is one table on GATE (`31`), COMP (`39`) and DUCKER (`262`); GATE Hold (`32`) is 214
+stops from 0.02 to 1960 ms; GATE Decay (`33`) and COMP Release (`40`) are one table of 277 stops from 9.3
+to 999 ms; DUCKER Decay (`263`) is 122 stops from 1.3 to 5000 ms. `core/control/dyn-time-stops.ts` holds
+the four whole, in each parameter's raw unit (µs, ms×100, ms×10), and hands the plan their milliseconds;
+the encoders' windows in `vd.ts` are the tables' ends. It is a module of its own for the reason
+`comp-ratio.ts` is: `vd.ts` and `translate.ts` both read it at module scope, and `translate.ts` sits inside an
+import cycle.
+
+Each field carries its table as `steps`, the shape the Ratio has below: the slider's position is an
+index, every position it can take is a stop, and both ends are positions — the top (80 ms, 1960 ms,
+999 ms, 5000 ms) as much as the bottom, which a linear grid stepped from the bottom could fall short of.
+MIDI resolves the same index ("MIDI assignment").
+
+**A value between two stops** — in a document saved before the fields had tables or a hand-edited one,
+or in a device read reporting one — is treated the way the Ratio treats one. The load moves it to
+the nearer stop and the load report says so; exactly halfway goes to the lower stop. A device read keeps
+the value the unit reports, with the slider resting on the nearer stop and the readout printing the
+value held. A write sends the nearer stop.
+
+**The readout prints a time the way the unit's own screen prints that control** (`formatTime`, which
+`formatDyn` calls): Attack — GATE, COMP, DUCKER and the SSMCS strip alike — three decimals below 10 ms
+and two from there; COMP and SSMCS Release and GATE Decay one decimal; GATE Hold two decimals below
+10 ms, one below 1 s, and seconds with two from there; DUCKER Decay one decimal, in seconds from 1 s.
+Every stop prints as itself in its control's readout. Between 1 and 10 ms neighbouring Attack and Hold
+stops are closer than one decimal (attack 1.008 and 1.039, hold 1.06 and 1.10), and that is where the
+readout spends its extra decimals.
+
+**The SSMCS strip's Attack and Release are the channel tables**: Attack raw 57 + i is the Attack stop i
+and Release raw 24 + i the Release stop i (`ssmcsAttackMs` / `ssmcsReleaseMs`), so the strip shows the
+values the channel COMP shows.
+
 ## COMP
 
 The same three-tap shape one stage downstream — PRE COMP (108) in, COMP GR (110), PRE EQ (111) out —
@@ -311,7 +345,8 @@ answers the same problem better, and a merged lane is on that column's ruler by 
 threshold / ratio / gain / knee — it computes the first three from a single level, and takes the
 knee when the knob engages; with Auto Makeup on, it computes the gain. Each
 recomputation is announced per address (measured), so those rows stay on screen and keep updating —
-tagged, dimmed and read-only — rather than being hidden or recomputed here.
+tagged, dimmed and read-only — rather than being hidden or recomputed here, and the writer does not
+send them (`compDeviceDriven`, below).
 
 **The 1-knob is a section above the parameters, not three rows inside them.** It decides whose the
 rows below it are, which is a different kind of thing from a value they set — and it is how the unit
@@ -370,8 +405,8 @@ The unit's Ratio is a ladder of detents rather than a range with one step: the s
 then `INF:1`. The channel COMP (`36`) and the SSMCS strip's compressor (`98`) stop on the same ratios
 and write them differently — `98` carries the INDEX of the stop, which is what its 0…120 descriptor
 range counts, and `36` carries ratio×100. `core/control/comp-ratio.ts` holds the one table both read,
-in a module of its own because `vd.ts` and `translate.ts` both read it at module scope and the two
-sit inside an import cycle.
+in a module of its own because `vd.ts` and `translate.ts` both read it at module scope and `translate.ts`
+sits inside an import cycle.
 
 The field carries the ladder as a `steps` table, so the slider's position is an index and every
 position it can take is a stop the unit has — a linear range would offer values the unit stops on
@@ -418,7 +453,9 @@ target wants, and the plot carries nothing else a press means.
 
 **The plot is a focus stop and the arrow keys move the band**, the keyboard reach a segmented bar
 would have. A canvas is a single stop, so Left/Right step and Home/End go to the ends. Selecting rebuilds the column, so focus is restored onto the new canvas the
-same way the bars restore theirs. With 1-knob on nothing is selectable and the canvas leaves the tab
+same way the bars restore theirs. The canvas is exposed as a slider over the bands — its value is the
+selected band's index, its value text the band's own name — since a canvas has no text of its own to say
+which band it is set to; the hint stays its accessible name. With 1-knob on nothing is selectable and the canvas leaves the tab
 order rather than standing in it as a stop that does nothing.
 
 **The plot's axes are frequency against gain**, so it carries no live dot. Each band gets a **marker** —
@@ -961,10 +998,14 @@ a slot rather than what is in it.
   adjusts what was selected.
 - **A plot where the response is defined, and nowhere else.** The companders take the transfer
   plot the compressor screens use — the same axes, the same live dot, the same reduction rule —
-  because their response IS their parameters: a window that passes unchanged, an expander under
-  it, the set ratio over the threshold, a limiter past 0 dBFS, and Out Gain moving the whole
-  curve down. The two variants differ in the expander's slope alone (H drops 5 dB per dB under
-  the window, S 1.5). A guitar amp's frequency response and a pitch tracker are not derivable
+  because their response IS their parameters: a window at unity, an expander under it, the set
+  ratio over the threshold and a limiter past 0 dBFS, all of it lifted by the make-up the unit
+  applies of its own, and Out Gain moving the whole curve down. The lift is `min(-T(1 - 1/R), 18)`
+  dB — what brings full scale back to 0 dBFS, up to an 18 dB ceiling past which it stays at 18 —
+  and the window's width does not change it; Out Gain is applied on top of it. The unity
+  reference and the reduction annotation take both out, so the annotation names the reduction
+  from the window's gain at full scale whatever the lift and Out Gain are. The two variants
+  differ in the expander's slope alone (H drops 5 dB per dB under the window, S 1.5). A guitar amp's frequency response and a pitch tracker are not derivable
   from the parameters, and the unit meters neither, so those faces are the lane rack alone —
   which is what `plotGeo` / `drawAxes` / `drawCurve` being optional together is for, and why
   `display` is handed the context: whether the column carries a plot is a question about the
@@ -1226,10 +1267,14 @@ on one line at 16.63px. `--led-ink` IS `--led-face`, so a separator drawn in it 
 face and a full mask reads as one solid block once the gap is gone; lit, the separator takes the ink
 the label takes, softened.
 
-**No family declares a reserved height.** A reserve exists so a bank's faces start their
-controls at the same place. The guitar amp and Pitch Fix are one face each, and the multi-band
-compressor's four are two rows of cards by construction (MAIN six, a band six, three columns), so no
-family needs one and the shared 520px is what every family takes.
+**The INS FX screen declares one reserved height for every family, 548px.** A reserve exists so
+the controls start at the same place whatever the screen shows, and this screen changes family
+without closing: a device follow that replaces the effect re-lays the same modal. The shared 520px is
+below some families' grids in Japanese — with macOS fonts at 1440x900, in Chromium and WebKit, the
+guitar amps' grid is 522.4-523.4px and the multi-band compressor's 525.4px on every face, against
+516.4px for Pitch Fix and 493.4px for the companders. 548px leaves 22.6px over the tallest of them for
+a wider font stack. `e2e/insertfx.spec.ts` opens every family and every multi-band face in Japanese
+and holds them to one height.
 
 **A gesture reads the Key the plan holds, not the one the row was drawn with.** A row's handlers
 close over the context they were built with, and the rebuild that would replace them is deferred for
@@ -1320,10 +1365,11 @@ the family the unit METERS (`hasReduction`: the compander and the multi-band com
 row above is why: a Drive amp's noise gate takes the output from -16 dB to the floor, over 100 dB,
 and moves `132` not once — so attenuation cannot decide it.
 
-The reduction merges into the OUTPUT column, as every reduction on every screen does, and takes no
-offset: the rule is to subtract whatever gain the processor adds, and these add none — the compander's
-makeup reaches 0 dB and only attenuates below it, so the level bar and the reduction hanging off the
-top of the same ruler cannot meet.
+The reduction merges into the OUTPUT column, as every reduction on every screen does, and is shortened by
+the gain the processor adds — the rule every merged reduction follows. For the compander that gain is its
+lift: the meter reads the reduction from the window's gain, the same reading at any Out Gain, and Out Gain
+only attenuates the level, so offsetting by the lift alone keeps the level bar and the reduction hanging
+off the top of the same ruler apart.
 
 **The multi-band compressor is the exception, and it is the only one.** Its reduction is metered per
 BAND — `133:0/1/2` are LOW / MID / HIGH — and each of its band faces carries the one that belongs to
@@ -1388,12 +1434,18 @@ by looking at it. The two crossovers are separately ranged and overlap (L-M reac
 at 42.5 Hz), so the upper one can be set below the lower; the band between them is then given no width
 rather than the three being reordered into a picture that reads as valid.
 
-**A band face: that band's transfer**, on the axes every other compressor screen uses — unity to its
-own threshold, the set ratio above it, its make-up added, and the reduction annotation over it. Out
-Gain is in none of them: that one is applied to the SUM of the three, so folding it into a band's curve
-would say every band is trimmed on its own. A band whose make-up is at the bottom of its range puts out
-nothing at all (`-∞` on the unit) and is drawn off the frame rather than along its floor, where a
-merely quiet band would also be.
+**A band face: that band's transfer** — unity to its own threshold, the set ratio above it, its make-up
+added, and the reduction annotation over it — on an output axis that runs to +18 dB as the COMP screen's
+does, since a band's make-up reaches +18 and a ceiling at 0 dBFS would cut the curve and the annotation
+off the top. The unity reference is lifted by the band's make-up, which the curve carries over its whole
+length. Out Gain is in none of the curves: it is applied to the SUM of the three, so folding it into a
+band's curve would say every band is trimmed on its own. The live dot's output reading is the POST tap,
+after Out Gain, so it is brought back by Out Gain to sit on the curve; and the band's reduction, merged
+into the output column, is shortened by the band's make-up plus Out Gain — the gain between the band's
+input and that column — and never lengthened where the two together take level away. A band whose
+make-up is at the bottom of its range puts out nothing at all (`-∞` on the unit) and is drawn off the
+frame rather than along its floor, where a merely quiet band would also be — with no reduction
+annotation, since the level it is drawn at is a placement rather than a property of the band.
 
 **MAIN's figure is on the CANVAS, and that is what makes it follow a knob.** The display column is
 built once per panel, so a strip of elements there would not: moving L-M Xover from 125 Hz to
@@ -1505,6 +1557,12 @@ disagree about who owns a row. Emitting them would not be merely redundant: anyt
 plan's copy after the knob has computed puts the operator's pre-knob values back on the unit, which
 is what a converge sharing the flush does.
 
+**Whether a driver switch is on is asked of the raw the write sends there** (`insertFxDriverOn`):
+the stored value rounded and bounded to the switch's 0..1, with a value the write does not send at
+all — a boolean, a string — counted as off. The driven sets, `insertFxLockedSlots`, the 1-knob's own
+switch on this screen and Pitch Fix's MIDI Control mode all take it from there, so a value the write
+sends as 0, or not at all, cannot lock eighteen rows the unit is not driving.
+
 The locked rows are **not tagged**, which is this screen's one departure from COMP's treatment. A tag
 says why THIS row cannot be touched and earns its space where some rows carry one and others do not;
 here it is every row of a band face and all but one of MAIN's, for one reason the panel's own line
@@ -1514,7 +1572,11 @@ under the pointer that "no row is ever removed" exists to stop.
 
 ### Where the catalogue's defaults come from
 
-**A `def` is what the screen prints before a device read has filled the plan**, so it is the
+**A `def` is what a selection and a load put in the plan for a slot nobody named, and what the
+screen prints for one the plan does not hold** (`seedInsertFxParams`) — the unit fills an engine
+with those values on the transition into a type and not on a same-value write, so the plan holds
+them rather than leaving the slot to the unit. Pitch Fix's MIDI Control, Scale and note mask have no
+descriptor row and carry theirs in the same catalogue (`insertFxDefaults`). So it is the
 unit's own number or it is a guess — and a guess has a shape no measurement produces: mid-scale
 round numbers, or one value repeated where the unit gives each band its own. The defaults here are
 the unit's.
@@ -1647,9 +1709,10 @@ factory plan and 93 on a URX44 / URX44V, against a converge scope of 618 / 782 c
 reaches the plan until a pair agrees**: an attempt answers with what it WOULD write and only the
 matching one is applied, so a discarded attempt leaves none of its layout behind and a node that fails
 every attempt arrives at its caller holding exactly what it held before. The guard itself is dropped, while the unit's head is not the one
-the SNAPSHOT holds, for the addresses that head LAYS OUT and no others: moved on the panel, the
-snapshot's raws describe the previous layout there, and a slot whose two layouts agree on a number read
-as "still what this session sent". An insert effect's bypass is not laid out by anything — it means
+the SNAPSHOT holds or is not the head the emit was laid out by, for the addresses that head LAYS OUT and
+no others: moved on the panel, the snapshot's raws describe the previous layout there, and a slot whose two
+layouts agree on a number read as "still what this session sent" — and a head that moved and came back to
+the sent one agrees with the snapshot while the emit still describes the layout the park read first. An insert effect's bypass is not laid out by anything — it means
 the same under every effect — so it keeps it, and an unsent edit to it survives an effect the operator
 changed on the unit.
 
@@ -1835,8 +1898,15 @@ anything the app can name — so each one added has to bring its own measured ax
 
 A plan can be loaded — dropped, opened, recalled from the recents — with a tuning screen open over it,
 so `loadPlan` refreshes the screen: it reads the plan through a closure and so holds the new values,
-but nothing else tells it to redraw. The refresh re-resolves the binding too, so a screen whose node or
-processor the new plan does not have closes itself instead of writing into something that is gone.
+but nothing else tells it to redraw. A read that re-authors the plan in place — a Fetch, the Live-sync
+start's read, a `.urxf` import — refreshes it the same way (`rerenderPlan`). The refresh re-resolves the
+binding too, so a screen whose node or processor the new plan does not have closes itself instead of
+writing into something that is gone.
+
+**A close ends the gesture under it.** Escape, and a processor taken away by a follow, both close the
+screen while the button can still be down on the threshold cap or the plot, whose drags hold the pointer
+capture. `close()` ends those drags and drops the press state, and nothing is written while the screen
+is closed — which also covers a value row, whose drag the engine keeps driving after the screen is hidden.
 
 The scrims all share `.consent-scrim`'s one z-index, which makes document order the tiebreak — and on
 its own would put the **load report** behind the tuning screen, where a report about the very drop that
@@ -1856,7 +1926,9 @@ window loses focus, because no engine ends them for you: taking the OS foregroun
 down fires `blur`, fires **no** `pointercancel`, and keeps the pointer capture (measured 2026-08-14 on
 Chromium and on the shipping WKWebView). Without it, a press held through an app switch would go on
 writing into the plan and out to the unit while another application is frontmost, and — since
-`history.ts` also ends its press at a `blur` — the remainder would land in a *new* undo entry.
+`history.ts` also ends its press at a `blur` — the remainder would land in a *new* undo entry. The cap
+and the plot also end at a mouse move with no button held, the release the native context menu takes
+from a right press (the app-wide rule is in architecture.md, "Responsive layout (mobile)").
 
 The cap and the plot are the view's own gestures, so ending them is dropping what the view holds. **A
 value row is a native `<input type="range">`, and the engine owns its drag**, which makes it a different
@@ -1887,7 +1959,7 @@ this screen adds is where a deferred refresh lands. The blur ends the gestures t
 leaves `grabbed` set, because the press is still in flight and a rebuild under it would hand the
 still-held pointer a live control — the state the hold exists to prevent. So the deferral outlives the
 blur, and the refresh runs at the **first** release to arrive: this screen's own `pointerup` or
-`pointercancel`, or the end of the last hold anywhere in the app — which the window coming back also
+`pointercancel`, a mouse move with no button held, or the end of the last hold anywhere in the app — which the window coming back also
 produces, so a return with the button still down lands it there. Whichever runs first clears `grabbed`;
 the others find it already cleared. The one refresh that does not wait is a plan **replaced** under the press —
 the model switch a Fetch or a Live-sync start applies: the plan the press began on is gone, so the screen
@@ -1896,12 +1968,27 @@ neither the row it began on nor the fresh one under the still-held pointer, whic
 driving — and once it ends the rows are drawn again from what the plan holds. The hold in turn asks for the row that is on screen
 rather than the one the gesture started on, since a rebuild may already have replaced it. A rebuilt row
 keeps whatever `disabled` state the rebuild gave it — COMP's 1-knob coming on hands threshold / ratio /
-gain / knee to the device and locks those rows — and it does not get focus back, because the screen's own
-rebuild restores none.
+gain / knee to the device and locks those rows — and a row the rebuild locked does not get focus back.
 
-The inspector defers on the same signal, through the gate that already waits out an IME composition and
-an open `<select>` picker. That one is worth naming because a held row is the only one of the three with
-no end event of its own: a composition ends, a picker closes, and a hold ends on a pointer release the
+**Every rebuild of the screen carries keyboard focus** to the same control in the new box — a value row by
+the field it edits, a control with an id by that id, anything else by its place among the box's controls
+and what it is — the way the CONSOLE and the inspector carry theirs. That includes the operator's own ON/OFF
+press or select change, which rebuild the column under the focused control. The place is counted over every
+control the box builds, tab stop or not, so a lock that takes the cap or the plot out of the tab order does
+not move the controls after it. Focus is dropped where the control is gone or locked, and where the plan was
+**replaced**: the control it was on belongs to a plan that is gone.
+
+**Closing hands focus back to the control that opened the screen**, which the app-wide inert hold does on its
+own while that element is still there. Both surfaces that open a screen can replace it first — the inspector
+rebuilds its panel on the screen's own relayouting edits, and the CONSOLE's INS FX and FX popovers close and
+re-render the rack before the screen opens — so where focus is left on the body or in the hidden screen, the
+screen asks for the launcher by what it opens and for which node (`focusOpener`): the inspector's button while
+the inspector shows that node, or the opener on that node's CONSOLE strip. The same plan rule applies: an
+opener on a plan that has since been replaced is not asked for.
+
+The inspector defers on the same signal, through the gate that already waits out an IME composition, an
+open `<select>` picker and a press inside the panel. That one is worth naming because a held row has no
+end event at the panel: a composition ends and a picker closes, while a hold ends on a pointer release the
 panel never hears — so the gate subscribes to the hold bookkeeping directly.
 
 ## Meter subscription ownership
@@ -2023,31 +2110,29 @@ and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catal
   no enum selector.
 - **The grid is the field table's, and each side reaches it its own way.** The **slider** is a native
   range built from the field: a linear one carries its own `min` / `max` / `step` and its value, a
-  logarithmic one carries positions (`0..logSteps` by 1) that `dynToPos` / `dynFromPos` convert. **MIDI**
-  resolves a position too — a logarithmic field through those same two functions, a linear one through
-  `linearCodec`, built on the same three numbers rather than on shared code. So the two cannot land on
-  different values of one grid, and where a logarithmic field is concerned they cannot even take different
-  routes to it.
-- **…and where the last step lands PAST the maximum, the wire stops on the maximum while the slider
-  stops short of it.** A span that is not a whole number of steps rounds either way. Fall short and the
-  top position is the last value on the grid, like every other one (GATE attack, 0.092..80 by 0.1, tops
-  out at 79.992). Overshoot and `linearCodec` bounds its result into the field's own range: a full-scale
-  message lands on `max` — DUCKER decay 5000, GATE hold 1960, GATE decay and COMP release 999 — against
-  slider tops of 4999.3, 1959.02 and 998.3 (measured in Chromium and WebKit). Bounding rather than
-  snapping down to that grid value is what keeps a reading the UNIT reports at its own ceiling a fixed
-  point: `vdToHold(196000)` is 1960, and a codec answering 1959.02 for it would let a 14-bit feedback
-  echo move it. `controls.test.ts` holds both halves.
+  logarithmic one or one with a stop table carries positions (`0..logSteps`, or the table's indices, by 1)
+  that `dynToPos` / `dynFromPos` convert. **MIDI** resolves a position too — a logarithmic field and a
+  stop table through those same two functions, a linear one through `linearCodec`, built on the same three
+  numbers rather than on shared code. So the two cannot land on different values of one grid, and where a
+  logarithmic field or a stop table is concerned they cannot even take different routes to it.
+- **…and both ends of a field are reachable from the wire, and hold there.** Full scale is the field's
+  `max` and zero its `min`. On a stop table those are its top and bottom stops, which are the unit's own
+  ceiling and floor, so a reading the UNIT reports at either end is a fixed point: `vdToHold(196000)` is
+  1960, and a write of the position that reading sits at lands back on 1960. A linear field's span is a
+  whole number of steps on every GATE / COMP / DUCKER row, so its top is `max` on the grid; `linearCodec`
+  also bounds its result into the field's own range, so a rounded last step never lands past `max`.
+  `controls.test.ts` holds both ends of every GATE / COMP / DUCKER field, and every wire position of each
+  stop table: at 14 bits each stop is a position, while at 7 bits the attack, hold and decay / release
+  tables have more stops than the wire has positions, so a 7-bit controller reaches both ends and lands on
+  a stop everywhere but does not reach every stop.
 - **…except where the control is finer than the wire, and then the WIRE's grid wins.** The Mono Delay
   time runs 1..27000 by 1, which is 27000 settings against a 14-bit controller's 16384 positions, so
   several of its values share a position. Its codec snaps the READING to the wire's grid as well as the
-  writing, which keeps the exactness the engine's echo decision rests on (`core/midi/engine.ts`) true of
-  the reading. **It does not make it true of the value**: an echo of the app's own feedback moves an
-  off-grid setting to the nearest addressable one — one raw, 0.1 ms, once, after which it is idempotent
-  — and that move stays visible rather than silent, since a cc14 arrives as two messages and the
-  intermediate value fires the engine's applied path, so it reaches the dirty flag and the undo ledger
-  like any other edit. What it costs otherwise is resolution over MIDI and nothing else: one notch moves
-  0.165 ms against the 0.1 ms a pointer, a wheel or an arrow key still reaches, and a controller
-  addresses 16384 of the 27000 settings. The step itself is not free to coarsen — it is the only one
+  writing, so a position written reads back as that position. A setting between two positions reads at
+  the nearer one, and the echo of the app's own feedback for it carries exactly that position, which
+  the engine refuses as no edit (`core/midi/engine.ts`): the setting stays where it is. What it costs is
+  resolution over MIDI and nothing else: one notch moves 0.165 ms against the 0.1 ms a pointer, a wheel
+  or an arrow key still reaches, and a controller addresses 16384 of the 27000 settings. The step itself is not free to coarsen — it is the only one
   that puts both official ends and the factory default on the grid.
 - **The screen opens while learn is on.** The `▸` opener is not itself assignable, so it passes the
   arming guard through rather than arming instead of opening.
@@ -2205,7 +2290,7 @@ Which way it gives depends on **who authors the values**:
 
 | The plan… | What closes it | Heads |
 | --- | --- | --- |
-| only **mirrors** them | the plan stops emitting those addresses while the head is engaged, so nothing can push them back | EQ 1-knob (its four bands), COMP 1-knob (`COMP_ONE_KNOB_DRIVEN`, which is also the set the COMP screen locks and tags, so the writer and the screen cannot disagree about who owns a row) |
+| only **mirrors** them | the plan stops emitting those addresses while the head is engaged, so nothing can push them back | EQ 1-knob (its four bands), COMP 1-knob and Auto Makeup (`compDeviceDriven`: the 1-knob's four values, or the gain alone while Auto Makeup is on — Auto Makeup is not a refetch head, so that gain is registered to be followed instead (`planToFollowOnlyAddrs`); the same set the COMP screen locks and tags and the MIDI catalogue refuses, so none of the three can disagree about who owns a row) |
 | genuinely **authors** them | the head declares what it hands to the device (`ParamSpec.drives`) and the converge is told to leave exactly those alone, for that flush and that node | SSMCS Morphing, SSMCS Sweet Spot Data |
 
 **One of those heads is a string.** Selecting a Sweet Spot Data preset recomputes the same

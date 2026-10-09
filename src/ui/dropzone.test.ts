@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   isTauri: vi.fn<() => boolean>(),
-  listenEvent: vi.fn<(event: string, handler: (payload: unknown) => void) => Promise<void>>(),
+  listenEvent: vi.fn<(event: string, handler: (payload: unknown) => void, scope?: string) => Promise<void>>(),
   readBinaryByPath: vi.fn<(path: string) => Promise<Uint8Array>>(),
   readTextByPath: vi.fn<(path: string) => Promise<string>>(),
 }));
@@ -145,6 +145,19 @@ describe("Tauri drops", () => {
     handlers.get("tauri://drag-drop")?.({ paths: ["/one.json", "/two.json"] });
     handlers.get("tauri://drag-drop")?.({});
     expect(rejects).toEqual([["multiple", "one.json"]]);
+  });
+
+  // The MIDI control window raises the same drag events for itself. Registered for every
+  // emitter, the main window's overlay and load would answer a file dropped there too.
+  it("takes the shell's drag events for its own window only", () => {
+    mocks.isTauri.mockReturnValue(true);
+    installDom();
+    initDropzone({ caption: () => "", onReject: vi.fn() });
+    expect(mocks.listenEvent.mock.calls.map(([event, , scope]) => [event, scope])).toEqual([
+      ["tauri://drag-enter", "window"],
+      ["tauri://drag-leave", "window"],
+      ["tauri://drag-drop", "window"],
+    ]);
   });
 
   it("reports shell event registration failure without aborting startup", async () => {

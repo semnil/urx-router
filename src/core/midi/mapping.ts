@@ -59,11 +59,11 @@ export function addrKey(addr: MidiAddr): string {
  * The wire's resolution for an address: how many steps a value crosses on its way
  * out. 7 bits for a CC or a note, 14 for a pair or a pitch bend.
  *
- * This is what decides whether a feedback echo can be an EDIT at all. A value that
+ * This is what decides how a feedback echo is kept from being an EDIT. A value that
  * left at 7 bits comes back decoded onto a neighbouring detent whenever the plan's
- * own grid is finer than 128 steps, so the engine guards those addresses; at 14 bits
- * every control round-trips onto the value it started from (measured over all three
- * models, pinned in controls.test.ts), so their echo cannot change anything.
+ * own grid is finer than 128 steps, so the engine arms a one-shot echo guard on those
+ * addresses; at 14 bits it refuses an incoming position equal to the one the plan's own
+ * value encodes to, which is the position the feedback carried.
  */
 export function wireSteps(addr: MidiAddr): number {
   return addr.type === "cc14" || addr.type === "pitchbend" ? 16383 : 127;

@@ -35,6 +35,7 @@ import {
   SWEET_SPOT_DATA_MAX,
 } from "./vd";
 import { COMP_RATIO_STEPS } from "./comp-ratio";
+import { DYN_ATTACK_STOPS_MS, DYN_RELEASE_STOPS_MS } from "./dyn-time-stops";
 
 describe("SSMCS raw→display encodings (live LCD calibration)", () => {
   it("EQ/SC frequency = 20 × 10^((raw−4)/40): 20 Hz … 20 kHz, 1/12-oct", () => {
@@ -63,16 +64,30 @@ describe("SSMCS raw→display encodings (live LCD calibration)", () => {
     expect(ssmcsCompDrive(100)).toBe(5);
   });
 
-  it("Comp attack = 0.092 × (80/0.092)^((raw−57)/226): 0.092 … 80 ms log", () => {
-    expect(ssmcsAttackMs(SSMCS_ATTACK_RAW_MIN)).toBeCloseTo(0.092, 5); // raw 57
-    expect(ssmcsAttackMs(SSMCS_ATTACK_RAW_MAX)).toBeCloseTo(80, 5); // raw 283
-    expect(ssmcsAttackMs(170)).toBeCloseTo(2.713, 2); // geometric midpoint
+  // Attack raw 57 + i and Release raw 24 + i are the channel tables' stop i — one raw per stop
+  // across the whole range — so the answers below are exact, and the middle ones sit where a
+  // logarithmic law between the ends gives a different value (raw 59: 0.098, raw 214: 10.13,
+  // raw 26: 9.621, raw 164: 99.71).
+  it("Comp attack raw 57 + i is the channel Attack stop i: 0.092 … 80 ms", () => {
+    expect(SSMCS_ATTACK_RAW_MAX - SSMCS_ATTACK_RAW_MIN + 1).toBe(DYN_ATTACK_STOPS_MS.length);
+    expect(ssmcsAttackMs(SSMCS_ATTACK_RAW_MIN)).toBe(0.092); // raw 57
+    expect(ssmcsAttackMs(59)).toBe(0.097);
+    expect(ssmcsAttackMs(214)).toBe(10.12);
+    expect(ssmcsAttackMs(SSMCS_ATTACK_RAW_MAX)).toBe(80); // raw 283
+    expect(ssmcsAttackMs(SSMCS_ATTACK_RAW_MIN - 1)).toBe(0.092);
+    expect(ssmcsAttackMs(SSMCS_ATTACK_RAW_MAX + 1)).toBe(80);
+    expect(ssmcsAttackMs(Number.NaN)).toBe(0.092);
   });
 
-  it("Comp release = 9.3 × (999/9.3)^((raw−24)/276): 9.3 … 999 ms log", () => {
-    expect(ssmcsReleaseMs(SSMCS_RELEASE_RAW_MIN)).toBeCloseTo(9.3, 5); // raw 24
-    expect(ssmcsReleaseMs(SSMCS_RELEASE_RAW_MAX)).toBeCloseTo(999, 5); // raw 300
-    expect(ssmcsReleaseMs(162)).toBeCloseTo(96.39, 1); // geometric midpoint
+  it("Comp release raw 24 + i is the channel Release stop i: 9.3 … 999 ms", () => {
+    expect(SSMCS_RELEASE_RAW_MAX - SSMCS_RELEASE_RAW_MIN + 1).toBe(DYN_RELEASE_STOPS_MS.length);
+    expect(ssmcsReleaseMs(SSMCS_RELEASE_RAW_MIN)).toBe(9.3); // raw 24
+    expect(ssmcsReleaseMs(26)).toBe(9.7);
+    expect(ssmcsReleaseMs(164)).toBe(100.1);
+    expect(ssmcsReleaseMs(SSMCS_RELEASE_RAW_MAX)).toBe(999); // raw 300
+    expect(ssmcsReleaseMs(SSMCS_RELEASE_RAW_MIN - 1)).toBe(9.3);
+    expect(ssmcsReleaseMs(SSMCS_RELEASE_RAW_MAX + 1)).toBe(999);
+    expect(ssmcsReleaseMs(Number.NaN)).toBe(9.3);
   });
 
   // The raw is the INDEX of a stop, not a point on a curve, so every raw has an exact

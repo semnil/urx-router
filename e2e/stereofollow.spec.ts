@@ -28,7 +28,7 @@ test.beforeEach(async ({ page }) => {
 async function liveWithParkedPartner(page: Page) {
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
 
   const grab = (await faceplate(page, "ch2").boundingBox())!;
   await page.mouse.move(grab.x + grab.width * 0.35, grab.y + 12);
@@ -90,7 +90,7 @@ test("a burst wide enough to force a whole-device read snaps the pair too", asyn
 test("a link arriving through a side-effect refetch shows on an already adjacent pair", async ({ page }) => {
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
   await expect(stereoTie(page)).toHaveCount(0);
 
   // The unit holds STEREO on the pair; nothing has told the app yet.

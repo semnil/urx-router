@@ -14,7 +14,10 @@ vi.mock("./fine", () => ({ resetFine: mocks.resetFine }));
 import { getSettings, resetSettingsCache, SETTINGS_DEFAULTS, updateSettings } from "../core/settings";
 import type { AppSettings } from "../core/settings";
 import { setLang, t } from "../i18n";
+import { en } from "../i18n/en";
+import { ja } from "../i18n/ja";
 import { PrefsPanel, type PrefsHooks, type UpdateCheckOutcome } from "./prefs";
+import { decl, RULES } from "./style-css.test-util";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -171,6 +174,48 @@ describe("PrefsPanel", () => {
     expect(scope.querySelector(".prefs-lock")).toBeNull();
   });
 
+  // Every committed change rebuilds the box, and so does a Live sync start or end while it
+  // is open. The grid the rebuild replaces is the box's scrolling region, so neither the
+  // control the operator used nor the offset they scrolled to may go with it: focus left
+  // on <body> sends the next Tab back to the top of the modal.
+  it("keeps the focused control and the grid's scroll offset across a rebuild", () => {
+    const { panel, setLive } = install();
+    panel.open();
+    const grid = (): HTMLElement => document.querySelector(".prefs-grid") as HTMLElement;
+    const first = grid();
+    first.scrollTop = 300;
+
+    const latch = (): HTMLButtonElement => document.querySelectorAll<HTMLButtonElement>("#prefs-fine button")[1];
+    const pressed = latch();
+    pressed.focus();
+    pressed.click();
+    expect(getSettings().fineLatch).toBe(true);
+    expect(grid()).not.toBe(first); // the press really rebuilt the grid
+    expect(document.activeElement).toBe(latch());
+    expect(document.activeElement).not.toBe(pressed);
+    expect(grid().scrollTop).toBe(300);
+
+    const wheel = (): HTMLSelectElement => document.querySelector("#prefs-wheel") as HTMLSelectElement;
+    const changed = wheel();
+    changed.focus();
+    change(changed, "4");
+    expect(getSettings().wheelSteps).toBe(4);
+    expect(document.activeElement).toBe(wheel());
+    expect(document.activeElement).not.toBe(changed);
+    expect(grid().scrollTop).toBe(300);
+
+    // A rebuild with no input at all: Live sync coming up while the modal is open.
+    const save = (): HTMLButtonElement => document.querySelectorAll<HTMLButtonElement>("#prefs-save-scope button")[0];
+    const held = save();
+    held.focus();
+    setLive(true);
+    panel.refresh();
+    expect(row(t().prefs.scope).classList.contains("locked")).toBe(true);
+    expect(document.activeElement).toBe(save());
+    expect(document.activeElement).not.toBe(held);
+    expect(grid().scrollTop).toBe(300);
+  });
+
   it("stores the sleep preference only when the OS hold succeeds", async () => {
     const { panel, hooks } = install();
     vi.mocked(hooks.setPreventSleep).mockResolvedValueOnce("permission denied").mockResolvedValueOnce(null);
@@ -223,8 +268,75 @@ describe("PrefsPanel", () => {
     (document.querySelector("#prefs-update-now") as HTMLButtonElement).click();
     await vi.waitFor(() => expect(document.querySelector("#prefs-update-note")?.textContent).toBe(""));
 
+    vi.mocked(hooks.checkUpdates).mockResolvedValueOnce({ kind: "busy" });
+    (document.querySelector("#prefs-update-now") as HTMLButtonElement).click();
+    await vi.waitFor(() =>
+      expect(document.querySelector("#prefs-update-note")?.textContent).toBe(t().status.deviceLinkBusy),
+    );
+    expect(document.querySelector("#prefs-update-note")?.classList.contains("warn")).toBe(true);
+
     panel.requestClose();
     expect(panel.isOpen()).toBe(false);
+  });
+
+  it("disables the grid while a check is in flight and renders what changed meanwhile at the settle", async () => {
+    const flight = deferred<UpdateCheckOutcome>();
+    const { panel, hooks, setLive } = install();
+    vi.mocked(hooks.checkUpdates).mockReturnValueOnce(flight.promise);
+    panel.open();
+    const controls = () => [
+      ...document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(".prefs-grid button, .prefs-grid select"),
+    ];
+    expect(controls().filter((c) => !c.disabled).length).toBeGreaterThan(0);
+
+    (document.querySelector("#prefs-update-now") as HTMLButtonElement).click();
+    expect(controls().filter((c) => !c.disabled)).toEqual([]);
+
+    // What the shell does on a language switch and on a live-sync change while open.
+    setLang("ja");
+    setLive(true);
+    panel.refresh();
+    expect(document.querySelector("#prefs-title")?.textContent).toBe(en.prefs.title);
+
+    flight.resolve({ kind: "upToDate" });
+    await vi.waitFor(() => expect(document.querySelector("#prefs-update-note")?.textContent).toBe(t().prefs.upToDate));
+    expect(document.querySelector("#prefs-title")?.textContent).toBe(ja.prefs.title);
+    expect((document.querySelector("#prefs-lang") as HTMLSelectElement).disabled).toBe(false);
+    expect((document.querySelector("#prefs-update-now") as HTMLButtonElement).disabled).toBe(false);
+    expect(
+      [...document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button")].every((b) => b.disabled),
+    ).toBe(true);
+    expect((document.querySelector(".consent-btn-secondary") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  // A control the flight disables has to look disabled, whatever kind it is: a toggle or a
+  // select left at its live face reads as usable while it refuses the press. Asked of the
+  // controls the flight actually disables, so a kind added to the grid is covered the day
+  // it is added. A locked row already dims as a whole, so the in-flight dim must not reach
+  // its controls as well.
+  it("gives every control the flight disables a stylesheet dim, and none in a locked row", () => {
+    const flight = deferred<UpdateCheckOutcome>();
+    const { panel, hooks, setLive } = install();
+    setLive(true);
+    vi.mocked(hooks.checkUpdates).mockReturnValueOnce(flight.promise);
+    panel.open();
+    (document.querySelector("#prefs-update-now") as HTMLButtonElement).click();
+    const dims = RULES.filter((r) => decl(r.body, "cursor") === "not-allowed" && decl(r.body, "opacity") !== undefined);
+    const dimmed = (c: Element): boolean => dims.some((r) => r.selector.split(",").some((s) => c.matches(s.trim())));
+    const all = [...document.querySelectorAll<HTMLElement>(".prefs-grid button, .prefs-grid select")];
+    const locked = all.filter((c) => c.closest(".prefs-row.locked"));
+    const flown = all.filter((c) => !c.closest(".prefs-row.locked"));
+    // The premise: every kind of control the grid carries is in flight, and a row is locked.
+    expect(flown.every((c) => (c as HTMLButtonElement).disabled)).toBe(true);
+    for (const kind of [".prefs-btn", ".prefs-toggle button", ".prefs-select"])
+      expect(
+        flown.some((c) => c.matches(kind)),
+        kind,
+      ).toBe(true);
+    expect(locked.length).toBeGreaterThan(0);
+
+    expect(flown.filter((c) => !dimmed(c)).map((c) => c.outerHTML)).toEqual([]);
+    expect(locked.filter(dimmed).map((c) => c.outerHTML)).toEqual([]);
   });
 });
 

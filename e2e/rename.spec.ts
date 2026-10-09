@@ -75,17 +75,17 @@ test("the labels toggle defaults to model labels and flips both ways", async ({ 
   await node(page, "ch1").click();
   await nameInput(page).fill("VocalMic");
   const labels = page.locator("#btn-labels");
-  await expect(labels).toHaveAttribute("aria-pressed", "false");
+  await expect(labels).toHaveAttribute("aria-checked", "false");
   await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
 
   await page.click("#btn-view");
   await labels.click();
-  await expect(labels).toHaveAttribute("aria-pressed", "true");
+  await expect(labels).toHaveAttribute("aria-checked", "true");
   await expect(node(page, "ch1").locator("text").first()).toHaveText("VocalMic");
 
   await page.click("#btn-view");
   await labels.click();
-  await expect(labels).toHaveAttribute("aria-pressed", "false");
+  await expect(labels).toHaveAttribute("aria-checked", "false");
   await expect(node(page, "ch1").locator("text").first()).toHaveText("CH 1");
 });
 
@@ -109,6 +109,22 @@ test("a color swatch adds a top accent cap; re-clicking it clears the cap", asyn
   // Re-clicking the active swatch toggles the color off.
   await page.locator("#inspector .swatch").nth(1).click();
   await expect(cap).toHaveCount(0);
+});
+
+// What a screen reader is handed in the shipping engine's family: the picker as a group the
+// row's label names, each swatch by the unit's own colour name, the chosen one pressed; and
+// a two-button pair and a slider named by their rows.
+test("the inspector's controls are reachable by their names", async ({ page }) => {
+  await node(page, "ch1").click();
+  const picker = page.getByRole("group", { name: "Color" });
+  await expect(picker.getByRole("button")).toHaveCount(11);
+  const green = picker.getByRole("button", { name: "LtGreen", exact: true });
+  await green.click();
+  await expect(picker.getByRole("button", { name: "LtGreen", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(picker.getByRole("button", { name: "Off", exact: true })).toHaveAttribute("aria-pressed", "false");
+  const phantom = page.getByRole("group", { name: "+48V" });
+  await expect(phantom.getByRole("button", { pressed: true })).toHaveCount(1);
+  await expect(page.locator("#inspector").getByRole("slider", { name: "A.Gain" })).toBeVisible();
 });
 
 test("name and color round-trip through save and open", async ({ page }, testInfo) => {

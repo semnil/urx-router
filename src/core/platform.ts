@@ -24,8 +24,19 @@ type ChannelCtor = new <T>() => TauriChannel<T>;
 // Only the event plugin needs it — commands take their callbacks as Channels.
 type TransformCallback = (callback: (payload: unknown) => void, once?: boolean) => number;
 
+// The labels of the window and webview the page runs in, which the shell writes
+// before any page script runs.
+interface TauriMetadata {
+  currentWindow?: { label?: string };
+}
+
 interface TauriGlobals {
-  __TAURI_INTERNALS__?: { invoke?: InvokeFn; Channel?: ChannelCtor; transformCallback?: TransformCallback };
+  __TAURI_INTERNALS__?: {
+    invoke?: InvokeFn;
+    Channel?: ChannelCtor;
+    transformCallback?: TransformCallback;
+    metadata?: TauriMetadata;
+  };
   __TAURI__?: { core?: { invoke?: InvokeFn; Channel?: ChannelCtor } };
 }
 
@@ -177,16 +188,37 @@ export async function nativeReadBinary(path: string): Promise<Uint8Array> {
 }
 
 /**
+ * Which emits an event subscription hears. `"any"` takes the event from every
+ * window and from the app. `"window"` takes only what the shell aims at the window
+ * this page runs in: an event the shell raises for another window (a file dragged
+ * onto the MIDI control window) does not reach it.
+ */
+export type EventScope = "any" | "window";
+
+/**
  * Subscribe to a Tauri webview event (the drag & drop events; commands use
  * Channels instead). Driving the event plugin directly keeps the frontend free of
  * npm runtime dependencies, like the dialog and updater calls above. No-op outside
- * Tauri, where the webview delivers DOM drag & drop events instead.
+ * Tauri, where the webview delivers DOM drag & drop events instead. A `"window"`
+ * subscription in a page whose window label is missing is refused rather than
+ * widened to every window.
  */
-export async function listenEvent<T>(event: string, handler: (payload: T) => void): Promise<void> {
-  const transformCallback = (window as unknown as TauriGlobals).__TAURI_INTERNALS__?.transformCallback;
+export async function listenEvent<T>(
+  event: string,
+  handler: (payload: T) => void,
+  scope: EventScope = "any",
+): Promise<void> {
+  const internals = (window as unknown as TauriGlobals).__TAURI_INTERNALS__;
+  const transformCallback = internals?.transformCallback;
   if (!transformCallback) return;
+  let target: { kind: "Any" } | { kind: "WebviewWindow"; label: string } = { kind: "Any" };
+  if (scope === "window") {
+    const label = internals?.metadata?.currentWindow?.label;
+    if (typeof label !== "string" || label === "") throw new Error("event: the page's window label is unknown");
+    target = { kind: "WebviewWindow", label };
+  }
   const id = transformCallback((message) => handler((message as { payload: T }).payload));
-  await invoke<number>("plugin:event|listen", { event, target: { kind: "Any" }, handler: id });
+  await invoke<number>("plugin:event|listen", { event, target, handler: id });
 }
 
 /** The event a macOS Edit menu click arrives on; the payload is the item id. */
@@ -630,11 +662,29 @@ export async function checkUpdate(): Promise<UpdateInfo | null> {
   return invoke<UpdateInfo | null>("plugin:updater|check", { timeout: UPDATE_CHECK_TIMEOUT_MS });
 }
 
+/** The whole download's deadline, from the request starting to the last byte of the bundle:
+ *  the updater plugin's request timeout is a total one, and the update a check returns carries
+ *  none of its own, so a download whose response stalls is otherwise never settled. A deadline
+ *  rather than an idle bound, so it is set for a slow link carrying the whole bundle. */
+const UPDATE_DOWNLOAD_TIMEOUT_MS = 600_000;
+
 /** Download and install a pending update, reporting progress. The app must be
- * restarted afterwards (see restartApp) for the new bundle to take effect. */
+ * restarted afterwards (see restartApp) for the new bundle to take effect. Rejects
+ * when the download outlives UPDATE_DOWNLOAD_TIMEOUT_MS. */
 export function installUpdate(rid: number, onProgress?: (e: DownloadEvent) => void): Promise<void> {
   const channel = newChannel<DownloadEvent>(onProgress ?? (() => {}));
-  return invoke<void>("plugin:updater|download_and_install", { onEvent: channel, rid });
+  return invoke<void>("plugin:updater|download_and_install", {
+    onEvent: channel,
+    rid,
+    timeout: UPDATE_DOWNLOAD_TIMEOUT_MS,
+  });
+}
+
+/** What the app's own exit puts on disk and closes, done ahead of an install: the window
+ *  geometry and its scales are saved, and the broker session is closed. On Windows the
+ *  updater ends the process from inside the install, past the shell's own exit handler. */
+export function prepareForExit(): Promise<void> {
+  return invoke<void>("prepare_for_exit");
 }
 
 /** Restart the app (process plugin) to launch the freshly installed bundle. */

@@ -12,6 +12,7 @@ import { MODEL_IDS } from "../models";
 import type { ModelId } from "../models/types";
 import { SAMPLE_RATES } from "../core/constraints";
 import { loadJson, saveJson } from "../core/storage";
+import { isPlainRecord } from "../core/plan";
 import type { LabelSource, ThemeName } from "../ui/graph";
 import type { ThemeMode } from "../ui/prefs";
 
@@ -92,13 +93,21 @@ export function seedEmptyRequested(): boolean {
 // one key holds a per-model map.
 type HiddenMap = Partial<Record<ModelId, string[]>>;
 
+/** The stored map, or an empty one when the stored value is not an object: a null, a
+ *  primitive or an array in its place reads as nothing shelved and is replaced by the next
+ *  write. */
+function hiddenMap(): HiddenMap {
+  const raw = loadJson<unknown>(HIDDEN_KEY, {});
+  return isPlainRecord(raw) ? (raw as HiddenMap) : {};
+}
+
 export function loadHidden(id: ModelId): string[] {
-  const list = loadJson<HiddenMap>(HIDDEN_KEY, {})[id];
-  return Array.isArray(list) ? list : [];
+  const list: unknown = hiddenMap()[id];
+  return Array.isArray(list) ? list.filter((v): v is string => typeof v === "string") : [];
 }
 
 export function rememberHidden(id: ModelId, hidden: string[]): void {
-  const map = loadJson<HiddenMap>(HIDDEN_KEY, {});
+  const map = hiddenMap();
   map[id] = hidden;
   saveJson(HIDDEN_KEY, map);
 }

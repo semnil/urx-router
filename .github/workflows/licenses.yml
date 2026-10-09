@@ -30,12 +30,14 @@ jobs:
       # SHA pin drops the branch-name toolchain shorthand, so the channel is
       # passed explicitly. No version tags; Dependabot leaves this pin alone.
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
         with:
           toolchain: stable
       # cargo-about gates its CLI binary behind the non-default `cli` feature, so a
       # prebuilt-less install (install-action's source-build fallback) yields no
       # `cargo-about` binary. Build from source with the feature, cached by version.
       - uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
         with:
           tool: cargo-about@0.9.1
           features: cli
@@ -43,6 +45,7 @@ jobs:
       # list, so a new crate can't silently drop a required notice.
       - run: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
         working-directory: src-tauri
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: third-party-licenses

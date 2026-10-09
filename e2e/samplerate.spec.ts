@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, textContrast } from "./fixtures";
 import type { Page } from "./fixtures";
 import { dialogsOf, setRefusedReads, stubTauriDevice, writesOf } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
@@ -19,7 +19,8 @@ interface StubOptions {
   deviceRate?: number;
   /** Device-side Follow USB state. */
   followUsb?: boolean;
-  /** Reject the Follow USB read, so the clock state cannot be established. */
+  /** Reject the Follow USB read, so the clock state cannot be established — with every
+   *  other read the stub has no value for, so a case keeping one answerable seeds it. */
   failClockRead?: boolean;
   /** The recorder's Track Count in stereo pairs. Unset reads 0, which is no recorder
    *  state at all and warns about nothing. */
@@ -94,13 +95,16 @@ test("a matching rate goes straight to the write confirm", async ({ page }) => {
 });
 
 test("an unreadable clock state cancels the write before anything is sent", async ({ page }) => {
-  await stubDevice(page, { deviceRate: 96000, failClockRead: true });
+  // The Track Count answers, so the clock read is the one refusal in reach: a flow that got
+  // past it would reach the reclock confirm or the choice rather than another refusal.
+  await stubDevice(page, { deviceRate: 96000, failClockRead: true, trackPairs: 8 });
   await startWrite(page);
 
   await expect(page.locator("#rate-choice")).toBeHidden();
+  // The clock refusal's own wording: "Nothing was written" ends two other refusals as well.
   await expect
     .poll(() => dialogsOf(page))
-    .toEqual(expect.arrayContaining([expect.stringContaining("Nothing was written")]));
+    .toEqual(expect.arrayContaining([expect.stringContaining("sample rate and Follow USB state could not be read")]));
   expect(await writesOf(page)).toEqual([]);
 });
 
@@ -124,6 +128,71 @@ test("the Follow USB badge reads as unknown until a device has been read", async
   await expect(badge).toHaveAttribute("aria-pressed", "true");
 });
 
+// Unknown is an operable state — a click reads the device — so its label is held to the
+// same ink as any control's. The dashed border is what tells it from off.
+for (const theme of ["dark", "light"] as const) {
+  test(`the unknown badge's label clears AA in the ${theme} theme`, async ({ page }) => {
+    await page.addInitScript((t) => localStorage.setItem("urx-theme", t), theme);
+    await stubDevice(page, { deviceRate: 48000, followUsb: true });
+    await page.goto("/");
+    const badge = page.locator("#follow-usb");
+    await expect(badge).toHaveAttribute("data-state", "unknown");
+    await expect(badge).toHaveCSS("border-top-style", "dashed");
+    expect(await textContrast(page, badge)).toBeGreaterThanOrEqual(4.5);
+  });
+}
+
+// On is the state that warns, printed in the tally's red on its own tint.
+test("the badge's label clears AA when on, in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await stubDevice(page, { deviceRate: 48000, followUsb: true });
+  await page.goto("/");
+  const badge = page.locator("#follow-usb");
+  await badge.click();
+  await expect(badge).toHaveAttribute("data-state", "on");
+  expect(await textContrast(page, badge)).toBeGreaterThanOrEqual(4.5);
+});
+
+// A first press reads the unit, so a read that fails is reported as a read: nothing was
+// written, and the badge stays unknown.
+test("a first press whose read fails says the read failed and leaves the badge unknown", async ({ page }) => {
+  await stubDevice(page, { deviceRate: 48000, failClockRead: true });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+
+  const badge = page.locator("#follow-usb");
+  await badge.click();
+  await expect
+    .poll(() => dialogsOf(page))
+    .toContainEqual(expect.stringContaining("Could not read the device's Follow USB setting"));
+  expect(await dialogsOf(page)).not.toContainEqual(expect.stringMatching(/write/i));
+  await expect(badge).toHaveAttribute("data-state", "unknown");
+  expect(await writesOf(page)).toEqual([]);
+});
+
+// The badge answers for the unit it was read from. A file that opens a plan of another model
+// switches the model, and the badge goes back to unknown, so the next press reads.
+test("the badge goes back to unknown when an opened plan switches the model", async ({ page }) => {
+  const urx22 = JSON.stringify({ format: "urx-router-plan", version: 2, modelId: "URX22", connections: [] });
+  await stubTauriDevice(page, {
+    values: { [SAMPLE_RATE]: 48000, [FOLLOW_USB]: 1 },
+    commands: { read_text_file: urx22 },
+  });
+  await page.addInitScript(
+    (entries) => localStorage.setItem("urx-recent", JSON.stringify(entries)),
+    [{ path: "/tmp/urx22.json", name: "urx22.json", modelId: "URX22" }],
+  );
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  const badge = page.locator("#follow-usb");
+  await badge.click();
+  await expect(badge).toHaveAttribute("data-state", "on");
+
+  await page.locator(".recent-row").click();
+  await expect(page.locator("#model-picker")).toHaveValue("URX22");
+  await expect(badge).toHaveAttribute("data-state", "unknown");
+});
+
 test("clicking the badge while unknown reads the device instead of toggling it", async ({ page }) => {
   await stubDevice(page, { deviceRate: 48000, followUsb: true });
   await page.goto("/");
@@ -138,8 +207,9 @@ test("clicking the badge while unknown reads the device instead of toggling it",
 // The unit lowers its own Track Count to fit a rate it cannot carry, and nothing the app
 // can write raises it again. The two arms of this dialog do not share that cost: releasing
 // writes the PLAN's rate and can pay it, adopting takes the rate the device is already
-// running and pays nothing. So the warning sits on the release arm rather than in the
-// note, which speaks for the whole dialog.
+// running and pays nothing. So the warning is the release arm's own line, worded to name
+// that arm, rather than in the note, which speaks for the whole dialog. Both lines sit above
+// the three buttons, so the wording is all that ties the warning to its arm.
 test("the release arm names what the plan's rate costs the recorder, and the shared note does not", async ({
   page,
 }) => {
@@ -158,6 +228,7 @@ test("the release arm names what the plan's rate costs the recorder, and the sha
   await expect(releaseNote).toBeVisible();
   await expect(releaseNote).toContainText("16");
   await expect(releaseNote).toContainText("8");
+  await expect(releaseNote).toContainText("Turning Follow USB off");
   // Where it must NOT be: the note belongs to every arm, adopting included.
   await expect(page.locator("#rate-choice-note")).not.toContainText("Track Count");
 

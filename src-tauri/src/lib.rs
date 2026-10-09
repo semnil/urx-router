@@ -5,6 +5,7 @@
 // The vd module adds live hardware control over the Device Center broker.
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use tauri::State;
 
 mod keepawake;
@@ -30,7 +31,8 @@ const RESET_STORAGE_FLAG: &str = "--reset-storage";
 // by ": " and a technical detail (an OS message, a path, an address). The frontend
 // localizes the code and shows the detail as-is (src/i18n error.shell) — a raw
 // message would reach a Japanese dialog in English. Codes here: file-not-found,
-// file-denied, file-io, file-bad-extension; vd.rs and midi.rs carry their own.
+// file-denied, file-io, file-bad-extension, file-no-temp; vd.rs and midi.rs carry
+// their own.
 // menu-absent / menu-io are the exception: the Edit menu is a nicety, so its caller
 // logs them and they are deliberately absent from the localized set.
 
@@ -55,8 +57,9 @@ fn io_error(e: &std::io::Error) -> String {
 // Reject a path whose extension (case-insensitive) is outside the command's
 // allowlist, so each file IO command only touches the file kinds its native
 // dialog offers.
-fn check_extension(path: &str, allowed: &[&str]) -> Result<(), String> {
-    let ext = std::path::Path::new(path)
+fn check_extension(path: impl AsRef<Path>, allowed: &[&str]) -> Result<(), String> {
+    let ext = path
+        .as_ref()
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase());
@@ -73,10 +76,19 @@ fn check_extension(path: &str, allowed: &[&str]) -> Result<(), String> {
 async fn read_text_file(path: String) -> Result<String, String> {
     check_extension(&path, &["json"])?;
     tauri::async_runtime::spawn_blocking(move || {
-        fs::read_to_string(&path).map_err(|e| io_error(&e))
+        fs::read_to_string(read_source(&path, &["json"])?).map_err(|e| io_error(&e))
     })
     .await
     .map_err(file_io)?
+}
+
+/// The file a read of `path` opens: the path resolved, with the command's extension
+/// allowlist asked again of the resolved file — a link with an allowed name does not
+/// make the file it points at one the command may read.
+fn read_source(path: &str, allowed: &[&str]) -> Result<PathBuf, String> {
+    let real = fs::canonicalize(path).map_err(|e| io_error(&e))?;
+    check_extension(&real, allowed)?;
+    Ok(real)
 }
 
 // Read a URX microSD settings file (.urxf). The bytes travel back as the raw IPC
@@ -85,10 +97,11 @@ async fn read_text_file(path: String) -> Result<String, String> {
 #[tauri::command]
 async fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> {
     check_extension(&path, &["urxf"])?;
-    let bytes =
-        tauri::async_runtime::spawn_blocking(move || fs::read(&path).map_err(|e| io_error(&e)))
-            .await
-            .map_err(file_io)??;
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        fs::read(read_source(&path, &["urxf"])?).map_err(|e| io_error(&e))
+    })
+    .await
+    .map_err(file_io)??;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -98,17 +111,37 @@ async fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> 
 /// on disk before the error is raised, and the app aborting cleanly afterwards
 /// no longer helps — there is nothing left to abort back to. The rename is
 /// atomic on the same filesystem, which a sibling temp guarantees.
-fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
+///
+/// The destination is resolved first and written THROUGH: a symlink keeps naming
+/// the file it points at, that file receives the new contents — and is created
+/// there when the link points at nothing yet — and the temp sits beside it, so the
+/// rename stays on that file's filesystem. What the operator set on the replaced
+/// file carries over to the new one — its mode, and on macOS its extended
+/// attributes (Finder tags) and ACL; on Windows the replace itself keeps its ACL,
+/// attributes and alternate data streams. A directory this process cannot write
+/// fails the save as it stands, with the previous file left whole: nothing is
+/// written in place. A file with more than one hard link is replaced the same way,
+/// so the name the save went to gets the new file and the other names keep the old
+/// contents.
+///
+/// `allowed` is the calling command's extension allowlist, asked again of the
+/// resolved path — a link with an allowed name does not make the file it points at
+/// one the command may write.
+fn write_atomic(path: &str, bytes: &[u8], allowed: &[&str]) -> Result<(), String> {
+    let (target, existing) = write_destination(path)?;
+    check_extension(&target, allowed)?;
     // A unique sibling, created exclusively. `{path}.tmp` is a name two writers to the
     // same destination both open — a double-fired save, or a dev build and an installed
     // one exporting to the same file — and the second `write` truncates under the first,
     // so whichever `rename` lands last can install a mixed body over the target: exactly
     // the corruption an atomic write exists to prevent. It also destroyed a pre-existing
     // operator file that happened to be named `plan.json.tmp`.
-    let mut tmp = String::new();
+    let mut tmp = PathBuf::new();
     let mut file = None;
-    for n in 0..64u32 {
-        let candidate = format!("{path}.{}.{n}.tmp", std::process::id());
+    for n in 0..TEMP_NAMES {
+        let mut candidate = target.clone().into_os_string();
+        candidate.push(format!(".{}.{n}.tmp", std::process::id()));
+        let candidate = PathBuf::from(candidate);
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -124,7 +157,7 @@ fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
         }
     }
     let Some(mut file) = file else {
-        return Err("io-error: could not create a temporary file".into());
+        return Err("file-no-temp".into());
     };
     {
         use std::io::Write;
@@ -135,17 +168,136 @@ fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
         }
     }
     drop(file);
-    if let Err(e) = fs::rename(&tmp, path) {
+    let installed = if existing {
+        carry_metadata(&target, &tmp).and_then(|()| replace_existing(&target, &tmp))
+    } else {
+        fs::rename(&tmp, &target)
+    };
+    if let Err(e) = installed {
         let _ = fs::remove_file(&tmp);
         return Err(io_error(&e));
     }
     Ok(())
 }
 
+/// The path a write to `path` lands on, and whether a file is there already. An
+/// existing destination is its resolved path. A symlink whose target does not exist
+/// names that target, followed link by link, so the write creates the file the link
+/// points at and the link stays a link. A path that names nothing is itself, new.
+fn write_destination(path: &str) -> Result<(PathBuf, bool), String> {
+    match fs::canonicalize(path) {
+        Ok(real) => return Ok((real, true)),
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(io_error(&e)),
+        Err(_) => {}
+    }
+    let mut at = PathBuf::from(path);
+    for _ in 0..LINK_HOPS {
+        match fs::symlink_metadata(&at) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let next = fs::read_link(&at).map_err(|e| io_error(&e))?;
+                at = match at.parent() {
+                    Some(dir) => dir.join(next),
+                    None => next,
+                };
+            }
+            Ok(_) => return Ok((at, true)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((at, false)),
+            Err(e) => return Err(io_error(&e)),
+        }
+    }
+    Err(file_io("too many levels of symbolic links"))
+}
+
+/// How many temp names `write_atomic` tries beside a destination: `{target}.{pid}.{n}.tmp`
+/// for each `n` below this.
+const TEMP_NAMES: u32 = 64;
+
+/// How many symlinks `write_destination` follows before it gives up on a chain.
+const LINK_HOPS: usize = 32;
+
+/// Give the temp file what the operator set on the file it replaces: the mode, and
+/// on macOS the extended attributes and the ACL. `copyfile` is asked for those two
+/// alone — its STAT half would also stamp the replaced file's modification time on
+/// the new contents. Windows carries all of it in `replace_existing`.
+fn carry_metadata(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let c = |p: &Path| {
+            std::ffi::CString::new(p.as_os_str().as_bytes())
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+        };
+        let (src, dst) = (c(from)?, c(to)?);
+        // SAFETY: both are NUL-terminated paths that outlive the call, and a null state
+        // asks copyfile to allocate and free its own.
+        let rc = unsafe {
+            libc::copyfile(
+                src.as_ptr(),
+                dst.as_ptr(),
+                std::ptr::null_mut(),
+                libc::COPYFILE_ACL | libc::COPYFILE_XATTR,
+            )
+        };
+        if rc < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    #[cfg(unix)]
+    fs::set_permissions(to, fs::metadata(from)?.permissions())?;
+    #[cfg(not(unix))]
+    let _ = (from, to);
+    Ok(())
+}
+
+/// Put the temp file in the place of an existing one.
+#[cfg(not(windows))]
+fn replace_existing(target: &Path, tmp: &Path) -> std::io::Result<()> {
+    fs::rename(tmp, target)
+}
+
+/// Put the temp file in the place of an existing one with `ReplaceFileW`, which
+/// merges the replaced file's ACL, attributes and alternate data streams into the
+/// replacement; a plain rename would leave the replacement's own. A merge that
+/// fails fails the replace, and the replaced file keeps its contents.
+///
+/// Two failures are finished with a rename instead: a destination that is gone by
+/// now, which leaves nothing to merge, and the one where the replaced file has
+/// already been removed and the replacement still carries its temp name — moving it
+/// is what completes the replace rather than leaving neither under the name.
+#[cfg(windows)]
+fn replace_existing(target: &Path, tmp: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_UNABLE_TO_MOVE_REPLACEMENT};
+    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+    let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(Some(0)).collect() };
+    let (replaced, replacement) = (wide(target), wide(tmp));
+    // SAFETY: both are NUL-terminated wide paths that outlive the call; the backup name
+    // and the two reserved arguments are null, as the call allows.
+    let ok = unsafe {
+        ReplaceFileW(
+            replaced.as_ptr(),
+            replacement.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if ok != 0 {
+        return Ok(());
+    }
+    let e = std::io::Error::last_os_error();
+    match e.raw_os_error().map(|code| code as u32) {
+        Some(ERROR_FILE_NOT_FOUND | ERROR_UNABLE_TO_MOVE_REPLACEMENT) => fs::rename(tmp, target),
+        _ => Err(e),
+    }
+}
+
 #[tauri::command]
 async fn write_text_file(path: String, contents: String) -> Result<(), String> {
-    check_extension(&path, &["json", "md"])?;
-    tauri::async_runtime::spawn_blocking(move || write_atomic(&path, contents.as_bytes()))
+    const ALLOWED: &[&str] = &["json", "md"];
+    check_extension(&path, ALLOWED)?;
+    tauri::async_runtime::spawn_blocking(move || write_atomic(&path, contents.as_bytes(), ALLOWED))
         .await
         .map_err(file_io)?
 }
@@ -171,9 +323,10 @@ async fn write_binary_file(request: tauri::ipc::Request<'_>) -> Result<(), Strin
     .decode_utf8()
     .map_err(file_io)?
     .into_owned();
-    check_extension(&path, &["png", "pdf"])?;
+    const ALLOWED: &[&str] = &["png", "pdf"];
+    check_extension(&path, ALLOWED)?;
     let bytes = bytes.clone();
-    tauri::async_runtime::spawn_blocking(move || write_atomic(&path, &bytes))
+    tauri::async_runtime::spawn_blocking(move || write_atomic(&path, &bytes, ALLOWED))
         .await
         .map_err(file_io)?
 }
@@ -386,9 +539,10 @@ fn prepare_modified_requested() -> bool {
     take_launch_action(&TAKEN, "--prepare-modified")
 }
 
-// True when launched with --reset-storage: the frontend clears its localStorage
-// (theme / model / meter points / consent gate / …) once on startup before reading
-// any of it, then boots clean. The browser dev app uses the ?reset URL instead.
+// True when launched with --reset-storage: the frontend asks this at the top of its
+// startup, clears its localStorage (theme / model / meter points / consent gate / …)
+// once the answer arrives, and reloads to boot clean. The browser dev app uses the
+// ?reset URL instead.
 // The window geometry is the one remembered thing that is not in localStorage;
 // `reset_window_state_plugin` clears that half, before any window is created.
 #[tauri::command]
@@ -672,7 +826,7 @@ fn save_window_scales(app: &tauri::AppHandle) {
     // can be written.
     if let Err(e) = fs::create_dir_all(&dir)
         .map_err(|e| io_error(&e))
-        .and_then(|()| write_atomic(&path.to_string_lossy(), &body))
+        .and_then(|()| write_atomic(&path.to_string_lossy(), &body, &["json"]))
     {
         eprintln!("window scale save: {e}");
     }
@@ -903,8 +1057,8 @@ fn vd_params_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
 
 // Watch the held-open live connection: the worker pushes a single LinkEvent
 // through the channel if the broker link drops while idle, so the UI can drop a
-// live session instead of silently freezing. Fire-and-forget, like the
-// subscriptions; the channel dies with the worker on disconnect.
+// live session instead of silently freezing. Fire-and-forget; the channel dies
+// with the worker on disconnect.
 #[tauri::command]
 fn vd_watch_link(
     state: State<vd::VdState>,
@@ -919,6 +1073,23 @@ fn vd_watch_link(
 #[tauri::command]
 fn vd_disconnect(state: State<vd::VdState>, epoch: u64) {
     vd::disconnect(&state, epoch);
+}
+
+/// What the app's own exit does at `RunEvent::Exit`, done ahead of an update install:
+/// the window geometry and its scales go to disk, and the broker session is closed
+/// (bounded, the same wait the exit takes). On Windows the updater ends the process
+/// from inside its install command, where no `RunEvent::Exit` follows. Async, so the
+/// bounded wait runs off the main thread the window reads are answered on.
+#[tauri::command]
+async fn prepare_for_exit(app: tauri::AppHandle) {
+    use tauri::Manager;
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_window_state::AppHandleExt;
+        let _ = app.save_window_state(WINDOW_STATE_FLAGS);
+        save_window_scales(&app);
+    }
+    vd::shutdown_blocking(&app.state::<vd::VdState>());
 }
 
 // External MIDI control: the frontend maps incoming MIDI messages onto console
@@ -1292,6 +1463,7 @@ pub fn run() {
             vd_params_unsubscribe,
             vd_watch_link,
             vd_disconnect,
+            prepare_for_exit,
             vd_link_stats,
             append_link_log,
             append_midi_log,
@@ -1584,7 +1756,7 @@ mod tests {
         let decoy = dir.join("plan.json.tmp");
         std::fs::write(&decoy, b"the operator's own file").unwrap();
 
-        super::write_atomic(target.to_str().unwrap(), b"{}").unwrap();
+        super::write_atomic(target.to_str().unwrap(), b"{}", &["json"]).unwrap();
 
         assert_eq!(std::fs::read(&target).unwrap(), b"{}");
         assert_eq!(
@@ -1600,6 +1772,308 @@ mod tests {
             .filter(|n| n != "plan.json" && n != "plan.json.tmp")
             .collect();
         assert!(strays.is_empty(), "left behind: {strays:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The names in `dir`, for asserting that a write left nothing of its own behind.
+    fn names_in(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    // A save over an existing file replaces its CONTENTS. A symlink chosen in the save
+    // panel keeps naming the file it pointed at, and that file is the one that takes the
+    // save — the temp beside it, so nothing is left in either directory.
+    #[cfg(unix)]
+    #[test]
+    fn an_atomic_write_goes_through_a_symlink_to_the_file_it_names() {
+        let dir = scratch_dir("atomic-link");
+        let (here, there) = (dir.join("docs"), dir.join("synced"));
+        std::fs::create_dir_all(&here).unwrap();
+        std::fs::create_dir_all(&there).unwrap();
+        let real = there.join("studio.json");
+        std::fs::write(&real, b"old").unwrap();
+        let link = here.join("studio.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        super::write_atomic(link.to_str().unwrap(), b"new", &["json"]).unwrap();
+
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the link is still a link"
+        );
+        assert_eq!(
+            std::fs::read(&real).unwrap(),
+            b"new",
+            "the file it names took the save"
+        );
+        assert_eq!(names_in(&here), vec!["studio.json"]);
+        assert_eq!(names_in(&there), vec!["studio.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The extension allowlist is asked of the file the write lands on as well as of the
+    // name the dialog returned: a link named like a plan does not make the file it
+    // points at one a plan save may overwrite.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_with_an_allowed_name_does_not_open_its_target_to_a_write() {
+        let dir = scratch_dir("atomic-ext");
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("notes.txt");
+        std::fs::write(&real, b"keep").unwrap();
+        let link = dir.join("plan.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let e = super::write_atomic(link.to_str().unwrap(), b"{}", &["json"]).unwrap_err();
+
+        assert!(e.starts_with("file-bad-extension"), "{e}");
+        assert_eq!(std::fs::read(&real).unwrap(), b"keep");
+        assert_eq!(names_in(&dir), vec!["notes.txt", "plan.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A link that points at nothing yet is still the operator's choice of where the
+    // save goes: the file it names is created there, through a chain of links and a
+    // relative one, and the link stays a link rather than becoming the file.
+    #[cfg(unix)]
+    #[test]
+    fn an_atomic_write_through_a_dangling_link_creates_the_file_it_names() {
+        let dir = scratch_dir("atomic-dangling");
+        let (here, there) = (dir.join("docs"), dir.join("synced"));
+        std::fs::create_dir_all(&here).unwrap();
+        std::fs::create_dir_all(&there).unwrap();
+        let link = here.join("studio.json");
+        let hop = there.join("studio.json");
+        std::os::unix::fs::symlink("../synced/studio.json", &link).unwrap();
+        std::os::unix::fs::symlink("final.json", &hop).unwrap();
+
+        super::write_atomic(link.to_str().unwrap(), b"new", &["json"]).unwrap();
+
+        for l in [&link, &hop] {
+            assert!(
+                std::fs::symlink_metadata(l)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "{} is still a link",
+                l.display()
+            );
+        }
+        assert_eq!(std::fs::read(there.join("final.json")).unwrap(), b"new");
+        assert_eq!(names_in(&here), vec!["studio.json"]);
+        assert_eq!(names_in(&there), vec!["final.json", "studio.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The allowlist is asked of the file a dangling link would create, as it is of one
+    // that exists: a link named like a plan does not make a text file one to write.
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_with_an_allowed_name_does_not_create_its_target() {
+        let dir = scratch_dir("atomic-dangling-ext");
+        std::fs::create_dir_all(&dir).unwrap();
+        let link = dir.join("plan.json");
+        std::os::unix::fs::symlink("notes.txt", &link).unwrap();
+
+        let e = super::write_atomic(link.to_str().unwrap(), b"{}", &["json"]).unwrap_err();
+
+        assert!(e.starts_with("file-bad-extension"), "{e}");
+        assert_eq!(names_in(&dir), vec!["plan.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A file other names share is replaced like any other: the name the save went to
+    // gets the new file whole, and the other name keeps the old contents.
+    #[test]
+    fn a_hard_linked_file_is_replaced_under_the_name_saved_to() {
+        let dir = scratch_dir("atomic-hard");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("plan.json");
+        let other = dir.join("backup.json");
+        std::fs::write(&target, b"the old contents").unwrap();
+        std::fs::hard_link(&target, &other).unwrap();
+
+        super::write_atomic(target.to_str().unwrap(), b"new", &["json"]).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert_eq!(std::fs::read(&other).unwrap(), b"the old contents");
+        assert_eq!(names_in(&dir), vec!["backup.json", "plan.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A read asks the allowlist of the file it opens as well as of the name it was
+    // handed: a link named like a plan or a settings file does not make the file it
+    // points at one the command may read. The same link onto an allowed file reads it.
+    #[cfg(unix)]
+    #[test]
+    fn a_read_asks_the_allowlist_of_the_file_a_link_names() {
+        use tauri::async_runtime::block_on;
+        let dir = scratch_dir("read-ext");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("notes.txt"), b"not a plan").unwrap();
+        std::fs::write(dir.join("real.json"), b"{}").unwrap();
+        let link = |name: &str, to: &str| -> String {
+            let at = dir.join(name);
+            std::os::unix::fs::symlink(to, &at).unwrap();
+            at.to_str().unwrap().to_string()
+        };
+
+        let e = block_on(super::read_text_file(link("plan.json", "notes.txt"))).unwrap_err();
+        assert!(e.starts_with("file-bad-extension"), "{e}");
+        let e = match block_on(super::read_binary_file(link("backup.urxf", "notes.txt"))) {
+            Ok(_) => panic!("a .txt file was read as a settings file"),
+            Err(e) => e,
+        };
+        assert!(e.starts_with("file-bad-extension"), "{e}");
+
+        assert_eq!(
+            block_on(super::read_text_file(link("open.json", "real.json"))),
+            Ok("{}".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Every temp name a write may use is taken: the save is refused with its own code,
+    // and neither the destination nor any of the files holding those names is touched.
+    #[test]
+    fn a_write_with_every_temp_name_taken_is_refused_by_code() {
+        let dir = scratch_dir("atomic-no-temp");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("plan.json");
+        std::fs::write(&target, b"old").unwrap();
+        let real = std::fs::canonicalize(&target).unwrap();
+        let taken: Vec<_> = (0..super::TEMP_NAMES)
+            .map(|n| {
+                let mut name = real.clone().into_os_string();
+                name.push(format!(".{}.{n}.tmp", std::process::id()));
+                std::path::PathBuf::from(name)
+            })
+            .collect();
+        for t in &taken {
+            std::fs::write(t, b"someone else's").unwrap();
+        }
+
+        let e = super::write_atomic(target.to_str().unwrap(), b"new", &["json"]).unwrap_err();
+
+        assert_eq!(e, "file-no-temp");
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        for t in &taken {
+            assert_eq!(std::fs::read(t).unwrap(), b"someone else's");
+        }
+        assert_eq!(names_in(&dir).len(), taken.len() + 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The mode the operator gave the file survives the save, including one that does
+    // not let the owner write it.
+    #[cfg(unix)]
+    #[test]
+    fn an_atomic_write_keeps_the_replaced_files_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch_dir("atomic-mode");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("plan.json");
+        std::fs::write(&target, b"old").unwrap();
+        for mode in [0o600, 0o400] {
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode)).unwrap();
+
+            super::write_atomic(target.to_str().unwrap(), b"new", &["json"]).unwrap();
+
+            let after = std::fs::metadata(&target).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(after, mode, "{mode:o} became {after:o}");
+            assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        }
+        assert_eq!(names_in(&dir), vec!["plan.json"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // On macOS a Finder tag is an extended attribute and a sharing grant is an ACL entry;
+    // both survive the save. The modification time is the save's own, not the replaced
+    // file's — a copy of the file's whole metadata would carry that over too.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_atomic_write_keeps_the_replaced_files_tags_and_acl_and_takes_a_new_mtime() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch_dir("atomic-meta");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("plan.json");
+        std::fs::write(&target, b"old").unwrap();
+        let c_target = CString::new(target.as_os_str().as_bytes()).unwrap();
+        let tag = CString::new("com.apple.metadata:_kMDItemUserTags").unwrap();
+        let value = b"Red";
+        // SAFETY: NUL-terminated name and path, and a value buffer of the given length.
+        let rc = unsafe {
+            libc::setxattr(
+                c_target.as_ptr(),
+                tag.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+                0,
+            )
+        };
+        assert_eq!(rc, 0, "setxattr: {}", std::io::Error::last_os_error());
+        let acl = |path: &std::path::Path| -> String {
+            let out = std::process::Command::new("/bin/ls")
+                .env("LC_ALL", "C")
+                .arg("-le")
+                .arg(path)
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        let grant = "everyone allow readattr";
+        let status = std::process::Command::new("/bin/chmod")
+            .args(["+a", grant])
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(acl(&target).contains(grant), "the fixture holds the grant");
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(946_684_800);
+        std::fs::File::options()
+            .write(true)
+            .open(&target)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o400)).unwrap();
+
+        super::write_atomic(target.to_str().unwrap(), b"new", &["json"]).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        let mut buf = [0u8; 16];
+        // SAFETY: as above, with a buffer the call may fill up to its length.
+        let n = unsafe {
+            libc::getxattr(
+                c_target.as_ptr(),
+                tag.as_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                0,
+                0,
+            )
+        };
+        assert_eq!(n, value.len() as isize, "the tag is gone");
+        assert_eq!(&buf[..value.len()], value);
+        assert!(acl(&target).contains(grant), "the ACL entry is gone");
+        let meta = std::fs::metadata(&target).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o7777, 0o400);
+        assert!(
+            meta.modified().unwrap() > old + std::time::Duration::from_secs(86_400),
+            "the save carried the replaced file's modification time"
+        );
+        assert_eq!(names_in(&dir), vec!["plan.json"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1691,21 +2165,31 @@ mod tests {
             );
         }
 
-        // …and the MIDI window is granted the relay pair and nothing else. Its whole
-        // description rests on this: it is a view of the main window's state.
+        // …and the MIDI window is granted the relay pair, the devtools hotkey a debug
+        // build injects into every webview, and nothing else. Its whole description
+        // rests on this: it is a view of the main window's state. The list is compared
+        // whole — a scoped entry by its identifier — so a core set added back fails here:
+        // `core:default` carries the event emit the main window's listeners answer.
         let midi: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/midi-window.json")).unwrap();
         let mut midi_perms: Vec<&str> = midi["permissions"]
             .as_array()
             .unwrap()
             .iter()
-            .filter_map(|v| v.as_str())
-            .filter(|p| p.starts_with("allow-"))
+            .map(|v| {
+                v.as_str()
+                    .or_else(|| v["identifier"].as_str())
+                    .expect("a permission is a string or names an identifier")
+            })
             .collect();
         midi_perms.sort_unstable();
         assert_eq!(
             midi_perms,
-            vec!["allow-midi-ui-attach-window", "allow-midi-ui-to-main"]
+            vec![
+                "allow-midi-ui-attach-window",
+                "allow-midi-ui-to-main",
+                "core:webview:allow-internal-toggle-devtools"
+            ]
         );
     }
 }

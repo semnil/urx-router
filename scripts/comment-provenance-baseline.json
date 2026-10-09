@@ -60,7 +60,7 @@
     "src/core/control/readback.test.ts": 7,
     "src/core/control/readback.ts": 4,
     "src/core/control/sample-rate.test.ts": 2,
-    "src/core/control/selftest.test.ts": 3,
+    "src/core/control/selftest.test.ts": 2,
     "src/core/control/selftest.ts": 4,
     "src/core/control/settle.ts": 1,
     "src/core/control/translate.test.ts": 2,

@@ -41,7 +41,7 @@ import type { PlanWriteWatch } from "../plan-history";
 // move. One flush costs a whole-plan translate + diff, measured at 0.20 ms for
 // the URX44V default plan (782 commands) in both V8 and WebKit, so flushing per
 // window rather than per gesture is 0.2% of a core.
-const DEBOUNCE_MS = 120;
+export const DEBOUNCE_MS = 120;
 
 // Params whose write makes the device move other values (the catalog flags these with
 // sideEffect), split by who owns what moved. CONVERGE = the device reset values the plan
@@ -208,6 +208,12 @@ export class LiveSync {
   // flag, because a session that ended and began again inside one await leaves the flag
   // at the value the flush entered on while every snapshot under it has been rebuilt.
   private sessionGen = 0;
+  // Aborted by end(), and handed to a flush's converge: a converge is a loop of reads, sends
+  // and settles, and the generation is asked only once it returns, so this is what stops it
+  // between its own round trips. Replaced by begin(), so a session's signal is its own.
+  private sessionAbort = new AbortController();
+  // The flush in flight, settled when it finishes — what `idle()` answers.
+  private flushDone: Promise<void> = Promise.resolve();
   private readonly snapshot = new Map<number, number>();
   private readonly nameSnapshot = new Map<string, string>();
   // Name address -> owner node. Kept apart from `index` because a name is not a
@@ -376,6 +382,14 @@ export class LiveSync {
     return this.timer !== null || this.flushing;
   }
 
+  /** Settles once the flush running now, if any, has finished — what a teardown waits on
+   *  before it disconnects, so the flush's last command goes over the link it started on. A
+   *  flush the session ended under stops at its next generation check, and a converge inside
+   *  it at its next round trip. */
+  idle(): Promise<void> {
+    return this.flushDone;
+  }
+
   private scope(): WriteScope {
     return this.hooks.getScope?.() ?? "all";
   }
@@ -403,6 +417,7 @@ export class LiveSync {
     // The caller subscribes for this session itself (main.ts: live.begin then follow.begin),
     // so the capture above is already accounted for and must not make the next flush ask again.
     this.followSetStale = false;
+    this.sessionAbort = new AbortController();
     this.active = true;
     this.sessionGen++;
   }
@@ -640,6 +655,7 @@ export class LiveSync {
   end(): void {
     this.active = false;
     this.sessionGen++;
+    this.sessionAbort.abort();
     this.announced.clear();
     this.onHeld = false;
     this.pendingValues.clear();
@@ -911,13 +927,17 @@ export class LiveSync {
     this.flushing = true;
     // Asked again by this flush: a held ON it still cannot send sets it back.
     this.onHeld = false;
+    // The session this flush is for. `model` and `plan` below are captured once and the
+    // re-take at the head of the loop reads those captures, so once the generation moves
+    // both describe a document that is no longer open — which is the same instant at
+    // which nothing may be sent any more. One check answers both, and the catch asks it
+    // too.
+    const gen = this.sessionGen;
+    const signal = this.sessionAbort.signal;
+    let finished = (): void => {};
+    this.flushDone = new Promise<void>((resolve) => (finished = resolve));
     let edits: PlanWriteWatch | undefined;
     try {
-      // The session this flush is for. `model` and `plan` below are captured once and the
-      // re-take at the head of the loop reads those captures, so once the generation moves
-      // both describe a document that is no longer open — which is the same instant at
-      // which nothing may be sent any more. One check answers both.
-      const gen = this.sessionGen;
       const model = this.hooks.getModel();
       const plan = this.hooks.getPlan();
       let sent = 0;
@@ -972,10 +992,8 @@ export class LiveSync {
       // The set can only be rebuilt by a capture, and a flush reaches one only through a
       // `sideEffect` param's converge or refetch epilogue — so an edit that moves the set
       // with no such head in it would leave the registration behind until something
-      // reconciled. No gesture produces one today (every default connection is fixed
-      // routing the graph refuses to cut, and none of the 310 routes an operator could
-      // draw moves the set), which is a property of the current model rather than of this
-      // layer: the comparison is an integer per address and holds it by construction.
+      // reconciled. The comparison is an integer per address and holds that by
+      // construction, whichever edit moved the set.
       // Taken before the first await so the rebuild cannot interleave with a capture, and
       // the snapshot is left alone — nothing has been read.
       if (!this.followSetMatches(commands)) this.rebuildFollowSet(model, plan, scope, commands);
@@ -1270,6 +1288,7 @@ export class LiveSync {
           scope: this.scope(),
           pending: seedPending,
           exclude,
+          signal,
         }).finally(() => {
           this.converge = null;
         });
@@ -1292,8 +1311,9 @@ export class LiveSync {
         if (failed || r.readErrors.length) {
           // `||` throughout: an empty message is what a rejection with no reason
           // leaves behind, and `new Error("")` here would end the session with a
-          // teardown that names nothing.
-          throw new Error(failed?.error || r.readErrors[0] || "converge failed");
+          // teardown that names nothing. The read's own message rather than the report
+          // entry, which carries the parameter's name in front of the shell's code.
+          throw new Error(failed?.error || r.readCauses[0] || "converge-failed");
         }
         this.capture(converged, since, undefined, new Set([...ownOns, ...unsentHeads.keys()]));
         for (const [k, v] of unsentHeads) if (v === undefined) this.snapshot.delete(k);
@@ -1426,16 +1446,24 @@ export class LiveSync {
         }
       }
     } catch (e) {
+      // A failure that arrives once its session has ended — a write the link answered late,
+      // or a converge the end aborted — is that session's, and the one running now is not
+      // stopped by it.
+      if (this.sessionGen !== gen) return;
       this.active = false;
       this.hooks.onError(e instanceof Error ? e.message : String(e));
       return;
     } finally {
       edits?.close();
       this.flushing = false;
-    }
-    if (this.pending) {
-      this.pending = false;
-      void this.flush();
+      finished();
+      // A flush asked for while this one ran. end() clears the request, so one standing here
+      // after the session moved on is the next session's, and it is sent whichever way this
+      // flush left — a flush whose session is stopped returns at its own entry.
+      if (this.pending) {
+        this.pending = false;
+        void this.flush();
+      }
     }
   }
 }

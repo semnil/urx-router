@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, textContrast, type Page } from "./fixtures";
 import { wheelOver } from "./graph-helpers";
 import { pickBand } from "./dyn-helpers";
 
@@ -15,9 +15,9 @@ const strip = (page: Page, name: string) => page.locator(".con-strip", { has: pa
 // LOCKED is DIM composed with the locked row's own 0.45, not that 0.45 alone: opacity on
 // one element cascades rather than multiplying, so the flat value printed the legend
 // heavier than the label it annotates (measured at 1.56x its ink, against 0.90x live).
-const DIM = "0.55";
+const DIM = "0.75";
 const LIT = "1";
-const LOCKED = "0.2475";
+const LOCKED = "0.3375";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -94,6 +94,19 @@ test.describe("tuning-screen sliders", () => {
     expect(await tag.boundingBox()).toEqual(before);
   });
 
+  // Printed at its silkscreen level, the legend still reads at the dim tier's ink: the
+  // level is set per theme, and the light theme prints it at full ink.
+  for (const theme of ["dark", "light"] as const) {
+    test(`the idle FINE legend clears AA in the ${theme} theme`, async ({ page }) => {
+      await page.addInitScript((t) => localStorage.setItem("urx-theme", t), theme);
+      await page.reload();
+      await openScreen(page, /^EQ$/, "#btn-eq-screen");
+      const tag = page.locator("#dyn-screen-box .prefs-row.has-fine .fine-tag");
+      await expect(tag).toBeVisible();
+      expect(await textContrast(page, tag)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+
   test("the legend survives the device taking the row, ahead of the tag that says so", async ({ page }) => {
     await openScreen(page, /^COMP$/, "#btn-comp-screen");
     const box = page.locator("#dyn-screen-box");
@@ -159,7 +172,9 @@ test.describe("console view", () => {
     await expect(val).toHaveText("2.04");
     await page.keyboard.up("Shift");
     await wheelOver(page, time, 100);
-    await expect(val).toHaveText("1.0"); // coarse again — a coarse notch re-snaps to its grid
+    // Coarse again: the notch moves 1.00 ms and keeps the hundredths, as the unit's own
+    // Delay Time knob does.
+    await expect(val).toHaveText("1.04");
   });
 
   test("the main fader keeps its detent grid under Shift", async ({ page }) => {
@@ -171,4 +186,23 @@ test.describe("console view", () => {
     await page.keyboard.up("Shift");
     await expect(readout).toHaveText("+0.4"); // one level_gain detent — no fine grid on faders
   });
+});
+
+// A capital letter typed into the Inspector's Name field is a Shift the field owns: in latch
+// mode it must not flip fine-tuning on. A bare Shift with the field left behind still does.
+test("in latch mode a capital typed into the Name field leaves fine mode alone", async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem("urx-settings", JSON.stringify({ fineLatch: true })));
+  await page.reload();
+  await page.locator("#model-picker").waitFor();
+  await node(page, "ch1").click();
+  const name = page.locator('#inspector input[type="text"]').first();
+  await name.click();
+  // Shift held over the V, the way a capital is typed: keyboard.type sends no Shift at all.
+  await page.keyboard.press("Shift+V");
+  await page.keyboard.type("ox");
+  await expect(name).toHaveValue(/Vox$/);
+  await expect(page.locator("html")).not.toHaveClass(/\bfine-mode\b/);
+  await name.evaluate((el) => (el as HTMLInputElement).blur());
+  await page.keyboard.press("Shift");
+  await expect(page.locator("html")).toHaveClass(/\bfine-mode\b/);
 });

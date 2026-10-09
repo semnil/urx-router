@@ -322,9 +322,12 @@ test.describe("T4b midi", () => {
     // Pinned defect. The operator moved one mapped fader; the app answered by
     // writing a channel-strip parameter of a DIFFERENT channel — back to the value
     // ch1 happened to hold — destroying what the unit had just reported.
+    // An address missing from the fake's memory answers 0, so that is what an absent entry reads.
+    const ch1Threshold = (await memOf(page))[CH1_GATE_THRESHOLD] ?? 0;
+    expect(ch1Threshold).not.toBe(-3000);
     expect(clobber.length).toBeGreaterThan(0);
-    expect(clobber[0].value).toBe(0); // ch1's threshold, not the device's -3000
-    expect((await memOf(page))[CH2_GATE_THRESHOLD]).toBe(0);
+    expect(clobber[0].value).toBe(ch1Threshold); // ch1's threshold, not the device's -3000
+    expect((await memOf(page))[CH2_GATE_THRESHOLD]).toBe(ch1Threshold);
     // The partner's fader moved too, which is the mirror working as designed — it
     // is the same copy, and the same copy carries everything else with it.
     await expect(faderReadout(page, "CH 2")).toHaveText("+5.0");
@@ -602,9 +605,11 @@ test.describe("T4b midi", () => {
     await mark(page, "cc39");
     await pushMidi(page, [cc(39, 127)]);
     // One physical message, two address semantics: CH 2 reads it as a 7-bit CC at
-    // full scale, CH 1 reads it as the LSB half of a 14-bit pair whose MSB is 0.
+    // full scale, CH 1 reads it as the LSB half of a 14-bit pair whose MSB has not
+    // arrived, which edits nothing. Both readouts are read after CH 2's has moved, so
+    // CH 1's is taken once the message has been applied.
     await expect(faderReadout(page, "CH 2")).toHaveText("+10.0");
-    await expect(faderReadout(page, "CH 1")).toHaveText("-∞");
+    await expect(faderReadout(page, "CH 1")).toHaveText("0.0");
 
     const win = await openMidiWindow(page);
     const rows = win.locator(".mw-list tbody tr");

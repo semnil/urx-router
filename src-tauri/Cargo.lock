@@ -4294,6 +4294,7 @@ name = "urx-router"
 version = "0.0.0"
 dependencies = [
  "core-foundation 0.10.1",
+ "libc",
  "midir",
  "percent-encoding",
  "serde",

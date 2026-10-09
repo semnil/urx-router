@@ -32,6 +32,7 @@
     "allow-midi-window-open",
     "allow-open-midi-window",
     "allow-pin-midi-window",
+    "allow-prepare-for-exit",
     "allow-prepare-modified-requested",
     "allow-read-binary-file",
     "allow-read-text-file",

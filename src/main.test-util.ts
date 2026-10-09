@@ -74,8 +74,15 @@ export interface TauriShell {
    *  did anything, and it does not look at `payload` — a payload shaped wrong for the
    *  event still delivers and still counts, and the handler will read it as empty. A case
    *  whose outcome is an ABSENCE has to pin something else as well, or it passes on a
-   *  delivery the app ignored. */
-  emit: (event: string, payload?: unknown) => number;
+   *  delivery the app ignored.
+   *
+   *  `from` is the window the shell raises the event for — the app's own, `"main"`, unless
+   *  named. A handler registered for every emitter (`{ kind: "Any" }`) takes it from any
+   *  window; one registered for a named window takes it only when that name is `from`, the
+   *  way the shell's event plugin filters an event a window raises for itself. A handler
+   *  registered with no target takes nothing here, as the shell would not have accepted
+   *  that registration. */
+  emit: (event: string, payload?: unknown, from?: string) => number;
 }
 
 /** The boot-time queries every launch answers, and the registrations a Live session
@@ -206,6 +213,16 @@ export function deviceCommands(
     "plugin:dialog|message": "Cancel",
     ...over,
   };
+  // The same goes for the commands the shell refuses while disconnected: a case that
+  // supplies its own reader or writer says what the unit HOLDS, and the connection rule
+  // stays the table's. Kept on the table as well, so `TauriShell.answer` applies it to a
+  // replacement made after the boot.
+  const guard =
+    (v: unknown): unknown =>
+    (a: Record<string, unknown>) =>
+      live(() => (typeof v === "function" ? (v as (x: Record<string, unknown>) => unknown)(a) : v));
+  for (const cmd of DEVICE_TRAFFIC) if (cmd in over) table[cmd] = guard(over[cmd]);
+  (table as Record<symbol, unknown>)[GUARD] = guard;
   // The bookkeeping is applied AFTER `over`, so a case that says what the unit reports at
   // connect (a model, a firmware, a throw) still gets a connection. Replacing the whole
   // command with a plain answer drops it, and every read after such a connect is then
@@ -219,6 +236,23 @@ export function deviceCommands(
   };
   return table;
 }
+
+/** The commands the shell sends through `sender()` (`vd.rs`), which answers "not-connected"
+ *  while no worker is installed. */
+const DEVICE_TRAFFIC = [
+  "vd_get",
+  "vd_get_str",
+  "vd_set",
+  "vd_set_str",
+  "vd_params_subscribe",
+  "vd_params_unsubscribe",
+  "vd_meters_subscribe",
+  "vd_meters_unsubscribe",
+  "vd_watch_link",
+];
+
+/** Where a device table keeps its connection guard for the shell it is installed in. */
+const GUARD = Symbol("device traffic guard");
 
 /** The shell most recently installed on the page, for a teardown that has to drain the
  *  app still driving it. A case returns as soon as its own assertion holds, but the flow
@@ -242,6 +276,7 @@ let epoch = 0;
  */
 export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
   const table: Record<string, unknown> = { ...BASE_COMMANDS, ...commands };
+  const guard = (commands as Record<symbol, unknown>)[GUARD] as ((v: unknown) => unknown) | undefined;
   const once = new Map<string, unknown>();
   const invokes: string[] = [];
   const args: Array<Record<string, unknown> | undefined> = [];
@@ -258,11 +293,21 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
   // function to `transformCallback` and then names the id it gets back when it registers,
   // so holding both halves is what makes an event deliverable at all.
   const callbacks = new Map<number, (message: unknown) => void>();
-  const listeners = new Map<string, number[]>();
+  const listeners = new Map<string, Array<{ handler: number; target: unknown }>>();
   let nextCallback = 1;
+  const reaches = (target: unknown, from: string): boolean => {
+    const t = target as { kind?: unknown; label?: unknown } | undefined;
+    if (t?.kind === "Any") return true;
+    const named =
+      t?.kind === "WebviewWindow" || t?.kind === "Window" || t?.kind === "Webview" || t?.kind === "AnyLabel";
+    return named && t?.label === from;
+  };
 
   (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
     Channel,
+    // The labels the shell writes into every page before it runs; the app entry is the
+    // main window's page.
+    metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
     transformCallback: (fn: (payload: unknown) => void) => {
       const id = nextCallback++;
       callbacks.set(id, fn as (message: unknown) => void);
@@ -284,7 +329,7 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
       // NOT covered by this — the recording is above the call — but nothing answers this
       // command with a function today.
       if (cmd === "plugin:event|listen" && typeof a?.event === "string" && typeof a.handler === "number") {
-        listeners.set(a.event, [...(listeners.get(a.event) ?? []), a.handler]);
+        listeners.set(a.event, [...(listeners.get(a.event) ?? []), { handler: a.handler, target: a.target }]);
       }
       const v = table[cmd];
       if (typeof v !== "function") return Promise.resolve(v);
@@ -303,12 +348,13 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     invokes,
     args,
     channels,
-    answer: (cmd, value) => void (table[cmd] = value),
+    answer: (cmd, value) => void (table[cmd] = guard && DEVICE_TRAFFIC.includes(cmd) ? guard(value) : value),
     failOnce: (cmd, err) => void once.set(cmd, err),
     count: (cmd) => invokes.filter((c) => c === cmd).length,
-    emit: (event, payload) => {
+    emit: (event, payload, from = "main") => {
       let delivered = 0;
-      for (const id of listeners.get(event) ?? []) {
+      for (const { handler: id, target } of listeners.get(event) ?? []) {
+        if (!reaches(target, from)) continue;
         const fn = callbacks.get(id);
         if (!fn) continue;
         // The shape `listenEvent` unwraps: it reads `.payload` off the message and hands
@@ -336,6 +382,13 @@ export interface BootOptions {
    *  is the only way to reach the gate: seeding cannot express it, because the
    *  pre-accept below writes the key after the seed. */
   consent?: boolean;
+  /** Markup installed in place of the app's own (`APP_BODY`). */
+  body?: string;
+  /** The module's own startup is expected to THROW. The boot then resolves once the import
+   *  has settled instead of waiting for a board that is never painted, and it rejects when
+   *  the startup did not throw, so a case written for a failing startup cannot pass on one
+   *  that succeeded. */
+  initThrows?: boolean;
 }
 
 let releaseAppListeners: (() => void) | undefined;
@@ -356,7 +409,7 @@ function trackAppListeners(): void {
 /** Install the markup and the globals, then run the module top to bottom. */
 export async function bootApp(opts: BootOptions = {}): Promise<TauriShell | null> {
   trackAppListeners();
-  document.body.innerHTML = APP_BODY; // innerHTML does not execute the <script type=module>
+  document.body.innerHTML = opts.body ?? APP_BODY; // innerHTML does not execute the <script type=module>
   localStorage.clear();
   localStorage.setItem("urx-lang", "en");
   localStorage.setItem("urx-model", "URX44V");
@@ -370,6 +423,14 @@ export async function bootApp(opts: BootOptions = {}): Promise<TauriShell | null
   const shell = opts.tauri === false ? null : tauriShell(opts.tauri ?? {});
 
   vi.resetModules();
+  if (opts.initThrows) {
+    const threw = await import("./main").then(
+      () => false,
+      () => true,
+    );
+    if (!threw) throw new Error("the app's startup was expected to throw and did not");
+    return shell;
+  }
   await import("./main");
   // The board rather than the status line: a boot that lands on an error (a malformed
   // `?plan=`, say) never writes the "Loaded …" line, and waiting for it would time out

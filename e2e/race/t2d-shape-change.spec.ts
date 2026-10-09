@@ -12,6 +12,7 @@ import {
   depthOf,
   ledgerOf,
   hasProbe,
+  memOf,
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter, type Span } from "./analyze";
@@ -162,11 +163,12 @@ const clearLedger = (page: Page): Promise<void> =>
   page.evaluate(() => (window as unknown as { __urxTrace?: { clear: () => void } }).__urxTrace?.clear());
 
 /** Step a slider by `n` detents from a keyboard focus — the driving convention the
- *  harness prefers when the VALUE is the subject (one press, one plan write). */
+ *  harness prefers when the VALUE is the subject (one press, one plan write). A negative
+ *  `n` steps it down. */
 async function stepSlider(page: Page, row: ReturnType<typeof fxRow>, n: number): Promise<void> {
   const slider = row.locator('input[type="range"]');
   await slider.focus();
-  for (let i = 0; i < n; i++) await page.keyboard.press("ArrowUp");
+  for (let i = 0; i < Math.abs(n); i++) await page.keyboard.press(n < 0 ? "ArrowDown" : "ArrowUp");
 }
 
 test.describe("T2d shape-change", () => {
@@ -195,6 +197,13 @@ test.describe("T2d shape-change", () => {
 
     const typeSel = fxRow(page, "EFFECT TYPE").locator("select");
     await expect(typeSel).toHaveValue("0"); // Rev-X Hall, the FX1 factory type
+    // The Rev-X values the unit holds before anything is written: the fake starts each address
+    // a node-param leaf is written to at its factory value, and an address missing from its
+    // memory answers 0.
+    // The panel move below is a change only against a slot holding something else.
+    const mem = await memOf(page);
+    const held = (addr: string): number => mem[addr] ?? 0;
+    expect(held(arr(10))).not.toBe(PANEL_HPF);
 
     // Phase 1 — author three Rev-X values, so the state the undo must restore is on
     // the wire rather than only in the plan. Two of them (Decay 15, Room Size 12) sit
@@ -203,7 +212,8 @@ test.describe("T2d shape-change", () => {
     await openFxScreen(page);
     await mark(page, "author-revx");
     await stepSlider(page, screenRow(page, "Decay"), 3);
-    await stepSlider(page, screenRow(page, "Room Size"), 3);
+    // Down: the unit's Room Size sits two detents under its ceiling.
+    await stepSlider(page, screenRow(page, "Room Size"), -3);
     await stepSlider(page, screenRow(page, "Rev.Time"), 3);
     await settleAfter(page, "author-revx", 1200);
 
@@ -211,10 +221,10 @@ test.describe("T2d shape-change", () => {
     const authoredAt = markTime(trace, "author-revx")!;
     const authored = new Map(arraySets(trace, authoredAt).map((s) => [s.addr!, s.value]));
     console.log(`authored Rev-X: ${[...authored].map(([a, v]) => `${a}=${v}`).join(", ")}`);
-    // Three presses from the device's 0 — the values the undo is later asked for.
-    expect(authored.get(arr(15))).toBe(3); // Decay
-    expect(authored.get(arr(12))).toBe(3); // Room Size
-    expect(authored.get(arr(7))).toBe(3); // Reverb Time
+    // Three presses from what the unit held — the values the undo is later asked for.
+    expect(authored.get(arr(15))).toBe(held(arr(15)) + 3); // Decay
+    expect(authored.get(arr(12))).toBe(held(arr(12)) - 3); // Room Size
+    expect(authored.get(arr(7))).toBe(held(arr(7)) + 3); // Reverb Time
 
     // Captured HERE, not at the end of the run: this is the registration the flush
     // under test was sent against, and it is what both the orphan assertion and the
@@ -358,7 +368,7 @@ test.describe("T2d shape-change", () => {
     // nothing carries across the families: each descriptor key names its own family
     // (fx-effect.ts), so the five shared slot numbers are re-authored from the delay
     // family alone. Slot 7 is reverbTime in Rev-X and Feedback Gain in the delay family:
-    // the 3 authored above is written over with the delay default 20. Slots 8, 9 and 10
+    // the value authored above is written over with the delay default 20. Slots 8, 9 and 10
     // change owner just as completely — diffusion → hiRatio, initialDelay → hpf and
     // hpf → lpf — and carry their delay defaults too (7 / 40 / 110, fx-effect.ts
     // DELAY_PARAMS), because this channel's plan has never held a delay value: the
@@ -455,9 +465,9 @@ test.describe("T2d shape-change", () => {
 
     // WHAT COMES BACK: every Rev-X-only slot, carrying the values phase 1 authored.
     for (const s of REVX_ONLY) expect(undoSlots.has(s)).toBe(true);
-    expect(undoVals.get(15)).toBe(3); // Decay
-    expect(undoVals.get(12)).toBe(3); // Room Size
-    expect(undoVals.get(7)).toBe(3); // Reverb Time, back over the delay Feedback Gain
+    expect(undoVals.get(15)).toBe(authored.get(arr(15))); // Decay
+    expect(undoVals.get(12)).toBe(authored.get(arr(12))); // Room Size
+    expect(undoVals.get(7)).toBe(authored.get(arr(7))); // Reverb Time, back over the delay Feedback Gain
 
     // WHAT DOES NOT, and why it is structural rather than a missed write. The three
     // delay-only slots the type change wrote leave the writable set with the family
@@ -479,15 +489,15 @@ test.describe("T2d shape-change", () => {
     // …and the two slots that changed owner without changing number are written in both
     // directions. The address does not move, but the value at it does: each family authors
     // its own key, so the switch wrote the delay HPF / LPF there and the undo writes the
-    // Rev-X Initial Delay / HPF back over them. Slot 9 is 0, as read from this zeroed fake.
-    // Slot 10 is what the PANEL was holding when the type went out: the park in front of that
+    // Rev-X Initial Delay / HPF back over them. Slot 9 is the factory value the session's
+    // readback took from the unit. Slot 10 is what the PANEL was holding when the type went out: the park in front of that
     // write found it and put it in the plan, and the undo gives it back. The entry was
     // recorded when the operator chose the type — BEFORE the park landed — so its own
     // before-image carried the app's pre-park copy, and what stops the undo sending that is
     // `absorb` folding the read's leaves into the entries recorded before it. Nothing else in
     // this run could carry the value: the app never read it before, and the fake announced
     // nothing when it changed.
-    expect(undoVals.get(9)).toBe(0);
+    expect(undoVals.get(9)).toBe(held(arr(9)));
     expect(undoVals.get(10)).toBe(PANEL_HPF);
     // That the park DID find it is the reflect asserted in the type-change window above; this
     // trace has been re-read since, and carries the undo's own park as well.

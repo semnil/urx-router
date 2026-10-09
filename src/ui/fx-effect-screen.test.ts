@@ -99,12 +99,12 @@ describe("what the screen prints for a stored raw", () => {
   });
 });
 
-// The Mono Delay time is the one control whose own grid is finer than a 14-bit controller can
-// address — 27000 settings against 16384 positions — and it is offered all the same, through a
-// codec whose reading is snapped to the wire's grid. Both halves are the decision: it is
-// THERE, and its round trip is exact. `controls.test.ts` sweeps every control for the second
-// property; this names the one the sweep would stop covering if it were dropped from the
-// catalogue, since a control that is not listed is not a control that fails.
+// The Mono Delay time is the one FX-channel control whose own grid is finer than a 14-bit
+// controller can address — 27000 settings against 16384 positions — and it is offered all the
+// same, through a codec whose reading is snapped to the wire's grid. Both halves are the
+// decision: it is THERE, and its round trip is exact. `controls.test.ts` sweeps the controls a
+// plan lists for the second property; this names the one the sweep would stop covering if it
+// were dropped from the catalogue, since a control that is not listed is not a control that fails.
 describe("the delay time over MIDI", () => {
   const ID = controlId("bus.fx2", "fx", `${FX_SCOPE}.delay`);
 

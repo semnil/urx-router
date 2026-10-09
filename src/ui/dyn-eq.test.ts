@@ -22,6 +22,10 @@ import { dynHost, pickBand } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import type { MidiLearnHooks } from "./midi-learn";
 import { deserialize, serialize } from "../core/plan";
+import { planProblems, prepareLoadedPlan } from "../core/plan-validate";
+import { EQ_TYPE_PASS } from "../core/control/params";
+import { defaultPlan } from "../models/initial-state";
+import { getModel } from "../models";
 import { setLang, t } from "../i18n";
 
 const EQ = DYN_PROCESSORS.eq;
@@ -223,6 +227,31 @@ describe("the rate lock", () => {
   });
 });
 
+// The band control is the plot: a canvas, one focus stop, whose arrow keys select the band.
+// A canvas has no text of its own, so the band it is set to has to be stated on it — the
+// pill on the Parameters heading says it too, but not on the control being operated.
+describe("the band the plot is set to", () => {
+  it("is exposed on the canvas as a slider's value, by the band's own name", () => {
+    host = dynHost();
+    open();
+    const cv = (): HTMLCanvasElement => host.box.querySelector<HTMLCanvasElement>("canvas.gt-pickplot")!;
+    expect(cv().getAttribute("role")).toBe("slider");
+    expect(cv().getAttribute("aria-valuemin")).toBe("0");
+    expect(cv().getAttribute("aria-valuemax")).toBe("3");
+    expect(cv().getAttribute("aria-valuenow")).toBe("0");
+    expect(cv().getAttribute("aria-valuetext")).toBe(t().inspector.eqBand.low);
+    selectBand(1);
+    expect(cv().getAttribute("aria-valuenow")).toBe("1");
+    expect(cv().getAttribute("aria-valuetext")).toBe(t().inspector.eqBand.lowMid);
+    selectBand(3);
+    expect(cv().getAttribute("aria-valuetext")).toBe(t().inspector.eqBand.high);
+    // …and the name is the one the Parameters heading carries for the same band.
+    expect(section(t().dynTuning.parameters).querySelector("h3 .prefs-lock")?.textContent).toBe(
+      t().inspector.eqBand.high,
+    );
+  });
+});
+
 describe("the 1-knob", () => {
   const oneKnobOn = (): void => void (host.plan.nodeParams["ch1"]!.eqOneKnob = { on: true, type: 0, level: 0 });
 
@@ -323,6 +352,20 @@ describe("the filter type", () => {
     open();
     selectBand(1); // a mid band is fixed peaking
     expect(locked(t().inspector.q, PARAMS())).toBe(false);
+  });
+
+  // A document can park a type on a mid band, which the write never sends; the load removes
+  // it, so the band's Q and gain stay the operator's.
+  it("leaves a mid band's Q and gain editable in a document that parked a type there", () => {
+    const doc = JSON.parse(serialize(defaultPlan("URX44V")));
+    doc.nodeParams.ch1.eqBands[1] = { ...doc.nodeParams.ch1.eqBands[1], type: EQ_TYPE_PASS, gain: 6, q: 2 };
+    const plan = deserialize(JSON.stringify(doc));
+    prepareLoadedPlan(getModel("URX44V"), plan, planProblems(getModel("URX44V"), plan));
+    host = dynHost({ plan });
+    open();
+    selectBand(1);
+    expect(locked(t().inspector.q, PARAMS())).toBe(false);
+    expect(locked(t().inspector.eqGain, PARAMS())).toBe(false);
   });
 });
 

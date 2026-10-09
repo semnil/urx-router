@@ -100,12 +100,23 @@ describe("view state", () => {
     expect($("graph-host").hidden).toBe(true);
   });
 
+  // A remembered CONSOLE renders inside the module's own initialisation, so a meter-point
+  // store holding something the view never writes is read there before anything else runs.
+  // It reads as no choices: the strips are built, and so is everything wired after the view.
+  it("restores a remembered CONSOLE over a meter-point store that is not an object", async () => {
+    await boot({ "urx-view": "console", "urx-metertap": "null" });
+    expect($("console-host").hidden).toBe(false);
+    expect($("console-host").querySelectorAll(".con-strip").length).toBeGreaterThan(0);
+    $("btn-view-graph").click();
+    expect($("graph-host").hidden).toBe(false);
+  });
+
   it("remembers the label source", async () => {
     await boot();
     const btn = $("btn-labels");
-    const before = btn.getAttribute("aria-pressed");
+    const before = btn.getAttribute("aria-checked");
     btn.click();
-    expect(btn.getAttribute("aria-pressed")).not.toBe(before);
+    expect(btn.getAttribute("aria-checked")).not.toBe(before);
     expect(localStorage.getItem("urx-labels")).not.toBeNull();
   });
 
@@ -113,13 +124,29 @@ describe("view state", () => {
     await boot();
     const btn = $("btn-hide-off");
     btn.click();
-    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    expect(btn.getAttribute("aria-checked")).toBe("true");
     expect(localStorage.getItem("urx-hide-off")).not.toBeNull();
+  });
+
+  it("keeps one label on each menu toggle and carries its state in aria-checked", async () => {
+    await boot();
+    for (const id of ["btn-live", "btn-hide-off", "btn-labels"]) {
+      expect($(id).getAttribute("role"), id).toBe("menuitemcheckbox");
+      expect($(id).hasAttribute("aria-pressed"), id).toBe(false);
+    }
+    for (const id of ["btn-hide-off", "btn-labels"]) {
+      const btn = $(id);
+      const label = btn.textContent;
+      expect(btn.getAttribute("aria-checked"), id).toBe("false");
+      btn.click();
+      expect(btn.getAttribute("aria-checked"), id).toBe("true");
+      expect(btn.textContent, id).toBe(label);
+    }
   });
 
   it("restores the remembered declutter", async () => {
     await boot({ "urx-hide-off": "1" });
-    expect($("btn-hide-off").getAttribute("aria-pressed")).toBe("true");
+    expect($("btn-hide-off").getAttribute("aria-checked")).toBe("true");
   });
 });
 

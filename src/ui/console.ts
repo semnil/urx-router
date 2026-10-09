@@ -13,6 +13,7 @@ import type { DeviceModel } from "../models/types";
 import { ref as portRef } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
 import {
+  isPlainRecord,
   LEVEL_MAX_DB,
   LEVEL_MIN_DB,
   LEVEL_OFF_DB,
@@ -40,7 +41,7 @@ import {
   type MeterTap,
 } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
-import { COMP_EQ_COMP_FIRST } from "../core/control/params";
+import { COMP_EQ_COMP_FIRST, planColorHex } from "../core/control/params";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 import { dynOpenLabel } from "./dyn-registry";
 import type { DynKind } from "./dyn-registry";
@@ -81,9 +82,10 @@ import {
   withLinkedPartner,
 } from "../core/routing";
 import { INSERT_FX_NONE, insertFxEngaged, insertFxSelected } from "../core/control/params";
-import { parkOutgoingInsertFxParams } from "./insert-fx-model";
+import { parkOutgoingInsertFxParams, seedInsertFxParams } from "./insert-fx-model";
 import { insertFxScreenFamily } from "./insert-fx-screen";
 import {
+  DELAY_TIME_GRID_MS,
   DELAY_TIME_MAX_MS,
   DELAY_TIME_MIN_MS,
   PAN_MAX,
@@ -96,7 +98,18 @@ import {
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
 import { setLevelText } from "./glyph";
-import { el, focusables, onWheelStep, popLeft, popTop, preserveFocus, scrubFloat } from "./dom";
+import {
+  el,
+  focusables,
+  mouseMovedUnpressed,
+  onWheelStep,
+  popLeft,
+  popTop,
+  preserveFocus,
+  scrubFloat,
+  tabbable,
+} from "./dom";
+import { isChord } from "./keys";
 import { fineActive, fineTag } from "./fine";
 import { t } from "../i18n";
 
@@ -173,6 +186,23 @@ function fmtDb(db: number, r: LevelRange): { text: string; off: boolean } {
   return { text: (db > 0 ? "+" : "") + db.toFixed(1), off: false };
 }
 
+// A level fader's accessible value: the readout's text with its unit, or "off (-∞)" below
+// the floor, so −∞ and the floor detent, and the detents either side of 0 dB, are read
+// apart where the rounded aria-valuenow is one number for both. Shared by the main fader
+// and the rack columns, which put `prefix` ("PRE, ") in front of a pre-fader send.
+function levelValueText(db: number, r: LevelRange, prefix = ""): string {
+  const f = fmtDb(db, r);
+  return f.off ? "off (-∞)" : prefix + f.text + " dB";
+}
+
+// The range a level fader's rounded aria-valuenow runs over, in place of the slider
+// role's default 0..100: −∞ rounds to the floor's integer, and the top is the scale's
+// maximum.
+function setLevelRange(fader: HTMLElement, r: LevelRange): void {
+  fader.setAttribute("aria-valuemin", String(Math.round(r.off)));
+  fader.setAttribute("aria-valuemax", String(r.max));
+}
+
 /**
  * Track a pointer drag that started on `control`, in the one place all three of this
  * view's drags share: the capture, the two `window` listeners, the teardown, and the
@@ -214,9 +244,11 @@ function trackDrag(
   // The id filter is the second half of the same defect: with none, a second pointer's
   // moves drove this control while the operator was dragging something else.
   const mine = (ev: PointerEvent): boolean => ev.pointerId === e.pointerId;
+  // A mouse moving with no button held has released the press — the native context menu
+  // takes a right press's release — so the drag ends there rather than following it.
   const move = (ev: PointerEvent): void => {
     if (!mine(ev)) return;
-    if (!control.isConnected) return end();
+    if (!control.isConnected || mouseMovedUnpressed(ev)) return end();
     onMove(ev);
   };
   const stop = (ev: PointerEvent): void => {
@@ -308,6 +340,23 @@ function meterReadCell(): { cell: HTMLElement; value: HTMLElement } {
   return { cell, value };
 }
 
+// A strip is a group named by its node, so a control inside it — named only for what it is
+// ("MUTE", "PAN", "FX 1") — is announced with the channel it belongs to.
+function nameStrip(strip: HTMLElement, m: { label: string }): void {
+  strip.setAttribute("role", "group");
+  strip.setAttribute("aria-label", m.label);
+}
+
+// Focus inside an open popover: the popover, the strip it belongs to, and the row as its
+// identity and its position among the popover's tabbable rows (-1 where it is not one).
+interface PopoverFocusMark {
+  pop: "tap" | "pan" | "ifx";
+  id: string;
+  idx: number;
+  ctl: string | undefined;
+  sel: readonly string[];
+}
+
 interface StripModel {
   id: string;
   label: string;
@@ -396,6 +445,11 @@ interface KnobSpec {
    *  `.con-gain .fine-tag`) — a knob with content directly above (a stacked
    *  PAN/BAL row) would need a new anchor before opting in. */
   fine?: number;
+  /** The grid a drag and a reset land on, finer than `step`, rounded to halfway up. A key
+   *  or a wheel notch then moves the held value by exactly `step` (or `fine`), so a value
+   *  off the grid stays off it. Absent, a value lands on `step` itself (the STREAMING TIME
+   *  knob sets 0.02 ms). */
+  grid?: number;
   format: (v: number) => string;
   reset: number;
   /** Indicator angle (deg) for a value; default is a -135°..+135° sweep over the
@@ -426,8 +480,10 @@ export interface ConsoleHooks {
    *  `written` names the contest keys the edit ASSERTED — its own and the ones a pair
    *  mirror carried — not only the ones whose value moved. A device read in flight
    *  arbitrates by authorship, so a write that lands on the value already there is
-   *  invisible to it otherwise. */
-  onChange: (written?: readonly string[]) => void;
+   *  invisible to it otherwise. `defaults` names, as (node, dotted path) pairs, the values the
+   *  edit put in as a type's defaults rather than as anything the operator chose — an effect
+   *  selection's seeded engine slots, on the strip and on a mirrored partner. */
+  onChange: (written?: readonly string[], defaults?: ReadonlyArray<readonly [string, string]>) => void;
   /** The meter stream could not be registered. Bars stuck on the floor are
    *  indistinguishable from silence, so the host surfaces this rather than
    *  leaving a live session that quietly shows nothing. */
@@ -476,10 +532,12 @@ export class Console {
   // SENDS rack global collapse (one state for every strip so the columns stay
   // aligned), persisted across sessions; the SEND PAN popover and the strip it is
   // open for. Collapse toggles a host class — no re-render — so the state is read
-  // once at build and kept here.
-  private sendsOpen = loadJson<boolean>(this.SENDS_STORE, true);
+  // once at build and kept here. Only a stored `false` reads as collapsed; anything
+  // else stored there reads as the default, open.
+  private sendsOpen = loadJson<unknown>(this.SENDS_STORE, true) !== false;
   private sendPanPop!: HTMLElement;
   private sendPanOpenFor: string | null = null;
+  private sendPanLocks = ""; // sendPanLockKey of the open SEND PAN popover, as it was drawn
   private tapBtn: HTMLElement | null = null; // the meter-point badge the open popover anchors to
   private sendPanBtn: HTMLElement | null = null; // the PAN ▾ button the open popover anchors to
   private tapPop!: HTMLElement;
@@ -494,6 +552,8 @@ export class Console {
   private typePopBtn: HTMLElement | null = null;
   private typePopKind: "insfx" | "fx" = "insfx";
   private stripsHost!: HTMLElement;
+  // A pointer is down inside an open popover (see `closeOnFocusLeave`).
+  private pressInPop = false;
   /** The plan the strips were last built from. A different one at a render is that plan replaced. */
   private builtFor: Plan | null = null;
 
@@ -587,6 +647,10 @@ export class Console {
     this.carryMeterState(old, this.refs.get(stripId));
     old.root.replaceWith(fresh);
     this.redrawMeters(stripId);
+    // The meter-point popover stays open across the rebuild — its rows do not depend on
+    // the plan — so only its anchor moves to the fresh strip's badge, which the close then
+    // marks shut.
+    if (this.tapOpenFor === stripId) this.tapBtn = fresh.querySelector<HTMLElement>(".con-tap");
     // The SEND PAN popover floats free of its strip, so the rebuild above left an
     // open one anchored to the detached PAN button with stale knob values. Re-open
     // it against the fresh strip's button: openSendPan re-reads the plan for the
@@ -595,6 +659,21 @@ export class Console {
     if (this.sendPanOpenFor === stripId) {
       const btn = fresh.querySelector<HTMLElement>(".con-panbtn");
       if (btn) this.openSendPan(stripId, btn);
+      else this.closeSendPan();
+    }
+    // A MIX bus's own locks decide whether another strip's open SEND PAN knob for that bus
+    // is live, so a rebuilt MIX strip re-opens the popover against its owner's button — or
+    // closes it where that button is gone — when one of those locks changed. Only then: a
+    // re-open under a knob being dragged ends the drag.
+    const panOwner = this.sendPanOpenFor;
+    if (
+      panOwner !== null &&
+      panOwner !== stripId &&
+      this.isMixBus(stripId) &&
+      this.sendPanLockKey(panOwner) !== this.sendPanLocks
+    ) {
+      const btn = this.refs.get(panOwner)?.root.querySelector<HTMLElement>(".con-panbtn");
+      if (btn) this.openSendPan(panOwner, btn);
       else this.closeSendPan();
     }
     // Same for the INS FX popover, and for a second reason: its list is drawn from the
@@ -640,6 +719,7 @@ export class Console {
     // so a press on the trigger is excluded).
     document.addEventListener("pointerdown", (e) => {
       const tgt = e.target as HTMLElement;
+      this.pressInPop = this.popovers.some((p) => p.openFor !== null && p.box.contains(tgt));
       if (this.tapOpenFor && !this.tapPop.contains(tgt) && !tgt.closest(".con-tap")) this.closeTapPop();
       if (this.sendPanOpenFor && !this.sendPanPop.contains(tgt) && !tgt.closest(".con-panbtn")) this.closeSendPan();
       if (this.typePopFor && !this.typePop.contains(tgt) && !tgt.closest(".con-ifxface, .con-ifxopen, .con-fxopen"))
@@ -656,6 +736,71 @@ export class Console {
       if (this.tapOpenFor) this.closeTapPop(true);
       if (this.typePopFor) this.closeTypePop(true);
     });
+    const pressEnd = (): void => void (this.pressInPop = false);
+    document.addEventListener("pointerup", pressEnd);
+    document.addEventListener("pointercancel", pressEnd);
+    this.host.addEventListener("focusout", (e) => this.closeOnFocusLeave(e));
+    this.tapPop.addEventListener("keydown", (e) => this.tabOutOfPopover(e, "tap"));
+    this.sendPanPop.addEventListener("keydown", (e) => this.tabOutOfPopover(e, "pan"));
+    this.typePop.addEventListener("keydown", (e) => this.tabOutOfPopover(e, "ifx"));
+  }
+
+  /**
+   * Leave a popover by Tab at its place in the tab order, which is right after the control
+   * that opened it, rather than at the end of the document where it is appended. Shift+Tab on
+   * its first control closes it and lands on that trigger; Tab on its last control closes it
+   * and lands on the first control after the trigger that takes the focus. Tab between its
+   * own controls is left to the browser.
+   */
+  private tabOutOfPopover(e: KeyboardEvent, kind: "tap" | "pan" | "ifx"): void {
+    if (e.key !== "Tab" || isChord(e)) return;
+    const p = this.popovers.find((x) => x.kind === kind);
+    if (!p || p.openFor === null) return;
+    const rows = focusables(p.box).filter(tabbable);
+    const at = rows.indexOf(document.activeElement as HTMLElement);
+    if (at < 0 || at !== (e.shiftKey ? 0 : rows.length - 1)) return;
+    e.preventDefault();
+    if (kind === "tap") this.closeTapPop(true);
+    else if (kind === "pan") this.closeSendPan(true);
+    else this.closeTypePop(true);
+    const trigger = document.activeElement;
+    if (e.shiftKey || !(trigger instanceof HTMLElement) || !this.host.contains(trigger)) return;
+    const all = focusables(document.body).filter(tabbable);
+    for (const next of all.slice(all.indexOf(trigger) + 1)) {
+      next.focus();
+      if (document.activeElement === next) return;
+    }
+  }
+
+  /**
+   * Close a popover once the keyboard focus leaves both it and the trigger that opened it —
+   * a Tab out of its last row, a Shift+Tab out of its first — so an open popover does not
+   * stand over the strips the focus has moved on to. Closed without handing the focus back:
+   * it has already gone somewhere the operator chose.
+   *
+   * A focusout that names no new target is not the focus leaving in two cases, and is
+   * ignored in both: the window losing the OS foreground (WKWebView blurs the focused element
+   * then, and `document.hasFocus()` answers false), and a press on a part of the popover that
+   * takes no focus (its header, its foot). A focused element this view's own rebuild removes
+   * (Chromium reports that as a focusout naming no target) closes nothing either: it belongs
+   * to no strip on screen by then, and a popover being re-opened has let go of its open state.
+   */
+  private closeOnFocusLeave(e: FocusEvent): void {
+    const to = e.relatedTarget instanceof Node ? e.relatedTarget : null;
+    if (to === null && (!document.hasFocus() || this.pressInPop)) return;
+    const from = e.target instanceof Node ? e.target : null;
+    if (from === null) return;
+    for (const p of this.popovers) {
+      if (p.openFor === null) continue;
+      const root = this.refs.get(p.openFor)?.root;
+      const owns = (n: Node): boolean =>
+        p.box.contains(n) ||
+        (n instanceof Element && !!root?.contains(n) && p.sel.some((sel) => n.closest(sel) !== null));
+      if (!owns(from) || (to !== null && owns(to))) continue;
+      if (p.kind === "tap") this.closeTapPop();
+      else if (p.kind === "pan") this.closeSendPan();
+      else this.closeTypePop();
+    }
   }
 
   // dB tick labels for a strip's fader range (per-channel scale between the fader
@@ -787,16 +932,18 @@ export class Console {
   }
 
   // Persist the per-strip tap choices per model in localStorage (shape:
-  // { [modelId]: { [nodeId]: tapKey } }), reusing the shared JSON storage helpers.
-  private allTaps(): Record<string, Record<string, string>> {
-    return loadJson<Record<string, Record<string, string>>>(this.TAP_STORE, {});
+  // { [modelId]: { [nodeId]: tapKey } }), reusing the shared JSON storage helpers. A
+  // stored value that is not an object (null, a string, a number, an array) reads as
+  // no choices at all, so a pick writes a fresh container instead of throwing.
+  private allTaps(): Record<string, unknown> {
+    const all = loadJson<unknown>(this.TAP_STORE, {});
+    return isPlainRecord(all) ? all : {};
   }
 
   private loadTaps(): void {
     this.meterTap.clear();
     const m = this.allTaps()[this.hooks.getModel().id];
-    if (m && typeof m === "object")
-      for (const [k, v] of Object.entries(m)) if (typeof v === "string") this.meterTap.set(k, v);
+    if (isPlainRecord(m)) for (const [k, v] of Object.entries(m)) if (typeof v === "string") this.meterTap.set(k, v);
   }
 
   private saveTaps(): void {
@@ -820,8 +967,11 @@ export class Console {
   private buildTapBadge(id: string): HTMLElement {
     const tap = tapFor(id, this.tapKeyOf(id), this.hooks.getModel().id);
     const badge = el("div", "con-tap");
+    badge.dataset.ctl = "meter-point";
     badge.setAttribute("role", "button");
     badge.setAttribute("aria-haspopup", "menu");
+    // A badge rebuilt under its own open popover (`refreshStrip`) reads open from the start.
+    badge.setAttribute("aria-expanded", String(this.tapOpenFor === id));
     badge.tabIndex = 0;
     // A small meter-bars glyph marks this as the METER point selector — so it
     // reads apart from the send-tap PRE/POST chip (which shares the pre/post
@@ -831,15 +981,15 @@ export class Console {
     const cv = el("span", "cv");
     cv.textContent = "▾";
     badge.append(ico, name, cv);
-    const toggle = (): void => {
+    const toggle = (viaKey: boolean): void => {
       if (this.tapOpenFor === id) this.closeTapPop();
-      else this.openTapPop(id, badge);
+      else this.openTapPop(id, badge, viaKey);
     };
-    badge.addEventListener("click", toggle);
+    badge.addEventListener("click", () => toggle(false));
     badge.addEventListener("keydown", (e) => {
       if (e.key === " " || e.key === "Enter") {
         e.preventDefault();
-        toggle();
+        toggle(true);
       } else if (e.key === "Escape") {
         this.closeTapPop();
       }
@@ -887,15 +1037,19 @@ export class Console {
     this.closeTypePop();
   }
 
-  private openTapPop(id: string, anchor: HTMLElement): void {
+  private openTapPop(id: string, anchor: HTMLElement, focusIn = false): void {
     this.closePopovers();
     const cur = this.tapKeyOf(id);
     this.tapPop.replaceChildren();
     const ph = el("div", "ph");
     ph.textContent = t().console.meterPoint;
     const chain = el("div", "chain");
+    chain.setAttribute("role", "menu");
+    chain.setAttribute("aria-label", t().console.meterPoint);
+    this.wireRowKeys(chain);
     for (const tp of tapsFor(id, this.hooks.getModel().id)) {
       const row = el("div", "crow" + (tp.key === cur ? " active" : ""));
+      row.dataset.ctl = "tap:" + tp.key;
       row.setAttribute("role", "menuitemradio");
       row.setAttribute("aria-checked", String(tp.key === cur));
       row.tabIndex = 0;
@@ -919,8 +1073,53 @@ export class Console {
     this.tapPop.hidden = false;
     this.tapOpenFor = id;
     this.tapBtn = anchor;
+    anchor.setAttribute("aria-expanded", "true");
     // Position fixed near the badge, clamped to the viewport (top-right aligned).
     this.placePopover(this.tapPop, anchor, "right", 2);
+    if (focusIn) this.focusInto(this.tapPop);
+  }
+
+  /**
+   * Move the focus into a popover the KEYBOARD opened: onto its checked row, or its first
+   * control where no row is checked or the checked one takes no focus. A popover is appended
+   * after the whole strip rack, so without this the next Tab walks the rest of the rack
+   * before it reaches the popover. Nothing moves where the popover offers the keyboard no
+   * control. A pointer open and the re-open after a strip rebuild leave the focus alone.
+   */
+  private focusInto(pop: HTMLElement): void {
+    const rows = focusables(pop);
+    const checked = rows.find((r) => r.getAttribute("aria-checked") === "true");
+    (checked ?? rows[0])?.focus({ preventScroll: true });
+  }
+
+  /**
+   * The keys a popover's list of rows answers, the ones the toolbar menus answer: Down / Up move
+   * the focus to the next / previous row that takes it, wrapping at the ends, and Home / End to
+   * the first / last. A row that cannot be picked takes no focus, so it is passed over. Tab still
+   * walks the rows and leaves the list; a key held with a command modifier is left alone.
+   * `ends` false answers Down / Up alone and leaves Home / End to the focused control — the SEND
+   * PAN knobs, walked by Down / Up while Left / Right step the focused one's value.
+   */
+  private wireRowKeys(list: HTMLElement, ends = true): void {
+    list.addEventListener("keydown", (e) => {
+      if (isChord(e)) return;
+      const rows = focusables(list);
+      const at = rows.indexOf(document.activeElement as HTMLElement);
+      if (at < 0) return;
+      const to =
+        e.key === "ArrowDown"
+          ? (at + 1) % rows.length
+          : e.key === "ArrowUp"
+            ? (at - 1 + rows.length) % rows.length
+            : ends && e.key === "Home"
+              ? 0
+              : ends && e.key === "End"
+                ? rows.length - 1
+                : null;
+      if (to === null) return;
+      e.preventDefault();
+      rows[to].focus();
+    });
   }
 
   private closeTapPop(restore = false): void {
@@ -929,6 +1128,7 @@ export class Console {
     this.tapOpenFor = null;
     this.tapPop.hidden = true;
     this.tapPop.replaceChildren();
+    this.tapBtn?.setAttribute("aria-expanded", "false");
     this.releaseFocus(this.tapBtn, restore, openFor, ".con-tap");
     this.tapBtn = null;
   }
@@ -949,6 +1149,7 @@ export class Console {
     const rack = el("div", "con-sends" + (hasAny ? "" : " empty"));
 
     const sh = el("div", "con-sh" + (hasAny ? "" : " dim"));
+    sh.dataset.ctl = "sends";
     sh.setAttribute("role", "button");
     sh.setAttribute("aria-expanded", String(this.sendsOpen));
     sh.tabIndex = 0;
@@ -1000,14 +1201,16 @@ export class Console {
     const panbtn = el("button", "con-panbtn") as HTMLButtonElement;
     panbtn.type = "button";
     panbtn.dataset.strip = m.id;
+    panbtn.dataset.ctl = "send-pan";
     panbtn.setAttribute("aria-haspopup", "true");
     panbtn.setAttribute("aria-expanded", "false");
     const cv = el("span", "cv");
     cv.textContent = "▾";
     panbtn.append(document.createTextNode("PAN"), cv);
-    panbtn.addEventListener("click", () => {
+    // A native button: a click the keyboard produced (Enter / Space) carries no click count.
+    panbtn.addEventListener("click", (e) => {
       if (this.sendPanOpenFor === m.id) this.closeSendPan();
-      else this.openSendPan(m.id, panbtn);
+      else this.openSendPan(m.id, panbtn, e.detail === 0);
     });
     rack.append(panbtn);
     return { el: rack, cols };
@@ -1044,6 +1247,8 @@ export class Console {
     const fader = el("div", "con-vfad" + (busFixed ? " readonly" : ""));
     fader.setAttribute("role", "slider");
     fader.setAttribute("aria-label", SEND_LABEL[target]);
+    fader.dataset.ctl = controlId(m.id, "level", target);
+    setLevelRange(fader, range);
     if (busFixed) {
       fader.setAttribute("aria-disabled", "true");
       fader.title = rateOff ? t().inspector.fx2RateLocked : t().inspector.busFixedSend;
@@ -1112,6 +1317,10 @@ export class Console {
               },
     );
 
+    // Each keeps one identity whatever lock it is drawn under, for the focus carry-over.
+    chip.dataset.ctl = controlId(m.id, "mute", target);
+    preBtn.dataset.ctl = controlId(m.id, "tap", target);
+
     // A FIXED-bus send fader is display-only: paint its value but skip the wiring.
     if (!busFixed) this.wireColFader(m.id, target, c, ref, range, swap, readoutText);
     this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, c?.params?.tap === "pre");
@@ -1154,14 +1363,23 @@ export class Console {
       e.preventDefault();
       if (this.midiArm(midiId)) return;
       dragging = true;
-      const startY = e.clientY;
-      const startFrac = dbToFrac(level(), range);
+      // Both anchors are rebased whenever the Shift state flips, as the head knob's are,
+      // so entering or leaving fine mode mid-drag continues from the level on screen
+      // instead of applying the new rate to the whole distance already dragged.
+      let startY = e.clientY;
+      let startFrac = dbToFrac(level(), range);
+      let wasShift = e.shiftKey;
       const travel = fader.getBoundingClientRect().height - 12;
       let moved = false;
       trackDrag(
         fader,
         e,
         (ev) => {
+          if (ev.shiftKey !== wasShift) {
+            startY = ev.clientY;
+            startFrac = dbToFrac(level(), range);
+            wasShift = ev.shiftKey;
+          }
           const dy = startY - ev.clientY;
           if (!moved && Math.abs(dy) < 3) return; // threshold guards mis-grabs / dblclick
           moved = true;
@@ -1209,9 +1427,10 @@ export class Console {
 
   // The next fader level for a keydown (Arrow = 1 detent, PageUp/Down = 6, Home = max,
   // End = −∞), or null for a non-stepping key. Shared by the main fader and the rack
-  // columns; a step down off the floor lands on −∞ via the range's own step().
+  // columns; a step down off the floor lands on −∞ via the range's own step(). A level
+  // below the floor steps from −∞, so one step up from there lands on the floor detent.
   private faderKeyStep(e: KeyboardEvent, range: LevelRange, cur: number): number | null {
-    const base = cur < range.min ? range.min : cur;
+    const base = cur < range.min ? range.off : cur;
     if (e.key === "ArrowUp") return range.step(base, 1);
     if (e.key === "ArrowDown") return range.step(base, -1);
     if (e.key === "PageUp") return range.step(base, 6);
@@ -1222,18 +1441,18 @@ export class Console {
   }
 
   // One detent up/down from a wheel notch, mirroring the Arrow keys (a step down
-  // off the floor lands on −∞ via the range's own step()). Shared by both faders.
+  // off the floor lands on −∞ via the range's own step(), and a level below the
+  // floor steps from −∞). Shared by both faders.
   private faderWheelStep(range: LevelRange, cur: number, dir: 1 | -1): number {
-    const base = cur < range.min ? range.min : cur;
+    const base = cur < range.min ? range.off : cur;
     return range.step(base, dir);
   }
 
   // Paint a send column's fader cap position + accessible value from a dB level + tap.
   private updateColLevel(ref: SendColRef, range: LevelRange, db: number, pre: boolean): void {
     ref.cap.style.setProperty("--pos", (1 - dbToFrac(db, range)) * 100 + "%");
-    const f = fmtDb(db, range);
     ref.fader.setAttribute("aria-valuenow", String(Math.round(db)));
-    ref.fader.setAttribute("aria-valuetext", f.off ? "off (-∞)" : (pre ? "PRE, " : "") + f.text + " dB");
+    ref.fader.setAttribute("aria-valuetext", levelValueText(db, range, pre ? "PRE, " : ""));
   }
 
   // Fill a collapsed-header dots row: one amber dot per active (ON) send.
@@ -1266,10 +1485,23 @@ export class Console {
     }
   }
 
+  /** The FIXED and Pan Link locks of every MIX bus a strip's SEND PAN popover draws a
+   *  knob for, as one comparable string. */
+  private sendPanLockKey(stripId: string): string {
+    const plan = this.hooks.getPlan();
+    return this.sendSlots()
+      .filter((target) => this.isMixBus(target) && this.hasSend(stripId, target))
+      .map((target) => {
+        const { busFixed, panLinked } = mixSendLocks(plan, target);
+        return `${target}:${busFixed}:${panLinked}`;
+      })
+      .join(",");
+  }
+
   // Open the SEND PAN popover below a strip's PAN ▾ button: the strip's MIX sends'
   // pan as rotary knobs laid out in horizontal columns (destination label above,
   // value below), echoing the rack columns. FX sends are mono and carry no pan.
-  private openSendPan(stripId: string, anchor: HTMLElement): void {
+  private openSendPan(stripId: string, anchor: HTMLElement, focusIn = false): void {
     this.closePopovers();
     const plan = this.hooks.getPlan();
     this.sendPanPop.replaceChildren();
@@ -1282,6 +1514,7 @@ export class Console {
     who.textContent = this.toStripModel(stripId).label;
     ph.append(cat, who);
     const grid = el("div", "pcols");
+    this.wireRowKeys(grid, false);
     for (const target of this.sendSlots()) {
       if (!this.isMixBus(target) || !this.hasSend(stripId, target)) continue;
       const pcol = el("div", "pcol");
@@ -1300,7 +1533,8 @@ export class Console {
         busFixed ? t().inspector.busFixedSend : panLinked ? t().inspector.panLinked : undefined,
       );
       // partnerSync off: the mirror is handled by commit; a re-render would tear down
-      // this popover, and no partner send-pan control is on screen.
+      // this popover, and no partner send-pan control is on screen. Horizontal: the
+      // knob steps on Left / Right, and Up / Down walk the popover's knobs.
       const { knob, val } = this.buildKnob(
         spec,
         SEND_LABEL[target],
@@ -1308,6 +1542,7 @@ export class Console {
         "rv",
         controlId(stripId, "pan", target),
         false,
+        true,
       );
       pcol.append(capEl, knob, val);
       grid.append(pcol);
@@ -1315,6 +1550,7 @@ export class Console {
     this.sendPanPop.append(ph, grid);
     this.sendPanPop.hidden = false;
     this.sendPanOpenFor = stripId;
+    this.sendPanLocks = this.sendPanLockKey(stripId);
     // Mark the trigger active so it reads as the open popover's owner; closeSendPan
     // clears it (the anchor outlives the open/close cycle — a render closes the
     // popover before rebuilding the strips).
@@ -1323,6 +1559,7 @@ export class Console {
     anchor.setAttribute("aria-expanded", "true");
     // Anchor below the PAN ▾ button, centred on it (upward caret), clamped to the viewport.
     this.placePopover(this.sendPanPop, anchor, "center", 8);
+    if (focusIn) this.focusInto(this.sendPanPop);
   }
 
   // ---- INS FX popover ----
@@ -1330,9 +1567,9 @@ export class Console {
   /** Open the type popover for a strip, or close it when it is already this strip's.
    *  Both the face and the disclosure call this, so pressing either one twice closes it
    *  — the toggle the meter badge and the PAN button already have. */
-  private toggleInsFxPop(id: string, anchor: HTMLElement): void {
+  private toggleInsFxPop(id: string, anchor: HTMLElement, focusIn = false): void {
     if (this.typePopFor === id) this.closeTypePop();
-    else this.openInsFxPop(id, anchor);
+    else this.openInsFxPop(id, anchor, focusIn);
   }
 
   /**
@@ -1347,7 +1584,7 @@ export class Console {
    * including the three — rate ceiling, STEREO-linked pair, slot taken — that make
    * everything else unpickable.
    */
-  private openInsFxPop(id: string, anchor: HTMLElement): void {
+  private openInsFxPop(id: string, anchor: HTMLElement, focusIn = false): void {
     this.closePopovers();
     const model = this.hooks.getModel();
     const plan = this.hooks.getPlan();
@@ -1365,6 +1602,7 @@ export class Console {
 
     const list = el("div", "ilist");
     list.setAttribute("role", "menu");
+    this.wireRowKeys(list);
     for (const entry of menu) {
       const isNone = entry.option.value === INSERT_FX_NONE;
       const current = entry.option.value === eff;
@@ -1374,6 +1612,7 @@ export class Console {
       // offer, and it is marked as checked rather than as available.
       const disabled = entry.lock !== null && !isNone && !current;
       const row = el("div", "irow" + (current ? " active" : "") + (disabled ? " off" : ""));
+      row.dataset.ctl = "insfx:" + entry.option.value;
       row.setAttribute("role", "menuitemradio");
       row.setAttribute("aria-checked", String(current));
       const nm = el("span", "nm");
@@ -1437,6 +1676,7 @@ export class Console {
     // an easier one, and the easier one is what stops being true first.
     const openable = insertFxScreenFamily(model, plan, id) !== null;
     const open = el("div", "iopen" + (openable ? "" : " off"));
+    open.dataset.ctl = "open-screen";
     open.textContent = dynOpenLabel("insfx", t());
     if (openable) {
       open.setAttribute("role", "button");
@@ -1460,10 +1700,12 @@ export class Console {
     anchor.classList.add("open");
     anchor.setAttribute("aria-expanded", "true");
     this.placePopover(this.typePop, anchor, "center", 8);
+    if (focusIn) this.focusInto(this.typePop);
   }
 
   private fxTypeOpenChip(id: string): HTMLElement {
     const chip = el("div", "con-chip con-chip-open con-fxopen");
+    chip.dataset.ctl = "open:fx";
     // Always "▸": an FX channel always holds an effect, so this never stands for the "+"
     // the INS FX opener shows over an empty strip.
     chip.textContent = "▸";
@@ -1473,9 +1715,9 @@ export class Console {
     const label = t().inspector.fxEffect.effectType;
     chip.title = label;
     chip.setAttribute("aria-label", label);
-    this.wireActivate(chip, undefined, () => {
+    this.wireActivate(chip, undefined, (viaKey) => {
       if (this.typePopFor === id && this.typePopKind === "fx") this.closeTypePop(true);
-      else this.openFxTypePop(id, chip);
+      else this.openFxTypePop(id, chip, viaKey);
     });
     return chip;
   }
@@ -1487,6 +1729,7 @@ export class Console {
    *  by. */
   private fxEffectFaceChip(): HTMLElement {
     const chip = el("div", "con-chip con-fxface static on");
+    chip.dataset.ctl = "fx-face";
     chip.textContent = t().console.effect;
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-pressed", "true");
@@ -1511,7 +1754,7 @@ export class Console {
    * There is no ON row here, and the INS FX popover's bypass has no counterpart: an FX
    * channel's effect has no switch of its own beside the strip's [ON].
    */
-  private openFxTypePop(id: string, anchor: HTMLElement): void {
+  private openFxTypePop(id: string, anchor: HTMLElement, focusIn = false): void {
     this.closePopovers();
     const plan = this.hooks.getPlan();
     const fxIndex = FX_CHANNEL_NODE_INDEX[id];
@@ -1527,9 +1770,11 @@ export class Console {
 
     const list = el("div", "ilist");
     list.setAttribute("role", "menu");
+    this.wireRowKeys(list);
     for (const option of fxEffectTypes(fxIndex)) {
       const current = option.value === cur;
       const row = el("div", "irow" + (current ? " active" : ""));
+      row.dataset.ctl = "fx:" + option.value;
       row.setAttribute("role", "menuitemradio");
       row.setAttribute("aria-checked", String(current));
       const nm = el("span", "nm");
@@ -1549,6 +1794,7 @@ export class Console {
 
     const foot = el("div", "ifoot");
     const open = el("div", "iopen");
+    open.dataset.ctl = "open-screen";
     open.textContent = dynOpenLabel("fx", t());
     open.setAttribute("role", "button");
     // An effect on a bus the rate has taken away is still an effect to tune — the screen says
@@ -1567,6 +1813,7 @@ export class Console {
     anchor.classList.add("open");
     anchor.setAttribute("aria-expanded", "true");
     this.placePopover(this.typePop, anchor, "center", 8);
+    if (focusIn) this.focusInto(this.typePop);
   }
 
   /**
@@ -1683,7 +1930,7 @@ export class Console {
   // are mid-tones where that ink loses by 30-40 Lc, and two of them reach neither
   // ink's floor, which is exactly where the halo does the work.
   private paintScribble(scrib: HTMLElement, m: StripModel): void {
-    const color = this.hooks.getPlan().nodeColors?.[m.id];
+    const color = planColorHex(this.hooks.getPlan().nodeColors?.[m.id]);
     const ink = color ? inkOn(color) : this.inkForRail(m.rail);
     if (color) scrib.style.background = color;
     if (!ink) return;
@@ -1771,20 +2018,21 @@ export class Console {
   }
 
   // Wire an element as an activatable button: keyboard (Space / Enter), MIDI-learn
-  // mark + arming, and click. `run` performs the edit; in learn mode arming consumes
-  // the activation instead. Shared by the toggle chips and the scribble power button.
-  private wireActivate(el: HTMLElement, midiId: string | undefined, run: () => void): void {
+  // mark + arming, and click. `run` performs the edit, told whether the keyboard
+  // activated it; in learn mode arming consumes the activation instead. Shared by the
+  // toggle chips and the scribble power button.
+  private wireActivate(el: HTMLElement, midiId: string | undefined, run: (viaKey: boolean) => void): void {
     el.tabIndex = 0;
     this.midiMark(el, midiId);
-    const activate = (): void => {
+    const activate = (viaKey: boolean): void => {
       if (this.midiArm(midiId)) return;
-      run();
+      run(viaKey);
     };
-    el.addEventListener("click", activate);
+    el.addEventListener("click", () => activate(false));
     el.addEventListener("keydown", (e) => {
       if (e.key === " " || e.key === "Enter") {
         e.preventDefault();
-        activate();
+        activate(true);
       }
     });
   }
@@ -1795,6 +2043,7 @@ export class Console {
   private wirePower(scrib: HTMLElement, led: HTMLElement, m: StripModel, spec: PowerSpec): void {
     led.classList.toggle("on", spec.on);
     scrib.classList.add("power");
+    scrib.dataset.ctl = spec.midiId;
     scrib.setAttribute("role", "button");
     scrib.setAttribute("aria-pressed", String(spec.on));
     scrib.setAttribute("aria-label", `${m.label} ${t().console.power}`);
@@ -1850,8 +2099,12 @@ export class Console {
 
   private dynOpenChip(kind: DynKind, id: string): HTMLElement {
     const chip = el("div", "con-chip con-chip-open");
+    chip.dataset.ctl = "open:" + kind;
     chip.textContent = "▸";
     chip.setAttribute("role", "button");
+    // What it opens, for `focusOpener` to find it by after a rebuild.
+    chip.dataset.dynOpen = kind;
+    chip.dataset.dynNode = id;
     const label = dynOpenLabel(kind, t());
     chip.title = label;
     chip.setAttribute("aria-label", label);
@@ -1876,6 +2129,7 @@ export class Console {
    *  was: it said why in a tooltip and then opened anyway. */
   private insFxVacantChip(id: string, whyNone?: string, locked?: boolean): HTMLElement {
     const chip = el("div", IFX_VACANT_CLS + (locked ? " readonly" : ""));
+    chip.dataset.ctl = "ifx-face";
     chip.textContent = "INS FX";
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-haspopup", "menu");
@@ -1888,7 +2142,7 @@ export class Console {
       chip.tabIndex = -1;
       return chip;
     }
-    this.wireActivate(chip, undefined, () => this.toggleInsFxPop(id, chip));
+    this.wireActivate(chip, undefined, (viaKey) => this.toggleInsFxPop(id, chip, viaKey));
     return chip;
   }
 
@@ -1899,6 +2153,7 @@ export class Console {
    *  nothing, since what it offers there is a choice rather than a way in. */
   private insFxOpenChip(id: string, holds: boolean): HTMLElement {
     const chip = el("div", "con-chip con-chip-open con-ifxopen");
+    chip.dataset.ctl = "open:insfx";
     chip.textContent = holds ? "▸" : "+";
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-haspopup", "menu");
@@ -1906,7 +2161,7 @@ export class Console {
     const label = t().inspector.insertFx;
     chip.title = label;
     chip.setAttribute("aria-label", label);
-    this.wireActivate(chip, undefined, () => this.toggleInsFxPop(id, chip));
+    this.wireActivate(chip, undefined, (viaKey) => this.toggleInsFxPop(id, chip, viaKey));
     return chip;
   }
 
@@ -1914,7 +2169,8 @@ export class Console {
   // for the head chips, con-sl / con-slp for the rack's enable chip / PRE button);
   // opts.mute paints the MUTE colour, opts.after runs after the toggle (before commit),
   // opts.readonlyTitle renders it inert with a tooltip, opts.midiId arms MIDI learn,
-  // opts.rerender rebuilds the whole view for a toggle whose effect reaches other strips.
+  // opts.rerender rebuilds the whole view for a toggle whose effect reaches other strips,
+  // opts.ctl names the chip for the focus carry-over (its MIDI id, else its label, when unset).
   private buildChip(
     id: string,
     label: string,
@@ -1929,9 +2185,10 @@ export class Console {
       after?: (next: boolean) => void;
       rerender?: boolean;
       keys?: readonly string[];
+      ctl?: string;
     },
   ): HTMLElement {
-    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender, keys } = opts ?? {};
+    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender, keys, ctl } = opts ?? {};
     // Normalised before it reaches the DOM. The device write is `np.<flag> ? 1 : 0`
     // and the load funnel passes a finite numeric leaf through unchecked, so a plan
     // authored elsewhere reaches here carrying 1 — `String(1)` is "1", which is not
@@ -1939,6 +2196,7 @@ export class Console {
     const state = Boolean(on);
     const chip = el("div", cls + (mute ? " mute" : "") + (state ? " on" : "") + (readonlyTitle ? " readonly" : ""));
     chip.textContent = label;
+    chip.dataset.ctl = ctl ?? midiId ?? label;
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-pressed", String(state));
     // A hover tooltip spelling out a terse label (e.g. C.INT → Cue Interrupt).
@@ -2009,12 +2267,13 @@ export class Console {
 
   // STREAMING strip: a live meter only — no fader, no set-level readout, no chips
   // (the device offers no level/EQ here, just a source select + delay). One meter
-  // point (pre/post-DELAY read the same level), so no tap selector either.
+  // point (the device exposes only the post-DELAY meter), so no tap selector either.
   private buildMeterOnlyStrip(m: StripModel): HTMLElement {
     // OSC rests off by default, so its strip is dimmed until switched on (via the
     // scribble power LED) — the same inactive dim as every other strip. STREAMING has
     // no on/off, so it never dims (m.inactive is false there).
     const strip = el("div", "con-strip meter-only" + (m.inactive ? " inactive" : ""));
+    nameStrip(strip, m);
     strip.style.setProperty("--rail", m.rail);
 
     const head = el("div", "con-head");
@@ -2045,8 +2304,9 @@ export class Console {
     }
     // STREAMING: a DELAY on/off chip and a TIME knob (the delay time, 1…1000 ms).
     // Gives the otherwise-bare head controls so the strip reads as purposeful, and
-    // mirrors the OSCILLATOR's ON + LEVEL pairing. Finer time steps stay in the
-    // inspector; holding Shift steps the device's 0.02 ms fine grid (push-and-turn).
+    // mirrors the OSCILLATOR's ON + LEVEL pairing. A key or a notch moves 1.00 ms and
+    // holding Shift 0.02 ms (push-and-turn), each keeping the hundredths the way the unit's
+    // own knob does, and a drag lands on that 0.02 ms grid.
     if (m.isStream) {
       const chips = el("div", "con-chips");
       const delayOn = (): boolean => this.hooks.getPlan().nodeParams[m.id]?.delay?.on ?? false;
@@ -2079,8 +2339,9 @@ export class Console {
           keys: ["delay.time"],
           min: DELAY_TIME_MIN_MS,
           max: DELAY_TIME_MAX_MS,
-          step: 1, // whole-ms on the knob; the inspector keeps the 0.01 ms grid
-          fine: 0.02, // device-verified fine grid (fixed, rate-independent)
+          step: 1, // ±1.00 ms per detent, keeping the hundredths
+          fine: DELAY_TIME_GRID_MS, // device-verified fine grid (fixed, rate-independent)
+          grid: DELAY_TIME_GRID_MS,
           // Digits by need: off-grid (fine / inspector-set) values get both
           // decimals; whole values keep the original compact display.
           format: (v) => v.toFixed(v % 1 ? 2 : v < 100 ? 1 : 0),
@@ -2211,18 +2472,20 @@ export class Console {
     });
   }
 
-  // Where keyboard focus sits inside the strips, as (strip id, index among that
-  // strip's focusable elements, class). A rebuild derives the same strips from the
-  // same plan, so the index addresses the same control; the class is the check that
-  // it really did — when the rebuild changed a strip's shape (a chip appeared, the
-  // strip is gone), focus is dropped rather than handed to some other control. The
-  // scroll offset is deliberately left out: the rack's is not restored (see
+  // Where keyboard focus sits inside the strips, as (strip id, the control's own identity).
+  // The scroll offset is deliberately left out: the rack's is not restored (see
   // preserveFocus), only focus is.
   /**
    * Carry the keyboard's place across a rebuild of the strips.
    *
-   * An ordinary control is keyed by its POSITION in the strip's tab order plus its class,
-   * which is what makes a control that moved refuse to answer for one that took its slot.
+   * An ordinary control is keyed by the identity it is built with (`data-ctl` — its MIDI id
+   * where it has one, else a fixed name such as the opener's kind), and the restore looks
+   * for that identity among the controls the rebuilt strip offers to the keyboard. So a
+   * control is found wherever the rebuild put it, and one the rebuild took away or turned
+   * read-only answers nothing: the focus is dropped rather than handed to whatever moved
+   * into its place — a +48V that HI-Z just locked does not pass the focus to HPF beside it.
+   * A control built without an identity falls back to its position in the strip's tab
+   * order plus its class.
    *
    * Two places the focus can be are not in that order at all, and both are ones this view
    * puts it in itself: the INS FX face where a sample rate has dropped the disclosure, and
@@ -2261,29 +2524,31 @@ export class Console {
 
   /** Focus standing inside an open popover, recorded as the row it is on AND the strip the
    *  popover belongs to — the two answers a rebuild can need, since a path may re-open the
-   *  popover (the row is still there) or close it (only the trigger is). */
-  private popoverMark(
-    active: HTMLElement,
-  ): { pop: "tap" | "pan" | "ifx"; id: string; idx: number; sel: readonly string[] } | null {
+   *  popover (the row is still there) or close it (only the trigger is). The row is keyed
+   *  by its identity as a strip control is, and by its position only where it has none. */
+  private popoverMark(active: HTMLElement): PopoverFocusMark | null {
     for (const p of this.popovers) {
       if (p.openFor === null || !p.box.contains(active)) continue;
-      return { pop: p.kind, id: p.openFor, idx: focusables(p.box).indexOf(active), sel: p.sel };
+      return {
+        pop: p.kind,
+        id: p.openFor,
+        idx: focusables(p.box).indexOf(active),
+        ctl: active.dataset.ctl,
+        sel: p.sel,
+      };
     }
     return null;
   }
 
   /** …and where it goes afterwards, decided by what the rebuild actually did rather than by
-   *  which path called: the same row where the popover is open again, the trigger on the
-   *  rebuilt strip where it is not. */
-  private restorePopoverFocus(mark: {
-    pop: "tap" | "pan" | "ifx";
-    id: string;
-    idx: number;
-    sel: readonly string[];
-  }): HTMLElement | null {
+   *  which path called: the same row where the popover is open again and still offers it to
+   *  the keyboard, the trigger on the rebuilt strip otherwise — a SEND PAN knob a lock just
+   *  turned read-only hands the focus to the PAN button, not to the knob beside it. */
+  private restorePopoverFocus(mark: PopoverFocusMark): HTMLElement | null {
     const p = this.popovers.find((x) => x.kind === mark.pop);
-    if (p && p.openFor !== null && mark.idx >= 0) {
-      const row = focusables(p.box)[mark.idx];
+    if (p && p.openFor !== null) {
+      const rows = focusables(p.box);
+      const row = mark.ctl !== undefined ? rows.find((r) => r.dataset.ctl === mark.ctl) : rows[mark.idx];
       if (row) return row;
     }
     const root = this.refs.get(mark.id)?.root;
@@ -2312,6 +2577,8 @@ export class Console {
           if (!r.root.contains(active)) continue;
           if (active === r.root) return { id, anchor: "strip-root" as const };
           if (active.classList.contains("con-ifxface")) return { id, anchor: "ifx-face" as const };
+          const ctl = active.dataset.ctl;
+          if (ctl !== undefined) return { id, ctl };
           const idx = focusables(r.root).indexOf(active);
           return idx < 0 ? null : { id, idx, cls: active.className };
         }
@@ -2327,6 +2594,7 @@ export class Console {
           // fresh close would have.
           return mark.anchor === "ifx-face" ? (root.querySelector<HTMLElement>(".con-ifxface") ?? root) : root;
         }
+        if ("ctl" in mark) return focusables(root).find((c) => c.dataset.ctl === mark.ctl);
         const target = focusables(root)[mark.idx];
         return target?.className === mark.cls ? target : null;
       },
@@ -2418,6 +2686,7 @@ export class Console {
     // otherwise route audio into a bus the unit is not running.
     const rateOff = nodeRateDisabled(m.id, this.hooks.getPlan().sampleRate);
     const strip = el("div", "con-strip" + (m.inactive || rateOff ? " inactive" : ""));
+    nameStrip(strip, m);
     // Programmatically focusable and out of the tab order: it is the floor a popover close
     // lands on when the control that opened it did not survive the rebuild.
     strip.tabIndex = -1;
@@ -2691,6 +2960,7 @@ export class Console {
         proc.append(
           this.buildChip(m.id, "INS FX", false, () => false, {
             cls: IFX_FACE_CLS,
+            ctl: "ifx-face",
             readonlyTitle:
               selected?.option.maxRate !== undefined
                 ? t().inspector.insFxRateLockedAt(selected.option.label, formatRate(selected.option.maxRate))
@@ -2707,7 +2977,7 @@ export class Console {
             // Selection belongs to the popover and the bypass to this face, so the face
             // writes the bypass alone and the strip it sits on is the only thing that
             // changes. Nothing else shows the value, so there is nothing to keep in step.
-            { cls: IFX_FACE_CLS, keys: ["insertFxOn"], midiId: controlId(m.id, "insertFxOn") },
+            { cls: IFX_FACE_CLS, keys: ["insertFxOn"], midiId: controlId(m.id, "insertFxOn"), ctl: "ifx-face" },
           ),
         );
       // Dropped where the popover behind it can do NOTHING: a strip holding nothing at a
@@ -2845,6 +3115,8 @@ export class Console {
     const fader = el("div", "con-fader");
     fader.setAttribute("role", "slider");
     fader.setAttribute("aria-label", m.label);
+    fader.dataset.ctl = controlId(m.id, "level");
+    setLevelRange(fader, m.range);
     fader.tabIndex = 0;
     const track = el("div", "track");
     // The 0 dB line rides the fader (not the inset track) so it shares the cap's
@@ -2970,6 +3242,7 @@ export class Console {
     setLevelText(r.readDb, f.text);
     r.readDb.classList.toggle("off", f.off);
     r.fader.setAttribute("aria-valuenow", String(Math.round(db)));
+    r.fader.setAttribute("aria-valuetext", levelValueText(db, r.m.range));
   }
 
   // ---- meters ----
@@ -3255,7 +3528,7 @@ export class Console {
   /** Apply a console edit to `id`: mirror it onto the linked partner — plus the insert
    *  FX, which the pair holds one of — then run the shared change funnel. Returns whether
    *  it mirrored (the caller rebuilds so the partner strip catches up). */
-  private commit(id: string, written: readonly string[] = []): boolean {
+  private commit(id: string, written: readonly string[] = [], defaults: readonly string[] = []): boolean {
     const model = this.hooks.getModel();
     const plan = this.hooks.getPlan();
     const mirrored = mirrorLinkedPair(model, plan, id);
@@ -3273,7 +3546,10 @@ export class Console {
     }
     // A linked MIX's send pans from this strip (and a mirrored partner) follow its position.
     keys.push(...alignLinkedSendPans(plan, withLinkedPartner(model, plan, id)));
-    this.hooks.onChange(keys);
+    // The insert-FX mirror copies the engine values, defaults included.
+    const seeded = defaults.map((path) => [id, path] as const);
+    if (partner && insFxMirrored) seeded.push(...defaults.map((path) => [partner, path] as const));
+    this.hooks.onChange(keys, seeded);
     return mirrored || insFxMirrored;
   }
 
@@ -3388,14 +3664,21 @@ export class Console {
   private setInsFx(id: string, value: number): void {
     const np = this.nodeParamsOf(id);
     const parked = parkOutgoingInsertFxParams(np);
-    if (parked) np.insertFxParams = parked;
+    // The plan takes the selected type's defaults for every slot it does not hold, which is
+    // what the screen shows and what the unit fills the engine with.
+    const { params, seeded } = seedInsertFxParams(parked ?? undefined, value);
+    if (parked || seeded.length > 0) np.insertFxParams = params;
     np.insertFx = value;
     np.insertFxOn = value !== INSERT_FX_NONE;
     this.closeTypePop();
     // Only what this edit wrote. The engine values are named when there were some to
     // park and not otherwise — naming that group on a selection that moved nothing in it
     // would take the device's answer for every slot the re-key merely copied.
-    this.commit(id, parked ? INSERT_FX_PAIR_KEYS : ["insertFx", "insertFxOn"]);
+    this.commit(
+      id,
+      parked ? INSERT_FX_PAIR_KEYS : ["insertFx", "insertFxOn"],
+      seeded.map((key) => `insertFxParams.${key}`),
+    );
     this.render();
     // Asked of the same function the launcher beside the list asks, so the press that
     // chooses and the press that opens cannot disagree about whether there is a screen.
@@ -3404,6 +3687,31 @@ export class Console {
       return;
     }
     this.focusInsFxAnchor(id);
+  }
+
+  /**
+   * Focus the control on the rack that opens `kind`'s tuning screen for `id`, as the rack is
+   * drawn now — the screen asks for it when it closes, since a strip rebuilt while it was open
+   * no longer holds the element that opened it, and the INS FX and FX popovers close (and
+   * take their rows with them) before the screen opens.
+   *
+   * The INS FX and FX screens are reached through their strip's disclosure, which is where a
+   * selection lands too. The SSMCS bank's faces share the one opener beside the SSMCS chip.
+   */
+  focusOpener(kind: DynKind, id: string): void {
+    const root = this.refs.get(id)?.root;
+    let target: HTMLElement | null | undefined;
+    if (kind === "insfx") {
+      target = root?.querySelector<HTMLElement>(".con-ifxopen") ?? root?.querySelector<HTMLElement>(".con-ifxface");
+    } else if (kind === "fx") {
+      target = root?.querySelector<HTMLElement>(".con-fxopen");
+    } else {
+      const opens = kind === "ssmcsComp" || kind === "ssmcsEq" ? "ssmcs" : kind;
+      target = [...this.host.querySelectorAll<HTMLElement>(".con-chip-open[data-dyn-open]")].find(
+        (c) => c.dataset.dynOpen === opens && c.dataset.dynNode === id,
+      );
+    }
+    target?.focus({ preventScroll: true });
   }
 
   /**
@@ -3451,8 +3759,9 @@ export class Console {
 
   // The knob primitive: the con-knob element + its value span (readonly / aria /
   // tabindex plumbing), wired via wireKnob. addKnob wraps it in the head's con-gain
-  // box; the SEND PAN popover wraps it in a pcol (with a "rv" value class). A
-  // device-locked knob shows its value but takes no input (wireKnob skips handlers).
+  // box; the SEND PAN popover wraps it in a pcol (with a "rv" value class) and makes it
+  // `horizontal`. A device-locked knob shows its value but takes no input (wireKnob
+  // skips handlers).
   private buildKnob(
     k: KnobSpec,
     ariaLabel: string,
@@ -3460,10 +3769,15 @@ export class Console {
     valCls: string,
     midiId?: string,
     partnerSync = true,
+    horizontal = false,
   ): { knob: HTMLElement; val: HTMLElement } {
     const knob = el("div", "con-knob" + (k.readonlyTitle ? " readonly" : ""));
     knob.setAttribute("role", "slider");
     knob.setAttribute("aria-label", ariaLabel);
+    knob.setAttribute("aria-valuemin", String(k.min));
+    knob.setAttribute("aria-valuemax", String(k.max));
+    if (horizontal) knob.setAttribute("aria-orientation", "horizontal");
+    knob.dataset.ctl = midiId ?? "knob:" + ariaLabel;
     knob.append(el("i", "ind"));
     const val = el("span", valCls);
     if (k.readonlyTitle) {
@@ -3472,17 +3786,19 @@ export class Console {
     } else {
       knob.tabIndex = 0;
     }
-    this.wireKnob(knob, val, k, id, midiId, partnerSync);
+    this.wireKnob(knob, val, k, id, midiId, partnerSync, horizontal);
     return { knob, val };
   }
 
   // Rotary knob: vertical drag (≈ full range over 150px) and arrow keys edit the
-  // value (snapped to `step`); the indicator rotates over a 270° sweep; a
-  // double-click resets to `reset`. Reads/writes via the spec's get/set.
+  // value (snapped to `step`, or to `grid` where the spec sets one); the indicator
+  // rotates over a 270° sweep; a double-click resets to `reset`. Reads/writes via the
+  // spec's get/set.
   // `partnerSync` (default on) re-renders after a linked-pair edit so the partner
   // strip's head knob catches up; the SEND PAN popover knob turns it OFF, since a
   // render would tear the popover down and no partner send-pan control is on screen
-  // (the plan mirror via `commit` is enough).
+  // (the plan mirror via `commit` is enough). `horizontal` steps on Left / Right
+  // alone and leaves Up / Down to the container; otherwise both axes step.
   private wireKnob(
     knob: HTMLElement,
     val: HTMLElement,
@@ -3490,6 +3806,7 @@ export class Console {
     id: string,
     midiId?: string,
     partnerSync = true,
+    horizontal = false,
   ): void {
     const angle = k.angle ?? ((v: number): number => -135 + ((v - k.min) / (k.max - k.min)) * 270);
     // Step for an interaction: fine while Shift is held — the event's own modifier
@@ -3500,12 +3817,30 @@ export class Console {
       val.textContent = k.format(v);
       knob.style.setProperty("--rot", angle(v) + "deg");
       knob.setAttribute("aria-valuenow", String(v));
+      // The face's own text ("L63", "C", "+8"), which is what the number means.
+      knob.setAttribute("aria-valuetext", k.format(v));
     };
-    const apply = (raw: number, st = k.step): void => {
-      const v = Math.max(k.min, Math.min(k.max, scrubFloat(Math.round(raw / st) * st)));
+    const write = (v: number): void => {
       k.set(v);
       show(v);
       this.commit(id, k.keys);
+    };
+    const apply = (raw: number, st = k.step): void => {
+      const to = k.grid ?? st;
+      write(Math.max(k.min, Math.min(k.max, scrubFloat(Math.round(scrubFloat(raw / to)) * to))));
+    };
+    // One step for a key or a wheel notch. On a knob with a `grid` it moves the held value by
+    // exactly the step, so a value off the grid stays off it, and stops at the ends. Otherwise
+    // it is snapped in the direction of travel: from a value between two grid points the next
+    // point that way, never the nearest one past it. The drag and the double-click reset keep
+    // `apply`'s nearest snap.
+    const stepBy = (dir: 1 | -1, st: number): void => {
+      if (k.grid !== undefined) {
+        write(Math.max(k.min, Math.min(k.max, scrubFloat(k.get() + dir * st))));
+        return;
+      }
+      const at = k.get() / st;
+      apply((dir > 0 ? Math.floor(at + 1e-9) + 1 : Math.ceil(at - 1e-9) - 1) * st, st);
     };
     const syncPartner = (): void => {
       if (partnerSync) this.syncPartnerStrip(id, k.pairs);
@@ -3542,8 +3877,8 @@ export class Console {
     knob.addEventListener("keydown", (e) => {
       if (this.midiLearnKey(e, midiId)) return;
       const st = stepFor(e);
-      if (e.key === "ArrowUp" || e.key === "ArrowRight") apply(k.get() + st, st);
-      else if (e.key === "ArrowDown" || e.key === "ArrowLeft") apply(k.get() - st, st);
+      if (e.key === "ArrowRight" || (!horizontal && e.key === "ArrowUp")) stepBy(1, st);
+      else if (e.key === "ArrowLeft" || (!horizontal && e.key === "ArrowDown")) stepBy(-1, st);
       else return;
       e.preventDefault();
       syncPartner();
@@ -3558,8 +3893,7 @@ export class Console {
     onWheelStep(
       knob,
       (dir) => {
-        const st = stepFor();
-        apply(k.get() + dir * st, st);
+        stepBy(dir, stepFor());
         syncPartner();
       },
       () => this.hooks.midi?.learnActive(),

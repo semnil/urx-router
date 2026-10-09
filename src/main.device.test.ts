@@ -17,6 +17,7 @@ import { resolve } from "node:path";
 import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
 import {
   $,
+  APP_BODY,
   bootApp,
   currentShell,
   deviceCommands,
@@ -33,7 +34,17 @@ import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, STEREO_FADER } from
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
-import { channelControl, insertFxControl, nameControl, planToCommands, sendControl } from "./core/control/translate";
+import {
+  channelControl,
+  cmdAddr,
+  insertFxControl,
+  nameControl,
+  nodeLeafRules,
+  planToCommandOrigins,
+  planToCommands,
+  sendControl,
+} from "./core/control/translate";
+import { nodeParamContestPath } from "./core/plan-history";
 import { getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { DeviceModel } from "./models/types";
@@ -64,12 +75,12 @@ afterEach(async () => {
   // session in the middle of starting holds it with the toggle still down, so the two are
   // waited on together — and the loop is what lets a start that completes here be ended.
   for (let i = 0; rate && i < 5; i++) {
-    if (btn?.getAttribute("aria-pressed") === "true") {
+    if (btn?.getAttribute("aria-checked") === "true") {
       btn.click();
-      await vi.waitFor(() => expect(btn.getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+      await vi.waitFor(() => expect(btn.getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
     }
     if (!rate.disabled) break;
-    await vi.waitFor(() => expect(!rate.disabled || btn?.getAttribute("aria-pressed") === "true").toBe(true), {
+    await vi.waitFor(() => expect(!rate.disabled || btn?.getAttribute("aria-checked") === "true").toBe(true), {
       timeout: 25_000,
     });
   }
@@ -579,6 +590,38 @@ describe("the device table the desktop cases run on", () => {
     expect(second).toBeGreaterThan(first);
   });
 
+  // A reader or writer a case supplies says what the unit HOLDS, and the connection rule is
+  // still the table's: answered regardless, a read issued after the link was released
+  // succeeds here and fails on every real unit.
+  it("refuses a case's own reader and writer on the same rule", () => {
+    const table = deviceCommands({ vd_get: () => 7, vd_set: () => undefined });
+    const write = { ...CH1, value: 1 };
+    expect(() => call(table, "vd_get", CH1)).toThrow(/not-connected/);
+    expect(() => call(table, "vd_set", write)).toThrow(/not-connected/);
+
+    const { epoch } = call(table, "vd_connect") as { epoch: number };
+    expect(call(table, "vd_get", CH1)).toBe(7);
+    expect(call(table, "vd_set", write)).toBeUndefined();
+
+    call(table, "vd_disconnect", { epoch });
+    expect(() => call(table, "vd_get", CH1)).toThrow(/not-connected/);
+    expect(() => call(table, "vd_set", write)).toThrow(/not-connected/);
+  });
+
+  // …and the same for one a case installs on the shell once the app is up.
+  it("refuses a reader a case answers on the booted shell", async () => {
+    const shell = await bootDevice();
+    shell.answer("vd_get", 7);
+    const invoke = (
+      window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a?: object) => Promise<unknown> } }
+    ).__TAURI_INTERNALS__.invoke;
+    await expect(invoke("vd_get", CH1)).rejects.toThrow(/not-connected/);
+    const { epoch } = (await invoke("vd_connect")) as { epoch: number };
+    await expect(invoke("vd_get", CH1)).resolves.toBe(7);
+    await invoke("vd_disconnect", { epoch });
+    await expect(invoke("vd_get", CH1)).rejects.toThrow(/not-connected/);
+  });
+
   // …and a connect that FAILS installs nothing, which is what the cases stubbing a broken
   // link rest on.
   it("stays disconnected when the connect itself fails", () => {
@@ -908,6 +951,208 @@ describe("Fetch from device", () => {
     expect(stripsNamed(asked[0])).toEqual([fullLabel(stream)]);
   });
 
+  // A send the document lists without a level loads at the unity the write sends, and that level
+  // is the fill's: the write that moves the unit's send there names the strip, said on the load's
+  // status line first. The control is the same document with the level written, on the same unit.
+  it.each([
+    ["names the strip whose send level the load supplied", false],
+    ["names nothing when the document wrote that level", true],
+  ])("%s", SLOW, async (_name, writesLevel) => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const model = getModel("URX44V");
+    const written = defaultPlan("URX44V");
+    const send = written.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix1:in")!;
+    send.params = writesLevel ? { ...send.params, level: 0 } : { pan: send.params?.pan ?? 0 };
+    const levels = sendControl(model, "ch1", "bus.mix1")!.level;
+    const read = clockReads(false, 48_000);
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({
+        "plugin:dialog|message": "Ok",
+        // The unit holds that send at -10 dB, which a write of unity moves.
+        vd_get: (a: Record<string, unknown>) =>
+          levels.includes(Number(a.paramId) + Number(a.x ?? 0)) ? levelToVd(-10) : read(a),
+      }),
+    }))!;
+    await vi.waitFor(
+      () =>
+        expect(statusText()).toBe(
+          writesLevel ? t().status.planLoaded : [t().status.sendLevelsSupplied(1), t().status.planLoaded].join(" — "),
+        ),
+      { timeout: 10_000 },
+    );
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const ch1 = model.nodes.find((n) => n.id === "ch1")!;
+    expect(stripsNamed(asked[0])).toEqual(writesLevel ? [] : [fullLabel(ch1)]);
+  });
+
+  // The unit fills an engine with the type's defaults only on the transition into it, so a write
+  // of a selector it already holds moves nothing there. A selection made in the app puts those
+  // defaults in the plan: the write over a unit already running that effect, tuned otherwise,
+  // sends them, and its confirm names the strip, since they are the type's and not the operator's.
+  it("sends a chosen effect's defaults over a unit already running it, and names the strip", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const { ENGINE_COMPANDER_INPUT, insertFxDefaults } = await import("./core/control/insert-fx-effect");
+    const model = getModel("URX44V");
+    const ifx = insertFxControl(model, "ch1")!;
+    const read = clockReads(false, 48_000);
+    const held: Record<number, number> = { 6: -2000, 7: 800 };
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(defaultPlan("URX44V")), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({
+        "plugin:dialog|message": "Ok",
+        // CH 1 runs Compander-H with a threshold and a ratio of its own.
+        vd_get: (a: Record<string, unknown>) =>
+          a.paramId === ifx.param
+            ? 1793
+            : a.paramId === ENGINE_COMPANDER_INPUT && held[Number(a.y)] !== undefined
+              ? held[Number(a.y)]
+              : read(a),
+      }),
+    }))!;
+    selectNode("ch1");
+    const sel = [...document.querySelectorAll<HTMLElement>("#inspector .param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.insertFxType)!
+      .querySelector("select")!;
+    sel.value = "1793";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    expect(stripsNamed(asked[0])).toEqual([fullLabel(model.nodes.find((n) => n.id === "ch1")!)]);
+    const sent = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set" ? shell.args[i] : undefined))
+      .filter((a): a is Record<string, unknown> => !!a && a.paramId === ENGINE_COMPANDER_INPUT && a.y === 6);
+    expect(sent.map((a) => a.value)).toContain(insertFxDefaults("compander", 1793)[6]);
+  });
+
+  // A document that leaves a name out loads with the model's factory name, which the write then
+  // sends: that name is the fill's, so the write moving the unit onto it names the strip, while a
+  // name the document wrote does not.
+  it.each([
+    ["names the strip whose name the load filled", false],
+    ["names nothing when the document wrote that name", true],
+  ])("%s", SLOW, async (_name, writesName) => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const model = getModel("URX44V");
+    const written = defaultPlan("URX44V");
+    if (!writesName) delete written.nodeNames.ch1;
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: clockReads(false, 48_000) }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const sentNames = shell.invokes.flatMap((cmd, i) => (cmd === "vd_set_str" ? [shell.args[i]!.value] : []));
+    expect(sentNames, "the premise: the factory name goes out").toContain(defaultPlan("URX44V").nodeNames.ch1);
+    expect(stripsNamed(asked[0])).toEqual(writesName ? [] : [fullLabel(model.nodes.find((n) => n.id === "ch1")!)]);
+  });
+
+  // A document that leaves a colour out loads with the model's factory colour, which the write
+  // then sends — the fill's, so the write moving the unit onto it names the strip, while a colour
+  // the document wrote does not. Off goes out as the unit's Off index.
+  it.each([
+    ["names the strip whose colour the load filled", false],
+    ["names nothing when the document wrote that colour", true],
+  ])("%s", SLOW, async (_name, writesColor) => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const { COLOR_OFF, COLOR_OFF_INDEX, planColorIndex } = await import("./core/control/params");
+    const model = getModel("URX44V");
+    const written = defaultPlan("URX44V");
+    // The unit answers 0 at an address nothing wrote, so STEREO's factory colour moves it.
+    expect(planColorIndex(written.nodeColors["bus.stereo"]), "the premise").not.toBe(0);
+    if (!writesColor) delete written.nodeColors["bus.stereo"];
+    written.nodeColors.ch1 = COLOR_OFF;
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok", vd_get: clockReads(false, 48_000) }),
+    }))!;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const stereo = fullLabel(model.nodes.find((n) => n.id === "bus.stereo")!);
+    expect(stripsNamed(asked[0])).toEqual(writesColor ? [] : [stereo]);
+    const offSent = shell.invokes.some(
+      (cmd, i) =>
+        cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.CH_COLOR.id && shell.args[i]?.value === COLOR_OFF_INDEX,
+    );
+    expect(offSent, "Off goes out as the Off index").toBe(true);
+  });
+
+  // An empty name has no value to send, and the unit keeps its own. Said by the write rather than
+  // counted as a match: on its own it is what the write reports instead of "already matches",
+  // and beside other changes it is a line of the confirm.
+  it("says which names are empty and not sent, instead of reporting a match", SLOW, async () => {
+    const shell = await bootDevice();
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(statusText(), "the premise: the unit matches the plan").toContain(t().status.writeNoChanges);
+
+    selectNode("ch1");
+    const field = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.value = "";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    const namesSent = (): number => shell.invokes.filter((cmd) => cmd === "vd_set_str").length;
+    const before = namesSent();
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 3);
+    const { fullLabel } = await import("./models/types");
+    const label = fullLabel(getModel("URX44V").nodes.find((n) => n.id === "ch1")!);
+    expect(statusText()).toBe(t().status.writeNamesNotSent(label, 1));
+    expect(namesSent(), "nothing is sent for it").toBe(before);
+
+    // Beside a change that does go out, the confirm says it.
+    selectNode("ch2");
+    const other = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+    other.value = "Kick";
+    other.dispatchEvent(new Event("input", { bubbles: true }));
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 4);
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked.at(-1)).toContain(t().confirm.namesNotSent(label, 1));
+  });
+
+  // The params of a wire a scene-scoped document carries over are the plan on screen's as the wire
+  // is: the OSC assign into STEREO of a plan nothing vouches for stays unvouched-for after a scene
+  // file is dropped over it, so the write moving the unit's assign names STEREO.
+  it("keeps the record of a carried-over wire's params", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { fullLabel } = await import("./models/types");
+    const scene = serialize(defaultPlan("URX44V"), { sceneOnly: true });
+    expect(JSON.parse(scene).connections.some((c: { from: string }) => c.from === "bus.osc:out")).toBe(false);
+    const shell = (await bootApp({
+      tauri: deviceCommands({
+        "plugin:dialog|message": "Ok",
+        vd_get: clockReads(false, 48_000),
+        read_text_file: () => scene,
+      }),
+    }))!;
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/scene.json"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.openedFrom("scene.json")), { timeout: 10_000 });
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
+    expect(asked, "the premise: the write asked").toHaveLength(1);
+    const stereo = getModel("URX44V").nodes.find((n) => n.id === "bus.stereo")!;
+    expect(stripsNamed(asked[0])).toContain(fullLabel(stereo));
+  });
+
   // A scene-scoped document leaves STREAMING's source to the plan on screen, and that wire keeps
   // the record it had there: the one the load supplied is still named by the next write.
   it("still names that source after a scene-scoped document carries it over", SLOW, async () => {
@@ -1012,7 +1257,7 @@ describe("Fetch from device", () => {
     [
       "live start",
       () => live().click(),
-      () => vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 }),
+      () => vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 }),
     ],
   ] as const) {
     it(`drops the undo history on a ${flow} whose read changed no value`, SLOW, async () => {
@@ -1133,7 +1378,7 @@ describe("the model the device turns out to be", () => {
   it("switches to the device's model when a live session offers it", SLOW, async () => {
     const shell = await bootDevice(connectAs("URX22"));
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     expect(confirms(shell)).toEqual([t().confirm.switchModel("URX22", "URX44V")]);
     expect($<HTMLSelectElement>("model-picker").value).toBe("URX22");
@@ -1214,6 +1459,9 @@ describe("the model the device turns out to be", () => {
    *  strips. */
   const firstSend = (): HTMLElement =>
     $("console-host").querySelector(".con-strip")!.querySelector<HTMLElement>(".con-vfad")!;
+  /** The send's value as the slider states it. Its valuetext rather than its valuenow: a send
+   *  ships at −∞ and one step up is the floor detent, and the rounded valuenow of both is -96. */
+  const sendValue = (): string | null => firstSend().getAttribute("aria-valuetext");
   /** Step the send one detent up from the keyboard, the way the operator does. */
   const stepSendUp = (): void => {
     for (const type of ["keydown", "keyup"]) {
@@ -1232,12 +1480,12 @@ describe("the model the device turns out to be", () => {
     $("btn-view-console").click();
     $("btn-fetch").click();
     await unit.reading;
-    const before = firstSend().getAttribute("aria-valuenow");
+    const before = sendValue();
     try {
       stepSendUp();
-      expect(firstSend().getAttribute("aria-valuenow"), "the premise: the console took the key").not.toBe(before);
+      expect(sendValue(), "the premise: the console took the key").not.toBe(before);
       await tick();
-      expect(firstSend().getAttribute("aria-valuenow")).toBe(before);
+      expect(sendValue()).toBe(before);
       expect(statusText()).toBe(t().status.busySwitchRead);
     } finally {
       unit.release(0);
@@ -1267,7 +1515,7 @@ describe("the model the device turns out to be", () => {
       $("btn-view-console").click();
       start();
       await unit.reading;
-      const before = firstSend().getAttribute("aria-valuenow");
+      const before = sendValue();
       try {
         stepSendUp();
         await tick();
@@ -1280,7 +1528,7 @@ describe("the model the device turns out to be", () => {
       await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 25_000 });
 
       expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
-      expect(firstSend().getAttribute("aria-valuenow")).toBe(before);
+      expect(sendValue()).toBe(before);
       expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
       expect(statusText()).toBe(t().status.nothingToUndo);
       // Nor did it mark the plan unsaved: New replaces it without asking.
@@ -1434,7 +1682,7 @@ describe("the model the device turns out to be", () => {
     [
       "live start",
       () => live().click(),
-      () => vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 }),
+      () => vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 }),
     ],
   ] as const) {
     it(`writes nothing into the switched plan from a drag held across a switched ${flow}`, SLOW, async () => {
@@ -1647,7 +1895,7 @@ describe("the model the device turns out to be", () => {
     [
       "live start",
       () => live().click(),
-      () => vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 }),
+      () => vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 }),
     ],
   ] as const) {
     it(`takes nothing into the switched plan from a key held across a switched ${flow}`, SLOW, async () => {
@@ -1729,7 +1977,7 @@ describe("the model the device turns out to be", () => {
       () => live().click(),
       async (unit: ReturnType<typeof holdFollowUsb>) => {
         unit.release(0);
-        await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+        await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
       },
       "URX22",
     ],
@@ -1786,20 +2034,20 @@ describe("the model the device turns out to be", () => {
     $("btn-view-console").click();
     $("btn-fetch").click();
     await disconnect.asked;
-    const before = firstSend().getAttribute("aria-valuenow");
+    const before = sendValue();
     try {
       expect($<HTMLSelectElement>("model-picker").value, "the premise: the incomplete read switched nothing").toBe(
         "URX44V",
       );
       stepSendUp();
       await tick();
-      expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+      expect(sendValue()).not.toBe(before);
       expect(statusText()).not.toBe(t().status.busySwitchRead);
     } finally {
       disconnect.release();
     }
     await vi.waitFor(() => expect(confirms(shell)).toContain(t().confirm.deviceErrorExport), { timeout: 10_000 });
-    expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+    expect(sendValue()).not.toBe(before);
   });
 
   it("takes edits again once a switched live start's read is over, while its session registers", SLOW, async () => {
@@ -1817,7 +2065,7 @@ describe("the model the device turns out to be", () => {
     } finally {
       subscribe.release();
     }
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect(oscFace()).toBe("ON");
   });
 
@@ -1840,20 +2088,20 @@ describe("the model the device turns out to be", () => {
       $("btn-view-console").click();
       start();
       await disconnect.asked;
-      const before = firstSend().getAttribute("aria-valuenow");
+      const before = sendValue();
       try {
         expect($<HTMLSelectElement>("model-picker").value, "the premise: the failed read switched nothing").toBe(
           "URX44V",
         );
         stepSendUp();
         await tick();
-        expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+        expect(sendValue()).not.toBe(before);
         expect(statusText()).not.toBe(t().status.busySwitchRead);
       } finally {
         disconnect.release();
       }
       await vi.waitFor(() => expect(errors(shell)).toEqual([failure("read-refused")]), { timeout: 10_000 });
-      expect(firstSend().getAttribute("aria-valuenow")).not.toBe(before);
+      expect(sendValue()).not.toBe(before);
     });
   }
 
@@ -1979,7 +2227,7 @@ describe("the model the device turns out to be", () => {
 
     const incomplete = (n: number): string => t().status.liveError(t().error.liveReadIncomplete(n));
     expect(countFor(errors(shell)[0], incomplete)).toBeGreaterThan(0);
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect(confirms(shell), "the premise: the switch was offered and taken").toEqual(TAKEN);
     await unswitched(shell);
   });
@@ -2061,7 +2309,7 @@ describe("the model the device turns out to be", () => {
 
     const incomplete = (n: number): string => t().status.liveError(t().error.liveReadIncomplete(n));
     expect(countFor(errors(shell)[0], incomplete)).toBeGreaterThan(0);
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect(flagged()).toEqual([]);
     // Read back from the plan rather than off the panel the edit left drawn: the inspector is
     // rebuilt by way of another node, for the reason the draw-failure cases below give.
@@ -2131,7 +2379,7 @@ describe("the model the device turns out to be", () => {
         expect(armed, "the premise: the switch's plan was the one drawn").toBe(false);
         expect(confirms(shell), "the premise: the switch was offered and taken").toEqual(TAKEN);
         expect(shell.count("vd_params_subscribe")).toBe(0);
-        expect(live().getAttribute("aria-pressed")).toBe("false");
+        expect(live().getAttribute("aria-checked")).toBe("false");
         await vi.waitFor(() => expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false), { timeout: 10_000 });
         expect($("btn-fetch").textContent).toBe(t().toolbar.fetchDevice);
         expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
@@ -2307,7 +2555,7 @@ describe("the undo history across a device read that landed", () => {
     await tick();
   };
   const liveUp = (): Promise<void> =>
-    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
   for (const [flow, cleanup, start, ended] of [
     ["fetch", "vd_disconnect", () => $("btn-fetch").click(), fetchEnded],
@@ -2487,12 +2735,12 @@ describe("a source replaced on the board while a device read was in flight", () 
       .sort();
 
   const stopLive = async (): Promise<void> => {
-    if (live().getAttribute("aria-pressed") !== "true") return;
+    if (live().getAttribute("aria-checked") !== "true") return;
     live().click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
   };
   const liveUp = (): Promise<void> =>
-    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
   interface Flow {
     name: string;
@@ -2584,7 +2832,7 @@ describe("a source replaced on the board while a device read was in flight", () 
       expect(streamingDrawn()).toEqual(["bus.mix2:out"]);
       // Nothing the read is about to do can still be in flight: a live session goes on
       // reading, so the assertions below are taken after it has gone quiet.
-      if (live().getAttribute("aria-pressed") === "true") {
+      if (live().getAttribute("aria-checked") === "true") {
         // The session sends the operator's choice rather than the unit's, and never NONE.
         expect(streamingWrites(shell)).not.toHaveLength(0);
         expect([...new Set(streamingWrites(shell))].sort()).toEqual(streamingFor(sourced(STREAM_IN, "bus.mix2:out")));
@@ -2809,7 +3057,195 @@ describe("the live session", () => {
     // failure the read path can raise, which is what separates this from a failed readback.
     await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
     expect(errors(shell).some((e) => e.includes(t().error.liveFollowStopped))).toBe(true);
-    expect(live().getAttribute("aria-pressed")).not.toBe("true");
+    expect(live().getAttribute("aria-checked")).not.toBe("true");
+  });
+
+  // A confirm that REJECTS rather than answering, on the way into a session that has already
+  // connected. Its exit has to close the connection it opened, as every other exit does.
+  it("closes the connection when a start's confirm rejects", SLOW, async () => {
+    const shell = await bootDevice({
+      "plugin:dialog|message": (a: Record<string, unknown>) => {
+        if (a.buttons === "OkCancel") throw new Error("dialog unavailable");
+        return "Ok";
+      },
+    });
+    // A dirty plan, so the start asks the discard confirm.
+    chooseRate(96_000);
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+    // Released by the epoch it was opened with: the stub closes only a matching one, so a
+    // device command after it is refused.
+    const invoke = (
+      window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a: unknown) => Promise<unknown> } }
+    ).__TAURI_INTERNALS__.invoke;
+    await expect(invoke("vd_get", { paramId: 1, x: 0, y: 0 })).rejects.toThrow("not-connected");
+    expect(confirms(shell)).toEqual([t().confirm.discard]);
+    expect(live().getAttribute("aria-checked")).not.toBe("true");
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 10_000 });
+  });
+
+  // A ledger line the shell cannot write is said on the status line, in the app's language:
+  // the shell's code goes through the same translation every other framed cause does.
+  it("names a ledger write failure in words rather than by its code", SLOW, async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const table = deviceCommands({
+      "plugin:dialog|message": "Ok",
+      append_link_log: () => {
+        throw new Error("file-denied");
+      },
+    });
+    const get = table.vd_get as (a: Record<string, unknown>) => number;
+    let first = true;
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        // The start's first read is held, so the line the ledger's failure wrote is still the
+        // one on screen when it is read.
+        vd_get: async (a: Record<string, unknown>) => {
+          if (first) {
+            first = false;
+            await held;
+          }
+          return get(a);
+        },
+      },
+    }))!;
+    $("btn-live").click();
+    await invoked(shell, "append_link_log");
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.linkLogFailed(t().error.shell.fileDenied)));
+    expect(statusText()).not.toContain("file-denied");
+    release();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 20_000 });
+  });
+
+  // Turning Live sync off while a flush has a write on the wire: the disconnect waits for the
+  // flush to finish, so its last command is answered over the session's own connection.
+  it("disconnects only once the flush in flight has finished", SLOW, async () => {
+    let release!: () => void;
+    let holding = false;
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" });
+    const set = table.vd_set as (a: Record<string, unknown>) => unknown;
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        vd_set: async (a: Record<string, unknown>) => {
+          if (holding) {
+            holding = false;
+            await new Promise<void>((r) => (release = r));
+          }
+          return set(a);
+        },
+      },
+    }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    const sets = shell.count("vd_set");
+    holding = true;
+    selectNode("bus.stereo");
+    const fader = row(t().inspector.level).querySelector<HTMLInputElement>("input[type=range]")!;
+    fader.value = String(Number(fader.value) - 3);
+    fader.dispatchEvent(new Event("input", { bubbles: true }));
+    await invoked(shell, "vd_set", sets + 1);
+
+    const disconnects = shell.count("vd_disconnect");
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(shell.count("vd_disconnect"), "the write is still unanswered").toBe(disconnects);
+    release();
+    await invoked(shell, "vd_disconnect", disconnects + 1);
+  });
+
+  // The LIVE half of the same window. A flush the operator's edit started inside it fails, and
+  // its report reaches `stopLiveOnError` while the session is not up yet: recorded there and
+  // thrown by the start, rather than dropped with the session declared up over a sync that
+  // has stopped.
+  it("refuses to start a session whose first flush failed on the way up", SLOW, async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    let refuse = false;
+    const table = deviceCommands({
+      "plugin:dialog|message": "Ok",
+      vd_params_subscribe: async () => {
+        if (++calls === 1) await held;
+        return null;
+      },
+    });
+    const set = table.vd_set as (a: Record<string, unknown>) => unknown;
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        vd_set: (a: Record<string, unknown>) => {
+          if (refuse) throw new Error("write refused");
+          return set(a);
+        },
+      },
+    }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(calls).toBe(1), { timeout: 25_000 });
+
+    refuse = true;
+    const sets = shell.count("vd_set");
+    selectNode("bus.stereo");
+    const fader = row(t().inspector.level).querySelector<HTMLInputElement>("input[type=range]")!;
+    fader.value = String(Number(fader.value) - 3);
+    fader.dispatchEvent(new Event("input", { bubbles: true }));
+    await invoked(shell, "vd_set", sets + 1);
+    release();
+
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+    expect(errors(shell)).toContain(t().status.liveError("write refused"));
+    expect(live().getAttribute("aria-checked")).not.toBe("true");
+  });
+
+  // A head write's park read that fails in the same window: the head it was in front of must
+  // not go out, and the start reports the read's failure.
+  it("sends no effect type behind a park read that failed on the way up", SLOW, async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    let refuse = false;
+    const table = deviceCommands({
+      "plugin:dialog|message": "Ok",
+      vd_params_subscribe: async () => {
+        if (++calls === 1) await held;
+        return null;
+      },
+    });
+    const get = table.vd_get as (a: Record<string, unknown>) => unknown;
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        vd_get: (a: Record<string, unknown>) => {
+          if (refuse) throw new Error("read refused");
+          return get(a);
+        },
+      },
+    }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(calls).toBe(1), { timeout: 25_000 });
+
+    refuse = true;
+    const at = shell.invokes.length;
+    const reads = shell.count("vd_get");
+    pressNode("bus.fx1");
+    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+    sel.value = String([...sel.options].map((o) => o.value).find((v) => v !== sel.value));
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    // The park asked the unit, and was refused.
+    await invoked(shell, "vd_get", reads + 1);
+    await new Promise((r) => setTimeout(r, 300));
+    release();
+
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+    expect(live().getAttribute("aria-checked")).not.toBe("true");
+    const typeWrites = shell.invokes
+      .slice(at)
+      .filter((cmd, i) => cmd === "vd_set" && shell.args[at + i]?.paramId === PARAMS.FX_EFFECT_TYPE.id);
+    expect(typeWrites).toEqual([]);
   });
 
   // The undo history survives a reconcile that authored nothing.
@@ -2822,7 +3258,7 @@ describe("the live session", () => {
   it("keeps the undo history through a reconcile that authored nothing", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     $("btn-view-console").click();
     const slider = (): HTMLElement => $("console-host").querySelector<HTMLElement>('.con-strip [role="slider"]')!;
@@ -2871,7 +3307,7 @@ describe("the live session", () => {
   // address alone.
   const heldByExcursion = async (shell: TauriShell, link = false): Promise<void> => {
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     // Selected through the session, so the unit holds it too: the hold is about a value
     // the app and the device agreed on until the rate moved. `link` puts the pair in
     // STEREO first, so the mirror carries the effect and BOTH members hold one — and it
@@ -2894,7 +3330,7 @@ describe("the live session", () => {
    *  attributed to whichever file is running then. */
   const endLive = async (): Promise<void> => {
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
   };
 
   // `delayMs` stretches each read, for the case that has to end the session inside one.
@@ -2931,7 +3367,7 @@ describe("the live session", () => {
   it("gives the plan STEREO where the unit's STREAMING was on NONE, and sends it with an edit", SLOW, async () => {
     const shell = await bootDevice({}, true, STREAMING_ON_NONE);
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect(statusText().startsWith(`${t().status.streamingSourceUnlisted} — `)).toBe(true);
     expect(streamingDrawn()).toEqual(["bus.stereo:out"]);
     await quiet(shell);
@@ -2958,7 +3394,7 @@ describe("the live session", () => {
     $("btn-live").click();
     await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 25_000 });
     expect(errors(shell)[0]).toBe(t().status.liveError(t().error.liveReadIncomplete(1)));
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect(streamingWrites(shell)).toEqual([]);
   });
 
@@ -2974,7 +3410,7 @@ describe("the live session", () => {
     $("btn-live").click();
     await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 25_000 });
     expect(errors(shell)[0]).toBe(t().status.liveError(t().error.liveReadIncomplete(1)));
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect(streamingDrawn()).toEqual(["bus.stereo:out"]);
     expect(statusText()).not.toBe(t().status.streamingSourceUnlisted);
     expect(streamingWrites(shell)).toEqual([]);
@@ -3020,7 +3456,7 @@ describe("the live session", () => {
         interval: 5,
       });
       $("btn-live").click();
-      await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
 
       await vi.waitFor(
         () =>
@@ -3044,6 +3480,54 @@ describe("the live session", () => {
     }
   });
 
+  // A rate the unit announced in a session that ended before any read took it is that
+  // session's evidence. The next session's own starting read establishes the rate, so a
+  // clearing the operator then makes on the unit's panel is adopted, not held against the
+  // rate the ended session heard.
+  it("forgets a rate an ended session was told about once the next session has read the unit", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 });
+    await heldByExcursion(shell);
+    const channelOf = (i: number) => (shell.args[i] as { channel: { onmessage: (d: unknown) => void } }).channel;
+    // Announced, and the session ended inside the settle that would have read it.
+    channelOf(shell.invokes.lastIndexOf("vd_params_subscribe")).onmessage([
+      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
+    ]);
+    await endLive();
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 25_000 });
+
+    // The next session reads the unit at 48 kHz with CH 1 still on the effect.
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    await quiet(shell);
+
+    // The operator clears CH 1's effect at the unit's panel — the address the selection wrote.
+    const selector = shell.invokes.reduce(
+      (last, cmd, i) =>
+        cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.INSERT_FX.id && shell.args[i]?.value === COMPANDER_H
+          ? i
+          : last,
+      -1,
+    );
+    const { x, y } = shell.args[selector] as { x: number; y: number };
+    const none = denormalizeInsertFx(INSERT_FX_NONE);
+    const invoke = (
+      window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a: unknown) => Promise<unknown> } }
+    ).__TAURI_INTERNALS__.invoke;
+    await invoke("vd_set", { paramId: PARAMS.INSERT_FX.id, x, y, value: none });
+    const written = insertFxWrites(shell).filter((v) => v === COMPANDER_H).length;
+    channelOf(shell.invokes.lastIndexOf("vd_params_subscribe")).onmessage([
+      { param_id: PARAMS.INSERT_FX.id, x, y, value: none },
+    ]);
+
+    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
+      timeout: 25_000,
+    });
+    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
+    await quiet(shell);
+    expect(insertFxWrites(shell).filter((v) => v === COMPANDER_H).length).toBe(written);
+    await endLive();
+  });
+
   // The OTHER half of the same rule, and the one that made the split worth stating: a
   // session that merely ends lets its read finish, but a plan REPLACED under it does not —
   // the document is gone, so the read is filling something nothing shows. Nothing else in
@@ -3053,7 +3537,7 @@ describe("the live session", () => {
   it("abandons a follow read when the plan it was filling is replaced", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     // The session's own starting read, which is what a WHOLE-device sweep costs. The
     // control for the count below, taken from this run rather than written down.
     const sweep = shell.count("vd_get");
@@ -3083,7 +3567,7 @@ describe("the live session", () => {
   it("lets nothing else connect while the ended session's read is still running", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     notifyRate(shell, { delayMs: 1 });
     const before = shell.count("vd_get");
@@ -3095,7 +3579,7 @@ describe("the live session", () => {
     const connects = shell.count("vd_connect");
     const disconnects = shell.count("vd_disconnect");
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
 
     // The toggle is off and the link is NOT: the read is still running over it.
     expect(shell.count("vd_disconnect")).toBe(disconnects);
@@ -3120,7 +3604,7 @@ describe("the live session", () => {
   it("gives the link back and says so when the disconnect itself fails", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     shell.failOnce("vd_disconnect", new Error("control-worker-gone"));
     $("btn-live").click();
@@ -3386,7 +3870,7 @@ describe("the live session", () => {
   it("comes up, prints the tally, and goes down again", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     expect($("live-tally").hidden).toBe(false);
     expect($("live-tally").textContent).toBe(t().toolbar.liveTag);
@@ -3395,7 +3879,7 @@ describe("the live session", () => {
 
     const disconnects = shell.count("vd_disconnect");
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 10_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
     expect($("live-tally").hidden).toBe(true);
     expect(shell.count("vd_params_unsubscribe")).toBe(1);
     // The disconnect is issued from an un-awaited teardown, so it lands after the
@@ -3412,7 +3896,7 @@ describe("the live session", () => {
     expect(picker.disabled).toBe(false);
 
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect(picker.disabled).toBe(true);
     expect(($("btn-fetch") as HTMLButtonElement).disabled).toBe(true);
     expect($<HTMLSelectElement>("rate-picker").disabled).toBe(true);
@@ -3436,7 +3920,7 @@ describe("the live session", () => {
     const shell = await bootDevice();
     live().click();
     live().click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect(shell.count("vd_connect")).toBe(1);
     expect(shell.count("vd_params_subscribe")).toBe(1);
   });
@@ -3462,11 +3946,11 @@ describe("the live session", () => {
     await vi.waitFor(() => expect(shell.count("vd_params_unsubscribe")).toBe(1), { timeout: 25_000 });
     await invoked(shell, "vd_disconnect");
     expect(errors(shell)).toEqual([t().status.liveError("watch-refused")]);
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect($("live-tally").hidden).toBe(true);
 
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect(shell.count("vd_params_subscribe")).toBe(2);
   });
 
@@ -3477,7 +3961,7 @@ describe("the live session", () => {
     });
     $("btn-live").click();
     await vi.waitFor(() => expect(shell.count("plugin:dialog|message")).toBeGreaterThan(0), { timeout: 10_000 });
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect($("live-tally").hidden).toBe(true);
     expect($<HTMLSelectElement>("model-picker").disabled).toBe(false);
   });
@@ -3501,7 +3985,7 @@ describe("the live session", () => {
   it("normalizes a rename arriving from the unit, its padding as well as its length", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     const nc = nameControl(getModel("URX44V"), "ch1")!;
     notifyChannel(shell).onmessage([{ param_id: nc.param, x: 0, y: 0, value: 0, value_str: "1234567  9" }]);
@@ -3541,7 +4025,7 @@ describe("the live session", () => {
         renamedOnUnit && a.paramId === nc.param && a.y === 0 ? "UnitName" : "",
     });
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     renamedOnUnit = true;
     // A scoped (non-direct) parameter: its notify is not applied on its own, it makes
@@ -3915,6 +4399,18 @@ describe("Write to device", () => {
     await invoked(shell, "vd_disconnect");
   });
 
+  // The same guard on an action that only READS: its refusal names the mismatch and the
+  // remedy, and says nothing about writing, since the action never writes.
+  it("refuses to read Device setup from a device of another model without naming a write", SLOW, async () => {
+    const shell = await bootDevice(connectAs("URX22"));
+    $("btn-device-setup").click();
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
+    expect(errors(shell)).toEqual([t().error.deviceSetupRead(t().error.modelMismatch("URX22", "URX44V"))]);
+    expect(errors(shell)[0]).not.toMatch(/writ/i);
+    expect(shell.count("vd_set")).toBe(0);
+    await invoked(shell, "vd_disconnect");
+  });
+
   // "Wrote N" and "wrote, but N did not take" are both reached with writes on the
   // wire, so a case that counts `vd_set` cannot tell them apart — and against a stub
   // that answers every read 0 it is the SECOND one that runs, every time, since the
@@ -4029,8 +4525,13 @@ describe("Write to device", () => {
     const described = emptyPlan("URX44V");
     described.nodeParams["ch1"] = { level: -10 };
     // The factory values, but WRITTEN IN the document: same numbers on the wire, different
-    // provenance — which is the whole distinction the note is drawn from.
-    for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    // provenance — which is the whole distinction the note is drawn from. The channels' sends
+    // and names are theirs too, and the write carries them on the same strips.
+    for (const id of ["bus.fx1", "bus.fx2"]) {
+      described.nodeParams[id] = factory.nodeParams[id]!;
+      described.nodeNames[id] = factory.nodeNames[id]!;
+    }
+    described.connections = factory.connections.filter((c) => c.from === "bus.fx1:out" || c.from === "bus.fx2:out");
     const told = await runWrite(described);
     expect(told.count("vd_set"), "the positive control").toBeGreaterThan(0);
     expect(confirms(told).filter((m) => stripsNamed(m).includes(fxLabel("bus.fx1")))).toEqual([]);
@@ -4050,8 +4551,13 @@ describe("Write to device", () => {
     const factory = defaultPlan("URX44V");
     const described = emptyPlan("URX44V");
     described.nodeParams["ch1"] = { level: -10 };
-    // The FX channels are what the document names; everything else is left to the fill.
-    for (const id of ["bus.fx1", "bus.fx2"]) described.nodeParams[id] = factory.nodeParams[id]!;
+    // The FX channels are what the document names — their params, their sends and their names;
+    // everything else is left to the fill.
+    for (const id of ["bus.fx1", "bus.fx2"]) {
+      described.nodeParams[id] = factory.nodeParams[id]!;
+      described.nodeNames[id] = factory.nodeNames[id]!;
+    }
+    described.connections = factory.connections.filter((c) => c.from === "bus.fx1:out" || c.from === "bus.fx2:out");
     const link = encodeURIComponent(Buffer.from(serialize(described), "utf8").toString("base64url"));
     // Reads that never reflect a write: every address answers its clock value or 0, so the
     // converge runs out with a residual and the write is not a landing.
@@ -4462,6 +4968,26 @@ describe("Write to device", () => {
 // Offered after the disconnect rather than during it (why, in `offerErrorReport`'s own
 // comment in main.ts). The write's read-failure case above covers the arm where the offer
 // is taken and a file appears; these are the two that leave nothing behind.
+
+/** A table seed holding the factory plan's value at every address a node-param leaf the write
+ *  bounds is sent to, so a read of the unit finds each of those leaves inside its rule. */
+function boundedLeavesAtFactory(): Record<string, number> {
+  const model = getModel("URX44V");
+  const factory = defaultPlan("URX44V");
+  const leaves = new Set(
+    model.nodes.flatMap((n) =>
+      nodeLeafRules(model, n.id, factory.nodeParams[n.id]).map(([path]) => nodeParamContestPath(n.id, path)),
+    ),
+  );
+  const origins = planToCommandOrigins(model, factory);
+  const seed: Record<string, number> = {};
+  for (const c of planToCommands(model, factory)) {
+    const origin = origins.get(cmdAddr(c));
+    if (typeof origin === "string" && leaves.has(origin)) seed[`${c.paramId}/${c.x}/${c.y}`] = c.vdValue;
+  }
+  return seed;
+}
+
 // A raw the unit holds and this app cannot write. The load path repairs a document, so the way
 // one reaches the plan is a DEVICE read: the unit's own encoder stops where the window does,
 // but the wire does not, and an earlier build of this app could put one there.
@@ -4475,9 +5001,12 @@ describe("a value the unit holds and the app cannot write", () => {
   const BELOW = lpf.rawMin! - 1;
   // BOTH channels' slots are seeded, from the catalogue rather than by hand: a slot the
   // table has not been told about reads 0, and 0 is outside several of these windows too, so
-  // a partial seed would move the count this case asserts for a reason it is not about.
-  const unitHoldingLowLpf = (): Record<string, number> => {
-    const seed: Record<string, number> = { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 };
+  // a partial seed would move the count this case asserts for a reason it is not about. Every
+  // node-param leaf the write bounds is seeded at the factory plan's value for the same reason —
+  // a GATE attack, a stereo channel's Rec Point and the oscillator interval all read 0 otherwise,
+  // and the write takes each of those back as well.
+  const unitInRule = (): Record<string, number> => {
+    const seed: Record<string, number> = { ...boundedLeavesAtFactory(), [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 };
     for (const [typeId, arrId, type] of [
       [679, 681, 0],
       [683, 685, 1024],
@@ -4485,9 +5014,9 @@ describe("a value the unit holds and the app cannot write", () => {
       seed[`${typeId}/0/0`] = type;
       for (const d of fxParams(type)) seed[`${arrId}/0/${d.slot}`] = d.def;
     }
-    seed[`685/0/${lpf.slot}`] = BELOW;
     return seed;
   };
+  const unitHoldingLowLpf = (): Record<string, number> => ({ ...unitInRule(), [`685/0/${lpf.slot}`]: BELOW });
   // Read off the surface rather than out of module state: what the operator sees IS the
   // question. The effect's parameters are drawn by the FX EFFECT tuning screen, so the node is
   // selected, its launcher pressed, the readout taken and the screen closed again — reopened
@@ -4551,6 +5080,46 @@ describe("a value the unit holds and the app cannot write", () => {
     // …and the write's own value is what the plan ends up holding, so the panel and the unit
     // name the same setting from here on.
     expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+  });
+
+  // A node's own params take the same path: a read files an insert-FX engine's values under the
+  // bare slot as the unit reported them, and the write sends the slot's own bound. Read back
+  // through two saves, since the document is where the plan's value goes on living.
+  it("takes an insert-FX raw the read stored verbatim back once the device confirmed it", SLOW, async () => {
+    const { ENGINE_COMPANDER_INPUT, insertFxDefaults } = await import("./core/control/insert-fx-effect");
+    const ifx = insertFxControl(getModel("URX44V"), "ch1")!;
+    const seed = unitInRule();
+    seed[`${ifx.param}/0/${ifx.instances[0]}`] = denormalizeInsertFx(COMPANDER_H);
+    for (const [slot, v] of Object.entries(insertFxDefaults("compander", COMPANDER_H)))
+      seed[`${ENGINE_COMPANDER_INPUT}/0/${slot}`] = v;
+    const PAST = 99_999;
+    seed[`${ENGINE_COMPANDER_INPUT}/0/7`] = PAST;
+    const shell = await bootDevice(SAVES, true, seed);
+    const saved = async (): Promise<unknown> => {
+      const before = shell.count("write_text_file");
+      $("btn-save").click();
+      await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
+      const doc = JSON.parse(
+        String((shell.args[shell.invokes.lastIndexOf("write_text_file")] as { contents: string }).contents),
+      );
+      return doc.nodeParams.ch1.insertFxParams["7"];
+    };
+
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(await saved(), "the read is verbatim").toBe(PAST);
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    const sent = shell.invokes
+      .map((cmd, i) => (cmd === "vd_set" ? shell.args[i] : undefined))
+      .filter((a): a is Record<string, unknown> => !!a && a.paramId === ENGINE_COMPANDER_INPUT && a.y === 7);
+    expect(
+      sent.map((a) => a.value),
+      "the write sends the slot's bound",
+    ).toEqual([2000]);
+    expect(statusText()).toContain(t().status.paramsBounded(1));
+    expect(await saved()).toBe(2000);
   });
 
   // The recorder tail runs in a FINALLY, after the write has written its outcome. A read that
@@ -5117,6 +5686,57 @@ describe("a value the unit holds and the app cannot write", () => {
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
   });
 
+  // A session that ENDS on a failed converge after that converge confirmed the address. The
+  // count is held for the line the flush writes once it has sent, and that line never comes;
+  // the next session's first flush must not print it as its own.
+  it("leaves a failed session's taken-back count behind with that session", SLOW, async () => {
+    // The FX 2 type selector is accepted and not kept twice — by the flush's head write and by
+    // the converge's first round — and refused on the third, which is the converge's second
+    // round: the LPF is confirmed by the first round's re-read, then the loop fails.
+    let typeWrites = 0;
+    const base = deviceCommands({ "plugin:dialog|message": "Ok" }, unitHoldingLowLpf());
+    const set = base.vd_set as (a: Record<string, unknown>) => void;
+    const shell = (await bootApp({
+      tauri: {
+        ...base,
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId !== 683) return set(a);
+          if (++typeWrites > 2) throw new Error(`broker-rejected: ${a.paramId}:${a.x}:${a.y}`);
+          return null;
+        },
+      },
+    }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
+    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+    sel.value = "1025";
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    // The session ended on the refusal, and the converge had taken the value back first.
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 20_000 });
+    expect(typeWrites).toBe(3);
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 20_000 });
+    expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {}));
+
+    // The next session, and an unrelated edit in it.
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 20_000 });
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 20_000 });
+    const sets = shell.count("vd_set");
+    pressNode("bus.stereo");
+    const fader = paramRow(t().inspector.level).querySelector<HTMLInputElement>("input[type=range]")!;
+    fader.value = String(Number(fader.value) - 3);
+    fader.dispatchEvent(new Event("input", { bubbles: true }));
+    fader.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(sets), { timeout: 20_000 });
+    // The line that flush wrote is its own count and nothing else.
+    await vi.waitFor(() => expect(countFor(statusText(), t().status.liveSynced)).toBeGreaterThan(0), {
+      timeout: 20_000,
+    });
+    expect(statusText()).not.toContain(t().status.paramsBounded(1));
+  });
+
   // …and the same, with a flush whose converge DID confirm a set — just not this address. The
   // case above cannot separate "the set does not carry it" from "there is no set", because a
   // plain fader flush runs no converge and the set is empty. An effect-type change on the OTHER
@@ -5465,7 +6085,7 @@ describe("an EFFECT TYPE change while a session is live", () => {
     type.value = String(COMP_EQ_SSMCS);
     type.dispatchEvent(new Event("change", { bubbles: true }));
 
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
     // The positive control: the park ran and reached the nodes it could, so the refusal is
     // what stopped it rather than a flush that never got there.
     expect(
@@ -5570,7 +6190,7 @@ describe("an EFFECT TYPE change while a session is live", () => {
     const gesture = shell.invokes.length;
     pickType(REVX_ROOM);
     $("btn-live").click(); // the session goes, before the flush that would carry it
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).not.toBe("true"), { timeout: 20_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).not.toBe("true"), { timeout: 20_000 });
     await settled(shell);
 
     // The selection is a plan edit, so it stands whatever the link does — losing it at a
@@ -5600,7 +6220,7 @@ describe("an EFFECT TYPE change while a session is live", () => {
     pickType(REVX_ROOM);
 
     // The session goes down, which is the signal the read failed at all.
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 20_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 20_000 });
     expect(
       shell.invokes.some((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture),
       "no type reached the unit",
@@ -5923,6 +6543,35 @@ describe("Compare with device", () => {
     await vi.waitFor(() => expect($("load-report").hidden).toBe(false), { timeout: 10_000 });
   });
 
+  // The sweep spans seconds, and the plan on screen can be replaced while it runs. Both
+  // halves of the report describe the plan the compare started on.
+  it("compares the names of the plan it started on when another replaces it mid-sweep", SLOW, async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let first = true;
+    const shell = await bootExperimental({
+      vd_get: async (a: Record<string, unknown>) => {
+        if (first) {
+          first = false;
+          await held;
+        }
+        return unwrittenRead(a);
+      },
+    });
+    selectNode("ch1");
+    const field = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+    field.value = "Vocal";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+
+    (await compare()).click();
+    await invoked(shell, "vd_get");
+    $("btn-new").click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.newPlan), { timeout: 10_000 });
+    release();
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), { timeout: 15_000 });
+    expect($("load-report").textContent).toContain("Vocal");
+  });
+
   // The button doubles as its own cancel while a run is in flight, and the label says
   // which of the two it currently is.
   it("turns into its own cancel while it runs", SLOW, async () => {
@@ -5952,6 +6601,36 @@ describe("the first-run consent gate", () => {
       tauri: deviceCommands({ "plugin:dialog|message": "Ok", ...over }),
       consent: false,
     }) as Promise<TauriShell>;
+
+  // The headless launch actions reach the device layer with nothing on screen to press, so
+  // the gate's inert app does not hold them: they wait on the consent itself, and say so.
+  for (const [flag, tag] of [
+    ["self_test_requested", "self-test"],
+    ["prepare_modified_requested", "prepare-modified"],
+  ] as const) {
+    it(`holds the --${tag} launch until the gate is accepted`, SLOW, async () => {
+      const log = captureWarnings();
+      try {
+        const shell = await bootUngated({ experimental_enabled: true, [flag]: true });
+        await vi.waitFor(() => expect(log.lines).toContain(`[${tag}] waiting for first-run consent`), {
+          timeout: 10_000,
+        });
+        expect($("consent").hidden).toBe(false);
+        expect(shell.count("vd_connect")).toBe(0);
+
+        $("consent-agree").click();
+        await invoked(shell, "vd_connect");
+        await vi.waitFor(
+          () => expect(log.lines.some((l) => /^\[(self-test|prepare-modified)\] [A-Z]/.test(l))).toBe(true),
+          {
+            timeout: 25_000,
+          },
+        );
+      } finally {
+        log.restore();
+      }
+    });
+  }
 
   it("blocks the launch until it is accepted, then remembers", SLOW, async () => {
     const shell = await bootUngated();
@@ -6047,14 +6726,20 @@ describe("the update check", () => {
   // Preferences, which nothing here reaches — so the title claims the two halves that are
   // asserted below and not the third.
   it("downloads and restarts when the update is accepted", SLOW, async () => {
+    let refuse!: (e: Error) => void;
     const shell = await bootDevice({
       "plugin:updater|check": { rid: 7, version: "9.9.9" },
+      prepare_for_exit: null,
       "plugin:updater|download_and_install": null,
-      "plugin:process|restart": () => new Promise(() => {}),
+      "plugin:process|restart": () => new Promise((_, r) => (refuse = r)),
     });
     await invoked(shell, "plugin:process|restart");
     expect(shell.count("plugin:updater|download_and_install")).toBe(1);
     expect(statusText()).toBe(t().status.updateDownloading);
+    // The real relaunch never answers; this one is refused so the link the install took is
+    // given back before the next case.
+    refuse(new Error("teardown"));
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 10_000 });
   });
 
   // Once accepted, "Downloading update…" is on screen with the modal closed, so a
@@ -6064,6 +6749,7 @@ describe("the update check", () => {
   it("surfaces a download that failed after the update was accepted", SLOW, async () => {
     const shell = await bootDevice({
       "plugin:updater|check": { rid: 7, version: "9.9.9" },
+      prepare_for_exit: null,
       "plugin:updater|download_and_install": () => {
         throw new Error("half-written");
       },
@@ -6073,10 +6759,116 @@ describe("the update check", () => {
     // "Downloading…" is gone rather than merely covered.
     await vi.waitFor(() => expect(statusText()).toBe(""), { timeout: 10_000 });
     expect(shell.count("plugin:process|restart")).toBe(0);
-    // An error dialog, and the one that names this failure. A cleared status line on its
-    // own is also what a silent swallow leaves behind.
+    // An error dialog, and the one that names this failure — the install, not the check that
+    // found the update — with its cause. A cleared status line on its own is also what a
+    // silent swallow leaves behind.
     await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
-    expect(errors(shell).at(-1)).toBe(t().prefs.updateCheckFailed);
+    expect(errors(shell).at(-1)).toBe(t().status.updateInstallFailed("half-written"));
+    expect(errors(shell).at(-1)).toContain("half-written");
+  });
+
+  // An install that succeeded and a relaunch that did not: the new bundle is on disk, so the
+  // line says to reopen the app rather than that the update failed.
+  it("says the update is installed when only the relaunch failed", SLOW, async () => {
+    const shell = await bootDevice({
+      "plugin:updater|check": { rid: 7, version: "9.9.9" },
+      prepare_for_exit: null,
+      "plugin:updater|download_and_install": null,
+      "plugin:process|restart": () => {
+        throw new Error("relaunch refused");
+      },
+    });
+    await invoked(shell, "plugin:process|restart");
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
+    expect(errors(shell).at(-1)).toBe(t().status.updateRestartFailed("relaunch refused"));
+  });
+
+  // The install ends the app, so it asks about unsaved edits first — before anything is
+  // downloaded — and declining keeps them and installs nothing.
+  it("asks the discard confirm before installing over unsaved edits", SLOW, async () => {
+    const shell = await bootDevice({
+      "plugin:updater|check": null,
+      prepare_for_exit: null,
+      "plugin:updater|download_and_install": null,
+      "plugin:dialog|message": byMessage((m) => m !== t().confirm.discard),
+    });
+    await invoked(shell, "plugin:updater|check");
+    shell.answer("plugin:updater|check", { rid: 7, version: "9.9.9" });
+    chooseRate(96_000); // unsaved
+    $("btn-prefs").click();
+    $<HTMLButtonElement>("prefs-update-now").click();
+    await vi.waitFor(() => expect(confirms(shell)).toEqual([t().confirm.update("9.9.9"), t().confirm.discard]), {
+      timeout: 10_000,
+    });
+    await vi.waitFor(() => expect($("prefs-update-note").textContent).toBe(t().prefs.updateAvailable("9.9.9")), {
+      timeout: 10_000,
+    });
+    expect(shell.count("prepare_for_exit")).toBe(0);
+    expect(shell.count("plugin:updater|download_and_install")).toBe(0);
+  });
+
+  // The install also ends a device action, so it takes the link: refused while one holds it,
+  // and nothing can start one while the bundle downloads.
+  it("refuses to install while Live sync holds the link", SLOW, async () => {
+    const shell = await bootDevice({
+      "plugin:updater|check": null,
+      prepare_for_exit: null,
+      "plugin:updater|download_and_install": null,
+    });
+    await invoked(shell, "plugin:updater|check");
+    shell.answer("plugin:updater|check", { rid: 7, version: "9.9.9" });
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    $("btn-prefs").click();
+    $<HTMLButtonElement>("prefs-update-now").click();
+    await vi.waitFor(() => expect($("prefs-update-note").textContent).toBe(t().status.deviceLinkBusy), {
+      timeout: 10_000,
+    });
+    expect(shell.count("plugin:updater|download_and_install")).toBe(0);
+    $("prefs-modal").querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
+  });
+
+  it("saves and closes what the exit would, then holds the link through the download", SLOW, async () => {
+    let fail!: (e: Error) => void;
+    const shell = await bootDevice({
+      "plugin:updater|check": { rid: 7, version: "9.9.9" },
+      prepare_for_exit: null,
+      "plugin:updater|download_and_install": () => new Promise((_, r) => (fail = r)),
+    });
+    await invoked(shell, "plugin:updater|download_and_install");
+    expect(shell.invokes.indexOf("prepare_for_exit")).toBeGreaterThan(-1);
+    expect(shell.invokes.indexOf("prepare_for_exit")).toBeLessThan(
+      shell.invokes.indexOf("plugin:updater|download_and_install"),
+    );
+    expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(true);
+    expect($<HTMLButtonElement>("btn-live").disabled).toBe(true);
+    // …and a download that fails gives the link back.
+    fail(new Error("half-written"));
+    await vi.waitFor(() => expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(false), { timeout: 10_000 });
+  });
+
+  // The Preferences lock covers the check and its confirm, not the download an accepted update
+  // runs after it: a modal reopened while the bundle is still downloading closes as any other.
+  it("leaves a Preferences reopened during an accepted download closable", SLOW, async () => {
+    let fail!: (e: Error) => void;
+    const shell = await bootDevice({
+      "plugin:updater|check": null,
+      prepare_for_exit: null,
+      "plugin:updater|download_and_install": () => new Promise((_, r) => (fail = r)),
+    });
+    // The launch check finds nothing; the one from Preferences finds the update.
+    await invoked(shell, "plugin:updater|check");
+    shell.answer("plugin:updater|check", { rid: 7, version: "9.9.9" });
+    $("btn-prefs").click();
+    $<HTMLButtonElement>("prefs-update-now").click();
+    await invoked(shell, "plugin:updater|download_and_install");
+    expect($("prefs-modal").hidden).toBe(true);
+    $("btn-prefs").click();
+    expect($("prefs-modal").hidden).toBe(false);
+    $("prefs-modal").querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
+    expect($("prefs-modal").hidden).toBe(true);
+    fail(new Error("teardown"));
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false), { timeout: 10_000 });
   });
 });
 
@@ -6098,6 +6890,46 @@ describe("the Follow USB badge", () => {
     await invoked(shell, "vd_disconnect");
     expect(badge().dataset.state).toBe("off");
     expect(badge().getAttribute("aria-pressed")).toBe("false");
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
+  // A file that opens a plan of ANOTHER model switches the model as the picker does, and the
+  // badge answers for the unit it was read from: back to unknown, so the next press reads.
+  it("goes back to unknown when an opened plan switches the model", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const shell = await bootDevice({
+      vd_get: clockReads(true, 48_000),
+      read_text_file: () => serialize(defaultPlan("URX22")),
+    });
+    badge().click();
+    await invoked(shell, "vd_disconnect");
+    expect(badge().dataset.state).toBe("on");
+
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/urx22.json"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.openedFrom("urx22.json")), { timeout: 10_000 });
+    expect($<HTMLSelectElement>("model-picker").value).toBe("URX22");
+    expect(badge().dataset.state).toBe("unknown");
+
+    // The next press reads rather than toggling from the other unit's state.
+    badge().click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(followUsbWrites(shell)).toEqual([]);
+  });
+
+  // …and a first press whose read FAILS is reported as the read it was. Nothing was written,
+  // so a dialog naming a failed write would tell the operator the clock policy may have moved.
+  it("reports a failed first-press read as a read", SLOW, async () => {
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId === PARAMS.FOLLOW_USB.id) throw new Error("broker-timeout: value at 848:0:0");
+        return unwrittenRead(a);
+      },
+    });
+    badge().click();
+    await vi.waitFor(() => expect(errors(shell).length).toBe(1), { timeout: 10_000 });
+    expect(errors(shell)[0]).toBe(t().error.followUsbRead(t().error.shell.brokerTimeout("value at 848:0:0")));
+    expect(errors(shell)[0]).not.toContain(t().status.writeError("").trim());
+    expect(badge().dataset.state).toBe("unknown");
     expect(shell.count("vd_set")).toBe(0);
   });
 
@@ -6190,7 +7022,7 @@ describe("the Follow USB badge", () => {
   it("writes over the live session's own link rather than opening a second one", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(true, 48_000) });
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     // The session start read the badge on its way up, so the press below is a toggle
     // rather than the read an unknown state would have taken.
     expect(badge().dataset.state).toBe("on");
@@ -6199,7 +7031,7 @@ describe("the Follow USB badge", () => {
     badge().click();
     await vi.waitFor(() => expect(statusText()).toBe(t().status.followUsbOff), { timeout: 10_000 });
     expect(shell.count("vd_connect")).toBe(connects);
-    expect(live().getAttribute("aria-pressed")).toBe("true");
+    expect(live().getAttribute("aria-checked")).toBe("true");
   });
 
   // A write that fails on the session's link is a mirror that did not complete, so it
@@ -6208,12 +7040,12 @@ describe("the Follow USB badge", () => {
   it("takes the session down when the write fails on its link", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(true, 48_000) });
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
     const armedAt = shell.invokes.length;
     shell.failOnce("vd_set", new Error("link-gone"));
     badge().click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 10_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
     expect(badge().dataset.state).toBe("unknown");
     // The failure that took the session down was THIS write. `failOnce` arms the next
     // `vd_set` from anyone and the session has writers of its own, so the count alone
@@ -6224,6 +7056,42 @@ describe("the Follow USB badge", () => {
     expect(refused).toBeGreaterThan(-1);
     expect(shell.args[refused]?.paramId).toBe(PARAMS.FOLLOW_USB.id);
     expect(followUsbWrites(shell)).toHaveLength(1);
+  });
+
+  // The confirm is window-modal, so the session can end behind it — here its link drops — and
+  // the write the operator then confirms has no session to go out on. It fails, and the
+  // failure is reported as that write's, since the session's own teardown said nothing of it.
+  it("reports a confirmed write that failed because the session ended behind its confirm", SLOW, async () => {
+    let answer!: (v: string) => void;
+    const held = new Promise<string>((r) => (answer = r));
+    const shell = await bootDevice({
+      vd_get: clockReads(false, 48_000),
+      "plugin:dialog|message": (a: Record<string, unknown>) =>
+        a.buttons === "OkCancel" && String(a.message ?? "").startsWith(t().confirm.followUsbOn) ? held : "Ok",
+    });
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    expect(badge().dataset.state).toBe("off");
+
+    badge().click();
+    await vi.waitFor(() => expect(confirms(shell).some((m) => m.startsWith(t().confirm.followUsbOn))).toBe(true), {
+      timeout: 10_000,
+    });
+    // The link drops while the confirm is up.
+    const watch = shell.args[shell.invokes.indexOf("vd_watch_link")] as {
+      channel: { onmessage: (d: unknown) => void };
+    };
+    watch.channel.onmessage({ reason: "device-lost" });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
+    await invoked(shell, "vd_disconnect");
+    const before = errors(shell).length;
+
+    answer("Ok");
+    await vi.waitFor(() => expect(errors(shell).length).toBe(before + 1), { timeout: 10_000 });
+    expect(errors(shell).at(-1)).toBe(
+      t().status.writeError(t().error.followUsbWrite(t().error.shell.notConnected, true)),
+    );
+    expect(badge().dataset.state).not.toBe("on");
   });
 
   // A Fetch and a Live-sync start read Follow USB on their own connection, and that read
@@ -6270,7 +7138,7 @@ describe("the Follow USB badge", () => {
   const settled = async (): Promise<void> =>
     vi.waitFor(
       () => {
-        const up = live().getAttribute("aria-pressed") === "true";
+        const up = live().getAttribute("aria-checked") === "true";
         expect(up || !$<HTMLSelectElement>("rate-picker").disabled).toBe(true);
       },
       { timeout: 25_000 },
@@ -6329,7 +7197,7 @@ describe("the Follow USB badge", () => {
     await settled();
 
     expect(errors(shell)).toEqual([]);
-    expect(live().getAttribute("aria-pressed")).toBe("true");
+    expect(live().getAttribute("aria-checked")).toBe("true");
     expect(badge().dataset.state).toBe("on");
     expect(muted("ch1")).toBe(true);
     expect(insertFxOf("ch1")).toBe(String(COMPANDER_H));
@@ -6349,7 +7217,7 @@ describe("the Follow USB badge", () => {
       timeout: 10_000,
     });
 
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect($("live-tally").hidden).toBe(true);
     expect(badge().dataset.state).toBe("on");
     expect(muted("ch1")).toBe(false);
@@ -6524,7 +7392,7 @@ describe("the Follow USB badge", () => {
     await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 10_000 });
     const incomplete = (n: number): string => t().status.liveError(t().error.liveReadIncomplete(n));
     expect(countFor(errors(shell)[0], incomplete)).toBeGreaterThan(0);
-    expect(live().getAttribute("aria-pressed")).toBe("false");
+    expect(live().getAttribute("aria-checked")).toBe("false");
     expect(badge().dataset.state).toBe("on");
   });
 
@@ -6789,6 +7657,63 @@ describe("the device self-test", () => {
     }
   });
 
+  // A cancel taken while the capture is still reading is a run that never wrote: the status
+  // says the unit was not touched, rather than that it was left silent and needs a fetch.
+  it("says a cancel taken before the first write left the unit untouched", SLOW, async () => {
+    const shell = await bootExperimental();
+    let ask = (): void => {};
+    const asked = new Promise<void>((r) => (ask = r));
+    let release = (): void => {};
+    const released = new Promise<void>((r) => (release = r));
+    shell.answer("vd_get", () => (ask(), released.then(() => 0)));
+    const btn = await selfTestBtn();
+    btn.click();
+    await asked;
+    expect(btn.textContent, "the premise: the run is under way").toBe(t().toolbar.selfTestCancel);
+
+    btn.click();
+    release();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestCancelledUntouched), { timeout: 25_000 });
+    expect(shell.count("vd_set")).toBe(0);
+    expect(btn.textContent).toBe(t().toolbar.selfTest);
+  });
+
+  // A unit of another model is a run that did not start: nothing read and nothing written. The
+  // status names the mismatch, rather than reading the restore that never ran as a failed one.
+  it("says a run on a unit of another model did not start", SLOW, async () => {
+    const shell = await bootExperimental(connectAs("URX22"));
+    const btn = await selfTestBtn();
+    btn.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestModelMismatch("URX22", "URX44V")), {
+      timeout: 25_000,
+    });
+    expect(shell.count("vd_set")).toBe(0);
+    expect(shell.count("vd_get")).toBe(0);
+  });
+
+  // A capture that missed CH 1's strip missed the heads on it, and putting one of those back
+  // after the restore would move what nothing then checks: the run does not start, and the
+  // status says which refusal it was rather than the one about an address it could not read.
+  it("says a run whose capture missed a setting that moves others did not start", SLOW, async () => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok", experimental_enabled: true });
+    const read = table.vd_get as (a: Record<string, unknown>) => number;
+    const faderY = channelControl(getModel("URX44V"), "ch1")!.y;
+    let failed = false;
+    table.vd_get = (a: Record<string, unknown>) => {
+      if (!failed && a.paramId === PARAMS.CH_FADER.id && a.y === faderY) {
+        failed = true;
+        throw new Error("timeout");
+      }
+      return read(a);
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+    const btn = await selfTestBtn();
+    btn.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestRefusedHead), { timeout: 25_000 });
+    expect(failed, "the premise: the capture's read of the fader failed").toBe(true);
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
   // A run that cannot open its own link surfaces as a dialog and lets the latch go.
   it("reports a run that cannot open its own link, and holds nothing afterwards", SLOW, async () => {
     const log = captureWarnings();
@@ -6890,6 +7815,82 @@ describe("the device self-test", () => {
 //
 // Driven through the shell rather than through a module mock: the dialog and the file read
 // are two Tauri commands, so answering them is the same seam every other case here uses.
+// A `.urxf` dropped on the window while a device action holds the link. The menu entry greys
+// for every holder; the drop has to be refused the same way, at its entry and again once its
+// confirms are answered, since the window keeps running behind them.
+describe("a settings file dropped while a device action holds the link", () => {
+  const PATH = "C:/urx/backup.urxf";
+  const boot = (over: Record<string, unknown> = {}): Promise<TauriShell> =>
+    bootDevice({
+      experimental_enabled: true,
+      read_binary_file: () => sampleUrxf().buffer,
+      "plugin:dialog|save": null,
+      ...over,
+    });
+
+  it("refuses the drop while Live sync is still connecting", SLOW, async () => {
+    let connect!: () => void;
+    const connecting = new Promise<void>((r) => (connect = r));
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" });
+    const vdConnect = table.vd_connect as (a: Record<string, unknown>) => unknown;
+    const shell = await boot({
+      vd_connect: async (a: Record<string, unknown>) => {
+        await connecting;
+        return vdConnect(a);
+      },
+      vd_disconnect: table.vd_disconnect,
+    });
+    await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
+    $("btn-live").click();
+    await invoked(shell, "vd_connect");
+    expect(shell.emit("tauri://drag-drop", { paths: [PATH] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.deviceLinkBusy), { timeout: 10_000 });
+    expect(shell.count("read_binary_file")).toBe(0);
+    expect(confirms(shell)).toEqual([]);
+    connect();
+  });
+
+  // A Live-sync start or a Fetch refuses to read while the import's flow runs, but a write
+  // does not consult it: one started behind the import's confirm holds the link when that
+  // confirm is answered, and is converging the plan the import would overwrite.
+  it("refuses the import when a write took the link behind its confirm", SLOW, async () => {
+    let answer!: (v: string) => void;
+    const importing = new Promise<string>((r) => (answer = r));
+    const importHead = t().confirm.importSettings("\u0000", "URX44V").split("\u0000")[0]!;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked!: () => void;
+    const reading = new Promise<void>((r) => (asked = r));
+    const table = deviceCommands({});
+    const vdGet = table.vd_get as (a: Record<string, unknown>) => unknown;
+    let first = true;
+    const shell = await boot({
+      "plugin:dialog|message": (a: Record<string, unknown>) =>
+        a.buttons === "OkCancel" && String(a.message ?? "").startsWith(importHead) ? importing : "Ok",
+      vd_get: async (a: Record<string, unknown>) => {
+        if (first) {
+          first = false;
+          asked();
+          await held;
+        }
+        return vdGet(a);
+      },
+    });
+    await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
+    expect(shell.emit("tauri://drag-drop", { paths: [PATH] })).toBe(1);
+    await vi.waitFor(() => expect(confirms(shell).length).toBe(1), { timeout: 10_000 });
+    $("btn-write").click();
+    await reading;
+    const rate = $<HTMLSelectElement>("rate-picker").value;
+    answer("Ok");
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.deviceLinkBusy), { timeout: 10_000 });
+    expect($<HTMLSelectElement>("rate-picker").value).toBe(rate);
+    release();
+    await vi.waitFor(() => expect($("btn-write").textContent).toBe(t().toolbar.writeDevice), { timeout: 20_000 });
+    expect(statusText()).not.toContain(countedHead(t().status.settingsPartial(0, 0, 0)));
+  });
+});
+
 describe("importing a settings file", () => {
   const PATH = "C:/urx/backup.urxf";
 
@@ -7147,7 +8148,7 @@ describe("importing a settings file", () => {
     expect($<HTMLButtonElement>("btn-open-settings").disabled).toBe(false);
 
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect($<HTMLButtonElement>("btn-open-settings").disabled).toBe(true);
   });
 
@@ -7158,7 +8159,7 @@ describe("importing a settings file", () => {
   it("refuses a settings file DROPPED onto the window while a live session is up", SLOW, async () => {
     const shell = await bootImport(sampleUrxf());
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     const reads = shell.count("read_binary_file");
 
     // One handler, not zero: an event nobody listens for would make every assertion below
@@ -7170,7 +8171,7 @@ describe("importing a settings file", () => {
     // Refused before the file was even read, and the session it would have disrupted is
     // still up.
     expect(shell.count("read_binary_file")).toBe(reads);
-    expect(live().getAttribute("aria-pressed")).toBe("true");
+    expect(live().getAttribute("aria-checked")).toBe("true");
   });
 });
 
@@ -7345,6 +8346,24 @@ describe("dropping a file onto the window", () => {
     expect(localStorage.getItem("urx-recent")).toContain(PLAN_PATH);
   });
 
+  // A file dragged onto the MIDI control window is raised by the shell for THAT window, and
+  // this window takes only the drag events raised for itself: no advert and no load follow
+  // here. The same drop raised for this window is the positive control — without it a stub
+  // that delivered nothing would satisfy every absence above it.
+  it("ignores a file dropped on the MIDI control window", SLOW, async () => {
+    const shell = await bootDevice({ read_text_file: () => droppedPlan });
+
+    expect(shell.emit("tauri://drag-enter", undefined, "midi")).toBe(0);
+    expect(advert().hidden).toBe(true);
+    expect(shell.emit("tauri://drag-drop", { paths: [PLAN_PATH] }, "midi")).toBe(0);
+    await settle();
+    expect(shell.count("read_text_file")).toBe(0);
+    expect(rate()).toBe("48000");
+
+    expect(shell.emit("tauri://drag-drop", { paths: [PLAN_PATH] })).toBe(1);
+    await vi.waitFor(() => expect(rate()).toBe("96000"), { timeout: 10_000 });
+  });
+
   // A file is a load as a link is: a document naming no STREAMING source opens with the STEREO
   // a new plan carries, drawn on the board, and the note leads the line that names the file.
   it("gives a dropped plan naming no STREAMING source STEREO, and says so ahead of the file", SLOW, async () => {
@@ -7486,6 +8505,511 @@ describe("a linked MIX's send pans on load", () => {
   });
 });
 
+// A tuning screen left open over a read that re-authors the plan in place. The screen draws a
+// snapshot of the plan it was built from, so the read has to tell it to draw again — and to
+// close when the read moved the channel onto a processor the screen does not edit.
+describe("a tuning screen open across a fetch", () => {
+  /** The unit's answer to every read, with Follow USB — the read's first — held until released,
+   *  so the screen can be opened while the read is in flight. */
+  const heldRead = (
+    rest: (a: Record<string, unknown>) => number,
+  ): { reading: Promise<void>; release: () => void; vd_get: (a: Record<string, unknown>) => unknown } => {
+    let asked = (): void => {};
+    const reading = new Promise<void>((r) => (asked = r));
+    let release = (): void => {};
+    const answered = new Promise<void>((r) => (release = r));
+    return {
+      reading,
+      release: () => release(),
+      vd_get: (a) => {
+        if (a.paramId !== PARAMS.FOLLOW_USB.id) return rest(a);
+        asked();
+        return answered.then(() => 0);
+      },
+    };
+  };
+  const threshold = (): HTMLInputElement =>
+    $("dyn-screen-box").querySelector<HTMLInputElement>('input[data-dyn="threshold"]')!;
+  const ch1 = (paramId: number) => (a: Record<string, unknown>) => a.paramId === paramId && a.x === 0 && a.y === 0;
+
+  it("draws the values the read brought in", SLOW, async () => {
+    const isThreshold = ch1(PARAMS.COMP_THRESHOLD.id);
+    const unit = heldRead((a) => (isThreshold(a) ? -1000 : unwrittenRead(a)));
+    const shell = await bootDevice({ vd_get: unit.vd_get });
+    $("btn-fetch").click();
+    await unit.reading;
+    selectNode("ch1");
+    $("btn-comp-screen").click();
+    const before = threshold().value;
+    expect(before).not.toBe("-10");
+    unit.release();
+    await fetchEnded();
+    expect(shell.count("vd_disconnect")).toBe(1);
+    expect($("dyn-screen-modal").hidden).toBe(false);
+    expect(threshold().value).toBe("-10");
+  });
+
+  it("closes the screen when the read moved the channel to SSMCS", SLOW, async () => {
+    const isType = ch1(PARAMS.COMP_EQ_TYPE.id);
+    const unit = heldRead((a) => (isType(a) ? COMP_EQ_SSMCS : unwrittenRead(a)));
+    await bootDevice({ vd_get: unit.vd_get });
+    $("btn-fetch").click();
+    await unit.reading;
+    selectNode("ch1");
+    $("btn-comp-screen").click();
+    expect($("dyn-screen-modal").hidden).toBe(false);
+    unit.release();
+    await fetchEnded();
+    await vi.waitFor(() => expect($("dyn-screen-modal").hidden).toBe(true), { timeout: 10_000 });
+  });
+});
+
+// A write converges the plan it was confirmed for, re-reading it after every await, so a plan
+// replaced during the write is the one it would put on the unit. Every wholesale replacement is
+// refused while a write holds the link — at its entry, and at loadPlan for a flow that entered
+// before the write did. Each case holds the write's first device read.
+describe("replacing the plan while a write holds the link", () => {
+  const heldWrite = (
+    over: Record<string, unknown> = {},
+  ): { tauri: Record<string, unknown>; release: () => void; reading: Promise<void> } => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked!: () => void;
+    const reading = new Promise<void>((r) => (asked = r));
+    const table = deviceCommands({ "plugin:dialog|message": "Ok", ...over });
+    const vdGet = table.vd_get as (a: Record<string, unknown>) => unknown;
+    let first = true;
+    return {
+      release,
+      reading,
+      tauri: {
+        ...table,
+        vd_get: async (a: Record<string, unknown>) => {
+          if (first) {
+            first = false;
+            asked();
+            await held;
+          }
+          return vdGet(a);
+        },
+      },
+    };
+  };
+  const writeEnded = (): Promise<void> =>
+    vi.waitFor(() => expect($("btn-write").textContent).toBe(t().toolbar.writeDevice), { timeout: 20_000 });
+
+  it("refuses New during a write and takes it once the write is done", SLOW, async () => {
+    const unit = heldWrite();
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    $("btn-write").click();
+    await unit.reading;
+    $("btn-new").click();
+    expect(statusText()).toBe(t().status.deviceLinkBusy);
+    unit.release();
+    await writeEnded();
+    await invoked(shell, "vd_disconnect");
+    $("btn-new").click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.newPlan), { timeout: 10_000 });
+  });
+
+  it("refuses a dropped plan during a write without reading it", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const unit = heldWrite({ read_text_file: () => serialize(defaultPlan("URX44V")) });
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    $("btn-write").click();
+    await unit.reading;
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/dropped.json"] })).toBe(1);
+    expect(statusText()).toBe(t().status.deviceLinkBusy);
+    unit.release();
+    await writeEnded();
+    expect(shell.count("read_text_file")).toBe(0);
+  });
+
+  it("refuses a model switch whose confirm was answered once the write had begun", SLOW, async () => {
+    let answer!: (v: string) => void;
+    const discard = new Promise<string>((r) => (answer = r));
+    const unit = heldWrite({
+      "plugin:dialog|message": (a: Record<string, unknown>) => (a.message === t().confirm.discard ? discard : "Ok"),
+    });
+    await bootApp({ tauri: unit.tauri });
+    chooseRate(96_000); // unsaved, so the switch asks the discard confirm
+    const picker = $<HTMLSelectElement>("model-picker");
+    picker.value = "URX22";
+    picker.dispatchEvent(new Event("change"));
+    $("btn-write").click();
+    await unit.reading;
+    answer("Ok");
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.deviceLinkBusy), { timeout: 10_000 });
+    // The picker names the model still on screen.
+    expect(picker.value).toBe("URX44V");
+    expect($("graph-host").querySelector('g.node[data-id="ch_11_12"]')).not.toBeNull();
+    unit.release();
+    await writeEnded();
+  });
+});
+
+// A write settles the sample rate once, at its start, and then converges the plan it re-reads
+// every round — so a rate the plan takes after the settle goes out with no re-clock confirm and
+// no Track Count warning. Undo is where that can come from, and it is refused for the rate while
+// any device action holds the link, as the rate picker is.
+describe("the sample rate during a write", () => {
+  /** A press and release on the window: it closes the open undo entry one macrotask later. */
+  const boundary = async (): Promise<void> => {
+    window.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 9 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 9 }));
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const rateWrites = (shell: TauriShell): number[] =>
+    shell.invokes.flatMap((cmd, i) =>
+      cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.SAMPLE_RATE.id ? [shell.args[i]!.value as number] : [],
+    );
+
+  it("refuses to undo a rate change while a write holds the link", SLOW, async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked!: () => void;
+    const diffing = new Promise<void>((r) => (asked = r));
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" }, { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 });
+    const vdGet = table.vd_get as (a: Record<string, unknown>) => unknown;
+    let gets = 0;
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        // The clock's two reads answer; the diff's first is held.
+        vd_get: async (a: Record<string, unknown>) => {
+          if (++gets === 3) {
+            asked();
+            await held;
+          }
+          return vdGet(a);
+        },
+      },
+    }))!;
+    chooseRate(96_000);
+    await boundary();
+    chooseRate(48_000);
+    await boundary();
+
+    $("btn-write").click();
+    await diffing;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(statusText()).toBe(t().status.undoRateLocked);
+    expect($<HTMLSelectElement>("rate-picker").value).toBe("48000");
+    release();
+    await vi.waitFor(() => expect($("btn-write").textContent).toBe(t().toolbar.writeDevice), { timeout: 20_000 });
+    expect(rateWrites(shell)).not.toContain(96_000);
+  });
+
+  it("re-reads the recorder after a rate the write sends, a count that fits it included", SLOW, async () => {
+    const shell = await bootDevice({}, true, {
+      [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000,
+      [TRACK_COUNT_SEED]: 2,
+    });
+    chooseRate(96_000);
+    $("btn-write").click();
+    await vi.waitFor(() => expect($("btn-write").textContent).toBe(t().toolbar.writeDevice), { timeout: 20_000 });
+    await invoked(shell, "vd_disconnect");
+    expect(rateWrites(shell)).toContain(96_000);
+    const sentAt = shell.invokes.findIndex(
+      (cmd, i) => cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.SAMPLE_RATE.id,
+    );
+    const readAfter = shell.invokes.some(
+      (cmd, i) =>
+        i > sentAt &&
+        cmd === "vd_get" &&
+        `${shell.args[i]?.paramId}:${shell.args[i]?.x}:${shell.args[i]?.y}` === TRACK_COUNT_ADDR,
+    );
+    expect(readAfter).toBe(true);
+  });
+});
+
+// A MIDI edit is an app edit: it goes through the history like any other, so it is undoable
+// and its keys are recorded as the operator's — which is what keeps the write confirm from
+// naming the strip the operator moved as one carrying "settings you did not edit".
+describe("an edit made through MIDI", () => {
+  const CC = 25;
+  const bootMidi = async (): Promise<TauriShell> => {
+    const shell = (await bootApp({
+      seed: {
+        "urx-midi": JSON.stringify({
+          input: "Controller In",
+          models: {
+            URX44V: [
+              {
+                control: "ch1/mute",
+                addr: { type: "cc", channel: 0, controller: CC },
+                mode: "absolute",
+                button: "edge",
+              },
+            ],
+          },
+        }),
+      },
+      tauri: deviceCommands(
+        {
+          "plugin:dialog|message": "Ok",
+          midi_list_inputs: ["Controller In"],
+          midi_open_input: null,
+          midi_close_input: null,
+        },
+        { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000 },
+      ),
+    }))!;
+    await invoked(shell, "midi_open_input");
+    return shell;
+  };
+  const sendCc = (shell: TauriShell): void =>
+    (
+      shell.args[shell.invokes.indexOf("midi_open_input")] as { channel: { onmessage: (d: unknown) => void } }
+    ).channel.onmessage([{ bytes: [0xb0, CC, 127] }]);
+  const mainSendDash = (): string | null | undefined =>
+    $("graph-host")
+      .querySelector('g:has(> .wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]) path:not(.wire-hit)')
+      ?.getAttribute("stroke-dasharray");
+  /** A press and release on the window, the boundary a click anywhere is: it closes the open
+   *  entry one macrotask later, and the timer below is queued behind that one. */
+  const boundary = async (): Promise<void> => {
+    window.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 9 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 9 }));
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  it("is not named by the write confirm as a setting the operator did not edit", SLOW, async () => {
+    const { fullLabel } = await import("./models/types");
+    const shell = await bootMidi();
+    // A first write puts the unit on the plan, so the second one carries the MIDI edit alone.
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(() => expect($("btn-write").textContent).toBe(t().toolbar.writeDevice), { timeout: 20_000 });
+    sendCc(shell);
+    await vi.waitFor(() => expect(mainSendDash()).toBe("1.5 4"), { timeout: 10_000 });
+    await boundary();
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    const asked = confirms(shell).filter((m) => m.includes(WRITE_ASK));
+    expect(asked, "the premise: both writes asked").toHaveLength(2);
+    expect(asked[1]).toContain(invariantOf(t().confirm.write(1)));
+    const ch1 = getModel("URX44V").nodes.find((n) => n.id === "ch1")!;
+    expect(stripsNamed(asked[0]), "the premise: the first write names the strip").toContain(fullLabel(ch1));
+    expect(stripsNamed(asked[1])).not.toContain(fullLabel(ch1));
+  });
+
+  it("is undone by Ctrl+Z", SLOW, async () => {
+    const shell = await bootMidi();
+    expect(mainSendDash(), "the premise: the send is drawn live").toBeNull();
+    sendCc(shell);
+    await vi.waitFor(() => expect(mainSendDash()).toBe("1.5 4"), { timeout: 10_000 });
+    await boundary();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(mainSendDash()).toBeNull(), { timeout: 10_000 });
+  });
+});
+
+// A document that needs a decision opens a report whose "Load anyway" runs later, from the
+// modal, after the flow that opened it has let the latch go. Two surfaces still reach the plan
+// under the modal — a MIDI controller and a drop — so the proceed asks again what the opening
+// flow asked, and a replaced plan takes the report down with it.
+describe("a load report's Load anyway", () => {
+  const CC = 24;
+  /** A plan two mono channels claim one 1-of insert-FX slot in: it loads only on request. */
+  const contended = async (): Promise<string> => {
+    const { serialize } = await import("./core/plan");
+    const plan = defaultPlan("URX44V");
+    const params = plan.nodeParams as Record<string, Record<string, unknown>>;
+    params.ch1 = { ...params.ch1, insertFx: 512 };
+    params.ch3 = { ...params.ch3, insertFx: 512 };
+    return serialize(plan);
+  };
+  const bootWith = async (files: Record<string, string>, agree: (m: string) => boolean): Promise<TauriShell> =>
+    (await bootApp({
+      seed: {
+        "urx-midi": JSON.stringify({
+          input: "Controller In",
+          models: {
+            URX44V: [
+              {
+                control: "ch1/mute",
+                addr: { type: "cc", channel: 0, controller: CC },
+                mode: "absolute",
+                button: "edge",
+              },
+            ],
+          },
+        }),
+      },
+      tauri: deviceCommands({
+        "plugin:dialog|message": byMessage(agree),
+        midi_list_inputs: ["Controller In"],
+        midi_open_input: null,
+        midi_close_input: null,
+        read_text_file: (a: Record<string, unknown>) => files[String(a.path)],
+      }),
+    }))!;
+  const proceed = (): HTMLButtonElement => $("load-report").querySelector<HTMLButtonElement>("#load-report-proceed")!;
+
+  it("asks the discard confirm again for an edit made while the report was up", SLOW, async () => {
+    const shell = await bootWith({ "C:/urx/contended.json": await contended() }, () => false);
+    await invoked(shell, "midi_open_input");
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/contended.json"] })).toBe(1);
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), { timeout: 10_000 });
+
+    const opened = shell.args[shell.invokes.indexOf("midi_open_input")] as {
+      channel: { onmessage: (d: unknown) => void };
+    };
+    opened.channel.onmessage([{ bytes: [0xb0, CC, 127] }]);
+    // The edit landed: CH 1 is muted, and its main send is drawn dashed.
+    await vi.waitFor(
+      () =>
+        expect(
+          $("graph-host")
+            .querySelector('g:has(> .wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]) path:not(.wire-hit)')
+            ?.getAttribute("stroke-dasharray"),
+        ).toBe("1.5 4"),
+      { timeout: 10_000 },
+    );
+    expect(confirms(shell)).toEqual([]);
+    proceed().click();
+    // Declined: the document does not load over the edit.
+    await vi.waitFor(() => expect(confirms(shell)).toEqual([t().confirm.discard]), { timeout: 10_000 });
+    expect(statusText()).not.toBe(t().status.openedFrom("contended.json"));
+  });
+
+  it("takes the report down when another plan replaces the one it was about", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const shell = await bootWith(
+      { "C:/urx/contended.json": await contended(), "C:/urx/other.json": serialize(defaultPlan("URX44V")) },
+      () => true,
+    );
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/contended.json"] })).toBe(1);
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), { timeout: 10_000 });
+    expect(shell.emit("tauri://drag-drop", { paths: ["C:/urx/other.json"] })).toBe(1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.openedFrom("other.json")), { timeout: 10_000 });
+    expect($("load-report").hidden).toBe(true);
+  });
+});
+
+// A file flow that is already running when a Fetch's connect lands holds the plan as it stood
+// when the flow began. The read does not start under it; the flow finishes on the plan it began
+// with. Each case holds the connect, starts the file flow, then lets the connect land — and holds
+// the read's first round trip as well, so a read that did start is still in flight when the
+// file flow finishes.
+describe("a Fetch that connects while a file flow runs", () => {
+  /** The connect and the first device read, each held until released. */
+  const held = (
+    over: Record<string, unknown>,
+  ): {
+    tauri: Record<string, unknown>;
+    connect: () => void;
+    read: () => void;
+  } => {
+    let connect!: () => void;
+    const connected = new Promise<void>((r) => (connect = r));
+    let read!: () => void;
+    const readHeld = new Promise<void>((r) => (read = r));
+    const table = deviceCommands({ "plugin:dialog|message": "Ok", ...over });
+    const vdConnect = table.vd_connect as (a: Record<string, unknown>) => unknown;
+    const vdGet = table.vd_get as (a: Record<string, unknown>) => unknown;
+    let first = true;
+    return {
+      connect,
+      read,
+      tauri: {
+        ...table,
+        vd_connect: async (a: Record<string, unknown>) => {
+          await connected;
+          return vdConnect(a);
+        },
+        vd_get: async (a: Record<string, unknown>) => {
+          if (first) {
+            first = false;
+            await readHeld;
+          }
+          return vdGet(a);
+        },
+      },
+    };
+  };
+  /** The Fetch has reached its decision: it read, or it let the link go. */
+  const fetchDecided = (shell: TauriShell): Promise<void> =>
+    vi.waitFor(() => expect(shell.count("vd_get") + shell.count("vd_disconnect")).toBeGreaterThan(0), {
+      timeout: 10_000,
+    });
+
+  it("does not read under a Save whose dialog is open", SLOW, async () => {
+    let save!: (path: string) => void;
+    const saving = new Promise<string>((r) => (save = r));
+    const unit = held({ "plugin:dialog|save": () => saving, write_text_file: null });
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_connect");
+    $("btn-save").click();
+    await invoked(shell, "plugin:dialog|save");
+    unit.connect();
+    await fetchDecided(shell);
+    unit.read();
+    await invoked(shell, "vd_disconnect");
+    expect(shell.count("vd_get")).toBe(0);
+    expect(statusText()).toBe(t().status.busyFileFlow);
+    save("C:/urx/saved.json");
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.savedTo("saved.json")), { timeout: 10_000 });
+  });
+
+  it("lets a model switch whose confirm is open finish on the model it named", SLOW, async () => {
+    let answerA!: (v: string) => void;
+    const confirmA = new Promise<string>((r) => (answerA = r));
+    let discards = 0;
+    const unit = held({
+      "plugin:dialog|message": (a: Record<string, unknown>) =>
+        a.message === t().confirm.discard && ++discards === 1 ? confirmA : "Ok",
+    });
+    const shell = (await bootApp({ tauri: unit.tauri }))!;
+    chooseRate(96_000); // unsaved, so the switch asks the discard confirm
+    $("btn-fetch").click();
+    await invoked(shell, "vd_connect");
+    const picker = $<HTMLSelectElement>("model-picker");
+    picker.value = "URX22";
+    picker.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(discards).toBe(1), { timeout: 10_000 });
+    unit.connect();
+    await fetchDecided(shell);
+    answerA("Ok");
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.switchedModel("URX22")), { timeout: 10_000 });
+    unit.read();
+    await fetchEnded();
+    expect(picker.value).toBe("URX22");
+    // The board is the URX22's: the URX44V's CH 11/12 is not drawn.
+    expect($("graph-host").querySelector('g.node[data-id="ch_11_12"]')).toBeNull();
+    expect(shell.count("vd_get")).toBe(0);
+  });
+
+  it("keeps a recent entry whose file opens while the Fetch connects", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    let readFile!: () => void;
+    const reading = new Promise<void>((r) => (readFile = r));
+    const unit = held({
+      read_text_file: async () => {
+        await reading;
+        return serialize(defaultPlan("URX44V"));
+      },
+    });
+    const entry = { path: "C:/urx/recent.json", name: "recent.json", modelId: "URX44V" };
+    const shell = (await bootApp({ tauri: unit.tauri, seed: { "urx-recent": JSON.stringify([entry]) } }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_connect");
+    $("inspector").querySelector<HTMLButtonElement>(".recent-row")!.click();
+    await invoked(shell, "read_text_file");
+    unit.connect();
+    await fetchDecided(shell);
+    readFile();
+    await vi.waitFor(() => expect(statusText()).not.toBe(t().status.fetchConnecting), { timeout: 10_000 });
+    unit.read();
+    await fetchEnded();
+    expect(localStorage.getItem("urx-recent")).toContain("recent.json");
+    expect($("inspector").querySelector(".recent-row")).not.toBeNull();
+  });
+});
+
 describe("the --reset-storage launch", () => {
   // The flag arrives async — after the synchronous init has already read localStorage —
   // so the only way to re-init clean is to clear and reload once. jsdom cannot navigate
@@ -7508,6 +9032,23 @@ describe("the --reset-storage launch", () => {
     // …and boot() never ran past the reset, so nothing downstream of it happened.
     await new Promise((r) => setTimeout(r, 100));
     expect(shell.count("plugin:updater|check")).toBe(0);
+  });
+
+  // A startup that throws before it reaches boot(). The markup is the one the app cannot
+  // start on (no rate picker, which its init fills unguarded), standing in for any store
+  // value that breaks the synchronous init: the reset is what recovers from those, so it
+  // cannot wait for the init to finish.
+  it("clears storage when the app's own startup throws", SLOW, async () => {
+    sessionStorage.clear();
+    const shell = (await bootApp({
+      tauri: deviceCommands({ reset_storage_requested: true }),
+      body: APP_BODY.replace('<select id="rate-picker"></select>', ""),
+      initThrows: true,
+    }))!;
+    await vi.waitFor(() => expect(sessionStorage.getItem("urx-reset-done")).toBe("1"), { timeout: 10_000 });
+    expect(shell.count("reset_storage_requested")).toBe(1);
+    expect(localStorage.getItem("urx-model")).toBeNull();
+    sessionStorage.clear();
   });
 
   // The flag is still set on the launch that follows the reload, so without the guard the
@@ -7563,14 +9104,14 @@ describe("MIDI feedback and the live session", () => {
     expect(shell.count("midi_send")).toBe(0);
 
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), SLOW);
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), SLOW);
     await vi.waitFor(() => expect(shell.count("midi_send")).toBeGreaterThan(0));
 
     // And closes again when the session ends. The edit below MOVES a mapped value, so a
     // pass that ran would carry it: the count staying put is the output side being shut
     // rather than a pass finding nothing.
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"));
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"));
     const sentWhileLive = shell.count("midi_send");
 
     selectNode("ch1");
@@ -7600,7 +9141,7 @@ describe("MIDI feedback and the live session", () => {
 
     $("btn-live").click();
     await invoked(shell, "vd_disconnect");
-    expect(live().getAttribute("aria-pressed")).not.toBe("true");
+    expect(live().getAttribute("aria-checked")).not.toBe("true");
     expect(shell.count("vd_params_subscribe")).toBe(0); // the session never registered
     expect(errors(shell).length).toBeGreaterThan(0); // and said so
     expect(shell.count("midi_send")).toBe(0);
@@ -7762,7 +9303,7 @@ describe("the inspector while the CONSOLE hides it", () => {
   it("holds the rebuild while the CONSOLE hides it, and pays it on the way back", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     selectNode("ch1");
     const before = paramRow(t().inspector.gainAnalog);
 
@@ -7887,8 +9428,8 @@ describe("an edit funnel against a device read", () => {
     thr.dispatchEvent(new Event("change", { bubbles: true }));
     await invoked(shell, "vd_disconnect");
 
-    // Read the plan back through a save: the open screen does not repaint on a read, so
-    // its DOM would answer for the render rather than for the merge.
+    // Read the plan back through a save: the saved document is the plan itself, so it answers
+    // for the merge rather than for the screen's render of it.
     const before = shell.count("write_text_file");
     $("btn-save").click();
     await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
@@ -7970,7 +9511,7 @@ describe("+48V and Hi-Z on one channel", () => {
     slider.dispatchEvent(new Event("input", { bubbles: true }));
   };
   const liveUp = (): Promise<void> =>
-    vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("true"), { timeout: 25_000 });
+    vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
   it("sends the gain the plan holds when Hi-Z goes on, not the one the panel was drawn with", SLOW, async () => {
     const shell = await bootDevice({}, true, { [at(PARAMS.HA_GAIN.id)]: gainToVd(60), [RATE]: 48_000 });
@@ -8539,17 +10080,24 @@ describe("+48V and Hi-Z on one channel", () => {
         timeout: 25_000,
         interval: 50,
       });
+      // The idle full read starts its delay again at every arm, and the settle's report of a
+      // write the unit did not announce is one, so it is waited for by its own first read
+      // rather than by a quiet window shorter than that delay.
+      await vi.waitFor(
+        () =>
+          expect(
+            shell.invokes.some(
+              (cmd, i) =>
+                i >= announced &&
+                cmd === "vd_get" &&
+                shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
+                shell.args[i]?.y === CH1_Y,
+            ),
+            "the premise: the full read ran behind the scoped one",
+          ).toBe(true),
+        { timeout: 25_000, interval: 50 },
+      );
       await quiet(shell);
-      expect(
-        shell.invokes.some(
-          (cmd, i) =>
-            i >= announced &&
-            cmd === "vd_get" &&
-            shell.args[i]?.paramId === PARAMS.PHANTOM.id &&
-            shell.args[i]?.y === CH1_Y,
-        ),
-        "the premise: the full read ran behind the scoped one",
-      ).toBe(true);
       expect(gainShown(), "the gain the press lowered is the unit's again").toBe("+60 dB");
       expect(statusText().startsWith(`${t().status.hiZRefusedByRead("CH 3")} — `), statusText()).toBe(true);
       expect({
@@ -8750,7 +10298,7 @@ describe("+48V and Hi-Z on one channel", () => {
       notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
 
       live().click();
-      await vi.waitFor(() => expect(live().getAttribute("aria-pressed")).toBe("false"), { timeout: 10_000 });
+      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
       hold.release();
       await invoked(shell, "vd_disconnect");
       selectNode("ch3");
@@ -8760,5 +10308,77 @@ describe("+48V and Hi-Z on one channel", () => {
         JSON.stringify(seen),
       ).toBe(false);
     });
+  });
+});
+
+// Under the Scene only device scope a whole-device read puts the plan's scene-external values
+// back afterwards. A read scoped to a few nodes — a follow reconcile, or the refetch a
+// `sideEffect: "refetch"` write takes — reads those nodes' oscillator assigns as well, so it
+// takes the same keep and restore, or the two reads disagree about one value under one
+// setting and the unit's assign replaces the plan's.
+describe("a scoped read under the Scene only device scope", () => {
+  const model = (): DeviceModel => getModel("URX44V");
+  /** The oscillator's assigns the board draws, by the bus they go into. */
+  const oscDrawn = (): string[] =>
+    [...$("graph-host").querySelectorAll('.wire-hit[data-from="bus.osc:out"]')]
+      .map((w) => (w as SVGElement).dataset.to ?? "")
+      .sort();
+  const readsOf = (shell: TauriShell, paramId: number): number =>
+    shell.invokes.filter((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === paramId).length;
+  const liveUp = (): Promise<void> =>
+    vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+
+  /** A unit whose oscillator goes into FX 1 and not into STEREO — the plan's own assign is the
+   *  other way round — with the session up under the scene scope. */
+  const sceneSession = async (): Promise<TauriShell> => {
+    const shell = (await bootApp({
+      seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) },
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok" }, { [`${PARAMS.OSC_ASSIGN_FX.id}/0/0`]: 1 }),
+    }))!;
+    expect(oscDrawn(), "the premise: the plan's oscillator goes into STEREO").toEqual(["bus.stereo:in"]);
+    live().click();
+    await liveUp();
+    await quiet(shell);
+    expect(oscDrawn(), "the premise: the session's start read kept it").toEqual(["bus.stereo:in"]);
+    return shell;
+  };
+
+  it("keeps the plan's assigns through a follow read of an FX channel", SLOW, async () => {
+    const shell = await sceneSession();
+    const send = planToCommands(model(), defaultPlan("URX44V")).find(
+      (c) => c.node === "bus.fx1" && c.name === "SEND_LEVEL",
+    )!;
+    const before = readsOf(shell, PARAMS.OSC_ASSIGN_FX.id);
+    // A send level moved on the unit's own panel, which the follow layer answers with a read of
+    // FX 1.
+    notifyChannel(shell).onmessage([{ param_id: send.paramId, x: send.x, y: send.y, value: -1000 }]);
+    await vi.waitFor(
+      () => expect(readsOf(shell, PARAMS.OSC_ASSIGN_FX.id), "the premise: FX 1 was read").toBeGreaterThan(before),
+      { timeout: 10_000 },
+    );
+    await quiet(shell);
+    expect(oscDrawn()).toEqual(["bus.stereo:in"]);
+  });
+
+  it("keeps the plan's assigns through the refetch a STEREO EQ 1-knob takes", SLOW, async () => {
+    const shell = await sceneSession();
+    const before = readsOf(shell, PARAMS.OSC_ASSIGN_STEREO.id);
+    selectNode("bus.stereo");
+    $("inspector").querySelector<HTMLButtonElement>("#btn-eq-screen")!.click();
+    $("dyn-screen-box")
+      .querySelector<HTMLElement>("#dyn-oneknob-level")!
+      .closest(".prefs-section")!
+      .querySelectorAll<HTMLButtonElement>(".prefs-toggle button")[0]
+      .click(); // ON
+    await vi.waitFor(
+      () =>
+        expect(readsOf(shell, PARAMS.OSC_ASSIGN_STEREO.id), "the premise: STEREO was read back").toBeGreaterThan(
+          before,
+        ),
+      { timeout: 10_000 },
+    );
+    $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions .consent-btn-secondary")!.click();
+    await quiet(shell);
+    expect(oscDrawn()).toEqual(["bus.stereo:in"]);
   });
 });

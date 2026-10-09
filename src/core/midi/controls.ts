@@ -56,6 +56,7 @@ import type { DynField, SsmcsEqBandName } from "../control/translate";
 import {
   COMP_EQ_COMP_FIRST,
   COMP_ONE_KNOB_DRIVEN,
+  compDeviceDriven,
   EQ_TYPE_PASS,
   EQ_TYPE_PEAKING,
   EQ_TYPE_SHELVING,
@@ -67,6 +68,7 @@ import {
   insertFxLockedSlots,
   insertFxParams,
   insertFxSlotVal,
+  insertFxSwitchOn,
   reKeyInsertFxParams,
   MBC_ONE_KNOB,
 } from "../control/insert-fx-effect";
@@ -324,17 +326,12 @@ function linearCodec(min: number, max: number, step: number): { get(x: number): 
 const WIRE_14_BIT_MAX = (1 << 14) - 1;
 
 /**
- * A codec whose normalized domain IS the 14-bit grid.
- *
- * The engine leaves 14-bit feedback unguarded against its own echo, and that is only safe
- * while every 14-bit round trip is exact — the case in `controls.test.ts` pins it and says
- * why. A control with more settings than the wire has positions cannot satisfy that on a
- * plain linear codec: several of its values share a position, so the value read back after
- * an echo is not the value set, and under Live sync that difference reaches the unit.
- *
- * Snapping the READING to the same grid the writing lands on makes the trip exact again.
- * What it costs is resolution over MIDI and nothing else: the control keeps every setting
- * for a pointer, a wheel and an arrow key, and a controller reaches 16384 of them.
+ * A codec whose normalized domain IS the 14-bit grid, for a control with more settings than
+ * the wire has positions. Several of its values share a position, and its READING snaps to the
+ * same grid its writing lands on, so a position written reads back as that position
+ * (`controls.test.ts` pins the round trip). What it costs is resolution over MIDI and
+ * nothing else: the control keeps every setting for a pointer, a wheel and an
+ * arrow key, and a controller reaches 16384 of them.
  */
 function wireGridCodec(min: number, max: number, step: number): { get(x: number): number; set(v: number): number } {
   const span = max - min;
@@ -745,10 +742,10 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       // COMP is absent in SSMCS mode (the morphing strip replaces it), which is
       // also how the tuning screen learns to refuse to open.
       if (dyn.comp) {
-        // While 1-knob is on the device computes threshold / ratio / gain and
-        // announces each recomputation, so a write would be overwritten within the
-        // flush; Auto Makeup cannot be operated then either, and the level does
-        // nothing while it is off. Same rules the screen's rows render under.
+        // A value the unit computes — threshold / ratio / gain / knee while 1-knob is on,
+        // the gain while Auto Makeup is on — is refused, the set the writer stops sending
+        // and the screen locks (`compDeviceDriven`). Auto Makeup cannot be operated while
+        // 1-knob is on either, and the level does nothing while it is off.
         const comp = (): Record<string, unknown> => (plan.nodeParams[id]?.comp ?? {}) as Record<string, unknown>;
         const oneOn = (): boolean => comp().oneKnob === true;
         const compKnob = controlId(lockNode(id), "oneKnob", COMP_SCOPE);
@@ -758,7 +755,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
               "comp",
               COMP_SCOPE,
               f,
-              COMP_ONE_KNOB_DRIVEN.has(f.key) ? oneOn : undefined,
+              () => compDeviceDriven(comp()).has(f.key),
               COMP_ONE_KNOB_DRIVEN.has(f.key) ? compKnob : undefined,
             ),
           );
@@ -946,6 +943,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
       node: id,
       param: "insertFxOn",
       kind: "toggle",
+      writes: { kind: "node", path: "insertFxOn" },
       get: () =>
         rateLocked() || !insertFxEngaged({ insertFx: insFxSel, insertFxOn: plan.nodeParams[id]?.insertFxOn }) ? 0 : 1,
       set: (v) => {
@@ -1000,7 +998,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
           scope,
           kind: "toggle",
           governedBy,
-          get: () => (cur() ? 1 : 0),
+          // As the write sends it: the same reading the locks take of the 1-knob switch.
+          get: () => (insertFxSwitchOn(cur()) ? 1 : 0),
           set: (v) => {
             if (lockedNow()) return false;
             write(v >= 0.5 ? 1 : 0);

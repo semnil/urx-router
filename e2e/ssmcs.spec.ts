@@ -95,6 +95,22 @@ test("re-entering an SSMCS/COMP->EQ mode resets that bank to factory", async ({ 
   await expect(screenRow(page, "Sweet Spot Data").locator("select")).toHaveValue("1");
 });
 
+// A STEREO-linked pair holds one bank on the unit, so entering SSMCS resets both members: the
+// partner takes the edited member's settled bank rather than keeping the outgoing one's Rec Point.
+test("entering SSMCS on a linked pair resets the partner's bank too", async ({ page }) => {
+  await node(page, "ch1").click();
+  await chooseOption(param(page, "Signal Type").locator("select"), "1"); // STEREO
+  const recPoint = () => page.locator("#inspector").getByLabel("Rec Point", { exact: true });
+  await chooseOption(recPoint(), "2"); // PRE EQ
+  await expect(recPoint()).toHaveValue("2");
+  await chooseOption(typeSelect(page), "1"); // SSMCS
+  await expect(recPoint()).toHaveValue("1"); // PRE COMP
+
+  await node(page, "ch2").click();
+  await expect(typeSelect(page)).toHaveValue("1");
+  await expect(recPoint()).toHaveValue("1");
+});
+
 test("toggling the SSMCS value reverts its fold to follow the on-state", async ({ page }) => {
   await node(page, "ch1").click();
   await chooseOption(typeSelect(page), "1"); // SSMCS
@@ -223,7 +239,9 @@ test.describe("the tuning screen's three faces", () => {
   // minHeight 640), and a floor is only safe if it yields there. `.consent-box` clamps
   // itself to the viewport, and the action row carrying Close is its last child, so a grid
   // that refuses to shrink pushes Close past the fold — measured before the floor learned
-  // to yield: 68px past the box's own edge.
+  // to yield: 68px past the box's own edge. That run is a constrained window holding its
+  // layout, so it is tagged @webkit as well: the floor has to give way to the chrome around
+  // the grid, and that chrome is the engine's to lay out.
   const RUNS = [
     { lang: "en", size: null },
     { lang: "ja", size: null },
@@ -231,7 +249,9 @@ test.describe("the tuning screen's three faces", () => {
   ] as const;
   for (const run of RUNS) {
     const at = `${run.lang}, ${run.size ? `${run.size.width}x${run.size.height}` : "the default window"}`;
-    test(`every face is one height with its display panel at one top edge (${at})`, async ({ page }) => {
+    test(`every face is one height with its display panel at one top edge (${at})${run.size ? " @webkit" : ""}`, async ({
+      page,
+    }) => {
       if (run.size) await page.setViewportSize(run.size);
       if (run.lang !== "en") {
         // A second init script rather than a write plus a reload: the suite's own init

@@ -1,5 +1,7 @@
-import { test, expect, colorToken, scrollsByWheel, type Page } from "./fixtures";
+import { test, expect, colorToken, scrollsByWheel, textContrast, type Locator, type Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
+import { LIVE_COMMANDS, heldReadsOf, notifyParam, setDeviceValue, setHeldReads, stubTauriDevice } from "./tauri-stub";
+import { PARAMS } from "../src/core/control/params";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
 // "CH 11/12"). The console runs against the factory plan, so we do NOT seed
@@ -37,6 +39,39 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#console-host")).toBeVisible();
 });
 
+// What releasing does is written on the No Effect row of a strip that holds an effect.
+// That row is an enabled entry, so its note keeps the dim tier's ink: in the light theme
+// that tier has no room for a fade.
+test("the INS FX popover's release note clears AA in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await page.reload();
+  await page.click("#btn-view-console");
+  const ch1 = strip(page, "CH 1");
+  const pop = page.locator(".con-ifxpop");
+  await ch1.locator(".con-ifxopen").click();
+  await pop.locator(".irow", { hasText: "Clean" }).first().click();
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+  await ch1.locator(".con-ifxopen").click();
+  const why = pop.locator(".irow:not(.off) .why");
+  await expect(why).toHaveText("release");
+  expect(await textContrast(page, why)).toBeGreaterThanOrEqual(4.5);
+});
+
+// The METER caption tells the strip's two readouts apart without relying on colour, so
+// it is text a reader needs; the group labels name the strip groups. Both are read on the
+// light theme's grounds at the dim tier's ink or better.
+test("the METER caption and the group labels clear AA in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await page.reload();
+  await page.click("#btn-view-console");
+  const caption = strip(page, "CH 1").locator(".con-readout .mtr .cap2");
+  await expect(caption).toHaveText("METER");
+  expect(await textContrast(page, caption)).toBeGreaterThanOrEqual(4.5);
+  const group = page.locator(".con-group:not(.master) .con-grouplabel").first();
+  await expect(group).toBeVisible();
+  expect(await textContrast(page, group)).toBeGreaterThanOrEqual(4.5);
+});
+
 test("GRAPH / CONSOLE tabs switch the visible view", async ({ page }) => {
   await expect(page.locator("#graph-host")).toBeHidden();
   await expect(page.locator("#btn-view-console")).toHaveAttribute("aria-pressed", "true");
@@ -49,6 +84,15 @@ test("the console lays out the input channels and the master", async ({ page }) 
   await expect(strip(page, "CH 1")).toBeVisible();
   await expect(strip(page, "CH 5/6")).toBeVisible();
   await expect(strip(page, "STEREO")).toBeVisible();
+});
+
+// The controls a strip repeats are named only for what they are, so the strip is a group
+// named by its node: that is what puts the channel on a MUTE reached from a control list.
+test("each strip is a group named by its node", async ({ page }) => {
+  const ch1 = page.getByRole("group", { name: "CH 1", exact: true });
+  await expect(ch1.getByRole("button", { name: "MUTE", exact: true })).toBeVisible();
+  await expect(ch1.getByRole("slider", { name: "PAN", exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "STREAMING", exact: true })).toHaveClass(/meter-only/);
 });
 
 test("the longest channel name (CH 11/12) shrinks a step so it fits its scribble", async ({ page }) => {
@@ -94,6 +138,14 @@ test("a fader edits its level via the keyboard", async ({ page }) => {
   // ArrowUp walks one detent of the device's level_gain grid (0.0 -> +0.4 dB).
   await page.keyboard.press("ArrowUp");
   await expect(readout).toHaveText("+0.4");
+  // The slider says the same: the readout with its unit, against the level range rather
+  // than the slider role's default 0..100.
+  const fader = s.locator(".con-fader");
+  await expect(fader).toHaveAttribute("aria-valuetext", "+0.4 dB");
+  await expect(fader).toHaveAttribute("aria-valuemin", "-96");
+  await expect(fader).toHaveAttribute("aria-valuemax", "10");
+  await page.keyboard.press("End");
+  await expect(fader).toHaveAttribute("aria-valuetext", "off (-∞)");
 });
 
 test("head MUTE and EQ chips toggle their pressed state", async ({ page }) => {
@@ -219,10 +271,33 @@ test("a send column fader edits the send level and drives the header readout", a
   await expect(s.locator(".con-sh")).toHaveClass(/readout/);
   await expect(rdout).toContainText("MIX 1");
   const before = await rdout.textContent();
+  await expect(rdout).toHaveText("MIX 1 -∞"); // the send ships off
   await page.keyboard.press("ArrowUp"); // one detent up
   await expect(rdout).not.toHaveText(before ?? "");
+  await expect(rdout).toHaveText("MIX 1 -96.0"); // −∞ is a detent: one press lands on the floor one
   await fader.blur();
   await expect(s.locator(".con-sh")).not.toHaveClass(/readout/); // reverts to SENDS
+});
+
+// Shift is the column fader's fine rate, and pressing it mid-drag continues from the level
+// the coarse drag left: the move that carries it is a quarter-rate pixel, not the coarse
+// distance replayed at a quarter of its length.
+test("a send column fader continues from where it stands when Shift is pressed mid-drag", async ({ page }) => {
+  const fader = col(page, "CH 1", "M1").locator(".con-vfad");
+  const box = (await fader.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height - 4;
+  const now = async (): Promise<number> => Number(await fader.getAttribute("aria-valuenow"));
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y - 30, { steps: 5 });
+  const coarse = await now();
+  expect(coarse).toBeGreaterThan(-96);
+  await page.keyboard.down("Shift");
+  await page.mouse.move(x, y - 31);
+  expect(await now()).toBeGreaterThanOrEqual(coarse);
+  await page.keyboard.up("Shift");
+  await page.mouse.up();
 });
 
 // Every reading the rack can put in its header has to be readable there. The readout gets
@@ -388,6 +463,129 @@ test("the PAN ▾ button reads active while its SEND PAN popover is open", async
   await expect(btn2).toHaveAttribute("aria-expanded", "false");
 });
 
+// A Pan Link turned on at the unit announces only the MIX bus, so the follow rebuilds that
+// bus's strip and not CH 1's, whose SEND PAN popover is open: the popover is re-read from the
+// MIX strip and its MIX 1 knob locks. The whole-device read the follow takes afterwards closes
+// every popover, which would hide the difference, so that read is held for the case.
+test("a Pan Link the unit turns on locks the open SEND PAN popover's knob for that bus", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await page.click("#btn-view-console");
+  await strip(page, "CH 1").locator(".con-panbtn").click();
+  const knob = page.locator('.con-spop .con-knob[aria-label="MIX 1"]');
+  await expect(knob).toHaveAttribute("tabindex", "0");
+  await expect(knob).not.toHaveAttribute("aria-disabled", "true");
+
+  await setHeldReads(page, [PARAMS.PAN_LINK.id]);
+  await setDeviceValue(page, PARAMS.PAN_LINK.id, 0, 1);
+  await notifyParam(page, PARAMS.PAN_LINK.id, 0, 1);
+  await expect(knob).toHaveAttribute("aria-disabled", "true");
+  // The read that would close the popover is waiting, so what is on screen is the follow's.
+  await expect.poll(() => heldReadsOf(page), { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect(page.locator(".con-spop")).toBeVisible();
+  await expect(knob).toHaveAttribute("aria-disabled", "true");
+  await setHeldReads(page, []);
+});
+
+// From the keyboard the PAN ▾ button hands the focus to the popover's first knob, which is
+// otherwise the whole strip rack away in the tab order; a pointer press leaves it on the button.
+// Once the focus leaves both, the popover closes.
+test("the PAN ▾ button opened from the keyboard puts the focus on the first SEND PAN knob", async ({ page }) => {
+  const btn = strip(page, "CH 1").locator(".con-panbtn");
+  const mix1 = page.locator('.con-spop .con-knob[aria-label="MIX 1"]');
+  await btn.click();
+  await expect(page.locator(".con-spop")).toBeVisible();
+  await expect(mix1).not.toBeFocused();
+  await btn.click();
+  await expect(page.locator(".con-spop")).toBeHidden();
+
+  await btn.focus();
+  await page.keyboard.press("Enter");
+  await expect(mix1).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator(".con-spop")).toBeHidden();
+  await expect(btn).toHaveAttribute("aria-expanded", "false");
+  await expect(btn, "Shift+Tab out of the popover lands on the button that opened it").toBeFocused();
+
+  // Tab past the last knob closes it too, and moves on to the control after the button.
+  await page.keyboard.press("Enter");
+  await expect(mix1).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(
+    page.locator('.con-spop .con-knob[aria-label="MIX 2"]'),
+    "up from the first knob is the last",
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".con-spop")).toBeHidden();
+  await expect(strip(page, "CH 1").locator(".con-tap")).toBeFocused();
+});
+
+// Inside the popover Up / Down walk the knobs, wrapping at the ends, and Left / Right step the
+// focused knob's value; Tab still reaches them.
+test("the arrow keys walk the SEND PAN knobs on Up / Down and step the focused one on Left / Right", async ({
+  page,
+}) => {
+  const pop = page.locator(".con-spop");
+  const knob = (mix: string) => pop.locator(".pcol", { hasText: mix }).locator(".con-knob");
+  const val = (mix: string) => pop.locator(".pcol", { hasText: mix }).locator(".rv");
+  await strip(page, "CH 1").locator(".con-panbtn").focus();
+  await page.keyboard.press("Enter");
+  await expect(knob("MIX 1")).toBeFocused();
+  await expect(val("MIX 1"), "the premise: a fresh send is centred").toHaveText("C");
+  await expect(val("MIX 2"), "the premise: a fresh send is centred").toHaveText("C");
+
+  await page.keyboard.press("ArrowDown");
+  await expect(knob("MIX 2")).toBeFocused();
+  await expect(val("MIX 1"), "the walk stepped nothing").toHaveText("C");
+  await page.keyboard.press("ArrowDown");
+  await expect(knob("MIX 1"), "down from the last knob is the first").toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(knob("MIX 2"), "up from the first knob is the last").toBeFocused();
+  await expect(val("MIX 2")).toHaveText("C");
+
+  await page.keyboard.press("ArrowLeft");
+  await expect(val("MIX 2")).toHaveText("L1");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await expect(val("MIX 2")).toHaveText("R1");
+  await expect(knob("MIX 2")).toBeFocused();
+  await expect(val("MIX 1")).toHaveText("C");
+
+  await page.keyboard.press("Shift+Tab");
+  await expect(knob("MIX 1"), "Tab still walks the knobs").toBeFocused();
+});
+
+// A device-side change to CH 1 rebuilds its strip under an open SEND PAN popover and re-opens
+// the popover against the fresh button. The button that had the focus is removed by that
+// rebuild, which is not the operator moving the focus: the popover stays open.
+test("a device-side rebuild of the strip keeps its SEND PAN popover open over a focused button", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await page.click("#btn-view-console");
+  const btn = strip(page, "CH 1").locator(".con-panbtn");
+  await btn.click();
+  await btn.focus();
+  await expect(page.locator(".con-spop")).toBeVisible();
+  await btn.evaluate((el) => el.setAttribute("data-before", ""));
+
+  await setHeldReads(page, [PARAMS.CH_PAN.id]);
+  await setDeviceValue(page, PARAMS.CH_PAN.id, 0, 10);
+  await notifyParam(page, PARAMS.CH_PAN.id, 0, 10);
+  await expect(strip(page, "CH 1").locator(".con-panbtn[data-before]"), "the strip was rebuilt").toHaveCount(0);
+  await expect(page.locator(".con-spop")).toBeVisible();
+  await expect(btn).toHaveAttribute("aria-expanded", "true");
+  await expect(btn).toBeFocused();
+  await setHeldReads(page, []);
+});
+
 test("the SEND PAN popover flips above its anchor near the viewport bottom", async ({ page }) => {
   // The static "below" class never changes, so only the geometry proves the flip.
   // Measure the popover at the default viewport (room below), then shrink the
@@ -480,6 +678,23 @@ test("a re-render keeps the strip scroll offset and the focused control", async 
   expect(await stripsScroll(page)).toBe(scrolled);
 });
 
+// The control is found again by what it is, not by where it stood: turning HI-Z off from the
+// keyboard brings +48V back into the tab order ahead of it, and the focus stays on Hi-Z
+// rather than on HPF, the chip that took its old place — where the next Space would write.
+test("a re-render that moves the tab order keeps the focus on the same chip", async ({ page }) => {
+  const ch3 = strip(page, "CH 3");
+  const hiZ = ch3.getByRole("button", { name: "Hi-Z", exact: true });
+  const hpf = ch3.getByRole("button", { name: "HPF", exact: true });
+  await hiZ.click();
+  await expect(hiZ).toHaveAttribute("aria-pressed", "true");
+  await expect(ch3.getByRole("button", { name: "+48", exact: true })).toHaveAttribute("aria-disabled", "true");
+  await hiZ.focus();
+  await page.keyboard.press("Space");
+  await expect(hiZ).toHaveAttribute("aria-pressed", "false");
+  await expect(hiZ).toBeFocused();
+  await expect(hpf).toHaveAttribute("aria-pressed", "false");
+});
+
 // The scroll offset survives a rebuild on its own: `render()` clears and refills the
 // rack in one task, so the empty rack is never laid out and the offset is never
 // clipped. Saving and rewriting it around the rebuild instead forces a synchronous
@@ -516,6 +731,95 @@ test("muting the channel master in the inspector dims the console strip", async 
   const ch = strip(page, "CH 1");
   await expect(ch).toHaveClass(/inactive/);
   await expect(ch.locator(".con-scribble.power")).toHaveAttribute("aria-pressed", "false");
+});
+
+/** How strongly an element is drawn: its own opacity times every ancestor's. */
+const strength = (l: Locator) =>
+  l.evaluate((el) => {
+    let o = 1;
+    for (let n: Element | null = el; n; n = n.parentElement) o *= Number(getComputedStyle(n).opacity);
+    return o;
+  });
+
+// A strip whose master is off dims what carries no text — its grooves, its meter, its knob
+// faces and its scribble's ground — while its controls stay operable, so their labels and
+// the fader cap keep full strength. A send switched off and a strip with no sends keep
+// their column and their header at full strength as well.
+test("an inactive strip dims what carries no text, and its controls keep their strength", async ({ page }) => {
+  await muteMasterViaInspector(page, "ch1");
+  const ch = strip(page, "CH 1");
+  await expect(ch).toHaveClass(/inactive/);
+  // The positive control: the strip is marked at all.
+  expect(await strength(ch.locator(".con-fader .track")), "fader groove").toBeLessThan(1);
+  expect(await strength(ch.locator(".con-meter").first()), "meter").toBeLessThan(1);
+  const knob = ch.locator(".con-knob").first();
+  await expect(knob).toBeVisible();
+  const veil = await knob.evaluate((el) => getComputedStyle(el, "::after").backgroundColor);
+  expect(veil, "knob face veil").not.toMatch(/, 0\)$|^transparent$/);
+  expect(await ch.locator(".con-scribble").evaluate((el) => getComputedStyle(el).boxShadow), "scribble veil").toContain(
+    "inset",
+  );
+  for (const [what, el] of [
+    ["MUTE chip", ch.getByRole("button", { name: "MUTE" })],
+    ["EQ chip", ch.locator(".con-chip", { hasText: /^EQ$/ }).first()],
+    ["fader cap", ch.locator(".con-fader .cap")],
+    ["knob", knob],
+    ["scribble", ch.locator(".con-scribble")],
+    ["send chip", ch.locator(".con-sl").first()],
+    ["SENDS header", ch.locator(".con-sh")],
+  ] as const)
+    expect(await strength(el), what).toBe(1);
+
+  const ch2 = strip(page, "CH 2");
+  const column = ch2.locator(".con-scol").first();
+  await column.locator(".con-sl").click();
+  await expect(column).toHaveClass(/\boff\b/);
+  expect(await strength(column.locator(".con-sl")), "an OFF column's enable chip").toBe(1);
+
+  const sendless = strip(page, "STEREO").locator(".con-sh");
+  await expect(sendless).toHaveClass(/\bdim\b/);
+  expect(await strength(sendless), "a sendless strip's SENDS header").toBe(1);
+});
+
+// The CONSOLE popovers' rows are 24px targets, and the SENDS rack's enable chip, PRE button
+// and header reach into half of each gap around them: a press in a gap lands on the nearer
+// control rather than on nothing, and never on the far one.
+test("popover rows are 24px targets, and the rack's controls take their gaps", async ({ page }) => {
+  const ch1 = strip(page, "CH 1");
+  const heights = (l: Locator) => l.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+  await ch1.locator(".con-tap").click();
+  const tapRows = await heights(page.locator(".con-tappop .crow"));
+  expect(tapRows.length).toBeGreaterThan(1);
+  for (const h of tapRows) expect(h, "a meter-point row").toBeGreaterThanOrEqual(24);
+  await page.keyboard.press("Escape");
+  await ch1.locator(".con-ifxopen").click();
+  const ifxRows = await heights(page.locator(".con-ifxpop .irow"));
+  expect(ifxRows.length).toBeGreaterThan(1);
+  for (const h of ifxRows) expect(h, "an INS FX row").toBeGreaterThanOrEqual(24);
+  await page.keyboard.press("Escape");
+
+  const at = (x: number, y: number) =>
+    page.evaluate(
+      ([px, py]) => {
+        const e = document.elementFromPoint(px, py);
+        return e?.closest(".con-sl, .con-slp, .con-sh")?.className.split(" ")[0] ?? e?.className ?? "";
+      },
+      [x, y] as const,
+    );
+  const column = ch1.locator(".con-scol").first();
+  const chip = (await column.locator(".con-sl").boundingBox())!;
+  const pre = (await column.locator(".con-slp").boundingBox())!;
+  const mid = chip.x + chip.width / 2;
+  // Every point of the gap between the two belongs to one of them, the upper part to the
+  // chip; nothing in it falls through to the column.
+  expect(await at(mid, chip.y + chip.height + 0.25), "just under the enable chip").toBe("con-sl");
+  for (let y = chip.y + chip.height; y < pre.y; y += 0.5)
+    expect(["con-sl", "con-slp"], `the gap at ${y}`).toContain(await at(mid, y));
+  expect(await at(mid, pre.y - 0.25), "just over the PRE button").toBe("con-slp");
+  expect(await at(mid, pre.y + pre.height / 2), "the PRE button's own middle").toBe("con-slp");
+  expect(await at(mid, pre.y + pre.height + 2), "just under the PRE button").toBe("con-slp");
+  const label = (await ch1.locator(".con-sh .lb").boundingBox())!;
+  expect(await at(label.x + 2, label.y - 4), "just over the SENDS header").toBe("con-sh");
 });
 
 test("a MIX strip's head MUTE drives the MIX → STEREO TO ST switch", async ({ page }) => {

@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { expect, test, textContrast } from "./fixtures";
 import { LIVE_COMMANDS, linkLogOf, stubTauriDevice } from "./tauri-stub";
 import { LINK_BAR_KEYS, LINK_LEDGER_KEYS, type LinkBarKey, type LinkLedgerKey } from "../src/core/control/link-stats";
 
@@ -58,7 +58,7 @@ async function liveWithLedger(page: import("@playwright/test").Page): Promise<vo
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
 }
 
 test("every status-bar cell prints its own figure while live", async ({ page }) => {
@@ -84,6 +84,17 @@ test("the bar prints the panel's own words for the rows it carries", async ({ pa
     const rowLabel = await page.locator(`[data-ledger-row="${key}"] .k`).textContent();
     expect(barLabels, `the ${key} cell's label`).toContain(rowLabel);
   }
+});
+
+// The panel's heading is text on the panel, not a mark on the groove the plot tokens are
+// sized for.
+test("the ledger panel's heading clears AA", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "dark"));
+  await liveWithLedger(page);
+  await page.click(".linkbar-open");
+  const heading = page.locator(".linkbar-pop h4");
+  await expect(heading).toBeVisible();
+  expect(await textContrast(page, heading)).toBeGreaterThanOrEqual(4.5);
 });
 
 test("the status message and the readout share the bar without displacing each other", async ({ page }) => {
@@ -125,6 +136,71 @@ test("the panel closes on Escape and the readout says so", async ({ page }) => {
   await expect(page.locator(".linkbar-open")).toHaveAttribute("aria-expanded", "false");
 });
 
+// Closing the panel from inside it removes the element focus was on. The keyboard goes back
+// to the readout that opened it, not to <body>.
+test("Escape from inside the panel puts focus back on the readout", async ({ page }) => {
+  await liveWithLedger(page);
+  await page.click(".linkbar-open");
+  await page.locator("[data-ledger-copy]").focus();
+  await expect(page.locator("[data-ledger-copy]")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".linkbar-pop")).toHaveCount(0);
+  await expect(page.locator(".linkbar-open")).toBeFocused();
+});
+
+// A modal opened from the keyboard leaves the panel open, since no press dismissed it. The
+// modal's hold covers the app the panel belongs to, so the panel is out of the tab order
+// behind the scrim, and an Escape aimed at the modal closes the modal alone.
+test("a modal over the open panel holds it with the app", async ({ page }) => {
+  await liveWithLedger(page);
+  await page.click(".linkbar-open");
+  await expect(page.locator(".linkbar-pop")).toBeVisible();
+  await page.locator("#btn-prefs").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#prefs-modal")).toBeVisible();
+  await expect(page.locator(".linkbar-pop")).toBeVisible();
+
+  expect(await page.locator("[data-ledger-copy]").evaluate((el) => el.closest("[inert]")?.id ?? null)).toBe("app");
+  // Tab past the dialog's last control leaves the document, which reads as <body>; every other
+  // stop has to be inside the dialog.
+  const stops = new Set<string>();
+  for (let i = 0; i < 40; i++) {
+    await page.keyboard.press("Tab");
+    stops.add(
+      await page.evaluate(() =>
+        document.activeElement?.closest("#prefs-modal")
+          ? "prefs"
+          : document.activeElement?.matches("[data-ledger-copy]")
+            ? "copy"
+            : (document.activeElement?.tagName ?? "null"),
+      ),
+    );
+  }
+  expect([...stops].sort()).toEqual(["BODY", "prefs"]);
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#prefs-modal")).toBeHidden();
+  await expect(page.locator(".linkbar-pop")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".linkbar-pop")).toHaveCount(0);
+});
+
+// The Escape that closes the panel is the panel's: the graph's selection behind it stays.
+test("Escape aimed at the panel leaves the graph's selection alone", async ({ page }) => {
+  await liveWithLedger(page);
+  const ch1 = page.locator('#graph-host g.node[data-id="ch1"]');
+  await ch1.click();
+  await expect(ch1).toHaveAttribute("aria-pressed", "true");
+  await page.click(".linkbar-open");
+  await expect(page.locator(".linkbar-pop")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".linkbar-pop")).toHaveCount(0);
+  await expect(ch1).toHaveAttribute("aria-pressed", "true");
+  // The positive control: with no panel open the same key clears the selection.
+  await page.keyboard.press("Escape");
+  await expect(ch1).toHaveAttribute("aria-pressed", "false");
+});
+
 test("copying the ledger reports on the status line", async ({ page }) => {
   await liveWithLedger(page);
   // The headless context has no clipboard permission by default; stub the write so
@@ -145,7 +221,7 @@ test("the readout belongs to the session: gone when sync goes off", async ({ pag
   await expect(page.locator("#link-stats")).toBeVisible();
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
   await expect(page.locator("#link-stats")).toBeHidden();
 });
 
@@ -157,7 +233,7 @@ test("without --experimental the bar carries the message alone", async ({ page }
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#statusbar")).toContainText("Live sync on");
   await expect(page.locator("#link-stats")).toBeHidden();
 });
@@ -166,12 +242,14 @@ test("the session is logged, and its last line says how it ended", async ({ page
   await liveWithLedger(page);
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
-  const lines = await expect
-    .poll(async () => (await linkLogOf(page)).length)
-    .toBeGreaterThan(0)
-    .then(() => linkLogOf(page));
-  const last = JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+  // A running session appends lines with no end reason; the session's own last line carries one.
+  const lastLine = async (): Promise<Record<string, unknown> | null> => {
+    const lines = await linkLogOf(page);
+    return lines.length > 0 ? (JSON.parse(lines[lines.length - 1]) as Record<string, unknown>) : null;
+  };
+  await expect.poll(async () => (await lastLine())?.end ?? null).not.toBeNull();
+  const last = (await lastLine())!;
   // The counters this session ended with, and how it ended — the two halves the log
   // exists to pair. A line written after the disconnect would carry zeros instead.
   expect(last.end).toBe("off");

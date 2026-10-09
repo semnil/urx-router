@@ -797,12 +797,19 @@ test.describe("T0b baseline sweeps", () => {
     );
 
     // Pinned behaviour #1: with the value controls driven before the structural ones,
-    // exactly one control is still unreachable when its slot runs — the STEREO
-    // master's insert-FX dropdown, whose only alternative is a slot the MIX bus took
-    // three gestures earlier. It is a constraint expressed as data (a disabled option)
-    // rather than as a refusal, and it is contention between two plan owners over one
-    // device resource, which is why it shows up in a sweep with no device attached.
-    expect(unavailable).toEqual(["STEREO master · EFFECT TYPE (select) — select offers no alternative option"]);
+    // exactly two controls are still unreachable when their slots run, both because an
+    // earlier gesture took the one thing they offered. The STEREO master's insert-FX
+    // dropdown: its only alternative is a slot the MIX bus took three gestures earlier, a
+    // constraint expressed as data (a disabled option) rather than as a refusal, and
+    // contention between two plan owners over one device resource, which is why it shows
+    // up in a sweep with no device attached. And ST IN's Rec Point picker: on the factory
+    // plan the only free port either channel's Rec Point can reach is microSD Rec track
+    // pair 13/14, which MONO IN's picker wired, so ST IN's has nothing left to offer and
+    // the Routing section stops drawing it.
+    expect(unavailable).toEqual([
+      'ST IN · Connect the Rec Point to (select) — row "Connect the Rec Point to" is no longer rendered',
+      "STEREO master · EFFECT TYPE (select) — select offers no alternative option",
+    ]);
 
     // Turned over from a pinned defect the ledger alone could see: two inspector
     // controls mutate the plan AFTER calling the change funnel — both selectors whose

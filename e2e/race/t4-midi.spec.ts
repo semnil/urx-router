@@ -42,7 +42,7 @@ import { chooseOption } from "../choose-option";
 const CC7 = { type: "cc", channel: 0, controller: 7 } as const;
 
 /** src/ui/history.ts. The idle backstop that closes an entry with no boundary of its
- *  own — the constant the rebase ladder below straddles. Restated here rather than
+ *  own — the constant the history ladder below straddles. Restated here rather than
  *  imported: an e2e spec that pulled in a `src/ui` module would load the app's i18n
  *  and DOM-facing tree in the driver's Node process. */
 const IDLE_COMMIT_MS = 300;
@@ -195,11 +195,12 @@ test.describe("T4 midi", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // midi-rebase-eats-ui-entry-ladder — the same writer classified two contradictory
-  // ways: markChanged() records it as an app edit (live sync mirrors it, the history
-  // opens an entry), and its own reflect runs planReadFromDevice() →
-  // planHistory.rebase(), which drops whatever entry is open. The operator's entry is
-  // collateral.
+  // midi-edit-enters-history-ladder — a MIDI edit goes through the history like any
+  // app edit: markChanged() records it (live sync mirrors it, the history opens or
+  // extends an entry), and nothing re-bases the history behind it. Inside the window an
+  // entry the operator has open is still open, so the MIDI edit joins it and one undo
+  // takes both back; outside it the operator's entry has committed and the MIDI edit
+  // is an entry of its own.
   //
   // The gesture that opens an entry is a WHEEL notch, not the catalog's chip click: a
   // click's entry is closed by the macrotask commit that pointerup schedules, so it is
@@ -207,11 +208,10 @@ test.describe("T4 midi", () => {
   // DOM boundary at all and is held open by the 300 ms idle backstop, which is the
   // window the ladder walks.
   // ---------------------------------------------------------------------------
-  // Two rungs inside the 300 ms backstop and one outside. It ran a second outside rung
-  // at 2000 ms, which measures the same "outside" the 400 ms one does.
+  // Two rungs inside the 300 ms backstop and one outside.
   for (const d of [20, 60, 400]) {
     const inWindow = d < 300;
-    test(`a MIDI message ${d} ms after a wheel edit ${inWindow ? "eats" : "spares"} the operator's undo entry`, async ({
+    test(`a MIDI message ${d} ms after a wheel edit ${inWindow ? "joins" : "follows"} the operator's undo entry`, async ({
       page,
     }) => {
       await installFake(page, { storage: midiStore([{ control: "ch1/level", addr: CC7, mode: "absolute" }]) });
@@ -222,6 +222,7 @@ test.describe("T4 midi", () => {
       await expect(faderReadout(page, "CH 2")).toBeVisible();
       await setLatency(page, { get: 8, set: 25 });
 
+      const ch1Before = (await faderReadout(page, "CH 1").textContent())!;
       const ch2Before = (await faderReadout(page, "CH 2").textContent())!;
       const box = (await faderOf(page, "CH 2").boundingBox())!;
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -243,11 +244,9 @@ test.describe("T4 midi", () => {
       const ch2AfterUndo = (await faderReadout(page, "CH 2").textContent())!;
       const ch1AfterUndo = (await faderReadout(page, "CH 1").textContent())!;
       // The link has been idle for 3 s by now, so waitQuiet would return on the spot
-      // and both branches below would be reading the device memory of an undo whose
-      // flush had not been given a chance to run — the in-window branch's verdict is
-      // an absence (nothing rewrote CH 2), which is exactly the shape waitQuiet
-      // cannot answer. settleAfter waits for the undo to wake the link, or for its
-      // grace to expire having seen nothing at all.
+      // and the branches below would be reading the device memory of an undo whose
+      // flush had not been given a chance to run. settleAfter waits for the undo to
+      // wake the link, or for its grace to expire having seen nothing at all.
       await settleAfter(page, "undo");
 
       const trace = await traceOf(page);
@@ -265,10 +264,10 @@ test.describe("T4 midi", () => {
       const achieved = markTime(trace, "midi")! - markTime(trace, "wheel")!;
 
       console.log(timeline(trace, { from: markTime(trace, "wheel")! - 50 }));
-      console.log(report(`rebase ladder D=${d}`, findings));
+      console.log(report(`history ladder D=${d}`, findings));
       console.log(
         `D intended=${d} achieved=${achieved.toFixed(0)} ms; CH 2 ${ch2Before} → ${ch2Edited} → ${ch2AfterUndo}; ` +
-          `CH 1 after undo=${ch1AfterUndo}; status="${undoStatus}"`,
+          `CH 1 ${ch1Before} → +5.0 → ${ch1AfterUndo}; status="${undoStatus}"`,
       );
 
       // The achieved phase, as a PRECONDITION rather than a log line. The rung's whole
@@ -277,30 +276,20 @@ test.describe("T4 midi", () => {
       // across the boundary would fail the branch below and read as an app regression.
       // Asserted here it fails naming the drift instead.
       expect(achieved < IDLE_COMMIT_MS).toBe(inWindow);
-      // Both edits reach the device either way — this is a history defect, not a
-      // sync one, and saying so keeps the two apart.
-      expect((await memOf(page))[CH1_FADER]).toBe(500);
-      expect(setsOf(trace).filter((s) => s.addr === CH2_FADER)).not.toHaveLength(0);
+      // The undo takes the MIDI edit back either way, on screen and on the unit.
+      expect(undoStatus).toBe("Undone");
+      expect(ch1AfterUndo).toBe(ch1Before);
+      expect((await memOf(page))[CH1_FADER]).not.toBe(500);
 
       if (inWindow) {
-        // Pinned behaviour: the wheel's entry was still open when MIDI's reflect
-        // rebased, so the operator's own edit is silently un-undoable. Nothing about
-        // the gesture failed — a controller twitched.
-        expect(undoStatus).toBe("Nothing to undo");
-        expect(ch2AfterUndo).toBe(ch2Edited);
-        expect((await memOf(page))[CH2_FADER]).toBe(40); // the device keeps it too
-      } else {
-        // Outside the window the idle backstop had already committed the entry, and
-        // rebase keeps committed entries — so the same script is recoverable. The
-        // status is the un-named form: the wheel moved a send connection's level, and
-        // a patch touching a wire rather than a node names nothing.
-        expect(undoStatus).toBe("Undone");
+        // One entry: the wheel edit goes back with the MIDI edit it was still open for.
         expect(ch2AfterUndo).toBe(ch2Before);
-        expect((await memOf(page))[CH2_FADER]).toBe(0); // and the undo reached the device
+        expect((await memOf(page))[CH2_FADER]).toBe(0);
+      } else {
+        // Two entries: the undo took the MIDI edit, and the wheel edit is the next one.
+        expect(ch2AfterUndo).toBe(ch2Edited);
+        expect((await memOf(page))[CH2_FADER]).toBe(40);
       }
-      // Either way the MIDI edit itself is NOT undoable: its own reflect rebased the
-      // entry it had just opened. One writer, two classifications.
-      expect(ch1AfterUndo).toBe("+5.0");
     });
   }
 
@@ -344,11 +333,11 @@ test.describe("T4 midi", () => {
       // Same control with the port closed: still a fader value, still no growth.
       snapshot: await snapshotOf(page),
     });
-    console.log(report("rebase ladder control (port closed)", findings));
+    console.log(report("history ladder control (port closed)", findings));
     console.log(`CH 2 ${ch2Before} → ${ch2Edited} → ${ch2AfterUndo}; status="${undoStatus}"`);
 
-    // No second writer: the CH 1 fader never moved, and the wheel entry survives the
-    // same 20 ms phase that loses it above.
+    // No second writer: the CH 1 fader never moved, and the same undo takes the wheel
+    // edit back on its own.
     expect((await memOf(page))[CH1_FADER]).toBeUndefined();
     expect(await faderReadout(page, "CH 1").textContent()).not.toBe("+5.0");
     expect(undoStatus).toBe("Undone");
@@ -451,20 +440,17 @@ test.describe("T4 midi", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // midi-pickup-without-output-port — pickup engagement is cleared only inside
-  // MidiEngine.feedback()'s emit branch, and runFeedback returns immediately when no
-  // output port is open. With a controller that has no MIDI IN (or simply none
-  // selected), the engagement outlives the UI edit that invalidated it: the fader is
-  // yanked back to the physical control's position by the next twitch.
+  // midi-pickup-without-output-port — pickup engagement is cleared by a feedback pass
+  // that sees the plan move away from the physical control, and that pass runs whether
+  // or not an output port is open: with no port it puts nothing on the wire and still
+  // un-engages the binding. A controller with no MIDI IN (or simply none selected)
+  // then swallows the next twitch of its fader instead of yanking the plan back to it.
   //
   // Scope of the measurement: ONE binding (ch1/level, CC 7, pickup), two UI edit →
-  // twitch cycles in one session. Two cycles is what makes "the engagement is never
-  // cleared" more than a single reading — it is not a survey of the control catalog,
-  // and nothing here observes a third.
+  // twitch cycles with no output port and one with it, in one session — not a survey
+  // of the control catalog.
   // ---------------------------------------------------------------------------
-  test("pickup does not disengage on a UI edit while no output port is open, and a later plan move fixes it", async ({
-    page,
-  }) => {
+  test("pickup disengages on a UI edit whether or not an output port is open", async ({ page }) => {
     await installFake(page, {
       storage: midiStore([{ control: "ch1/level", addr: CC7, mode: "pickup" }], { input: "Fake In" }),
     });
@@ -488,39 +474,48 @@ test.describe("T4 midi", () => {
     await faderOf(page, "CH 1").focus();
     for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowDown");
     await expect(readout).toHaveText("+2.0");
+    // The address received input moments ago, so the pass defers behind RECENT_MS and
+    // lands on the 350 ms settle retry.
+    await page.waitForTimeout(700);
 
     await mark(page, "twitch-no-output");
     await pushMidi(page, [cc7(122)]); // 0.961: neither near nor crossing the plan's 0.825
-    // Pinned defect: the plan is yanked back to the physical control's position. A
-    // disengaged pickup would have swallowed this exactly as it swallowed CC 40.
+    await page.waitForTimeout(200);
+    // Swallowed, exactly as CC 40 was: the pass with no port un-engaged the binding.
+    expect(await readout.textContent()).toBe("+2.0");
+    // …and the binding still takes over where the physical control crosses the plan value.
+    await pushMidi(page, [cc7(100)]); // 0.787: crosses 0.825 from above → engaged → pos 31
+    await expect(readout).toHaveText("+0.4");
+    await pushMidi(page, [cc7(120)]); // tracks → pos 38
     await expect(readout).toHaveText("+7.2");
 
-    // Second cycle, same session and same binding: the engagement is still there. The
-    // reflect above replaced the strip, so the fader has to be focused again.
+    // Second cycle, same session and same binding. The reflects above replaced the strip,
+    // so the fader has to be focused again.
     await faderOf(page, "CH 1").focus();
     for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowDown");
     await expect(readout).toHaveText("+3.2"); // pos 34
+    await page.waitForTimeout(700); // the debounce, then the settle retry behind RECENT_MS
     await mark(page, "twitch-no-output-2");
     await pushMidi(page, [cc7(118)]); // 0.929: again neither near nor crossing 0.85
-    await expect(readout).toHaveText("+6.0"); // pos 37 — yanked back a second time
+    await page.waitForTimeout(200);
+    expect(await readout.textContent()).toBe("+3.2"); // swallowed a second time
+    await pushMidi(page, [cc7(100)]); // 0.787: crosses 0.85 from above → engaged → pos 31
+    await expect(readout).toHaveText("+0.4");
+    await pushMidi(page, [cc7(118)]); // tracks → pos 37
+    await expect(readout).toHaveText("+6.0");
 
     // Open the output port. Nothing goes on the wire — the output side stays shut until
-    // a live readback establishes the plan — but the pass still RUNS, and deleting the
-    // pickup engagement is what it owes the receive side either way.
+    // a live readback establishes the plan — and the pass runs as it did without one.
     const win = await openMidiWindow(page);
     await chooseOption(win.locator(".mw-out"), "Fake Out");
     await expect.poll(() => page.evaluate(() => window.__urxFake.midi.outPort)).toBe("Fake Out");
     await win.close();
-    // The address received input moments ago, so the pass defers behind RECENT_MS and
-    // lands on the 350 ms settle retry.
     await page.waitForTimeout(700);
     expect(await midiSentOf(page)).toEqual([]);
 
-    // Nothing is un-engaged yet, and that is the rule rather than the defect: what drops
-    // the engagement is a pass seeing the plan MOVE away from the physical control, and
-    // at this instant the plan holds exactly what the last twitch put there. The port
-    // opening used to drop it by emitting; with the output side shut until a session
-    // establishes the plan, there is no emit to hang it on.
+    // Opening the port un-engages nothing: what drops the engagement is a pass seeing the
+    // plan MOVE away from the physical control, and the plan holds exactly what the last
+    // message put there.
     await mark(page, "edit-with-output");
     await faderOf(page, "CH 1").focus();
     for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");

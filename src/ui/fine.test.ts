@@ -1,13 +1,22 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { initFineMode, fineActive } from "./fine";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { initFineMode, fineActive, resetFine } from "./fine";
+import { resetSettingsCache, updateSettings } from "../core/settings";
+import { pinSettingsReset } from "../core/settings-reset.test-util";
 
 const shift = (type: "keydown" | "keyup"): void => {
   window.dispatchEvent(new KeyboardEvent(type, { key: "Shift" }));
 };
 
+beforeAll(() => initFineMode());
+beforeEach(() => {
+  localStorage.clear();
+  resetSettingsCache();
+});
+
+pinSettingsReset();
+
 describe("fine mode (hold Shift)", () => {
-  beforeAll(() => initFineMode());
   beforeEach(() => {
     shift("keyup"); // start every test coarse
     document.body.replaceChildren();
@@ -51,5 +60,46 @@ describe("fine mode (hold Shift)", () => {
     window.dispatchEvent(new Event("blur"));
     expect(fineActive()).toBe(false);
     expect(document.documentElement.classList.contains("fine-mode")).toBe(false);
+  });
+});
+
+describe("fine mode (latch)", () => {
+  beforeEach(() => {
+    updateSettings({ fineLatch: true });
+    resetFine();
+    document.body.replaceChildren();
+  });
+  afterEach(() => resetFine());
+
+  const press = (target: EventTarget, init: KeyboardEventInit = {}): void => {
+    target.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift", bubbles: true, ...init }));
+  };
+  const field = (build: () => HTMLElement): HTMLElement => {
+    const el = build();
+    document.body.append(el);
+    return el;
+  };
+
+  // A capital letter typed into the Inspector's Name field is a Shift press the field owns.
+  it("ignores a Shift typed into a text surface", () => {
+    const text = field(() => Object.assign(document.createElement("input"), { type: "text" }));
+    const area = field(() => document.createElement("textarea"));
+    press(text);
+    expect(fineActive()).toBe(false);
+    press(area);
+    expect(fineActive()).toBe(false);
+  });
+
+  it("ignores a Shift pressed during an IME composition", () => {
+    press(window, { isComposing: true });
+    expect(fineActive()).toBe(false);
+  });
+
+  it("flips on a Shift pressed over a slider or the page", () => {
+    const range = field(() => Object.assign(document.createElement("input"), { type: "range" }));
+    press(range);
+    expect(fineActive()).toBe(true);
+    press(window);
+    expect(fineActive()).toBe(false);
   });
 });

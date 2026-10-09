@@ -39,3 +39,48 @@ test("Arrange leaves a fresh plan's nodes exactly where they are", async ({ page
     expect(await node(page, id).getAttribute("transform"), id).toBe(before[id]);
   }
 });
+
+// Arrange packs CH 3 into the row CH 2 had while CH 2 is on the shelf. Show all brings CH 2 to
+// the foot of the channel column rather than back onto CH 3.
+test("Show all after Arrange puts no node on top of another", async ({ page }) => {
+  await node(page, "ch2").click();
+  await page.locator("#inspector button.subtle").click();
+  await expect(node(page, "ch2")).toHaveCount(0);
+  await page.click("#btn-view");
+  await page.click("#btn-auto");
+  await page.locator(".hidden-shelf .shelf-showall").click();
+  await expect(node(page, "ch2")).toHaveCount(1);
+  expect(await node(page, "ch2").getAttribute("transform")).not.toBe(await node(page, "ch3").getAttribute("transform"));
+  expect(await overlaps(page)).toEqual([]);
+});
+
+// DUCKER 1 hangs from CH 5/6 and takes its place from it, so with it on the shelf Arrange gives
+// its row to CH 7/8, and Show all would bring it back onto CH 7/8. Its parent moves with it.
+test("Show all after Arrange brings a hung ducker back clear of the node below its parent", async ({ page }) => {
+  await node(page, "out.ducker1").click();
+  await page.locator("#inspector button.subtle").click();
+  await expect(node(page, "out.ducker1")).toHaveCount(0);
+  await page.click("#btn-view");
+  await page.click("#btn-auto");
+  const parentBefore = await node(page, "ch_5_6").getAttribute("transform");
+  await page.locator(".hidden-shelf .shelf-showall").click();
+  await expect(node(page, "out.ducker1")).toHaveCount(1);
+  expect(await overlaps(page)).toEqual([]);
+  expect(await node(page, "ch_5_6").getAttribute("transform")).not.toBe(parentBefore);
+});
+
+/** Every pair of drawn node frames that overlap by more than half a pixel. */
+async function overlaps(page: Page): Promise<string[]> {
+  const boxes = await page.locator("#graph-host g.node").evaluateAll((gs) =>
+    gs.map((g) => {
+      const r = g.querySelector("rect")!.getBoundingClientRect();
+      return { id: (g as SVGGElement).dataset.id, x: r.x, y: r.y, r: r.right, b: r.bottom };
+    }),
+  );
+  return boxes.flatMap((a, i) =>
+    boxes
+      .slice(i + 1)
+      .filter((b) => a.x < b.r - 0.5 && b.x < a.r - 0.5 && a.y < b.b - 0.5 && b.y < a.b - 0.5)
+      .map((b) => `${a.id} x ${b.id}`),
+  );
+}

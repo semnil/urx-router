@@ -29,7 +29,7 @@ import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/cont
 import { downloadText, exportSvgToPdf, exportSvgToPng, saveTextDocument } from "./core/storage";
 import { t } from "./i18n";
 import { $, APP_SETTLE, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
-import { faceplate } from "./ui/graph.test-util";
+import { faceplate, press, wireHit } from "./ui/graph.test-util";
 
 const nodes = (): number => $("graph-host").querySelectorAll("g.node[data-id]").length;
 
@@ -568,7 +568,56 @@ describe("the modals", () => {
     await boot();
     $("btn-licenses").click();
     await vi.waitFor(() => expect(vi.mocked(alert)).toHaveBeenCalled(), APP_SETTLE);
+    const framing = t().licenses.error("");
+    expect(String(vi.mocked(alert).mock.calls.at(-1)![0]).slice(0, framing.length)).toBe(framing);
     expect($("licenses-modal").hidden).toBe(true);
+  });
+});
+
+// A tuning screen hands focus back to the control that opened it. Both surfaces that open one
+// rebuild that control while the screen is up — the inspector on the screen's own relayouting
+// edits, the CONSOLE popovers before the screen even claims focus — so the screen asks for the
+// control as it is drawn at the close.
+describe("focus after a tuning screen closes", () => {
+  it("lands on the inspector's launcher that the screen's own edit rebuilt", async () => {
+    await boot();
+    selectNode("ch1");
+    const launcher = $("btn-eq-screen");
+    launcher.focus();
+    launcher.click();
+    expect($("dyn-screen-modal").hidden).toBe(false);
+    // A band's own ON / OFF changes which inspector rows exist, so the panel is rebuilt.
+    const bandRow = [...$("dyn-screen-box").querySelectorAll<HTMLElement>(".prefs-row")].find(
+      (r) => r.querySelector(".lbl")?.textContent === t().inspector.bandOn,
+    )!;
+    [...bandRow.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.getAttribute("aria-pressed") === "false")!
+      .click();
+    expect(launcher.isConnected).toBe(false);
+
+    chord("Escape");
+    expect($("dyn-screen-modal").hidden).toBe(true);
+    expect(document.activeElement).toBe($("btn-eq-screen"));
+  });
+
+  it("lands on the strip's INS FX disclosure after a screen opened from its popover", async () => {
+    await boot();
+    $("btn-view-console").click();
+    const disclosure = (): HTMLElement =>
+      $("console-host").querySelector<HTMLElement>(".con-strip")!.querySelector<HTMLElement>(".con-ifxopen")!;
+    disclosure().focus();
+    disclosure().click();
+    const row = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
+      (r) => r.querySelector(".nm")?.textContent === "Compander-H",
+    )!;
+    // From the keyboard, which is where focus is when the row is chosen.
+    row.focus();
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect($("dyn-screen-modal").hidden).toBe(false);
+
+    chord("Escape");
+    expect($("dyn-screen-modal").hidden).toBe(true);
+    expect(document.activeElement).toBe(disclosure());
   });
 });
 
@@ -1250,6 +1299,40 @@ describe("editing a node through the inspector", () => {
     expect(document.activeElement).toBe(after[at]);
   });
 
+  // A STEREO-linked pair holds one bank on the unit, so the reset the type change mirrors
+  // has to reach both members: the partner takes the edited member's settled record rather
+  // than keeping the outgoing bank's section ONs and Rec Point.
+  it("resets both members of a linked pair when the type enters SSMCS", async () => {
+    await boot();
+    selectNode("ch1");
+    const signalType = row("Signal Type").querySelector<HTMLSelectElement>("select")!;
+    signalType.value = "1"; // STEREO
+    signalType.dispatchEvent(new Event("change", { bubbles: true }));
+    const recPoint = (): HTMLSelectElement => row(t().inspector.recPoint).querySelector<HTMLSelectElement>("select")!;
+    recPoint().value = String(REC_POINT_PRE_EQ);
+    recPoint().dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_EQ)), APP_SETTLE);
+    const type = row(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = String(COMP_EQ_SSMCS);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_COMP)), APP_SETTLE);
+
+    const saves = vi.mocked(saveTextDocument).mock.calls.length;
+    $("btn-save").click();
+    await vi.waitFor(() => expect(vi.mocked(saveTextDocument).mock.calls.length).toBe(saves + 1), APP_SETTLE);
+    const saved = JSON.parse(vi.mocked(saveTextDocument).mock.calls.at(-1)![1]) as {
+      nodeParams: Record<string, Record<string, unknown>>;
+    };
+    const bank = (id: string) => {
+      const np = saved.nodeParams[id];
+      return { compEqType: np.compEqType, compOn: np.compOn, eqOn: np.eqOn, recPoint: np.recPoint, ssmcs: np.ssmcs };
+    };
+    expect(saved.nodeParams.ch1.stereoLink, "the premise: the pair is linked").toBe(true);
+    expect(bank("ch1").compOn).toBe(true);
+    expect(bank("ch1").recPoint).toBe(REC_POINT_PRE_COMP);
+    expect(bank("ch2")).toEqual(bank("ch1"));
+  });
+
   it("moves a PRE EQ rec point to PRE COMP when the channel enters SSMCS", async () => {
     await boot();
     selectNode("ch1");
@@ -1265,6 +1348,33 @@ describe("editing a node through the inspector", () => {
     await vi.waitFor(() => expect(recPoint().value).toBe(String(REC_POINT_PRE_COMP)), APP_SETTLE);
     // …and the stage that no longer exists is off the list, so it cannot be chosen again.
     expect([...recPoint().options].map((o) => o.value)).not.toContain(String(REC_POINT_PRE_EQ));
+  });
+});
+
+// A send at -∞ is drawn as off (a dotted, receded wire), so a level edit that crosses -∞ moves
+// the wire's look while the wire stays selected and the slider keeps the pointer.
+describe("a send level edited across -∞ in the panel", () => {
+  // The painted path, which a selected wire draws after its halo.
+  const wire = (): SVGPathElement | undefined =>
+    [
+      ...$("graph-host").querySelectorAll<SVGPathElement>(
+        'g:has(> .wire-hit[data-from="ch1:out"][data-to="bus.stereo:in"]) > path:not(.wire-hit)',
+      ),
+    ].at(-1);
+  const slide = (to: "min" | "max"): void => {
+    const slider = row(t().inspector.level).querySelector<HTMLInputElement>('input[type="range"]')!;
+    slider.value = to === "min" ? slider.min : slider.max;
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  it("redraws the wire as off at -∞ and as on again above it", async () => {
+    await boot();
+    press(wireHit($("graph-host"), "ch1:out", "bus.stereo:in")!);
+    expect(wire()!.getAttribute("stroke-dasharray"), "the premise: the main send ships live").toBeNull();
+    slide("min");
+    expect(wire()!.getAttribute("stroke-dasharray")).toBe("1.5 4");
+    slide("max");
+    expect(wire()!.getAttribute("stroke-dasharray")).toBeNull();
   });
 });
 
@@ -1315,6 +1425,48 @@ describe("the inspector's Hi-Z switch and the gain it caps", () => {
   });
 });
 
+// The panel is hidden for as long as the CONSOLE is up, and its locks are taken when it is
+// drawn. An edit made on the CONSOLE has to reach the panel the operator returns to without
+// selecting the node again.
+describe("the panel after edits made on the CONSOLE", () => {
+  const consoleChip = (stripLabel: string, chip: string): HTMLElement => {
+    const strip = [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")].find(
+      (s) => s.getAttribute("aria-label") === stripLabel,
+    );
+    expect(strip, `the CONSOLE draws a "${stripLabel}" strip`).toBeDefined();
+    const found = [...strip!.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === chip);
+    expect(found, `the "${stripLabel}" strip carries a "${chip}" chip`).toBeDefined();
+    return found!;
+  };
+
+  it("locks Hi-Z once +48V was turned on there", async () => {
+    await boot();
+    selectNode("ch3");
+    const hiZ = (): HTMLButtonElement[] => [...row(t().inspector.hiZ).querySelectorAll<HTMLButtonElement>("button")];
+    expect(
+      hiZ().every((b) => !b.disabled),
+      "the premise: Hi-Z is free while +48V is off",
+    ).toBe(true);
+    $("btn-view-console").click();
+    consoleChip("CH 3", "+48").click();
+    $("btn-view-graph").click();
+    expect(row(t().inspector.hiZ).title).toBe(t().inspector.hiZLockedByPhantom);
+    expect(hiZ().every((b) => b.disabled)).toBe(true);
+  });
+
+  it("caps the A.Gain range once Hi-Z was turned on there", async () => {
+    await boot();
+    selectNode("ch4");
+    const slider = (): HTMLInputElement =>
+      row(t().inspector.gainAnalog).querySelector<HTMLInputElement>('input[type="range"]')!;
+    expect(slider().max, "the premise: the full range while Hi-Z is off").toBe("70");
+    $("btn-view-console").click();
+    consoleChip("CH 4", "Hi-Z").click();
+    $("btn-view-graph").click();
+    expect(slider().max).toBe("40");
+  });
+});
+
 describe("menu keyboard navigation", () => {
   // The same selector the entry's own key handler applies, so this addresses the list the
   // app navigates rather than a wider one of its own. The File menu already carries a
@@ -1322,9 +1474,8 @@ describe("menu keyboard navigation", () => {
   // so today the two lists happen to share a first and a last item; an entry added at
   // either end would separate them, and only this file would still be asserting on the
   // wrong one.
-  const items = (): HTMLButtonElement[] => [
-    ...$("file-menu").querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled]):not([hidden])'),
-  ];
+  const ENTRY = ':is([role="menuitem"], [role="menuitemcheckbox"]):not([disabled]):not([hidden])';
+  const items = (menu = "file-menu"): HTMLButtonElement[] => [...$(menu).querySelectorAll<HTMLButtonElement>(ENTRY)];
 
   it("leaves focus and the default action intact for an unrelated key", async () => {
     await boot();
@@ -1357,6 +1508,24 @@ describe("menu keyboard navigation", () => {
     expect(document.activeElement).toBe(list[list.length - 1]);
     chord("Home");
     expect(document.activeElement).toBe(list[0]);
+  });
+
+  // The View menu ends on its two toggles, which are checkbox items rather than plain
+  // ones: the walk has to reach them, and choosing one has to close the menu like any
+  // other entry.
+  it("walks onto the View menu's toggles and closes on choosing one", async () => {
+    await boot();
+    $("btn-view").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    expect(items("view-menu").at(-1)).toBe($("btn-labels"));
+
+    chord("End");
+    expect(document.activeElement).toBe($("btn-labels"));
+    chord("ArrowUp");
+    expect(document.activeElement).toBe($("btn-hide-off"));
+
+    $("btn-hide-off").click();
+    expect($("view-menu").hidden).toBe(true);
+    expect($("btn-hide-off").getAttribute("aria-checked")).toBe("true");
   });
 
   // The trigger opens from the keyboard as well as from a press, and each of the three

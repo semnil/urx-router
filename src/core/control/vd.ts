@@ -17,6 +17,7 @@
 // and a binding read there is initialised whichever module is imported first only when it
 // comes from outside that cycle.
 import { COMP_RATIO_INF, COMP_RATIO_STEPS } from "./comp-ratio";
+import { DUCKER_DECAY_STOPS_MS, DYN_ATTACK_STOPS_MS, DYN_HOLD_STOPS_MS, DYN_RELEASE_STOPS_MS } from "./dyn-time-stops";
 
 // LEVEL fader / send range in dB (the device level_gain table, shared by every
 // fader, send and the monitor — UG "Range: -∞ dB to +10.00 dB"). The slider's
@@ -42,6 +43,10 @@ export const A_GAIN_MAX_DB = 70;
 export const HI_Z_A_GAIN_MAX_DB = 40;
 export const D_GAIN_MIN_DB = -24;
 export const D_GAIN_MAX_DB = 24;
+
+/** The oscillator level's range (param 711), in dB. */
+export const OSC_LEVEL_MIN_DB = -96;
+export const OSC_LEVEL_MAX_DB = 0;
 
 /** Plan pan range, matching the inspector slider and the device scale L63 – C –
  *  R63 (1:1 with the broker ±63). */
@@ -75,25 +80,28 @@ export const EQ_GAIN_MAX_DB = 18;
 //   release   : ms×10,         broker 93 … 9990   → 9.3 … 999 ms (gate decay too).
 //   ratio     : ratio×100,     broker 100 … 65535 → 1.0 : 1 … the unit's INF:1, which it puts
 //               on the widest raw the field holds.
-export const DYN_ATTACK_MIN_MS = 0.092;
-export const DYN_ATTACK_MAX_MS = 80;
-export const DYN_HOLD_MIN_MS = 0.02;
-export const DYN_HOLD_MAX_MS = 1960;
-export const DYN_RELEASE_MIN_MS = 9.3;
-export const DYN_RELEASE_MAX_MS = 999;
+// The time ranges are the ends of the unit's own stop tables (dyn-time-stops.ts).
+export const DYN_ATTACK_MIN_MS = DYN_ATTACK_STOPS_MS[0];
+export const DYN_ATTACK_MAX_MS = DYN_ATTACK_STOPS_MS[DYN_ATTACK_STOPS_MS.length - 1];
+export const DYN_HOLD_MIN_MS = DYN_HOLD_STOPS_MS[0];
+export const DYN_HOLD_MAX_MS = DYN_HOLD_STOPS_MS[DYN_HOLD_STOPS_MS.length - 1];
+export const DYN_RELEASE_MIN_MS = DYN_RELEASE_STOPS_MS[0];
+export const DYN_RELEASE_MAX_MS = DYN_RELEASE_STOPS_MS[DYN_RELEASE_STOPS_MS.length - 1];
 export const DYN_RATIO_MIN = 1;
 // The same fact as the ladder's top stop: 65535 is both the widest raw the encoding can carry
 // and the one the unit reads as INF:1, so the ceiling is not a second number.
 export const DYN_RATIO_MAX = COMP_RATIO_INF;
 // Ducker decay shares the ×10 release scale but with a wider range than gate/comp.
-export const DUCKER_DECAY_MIN_MS = 1.3;
-export const DUCKER_DECAY_MAX_MS = 5000;
+export const DUCKER_DECAY_MIN_MS = DUCKER_DECAY_STOPS_MS[0];
+export const DUCKER_DECAY_MAX_MS = DUCKER_DECAY_STOPS_MS[DUCKER_DECAY_STOPS_MS.length - 1];
 
 // STREAMING DELAY time (param 708): broker value is ms×100 (centi-ms). Range
 // 100 … 100000 = 1.00 … 1000.00 ms, default 100 (= 1.00 ms), 0.01 ms resolution
 // (confirmed by live snapshot-diff: ms 100.0 on the LCD reads back as 10000).
 export const DELAY_TIME_MIN_MS = 1;
 export const DELAY_TIME_MAX_MS = 1000;
+/** The Delay Time knob's pressed step, and the grid a drag lands on: an even centi-ms. */
+export const DELAY_TIME_GRID_MS = 0.02;
 
 // PHONES output level (param 725, y0 = PHONES 1, y1 = PHONES 2). The device shows
 // a unit-less 0.0 … 10.0 volume scale (NOT dB — distinct from the monitor fader);
@@ -110,6 +118,22 @@ export function clamp(v: number, lo: number, hi: number): number {
   // reaching vdSet would serialize to null (a malformed broker write).
   if (Number.isNaN(v)) return lo;
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+// Bound a RAW / enum value to its catalog range — the last line before an
+// out-of-range value reaches the device, since encodeValue's "raw" and "enum"
+// cases are pure passthroughs (every numeric encoder here clamps internally,
+// these two cannot: their range lives in the effect / option catalogs, not in the
+// encoder). The inspector already constrains the same bounds, so this only bites
+// on a hand-edited or `?plan=` payload. Rounded first: a raw is a broker integer,
+// and the shell refuses a write carrying a fraction. A value that is not a finite
+// number is the caller's to skip (translate.ts `isRaw`), since what stands in for one
+// differs by whether a catalog default exists to fall back on.
+export function boundRaw(raw: number, lo?: number, hi?: number): number {
+  const v = Math.round(raw);
+  if (lo !== undefined && v < lo) return lo;
+  if (hi !== undefined && v > hi) return hi;
+  return v;
 }
 
 /** Plan PHONES level (0.0 … 10.0 scale) → broker raw (×10). */
@@ -196,13 +220,22 @@ export function strToSweetSpotData(value: string): number {
 export function ssmcsCompDrive(raw: number): number {
   return raw / 20;
 }
-/** SSMCS comp attack raw → ms (logarithmic 0.092 … 80 ms). */
-export function ssmcsAttackMs(raw: number): number {
-  return 0.092 * Math.pow(80 / 0.092, (raw - SSMCS_ATTACK_RAW_MIN) / 226);
+/** The stop a raw names in a table that starts at raw `first`. A raw outside the table — or
+ *  one that is not a number — reads as the nearest end of it. */
+function stopFrom(stops: readonly number[], first: number, raw: number): number {
+  const i = Math.round(raw) - first;
+  if (!(i > 0)) return stops[0];
+  return stops[Math.min(i, stops.length - 1)];
 }
-/** SSMCS comp release raw → ms (logarithmic 9.3 … 999 ms). */
+/** SSMCS comp attack raw → ms: raw 57 + i is the GATE / COMP / DUCKER Attack stop i
+ *  (0.092 … 80 ms). */
+export function ssmcsAttackMs(raw: number): number {
+  return stopFrom(DYN_ATTACK_STOPS_MS, SSMCS_ATTACK_RAW_MIN, raw);
+}
+/** SSMCS comp release raw → ms: raw 24 + i is the COMP Release / GATE Decay stop i
+ *  (9.3 … 999 ms). */
 export function ssmcsReleaseMs(raw: number): number {
-  return 9.3 * Math.pow(999 / 9.3, (raw - SSMCS_RELEASE_RAW_MIN) / 276);
+  return stopFrom(DYN_RELEASE_STOPS_MS, SSMCS_RELEASE_RAW_MIN, raw);
 }
 /** SSMCS EQ/SC Q raw → value (logarithmic 0.50 … 16.0). */
 export function ssmcsQ(raw: number): number {
@@ -251,8 +284,8 @@ export function vdToPan(value: number): number {
   return clamp(Math.round(value), PAN_MIN, PAN_MAX);
 }
 
-// HA gain converters clamp to the union of the analog/digital ranges; the UI
-// slider enforces the tighter per-type bounds.
+// HA gain converters clamp to the union of the analog/digital ranges; the channel's own
+// range is `channelGainRange` (input-lock.ts), which the load and the UI bound a value to.
 const GAIN_MIN_DB = D_GAIN_MIN_DB; // -24, the lower of the two
 const GAIN_MAX_DB = A_GAIN_MAX_DB; // +70, the higher of the two
 

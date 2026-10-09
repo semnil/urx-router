@@ -84,7 +84,8 @@ and `from`/`to` refs below; only routes listed here are legal.
 
 Each row is a legal wire from -> to with its kind. fixed wires are structural:
 they always exist (seeded into every plan) and cannot be removed; you may set
-their params (level/pan/on) but not delete them.
+their params (level/pan/on) but not delete them. *(fixed)* after a destination marks
+every source in that row; after a source, that source alone.
 
 ### kind: `source`
 _input source select (single-input: at most one wire into the destination)_
@@ -147,4 +148,4 @@ _ON/OFF assign into a bus (no level/pan)_
 - **-> `bus.fx2:in`**: `bus.osc:out`
 - **-> `bus.mix1:in`**: `bus.osc:out`
 - **-> `bus.mix2:in`**: `bus.osc:out`
-- **-> `bus.stereo:in`** *(fixed)*: `bus.mix1:out`, `bus.mix2:out`, `bus.osc:out`
+- **-> `bus.stereo:in`**: `bus.mix1:out` *(fixed)*, `bus.mix2:out` *(fixed)*, `bus.osc:out`

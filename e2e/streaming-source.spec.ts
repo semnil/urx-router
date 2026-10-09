@@ -70,7 +70,7 @@ test("a Live-sync start on a unit on NONE sends STREAMING STEREO with the next e
   await streamingSource(page, PORT_REF_NONE, PORT_REF_NONE);
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
   await expect(wire(page, ...STEREO_TO_STREAM)).toHaveCount(1);
   await page.locator('#graph-host g.node[data-id="ch1"]').click();
   await page.locator("#inspector .param", { hasText: "HPF" }).getByRole("button", { name: "ON", exact: true }).click();
@@ -90,7 +90,7 @@ test("Live sync does not start on a unit whose STREAMING source is a channel's s
     .toEqual([
       "Live sync stopped: 1 setting could not be read, so the device's state is not fully known. Live sync needs a complete read to start.",
     ]);
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
   await expect(wire(page, ...STEREO_TO_STREAM)).toHaveCount(1);
   // An incomplete start merges nothing, so no node carries the read's provenance either.
   await expect(unreadBadge(page, "bus.stream")).toHaveCount(0);

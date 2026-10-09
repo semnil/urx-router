@@ -31,10 +31,12 @@ import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
 import { getSettings } from "../core/settings";
 import type { ExportOptions, SaveResult } from "../core/storage";
 import { oscAssign } from "../core/control/translate";
-import { SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
+import { planColorHex, SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
 import { trackCountCeiling } from "../core/constraints";
 import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale, notePanelHeight } from "./graph-text";
 import { sendlessNote } from "./send-fields";
+import { isChord } from "./keys";
+import { mouseMovedUnpressed, preserveFocus } from "./dom";
 import { t } from "../i18n";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -100,6 +102,10 @@ const LONG_PRESS_TOLERANCE = 6;
 // Zoom bounds shared by the wheel, pinch, and fit-to-view paths.
 const ZOOM_MIN = 0.3;
 const ZOOM_MAX = 2.5;
+
+// A wheel gesture ends when no wheel event has arrived for this long (ms); the next event
+// starts a new one, which takes its own axis.
+const WHEEL_GESTURE_GAP_MS = 150;
 
 const LABEL_FONT = '"SF Mono", "SFMono-Regular", "Menlo", "Cascadia Code", "Consolas", monospace';
 
@@ -174,8 +180,14 @@ interface Palette {
   possibleStroke: string;
   /** Outline for nodes unavailable at the current sample rate. */
   warn: string;
+  /** Ink of the OFF / "?" badge text printed on `warn`. */
+  warnInk: string;
   /** Accent for the PRE (pre-fader) send marker; the brand LED amber. */
   pre: string;
+  /** Ink of the "PRE" label beside that marker, on the canvas. */
+  preInk: string;
+  /** Fill opacity of a node's secondary legend (the sublabel) over `nodeFill`. */
+  sublabelOpacity: number;
   /** In-frame note panel: recessed-well tint and ink. */
   noteWell: string;
   noteInk: string;
@@ -205,7 +217,10 @@ export const PALETTES: Record<ThemeName, Palette> = {
     legalStroke: "#7fd0a0",
     possibleStroke: "#5a7d6a",
     warn: "#e2794e",
+    warnInk: "#14110d",
     pre: "#ffc24d",
+    preInk: "#ffc24d",
+    sublabelOpacity: 0.6,
     noteWell: "rgba(0,0,0,0.24)",
     noteInk: "#e9ddc3",
   },
@@ -228,18 +243,30 @@ export const PALETTES: Record<ThemeName, Palette> = {
       send: "#13836f",
       out: "#b8700a",
     },
-    tempWire: "#9a8d70",
+    tempWire: "#8d8064",
     legalFill: "#cde7d6",
     legalStroke: "#2f8f63",
-    possibleStroke: "#8fb6a0",
-    warn: "#c2531f",
+    possibleStroke: "#587d69",
+    warn: "#a8461a",
+    warnInk: "#ffffff",
     pre: "#e8920f",
+    preInk: "#755407",
+    sublabelOpacity: 0.75,
     noteWell: "rgba(95,78,42,0.10)",
     noteInk: "#3c3320",
   },
 };
 
 export type Selection = { type: "node"; id: string } | { type: "conn"; from: string; to: string } | null;
+
+/** A jack a wire can be drawn from — a port, or a channel's Rec Point tap (`tap`, which
+ *  carries the channel's own `out` ref) — with the ports a drag from it can end on. */
+export interface ConnectOrigin {
+  ref: string;
+  dir: PortDirection;
+  tap: boolean;
+  targets: string[];
+}
 
 export interface GraphCallbacks {
   onSelect: (sel: Selection) => void;
@@ -310,9 +337,12 @@ export class Graph {
   // a board where most of the always-wired CH → MIX/FX sends sit at -∞.
   private hideOffSends = false;
   private disabledNodes = new Set<string>();
-  // Nodes still showing their plan default after a device readback (a body read
-  // failed). Mirrors plan.unreadNodes; empty when the plan has no device
-  // provenance (new / loaded / hand-edited plan).
+  // The microSD Rec slots the node layer was last built without because Track Count or the
+  // rate's ceiling gates them. A rate change moves that set as well as the disabled one.
+  private drawnGated = new Set<string>();
+  // Nodes still showing their plan value after a device readback (a read of their
+  // settings or selector failed). Mirrors plan.unreadNodes; empty when the plan has
+  // no device provenance (new / loaded / hand-edited plan).
   private unreadNodes = new Set<string>();
   // Node ids collapsed off the canvas into the bottom shelf. Kept in sync with
   // plan.hidden; a shelved node is hidden along with its wires.
@@ -328,6 +358,16 @@ export class Graph {
   // stale size during construction) and on window resize while this stays true.
   private autoFit = true;
   private selection: Selection = null;
+  // The node the board puts in the tab order (the only one with tabindex 0): the one keyboard
+  // focus last rested on or that was last selected, else the first drawn.
+  private focusNode: string | null = null;
+  // The plan the node layer was last built for. Keyboard focus is carried across a rebuild of
+  // the same plan only: the node it stood on belongs to a replaced plan, and a key still held
+  // there must reach nothing in the one that took its place.
+  private builtFor: Plan | null = null;
+  // The plan the shelf and the selection bar were each last built for. Focus on a chip or a
+  // bar button is carried across a rebuild of the same plan only, as on the board.
+  private chromeBuiltFor = new WeakMap<HTMLElement, Plan>();
   // Ctrl/Cmd-click builds a multi-selection of nodes to shelve together. The
   // anchor (shown in the inspector) is selection.id; this set holds it plus any
   // others. Empty whenever selection is a connection or null.
@@ -337,6 +377,9 @@ export class Graph {
   // Empty when no trace is active. Independent of the selection; cleared by any
   // selection change so it never lingers behind a fresh focus.
   private pathNodes = new Set<string>();
+  // The node the trace was taken for. The closure is taken again from it before every
+  // wire and node repaint, so an edit, an undo or a device read under the trace moves it.
+  private pathRoot: string | null = null;
 
   // transient interaction state. `link` is a STEREO-linked, visible partner that
   // moves with the dragged node (keeping its offset), plus the pair to redraw the
@@ -373,6 +416,9 @@ export class Graph {
   // (the pinch transforms an inner <g>), so reading it once avoids a forced
   // reflow on every move frame.
   private pinch: { lastDist: number; lastCx: number; lastCy: number; left: number; top: number } | null = null;
+  // The wheel gesture under way: the axis its first event moved along, and when its latest
+  // event arrived. A horizontal gesture pans the board, a vertical one zooms it.
+  private wheelGesture: { axis: "x" | "y"; last: number } | null = null;
   // Floating HTML textarea for editing a node's note in place on the canvas.
   private noteEditor: { id: string; el: HTMLTextAreaElement } | null = null;
   // In-flight long-press on a node: a timer that traces the node's signal path if
@@ -403,10 +449,15 @@ export class Graph {
       this.lastNodeClick = null;
       this.endAllPointers();
     }
+    // The note being edited goes with the selection: a Fetch, the Live-sync read and a .urxf
+    // import re-author the plan's values here, and a file or a model switch replaces it.
+    this.dropNoteEditor();
     this.model = model;
     this.plan = plan;
     this.selection = null;
     this.selectedNodes.clear();
+    // A trace belongs to the selection it was taken from, which goes here too.
+    this.clearTrace();
     this.adoptPlanState();
     // Before the draw and the fit: a document arriving with a pair already STEREO-linked
     // had no edit funnel to snap its partner, so this is where the two loading paths
@@ -436,8 +487,8 @@ export class Graph {
   }
 
   // The view state mirrored out of the plan: the shelved set, the note-collapse set,
-  // and the device provenance (plan.unreadNodes holds exactly the nodes whose body read
-  // failed; no provenance — a plan never fetched — means nothing is flagged). Every
+  // and the device provenance (plan.unreadNodes holds exactly the nodes a read failed
+  // on; no provenance — a plan never fetched — means nothing is flagged). Every
   // place that adopts a plan goes through here so none of the three is forgotten.
   private adoptPlanState(): void {
     this.hidden = new Set(this.plan.hidden);
@@ -468,22 +519,32 @@ export class Graph {
     this.redrawWires();
   }
 
-  /** Whether the board is already drawn against this disabled set. The dim and the
-   *  dashed outline are all the set contributes, so an equal one draws the same board. */
+  /** Whether the board is already drawn against this disabled set and against the plan's
+   *  gated record slots. The dim and the dashed outline are all the set contributes, and the
+   *  slots Track Count and the rate's ceiling leave out are all the rate contributes besides,
+   *  so with both equal the board drawn is the same one. */
   hasDisabledNodes(ids: string[]): boolean {
-    const next = new Set(ids);
-    return next.size === this.disabledNodes.size && [...next].every((id) => this.disabledNodes.has(id));
+    return sameSet(new Set(ids), this.disabledNodes) && sameSet(this.gatedSlots(), this.drawnGated);
   }
 
   /** Mark nodes unavailable at the current sample rate (dimmed + dashed outline). The
-   *  set is stored either way. The board is redrawn only when the set moved AND the host
-   *  is on screen: an unchanged set draws the same board, and a hidden one is redrawn
-   *  from the plan when the view comes back (the caller carries that with graphDirty). */
+   *  set is stored either way, and a selection the rate has taken off the board is dropped
+   *  whether or not the host is on screen. The board is redrawn only when the set or the
+   *  gated record slots moved AND the host is on screen: an unchanged pair draws the same
+   *  board, and a hidden one is redrawn from the plan when the view comes back (the caller
+   *  carries that with graphDirty). */
   setDisabledNodes(ids: string[]): void {
     const same = this.hasDisabledNodes(ids);
     this.disabledNodes = new Set(ids);
-    if (same || this.host.hidden) return;
+    const selected = this.selection;
+    this.dropSelectionIfHidden();
+    if ((same && this.selection === selected) || this.host.hidden) return;
     this.render();
+  }
+
+  /** The microSD Rec slots Track Count and the rate's ceiling leave off the board now. */
+  private gatedSlots(): Set<string> {
+    return new Set(this.model.nodes.filter((n) => this.sdRecSlotInactive(n.id)).map((n) => n.id));
   }
 
   /** Repaint nodes after a node-parameter change (e.g. a channel muted). */
@@ -503,6 +564,8 @@ export class Graph {
     // redrawWires ends with refreshPortStates, so the port glow is restored there.
     this.redrawWires();
     this.highlightSelectedNode();
+    // The rebuilt nodes' jacks come back at rest, so a connect drag under way lights them again.
+    this.repaintCandidates();
   }
 
   /** Rebuild one node's <g> in place. makeNode re-registers this node's nodeEls /
@@ -513,10 +576,13 @@ export class Graph {
     if (this.isHidden(id)) return;
     const node = this.nodeById.get(id);
     if (!node) return;
+    const focused = this.focusedNodeId() === id;
     const old = this.nodeEls.get(id);
     const g = this.makeNode(node);
     if (old) old.replaceWith(g);
     else this.nodeLayer.append(g);
+    this.syncRovingNode();
+    if (focused) this.refocusNode(id);
   }
 
   /** Set or clear a node's free-text note and repaint its in-frame panel. */
@@ -591,6 +657,9 @@ export class Graph {
     ta.addEventListener("input", () => this.setNote(id, ta.value));
     ta.addEventListener("keydown", (e) => {
       e.stopPropagation();
+      // A key pressed during an IME composition belongs to the composition: Escape cancels
+      // the conversion and Enter commits it, and neither closes the editor.
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
         e.preventDefault();
         this.closeNoteEditor();
@@ -611,14 +680,21 @@ export class Graph {
   }
 
   private closeNoteEditor(): void {
-    const ed = this.noteEditor;
-    if (!ed) return;
-    this.noteEditor = null;
-    ed.el.remove();
+    if (!this.dropNoteEditor()) return;
     // Restore the panel text now that its editor is gone.
     this.renderNodes();
     this.redrawWires();
     this.highlightSelectedNode();
+  }
+
+  /** Remove the editor without repainting, for a caller that draws the board itself next.
+   *  Answers whether there was one. */
+  private dropNoteEditor(): boolean {
+    const ed = this.noteEditor;
+    if (!ed) return false;
+    this.noteEditor = null;
+    ed.el.remove();
+    return true;
   }
 
   /** Center and scale the diagram to fit the current viewport. */
@@ -650,6 +726,8 @@ export class Graph {
     this.svg.setAttribute("height", "100%");
     this.svg.style.display = "block";
     this.svg.style.touchAction = "none";
+    this.svg.setAttribute("role", "group");
+    this.svg.setAttribute("aria-label", t().toolbar.viewGraphHint);
 
     this.svg.append(makeGlowDefs());
 
@@ -690,6 +768,11 @@ export class Graph {
     // down. A suite that builds several takes them back through `recordWindowListeners`.
     window.addEventListener("blur", () => this.endAllPointers());
     this.svg.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
+    this.svg.addEventListener("keydown", (e) => this.onBoardKey(e));
+    this.svg.addEventListener("focusin", (e) => {
+      const id = this.nodeIdOf(e.target);
+      if (id !== null) this.setRovingNode(id);
+    });
 
     // The initial fitView() in the constructor can measure a stale viewport size
     // before the webview has applied its stylesheet/layout (notably WKWebView in
@@ -789,9 +872,12 @@ export class Graph {
   // --- rendering -----------------------------------------------------------
 
   render(): void {
-    this.closeNoteEditor();
     this.nodeById.clear();
     for (const node of this.model.nodes) this.nodeById.set(node.id, node);
+    // An open note editor stays open, focus and any IME composition with it, for as long as
+    // its node is drawn; applyTransform below puts it back over the node's panel.
+    const ed = this.noteEditor;
+    if (ed && (!this.nodeById.has(ed.id) || this.isHidden(ed.id))) this.dropNoteEditor();
     this.applyTransform();
     this.renderNodes();
     // redrawWires ends with refreshPortStates, so the port glow is restored there.
@@ -806,6 +892,7 @@ export class Graph {
    *  select bar, plus the node/wire layers, whose SVG tooltips and wire <title>s
    *  bake the language in at paint time. */
   relocalizeChrome(): void {
+    this.svg.setAttribute("aria-label", t().toolbar.viewGraphHint);
     this.renderNodes();
     this.redrawWires();
     this.renderShelf();
@@ -814,6 +901,8 @@ export class Graph {
   }
 
   private renderNodes(): void {
+    const focused = this.focusedNodeId();
+    this.drawnGated = this.gatedSlots();
     this.nodeLayer.replaceChildren();
     this.nodeEls.clear();
     this.portEls.clear();
@@ -832,7 +921,88 @@ export class Graph {
       if (this.isHidden(a) || this.isHidden(b)) continue;
       this.redrawStereoLink(a, b);
     }
+    this.syncRovingNode();
+    this.refocusNode(focused);
+    this.builtFor = this.plan;
     this.repaintCandidates();
+  }
+
+  // --- keyboard ------------------------------------------------------------
+
+  /** The id of the board node `target` is, or sits in; null for anything else. */
+  private nodeIdOf(target: EventTarget | null): string | null {
+    const g = target instanceof Element ? target.closest<SVGGElement>("g.node") : null;
+    return g && this.nodeLayer.contains(g) ? (g.dataset.id ?? null) : null;
+  }
+
+  /** The board node keyboard focus is on, if it is on one. */
+  private focusedNodeId(): string | null {
+    return this.nodeIdOf(document.activeElement);
+  }
+
+  /** Put focus back on the node drawn for `id` after its element was replaced or moved,
+   *  for the plan the board was built for only. */
+  private refocusNode(id: string | null): void {
+    if (id === null || this.plan !== this.builtFor) return;
+    this.nodeEls.get(id)?.focus({ preventScroll: true });
+  }
+
+  private setRovingNode(id: string): void {
+    this.focusNode = id;
+    this.syncRovingNode();
+  }
+
+  /** One node of the board is in the tab order at a time. */
+  private syncRovingNode(): void {
+    const pick = this.rovingId();
+    for (const [id, el] of this.nodeEls) el.setAttribute("tabindex", id === pick ? "0" : "-1");
+  }
+
+  /** The node the board puts in the tab order. */
+  private rovingId(): string | null {
+    const anchor = this.selection?.type === "node" ? this.selection.id : null;
+    return (
+      [this.focusNode, anchor].find((id): id is string => id !== null && this.nodeEls.has(id)) ??
+      this.nodeEls.keys().next().value ??
+      null
+    );
+  }
+
+  /** Rebuild the shelf or the selection bar with `build`, handing keyboard focus on one of
+   *  its buttons to the same button afterwards — a chip by the node it restores, Show all
+   *  and the bar's buttons by their class — for as long as the plan is the one it was last
+   *  built for. A button the rebuild no longer offers takes the focus with it. */
+  private rebuildChrome(bar: HTMLElement, build: () => void): void {
+    const keyOf = (el: HTMLElement): string | null =>
+      el.dataset.node ? `node:${el.dataset.node}` : el.className || null;
+    const restore = preserveFocus(bar, keyOf, (key) =>
+      [...bar.querySelectorAll<HTMLElement>("button")].find((b) => keyOf(b) === key),
+    );
+    build();
+    if (this.chromeBuiltFor.get(bar) === this.plan) restore();
+    this.chromeBuiltFor.set(bar, this.plan);
+  }
+
+  /** Enter / Space select the focused node as a press does; the arrow keys walk focus through
+   *  the drawn nodes in the model's order (Right / Down onward, Left / Up back, wrapping at the
+   *  ends) and pan the one reached into view. */
+  private onBoardKey(e: KeyboardEvent): void {
+    const id = this.nodeIdOf(e.target);
+    if (id === null || isChord(e)) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      this.select({ type: "node", id });
+      return;
+    }
+    const step =
+      e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const ids = [...this.nodeEls.keys()];
+    const next = ids[(ids.indexOf(id) + step + ids.length) % ids.length];
+    this.setRovingNode(next);
+    this.nodeEls.get(next)?.focus({ preventScroll: true });
+    this.panIntoView(next, []);
   }
 
   /** Re-light the connect-drag candidates after every port element has been replaced.
@@ -1114,6 +1284,10 @@ export class Graph {
     const g = document.createElementNS(SVGNS, "g");
     g.classList.add("node");
     g.dataset.id = node.id;
+    g.setAttribute("role", "button");
+    g.setAttribute("aria-label", this.labelOf(node.id));
+    g.setAttribute("aria-pressed", String(this.selectedNodes.has(node.id)));
+    g.setAttribute("tabindex", "-1");
     const pos = this.posOf(node.id);
     g.setAttribute("transform", `translate(${pos.x} ${pos.y})`);
 
@@ -1146,7 +1320,7 @@ export class Graph {
 
     // User color override (plan.nodeColors): a thin accent cap along the top
     // edge. Keeps the kind rail intact, so the cap is purely additional.
-    const capColor = this.plan.nodeColors?.[node.id];
+    const capColor = planColorHex(this.plan.nodeColors?.[node.id]);
     if (capColor) g.append(svgRect(6, 0, NODE_W - 6, 3, 1.5, capColor));
 
     for (const sx of [12, NODE_W - 12]) {
@@ -1173,7 +1347,7 @@ export class Graph {
       const s1 = fitScale(primary, LABEL_FS, 1, LABEL_MAX_W);
       g.append(labelText(primary, LABEL_TIER1_Y, LABEL_FS * s1, s1, p.label, 1));
       const s2 = fitScale(node.sublabel, LABEL_SUB_FS, 0.5, LABEL_MAX_W);
-      g.append(labelText(node.sublabel, LABEL_TIER2_Y, LABEL_SUB_FS * s2, 0.5 * s2, p.label, 0.6));
+      g.append(labelText(node.sublabel, LABEL_TIER2_Y, LABEL_SUB_FS * s2, 0.5 * s2, p.label, p.sublabelOpacity));
     } else {
       // Single line, scaled down only when it would otherwise run under the button.
       const s = fitScale(primary, LABEL_FS, 1, LABEL_MAX_W);
@@ -1221,20 +1395,21 @@ export class Graph {
     // and frames never collide. Precedence: rate-disabled > inactive > unread —
     // a feature unusable at this rate dominates a user mute, which dominates a
     // mere provenance warning.
+    const badges: SVGElement[] = [];
     if (this.disabledNodes.has(node.id)) {
-      g.append(svgRect(NODE_W - 34, -8, 30, 15, 3, p.warn));
+      badges.push(svgRect(NODE_W - 34, -8, 30, 15, 3, p.warn));
       const badge = document.createElementNS(SVGNS, "text");
       badge.setAttribute("x", String(NODE_W - 19));
       badge.setAttribute("y", "0");
       badge.setAttribute("text-anchor", "middle");
       badge.setAttribute("dominant-baseline", "central");
-      badge.setAttribute("fill", "#14110d");
+      badge.setAttribute("fill", p.warnInk);
       badge.setAttribute("font-family", LABEL_FONT);
       badge.setAttribute("font-size", "8.5");
       badge.setAttribute("font-weight", "700");
       badge.style.pointerEvents = "none";
       badge.textContent = "OFF";
-      g.append(badge);
+      badges.push(badge);
     } else if (this.isNodeInactive(node)) {
       // A muted node (CH_ON off) / bypassed ducker (duckerOn off) / oscillator off
       // (osc.on): tag it MUTE (a mute) or OFF (a ducker / the oscillator, whose
@@ -1260,19 +1435,19 @@ export class Graph {
     // Ranks below MUTE and DISABLED (the else-if keeps it from stacking), so the
     // badge sits alone in the top-left, never colliding with their top-right tags.
     else if (this.unreadNodes.has(node.id)) {
-      g.append(svgRect(8, -8, 16, 15, 3, p.warn));
+      badges.push(svgRect(8, -8, 16, 15, 3, p.warn));
       const badge = document.createElementNS(SVGNS, "text");
       badge.setAttribute("x", "16");
       badge.setAttribute("y", "0");
       badge.setAttribute("text-anchor", "middle");
       badge.setAttribute("dominant-baseline", "central");
-      badge.setAttribute("fill", "#14110d");
+      badge.setAttribute("fill", p.warnInk);
       badge.setAttribute("font-family", LABEL_FONT);
       badge.setAttribute("font-size", "9");
       badge.setAttribute("font-weight", "700");
       badge.style.pointerEvents = "none";
       badge.textContent = "?";
-      g.append(badge);
+      badges.push(badge);
     }
 
     if (lines.length) {
@@ -1285,6 +1460,33 @@ export class Graph {
       // signal path instead of opening the note editor).
       g.append(this.makeNoteAdd(node));
     }
+
+    // The OFF / "?" badge stays at full strength while its node dims: the node's body
+    // goes into a group of its own, which highlightSelectedNode dims instead of the node.
+    if (badges.length) {
+      const body = document.createElementNS(SVGNS, "g");
+      body.classList.add("node-body");
+      body.append(...g.childNodes);
+      const badge = document.createElementNS(SVGNS, "g");
+      badge.classList.add("node-badge");
+      badge.append(...badges);
+      g.append(body, badge);
+    }
+
+    // The keyboard focus ring, outside the body a badge splits off and so clear of its dim:
+    // stroked by the stylesheet only while the node holds :focus-visible, and stroke-less in
+    // an export, which carries no stylesheet.
+    const ring = document.createElementNS(SVGNS, "rect");
+    ring.classList.add("focus-ring");
+    ring.setAttribute("x", "-4");
+    ring.setAttribute("y", "-4");
+    ring.setAttribute("width", String(NODE_W + 8));
+    ring.setAttribute("height", String(h + 8));
+    ring.setAttribute("rx", "10");
+    ring.setAttribute("fill", "none");
+    ring.setAttribute("stroke", "none");
+    ring.style.pointerEvents = "none";
+    g.append(ring);
 
     this.nodeEls.set(node.id, g);
     return g;
@@ -1553,6 +1755,7 @@ export class Graph {
   }
 
   private redrawWires(): void {
+    this.retrace();
     this.wireLayer.replaceChildren();
     // Partition the visible wires into off / on in one pass. Off / -∞ sends paint
     // first (behind) and the live (on) wires last (on top), so in the dense always-
@@ -1698,7 +1901,7 @@ export class Graph {
     label.setAttribute("x", String(p.x));
     label.setAttribute("y", String(p.y - 12));
     label.setAttribute("text-anchor", "middle");
-    label.setAttribute("fill", this.palette.pre);
+    label.setAttribute("fill", this.palette.preInk);
     label.setAttribute("font-family", LABEL_FONT);
     label.setAttribute("font-size", "10.5");
     label.setAttribute("font-weight", "700");
@@ -1719,8 +1922,11 @@ export class Graph {
   private select(sel: Selection): void {
     this.selection = sel;
     this.selectedNodes.clear();
-    this.pathNodes.clear();
-    if (sel?.type === "node") this.selectedNodes.add(sel.id);
+    this.clearTrace();
+    if (sel?.type === "node") {
+      this.selectedNodes.add(sel.id);
+      this.focusNode = sel.id;
+    }
     this.redrawWires();
     this.highlightSelectedNode();
     this.renderSelBar();
@@ -1731,7 +1937,7 @@ export class Graph {
    *  it, so several nodes can be shelved at once. The anchor (shown in the
    *  inspector) follows the most recently touched node. */
   private toggleNodeSelection(id: string): void {
-    this.pathNodes.clear();
+    this.clearTrace();
     if (this.selectedNodes.has(id)) {
       this.selectedNodes.delete(id);
       if (this.selection?.type === "node" && this.selection.id === id) {
@@ -1753,16 +1959,39 @@ export class Graph {
    *  sends are not followed, or the always-wired mesh would light the whole board).
    *  The node stays selected; a leaf with no upstream just reports it. */
   private highlightPath(id: string): void {
-    const closure = upstreamNodes(this.plan, id, (c) => !this.isOffSend(c));
+    const closure = this.upstreamOf(id);
     // A leaf (an input) has only itself: nothing upstream to light.
     const hasPath = closure.size > 1;
-    if (hasPath) this.pathNodes = closure;
-    else this.pathNodes.clear();
+    this.clearTrace();
+    if (hasPath) {
+      this.pathNodes = closure;
+      this.pathRoot = id;
+    }
     this.redrawWires();
     this.highlightSelectedNode();
     this.cb.onStatus(
       hasPath ? t().status.pathTraced(this.labelOf(id), closure.size) : t().status.pathNone(this.labelOf(id)),
     );
+  }
+
+  /** The live signal closure feeding `id`, the node included. */
+  private upstreamOf(id: string): Set<string> {
+    return upstreamNodes(this.plan, id, (c) => !this.isOffSend(c));
+  }
+
+  private clearTrace(): void {
+    this.pathNodes.clear();
+    this.pathRoot = null;
+  }
+
+  /** Take the trace again from its root against the plan as it stands. A root no longer on
+   *  the board, or one nothing feeds any more, ends the trace. */
+  private retrace(): void {
+    const root = this.pathRoot;
+    if (root === null) return;
+    const closure = this.isHidden(root) ? null : this.upstreamOf(root);
+    if (closure && closure.size > 1) this.pathNodes = closure;
+    else this.clearTrace();
   }
 
   /** Clear any selection (used by the canvas, the action bar, and Escape). */
@@ -1772,6 +2001,7 @@ export class Graph {
   }
 
   private highlightSelectedNode(): void {
+    this.retrace();
     const anchor = this.selection?.type === "node" ? this.selection.id : null;
     // While a path trace is active, fade the off-path nodes so the lit chain stands
     // out in the node layer too — the same lit / faded split the wires already use.
@@ -1787,12 +2017,19 @@ export class Graph {
       // unread node keeps its own dim), and restore the rest to that base.
       const base = this.restingOpacity(node);
       const fadeOff = pathActive && !this.pathNodes.has(id);
-      el.setAttribute("opacity", String(fadeOff ? +(base * 0.3).toFixed(3) : base));
+      // A badged node carries its dim on its body, so the badge beside it keeps full
+      // strength; the node itself then carries the path fade alone.
+      const body = el.querySelector(":scope > .node-body");
+      if (body) {
+        body.setAttribute("opacity", String(base));
+        el.setAttribute("opacity", fadeOff ? "0.3" : "1");
+      } else el.setAttribute("opacity", String(fadeOff ? +(base * 0.3).toFixed(3) : base));
       const disabled = !on && !onPath && this.disabledNodes.has(id);
       // Unread frame ranks below selected/path/disabled but above the plain frame, so
       // a re-highlight restores it instead of reverting an unread node to normal.
       const unread = !on && !onPath && !disabled && this.unreadNodes.has(id) && !this.isNodeInactive(node);
       el.classList.toggle("selected", on);
+      el.setAttribute("aria-pressed", String(on));
       rect.setAttribute("stroke-width", on ? "2.5" : onPath ? "2" : disabled ? "1.5" : unread ? "1.2" : "1");
       rect.setAttribute(
         "stroke",
@@ -1802,10 +2039,16 @@ export class Graph {
       else if (unread) rect.setAttribute("stroke-dasharray", "2 3");
       else rect.removeAttribute("stroke-dasharray");
     }
-    // Raise the anchor node so its note panel sits above any neighbor below it.
+    this.syncRovingNode();
+    // Raise the anchor node so its note panel sits above any neighbor below it. Moving the
+    // element takes keyboard focus off it, so a focused anchor is focused again.
     if (anchor) {
       const el = this.nodeEls.get(anchor);
-      if (el) this.nodeLayer.append(el);
+      if (el) {
+        const focused = this.focusedNodeId() === anchor;
+        this.nodeLayer.append(el);
+        if (focused) el.focus({ preventScroll: true });
+      }
     }
   }
 
@@ -1987,6 +2230,13 @@ export class Graph {
   }
 
   private onPointerMove(e: PointerEvent): void {
+    // A mouse moving with no button held has released whatever it pressed, whether or not
+    // the release reached the page — the native context menu takes the right button's —
+    // so the press it started ends here rather than following the cursor.
+    if (mouseMovedUnpressed(e)) {
+      if (this.pointers.has(e.pointerId)) this.endLostPress(e.pointerId);
+      return;
+    }
     if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (this.pinch) {
       this.updatePinch();
@@ -2146,6 +2396,18 @@ export class Graph {
     this.endNodeDrag();
   }
 
+  /** End the press of a pointer whose release never arrived: a pan stops where it is, a
+   *  connect drag draws nothing, and a moved node is reported once. */
+  private endLostPress(pointerId: number): void {
+    this.pointers.delete(pointerId);
+    try {
+      this.svg.releasePointerCapture(pointerId);
+    } catch {
+      /* pointer was not captured */
+    }
+    this.cancelInteraction();
+  }
+
   private onPointerCancel(e: PointerEvent): void {
     this.pointers.delete(e.pointerId);
     if (this.pinch && this.pointers.size < 2) this.pinch = null;
@@ -2223,8 +2485,25 @@ export class Graph {
     this.zoom = z;
   }
 
+  /** A wheel gesture keeps the axis of its first event until it ends: a horizontal one (a
+   *  trackpad swipe sideways, a tilt wheel, Shift + wheel) pans the board by deltaX, a vertical
+   *  one zooms about the pointer, and a ctrl+wheel event — what a trackpad pinch arrives as —
+   *  zooms whichever axis the gesture holds. An event that does not move along the axis it is
+   *  read on does nothing. */
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
+    const now = performance.now();
+    const g = this.wheelGesture;
+    if (g && now - g.last <= WHEEL_GESTURE_GAP_MS) g.last = now;
+    else this.wheelGesture = { axis: Math.abs(e.deltaX) > Math.abs(e.deltaY) ? "x" : "y", last: now };
+    if (!e.ctrlKey && this.wheelGesture!.axis === "x") {
+      if (e.deltaX === 0) return;
+      this.autoFit = false;
+      this.pan.x -= e.deltaX;
+      this.applyTransform();
+      return;
+    }
+    if (e.deltaY === 0) return;
     this.autoFit = false;
     const rect = this.svg.getBoundingClientRect();
     const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
@@ -2233,6 +2512,46 @@ export class Graph {
   }
 
   // --- connecting ----------------------------------------------------------
+
+  /** Every jack of a drawn node a wire can be drawn from, each with the drawn ports a drag
+   *  from it would be taken on: the drag's own candidates (`connectCandidates`), so an
+   *  occupied receiver the drop replaces the wire on — STREAMING's source — is among them. */
+  connectOrigins(nodeId: string): ConnectOrigin[] {
+    const node = this.nodeById.get(nodeId);
+    if (!node || node.header || this.isHidden(nodeId)) return [];
+    const origins: ConnectOrigin[] = [];
+    for (const port of node.ports) {
+      const r = ref(nodeId, port.id);
+      for (const tap of port.direction === "out" && this.hasTapJack(node) ? [false, true] : [false]) {
+        const { legal } = this.connectCandidates(r, port.direction, tap);
+        const targets = [...legal].filter((t) => !this.isHidden(parseRef(t).nodeId));
+        origins.push({ ref: r, dir: port.direction, tap, targets });
+      }
+    }
+    return origins;
+  }
+
+  /** Draw a wire from `origin` to `other` through the drag's own commit, as a drag from that
+   *  jack released on that port does — refusals, a replaced source and a completed linked
+   *  pair included. */
+  connectTo(origin: ConnectOrigin, other: string): void {
+    if (!this.cb.mayEdit()) return;
+    const tapUsed = origin.dir === "out" ? origin.tap : this.isRecPointTap(other, origin.ref);
+    this.finishConnect(origin.ref, origin.dir, other, tapUsed);
+  }
+
+  /** Whether the board draws this wire: both its nodes are on the board, and the declutter
+   *  toggle is not hiding it as an off send. */
+  wireDrawn(from: string, to: string): boolean {
+    const conn = this.plan.connections.find((c) => c.from === from && c.to === to);
+    return !!conn && this.isWireShown(conn) && !(this.hideOffSends && this.isOffSend(conn));
+  }
+
+  /** Select a wire the board draws, as a press on it does; one it does not draw stays
+   *  unselected. */
+  selectConnection(from: string, to: string): void {
+    if (this.wireDrawn(from, to)) this.select({ type: "conn", from, to });
+  }
 
   // Enter connect mode from `ref`, highlighting the legal ports on the opposite
   // side and starting a rubber-band wire. Returns false (doing nothing) when the
@@ -2296,11 +2615,12 @@ export class Graph {
    *  tap for a USB / microSD target and its output otherwise.
    *
    *  Its own method because the highlight state lives ONLY in these elements, and a
-   *  render replaces every one of them: a device-follow reflect landing mid-drag left
+   *  render or a fine-grained repaint replaces them: a device-follow reflect landing mid-drag left
    *  the operator finishing the connection with no legality cues at all — the drag
    *  itself survives (the state is ref-based and elementFromPoint resolves the fresh
    *  hit discs), so nothing failed, it just went dark. On a dense board those cues are
-   *  the whole affordance. `repaintCandidates` re-runs it after a render. */
+   *  the whole affordance. `repaintCandidates` re-runs it after a render and after
+   *  `repaintDirtyNodes`. */
   private paintCandidates(from: string, dir: PortDirection, legal: Set<string>, possible: Set<string>): void {
     this.clearPortHighlights();
     for (const r of possible) {
@@ -2504,6 +2824,9 @@ export class Graph {
    * parent is placed — the child's position derives from it. */
   showNode(id: string): void {
     if (!this.cb.mayEdit()) return;
+    // A chip activated from the keyboard is gone once its node is back, so focus moves on.
+    const fromShelf = this.shelf.contains(document.activeElement);
+    const at = this.shelfChips().findIndex((c) => c.dataset.node === id);
     const parent = this.parentOf(id);
     let changed = this.hidden.delete(id);
     if (parent) {
@@ -2532,14 +2855,27 @@ export class Graph {
       [parent, partner].filter((x): x is string => x !== undefined && x !== null),
     );
     this.select({ type: "node", id });
+    // To the chip that took its place in the row (the last one when it was last), or, with
+    // the shelf now empty, to the node it brought back.
+    if (fromShelf) {
+      const chips = this.shelfChips();
+      const next = chips.length ? chips[Math.min(Math.max(at, 0), chips.length - 1)] : this.nodeEls.get(id);
+      next?.focus({ preventScroll: true });
+    }
     this.cb.onChange();
     this.cb.onStatus(t().status.shownNode(this.labelOf(id)));
+  }
+
+  /** The shelf's chips, in the order it shows them. */
+  private shelfChips(): HTMLButtonElement[] {
+    return [...this.shelf.querySelectorAll<HTMLButtonElement>("button.chip")];
   }
 
   /** Bring every shelved node back and re-frame the diagram. */
   showAll(): void {
     if (!this.hidden.size) return;
     if (!this.cb.mayEdit()) return;
+    const fromShelf = this.shelf.contains(document.activeElement);
     const returning = new Set(this.hidden);
     this.hidden.clear();
     this.commitHidden();
@@ -2555,10 +2891,78 @@ export class Graph {
       this.snapToLinkedPartner(id);
     }
     this.alignLinkedPairs();
+    this.restackReturning(returning);
     this.render();
     this.fitView();
+    // The shelf closes with every chip and Show all on it, so focus goes to the board's tab stop.
+    if (fromShelf) {
+      const stop = this.rovingId();
+      if (stop !== null) this.nodeEls.get(stop)?.focus({ preventScroll: true });
+    }
     this.cb.onChange();
     this.cb.onStatus(t().status.shownAll);
+  }
+
+  /** Move each returning unit that lands on another node to the foot of its column.
+   *
+   *  Arrange packs a column over the nodes on the board, so a shelved node comes back to a row
+   *  that has since been given to another one, and a member snapped beside its STEREO partner
+   *  lands on whatever Arrange put below that partner. A unit is a free-standing node that
+   *  returned, or that a returning hung child hangs from, with its linked partner on the board,
+   *  whether that partner returned too or is the one it was snapped to; its hung children come
+   *  with it. A hung child takes its place from its parent, so one that comes back onto another
+   *  node moves its parent with it. A unit moves when a node of it that came back from the shelf
+   *  stands on a node outside it; one whose returning nodes stand clear stays where it is, so a
+   *  Show all with nothing to restack writes no position. */
+  private restackReturning(returning: ReadonlySet<string>): void {
+    const placed = new Set<string>();
+    for (const node of this.model.nodes) {
+      if (!returning.has(node.id)) continue;
+      let root = node.id;
+      for (let up = this.parentOf(root); up !== undefined; up = this.parentOf(root)) root = up;
+      if (placed.has(root) || this.isHidden(root)) continue;
+      const partner = this.linkedPartnerOnBoard(root);
+      const members = (partner ? [root, partner] : [root]).sort(
+        (a, b) => defaultLayoutPos(this.nodeById.get(a)!).y - defaultLayoutPos(this.nodeById.get(b)!).y,
+      );
+      for (const id of members) placed.add(id);
+      const unit = new Set(members.flatMap((id) => [id, ...this.attachedDescendants(id)]));
+      const others = this.model.nodes.filter((n) => !unit.has(n.id) && !this.isHidden(n.id)).map((n) => n.id);
+      const back = [...unit].filter((id) => returning.has(id) && !this.isHidden(id));
+      const lands = back.some((id) => others.some((o) => this.boxesMeet(this.boxOf([id])!, this.boxOf([o])!)));
+      if (!lands) continue;
+      const col = this.nodeById.get(members[0])!.pos.col;
+      const x = MARGIN + col * COL_GAP;
+      let y = this.columnFoot(x, unit);
+      for (const id of members) {
+        this.plan.positions[id] = { x, y };
+        y += this.rowsFor(id) * ROW_GAP;
+      }
+    }
+  }
+
+  /** Where the next free row starts below every free-standing node standing across the
+   *  column at `x`, outside `skip`: each node's own row plus the rows Arrange advances past it
+   *  for its note and hung children. */
+  private columnFoot(x: number, skip: ReadonlySet<string>): number {
+    let foot = MARGIN;
+    for (const node of this.model.nodes) {
+      if (node.attachTo || skip.has(node.id) || this.isHidden(node.id)) continue;
+      const p = this.posOf(node.id);
+      if (p.x >= x + NODE_W - ALIGN_SLOP || x >= p.x + NODE_W - ALIGN_SLOP) continue;
+      foot = Math.max(foot, p.y + this.rowsFor(node.id) * ROW_GAP);
+    }
+    return foot;
+  }
+
+  /** Whether two drawn boxes overlap by more than float drift. */
+  private boxesMeet(a: { x: number; y: number; w: number; h: number }, b: typeof a): boolean {
+    return (
+      a.x < b.x + b.w - ALIGN_SLOP &&
+      b.x < a.x + a.w - ALIGN_SLOP &&
+      a.y < b.y + b.h - ALIGN_SLOP &&
+      b.y < a.y + a.h - ALIGN_SLOP
+    );
   }
 
   private commitHidden(): void {
@@ -2590,7 +2994,7 @@ export class Graph {
     for (const id of [...this.selectedNodes]) if (this.isHidden(id)) this.selectedNodes.delete(id);
     if (this.selectionIsStale()) {
       this.selection = null;
-      this.pathNodes.clear();
+      this.clearTrace();
       this.cb.onSelect(null);
     }
   }
@@ -2683,6 +3087,10 @@ export class Graph {
    * hidden alongside its (also hidden) parent gets no chip of its own — the
    * parent's chip restores the whole unit. */
   private renderShelf(): void {
+    this.rebuildChrome(this.shelf, () => this.buildShelf());
+  }
+
+  private buildShelf(): void {
     const ids = this.model.nodes
       // Chip every USER-shelved node (not merely hidden — a Track-Count-inactive
       // slot is hidden but gated, not shelved, so it gets no chip). A node whose
@@ -2710,6 +3118,7 @@ export class Graph {
       const chip = document.createElement("button");
       chip.type = "button";
       chip.className = "chip";
+      chip.dataset.node = id;
       chip.style.setProperty("--rail", this.palette.rail[node.kind]);
       chip.title = m.shelf.restore(fullLabel(node));
       const name = document.createElement("span");
@@ -2737,6 +3146,10 @@ export class Graph {
    *  nodes selected (a single selection keeps using the inspector). The hide
    *  button shelves every selected node. */
   private renderSelBar(): void {
+    this.rebuildChrome(this.selbar, () => this.buildSelBar());
+  }
+
+  private buildSelBar(): void {
     // Only count nodes still on the canvas — a stale shelved id never inflates it.
     const ids = [...this.selectedNodes].filter((id) => this.nodeEls.has(id));
     if (ids.length < 2) {
@@ -2865,6 +3278,10 @@ export class Graph {
     const res = await exportSvgToPdf(svg, filename, opts, { ext: "pdf", label: t().filter.pdf });
     this.cb.onStatus(exportStatus(res, t().status.pdfExported));
   }
+}
+
+function sameSet<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
+  return a.size === b.size && [...a].every((x) => b.has(x));
 }
 
 /** Map a save result to a status line: the saved path, generic done, or cancel. */

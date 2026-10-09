@@ -16,10 +16,17 @@ import type { ConsoleMidiHooks } from "./console";
 import { sendConnection } from "../core/plan";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { nodeParamContestPath } from "../core/plan-history";
-import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS, insertFxSelected } from "../core/control/params";
+import {
+  COLOR_OFF,
+  COLOR_PALETTE,
+  INSERT_FX_OPTIONS,
+  OUTPUT_INSERT_FX_OPTIONS,
+  insertFxSelected,
+} from "../core/control/params";
 import { insertFxControl, planToCommands } from "../core/control/translate";
 import { getModel } from "../models";
 import { fxEffectTypes } from "../core/control/fx-effect";
+import { insertFxDefaults, insertFxWritableSlots } from "../core/control/insert-fx-effect";
 import { defaultPlan } from "../models/initial-state";
 import { t } from "../i18n";
 
@@ -65,6 +72,19 @@ describe("the main fader", () => {
     expect(r.readDb!.textContent).toBe("-∞");
     key(r.fader!, "Home");
     expect(r.readDb!.classList.contains("off")).toBe(false);
+  });
+
+  // The same helper as a rack column's: −∞ is the first detent, so the first step up from
+  // it is the floor detent and a wheel notch is one Arrow.
+  it("steps out of −∞ onto the floor detent", () => {
+    h = consoleHost();
+    const r = h.strip("ch1");
+    key(r.fader!, "End");
+    key(r.fader!, "ArrowUp");
+    expect(main("ch1")).toBe(-96);
+    key(r.fader!, "End");
+    wheel(r.fader!, 1);
+    expect(main("ch1")).toBe(-96);
   });
 
   /** Press the fader at a page y, then release without moving. */
@@ -174,6 +194,26 @@ describe("the main fader", () => {
     // And the capture goes with it: on this end no engine drops it, and one left behind
     // routes the next press for that pointer id to this fader instead of to the control
     // the operator pressed.
+    expect(fader.hasPointerCapture(1)).toBe(false);
+  });
+
+  // The native context menu takes the release of the press that opened it, so the page
+  // hears a right press and then a mouse moving with no button held. That move ends the
+  // drag; a move with the button held still drives it.
+  it("ends a fader drag at a mouse move with no button held", () => {
+    h = consoleHost();
+    const fader = h.strip("ch1").fader!;
+    const mouse = (type: string, clientY: number, init: PointerEventInit = {}): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, cancelable: true, clientY, pointerId: 1, pointerType: "mouse", ...init });
+    fader.dispatchEvent(mouse("pointerdown", 100, { button: 2, buttons: 2 }));
+    const pressed = main("ch1");
+    window.dispatchEvent(mouse("pointermove", 70, { buttons: 2 }));
+    const moved = main("ch1");
+    expect(moved).not.toBe(pressed);
+
+    window.dispatchEvent(mouse("pointermove", 40, { buttons: 0 }));
+    window.dispatchEvent(mouse("pointermove", 10, { buttons: 0 }));
+    expect(main("ch1")).toBe(moved);
     expect(fader.hasPointerCapture(1)).toBe(false);
   });
 
@@ -390,6 +430,121 @@ describe("a head knob", () => {
     window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
   });
 
+  // The TIME knob moves the way the unit's own Delay Time knob does: a key or a wheel notch
+  // moves 1.00 ms and keeps the hundredths (45.86 -> 46.86), the fine (Shift) step moves
+  // 0.02 ms, and neither rounds — a held odd centi-ms stays odd (3.41 -> 4.41 -> 3.41 and
+  // 3.41 -> 3.43 -> 3.41 on the unit). The ends stop at 1.00 and 1000.00 ms. On-grid whole
+  // values are the control: they step one millisecond either way.
+  it("moves the TIME knob 1.00 ms keeping the hundredths, and 0.02 ms in fine mode", () => {
+    h = consoleHost();
+    const time = (): number | undefined => h.plan.nodeParams["bus.stream"]?.delay?.time;
+    const knob = (): HTMLElement =>
+      h.strip("bus.stream").root.querySelector<HTMLElement>(".con-gain.has-fine .con-knob")!;
+    const from = (v: number): HTMLElement => {
+      const np = (h.plan.nodeParams["bus.stream"] ??= {});
+      np.delay = { ...np.delay, time: v };
+      h.view.refresh();
+      return knob();
+    };
+
+    key(from(12), "ArrowDown");
+    expect(time()).toBe(11);
+    key(from(12), "ArrowUp");
+    expect(time()).toBe(13);
+
+    key(from(45.86), "ArrowUp");
+    expect(time()).toBe(46.86);
+    key(from(45.86), "ArrowDown");
+    expect(time()).toBe(44.86);
+    wheel(from(45.86), 1);
+    expect(time()).toBe(46.86);
+    wheel(from(45.86), -1);
+    expect(time()).toBe(44.86);
+    key(from(45.86), "ArrowUp", { shiftKey: true });
+    expect(time()).toBe(45.88);
+    key(from(45.86), "ArrowDown", { shiftKey: true });
+    expect(time()).toBe(45.84);
+
+    key(from(3.41), "ArrowUp");
+    expect(time()).toBe(4.41);
+    key(knob(), "ArrowDown");
+    expect(time()).toBe(3.41);
+    key(from(3.41), "ArrowUp", { shiftKey: true });
+    expect(time()).toBe(3.43);
+    key(knob(), "ArrowDown", { shiftKey: true });
+    expect(time()).toBe(3.41);
+    key(from(45.87), "ArrowUp");
+    expect(time()).toBe(46.87);
+    wheel(from(45.87), -1);
+    expect(time()).toBe(44.87);
+
+    key(from(999.5), "ArrowUp");
+    expect(time()).toBe(1000);
+    key(from(1.5), "ArrowDown");
+    expect(time()).toBe(1);
+    key(from(1000), "ArrowUp");
+    expect(time()).toBe(1000);
+    key(from(1), "ArrowDown", { shiftKey: true });
+    expect(time()).toBe(1);
+
+    // The double-click still resets to the factory value.
+    from(45.86).dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(time()).toBe(defaultPlan("URX44V").nodeParams["bus.stream"]?.delay?.time);
+  });
+
+  // A drag keeps its own mapping (the full range over 150 px coarse, one fine step per pixel
+  // in fine mode) and lands on the 0.02 ms grid in both.
+  it("lands a TIME knob drag on the 0.02 ms grid", () => {
+    h = consoleHost();
+    const knob = h.strip("bus.stream").root.querySelector<HTMLElement>(".con-gain.has-fine .con-knob")!;
+    const time = (): number => h.plan.nodeParams["bus.stream"]!.delay!.time!;
+    const onGrid = (v: number): boolean => Math.abs(v * 50 - Math.round(v * 50)) < 1e-6;
+    for (const [dy, shift] of [
+      [1, false],
+      [7, false],
+      [3, true],
+      [11, true],
+    ] as const) {
+      knob.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      dragY(knob, dy, { shift });
+      expect(time(), `${dy} px${shift ? " fine" : ""}`).toBeGreaterThan(1);
+      expect(onGrid(time()), `${time()} after ${dy} px${shift ? " fine" : ""}`).toBe(true);
+    }
+    knob.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    dragY(knob, 1);
+    // One pixel coarse is the range over 150 px, 6.66 ms, on the grid at 7.66 ms.
+    expect(time()).toBe(7.66);
+  });
+
+  // A knob with no grid of its own snaps a key or a wheel notch in the direction of travel:
+  // from a value between two step points the next point that way, never the nearest one past
+  // it. The OSCILLATOR LEVEL knob steps 1 dB; on-grid values are the control.
+  it("steps a knob with no grid to the adjacent step point from a value between two", () => {
+    h = consoleHost();
+    const level = (): number | undefined => h.plan.nodeParams["bus.osc"]?.osc?.level;
+    const from = (v: number): HTMLElement => {
+      const np = (h.plan.nodeParams["bus.osc"] ??= {});
+      np.osc = { ...np.osc, level: v };
+      h.view.refresh();
+      return h.strip("bus.osc").root.querySelector<HTMLElement>(".con-gain .con-knob")!;
+    };
+
+    key(from(-14), "ArrowDown");
+    expect(level()).toBe(-15);
+    key(from(-14), "ArrowUp");
+    expect(level()).toBe(-13);
+    key(from(-14.34), "ArrowDown");
+    expect(level()).toBe(-15);
+    key(from(-14.34), "ArrowUp");
+    expect(level()).toBe(-14);
+    key(from(-14.6), "ArrowUp");
+    expect(level()).toBe(-14);
+    key(from(-14.6), "ArrowDown");
+    expect(level()).toBe(-15);
+    wheel(from(-14.34), -1);
+    expect(level()).toBe(-15);
+  });
+
   it("arms for MIDI instead of moving while learn is on", () => {
     const armed: string[] = [];
     h = consoleHost({ midi: learnHooks(armed) });
@@ -400,6 +555,86 @@ describe("a head knob", () => {
     knob.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     expect(knob.getAttribute("aria-valuenow")).toBe(before);
     expect(armed.length).toBeGreaterThan(0);
+  });
+});
+
+// aria-valuenow is a number the slider role reads against a range, and without one the range
+// is 0..100: a −8 dB gain, a fader at −96 dB and a pan at L10 all read as 0 there. Each
+// slider carries its own range with its value inside it, and a valuetext that says what its
+// face says — which is also what tells −∞ from the floor detent, and the detents either side
+// of 0 dB from each other, where the rounded number is one value for both.
+describe("what each slider exposes", () => {
+  it("carries its own range with its value inside it, and a valuetext", () => {
+    h = consoleHost();
+    h.strip("ch1").root.querySelector<HTMLButtonElement>(".con-panbtn")!.click(); // the SEND PAN knobs too
+    const sliders = [...h.host.querySelectorAll<HTMLElement>('[role="slider"]')];
+    const kinds = new Set(sliders.map((s) => s.classList[0]));
+    expect([...kinds].sort(), "every kind of slider is in the sample").toEqual(["con-fader", "con-knob", "con-vfad"]);
+    expect(
+      sliders.some((s) => s.closest(".con-spop")),
+      "a SEND PAN knob is in the sample",
+    ).toBe(true);
+    for (const s of sliders) {
+      const what = `${s.className} "${s.getAttribute("aria-label")}"`;
+      for (const attr of ["aria-valuenow", "aria-valuemin", "aria-valuemax", "aria-valuetext"])
+        expect(s.getAttribute(attr), `${what} ${attr}`).toBeTruthy();
+      const now = Number(s.getAttribute("aria-valuenow"));
+      expect(Number(s.getAttribute("aria-valuemin")), what).toBeLessThanOrEqual(now);
+      expect(now, what).toBeLessThanOrEqual(Number(s.getAttribute("aria-valuemax")));
+    }
+  });
+
+  it("reads the main fader's −∞ apart from the floor, and the detents either side of 0 dB apart", () => {
+    h = consoleHost();
+    const text = (): string | null => h.strip("ch1").fader!.getAttribute("aria-valuetext");
+    key(h.strip("ch1").fader!, "End");
+    expect(text()).toBe("off (-∞)");
+    key(h.strip("ch1").fader!, "ArrowUp");
+    expect(text()).toBe("-96.0 dB");
+
+    const c = sendConnection(h.plan, "ch1", "bus.stereo")!;
+    c.params = { ...c.params, level: -1.2 };
+    h.view.refresh();
+    const seen: Array<string | null> = [];
+    for (let i = 0; i < 3; i++) {
+      key(h.strip("ch1").fader!, "ArrowUp");
+      seen.push(text());
+    }
+    expect(seen).toEqual(["-0.4 dB", "0.0 dB", "+0.4 dB"]);
+    expect(text(), "the readout's own text, with its unit").toBe(h.strip("ch1").readDb!.textContent + " dB");
+  });
+
+  it("reads a knob as its face prints it", () => {
+    h = consoleHost();
+    const box = [...h.strip("ch1").root.querySelectorAll<HTMLElement>(".con-gain")].find(
+      (b) => b.querySelector(".con-knob")?.getAttribute("aria-label") === "PAN",
+    )!;
+    const knob = box.querySelector<HTMLElement>(".con-knob")!;
+    for (let i = 0; i < 10; i++) key(knob, "ArrowLeft");
+    expect(knob.getAttribute("aria-valuenow")).toBe("-10");
+    expect(knob.getAttribute("aria-valuetext")).toBe("L10");
+    expect(box.querySelector(".val")!.textContent).toBe("L10");
+  });
+});
+
+// Every strip repeats the same controls under the same names — MUTE, PAN, an "FX 1" send
+// fader — so the strip root is a group named by its node, which is what says which channel
+// one of them belongs to when it is reached any way other than a Tab walk from the scribble.
+describe("the strip root", () => {
+  it("is a group named by its node, meter-only strips included", () => {
+    h = consoleHost();
+    const strips = [...h.host.querySelectorAll<HTMLElement>(".con-strip")];
+    expect(
+      strips.some((s) => s.classList.contains("meter-only")),
+      "a meter-only strip is in the sample",
+    ).toBe(true);
+    for (const s of strips) {
+      const name = s.querySelector(".con-scribble .name .txt")!.textContent;
+      expect(s.getAttribute("role"), name ?? "").toBe("group");
+      expect(s.getAttribute("aria-label")).toBe(name);
+    }
+    // The main fader carries the same name, which is the channel the group says.
+    expect(h.strip("ch1").root.getAttribute("aria-label")).toBe(h.strip("ch1").fader!.getAttribute("aria-label"));
   });
 });
 
@@ -668,15 +903,54 @@ describe("the INS FX chip", () => {
       expect(now.insertFxOn).toBe(true);
       // The half that says the press was not merely cosmetic: the selector the unit is
       // given now carries the chosen effect, where the stale value was sent as No Effect.
-      // Asserted on the SELECTOR and not on the engine array — translate writes only the
-      // slots the plan carries, and a freshly chosen effect carries none, so a count there
-      // would be zero for the right reason and prove nothing.
       const sent = planToCommands(getModel("URX44V"), h.plan)
         .filter((c) => c.name === "INSERT_FX")
         .map((c) => c.planValue);
       expect(sent).toContain(now.insertFx);
       expect(sent).not.toContain(stale);
     });
+  });
+
+  // The scribble paints a plan colour as its palette swatch and nothing else: Off is the unit's
+  // no-colour, and a string that is no plan colour — which the load drops, and nothing else writes —
+  // never reaches the style, where a url() would be fetched and a short hex inked white.
+  it("paints a scribble only with a palette colour", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeColors = {
+      ...plan.nodeColors,
+      ch1: COLOR_OFF,
+      ch2: "url(https://example.invalid/x)",
+      ch3: "#ff0",
+      ch4: COLOR_PALETTE[6].hex.toUpperCase(),
+    };
+    h = consoleHost({ plan });
+    const scribble = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-scribble")!;
+    for (const id of ["ch1", "ch2", "ch3"]) {
+      expect(scribble(id).style.background, id).toBe("");
+      expect(scribble(id).getAttribute("style") ?? "", id).not.toContain("url(");
+    }
+    expect(scribble("ch4").style.background).not.toBe("");
+  });
+
+  // The unit fills the engine with the type's defaults on the transition into it and not on a  // The unit fills the engine with the type's defaults on the transition into it and not on a
+  // same-value write, so the selection puts them in the plan, where the screen reads them and the
+  // write sends them — and names them as defaults rather than as values the operator chose.
+  it("seeds the chosen type's defaults and names them as defaults", () => {
+    h = consoleHost();
+    openerOf("ch1").click();
+    popRow("Compander-S").click();
+    const expected = insertFxDefaults("compander", 1794);
+    const slots = insertFxWritableSlots("compander").map((s) => s.slot);
+    expect(h.plan.nodeParams.ch1!.insertFxParams).toEqual(
+      Object.fromEntries(slots.map((slot) => [`compander:${slot}`, expected[slot]])),
+    );
+    expect([...h.changeDefaults().at(-1)!].map(([id, path]) => `${id} ${path}`).sort()).toEqual(
+      slots.map((slot) => `ch1 insertFxParams.compander:${slot}`).sort(),
+    );
+    const engine = planToCommands(getModel("URX44V"), h.plan).filter(
+      (c) => c.node === "ch1" && c.name === "INSERT_FX_EFFECT",
+    );
+    expect(engine.length).toBeGreaterThanOrEqual(slots.length);
   });
 
   // The positive control for the pair above: an effect the node's own control DOES carry

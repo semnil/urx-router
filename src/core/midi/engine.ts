@@ -24,7 +24,7 @@ export interface EngineHooks {
   refused?(reason: string): void;
   /** A write the control itself refused (`BoundControl.refuses`): nothing was edited. */
   declined?(control: BoundControl, why: ControlRefusal): void;
-  /** Send feedback bytes out (caller no-ops when no output port is open). */
+  /** Send feedback bytes out. Called only on a pass that delivers (see `feedback`). */
   send(bytes: number[]): void;
   /** MIDI-learn resolved an address. */
   learned(addr: MidiAddr): void;
@@ -66,6 +66,11 @@ const RECENT_MS = 300;
 // The intervening release (0) does not disarm it, since 0 ≠ 127.
 const ECHO_MS = 50;
 
+/** The key a 14-bit CC pair's assembly state is held under, by its MSB controller. */
+function pairKey(channel: number, msbController: number): string {
+  return `${channel}:${msbController}`;
+}
+
 interface PickupState {
   engaged: boolean;
   lastIn: number | null;
@@ -96,7 +101,10 @@ export class MidiEngine {
   private mappings: MidiMapping[] = [];
   private byKey = new Map<string, MidiMapping[]>();
   private pickup = new Map<string, PickupState>();
-  private pair = new Map<string, { msb: number; lsb: number }>(); // cc14 assembly
+  /** cc14 assembly per pair: the last MSB and LSB received, or the two halves the last
+   *  feedback pass SENT on that pair (see `emit`). `msb` is null until either has happened
+   *  since the last reset. */
+  private pair = new Map<string, { msb: number | null; lsb: number }>();
   private lastSent = new Map<string, number>(); // last raw value fed back per address
   /** The plan value each address carried at the last pass, whether or not that pass put
    *  anything on the wire. Separate from `lastSent`, which is a claim about the
@@ -468,7 +476,7 @@ export class MidiEngine {
       const raw = wireRaw(mapping.addr, after);
       this.lastSent.set(key, raw);
       // The pass's own record of the plan, kept here as well: a pass may not have run
-      // for this address yet (no output port, or an offline stretch), and without a
+      // for this address yet (no plan change has scheduled one), and without a
       // value to compare against the first one that does cannot tell a plan that moved
       // under the physical control from one it has simply never watched.
       this.lastSeen.set(key, raw);
@@ -516,7 +524,9 @@ export class MidiEngine {
     if (ev.type === "pitchbend") {
       incoming = ev.value / 16383;
     } else if (mapping.addr.type === "cc14") {
-      incoming = this.assemblePair(mapping.addr.channel, mapping.addr.controller, ev) / 16383;
+      const raw = this.assemblePair(mapping.addr.channel, mapping.addr.controller, ev);
+      if (raw === null) return null;
+      incoming = raw / 16383;
     } else {
       incoming = ev.value / 127;
     }
@@ -527,18 +537,27 @@ export class MidiEngine {
       const engaged = isHead ? this.pickupEngaged(key, incoming, current) : (this.pickup.get(key)?.engaged ?? false);
       if (!engaged) return null;
     }
+    // A 14-bit position equal to the one the control's value already encodes to edits
+    // nothing. That is the position its own feedback carries, so an echo of it re-enters
+    // as no edit whatever the value — one the codec's grid does not hold (a factory or
+    // device-read value, a fine-mode step, a setting finer than the wire) included.
+    // Asked after the pickup bookkeeping, so the crossing state still records the message.
+    const steps = wireSteps(mapping.addr);
+    if (steps !== 127 && Math.round(incoming * steps) === wireRaw(mapping.addr, current)) return null;
     return incoming;
   }
 
   // 14-bit CC pair assembly: keep the last MSB/LSB per pair and combine on every
-  // half, so an MSB-only sweep still moves coarsely and MSB+LSB is exact.
-  private assemblePair(channel: number, msbController: number, ev: CcEvent): number {
-    const key = `${channel}:${msbController}`;
-    const st = this.pair.get(key) ?? { msb: 0, lsb: 0 };
+  // half, so an MSB-only sweep still moves coarsely and MSB+LSB is exact. An LSB that
+  // arrives while the pair's MSB is unknown (none received or sent since the last reset) is
+  // kept for the MSB that follows and edits nothing on its own (null).
+  private assemblePair(channel: number, msbController: number, ev: CcEvent): number | null {
+    const key = pairKey(channel, msbController);
+    const st = this.pair.get(key) ?? { msb: null, lsb: 0 };
     if (ev.controller === msbController) st.msb = ev.value;
     else st.lsb = ev.value;
     this.pair.set(key, st);
-    return (st.msb << 7) | st.lsb;
+    return st.msb === null ? null : (st.msb << 7) | st.lsb;
   }
 
   // Pickup: swallowed until the physical value reaches (±eps) or crosses the
@@ -623,18 +642,11 @@ export class MidiEngine {
       // and Q, GATE attack / hold / decay, COMP attack / release / ratio), while
       // every console-level control round-trips unchanged.
       //
-      // The 14-bit forms are deliberately left unarmed. A cc14 echo cannot be matched
-      // here at all — it arrives as two 7-bit halves — and neither needs to be: at 14
-      // bits that same sweep found no control whose READING fails to round-trip, so their
-      // echo re-enters the same plan value and edits nothing. That is the load-bearing half
-      // of this decision rather than an aside, so it is pinned in controls.test.ts.
-      // ONE control is an exception, and it is stated here rather than left to be
-      // rediscovered: the Mono Delay time carries more settings than the wire has
-      // positions (27000 against 16384), so an echo of its own feedback snaps it to the
-      // nearest addressable value — one raw, and idempotent from there. The move stays
-      // visible: a cc14 arrives as two messages, so the intermediate value differs and
-      // `applied` fires, which puts it on the dirty flag and in the undo ledger rather
-      // than only in the plan. `controls.test.ts` pins both halves.
+      // The 14-bit forms are left unarmed. A cc14 echo cannot be matched here at all — it
+      // arrives as two 7-bit halves — and neither form needs to be: `continuousTarget`
+      // refuses an incoming 14-bit position equal to the one the plan's own value encodes
+      // to, which is the position this pass sends, and `emit` records the halves of a cc14
+      // so each echoed half assembles to that position rather than against a stale one.
       // Asked of the address' resolution rather than of its type: the property is what
       // decides, and `wireSteps` is the one place a new address type has to choose.
       if (deliver && wireSteps(mapping.addr) === 127) {
@@ -713,6 +725,10 @@ export class MidiEngine {
       case "cc14":
         this.hooks.send(encodeCc(addr.channel, addr.controller, (raw >> 7) & 0x7f));
         this.hooks.send(encodeCc(addr.channel, addr.controller + 32, raw & 0x7f));
+        // What the controller was just told is the pair's state: a half it sends back, or
+        // an LSB it moves alone, assembles against the other half it was sent. Recorded
+        // here, on the send, and on no pass that leaves the wire alone.
+        this.pair.set(pairKey(addr.channel, addr.controller), { msb: (raw >> 7) & 0x7f, lsb: raw & 0x7f });
         break;
       case "note":
         this.hooks.send(encodeNote(addr.channel, addr.note, raw >= 64));

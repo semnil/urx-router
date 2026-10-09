@@ -1,6 +1,6 @@
-import { test, expect, scrollsByWheel } from "./fixtures";
+import { test, expect, scrollsByWheel, textContrast } from "./fixtures";
 import type { Page } from "./fixtures";
-import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+import { LIVE_COMMANDS, answerTimingOf, stubTauriBoot, stubTauriDevice, untilAnswered } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 
 // Preferences modal (toolbar gear). The gear is an independent entry available
@@ -13,6 +13,17 @@ test.describe("plain browser", () => {
     await page.addInitScript(() => localStorage.setItem("urx-lang", "en"));
     await page.goto("/");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  });
+
+  // The tag says why the row is locked, so it keeps the dim tier's ink while the row it
+  // sits on dims; in the light theme that tier has no room for a fade.
+  test("the desktop-only tag clears AA in the light theme", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+    await page.reload();
+    await page.click("#btn-prefs");
+    const tag = page.locator("#prefs-device-scope").locator("..").locator(".prefs-lock");
+    await expect(tag).toHaveText("Desktop app only");
+    expect(await textContrast(page, tag)).toBeGreaterThanOrEqual(4.5);
   });
 
   test("the gear opens the modal; desktop-only rows are locked and tagged", async ({ page }) => {
@@ -135,6 +146,33 @@ test.describe("plain browser", () => {
     await close.click();
     await expect(page.locator("#prefs-modal")).toBeHidden();
   });
+
+  // A change rebuilds the modal, and the grid it rebuilds is the scrolling region. The
+  // control the operator used and the offset they scrolled to both survive it, or the next
+  // Tab starts again from the top of the box and a scrolled grid jumps back to its start.
+  test("a change keeps the focused control and the grid's scroll offset", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 420 });
+    await page.click("#btn-prefs");
+    const grid = page.locator(".prefs-grid");
+    const scale = page.getByRole("combobox", { name: "Export scale", exact: true });
+    await scale.focus();
+    const before = await grid.evaluate((el) => el.scrollTop);
+    // The premise: focusing the row scrolled the grid, so there is an offset to lose.
+    expect(before).toBeGreaterThan(0);
+    await chooseOption(scale, "3");
+    await expect(scale).toHaveValue("3");
+    await expect(scale).toBeFocused();
+    expect(await grid.evaluate((el) => el.scrollTop)).toBe(before);
+
+    // A face pressed from the keyboard rebuilds the modal the same way.
+    const latch = page.locator('#prefs-fine button:has-text("Latch")');
+    await latch.focus();
+    const at = await grid.evaluate((el) => el.scrollTop);
+    await page.keyboard.press("Space");
+    await expect(latch).toHaveAttribute("aria-pressed", "true");
+    await expect(latch).toBeFocused();
+    expect(await grid.evaluate((el) => el.scrollTop)).toBe(at);
+  });
 });
 
 test("the desktop shell unlocks the device rows (stubbed Tauri)", async ({ page }) => {
@@ -170,11 +208,74 @@ test("every dismissal locks while a check is in flight (stubbed Tauri)", async (
   await page.keyboard.press("Escape");
   await expect(page.locator("#prefs-modal")).toBeVisible();
   await expect(page.locator("#prefs-modal .consent-btn-secondary")).toBeDisabled();
-  // Settled: the outcome lands and every dismissal returns.
+  // The grid's controls are disabled for the flight, Check now among them.
+  await expect(page.locator("#prefs-lang")).toBeDisabled();
+  await expect(page.locator("#prefs-device-scope button").first()).toBeDisabled();
+  await expect(page.locator("#prefs-update-now")).toBeDisabled();
+  // Settled: the outcome lands and every dismissal and control returns.
   await expect(page.locator("#prefs-update-note")).toHaveText("Already up to date.");
   await expect(page.locator("#prefs-modal .consent-btn-secondary")).toBeEnabled();
+  await expect(page.locator("#prefs-lang")).toBeEnabled();
+  await expect(page.locator("#prefs-device-scope button").first()).toBeEnabled();
+  await expect(page.locator("#prefs-update-now")).toBeEnabled();
+  await expect(page.locator("#prefs-update-now")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.locator("#prefs-modal")).toBeHidden();
+});
+
+// The flight disables every control of the grid, and each one has to look it: a toggle or a
+// select left at its live face reads as usable while it refuses the press.
+test("every control a check disables wears the disabled face while it runs (stubbed Tauri)", async ({ page }) => {
+  await stubTauriBoot(page);
+  // The updater's answer is held until the case releases it.
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      __TAURI_INTERNALS__: { invoke: (cmd: string) => Promise<unknown> };
+      __urxReleaseCheck?: () => void;
+    };
+    const invoke = w.__TAURI_INTERNALS__.invoke.bind(w.__TAURI_INTERNALS__);
+    w.__TAURI_INTERNALS__.invoke = (cmd: string, ...rest: unknown[]) => {
+      if (cmd === "plugin:updater|check") return new Promise((r) => (w.__urxReleaseCheck = () => r(null)));
+      return (invoke as (...a: unknown[]) => Promise<unknown>)(cmd, ...rest);
+    };
+  });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-prefs");
+  // Every control of the grid outside a locked row, with the face it computes.
+  const faces = () =>
+    page.locator(".prefs-grid").evaluate((grid) =>
+      [...grid.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("button, select")]
+        .filter((c) => !c.closest(".prefs-row.locked"))
+        .map((c) => {
+          const s = getComputedStyle(c);
+          return { control: c.id || c.textContent?.trim() || c.className, opacity: s.opacity, cursor: s.cursor };
+        }),
+    );
+  const live = await faces();
+  // The premise: the grid holds the three kinds of control the flight disables.
+  expect(live.map((f) => f.control)).toEqual(expect.arrayContaining(["prefs-lang", "prefs-update-now"]));
+  expect(await page.locator(".prefs-grid .prefs-toggle button").count()).toBeGreaterThan(0);
+  expect(live.filter((f) => f.opacity !== "1")).toEqual([]);
+
+  await page.click("#prefs-update-now");
+  await expect(page.locator("#prefs-update-note")).toHaveText("Checking…");
+  await page.waitForFunction(() => typeof (window as { __urxReleaseCheck?: unknown }).__urxReleaseCheck === "function");
+  await expect(page.locator("#prefs-update-now")).toBeDisabled();
+  const check = await page
+    .locator("#prefs-update-now")
+    .evaluate((c) => ({ opacity: getComputedStyle(c).opacity, cursor: getComputedStyle(c).cursor }));
+  expect(check.cursor).toBe("not-allowed");
+  expect(Number(check.opacity)).toBeLessThan(1);
+  const held = await faces();
+  expect(held.length).toBe(live.length);
+  expect(held.filter((f) => f.opacity !== check.opacity || f.cursor !== check.cursor)).toEqual([]);
+
+  // Settled: the faces come back with the controls.
+  await page.evaluate(() => (window as unknown as { __urxReleaseCheck: () => void }).__urxReleaseCheck());
+  await expect(page.locator("#prefs-update-note")).toHaveText("Already up to date.");
+  await expect(page.locator("#prefs-update-now")).toBeEnabled();
+  expect((await faces()).filter((f) => f.opacity !== "1" || f.cursor === "not-allowed")).toEqual([]);
 });
 
 test("Check now reports 'up to date' inline and keeps the modal open (stubbed Tauri)", async ({ page }) => {
@@ -205,10 +306,23 @@ async function recordKeepAwake(page: Page, refuse = false): Promise<void> {
     internals.invoke = (cmd: string, ...rest: unknown[]) => {
       if (cmd !== "set_keep_awake") return (invoke as (...a: unknown[]) => Promise<unknown>)(cmd, ...rest);
       calls.push(Boolean((rest[0] as { on?: boolean })?.on));
-      return deny ? Promise.reject(new Error("PowerCreateRequest failed")) : Promise.resolve(null);
+      // Recorded when it is sent; the answer settles through the stub's queue.
+      return window.__urxAnswerLater(
+        cmd,
+        deny ? Promise.reject(new Error("PowerCreateRequest failed")) : Promise.resolve(null),
+      );
     };
   }, refuse);
 }
+
+test("the keep-awake recorder answers on a later task, in the order asked (stubbed Tauri)", async ({ page }) => {
+  await stubTauriBoot(page);
+  await recordKeepAwake(page, true);
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  const cmds = ["set_keep_awake", "experimental_enabled"];
+  expect(await answerTimingOf(page, cmds)).toEqual({ inSendingTask: [], order: cmds });
+});
 
 const keepAwakeCalls = (page: Page): Promise<boolean[]> =>
   page.evaluate(() => (window as unknown as { __urxKeepAwake: boolean[] }).__urxKeepAwake);
@@ -231,6 +345,8 @@ test("the toggle stores the preference off-line without asking the OS (stubbed T
   expect(await keepAwakeCalls(page)).toEqual([]);
   await page.reload();
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  // Asked once the boot's launch-flag answer has reached the app.
+  await untilAnswered(page, "experimental_enabled");
   expect(await keepAwakeCalls(page)).toEqual([]);
 });
 
@@ -240,15 +356,17 @@ test("Live sync takes the hold and ending it releases (stubbed device)", async (
   await recordKeepAwake(page);
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
-  // Nothing held while the board is off-line, however the preference reads.
+  // Nothing held while the board is off-line, however the preference reads — asked once the
+  // boot's launch-flag answer has reached the app.
+  await untilAnswered(page, "experimental_enabled");
   expect(await keepAwakeCalls(page)).toEqual([]);
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await expect.poll(() => keepAwakeCalls(page)).toEqual([true]);
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
   await expect.poll(() => keepAwakeCalls(page)).toEqual([true, false]);
 });
 
@@ -259,7 +377,7 @@ test("with the preference off a session holds nothing (stubbed device)", async (
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   // Only the difference is sent: the target never leaves false, so the OS is
   // never called at all.
   expect(await keepAwakeCalls(page)).toEqual([]);
@@ -272,7 +390,7 @@ test("a refused hold leaves the row OFF and says why (stubbed device)", async ({
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await page.click("#btn-prefs");
   await page.click('#prefs-prevent-sleep button:has-text("ON")');
   await expect(page.locator("#prefs-sleep-error")).toContainText("Could not change the sleep setting");

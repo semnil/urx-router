@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MidiEngine } from "./engine";
 import type { MidiAddr, MidiMapping } from "./mapping";
-import { encodeCc, encodeNote } from "./message";
+import { encodeCc, encodeNote, encodePitchBend } from "./message";
 import { fake, type Fake } from "./fake-control.test-util";
 
 let controls: Map<string, Fake>;
@@ -135,20 +135,6 @@ describe("incoming application", () => {
     expect(n.value).toBe(0);
   });
 
-  it("pickup swallows input until the physical value reaches or crosses the plan value", () => {
-    const c = fake("ch1/level", "continuous", 0.5);
-    controls.set(c.id, c);
-    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
-    engine.onMessage(encodeCc(0, 7, 20)); // far below → swallowed
-    expect(c.value).toBe(0.5);
-    engine.onMessage(encodeCc(0, 7, 40)); // still below → swallowed
-    expect(c.value).toBe(0.5);
-    engine.onMessage(encodeCc(0, 7, 70)); // crossed 0.5 → engaged, applies
-    expect(c.value).toBeCloseTo(0.55, 5); // 70/127 snapped to the 1/40 grid
-    engine.onMessage(encodeCc(0, 7, 20)); // engaged: tracks anywhere now
-    expect(c.value).toBeCloseTo(0.15, 5);
-  });
-
   // A held pass (the output side shut until a Live-sync readback settles) still owes the
   // receive side its bookkeeping: the plan value moved, so a non-motorized fader no
   // longer matches it and has to pick it up again. Skipping the pass entirely left the
@@ -219,32 +205,31 @@ describe("incoming application", () => {
   });
 
   it("assembles a 14-bit CC pair regardless of arrival order (LSB before MSB)", () => {
-    const c = fake("ch1/level", "continuous", 0, 1 / 16383);
+    const c = fake("ch1/level", "continuous", 0.5, 1 / 16383);
     controls.set(c.id, c);
     map(c.id, { type: "cc14", channel: 0, controller: 7 });
-    engine.onMessage(encodeCc(0, 39, 32)); // LSB first: MSB still 0 → tiny value
-    expect(c.value).toBeCloseTo(32 / 16383, 6);
-    engine.onMessage(encodeCc(0, 7, 64)); // MSB completes the pair
-    expect(c.value).toBeCloseTo(((64 << 7) | 32) / 16383, 6);
-  });
-
-  it("pickup engages on an exact touch of the plan value, then tracks", () => {
-    const c = fake("ch1/level", "continuous", 0.5);
-    controls.set(c.id, c);
-    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
-    engine.onMessage(encodeCc(0, 7, 64)); // 64/127 ≈ 0.504, within the ±2-step window → engaged
-    engine.onMessage(encodeCc(0, 7, 127)); // now tracks anywhere
-    expect(c.value).toBe(1);
-  });
-
-  it("pickup engages when the physical value crosses the plan value from above", () => {
-    const c = fake("ch1/level", "continuous", 0.5);
-    controls.set(c.id, c);
-    map(c.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
-    engine.onMessage(encodeCc(0, 7, 90)); // far above → swallowed, records the position
+    engine.onMessage(encodeCc(0, 39, 32)); // LSB first: no MSB yet, so nothing is edited
     expect(c.value).toBe(0.5);
-    engine.onMessage(encodeCc(0, 7, 20)); // sweeps down through 0.5 → engaged, applies
-    expect(c.value).toBeCloseTo(0.15, 5); // 20/127 snapped to the 1/40 grid
+    expect(applied).toEqual([]);
+    engine.onMessage(encodeCc(0, 7, 64)); // MSB completes the pair with the LSB it kept
+    expect(c.value).toBeCloseTo(((64 << 7) | 32) / 16383, 6);
+    expect(applied).toEqual([c.id]);
+  });
+
+  // A sender may move the LSB alone on a fine move. With no MSB received since the engine
+  // came up, there is nothing to assemble it against: it edits nothing, rather than taking
+  // an MSB of 0 and putting the control at the bottom of its range.
+  it("edits nothing on an LSB alone before any MSB has arrived", () => {
+    const c = fake("ch1/level", "continuous", 0.75, 1 / 16383);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc14", channel: 0, controller: 7 });
+    engine.onMessage(encodeCc(0, 39, 41));
+    expect(c.value).toBe(0.75);
+    expect(applied).toEqual([]);
+    // …and once an MSB arrives, an LSB alone refines it.
+    engine.onMessage(encodeCc(0, 7, 100));
+    engine.onMessage(encodeCc(0, 39, 42));
+    expect(c.value).toBeCloseTo(((100 << 7) | 42) / 16383, 6);
   });
 
   it("drives a continuous control from a note as a momentary full / zero switch", () => {
@@ -276,8 +261,10 @@ describe("incoming application", () => {
     expect(c.value).toBeCloseTo((127 << 7) / 16383, 6);
     // Replace the mappings (same address): the retained MSB must not survive.
     engine.setMappings([{ control: c.id, addr: { type: "cc14", channel: 0, controller: 7 }, mode: "absolute" }]);
-    engine.onMessage(encodeCc(0, 39, 64)); // LSB only → assembles against a fresh MSB 0
-    expect(c.value).toBeCloseTo(64 / 16383, 6);
+    engine.onMessage(encodeCc(0, 39, 64)); // LSB only: the MSB is unknown again, so no edit
+    expect(c.value).toBeCloseTo((127 << 7) / 16383, 6);
+    engine.onMessage(encodeCc(0, 7, 3)); // a fresh MSB assembles with the LSB it kept
+    expect(c.value).toBeCloseTo(((3 << 7) | 64) / 16383, 6);
   });
 });
 
@@ -469,7 +456,7 @@ describe("feedback", () => {
     clock += 10;
     engine.onMessage(encodeCc(0, 20, 127)); // the echo — dropped
     expect(mute.value).toBe(1);
-    clock += 100; // still well inside the window
+    clock += 20; // still inside the window (ECHO_WINDOW below)
     engine.onMessage(encodeCc(0, 20, 127)); // a real press
     expect(mute.value).toBe(0);
     expect(applied).toEqual(["ch1/mute"]);
@@ -503,7 +490,7 @@ describe("feedback", () => {
 
     // Something else clears it — an app-side edit, which does not re-arm the guard.
     mute.value = 0;
-    clock += 100; // still well inside the 300 ms window
+    clock += 20; // still inside the window (ECHO_WINDOW below)
 
     engine.onMessage(encodeCc(0, 20, 127)); // the same bytes again: a real press this time
     expect(mute.value).toBe(1); // …which lands only because the echo disarmed the guard
@@ -613,23 +600,64 @@ describe("feedback", () => {
     expect(applied).toEqual([c.id]);
   });
 
-  it("leaves a 14-bit echo unguarded, because at 14 bits it re-enters the same value", () => {
-    // A cc14 echo arrives as two 7-bit halves that cannot be matched against the
-    // 14-bit cache, and does not need to be: the round trip is exact for every
-    // control (pinned in controls.test.ts), so applying it changes nothing. Pinned
-    // here is that the guard does not pretend otherwise — the halves reach `apply`
-    // and re-enter the same value rather than being swallowed by a stale arm.
-    const c = fake("ch1/level", "continuous", 0.5, FINE);
+  // A plan holds values its codec's grid does not: a factory or device-read value, a
+  // fine-mode step. 0.3 is one here (off the 1/256 grid), and its 14-bit position carries a
+  // non-zero LSB, so an MSB half assembled against an LSB of 0 would apply an intermediate
+  // value and the full pair would land on the grid — a move nobody made, twice reported.
+  const OFF_GRID = 0.3;
+
+  it("edits nothing on a cc14 echo of the position the plan already holds", () => {
+    const c = fake("ch1/level", "continuous", OFF_GRID, FINE);
     controls.set(c.id, c);
     map(c.id, { type: "cc14", channel: 0, controller: 7 });
     engine.feedback();
-    const raw = Math.round(0.5 * 16383);
+    const raw = Math.round(OFF_GRID * 16383);
+    expect(raw & 0x7f, "the case needs a non-zero LSB").not.toBe(0);
     expect(sent).toEqual([encodeCc(0, 7, (raw >> 7) & 0x7f), encodeCc(0, 39, raw & 0x7f)]);
     clock += 5;
     engine.onMessage(encodeCc(0, 7, (raw >> 7) & 0x7f));
     engine.onMessage(encodeCc(0, 39, raw & 0x7f));
-    expect(c.value).toBe(0.5);
-    expect(applied).toEqual([]); // re-entered the same value, so nothing was reported
+    expect(c.value).toBe(OFF_GRID);
+    expect(applied).toEqual([]);
+    // The refusal is about the position, not about the message having been an echo: one
+    // position away is an edit, and lands on the grid.
+    engine.onMessage(encodeCc(0, 39, (raw + 1) & 0x7f));
+    expect(c.value).not.toBe(OFF_GRID);
+    expect(applied).toEqual([c.id]);
+  });
+
+  it("edits nothing on a pitch-bend echo of the position the plan already holds", () => {
+    const c = fake("ch1/level", "continuous", OFF_GRID, FINE);
+    controls.set(c.id, c);
+    map(c.id, { type: "pitchbend", channel: 0 });
+    engine.feedback();
+    expect(sent).toHaveLength(1);
+    clock += 5;
+    engine.onMessage(sent[0]);
+    expect(c.value).toBe(OFF_GRID);
+    expect(applied).toEqual([]);
+  });
+
+  // The pair state a send records is a claim about what the controller was TOLD. A pass
+  // that delivers nothing (no output port, or no settled readback) tells it nothing, so an
+  // LSB the controller moves alone afterwards still has no MSB to assemble against.
+  it("records a cc14 pair's halves on a send, and not on a pass that delivers nothing", () => {
+    const c = fake("ch1/level", "continuous", OFF_GRID, FINE);
+    controls.set(c.id, c);
+    map(c.id, { type: "cc14", channel: 0, controller: 7 });
+    engine.feedback(false, false);
+    expect(sent).toEqual([]);
+    engine.onMessage(encodeCc(0, 39, 1)); // an LSB alone, with no MSB sent or received
+    expect(c.value).toBe(OFF_GRID);
+    expect(applied).toEqual([]);
+
+    clock += 400; // past RECENT_MS: the LSB above deferred this address' next pass
+    engine.feedback(true, true);
+    const raw = Math.round(OFF_GRID * 16383);
+    expect(sent).toEqual([encodeCc(0, 7, (raw >> 7) & 0x7f), encodeCc(0, 39, raw & 0x7f)]);
+    engine.onMessage(encodeCc(0, 39, 1)); // the same LSB, against the MSB just sent
+    expect(c.value).toBeCloseTo(Math.round((((raw >> 7) << 7) | 1) / 16383 / FINE) * FINE, 9);
+    expect(applied).toEqual([c.id]);
   });
 
   it("resync forgets the sent cache and re-emits everything", () => {
@@ -773,17 +801,75 @@ describe("gang (several controls on one address)", () => {
     engine.onMessage(encodeCc(0, 20, 127)); // a real press past the window flips both
     expect([a.value, b.value]).toEqual([0, 0]);
   });
+});
 
-  it("engages pickup from the head; members cross over together", () => {
+// Pickup is decided after the address kind has turned a message into a position, so each
+// continuous kind has to reach it: a plain CC, a 14-bit pair (both halves) and a pitch bend.
+// Positions are on the fake's 1/40 grid, so a value that is applied reads back exactly.
+const PICKUP_ADDRS: Array<[string, MidiAddr, (pos: number) => number[][]]> = [
+  ["CC", { type: "cc", channel: 0, controller: 7 }, (pos) => [encodeCc(0, 7, Math.round(pos * 127))]],
+  [
+    "14-bit CC",
+    { type: "cc14", channel: 0, controller: 7 },
+    (pos) => {
+      const raw = Math.round(pos * 16383);
+      return [encodeCc(0, 7, raw >> 7), encodeCc(0, 39, raw & 0x7f)];
+    },
+  ],
+  ["pitch bend", { type: "pitchbend", channel: 0 }, (pos) => [encodePitchBend(0, Math.round(pos * 16383))]],
+];
+
+describe.each(PICKUP_ADDRS)("pickup on a %s address", (_kind, addr, at) => {
+  const move = (pos: number): void => {
+    for (const msg of at(pos)) engine.onMessage(msg);
+  };
+
+  it("swallows input until the physical value reaches or crosses the plan value", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, addr, "pickup");
+    move(0.15); // far below → swallowed
+    expect(c.value).toBe(0.5);
+    move(0.3); // still below → swallowed
+    expect(c.value).toBe(0.5);
+    expect(applied).toEqual([]);
+    move(0.55); // crossed 0.5 → engaged, applies
+    expect(c.value).toBeCloseTo(0.55, 5);
+    move(0.15); // engaged: tracks anywhere now
+    expect(c.value).toBeCloseTo(0.15, 5);
+  });
+
+  it("engages on an exact touch of the plan value, then tracks", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, addr, "pickup");
+    move(0.5); // within the ±2-step window → engaged
+    move(1); // now tracks anywhere
+    expect(c.value).toBe(1);
+  });
+
+  it("engages when the physical value crosses the plan value from above", () => {
+    const c = fake("ch1/level", "continuous", 0.5);
+    controls.set(c.id, c);
+    map(c.id, addr, "pickup");
+    move(0.7); // far above → swallowed, records the position
+    expect(c.value).toBe(0.5);
+    expect(applied).toEqual([]);
+    move(0.15); // sweeps down through 0.5 → engaged, applies
+    expect(c.value).toBeCloseTo(0.15, 5);
+  });
+
+  it("engages from a gang's head; members cross over together", () => {
     const a = fake("ch1/level@bus.mix1", "continuous", 0.5);
     const b = fake("ch2/level@bus.mix1", "continuous", 0.5);
     controls.set(a.id, a);
     controls.set(b.id, b);
-    map(a.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
-    map(b.id, { type: "cc", channel: 0, controller: 7 }, "pickup");
-    engine.onMessage(encodeCc(0, 7, 20)); // below the head value → both swallowed
+    map(a.id, addr, "pickup");
+    map(b.id, addr, "pickup");
+    move(0.15); // below the head value → both swallowed
     expect([a.value, b.value]).toEqual([0.5, 0.5]);
-    engine.onMessage(encodeCc(0, 7, 70)); // crosses the head value → both engage
+    expect(applied).toEqual([]);
+    move(0.55); // crosses the head value → both engage
     expect(a.value).toBeCloseTo(0.55, 5);
     expect(b.value).toBeCloseTo(0.55, 5);
   });
@@ -796,29 +882,56 @@ describe("gang (several controls on one address)", () => {
 // wrote it to the unit while live. Its own corrective feedback then echoed back into
 // the fader's unguarded LSB half.
 describe("cc14 feedback and a plain-CC binding on the same controller", () => {
-  it("arms the plain-CC guards the emission actually touches", () => {
+  // The knob on either half: CC 7 takes the MSB byte, CC 39 the LSB byte.
+  it.each([
+    [7, 64],
+    [39, 32],
+  ])("arms the plain-CC guards the emission actually touches (knob on CC %i)", (knobCc, echoed) => {
     const fader = fake("ch1/level", "continuous", 0, 1 / 16383);
-    const knob = fake("ch2/level", "continuous", 0.5);
+    const knob = fake("ch2/level", "continuous", 0.2);
     controls.set(fader.id, fader);
     controls.set(knob.id, knob);
     map(fader.id, { type: "cc14", channel: 0, controller: 7 });
-    map(knob.id, { type: "cc", channel: 0, controller: 39 });
+    map(knob.id, { type: "cc", channel: 0, controller: knobCc });
 
     // A first pass sends both, so each address' cache holds its own value.
     engine.feedback();
     sent.length = 0;
 
-    // Now only the FADER moves: the pass emits the cc14 pair alone, and its LSB byte
-    // goes out on CC 39 — the knob's address, which the knob itself did not send.
+    // Now only the FADER moves: the pass emits the cc14 pair alone, and one of its bytes
+    // goes out on the knob's address, which the knob itself did not send.
     fader.value = ((64 << 7) | 32) / 16383;
     engine.feedback();
     expect(sent).toEqual([encodeCc(0, 7, 64), encodeCc(0, 39, 32)]);
 
-    // That LSB coming back off a reflecting bus must not edit the knob.
+    // That byte coming back off a reflecting bus must not edit the knob.
     const before = knob.value;
     clock += 5;
-    engine.onMessage(encodeCc(0, 39, 32));
+    engine.onMessage(encodeCc(0, knobCc, echoed));
     expect(knob.value).toBe(before);
     expect(applied).not.toContain(knob.id);
+  });
+
+  // A held pass sends nothing, so neither half has an echo to expect: a press carrying the
+  // byte the pass would have sent is the operator's.
+  it.each([
+    [7, 64],
+    [39, 32],
+  ])("does not arm them on a held pass (knob on CC %i)", (knobCc, pressed) => {
+    const fader = fake("ch1/level", "continuous", 0, 1 / 16383);
+    const knob = fake("ch2/level", "continuous", 0.2);
+    controls.set(fader.id, fader);
+    controls.set(knob.id, knob);
+    map(fader.id, { type: "cc14", channel: 0, controller: 7 });
+    map(knob.id, { type: "cc", channel: 0, controller: knobCc });
+
+    fader.value = ((64 << 7) | 32) / 16383;
+    engine.feedback(false, false);
+    expect(sent).toEqual([]);
+
+    clock += 5;
+    engine.onMessage(encodeCc(0, knobCc, pressed));
+    expect(knob.value).not.toBe(0.2);
+    expect(applied).toContain(knob.id);
   });
 });

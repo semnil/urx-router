@@ -9,9 +9,11 @@ import {
   setLatency,
   waitQuiet,
   memOf,
+  blockAt,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf } from "./analyze";
 import { CH1_FADER, faderOf, faderReadout } from "./ui";
+import { answerTimingOf } from "../tauri-stub";
 
 // T0 baseline — the floor and the golden path. Every T1+ verdict is a difference
 // against these two traces, so without them a firing invariant cannot be told from
@@ -22,6 +24,30 @@ test.describe("T0 baseline", () => {
     await installFake(page);
     await page.goto("/");
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  });
+
+  // baseline-fake-answer-timing. The fake's own floor: the shell answers a command on a later
+  // task, never in the microtasks of the task that sent it, and in the order asked — a command
+  // on the vd worker asked ahead of one the worker does not carry settles ahead of it, a
+  // refusal included. A held read holds back nothing asked after it outside the worker.
+  test("the fake answers each command on a later task, in the order asked", async ({ page }) => {
+    const cmds = ["vd_get_str", "stub_unknown_command", "vd_get"];
+    expect(await answerTimingOf(page, cmds)).toEqual({ inSendingTask: [], order: cmds });
+
+    await blockAt(page, "vd_get", 1);
+    const held = await page.evaluate(async () => {
+      const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string) => Promise<unknown> } })
+        .__TAURI_INTERNALS__;
+      const order: string[] = [];
+      const note = (cmd: string) => () => order.push(cmd);
+      const read = internals.invoke("vd_get").then(note("vd_get"), note("vd_get"));
+      await internals.invoke("stub_unknown_command").then(note("stub_unknown_command"), note("stub_unknown_command"));
+      const whileHeld = [...order];
+      window.__urxFake.release();
+      await read;
+      return { whileHeld, order };
+    });
+    expect(held).toEqual({ whileHeld: ["stub_unknown_command"], order: ["stub_unknown_command", "vd_get"] });
   });
 
   // baseline-quiescent-floor. The only case whose expected output is empty.

@@ -67,7 +67,7 @@ async function fetchFromDevice(page: Page): Promise<void> {
 async function startLive(page: Page): Promise<void> {
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
 }
 
 test.beforeEach(async ({ page }) => {
@@ -161,7 +161,7 @@ test("Live sync starts under All on a unit holding a mono PAIR, and writes nothi
     "no write to USB MAIN A",
   ).toEqual([]);
   expect(await usbOutAOf(page)).toEqual([CH3_SLOT, CH4_SLOT]);
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   // Linking the pair leaves the output's two wires as they are.
   await expect(wire(page, CH3, USB_A_IN)).toHaveCount(1);
   await expect(wire(page, CH4, USB_A_IN)).toHaveCount(1);
@@ -196,7 +196,7 @@ test("Live sync does not start while the unit holds a USB output on a pair the w
   // The failure reaches the operator as a dialog; the stub records what it was told to
   // show, so the assertion is on the text rather than on a box that may be a native one.
   await expect.poll(async () => (await dialogsOf(page)).join(" | "), { timeout: 20000 }).toContain("could not be read");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
 });
 
 test("Scene only starts Live sync against the same unit, and writes no USB output", async ({ page }) => {
@@ -253,7 +253,7 @@ test("Scene only keeps a session running when a USB output turns unreadable mid-
     )
     .toBe(true);
   expect(await dialogsOf(page), "no session-ending dialog").toEqual([]);
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await expect(mutedTag(page, "ch_5_6")).toHaveCount(1);
 
   // Follow is still following: a hand on the unit's CH 3 [ON] reaches the board.
@@ -283,6 +283,6 @@ test("All still ends a session when a USB output turns unreadable mid-session", 
   for (const b of burst) await setDeviceValue(page, b.paramId, b.y, b.value);
   await notifyBurst(page, burst);
 
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false", { timeout: 20000 });
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false", { timeout: 20000 });
   await expect.poll(async () => (await dialogsOf(page)).join(" | ")).toContain("could not be read");
 });

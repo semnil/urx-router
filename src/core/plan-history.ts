@@ -159,7 +159,7 @@ export function clonePlanState(plan: Plan): Plan {
 // and a clean record equal. NaN compares equal to itself so a non-finite value
 // (which the plan loader drops, but which a live edit could in principle produce)
 // cannot make every commit report a change forever.
-function deepEqual(a: unknown, b: unknown): boolean {
+export function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a === "number" && typeof b === "number") return Number.isNaN(a) && Number.isNaN(b);
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
@@ -752,6 +752,17 @@ export function nodeParamContestPath(nodeId: string, path: string): string {
  *  caller should be spelling out. */
 export function connParamContestKey(from: string, to: string, param: string): string {
   return contestName("connParams", wireKey(from, to), param);
+}
+
+/** The same, for a node's name: the name an edit or a device read that sets or clears it
+ *  records it under. */
+export function nodeNameContestKey(nodeId: string): string {
+  return contestName("nodeNames", nodeId);
+}
+
+/** The same, for a node's colour. */
+export function nodeColorContestKey(nodeId: string): string {
+  return contestName("nodeColors", nodeId);
 }
 
 /** The same, for a wire's presence: the name an edit or a device read that adds or removes

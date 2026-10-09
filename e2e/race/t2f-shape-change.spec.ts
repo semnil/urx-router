@@ -28,7 +28,7 @@ import { readoutOf } from "./ui";
 //     DeviceFollow's single `intercept` hook (src/main.ts). One is written, followed
 //     and undoable-in-principle; the other is written by nothing and consumed before
 //     the reconcile window ever sees it.
-//   - `shape-device-setup-plan-external`: the thirteen SETUP > GENERAL addresses that
+//   - `shape-device-setup-plan-external`: the fourteen SETUP > GENERAL addresses that
 //     carry the same `planExternal` flag as 848 but have NO intercept hook, so a
 //     device-side change to one of them takes the most expensive path the follow
 //     layer has — and that path reads none of them.
@@ -68,11 +68,11 @@ const EDIT_RATE = 44100;
 /** The SETUP > GENERAL catalog entries, all flagged `planExternal` in params.ts. 848
  *  carries the same flag and is listed separately below, because it is the one that
  *  has a hook. */
-const SETUP_IDS = [758, 760, 761, 767, 768, 770, 771, 772, 787, 788, 795, 812, 831];
+const SETUP_IDS = [758, 760, 761, 767, 768, 769, 770, 771, 772, 787, 788, 795, 812, 831];
 /** What readDeviceSetup asks a URX44V for, as numbers: the five globals, the two HDMI
- *  rows (hasHDMI) and the three Date/Time rows (hasSD). The knob strings ride
- *  vd_get_str and are counted separately. */
-const SETUP_NUMERIC_IDS = [758, 760, 761, 767, 768, 787, 788, 795, 812, 831];
+ *  rows (hasHDMI), the three Date/Time rows (hasSD) and the knob bank the tabs open on.
+ *  The knob strings ride vd_get_str and are counted separately. */
+const SETUP_NUMERIC_IDS = [758, 760, 761, 767, 768, 769, 787, 788, 795, 812, 831];
 const UDK_FUNCTION_ID = 770;
 const UDK_SLOTS = 16;
 
@@ -367,7 +367,7 @@ test.describe("T2f shape-change", () => {
     expect(depthEnd).toEqual({ undo: 0, redo: 0 });
   });
 
-  // shape-device-setup-plan-external. The thirteen SETUP > GENERAL addresses share the
+  // shape-device-setup-plan-external. The fourteen SETUP > GENERAL addresses share the
   // `planExternal` flag with Follow USB and share none of its handling: no translate
   // emit, no readback group, no registration — and no intercept hook, which is the
   // whole point of measuring them beside 848 rather than on their own.
@@ -403,7 +403,7 @@ test.describe("T2f shape-change", () => {
     );
 
     // Exactly the ten numeric rows a URX44V has (five globals + two HDMI + three
-    // Date/Time), each asked once, and sixteen knob-function strings — and NOTHING
+    // Date/Time) and the knob bank, each asked once, and sixteen knob-function strings — and NOTHING
     // else, which is what says the screen cannot reach a plan address even by
     // accident. Both lists are exact, so an extra read anywhere fails them: the knob
     // Parameter 1 / Parameter 2 columns (771 / 772) are absent because this fake
@@ -464,13 +464,13 @@ test.describe("T2f shape-change", () => {
         `, ${followUsbReads.length} on 848. Registered planExternal ids: [${registeredFlagged.join(", ")}]`,
     );
 
-    // The one exception is the one with a hook. Thirteen addresses catalogued beside it
+    // The one exception is the one with a hook. Fourteen addresses catalogued beside it
     // with the same flag, and not one of them is registered — so nothing routes their
     // notifies anywhere.
     expect(registeredFlagged).toEqual([848]);
     expect(reg.at(-1)).toEqual([848, 0, 0]);
     // …and no readback group covers them either: a whole-device read of ~800 addresses
-    // asks for none of the thirteen. 848 is read once, by the Follow USB read the session
+    // asks for none of the fourteen. 848 is read once, by the Follow USB read the session
     // start makes, which is the same asymmetry seen from the read side.
     expect(setupReads).toHaveLength(0);
     expect(followUsbReads).toHaveLength(1);

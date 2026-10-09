@@ -35,11 +35,17 @@ import {
   wireHit,
 } from "./graph.test-util";
 import type { GraphFixture, GraphOptions } from "./graph.test-util";
-import { LEVEL_MIN_DB, LEVEL_OFF_DB } from "../core/plan";
+
+/** A node's resting dim: on its body when it carries a badge (which stays at full
+ *  strength beside it), on the node itself otherwise. */
+const restingDim = (node: SVGGElement): string | null =>
+  (node.querySelector(":scope > .node-body") ?? node).getAttribute("opacity");
+import { LEVEL_MIN_DB, LEVEL_OFF_DB, setPlanSampleRate } from "../core/plan";
+import { rateConstraints } from "../core/constraints";
 import type { Plan } from "../core/plan";
 import { defaultPlan } from "../models/initial-state";
 import { isFixedConnection } from "../core/routing";
-import { BUS_TYPE_FIXED } from "../core/control/params";
+import { BUS_TYPE_FIXED, COLOR_OFF, COLOR_PALETTE } from "../core/control/params";
 import { getModel } from "../models";
 import type { ModelId } from "../models/types";
 import { getSettings, resetSettingsCache, updateSettings } from "../core/settings";
@@ -89,6 +95,23 @@ describe("construction", () => {
     expect(tapHit(fx.host, "ch1:out")).not.toBeNull();
     expect(tapHit(fx.host, "ch1:out")).not.toBe(portHit(fx.host, "ch1:out"));
     expect(fx.host.querySelectorAll(".port-tap").length).toBeGreaterThan(0);
+  });
+
+  // The colour cap is a palette swatch: Off draws none, and so does a string that is no plan
+  // colour, which never reaches the fill.
+  it("caps a node only with a palette colour", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        plan.nodeColors.ch1 = COLOR_OFF;
+        plan.nodeColors.ch2 = "url(https://example.invalid/x)";
+        plan.nodeColors.ch3 = COLOR_PALETTE[6].hex;
+      },
+    });
+    const fills = (id: string): string[] =>
+      [...nodeEl(fx.host, id)!.querySelectorAll("rect")].map((r) => r.getAttribute("fill") ?? "");
+    expect(fills("ch1")).not.toContain(COLOR_OFF);
+    expect(fills("ch2").some((f) => f.includes("url("))).toBe(false);
+    expect(fills("ch3")).toContain(COLOR_PALETTE[6].hex);
   });
 
   it("draws a hit path per wire, addressed by its endpoints", () => {
@@ -246,12 +269,33 @@ describe("appearance", () => {
     fx = graphFixture();
     fx.graph.setDisabledNodes(["bus.fx2"]);
     const marked = nodeEl(fx.host, "bus.fx2")!;
-    expect(marked.getAttribute("opacity")).toBe("0.62");
+    expect(restingDim(marked)).toBe("0.62");
     expect(marked.querySelector("rect")?.getAttribute("stroke-dasharray")).toBe("4 3");
     fx.graph.setDisabledNodes([]);
     const cleared = nodeEl(fx.host, "bus.fx2")!;
-    expect(cleared.getAttribute("opacity")).not.toBe("0.62");
+    expect(restingDim(cleared)).not.toBe("0.62");
     expect(cleared.querySelector("rect")?.getAttribute("stroke-dasharray")).toBeNull();
+  });
+
+  // The badge names why the node is dim, so it is read at full strength beside the dim
+  // body, in the ink chosen for the warn face it is printed on.
+  it.each(["dark", "light"] as const)("keeps the OFF and ? badges out of their node's dim (%s)", (theme) => {
+    fx = graphFixture({ seed: (plan) => void (plan.unreadNodes = new Set(["bus.fx1"])) });
+    fx.graph.setTheme(theme);
+    fx.graph.setDisabledNodes(["bus.fx2"]);
+    for (const [id, text] of [
+      ["bus.fx2", "OFF"],
+      ["bus.fx1", "?"],
+    ] as const) {
+      const node = nodeEl(fx.host, id)!;
+      const badge = node.querySelector(":scope > .node-badge")!;
+      expect(badge, id).not.toBeNull();
+      expect(node.querySelector(":scope > .node-body")!.getAttribute("opacity"), id).not.toBe("1");
+      expect(node.getAttribute("opacity"), id).toBe("1");
+      expect(badge.getAttribute("opacity"), id).toBeNull();
+      const ink = [...badge.querySelectorAll("text")].find((t) => t.textContent === text)!;
+      expect(ink.getAttribute("fill"), id).toBe(PALETTES[theme].warnInk);
+    }
   });
 
   // A full device reconcile re-applies the set on every pass, and the set holds at most
@@ -267,7 +311,7 @@ describe("appearance", () => {
     // A set that differs still renders, and the stored set is the new one.
     fx.graph.setDisabledNodes([]);
     expect(nodeEl(fx.host, "bus.fx2")).not.toBe(first);
-    expect(nodeEl(fx.host, "bus.fx2")!.getAttribute("opacity")).not.toBe("0.62");
+    expect(restingDim(nodeEl(fx.host, "bus.fx2")!)).not.toBe("0.62");
   });
 
   // The console view hides the graph host, and a rate excursion past 96 kHz moves the
@@ -284,7 +328,51 @@ describe("appearance", () => {
     // against. A store that had been skipped would leave the node undimmed here.
     fx.host.hidden = false;
     fx.graph.refresh();
-    expect(nodeEl(fx.host, "bus.fx2")!.getAttribute("opacity")).toBe("0.62");
+    expect(restingDim(nodeEl(fx.host, "bus.fx2")!)).toBe("0.62");
+  });
+
+  // 48 to 96 kHz leaves the disabled set as it was and lowers Track Count from 16 to 8, so the
+  // record slots t5..t8 leave the board: that is a moved board, and it is drawn again.
+  describe("a rate change that gates record slots", () => {
+    const SLOTS = ["out.sdrec.t1", "out.sdrec.t4", "out.sdrec.t5", "out.sdrec.t8"];
+    const pick = (rate: number): string[] => {
+      setPlanSampleRate(fx.plan, rate);
+      const disabled = rateConstraints(getModel("URX44V"), rate).disabledNodes;
+      fx.graph.setDisabledNodes(disabled);
+      return disabled;
+    };
+
+    it("redraws the board without the slots the rate gates", () => {
+      fx = graphFixture();
+      expect(SLOTS.map((id) => nodeEl(fx.host, id) !== null)).toEqual([true, true, true, true]);
+      pick(96000);
+      expect(SLOTS.map((id) => nodeEl(fx.host, id) !== null)).toEqual([true, true, false, false]);
+      expect(portHit(fx.host, "out.sdrec.t7:in")).toBeNull();
+    });
+
+    // A wire into a gated slot is no longer drawn, so a selection on it would leave the
+    // Inspector showing it and Delete removing it. It is dropped with the console view up too.
+    it("drops a selection on a wire the rate takes off the board, the board hidden or not", () => {
+      for (const hidden of [false, true]) {
+        if (hidden) fx.restore();
+        fx = graphFixture();
+        wireHit(fx.host, "bus.stereo:out", "out.sdrec.t8:in")!.dispatchEvent(
+          new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }),
+        );
+        expect(fx.cb.onSelect).toHaveBeenLastCalledWith({
+          type: "conn",
+          from: "bus.stereo:out",
+          to: "out.sdrec.t8:in",
+        });
+        fx.host.hidden = hidden;
+        const disabled = pick(96000);
+        expect(fx.cb.onSelect, `hidden=${hidden}`).toHaveBeenLastCalledWith(null);
+        fx.graph.deleteSelection();
+        expect(fx.plan.connections.some((c) => c.to === "out.sdrec.t8:in")).toBe(true);
+        // While hidden the board is still the one drawn before the pick, and says so.
+        expect(fx.graph.hasDisabledNodes(disabled)).toBe(!hidden);
+      }
+    });
   });
 
   // The question is whether the board is drawn against this set, so the comparison is
@@ -299,7 +387,7 @@ describe("appearance", () => {
     const before = nodeEl(fx.host, "bus.fx1");
     fx.graph.setDisabledNodes(["bus.fx2", "bus.fx2"]);
     expect(nodeEl(fx.host, "bus.fx1")).not.toBe(before);
-    expect(nodeEl(fx.host, "bus.fx1")!.getAttribute("opacity")).not.toBe("0.62");
+    expect(restingDim(nodeEl(fx.host, "bus.fx1")!)).not.toBe("0.62");
   });
 
   it("re-labels its chrome on a language switch", () => {
@@ -379,6 +467,313 @@ describe("selection", () => {
   });
 });
 
+describe("path trace", () => {
+  const trace = (id: string): void =>
+    (fx.graph as unknown as { highlightPath: (id: string) => void }).highlightPath(id);
+  const fadedNodes = (): string[] =>
+    [...fx.host.querySelectorAll<SVGGElement>("g.node[data-id]")]
+      .filter((g) => Number(g.getAttribute("opacity")) < 0.35)
+      .map((g) => g.dataset.id ?? "");
+
+  // Fetch, the Live-sync read and a .urxf import redraw the same plan through setModel; a
+  // file, New and the model picker hand it another. Either way the selection the trace
+  // was taken from is gone, and the board comes up unfaded.
+  it("drops a trace when the board is handed a plan", () => {
+    fx = graphFixture();
+    trace("bus.stereo");
+    expect(fadedNodes().length).toBeGreaterThan(0);
+    fx.graph.setModel(getModel("URX44V"), fx.plan);
+    expect(fadedNodes()).toEqual([]);
+    trace("bus.stereo");
+    fx.graph.setModel(getModel("URX22"), defaultPlan("URX22"));
+    expect(fadedNodes()).toEqual([]);
+    expect(fx.host.querySelectorAll('.wire-hit + path[opacity="0.16"]').length).toBe(0);
+  });
+
+  const send = (plan: Plan, from: string, to: string): NonNullable<Plan["connections"][number]> =>
+    plan.connections.find((c) => c.from === from && c.to === to)!;
+
+  // An undo or a device read that raises a send into the traced bus redraws through
+  // refresh(); the channel it now carries is on the path and stops fading.
+  it("takes the trace again when the wiring under it changes", () => {
+    fx = graphFixture({ seed: (plan) => void (send(plan, "ch2:out", "bus.mix1:in").params = { level: 0 }) });
+    trace("bus.mix1");
+    expect(fadedNodes()).toContain("ch1");
+    send(fx.plan, "ch1:out", "bus.mix1:in").params = { level: 0 };
+    fx.graph.refresh();
+    expect(fadedNodes()).not.toContain("ch1");
+    expect(nodeEl(fx.host, "ch1")!.getAttribute("opacity")).toBe("1");
+  });
+
+  // Switching the traced bus off from its own panel repaints nodes and wires only; nothing
+  // feeds it through live wiring any more, so the trace ends rather than framing its former
+  // feeders.
+  it("ends the trace when nothing live feeds its node any more", () => {
+    fx = graphFixture({ seed: (plan) => void (send(plan, "ch2:out", "bus.mix1:in").params = { level: 0 }) });
+    trace("bus.mix1");
+    expect(faceplate(fx.host, "ch2")!.getAttribute("stroke-width")).toBe("2");
+    fx.plan.nodeParams["bus.mix1"] = { ...fx.plan.nodeParams["bus.mix1"], on: false };
+    fx.graph.repaintNodes();
+    fx.graph.repaintWires();
+    expect([...fx.host.querySelectorAll('g.node > rect[stroke-width="2"]')]).toEqual([]);
+    expect(fadedNodes()).toEqual([]);
+  });
+
+  // A fine-grained follow repaint mutes a feeder: it leaves the path, and fades.
+  it("takes a feeder off the path on a fine-grained repaint", () => {
+    fx = graphFixture({
+      seed: (plan) => {
+        send(plan, "ch1:out", "bus.mix1:in").params = { level: 0 };
+        send(plan, "ch3:out", "bus.mix1:in").params = { level: 0 };
+      },
+    });
+    trace("bus.mix1");
+    expect(fadedNodes()).not.toContain("ch3");
+    fx.plan.nodeParams["ch3"] = { ...fx.plan.nodeParams["ch3"], on: false };
+    fx.graph.repaintDirtyNodes(["ch3"]);
+    expect(faceplate(fx.host, "ch3")!.getAttribute("stroke-width")).not.toBe("2");
+    expect(fadedNodes()).toContain("ch3");
+  });
+});
+
+describe("keyboard", () => {
+  const stops = (): string[] =>
+    [...fx.host.querySelectorAll<SVGGElement>('g.node[tabindex="0"]')].map((g) => g.dataset.id ?? "");
+  const focused = (): string | null => (document.activeElement as SVGGElement | null)?.dataset?.id ?? null;
+  const key = (id: string, k: string, init: KeyboardEventInit = {}): void =>
+    void nodeEl(fx.host, id)!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
+    );
+  const focus = (id: string): void => nodeEl(fx.host, id)!.focus();
+
+  it("names the board and every node, and puts one node in the tab order", () => {
+    fx = graphFixture();
+    expect(fx.svg.getAttribute("role")).toBe("group");
+    expect(fx.svg.getAttribute("aria-label")).toBe(t().toolbar.viewGraphHint);
+    const nodes = [...fx.host.querySelectorAll<SVGGElement>("g.node")];
+    expect(nodes.every((g) => g.getAttribute("role") === "button")).toBe(true);
+    expect(nodeEl(fx.host, "ch1")!.getAttribute("aria-label")).toBe("CH 1");
+    expect(nodes.every((g) => g.getAttribute("aria-pressed") === "false")).toBe(true);
+    expect(stops()).toEqual([nodes[0].dataset.id]);
+  });
+
+  it("selects the focused node on Enter and on Space, as a press does", () => {
+    fx = graphFixture();
+    focus("ch1");
+    key("ch1", "Enter");
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "node", id: "ch1" });
+    expect(nodeEl(fx.host, "ch1")!.getAttribute("aria-pressed")).toBe("true");
+    expect(focused(), "raising the selected node keeps focus on it").toBe("ch1");
+    focus("ch2");
+    key("ch2", " ");
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "node", id: "ch2" });
+    expect(nodeEl(fx.host, "ch1")!.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("walks focus through the nodes with the arrow keys, moving the tab stop with it", () => {
+    fx = graphFixture();
+    const ids = nodeIds(fx.host);
+    const i = ids.indexOf("ch1");
+    focus("ch1");
+    key("ch1", "ArrowDown");
+    expect(focused()).toBe(ids[i + 1]);
+    expect(stops()).toEqual([ids[i + 1]]);
+    key(ids[i + 1], "ArrowLeft");
+    key("ch1", "ArrowUp");
+    expect(focused()).toBe(ids[i - 1]);
+    // A chord is left to whoever owns it.
+    key(ids[i - 1], "ArrowDown", { metaKey: true });
+    expect(focused()).toBe(ids[i - 1]);
+    expect(fx.cb.onSelect).not.toHaveBeenCalled();
+  });
+
+  // A device-follow full reflect, a fine-grained one and a theme switch each rebuild the
+  // focused node's element; focus stays on the node.
+  it("keeps focus on its node through refresh, a fine-grained repaint and a theme switch", () => {
+    fx = graphFixture();
+    focus("ch3");
+    fx.graph.refresh();
+    expect(focused()).toBe("ch3");
+    fx.graph.repaintDirtyNodes(["ch3"]);
+    expect(focused()).toBe("ch3");
+    fx.graph.setTheme("light");
+    expect(focused()).toBe("ch3");
+    expect(document.activeElement).toBe(nodeEl(fx.host, "ch3"));
+  });
+
+  it("carries focus across a redraw of the same plan only", () => {
+    fx = graphFixture();
+    focus("ch3");
+    fx.graph.setModel(getModel("URX44V"), fx.plan);
+    expect(focused(), "the same plan, read again").toBe("ch3");
+    fx.graph.setModel(getModel("URX44V"), defaultPlan("URX44V"));
+    expect(focused(), "a replaced plan").toBeNull();
+  });
+
+  it("follows a selection made with the pointer with the tab stop", () => {
+    fx = graphFixture();
+    press(faceplate(fx.host, "bus.mix1")!);
+    expect(stops()).toEqual(["bus.mix1"]);
+  });
+
+  it("draws a focus ring every node carries, stroke-less outside the stylesheet", () => {
+    fx = graphFixture({ seed: (plan) => void (plan.unreadNodes = new Set(["ch1"])) });
+    for (const g of fx.host.querySelectorAll<SVGGElement>("g.node")) {
+      const ring = g.querySelector(":scope > .focus-ring")!;
+      expect(ring, g.dataset.id).not.toBeNull();
+      expect(ring.getAttribute("stroke")).toBe("none");
+      expect(g.lastElementChild).toBe(ring);
+    }
+    // A badged node's ring sits beside its dimmed body, not in it.
+    expect(nodeEl(fx.host, "ch1")!.querySelector(":scope > .node-body > .focus-ring")).toBeNull();
+  });
+});
+
+// The Inspector's keyboard path to wire, through the drag's own candidates and commit.
+describe("connecting without a drag", () => {
+  const USB_B = "out.usbmain_b:in";
+  const STREAM = "bus.stream:in";
+  const freeUsbB = (plan: Plan): void => {
+    plan.connections = plan.connections.filter((c) => c.to !== USB_B);
+  };
+  const origin = (nodeId: string, dir: "in" | "out", tap = false) =>
+    fx.graph.connectOrigins(nodeId).find((o) => o.dir === dir && o.tap === tap)!;
+  const into = (to: string): string[] => fx.plan.connections.filter((c) => c.to === to).map((c) => c.from);
+
+  it("offers a channel's input, its output and its Rec Point tap, each with its own targets", () => {
+    fx = graphFixture({ seed: freeUsbB });
+    const origins = fx.graph.connectOrigins("ch1");
+    expect(origins.map((o) => [o.ref, o.dir, o.tap])).toEqual([
+      ["ch1:in", "in", false],
+      ["ch1:out", "out", false],
+      ["ch1:out", "out", true],
+    ]);
+    expect(origin("ch1", "out", true).targets).toContain(USB_B);
+    expect(origin("ch1", "out", false).targets).not.toContain(USB_B);
+  });
+
+  // STREAMING never goes without a source, so a drop there replaces its wire: the keyboard
+  // path offers it and commits it the same way, from either end.
+  it("replaces STREAMING's source from the source's side and from STREAMING's", () => {
+    fx = graphFixture();
+    expect(into(STREAM)).toEqual(["bus.stereo:out"]);
+    const fromMix2 = origin("bus.mix2", "out");
+    expect(fromMix2.targets).toContain(STREAM);
+    fx.graph.connectTo(fromMix2, STREAM);
+    expect(into(STREAM)).toEqual(["bus.mix2:out"]);
+    const fromStream = origin("bus.stream", "in");
+    expect(fromStream.targets).toContain("bus.mix1:out");
+    fx.graph.connectTo(fromStream, "bus.mix1:out");
+    expect(into(STREAM)).toEqual(["bus.mix1:out"]);
+    expect(statuses().at(-1)).toBe(t().status.connected);
+  });
+
+  // From an input, a channel offered as a source is reached through the jack the route leaves
+  // from — the Rec Point tap for a USB output — without the operator naming it.
+  it("draws a direct out from the USB output's side through the channel's Rec Point", () => {
+    fx = graphFixture({ seed: freeUsbB });
+    const fromUsb = origin("out.usbmain_b", "in");
+    expect(fromUsb.targets).toContain("ch1:out");
+    fx.graph.connectTo(fromUsb, "ch1:out");
+    expect(into(USB_B)).toEqual(["ch1:out"]);
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes nothing when the host refuses the edit", () => {
+    fx = graphFixture({ seed: freeUsbB });
+    fx.cb.mayEdit.mockReturnValue(false);
+    fx.graph.connectTo(origin("ch1", "out", true), USB_B);
+    expect(into(USB_B)).toEqual([]);
+  });
+
+  it("offers nothing from, and nothing onto, a node on the shelf", () => {
+    fx = graphFixture({ seed: freeUsbB });
+    fx.graph.hideNode("out.usbmain_b");
+    expect(origin("ch1", "out", true).targets).not.toContain(USB_B);
+    expect(fx.graph.connectOrigins("out.usbmain_b")).toEqual([]);
+  });
+
+  it("selects a wire the board draws, and leaves one it does not draw unselected", () => {
+    fx = graphFixture();
+    fx.graph.selectConnection("ch1:out", "bus.stereo:in");
+    expect(fx.cb.onSelect).toHaveBeenLastCalledWith({ type: "conn", from: "ch1:out", to: "bus.stereo:in" });
+    fx.graph.hideNode("bus.mix1");
+    expect(fx.graph.wireDrawn("ch1:out", "bus.mix1:in")).toBe(false);
+    fx.cb.onSelect.mockClear();
+    fx.graph.selectConnection("ch1:out", "bus.mix1:in");
+    expect(fx.cb.onSelect).not.toHaveBeenCalled();
+    // An off send the declutter toggle hides is not drawn either.
+    const off = fx.plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.mix2:in")!;
+    expect(fx.graph.wireDrawn(off.from, off.to)).toBe(true);
+    fx.graph.setHideOffSends(true);
+    expect(fx.graph.wireDrawn(off.from, off.to)).toBe(false);
+  });
+});
+
+// The shelf and the multi-select bar are rebuilt by every render: a device-follow reflect, an
+// undo, an OS theme flip. Focus on one of their buttons stays on that button.
+describe("focus on the shelf and the selection bar", () => {
+  const chip = (id: string): HTMLButtonElement | null =>
+    fx.host.querySelector<HTMLButtonElement>(`.hidden-shelf button.chip[data-node="${id}"]`);
+  const active = (): Element | null => document.activeElement;
+  const shelve = (plan: Plan): void => void (plan.hidden = ["ch1", "ch3"]);
+
+  it("keeps focus on a chip through refresh, a theme switch and a relocalization", () => {
+    fx = graphFixture({ seed: shelve });
+    chip("ch3")!.focus();
+    fx.graph.refresh();
+    expect(active()).toBe(chip("ch3"));
+    fx.graph.setTheme("light");
+    expect(active()).toBe(chip("ch3"));
+    fx.graph.relocalizeChrome();
+    expect(active()).toBe(chip("ch3"));
+    fx.host.querySelector<HTMLButtonElement>(".shelf-showall")!.focus();
+    fx.graph.refresh();
+    expect(active()).toBe(fx.host.querySelector(".shelf-showall"));
+  });
+
+  it("keeps focus on a selection-bar button through refresh", () => {
+    fx = graphFixture();
+    const g = fx.graph as unknown as { toggleNodeSelection: (id: string) => void };
+    g.toggleNodeSelection("ch1");
+    g.toggleNodeSelection("ch2");
+    fx.host.querySelector<HTMLButtonElement>(".selbar-clear")!.focus();
+    fx.graph.refresh();
+    expect(active()).toBe(fx.host.querySelector(".selbar-clear"));
+  });
+
+  it("does not carry focus onto the shelf of a plan that replaced the one it was on", () => {
+    fx = graphFixture({ seed: shelve });
+    chip("ch3")!.focus();
+    const next = defaultPlan("URX44V");
+    shelve(next);
+    fx.graph.setModel(getModel("URX44V"), next);
+    expect(chip("ch3")).not.toBeNull();
+    expect(active()).not.toBe(chip("ch3"));
+  });
+
+  // Restoring from a chip takes that chip away: focus goes to the chip that took its place,
+  // and from the last chip to the node it brought back.
+  it("moves focus on from a chip it restored, to the next chip and then to the node", () => {
+    fx = graphFixture({ seed: shelve });
+    chip("ch1")!.focus();
+    chip("ch1")!.click();
+    expect(active()).toBe(chip("ch3"));
+    chip("ch3")!.click();
+    expect(active()).toBe(nodeEl(fx.host, "ch3"));
+  });
+
+  it("moves focus to the board's tab stop when Show all closes the shelf", () => {
+    fx = graphFixture({ seed: shelve });
+    const showAll = fx.host.querySelector<HTMLButtonElement>(".shelf-showall")!;
+    showAll.focus();
+    showAll.click();
+    const stop = fx.host.querySelector('g.node[tabindex="0"]');
+    expect(stop).not.toBeNull();
+    expect(active()).toBe(stop);
+  });
+});
+
 describe("hide and show", () => {
   it("shelves a node and gives it a chip", () => {
     fx = graphFixture();
@@ -420,13 +815,16 @@ describe("hide and show", () => {
   // A restored member of a STEREO-linked pair lands beside its partner rather than
   // under the viewport: the tie is drawn the moment both are on the board, so parking
   // it wherever the operator happens to be looking opens the pair stretched.
-  const linkedPair = (kept: string): GraphOptions => ({
+  const linkedPair = (kept: string, at = { x: 500, y: 300 }): GraphOptions => ({
     seed: (plan) => {
       plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: true };
       plan.nodeParams["ch2"] = { ...plan.nodeParams["ch2"], stereoLink: true };
-      plan.positions[kept] = { x: 500, y: 300 };
+      plan.positions[kept] = at;
     },
   });
+  // Right of the last column, where a pair stands on no other node: x = 500 lies across the
+  // bus column, and Show all moves a returning member that lands on a node there.
+  const CLEAR = { x: 1400, y: 300 };
 
   it("lands a restored STEREO partner beside the primary already on the board", () => {
     fx = graphFixture(linkedPair("ch1"));
@@ -452,13 +850,13 @@ describe("hide and show", () => {
   // when it is the PRIMARY, where a primary-keeping sweep would drag the visible partner
   // to a coordinate only the shelved node was carrying.
   it("moves the member Show all brought back, not the one already on the board", () => {
-    fx = graphFixture(linkedPair("ch2"));
+    fx = graphFixture(linkedPair("ch2", CLEAR));
     fx.plan.positions["ch1"] = { x: 40, y: 40 }; // stale: where ch1 sat before it was shelved
     fx.graph.hideNode("ch1");
     fx.graph.showAll();
-    expect(fx.plan.positions["ch2"]).toEqual({ x: 500, y: 300 });
-    expect(fx.plan.positions["ch1"]!.x).toBe(500);
-    expect(fx.plan.positions["ch1"]!.y).toBeLessThan(300);
+    expect(fx.plan.positions["ch2"]).toEqual(CLEAR);
+    expect(fx.plan.positions["ch1"]!.x).toBe(CLEAR.x);
+    expect(fx.plan.positions["ch1"]!.y).toBeLessThan(CLEAR.y);
   });
 
   // A node placed beside its partner goes wherever that partner is, and the chip's own status
@@ -601,14 +999,103 @@ describe("hide and show", () => {
 
   // Show all can bring several members back at once, so it closes the gap the way a
   // load does — keeping the primary — rather than moving whichever node arrived.
+  describe("Show all after Arrange", () => {
+    type Geometry = {
+      posOf: (id: string) => { x: number; y: number };
+      nodeHeight: (id: string) => number;
+      isHidden: (id: string) => boolean;
+    };
+    // Every pair of drawn nodes whose boxes overlap by more than float drift.
+    const collisions = (modelId: ModelId = "URX44V"): string[] => {
+      const g = fx.graph as unknown as Geometry;
+      const ids = getModel(modelId)
+        .nodes.map((n) => n.id)
+        .filter((id) => !g.isHidden(id));
+      const out: string[] = [];
+      for (const [i, a] of ids.entries())
+        for (const b of ids.slice(i + 1)) {
+          const pa = g.posOf(a);
+          const pb = g.posOf(b);
+          const meet =
+            pa.x < pb.x + 184 - 0.01 &&
+            pb.x < pa.x + 184 - 0.01 &&
+            pa.y < pb.y + g.nodeHeight(b) - 0.01 &&
+            pb.y < pa.y + g.nodeHeight(a) - 0.01;
+          if (meet) out.push(`${a} x ${b}`);
+        }
+      return out;
+    };
+
+    it("moves a node brought back onto an arranged one to the foot of its column", () => {
+      fx = graphFixture();
+      fx.graph.hideNode("ch2");
+      fx.graph.autoLayout();
+      fx.graph.showAll();
+      expect(collisions()).toEqual([]);
+      const g = fx.graph as unknown as Geometry;
+      const channels = getModel("URX44V").nodes.filter((n) => n.pos.col === 1 && !n.attachTo && n.id !== "ch2");
+      expect(g.posOf("ch2").x).toBe(g.posOf("ch1").x);
+      expect(channels.every((n) => g.posOf(n.id).y < g.posOf("ch2").y)).toBe(true);
+    });
+
+    // A hung child takes its place from its parent, and Arrange packs the column without the row
+    // a shelved one reserved: DUCKER 1 comes back onto CH 7/8. Its parent goes to the foot of the
+    // column with it, and the child stays hung under the parent.
+    it("moves the parent of a hung child brought back onto an arranged node", () => {
+      fx = graphFixture();
+      fx.graph.hideNode("out.ducker1");
+      fx.graph.autoLayout();
+      const g = fx.graph as unknown as Geometry;
+      const was = g.posOf("ch_5_6");
+      fx.graph.showAll();
+      expect(collisions()).toEqual([]);
+      const channels = getModel("URX44V").nodes.filter((n) => n.pos.col === 1 && !n.attachTo && n.id !== "ch_5_6");
+      expect(g.posOf("ch_5_6").x).toBe(was.x);
+      expect(channels.every((n) => g.posOf(n.id).y < g.posOf("ch_5_6").y)).toBe(true);
+      expect(g.posOf("out.ducker1").y).toBeGreaterThan(g.posOf("ch_5_6").y);
+    });
+
+    it.each(["URX44V", "URX44", "URX22"] as ModelId[])("leaves no node on another after Hide unused (%s)", (m) => {
+      fx = graphFixture({ modelId: m });
+      fx.graph.hideUnused();
+      fx.graph.autoLayout();
+      fx.graph.showAll();
+      expect(collisions(m)).toEqual([]);
+    });
+
+    // A member snapped beside its STEREO partner lands on what Arrange put below that partner;
+    // the pair goes to the foot of the column together and stays in its slot.
+    it("moves a linked pair together when the member snapped into it lands on a node", () => {
+      fx = graphFixture({ seed: (plan) => void (plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, stereoLink: true }) });
+      fx.graph.hideNode("ch2");
+      fx.graph.hideNode("ch4");
+      fx.graph.autoLayout();
+      fx.graph.showAll();
+      expect(collisions()).toEqual([]);
+      const g = fx.graph as unknown as Geometry;
+      expect(g.posOf("ch4").x).toBe(g.posOf("ch3").x);
+      expect(g.posOf("ch4").y).toBeGreaterThan(g.posOf("ch3").y);
+      expect(fx.graph.alignLinkedPairs(), "already in the pair's slot").toBe(false);
+    });
+
+    // A position carried with float error touches its neighbour by ~1e-13 px; that is not
+    // landing on it, and the node keeps the place it was given.
+    it("leaves a node that meets its neighbour only by float drift where it is", () => {
+      fx = graphFixture({ seed: (plan) => void (plan.positions["ch2"] = { x: 296, y: 40 + 44 - 1e-13 }) });
+      fx.graph.hideNode("ch2");
+      fx.graph.showAll();
+      expect(fx.plan.positions["ch2"]).toEqual({ x: 296, y: 40 + 44 - 1e-13 });
+    });
+  });
+
   it("closes a linked pair's gap when Show all brings its member back", () => {
-    fx = graphFixture(linkedPair("ch1"));
+    fx = graphFixture(linkedPair("ch1", CLEAR));
     fx.plan.positions["ch2"] = { x: 900, y: 620 };
     fx.graph.hideNode("ch2");
     fx.graph.showAll();
-    expect(fx.plan.positions["ch1"]).toEqual({ x: 500, y: 300 });
-    expect(fx.plan.positions["ch2"]!.x).toBe(500);
-    expect(fx.plan.positions["ch2"]!.y).toBeGreaterThan(300);
+    expect(fx.plan.positions["ch1"]).toEqual(CLEAR);
+    expect(fx.plan.positions["ch2"]!.x).toBe(CLEAR.x);
+    expect(fx.plan.positions["ch2"]!.y).toBeGreaterThan(CLEAR.y);
   });
 
   // The negative control: without the link there is no tie to keep short, so the node does
@@ -1041,6 +1528,50 @@ describe("a USB output's linked-pair drop across a render", () => {
   });
 });
 
+// A device-follow direct notify or a MIDI move repaints only the nodes it touched; their jacks
+// come back at rest, and a connect drag under way has to light them again.
+describe("connect candidates across a fine-grained repaint", () => {
+  const down = (el: Element, x: number): void =>
+    void el.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: x, clientY: 0, bubbles: true }));
+  const move = (el: Element, x: number): void =>
+    void el.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: x, clientY: 0, bubbles: true }));
+  const cancel = (el: Element): void =>
+    void el.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
+  const jack = (sel: string): Element => fx.host.querySelector(sel)!.previousElementSibling!;
+
+  it("keeps a legal source lit on a repainted node", () => {
+    const USB_B = "out.usbmain_b:in";
+    fx = graphFixture({ seed: (plan) => void (plan.connections = plan.connections.filter((c) => c.to !== USB_B)) });
+    const from = portHit(fx.host, USB_B)!;
+    down(from, 0);
+    move(from, 60);
+    const tap = (): Element => jack('[data-tap-pin="ch1"]');
+    const mixOut = (): Element => jack('[data-pin="bus.mix1:out"]');
+    expect(tap().getAttribute("fill"), "the control: lit before the repaint").toBe(PALETTES.dark.legalFill);
+    fx.graph.repaintDirtyNodes(["ch1", "bus.mix1"]);
+    for (const el of [tap(), mixOut()]) {
+      expect(el.getAttribute("r")).toBe("8");
+      expect(el.getAttribute("fill")).toBe(PALETTES.dark.legalFill);
+    }
+    cancel(from);
+  });
+
+  it("keeps an occupied target outlined on a repainted node", () => {
+    fx = graphFixture();
+    const from = portHit(fx.host, "ch1:out")!;
+    down(from, 0);
+    move(from, 60);
+    const stereo = (): Element => jack('[data-pin="bus.stereo:in"]');
+    expect(stereo().getAttribute("stroke"), "the control: outlined before the repaint").toBe(
+      PALETTES.dark.possibleStroke,
+    );
+    fx.graph.repaintDirtyNodes(["bus.stereo"]);
+    expect(stereo().getAttribute("r")).toBe("8");
+    expect(stereo().getAttribute("stroke")).toBe(PALETTES.dark.possibleStroke);
+    cancel(from);
+  });
+});
+
 describe("node drag", () => {
   it("moves a node and reports the change exactly once", () => {
     fx = graphFixture();
@@ -1448,6 +1979,140 @@ describe("view transform", () => {
     expect(top).toBeLessThanOrEqual(2.5);
   });
 
+  describe("a wheel gesture's axis", () => {
+    let clock = 0;
+    const view = (): { zoom: number; pan: { x: number; y: number } } =>
+      fx.graph as unknown as { zoom: number; pan: { x: number; y: number } };
+    // One wheel event `after` ms past the previous one.
+    const wheel = (deltaX: number, deltaY: number, after = 16, init: WheelEventInit = {}): void => {
+      clock += after;
+      fx.svg.dispatchEvent(
+        new WheelEvent("wheel", { deltaX, deltaY, clientX: 50, clientY: 50, bubbles: true, cancelable: true, ...init }),
+      );
+    };
+    beforeEach(() => {
+      clock = 1000;
+      vi.spyOn(performance, "now").mockImplementation(() => clock);
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    // A tilt wheel reports deltaX alone, and Shift + wheel is remapped onto deltaX.
+    it("pans by deltaX for a horizontal gesture, in either direction", () => {
+      fx = graphFixture();
+      const x0 = view().pan.x;
+      wheel(30, 0);
+      wheel(30, 0);
+      expect(view().pan.x).toBe(x0 - 60);
+      wheel(-100, 0, 400, { shiftKey: true });
+      expect(view().pan.x).toBe(x0 + 40);
+      expect(view().zoom).toBe(1);
+    });
+
+    // A trackpad swipe carries the other axis too: a sideways one keeps panning however much
+    // deltaY a later event carries, and a vertical one keeps zooming.
+    it("keeps the axis of the gesture's first event", () => {
+      fx = graphFixture();
+      wheel(-9, 0);
+      wheel(-2, 3);
+      wheel(0, 2);
+      expect(view().zoom).toBe(1);
+      wheel(0, -4, 200);
+      const zoomed = view().zoom;
+      expect(zoomed).toBeGreaterThan(1);
+      wheel(-9, -1);
+      expect(view().zoom).toBeGreaterThan(zoomed);
+    });
+
+    it("starts a new gesture after a gap, with its own axis", () => {
+      fx = graphFixture();
+      wheel(0, -4);
+      const before = { zoom: view().zoom, x: view().pan.x };
+      wheel(-9, 0, 150);
+      expect({ zoom: view().zoom, x: view().pan.x }, "inside the gap: still the vertical gesture").toEqual(before);
+      wheel(-9, 0, 151);
+      expect(view().pan.x).toBe(before.x + 9);
+      expect(view().zoom).toBe(before.zoom);
+    });
+
+    // A trackpad pinch arrives as ctrl+wheel, and zooms in the middle of a sideways swipe too.
+    it("zooms on a ctrl+wheel event whatever the gesture's axis", () => {
+      fx = graphFixture();
+      wheel(-9, 0);
+      wheel(0, -5, 16, { ctrlKey: true });
+      expect(view().zoom).toBeGreaterThan(1);
+    });
+
+    it("reads an event with no movement on the gesture's axis as nothing", () => {
+      fx = graphFixture();
+      wheel(0, 0);
+      wheel(5, 0);
+      expect(view().zoom).toBe(1);
+      wheel(0, -3, 400);
+      const z = view().zoom;
+      const pan = { ...view().pan };
+      wheel(0, 0);
+      expect(view().zoom).toBe(z);
+      expect(view().pan).toEqual(pan);
+    });
+  });
+
+  // The native context menu takes the right button's release, so the page sees the press and
+  // then moves with no button held. A press whose release never arrived ends at that move.
+  describe("a press whose release never arrived", () => {
+    const mouse = (type: string, x: number, init: PointerEventInit = {}): PointerEvent =>
+      new PointerEvent(type, {
+        pointerId: 1,
+        pointerType: "mouse",
+        clientX: x,
+        clientY: x,
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+    const pan = (): { x: number; y: number } => ({ ...(fx.graph as unknown as { pan: { x: number; y: number } }).pan });
+
+    it("does not pan on a buttonless move after a right press on the empty canvas", () => {
+      fx = graphFixture();
+      const before = pan();
+      fx.svg.dispatchEvent(mouse("pointerdown", 5, { button: 2, buttons: 2 }));
+      fx.svg.dispatchEvent(mouse("pointermove", 80, { buttons: 0 }));
+      fx.svg.dispatchEvent(mouse("pointermove", 160, { buttons: 0 }));
+      expect(pan()).toEqual(before);
+    });
+
+    it("pans while the button is held, the control", () => {
+      fx = graphFixture();
+      const before = pan();
+      fx.svg.dispatchEvent(mouse("pointerdown", 5, { buttons: 1 }));
+      fx.svg.dispatchEvent(mouse("pointermove", 80, { buttons: 1 }));
+      expect(pan()).not.toEqual(before);
+    });
+
+    it("stops a node drag at the buttonless move, reporting the move once", () => {
+      fx = graphFixture();
+      const rect = faceplate(fx.host, "ch1")!;
+      rect.dispatchEvent(mouse("pointerdown", 100, { buttons: 1 }));
+      rect.dispatchEvent(mouse("pointermove", 200, { buttons: 1 }));
+      const placed = { ...fx.plan.positions["ch1"] };
+      rect.dispatchEvent(mouse("pointermove", 300, { buttons: 0 }));
+      rect.dispatchEvent(mouse("pointermove", 400, { buttons: 0 }));
+      expect(fx.plan.positions["ch1"]).toEqual(placed);
+      expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("draws nothing for a connect drag whose release never arrived", () => {
+      fx = graphFixture();
+      const from = portHit(fx.host, "ch1:out")!;
+      from.dispatchEvent(mouse("pointerdown", 0, { buttons: 1 }));
+      from.dispatchEvent(mouse("pointermove", 60, { buttons: 1 }));
+      expect(fx.host.querySelector(".overlay-temp")).not.toBeNull();
+      const wires = fx.plan.connections.length;
+      from.dispatchEvent(mouse("pointermove", 90, { buttons: 0 }));
+      expect(fx.host.querySelector(".overlay-temp")).toBeNull();
+      expect(fx.plan.connections.length).toBe(wires);
+    });
+  });
+
   it("pans the canvas from a drag on empty space", () => {
     fx = graphFixture();
     const before = { ...(fx.graph as unknown as { pan: { x: number; y: number } }).pan };
@@ -1540,8 +2205,8 @@ describe("notes", () => {
 
   it("opens the floating editor from the add button and writes as it is typed", () => {
     fx = graphFixture();
-    const add = nodeEl(fx.host, "ch4")?.querySelector(".note-add");
-    if (!add) return;
+    const add = nodeEl(fx.host, "ch4")!.querySelector(".note-add")!;
+    expect(add).not.toBeNull();
     add.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 0, clientY: 0, bubbles: true }));
     const ta = fx.host.querySelector<HTMLTextAreaElement>("textarea.note-edit-overlay")!;
     expect(ta).not.toBeNull();
@@ -1550,6 +2215,66 @@ describe("notes", () => {
     expect(fx.plan.notes?.["ch4"]).toBe("hello");
     ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(fx.host.querySelector("textarea.note-edit-overlay")).toBeNull();
+  });
+
+  describe("an open editor across a redraw", () => {
+    const open = (id: string): HTMLTextAreaElement => {
+      (fx.graph as unknown as { openNoteEditor: (id: string) => void }).openNoteEditor(id);
+      return fx.host.querySelector<HTMLTextAreaElement>("textarea.note-edit-overlay")!;
+    };
+    const type = (ta: HTMLTextAreaElement, text: string): void => {
+      ta.value = text;
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const key = (ta: HTMLTextAreaElement, init: KeyboardEventInit): void =>
+      void ta.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ...init }));
+
+    // A device-follow full reflect (refresh) and an OS appearance flip in Auto mode
+    // (setTheme) both redraw the board through render(); the note being typed stays open.
+    it("keeps the editor open, focused and unchanged through refresh and a theme switch", () => {
+      fx = graphFixture();
+      const ta = open("ch1");
+      type(ta, "mic ch");
+      fx.graph.refresh();
+      expect(ta.isConnected).toBe(true);
+      expect(document.activeElement).toBe(ta);
+      fx.graph.setTheme("light");
+      expect(ta.isConnected).toBe(true);
+      expect(document.activeElement).toBe(ta);
+      expect(fx.plan.notes?.["ch1"]).toBe("mic ch");
+      // The panel under it stays the one being edited: its text is not drawn behind it.
+      expect(nodeEl(fx.host, "ch1")!.querySelector(".note-panel text")).toBeNull();
+    });
+
+    it("closes the editor once its node is no longer drawn", () => {
+      fx = graphFixture();
+      const ta = open("ch1");
+      fx.graph.hideNode("ch1");
+      expect(ta.isConnected).toBe(false);
+    });
+
+    // rerenderPlan (Fetch, the Live-sync read, a .urxf import) and a file or a model switch
+    // all hand the board a plan, and the selection the editor belongs to goes with it.
+    it("closes the editor when the board is handed a plan, the same one included", () => {
+      fx = graphFixture();
+      let ta = open("ch1");
+      fx.graph.setModel(getModel("URX44V"), fx.plan);
+      expect(ta.isConnected).toBe(false);
+      ta = open("ch1");
+      fx.graph.setModel(getModel("URX44V"), defaultPlan("URX44V"));
+      expect(ta.isConnected).toBe(false);
+    });
+
+    it("leaves a key pressed during an IME composition to the composition", () => {
+      fx = graphFixture();
+      const ta = open("ch1");
+      key(ta, { key: "Escape", isComposing: true });
+      key(ta, { key: "Enter", metaKey: true, isComposing: true });
+      key(ta, { key: "Escape", keyCode: 229 });
+      expect(ta.isConnected).toBe(true);
+      key(ta, { key: "Escape" });
+      expect(ta.isConnected, "the control: a plain Escape closes it").toBe(false);
+    });
   });
 
   // A note panel resizing shifts every node hung under it.

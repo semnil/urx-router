@@ -488,17 +488,77 @@ describe("refusals", () => {
     expect(h.plan.nodeParams.ch1).toBeUndefined();
   });
 
-  it("refuses a rate change while a live session holds the rate", () => {
+  // The native context menu takes the release of the press that opened it, so the page
+  // hears the press and then a mouse moving with no button held. That move ends the press
+  // as a release would; a move with the button held is still a drag.
+  describe("a press whose release never arrived", () => {
+    const mouse = (type: "pointerdown" | "pointermove", init: PointerEventInit): void =>
+      void window.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: "mouse", bubbles: true, ...init }));
+
+    it("ends a right press at a move with no button held", () => {
+      const h = harness();
+      h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
+      idle();
+      mouse("pointerdown", { button: 2, buttons: 2 });
+      mouse("pointermove", { buttons: 0 });
+      mouse("pointermove", { buttons: 0 });
+      h.history.undo();
+      expect(h.statuses.at(-1)).not.toBe("Finish the current drag before undoing");
+      expect(h.plan.nodeParams.ch1).toBeUndefined();
+    });
+
+    it("ends a drag at a move with no button held, and closes its entry", () => {
+      const h = harness();
+      mouse("pointerdown", { buttons: 1 });
+      mouse("pointermove", { buttons: 1 });
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+      mouse("pointermove", { buttons: 0 });
+      settle();
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 3 }));
+      idle();
+      // Two entries: the edit after the move, then the drag's, closed at the move.
+      h.history.undo();
+      settle();
+      expect(h.plan.nodeParams.ch1).toEqual({ gain: 2 });
+      h.history.undo();
+      settle();
+      expect(h.plan.nodeParams.ch1).toBeUndefined();
+    });
+
+    it("still refuses while the button is held", () => {
+      const h = harness();
+      h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
+      idle();
+      mouse("pointerdown", { buttons: 1 });
+      mouse("pointermove", { buttons: 1 });
+      h.history.undo();
+      expect(h.statuses.at(-1)).toBe("Finish the current drag before undoing");
+      expect(h.plan.nodeParams.ch1).toEqual({ hpf: true });
+    });
+
+    // With no press standing a buttonless move is a hover, and must not close the entry an
+    // edit with no gesture of its own (a wheel burst, a MIDI sweep) leaves open.
+    it("leaves an open entry alone when no press is standing", () => {
+      const h = harness();
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+      mouse("pointermove", { buttons: 0 });
+      settle();
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+      idle();
+      expect(undoDepth(h)).toBe(1);
+    });
+  });
+
+  it("refuses a rate change while a device action holds the rate", () => {
     const h = harness();
     h.edit((p) => (p.sampleRate = 96000));
     idle();
     h.rateLocked = true;
     h.history.undo();
-    expect(h.statuses.at(-1)).toBe(
-      "The sample rate follows the device while Live sync is on — it cannot be undone here",
-    );
+    expect(h.statuses.at(-1)).toBe("The sample rate cannot be undone while a device operation is running");
     expect(h.plan.sampleRate).toBe(96000);
-    // Not consumed: turning the session off makes the same press work.
+    // Not consumed: once the action ends the same press works.
     h.rateLocked = false;
     h.history.undo();
     settle();
@@ -517,11 +577,11 @@ describe("refusals", () => {
     h.rateLocked = true;
     h.history.undo();
     expect(h.statuses.at(-1)).toBe(
-      "This step also changes the sample rate, which follows the device while Live sync is on — the whole step is held back, not lost; it works again with Live sync off",
+      "This step also changes the sample rate, which cannot be undone while a device operation is running — the whole step is held back, not lost; it works again once that operation ends",
     );
     expect(h.plan.sampleRate).toBe(96000);
     expect(h.plan.nodeParams.ch1).toEqual({ hpf: true });
-    // Not consumed either: the same press works with the session off.
+    // Not consumed either: the same press works once the action ends.
     h.rateLocked = false;
     h.history.undo();
     settle();
@@ -529,7 +589,7 @@ describe("refusals", () => {
     expect(h.plan.nodeParams.ch1).toBeUndefined();
   });
 
-  it("allows an undo that does not touch the rate while live", () => {
+  it("allows an undo that does not touch the rate while the rate is held", () => {
     const h = harness();
     h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
     idle();

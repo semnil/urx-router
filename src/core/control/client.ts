@@ -103,6 +103,10 @@ export interface DiffResult {
   /** Per-command read failures (e.g. timeout). A non-empty list means the
    *  comparison is incomplete and the caller must not write on it. */
   errors: string[];
+  /** The same failures' own messages, in the same order, without the command name `errors`
+   *  prefixes them with — a shell code at the head of each, which is what a caller that
+   *  puts one in a localized frame resolves (`errorText`). */
+  causes: string[];
   /** The commands behind those failures. `errors` carries a name and a message, which
    *  is what a report prints; a caller that has to decide something PER ADDRESS — the
    *  self-test, deciding whether a guessed mapping round-tripped — cannot get there
@@ -155,6 +159,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
   const { signal, stopOnError = false, scope = "all", emit = {}, exclude, matched } = opts;
   const diffs: CommandDiff[] = [];
   const errors: string[] = [];
+  const causes: string[] = [];
   const unread: VdCommand[] = [];
   for (const command of planToCommands(model, plan, scope, emit)) {
     if (exclude?.has(cmdAddr(command))) continue;
@@ -166,12 +171,14 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
         matched?.delete(cmdAddr(command));
       } else matched?.add(cmdAddr(command));
     } catch (e) {
-      errors.push(`${command.name}: ${e instanceof Error ? e.message : String(e)}`);
+      const cause = e instanceof Error ? e.message : String(e);
+      errors.push(`${command.name}: ${cause}`);
+      causes.push(cause);
       unread.push(command);
       if (stopOnError) break;
     }
   }
-  return { diffs, errors, unread };
+  return { diffs, errors, causes, unread };
 }
 
 /**
@@ -501,6 +508,8 @@ export interface ConvergeResult {
    *  stopped early because the device's state could no longer be confirmed, so
    *  `residual` is what was known at that point rather than a settled answer. */
   readErrors: string[];
+  /** Their own messages, in the same order (see DiffResult.causes). */
+  readCauses: string[];
   /** The commands behind them (see DiffResult.unread), so a caller can decide per
    *  address rather than per message. */
   unread: VdCommand[];
@@ -673,6 +682,7 @@ export async function sendConverging(
   } = opts;
   const outcomes: SendOutcome[] = [];
   const readErrors: string[] = [];
+  const readCauses: string[] = [];
   const unread: VdCommand[] = [];
   const trace: ConvergeRound[] = [];
   const matched = ledger.matched;
@@ -693,6 +703,7 @@ export async function sendConverging(
       });
     const seed = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude, matched });
     readErrors.push(...seed.errors);
+    readCauses.push(...seed.causes);
     unread.push(...seed.unread);
     residual = seed.diffs;
   }
@@ -753,11 +764,12 @@ export async function sendConverging(
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
     const next = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude, matched });
     readErrors.push(...next.errors);
+    readCauses.push(...next.causes);
     unread.push(...next.unread);
     residual = next.diffs;
     record(residual);
   }
-  return { outcomes, rounds, trace, residual, readErrors, unread, ledger };
+  return { outcomes, rounds, trace, residual, readErrors, readCauses, unread, ledger };
 }
 
 /**
@@ -843,8 +855,8 @@ export interface NameCompareEntry {
 }
 
 /**
- * Read every parameter the plan implies and record the device's value beside the
- * plan's — the full, auditable form of `diffPlan`, which keeps only the
+ * Read every parameter in `commands` (a plan's `planToCommands`) and record the device's
+ * value beside the plan's — the full, auditable form of `diffPlan`, which keeps only the
  * mismatches. The read-only "Compare with device" uses this so the report can
  * show that every parameter was actually read, not just the ones that differ (a
  * comparison that returns "matches" instantly is otherwise indistinguishable from
@@ -852,15 +864,18 @@ export interface NameCompareEntry {
  * parameter left out of `entries`, so "matched" and "could not be read" stay
  * distinct. Reads all — no stopOnError — so one dead parameter does not truncate
  * the audit. The caller must have connected first.
+ *
+ * Takes the list rather than the plan, as `compareNames` does, so a caller builds both
+ * from one plan before the first read: the sweep spans seconds, and a plan read again
+ * after it can be another document.
  */
 export async function comparePlan(
-  model: DeviceModel,
-  plan: Plan,
+  commands: readonly VdCommand[],
   signal?: AbortSignal,
 ): Promise<{ entries: CompareEntry[]; errors: string[] }> {
   const entries: CompareEntry[] = [];
   const errors: string[] = [];
-  for (const command of planToCommands(model, plan)) {
+  for (const command of commands) {
     signal?.throwIfAborted();
     try {
       const device = await vdGet(command.paramId, command.x, command.y);
@@ -872,14 +887,14 @@ export async function comparePlan(
   return { entries, errors };
 }
 
-/** The CH SETTING name analogue of comparePlan (string params, via the string IPC). */
+/** The CH SETTING name analogue of comparePlan (string params, via the string IPC), over a
+ *  plan's `planToNameWrites`. */
 export async function compareNames(
-  model: DeviceModel,
-  plan: Plan,
+  writes: readonly NameWrite[],
 ): Promise<{ entries: NameCompareEntry[]; errors: string[] }> {
   const entries: NameCompareEntry[] = [];
   const errors: string[] = [];
-  for (const write of planToNameWrites(model, plan)) {
+  for (const write of writes) {
     try {
       const device = (await vdGetStr(write.param, 0, write.y)).trimEnd();
       entries.push({ write, device, match: device === write.value });

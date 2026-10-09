@@ -29,12 +29,14 @@ import { NAMED_TOKENS, recorder, vals } from "./dyn-plot.test-util";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import { defaultPlan } from "../models/initial-state";
 import { getModel } from "../models";
-import { INSERT_FX_OPTIONS } from "../core/control/params";
+import { INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { effectiveInsertFx } from "../core/control/translate";
 import { t } from "../i18n";
 
 /** The compander, by name off the shared table rather than as a literal. */
 const COMPANDER_H = INSERT_FX_OPTIONS.find((o) => o.label === "Compander-H")!.value;
+/** The multi-band compressor, the one family whose plot names its bands. */
+const MBC = OUTPUT_INSERT_FX_OPTIONS.find((o) => o.label === "M.B.Comp")!.value;
 
 /** The tokens that are lamps and gradients, never faces to print on. */
 const NOT_A_FACE = ["--led", "--seg"];
@@ -125,6 +127,99 @@ describe("a lit face that carries text uses --led-face, not --led or --seg", () 
   });
 });
 
+// A tick label, a band name, any number a plot prints, is text read on the groove, and
+// --plot-faint is a rule's tone there rather than an ink: text takes --plot-dim, the tier
+// the DOM tick column on the same groove prints in. Driven over every processor's axes and
+// curve, on nodes holding each kind of plot, with each band selected in turn.
+describe("a plot prints no text in --plot-faint", () => {
+  it("draws every tick label and band name in an ink, not in the rules' tone", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: COMPANDER_H, insertFxOn: true };
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], insertFx: MBC, insertFxOn: true };
+    const offenders: string[] = [];
+    let texts = 0;
+    for (const [kind, proc] of Object.entries(DYN_PROCESSORS)) {
+      if (!proc.drawCurve || !proc.plotGeo) continue;
+      for (const nodeId of ["ch1", "bus.mix1", "out.ducker1"])
+        for (const sel of [0, 1, 2, 3]) {
+          const ctx = { nodeId, sel, plan, model: getModel("URX44V"), m: t() } as never;
+          const r = recorder();
+          const geo = proc.plotGeo(600, 320, ctx);
+          proc.drawAxes?.(r.ctx, geo, NAMED_TOKENS, ctx);
+          proc.drawCurve(r.ctx, geo, vals(), NAMED_TOKENS, ctx);
+          texts += r.texts.length;
+          for (const text of r.texts)
+            if (text.style === "--plot-faint") offenders.push(`${kind} on ${nodeId}: "${text.text}"`);
+        }
+    }
+    expect([...new Set(offenders)], "print it in --plot-dim").toEqual([]);
+    // The positive control: the drive reached text at all.
+    expect(texts).toBeGreaterThan(100);
+  });
+});
+
+// Text a plot writes on a face of its own (a band marker's pill, a lit marker) is read
+// against that face, not the groove, so the pair has to reach 4.5:1 in each theme with the
+// token values the stylesheet declares. Graded where both are drawn at full strength: a
+// marker drawn dim is a band switched off, which says so by being dim.
+describe("a plot's text on a face of its own reads at 4.5:1", () => {
+  it("in both themes", () => {
+    const themes = {
+      dark: tokensIn(THEME_SELECTOR.dark),
+      light: { ...tokensIn(THEME_SELECTOR.dark), ...tokensIn(THEME_SELECTOR.light) },
+    };
+    const value = (map: Record<string, string>, token: string): string => {
+      let v = map[token] ?? "";
+      for (let i = 0; i < 5 && v.startsWith("var("); i++) v = map[v.slice(4, -1)] ?? "";
+      return v;
+    };
+    const rgb = (hex: string): number[] => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    const lum = (c: number[]): number => {
+      const [r, g, b] = c.map((v) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (a: string, b: string): number => {
+      const [hi, lo] = [lum(rgb(a)), lum(rgb(b))].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: COMPANDER_H, insertFxOn: true };
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], insertFx: MBC, insertFxOn: true };
+    const pairs = new Set<string>();
+    for (const proc of Object.values(DYN_PROCESSORS)) {
+      if (!proc.drawCurve || !proc.plotGeo) continue;
+      for (const nodeId of ["ch1", "bus.mix1", "out.ducker1"])
+        for (const sel of [-1, 0, 1, 2, 3]) {
+          const ctx = { nodeId, sel, plan, model: getModel("URX44V"), m: t() } as never;
+          const r = recorder();
+          const geo = proc.plotGeo(600, 320, ctx);
+          proc.drawAxes?.(r.ctx, geo, NAMED_TOKENS, ctx);
+          proc.drawCurve(r.ctx, geo, vals(), NAMED_TOKENS, ctx);
+          for (const text of r.texts) {
+            if (text.alpha !== 1) continue;
+            const under = r.faces
+              .filter((f) => f.seq < text.seq && f.x0 <= text.x && text.x <= f.x1 && f.y0 <= text.y && text.y <= f.y1)
+              .at(-1);
+            if (under?.alpha === 1) pairs.add(`${text.style} on ${under.style}`);
+          }
+        }
+    }
+    const short: string[] = [];
+    for (const pair of pairs) {
+      const [ink, face] = pair.split(" on ");
+      for (const [theme, map] of Object.entries(themes)) {
+        const [a, b] = [value(map, ink), value(map, face)];
+        if (!/^#[0-9a-f]{6}$/i.test(a) || !/^#[0-9a-f]{6}$/i.test(b)) continue;
+        if (ratio(a, b) < 4.5) short.push(`${theme}: ${pair} ${ratio(a, b).toFixed(2)}`);
+      }
+    }
+    expect(short).toEqual([]);
+    // The positive control: the drive met text on a face — the EQ markers' — at all.
+    expect([...pairs].some((p) => p.endsWith("on --led-face"))).toBe(true);
+    expect(pairs.size).toBeGreaterThan(1);
+  });
+});
+
 // A ring drawn INSIDE a lit face in the lamp's own colour is invisible on it: in the dark
 // theme --led-face IS --led. The packed racks draw their ring inside (offset -2px), so every
 // lit state whose unlit control rings that way has to name a ring of its own. Derived from
@@ -135,12 +230,16 @@ describe("a focus ring drawn inside a lit face does not take the lamp's colour",
   const litSelectors = RULES.filter((r) => faceDecl(r.body) === "var(--led-face)")
     .flatMap((r) => r.selector.split(",").map((s) => s.trim()))
     .filter((s) => LIT_STATE.test(s));
-  const ringOf = (selector: string): CssRule | undefined =>
-    RULES.filter((r) =>
-      r.selector
-        .split(",")
-        .map((s) => s.trim())
-        .includes(`${selector}:focus-visible`),
+  // The last rule that names the ring AND declares the property read from it: RULES flattens
+  // the @media blocks, so a later forced-colors rule that only restyles the ring's line would
+  // otherwise stand in for the one that gives it its colour.
+  const ringOf = (selector: string, prop: string): CssRule | undefined =>
+    RULES.filter(
+      (r) =>
+        r.selector
+          .split(",")
+          .map((s) => s.trim())
+          .includes(`${selector}:focus-visible`) && decl(r.body, prop) !== undefined,
     ).at(-1);
 
   it("finds lit states to hold", () => {
@@ -151,12 +250,12 @@ describe("a focus ring drawn inside a lit face does not take the lamp's colour",
     const inset: string[] = [];
     const missing: string[] = [];
     for (const lit of litSelectors) {
-      const base = ringOf(lit.replace(LIT_STATE, ""));
+      const base = ringOf(lit.replace(LIT_STATE, ""), "outline");
       if (!base) continue;
       const offset = parseFloat(decl(base.body, "outline-offset") ?? "0");
       if (!(offset < 0 && (decl(base.body, "outline") ?? "").includes("var(--led)"))) continue;
       inset.push(lit);
-      if (decl(ringOf(lit)?.body ?? "", "outline-color") !== "var(--on-accent-ink)") missing.push(lit);
+      if (decl(ringOf(lit, "outline-color")?.body ?? "", "outline-color") !== "var(--on-accent-ink)") missing.push(lit);
     }
     // The positive control: the racks this exists for are found by the derivation.
     expect(inset).toEqual(expect.arrayContaining([".con-chip.on", ".con-ifxpop .irow.active"]));

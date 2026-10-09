@@ -218,6 +218,18 @@ describe("pitch MIDI control tri-state", () => {
     expect(pitchMidiMode(1, 1)).toBe(2);
   });
 
+  // Each bit is read as the raw the write sends there, the question the writer's driven set
+  // asks of the same slot: a value the write sends as 0, or does not send at all, is off.
+  it("reads each bit the way the write sends it", () => {
+    expect(pitchMidiMode(true, 0), "a boolean enable sends nothing").toBe(0);
+    expect(pitchMidiMode(false, 1), "nor does a false one").toBe(0);
+    expect(pitchMidiMode(-1, 0), "sent as 0").toBe(0);
+    expect(pitchMidiMode(0.4, 0), "rounded to 0").toBe(0);
+    expect(pitchMidiMode(0.5, 0), "rounded to 1").toBe(1);
+    expect(pitchMidiMode(2, true), "bounded to 1, beside a real-time bit that sends nothing").toBe(1);
+    expect(pitchMidiMode(2, 2), "both bounded to 1").toBe(2);
+  });
+
   // Two bits for three modes, so a write names BOTH — setting the enable bit alone would
   // leave whichever real-time bit was there and land on a mode nobody chose.
   it("encodes a mode back into both bits", () => {

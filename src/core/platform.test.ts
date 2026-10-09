@@ -135,6 +135,35 @@ describe("invoke resolution and file/dialog primitives", () => {
     expect(seen).toEqual([42]);
   });
 
+  // A window-scoped subscription names the page's own window, as the shell labels it, so an
+  // event the shell raises for another window does not reach it; the default stays every
+  // emitter, which is what the Edit menu's subscription relies on.
+  it("aims a window-scoped event subscription at the page's own window", async () => {
+    const harness = installInternals();
+    setWindowProperty("__TAURI_INTERNALS__", {
+      ...(window as unknown as { __TAURI_INTERNALS__: object }).__TAURI_INTERNALS__,
+      metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+    });
+    await platform.listenEvent("tauri://drag-drop", vi.fn(), "window");
+    await platform.listenEvent("menu://edit", vi.fn());
+    expect(harness.invoke.mock.calls.map(([, args]) => (args as { target: unknown }).target)).toEqual([
+      { kind: "WebviewWindow", label: "main" },
+      { kind: "Any" },
+    ]);
+  });
+
+  // Without the label there is no window to aim at, and widening to every emitter is the
+  // subscription the scope exists to refuse: it rejects, registers nothing and keeps no
+  // callback.
+  it("refuses a window-scoped subscription when the page's window label is missing", async () => {
+    const harness = installInternals();
+    await expect(platform.listenEvent("tauri://drag-drop", vi.fn(), "window")).rejects.toThrow(
+      "window label is unknown",
+    );
+    expect(harness.invoke).not.toHaveBeenCalled();
+    expect(harness.callbacks).toEqual([]);
+  });
+
   it("normalizes cancellation and unavailable event support", async () => {
     const harness = installInternals();
     harness.invoke.mockResolvedValueOnce("Cancel");
@@ -359,7 +388,7 @@ describe("command wrappers", () => {
     defaultArgs.onEvent.onmessage({ event: "Finished" });
     expect(harness.invoke).toHaveBeenCalledWith(
       "plugin:updater|download_and_install",
-      { onEvent: expect.any(FakeChannel), rid: 5 },
+      { onEvent: expect.any(FakeChannel), rid: 5, timeout: 600_000 },
       undefined,
     );
   });

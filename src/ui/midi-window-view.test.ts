@@ -42,6 +42,10 @@ function fixture(state: MidiUiState): { host: HTMLElement; sent: MidiUiIntent[] 
   return { host, sent };
 }
 
+/** The hint wording that is painted and read: the one the stack does not hide. */
+const shownHint = (host: HTMLElement): string | null | undefined =>
+  host.querySelector(".mw-hint > :not([aria-hidden])")?.textContent;
+
 const change = (node: Element, value: string): void => {
   (node as HTMLSelectElement).value = value;
   node.dispatchEvent(new Event("change"));
@@ -74,6 +78,81 @@ describe("renderMidiWindow — shell", () => {
     const status = host.querySelector(".mw-status")!;
     expect(status.getAttribute("role")).toBe("status");
     expect(status.textContent).toBe("Assigned CC 7 to CH 1 · Level");
+  });
+});
+
+// Every intent the window sends comes back as a full state push, and each push repaints.
+// What a repaint must not do is take the operator's place away: keyboard focus stays on the
+// control it was on, found again by what that control IS — its class and the assignment row
+// it sits in — and the status line stays the one live region, written in place.
+describe("renderMidiWindow — across a repaint", () => {
+  const paint = (host: HTMLElement, state: MidiUiState): void => renderMidiWindow(host, state, () => {});
+  const focused = (): Element | null => document.activeElement;
+
+  it("keeps focus on the Learn button", () => {
+    const { host } = fixture(baseState());
+    (host.querySelector(".mw-learnbtn") as HTMLButtonElement).focus();
+    paint(host, baseState({ learnOn: true }));
+    const btn = host.querySelector(".mw-learnbtn")!;
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    expect(focused()).toBe(btn);
+  });
+
+  it("keeps focus on a port select", () => {
+    const { host } = fixture(baseState({ outputs: ["A Out"] }));
+    (host.querySelector(".mw-out") as HTMLSelectElement).focus();
+    paint(host, baseState({ outputs: ["A Out"], output: "A Out" }));
+    expect(focused()).toBe(host.querySelector(".mw-out"));
+  });
+
+  // By the row's control, not by position: the list below reorders, so the same index
+  // names a different assignment after the repaint.
+  it("keeps focus on the select of the same assignment when the rows move", () => {
+    const a = row({ control: "ch1/level", label: "CH 1 · Level" });
+    const b = row({ control: "ch2/level", label: "CH 2 · Level" });
+    const { host } = fixture(baseState({ rows: [a, b] }));
+    (host.querySelector('tr[data-control="ch2/level"] .mw-mode') as HTMLSelectElement).focus();
+    paint(host, baseState({ rows: [b, { ...a, mode: "pickup" }] }));
+    expect(focused()).toBe(host.querySelector('tr[data-control="ch2/level"] .mw-mode'));
+  });
+
+  it("keeps focus on a toggle row's behavior select", () => {
+    const t1 = row({ control: "ch1/mute", kind: "toggle", option: "button", button: "edge" });
+    const { host } = fixture(baseState({ rows: [t1] }));
+    (host.querySelector(".mw-btn") as HTMLSelectElement).focus();
+    paint(host, baseState({ rows: [{ ...t1, button: "state" }] }));
+    expect(focused()).toBe(host.querySelector(".mw-btn"));
+  });
+
+  // The removed row's delete button has no successor of its own, and handing focus to the
+  // row that moved into its place would aim the next Space at an assignment nobody chose.
+  it("does not hand focus to another row when the focused one is gone", () => {
+    const a = row({ control: "ch1/level" });
+    const b = row({ control: "ch2/level" });
+    const { host } = fixture(baseState({ rows: [a, b] }));
+    (host.querySelector('tr[data-control="ch1/level"] .mw-del') as HTMLButtonElement).focus();
+    paint(host, baseState({ rows: [b] }));
+    expect(focused()).not.toBe(host.querySelector(".mw-del"));
+  });
+
+  it("keeps one status line, and writes it only when its text changes", () => {
+    const { host } = fixture(baseState({ status: "first" }));
+    const status = host.querySelector(".mw-status")!;
+    const seen = new MutationObserver(() => {});
+    seen.observe(status, { childList: true, characterData: true, subtree: true });
+
+    paint(host, baseState({ status: "first", inputs: ["A In"] }));
+    expect(host.querySelector(".mw-status")).toBe(status);
+    expect(seen.takeRecords(), "an unchanged status is not written").toHaveLength(0);
+
+    paint(host, baseState({ status: "second" }));
+    expect(host.querySelector(".mw-status")).toBe(status);
+    expect(status.isConnected).toBe(true);
+    expect(status.getAttribute("role")).toBe("status");
+    expect(status.textContent).toBe("second");
+    expect(seen.takeRecords().length, "a changed status is written into the region").toBeGreaterThan(0);
+    expect(host.lastElementChild).toBe(status);
+    seen.disconnect();
   });
 });
 
@@ -118,19 +197,45 @@ describe("renderMidiWindow — learn", () => {
     expect(host.querySelector(".mw-dot")!.className).toBe("mw-dot");
     const btn = host.querySelector(".mw-learnbtn") as HTMLButtonElement;
     expect(btn.getAttribute("aria-pressed")).toBe("false");
-    expect(host.querySelector(".mw-hint")!.textContent).toBe(t().midi.hintIdle);
+    expect(shownHint(host)).toBe(t().midi.hintIdle);
   });
 
   it("lights the dot and asks for a control when learn is on but nothing is armed", () => {
     const { host } = fixture(baseState({ learnOn: true }));
     expect(host.querySelector(".mw-dot")!.className).toBe("mw-dot on");
     expect((host.querySelector(".mw-learnbtn") as HTMLButtonElement).getAttribute("aria-pressed")).toBe("true");
-    expect(host.querySelector(".mw-hint")!.textContent).toBe(t().midi.hintLearn);
+    expect(shownHint(host)).toBe(t().midi.hintLearn);
   });
 
   it("names the armed control once one is armed", () => {
     const { host } = fixture(baseState({ learnOn: true, armed: "CH 2 · Level" }));
-    expect(host.querySelector(".mw-hint")!.textContent).toBe(t().midi.hintArmed("CH 2 · Level"));
+    expect(shownHint(host)).toBe(t().midi.hintArmed("CH 2 · Level"));
+  });
+
+  // The hint keeps the height of its tallest wording because every wording is laid out in
+  // one cell: idle and learn in every state, the armed one while a control is armed. Exactly
+  // one of them is painted and read, and it is the one the state calls for.
+  it("stacks every wording it can show, with only the current one exposed", () => {
+    const m = t().midi;
+    const cases: Array<[Partial<MidiUiState>, string[], string]> = [
+      [{}, [m.hintIdle, m.hintLearn], m.hintIdle],
+      [{ learnOn: true }, [m.hintIdle, m.hintLearn], m.hintLearn],
+      [
+        { learnOn: true, armed: "CH 2 · Level" },
+        [m.hintIdle, m.hintLearn, m.hintArmed("CH 2 · Level")],
+        m.hintArmed("CH 2 · Level"),
+      ],
+    ];
+    for (const [over, stacked, shown] of cases) {
+      const { host } = fixture(baseState(over));
+      const lines = [...host.querySelector(".mw-hint")!.children];
+      expect(lines.map((l) => l.textContent)).toEqual(stacked);
+      const exposed = lines.filter((l) => !l.hasAttribute("aria-hidden"));
+      expect(exposed.map((l) => l.textContent)).toEqual([shown]);
+      expect(
+        lines.filter((l) => l.hasAttribute("aria-hidden")).every((l) => l.getAttribute("aria-hidden") === "true"),
+      ).toBe(true);
+    }
   });
 
   it("reports the flipped learn state, not the current one", () => {
@@ -291,14 +396,14 @@ describe("localization", () => {
     const state = baseState({ rows: [row()] });
     renderMidiWindow(host, state, noop);
     const enTitle = host.querySelector(".mw-title")!.textContent;
-    const enHint = host.querySelector(".mw-hint")!.textContent;
+    const enHint = shownHint(host);
 
     setLang("ja");
     renderMidiWindow(host, state, noop);
     expect(host.querySelector(".mw-title")!.textContent).toBe(t().midi.title);
-    expect(host.querySelector(".mw-hint")!.textContent).toBe(t().midi.hintIdle);
+    expect(shownHint(host)).toBe(t().midi.hintIdle);
     expect(host.querySelector(".mw-title")!.textContent).not.toBe(enTitle);
-    expect(host.querySelector(".mw-hint")!.textContent).not.toBe(enHint);
+    expect(shownHint(host)).not.toBe(enHint);
     expect(document.title).toBe(t().midi.title);
   });
 

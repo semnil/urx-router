@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dynHost } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import { DynScreen } from "./dyn-screen";
-import type { DynCtx, DynValues } from "./dyn-screen";
+import type { DynCtx, DynLane, DynValues } from "./dyn-screen";
 import { INSFX_DYN, companderResponse, insertFxScreenFamily } from "./insert-fx-screen";
 import { planToCommands } from "../core/control/translate";
 import {
@@ -26,7 +26,7 @@ import {
 } from "../core/control/insert-fx-effect";
 import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { recorder, vals } from "./dyn-plot.test-util";
-import { t } from "../i18n";
+import { setLang, t } from "../i18n";
 
 let h: DynHost;
 
@@ -81,14 +81,16 @@ describe("what the screen binds to", () => {
 
   it("binds the multi-band compressor's first face, three cards to a row", () => {
     // What the three bands share: the two crossovers and the levels they come back at.
-    // Three columns is what makes the four faces the same height — six cards and four are
-    // both two rows — so the segment that moves between them does not resize the modal.
+    // Three columns is what makes the four faces the same height — MAIN's six cards and a
+    // band face's six are both two rows — so the segment that moves between them does not
+    // resize the modal.
     const binding = INSFX_DYN.bind(holding("bus.mix1", "M.B.Comp"));
     expect(binding).not.toBeNull();
     expect(binding!.fields).toHaveLength(6);
     expect(binding!.knobGrid).toBe(true);
     expect(binding!.knobCols).toBe(3);
-    // The 1-knob pair is not among them: the app never writes it, so it is not a field.
+    // The 1-knob pair is not among them: its own section above the panel draws it, so it
+    // is not a field.
     const slots = binding!.fields.map((f) => Number(/:(\d+)$/.exec(f.key)?.[1]));
     expect(slots).not.toContain(MBC_GLOBAL.oneKnobOn);
     expect(slots).not.toContain(MBC_GLOBAL.oneKnobLevel);
@@ -166,6 +168,26 @@ describe("the meter lanes", () => {
       "in",
       "out",
     ]);
+  });
+
+  // The meter reads the reduction from the flat region's gain, which the unit lifts; merged
+  // into the output column the bar is shortened by that lift, the processor's own gain. Out
+  // Gain is not in it: the meter reads the same at any Out Gain.
+  it("shortens the compander's merged reduction by its lift, and not by Out Gain", () => {
+    const gainSlot = insertFxParams("compander").find((d) => d.label === "gain")!.slot;
+    for (const [type, lift] of [
+      ["Compander-H", 10 * (1 - 1 / 3.5)],
+      ["Compander-S", 8 * (1 - 1 / 4)],
+    ] as const) {
+      const gr = (): DynLane => INSFX_DYN.bind(holding("ch1", type))!.lanes.find((l) => l.key === "gr")!;
+      h.plan.nodeParams.ch1 = { ...h.plan.nodeParams.ch1, insertFxParams: {} };
+      expect(gr().grOffsetDb, type).toBeCloseTo(lift, 6);
+      h.plan.nodeParams.ch1 = {
+        ...h.plan.nodeParams.ch1,
+        insertFxParams: { [insertFxParamKey("compander", gainSlot)]: -1800 },
+      };
+      expect(gr().grOffsetDb, `${type} at Out Gain -18 dB`).toBeCloseTo(lift, 6);
+    }
   });
 
   it("gives the reduction lane to the compander alone, on the input side", () => {
@@ -340,7 +362,8 @@ describe("the rendered screen", () => {
       const sw = h.box.querySelector<HTMLButtonElement>(".gt-knobs .prefs-switch")!;
       expect(sw.textContent, type).toBe(t().inspector.off);
       expect(h.box.querySelector(".gt-knobs .prefs-toggle"), type).toBeNull();
-      expect(h.box.querySelector(".gt-facebar button"), type).toBeNull();
+      expect(h.box.querySelector(".gt-modes.inert"), type).not.toBeNull();
+      expect(h.box.querySelector(".gt-modes button:not([disabled])"), type).toBeNull();
       screen.close();
     }
     // …and the modulation selector's WORDING, which the list above cannot pin: every
@@ -680,7 +703,8 @@ describe("moving between the faces", () => {
     // The panel takes the flexible column and the meters the narrow one, and there is no
     // bar to a second face.
     expect(h.box.querySelector<HTMLElement>(".prefs-grid")!.classList.contains("gt-paramsleft")).toBe(true);
-    expect(h.box.querySelector(".gt-facebar button")).toBeNull();
+    expect(h.box.querySelector(".gt-modes.inert")).not.toBeNull();
+    expect(h.box.querySelector(".gt-modes button:not([disabled])")).toBeNull();
     expect(h.box.querySelector(".gt-ladders")).not.toBeNull();
     // …and no second copy of the twelve notes: one grid of them, not two.
     expect(h.box.querySelectorAll(".gt-notes").length).toBe(1);
@@ -749,26 +773,107 @@ describe("the compander's transfer curve", () => {
     return { get: (k: string) => raws.get(k) ?? 0 } as DynValues;
   };
 
-  it("passes the window, holds back above the threshold, and stops past 0 dB", () => {
+  /** The factory compander's lift: -T(1 - 1/R) for Threshold -10 dB at 3.5:1. */
+  const FACTORY_LIFT = 10 * (1 - 1 / 3.5);
+
+  it("lifts the window, holds back above the threshold, and stops past 0 dB", () => {
     const out = companderResponse(factory(), "compander", valueOf("Compander-H"));
-    // The window is Threshold - Width … Threshold = -16 … -10, and passes unchanged.
-    expect(out(-16)).toBeCloseTo(-16, 6);
-    expect(out(-13)).toBeCloseTo(-13, 6);
-    expect(out(-10)).toBeCloseTo(-10, 6);
-    // Above it, the set ratio: -10 + (in + 10) / 3.5.
-    expect(out(-3)).toBeCloseTo(-10 + 7 / 3.5, 6);
-    expect(out(0)).toBeCloseTo(-10 + 10 / 3.5, 6);
+    // The window is Threshold - Width … Threshold = -16 … -10, at unity plus the lift.
+    expect(out(-16)).toBeCloseTo(-16 + FACTORY_LIFT, 6);
+    expect(out(-13)).toBeCloseTo(-13 + FACTORY_LIFT, 6);
+    expect(out(-10)).toBeCloseTo(-10 + FACTORY_LIFT, 6);
+    // Above it, the set ratio: -10 + (in + 10) / 3.5, lifted the same.
+    expect(out(-3)).toBeCloseTo(-10 + 7 / 3.5 + FACTORY_LIFT, 6);
+    // The lift is what brings full scale back to 0 dBFS (with Out Gain at 0 dB).
+    expect(out(0)).toBeCloseTo(0, 6);
     // …and past 0 dBFS nothing more gets out.
     expect(out(6)).toBeCloseTo(out(0), 6);
     expect(out(24)).toBeCloseTo(out(0), 6);
+  });
+
+  /** A compander at one setting, in dB, the way the plan stores it (centi-dB, ratio × 100). */
+  const at = (o: { thr: number; ratio: number; width?: number; outGain?: number }): DynValues => {
+    const raws = new Map<string, number>();
+    for (const d of insertFxParams("compander")) raws.set(`ifx:compander:${d.slot}`, d.def);
+    const slot = (label: string): string =>
+      `ifx:compander:${insertFxParams("compander").find((d) => d.label === label)!.slot}`;
+    raws.set(slot("threshold"), o.thr * 100);
+    raws.set(slot("ratio"), o.ratio * 100);
+    raws.set(slot("width"), (o.width ?? 6) * 100);
+    raws.set(slot("gain"), (o.outGain ?? 0) * 100);
+    return { get: (k: string) => raws.get(k) ?? 0 } as DynValues;
+  };
+  /** The flat region's gain: what the curve puts out in the middle of the window, less what
+   *  goes in. */
+  const flatGain = (o: Parameters<typeof at>[0]): number => {
+    const inDb = o.thr - (o.width ?? 6) / 2;
+    return companderResponse(at(o), "compander", valueOf("Compander-S"))(inDb) - inDb;
+  };
+
+  // The unit's flat-region gain at ten settings (vd-params "コンパンダーと M.B.Comp の入出力"),
+  // against the curve's own. It follows -T(1 - 1/R) where that is under 18 dB and stops at
+  // 18 where it is over; the 15-17 dB points are the ones that tell a ceiling from a curve
+  // bending toward it.
+  it("lifts the window by -T(1 - 1/R), up to an 18 dB ceiling, as the unit reads", () => {
+    for (const [thr, ratio, read] of [
+      [-30, 2, 15.2],
+      [-16, 20, 15.5],
+      [-34, 2, 17.1],
+      [-18, 20, 17.5],
+      [-38, 2, 18.3],
+      [-54, 2, 18.3],
+      [-30, 20, 18.2],
+      [-54, 20, 18.1],
+      [0, 20, 0.1],
+      [-54, 1, -0.1],
+    ] as const) {
+      expect(Math.abs(flatGain({ thr, ratio }) - read), `T ${thr} / R ${ratio}`).toBeLessThanOrEqual(0.5);
+    }
+    // The ceiling itself, rather than a reading near it.
+    expect(flatGain({ thr: -54, ratio: 20 })).toBe(18);
+    // Width does not move it: 1 dB and 90 dB of window lift the same.
+    expect(flatGain({ thr: -54, ratio: 20, width: 1 })).toBeCloseTo(flatGain({ thr: -54, ratio: 20, width: 90 }), 6);
+    // …and Out Gain applies on top: -18 dB takes the 18 dB lift to 0.
+    expect(flatGain({ thr: -54, ratio: 20, outGain: -18 })).toBeCloseTo(0, 6);
+  });
+
+  // The factory settings of both types, against the unit's tone transfers (in → out, dBFS;
+  // the same vd-params section). The curve is within 1.5 dB of every S point and 3.1 dB of
+  // every H point above its floor.
+  it("draws the factory curves through the tone transfers the unit puts out", () => {
+    const typed = (type: string): DynValues => {
+      const raws = new Map<string, number>();
+      for (const d of insertFxParams("compander", valueOf(type))) raws.set(`ifx:compander:${d.slot}`, d.def);
+      return { get: (k: string) => raws.get(k) ?? 0 } as DynValues;
+    };
+    const s = companderResponse(typed("Compander-S"), "compander", valueOf("Compander-S"));
+    for (const [inDb, read] of [
+      [-61, -68],
+      [-44, -43],
+      [-32, -26],
+      [-20, -14],
+      [-8, -3],
+      [-2, -1],
+    ] as const) {
+      expect(Math.abs(s(inDb) - read), `S ${inDb}`).toBeLessThanOrEqual(1.5);
+    }
+    const h = companderResponse(typed("Compander-H"), "compander", valueOf("Compander-H"));
+    for (const [inDb, read] of [
+      [-20, -26],
+      [-14, -6],
+      [-8, -3],
+      [-2, -1],
+    ] as const) {
+      expect(Math.abs(h(inDb) - read), `H ${inDb}`).toBeLessThanOrEqual(3.1);
+    }
   });
 
   it("drops five times as fast on H as one and a half on S, below the window", () => {
     const h = companderResponse(factory(), "compander", valueOf("Compander-H"));
     const s = companderResponse(factory(), "compander", valueOf("Compander-S"));
     // 4 dB under the window: H is 20 dB down from it, S is 6.
-    expect(h(-20)).toBeCloseTo(-16 - 4 * 5, 6);
-    expect(s(-20)).toBeCloseTo(-16 - 4 * 1.5, 6);
+    expect(h(-20)).toBeCloseTo(-16 - 4 * 5 + FACTORY_LIFT, 6);
+    expect(s(-20)).toBeCloseTo(-16 - 4 * 1.5 + FACTORY_LIFT, 6);
     // …and they are the same everywhere else, which is what says the slope is the ONLY
     // difference rather than two unrelated curves.
     for (const inDb of [-16, -13, -10, -3, 0, 6]) expect(h(inDb)).toBeCloseTo(s(inDb), 6);
@@ -869,6 +974,40 @@ describe("what the compander's plot draws beside its curve", () => {
         type,
       ).toContain(`EXPANDER ${slope}`);
     }
+  });
+
+  // Out Gain moves the whole curve without compressing anything, so the reduction the
+  // annotation names is the same at any Out Gain, and the unity reference — the level with
+  // no compression — moves with it.
+  it("names the same reduction at any Out Gain, and moves unity by it", () => {
+    const ctx = holding("ch1", "Compander-H");
+    const geo = INSFX_DYN.plotGeo!(W, H, ctx);
+    const gainSlot = insertFxParams("compander").find((d) => d.label === "gain")!.slot;
+    const drawnAt = (outGainRaw: number): { labels: string[]; unity: number[] } => {
+      const raws: Record<string, number> = {};
+      for (const d of insertFxParams("compander", valueOf("Compander-H"))) raws[`ifx:compander:${d.slot}`] = d.def;
+      raws[`ifx:compander:${gainSlot}`] = outGainRaw;
+      h.plan.nodeParams.ch1!.insertFxParams = { [insertFxParamKey("compander", gainSlot)]: outGainRaw };
+      const curve = recorder();
+      INSFX_DYN.drawCurve!(curve.ctx, geo, vals(raws), TOK, ctx);
+      const axes = recorder();
+      INSFX_DYN.drawAxes!(axes.ctx, geo, TOK, ctx);
+      return { labels: curve.texts.filter((x) => x.text.endsWith(" dB")).map((x) => x.text), unity: axes.ys.slice(-2) };
+    };
+    // The factory Compander-H's lift, -T(1 - 1/R) for -10 dB at 3.5:1, is in the curve as well.
+    const lift = 10 * (1 - 1 / 3.5);
+    const flat = drawnAt(0);
+    // …and is not part of what the annotation names: -10 + 10 / 3.5 is the reduction at full
+    // scale from the flat region's gain.
+    expect(flat.labels).toEqual([`${(-10 + 10 / 3.5).toFixed(1)} dB`]);
+    for (const outGainRaw of [-600, -1800]) {
+      const drawn = drawnAt(outGainRaw);
+      expect(drawn.labels, String(outGainRaw)).toEqual(flat.labels);
+      const off = lift + outGainRaw / 100;
+      expect(drawn.unity[0], String(outGainRaw)).toBeCloseTo(geo.py(-60 + off), 6);
+      expect(drawn.unity[1], String(outGainRaw)).toBeCloseTo(geo.py(off), 6);
+    }
+    expect(flat.unity[1]).toBeCloseTo(geo.py(lift), 6);
   });
 
   it("puts the LIVE reduction on the plot, and nothing there without a reading", () => {
@@ -1225,6 +1364,21 @@ describe("the multi-band compressor", () => {
     expect(INSFX_DYN.hint!(mbc(MAIN, oneKnobOn()))).toBe(g.mbcOneKnob);
   });
 
+  // The line that says who owns the panel must not say MAIN's one live row is the unit's: Out
+  // Gain stays writable and sent while the knob is on, so the line names it, in both catalogs.
+  it("names Out Gain as the operator's while the 1-knob owns the rest", () => {
+    const states = INSFX_DYN.rowStates!(mbc(MAIN, oneKnobOn()), {})!;
+    expect(states.has(`ifx:mbc:${MBC_GLOBAL.outGain}`)).toBe(false);
+    try {
+      for (const lang of ["en", "ja"] as const) {
+        setLang(lang);
+        expect(INSFX_DYN.hint!(mbc(MAIN, oneKnobOn())), lang).toContain(t().inspector.insertFxEffect.params.outGain);
+      }
+    } finally {
+      setLang("en");
+    }
+  });
+
   it("names a bypassed band's figure as its values rather than as the band", () => {
     // The curve is drawn from Threshold / Ratio / Gain and does not read the Bypass, which
     // is the right shape — a bypassed EFFECT keeps its curve too — so the line under the
@@ -1265,6 +1419,20 @@ describe("the multi-band compressor", () => {
       expect(rows[1].textContent, String(sel)).toContain("24");
       screen.close();
     }
+  });
+
+  // The switch is drawn from the raw the write sends there, the same question the lock below it
+  // asks: a value that sends nothing (a boolean) or sends 0 shows OFF with the Level locked,
+  // rather than ON over a Level the lock says the knob is not driving.
+  it.each([[false], [true], [-1]])("draws a 1-knob switch holding %j as the write sends it", (v) => {
+    mbc(MAIN, { [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]: v as unknown as number });
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "bus.mix1");
+    const rows = [...h.box.querySelectorAll<HTMLElement>(".prefs-section .prefs-row")];
+    const pressed = rows[0].querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
+    expect(pressed?.textContent).toBe(t().inspector.off);
+    expect(rows[1].classList.contains("locked")).toBe(true);
+    screen.close();
   });
 
   it("locks the Level while the knob is off, which is the COMP knob's own treatment", () => {
@@ -1393,6 +1561,73 @@ describe("the multi-band compressor", () => {
     expect(r.ys[0]).toBeCloseTo(mainGeo.py(0), 6);
   });
 
+  // A band's make-up reaches +18 dB, so its face runs its output axis to +18 the way the COMP
+  // screen does: a ceiling at 0 dBFS cut every curve whose make-up put it above full scale.
+  it("keeps a band's curve inside the frame at the top of its make-up", () => {
+    const ctx = mbc(LOW);
+    const geo = INSFX_DYN.plotGeo!(W, H, ctx);
+    const r = recorder();
+    // Threshold -6 dB, 2:1, make-up raw 55 = +18 dB: full scale comes out at +15 dBFS.
+    INSFX_DYN.drawCurve!(r.ctx, geo, vals({ "ifx:mbc:9": 121, "ifx:mbc:10": 2, "ifx:mbc:11": 55 }), TOK, ctx);
+    const curve = r.ys.slice(0, 121);
+    expect(Math.min(...curve)).toBeGreaterThanOrEqual(geo.pad.t);
+    expect(curve.at(-1)).toBeCloseTo(geo.py(15), 6);
+    // MAIN keeps its own frequency axes, and a compander keeps the 0 dBFS ceiling.
+    expect(INSFX_DYN.plotGeo!(W, H, holding("ch1", "Compander-H")).py(0)).toBeCloseTo(geo.pad.t, 6);
+  });
+
+  // The curve carries the band's make-up over its whole length, so unity is lifted by it to
+  // stay the level with no compression; a bypassed band carries none.
+  it("lifts a band face's unity by that band's make-up", () => {
+    const unity = (ctx: DynCtx): number[] => {
+      const r = recorder();
+      INSFX_DYN.drawAxes!(r.ctx, INSFX_DYN.plotGeo!(W, H, ctx), TOK, ctx);
+      return r.ys.slice(-2);
+    };
+    const geo = INSFX_DYN.plotGeo!(W, H, mbc(LOW));
+    // Make-up raw 47 = +10 dB.
+    const lifted = unity(mbc(LOW, { [insertFxParamKey("mbc", MBC_BANDS[0].gain)]: 47 }));
+    expect(lifted[0]).toBeCloseTo(geo.py(-60 + 10), 6);
+    expect(lifted[1]).toBeCloseTo(geo.py(10), 6);
+    const bypassed = unity(
+      mbc(LOW, {
+        [insertFxParamKey("mbc", MBC_BANDS[0].gain)]: 47,
+        [insertFxParamKey("mbc", MBC_BANDS[0].bypass)]: 1,
+      }),
+    );
+    expect(bypassed[1]).toBeCloseTo(geo.py(0), 6);
+  });
+
+  // The dot's output is the POST tap, after Out Gain, which the band's curve leaves out — so
+  // the reading is brought back by Out Gain to sit on the curve. Factory MID: -20 dB at 2:1
+  // with +2 dB of make-up and Out Gain +4, so a tone at -44 comes out at -38 and is on the
+  // curve at -42.
+  it("puts a band's live dot on its curve, Out Gain taken back off the output reading", () => {
+    const ctx = mbc(2);
+    const geo = INSFX_DYN.plotGeo!(W, H, ctx);
+    const r = recorder();
+    INSFX_DYN.drawLive!(r.ctx, geo, (k) => (k === "in" ? -44 : k === "out" ? -38 : null), TOK, ctx);
+    const dot = r.faces.at(-1)!;
+    expect((dot.y0 + dot.y1) / 2).toBeCloseTo(geo.py(-42), 6);
+    expect((dot.x0 + dot.x1) / 2).toBeCloseTo(geo.px(-44), 6);
+  });
+
+  // Merged into the output column, a band's reduction is shortened by the gain between the
+  // band's input and that column — its make-up and Out Gain — and never lengthened.
+  it("shortens a band's merged reduction by its make-up and Out Gain, never by less than 0", () => {
+    const offset = (params: Record<string, number>): number | undefined =>
+      INSFX_DYN.bind(mbc(LOW, params))!.lanes.find((l) => l.key === "gr")!.grOffsetDb;
+    // Factory: +2 dB of make-up and Out Gain +4.
+    expect(offset({})).toBe(6);
+    // +10 dB of make-up and Out Gain -12.
+    expect(
+      offset({ [insertFxParamKey("mbc", MBC_BANDS[0].gain)]: 47, [insertFxParamKey("mbc", MBC_GLOBAL.outGain)]: 52 }),
+    ).toBe(0);
+    expect(
+      offset({ [insertFxParamKey("mbc", MBC_BANDS[0].gain)]: 55, [insertFxParamKey("mbc", MBC_GLOBAL.outGain)]: 70 }),
+    ).toBe(24);
+  });
+
   it("takes a band with no make-up left off the frame rather than along its floor", () => {
     // Gain raw 0 is -∞ on the unit, which is a band putting out nothing — and a line lying
     // on the plot's bottom edge is where a very quiet band would be drawn too.
@@ -1401,9 +1636,16 @@ describe("the multi-band compressor", () => {
     const r = recorder();
     INSFX_DYN.drawCurve!(r.ctx, geo, vals({ "ifx:mbc:11": 0 }), TOK, ctx);
     expect(r.ys[0]).toBeGreaterThan(geo.py(-60));
-    // The positive control: with make-up the same face draws inside the frame.
+    // …and names no reduction: the level it is drawn at is a placement, not a property of
+    // the band, so a figure printed from it would be invented.
+    const reductions = (texts: Array<{ text: string }>): string[] =>
+      texts.map((x) => x.text).filter((t) => t.endsWith(" dB"));
+    expect(reductions(r.texts)).toEqual([]);
+    // The positive control: with make-up the same face draws inside the frame, and the
+    // reduction at full scale for -20 dB at 2:1 is named.
     const ok = recorder();
     INSFX_DYN.drawCurve!(ok.ctx, geo, vals({ "ifx:mbc:9": 107, "ifx:mbc:10": 2, "ifx:mbc:11": 39 }), TOK, ctx);
     expect(ok.ys[0]).toBeLessThanOrEqual(geo.py(-60));
+    expect(reductions(ok.texts)).toEqual(["-10.0 dB"]);
   });
 });

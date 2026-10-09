@@ -102,9 +102,12 @@ Each phase-offset value sits on the edge of one of these measured constants.
   a **whole-device** reconcile 900 ms later. There is no "scoped only" path in this code
 - `REFLECT_MIN_MS` is a leading-edge rate limit, not a 50 ms coalesce delay. With no reflect in the
   previous 50 ms the wait is 0
-- `isEcho` has no time window, and the flush writes its snapshot entry **after** the ack. The
-  discriminating variable is whether an echo beats its own ack — there is no late echo here, only an
-  early one
+- `isEcho` takes a notify carrying a value this session was acked for at that address within the last
+  300 ms (the pending queue, `SETTLE_TIMEOUT_MS` long) or the value the snapshot holds, and the flush
+  writes both **after** the ack. An echo that beats its own ack is neither: it lands while the write
+  is in flight, so the follow layer takes it as superseded (`hasUnannouncedWrite`) — nothing is
+  applied, the node is re-read once the write is announced — and the idle net still sweeps the whole
+  device. The discriminating variable is whether an echo beats its own ack
 
 ## Invariants
 
@@ -134,8 +137,9 @@ an address nothing in the run ever sent, so the next diff measures from a value 
 is the VALUE form — the address WAS sent and the entry holds something else. That is the shape post-write read
 staleness produces: the flush wrote X, a read inside the staleness window answered the pre-write value, and the
 `capture` after it put that value in the snapshot over the one the same flush wrote there. Beyond the next diff's
-blind spot, it also makes the unit's own notify for X arrive as a foreign change (`live.ts`'s `isEcho` is bare
-snapshot equality), costing a scoped reconcile and an idle sweep nobody asked for. Clause B runs only when a case
+blind spot, the unit's own notify for X is an echo only while X is still in the pending queue (300 ms after the
+ack, `live.ts`'s `isEcho`); arriving later it is a foreign change, costing a scoped reconcile and an idle sweep
+nobody asked for. Clause B runs only when a case
 supplies `deviceState` (`memOf`, read at the same instant as `snapshot`), because it needs two exonerations without
 which it is a false-positive machine: a value **the app itself sent** at some point in the run is its own write
 coming back in another order, and a value **the unit holds** is the quantise case — `capture()` moves snapshot
@@ -225,6 +229,7 @@ single source of truth. This table states what each case measures.
 
 | id | Surface | What it measures |
 | --- | --- | --- |
+| `baseline-fake-answer-timing` | harness | That the fake answers every command on a later task than the one that sent it, in the order asked, and that a held read holds back no answer from outside the worker (contract item s) |
 | `baseline-quiescent-floor` | mixed | That an idle live session produces no plan write and no readback. Every other verdict is a difference against this trace |
 | `baseline-single-edit-latency-ladder` | console | One edit at four latencies: the canonical timeline every phase offset is measured against, and how much lateness is the link |
 | `baseline-graph-surface-sweep` | graph | That every GRAPH gesture is reachable by the driver's vocabulary, and that gestures which should write nothing really do not |
@@ -254,6 +259,7 @@ single source of truth. This table states what each case measures.
 | `overtake-direct-scoped-coalesce-boundary` | console | Whether a reconcile resolving inside the coalesce upgrades an unrelated direct reflect |
 | `overtake-drag-flush-backpressure` | console | A realistic gesture on a realistic link, and the convergence latency an operator perceives |
 | `overtake-refetch-reads-before-the-write-settles` | tuning | The one window the fake had no state for: a write the unit accepted and cannot yet report. `t1c-refetch-stale.spec.ts` |
+| `overtake-held-repaint-vs-the-next-gesture` | inspector | A device change the inspector holds while a select keeps the focus, released by the operator's next click, Tab or tap: whether that gesture still lands — its write sent, its focus on a control the rebuild kept. `t1e-held-repaint.spec.ts` |
 
 ### T2 shape-change — params that reshape the writable address set
 
@@ -305,13 +311,13 @@ single source of truth. This table states what each case measures.
 | --- | --- | --- |
 | `midi-vs-main-fader-absolute` | midi | A MIDI reflect replacing a strip under an active pointer capture |
 | `midi-vs-send-fader-relative-baseline` | midi | A relative drag erasing a MIDI write by arithmetic rather than overwriting it |
-| `midi-pickup-without-output-port` | midi | Pickup never disengaging when no output port is open |
+| `midi-pickup-without-output-port` | midi | Pickup disengaging on a plan move while no output port is open |
 | `midi-toggle-echo-window-ladder` | midi | A one-shot guard that cannot tell a genuine press from a loopback |
 | `midi-continuous-echo-reaches-the-unit` | midi | The same guard on a fader, where an unguarded echo is a device write |
 | `midi-gang-fanout-and-head-reelection` | midi | The only many-to-one writer, and an unrelated edit reassigning ownership |
 | `midi-learn-arm-during-rerender` | midi | The only case where the second operator's configuration races the device |
 | `midi-write-during-refetch-snapshot` | midi | An ungated writer combined with a snapshot re-base |
-| `midi-rebase-eats-ui-entry-ladder` | midi | The only writer classified two contradictory ways at once |
+| `midi-edit-enters-history-ladder` | midi | A MIDI edit inside and outside an open undo entry: it joins the entry or opens its own, and is undoable either way |
 | `midi-14bit-pair-and-cross-binding` | midi | Message-level decoding, including a binding that can never fire |
 | `midi-bal-mirror-clobbers-partner` | midi | Collisions mediated by a mirror — between two app-side writers, and between a mirror's no-op write and the read that reported the partner otherwise |
 
@@ -373,8 +379,8 @@ unguarded reconcile.
 
 ## The fake device's contract
 
-The current E2E stub resolves on the next microtask, so none of the windows above exists. The fake
-must provide the following.
+The current E2E stub answers each command on a later task with no latency of its own, so none of the
+windows above exists. The fake must provide the following.
 
 | Item | Requirement |
 | --- | --- |
@@ -395,6 +401,8 @@ must provide the following.
 | o | The announcement itself, which is unconditional and needs no case to arm it: a write that CHANGES the value the unit reports is announced `cfg.announceMs` (100, the measured median) after its **ack**. Three silences, all from the one rule — a same-value write (measured: 18 acked in 0-1 ms, none announced), an `ignoreWrites` address (acked and never stored, so nothing it reports moved) and a `diverge`d address (the unit goes on asserting what it already held) |
 | p | The same window on the NAME path: `staleAfterWrite` applies to a string address too, so the next `n` reads of it after a `vd_set_str` answer the name it replaced. Measured on a URX44V — 81 ms, so the string path is not exempt and the fake modelled it as exempt for its whole life. **The announcement follows item o's rule too, and both halves of it are measured on this path rather than carried over**: a name write that changes the reported name is announced `announceMs` after its ack and closes the window (32 writes over two runs announced after their own ack, 32/32, at ack+1-102 ms — most of them 66-102, with 2 of the 32 under 10 ms, a low tail the numeric spread does not have and whose cause is not identified), and a same-value name write announces nothing (acked in 0 ms, silent for 2000 ms, bracketed by a changing write on each side so a dead stream could not pass for a silent device). The app hears it, because name addresses joined the registration set when the follow learned to carry a device-side rename; Sweet Spot Data (param 91) joined it too — the SSMCS mode change's own flush subscribes to it (`t2b-shape-change`). `t1d-name-window` is the case that needed the window |
 | q | Pan Link's silent rewrites, for the groups a case names (`installFake`'s `panLink: [{ link, source, sends }]`): writing the switch on sets every send pan in the group to its source's pan; while it is on, a source written carries the sends and a send written moves the source (and the other sends) to that value; writing it off leaves them where they are. None of it is announced — only the written address is, by item o's rule. The unit settles a send-pan write about 2 s after it; the fake settles it at the queue point, the stricter of the two for a case asking whether a send pan was written at all. Where the group names its MIX's BUS Type address (`busType`), a write of FIXED there turns the switch off, unannounced as well; a write of VARI leaves it. A `seedMem` of the switch is a state and rewrites nothing. `shape-pan-link-send-pans` is the case that needed it |
+| r | The state map's starting contents: every address a node-param leaf is written to holds the model's factory value — `defaultPlan`'s node params emitted through `planToCommands`, kept where `planToCommandOrigins` names a node-param leaf as the command's source — so a read there answers what a unit nobody has written holds, and the app finds nothing to bound. Every other address nothing wrote reads 0 — routing selectors, wire params (a channel's fader and pan are its STEREO send's), colours — except STREAMING's source (705 / 706), which starts on the factory STEREO. A case that needs another state seeds it (`setMemAt`, or a spec's own `seedMem`) |
+| s | Answer timing: every answer settles on a later task than the one that sent the command, never in its microtasks, through the same queue the ordinary stubs settle through (`installAnswerQueue` in `e2e/tauri-stub.ts`) — and never ahead of an answer to a command asked before it that is already in. Latency, a barrier, a refusal and the device-lost latch all run their course before an answer joins that queue, and an answer still held back holds back nothing asked after it: a read held on the worker does not delay an answer from outside it. The `ipc-end` is traced, and a write's announcement armed (item o's ack), as the answer reaches the app. `baseline-fake-answer-timing` pins it |
 Plus a **barrier**: `blockAt({ cmd, nth })` holds a specific command, and `release()` lets it through.
 
 Items n, o and p are the ones the fake lived **without** for its whole life, and the omission was not neutral — see
@@ -438,11 +446,11 @@ makes a range that is neither.
 
 This is also what the overtake above has to be spelled out about, because merging is what bounds it. An overtake is a
 WINDOW rather than merely a late announcement — between the superseding write's ISSUE, where the app's snapshot
-moves, and its ACK, where the fake cancels — and that window is exactly `latency.set` wide, so at the default of 0
-there is none and no overtake can happen at all. `late echo of an overtaken write` therefore sets a set latency of
-its own, and ASSERTS that the first write's announcement both went out and arrived after the second write was
-issued. Without that assertion it passes on a run where nothing was overtaken: every other assertion in it says
-nothing went wrong, and nothing going wrong is also what an empty run looks like.
+moves, and its ACK, where the fake cancels — and that window is `latency.set` wide plus the task the ack takes to
+reach the app (item s), so at the default of 0 it is one task wide. `late echo of an overtaken write` therefore
+sets a set latency of its own, and ASSERTS that the first write's announcement both went out and arrived after the
+second write was issued. Without that assertion it passes on a run where nothing was overtaken: every other
+assertion in it says nothing went wrong, and nothing going wrong is also what an empty run looks like.
 
 **Coercion is deliberately not modelled at all.** `diverge` bends READS and leaves `mem` alone, so nothing the unit
 reports has moved and there is nothing for it to announce; making it announce its asserted value instead would be a
@@ -741,12 +749,10 @@ can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
 
-**The current array.** `[44, 48, 87]` is derived from the race run of the 179-case corpus
-(2026-09-29), which timed 172 of them and left the 7 declared skips at zero. Measured against that
-run's durations, under the two-worker model, its three shards run 284 / 305 / 305 s, against 286 s for
-a division with no contiguity constraint at all, and the runner reproduced the plan case for case. The
-point of re-deriving is not that remaining gap but that the cut is a duration reading again rather than
-the residue of an edit, since nothing reports an array whose durations have moved.
+**The current array.** `[49, 61, 74]` is the array derived from the race run of the 184-case corpus
+(2026-10-04). That run timed 177 of its cases and left the 7 declared skips at zero. Measured against its
+durations, under the two-worker model, its three shards ran 265 / 266 / 270 s, against 260 s if the work
+divided evenly, and the runner reproduced the plan case for case.
 
 A log assembled from two runs is the case none of that reaches on its own: where the halves overlap, a
 case timed twice with no retry between them gives it away, but halves that do not overlap cover the
@@ -881,8 +887,10 @@ agreement, zero findings.
 - **Converge-latch starvation**: with a converge param still in the diff and edits closer together
   than 120 ms, **not one command leaves the app for five seconds**. Nothing is lost, but the unit plays
   the old value for the whole gesture
-- **Echo versus ack**: a broker that echoes faster than it acks makes the app apply its own write as a
-  device-side change and escalate to a whole-device readback — several hundred reads per echoed write
+- **Echo versus ack**: a broker that echoes faster than it acks delivers the echo while the write is in
+  flight. The app takes it as superseded rather than applying it, re-reads the node once the write is
+  announced, and the idle net escalates to a whole-device readback — several hundred reads per echoed
+  write
 - **A flush wrote a device-authored value back at the device — fixed.** With the send loop held at CH 1's
   fader and a pan notify delivered while it was held, the loop reached CH 1's pan — one command behind —
   and sent the **pre-notify** value: the device was left holding `0` after reporting `24`, and the idle
@@ -896,6 +904,14 @@ agreement, zero findings.
   — and with it the three stages leave in order: `135:0:0=1793`, `689:0:6=-990`, `134:0:0=1`. The case asserts
   on the writes rather than on the screen, because at 192 kHz every option is rate-locked and the inspector row
   stops being a select; that the effect is still the plan's is read from the screen once the rate comes back
+
+- **A device change held behind a focused select was released inside the next gesture — fixed.** Choosing
+  Compander-H on CH 1 leaves its select focused, a device-side change to CH 1's HPF frequency is then held, and a
+  press on the bypass OFF button ends the hold with its `focusout`. The rebuild ran inside that `focusout`, so the
+  button the press began on was gone by the release: no click was dispatched and nothing was written (Chromium and
+  WebKit). A Tab from the select left the focus on the body (Chromium), and a tap lost its click the same way
+  (Chromium and WebKit). Measured 2026-10-03 at `39ae84ea`, and the click in Chromium on main at `9b808411`; §15
+  below carries the fix
 
 **T2 — address-set shape**
 
@@ -933,7 +949,11 @@ agreement, zero findings.
   now absorbs the keys the notify authored; measured after the fix at Δ = 5 / 40 / 95 ms inside the
   100 ms notify interval, the edit undoes to where the press found it and the pre-sweep entry is still
   beneath it
-- An undo fired inside a held reconcile is applied, and the reconcile then wipes both stacks
+- **An undo fired inside a held reconcile was applied, and the reconcile then wiped both stacks —
+  fixed.** The press is now refused while the read holds the plan, without spending the entry, and the
+  reconcile's reflect resets the stacks only when its read authored a key, so after a reconcile that
+  agreed with the plan everywhere the same press applies (`t3-undo.spec.ts`, the scoped and full
+  reconcile cells)
 - The apply order is correct: the persisted mirror moves before any repaint, the viewport is untouched,
   and `markChanged` runs last
 
@@ -1023,7 +1043,7 @@ agreement, zero findings.
 - **A notify on a SETUP > GENERAL address buys NOTHING — the notify never crosses the bridge.** The
   Rust bridge's `Subs::absorb` (`src-tauri/src/vd.rs`) forwards a param notify to the frontend only
   when it is in the registered set (`param_addrs`) or is `BULK_CHANGE`. **An address in no
-  registration is undeliverable for the whole session**, and the thirteen SETUP > GENERAL addresses
+  registration is undeliverable for the whole session**, and the fourteen SETUP > GENERAL addresses
   are the largest family in that position. **Which addresses those are is no longer "the ones the
   plan never emits"**: the registration was that set once, and addresses have been added to it by
   hand since — the string-path addresses and the follow-only cases, which the unit announces and the
@@ -1082,7 +1102,7 @@ agreement, zero findings.
   be retried" was overstated: `deactivateLive` does not reset the history, so leaving the session makes
   the same press work. The refusal is a deferral, not a discard; the entry is only lost if the DEVICE
   moves the rate first, which is the full reconcile's `reset()`, a separate question. **The wording gap
-  is now closed**: an entry carrying more than the rate gets its own string (`undoRateLiveMixed`, chosen
+  is now closed**: an entry carrying more than the rate gets its own string (`undoRateLockedMixed`, chosen
   by whether the entry's field set is nothing but `sampleRate`), and both strings say the entry is held
   back rather than lost
 
@@ -1200,8 +1220,9 @@ keeps an unmeasured hardware fact out of the verdict.
 
 The coalesced reflect joins several producers and cannot know what the device authored, so
 `planReadFromDevice` splits into `planValuesChanged` (probe + MIDI feedback) and the history settle,
-and the reflect calls only the first. **The `rebase()` MIDI relied on was relocated verbatim** to its
-own site, so this change moves one behaviour and not two.
+and the reflect calls only the first. The `rebase()` MIDI relied on was first relocated verbatim to its
+own site, so that change moved one behaviour and not two; it has since been removed, and a MIDI edit
+now commits through the history like any other edit (`midi-edit-enters-history-ladder`).
 
 The **direct-follow apply** is the same rule at the one other site that writes device values into the
 plan outside a readback, and it kept its whole-plan `rebase()` until the sweep case named the cost: an
@@ -1337,7 +1358,10 @@ replacement it was re-taking from a document nothing holds any more.
 
 `LiveSync` now carries a `sessionGen`, bumped by `begin()` and by `end()`, and the loop compares it after
 every await — the two sends, the converge and the refetch — returning rather than throwing, because a
-teardown is not a failure and there is nobody left to report one to. It returns **before** recording the
+teardown is not a failure and there is nobody left to report one to. The converge is a loop of its own (reads,
+sends and settles), so the generation alone stops it only once it returns: `end()` also aborts the session's
+signal, which the converge is handed, so it stops at its next round trip and its abort is returned as the
+teardown it is. It returns **before** recording the
 write in the snapshot: a session that ended and began again inside one await has already rebuilt that
 snapshot from a device read, and writing a dead flush's value into it would poison the new session's
 device truth. A generation rather than the flag for the same reason — across a stop/start the flag reads
@@ -1347,7 +1371,9 @@ The teardown chains the disconnect rather than awaiting it (`vd_disconnect` retu
 its epoch guard is what makes a late one safe. The window between `end()` and the disconnect landing in Rust
 is therefore open — what the generation closes is the app's own decision to keep sending into it. That window
 is no longer the ledger's flush alone: `releaseLive` waits out a follow read still doing round trips before it
-disconnects, since a session that merely ends lets its read finish and the link it reads over is the session's.
+disconnects, since a session that merely ends lets its read finish and the link it reads over is the session's,
+and the session's own flush (`LiveSync.idle()`) for the same reason — its command on the wire is answered over
+that link.
 Nothing else may connect for its duration — the link holder goes back at the end of that release rather than at
 the toggle — because a read carries no epoch and would otherwise go on over the worker an intervening action
 installed.
@@ -1471,6 +1497,29 @@ and the read after the release takes what the unit then holds. In both, the scre
 value, which the cases assert with the recall taken into the fake's state at the instant it is
 announced, so a later write lands on it as it does on the unit.
 
+### 15. Running a held inspector rebuild after the gesture that releases it (`inspector.ts` / `dom.ts`)
+
+The inspector's gate holds a rebuild while a select in the panel is focused, and the `focusout` that ends that
+hold ran the held rebuild at once. The `focusout` fires partway through the gesture that moves the focus, so the
+rebuild replaced the control that gesture was going to: a mouse press on the bypass OFF button lost its click, a
+Tab from the select lost its focus and a tap lost its click (the T1 finding above).
+
+The fix: the `focusout` runs the release in the next task, once the focus has landed, and a press that began inside
+the panel is a fourth thing the gate holds for — from its `pointerdown` until its click has reached the target's own
+handlers, or, for a press that produces no click in the panel, until the task after the next pointer release, or the
+window coming back from a release it never heard. A press on a `<select>` is left to the picker's own hold. The press
+does not wait for the app-wide count of pointers down that `dom.ts` keeps for the inert holds to reach zero: the
+ordinary tier's `selectWire` dispatches a `pointerdown` no release follows. Measured 2026-10-03: with the hold released
+on that count, four ordinary-tier cases failed (two in `directout.spec.ts`, one in `midi.spec.ts`, one in
+`inventory.spec.ts`); in the first `directout.spec.ts` case the `pointerdown` was still counted when the panel stopped
+rebuilding, and a window `focus` dispatched before the press, which clears the count, made it pass. Released on any
+release, the same four pass, in a run of those three spec files whole. `overtake-held-repaint-vs-the-next-gesture` drives the click pair (a
+device change held, and a control run with none) in Chromium and WebKit, and the Tab and the tap in Chromium, and
+asserts the one bypass write and the device's HPF value on screen. Measured 2026-10-03 at `39ae84ea`: with the gate
+change reverted, the click pair, the Tab and the tap fail; with the node-param take-back of `74c4b97e` reverted as
+well, the control run passes and the other cases fail; with only the next-task release reverted, the Tab and the tap
+fail in Chromium; with only the press hold removed, the click pair fails in WebKit.
+
 ## What the harness itself got wrong
 
 The audits found harness errors before they found app defects. They are recorded so the next tier does
@@ -1581,7 +1630,7 @@ not repeat them.
 - **A mousedown that also moves focus fires `focusout`, which is a history boundary**, so a synthetic
   slider drag costs two undo entries — its first edit is committed on the spot
 - **An offline edit before `goLive` makes Live start ask the discard confirm**, which the fake declines
-  by default; `goLive` then times out on `#btn-live[aria-pressed="true"]` with no other symptom
+  by default; `goLive` then times out on `#btn-live[aria-checked="true"]` with no other symptom
 - **Do not print a verdict you did not check.** `analyze()` with an empty spec can only emit invariant
   4, and an offline sweep has neither a read nor a write, so the line always says "clean"
 - **A command named `vd_*` is not automatically a command on the worker.** `onWorker` routed the whole
@@ -1602,6 +1651,20 @@ not repeat them.
   defect to reproduce, which fix 11 above deleted in `3ba19c4` — so the `vd_link_stats` link is now
   unfalsifiable as well as unestablished. Every one of the 16 harness runs since those fixes landed
   has reported **flaky 0**
+- **An address nothing wrote read 0, and at a node-param leaf 0 is often a value its control cannot
+  take.** A session's readback took each such 0 into the plan, and once the write-time take-back reached
+  node-param leaves (`74c4b97e`), the first converge — an insert-FX selection's, for one — bounded 41 of
+  them and took the bounds back into the plan, which the write's status line reported. That reflect
+  marked CH 1 changed and its repaint was held behind the focused Insert FX select, so
+  `shape-insert-fx-select-ordering` and `shape-pan-bal-mode-switch` failed on the defect §15 fixes, with
+  no device change in either. The fake now starts each address a node-param leaf is written to at the
+  model's factory value (contract item r), which is what a unit nobody has written holds. Measured 2026-10-03: with that change
+  alone and the inspector gate as it was before §15, those two cases pass, and so does the control run of
+  `overtake-held-repaint-vs-the-next-gesture`, which asserts the selection's write takes nothing back since
+  the control depends on it. Three cases had stated a value the zeros produced and now state the fact it
+  stood for: `shape-fx-effect-type-slot-family` the authored values as detents from what the unit held,
+  `midi-bal-mirror-clobbers-partner` the clobbering write as ch1's threshold on the unit, and
+  `drop-write-reject-mid-send` the retry as the remainder its first attempt's own status line counts
 - **A precondition is not a gesture, and a page-wide fail-fast bound reaches it anyway.** `t0b-sweeps`
   sets a 4 s `page.setDefaultTimeout` in its `boot()` so an unreachable control lands in the sweep's
   error column by name — and Playwright applies a page default to every later action, including
@@ -1652,7 +1715,7 @@ not repeat them.
   **in the page**, where a driver-side module binding does not exist. It compiles, `pnpm
   typecheck:e2e` passes, and `--list` collects every case; the failure arrives at runtime on the
   **first** command the fake handles. What it presents as is not an error message but an absence:
-  `goLive` times out after 30 s on `#btn-live[aria-pressed="true"]` — the live session never comes up
+  `goLive` times out after 30 s on `#btn-live[aria-checked="true"]` — the live session never comes up
   — in **every** engine (measured 2026-08-13: 4 of `race-webkit`'s 5 cases, and the same case in the
   Chromium `race` project, which is a 30 s timeout at the same locator). The failure text names only
   the locator, so on its own it is indistinguishable from an infrastructure hang, exactly as the
@@ -1670,6 +1733,23 @@ not repeat them.
   is a compile error, while a closure reference is not. It
   entered `main` with the pull request that wrote it and survived three further merges before a
   version bump ran the harness again
+- **The fake answered a command with no latency of its own inside the task that sent it, and two cases
+  leaned on that.** The shell answers every `invoke` on a later task; the fake resolved such a command in
+  the microtasks of the sending task, so a flow whose next step waited on one of those answers had run to
+  its end before the driver's next step could look. `teardown-flow-refusals`'s unguarded half read File >
+  Open's native dialog and File > New's status straight after the clicks, while both flows go on only
+  once their confirm has been answered. `stress-long-session-quiescence` equated the meter subscribe and
+  unsubscribe counts, which holds only while each tuning screen's registration is answered before the
+  screen closes: a screen closed inside its own pending registration is replaced by the console's
+  subscribe with no unsubscribe of its own, which `subscribeMeters`' generation stamp makes correct, since
+  a subscribe replaces the registration wholesale. With answers on a later task (contract item s), the
+  first read no open dialog, and the second read 3 subscribes against 2 unsubscribes in each of the ten
+  cycles of one tier run, and in 7, 9 and 9 of the ten in three runs of the case alone. The first now waits for each flow
+  to land while the read is still held. The second reads the release from the order instead — every
+  unsubscribe inside a session is followed by a subscribe, and the cycle's last meter command is the
+  unsubscribe its end issued — which also fails a stale release that cancels the new owner's stream: with
+  the generation check removed from that release, the counts read 30 / 30 at the tenth cycle and the
+  order assertion was red
 
 Across two audit rounds these accounted for **24 vacuous assertions and 28 over-stated claims**, all
 fixed or withdrawn.
@@ -1689,14 +1769,13 @@ fixed or withdrawn.
 - The macOS native menu itself, real drag-and-drop path resolution and the OS-refusal semantics of the
   sleep hold stay outside automation
 - The codebase has no test-id vocabulary, so every case depends on the current DOM ids and class names
-- **A case cannot import from `src/core/control/` or `src/core/plan.ts`.** Those sit in a module cycle
-  — `plan` → `control/insert-fx-effect` → `translate` → `vd` → `plan` — that resolves only because the
-  app's own entry point orders it. Playwright loads a spec directly, so entering the cycle at the wrong
-  end fails the whole project at collection with `Cannot access 'GATE_RANGE_OFF_DB' before
-  initialization` — **no tests found**, not one red case. The src imports the harness does have
-  (`core/levels`, `core/plan-history`) are leaves and are safe. The cost is real: `deviceLevelText` in
-  `e2e/race/ui.ts` restates the off sentinel and the centi-dB scale that `vd.ts` already owns, and
-  `FLUSH_TAIL_MS` copies `DEBOUNCE_MS` rather than deriving from it. Both say so at their definition
+- **`deviceLevelText` in `e2e/race/ui.ts` restates the console's level formatting.** `src/ui/console.ts`
+  is a DOM module and a spec runs in Node, so the formatting is written out there; the off sentinel and
+  the centi-dB decode underneath it are `src/core/control/vd.ts`'s own. A case imports from `src/core/`
+  freely otherwise: the one import cycle there — `plan`, `constraints`, `control/translate`,
+  `plan-history`, `routing`, `scene-scope` — evaluates alike whichever member a spec enters first
+  (`src/core/module-order.contract.test.ts` holds that), so `tzb-tail.spec.ts` derives `FLUSH_TAIL_MS`
+  from `live.ts`'s own `DEBOUNCE_MS`, and the harness imports `core/levels` and `core/plan-history`
 - **A plan EDIT never appears in the IPC trace** — only its write does, lagged by up to the 120 ms
   flush window and continuing after the read has resolved. So no predicate over the trace can decide
   "did an edit land inside the read's window", which became a load-bearing question once the readback

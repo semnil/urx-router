@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, colorToken, contrastRatio, textContrast } from "./fixtures";
 import { dialogsOf, stubTauriDevice, strWritesOf, writesOf } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 
@@ -19,6 +19,7 @@ const TIME_ZONE = 831;
 const UDK_FUNCTION = 770;
 const UDK_PARAM1 = 771;
 const UDK_PARAM2 = 772;
+const UDK_BANK = 769;
 
 /** A device whose reported settings differ from the factory defaults, so the
  *  screen has to show what it read rather than what it assumed. */
@@ -48,6 +49,25 @@ test("opens on the values read from the device and writes nothing", async ({ pag
   expect(await strWritesOf(page)).toEqual([]);
 });
 
+// A Time Zone index past the city list is the unit's own state — the broker stores one
+// verbatim — and not the nearest city. Shown as that city, nothing was pending for it and
+// choosing the city wrote nothing, so the unit stayed where it was.
+test("a time zone past the city list opens as unknown, and the city picked for it is written", async ({ page }) => {
+  await stubTauriDevice(page, { values: { ...DEVICE_VALUES, [TIME_ZONE]: 200 } });
+  await page.goto("/");
+  await openSetup(page);
+
+  await expect(page.locator("#device-setup-timezone")).toHaveValue("200");
+  await expect(page.locator("#device-setup-timezone option:checked")).toHaveText("unknown (200)");
+  await expect(page.locator("#device-setup-apply")).toBeDisabled();
+
+  await chooseOption(page.locator("#device-setup-timezone"), "153");
+  await expect(page.locator("#device-setup-pending")).toHaveText("1 unapplied change");
+  await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
+  expect(await writesOf(page)).toEqual([[TIME_ZONE, 153]]);
+});
+
 // Brightness 0 is the unit's own floor, not a dump artefact (hardware: the LCD
 // stays readable there). With the floor at 1 the screen coerced the value it read
 // on open, so a unit sitting at 0 was reported as 1 and 0 could never be sent back.
@@ -70,6 +90,7 @@ test("brightness 0 can be applied to a device that is brighter", async ({ page }
   await page.locator("#device-setup-brightness").fill("0");
   await page.locator("#device-setup-brightness").dispatchEvent("change");
   await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
 
   expect(await writesOf(page)).toEqual([[BRIGHTNESS, 0]]);
 });
@@ -97,6 +118,36 @@ test("an edit is pending until Apply, which sends only what changed", async ({ p
   await expect(page.locator("#device-setup-pending")).toHaveText("");
 });
 
+// The sub-page names and the knob columns' heads are labels the rows below are read by,
+// at the dim tier's ink in the light theme too.
+test("the sub-headings and the knob column heads clear AA in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await stubTauriDevice(page, { values: DEVICE_VALUES });
+  await page.goto("/");
+  await openSetup(page);
+  const sub = page.locator("#device-setup-modal .dev-sub").first();
+  const head = page.locator("#device-setup-modal .udk-head span:not(:empty)").first();
+  await expect(sub).toBeVisible();
+  await expect(head).toBeVisible();
+  expect(await textContrast(page, sub)).toBeGreaterThanOrEqual(4.5);
+  expect(await textContrast(page, head)).toBeGreaterThanOrEqual(4.5);
+});
+
+// The dot that marks a row Apply will write is a state graphic on the panel, drawn in the
+// accent's ink so it reads at 3:1 in the light theme.
+test("the pending-edit dot reads on the light panel", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await stubTauriDevice(page, { values: DEVICE_VALUES });
+  await page.goto("/");
+  await openSetup(page);
+  await chooseOption(page.locator(".udk-row").first().locator("select").first(), "Monitor");
+  const dirty = page.locator(".udk-row.dirty .knob").first();
+  await expect(dirty).toBeVisible();
+  const dot = await dirty.evaluate((el) => getComputedStyle(el, "::before").backgroundColor);
+  expect(dot).toBe(await colorToken(page, "--led-ink"));
+  expect(await contrastRatio(page, dot, await colorToken(page, "--panel"))).toBeGreaterThanOrEqual(3);
+});
+
 test("a knob assignment writes its three columns together", async ({ page }) => {
   await stubTauriDevice(page, { values: DEVICE_VALUES });
   await page.goto("/");
@@ -108,11 +159,61 @@ test("a knob assignment writes its three columns together", async ({ page }) => 
   await chooseOption(page.locator(".udk-row").first().locator("select").first(), "Monitor");
   await expect(page.locator("#device-setup-pending")).toHaveText("1 unapplied change");
   await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
 
   expect(await strWritesOf(page)).toEqual([
     [UDK_FUNCTION, 0, "Monitor"],
     [UDK_PARAM1, 0, "Monitor 1"],
     [UDK_PARAM2, 0, "Level"],
+  ]);
+  expect(await writesOf(page)).toEqual([]);
+});
+
+// A Monitor knob the unit reports on a Parameter 1 the catalog does not have is shown as that
+// value rather than as Monitor 1, so nothing is pending on open and picking Monitor 1 writes it.
+test("a knob's Parameter 1 off the catalog opens as unknown, and the one picked for it is written", async ({
+  page,
+}) => {
+  await stubTauriDevice(page, {
+    values: DEVICE_VALUES,
+    strings: { [`${UDK_FUNCTION}:0`]: "Monitor", [`${UDK_PARAM1}:0`]: "Monitor 3" },
+  });
+  await page.goto("/");
+  await openSetup(page);
+
+  const p1 = page.locator(".udk-row").first().locator("select").nth(1);
+  await expect(p1.locator("option:checked")).toHaveText("unknown (Monitor 3)");
+  await expect(page.locator("#device-setup-pending")).toHaveText("");
+  await chooseOption(p1, "Monitor 1");
+  await expect(page.locator("#device-setup-pending")).toHaveText("1 unapplied change");
+  await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
+
+  expect(await strWritesOf(page)).toEqual([
+    [UDK_FUNCTION, 0, "Monitor"],
+    [UDK_PARAM1, 0, "Monitor 1"],
+    [UDK_PARAM2, 0, "Level"],
+  ]);
+});
+
+// The knob tabs open on the bank the unit is on, read with the rest of the screen, and the
+// bank is read only: applying an edit on it writes the knob's slot and never the bank.
+test("opens the knob tabs on the bank the unit is on, and writes the bank never", async ({ page }) => {
+  await stubTauriDevice(page, { values: { ...DEVICE_VALUES, [UDK_BANK]: 2 } });
+  await page.goto("/");
+  await openSetup(page);
+
+  const banks = page.locator("#device-setup-banks button");
+  await expect(banks.nth(2)).toHaveAttribute("aria-pressed", "true");
+  await expect(banks.nth(0)).toHaveAttribute("aria-pressed", "false");
+  // Bank 3, knob A = slot 8.
+  await chooseOption(page.locator(".udk-row").nth(0).locator("select").first(), "Oscillator");
+  await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
+  expect(await strWritesOf(page)).toEqual([
+    [UDK_FUNCTION, 8, "Oscillator"],
+    [UDK_PARAM1, 8, "Level"],
+    [UDK_PARAM2, 8, ""],
   ]);
   expect(await writesOf(page)).toEqual([]);
 });
@@ -126,12 +227,44 @@ test("switching banks addresses the knob slots behind it", async ({ page }) => {
   await page.locator("#device-setup-banks button").nth(2).click();
   await chooseOption(page.locator(".udk-row").nth(1).locator("select").first(), "Oscillator");
   await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
 
   expect(await strWritesOf(page)).toEqual([
     [UDK_FUNCTION, 9, "Oscillator"],
     [UDK_PARAM1, 9, "Level"],
     [UDK_PARAM2, 9, ""],
   ]);
+});
+
+// Every edit and every bank tab rebuilds the screen, and the grid it rebuilds is the
+// scrolling region. The control the operator used and the offset they scrolled to both
+// survive it, or a keyboard user starts again from the top of the box after every pick.
+test("an edit or a bank tab keeps the focused control and the grid's scroll offset", async ({ page }) => {
+  await stubTauriDevice(page, { values: DEVICE_VALUES });
+  await page.goto("/");
+  await openSetup(page);
+  // Shrunk after the menu is used, so the grid has an offset to keep.
+  await page.setViewportSize({ width: 1280, height: 420 });
+  const grid = page.locator("#device-setup-box .prefs-grid");
+
+  const tab = page.locator("#device-setup-banks button").nth(2);
+  await tab.focus();
+  const before = await grid.evaluate((el) => el.scrollTop);
+  // The premise: focusing the tab scrolled the grid, so there is an offset to lose.
+  expect(before).toBeGreaterThan(0);
+  await page.keyboard.press("Enter");
+  await expect(tab).toHaveAttribute("aria-pressed", "true");
+  await expect(tab).toBeFocused();
+  expect(await grid.evaluate((el) => el.scrollTop)).toBe(before);
+
+  const fn = page.locator(".udk-row").nth(1).locator("select").first();
+  await fn.focus();
+  const at = await grid.evaluate((el) => el.scrollTop);
+  await chooseOption(fn, "Oscillator");
+  await expect(fn).toHaveValue("Oscillator");
+  await expect(fn).toBeFocused();
+  expect(await grid.evaluate((el) => el.scrollTop)).toBe(at);
+  expect(await writesOf(page)).toEqual([]);
 });
 
 test("closing with unapplied edits asks before discarding them", async ({ page }) => {
@@ -191,8 +324,9 @@ test("a failed read leaves the screen unopened", async ({ page }) => {
   await page.click("#btn-device");
   await page.click("#btn-device-setup");
 
+  await expect.poll(async () => (await dialogsOf(page)).join("\n")).toContain("Could not read the device's settings");
+  // The dialog is the flow's end, so the screen not showing is now an observation.
   await expect(page.locator("#device-setup-modal")).toBeHidden();
-  expect((await dialogsOf(page)).join("\n")).toContain("Could not read the device's settings");
 });
 
 test("rows for a page the model does not have are locked, not hidden", async ({ page }) => {
@@ -212,6 +346,7 @@ test("rows for a page the model does not have are locked, not hidden", async ({ 
   await page.locator("#device-setup-brightness").fill("2");
   await page.locator("#device-setup-brightness").dispatchEvent("change");
   await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
   expect(await writesOf(page)).toEqual([[BRIGHTNESS, 2]]);
 });
 
@@ -246,5 +381,6 @@ test("a brightness drag interrupted by a window blur is committed, and the row i
   await page.mouse.up();
   await expect(page.locator("#device-setup-brightness")).toBeEnabled();
   await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
   expect(await writesOf(page)).toEqual([[BRIGHTNESS, Number(dragged)]]);
 });

@@ -827,7 +827,7 @@ describe("cancellation", () => {
   });
 
   it("stops a comparison before the first round trip", async () => {
-    await expect(comparePlan(model, basePlan(), aborted())).rejects.toThrow();
+    await expect(comparePlan(planToCommands(model, basePlan()), aborted())).rejects.toThrow();
     expect(vi.mocked(vdGet)).not.toHaveBeenCalled();
   });
 
@@ -1199,7 +1199,7 @@ describe("comparePlan", () => {
     const plan = basePlan();
     const table = deviceTableFor(plan);
     vi.mocked(vdGet).mockImplementation((id, x, y) => Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0));
-    const { entries, errors } = await comparePlan(model, plan);
+    const { entries, errors } = await comparePlan(planToCommands(model, plan));
     expect(errors).toEqual([]);
     expect(entries).toHaveLength(planToCommands(model, plan).length);
     expect(entries.every((e) => e.match)).toBe(true);
@@ -1213,7 +1213,7 @@ describe("comparePlan", () => {
       const k = `${id}:${x}:${y}`;
       return Promise.resolve(k === `${target.paramId}:${target.x}:${target.y}` ? 12345 : (table.get(k) ?? 0));
     });
-    const { entries } = await comparePlan(model, plan);
+    const { entries } = await comparePlan(planToCommands(model, plan));
     const mismatch = entries.filter((e) => !e.match);
     expect(mismatch).toHaveLength(1);
     expect(mismatch[0].device).toBe(12345);
@@ -1231,7 +1231,7 @@ describe("comparePlan", () => {
         ? Promise.reject(new Error("timeout"))
         : Promise.resolve(table.get(`${id}:${x}:${y}`) ?? 0),
     );
-    const { entries, errors } = await comparePlan(model, plan);
+    const { entries, errors } = await comparePlan(planToCommands(model, plan));
     expect(errors).toEqual([`${commands[0].name}: timeout`]);
     expect(entries).toHaveLength(commands.length - 1);
     expect(vi.mocked(vdGet)).toHaveBeenCalledTimes(commands.length);
@@ -1239,7 +1239,7 @@ describe("comparePlan", () => {
 
   it("renders a non-Error rejection as a string", async () => {
     vi.mocked(vdGet).mockRejectedValue("link-down");
-    const { entries, errors } = await comparePlan(model, basePlan());
+    const { entries, errors } = await comparePlan(planToCommands(model, basePlan()));
     expect(entries).toEqual([]);
     expect(errors[0]).toContain(": link-down");
   });
@@ -1256,7 +1256,7 @@ describe("compareNames", () => {
           : `${writes.find((w) => w.param === param && w.y === y)?.value ?? ""}  `,
       ),
     );
-    const { entries, errors } = await compareNames(model, plan);
+    const { entries, errors } = await compareNames(planToNameWrites(model, plan));
     expect(errors).toEqual([]);
     expect(entries).toHaveLength(writes.length);
     expect(entries[0]).toEqual({ write: writes[0], device: "DEVICE", match: false });
@@ -1269,19 +1269,19 @@ describe("compareNames", () => {
     vi.mocked(vdGetStr).mockImplementation((param, _x, y) =>
       param === writes[0].param && y === writes[0].y ? Promise.reject(new Error("timeout")) : Promise.resolve(""),
     );
-    const { entries, errors } = await compareNames(model, plan);
+    const { entries, errors } = await compareNames(planToNameWrites(model, plan));
     expect(errors).toEqual([`name ${writes[0].param}:${writes[0].y}: timeout`]);
     expect(entries).toHaveLength(writes.length - 1);
   });
 
   it("renders a non-Error rejection as a string", async () => {
     vi.mocked(vdGetStr).mockRejectedValue("link-down");
-    const { errors } = await compareNames(model, namedPlan());
+    const { errors } = await compareNames(planToNameWrites(model, namedPlan()));
     expect(errors[0]).toContain(": link-down");
   });
 
   it("reads nothing for a plan that names no node", async () => {
-    expect(await compareNames(model, basePlan())).toEqual({ entries: [], errors: [] });
+    expect(await compareNames(planToNameWrites(model, basePlan()))).toEqual({ entries: [], errors: [] });
     expect(vi.mocked(vdGetStr)).not.toHaveBeenCalled();
   });
 });

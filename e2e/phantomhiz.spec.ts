@@ -102,6 +102,20 @@ test("the CONSOLE chips follow the same rule, and the A.GAIN knob stops at +40 u
   await expect(chip(page, "Hi-Z")).toHaveAttribute("title", LOCKED_HIZ);
 });
 
+// The Inspector is hidden while the CONSOLE is up and keeps the locks it was drawn with, so an
+// edit made on a strip has to reach the panel the operator returns to without a new selection.
+test("an Inspector drawn before a CONSOLE edit takes the lock that edit set", async ({ page }) => {
+  await open(page, { hiZ: false, phantom: false, gain: 30 });
+  await selectCh3(page);
+  await expect(row(page, "Hi-Z").getByRole("button", { name: "ON", exact: true })).toBeEnabled();
+  await page.click("#btn-view-console");
+  await chip(page, "+48").click();
+  await expect(chip(page, "+48")).toHaveAttribute("aria-pressed", "true");
+  await page.click("#btn-view-graph");
+  await expect(row(page, "Hi-Z")).toHaveAttribute("title", LOCKED_HIZ);
+  await expect(row(page, "Hi-Z").getByRole("button", { name: "ON", exact: true })).toBeDisabled();
+});
+
 test("a document holding both on opens with +48V off and says so", async ({ page }) => {
   await open(page, { hiZ: true, phantom: true, gain: 60 });
   await expect(page.locator("#statusbar")).toContainText(
@@ -137,7 +151,7 @@ test("starting Live sync on a unit holding both on keeps its state and says so",
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
   await expect(page.locator("#statusbar")).toContainText("+48V and Hi-Z are both on for CH 3, CH 4");
   expect(
     (await writesOf(page)).filter(([id]) => id === 0 || id === 6),
@@ -152,7 +166,7 @@ test("a device follow finding both on says so, and again once the unit turns one
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
   // CH 3 is y 2. The unit's panel turns HI-Z and +48V on, announced as one batch.
   await setDeviceValue(page, PARAMS.HI_Z.id, 2, 1);
   await setDeviceValue(page, PARAMS.PHANTOM.id, 2, 1);
@@ -256,7 +270,7 @@ const startLive = async (page: Page): Promise<void> => {
   await page.click("#btn-live");
 };
 const liveOn = (page: Page) =>
-  expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true", { timeout: 30_000 });
+  expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
 
 test("a +48V ON pressed while Live sync's starting read runs is refused where the read finds Hi-Z on", async ({
   page,

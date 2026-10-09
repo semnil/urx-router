@@ -24,6 +24,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, getsOf, type Span } from "./analyze";
 import { MAX_ENTRIES } from "../../src/core/plan-history";
+import { DEBOUNCE_MS } from "../../src/core/control/live";
 import { CH1_FADER, CH2_FADER, deviceLevelText, faderOf, faderReadout, strip } from "./ui";
 import { chooseOption } from "../choose-option";
 
@@ -44,11 +45,10 @@ const CH4_FADER = "139:0:3";
 const P_CH_PAN = 141; // direct-follow: applied into the plan with no readback at all
 const MIDI_CC_LEVEL = 7;
 /** How long a plan edit can still be leaving after the edit itself: LiveSync's own
- *  `DEBOUNCE_MS` (120) plus slack for a loaded runner. A set on the wire this soon after
- *  a gesture ended belongs to an edit the gesture had already made; anything later is the
- *  gesture still running. Copied rather than imported — `live.ts` is inside the module
- *  cycle the harness cannot enter (see `deviceLevelText` in ./ui). */
-const FLUSH_TAIL_MS = 300;
+ *  `DEBOUNCE_MS` plus slack for a loaded runner. A set on the wire this soon after a
+ *  gesture ended belongs to an edit the gesture had already made; anything later is the
+ *  gesture still running. */
+const FLUSH_TAIL_MS = DEBOUNCE_MS + 180;
 
 /** Click a File menu item (the menu opens on its trigger and closes on the item). */
 async function fileMenu(page: Page, id: string): Promise<void> {
@@ -639,7 +639,7 @@ test.describe("Tzb tail", () => {
     // the session state is hidden by the time it flips.
     await page.click("#btn-device");
     await page.click("#btn-live");
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
     // Read between the halves: leaving live is not a plan replacement, so the entries
     // the arming made are still there. Without this the reset asserted below would also
     // be satisfied by a teardown that had thrown the history away, which is a different
@@ -1050,7 +1050,7 @@ test.describe("Tzb tail", () => {
 
       await mark(page, `loop-${i}-off`);
       await clickLive(page);
-      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
       await waitQuiet(page, 600);
       await mark(page, `loop-${i}-quiet`);
       // A fixed window, not a silence check: the verdict here is an absence, and the
@@ -1063,10 +1063,14 @@ test.describe("Tzb tail", () => {
     const trace = await traceOf(page);
     const all = spans(trace);
     const idle: number[] = [];
+    // Each cycle's meter commands, in the order issued.
+    const meterRuns: Span[][] = [];
     for (let i = 0; i < LOOPS; i++) {
       const from = markTime(trace, `loop-${i}-quiet`)!;
       const to = i + 1 < LOOPS ? markTime(trace, `loop-${i + 1}-on`)! : Number.POSITIVE_INFINITY;
       idle.push(all.filter((s) => s.cmd.startsWith("vd_") && s.start > from && s.start < to).length);
+      const on = markTime(trace, `loop-${i}-on`)!;
+      meterRuns.push(all.filter((s) => s.cmd.startsWith("vd_meters_") && s.start > on && s.start < from));
     }
 
     // The last cycle's idle phase, stated as the analyzer states it: nothing armed
@@ -1084,22 +1088,33 @@ test.describe("Tzb tail", () => {
     }
 
     for (const [i, s] of samples.entries()) {
-      // One connection per cycle, and both registrations released with it: a session
-      // that left either behind would show as a growing imbalance rather than as a
-      // failure inside the cycle that leaked it.
+      // One connection per cycle, and both registrations released with it. The param one is
+      // taken once and released once, so a session that left it behind would show as a
+      // growing imbalance rather than as a failure inside the cycle that leaked it.
       expect(s.counters.connects).toBe(i + 1);
       expect(s.counters.subscribes).toBe(i + 1);
       expect(s.counters.unsubscribes).toBe(s.counters.subscribes);
-      expect(s.counters.meterUnsubs).toBe(s.counters.meterSubs);
+      // The meter slot is handed between the console and the tuning screen inside the
+      // session, and a screen closed before its own registration has been answered is
+      // replaced by the console's with no unsubscribe of its own — a subscribe replaces the
+      // registration wholesale — so the meter half is read from the order rather than from
+      // the counts: the session never sits unregistered (every unsubscribe inside it is
+      // followed by a subscribe), and the cycle's last meter command is the unsubscribe its
+      // end issued.
+      const offAt = markTime(trace, `loop-${i}-off`)!;
+      const inSession = meterRuns[i].filter((m) => m.start < offAt);
+      expect(inSession[0]?.cmd).toBe("vd_meters_subscribe");
+      for (const [k, m] of inSession.entries())
+        if (m.cmd === "vd_meters_unsubscribe") expect(inSession[k + 1]?.cmd).toBe("vd_meters_subscribe");
+      expect(meterRuns[i].at(-1)?.cmd).toBe("vd_meters_unsubscribe");
+      expect(meterRuns[i].at(-1)!.start).toBeGreaterThan(offAt);
       // The history is bounded: 130 entries were offered, 100 is the cap, and the
       // stack does not carry the surplus across a cycle either.
       expect(s.undo).toBe(MAX_ENTRIES);
       // Nothing armed inside the session fires after it.
       expect(idle[i]).toBe(0);
     }
-    // The meter slot is taken and released once per cycle plus once per screen
-    // handover, and never accumulates: the count grows with the loop, the imbalance
-    // does not.
+    // The meter slot is taken in every cycle, so the count grows with the loop.
     expect(samples[LOOPS - 1].counters.meterSubs).toBeGreaterThan(samples[0].counters.meterSubs);
   });
 });

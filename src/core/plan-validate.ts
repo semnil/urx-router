@@ -7,17 +7,50 @@
 // messages. Nothing here runs on a device readback (see insertFxSlotProblems).
 
 import type { DeviceModel } from "../models/types";
-import { parseRef } from "../models/types";
-import { factoryNodeParams, fillFactoryParams } from "../models/initial-state";
+import { parseRef, ref } from "../models/types";
+import { factoryNodeColors, factoryNodeNames, factoryNodeParams, fillFactoryParams } from "../models/initial-state";
+import { getModel, MODEL_IDS } from "../models";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
-import type { InsertFxSlot } from "./control/params";
-import { fixedConnection, isPlainRecord, requiredSourceWire, setPlanSampleRate } from "./plan";
-import type { Plan } from "./plan";
-import { insertFxWireState } from "./control/translate";
+import { isPlanColor, type InsertFxSlot } from "./control/params";
+import {
+  fixedConnection,
+  isPlainRecord,
+  normalizeDocumentName,
+  requiredSourceWire,
+  SEND_LEVEL_UNNAMED_DB,
+  setPlanSampleRate,
+  stripXmlInvalid,
+} from "./plan";
+import {
+  connParamContestKey,
+  deepEqual,
+  nodeColorContestKey,
+  nodeNameContestKey,
+  nodeParamContestPath,
+} from "./plan-history";
+import type { ConnParams, NodeParams, Plan, PlanConnection } from "./plan";
+import {
+  admitLeaf,
+  colorControl,
+  effectiveInsertFx,
+  insertFxControl,
+  insertFxWireState,
+  nameControl,
+  nodeLeafRules,
+  sendControl,
+} from "./control/translate";
+import { seedInsertFxParams } from "./control/insert-fx-effect";
 import { hiZOn } from "./input-lock";
-import { HI_Z_A_GAIN_MAX_DB } from "./control/vd";
-import { mixSendLocks, sourcePan, validatePlan } from "./routing";
+import {
+  INSERT_FX_PAIR_KEYS,
+  isBalLinkedPair,
+  isStereoLinkedPair,
+  mixSendLocks,
+  pairSharesNodeKey,
+  sourcePan,
+  validatePlan,
+} from "./routing";
 import type { PlanProblem } from "./routing";
 
 /** One device-wide 1-of insert-FX slot claimed by more than one node. Not a wire,
@@ -31,7 +64,8 @@ export interface InsertFxSlotProblem {
 
 // Insert-FX slot collisions in a whole plan. The screens cannot author one
 // (insertFxMenu locks a slot another node holds), so a plan carrying one came
-// from outside — a file, a ?plan= link, a generator. Unlike an illegal wire this
+// from outside — a file, a ?plan= link, a generator, or a read of a unit that holds
+// two, since its control link accepts a second selection. Unlike an illegal wire this
 // does not refuse the document: the loader reports it and offers to open it anyway,
 // since the plan is otherwise usable and only the unit decides what it runs.
 // A device readback deliberately does not run this: the unit is the authority for
@@ -86,6 +120,7 @@ export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPa
   // answering it must not complete the caller's plan behind their back.
   const filled = structuredClone(plan);
   fillFactoryParams(model.id, filled);
+  completeInsertFxParams(model, filled);
   for (const [a, b] of linked) {
     const sa = insertFxWireState(model, filled, a);
     const sb = insertFxWireState(model, filled, b);
@@ -114,27 +149,30 @@ export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPa
  *  route — it is a FILE, but one the unit wrote, and it reaches the plan through the readback
  *  rather than through this funnel.
  *
- *  SCOPE: the FX channel effect, plus two keys of a channel carrying HI-Z (`where: "node"`):
- *  +48V on while HI-Z is on is bounded to off (HI-Z kept), and A.Gain above +40 dB while HI-Z
- *  is on is bounded to +40 — the app never turns the two on together, and the unit does not
- *  apply an A.Gain above +40 under HI-Z. A device read keeps +48V and HI-Z both on where the
- *  unit holds them, so a file this build saved can carry that pair.
- *  Beyond those, the FX channel effect and nothing else. `translate.ts` bounds twenty addresses by
- *  a window, and this reads one family of them. The others (insert-FX, SSMCS, the two 1-knob
- *  levels, the oscillator interval) have the same shape, and one of them — the oscillator —
- *  is scene-external, so a scene-scoped write would not send it while a whole-plan repair
- *  would still move it. The FX catalogue is the family whose windows have actually moved, so
- *  it is the family a shipped document can be outside of. The name says `param` because the
- *  shape is general; the walk is deliberately not. */
+ *  SCOPE: the FX channel effect; on every node the model's factory values describe, a leaf or
+ *  group whose kind is not the factory value's at that path (`where: "node"`, dropped, so the
+ *  fill supplies the factory value) — a number where the factory holds an on/off is converted
+ *  instead (`booleanParamProblems`); every node-param leaf the write bounds, bounded by the rule
+ *  the write bounds it by (`nodeLeafRules` / `admitLeaf` in translate.ts, `where: "node"`); plus
+ *  +48V on a channel carrying HI-Z with HI-Z on, bounded to off (HI-Z kept) — the app never
+ *  turns the two on together. A channel's gain is bounded to its own range (`channelGainRange`:
+ *  A.Gain -8..+70 dB, -8..+40 under HI-Z, D.Gain -24..+24), the oscillator level to -96..0
+ *  dB and the HPF frequency to the nearest of its five 20 Hz detents — their encoders clamp
+ *  only to a wider window (the HPF's at 0.1 Hz), so here the load moves what the write sends,
+ *  onto a value the unit's own panel can set. A device read keeps +48V and HI-Z both on where the unit holds
+ *  them, so a file this build saved can carry that pair. A repair reaches the oscillator, which
+ *  is scene-external: under the Scene-only device scope the write does not carry it, while the
+ *  load still moves it and says so. */
 export interface ParamRangeProblem {
   reason: "paramRange";
   node: string;
   /** Which container holds it: the node's `fxEffect` value itself, a field of that object
    *  (`type` / `params`), a member of its `params` map, or one of the node's own params
-   *  (`node`: a HI-Z channel's `phantom` / `gain`). A `params` member is bounded by its own
-   *  descriptor. */
+   *  (`node`). A `params` member is bounded by its own descriptor. */
   where: "effect" | "field" | "params" | "node";
-  /** The field or catalogue key, as the plan stores it. `fxEffect` for the object itself. */
+  /** The field or catalogue key, as the plan stores it. `fxEffect` for the object itself. For
+   *  `node`, the dotted path inside the node's params, an array element by its index
+   *  (`eqOneKnob.level`, `eqBands.0.q`). */
   key: string;
   /** What the document carries. NOT always a number: the sanitiser keeps a boolean leaf and a
    *  non-empty object, since node params have toggles and groups, and a document can put
@@ -234,10 +272,23 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
       }
     }
   }
-  // A HI-Z channel with HI-Z on: +48V goes off and A.Gain stops at +40 dB.
-  for (const [node, np] of Object.entries(plan.nodeParams)) {
-    if (!hiZOn(plan.modelId, node, np)) continue;
-    if (np.phantom) {
+  for (const [node, carried] of Object.entries(plan.nodeParams)) {
+    // A leaf or group of a shape the factory value at that path does not have. The checks
+    // after it read the node as the drop leaves it.
+    const factory = factoryNodeParams(plan.modelId, node);
+    const drops = factory ? kindMismatches(carried, factory) : [];
+    const np = drops.length ? structuredClone(carried) : carried;
+    for (const path of drops) {
+      const parent = path.slice(0, -1).reduce<unknown>((v, k) => (v as Record<string, unknown>)[k], np) as Record<
+        string,
+        unknown
+      >;
+      const key = path[path.length - 1];
+      out.push({ reason: "paramRange", node, where: "node", key: path.join("."), stored: parent[key], action: "drop" });
+      delete parent[key];
+    }
+    // A HI-Z channel with HI-Z on: +48V goes off (A.Gain's +40 dB ceiling is in its rule).
+    if (hiZOn(plan.modelId, node, np) && np.phantom) {
       out.push({
         reason: "paramRange",
         node,
@@ -248,19 +299,55 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
         bound: false,
       });
     }
-    if (typeof np.gain === "number" && np.gain > HI_Z_A_GAIN_MAX_DB) {
-      out.push({
-        reason: "paramRange",
-        node,
-        where: "node",
-        key: "gain",
-        stored: np.gain,
-        action: "bound",
-        bound: HI_Z_A_GAIN_MAX_DB,
-      });
+    // A value outside what the write sends for it: the value the write sends.
+    const model = MODEL_IDS.includes(plan.modelId) ? getModel(plan.modelId) : null;
+    for (const [path, rule] of model ? nodeLeafRules(model, node, np) : []) {
+      const stored = path
+        .split(".")
+        .reduce<unknown>(
+          (v, k) => (isPlainRecord(v) || Array.isArray(v) ? (v as Record<string, unknown>)[k] : undefined),
+          np,
+        );
+      if (typeof stored !== "number" || !Number.isFinite(stored)) continue;
+      if ("unsent" in rule) {
+        out.push({ reason: "paramRange", node, where: "node", key: path, stored, action: "drop" });
+        continue;
+      }
+      const bound = admitLeaf(rule, stored);
+      if (bound !== stored)
+        out.push({ reason: "paramRange", node, where: "node", key: path, stored, action: "bound", bound });
     }
   }
   return out;
+}
+
+/** The node-param keys whose shape the FX walk owns rather than the factory comparison. */
+const KIND_WALK_SKIPS: ReadonlySet<string> = new Set(["fxEffect"]);
+
+/**
+ * Every path in `carried` holding a value whose kind is not the factory value's there: a
+ * value that is not a number where the factory holds a number, a group where it holds an
+ * on/off, and anything but a group (or an array) where it holds one. Neither the sanitiser
+ * nor the fill catches these — the sanitiser keeps an on/off and a non-empty group under any
+ * key, and the fill keeps whatever the document wrote at a scalar — so the write would encode
+ * one (an on/off at A.Gain goes out as +1 dB, a group as the encoder's floor) and a reader
+ * that formats a number would throw on it. A path the factory does not carry is left alone.
+ */
+function kindMismatches(carried: unknown, factory: unknown, path: string[] = []): string[][] {
+  if (carried === undefined) return [];
+  if (typeof factory === "number") return typeof carried === "number" ? [] : [path];
+  if (typeof factory === "boolean") return isPlainRecord(carried) || Array.isArray(carried) ? [path] : [];
+  if (Array.isArray(factory)) {
+    if (!Array.isArray(carried)) return [path];
+    return factory.flatMap((f, i) => kindMismatches(carried[i], f, [...path, String(i)]));
+  }
+  if (isPlainRecord(factory)) {
+    if (!isPlainRecord(carried)) return [path];
+    return Object.entries(factory).flatMap(([key, f]) =>
+      path.length === 0 && KIND_WALK_SKIPS.has(key) ? [] : kindMismatches(carried[key], f, [...path, key]),
+    );
+  }
+  return [];
 }
 
 /** Write each reported bound into the plan. Separate from finding them so a caller can
@@ -269,7 +356,13 @@ export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void
   for (const p of problems) {
     const np = plan.nodeParams[p.node]!;
     if (p.where === "node") {
-      (np as Record<string, unknown>)[p.key] = p.bound;
+      const keys = p.key.split(".");
+      let holder = np as Record<string, unknown> | undefined;
+      for (const key of keys.slice(0, -1)) holder = holder?.[key] as Record<string, unknown> | undefined;
+      if (!holder) continue;
+      const last = keys[keys.length - 1];
+      if (p.action === "drop") delete holder[last];
+      else holder[last] = p.bound;
       continue;
     }
     if (p.where === "effect") {
@@ -324,6 +417,173 @@ export function requiredSourceProblems(model: DeviceModel, plan: Plan): Required
  *  `applyParamRange` is. */
 export function applyRequiredSources(model: DeviceModel, plan: Plan, problems: RequiredSourceProblem[]): void {
   for (const p of problems) plan.connections.push(requiredSourceWire(model, p.to));
+}
+
+/** A fixed send into a MIX or FX bus — one `sendControl` writes, a column of the CONSOLE's send
+ *  rack — that the document lists without a level. The write sends it at unity
+ *  (`SEND_LEVEL_UNNAMED_DB`), while the send rack and the MIDI feedback read a send with no level
+ *  as off — so the loader completes the wire with the level the write sends, records it as the
+ *  fill's (the write confirm names the strip when that level would move the unit), and says so.
+ *  A main path into STEREO is the channel's fader, which every reader takes at unity without a
+ *  level, as the write does, so it is left as written. Like every check in this file it does NOT
+ *  run on a device readback or the `.urxf` import, which give every send its level. */
+export interface SendLevelProblem {
+  reason: "sendLevel";
+  /** The send's source, as its out ref. */
+  from: string;
+  /** The send's destination input ref. */
+  to: string;
+}
+
+/** Every fixed rack send the document lists with no level, in the document's own order. */
+export function sendLevelProblems(model: DeviceModel, plan: Plan): SendLevelProblem[] {
+  return plan.connections
+    .filter((c) => c.params?.level === undefined && isRackSend(model, c.from, c.to))
+    .map((c) => ({ reason: "sendLevel" as const, from: c.from, to: c.to }));
+}
+
+/** Whether `from -> to` is a fixed send the write sends a SEND_LEVEL for. */
+export function isRackSend(model: DeviceModel, from: string, to: string): boolean {
+  return (
+    model.rules.some((r) => r.fixed && r.kind === "send" && r.from === from && r.to === to) &&
+    sendControl(model, parseRef(from).nodeId, parseRef(to).nodeId) !== null
+  );
+}
+
+/** Give each reported send the level the write sends, recorded as the fill's. Separate from
+ *  finding them for the reason `applyParamRange` is. */
+export function applySendLevels(plan: Plan, problems: SendLevelProblem[]): void {
+  const source = (plan.paramSource ??= new Map());
+  for (const p of problems) {
+    const send = plan.connections.find((c) => c.from === p.from && c.to === p.to);
+    if (!send) continue;
+    send.params = { ...send.params, level: SEND_LEVEL_UNNAMED_DB };
+    source.set(connParamContestKey(p.from, p.to, "level"), "default");
+  }
+}
+
+/** A STEREO-linked MONO IN pair whose members disagree about a value the pair holds once. The
+ *  unit keeps one set of values for a linked pair — it copies the odd channel's onto the even one
+ *  when the pair is linked, and mirrors a write to either member onto the other — while the write
+ *  sends each member from its own params, so a disagreeing pair is two values the unit cannot hold
+ *  and a converge that alternates between them. The loader copies the primary's values onto the
+ *  secondary, the copy `mirrorLinkedPair` makes on an edit, and says so. A document naming only
+ *  the primary is the same repair: the secondary takes the primary's values rather than its own
+ *  factory ones.
+ *
+ *  What is compared is what the write would send: the node params the pair shares
+ *  (`pairSharesNodeKey`) as the fill completes them, and each pair of fixed sends into one
+ *  destination — level, on/off and PRE/POST, and the pan in BAL, where the pair holds one balance —
+ *  read the way the emit reads them, a send the document omits as the one the install seeds. The
+ *  insert effect is not: a pair disagreeing about it is refused (`insertFxPairProblems`), and one
+ *  agreeing about what the write sends keeps what each member stores.
+ *  Like every check in this file it does NOT run on a device readback or the `.urxf` import. */
+export interface LinkedPairProblem {
+  reason: "linkedPair";
+  /** The pair, primary first. */
+  nodes: [string, string];
+  /** The shared node-param keys whose values disagree, in the primary's key order. */
+  keys: string[];
+  /** The destinations whose two sends disagree, as input refs, in rule order. */
+  sends: string[];
+}
+
+const INSERT_FX_KEYS: ReadonlySet<string> = new Set(INSERT_FX_PAIR_KEYS);
+
+/** Whether a linked pair holds `key` once and this check carries it. */
+const pairCopies = (key: string): boolean => pairSharesNodeKey(key) && !INSERT_FX_KEYS.has(key);
+
+/** The send params a linked pair holds once: the pan only in BAL. */
+const pairSendKeys = (bal: boolean): Array<keyof ConnParams> =>
+  bal ? ["level", "on", "tap", "pan"] : ["level", "on", "tap"];
+
+/** The fixed sends both members of a pair have into one destination, as rule pairs. */
+function pairSends(model: DeviceModel, a: string, b: string): Array<[RoutingRuleOf, RoutingRuleOf]> {
+  const out: Array<[RoutingRuleOf, RoutingRuleOf]> = [];
+  for (const ra of model.rules) {
+    if (!ra.fixed || ra.kind !== "send" || ra.from !== ref(a, "out")) continue;
+    const rb = model.rules.find((r) => r.fixed && r.kind === "send" && r.from === ref(b, "out") && r.to === ra.to);
+    if (rb) out.push([ra, rb]);
+  }
+  return out;
+}
+type RoutingRuleOf = DeviceModel["rules"][number];
+
+/** A send's params as the write reads them: a listed send's own (a missing level the one the
+ *  load completes it with), an omitted one's seed. */
+function sentParams(model: DeviceModel, plan: Plan, rule: RoutingRuleOf): Record<string, unknown> {
+  const listed = plan.connections.find((c) => c.from === rule.from && c.to === rule.to);
+  const params: ConnParams = listed ? (listed.params ?? {}) : (fixedConnection(model, rule).params ?? {});
+  return {
+    level: params.level ?? SEND_LEVEL_UNNAMED_DB,
+    on: params.on ?? true,
+    tap: params.tap === "pre" ? "pre" : "post",
+    pan: params.pan ?? 0,
+  };
+}
+
+/** Every STEREO-linked pair whose members disagree, in the model's pair order. */
+export function linkedPairProblems(model: DeviceModel, plan: Plan): LinkedPairProblem[] {
+  const out: LinkedPairProblem[] = [];
+  const linked = model.channelPairs.filter(([a]) => isStereoLinkedPair(model, plan, a));
+  if (linked.length === 0) return out;
+  // The fill mutates, so it runs on a copy, for the reason insertFxPairProblems gives.
+  const filled = structuredClone(plan);
+  fillFactoryParams(model.id, filled);
+  for (const [a, b] of linked) {
+    const pa = (filled.nodeParams[a] ?? {}) as Record<string, unknown>;
+    const pb = (filled.nodeParams[b] ?? {}) as Record<string, unknown>;
+    const keys = [...new Set([...Object.keys(pa), ...Object.keys(pb)])].filter(
+      (k) => pairCopies(k) && !deepEqual(pa[k], pb[k]),
+    );
+    const sendKeys = pairSendKeys(isBalLinkedPair(model, plan, a));
+    const sends = pairSends(model, a, b)
+      .filter(([ra, rb]) => {
+        const sa = sentParams(model, plan, ra);
+        const sb = sentParams(model, plan, rb);
+        return sendKeys.some((k) => sa[k] !== sb[k]);
+      })
+      .map(([ra]) => ra.to);
+    if (keys.length > 0 || sends.length > 0) out.push({ reason: "linkedPair", nodes: [a, b], keys, sends });
+  }
+  return out;
+}
+
+/** Copy each reported pair's primary onto its secondary: every node param the pair holds once,
+ *  an absent one staying absent, and each pair of sends' shared params — the omitted member of a
+ *  send pair given the send the install seeds, so the copy has a wire on both sides. A copied send
+ *  param takes the primary's record of where it came from. Separate from finding them for the
+ *  reason `applyParamRange` is. */
+export function applyLinkedPairs(model: DeviceModel, plan: Plan, problems: LinkedPairProblem[]): void {
+  const source = plan.paramSource;
+  for (const { nodes } of problems) {
+    const [a, b] = nodes;
+    const src = (plan.nodeParams[a] ?? {}) as Record<string, unknown>;
+    const next: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(plan.nodeParams[b] ?? {})) if (!pairCopies(k)) next[k] = v;
+    for (const [k, v] of Object.entries(src)) if (pairCopies(k)) next[k] = structuredClone(v);
+    plan.nodeParams[b] = next as NodeParams;
+    const sendKeys = pairSendKeys(isBalLinkedPair(model, plan, a));
+    for (const [ra, rb] of pairSends(model, a, b)) {
+      const find = (r: RoutingRuleOf): PlanConnection | undefined =>
+        plan.connections.find((c) => c.from === r.from && c.to === r.to);
+      if (!find(ra) && !find(rb)) continue;
+      for (const r of [ra, rb]) if (!find(r)) plan.connections.push(fixedConnection(model, r));
+      const ca = find(ra)!;
+      const cb = find(rb)!;
+      const params: ConnParams = { ...cb.params };
+      for (const k of sendKeys) {
+        const value = ca.params?.[k];
+        if (value === undefined) delete params[k];
+        else (params as Record<string, unknown>)[k] = value;
+        const from = source?.get(connParamContestKey(ca.from, ca.to, k));
+        const name = connParamContestKey(cb.from, cb.to, k);
+        if (from !== undefined) source?.set(name, from);
+        else source?.delete(name);
+      }
+      cb.params = params;
+    }
+  }
 }
 
 /** A send into a MIX bus whose Pan Link is on, carrying a pan other than its source's own pan /
@@ -387,6 +647,69 @@ export function applyLinkedSendPans(model: DeviceModel, plan: Plan, problems: Li
   }
 }
 
+/** A node colour that is no plan colour (`isPlanColor`) — not one of the unit's ten palette
+ *  hexes, nor `COLOR_OFF`. The write sends nothing for one while every surface would paint
+ *  whatever the string says, so the loader drops it — the fill then gives a colourable node its
+ *  factory colour — and says so. Like every check in this file it does NOT run on a device
+ *  readback, which writes palette colours only. */
+export interface NodeColorProblem {
+  reason: "nodeColor";
+  node: string;
+  /** The string the document carries. */
+  stored: string;
+}
+
+/** Every node colour the plan holds that is no plan colour, in the plan's own order. */
+export function nodeColorProblems(plan: Plan): NodeColorProblem[] {
+  return Object.entries(plan.nodeColors)
+    .filter(([, value]) => !isPlanColor(value))
+    .map(([node, stored]) => ({ reason: "nodeColor" as const, node, stored }));
+}
+
+/** Drop each reported colour. Separate from finding them for the reason `applyParamRange` is. */
+export function applyNodeColors(plan: Plan, problems: NodeColorProblem[]): void {
+  for (const p of problems) delete plan.nodeColors[p.node];
+}
+
+/** A node name or a note the document carries in a form the app does not keep. A name is cut to
+ *  what the unit's own CH SETTING screen takes and loses its trailing padding — the form every
+ *  read of the unit gives it back in — and neither text keeps a code point XML refuses, since an
+ *  image export serializes both into an SVG and one such character fails the whole export. The
+ *  loader rewrites it and says so. A name read from the unit is not cleaned this way
+ *  (`normalizeDocumentName`). Like every check in this file it does NOT run on a device readback. */
+export interface DocumentTextProblem {
+  reason: "documentText";
+  field: "nodeNames" | "notes";
+  node: string;
+  /** The text the document carries. */
+  stored: string;
+  /** What the load keeps — empty where nothing is left, which for a name is no name. */
+  value: string;
+}
+
+/** Every name and note the load rewrites, names first, each in the plan's own order. */
+export function documentTextProblems(plan: Plan): DocumentTextProblem[] {
+  const out: DocumentTextProblem[] = [];
+  for (const [node, stored] of Object.entries(plan.nodeNames)) {
+    const value = normalizeDocumentName(stored);
+    if (value !== stored) out.push({ reason: "documentText", field: "nodeNames", node, stored, value });
+  }
+  for (const [node, stored] of Object.entries(plan.notes)) {
+    const value = stripXmlInvalid(stored);
+    if (value !== stored) out.push({ reason: "documentText", field: "notes", node, stored, value });
+  }
+  return out;
+}
+
+/** Write each reported text, removing a name nothing is left of. Separate from finding them for
+ *  the reason `applyParamRange` is. */
+export function applyDocumentText(plan: Plan, problems: DocumentTextProblem[]): void {
+  for (const p of problems) {
+    if (p.field === "nodeNames" && !p.value) delete plan.nodeNames[p.node];
+    else plan[p.field][p.node] = p.value;
+  }
+}
+
 /** An on/off leaf written as a number. The document sanitiser keeps any finite number, and the
  *  write sends one where an on/off belongs as on unless it is 0. The loader converts it to that
  *  on/off, so every reader of the plan holds a boolean there and reads what the write sends,
@@ -440,16 +763,24 @@ export function applyBooleanParams(plan: Plan, problems: BooleanParamProblem[]):
 
 /** Everything a plan load reports: an illegal wire (refused), a slot claimed twice (the
  *  operator decides), a value outside its range (normalized, then reported), a receiver
- *  given no source (completed, then reported), a linked send pan off its source's value
- *  (set to it, then reported), or an on/off written as a number (converted, then reported). */
+ *  given no source (completed, then reported), a send listed without a level (completed,
+ *  then reported), a linked pair whose members disagree (the primary copied onto the
+ *  secondary, then reported), a linked send pan off its source's value (set to it, then
+ *  reported), an on/off written as a number (converted, then reported), a colour that is no
+ *  plan colour (dropped, then reported), or a name or note in a form the app does not keep
+ *  (rewritten, then reported). */
 export type LoadProblem =
   | PlanProblem
   | InsertFxSlotProblem
   | InsertFxPairProblem
   | ParamRangeProblem
   | RequiredSourceProblem
+  | SendLevelProblem
+  | LinkedPairProblem
   | LinkedSendPanProblem
-  | BooleanParamProblem;
+  | BooleanParamProblem
+  | NodeColorProblem
+  | DocumentTextProblem;
 
 // Every violation the plan loader reports on a file / ?plan= link / drop, in one
 // list so a load path cannot pick up half of them. The caller splits them by
@@ -457,11 +788,16 @@ export type LoadProblem =
 // Both halves check a plan built elsewhere; neither runs on a device readback.
 // The on/off conversions come first and the other checks read the document as they leave
 // it, which is the order the loader applies them in: `panLink: 1` is a linked MIX to the
-// send-pan check, and `stereoLink: 1` a linked pair to the insert-FX pair check.
+// send-pan check, and `stereoLink: 1` a linked pair to the insert-FX pair check. The send-pan
+// check reads it as the linked-pair copy leaves it too, since in BAL that copy moves the pans
+// it compares against.
 export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
   const booleans = booleanParamProblems(model, plan);
   const read = booleans.length > 0 ? structuredClone(plan) : plan;
   applyBooleanParams(read, booleans);
+  const pairs = linkedPairProblems(model, read);
+  const paired = pairs.length > 0 ? structuredClone(read) : read;
+  applyLinkedPairs(model, paired, pairs);
   return [
     ...booleans,
     ...validatePlan(model, read),
@@ -469,7 +805,11 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
     ...insertFxSlotProblems(model, read),
     ...paramRangeProblems(read),
     ...requiredSourceProblems(model, read),
-    ...linkedSendPanProblems(model, read),
+    ...sendLevelProblems(model, read),
+    ...pairs,
+    ...linkedSendPanProblems(model, paired),
+    ...nodeColorProblems(read),
+    ...documentTextProblems(read),
   ];
 }
 
@@ -482,8 +822,12 @@ export function isRefusal(problem: LoadProblem): boolean {
     problem.reason !== "insertFxSlot" &&
     problem.reason !== "paramRange" &&
     problem.reason !== "requiredSource" &&
+    problem.reason !== "sendLevel" &&
+    problem.reason !== "linkedPair" &&
     problem.reason !== "linkedSendPan" &&
-    problem.reason !== "booleanParam"
+    problem.reason !== "booleanParam" &&
+    problem.reason !== "nodeColor" &&
+    problem.reason !== "documentText"
   );
 }
 
@@ -502,13 +846,20 @@ export interface LoadRepairs {
   booleans: BooleanParamProblem[];
   ranged: ParamRangeProblem[];
   supplied: RequiredSourceProblem[];
+  sendLevels: SendLevelProblem[];
+  linkedPairs: LinkedPairProblem[];
   linkedPans: LinkedSendPanProblem[];
+  colors: NodeColorProblem[];
+  texts: DocumentTextProblem[];
 }
 
 /** Apply every repair `planProblems` reported, in the order `planProblems` reads them: an on/off
  *  written as a number is converted first, then a value outside what the app can write is
  *  bounded or dropped, a receiver the unit never leaves without a source gets the one a new plan
- *  carries, and a send into a MIX whose Pan Link is on takes its source's own pan / balance.
+ *  carries, a send listed without a level gets the one the write sends, a linked pair's
+ *  secondary takes its primary's shared values, a send into a MIX whose Pan Link is on
+ *  takes its source's own pan / balance, a colour that is no plan colour is dropped, and a name
+ *  or a note is rewritten to the form the app keeps.
  *  Refusals and decisions are the caller's; the reasons they carry are not repaired here. */
 export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
   const booleans = problems.filter((p) => p.reason === "booleanParam");
@@ -517,17 +868,94 @@ export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadP
   applyParamRange(plan, ranged);
   const supplied = problems.filter((p) => p.reason === "requiredSource");
   applyRequiredSources(model, plan, supplied);
+  const sendLevels = problems.filter((p) => p.reason === "sendLevel");
+  applySendLevels(plan, sendLevels);
+  const linkedPairs = problems.filter((p) => p.reason === "linkedPair");
+  applyLinkedPairs(model, plan, linkedPairs);
   const linkedPans = problems.filter((p) => p.reason === "linkedSendPan");
   applyLinkedSendPans(model, plan, linkedPans);
-  return { booleans, ranged, supplied, linkedPans };
+  const colors = problems.filter((p) => p.reason === "nodeColor");
+  applyNodeColors(plan, colors);
+  const texts = problems.filter((p) => p.reason === "documentText");
+  applyDocumentText(plan, texts);
+  return { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, colors, texts };
 }
 
-/** A document as the loader opens it: repaired (`applyLoadRepairs`), then completed from the
- *  model's factory values — a value a repair dropped is completed like any other absent one —
- *  then put back through the rate rule, which a Track Count the fill completes can exceed. */
+/** Give each node's selected insert effect every engine slot it leaves out, at that type's own
+ *  default (`seedInsertFxParams`), the effect being the one the write acts on
+ *  (`effectiveInsertFx`). Returns the contest names it set. The factory values carry no engine
+ *  values, so this is the half of the completion `fillFactoryParams` cannot supply. */
+export function completeInsertFxParams(model: DeviceModel, plan: Plan): string[] {
+  const names: string[] = [];
+  for (const node of model.nodes) {
+    const np = plan.nodeParams[node.id];
+    if (!insertFxControl(model, node.id) || np?.insertFx === undefined) continue;
+    const selector = effectiveInsertFx(model, plan, node.id);
+    if (selector === undefined) continue;
+    const { params, seeded } = seedInsertFxParams(np.insertFxParams, selector);
+    if (seeded.length === 0) continue;
+    plan.nodeParams[node.id] = { ...np, insertFxParams: params };
+    for (const key of seeded) names.push(nodeParamContestPath(node.id, `insertFxParams.${key}`));
+  }
+  return names;
+}
+
+/** Give each nameable node a document leaves unnamed — no entry, or an empty one — the model's
+ *  factory name. A name the write does not send is one the unit keeps as it has it, while every
+ *  surface draws the node's label there, so the load supplies the name the write then sends.
+ *  Returns the contest names it set. */
+export function completeNodeNames(model: DeviceModel, plan: Plan): string[] {
+  const factory = factoryNodeNames(model.id);
+  const names: string[] = [];
+  for (const node of model.nodes) {
+    if (plan.nodeNames[node.id] || !nameControl(model, node.id) || !factory[node.id]) continue;
+    plan.nodeNames[node.id] = factory[node.id];
+    names.push(nodeNameContestKey(node.id));
+  }
+  return names;
+}
+
+/** Give each colourable node a document leaves without a colour the model's factory colour, so
+ *  absent no longer means "leave the unit alone" — the write sends a colour for every node it can.
+ *  Returns the contest names it set. */
+export function completeNodeColors(model: DeviceModel, plan: Plan): string[] {
+  const factory = factoryNodeColors(model.id);
+  const names: string[] = [];
+  for (const node of model.nodes) {
+    if (plan.nodeColors[node.id] !== undefined || !colorControl(model, node.id) || !factory[node.id]) continue;
+    plan.nodeColors[node.id] = factory[node.id];
+    names.push(nodeColorContestKey(node.id));
+  }
+  return names;
+}
+
+/** A document as the loader opens it: its own wire params, names and colours recorded as the
+ *  document's, repaired (`applyLoadRepairs`), then completed from the model's factory values — a
+ *  value a repair dropped is completed like any other absent one — each selected insert effect
+ *  from its type's defaults, and each unnamed or uncoloured node from its factory name or colour,
+ *  all recorded as the fill's, then put back through the rate rule, which a Track Count the fill
+ *  completes can exceed. */
 export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
+  // The document's own wire params and names are what it wrote, as its node params are (the
+  // fill records those); a repair below that completes one records its own.
+  const source = (plan.paramSource ??= new Map());
+  for (const [id, name] of Object.entries(plan.nodeNames)) {
+    if (name && !source.has(nodeNameContestKey(id))) source.set(nodeNameContestKey(id), "load");
+  }
+  for (const id of Object.keys(plan.nodeColors)) {
+    if (!source.has(nodeColorContestKey(id))) source.set(nodeColorContestKey(id), "load");
+  }
+  for (const c of plan.connections) {
+    for (const key of Object.keys(c.params ?? {})) {
+      const name = connParamContestKey(c.from, c.to, key);
+      if (!source.has(name)) source.set(name, "load");
+    }
+  }
   const repairs = applyLoadRepairs(model, plan, problems);
   fillFactoryParams(model.id, plan);
+  for (const name of completeInsertFxParams(model, plan)) source.set(name, "default");
+  for (const name of completeNodeNames(model, plan)) source.set(name, "default");
+  for (const name of completeNodeColors(model, plan)) source.set(name, "default");
   setPlanSampleRate(plan, plan.sampleRate);
   return repairs;
 }

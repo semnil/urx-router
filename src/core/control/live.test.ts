@@ -165,6 +165,27 @@ describe("LiveSync sideEffect converge", () => {
   // against the live plan would be joining one moment's addresses to another moment's keys.
   it("hands the confirmed addresses over with the plan they came from", async () => {
     const plan = basePlan();
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024 } };
+    // A unit that keeps what it is sent, holding the plan as it stands before the edit.
+    const key = (id: number, x: number, y: number): string => `${id}:${x}:${y}`;
+    const table = new Map(planToCommands(model, plan).map((c) => [key(c.paramId, c.x, c.y), c.vdValue]));
+    // The COMP/EQ type head moves the ch1 fader on the unit as it lands, so the converge finds
+    // an address that differs, sends it again and reads it back: a confirmed address.
+    const fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      table.set(key(id, x, y), v);
+      if (id === PARAMS.COMP_EQ_TYPE.id) table.set(key(fader.paramId, fader.x, fader.y), fader.vdValue + 100);
+      return Promise.resolve();
+    });
+    // The FX2 effect type moves on the converge's first read, after its plan was frozen.
+    let edited = false;
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      if (!edited) {
+        edited = true;
+        plan.nodeParams["bus.fx2"] = { fxEffect: { type: 768 } };
+      }
+      return Promise.resolve(table.get(key(id, x, y)) ?? 0);
+    });
     const seen: Array<{ addrs: ReadonlySet<number>; sent: Plan }> = [];
     const live = new LiveSync({
       getModel: () => model,
@@ -180,13 +201,13 @@ describe("LiveSync sideEffect converge", () => {
     await vi.advanceTimersByTimeAsync(120);
     await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
 
+    expect(edited, "the premise: the edit landed inside the converge").toBe(true);
     expect(seen, "a sideEffect param converges, so the hook fires").toHaveLength(1);
-    // Not the live plan — the clone. Handed the live one, every address would be read against
-    // whatever the plan holds by the time the caller uses them.
-    expect(seen[0]!.sent).not.toBe(plan);
-    // What the set CONTAINS is the device flow's question (main.device.test.ts) — this mock's
-    // converge re-reads a device that already agrees, so it sends nothing and confirms nothing.
-    expect(seen[0]!.addrs).toBeInstanceOf(Set);
+    expect(seen[0]!.addrs.has(cmdAddr(fader)), "the address the converge sent again and read back").toBe(true);
+    // The plan as the converge froze it, not one taken when the hook fires: the effect type the
+    // confirmed addresses were laid out by is the one before the edit.
+    expect(seen[0]!.sent.nodeParams["bus.fx2"]?.fxEffect?.type).toBe(1024);
+    expect(plan.nodeParams["bus.fx2"]?.fxEffect?.type).toBe(768);
   });
 
   // The park in front of the converge. Three families announce nothing when the unit's own
@@ -467,6 +488,57 @@ describe("LiveSync sideEffect converge", () => {
     expect(vi.mocked(vdGet), "and no seed read").not.toHaveBeenCalled();
   });
 
+  // …and the same once the converge is RUNNING: it is a loop of reads, sends and settles, and
+  // the session ending inside it stops it at its next round trip, with nothing reported.
+  it("stops a converge the session ended under, between its own reads", async () => {
+    const plan = basePlan();
+    const errors: string[] = [];
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: (m) => errors.push(m),
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    let gets = 0;
+    let setsAtEnd = -1;
+    vi.mocked(vdGet).mockImplementation(async () => {
+      if (++gets === 3) {
+        setsAtEnd = vi.mocked(vdSet).mock.calls.length;
+        live.end();
+      }
+      return 0;
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
+    expect(setsAtEnd, "the premise: the converge reached its reads").toBeGreaterThan(0);
+    expect(gets).toBe(3);
+    expect(vi.mocked(vdSet).mock.calls.length).toBe(setsAtEnd);
+    expect(errors).toEqual([]);
+  });
+
+  it("answers idle once the flush in flight has finished", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    let resolve!: () => void;
+    vi.mocked(vdSet).mockImplementationOnce(() => new Promise<void>((r) => (resolve = r)));
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    let idle = false;
+    void live.idle().then(() => (idle = true));
+    live.end();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle, "the write the flush has on the wire is still unanswered").toBe(false);
+    resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle).toBe(true);
+  });
+
   it("hands the confirmed addresses over even when a later round's send fails", async () => {
     // The failure ends the session, and what earlier rounds confirmed is the plan's only chance
     // at those values: the write that landed is what stops the address differing, so no later
@@ -705,8 +777,30 @@ describe("LiveSync sideEffect converge", () => {
     await vi.advanceTimersByTimeAsync(2000);
     void flushed;
     expect(errors).toHaveLength(1);
-    expect(errors[0]).not.toBe("");
+    // A code the error catalogue resolves, so the teardown dialog reads in the app's language.
+    expect(errors[0]).toBe("converge-failed");
     expect(live.isActive()).toBe(false);
+  });
+
+  // A converge read the link fails reports the shell's own code, as a direct write's failure
+  // does, rather than the report entry that puts the parameter's name in front of it.
+  it("reports the shell's code when a converge read fails", async () => {
+    const plan = basePlan();
+    const errors: string[] = [];
+    const live: LiveSync = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: (m) => errors.push(m),
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    vi.mocked(vdGet).mockRejectedValue(new Error("device-lost: sync_status offline"));
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(errors).toEqual(["device-lost: sync_status offline"]);
   });
 });
 
@@ -732,6 +826,67 @@ describe("LiveSync flush error", () => {
     await vi.advanceTimersByTimeAsync(120);
     expect(activeAtError).toBe(false);
     expect(live.isActive()).toBe(false);
+  });
+});
+
+// A write the link answers late can outlive the session that sent it, and the next session
+// can begin before it settles. Its answer belongs to the session that is gone.
+describe("LiveSync across a session that ended under its own flush", () => {
+  const liveWith = (plan: Plan, onError: (m: string) => void): LiveSync =>
+    new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError,
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+
+  it("does not stop the next session when the ended one's write fails late", async () => {
+    const plan = basePlan();
+    const onError = vi.fn();
+    const live = liveWith(plan, onError);
+    let reject!: (e: Error) => void;
+    vi.mocked(vdSet).mockImplementationOnce(() => new Promise<void>((_, r) => (reject = r)));
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1); // the first session's write, unanswered
+
+    live.end();
+    live.begin();
+    reject(new Error("broker-timeout: write at 139:0:0"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onError).not.toHaveBeenCalled();
+    expect(live.isActive()).toBe(true);
+  });
+
+  it("sends the next session's edit once the ended one's write is answered", async () => {
+    const plan = basePlan();
+    const live = liveWith(plan, () => {});
+    let resolve!: () => void;
+    vi.mocked(vdSet).mockImplementationOnce(() => new Promise<void>((r) => (resolve = r)));
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+
+    live.end();
+    live.begin();
+    setCh1Fader(plan, -12);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120); // queued behind the write still out
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+
+    resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(vdSet).mock.calls[1]![3]).toBe(
+      planToCommands(model, plan).find((c) => c.name === "CH_FADER")!.vdValue,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(live.isWriting()).toBe(false);
   });
 });
 
@@ -1022,6 +1177,27 @@ describe("LiveSync late echo of a write the snapshot has moved past", () => {
     // The earlier value is no longer pending, so the unit reporting it now is a real
     // device-side move back — not our own write arriving late.
     expect(live.isEcho(a.paramId, a.x, a.y, a.vdValue)).toBe(false);
+  });
+
+  // A name the field holds empty has no value to send, so the flush sends nothing for it and the
+  // unit keeps the last name it was sent; the next name the field holds goes out as any edit does.
+  it("sends nothing for a name cleared empty, and sends the next one the plan holds", async () => {
+    const plan = basePlan();
+    plan.nodeNames = { ...plan.nodeNames, ch1: "Vox" };
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    const values = (): string[] => vi.mocked(vdSetStr).mock.calls.map((c) => c[3]);
+
+    const { ch1: _cleared, ...rest } = plan.nodeNames;
+    plan.nodeNames = rest;
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(values()).toEqual([]);
+
+    plan.nodeNames = { ...plan.nodeNames, ch1: "Kick" };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(values()).toContain("Kick");
   });
 
   it("does the same for a name the snapshot has moved past", async () => {

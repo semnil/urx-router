@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { compositionGate, inspectorNodes, renderInspector } from "./inspector";
+import { colorNames, compositionGate, inspectorNodes, renderInspector } from "./inspector";
 import type { InspectorActions } from "./inspector";
 import { resetSectionCache } from "./inspector-sections";
 import type { Selection } from "./graph";
@@ -15,6 +15,8 @@ import { insertFxMenu } from "../core/constraints";
 import { insertFxControl } from "../core/control/translate";
 import {
   BUS_TYPE_FIXED,
+  COLOR_OFF,
+  COLOR_PALETTE,
   COMP_EQ_SSMCS,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
@@ -22,6 +24,7 @@ import {
 } from "../core/control/params";
 import { planToCommands } from "../core/control/translate";
 import { fxParams } from "../core/control/fx-effect";
+import { insertFxDefaults, insertFxWritableSlots } from "../core/control/insert-fx-effect";
 import type { DeviceModel } from "../models/types";
 import { setLang, t } from "../i18n";
 
@@ -250,6 +253,8 @@ describe("compositionGate", () => {
   const fire = (el: HTMLElement, type: string): void => {
     el.querySelector("input")!.dispatchEvent(new Event(type, { bubbles: true }));
   };
+  /** The task after this one — where a release the gate defers to its next task has run. */
+  const nextTask = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
   it("lets a rebuild through when nothing is composing", () => {
     let rebuilds = 0;
@@ -373,8 +378,10 @@ describe("compositionGate", () => {
     sel.append(document.createElement("option"));
     const slider = document.createElement("input");
     slider.type = "range";
-    el.append(sel, slider);
-    document.body.replaceChildren(el);
+    el.append(sel);
+    // Outside the panel, so the hold is the only thing holding it: a press on a slider
+    // inside it is held as a press as well (the cases further down).
+    document.body.replaceChildren(el, slider);
     holdInertOnBlur(slider);
     const gate = compositionGate(el, () => rebuilds++);
 
@@ -413,7 +420,7 @@ describe("compositionGate", () => {
     const el = host();
     const slider = document.createElement("input");
     slider.type = "range";
-    el.append(slider);
+    document.body.append(slider); // outside the panel: a slider inside it is held as a press too
     holdInertOnBlur(slider);
     const gate = compositionGate(el, () => rebuilds++);
 
@@ -438,7 +445,7 @@ describe("compositionGate", () => {
     const el = host();
     const slider = document.createElement("input");
     slider.type = "range";
-    el.append(slider);
+    document.body.append(slider); // outside the panel: a slider inside it is held as a press too
     holdInertOnBlur(slider);
     const gate = compositionGate(el, () => rebuilds++);
 
@@ -464,18 +471,167 @@ describe("compositionGate", () => {
     expect(rebuilds).toBe(0);
   });
 
-  it("releases on focusout, so a field that goes away cannot wedge the panel", () => {
+  it("releases on focusout, so a field that goes away cannot wedge the panel", async () => {
     let rebuilds = 0;
     const el = host();
     const gate = compositionGate(el, () => rebuilds++);
     fire(el, "compositionstart");
     expect(gate.held()).toBe(true);
     fire(el, "focusout");
+    await nextTask();
     expect(rebuilds).toBe(1);
     expect(gate.held()).toBe(false);
     // And the composition's own end afterwards is not a second rebuild.
     fire(el, "compositionend");
     expect(rebuilds).toBe(1);
+  });
+
+  // The release a focus move gives is the one that lands inside a gesture: the focusout
+  // fires partway through the Tab, the click or the tap that moves the focus, and a rebuild
+  // there replaces the control the gesture is going to — the Tab's focus lands on a removed
+  // button, and the click a press produces is dispatched to one. The panel below rebuilds
+  // the way the app's does, by replacing its children, so "the control is still there" is
+  // something these cases can ask.
+  describe("the gesture a release lands in", () => {
+    let el: HTMLElement;
+    let sel: HTMLSelectElement;
+    let button: HTMLButtonElement;
+    let rebuilds: number;
+    let gate: ReturnType<typeof compositionGate>;
+    /** A select holding the focus with a rebuild held behind it — a device follow that
+     *  arrived while an Insert FX choice left its select focused. */
+    const heldBehindSelect = (): void => {
+      sel.focus();
+      expect(gate.held()).toBe(true);
+    };
+    beforeEach(() => {
+      el = document.createElement("div");
+      sel = document.createElement("select");
+      sel.append(document.createElement("option"));
+      button = document.createElement("button");
+      el.append(sel, button);
+      document.body.replaceChildren(el);
+      rebuilds = 0;
+      gate = compositionGate(el, () => {
+        rebuilds++;
+        const fresh = button.cloneNode(true) as HTMLButtonElement;
+        el.replaceChildren(sel.cloneNode(true), fresh);
+      });
+    });
+
+    it("runs the rebuild a focus move releases only once the focus has landed", async () => {
+      heldBehindSelect();
+      button.focus(); // a Tab from the select to the next control
+      expect(rebuilds, "not inside the focusout, while the focus is on its way").toBe(0);
+      expect(document.activeElement).toBe(button);
+      await nextTask();
+      expect(rebuilds).toBe(1);
+    });
+
+    it("holds every rebuild while a press inside the panel is down, and runs one after its click", async () => {
+      heldBehindSelect();
+      const landed: boolean[] = [];
+      button.addEventListener("click", () => {
+        landed.push(button.isConnected);
+        expect(gate.held(), "the click's own refresh is held to the end of the click").toBe(true);
+      });
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      button.focus(); // a mouse press moves the focus at its start
+      await nextTask();
+      expect(rebuilds, "the focus move's release, with the press still down").toBe(0);
+      expect(gate.held(), "a follow arriving mid-press").toBe(true);
+
+      button.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+      expect(rebuilds).toBe(0);
+      button.click();
+      expect(landed, "the click reached the button the press began on").toEqual([true]);
+      expect(rebuilds, "one rebuild, run as the click leaves the panel").toBe(1);
+      await nextTask();
+      expect(rebuilds).toBe(1);
+    });
+
+    // A tap delivers its click after the touch is already released, and moves the focus in
+    // the same task as that click.
+    it("lets a tap's click land when the focus move comes after the release", async () => {
+      heldBehindSelect();
+      let reached = false;
+      button.addEventListener("click", () => (reached = button.isConnected));
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 2 }));
+      button.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 2 }));
+      await nextTask();
+      button.focus();
+      button.click();
+      expect(reached).toBe(true);
+      await nextTask();
+      expect(rebuilds).toBe(1);
+    });
+
+    it("releases a press that produces no click here in the task after the release", async () => {
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      expect(gate.held()).toBe(true);
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+      expect(rebuilds).toBe(0);
+      await nextTask();
+      expect(rebuilds).toBe(1);
+      expect(gate.held()).toBe(false);
+    });
+
+    // A pointer the app saw pressed and never saw released — a synthetic pointerdown, or a
+    // release another window took — is still down by any count of pointers. The panel's own
+    // press must not wait for it: held on that count, the panel stops updating for as long
+    // as the window keeps its focus.
+    it("releases a press on its own release while another pointer was never released", async () => {
+      heldBehindSelect();
+      const outside = document.createElement("div");
+      document.body.append(outside);
+      outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 7 }));
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      button.focus();
+      button.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+      await nextTask();
+      expect(rebuilds).toBe(1);
+    });
+
+    it("releases a press whose release never arrived when the window comes back", () => {
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      expect(gate.held()).toBe(true);
+      window.dispatchEvent(new FocusEvent("focus"));
+      expect(rebuilds).toBe(1);
+      expect(gate.held()).toBe(false);
+    });
+
+    // The native context menu takes the release of the press that opened it, so the page
+    // hears the press and then a mouse moving with no button held. That move releases the
+    // hold; a move with the button held does not.
+    it("releases a press at a mouse move with no button held", () => {
+      const mouse = (type: string, init: PointerEventInit): PointerEvent =>
+        new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: "mouse", ...init });
+      button.dispatchEvent(mouse("pointerdown", { button: 2, buttons: 2 }));
+      window.dispatchEvent(mouse("pointermove", { buttons: 2 }));
+      expect(gate.held(), "a move with the button held").toBe(true);
+      expect(rebuilds).toBe(0);
+      window.dispatchEvent(mouse("pointermove", { buttons: 0 }));
+      expect(rebuilds).toBe(1);
+      expect(gate.held()).toBe(false);
+    });
+
+    // A press on a select opens its picker, which focus already holds the panel for, and
+    // the picker's change has to release it even when the press's own release never
+    // reaches the page.
+    it("leaves a press on a select to the picker's own hold", () => {
+      sel.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      sel.focus();
+      expect(gate.held()).toBe(true);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      expect(rebuilds).toBe(1);
+    });
+
+    it("does not hold for a press outside the panel", () => {
+      const outside = document.createElement("button");
+      document.body.append(outside);
+      outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      expect(gate.held()).toBe(false);
+    });
   });
 });
 
@@ -496,6 +652,10 @@ const actions = (): InspectorActions => ({
   onHideNode: vi.fn(),
   onOpenDynScreen: vi.fn(),
   onClose: vi.fn(),
+  connectOrigins: vi.fn(() => []),
+  onConnect: vi.fn(),
+  wireDrawn: vi.fn(() => true),
+  onSelectConnection: vi.fn(),
 });
 
 let panel: HTMLElement;
@@ -633,6 +793,69 @@ describe("renderInspector — a stored value outside its control's range", () =>
     renderInspector(panel, getModel("URX44V"), plan, nodeSel("ch1"), act);
     expect(rowValue(t().inspector.gainAnalog)).toContain("-20");
     expect(planToCommands(getModel("URX44V"), plan).some((c) => c.vdValue === -2000)).toBe(true);
+  });
+});
+
+// The STREAMING Delay Time steps 0.02 ms, the unit's own pressed-knob step. A value off the
+// 0.02 ms grid — an odd centi-ms, which an earlier build's 0.01 ms slider could write — prints
+// as the value held, goes out as held, and a key or a notch moves it by exactly 0.02 ms, as the
+// unit's knob does (3.41 -> 3.43 -> 3.41 on a URX44V). Where the thumb rests is the engine's (a
+// range rounds a value off its step to the nearer valid one, halfway up), which jsdom does not
+// do, so that half is asked in e2e/streamingdelay.spec.ts.
+describe("renderInspector — the STREAMING Delay Time", () => {
+  const slider = (): HTMLInputElement =>
+    [...panel.querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.delayTime)!
+      .querySelector<HTMLInputElement>('input[type="range"]')!;
+  const withTime = (time: number): Plan => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.stream"] = { ...plan.nodeParams["bus.stream"], delay: { on: true, time } };
+    return plan;
+  };
+
+  it("steps the unit's 0.02 ms grid across 1.00 to 1000.00 ms", () => {
+    renderInspector(panel, getModel("URX44V"), withTime(45.86), nodeSel("bus.stream"), act);
+    expect([slider().min, slider().max, slider().step]).toEqual(["1", "1000", "0.02"]);
+    slider().dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true, cancelable: true }));
+    const [, patch] = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)!;
+    expect(patch.delay?.time).toBe(45.88);
+  });
+
+  it("prints an off-grid value as held, and sends it as held until the row moves", () => {
+    const plan = withTime(45.87);
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("bus.stream"), act);
+    const row = slider().closest<HTMLElement>(".param")!;
+    expect(row.querySelector(".param-val")?.textContent).toBe("45.87 ms");
+    expect(slider().getAttribute("aria-valuetext")).toBe("45.87 ms");
+    expect(act.onUpdateNodeParams).not.toHaveBeenCalled();
+    expect(planToCommands(getModel("URX44V"), plan).find((c) => c.paramId === 708)?.vdValue).toBe(4587);
+  });
+
+  it("steps an off-grid value by exactly 0.02 ms, and stops at the ends", () => {
+    const sent = (): number | undefined => vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)?.[1].delay?.time;
+    const press = (key: string): void => {
+      slider().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    };
+    renderInspector(panel, getModel("URX44V"), withTime(45.87), nodeSel("bus.stream"), act);
+    press("ArrowRight");
+    expect(sent()).toBe(45.89);
+    press("ArrowLeft");
+    press("ArrowLeft");
+    expect(sent()).toBe(45.85);
+    slider().dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true, cancelable: true }));
+    expect(sent()).toBe(45.87);
+    expect(slider().closest<HTMLElement>(".param")!.querySelector(".param-val")?.textContent).toBe("45.87 ms");
+
+    vi.mocked(act.onUpdateNodeParams).mockClear();
+    renderInspector(panel, getModel("URX44V"), withTime(999.99), nodeSel("bus.stream"), act);
+    press("ArrowUp");
+    expect(sent()).toBe(1000);
+    vi.mocked(act.onUpdateNodeParams).mockClear();
+    press("ArrowUp");
+    expect(act.onUpdateNodeParams).not.toHaveBeenCalled();
+    renderInspector(panel, getModel("URX44V"), withTime(1.01), nodeSel("bus.stream"), act);
+    press("ArrowDown");
+    expect(sent()).toBe(1);
   });
 });
 
@@ -810,7 +1033,9 @@ describe("node controls report their edits", () => {
     expect(act.onRenameNode).toHaveBeenLastCalledWith("ch1", "あ".repeat(8));
   });
 
-  it("recolors a node from a swatch and clears it from the none swatch", () => {
+  // The none swatch is the unit's Off, written as Off: a colour the plan merely left out would
+  // send nothing, and the unit would keep the colour it has.
+  it("recolors a node from a swatch and sets Off from the none swatch", () => {
     renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
     const swatches = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];
     expect(swatches.length).toBeGreaterThan(1);
@@ -819,7 +1044,21 @@ describe("node controls report their edits", () => {
     const calls = vi.mocked(act.onRecolorNode).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls.every(([id]) => id === "ch1")).toBe(true);
-    expect(calls.some(([, color]) => color === null)).toBe(true);
+    expect(calls.map(([, color]) => color)).toEqual([COLOR_PALETTE.at(-1)!.hex, COLOR_OFF]);
+  });
+
+  it("rings the none swatch for Off, and sets Off from a second press on the active one", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeColors.ch1 = COLOR_OFF;
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("ch1"), act);
+    const swatches = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];
+    expect(swatches.filter((b) => b.classList.contains("sel"))).toEqual([swatches[0]]);
+    plan.nodeColors.ch1 = COLOR_PALETTE[0].hex.toUpperCase();
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("ch1"), act);
+    const again = [...panel.querySelectorAll<HTMLButtonElement>("button.swatch")];
+    expect(again.filter((b) => b.classList.contains("sel"))).toEqual([again[1]]);
+    again[1].click();
+    expect(vi.mocked(act.onRecolorNode).mock.calls.at(-1)).toEqual(["ch1", COLOR_OFF]);
   });
 
   it("hides a node and closes the panel from their own buttons", () => {
@@ -895,8 +1134,8 @@ describe("insert FX", () => {
     renderInspector(panel, model, plan, nodeSel(id), act);
     const sel = [...panel.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
       [...s.options].some((o) => Number(o.value) === INSERT_FX_NONE),
-    );
-    if (!sel) return;
+    )!;
+    expect(sel).toBeDefined();
     const real = [...sel.options].find((o) => Number(o.value) !== INSERT_FX_NONE);
     if (real) {
       sel.value = real.value;
@@ -1022,13 +1261,36 @@ describe("insert FX", () => {
     renderInspector(panel, model, plan, nodeSel(id), act);
     const sel = [...panel.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
       [...s.options].some((o) => Number(o.value) === INSERT_FX_NONE),
-    );
-    if (!sel) return;
+    )!;
+    expect(sel).toBeDefined();
     sel.value = String(INSERT_FX_NONE);
     sel.dispatchEvent(new Event("change", { bubbles: true }));
     const patch = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)![1];
     expect(patch.insertFxParams).toBeDefined();
     expect(Object.keys(patch.insertFxParams!)).not.toContain("3");
+  });
+
+  // The unit fills the engine with the type's defaults on the transition into it and not on a
+  // same-value write, so a selection that carried no engine values left a write that sends
+  // nothing there while the screen printed the defaults. The selection seeds them, and names them
+  // as defaults rather than as values the operator chose.
+  it("seeds the selected type's defaults and names them as defaults", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    const sel = [...panel.querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.insertFxType)!
+      .querySelector("select")!;
+    sel.value = "1794";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    const [id, patch, , defaults] = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)!;
+    expect(id).toBe("ch1");
+    const expected = insertFxDefaults("compander", 1794);
+    const slots = insertFxWritableSlots("compander").map((s) => s.slot);
+    expect(patch.insertFxParams).toEqual(
+      Object.fromEntries(slots.map((slot) => [`compander:${slot}`, expected[slot]])),
+    );
+    expect([...(defaults ?? [])].sort()).toEqual(slots.map((slot) => `insertFxParams.compander:${slot}`).sort());
   });
 });
 
@@ -1037,8 +1299,8 @@ describe("section fold state", () => {
     const model = getModel("URX44V");
     const plan = defaultPlan("URX44V");
     renderInspector(panel, model, plan, nodeSel("ch1"), act);
-    const first = [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find((d) => d.open);
-    if (!first) return;
+    const first = [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find((d) => d.open)!;
+    expect(first).toBeDefined();
     const title = first.querySelector(".sec-title")!.textContent!;
     first.open = false;
     first.dispatchEvent(new Event("toggle"));
@@ -1053,8 +1315,8 @@ describe("section fold state", () => {
     const model = getModel("URX44V");
     const plan = defaultPlan("URX44V");
     renderInspector(panel, model, plan, nodeSel("ch1"), act);
-    const first = [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find((d) => d.open);
-    if (!first) return;
+    const first = [...panel.querySelectorAll<HTMLDetailsElement>("details.insp-section")].find((d) => d.open)!;
+    expect(first).toBeDefined();
     const title = first.querySelector(".sec-title")!.textContent!;
     first.open = false;
     first.dispatchEvent(new Event("toggle"));
@@ -1078,19 +1340,147 @@ describe("section fold state", () => {
   });
 });
 
+// The level rows step from the plan's own value, the CONSOLE's rule: from a level between two
+// detents one press or notch lands on the adjacent detent in the direction of travel. Their
+// slider position is the NEAREST detent, so stepping from it skipped one (-15.5 down gave -18).
+describe("level stepping from an off-grid value", () => {
+  const levelSlider = (): HTMLInputElement =>
+    [...panel.querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.level)!
+      .querySelector<HTMLInputElement>('input[type="range"]')!;
+  const stereoAt = (level: number): void => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.stereo"] = { ...plan.nodeParams["bus.stereo"], level };
+    renderInspector(panel, model, plan, nodeSel("bus.stereo"), act);
+  };
+  const lastLevel = (): number | undefined =>
+    (vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)?.[1] as { level?: number } | undefined)?.level;
+  const key = (k: string): void =>
+    void levelSlider().dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  const wheel = (deltaY: number): void =>
+    void levelSlider().dispatchEvent(new WheelEvent("wheel", { deltaY, bubbles: true, cancelable: true }));
+
+  it.each([
+    [-15.5, "ArrowDown", -16],
+    [0.2, "ArrowDown", 0],
+    [-14.5, "ArrowUp", -14],
+    [9.5, "ArrowUp", 10],
+    [-95, "ArrowDown", -96],
+    [-16, "ArrowDown", -18],
+  ])("steps %s by %s to %s", (from, k, to) => {
+    stereoAt(from);
+    key(k);
+    expect(lastLevel()).toBe(to);
+    expect(levelSlider().getAttribute("aria-valuetext")).toContain(String(Math.abs(to)));
+  });
+
+  it.each([
+    [-14.5, -1, -14],
+    [-15.5, 1, -16],
+    [9.5, -1, 10],
+  ])("steps %s by a wheel notch of deltaY %s to %s", (from, deltaY, to) => {
+    stereoAt(from);
+    wheel(deltaY);
+    expect(lastLevel()).toBe(to);
+  });
+
+  // The wheel-step preference still decides how many detents one notch is.
+  it("takes the wheel-step preference's detents per notch, each from the last", () => {
+    updateSettings({ wheelSteps: 2 });
+    stereoAt(-15.5);
+    wheel(1);
+    expect(vi.mocked(act.onUpdateNodeParams).mock.calls.map((c) => (c[1] as { level: number }).level)).toEqual([
+      -16, -18,
+    ]);
+  });
+
+  it("writes nothing for a step past the top", () => {
+    stereoAt(10);
+    key("ArrowUp");
+    wheel(-1);
+    expect(act.onUpdateNodeParams).not.toHaveBeenCalled();
+  });
+
+  it("steps a send's Level from its own value too", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const conn = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    conn.params = { ...conn.params, level: -15.5 };
+    renderInspector(panel, model, plan, connSel(conn.from, conn.to), act);
+    key("ArrowDown");
+    expect(vi.mocked(act.onUpdateParams).mock.calls.at(-1)?.[2]).toEqual({ level: -16 });
+  });
+});
+
+// The Routing section is the keyboard's way to wire: a drawn wire's row selects it, and each
+// jack the board offers origins for gets a picker of where it can go.
+describe("routing from the keyboard", () => {
+  const routing = (): HTMLDetailsElement => sectionByTitle(t().inspector.routing)!;
+  const picker = (label: string): HTMLSelectElement | null =>
+    [...routing().querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === label)
+      ?.querySelector("select") ?? null;
+
+  it("makes a drawn wire's row a button that selects it, and leaves an undrawn one a row", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const drawn = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    vi.mocked(act.wireDrawn).mockImplementation((from, to) => from === drawn.from && to === drawn.to);
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    const rows = [...routing().querySelectorAll<HTMLElement>(".conn-row")];
+    const buttons = rows.filter((r) => r instanceof HTMLButtonElement);
+    expect(buttons.map((b) => b.textContent)).toEqual(["→ STEREO (MAIN)"]);
+    expect(rows.length).toBeGreaterThan(1);
+    buttons[0].click();
+    expect(act.onSelectConnection).toHaveBeenCalledWith(drawn.from, drawn.to);
+  });
+
+  it("offers each origin's targets by name and connects the one chosen", () => {
+    const model = getModel("URX44V");
+    const plan = defaultPlan("URX44V");
+    const out = { ref: "ch1:out", dir: "out" as const, tap: false, targets: ["out.ducker1:in"] };
+    const tap = { ref: "ch1:out", dir: "out" as const, tap: true, targets: ["out.usbmain_b:in", "out.sdrec.t7:in"] };
+    const into = { ref: "ch1:in", dir: "in" as const, tap: false, targets: [] };
+    vi.mocked(act.connectOrigins).mockReturnValue([into, out, tap]);
+    renderInspector(panel, model, plan, nodeSel("ch1"), act);
+    expect(act.connectOrigins).toHaveBeenCalledWith("ch1");
+    expect(picker(t().inspector.connectSource), "an origin with nowhere to go has no picker").toBeNull();
+    const sel = picker(t().inspector.connectRecPoint)!;
+    expect([...sel.options].map((o) => o.textContent)).toEqual([
+      t().inspector.connectChoose,
+      "USB MAIN OUT B",
+      "Track 13/14",
+    ]);
+    expect(sel.value).toBe("");
+    expect(sel.getAttribute("aria-labelledby")).not.toBeNull();
+    sel.value = "out.usbmain_b:in";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(act.onConnect).toHaveBeenCalledWith(tap, "out.usbmain_b:in");
+    expect(picker(t().inspector.connectOutput)).not.toBeNull();
+  });
+});
+
 describe("live-connected presentation", () => {
   // The tap is always editable in the planner — the plan records intent — and is
   // turned read-only only while live and the device cannot accept the write.
   it("locks a CH to FX tap only while live", () => {
     const model = getModel("URX44V");
     const plan = defaultPlan("URX44V");
-    const toFx = plan.connections.find((c) => c.kind === "send" && c.to.startsWith("bus.fx"));
-    if (!toFx) return;
+    const toFx = plan.connections.find((c) => c.kind === "send" && c.to.startsWith("bus.fx"))!;
+    expect(toFx).toBeDefined();
+    const tap = (): boolean[] =>
+      [...panel.querySelectorAll<HTMLButtonElement>("button")]
+        .filter((b) => /^(PRE|POST)$/.test(b.textContent ?? ""))
+        .map((b) => b.disabled);
+    const disabled = (): number =>
+      [...panel.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.disabled).length;
     renderInspector(panel, model, plan, connSel(toFx.from, toFx.to), act, [], false);
-    const offline = [...panel.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.disabled).length;
+    expect(tap()).toEqual([false, false]);
+    expect(disabled()).toBe(0);
     renderInspector(panel, model, plan, connSel(toFx.from, toFx.to), act, [], true);
-    const live = [...panel.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.disabled).length;
-    expect(live).toBeGreaterThanOrEqual(offline);
+    expect(tap()).toEqual([true, true]);
+    expect(disabled()).toBe(2);
   });
 });
 
@@ -1150,8 +1540,8 @@ describe("coverage sweep: every control of every selection", () => {
   // shape is asserted too, since `not.toThrow()` passes over a surface that has gone empty.
   it("offers a launcher for the families the screen shows, and an editor for the one it does not", () => {
     const model = getModel("URX44V");
-    const id = model.nodes.find((n) => insertFxControl(model, n.id))?.id;
-    if (!id) return;
+    const id = model.nodes.find((n) => insertFxControl(model, n.id))?.id as string;
+    expect(id).toBeDefined();
     for (const { option } of insertFxMenu(model, defaultPlan("URX44V"), id)) {
       const plan = defaultPlan("URX44V");
       plan.nodeParams[id] = { ...plan.nodeParams[id], insertFx: option.value, insertFxOn: true };
@@ -1306,5 +1696,114 @@ describe("renderInspector — the sample-rate warning card's preference", () => 
     expect(panel.textContent).not.toContain(t().warning.stereoEq);
     expect(panel.textContent).toContain(t().warning.duckerTitle); // the other switch stands
     expect(eqLock()).toBe(t().inspector.eqRateLocked); // and so does the lock it named
+  });
+});
+
+// What a screen reader is given: every control named by its row's label (a two-button pair
+// as a group the label names), which button of a pair is pressed, each colour swatch named
+// the way the unit's own picker names it, and a snapped slider's value as the value it
+// stands for rather than its grid position.
+describe("names and states a screen reader is given", () => {
+  /** The name a control's attributes give it: aria-labelledby's referents, else
+   *  aria-label, else its own text. */
+  const nameOf = (el: Element): string => {
+    const by = el.getAttribute("aria-labelledby");
+    if (by)
+      return by
+        .split(/\s+/)
+        .map((ref) => document.getElementById(ref)?.textContent ?? "")
+        .join(" ")
+        .trim();
+    return (el.getAttribute("aria-label") ?? el.textContent ?? "").trim();
+  };
+
+  it.each(MODEL_IDS)("names every control, and presses one button of every pair, on %s", (id) => {
+    const model = getModel(id);
+    const plan = defaultPlan(id);
+    const selections: Selection[] = [
+      ...model.nodes.map((n) => nodeSel(n.id)),
+      ...plan.connections.map((c) => connSel(c.from, c.to)),
+    ];
+    let pairs = 0;
+    for (const sel of selections) {
+      const host = document.createElement("div");
+      document.body.append(host);
+      renderInspector(host, model, plan, sel, actions());
+      const where = JSON.stringify(sel);
+      for (const c of host.querySelectorAll("input, select, button"))
+        expect(nameOf(c), `${where}: ${c.outerHTML.slice(0, 80)}`).not.toBe("");
+      for (const g of host.querySelectorAll(".toggle")) {
+        pairs++;
+        expect(g.getAttribute("role"), where).toBe("group");
+        expect(nameOf(g), `${where}: a pair's group`).not.toBe("");
+        const pressed = [...g.querySelectorAll("button")].map((b) => b.getAttribute("aria-pressed"));
+        expect(
+          pressed.filter((p) => p === "true"),
+          `${where}: ${pressed}`,
+        ).toHaveLength(1);
+        expect(
+          pressed.every((p) => p === "true" || p === "false"),
+          where,
+        ).toBe(true);
+      }
+      host.remove();
+    }
+    // The positive control: the sweep met pairs at all.
+    expect(pairs).toBeGreaterThan(10);
+  });
+
+  it("moves the pressed state with a click on a pair", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const pair = panel.querySelector<HTMLElement>('.param[data-param-label="+48V"] .toggle')!;
+    const [on, off] = [...pair.querySelectorAll("button")];
+    const before = on.getAttribute("aria-pressed");
+    (before === "true" ? off : on).click();
+    expect(on.getAttribute("aria-pressed")).toBe(before === "true" ? "false" : "true");
+    expect(off.getAttribute("aria-pressed")).toBe(before === "true" ? "true" : "false");
+  });
+
+  it("names each colour swatch the way the unit does and presses the chosen one", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeColors = { ...plan.nodeColors, ch1: COLOR_PALETTE[8].hex };
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("ch1"), act);
+    const strip = panel.querySelector(".swatches")!;
+    expect(strip.getAttribute("role")).toBe("group");
+    expect(nameOf(strip)).toBe(t().inspector.color);
+    const swatches = [...strip.querySelectorAll("button.swatch")];
+    expect(swatches.map((s) => s.getAttribute("aria-label"))).toEqual([
+      "Off",
+      "Blue",
+      "Orange",
+      "Yellow",
+      "Purple",
+      "Cyan",
+      "Magenta",
+      "Red",
+      "Green",
+      "LtGreen",
+      "White",
+    ]);
+    expect(swatches.map((s) => s.getAttribute("aria-pressed"))).toEqual(swatches.map((_, i) => String(i === 9)));
+  });
+
+  it("keeps the colour names in the palette's order", () => {
+    // The broker's table names one entry Light Green where the unit prints LtGreen; every
+    // other name is the same word, so the two lists line up entry by entry.
+    expect(colorNames(t()).map((n) => n.replace(/^Lt/, "Light "))).toEqual(COLOR_PALETTE.map((c) => c.name));
+  });
+
+  it("gives a send's level the level as its value, not the grid position", () => {
+    const plan = defaultPlan("URX44V");
+    const send = plan.connections.find((c) => c.from === "ch1:out" && c.to === "bus.stereo:in")!;
+    renderInspector(panel, getModel("URX44V"), plan, connSel(send.from, send.to), act);
+    const row = panel.querySelector<HTMLElement>(`.param[data-param-label="${t().inspector.level}"]`)!;
+    const slider = row.querySelector<HTMLInputElement>('input[type="range"]')!;
+    const readout = () => row.querySelector(".param-val")!.textContent;
+    expect(nameOf(slider)).toBe(t().inspector.level);
+    expect(slider.getAttribute("aria-valuetext")).toBe(readout());
+    slider.value = String(Number(slider.value) + 1);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(slider.getAttribute("aria-valuetext")).toBe(readout());
+    expect(slider.getAttribute("aria-valuetext")).not.toBe(slider.value);
   });
 });

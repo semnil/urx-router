@@ -5,9 +5,17 @@
 
 import { LEVEL_MIN_DB } from "../core/plan";
 import { formatHz } from "../core/control/fx-effect";
-import { formatDyn } from "../core/control/translate";
+import { formatDyn, formatTime } from "../core/control/translate";
 import { formatCompRatio } from "../core/control/comp-ratio";
-import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ, ssmcsFreqHz, ssmcsGainDb, ssmcsQ } from "../core/control/vd";
+import {
+  EQ_FREQ_MAX_HZ,
+  EQ_FREQ_MIN_HZ,
+  ssmcsAttackMs,
+  ssmcsFreqHz,
+  ssmcsGainDb,
+  ssmcsQ,
+  ssmcsReleaseMs,
+} from "../core/control/vd";
 
 // The lowest real value shown is LEVEL_MIN_DB (-96.0); formatDb prints -∞ below it.
 export const LEVEL_MIN = LEVEL_MIN_DB;
@@ -26,12 +34,11 @@ export function formatGainDb(v: number): string {
   return `${v > 0 ? "+" : ""}${v} dB`;
 }
 
-// SSMCS raw-value display formatters: ms (3-tier to match the device's variable
-// precision) and ratio (the strip's own three-figure field). Hz and dB reuse formatHz /
-// formatDyn.
-export function fmtSsmcsMs(ms: number): string {
-  return ms < 10 ? `${ms.toFixed(3)} ms` : ms < 100 ? `${ms.toFixed(2)} ms` : `${ms.toFixed(1)} ms`;
-}
+// SSMCS raw-value display formatters: the comp times (the channel Attack / Release stops, in
+// those controls' own readouts) and ratio (the strip's own three-figure field). Hz and dB reuse
+// formatHz / formatDyn.
+export const fmtSsmcsAttack = (raw: number): string => formatTime(ssmcsAttackMs(raw), "attack");
+export const fmtSsmcsRelease = (raw: number): string => formatTime(ssmcsReleaseMs(raw), "release");
 export function fmtSsmcsRatio(r: number): string {
   return formatCompRatio(r, "ssmcs");
 }

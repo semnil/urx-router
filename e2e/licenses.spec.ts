@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
-import { stubTauriBoot } from "./tauri-stub";
+import { dialogsOf, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+import { en } from "../src/i18n/en";
 
 // The third-party license notice ships as a Tauri resource, so the File menu
 // entry is desktop-only: the stubbed shell serves the generated page, which the
@@ -68,14 +69,41 @@ test("a press outside the box or Escape dismisses the notice", async ({ page }) 
   await expect(page.locator("#licenses-modal")).toBeHidden();
 });
 
+// The notice opens on an await, by which time choosing the item has already hidden it with
+// the rest of the menu. The modal's close puts focus back where it was when the modal
+// opened, so that has to be the File trigger — a hidden item cannot take focus, and the
+// keyboard would be left on <body>. The stub answers the resource read on a later task, as the
+// shell answers it: the menu's own click listener runs between the item's action and the
+// answer, and that order is what this case is about.
+test("closing the notice opened from the keyboard returns focus to the File trigger", async ({ page }) => {
+  await stubTauriBoot(page, { third_party_licenses: NOTICE });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.focus("#btn-file");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#btn-new")).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(page.locator("#btn-licenses")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#licenses-modal")).toBeVisible();
+  await expect(page.locator("#licenses-close")).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#licenses-modal")).toBeHidden();
+  await expect(page.locator("#btn-file")).toBeFocused();
+});
+
 test("an unparseable notice lands in the error dialog, not an empty modal", async ({ page }) => {
-  await stubTauriBoot(page, { third_party_licenses: "<h1>not a notice</h1>", "plugin:dialog|message": null });
+  // The device stub records each dialog's message, which is what tells the notice's own
+  // framing apart from the generic one a failure escaping the flow is reported with.
+  await stubTauriDevice(page, { commands: { third_party_licenses: "<h1>not a notice</h1>" } });
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await page.click("#btn-file");
   await page.click("#btn-licenses");
-  // The stubbed message dialog resolves immediately; the modal must never show.
-  await page.waitForTimeout(300);
+  const framing = en.licenses.error("");
+  await expect.poll(async () => (await dialogsOf(page)).map((m) => m.slice(0, framing.length))).toEqual([framing]);
+  // The dialog is the flow's end, so the modal not showing is now an observation.
   await expect(page.locator("#licenses-modal")).toBeHidden();
 });
 

@@ -11,7 +11,9 @@
 // funnel wrote it. Everything else is not — `default` is the factory fill, `device` is a value
 // read off the unit, and a key NOBODY recorded is one no funnel claims. The classification is
 // total and falls toward warning, since a leaf that reached the plan unrecorded is exactly the
-// kind this cannot vouch for.
+// kind this cannot vouch for. A wire's params are asked the same way — a send's level and its
+// on/off are values a write carries like any node's — with the wire's own record standing for a
+// param nothing recorded separately.
 //
 // A routing selector is the exception, because its value is a WIRE rather than a key: every wire
 // is drawn on the board, so the one it names is the one nobody drew, loaded or read — a wire the
@@ -26,7 +28,7 @@ import {
   type WriteScope,
 } from "../core/control/translate";
 import type { Plan } from "../core/plan";
-import { connectionContestKey } from "../core/plan-history";
+import { connectionContestKey, connParamContestKey, nodeNameContestKey } from "../core/plan-history";
 import { ref, type DeviceModel } from "../models/types";
 
 /**
@@ -42,6 +44,9 @@ import { ref, type DeviceModel } from "../models/types";
  * changing it leaves an engine parameter the operator dialled in as theirs, which is what it
  * is.
  *
+ * `renaming` is the nodes whose NAME the write changes, which goes out on the string path
+ * rather than as an address: such a node is named when its name is one nobody chose.
+ *
  * Returns node ids in the model's own order, so a caller naming strips lists them the way the
  * board does.
  */
@@ -50,11 +55,21 @@ export function unauthoredWriteNodes(
   plan: Plan,
   scope: WriteScope,
   changing: ReadonlySet<number>,
+  renaming: ReadonlySet<string> = new Set(),
 ): string[] {
-  if (!changing.size) return [];
+  if (!changing.size && !renaming.size) return [];
   const source = plan.paramSource;
+  // A wire's param carries a record of its own once something writes that param; until then
+  // it answers to the wire's — a wire drawn, imported or read whole is recorded by presence.
+  const wireOf = new Map<string, string>();
+  for (const c of plan.connections) {
+    for (const key of Object.keys(c.params ?? {})) {
+      wireOf.set(connParamContestKey(c.from, c.to, key), connectionContestKey(c.from, c.to));
+    }
+  }
   const chose = (name: string): boolean => {
-    const from = source?.get(name);
+    const wire = wireOf.get(name);
+    const from = source?.get(name) ?? (wire === undefined ? undefined : source?.get(wire));
     return from === "load" || from === "manual";
   };
 
@@ -68,7 +83,7 @@ export function unauthoredWriteNodes(
   }
 
   const origins = planToCommandOrigins(model, plan, scope);
-  const named = new Set<string>();
+  const named = new Set<string>([...renaming].filter((id) => !chose(nodeNameContestKey(id))));
   for (const c of planToCommands(model, plan, scope)) {
     const addr = cmdAddr(c);
     if (c.node === undefined || !changing.has(addr)) continue;

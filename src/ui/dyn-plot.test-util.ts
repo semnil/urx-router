@@ -8,10 +8,13 @@
 
 import type { DynValues } from "./dyn-screen";
 
-/** One painted face: the fill style and opacity in force, and the box the path covered. */
+/** One painted face: the fill style and opacity in force, and the box the path covered.
+ *  `seq` is its place in the order faces and texts were drawn, so a text can be read
+ *  against the face that was under it when it was drawn. */
 export interface PaintedFace {
   style: string;
   alpha: number;
+  seq: number;
   x0: number;
   y0: number;
   x1: number;
@@ -24,6 +27,7 @@ export interface PaintedFace {
 export interface PaintedText {
   style: string;
   alpha: number;
+  seq: number;
   text: string;
   x: number;
   y: number;
@@ -65,9 +69,10 @@ export function recorder(): Recorder {
   let alpha = 1;
   const saved: Array<{ style: string; alpha: number }> = [];
   let box: PaintedFace | null = null;
+  let seq = 0;
 
   const cover = (x: number, y: number): void => {
-    if (!box) box = { style, alpha, x0: x, y0: y, x1: x, y1: y };
+    if (!box) box = { style, alpha, seq: 0, x0: x, y0: y, x1: x, y1: y };
     else {
       box.x0 = Math.min(box.x0, x);
       box.y0 = Math.min(box.y0, y);
@@ -110,10 +115,10 @@ export function recorder(): Recorder {
             };
           case "fill":
             return () => {
-              if (box) faces.push({ ...box, style, alpha });
+              if (box) faces.push({ ...box, style, alpha, seq: seq++ });
             };
           case "fillText":
-            return (text: string, x: number, y: number) => void texts.push({ style, alpha, text, x, y });
+            return (text: string, x: number, y: number) => void texts.push({ style, alpha, seq: seq++, text, x, y });
           case "measureText":
             return () => ({ width: 8 });
           default:

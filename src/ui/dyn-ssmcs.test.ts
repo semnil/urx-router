@@ -477,8 +477,9 @@ describe("the COMP face", () => {
 
   it("prints every value through its own device curve", () => {
     const text = (key: string): string => h!.box.querySelector(`[data-dyn-val="${key}"]`)?.textContent ?? "";
-    expect(text("attack")).toBe("4.126 ms");
-    expect(text("release")).toBe("91.61 ms");
+    // Attack raw 184 and Release raw 159 are the channel tables' stops 127 and 135.
+    expect(text("attack")).toBe("4.122 ms");
+    expect(text("release")).toBe("92.0 ms");
     expect(text("ratio")).toBe("2.50:1");
     segment(SC_SEG);
     expect(text("scQ")).toBe("1.00");
@@ -554,6 +555,22 @@ describe("the EQ face", () => {
       expect(h!.box.querySelectorAll(".prefs-row").length, name).toBe(4);
       const q = rowsByKey(h!.box).get("q")!;
       expect(q.disabled, `${name} Q`).toBe(name !== "MID");
+    }
+  });
+
+  // The band control is the plot, as on the shipped EQ screen, so the band it is set to is
+  // stated on the canvas by name.
+  it("exposes the selected band on the plot as a slider's value", () => {
+    const cv = (): HTMLCanvasElement => h!.box.querySelector<HTMLCanvasElement>("canvas.gt-pickplot")!;
+    expect(cv().getAttribute("role")).toBe("slider");
+    expect(cv().getAttribute("aria-valuemax")).toBe("2");
+    for (const [name, key] of [
+      ["LOW", "low"],
+      ["MID", "mid"],
+      ["HIGH", "high"],
+    ] as const) {
+      band(name);
+      expect(cv().getAttribute("aria-valuetext"), name).toBe(t().inspector.ssmcs.bands[key]);
     }
   });
 
@@ -1173,9 +1190,9 @@ describe("what the curves draw", () => {
   it("marks all three bands on the EQ face, lighting only the selected one", () => {
     draw(SSMCS_EQ_DYN, 1);
     const lit = h!.canvas.faces.filter((f) => f.style === "--led-face");
-    const dim = h!.canvas.faces.filter((f) => f.style === "--plot-dim");
+    const unlit = h!.canvas.faces.filter((f) => f.style === "--plot-faint");
     expect(lit.length).toBe(1);
-    expect(dim.length).toBe(2);
+    expect(unlit.length).toBe(2);
   });
 
   it("keeps a switched-off band's marker on the composite curve", () => {
@@ -1186,13 +1203,13 @@ describe("what the curves draw", () => {
     draw(SSMCS_EQ_DYN, 1);
     // Still three markers: switching a band off takes it out of the response, not off
     // the plot — its frequency is what the operator is still reading.
-    expect(h!.canvas.faces.filter((f) => f.style === "--led-face" || f.style === "--plot-dim").length).toBe(3);
+    expect(h!.canvas.faces.filter((f) => f.style === "--led-face" || f.style === "--plot-faint").length).toBe(3);
   });
 
   it("draws both halves on MAIN, each inside its own frame", () => {
     draw(SSMCS_DYN);
     // The two plots' x ranges do not overlap: the EQ half starts past the divider.
-    const marks = h!.canvas.faces.filter((f) => f.style === "--plot-dim");
+    const marks = h!.canvas.faces.filter((f) => f.style === "--plot-faint");
     expect(marks.length).toBe(3);
     expect(Math.min(...marks.map((m) => m.x0))).toBeGreaterThan(350);
     // And no band is lit — none of them is being edited on this face.

@@ -120,7 +120,9 @@ export class DeviceFollow {
   private unsub: (() => void) | null = null;
   private settleTimer: ReturnType<typeof setTimeout> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
-  private reconciling = false;
+  // The generation whose reconcile is in flight, or null. A reconcile still running for a
+  // session that has ended holds back nothing in the next one.
+  private reconcilingGen: number | null = null;
   private pending = false;
   // A full (idle safety net) reconcile arrived while one was in flight: the replay
   // must keep the full scope rather than downgrade to a scoped/no-op pass.
@@ -147,6 +149,12 @@ export class DeviceFollow {
   // released everywhere that is: an armed source with no stream behind it would make
   // the settle report every write as unannounced for the rest of the session.
   private settleSource: (() => void) | null = null;
+  // The one sink this SESSION hands the write settle, made in `begin()` and armed again by
+  // every registration of that session. The settle tells "the same sink coming back" from
+  // another listener by identity, so a sink made per registration lost every report armed
+  // before a re-registration that moved the address set, while one made per session still
+  // keeps a new session from taking an old one's report.
+  private settleSink: (() => void) | null = null;
   /**
    * Which session a registration belongs to, bumped by `begin` and by `end`.
    *
@@ -177,6 +185,7 @@ export class DeviceFollow {
   async begin(): Promise<void> {
     this.active = true;
     this.gen++;
+    this.settleSink = () => this.armIdle();
     await this.subscribe();
   }
 
@@ -231,6 +240,7 @@ export class DeviceFollow {
     this.unsub = null;
     this.settleSource?.();
     this.settleSource = null;
+    this.settleSink = null;
   }
 
   // Register the current follow address set for notifies. The set rarely changes
@@ -247,7 +257,7 @@ export class DeviceFollow {
   // a set the broker does not hold, which is this file's own defect class.
   //
   // `refresh()` is what made that reachable: `begin()` is awaited at session start and
-  // `runReconcile`'s call is inside `reconciling`, but a flush ends whenever it ends.
+  // `runReconcile`'s call is inside its own reconcile, but a flush ends whenever it ends.
   // Queued rather than dropped, so `begin()` still returns only once ITS registration has
   // landed, and a queued call reads the address set when its turn comes rather than when
   // it was asked. With nothing in flight the registration is issued in this same tick, as
@@ -321,7 +331,7 @@ export class DeviceFollow {
     // side owns the only full reconcile. The idle net is the right one — it already
     // exists, it is the missed-notify safety net by construction, and a burst of these
     // during a drag costs one sweep after the drag rather than one each.
-    this.settleSource = writeSettle.arm(() => this.armIdle());
+    if (this.settleSink) this.settleSource = writeSettle.arm(this.settleSink);
   }
 
   private clearWindow(): void {
@@ -343,10 +353,9 @@ export class DeviceFollow {
     // Our own write (or a value we already hold) coming back — not a change. Ahead of
     // the rename branch, and it covers that branch too: the unit announces every name
     // write it accepts, so the OPERATOR's own rename in the app echoes back, and
-    // counting that echo as a followed change armed the idle net — a full reconcile
-    // whose reflect ends in `planHistory.reset()`, so one rename during Live sync cost
-    // ~800 reads 900 ms later and took its own undo entry with it. The host dispatches
-    // this hook on `valueStr` because the two snapshots are separate maps.
+    // counted as a followed change that echo would arm the idle net — a whole-device
+    // read 900 ms later. The host dispatches this hook on `valueStr` because the two
+    // snapshots are separate maps.
     if (this.hooks.isEcho(p)) return;
     this.hooks.onDeviceParam?.(p);
     const superseded = this.hooks.isSuperseded?.(p) === true;
@@ -425,7 +434,7 @@ export class DeviceFollow {
 
   private async runReconcile(idle: boolean): Promise<void> {
     if (!this.active) return;
-    if (this.reconciling) {
+    if (this.reconcilingGen === this.gen) {
       this.pending = true;
       if (idle) this.pendingFull = true;
       return;
@@ -452,7 +461,8 @@ export class DeviceFollow {
       this.hooks.flushDirect();
       return;
     }
-    this.reconciling = true;
+    const gen = this.gen;
+    this.reconcilingGen = gen;
     try {
       if (full) await this.hooks.reconcileAll();
       else await this.hooks.reconcileNodes(nodes);
@@ -460,12 +470,18 @@ export class DeviceFollow {
       // address set), so re-register against the post-reconcile set.
       await this.subscribe();
     } catch (e) {
+      // The same rule `refresh()` keeps: a failure that arrives once its session has ended
+      // stops nothing in the one that followed.
+      if (this.gen !== gen) return;
       this.active = false;
       this.hooks.onError(e instanceof Error ? e.message : String(e));
       return;
     } finally {
-      this.reconciling = false;
+      if (this.reconcilingGen === gen) this.reconcilingGen = null;
     }
+    // A replay this reconcile owes belongs to its own session; end() clears it, and the next
+    // session's reconciles replay their own.
+    if (this.gen !== gen) return;
     if (this.pending) {
       this.pending = false;
       const replayFull = this.pendingFull;

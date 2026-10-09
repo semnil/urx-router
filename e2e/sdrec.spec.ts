@@ -37,6 +37,20 @@ test("Track Count gates how many SD Rec track-pair slots are shown", async ({ pa
   await expect(node(page, "out.sdrec.t3")).toHaveCount(0);
 });
 
+// 96 kHz caps Track Count at 8, which the rate pick lowers from 16 with no disabled node
+// moving. The slots past it leave the board at once, and a wire selected into one goes from
+// the Inspector rather than staying deletable there.
+test("a rate pick that lowers Track Count takes the gated slots off the board", async ({ page }) => {
+  await selectWire(page, "bus.stereo:out", "out.sdrec.t8:in");
+  const heading = page.locator("#inspector h2", { hasText: /^Connection$/ });
+  await expect(heading).toHaveCount(1);
+  await chooseOption(page.locator("#rate-picker"), "96000");
+  await expect(node(page, "out.sdrec.t4")).toBeVisible();
+  await expect(node(page, "out.sdrec.t5")).toHaveCount(0);
+  await expect(node(page, "out.sdrec.t8")).toHaveCount(0);
+  await expect(heading).toHaveCount(0);
+});
+
 test("the SD Rec header shows no input connector and no routing list", async ({ page }) => {
   // The recorder header owns its track slots; it takes no direct wire, so its port
   // connector is not drawn and the inspector shows no routing list — only Track Count.
@@ -136,7 +150,7 @@ test("Track Count is locked and stays visibly dimmed while a live session holds 
 
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
 
   await node(page, "out.sdrec").click();
   await expect(trackCount(page)).toBeDisabled();

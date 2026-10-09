@@ -6,17 +6,21 @@
 // a plan without the wire sends nothing there (translate.test.ts pins that), and a read
 // that finds it on NONE leaves the plan to be given STEREO, as Fetch and Live start do.
 //
-// The strong guarantee is a fixed point: once the device has been read into a
-// plan, emitting that plan reproduces exactly the values that were read, and
-// reading those back gives the same plan. So emit∘readback applied twice yields
-// the identical command set — any parameter emit writes but readback cannot read
-// (or vice versa) would break the round trip and is caught here. This is the
-// software twin of the live idempotent double-write check.
+// The fixed point: once the device has been read into a plan, emitting that plan
+// and reading the result back gives the same command set again — emit∘readback is
+// idempotent, the software twin of the live idempotent double-write check. Both of
+// its rounds start from an empty plan, so a key the read never sets is unset in both
+// and the two rounds agree whatever the device held: a missing read is not something
+// the fixed point can see. "readback covers what the emit writes" asks for that
+// directly — every parameter a write sends is one the read asks the unit for, and a
+// unit holding a distinctive value at every address a write sends reads back into a
+// plan that sends exactly those values.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getModel } from "../../models";
-import { emptyPlan, ensureFixedConnections, supplyRequiredSources } from "../plan";
-import { ref } from "../../models/types";
+import { getModel, MODEL_IDS } from "../../models";
+import { defaultPlan } from "../../models/initial-state";
+import { emptyPlan, ensureFixedConnections, supplyRequiredSources, type Plan } from "../plan";
+import { ref, type ModelId } from "../../models/types";
 
 vi.mock("../platform", () => ({ vdGet: vi.fn() }));
 
@@ -24,6 +28,7 @@ import { vdGet } from "../platform";
 import { applyDeviceState } from "./readback";
 import { planToCommands } from "./translate";
 import type { VdCommand } from "./translate";
+import { buildModifiedPlan } from "./prepare";
 import { PORT_REF_NONE } from "./vd";
 
 const model = getModel("URX44V");
@@ -158,5 +163,82 @@ describe("planToCommands absolute-state completeness", () => {
       [0, 2],
       [1, 3],
     ]);
+  });
+});
+
+// A distinctive state: the factory plan with every writable scalar moved off its factory value
+// by the audit-prep writer, so a value the read loses differs from what an unread key emits.
+function distinctivePlan(id: ModelId): Plan {
+  const installed = defaultPlan(id);
+  ensureFixedConnections(getModel(id), installed);
+  return buildModifiedPlan(installed);
+}
+
+// Every vdGet the read issues, answered from `table`.
+function recordReads(table: Map<string, number>): Set<string> {
+  const asked = new Set<string>();
+  vi.mocked(vdGet).mockImplementation((id, x, y) => {
+    const k = `${id}:${x}:${y}`;
+    asked.add(k);
+    if (table.has(k)) return Promise.resolve(table.get(k)!);
+    return Promise.resolve(PORT_REF_PARAMS.has(id) ? PORT_REF_NONE : 0);
+  });
+  return asked;
+}
+
+describe("readback covers what the emit writes", () => {
+  // The read names a stereo channel's source from its L half, which identifies the input pair
+  // the R half follows; it never asks for the R half on its own.
+  const SOURCED_FROM_L = ["STEREO_INPUT_SOURCE_R"];
+
+  it.each(MODEL_IDS)("%s: every parameter a write sends is one the read asks the unit for", async (id) => {
+    const m = getModel(id);
+    const sent = planToCommands(m, distinctivePlan(id), "all", { includeDeviceDriven: true });
+    const asked = recordReads(tableFrom(sent));
+    await applyDeviceState(m, emptyPlan(id));
+    const askedAt = (c: VdCommand) => asked.has(`${c.paramId}:${c.x}:${c.y}`);
+    const unread = [...new Set(sent.map((c) => c.name))].filter((n) => !sent.some((c) => c.name === n && askedAt(c)));
+    expect(unread).toEqual(SOURCED_FROM_L);
+    // The population carries the presence-conditional COMP keys, whose read is the one the
+    // fixed point above cannot see.
+    for (const n of ["COMP_AUTO_MAKEUP", "COMP_KNEE", "COMP_ONE_KNOB", "COMP_ONE_KNOB_LEVEL"])
+      expect(
+        sent.some((c) => c.name === n),
+        n,
+      ).toBe(true);
+  });
+
+  it.each(MODEL_IDS)(
+    "%s: a unit holding a distinctive value everywhere reads into a plan that sends it",
+    async (id) => {
+      const m = getModel(id);
+      const sent = planToCommands(m, distinctivePlan(id));
+      recordReads(tableFrom(sent));
+      const plan = emptyPlan(id);
+      await applyDeviceState(m, plan);
+      expect(addrVals(planToCommands(m, plan))).toEqual(addrVals(sent));
+    },
+  );
+});
+
+// A new plan is what the factory fill completes a document with, so every address a write can
+// send has to be one it carries a value for: a key the factory lacks is one the panel draws a
+// default for while the write sends nothing, and a unit holding anything else keeps it. A full
+// read of a unit holding the new plan's own values sets every key the read covers, so the two
+// emits have to name the same addresses.
+describe("a new plan", () => {
+  it.each(MODEL_IDS)("%s writes every address a device read of it covers", async (id) => {
+    const m = getModel(id);
+    // Installed the way every plan is, which seeds the fixed wires the factory list leaves out.
+    const installed = defaultPlan(id);
+    ensureFixedConnections(m, installed);
+    const fresh = planToCommands(m, installed);
+    mockDevice(tableFrom(fresh));
+    const plan = emptyPlan(id);
+    await applyDeviceState(m, plan);
+    const addrs = (cmds: VdCommand[]): string[] =>
+      [...new Set(cmds.map((c) => `${c.name} ${c.paramId}:${c.x}:${c.y}`))].sort();
+    const read = addrs(planToCommands(m, plan));
+    expect(read.filter((a) => !addrs(fresh).includes(a))).toEqual([]);
   });
 });

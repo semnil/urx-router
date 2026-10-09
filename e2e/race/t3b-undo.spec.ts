@@ -53,7 +53,10 @@ const wireHits = (page: Page) => page.locator("#graph-host .wire-hit");
 const sendWire = (page: Page) => page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.mix1:in"]');
 const levelSlider = (page: Page) =>
   page.locator("#inspector .param", { hasText: "Level" }).locator("input[type='range']");
-const insp = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label }).locator("select");
+// By the select's own name rather than by row text: a row's text takes in its options and
+// the Routing pickers' labels ("Connect the Rec Point to"), which a substring match reads as
+// a second "Rec Point".
+const insp = (page: Page, label: string) => page.locator("#inspector").getByLabel(label, { exact: true });
 
 const readStatus = (page: Page): Promise<string> =>
   statusOf(page)
@@ -1408,7 +1411,7 @@ test.describe("T3b undo", () => {
   // readback's rerenderPlan, which resets both stacks, and the rate picker is disabled
   // from then on. t3-undo.spec.ts's refusal ladder already probes both halves of that
   // (the offline rate change IS undoable; the picker IS locked while live) and pins
-  // `undoRateLive` as an unreachable refusal. There is no second route into the state
+  // `undoRateLocked` as an unreachable refusal while live. There is no second route into the state
   // — a ?plan= link and a file load both go through loadPlan, which resets too — so
   // there is nothing here that could fail.
   //

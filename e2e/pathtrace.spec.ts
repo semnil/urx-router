@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { drag, faceplate, port } from "./graph-helpers";
+import { chooseOption } from "./choose-option";
 
 // Long-pressing a node traces the live signal path feeding it: every upstream
 // input / channel / bus reached through live wiring lights up, the rest fade.
@@ -132,5 +133,29 @@ test("a path trace clears when the selection is dropped", async ({ page }) => {
   // returns to its normal opacity.
   await page.keyboard.press("Escape");
   await expect(wire(page, "in.aux:out", "ch_5_6:in")).toHaveAttribute("opacity", "0.85");
+  await expect(node(page, "in.aux")).toHaveAttribute("opacity", "1");
+});
+
+test("a path trace does not outlive the plan it was traced on", async ({ page }) => {
+  // The fixed CH -> STEREO sends alone give STEREO an upstream path on the empty board.
+  await longPress(page, "bus.stereo");
+  await expect(node(page, "in.aux")).toHaveAttribute("opacity", "0.3");
+  // Another model is another plan: its board comes up with nothing faded.
+  await chooseOption(page.locator("#model-picker"), "URX22");
+  await expect(page.locator("#model-picker")).toHaveValue("URX22");
+  await expect(page.locator('#graph-host g.node[opacity="0.3"]')).toHaveCount(0);
+});
+
+test("a path trace follows an edit made in the traced node's own panel", async ({ page }) => {
+  await longPress(page, "bus.stereo");
+  await expect(node(page, "in.aux")).toHaveAttribute("opacity", "0.3");
+  // The long press selected STEREO, so its panel is the one on screen. Switching the bus
+  // OFF leaves nothing live feeding it, and the trace ends with it.
+  await page
+    .locator("#inspector .param")
+    .filter({ has: page.locator(".toggle") })
+    .filter({ hasText: "Channel" })
+    .getByRole("button", { name: "OFF", exact: true })
+    .click();
   await expect(node(page, "in.aux")).toHaveAttribute("opacity", "1");
 });

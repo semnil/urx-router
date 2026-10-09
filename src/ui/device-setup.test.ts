@@ -5,6 +5,8 @@ import { BRIGHTNESS_MAX, defaultDeviceSetup, type DeviceSetup } from "../core/co
 import { getModel } from "../models";
 import { DeviceSetupPanel, type DeviceSetupHooks } from "./device-setup";
 import { resetSettingsCache } from "../core/settings";
+import { TIME_ZONE_CITIES } from "../core/control/timezones";
+import { t } from "../i18n";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -39,7 +41,7 @@ beforeEach(() => {
 });
 
 describe("DeviceSetupPanel", () => {
-  it("opens from a coerced snapshot and locks settings absent from the model", () => {
+  it("opens on the reading as reported and locks settings absent from the model", () => {
     const { panel } = install("URX22");
     const setup: DeviceSetup = { ...defaultDeviceSetup(), brightness: 999, timeZone: 999 };
 
@@ -47,7 +49,10 @@ describe("DeviceSetupPanel", () => {
 
     expect(panel.isOpen()).toBe(true);
     expect(document.querySelector("#device-setup-title")).not.toBeNull();
+    // The range input cannot show 999 and puts its thumb at the top; the readout says what
+    // the unit reported, and nothing is pending for it.
     expect((document.querySelector("#device-setup-brightness") as HTMLInputElement).value).toBe(String(BRIGHTNESS_MAX));
+    expect(document.querySelector(".dev-slider .param-val")?.textContent).toBe("999");
     expect((document.querySelector("#device-setup-timezone") as HTMLSelectElement).disabled).toBe(true);
     expect(document.querySelectorAll(".prefs-row.locked").length).toBeGreaterThanOrEqual(5);
     expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
@@ -59,6 +64,99 @@ describe("DeviceSetupPanel", () => {
     expect(document.querySelector("#device-setup-box")?.childElementCount).toBe(0);
     panel.refresh();
     expect(document.querySelector("#device-setup-box")?.childElementCount).toBe(0);
+  });
+
+  // A value the app's catalog does not have is the unit's own state, not the nearest entry:
+  // shown as that entry, nothing was pending for it and choosing that entry wrote nothing.
+  it("shows a time zone off the catalog as unknown, and writes the entry picked for it", async () => {
+    const { panel, hooks } = install();
+    panel.open({ ...defaultDeviceSetup(), timeZone: 200 });
+
+    const zone = document.querySelector("#device-setup-timezone") as HTMLSelectElement;
+    expect(zone.value).toBe("200");
+    expect(zone.selectedOptions[0]?.textContent).toBe(t().deviceSetup.unknownValue(200));
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
+
+    change(zone, String(TIME_ZONE_CITIES.length - 1));
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe(t().deviceSetup.pending(1));
+    // …and picked back, it is the reading again rather than its nearest entry.
+    change(document.querySelector("#device-setup-timezone") as HTMLSelectElement, "200");
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
+
+    change(document.querySelector("#device-setup-timezone") as HTMLSelectElement, String(TIME_ZONE_CITIES.length - 1));
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledOnce());
+    expect(hooks.apply).toHaveBeenCalledWith(
+      [{ kind: "num", name: "TIME_ZONE", y: 0, value: TIME_ZONE_CITIES.length - 1 }],
+      1,
+    );
+  });
+
+  it("writes nothing for a value off the catalog when another row is edited", async () => {
+    const { panel, hooks } = install();
+    panel.open({ ...defaultDeviceSetup(), timeZone: 200, autoPowerOffTime: 30 });
+    expect(
+      (document.querySelector("#device-setup-apo-time") as HTMLSelectElement).selectedOptions[0]?.textContent,
+    ).toBe(t().deviceSetup.unknownValue(30));
+
+    change(document.querySelector("#device-setup-language") as HTMLSelectElement, "1");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledOnce());
+    expect(hooks.apply).toHaveBeenCalledWith([{ kind: "num", name: "DEVICE_LANGUAGE", y: 0, value: 1 }], 1);
+  });
+
+  // A Monitor knob the unit reports on "Monitor 3": shown as Monitor 1 it read as already being
+  // there, and picking Monitor 1 sent nothing.
+  it("shows a Parameter 1 off the catalog as unknown, and writes the one picked for it", async () => {
+    const { panel, hooks } = install();
+    const setup = defaultDeviceSetup();
+    setup.knobs[0] = { fn: "Monitor", p1: "Monitor 3", p2: "Level" };
+    panel.open(setup);
+
+    const p1 = () => document.querySelectorAll<HTMLSelectElement>(".udk-row")[0]!.querySelectorAll("select")[1]!;
+    expect(p1().selectedOptions[0]?.textContent).toBe(t().deviceSetup.unknownValue("Monitor 3"));
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
+
+    // Picked away and back, it is the reading again, with nothing pending.
+    change(p1(), "Monitor 2");
+    expect(document.querySelector("#device-setup-pending")?.textContent).not.toBe("");
+    change(p1(), "Monitor 3");
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
+
+    change(p1(), "Monitor 1");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledOnce());
+    expect(hooks.apply).toHaveBeenCalledWith(
+      [
+        { kind: "str", name: "UDK_FUNCTION", y: 0, value: "Monitor" },
+        { kind: "str", name: "UDK_PARAM1", y: 0, value: "Monitor 1" },
+        { kind: "str", name: "UDK_PARAM2", y: 0, value: "Level" },
+      ],
+      1,
+    );
+  });
+
+  it("shows a knob function off the catalog as unknown, and clears it with three writes", async () => {
+    const { panel, hooks } = install();
+    const setup = defaultDeviceSetup();
+    setup.knobs[0] = { fn: "Warp Drive", p1: "", p2: "" };
+    panel.open(setup);
+
+    const fn = document.querySelector(".udk-row select") as HTMLSelectElement;
+    expect(fn.selectedOptions[0]?.textContent).toBe(t().deviceSetup.unknownValue("Warp Drive"));
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe("");
+
+    change(fn, "No Assign");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledOnce());
+    expect(hooks.apply).toHaveBeenCalledWith(
+      [
+        { kind: "str", name: "UDK_FUNCTION", y: 0, value: "No Assign" },
+        { kind: "str", name: "UDK_PARAM1", y: 0, value: "" },
+        { kind: "str", name: "UDK_PARAM2", y: 0, value: "" },
+      ],
+      1,
+    );
   });
 
   // `onWheelStep` calls back once per configured wheel step, and the first `edit()`
@@ -143,6 +241,61 @@ describe("DeviceSetupPanel", () => {
     expect(hooks.confirmDiscard).not.toHaveBeenCalled();
   });
 
+  // The rows stay live while an apply is in flight, and what the apply sends is the diff
+  // taken when it was pressed. An edit made during the flight is not in it, so it has to
+  // stay pending: marked, counted, and asked about on Close — not adopted into the
+  // baseline as though the unit had received it.
+  it("keeps an edit made while the apply is in flight pending", async () => {
+    const flight = deferred<boolean>();
+    const { panel, hooks } = install();
+    vi.mocked(hooks.apply).mockReturnValueOnce(flight.promise);
+    panel.open(defaultDeviceSetup());
+
+    change(document.querySelector("#device-setup-language") as HTMLSelectElement, "1");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await Promise.resolve();
+    expect(hooks.apply).toHaveBeenCalledWith([{ kind: "num", name: "DEVICE_LANGUAGE", y: 0, value: 1 }], 1);
+
+    change(document.querySelector("#device-setup-apo-time") as HTMLSelectElement, "2");
+    flight.resolve(true);
+    await vi.waitFor(() =>
+      expect((document.querySelector("#device-setup-apply") as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe(t().deviceSetup.pending(1));
+    expect(document.querySelectorAll(".prefs-row.dirty")).toHaveLength(1);
+    expect(document.querySelector(".prefs-row.dirty #device-setup-apo-time")).not.toBeNull();
+
+    await panel.requestClose();
+    expect(hooks.confirmDiscard).toHaveBeenCalledOnce();
+  });
+
+  // The same window, edited back to where the baseline was: the unit received 1, so a
+  // screen showing 0 owes it a write — the language row is pending, not settled.
+  it("keeps a row edited back during the flight pending against what was sent", async () => {
+    const flight = deferred<boolean>();
+    const { panel, hooks } = install();
+    vi.mocked(hooks.apply).mockReturnValueOnce(flight.promise);
+    panel.open(defaultDeviceSetup());
+
+    change(document.querySelector("#device-setup-language") as HTMLSelectElement, "1");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await Promise.resolve();
+    change(document.querySelector("#device-setup-language") as HTMLSelectElement, "0");
+    flight.resolve(true);
+    await vi.waitFor(() =>
+      expect((document.querySelector("#device-setup-apply") as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(document.querySelector("#device-setup-pending")?.textContent).toBe(t().deviceSetup.pending(1));
+    expect(document.querySelector(".prefs-row.dirty #device-setup-language")).not.toBeNull();
+
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(hooks.apply).mock.calls[1]).toEqual([
+      [{ kind: "num", name: "DEVICE_LANGUAGE", y: 0, value: 0 }],
+      1,
+    ]);
+  });
+
   it("keeps a failed apply pending so the same writes can be retried", async () => {
     const { panel, hooks } = install();
     vi.mocked(hooks.apply).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
@@ -186,6 +339,76 @@ describe("DeviceSetupPanel", () => {
     expect(hooks.confirmDiscard).toHaveBeenCalledTimes(2);
   });
 
+  // Every edit and every bank tab rebuilds the box, including a brightness step taken from
+  // the keyboard. The grid the rebuild replaces is the box's scrolling region, so neither
+  // the control the operator used nor the offset they scrolled to may go with it.
+  it("keeps the focused control and the grid's scroll offset across a rebuild", () => {
+    const { panel } = install();
+    panel.open(defaultDeviceSetup());
+    const grid = (): HTMLElement => document.querySelector("#device-setup-box .prefs-grid") as HTMLElement;
+    const first = grid();
+    first.scrollTop = 400;
+
+    const tab = (): HTMLButtonElement => document.querySelectorAll<HTMLButtonElement>("#device-setup-banks button")[2];
+    const pressed = tab();
+    pressed.focus();
+    pressed.click();
+    expect(grid()).not.toBe(first); // the tab really rebuilt the grid
+    expect(tab().getAttribute("aria-pressed")).toBe("true");
+    expect(document.activeElement).toBe(tab());
+    expect(document.activeElement).not.toBe(pressed);
+    expect(grid().scrollTop).toBe(400);
+
+    const fn = (): HTMLSelectElement => document.querySelector<HTMLSelectElement>(".udk-row select")!;
+    const picked = fn();
+    picked.focus();
+    change(picked, "Monitor");
+    expect(fn().value).toBe("Monitor");
+    expect(document.activeElement).toBe(fn());
+    expect(document.activeElement).not.toBe(picked);
+    expect(grid().scrollTop).toBe(400);
+
+    const slider = (): HTMLInputElement => document.querySelector("#device-setup-brightness") as HTMLInputElement;
+    const stepped = slider();
+    stepped.focus();
+    stepped.value = "4";
+    stepped.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(slider().value).toBe("4");
+    expect(document.activeElement).toBe(slider());
+    expect(document.activeElement).not.toBe(stepped);
+    expect(grid().scrollTop).toBe(400);
+  });
+
+  // The knob tabs open on the bank the unit reported, so the rows on screen are the slots of
+  // the bank the unit's knobs are on; a reading naming none of the four opens on bank 1.
+  it("opens the knob tabs on the bank the unit is on", async () => {
+    const pressed = (): number[] =>
+      [...document.querySelectorAll<HTMLButtonElement>("#device-setup-banks button")].flatMap((b, i) =>
+        b.getAttribute("aria-pressed") === "true" ? [i] : [],
+      );
+    const { panel, hooks } = install();
+    panel.open({ ...defaultDeviceSetup(), knobBank: 2 });
+    expect(pressed()).toEqual([2]);
+    change(document.querySelector<HTMLSelectElement>(".udk-row select")!, "Oscillator");
+    (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(hooks.apply).toHaveBeenCalledOnce());
+    // Bank 3, knob A is slot 8, and the bank itself is no write.
+    expect(vi.mocked(hooks.apply).mock.calls[0][0]).toEqual([
+      { kind: "str", name: "UDK_FUNCTION", y: 8, value: "Oscillator" },
+      { kind: "str", name: "UDK_PARAM1", y: 8, value: "Level" },
+      { kind: "str", name: "UDK_PARAM2", y: 8, value: "" },
+    ]);
+    panel.close();
+
+    for (const knobBank of [7, -1, 1.5, NaN]) {
+      panel.open({ ...defaultDeviceSetup(), knobBank });
+      expect(pressed(), String(knobBank)).toEqual([0]);
+      panel.close();
+    }
+    panel.open({ ...defaultDeviceSetup(), knobBank: 3 });
+    expect(pressed()).toEqual([3]);
+  });
+
   it("edits the selected user-defined-knob bank as one three-column write", async () => {
     const { panel, hooks } = install();
     panel.open(defaultDeviceSetup());
@@ -196,6 +419,18 @@ describe("DeviceSetupPanel", () => {
     expect(
       document.querySelectorAll<HTMLButtonElement>("#device-setup-banks button")[1].getAttribute("aria-pressed"),
     ).toBe("true");
+
+    // Each of a knob's three selects is named by the knob and its column's head.
+    const named = [...document.querySelectorAll<HTMLSelectElement>(".udk-row select")].map((s) =>
+      (s.getAttribute("aria-labelledby") ?? "")
+        .split(/\s+/)
+        .map((ref) => document.getElementById(ref)?.textContent ?? "")
+        .join(" "),
+    );
+    const knob = document.querySelector(".udk-row .knob")!.textContent;
+    const heads = [...document.querySelectorAll(".udk-head .cols span")].map((h) => h.textContent);
+    expect(heads).toHaveLength(3);
+    expect(named.slice(0, 3)).toEqual(heads.map((h) => `${knob} ${h}`));
 
     const fn = document.querySelector<HTMLSelectElement>(".udk-row select")!;
     change(fn, "Monitor");

@@ -37,6 +37,11 @@
   /* Ink on any lit accent face. Dark in both themes: the light --led carries
      ~7.6:1 with this and ~2.5:1 with white. */
   --on-accent-ink: #14110d;
+  /* The MIDI-learn rings as shares of --led-ink: the dashed ring on every armable
+     control, and the armed ring at the bottom of its pulse. The light theme's are
+     stronger, since its ink is drawn on a light panel. */
+  --learn-ring: 55%;
+  --learn-trough: 30%;
 
   --ctl-bg: #221c13;
   --ctl-bg2: #2c2517;
@@ -83,10 +88,15 @@
      signal zones above; rose is clear of them and of the amber accent, and sits
      in the ducker rail's family — a ducker's GR is the same class of quantity. */
   --gr: #e0788c;
+  /* GR as INK, for the one place it is text rather than a mark on the groove: the
+     readout tile, which sits on --ctl-bg. The dark theme prints --gr itself. */
+  --gr-ink: var(--gr);
   /* Plot chrome for anything drawn on the groove (which stays dark in the light
      theme too, so meters read as LEDs on black). These do NOT flip with the
      theme: the light theme's own --line on a dark groove draws as bright white
-     rules. Only the meter colors follow the theme, as the console's meters do. */
+     rules. Only the meter colors follow the theme, as the console's meters do.
+     --plot-faint is a tone for rules and marks; text on the groove takes --plot-dim
+     or --plot-ink. */
   --plot-line: #38301f;
   --plot-faint: #6f6450;
   --plot-dim: #ab9b7d;
@@ -98,8 +108,10 @@
   /* The two dims that have to compose: a printed legend's own silkscreen level, and how
      far a row that does not apply falls. `opacity` on one element cascades rather than
      multiplying, so the composed value is written as their product (see .fine-tag) —
-     named here so it cannot be a stale copy of either. Neither varies by theme. */
-  --fine-dim: 0.55;
+     named here so it cannot be a stale copy of either. The legend's level is set per
+     theme, so the printed legend keeps the dim tier's legibility on every ground it lands
+     on; the row's dim is the same in both. */
+  --fine-dim: 0.75;
   --row-lock-dim: 0.45;
 
   color-scheme: dark;
@@ -124,6 +136,8 @@
      face and would need an exception there. */
   --led-ink: #755407;
   --led-face: #ffc24d;
+  --learn-ring: 100%;
+  --learn-trough: 70%;
 
   --ctl-bg: #e9e2d3;
   --ctl-bg2: #f6f2ea;
@@ -144,10 +158,12 @@
   --danger-bg: #f7ede6;
   --danger-bd: #e0c4b4;
 
-  --warn: #c2531f;
+  /* Each is written as text as well as drawn as a lamp or a frame, so each is dark
+     enough to be read as ink on its own tint and on the panel. */
+  --warn: #a8461a;
   --warn-bg: #f9ece3;
 
-  --tally: #d32f2f;
+  --tally: #b71c1c;
   --tally-bg: #fbe9e9;
   --mute-on: #d32f2f;
   --meter-frame: #9a8a63;
@@ -158,12 +174,18 @@
   --m-red: #d32f2f;
   /* Like the meter colors, GR is drawn on the pinned-dark groove, so it shifts
      only enough to sit beside the light theme's reds — it does not darken the
-     way panel-borne colors do. --plot-* deliberately have no light override. */
+     way panel-borne colors do. --plot-* deliberately have no light override. The
+     readout tile is the one place GR is text on a panel-borne ground, and it reads
+     --gr-ink, which darkens as panel-borne ink does. */
   --gr: #d9697f;
+  --gr-ink: #a8384f;
   --grain-blend: multiply;
   --grain-op: 0.045;
   --vignette: rgba(90, 75, 40, 0.22);
   --ctl-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 1px 1px rgba(0, 0, 0, 0.12);
+  /* The light dim tier is printed at full ink: it sits at the tier's floor, so any fade
+     of it falls below the tier. */
+  --fine-dim: 1;
 
   color-scheme: light;
 }
@@ -411,7 +433,7 @@ select#rate-picker:disabled {
 /* Follow USB: the device's clock policy, sitting next to the rate it governs. Lit
    when on (the device is slaved to its USB host, so the rate picker cannot make a
    change stick), plain when off. Before any device has been read it is drawn as its
-   own dimmed, dashed "unknown" — never as "off", which is the state in which the
+   own dashed "unknown" — never as "off", which is the state in which the
    picker IS trusted, and never hidden, since the warning is worth the least once the
    operator has already committed to a device action. */
 .follow-usb {
@@ -436,7 +458,6 @@ select#rate-picker:disabled {
 }
 
 .follow-usb[data-state="unknown"] {
-  color: color-mix(in srgb, var(--text-dim) 60%, transparent);
   border-style: dashed;
 }
 
@@ -499,14 +520,14 @@ button.consent-btn-secondary {
    pixels in both themes.
 
    It was written as `.tools button[aria-pressed="true"]`, which described the wrong
-   thing — the toolbar's own buttons never carry aria-pressed, and the only elements
+   thing — the toolbar's own buttons never carry that state, and the only elements
    it ever reached were the three toggling menu items inside .tools (Live sync,
    hide-OFF, label source). Named for what it styles, it must stay HERE rather than
-   move down beside the other `[aria-pressed="true"]` rule: at 0,3,0 it now ties with
+   move down beside the other `[aria-checked="true"]` rule: at 0,3,0 it ties with
    `.menu-panel .menu-item:hover`, and source order is what decides a tie, so the
    hover background has to keep winning as it did when this was 0,2,1. `color` is
    likewise taken back by the later rule, which is why it is not set here at all. */
-.menu-panel .menu-item[aria-pressed="true"] {
+.menu-panel .menu-item[aria-checked="true"] {
   border-color: color-mix(in srgb, var(--led) 60%, var(--ctl-border));
   background: linear-gradient(180deg, var(--ctl-bg), var(--ctl-bg2));
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
@@ -670,18 +691,25 @@ button.consent-btn-secondary {
 
 .menu-panel .menu-item:hover::before,
 .menu-panel .menu-item:focus-visible::before,
-.menu-panel .menu-item[aria-pressed="true"]::before {
+.menu-panel .menu-item[aria-checked="true"]::before {
   height: 16px;
 }
 
 /* A toggled-on menu item (live sync) keeps its rail lit and the label in the
    accent color, so the active state reads without opening the menu's tally. */
-.menu-panel .menu-item[aria-pressed="true"] {
+.menu-panel .menu-item[aria-checked="true"] {
   color: var(--led-ink);
 }
 
 .menu-panel .menu-item:focus-visible {
   outline: none;
+}
+
+/* A checked item already holds its rail at full height, so the rail cannot also mark
+   focus there; an inset ring does. */
+.menu-panel .menu-item[aria-checked="true"]:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
 }
 
 /* A not-yet-available action (e.g. device write before it ships): dimmed, no
@@ -724,10 +752,22 @@ select:focus-visible,
   outline-offset: 2px;
 }
 
-/* The second focus vocabulary, and the reason there are two: an amber ring is
+/* A board node takes the same amber ring as an SVG stroke around its panel: an outline
+   on an SVG group is not painted by every engine. */
+#graph-host g.node:focus-visible {
+  outline: none;
+}
+#graph-host g.node:focus-visible > .focus-ring {
+  stroke: var(--led);
+  stroke-width: 2px;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The second focus vocabulary, and the reason there are three: an amber ring is
    invisible on an amber face. A white outline with a dark halo reads on any of
    them, and the halo is what makes it read in the light theme too — white alone
-   would vanish on the panel.
+   would vanish on the panel. The third is the rule below this one, for a lit face
+   whose ring is drawn inside it.
 
    These eight surfaces carried no rule at all and were showing the UA's blue
    ring. Three of them genuinely need the white (the lit faces: the primary
@@ -752,9 +792,12 @@ input[type="range"]:focus-visible,
     0 0 0 4px rgba(0, 0, 0, 0.9);
 }
 
-/* A lit face whose ring sits INSIDE it (a packed rack, offset -2px) has no room for the
-   halo the white ring needs, and white on the lamp is under the floor. The ring takes the
-   face's own ink instead, which is what clears the lamp in both themes. */
+/* The third focus vocabulary: a lit face that wears its ring INSIDE it (a packed rack,
+   offset -2px), as each of these does in every state. The segmented bars and the SENDS
+   rack clip what is drawn outside them, so the white ring and its outer halo would be cut
+   off there, and white on the lamp is under the floor; the inset ring keeps its place and
+   takes the face's own ink instead of the accent the face is lit in, which is what clears
+   the lamp in both themes. */
 .con-chip.on:focus-visible,
 .con-sl.on:focus-visible,
 .con-slp.on:focus-visible,
@@ -979,6 +1022,15 @@ input[type="range"]:focus-visible,
   color: var(--text);
 }
 
+/* A drawn wire's row is a button that selects the wire; it keeps the row's look. */
+#inspector button.conn-row {
+  width: 100%;
+  margin-top: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
 .conn-row .dot {
   width: 9px;
   height: 9px;
@@ -1032,6 +1084,9 @@ input[type="range"]:focus-visible,
 .note-edit-overlay::placeholder {
   color: var(--text-dim);
   opacity: 0.8;
+}
+[data-theme="light"] .note-edit-overlay::placeholder {
+  opacity: 1;
 }
 
 .warning {
@@ -1197,6 +1252,12 @@ input[type="range"]:focus-visible,
 #inspector .swatch.sel {
   outline: 2px solid var(--text);
   outline-offset: 1px;
+}
+
+/* The selected swatch already wears a ring, so focus moves it out and lights it. */
+#inspector .swatch.sel:focus-visible {
+  outline-color: var(--led);
+  outline-offset: 3px;
 }
 
 .swatch-none {
@@ -1482,7 +1543,7 @@ input[type="range"]:focus-visible,
   font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--plot-faint);
+  color: var(--text-dim);
 }
 
 .linkbar-pop table {
@@ -2066,9 +2127,15 @@ input[type="range"]:focus-visible,
 .gt-modes button:last-child {
   border-right: 0;
 }
+/* The pressed tab is the channel rail's purple with white ink. The dark rail is a
+   mid-tone, so the dark face is a deeper shade of the same hue; the light rail carries
+   white as it is. */
 .view-tabs button[aria-pressed="true"] {
-  background: var(--rail-channel);
+  background: color-mix(in srgb, var(--rail-channel) 85%, #000);
   color: #fff;
+}
+[data-theme="light"] .view-tabs button[aria-pressed="true"] {
+  background: var(--rail-channel);
 }
 .view-tabs button:focus-visible,
 .udk-banks button:focus-visible,
@@ -2146,8 +2213,11 @@ input[type="range"]:focus-visible,
   justify-content: center;
   background: rgba(0, 0, 0, 0.12);
 }
+/* The light canvas under the shade is darker than the grounds the dim tier is set
+   for, so the light labels take a darker ink of their own. */
 [data-theme="light"] .con-grouplabel {
   background: rgba(0, 0, 0, 0.03);
+  color: #605847;
 }
 .con-group.master .con-grouplabel {
   color: var(--led-ink);
@@ -2167,10 +2237,53 @@ input[type="range"]:focus-visible,
      then goes to .con-strips' vertical scroll instead of crushing the fader. */
   min-height: min-content;
 }
-/* A node whose master is off (power LED off): dim the whole strip like the graph
-   dims a muted node, while its other controls (MUTE / sends / EQ) stay operable. */
+/* The strip root holds the focus when a popover close lands on it, and in WebKit after a
+   click on a control the click does not focus. It wears the rack's inset amber ring: the
+   rack clips what is drawn outside a strip, and the next strip paints over its right edge. */
+.con-strip:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
+}
+/* A node whose master is off (power LED off), or whose bus the rate removes: the parts
+   of the strip that carry no text dim — the fader and mini-fader grooves, the meter, the
+   knob faces and the scribble's ground — the way the graph dims a muted node. Its
+   controls (MUTE / sends / EQ) stay operable, so their labels and the fader caps are not
+   dimmed. The 0-dB lines carry an opacity of their own, so theirs is the product. */
 .con-strip.inactive {
+  --inactive-veil: color-mix(in srgb, var(--panel) 50%, transparent);
+}
+.con-strip.inactive :is(.con-fader, .con-vfad) .track,
+.con-strip.inactive .con-meter {
   opacity: 0.5;
+}
+.con-strip.inactive .con-fader .zero {
+  opacity: 0.3;
+}
+.con-strip.inactive .con-vfad .zero {
+  opacity: 0.25;
+}
+/* The knob face and the scribble's ground take a half-panel veil rather than opacity:
+   the knob's focus ring is its own outline, and the scribble's name and power LED are
+   drawn over its ground. The scribble's veil is an inset shadow, which paints over the
+   ground and under everything inside it. */
+.con-strip.inactive .con-knob::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: var(--inactive-veil);
+  pointer-events: none;
+}
+.con-strip.inactive .con-scribble {
+  box-shadow:
+    var(--ctl-shadow),
+    inset 0 0 0 100vmax var(--inactive-veil);
+}
+.con-strip.inactive .con-scribble.power:focus-visible {
+  box-shadow:
+    var(--ctl-shadow),
+    inset 0 0 0 100vmax var(--inactive-veil),
+    0 0 0 4px rgba(0, 0, 0, 0.9);
 }
 
 .con-head {
@@ -2483,12 +2596,14 @@ input[type="range"]:focus-visible,
   position: relative;
   padding: 5px 0 6px;
 }
+/* The spine runs between the first and the last node's centre, each end tucked inside
+   its node. */
 .con-tappop .chain::before {
   content: "";
   position: absolute;
   left: 16px;
-  top: 12px;
-  bottom: 13px;
+  top: 14.5px;
+  bottom: 15.5px;
   width: 2px;
   background: linear-gradient(180deg, #5a4d31, #3a3220);
   border-radius: 1px;
@@ -2496,11 +2611,14 @@ input[type="range"]:focus-visible,
 [data-theme="light"] .con-tappop .chain::before {
   background: linear-gradient(180deg, #cabd9f, #b3a684);
 }
+/* Each row is a 24px target, the WCAG 2.5.8 minimum: the rows abut, so no spacing
+   between them can stand in for a shorter one. */
 .con-tappop .crow {
   position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 24px;
   padding: 4px 10px;
   cursor: pointer;
 }
@@ -2816,7 +2934,7 @@ input[type="range"]:focus-visible,
   margin-bottom: 2px;
 }
 .con-readout .mtr .cap2 {
-  color: color-mix(in srgb, var(--led) 62%, var(--text-dim));
+  color: color-mix(in srgb, var(--led-ink) 62%, var(--text-dim));
 }
 .con-readout .rv {
   font: 700 12px var(--mono);
@@ -2864,8 +2982,13 @@ input[type="range"]:focus-visible,
 }
 /* rack header: SENDS label / value readout (swaps in on column touch) / active-send
    dots (collapsed) / collapse arrow. Fixed height so the readout swap never reflows. */
+/* The header clips its readout, so its hit area grows by padding rather than by a
+   pseudo-element: into the rack's padding above and to each side and half the gap below,
+   with margins that keep its place in the rack at 13px. */
 .con-sh {
-  height: 13px;
+  height: 20px;
+  padding: 5px 5px 2px;
+  margin: -5px -5px -2px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -2873,9 +2996,6 @@ input[type="range"]:focus-visible,
   cursor: pointer;
   user-select: none;
   overflow: hidden;
-}
-.con-sh.dim {
-  opacity: 0.55;
 }
 .con-sh .lb {
   font: 700 8.5px var(--mono);
@@ -2943,9 +3063,6 @@ input[type="range"]:focus-visible,
   flex-direction: column;
   gap: 3px;
 }
-.con-scol.off {
-  opacity: 0.5;
-}
 .con-scol.empty {
   visibility: hidden;
 }
@@ -2968,6 +3085,24 @@ input[type="range"]:focus-visible,
 }
 .con-sends {
   --rack-btn-h: 18px;
+}
+/* The enable chip and the PRE button take half of each gap around them as hit area, through
+   a transparent box that takes no layout: neighbours meet at the middle of a gap and never
+   overlap. The box is placed against the padding edge, so each inset counts the border. */
+.con-sl,
+.con-slp {
+  position: relative;
+}
+.con-sl::after,
+.con-slp::after {
+  content: "";
+  position: absolute;
+}
+.con-sl::after {
+  inset: -3px -2.5px -2.5px;
+}
+.con-slp::after {
+  inset: -2.5px -2.5px -4.5px;
 }
 .con-sl,
 .con-slp {
@@ -3510,10 +3645,12 @@ input[type="range"]:focus-visible,
 .con-ifxpop .ilist {
   padding: 4px 0;
 }
+/* A 24px target, as the meter-point rows are; the name and the reason are centred in it. */
 .con-ifxpop .irow {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+  min-height: 24px;
   padding: 4px 10px;
   cursor: pointer;
 }
@@ -3530,6 +3667,8 @@ input[type="range"]:focus-visible,
   font: 600 8px var(--mono);
   letter-spacing: 0.5px;
   color: var(--text-dim);
+}
+.con-ifxpop .irow.off .why {
   opacity: 0.75;
 }
 .con-ifxpop .irow:hover {
@@ -3932,6 +4071,13 @@ button.consent-btn-primary {
   border-radius: 999px;
   padding: 1px 7px;
 }
+/* The light dim tier sits at the tier's floor, so these labels print it at full ink
+   there; the dark theme keeps the fade. */
+[data-theme="light"] .prefs-lock,
+[data-theme="light"] .dev-sub,
+[data-theme="light"] .udk-head span {
+  color: var(--text-dim);
+}
 /* Faces and selects reuse the inspector-toggle / rack-select / tool-button
    recipes above; only the width constraints are prefs-specific. */
 .prefs-toggle {
@@ -3970,10 +4116,14 @@ button.consent-btn-primary {
   display: none;
 }
 /* In-flight disable (the update check): same treatment as a disabled menu
-   item. Locked rows stay out — they already dim wholesale. The modal actions
-   are not listed here any more; they carry the same treatment from the
-   `.consent-actions button` recipe, which reaches every dialog. */
-.prefs-row:not(.locked) .prefs-btn:disabled {
+   item, on every kind of control the flight disables — the buttons, the
+   segmented faces and the selects. Locked rows stay out — they already dim
+   wholesale. The modal actions are not listed here any more; they carry the
+   same treatment from the `.consent-actions button` recipe, which reaches
+   every dialog. */
+.prefs-row:not(.locked) .prefs-btn:disabled,
+.prefs-row:not(.locked) .prefs-toggle button:disabled,
+.prefs-row:not(.locked) .prefs-select:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
@@ -4013,9 +4163,9 @@ button.consent-btn-primary {
   font-size: 11px;
   color: var(--text);
 }
-/* The on-air tally's ink, on a dot rather than the text: the sentence has to stay
-   readable (red on the panel is only ~4.4:1 at this size) while the lamp carries
-   the "this goes to the hardware" meaning the tally already taught. */
+/* The on-air tally's ink, on a dot rather than the text: the sentence keeps the text
+   ink while the lamp carries the "this goes to the hardware" meaning the tally
+   already taught. */
 .dev-warm::before {
   content: "";
   width: 7px;
@@ -4055,8 +4205,8 @@ button.consent-btn-primary {
   height: 6px;
   margin-right: 7px;
   border-radius: 50%;
-  background: var(--led);
-  box-shadow: 0 0 6px var(--led);
+  background: var(--led-ink);
+  box-shadow: 0 0 6px var(--led-ink);
 }
 /* Rendered with .prefs-ver, which already carries the dim mono readout face. */
 .dev-pending {
@@ -4182,23 +4332,23 @@ button.consent-btn-primary {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--led);
+  background: var(--led-ink);
   pointer-events: none;
 }
 /* No border-radius here: the outline follows each element's own radius (chips /
    fader caps keep theirs, knobs stay circular) — declaring one would override
    the knob's 50% and square it while learn mode is on. */
 .midi-target {
-  outline: 1px dashed color-mix(in srgb, var(--led) 55%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--led-ink) var(--learn-ring), transparent);
   outline-offset: 1px;
 }
 .midi-target.midi-armed {
-  outline: 2px solid var(--led);
+  outline: 2px solid var(--led-ink);
   animation: midi-armed-pulse 1s ease-in-out infinite;
 }
 @keyframes midi-armed-pulse {
   50% {
-    outline-color: color-mix(in srgb, var(--led) 30%, transparent);
+    outline-color: color-mix(in srgb, var(--led-ink) var(--learn-trough), transparent);
   }
 }
 /* The only animation here with no end: learn mode arms a control and it pulses
@@ -4222,7 +4372,7 @@ button.consent-btn-primary {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--led);
+  background: var(--led-ink);
   box-shadow: 0 0 0 1px var(--panel);
   pointer-events: none;
   z-index: 1;
@@ -4337,10 +4487,22 @@ button.consent-btn-primary {
   background: var(--led-face);
   color: var(--on-accent-ink);
 }
+/* Every wording the hint can show shares one grid cell, so the hint is as tall as the
+   tallest of them at whatever width the window has, and switching learn on or off, or
+   arming a control, moves nothing below it. Each wording is centred in that height, on
+   the LEARN button's axis; the ones not in effect keep their space and are not painted. */
 .mw-hint {
   flex: 1;
   min-width: 0;
   line-height: 1.5;
+  display: grid;
+}
+.mw-hint > * {
+  grid-area: 1 / 1;
+  align-self: center;
+}
+.mw-hint > [aria-hidden="true"] {
+  visibility: hidden;
 }
 /* The assignment list. A table, not a flex row per assignment: at 360 px the name
    ellipsized and the address competed with the selects on one line, and the whole
@@ -4525,7 +4687,8 @@ button.consent-btn-primary {
 
      The 520px is the shipped bank's number and the default a face gets. A bank whose
      tallest face needs more says so from its binding (`faceReserve`), which sets
-     `--gt-face-min` here; no bank does today, so every bank takes the 520. */
+     `--gt-face-min` here: the INS FX screen does, with one number for every family, since a
+     device follow can replace the effect inside an open screen. */
   min-height: min(var(--gt-face-min, 520px), calc(100vh - 211px));
   /* Below the reserve the panel would CLIP rather than shrink — a column has nowhere to
      put its rows and the box hides what overflows — so the grid takes a scroll instead of
@@ -4582,6 +4745,10 @@ button.consent-btn-primary {
    clips its overflow and an outline drawn outside the canvas would be cut off by it. */
 .gt-curvebox canvas.gt-pickplot {
   cursor: pointer;
+}
+.gt-curvebox canvas.gt-pickplot:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
 }
 /* A plot beside its meters, in signal order: the plot takes the width it can get and the
    rack takes what its lanes need. Every screen with a plot uses it but one — the SSMCS
@@ -4812,8 +4979,8 @@ button.consent-btn-primary {
   font-family: var(--mono);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
-  /* --plot-faint is sized for the pinned-dark groove; these numbers sit on the
-     panel, where it measures 2.62:1. The dim tier is the panel's own step. */
+  /* Text on the groove takes --plot-dim, as the plots' own tick labels do;
+     --plot-faint is the rules' tone there, not an ink. */
   color: var(--plot-dim);
 }
 .gt-scale .t::before {
@@ -4897,7 +5064,7 @@ button.consent-btn-primary {
   color: var(--text);
 }
 .gt-ro.gr .v {
-  color: var(--gr);
+  color: var(--gr-ink);
 }
 .gt-ro .p {
   font-family: var(--mono);
@@ -4936,12 +5103,48 @@ button.consent-btn-primary {
   .prefs-toggle button.on,
   .udk-banks button[aria-pressed="true"],
   .gt-notes button[aria-pressed="true"],
-  .menu-panel .menu-item[aria-pressed="true"],
+  .menu-panel .menu-item[aria-checked="true"],
   .mw-learnbtn.on,
-  .con-panbtn.open {
+  .con-panbtn.open,
+  .view-tabs button[aria-pressed="true"] {
     background: Canvas;
     color: CanvasText;
     border: 3px double CanvasText;
+  }
+  /* The same rim on two controls that must not change size with their state. The
+     Follow USB badge gives the rim's extra width back out of its padding, so the
+     toolbar does not shift when the state lands; the popover row takes the rim as an
+     inset outline, so the rows below it stay where they are. */
+  .follow-usb[data-state="on"] {
+    background: Canvas;
+    color: CanvasText;
+    border: 3px double CanvasText;
+    padding: 3px 8px;
+  }
+  .con-ifxpop .irow.active {
+    background: Canvas;
+    color: CanvasText;
+    outline: 3px double CanvasText;
+    outline-offset: -3px;
+  }
+  /* The held row with the keyboard focus on it draws that rim dashed: the focus ring and the
+     held state share the one outline, so the focus shows as a change of shape. */
+  .con-ifxpop .irow.active:focus-visible {
+    outline-style: dashed;
+  }
+
+  /* A state drawn only as a filled dot: the fill is a system colour, which the mode
+     keeps, and the unlit LED keeps a rim so its place still shows. */
+  .sec-led {
+    border: 1px solid CanvasText;
+  }
+  .sec-led.on,
+  .prefs-row.dirty .lblc::before,
+  .udk-row.dirty .knob::before,
+  .midi-target.midi-mapped::before,
+  #dyn-screen-box .prefs-row.midi-mapped-row::before,
+  .con-sh .dots i {
+    background: CanvasText;
   }
 
   /* Anything whose job is to point at a position: the filled bar becomes an
@@ -5054,5 +5257,34 @@ button.consent-btn-primary {
     forced-color-adjust: none;
     outline: 1px solid CanvasText;
     outline-offset: -1px;
+  }
+
+  /* The inspector's colour keys and the colour picker carry the board's colours
+     outside the board's island, so each is an island of its own. Their edges and the
+     picker's selection and focus rings are restated in system colours, which still
+     resolve to the contrast palette inside an island; the focus ring is restated on
+     the selected swatch too, whose own focus rule outranks the plain one. */
+  #inspector .swatch:not(.swatch-none),
+  .conn-row .dot {
+    forced-color-adjust: none;
+  }
+  #inspector .swatch {
+    border-color: CanvasText;
+  }
+  #inspector .swatch.sel {
+    outline-color: CanvasText;
+  }
+  #inspector .swatch:focus-visible,
+  #inspector .swatch.sel:focus-visible {
+    outline-color: Highlight;
+  }
+  .conn-row .dot {
+    border: 1px solid CanvasText;
+  }
+
+  /* The MIDI window's gang rail marks membership, so it trades its fill for an edge. */
+  .mw-list tr.linked td:first-child::before {
+    background: none;
+    border-left: 2px solid CanvasText;
   }
 }

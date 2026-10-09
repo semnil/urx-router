@@ -15,6 +15,7 @@ import { sendConnection } from "../core/plan";
 import type { ConsoleMidiHooks } from "./console";
 import { BUS_TYPE_FIXED, PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { t } from "../i18n";
+import { defaultPlan } from "../models/initial-state";
 
 let h: ConsoleHost;
 
@@ -39,10 +40,8 @@ const colOf = (id: string, short: string): HTMLElement => {
 const level = (id: string, target: string): number | undefined =>
   sendConnection(h.plan, id, target)?.params?.level as number | undefined;
 
-// Every send ships OFF (-96.5 dB, measured on the default URX44V plan), and the level
-// grid is deliberately asymmetric at that end — a step down off the lowest real detent
-// lands on −∞, so a round trip from OFF does not return to OFF. Tests about the ordinary
-// stepping seed a real level first; the OFF end has a case of its own below.
+// Every send ships OFF (-96.5 dB, measured on the default URX44V plan). Tests about the
+// ordinary stepping seed a real level first; the OFF end has a case of its own below.
 const seedLevel = (id: string, target: string, db: number): void => {
   const c = sendConnection(h.plan, id, target)!;
   c.params = { ...c.params, level: db };
@@ -110,27 +109,35 @@ describe("a column's fader", () => {
     expect(col.fader.getAttribute("aria-valuetext")).toBe("off (-∞)");
   });
 
-  // The OFF end is not symmetric, and that is the level grid's own rule rather than
-  // this view's. Measured from the default (OFF = −96.5): a step up clamps the base to
-  // the floor and then steps, landing on −80 — so it climbs out past the floor in one
-  // press, and coming back down takes TWO (−80 → −96 → −∞). A test that assumed a
-  // symmetric round trip would read the second press as a lost edit.
-  it("climbs out of −∞ in one step and needs two to fall back into it", () => {
+  // −∞ is the first of the grid's detents, as it is in the Inspector's level slider: one
+  // step up from it lands on the floor detent (−96) and one step down goes back, PageUp
+  // counts it as the first of its six, and a wheel notch is one Arrow. A level stored
+  // BELOW the floor steps from −∞ too, so its first step up is the floor detent rather
+  // than a press that writes −∞ again.
+  it("steps out of −∞ onto the floor detent, and back into it, one detent per press", () => {
     h = consoleHost();
-    const col = h.sendCol("ch1", "bus.mix1");
-    expect(col.fader.getAttribute("aria-valuetext")).toBe("off (-∞)");
+    const fader = (): HTMLElement => h.sendCol("ch1", "bus.mix1").fader;
+    expect(fader().getAttribute("aria-valuetext")).toBe("off (-∞)");
 
-    key(col.fader, "ArrowUp");
-    const climbed = level("ch1", "bus.mix1")!;
-    expect(climbed).toBe(-80);
+    key(fader(), "ArrowUp");
+    expect(level("ch1", "bus.mix1")).toBe(-96);
+    expect(fader().getAttribute("aria-valuetext")).not.toBe("off (-∞)");
+    key(fader(), "ArrowDown");
+    expect(fader().getAttribute("aria-valuetext")).toBe("off (-∞)");
 
-    key(col.fader, "ArrowDown");
-    const floor = level("ch1", "bus.mix1")!;
-    expect(floor).toBe(-96);
-    expect(col.fader.getAttribute("aria-valuetext")).not.toBe("off (-∞)");
+    key(fader(), "PageUp");
+    expect(level("ch1", "bus.mix1")).toBe(-48);
 
-    key(col.fader, "ArrowDown");
-    expect(col.fader.getAttribute("aria-valuetext")).toBe("off (-∞)");
+    key(fader(), "End");
+    wheel(fader(), 1);
+    expect(level("ch1", "bus.mix1")).toBe(-96);
+
+    seedLevel("ch1", "bus.mix1", -200);
+    key(fader(), "ArrowUp");
+    expect(level("ch1", "bus.mix1")).toBe(-96);
+    seedLevel("ch1", "bus.mix1", -200);
+    key(fader(), "PageUp");
+    expect(level("ch1", "bus.mix1")).toBe(-48);
   });
 
   it("ignores a key that does not step", () => {
@@ -182,6 +189,44 @@ describe("a column's fader", () => {
     const fine = level("ch1", "bus.mix1")!;
     expect(fine).toBeGreaterThan(start);
     expect(fine).toBeLessThan(coarse);
+  });
+
+  // Flipping Shift mid-drag rebases both anchors, as the head knob's do: the move that
+  // carries the flip lands where the level already is, and the drag then continues at the
+  // other rate from there. Without the rebase the new rate is applied to the whole
+  // distance already dragged, and a downward drag that presses Shift jumps the level UP.
+  it("does not jump when Shift is pressed or released mid-drag", () => {
+    h = consoleHost();
+    seedLevel("ch1", "bus.mix1", -10);
+    const fader = h.sendCol("ch1", "bus.mix1").fader;
+    const move = (clientY: number, shiftKey: boolean): void =>
+      void window.dispatchEvent(new PointerEvent("pointermove", { clientY, shiftKey, pointerId: 1 }));
+
+    fader.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 100, pointerId: 1 }),
+    );
+    move(130, false);
+    const coarse = level("ch1", "bus.mix1")!;
+    expect(coarse).toBeLessThan(-10);
+    move(130, true);
+    expect(level("ch1", "bus.mix1"), "pressing Shift where the pointer stands").toBe(coarse);
+    move(140, true);
+    const fine = level("ch1", "bus.mix1")!;
+    expect(fine, "further down, at the fine rate").toBeLessThan(coarse);
+    move(140, false);
+    expect(level("ch1", "bus.mix1"), "releasing Shift where the pointer stands").toBe(fine);
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
+
+    // The fine rate itself: 10 px with Shift moves less than 10 px without.
+    seedLevel("ch1", "bus.mix1", -10);
+    const again = h.sendCol("ch1", "bus.mix1").fader;
+    again.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 100, pointerId: 1 }),
+    );
+    move(130, false);
+    move(140, false);
+    expect(level("ch1", "bus.mix1")).toBeLessThan(fine);
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
   });
 
   it("resets to the factory level on a double-click", () => {
@@ -367,6 +412,38 @@ describe("the SEND PAN popover", () => {
     expect(panBtn("ch2").getAttribute("aria-expanded")).toBe("true");
   });
 
+  // A device-side Pan Link flip announces only the MIX bus, so the follow rebuilds that bus's
+  // strip and not the strip whose popover is open. The popover's MIX 1 knob is read-only
+  // under the link, and live without it — so it is re-read when the bus is rebuilt, in both
+  // directions, and left alone (the same elements) when the rebuild changed no lock.
+  it("re-reads a MIX bus's Pan Link when that bus's strip is rebuilt, and only when it moved", () => {
+    h = consoleHost();
+    const mix1 = (): HTMLElement => pop().querySelector<HTMLElement>('.pcol .con-knob[aria-label="MIX 1"]')!;
+    const send = sendConnection(h.plan, "ch1", "bus.mix1")!;
+    panBtn("ch1").click();
+    expect(mix1().getAttribute("aria-disabled")).toBeNull();
+    expect(mix1().tabIndex).toBe(0);
+
+    const drawn = mix1();
+    h.view.refreshStrip("bus.mix1");
+    expect(mix1(), "no lock moved: the same knob").toBe(drawn);
+
+    mix1().focus();
+    (h.plan.nodeParams["bus.mix1"] ??= {}).panLink = true;
+    send.params = { ...send.params, pan: -20 };
+    h.view.refreshStrip("bus.mix1");
+    expect(pop().hidden).toBe(false);
+    expect(mix1().getAttribute("aria-disabled"), "locked under the link").toBe("true");
+    expect(mix1().getAttribute("aria-valuenow"), "showing the pan the link put there").toBe("-20");
+    expect(panBtn("ch1").getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement, "the focus the locked knob had goes to the trigger").toBe(panBtn("ch1"));
+
+    h.plan.nodeParams["bus.mix1"]!.panLink = false;
+    h.view.refreshStrip("bus.mix1");
+    expect(mix1().getAttribute("aria-disabled"), "live again without it").toBeNull();
+    expect(mix1().tabIndex).toBe(0);
+  });
+
   it("writes the knob's value onto the send connection's pan", () => {
     h = consoleHost();
     panBtn("ch1").click();
@@ -392,6 +469,36 @@ describe("the meter-point popover", () => {
     other.click();
     expect(h.host.querySelector<HTMLElement>(".con-tappop")!.hidden).toBe(true);
     expect(badge("ch1").textContent).toContain(label);
+  });
+
+  // The badge says whether its popover is open — across the one-strip rebuild a device
+  // follow runs under an open popover too — and the rows it opens sit in a menu named for
+  // what they choose.
+  it("reports its open state on the badge and lists its rows inside a named menu", () => {
+    h = consoleHost();
+    const expanded = (): string | null => badge("ch1").getAttribute("aria-expanded");
+    expect(expanded()).toBe("false");
+    badge("ch1").click();
+    expect(expanded()).toBe("true");
+    const pop = h.host.querySelector<HTMLElement>(".con-tappop")!;
+    const rows = [...pop.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    expect(rows.length).toBeGreaterThan(1);
+    for (const r of rows) {
+      const menu = r.closest<HTMLElement>('[role="menu"]');
+      expect(menu !== null && pop.contains(menu)).toBe(true);
+      expect(menu!.getAttribute("aria-label")).toBe(t().console.meterPoint);
+    }
+
+    const before = badge("ch1");
+    h.view.refreshStrip("ch1");
+    expect(badge("ch1"), "the premise: the badge was rebuilt").not.toBe(before);
+    expect(expanded(), "the rebuilt badge reads open").toBe("true");
+    key(document.body, "Escape");
+    expect(expanded(), "and shut once the popover closes").toBe("false");
+
+    badge("ch1").click();
+    badge("ch1").click();
+    expect(expanded()).toBe("false");
   });
 
   it("opens and closes from the keyboard, and Escape closes it", () => {
@@ -666,6 +773,44 @@ describe("storage that cannot be trusted", () => {
     localStorage.setItem("urx-metertap", JSON.stringify({ URX44V: "nonsense" }));
     expect(() => (h = consoleHost())).not.toThrow();
   });
+
+  // The container itself, one shape per class JSON can hold that is not an object. A null
+  // used to throw out of every render (an empty CONSOLE, and the module init with it when
+  // CONSOLE was the remembered view); a primitive made every pick throw before it was
+  // saved; an array dropped the pick on the way to storage.
+  it.each(["null", '"x"', "7", "true", "[]"])("reads a tap store holding %s as no choices, and saves a pick", (raw) => {
+    localStorage.setItem("urx-metertap", raw);
+    h = consoleHost();
+    expect(h.host.querySelectorAll(".con-strip").length).toBeGreaterThan(0);
+    const badge = (): HTMLElement => h.strip("ch1").root.querySelector<HTMLElement>(".con-tap")!;
+    badge().click();
+    const other = [...h.host.querySelectorAll<HTMLElement>(".con-tappop .crow")].find(
+      (r) => r.getAttribute("aria-checked") === "false",
+    )!;
+    const label = other.querySelector(".nm")!.textContent!;
+    other.click();
+    expect(h.host.querySelector<HTMLElement>(".con-tappop")!.hidden).toBe(true);
+    expect(badge().textContent).toContain(label);
+    const stored = JSON.parse(localStorage.getItem("urx-metertap")!) as Record<string, Record<string, string>>;
+    expect(Object.keys(stored)).toEqual(["URX44V"]);
+    expect(stored.URX44V.ch1).toBeTruthy();
+  });
+
+  // Only a stored false collapses the rack; anything else reads as the default, open, and
+  // never reaches aria-expanded as itself.
+  it.each(["1", "0", '"no"', "{}", "null"])("reads a SENDS state of %s as open", (raw) => {
+    localStorage.setItem("urx-sends-open", raw);
+    h = consoleHost();
+    expect(header("ch1").getAttribute("aria-expanded")).toBe("true");
+    expect(h.host.classList.contains("sends-collapsed")).toBe(false);
+  });
+
+  it("reads a stored false as collapsed", () => {
+    localStorage.setItem("urx-sends-open", "false");
+    h = consoleHost();
+    expect(header("ch1").getAttribute("aria-expanded")).toBe("false");
+    expect(h.host.classList.contains("sends-collapsed")).toBe(true);
+  });
 });
 
 describe("the slot set follows the model", () => {
@@ -869,5 +1014,298 @@ describe("where the focus goes when a popover closes", () => {
     elsewhere.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     expect(h.host.querySelector<HTMLElement>(".con-tappop")!.hidden).toBe(true);
     expect(document.activeElement, "the press owns the focus, not the popover that closed").toBe(elsewhere);
+  });
+});
+
+// The popovers are appended after the whole strip rack, so from a trigger the next Tab walks
+// the rest of the rack before it reaches the popover. Opened from the KEYBOARD a popover takes
+// the focus — onto a list's checked row, onto SEND PAN's first knob — and once the focus
+// leaves both the popover and its trigger the popover closes, so it does not stand open over
+// the strips the focus moved on to. A pointer open, and the re-open a one-strip rebuild runs,
+// leave the focus where it is.
+describe("a popover the keyboard opens", () => {
+  const tapBadge = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-tap")!;
+  const panBtn = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-panbtn")!;
+  const tapPop = (): HTMLElement => h.host.querySelector<HTMLElement>(".con-tappop")!;
+  const spop = (): HTMLElement => h.host.querySelector<HTMLElement>(".con-spop")!;
+  /** A click on a native button as the keyboard produces it (Enter / Space): no click count. */
+  const keyClick = (el: HTMLElement): void =>
+    void el.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+  const pointerClick = (el: HTMLElement): void =>
+    void el.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+  const focusout = (from: HTMLElement, to: HTMLElement | null): void =>
+    void from.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: to }));
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("takes the focus onto the meter point's checked row", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    expect(tapPop().contains(document.activeElement)).toBe(true);
+    expect((document.activeElement as HTMLElement).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("takes the focus onto SEND PAN's first knob", () => {
+    h = consoleHost();
+    panBtn("ch1").focus();
+    keyClick(panBtn("ch1"));
+    expect(document.activeElement).toBe(spop().querySelector(".con-knob"));
+  });
+
+  it.each([
+    ["INS FX", (id: string) => h.strip(id).root.querySelector<HTMLElement>(".con-ifxopen")!, "ch1"],
+    ["EFFECT TYPE", (id: string) => h.strip(id).root.querySelector<HTMLElement>(".con-fxopen")!, "bus.fx1"],
+  ] as const)("takes the focus onto the %s list's checked row", (_name, opener, id) => {
+    h = consoleHost();
+    opener(id).focus();
+    key(opener(id), "Enter");
+    const pop = h.host.querySelector<HTMLElement>(".con-ifxpop")!;
+    expect(pop.hidden).toBe(false);
+    expect(pop.contains(document.activeElement)).toBe(true);
+    expect((document.activeElement as HTMLElement).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("leaves the focus where a pointer open found it", () => {
+    h = consoleHost();
+    panBtn("ch1").focus();
+    pointerClick(panBtn("ch1"));
+    expect(spop().hidden).toBe(false);
+    expect(document.activeElement).toBe(panBtn("ch1"));
+
+    tapBadge("ch2").focus();
+    pointerClick(tapBadge("ch2"));
+    expect(tapPop().hidden).toBe(false);
+    expect(document.activeElement).toBe(tapBadge("ch2"));
+  });
+
+  it("leaves a focus elsewhere alone when a one-strip rebuild re-opens the popover", () => {
+    h = consoleHost();
+    pointerClick(panBtn("ch1"));
+    const elsewhere = h.strip("ch2").fader!;
+    elsewhere.focus();
+    h.view.refreshStrip("ch1");
+    expect(spop().hidden, "re-opened").toBe(false);
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it("closes once the focus leaves both the popover and its trigger, and not before", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    const rows = [...tapPop().querySelectorAll<HTMLElement>(".crow")];
+    rows[0].focus();
+    expect(tapPop().hidden, "a row to another row").toBe(false);
+    tapBadge("ch1").focus();
+    expect(tapPop().hidden, "a row to the trigger").toBe(false);
+    rows[0].focus();
+
+    const outside = h.strip("ch2").fader!;
+    outside.focus();
+    expect(tapPop().hidden, "out of both").toBe(true);
+    expect(tapBadge("ch1").getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement, "the focus stays where it went").toBe(outside);
+  });
+
+  // WKWebView blurs the focused element when the window loses the OS foreground, naming no new
+  // target; Playwright's focus emulation keeps document.hasFocus() true, so this is the case
+  // that pins it. The same event with the window still focused is the positive control.
+  it("stays open when the window loses the foreground", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    const row = document.activeElement as HTMLElement;
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    focusout(row, null);
+    expect(tapPop().hidden).toBe(false);
+    hasFocus.mockReturnValue(true);
+    focusout(row, null);
+    expect(tapPop().hidden).toBe(true);
+  });
+
+  it("stays open when a press lands on a part of it that takes no focus", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    const row = document.activeElement as HTMLElement;
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    tapPop()
+      .querySelector<HTMLElement>(".ph")!
+      .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    focusout(row, null);
+    expect(tapPop().hidden).toBe(false);
+    document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    focusout(row, null);
+    expect(tapPop().hidden, "the press is over").toBe(true);
+  });
+});
+
+// Inside a popover's list the arrow keys walk the rows, the way the toolbar menus answer them:
+// Down / Up to the next / previous row, wrapping at the ends, Home / End to the first / last. A
+// row that cannot be picked takes no focus and is passed over. Tab still reaches the rows.
+describe("the arrow keys inside a popover's list", () => {
+  const tapBadge = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-tap")!;
+  const focused = (): HTMLElement => document.activeElement as HTMLElement;
+
+  it("walk the meter point's rows, wrapping at the ends", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    const rows = [...h.host.querySelectorAll<HTMLElement>(".con-tappop .crow")];
+    expect(rows.length, "the premise: a list to walk").toBeGreaterThan(2);
+    const start = rows.indexOf(focused());
+    expect(start, "the premise: the focus is on a row").toBeGreaterThanOrEqual(0);
+
+    expect(key(focused(), "ArrowDown").defaultPrevented).toBe(true);
+    expect(focused()).toBe(rows[(start + 1) % rows.length]);
+    key(focused(), "ArrowUp");
+    expect(focused()).toBe(rows[start]);
+    key(focused(), "End");
+    expect(focused()).toBe(rows[rows.length - 1]);
+    key(focused(), "ArrowDown");
+    expect(focused(), "down from the last row is the first").toBe(rows[0]);
+    key(focused(), "ArrowUp");
+    expect(focused(), "up from the first row is the last").toBe(rows[rows.length - 1]);
+    key(focused(), "Home");
+    expect(focused()).toBe(rows[0]);
+  });
+
+  it("leave a key held with a command modifier, and any other key, to the row", () => {
+    h = consoleHost();
+    tapBadge("ch1").focus();
+    key(tapBadge("ch1"), "Enter");
+    const row = focused();
+    expect(key(row, "ArrowDown", { metaKey: true }).defaultPrevented).toBe(false);
+    expect(key(row, "ArrowRight").defaultPrevented).toBe(false);
+    expect(focused()).toBe(row);
+  });
+
+  // CH 1 holding the compander takes the one slot it has, so CH 2's INS FX list carries rows that
+  // take no focus between the ones that do.
+  it("pass over the INS FX rows that cannot be picked", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 1793 };
+    h = consoleHost({ plan });
+    const opener = h.strip("ch2").root.querySelector<HTMLElement>(".con-ifxopen")!;
+    opener.focus();
+    key(opener, "Enter");
+    const list = h.host.querySelector<HTMLElement>(".con-ifxpop .ilist")!;
+    const all = [...list.querySelectorAll<HTMLElement>(".irow")];
+    const live = all.filter((r) => r.tabIndex === 0);
+    expect(all.length - live.length, "the premise: rows that cannot be picked").toBeGreaterThan(0);
+    expect(live.length, "the premise: more than one row to walk").toBeGreaterThan(1);
+    expect(live).toContain(focused());
+
+    const seen: HTMLElement[] = [];
+    key(focused(), "Home");
+    for (let i = 0; i < live.length; i++) {
+      seen.push(focused());
+      key(focused(), "ArrowDown");
+    }
+    expect(seen).toEqual(live);
+    expect(focused(), "and round to the first again").toBe(live[0]);
+  });
+
+  it("walk the EFFECT TYPE rows of an FX channel", () => {
+    h = consoleHost();
+    const opener = h.strip("bus.fx1").root.querySelector<HTMLElement>(".con-fxopen")!;
+    opener.focus();
+    key(opener, "Enter");
+    const rows = [...h.host.querySelectorAll<HTMLElement>(".con-ifxpop .ilist .irow")];
+    const start = rows.indexOf(focused());
+    expect(start).toBeGreaterThanOrEqual(0);
+    key(focused(), "ArrowDown");
+    expect(focused()).toBe(rows[(start + 1) % rows.length]);
+  });
+});
+
+// SEND PAN holds knobs rather than rows: Up / Down walk them, wrapping at the ends, while Left /
+// Right step the focused knob's value. A knob a lock took out of the tab order is passed over, and
+// the keys the walk does not take stay with the knob.
+describe("the arrow keys inside SEND PAN", () => {
+  const panBtn = (id: string): HTMLElement => h.strip(id).root.querySelector<HTMLElement>(".con-panbtn")!;
+  const knobs = (): HTMLElement[] => [...h.host.querySelectorAll<HTMLElement>(".con-spop .con-knob")];
+  const knobFor = (label: string): HTMLElement =>
+    h.host.querySelector<HTMLElement>(`.con-spop .con-knob[aria-label="${label}"]`)!;
+  const focused = (): HTMLElement => document.activeElement as HTMLElement;
+  const pans = (): number[] =>
+    ["bus.mix1", "bus.mix2"].map((target) => sendConnection(h.plan, "ch1", target)?.params?.pan ?? 0);
+  /** Open CH 1's popover the way Enter on the PAN button does, which puts the focus inside it. */
+  const openFromKeyboard = (): void => {
+    panBtn("ch1").focus();
+    panBtn("ch1").dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+  };
+
+  it("walk the knobs on Down / Up, wrapping at the ends, and step no value", () => {
+    h = consoleHost();
+    openFromKeyboard();
+    const ks = knobs();
+    expect(
+      ks.map((k) => k.getAttribute("aria-label")),
+      "the premise: two knobs to walk",
+    ).toEqual(["MIX 1", "MIX 2"]);
+    expect(focused()).toBe(ks[0]);
+    const before = pans();
+
+    expect(key(focused(), "ArrowDown").defaultPrevented).toBe(true);
+    expect(focused()).toBe(ks[1]);
+    expect(pans(), "the walk stepped nothing").toEqual(before);
+    key(focused(), "ArrowDown");
+    expect(focused(), "down from the last knob is the first").toBe(ks[0]);
+    expect(pans()).toEqual(before);
+    key(focused(), "ArrowUp");
+    expect(focused(), "up from the first knob is the last").toBe(ks[1]);
+    expect(pans()).toEqual(before);
+    key(focused(), "ArrowUp");
+    expect(focused()).toBe(ks[0]);
+    expect(pans()).toEqual(before);
+  });
+
+  it("step the focused knob's value on Left / Right and keep the focus on it", () => {
+    h = consoleHost();
+    openFromKeyboard();
+    key(focused(), "ArrowDown");
+    const mix2 = knobFor("MIX 2");
+    expect(focused()).toBe(mix2);
+    const [mix1At, mix2At] = pans();
+
+    expect(key(mix2, "ArrowRight").defaultPrevented).toBe(true);
+    expect(pans()).toEqual([mix1At, mix2At + 1]);
+    expect(mix2.getAttribute("aria-valuenow")).toBe(String(mix2At + 1));
+    key(mix2, "ArrowLeft");
+    key(mix2, "ArrowLeft");
+    expect(pans()).toEqual([mix1At, mix2At - 1]);
+    expect(focused()).toBe(mix2);
+    expect(mix2.getAttribute("aria-orientation")).toBe("horizontal");
+  });
+
+  it("leave Home / End, Page Up / Down and a key held with a command modifier where they were", () => {
+    h = consoleHost();
+    openFromKeyboard();
+    const knob = focused();
+    const before = pans();
+    for (const k of ["Home", "End", "PageUp", "PageDown"]) {
+      expect(key(knob, k).defaultPrevented, k).toBe(false);
+    }
+    expect(key(knob, "ArrowDown", { metaKey: true }).defaultPrevented).toBe(false);
+    expect(focused()).toBe(knob);
+    expect(pans()).toEqual(before);
+  });
+
+  it("pass over a knob Pan Link locked", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], panLink: true };
+    h = consoleHost({ plan });
+    openFromKeyboard();
+    const mix2 = knobFor("MIX 2");
+    expect(knobFor("MIX 1").tabIndex, "the premise: MIX 1 is out of the tab order").toBe(-1);
+    expect(focused()).toBe(mix2);
+    const before = pans();
+    key(mix2, "ArrowDown");
+    expect(focused()).toBe(mix2);
+    expect(pans(), "the walk stepped nothing").toEqual(before);
+    key(mix2, "ArrowUp");
+    expect(focused()).toBe(mix2);
+    expect(pans()).toEqual(before);
   });
 });

@@ -20,7 +20,8 @@ tabs, no send-on-fader mode and no console mode bar (`Output [MAIN]` / `Send to 
 The head MUTE chip controls the → STEREO main path (on the strips that have that send: channels,
 FX channels, MIX buses); the rack never touches the main path. The node master ON/OFF (CH_ON / MIX 675 /
 STEREO / MONITOR, all `np.on`, and the oscillator's `osc.on`) is a **power LED** on the scribble — the whole
-scribble is its button; when off the strip dims (the shared `isNodeInactive` predicate, matching the graph),
+scribble is its button; when off the strip dims its grooves, meter, knob faces and scribble ground (the shared
+`isNodeInactive` predicate, matching the graph) while its labels and fader caps keep their strength,
 so there is no separate red "CH MUTE" badge. STEREO and the MONITOR buses have no → STEREO send, so they carry no
 MUTE chip; the power LED is their only on/off.
 
@@ -56,7 +57,7 @@ visually fuse into one 0 dB reference line, so a strip's send distribution reads
   aligned across strips.
 - A strip that lacks a particular send leaves that column blank (e.g. FX channels show only
   MIX 1 / MIX 2). Strips with no sends at all (MIX / MONITOR / STEREO / OSCILLATOR / STREAMING)
-  render a dimmed `SENDS` header only — its collapse arrow still works, so the global collapse is
+  render a `SENDS` header only — its collapse arrow still works, so the global collapse is
   reachable from any strip. Meter-only strips get the same spacer so fader tops stay aligned.
 
 ### Send enable chip
@@ -116,7 +117,9 @@ still claims is given back — and that is the state an operator most needs to r
   full detent and live sync writes immediately). This is where it parts company with the main fader,
   which grabs its cap where it is but still jumps on a press that lands on the bare track
   ([architecture.md](architecture.md) "Pressing the main fader"). First write only after a 3 px drag threshold
-  (protects against mis-grabs and double-click). Shift-drag = fine mode (per detent).
+  (protects against mis-grabs and double-click). Shift-drag = fine mode (per detent); pressing or
+  releasing Shift mid-drag continues from the level already set, rather than applying the new rate
+  to the distance already dragged.
 - Keyboard: Arrow = 1 detent, PageUp/PageDown = 6, Home = max, End = −∞ (same as the main fader).
   Double-click = factory reset. Scroll wheel = 1 detent per notch (mirrors Arrow; the main fader,
   the head knob, and the inspector sliders share the same `onWheelStep` wiring in `src/ui/dom.ts`).
@@ -184,10 +187,37 @@ still claims is given back — and that is the state an operator most needs to r
   operator on `<body>`, a whole strip rack away from where they were. A PRESS is the other case:
   the focus belongs to whatever was pressed, and taking it back would move the caret out of the
   control the operator just aimed at. The same rule covers all three popovers.
+- **A popover opened from the keyboard takes the focus, and closes once the focus leaves it.** The
+  popovers are appended after the whole strip rack, so from a trigger the next Tab would walk the
+  rest of the rack first. Enter or Space on a trigger therefore moves the focus onto the popover's
+  checked row (meter point, INS FX type, FX effect type) or its first knob (SEND PAN); a pointer
+  open, and the re-open after a strip rebuild, leave the focus where it is. A focus that then moves
+  to an element outside both the popover and its trigger closes the popover without handing the
+  focus back. A focusout naming no new element is not that: the window losing the OS foreground
+  (`document.hasFocus()` false — WKWebView blurs on deactivation), and a press on a part of the
+  popover that takes no focus, both leave it open.
+- **Tab leaves a popover at its trigger's place in the tab order.** Left to the browser, a Tab past
+  the popover's last control would continue from the end of the document and a Shift+Tab before
+  its first from the last strip, since that is where the popover is appended. Instead Shift+Tab on
+  the first control closes the popover and lands on its trigger, and Tab on the last control closes
+  it and lands on the first control after the trigger that takes the focus. Tab between the popover's own controls is the browser's. The same rule covers all three
+  popovers.
+- **Inside a popover's list the arrow keys walk the rows** (meter point, INS FX type, FX effect type),
+  as the toolbar menus answer them: Down / Up to the next / previous row, wrapping at the ends, Home /
+  End to the first / last, and a row that cannot be picked is passed over. A key held with a command
+  modifier is left alone, and Tab still walks the rows. SEND PAN holds knobs rather than rows: Up /
+  Down walk them the same way, wrapping at the ends and passing over a knob a lock took out of the tab
+  order, Left / Right step the focused knob's value, and Home / End take no part in the walk.
+- **An ordinary control is carried by its own identity, not by its place.** Each control is built
+  with a `data-ctl` (its MIDI id where it has one, else a fixed name), and a rebuild looks that
+  identity up among the controls the rebuilt strip — or the re-opened popover — offers to the
+  keyboard. A control a lock took out of the tab order (a +48V that HI-Z locked, a SEND PAN knob
+  under Pan Link) or one the rate withheld answers nothing, so the focus is dropped, or handed to
+  the popover's trigger, rather than passed to the neighbour that moved up into its place.
 - **A focus this view placed itself outlives the next rebuild.** The two anchors below are
-  `tabindex="-1"` — present, not tabbable — so the strip rebuild's focus carry-over, which keys
-  an ordinary control by its position in the tab order, comes back empty for them and drops to
-  `<body>`. A device-follow repaint of the same channel is enough to trigger it, so the place the
+  `tabindex="-1"` — present, not tabbable — so the strip rebuild's focus carry-over, which looks
+  an ordinary control up among the controls the keyboard can reach, finds nothing for them and
+  drops to `<body>`. A device-follow repaint of the same channel is enough to trigger it, so the place the
   view hands the operator would not survive the next thing the unit says. They are keyed by NAME
   in the console's own capture instead of widening what counts as focusable, which the Inspector
   also keys against. The popovers are the other half: they live outside the strip rack and are
@@ -218,7 +248,11 @@ All rack edits go through the shared `markChanged` funnel (identical to the grap
 STEREO-linked pairs mirror via `mirrorLinkedPair`, and device-side changes arrive through `follow` →
 `refreshStrip`, which rebuilds the whole strip including the rack. If the strip's SEND PAN popover
 is open, `refreshStrip` re-opens it against the fresh strip's PAN ▾ button, so the knobs re-read
-the plan and the trigger keeps its open marking (device follow and external MIDI alike). Sends
+the plan and the trigger keeps its open marking (device follow and external MIDI alike). A
+rebuilt MIX strip re-opens ANOTHER strip's open SEND PAN popover the same way when one of the
+FIXED / Pan Link locks its knobs read has changed — a Pan Link turned on at the unit announces
+only the MIX bus — and leaves it alone otherwise, since a re-open under a knob being dragged
+ends the drag. A knob the re-open locked hands the focus to the PAN ▾ button. Sends
 have no meters — the broker exposes no per-send meter addresses — so the rack contains no signal
 display by design.
 
@@ -250,13 +284,15 @@ display by design.
 
 - Strips without sends carry a blank rack band while expanded (alignment cost; collapse
   mitigates).
-- Sub-24 px touch targets in the browser demo (desktop-first product; relative drag and keyboard
-  paths mitigate).
+- The rack's controls are under 24 px across (desktop-first product; relative drag and keyboard
+  paths mitigate). The enable chip, the PRE button and the `SENDS` header take half of each gap
+  around them as hit area, so a press between two controls lands on the nearer one; the popover
+  rows above the rack (meter point, INS FX type, FX effect type) are full 24 px targets.
 - Comparing one send across many strips is slightly slower than on horizontal rows (the
   fixed-y-band advantage is traded for grammar consistency and the elimination of the pan
   misread).
-- 19 px column pitch relies on pointer capture + the drag threshold to avoid adjacent-column
-  mis-grabs.
+- The 21.5 px column pitch (18.5 px columns, 3 px apart) relies on pointer capture + the drag
+  threshold to avoid adjacent-column mis-grabs.
 
 ## Edit → device data path
 

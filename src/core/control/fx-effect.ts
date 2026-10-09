@@ -100,9 +100,10 @@ export function revxFreqHz(raw: number): number {
 export function fx2FreqHz(raw: number): number {
   return preferredNumber(R40, raw + 47);
 }
-/** Initial Delay / ER-Reverb Delay (REV-X + Rev.R3): linear ms = raw × 200/127. */
+/** Initial Delay / ER-Reverb Delay (REV-X + Rev.R3): linear from 0.1 ms at raw 0 to
+ *  200.0 ms at raw 127, ms = 0.1 + raw × 199.9/127. */
 export function initDelayMs(raw: number): number {
-  return (raw * 200) / 127;
+  return 0.1 + (raw * 199.9) / 127;
 }
 /** Delay time for BOTH delay types: linear ms = raw / 10. The two differ in the
  *  RANGE they accept, not in how a raw reads. */
@@ -147,9 +148,9 @@ function revxTimeBaseUnits(raw: number): number {
 }
 /** How much longer than Hall a REV-X type runs at the same Reverb-Time raw. The unit's
  *  own maxima are the ratio: at Room Size 0 and raw 69 the LCD reads 10.3 s on Hall,
- *  15.2 s on Room and 17.6 s on Plate, and multiplying each by the Room Size scale of 3
- *  lands on the guide's per-type ceilings (31.0 / 45.3 / 52.0 s). The Room Size scale
- *  itself is type-independent. */
+ *  15.2 s on Room and 17.6 s on Plate. Multiplying each by the Room Size scale of 3 gives
+ *  30.9 / 45.6 / 52.8 s, near the guide's nominal per-type ceilings (31.0 / 45.3 / 52.0 s)
+ *  and not fitted to them. The Room Size scale itself is type-independent. */
 const REVX_TYPE_SCALE: Record<number, number> = { 0: 1, 1: 15.2 / 10.3, 2: 17.6 / 10.3 };
 
 /** REV-X Reverb Time seconds for a Reverb-Time raw, the channel's Room Size raw and the
@@ -213,6 +214,11 @@ export function formatFx2Hz(hz: number): string {
 function formatSec(s: number): string {
   return `${s < 10 ? s.toFixed(2) : s.toFixed(1)} s`;
 }
+/** REV-X Reverb Time, to the three significant figures the unit prints it with (0.927,
+ *  2.79, 31.0) — a fixed decimal count drops a digit below 1 s and adds one above 10 s. */
+function formatRevxSec(s: number): string {
+  return `${threeFigures(s)} s`;
+}
 /** The FX2 / delay filters read THRU rather than a frequency at the ends of their
  *  windows — the HPF's bottom six raws and the LPF's top one. The official ranges
  *  spell that out and put the word on the end it belongs to: the HPF's is written
@@ -225,8 +231,10 @@ function fx2HpfLabel(raw: number): string {
 function fx2LpfLabel(raw: number): string {
   return raw >= FX2_LPF_THRU ? "THRU" : formatFx2Hz(fx2FreqHz(raw));
 }
+/** A delay time, to the 0.1 ms the unit prints across the whole range — which is also the
+ *  step the keyboard and the wheel move a delay row by, so every step reads differently. */
 function formatMs(ms: number): string {
-  return `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
+  return `${ms.toFixed(1)} ms`;
 }
 
 // ---- per-effect parameter descriptors ----
@@ -277,7 +285,7 @@ export const REVX_PARAMS: FxParamDesc[] = [
     rawMax: 69,
     rawStep: 1,
     def: 23,
-    format: (r, c) => formatSec(revxTimeSec(r, c.roomSize ?? 31)),
+    format: (r, c) => formatRevxSec(revxTimeSec(r, c.roomSize ?? 31)),
   },
   {
     key: "revxInitialDelay",
@@ -697,7 +705,7 @@ export function fxParams(type: number): FxParamDesc[] {
     // Reverb Time is the one display that cannot be written without knowing the type.
     const format =
       family === "revx" && d.key === "reverbTime"
-        ? (r: number, c: Record<string, number>) => formatSec(revxTimeSec(r, c.roomSize ?? 31, type))
+        ? (r: number, c: Record<string, number>) => formatRevxSec(revxTimeSec(r, c.roomSize ?? 31, type))
         : d.format;
     return def === d.def && format === d.format ? d : { ...d, def, format };
   });
@@ -788,26 +796,33 @@ export function migrateFxEffectParams(
   delete (fx as unknown as Record<string, unknown>).on;
   delete (fx as unknown as Record<string, unknown>).level;
   const params = fx.params;
-  if (!params) return;
-  const type = resolveFxEffectType(fxIndex, fx.type);
-  const owned = new Set(fxParams(type).map((d) => d.key));
-  const rename = (from: string, to: string): void => {
-    if (!(from in params) || !owned.has(to)) return;
+  // A map that is not an object is left for the load-time repair, which drops it.
+  if (typeof params !== "object" || params === null || Array.isArray(params)) return;
+  if (version >= 2) return;
+  for (const [from, to] of legacyFxRenames(fxIndex, fx.type)) {
+    if (!(from in params)) continue;
     // The old key goes either way. It addresses nothing once the type owns another
     // name for that parameter, so leaving it would carry a value no build reads into
     // every later save of the plan.
     if (!(to in params)) params[to] = params[from];
     delete params[from];
-  };
-  if (version < 2) {
-    const prefix: string = fxFamilyOf(type);
-    for (const legacy of LEGACY_FX_PARAM_KEYS) {
-      rename(legacy, prefix + legacy[0].toUpperCase() + legacy.slice(1));
-    }
-    // Both re-keyings ride the same version, because both landed before any build that
-    // writes one shipped: the released app is version 1. From 2 on, a `delay` key beside
-    // a Ping Pong type is the MONO value parked under its own name, so re-keying it then
-    // would be the re-interpretation the split exists to prevent.
-    rename(MONO_DELAY_KEY, PINGPONG_DELAY_KEY);
   }
+}
+
+/** The renames a version-1 document's FX parameters take on load (`migrateFxEffectParams` says
+ *  why version 1 alone), as (stored key, key the build reads) pairs, for the type `typeValue`
+ *  resolves to on FX channel `fxIndex` — only those onto a key that type owns. The skill's
+ *  validator carries the same pairs (`skill-export.ts`). */
+export function legacyFxRenames(fxIndex: number, typeValue: number | undefined): Array<[string, string]> {
+  const type = resolveFxEffectType(fxIndex, typeValue);
+  const owned = new Set(fxParams(type).map((d) => d.key));
+  const prefix: string = fxFamilyOf(type);
+  const pairs: Array<[string, string]> = [
+    ...LEGACY_FX_PARAM_KEYS.map((legacy): [string, string] => [
+      legacy,
+      prefix + legacy[0].toUpperCase() + legacy.slice(1),
+    ]),
+    [MONO_DELAY_KEY, PINGPONG_DELAY_KEY],
+  ];
+  return pairs.filter(([, to]) => owned.has(to));
 }

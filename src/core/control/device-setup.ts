@@ -17,7 +17,7 @@
 import type { DeviceModel } from "../../models/types";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
-import type { ParamName } from "./params";
+import type { ParamName, WritableParamName } from "./params";
 import { clamp } from "./vd";
 import { TIME_ZONE_CITIES } from "./timezones";
 
@@ -105,6 +105,9 @@ export interface DeviceSetup {
   language: number;
   usbSuppression: number;
   knobs: UdkAssignment[];
+  /** The User Defined Knobs bank the unit is on, 0..3 = banks 1..4: the bank the screen
+   *  opens on. Read and never written, so no change is ever made of it. */
+  knobBank: number;
 }
 
 /** Which SETUP pages the model actually has, derived from the hardware it is fitted
@@ -135,12 +138,15 @@ export function defaultDeviceSetup(): DeviceSetup {
     language: 0,
     usbSuppression: 0,
     knobs: Array.from({ length: UDK_SLOTS }, () => ({ ...UDK_UNASSIGNED })),
+    knobBank: 0,
   };
 }
 
 /** Bring a value into range on the way out to hardware. The last line before a
  *  write, matching translate.ts's coercion: the broker stores an out-of-range Time
- *  Zone index verbatim instead of clamping, so nothing downstream will catch it. */
+ *  Zone index verbatim instead of clamping, so nothing downstream will catch it.
+ *  A reading is never passed through here: the screen holds what the unit reported,
+ *  and only what the operator edits is coerced (`coerceDeviceSetupFields`). */
 export function coerceDeviceSetup(s: DeviceSetup): DeviceSetup {
   return {
     ...s,
@@ -156,11 +162,25 @@ export function coerceDeviceSetup(s: DeviceSetup): DeviceSetup {
   };
 }
 
+/** The fields `patch` carries, each coerced the way `coerceDeviceSetup` coerces it, and
+ *  nothing else. A field the patch sets back to `reading`'s value keeps that value as the
+ *  unit holds it, catalog or not. Knobs are taken as given: the knob row normalizes the one
+ *  assignment it edits, and normalizing the whole list would move the knobs nobody touched. */
+export function coerceDeviceSetupFields(patch: Partial<DeviceSetup>, reading: DeviceSetup): Partial<DeviceSetup> {
+  const coerced = coerceDeviceSetup({ ...reading, ...patch });
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(patch) as (keyof DeviceSetup)[]) {
+    if (key === "knobs") out.knobs = patch.knobs;
+    else out[key] = patch[key] === reading[key] ? reading[key] : coerced[key];
+  }
+  return out as Partial<DeviceSetup>;
+}
+
 /** One pending hardware write. `y` is the parameter instance (0 for every global,
  *  the knob slot for the User Defined Knobs strings). */
 export type SetupWrite =
-  | { kind: "num"; name: ParamName; y: number; value: number }
-  | { kind: "str"; name: ParamName; y: number; value: string };
+  | { kind: "num"; name: WritableParamName; y: number; value: number }
+  | { kind: "str"; name: WritableParamName; y: number; value: string };
 
 /** Read the whole screen from the connected device. Rejects on the first failure:
  *  a partial read cannot be diffed against without inviting a write of values that
@@ -181,6 +201,7 @@ export async function readDeviceSetup(model: DeviceModel): Promise<DeviceSetup> 
   setup.autoPowerOffTime = await num("AUTO_POWER_OFF_TIME");
   setup.language = await num("DEVICE_LANGUAGE");
   setup.usbSuppression = await num("USB_SUPPRESSION");
+  setup.knobBank = await num("UDK_BANK");
   if (support.hdmi) {
     setup.hdcp = (await num("HDMI_HDCP")) !== 0;
     setup.hdmiChannels = await num("HDMI_INPUT_CHANNELS");
@@ -197,15 +218,24 @@ export async function readDeviceSetup(model: DeviceModel): Promise<DeviceSetup> 
     // (Monitor / Phones); elsewhere — and for Parameter 2, which never offers more
     // than one value — normalizeUdk would overwrite whatever came back, so reading
     // it would cost a round trip for a value that is discarded. On a factory unit
-    // (every knob No Assign) that skips 32 of the 58 reads this screen makes.
-    const p1 = entry && entry.p1.length > 1 ? await str("UDK_PARAM1", y) : "";
-    setup.knobs[y] = normalizeUdk({ fn, p1, p2: "" });
+    // (every knob No Assign) that skips 32 of the 59 reads this screen makes.
+    const chooses = entry !== undefined && entry.p1.length > 1;
+    const p1 = chooses ? await str("UDK_PARAM1", y) : "";
+    // A Function the catalog does not have is kept as the unit holds it, so the screen
+    // can say the knob is on something it does not offer rather than name an assignment
+    // the unit is not on; its two parameters are not read. A Parameter 1 the function
+    // offers a choice for is kept as read the same way, catalog or not.
+    setup.knobs[y] = !entry
+      ? { fn, p1: "", p2: "" }
+      : chooses
+        ? { ...normalizeUdk({ fn, p1, p2: "" }), p1 }
+        : normalizeUdk({ fn, p1, p2: "" });
   }
   return setup;
 }
 
 /** Which row a change belongs to: a scalar field, or one User Defined Knobs slot. */
-export type SetupField = Exclude<keyof DeviceSetup, "knobs"> | `knob${number}`;
+export type SetupField = Exclude<keyof DeviceSetup, "knobs" | "knobBank"> | `knob${number}`;
 
 export const knobField = (slot: number): SetupField => `knob${slot}`;
 
@@ -220,35 +250,38 @@ export interface SetupChange {
 }
 
 /** What applying `next` would send, given what the device reported as `current`.
- *  Only differences are written, so an unchanged screen sends nothing at all.
- *  Fields the model does not have are skipped: their rows are locked, and writing
- *  a page the unit does not have is a guess about hardware. */
+ *  The two are compared as they stand — `current` is the reading, uncoerced, so a field
+ *  the operator left alone holds the same value in both whatever it is, and nothing is
+ *  written for it. A field that differs is written at its coerced value. Fields the model
+ *  does not have are skipped: their rows are locked, and writing a page the unit does not
+ *  have is a guess about hardware. */
 export function deviceSetupChanges(model: DeviceModel, current: DeviceSetup, next: DeviceSetup): SetupChange[] {
   const support = setupSupport(model);
   const to = coerceDeviceSetup(next);
-  const from = coerceDeviceSetup(current);
   const changes: SetupChange[] = [];
-  const num = (field: SetupField, name: ParamName, a: number, b: number): void => {
-    if (a !== b) changes.push({ field, writes: [{ kind: "num", name, y: 0, value: b }] });
+  const num = (field: SetupField, name: WritableParamName, a: number, b: number, sent: number): void => {
+    if (a !== b) changes.push({ field, writes: [{ kind: "num", name, y: 0, value: sent }] });
   };
+  const bit = (v: boolean): number => (v ? 1 : 0);
 
-  num("brightness", "BRIGHTNESS", from.brightness, to.brightness);
-  num("autoPowerOff", "AUTO_POWER_OFF", from.autoPowerOff ? 1 : 0, to.autoPowerOff ? 1 : 0);
-  num("autoPowerOffTime", "AUTO_POWER_OFF_TIME", from.autoPowerOffTime, to.autoPowerOffTime);
-  num("language", "DEVICE_LANGUAGE", from.language, to.language);
-  num("usbSuppression", "USB_SUPPRESSION", from.usbSuppression, to.usbSuppression);
+  num("brightness", "BRIGHTNESS", current.brightness, next.brightness, to.brightness);
+  num("autoPowerOff", "AUTO_POWER_OFF", bit(current.autoPowerOff), bit(next.autoPowerOff), bit(to.autoPowerOff));
+  num("autoPowerOffTime", "AUTO_POWER_OFF_TIME", current.autoPowerOffTime, next.autoPowerOffTime, to.autoPowerOffTime);
+  num("language", "DEVICE_LANGUAGE", current.language, next.language, to.language);
+  num("usbSuppression", "USB_SUPPRESSION", current.usbSuppression, next.usbSuppression, to.usbSuppression);
   if (support.hdmi) {
-    num("hdcp", "HDMI_HDCP", from.hdcp ? 1 : 0, to.hdcp ? 1 : 0);
-    num("hdmiChannels", "HDMI_INPUT_CHANNELS", from.hdmiChannels, to.hdmiChannels);
+    num("hdcp", "HDMI_HDCP", bit(current.hdcp), bit(next.hdcp), bit(to.hdcp));
+    num("hdmiChannels", "HDMI_INPUT_CHANNELS", current.hdmiChannels, next.hdmiChannels, to.hdmiChannels);
   }
   if (support.dateTime) {
-    num("dateFormat", "DATE_FORMAT", from.dateFormat, to.dateFormat);
-    num("timeFormat", "TIME_FORMAT", from.timeFormat, to.timeFormat);
-    num("timeZone", "TIME_ZONE", from.timeZone, to.timeZone);
+    num("dateFormat", "DATE_FORMAT", current.dateFormat, next.dateFormat, to.dateFormat);
+    num("timeFormat", "TIME_FORMAT", current.timeFormat, next.timeFormat, to.timeFormat);
+    num("timeZone", "TIME_ZONE", current.timeZone, next.timeZone, to.timeZone);
   }
   for (let y = 0; y < UDK_SLOTS; y++) {
-    const a = from.knobs[y] ?? UDK_UNASSIGNED;
-    const b = to.knobs[y] ?? UDK_UNASSIGNED;
+    const a = current.knobs[y] ?? UDK_UNASSIGNED;
+    const b = next.knobs[y] ?? UDK_UNASSIGNED;
+    const sent = to.knobs[y] ?? UDK_UNASSIGNED;
     // All three columns go together or none do. The device does not reconcile a
     // partial write: writing only the function leaves the old parameters beside it,
     // and the unit then shows a triple no menu could have produced.
@@ -256,9 +289,9 @@ export function deviceSetupChanges(model: DeviceModel, current: DeviceSetup, nex
       changes.push({
         field: knobField(y),
         writes: [
-          { kind: "str", name: "UDK_FUNCTION", y, value: b.fn },
-          { kind: "str", name: "UDK_PARAM1", y, value: b.p1 },
-          { kind: "str", name: "UDK_PARAM2", y, value: b.p2 },
+          { kind: "str", name: "UDK_FUNCTION", y, value: sent.fn },
+          { kind: "str", name: "UDK_PARAM1", y, value: sent.p1 },
+          { kind: "str", name: "UDK_PARAM2", y, value: sent.p2 },
         ],
       });
     }

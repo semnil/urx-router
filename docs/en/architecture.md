@@ -116,20 +116,41 @@ carries a one-line map of the same directories and points here.
   state a WRITE would leave rather than over what the document stores — `insertFxWireState` in `translate.ts`
   is that projection, and it sits in the emit path so the comparison and the write cannot drift apart);
   an insert-FX slot collision only warns and
-  offers to open it anyway; a stored value outside what the app can write is repaired before the document
+  offers to open it anyway (the offer is about the plan on screen when it was made: a plan replaced since
+  takes the report down, and one edited since asks the discard confirm again); a stored value outside what the app can write is repaired before the document
   opens and reported on the status line, since nothing failed and nothing is being asked — bounded to the
   window, or DROPPED where there is nothing to bound: a leaf that is not a finite number (the window is
   shared across a channel's types and the DEFAULT is not), a `type` the channel's menu does not offer (a
   menu has no nearest member), and an `fxEffect` or its `params` that is not an object at all, which the
-  sanitiser keeps and every reader below then treats as absent. A drop of the effect OBJECT is the one
+  sanitiser keeps and every reader below then treats as absent. On every node the model's factory values
+  describe, a value whose kind is not the factory value's at that path is dropped the same way and the fill
+  supplies the factory value — a value that is not a number where a number belongs, a group or a list where
+  an on/off does, anything but a group where a group does (a number where an on/off belongs is converted
+  instead, below). Every node-param leaf the write bounds is bounded the same way, to the value the write
+  sends, by the one rule the write bounds it by (`nodeLeafRules` / `admitLeaf` in `translate.ts`) — an enum
+  off its menu to the menu's default — and a leaf the write never sends at all, a filter type on one of the
+  PEQ's two fixed-peaking bands, is dropped. That reaches the oscillator, which is scene-external: under the
+  Scene-only device scope the write does not carry it, while the load still moves it and says so. A drop of
+  the effect OBJECT is the one
   repair that changes what is sent, and in the safe direction — see "An FX channel the plan does not
   describe". The two actions are counted and said
   separately, since a value moved to the nearest one the app can send and a value removed are different
   events. A receiver the unit never leaves without a source that the document gives no wire — STREAMING —
   is completed the same way, with its default source, and said on the same line (`requiredSourceProblems`;
-  see "A plan that names no STREAMING source"). A send into a MIX bus whose Pan Link is on that carries a pan
-  other than its source's own is set to the source's value the same way and said on the same line
-  (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). An on/off written as a
+  see "A plan that names no STREAMING source"). A fixed send into a MIX or FX bus the document lists without a
+  level — which the write sends at unity while the CONSOLE's send rack and the MIDI feedback read a send with no
+  level as off; a main path into STEREO is the fader, which every reader takes at unity, and is left as written —
+  is given that unity level the same way, recorded as the fill's so the write confirm names its strip when
+  that level would move the unit, and said on the same line (`sendLevelProblems`). A STEREO-linked pair whose
+  members disagree about a value the pair holds once — a node param `pairSharesNodeKey` calls shared, as the
+  fill completes it, or a pair of sends' level, on/off and PRE/POST, and the pan in BAL — has the primary's
+  values copied onto the secondary the same way, the copy the unit makes when a pair is linked and the one
+  `mirrorLinkedPair` makes on an edit, and is said on the same line (`linkedPairProblems`). A document naming
+  only the primary is that repair too, and a valid shape: the secondary takes the primary's values rather
+  than its own factory ones. The insert effect stays the refusal's. A send into a MIX bus
+  whose Pan Link is on that carries a pan other than its source's own is set to the source's value the same
+  way and said on the same line, reading the pair as its copy leaves it, since in BAL the copy moves the
+  balance the send is held at (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). An on/off written as a
   number — a leaf the model's factory values hold as a boolean, at the same path on the same node — is
   converted to the on/off the write sends, off for 0 and on for any other number, and said on the same
   line (`booleanParamProblems`). It comes first, and every other check reads the document as it leaves it,
@@ -207,7 +228,8 @@ carries a one-line map of the same directories and points here.
     flush's refetch await, and not learn),
     reported to the status line once per gated window rather than once per message; MIDI-learn state
     machine, feedback (diff against a sent cache + 300 ms echo suppression while receiving + a one-shot
-    receive-side echo guard for toggles); several mappings sharing one address form a gang (`byKey`) — one
+    receive-side echo guard on every 7-bit address, toggles and continuous controls alike, the plain-CC
+    halves a 14-bit emission lands on included); several mappings sharing one address form a gang (`byKey`) — one
     physical control drives every member (incoming messages fan out to all), while the gang's HEAD owns
     feedback/echo/pickup (`headOf`: the first learned member the current plan can resolve, not simply the
     first learned one, so a mapping for a processor this node no longer holds does not take the role and
@@ -236,6 +258,10 @@ carries a one-line map of the same directories and points here.
       strip's compressor stop on the same ones and write them differently, and a module of its own is what
       lets both of the layers below read the table at module scope (channel-tuning.md "Ratio stops where
       the unit's control stops") /
+      `dyn-time-stops.ts` the stops the GATE / COMP / DUCKER time controls turn through, as the unit's own
+      raw tables — one attack table for all three processors, one for GATE decay and COMP release, GATE hold
+      and DUCKER decay each their own — in a module of its own for the same reason (channel-tuning.md "Time
+      values stop where the unit's controls stop") /
       `vd.ts` value encoding / `translate.ts` plan→commands (**one device address yields exactly one
       command**: an insert effect's parameters live in one engine array per effect family with no channel
       axis, so two nodes holding the same family emit the same addresses — `collapseSharedAddrs` keeps the
@@ -273,7 +299,9 @@ carries a one-line map of the same directories and points here.
       from **what the unit announced** for them, since the unit does not answer a GET for a write that early
       — every other read path hands over nothing, and names are the one class the overlay never answers for:
       `readPass` skips them entirely while `pending` is present, for the reason given under `settle.ts`
-      below / `settle.ts` the post-write settle: **a write is acked
+      below. The layout heads (each FX channel's EFFECT TYPE, each insert-FX selector) are read off the unit
+      even when announced: the family read checks its head a second time behind the values it lays out, and
+      an answer from the announcement would make that check a constant / `settle.ts` the post-write settle: **a write is acked
       before its value is readable**, and the boundary is that write's own device notify (measured on a
       URX44V, 9-204 ms from the write's issue, 87 value-paired samples on six addresses, independent of the
       parameter's class; on hardware a 1-knob drag ended at the notify 10/10, 42-203 ms, never at the
@@ -329,7 +357,9 @@ carries a one-line map of the same directories and points here.
     - `fx-effect.ts` catalog of FX-channel effects (Rev-X/Rev.R3/Mono Delay/Ping Pong) — slot addressing of
       the type selector + parameter arrays, and raw↔display encoding. The two filter tables are R20 (REV-X)
       and R40 (Rev.R3 / delay) at their own offsets, and each family is PRINTED at its own precision: FX1
-      an integer below 1 kHz, FX2 three significant figures throughout, both three at or above 1 kHz
+      an integer below 1 kHz, FX2 three significant figures throughout, both three at or above 1 kHz.
+      Every delay time (Mono / Ping Pong, Initial / ER-Rev Delay) prints to 0.1 ms across its range, and
+      the REV-X Reverb Time to three significant figures
     - `insert-fx-effect.ts` effect parameter catalog for insert FX (Guitar Amp Classics/Pitch
       Fix/Compander-H/S/Multi-Band Comp) — reads/writes the engine arrays bound by the selector (Guitar 697
       / Pitch 701 / Compander 689 / output 693) via slot addressing; raw↔display uses values calibrated
@@ -431,7 +461,7 @@ carries a one-line map of the same directories and points here.
   typing into a textarea / `history.ts` undo / redo (`Ctrl/Cmd+Z`,
   `Ctrl/Cmd+Shift+Z`, `Ctrl/Cmd+Y`): gesture boundaries, the keyboard predicate, and the apply sequence over
   `core/plan-history.ts`. One entry runs from the first edit to the first boundary
-  (`pointerup`/`pointercancel`/a window `blur` a macrotask later, so a `click`-handler edit lands inside it — and the next
+  (`pointerup`/`pointercancel`/a window `blur`/a mouse move with no button held a macrotask later, so a `click`-handler edit lands inside it — and the next
   `pointerdown` lands that commit first, or a late macrotask merges two clicks; a stepping-key `keyup`
   outside a text field and `focusout`, both committed **at once**, since nothing is dispatched after them on
   the gesture's behalf and deferring lets an autorepeat outrun the macrotask; a re-arming 300 ms idle
@@ -488,8 +518,9 @@ carries a one-line map of the same directories and points here.
   osc.on) with the off-state dimmed via the shared `isNodeInactive`; live meters only during Live sync, ~10
   Hz) / `glyph.ts` wraps the `∞` glyph in a `.glyph-inf` span to compensate the reduced x-height of mono
   fonts (shared by console readouts and inspector values) / `dropzone.ts` drag & drop onto the window (two
-  paths: the shell's `tauri://drag-*` events carrying real paths on desktop, DOM drag events carrying `File`
-  objects in a browser; DOM handlers registered only outside Tauri so a drop is never handled twice) /
+  paths: the shell's `tauri://drag-*` events carrying real paths on desktop, taken only for the main window,
+  DOM drag events carrying `File` objects in a browser; DOM handlers registered only outside Tauri so a drop
+  is never handled twice) /
   `consent.ts` first-launch consent gate (fullscreen inert modal, disclaimer text, persisted in
   `localStorage`, declining exits the app; desktop only) / `load-report.ts` copyable report modal for plan
   load failures (`?plan=` decode failures, routing validation failures) / `rate-choice.ts` three-way modal
@@ -511,7 +542,9 @@ carries a one-line map of the same directories and points here.
   window) — which is a **view**: it renders a pushed state and reports intents (`ui/midi-protocol.ts`),
   because a MIDI input port delivers its bursts to the window that opened it and only the main window has a
   plan. Both directions are Tauri Channels through one Rust relay (`src-tauri/src/midiwin.rs`), so the
-  second window needs no capability beyond core. It raises itself when learn turns ON and deliberately NOT
+  second window needs no capability beyond the relay pair: `capabilities/midi-window.json` grants the two relay
+  commands and, of core, only the devtools hotkey a debug build injects — no event emit or listen, so a script
+  in it cannot raise an event the main window listens for. It raises itself when learn turns ON and deliberately NOT
   when a binding lands — measured on macOS: a click on a window that is not active does not reach the
   webview (`accept_first_mouse` defaults to false), so raising per binding would make every following assignment
   two clicks; gang members render contiguously below their head with a Linked tag, and the Behavior column's
@@ -631,14 +664,17 @@ carries a one-line map of the same directories and points here.
   plan take back — it takes the plan the converge SENT as well as the live one, since the live flush clones
   before its await and one address is a different key under a different effect type /
   `param-source.ts` where each of a plan's parameter values came from — the fill records `load` /
-  `default` as it goes, an edit records `manual`, and a settled read or a landed write records
+  `default` as it goes, an edit records `manual` — the engine slots an effect selection seeds with
+  the type's defaults excepted, which are `default` — and a settled read or a landed write records
   `device` for everything they reached. Transient, and never serialized: the document holds state,
   not a record of how it was operated /
   `unauthored-writes.ts` which of a write's changes the operator never chose. The plan is dense — the
   loader completes a document from the model's factory values — so a write carries keys nobody set, and
   this names the strips they are on by re-emitting the plan with those keys blanked: an address that
   survives that emit is one an authored key asks for. `load` counts as authored (the document named the
-  value); `default` and `device` do not. A routing selector is named only for a wire the app completed —
+  value); `default` and `device` do not. A wire's params are asked the same way — a send level the load
+  completed is `default`, and a fixed send the document left out, which the install seeds, carries no
+  record — with the wire's own record standing for a param nothing recorded separately. A routing selector is named only for a wire the app completed —
   the load, or a Fetch / Live-sync start that found the unit on NONE (see "A plan that names no STREAMING
   source")
 
@@ -680,8 +716,13 @@ carries a one-line map of the same directories and points here.
   make the menu agree with the chord. macOS only; no other platform installs a menu). The installer's
   consent page is `bundle.licenseFile` (`LICENSE.txt` = disclaimer + trademarks + MIT); exiting on
   consent-gate rejection requires the `process:allow-exit` permission. `build.rs` is the crate's build
-  script and nothing else (`tauri_build::build()`): it is what turns `tauri.conf.json` and
-  `capabilities/*.json` into the code `tauri::generate_context!` expands to, so a capability added to the
+  script, and it declares the app's own command set (`tauri_build::try_build` with `AppManifest::commands`) —
+  which is what gives each app command a permission the capability files can grant. A new command therefore
+  takes three edits: `generate_handler!` in `lib.rs`, the list in `build.rs`, and an `allow-<command>` grant
+  in the capability of the window that may call it (`capabilities/default.json`, or `midi-window.json`);
+  `every_app_command_is_declared_and_granted_to_the_window_that_may_call_it` in `lib.rs` fails when one is
+  missing, and the header of `build.rs` carries why the list exists. It is also what turns `tauri.conf.json`
+  and `capabilities/*.json` into the code `tauri::generate_context!` expands to, so a capability added to the
   configuration reaches the binary through it rather than through any Rust under `src/`
 
 
@@ -698,13 +739,22 @@ carries a one-line map of the same directories and points here.
 - **Plan** — the mutable state the user creates. It holds `modelId`, node positions (`positions`),
   connections (`connections`), per-connection parameters (level / pan / pre-post, etc.),
   node name overrides (`nodeNames`, the device's CH SETTING name — read and written over the string
-  IPC for the same nodes that carry a color; an empty name falls back to the model's default label).
+  IPC for the same nodes that carry a color; an empty name falls back to the model's default label.
+  An empty name is never sent — Live sync stops sending a name the moment its field is emptied and
+  resumes with the next name it holds, the unit keeping the last one sent, and Device > Write says
+  which names are empty and not sent instead of reporting a match. The load gives every nameable node a
+  document leaves unnamed — no entry, or an empty one — its factory name, recorded as the fill's, so
+  the write confirm names the strip when that name would move the unit: `completeNodeNames`).
   The toolbar's labels toggle chooses whether the canvas shows the planner's fixed labels ("CH 1",
   the default) or these device names ("ch 1"); model mode ignores `nodeNames` entirely),
   node color overrides
   (`nodeColors`, the device CH SETTING color, drawn as a thin top accent cap; the picker offers the
-  device's fixed palette so a chosen color is read and written 1:1 to hardware — input channels,
-  MIX, STEREO, FX and STREAMING; the CH SETTING **Icon**, a sibling of name and color, is
+  device's fixed palette and its Off — the plan's `"off"`, written as palette index 10 — so a chosen
+  color is read and written 1:1 to hardware — input channels, MIX, STEREO, FX and STREAMING. A plan
+  holds one of those eleven values or none (`isPlanColor`): the load drops any other string and says
+  so, and gives every colorable node a document leaves without a color its factory color, recorded as
+  the fill's so the write confirm names the strip when that color would move the unit
+  (`nodeColorProblems`, `completeNodeColors`); the CH SETTING **Icon**, a sibling of name and color, is
   intentionally not modeled — every node kind exposes it, but its value is a bare glyph id that
   would have to be calibrated against the unit's screen first), hidden nodes (`hidden`),
   and per-node notes (`notes`) with their minimized state (`noteCollapsed`). It serializes to JSON.
@@ -774,8 +824,8 @@ The constraint core (`core/routing.ts`):
   It therefore takes a mirror pass of its own (`mirrorLinkedInsertFx`) beside the node mirror: the two share
   the `stereoLink` gate and write the same values, and the separate pass is what names the three pair keys as
   the edit's own writes whatever that edit touched.
-  `applyPairTransition` clears `insertFx` / `insertFxOn` / `insertFxParams` on both members at the transition,
-  the mirror carries them whenever the pair is linked, and the 1-of slot census (`insertFxCensus`) counts a
+  `applyPairTransition` sets `insertFx` to No Effect and `insertFxOn` to off and removes `insertFxParams` on
+  both members at the transition (an absent selector is one the write sends nothing for), the mirror carries them whenever the pair is linked, and the 1-of slot census (`insertFxCensus`) counts a
   linked pair as a single holder — the app follows what the device does instead of modelling a second copy of
   the rule ([What the app models, and what it leaves to the unit](#what-the-app-models-and-what-it-leaves-to-the-unit)).
   **What a linked pair may take is the companders and nothing else.** The guitar amps and Pitch Fix are
@@ -850,7 +900,7 @@ same as clicking the wire itself; on a USB output holding a pair it selects the 
 **Drawing another source onto STREAMING replaces the wire it holds**, in one change and so one undo step:
 the unit's source list for STREAMING has no None, so the board never leaves it empty
 (`DeviceModel.requiredSources`, asked through `requiresSource`). That drop is lit as legal, in the same
-set a render mid-drag relights (`connectCandidates` serves the drag's start and the repaint alike), which
+set a render or a fine-grained repaint (`repaintDirtyNodes`) mid-drag relights (`connectCandidates` serves the drag's start and the repaint alike), which
 also lets a drag open from STREAMING's own input; a click there still selects its wire. Its last wire is
 kept: the board's Delete key reaches `deleteConnection`, which refuses it with a status message, and the
 Inspector offers no delete for it — a hint in that refusal's own words instead (`isLastRequiredSource` is
@@ -866,7 +916,11 @@ wires and nodes off the path fade (the same lit / faded split a multi-selection 
 by a factor of its resting opacity, derived from node state by `restingOpacity` (the same precedence
 `makeNode` dims it: rate-disabled > inactive > unread > plain), so a muted / unread node keeps its own
 dim instead of having it clobbered. The trace is a state (`pathNodes`)
-independent of the selection, cleared by any selection change, Escape, or an empty-canvas click. A
+independent of the selection, cleared by any selection change, Escape, an empty-canvas click, or the
+board being handed a plan (`setModel`: Fetch, the Live-sync read, a `.urxf` import, a file, a model
+switch). It keeps the node it was taken for (`pathRoot`) and takes the closure again from it before
+every wire and node repaint, so an edit, an undo, a MIDI move or a device read under the trace moves
+it with the wiring; a root shelved or left with nothing live feeding it ends the trace. A
 node with no upstream (an input) just reports it on the status bar and lights nothing. The closure is
 route-accurate, not per-node: a stereo input mirrors its source onto a channel pair, so muting one
 half of the pair leaves the muted channel off the path while its shared input stays lit through the
@@ -935,7 +989,9 @@ the inspector, and the open modal itself.
 > on one of the unit's own screens keeps that screen's English label, in every app language** — the unit
 > is English there whichever of its three display languages is selected. That was **read off the hardware
 > with its own Language set to Japanese**, screen by screen: GATE, COMP, EQ, DUCKER, OSCILLATOR, MONITOR
-> and CH SETTING carry no kana at all. The Japanese user guide names the same controls in English too
+> and CH SETTING carry no kana at all. CH SETTING's [Color] picker prints its colours as words — `Blue`,
+> `Orange`, `Yellow`, `Purple`, `Cyan`, `Magenta`, `Red`, `Green`, `LtGreen` (where the broker's table writes
+> `Light Green`), `White` and `Off` — and those are the names the Inspector's swatches carry. The Japanese user guide names the same controls in English too
 > (`[Attack]`, `[Hold]`, `[Decay]`, `[Release]`, `[Knee]`, `[Threshold]`, `[Gain]`, `[Frequency]`,
 > `[HPF Freq.]`, `[Level]`, `[Width]`, `[Interval]`, `[Pan]`, `[Name]`, `[Color]`, and the `Assign`
 > sub-menu). **The INS FX screens were read the same way on 2026-08-28, and again on 2026-08-30**, and
@@ -997,11 +1053,12 @@ address, a broker URI. Both sides of the shell raise them:
 
 | Source                          | Codes                                                                                                                                                                                  |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src-tauri/src/lib.rs` (file IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`                                                                                                                       |
+| `src-tauri/src/lib.rs` (file IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`, `file-no-temp`                                                                                                       |
 | `src-tauri/src/vd.rs` (broker)  | `broker-unreachable`, `no-device`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-rejected`, `broker-bad-response`, `broker-io`      |
 | `src-tauri/src/midi.rs`         | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                              |
 | `src-tauri/src/keepawake.rs`    | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                          |
-| `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`                                                                                                                                                     |
+| `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`, `svg-rasterize`                                                                                                                                    |
+| `core/control/live.ts` (converge) | `converge-failed`                                                                                                                                                                    |
 
 `errorText` (`i18n/index.ts`) resolves a code against `error.shell` and hands the detail to the
 entries that take one; an unrecognized message passes through unchanged, so an unexpected JS error
@@ -1059,9 +1116,10 @@ with no halo and say nothing.
 > `.dot-send` / `.dot-out`, named for the group rather than the kind). One more reader sits outside the
 > graph entirely: the MIDI window's ganged-row rail borrows `--w-send` to mean "these move together",
 > which a grep for "wire" will not find.
-> **This pair is the one palette relationship with a test.** `src/ui/palette.contract.test.ts` parses
-> style.css and holds every `--w-*` against `PALETTES.wire`, refuses an orphan on either side, and pins
-> `WIRE_GROUP` itself — re-splitting a group has to be a decision, not a drift. The `--rail-*` and
+> **This pair and the warn colour are the palette relationships with a test.** `src/ui/palette.contract.test.ts`
+> parses style.css and holds every `--w-*` against `PALETTES.wire`, refuses an orphan on either side, and pins
+> `WIRE_GROUP` itself — re-splitting a group has to be a decision, not a drift. It also holds `--warn` against
+> `PALETTES.warn`, the colour of the board's OFF / "?" badges and warn frames. The `--rail-*` and
 > `--canvas-bg` pairs still have nothing checking them.
 
 > **What a theme switch repaints, and what it does not.** `applyResolvedTheme()` in `main.ts` is the
@@ -1103,7 +1161,10 @@ from them. Nothing in it touches a declaration used outside the query, so the or
 pixel-identical.
 
 - **An outline.** An engaged control takes `3px double CanvasText`, a weight measured to keep its three
-  pixel rows distinct under the system palette (the other widths of a double border were not measured). Anything whose job is to mark a position or a path — the knob
+  pixel rows distinct under the system palette (the other widths of a double border were not measured).
+  Two controls take it without changing size: the FOLLOW USB badge gives the rim's extra width back out
+  of its padding, and the INS FX popover's held row draws it as an inset outline, which turns dashed while
+  the keyboard focus is on that row, since the focus ring and the held state share the one outline. Anything whose job is to mark a position or a path — the knob
   pointer, the fader and mini-fader cap bars, the 0-dB lines, the slot each cap rides in, and the
   parameter sliders' track — trades its fill for an outline of the same geometry.
 - **An island.** A surface whose colours ARE the reading — the scribble's device colour, the meters'
@@ -1111,13 +1172,19 @@ pixel-identical.
   vocabulary of wires and rails — opts out with `forced-color-adjust: none`. Forcing those into two
   system colours would not raise contrast, it would delete the information. The board additionally
   takes a rim so the island still has an edge. The property inherits, so `.gt-slot` covers a lane's
-  sides, bar, shade, peak and threshold cap at once.
+  sides, bar, shade, peak and threshold cap at once. The inspector's keys to those colours are islands
+  too — the legend's and the routing list's dots and the node-colour picker's swatches — each with a
+  `CanvasText` edge, and the picker's selection ring and focus ring restated in system colours, which
+  still resolve to the contrast palette inside an island.
 
 A third mechanism exists but is narrow: a **system** colour may still be used as a fill. The fader caps
 and the slider thumbs take `background: Canvas` for one reason only — to keep occluding the track they
 ride over the way an opaque handle does in the ordinary themes, which is the layering the 0-dB rule is
 written against. An *author* colour cannot be used this way; the mode replaces it. An outlined track
-without this is worse than no rule at all: the line reads straight through the handle.
+without this is worse than no rule at all: the line reads straight through the handle. The status dots
+are the other use: a section's ON LED, Device setup's pending-edit dot, learn mode's already-mapped dot
+and the collapsed SENDS header's active-send dots are a fill and nothing else, so each paints
+`CanvasText`, and the unlit LED keeps a `CanvasText` rim so its place still shows.
 
 Two traps are worth stating.
 
@@ -1254,7 +1321,7 @@ taps reset it".
 **Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
 step while Shift is held, mirroring the hardware's (undocumented) push-and-turn fine mode: the tuning screens'
 EQ band Gain and COMP Gain sliders step 0.1 dB (coarse 0.5 dB), and the STREAMING TIME knob steps 0.02 ms
-(coarse 1 ms; the fine step is fixed — it does not follow the sample rate, matching the device). Every
+(coarse 1.00 ms; the fine step is fixed — it does not follow the sample rate, matching the device). Every
 fine-eligible control carries a printed `FINE` legend at all times — silkscreen-dim, so eligibility reads
 before any interaction, and placed so it can never shift the control's layout by appearing (pinned
 beside the static label in the tuning screen's row — anchored to the value readout it would jitter with the
@@ -1267,13 +1334,20 @@ since the slider refuses the gesture it describes. `ui/fine.ts` tracks the key g
 it toggles the `.fine-mode` root class (the tag CSS) and swaps the `step` attribute of every
 `input[data-fine-step]`, so native slider drag, arrow keys and the wheel all inherit the fine grid; the
 console knob reads the modifier per event (drag rebases when Shift flips mid-gesture, so entering or
-leaving fine never jumps the value). Faders, sends and every other parameter keep their normal grids — the
-device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set.
+leaving fine never jumps the value), and its keys and wheel step to the adjacent grid point in the
+direction of travel, so a value fine mode left between two coarse points moves one point, not two (the
+drag and the double-click reset keep the nearest point). Faders, sends and every other parameter keep their normal grids — the
+device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set. The level rows step the same way on
+both surfaces: the CONSOLE faders and the Inspector's Level sliders (a bus master, MONITOR, every send) take their
+keys and wheel through `stepLevel` from the plan's own value, so a level a loaded plan or a device read keeps between
+two detents moves to the adjacent detent in the direction of travel rather than past it from the nearest one, and a
+drag lands on the nearest.
 
 - **Meter point (per-strip tap)** — a node exposes several observable meter tap points along its signal
   chain, and each strip picks which one its meter (and the live readout) shows. An amber badge — carrying a
   meter-bars glyph so it reads apart from the send-tap PRE/POST chip — above the
-  meter opens a vertical signal-chain popover (`con-tappop`, listed in flow order, active tap highlighted);
+  meter opens a vertical signal-chain popover (`con-tappop`, listed in flow order, active tap highlighted —
+  a `menu` named METER POINT, with the badge reporting `aria-expanded`);
   it is position-fixed so it escapes the strip scroll container. Tap → `meter_id` was confirmed on the
   device against the block diagram (`core/meters.ts`; the stereo-channel maps are per-model — `NODE_TAPS_URX22` / `NODE_TAPS_URX44`, with URX44V aliasing the URX44 map — because the meters are indexed by stereo-pair position and the URX22's first stereo channel is CH3/4, confirmed on real URX22 hardware): mono channels INPUT → PRE GATE → PRE COMP →
   PRE EQ → PRE INS FX → PRE FADER → POST; stereo channels INPUT → PRE FADER → PRE DUCKER → POST (no
@@ -1286,9 +1360,14 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   switched on); it carries a **LEVEL
   rotary knob** (−96…0 dB, the shared device level; its indicator's horizontal marks read -50 left / -8 right)
   in place of a fader; **STREAMING** carries a **DELAY on/off chip** (`delay.on`) and a **TIME knob** (the delay
-  time, 1…1000 ms; holding Shift steps the device's 0.02 ms fine grid, and the inspector keeps the full
-  0.01 ms grid) so the otherwise-bare head reads as a purposeful
-  strip. The choice persists per model in
+  time, 1…1000 ms). The knob moves the way the unit's own Delay Time knob does: a key or a wheel notch moves
+  exactly 1.00 ms and holding Shift exactly 0.02 ms, each keeping the hundredths (45.86 → 46.86), so a held
+  odd centi-ms stays odd (3.41 → 4.41, and 3.43 with Shift); a drag keeps its own mapping and lands on the
+  0.02 ms grid, halfway up; and it stops at 1.00 and 1000.00 ms (`KnobSpec.grid`; LEVEL, PAN and the gain
+  knobs snap to their step). The inspector's Delay Time row steps 0.02 ms the same way — a key or a
+  wheel notch moves the held value by exactly 0.02 ms, so a value off the grid prints, is written and steps
+  as itself, and a drag lands on the grid. The chip and the knob are what make the
+  otherwise-bare head read as a purposeful strip. The choice persists per model in
   `localStorage` (`urx-metertap`). The readout has two captioned cells: **FADER** (the set level, white) and
   **METER** (the selected tap's live value, amber); default tap = the most downstream point.
 - **Shared edit path** — fader / chip / gain edits mutate the plan directly and flow through the same change
@@ -1300,7 +1379,8 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   read-back. The transient state those elements held is carried across the rebuild rather than lost with them:
   each strip's meter ballistics move onto the fresh lanes when it still meters the same tap (`carryMeterState`,
   shared with `refreshStrip`), and keyboard focus is handed back to the same control (`captureFocus`, matched
-  by strip id + index + class, dropped when the rebuild changed that strip's shape, and dropped when the plan
+  by strip id + the control's own identity (`data-ctl`), dropped when the rebuilt strip no longer offers that
+  control to the keyboard — a chip a lock turned read-only, an opener the rate withheld — and dropped when the plan
   itself was replaced — a file load, a model switch — since the control it stood on belongs to the plan that
   is gone, and a key still held there must reach nothing in the one that took its place).
   The strip rack's scroll offset carries itself and is deliberately not saved and restored: the clear and the
@@ -1319,8 +1399,10 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   rebuilds the strip at up to 20 Hz, so without a redraw the value flickers against "—" for the whole sweep.
 - **Levels only (no routing)** — CONSOLE adjusts the levels of existing sends / paths; it never adds or
   removes connections (routing stays in the graph). The SENDS-rack mini-fader only mutates an existing
-  connection's `params.level`, so lowering a send to -∞ keeps the wire (the strip stays). INS FX has no
-  separate on/off (No Effect is off), so toggling on restores the last chosen effect (or the first real option).
+  connection's `params.level`, so lowering a send to -∞ keeps the wire (the strip stays). On a strip holding
+  an effect the INS FX face switches the insert's bypass (`insertFxOn`) and leaves the selection alone; on a
+  strip holding nothing it opens the type list, and an effect is selected only in that list
+  ([channel-tuning.md](channel-tuning.md) "Reaching it from a strip").
 - **SENDS rack** — the head always shows the MAIN control set; every strip's MIX/FX sends live in a
   per-strip **SENDS rack** between the head and the fader zone (spec: [console-sends.md](console-sends.md)).
   The rack has one fixed column per model send slot (order FX 1 / FX 2 / MIX 1 / MIX 2 = `SEND_TARGETS`, a
@@ -1340,7 +1422,9 @@ device has no fine mode there, so `LEVEL_STEPS_DB` remains the full settable set
   `np.on`, or the oscillator's `osc.on`), the strip **dims** — the shared `isNodeInactive` predicate the graph
   view uses, so both views dim the same nodes — with the unlit power LED, not a badge, marking why. The head
   MUTE and the rack sends stay operable (the → STEREO send ON/OFF and the node master are independent device
-  params).
+  params), so the dim reaches only what carries no text — the grooves, the meter, the knob faces and the
+  scribble's ground — and the labels and fader caps keep their strength. A send switched off keeps its column
+  at full strength too; its unlit chip and the cap's dim bar say it is off.
 - **Scribble colour** — the scribble uses each node's **CH SETTING colour** (`plan.nodeColors`, a device
   parameter) rather than the node-kind rail. The text colour is whichever of black/white has the higher
   actual contrast ratio (WCAG relative luminance, `inkOn`), paired with a faint opposite-tone halo
@@ -1462,6 +1546,22 @@ focus, not one that is removed — so nothing releases the gate if the composing
 and what makes that unreachable is that `renderInspector` has exactly **one** call site, behind the gate. A second
 one would latch the gate for the rest of the session and the panel would silently stop updating.
 
+The same gate holds while a `<select>` inside the panel has focus (a rebuild closes an open picker), while a row is
+held inert, and while a press that began inside the panel is down — the click a press produces is dispatched to the
+element the press began on, and a rebuild in between removes it. **What releases a hold is usually the operator's
+next gesture, so a held rebuild runs after that gesture rather than inside it.** A focus move ends the select's hold,
+and the rebuild it releases runs in the task after the `focusout`: the `focusout` fires partway through the gesture
+that moves the focus — a mouse press before its click, a Tab before the focus lands, a tap before its click — and a
+rebuild there would remove the control the gesture is going to, so the click would reach nothing and the Tab's focus
+would land on a removed button. A press ends at its click, after the target's own handlers, or, for a press that
+produces no click in the panel, in the task after the next pointer release, at a mouse move with no button held —
+the release the native context menu takes from a right press — or when the window comes back from a
+release it never heard. It does not wait for the app-wide count of pointers down to reach zero: a pointer whose
+release the page never received keeps that count above zero, and the panel would stop updating with it. A press on a
+`<select>` is left to the picker's hold, which its `change` releases. The race harness's `overtake-held-repaint-vs-the-next-gesture` drives
+the three gestures against a device change held behind a focused select
+([live-race-harness.md](live-race-harness.md)).
+
 ## External MIDI control
 
 The CONSOLE view's controls (faders / send levels / MUTE / PAN-BAL / GAIN / PHONES / the toggles) and every
@@ -1477,9 +1577,22 @@ orphan page would ship to GitHub Pages.
 The window is a **view**. It holds no plan, no model, no engine and no port — a MIDI input port delivers its
 bursts to the window that opened it, so a window with no plan must never open one. It renders a state the main
 window pushes and reports intents back (`ui/midi-protocol.ts`); everything that decides what it shows stays in
-`ui/midi.ts`. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
+`ui/midi.ts`. Every push repaints it, and the repaint keeps two things: keyboard focus stays on the control the
+operator was on — found again by its class and the assignment row it sits in, and dropped when that row is
+gone rather than handed to the row that moved into its place — and the status line is one live region for
+the window's life, written in place only when its text changes. The hint beside **Learn** holds every wording
+it can show in one grid cell — the idle and learn ones always, the armed one while a control is armed — so it is as
+tall as the tallest of them and turning learn on or off, or arming a control, moves nothing below it; only the
+current wording is painted, and the others are `aria-hidden` as well as hidden from sight. An armed wording taller
+than both would still grow it. Measured 2026-10-04 in Playwright's Chromium and WebKit builds, in both languages, at
+the 440 px the window opens at and its 360 px minimum: of the 3,378 distinct armed wordings per language — every
+control id the three models' default plans list, plus every insert-FX slot and FX parameter on every node — none
+is taller than the idle one. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
-`invoke`, so the second window needs no capability beyond core. Where it sits is the shell's to remember (see
+`invoke`, so the second window needs no capability beyond the relay pair — its capability grants those two commands
+and, of core, only a debug build's devtools hotkey, so it cannot emit an event the main window listens for. A file dropped onto it
+opens nothing: the shell raises the drag events for the window the file was dropped on, and the main window takes only those
+raised for itself (see "Opening files: drag & drop, and settings files"). Where it sits is the shell's to remember (see
 "Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by platform —
 a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where an AppKit parent was measured
 and is not used. Closing the main window closes it; closing it drops learn mode, which would
@@ -1555,9 +1668,12 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   on while the other is on for the channel is refused by the control itself (`refuses`) and reported on the
   status line rather than dropped, and the CONSOLE chip that rule locks stays a learn target
   (known-issues.md "The unit lets +48V and HI-Z be on together; the app does not").
-- **Engine (`engine.ts`)** — routes incoming events onto bound controls. Take-in modes are per-mapping:
-  absolute / pickup (swallowed until the physical value reaches or crosses the plan value). 14-bit CC assembles the MSB/LSB
-  pair (n / n+32). Toggles carry a per-mapping button behavior instead of a take-in mode, named after the
+- **Engine (`engine.ts`)** — routes incoming events onto bound controls. A take-in mode belongs to the
+  physical control rather than to one binding — every binding on one address carries the same one, which a
+  learn onto the address takes and a change in the window sets for all of them: absolute / pickup (swallowed until the physical value reaches or crosses the plan value). 14-bit CC assembles the MSB/LSB
+  pair (n / n+32); an LSB that arrives while the pair's MSB is unknown — none received, and none sent by a feedback
+  pass, since the mappings were last set, which a boot, a learn, an edit of the list and a plan load all do —
+  edits nothing and is kept for the MSB that follows. Toggles carry a per-mapping button behavior instead of a take-in mode, named after the
   SENDER's button type (the controller-side setting the user reads): the default "Momentary" (edge — flips
   on each on-value: a note-on or a CC ≥ 64, the release ignored; not a rising-edge test, so a push button
   that sends a fixed on-value per press with no release-to-0 between still flips every press, not just the
@@ -1568,7 +1684,10 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
 - **Learn** — turning the window's Learn on gives armable controls a dashed target ring, on the CONSOLE
   strips and on an open tuning screen alike (`ui/midi-learn.ts` holds the one treatment and the one arming
   path, so the two surfaces cannot drift); clicking one arms it (pulsing outline; already-bound controls carry
-  an amber dot) and the next MIDI input binds. On a tuning screen the target is the row's control cell, and
+  an amber dot) and the next MIDI input binds. The ring is not the only report: learn turning on from the
+  window, the control an arming names and learn turning off are each said on the main window's status line,
+  a live region — while armed, a control's keys arm rather than edit. A learn dropped by a plan replacement
+  or by the window closing says nothing there, since that line belongs to whatever replaced the plan. On a tuning screen the target is the row's control cell, and
   the press is taken in the capture phase so the slider never starts a drag; the wheel is gated for the same
   reason. A tuning screen opens normally while learn is on — its `▸` opener is not itself assignable, so it
   passes the arming guard through. A CC
@@ -1576,7 +1695,19 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   after a 500 ms quiet gap. One binding per console control (a new binding replaces the control's previous
   one), but a physical control may drive several controls: learning it to more than one gangs them — one
   message moves all of them — and the first-learned owns that address' feedback (the assignment list tags the
-  later rows "Linked"). A control on a hung node (a ducker, which sits under its stereo channel and is labeled
+  later rows "Linked"). A gang holds one kind of control: Pickup engages only behind a continuous head, and a
+  switch ganged with a continuous control can come to head it, so a learn that would put a switch and a
+  continuous control on one MIDI control is refused with the reason on the status line — as is a learn onto
+  one whose bindings include a control the current plan or model does not carry, whose kind cannot be
+  compared, and a learn whose armed control has itself stopped being in the current plan since it was armed
+  (an edit released the insert effect its switch belongs to), on any MIDI control, one nothing is bound to
+  included. A saved gang that mixes the two kinds is set to Absolute when the mappings load, and says so on
+  the status line; the window offers no take-in mode on such a gang's continuous rows, Absolute being the one
+  they work in there, and refuses a mode it receives for one. A binding counts toward the mix only while the
+  current plan resolves it — an insert effect's switch only while its strip holds an effect — so the gangs are
+  judged again once a run of plan edits settles (one judgement per run, on the 120 ms feedback debounce): a gang
+  an edit made mixed is set to Absolute and said then, and the window is repainted when what its list shows
+  moved. A control on a hung node (a ducker, which sits under its stereo channel and is labeled
   only "Ducker") is named by its parent channel in the list, so the binding reads e.g. `CH 5/6 · DUCKER`.
   Replacing the plan or model (a model switch, a plan load) cancels an in-flight
   learn, dropping the armed control instead of committing it under the new model's mapping key.
@@ -1601,11 +1732,11 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   being up rather than off reaching the `finally` all three land in — and Live sync ending, or the plan being
   replaced, closes it again. **What the fetch exclusion costs** is a motorised controller left showing what it
   was last told: touch that fader before a session opens the output side and its stale position is applied to
-  the freshly fetched plan. Pickup mode is the per-mapping answer, and the alternative — letting a fetch open
+  the freshly fetched plan. Pickup mode is the answer to that, and the alternative — letting a fetch open
   it — is the one this rule exists to refuse, since a plan that agreed with the unit at the instant of a read
-  is not a plan anything holds to it afterwards. A pass that is HELD still runs: what it owes the receive side
-  (a moved plan value un-engages a pickup binding) does not depend on the controller having heard. The receive side mirrors the guard: for 300 ms after feedback
-  goes out, the first incoming value equal to it on the same address is dropped as an echo and the guard
+  is not a plan anything holds to it afterwards. A pass that is HELD — no readback settled yet, or no output port open — still runs: what it owes the
+  receive side (a moved plan value un-engages a pickup binding) does not depend on the controller having heard. The receive side mirrors the guard: for 50 ms (`ECHO_MS`) after
+  feedback goes out, the first incoming value equal to it on the same address is dropped as an echo and the guard
   disarms (a shared virtual MIDI bus, or a controller that re-sends its state when feedback changes it,
   would otherwise flip an edge-mode toggle straight back; consuming the echo one-shot keeps an equal real
   press right after it alive). It covers **both kinds**, and for a continuous control the damage it prevents
@@ -1613,13 +1744,22 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   neighbouring detent, so the echo moves the value and — while live — writes it to the unit, once per
   feedback pass and so once per Live-sync start. The comparison is made in the domain the message was
   actually SENT in, since a note address carries on/off whatever position the sent cache holds; a fader
-  bound to a note echoes back as full scale, which is the worst case in the family. The **14-bit forms are
-  deliberately unguarded**: a cc14 echo arrives as two 7-bit halves that cannot be matched, and needs no
-  matching, because at 14 bits every control round-trips onto the same plan value (pinned in
-  `core/midi/controls.test.ts`; measured 2026-09-23, at 7 bits 97 of 311 controls on a URX44V do not — the
-  tuning screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack /
-  decay. COMP **ratio** is not on that list because its field is the unit's own stop ladder — the ladder holds
-  fewer stops than the wire holds positions, so a 7-bit echo decodes onto the stop it left from).
+  bound to a note echoes back as full scale, which is the worst case in the family. The **14-bit forms carry
+  no echo guard** — a cc14 echo arrives as two 7-bit halves that cannot be matched — and are kept from
+  editing another way: an incoming 14-bit position equal to the one the control's plan value encodes to edits
+  nothing, and a feedback pass that sends a cc14 records both halves as the pair's state, so each echoed half
+  assembles to the position that was sent rather than against a stale half. That covers the values a plan
+  holds off the codec's grid — the factory capture and a value read from the unit (1000 Hz between two of an
+  EQ band's log positions), a 0.1 dB fine-mode gain, a setting
+  finer than the wire (the Mono Delay time, the companders' Release) — which the echo would otherwise move
+  and, while live, write to the unit (`core/midi/controls.test.ts` drives it through the engine on the continuous
+  controls the factory plan lists, the morphing bank's, and those of each insert effect and each FX type). Only a pass that actually sends records the
+  pair: one that delivers nothing tells the controller nothing. At 7 bits the codecs alone would not hold
+  the value either (measured 2026-10-04, 93 of 311 controls on a URX44V do not round-trip — the tuning
+  screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack. COMP
+  **ratio** and DUCKER **decay** are not on that list because each field is a stop table of the unit's that
+  holds fewer stops than the wire holds positions, so a 7-bit echo decodes onto the stop it left from; the
+  attack, hold and decay / release tables hold more).
   Setting `localStorage["urx-midi-log"]` traces every rx/tx
   byte string and the engine's per-message decision (drop/ignore/apply) to the console; a dev build also
   carries `window.__urxMidiProbe` (`ui/midi-probe.ts`), which records the same stream **with timestamps** on
@@ -1748,7 +1888,7 @@ the captured original living only in the dead call stack — the same unrecovera
 during a run.
 
 **So the link is held by exactly one thing at a time, named.** `deviceLinkHolder` is one of `fetch` /
-`write` / `compare` / `device-setup` / `follow-usb` / `live` / `run`; `holdDeviceLink` takes it or refuses,
+`write` / `compare` / `device-setup` / `follow-usb` / `live` / `run` / `update`; `holdDeviceLink` takes it or refuses,
 `releaseDeviceLink` gives it back and ignores a release that does not name the current holder (the same
 rule the epoch enforces on the Rust side). **A live session gives it back when the LINK goes, not when the
 toggle does**: `releaseLive` waits out a follow read still doing round trips, and a read carries no epoch of
@@ -1770,6 +1910,13 @@ why `loadPlan` ends a session), and while live the picker is the only surface na
 the on-air tally prints the tag alone rather than repeating a model the picker already states, since a
 mismatch is refused before any read. A live *start* is deliberately not covered: the model may still change
 there (`offerModelSwitch`), and the switch is refused for the read's duration by `deviceReadInFlight`.
+The other order is refused at the read: a Fetch or a Live-sync start whose connect lands while a file flow is
+already running — a Save or Open dialog up, a document being read, a discard confirm unanswered — reads nothing
+and lets the link go (`status.busyFileFlow`), since that flow holds the plan as it stood when it began.
+A **write** holds the plan the same way: it converges the plan it was confirmed for and re-reads it after
+every await, so while a write holds the link every wholesale replacement — New, Open, a recent row, a dropped
+plan, the model picker — is refused (`status.deviceLinkBusy`), at its entry, or at `loadPlan` for a flow
+that entered before the write took the link.
 Follow USB is the one exception in the other direction: a live **session** lends it the session's
 link (its handler writes over that link rather than opening one, and measured on a URX44V the session
 survives the re-clock), so it stays usable while live and greys for every other holder — including a live
@@ -1837,6 +1984,9 @@ written at all:
   asks the read's rate AND every rate the unit announced on the way (`HoldContext.ratesSeen`). That list is
   deliberately NOT scoped to the read's own window, unlike the announcements above: the rate notify that
   escalated to the read arrives before it starts, and it is the one carrying the rate that did the clearing.
+  It does not outlive a session, though: a Live-sync start's own read establishes the unit's rate, so the list
+  is emptied once that read lands, and a rate a session that has ended was told about decides nothing in the
+  next one.
   It also survives a read that established no rate, rather than being emptied by whichever read ends first —
   reconciles run one at a time, so a SCOPED read for another node sits between the notify and the full read
   it escalates to. That scoped read is where both halves matter: it never asks for the rate address, and it
@@ -2003,9 +2153,13 @@ is the boundary rather than an estimate of it. From the write's issue the window
 polled every 4 ms; the ack tells nothing about it (one write acked in 2 ms stayed stale for another 31 ms), and it
 is always the ack that lands first. The parameter's class is
 irrelevant: the same behaviour was measured on a `sideEffect` head, a `follow: "direct"` scalar, plain storage and
-the PEQ band gains. Two consequences bound any repair. A side effect goes readable **1-2 ms after** the address that
-caused it, so no separate wait is needed for what a write makes the unit recompute; and a write of a value the unit
-already holds emits **no notify at all**, so a wait for one has to be able to end on a timer.
+the PEQ band gains. Two consequences bound any repair. What a `sideEffect: "refetch"` head makes the unit recompute
+goes readable within a few milliseconds of the head's own notify — **1-2 ms after** it for the EQ 1-knob LEVEL, 2-4 ms
+for the preset its TYPE loads, and announced behind the head within a millisecond for SSMCS Morphing, Sweet Spot Data,
+the COMP 1-knob and its Level, and the insert-FX drivers (the multi-band compressor's 1-knob and Level, Pitch Fix's
+MIDI Control), while the EQ 1-knob ON recomputes no band — so no separate wait is needed for what those writes make
+the unit recompute; and a write of a value the unit already holds emits **no notify at all**, so a wait for one has to
+be able to end on a timer.
 
 `core/control/settle.ts` is that wait, and the whole of it is one sentence: **the answer for an address this flush
 wrote is the value the DEVICE ANNOUNCED for it, never the value that was sent.** An acked write the unit silently
@@ -2114,7 +2268,11 @@ whenever `end()` lands inside it — reading the generation at its turn would ma
 run as the NEXT session's, alongside the one that session already has on the wire, which is the pile-up the queue
 exists to prevent. And a rejection leaves the registration by exception, so it never reaches the post-await
 generation guard: `refresh`'s catch compares the generation it started with before it stops anything, or a refusal
-arriving after its session ended stops the live one instead, with nothing to restart it.
+arriving after its session ended stops the live one instead, with nothing to restart it. A reconcile's catch
+(`runReconcile`) and a flush's catch (`LiveSync.flush`) compare it the same way, and neither holds the next session
+back: a reconcile still running for an ended session does not make the next session's reconciles wait behind it,
+and a flush asked for in the next session while an ended session's write is still out is sent once that write is
+answered.
 
 **Four follow-only cases join for the same reason as the names**: an address the app only READS is in no
 registration unless it is listed here, so the unit's announcement would reach nobody and the value would catch up
@@ -2201,7 +2359,7 @@ as invariant 4 (channel-tuning.md, "FX EFFECT").
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
 the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
-has ever been measured — the 1-2 ms figure above belongs to the `refetch` family, which never reaches this loop. Its
+has ever been measured — the figures above belong to the `refetch` heads, which never reach this loop. Its
 round also sends `roundCommands`, whole groups, so a wait that ended at the read diff's own notifies would return
 while the rest of a group was still inside its window.
 
@@ -2296,7 +2454,7 @@ it read included; a reconcile reads the names of the nodes it covers and takes t
 | Session start | `begin` from the starting read's clone | `reset` |
 | App edit, `markChanged` | per address, as its own write returns | entry opened, closed at the gesture boundary |
 | Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands, and an entry already recorded takes a nested `nodeParams` / `connParams` leaf only where its `before` AND its `after` both hold what the read measured from — both sides then take the read's value, and a whole field is never folded |
-| Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect |
+| Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect, when the read authored at least one key (`followAuthored`) |
 | Side-effect refetch | `capture` from the read's clone for the nodes it read, their names excepted since the read carries none, then the same journal replay | `absorb` of the device-authored keys only |
 | Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel | untouched |
 
@@ -2331,9 +2489,10 @@ sequenceDiagram
 ```
 
 The reflect is coalesced across *producers*, so it cannot know what the device authored — which is why the
-history is settled at each producer's own site (see the table above) and not here. Its full branch does call
-`PlanHistory.reset`, because a readback of any breadth re-authored the plan's values and no earlier entry
-describes a state it can return to.
+history is settled at each producer's own site (see the table above) and not here. Its full branch calls
+`PlanHistory.reset` when the reconciles behind it authored at least one key (`followAuthored`), because such a
+readback re-authored the plan's values and no earlier entry describes a state it can return to; a reconcile that
+agreed with the plan at every key leaves both stacks as they were.
 
 #### What is discarded, and where
 
@@ -2388,14 +2547,16 @@ An insert effect's parameters live in **one engine array per effect family**, ad
 channel axis (`control/insert-fx-effect.ts`). Two nodes holding the same family therefore write the same
 addresses with their own values.
 
-**A conforming unit never gets into that state.** The user guide's Effect list gives each effect a "Number of
-simultaneous uses", and the compander's is "MONO IN channels: 1 slot; output channels: 1 slot", with the
-Supported-channels row adding that it "cannot be inserted into two mono channels". The 1-of slot rule in
-`control/params.ts` (`InsertFxSlot`) is that documented constraint, not an app policy, and the inspector and the
-console are defined over it (`insertFxMenu`). The plan loader warns about a file that carries the collision
-and opens it on the operator's word (`planProblems` in `core/plan-validate.ts`) — a refusal would make
-Fetch → Save → reopen impossible for the app's own document, since a **device readback** and a `.urxf`
-import deliberately do not validate; neither can produce it from a unit that honours its own spec.
+The user guide's Effect list gives each effect a "Number of simultaneous uses", and the compander's is "MONO
+IN channels: 1 slot; output channels: 1 slot", with the Supported-channels row adding that it "cannot be
+inserted into two mono channels". The 1-of slot rule in `control/params.ts` (`InsertFxSlot`) is that documented
+constraint, not an app policy, and the inspector and the console are defined over it (`insertFxMenu`). **The
+unit's control link does not enforce it**: with one MONO IN channel holding the compander, a second channel
+selecting it is accepted, both channels switch the effect on, and both point at the one engine array. The plan
+loader warns about a file that carries the collision and opens it on the operator's word (`planProblems` in
+`core/plan-validate.ts`), and a Write of such a plan puts the unit into that state. A **device readback** and a
+`.urxf` import deliberately do not validate, so reading a unit in that state produces the two-owner plan — and a
+refusal at the loader would make Fetch → Save → reopen impossible for the app's own document.
 
 A **STEREO-linked MONO IN pair** is one holder, not two, and the census counts it as one: measured on the unit,
 a linked pair's two members mirror the selector both ways and point at a single engine instance, and the link
@@ -2403,10 +2564,10 @@ transition clears the effect on both. The census reads `stereoLink`, not PAN/BAL
 both modes. Counting it as a collision would lock the pair's own menu against a selection the app itself
 authored (see the pair rules above).
 
-The collapse below is therefore not a repair of a state the hardware reports. It is an invariant on the app's
-own emission: `Plan` is free to hold two owners for one address — nothing in its type prevents it, and a
-hand-edited file or a future family that shares an engine would — and **a command list with two values for one
-address is never correct to send**, whatever put them there.
+The collapse below is an invariant on the app's own emission rather than a repair of what a read reports:
+`Plan` is free to hold two owners for one address — nothing in its type prevents it, and a hand-edited file, a
+read of a unit holding two or a future family that shares an engine would — and **a command list with two values
+for one address is never correct to send**, whatever put them there.
 
 The emitted set therefore collapses a repeated address to its **last** command, kept at its own position
 (`collapseSharedAddrs` in `control/translate.ts`):
@@ -2469,7 +2630,8 @@ can still read, with the unreadable ones listed as gaps that leave the compariso
 **Its scope is exactly what the plan would write**, since it walks `planToCommands` (plus the names). Two kinds of
 parameter fall outside it: the ones the app reads and never emits — the microSD Rec Track Count (839) and the CH →
 FX send tap (193) — and the device-wide settings that are not in the plan at all (`planExternal`: Follow USB and the
-thirteen SETUP > GENERAL addresses, which the unit's own settings screen reads and writes). Neither kind can ever be
+fourteen SETUP > GENERAL addresses, which the unit's own settings screen reads and, all but the knob bank,
+writes). Neither kind can ever be
 reported as a difference, and neither is in the compared count. That is a different silence from the read failures
 above, which are listed as gaps: here nothing was read, and nothing says so.
 
@@ -2486,14 +2648,17 @@ A link that drops *during* a command surfaces on the next operation as a broker 
 sitting **idle** (live sync with no edits) would go unnoticed. Unplugging *only the URX* is also invisible to a
 socket check: the broker socket stays up and keeps ACKing writes (a success reply with no unit attached), so neither
 a socket drop nor a write error reveals it. To close both gaps the Rust worker watches, in `pump` (the idle socket
-drain) and in the read/write round-trip loops (`do_set` / `do_get_value`), for (a) a socket drop and (b) the
+drain) and in the read/write round-trip loops (`do_set` / `do_get_value`, the late drain after a deadline included), for (a) a socket drop and (b) the
 `/vd/synchronize` frame Device Center spontaneously sends at the moment of disconnect (`sync_status` flipping away
 from `online` — distinct from the handshake / sync_status reads that fetch it on purpose). On either, it pushes a
 single `LinkEvent` to the frontend (`vdWatchLink`), or fails the in-flight command, and the frontend tears the live
-session down. That drop is also **latched** in the worker: the `/vd/synchronize` push arrives exactly once, so
+session down. That drop is also **latched** in the worker, whichever reader met it: the `/vd/synchronize` push arrives exactly once, so
 without latching only the command that consumed it could ever notice, and every command after it would keep talking
 to a broker that ACKs writes with no unit attached and answers reads from its cache. Once latched, every later
-command fails until a reconnect.
+command fails until a reconnect, with the cause the drop was met with (`broker-closed`, `device-lost`, `broker-io`, …).
+The worker stays up to answer them — a drop the idle pump meets stops the pump, not the worker — so an action with a
+dialog open between its connect and its first command reports what happened to the link rather than
+`control-worker-gone`.
 
 ### Reset chains, and what a converge round sends
 
@@ -2635,10 +2800,14 @@ session counts as started, and the worker replies only once every address is reg
 refused registration ends the attempt rather than starting a session that cannot do its job. A THIRD registration
 can be refused in that window and is not awaited by anything: `live.begin()` runs first, so a structural edit can
 flush while the notify stream is still being registered, and that flush asks the follow layer to re-register. Its
-refusal stops follow and reports through `stopLiveOnError`, which returns without doing anything while the session
-is not yet up — so the session checks that follow is still following immediately before declaring itself started,
-and fails the attempt when it is not. Without it the app reports "Live sync on" over a follow that discards every
-notify for the rest of the session.
+refusal stops follow and reports through `stopLiveOnError`, which tears nothing down while the session is not yet
+up — so the session checks that follow is still following immediately before declaring itself started, and fails
+the attempt when it is not. Without it the app reports "Live sync on" over a follow that discards every notify for
+the rest of the session. The live half is checked the same way. A flush can fail in that window, and so can the
+read a head write parks behind; inside the start's window `stopLiveOnError` records the first such failure and ends
+the live half at once, so a flush waiting behind a failed read stops at its generation check and the head it was
+in front of is never sent. The start then fails with the recorded cause instead of declaring a session whose edits
+would go nowhere.
 
 Everything **outside** the device link keeps a softer rule — salvage what can be salvaged, but never in silence. A
 failed MIDI feedback send drops the engine's sent-cache so the next pass re-sends (a one-off heals; a port that
@@ -2695,7 +2864,19 @@ listed here so they are not proposed as gaps:
    **One selector a partial capture leaves alone instead: STREAMING's source.** A capture that did not read it
    (`ReadbackResult.sourceUnread`) keeps no STREAMING wire in the plan it restores from, so no pass and not the
    restore write that selector — the unit keeps the source it held — and the report says so among its issues.
-   Every other address of a partial capture is still swept and restored as above.
+   Every other address of a partial capture is still swept, and **put back from the unit's own value rather
+   than from the plan's default**: a read the capture could not make leaves the captured plan's default there
+   (no source on a selector, unity on a fader, -inf on a send), which the restore would converge the unit
+   onto. So before the sweep the captured plan is diffed against the unit, and every address it finds
+   different or cannot read joins the ones the restore has no command for — read before the sweep and
+   written back after the restore, with an address that cannot be read then refusing the run (`diag.captureUnheld`
+   lists them). **A head is not put back that way: the run refuses instead** (`refusal: "sideEffectUnheld"`).
+   When an address bound for that write-back is a `sideEffect` param — an insert-FX selector, Signal Type, a
+   COMP/EQ order, an EQ 1-knob switch — on a node the capture could not read, writing it after the restore
+   would refill or reset values that nothing then compares, so the run declines before the sweep, writes
+   nothing, and the status line says which refusal it was. That covers a head the captured plan sends nothing
+   to as well as one it holds a default at: a capture that missed CH 1's strip leaves a plan that sends no
+   Signal Type or PAN / BAL there, while the passes do.
 2. **`translate.ts`'s value coercion clamps instead of refusing.** It is the last line before the hardware, and
    a coerced in-range value is a better outcome than an out-of-range one reaching the unit. The clamp is
    deliberately NOT applied to the readout beside it: the panel shows what the plan holds, which after a
@@ -2763,7 +2944,10 @@ also normalises a document naming a rate and a count that cannot both be true. A
 than when the count is read: a read-time clamp would hand 16 back the moment the rate came down, and the plan would
 then describe a recorder the unit does not have. The Inspector offers only the counts the rate allows and says why
 the menu is short, and the graph gates the recorder's track slots on the ceiling as well as on the stored value, so
-no plan can offer a slot to wire against a track the unit has no room for.
+no plan can offer a slot to wire against a track the unit has no room for. A rate pick redraws the board when the
+slots it gates move even where the rate-disabled set does not (48 to 96 kHz moves only the slots), and a selection on
+a node or wire the rate took off the board is dropped with it — with the CONSOLE view up too, so the Inspector and
+`Delete` are never left holding a wire the board no longer draws (`setDisabledNodes`, `hasDisabledNodes`).
 
 **The rate settle also names what the change costs the microSD recorder**, which is the one rate side effect the
 unit ACTS on rather than merely refuses: it lowers its own Track Count to fit a rate it cannot carry (16 tracks at
@@ -2775,8 +2959,8 @@ the DEVICE rather than the plan: an offline plan's count is whatever was last au
 drops and invent false ones. A count that already fits is silent, because a loss notice shown to someone losing
 nothing is how a notice stops being read, and a read that fails cancels the write, as a failed clock read does.
 Three paths carry it — the plain re-clock confirm, the three-way's RELEASE arm (its own
-element under that button, since adopting the device's rate costs nothing and the shared note speaks for both
-arms), and the Follow USB toggle, which gets the numberless form because the host's rate is not something this app
+element above the actions row, worded to name the release arm, since adopting the device's rate costs nothing
+and the shared note speaks for both arms), and the Follow USB toggle, which gets the numberless form because the host's rate is not something this app
 can read. **URX22 has no recorder and is silent throughout.** Afterwards the write's own epilogue re-reads the
 recorder node: the unit does the lowering itself, and whether it announces one has not been measured here, so the
 plan is refreshed rather than left waiting for a notify that may never come. The epilogue is armed from the rate
@@ -2792,11 +2976,13 @@ than a routing choice, and emitting it would make every Live-sync flush re-asser
 written with a single `vdSet`. Live sync registers 848 for notifies alongside the plan's writable set and
 **intercepts** it ahead of node resolution (`DeviceFollow`'s `intercept` hook) — an address with no owner node
 would otherwise escalate every change to a full device re-read. The **FOLLOW USB** badge beside the Rate picker
-shows and toggles the state. Before any device has been read it is drawn as a dimmed "unknown" (clicking it then
+shows and toggles the state. Before any device has been read it is drawn as a dashed "unknown" (clicking it then
 reads the state rather than toggling), never as "off", and in the desktop build it is never hidden — hiding it until a device action
 would mean the warning only arrives once the operator has already committed to one. It is session-scoped rather than persisted, since a
 remembered value would be a claim about
-hardware that may not even be attached. The Rate picker itself locks while Live sync is on, because re-clocking
+hardware that may not even be attached. For the same reason it goes back to unknown whenever the plan switches
+to another model, whichever entry switched it — the model picker, File > Open, a drop, a recent row, or the
+switch a Fetch or a Live-sync start offers. The Rate picker itself locks while Live sync is on, because re-clocking
 renegotiates the USB stream, interrupting audio and putting the held connection at risk. The badge stays live:
 toggling Follow USB only re-clocks when the host is on a different rate, and the connection survived it on a URX44V.
 
@@ -2888,7 +3074,8 @@ socket's first read timeout: an empty read means the peer has nothing queued, an
 frame budget would spend seconds of the operator's Quit on a broker that has already gone quiet.
 
 On the app side the same is true of the connection: `releaseLive` in `main.ts` is the one release, so "read the
-ledger's final counters, wait out a follow read still on the wire, drop the link, then hand the holder back" is
+ledger's final counters, wait out a follow read and the session's own flush still on the wire, drop the link,
+then hand the holder back" is
 a property of the code rather than a rule each of the three exits re-implements. The wait is what makes
 `abandonFollowWork`'s split hold at the link as well as in the plan — a session that merely ends lets its read
 finish, so the link it reads over has to outlive the session — and the holder going last is what stops another
@@ -2898,7 +3085,10 @@ The app's exit is the case that needs more than telling: `lib.rs` builds the app
 `RunEvent::Exit` handler that calls `vd::shutdown_blocking`, which **waits** (bounded, 1.5 s) for the
 unregisters and the close to reach the wire. Everywhere else the worker outlives the caller and finishes on its
 own; at exit it does not, and "told to close" and "closed" are the same thing only when something outlives the
-telling.
+telling. An update install is the one exit that does not reach that handler on every platform — on Windows the
+updater ends the process from inside its install command — so the frontend calls `prepare_for_exit` before the
+download: it saves the window geometry and its scales and runs the same `vd::shutdown_blocking`, which is what
+the exit handler would have done.
 
 **A page load is the other teardown, and it is scoped to what that page owns.** `on_page_load`
 (`PageLoadEvent::Started`) shuts the worker down, closes both MIDI ports and releases the idle-sleep hold:
@@ -2953,13 +3143,22 @@ scope in Preferences is how the app draws the same line the other way.
 edit → apply:
 
 1. Opening connects, confirms the firmware, refuses a model mismatch, reads the whole set, and
-   disconnects. A read failure leaves the screen **unopened** — a half-established baseline would invite
-   applying a diff against values that were never read (see "Aborting on failure").
+   disconnects. The set includes the User Defined Knobs bank the unit is on, and the knob tabs open on
+   it. A read failure — that bank's included — leaves the screen **unopened** — a half-established
+   baseline would invite applying a diff against values that were never read (see "Aborting on
+   failure").
 2. Edits accumulate in the modal. A row whose value differs from what the device reported takes the
-   accent dot, and the footer counts the pending settings.
+   accent dot, and the footer counts the pending settings. Each edit and each bank tab rebuilds the
+   modal, keeping the focused control and the grid's scroll offset as Preferences does. The screen
+   holds the reading **as the unit reported it**: a value the app's catalog does not have — a Time Zone index past the city list, a knob
+   Function string the unit stores verbatim, a Monitor / Phones knob's Parameter 1 — is offered as `unknown (N)`
+   rather than shown as the nearest
+   entry, and the diff compares the draft against that reading. An edit coerces only the field it sets,
+   so a value off the catalog is written only once the operator picks something for that row.
 3. `Apply to device` connects, sends **only the differences**, and disconnects. Only a clean apply moves
-   the baseline; after a failure the draft still differs from what the device holds, which is what a
-   retry needs.
+   the baseline, and only to the draft it sent; after a failure the draft still differs from what the
+   device holds, which is what a retry needs. The rows stay editable while the apply is in flight, and an
+   edit made then is not part of what was sent, so it stays pending afterwards.
 
 Closing with unapplied edits asks first. The entry disables while Live sync holds the connection, on the
 same list as Fetch / Write / Compare.
@@ -2980,7 +3179,11 @@ from 76 onward.
 free-form strings (`Function` / `Parameter 1` / `Parameter 2`) that the device stores verbatim and never
 validates, so the app owns the exact user-guide spelling: picking a function re-seeds both parameter
 columns from the catalog, and all three are always written together. A partial write is not reconciled by
-the device — it would leave the unit showing a triple no menu could have produced.
+the device — it would leave the unit showing a triple no menu could have produced. The bank tabs open on the
+bank the unit is on (`769`, raw 0..3 = banks 1..4, read on every model with the rest of the set), and on bank
+1 for a reading that names none of the four. That address is read and never written: the catalog flags it
+**`readOnly`**, which keeps it out of `WritableParamName` and so out of every setup write, and moving between
+the tabs is the screen's own and changes nothing on the unit.
 
 ## Window geometry
 
@@ -3204,6 +3407,39 @@ works by mouse wheel (desktop) and two-finger pinch (touch); both share one "zoo
 routine (`zoomAt` in `graph.ts`). `viewport-fit=cover` plus `env(safe-area-inset-bottom)` clears the
 notch / home indicator.
 
+**A wheel gesture keeps the axis of its first event.** The board reads a gesture — wheel events with no
+gap longer than 150 ms between them (`WHEEL_GESTURE_GAP_MS`) — along the axis its first event moved
+on: a horizontal gesture (a trackpad swipe sideways, a tilt wheel, Shift + wheel) pans the board by
+`deltaX`, a vertical one zooms as above, and a `ctrl`+wheel event, which is what a trackpad pinch
+arrives as, zooms whichever axis the gesture holds. An event that does not move along the axis it is
+read on does nothing, so a `deltaY` of 0 is no longer a step out. Per event the deltas cannot decide
+it: measured on macOS's WKWebView (2026-10-03, a console probe counting one gesture at a time, `deltaMode`
+0 throughout), a two-finger sideways swipe gave 206 events with the larger `deltaX`, 1 with the larger
+`deltaY` and 32 equal, and a vertical swipe 2 / 80 / 12, while the first event of each lay on the
+swipe's own axis; a pinch arrived as `ctrl`+wheel with `deltaX` 0; a tilt wheel carried `deltaX` alone.
+The 150 ms sits between the longest gap measured inside one trackpad gesture, momentum included
+(78 ms, over four gestures), and a deliberate second flick after the first had visibly stopped, which
+arrived 250 ms after the first one's last event (one sample).
+
+**A press ends at a mouse move with no button held.** A pan, a node drag or a connect drag on the
+board follows the pointer only while a mouse button is down: a mouse `pointermove` whose `buttons` is
+0 ends the press there — a pan stops, a connect drag draws nothing, a moved node is reported once —
+so a release lost on any route leaves nothing running. The same move ends every other press the app
+tracks, through one predicate (`mouseMovedUnpressed` in `ui/dom.ts`): the undo history's press
+([Undo / redo](#undo--redo)), the Inspector's press hold
+([above](#the-inspector-repaint-versus-an-ime-composition)), the CONSOLE's fader, send-column and knob
+drags, and the tuning screen's cap and plot drags and the refresh its press defers
+([channel-tuning.md](channel-tuning.md)). A move with the button held is still a drag, and a pointer that
+is not a mouse is left to its own release. The route that was measured is the native
+context menu: on macOS's WKWebView (2026-10-03, a page-side pointer probe beside an OS-level event
+tap), a right press on the empty board delivered `pointerdown` (button 2), `gotpointercapture` and
+`contextmenu`, and no `pointerup`, `pointercancel` or `lostpointercapture` followed; with the menu
+dismissed by Escape the pan it started went on following the buttonless cursor until the next click,
+and only where a window `blur` arrived (`endAllPointers` in `graph.ts`) did it stop. The same route in
+the Inspector, read by hand in the same engine (2026-10-04): a channel switched with a click, a right
+press on blank Inspector space, the menu dismissed by Escape, then `Cmd+Z` — refused with "Finish the
+current drag before undoing", and the channel stayed as switched.
+
 **A select takes the comfortable target as a height.** The same breakpoint gives the rack's and the
 inspector's controls a 40px minimum height, and a `<select>` does not take it that way: WebKit keeps these
 selects at the platform's own height whatever `min-height` says. It does take a `height`, and keeps the
@@ -3287,6 +3523,17 @@ an export) as rail-colored chips; clicking a chip restores that one, and "Show a
   resurrect what was just undone ([below](#undo--redo)).
 - The bulk "hide" and "show all" re-fit the diagram to reclaim space; while the shelf is open `fitView`
   frames the content above it, and a single restored node is parked at the viewport center.
+- **Show all restacks a returning node that lands on another one** (`restackReturning`). Arrange packs
+  a column over the nodes on the board, so a shelved node comes back to a row that has since been given
+  to another node, and a member snapped beside its STEREO partner lands on whatever Arrange put below
+  that partner. Such a node moves to the foot of its column — below every free-standing node standing
+  across that column, advanced by each one's `rowsFor`, the step Arrange takes — together with its
+  linked partner when it has one on the board (the pair keeps its slot, so a later `alignLinkedPairs`
+  leaves it there). A hung child takes its place from its parent, so one that comes back onto another node
+  moves its parent there with it — DUCKER 1 brought back after an Arrange that gave its row to CH 7/8 takes
+  CH 5/6 to the foot of the channel column. "Lands on" is an overlap of more than the sub-pixel tolerance `inPairSlot` uses,
+  and only a node that came back from the shelf is asked: a unit whose returning nodes stand clear stays
+  where it is, and a Show all with nothing to restack writes no position.
 
 ## Hung nodes (ducker, microSD Rec slots)
 
@@ -3466,6 +3713,13 @@ PDF exports.
 - **Edit** — once a node is selected, clicking its open note area edits it; the header (outside the
   note) still drags the node, and an unselected node drags from anywhere. Editing is canvas-only —
   the inspector has no note field.
+- **An open editor across a redraw** — a redraw of the board (`render()`: a device-follow full reflect,
+  an undo, an OS appearance flip in Auto theme mode) leaves the editor open, focused and over its node's
+  panel, an IME composition in it included, for as long as that node is drawn; a node shelved or no
+  longer in the model takes the editor with it. Handing the board a plan (`setModel`: Fetch, the
+  Live-sync read, a `.urxf` import, a file, a model switch) closes it together with the selection. A
+  key pressed during an IME composition (`isComposing`, or `keyCode` 229) is the composition's, so
+  `Escape` and `Ctrl/Cmd+Enter` close the editor only outside one.
 - **Minimize / expand** — a noted node shows a `+` / `−` button (`makeNoteToggle`): `−` minimizes
   the note to the header, `+` re-expands it. The minimized state persists per node.
 - **Persistence & layout** — notes persist as `plan.notes` (node id → text) and the minimized set as
@@ -3495,7 +3749,7 @@ one is an edit that silently cannot be undone.
 
 | Boundary | Ends | Timing |
 | --- | --- | --- |
-| `pointerup` / `pointercancel` / window `blur` | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — measured 2026-08-14 on Chromium (over its own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so without this boundary the CONSOLE fader on the unit-facing build would go on following the pointer, and writing, while another application is frontmost. The drags in `console.ts` / `dyn-screen.ts` end at that same event, confirmed in WKWebView (the same gesture leaves the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely |
+| `pointerup` / `pointercancel` / window `blur` / a mouse `pointermove` with no button held | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — measured 2026-08-14 on Chromium (over its own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so without this boundary the CONSOLE fader on the unit-facing build would go on following the pointer, and writing, while another application is frontmost. The drags in `console.ts` / `dyn-screen.ts` end at that same event, confirmed in WKWebView (the same gesture leaves the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely. The buttonless move ends a press whose release never reached the page — the native context menu takes a right press's — and only while a press stands, so a hover leaves an entry an edit with no gesture of its own left open; the rule and its reading are under [Responsive layout (mobile)](#responsive-layout-mobile) |
 | `keyup` of an Arrow / Page / Home / End / Enter / Space key, outside a text field | Keyboard stepping on a fader or knob, which autorepeats one edit per repeat with no other terminator | At once. Nothing is dispatched after a keyup on the gesture's behalf, and the next press is a new gesture — deferring would let an autorepeat outrun the macrotask and merge two presses |
 | `focusout` | The node-name field and the in-frame note editor, which edit the plan on every keystroke | At once |
 | 300 ms idle, re-arming | A wheel-notch burst and an incoming MIDI sweep, which produce no DOM gesture at all | Only armed for edits with no boundary of their own: suppressed while a pointer is down, and while a text field has focus (its `focusout` is the boundary, so a name typed with a pause between letters must not cost an entry per letter) |
@@ -3568,9 +3822,10 @@ An undo is refused, with the reason on the status line and **without spending th
   full reconciles and Live sync's 1-knob refetch do the same. A converge round is not one of them —
   it reads the whole write scope but writes nothing back into the plan. The refusal is taken before
   the open entry is **closed**, not merely before it is consumed, so the press is exact when it is
-  retried; note that the two reconciles reset the history in their reflect a moment later, so for
-  those the refused entry is one the operator loses — visibly, rather than as an edit that may or may
-  not have reached the unit. Those three deliberately do **not** refuse a file flow: they start on
+  retried. A reconcile whose read changed a value resets the history in its reflect a moment later, so
+  there the refused entry is one the operator loses — visibly, rather than as an edit that may or may
+  not have reached the unit; a reconcile that agreed with the plan at every key leaves the entry for the
+  retry. Those three deliberately do **not** refuse a file flow: they start on
   their own and nothing on screen names them, so the plan-replacement side is handled at the read
   instead (`loadPlan` ends the session and abandons the read; the read is bound to the plan it was
   issued for and drops its result if that plan is gone). The 1-knob refetch holds the refusal
@@ -3582,16 +3837,20 @@ An undo is refused, with the reason on the status line and **without spending th
   discard, bounded by the settle's own window. A fetch or Live-sync start whose read carries a model switch
   names the switch instead (`busySwitchRead`), as the edit funnel does for the same window
   ([Aborting on failure](#aborting-on-failure));
-- a **drag** is in progress (a press that has moved), because it holds start values and element
-  references in its own closures that the repaint would rebuild from under it;
+- a **drag** is in progress (a press that has moved with a button held), because it holds start values
+  and element references in its own closures that the repaint would rebuild from under it. A mouse
+  move with no button held ends the press instead of continuing it, so a right press whose release the
+  context menu took does not leave the refusal standing;
 - a modal is open — none of them edits the plan, except the channel tuning screen, which is exactly
   what its sliders do, so an undo taken with that one open belongs to the plan behind it;
-- the patch touches `sampleRate` while a live session is up, which is why the rate picker is locked
-  for the same reason. A patch is applied atomically, so the refusal takes the **whole** entry: when
-  the entry carries more than the rate, the status line says so (`undoRateLiveMixed`, chosen by
-  whether the entry's field set is nothing but `sampleRate`). Either way the entry is held back, not
-  lost — the refusal runs on a peeked entry and nothing consumes it, and leaving the session makes
-  the same press work;
+- the patch touches `sampleRate` while any device action holds the link — the rate picker is locked
+  for the same holders and the same reason: a live session holds the rate at the unit's, and a write
+  settles the rate once and then converges the plan it re-reads every round, so a rate the plan took
+  after the settle would re-clock the unit with no confirm and no Track Count warning. A patch is
+  applied atomically, so the refusal takes the **whole** entry: when the entry carries more than the
+  rate, the status line says so (`undoRateLockedMixed`, chosen by whether the entry's field set is
+  nothing but `sampleRate`). Either way the entry is held back, not lost — the refusal runs on a peeked
+  entry and nothing consumes it, and once the action ends the same press works;
 - the host refuses the state the patch would leave behind (`patchBlocked`) — today the +48V / HI-Z
   exclusion, which an entry can otherwise walk around, since its patch is applied whole and nothing
   between the edit that recorded it and this asks what the two switches end up at. Asked of the state
@@ -3607,8 +3866,9 @@ Both stacks are dropped, and the baseline re-taken, when no earlier entry descri
 can return to: a **new document** (`loadPlan` — New / Open / a drop / a recent row / the model picker
 / the model switch a Fetch or Live-sync start offers, applied once its read has landed complete / the `?plan=`
 deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch, Live-sync start
-and the `.urxf` import; plus device-follow's full reconcile). A one-node follow readback only re-takes
-the baseline, keeping the entries already recorded. A read that refuses a +48V / HI-Z ON — made while it was in
+and the `.urxf` import; plus device-follow's reconciles, scoped or full, once their read has authored at least one
+key). A side-effect refetch only takes the keys the device authored into the baseline, keeping the entries already
+recorded. A read that refuses a +48V / HI-Z ON — made while it was in
 flight, or held back by a live flush and never sent — takes that one edit out instead (`PlanHistory.retract`):
 the newest entry carrying each key it took back loses the key when that entry still holds the refused value, an
 entry left empty leaves the stack, and the baseline takes the refusal so it is not recorded as an edit of its own.
@@ -3667,8 +3927,11 @@ per drag, and each report crosses the IPC boundary to set a native item's state.
 | `Ctrl/Cmd+Z` | Undo (macOS: also Edit ▸ Undo) |
 | `Ctrl/Cmd+Shift+Z`, `Ctrl/Cmd+Y` | Redo (macOS: also Edit ▸ Redo) |
 | `Delete`, `Backspace` | Delete the graph's selection (GRAPH view only, and not past a modal) |
-| `Escape` | Clear the graph's selection; dismiss a dismissable overlay; close the note editor |
-| `Shift` (hold, or latch) | Fine-tuning mode ([above](#node-notes) — `ui/fine.ts`) |
+| `Escape` | Clear the graph's selection; dismiss a dismissable overlay; close the note editor (not during an IME composition) |
+| `Shift` (hold, or latch) | Fine-tuning mode ([above](#node-notes) — `ui/fine.ts`); not a Shift typed into a text field or pressed during an IME composition |
+| `Tab` | Reaches the board through one node: the one focus last rested on or last selected, else the first drawn |
+| `Enter`, `Space` (a board node focused) | Select that node, as a press does |
+| Arrow keys (a board node focused) | Move focus to the next (`→` `↓`) or previous (`←` `↑`) node in the model's order, wrapping at the ends, and pan it into view |
 
 The undo branch runs before the `Delete` / `Escape` handling and applies its own target test, because
 that handler's broader "focus is in a field" bail is wrong for the shortcut: a focused range slider or
@@ -3680,13 +3943,41 @@ macOS: the page receives `Cmd+Z` even with the native Edit menu installed, and c
 phase like the rest of that handler, which is what lets the note editor's `stopPropagation` shield an
 in-progress note from the shortcut.
 
+**The board from the keyboard.** The board's `<svg>` is a `group` named after the GRAPH view, and each node a
+`button` named by its label (the CH SETTING name in device-label mode) whose `aria-pressed` says whether it is
+selected. One node at a time carries `tabindex="0"` (a roving tab stop, `syncRovingNode` in `graph.ts`), so the
+board is one stop in the page's Tab order however many nodes it draws. The focused node wears the amber ring as an
+SVG stroke — a `.focus-ring` rect drawn last in the node, stroked by the stylesheet under `:focus-visible` and
+stroke-less in an export — because an outline on an SVG group is not painted in WebKit; a node dimmed as a whole
+dims its ring with it, while a badged node's ring sits beside its dimmed body. Focus is carried by node id across
+every rebuild of the node layer (`renderNodes`), a single node's (`repaintNode`) and the re-append that raises the
+selected node, for as long as the board draws the same plan: measured on macOS's WKWebView (2026-10-03), re-appending
+the focused group moved focus to `<body>`, and Tab reached `<g tabindex="0">` with the OS keyboard-navigation setting
+at its default (off). The shelf and the selection bar are rebuilt by the same renders and carry focus the same way, a
+chip by the node it restores and Show all and the bar's buttons by their class (`rebuildChrome`); a chip that restores
+its node hands focus to the chip that took its place, or to that node when it was the last, and Show all, which closes
+the shelf, hands it to the board's tab stop.
+
+**Wiring from the keyboard goes through the Inspector.** A node's Routing section lists its wires, and each one the
+board draws is a button that selects it as a press on the wire does (`selectConnection`): focus moves into the wire's
+panel, whose delete removes it, and a wire the board does not draw — an end on the shelf, an off send the declutter
+toggle hides — stays a plain row. Each of the node's jacks — its input, its output, a channel's Rec Point tap — gets a
+picker of the ports a drag from that jack would be taken on (`connectOrigins`, which asks the drag's own
+`connectCandidates`), and the choice commits through the drag's own `finishConnect` (`connectTo`), so a source chosen for
+STREAMING replaces the one it holds, and a linked channel brings its partner onto a USB output, as the drag does. The
+picker keeps the focus across the rebuild the new wire causes (`data-focus-key`, which `inspectorFocusKey` in `main.ts`
+reads in place of a control's text).
+
 ## Preferences
 
 The toolbar gear opens the Preferences modal (`ui/prefs.ts`), available in every build. It is the
 consent-box family (`.prefs-box`, `min(1180px, 100%)`, two columns), and the box itself never
 scrolls: it is a fixed column with the title on top and the Close action pinned at the bottom, and
 the grid between them is the only scrolling region, so a shrunken window height cannot hide Close
-behind a scroll. Since every setting applies the moment
+behind a scroll. Every change but the theme's (which the palette restyles in place) rebuilds the
+box, and so do a Live sync start or end and a language switch while it is open; the rebuild keeps
+the focused control and the grid's scroll offset (`preserveSettingsView` in `ui/dom.ts`, which
+Device setup shares). Since every setting applies the moment
 it is changed, a press outside the box or Escape dismisses the modal like the MIDI panel and the
 licenses modal — the capture-phase wiring all three share lives in `ui/dom.ts` (`wireDismiss`).
 Settings persist as one
@@ -3712,7 +4003,10 @@ what the desktop app offers.
   address (see "One device address, more than one owner"), and it does so **before** the scope
   filter, so the scene subset stays the full list filtered by ParamName. Reads stay full — a scoped fetch reads every
   parameter (reads are side-effect free) and then restores the kept values
-  (`applyDeviceStateScoped` in `main.ts`). The diagnostics (compare / self-test / prepare) always
+  (`applyDeviceStateScoped` in `main.ts`), and the two reads a live session scopes to a few nodes — a follow
+  reconcile and a `sideEffect: "refetch"` read — take the same keep and restore (`applyNodeStateScoped`), since a
+  node read there carries scene-external values of its own (the oscillator's assign into STEREO, a MIX or an FX
+  channel). The diagnostics (compare / self-test / prepare) always
   run at full scope, and the control locks while Live sync is up, since the scope is part of the
   held session's snapshot and notify registration. A scene-only write also skips the sample-rate
   settle: the rate is out of scope, so the device keeps its own clock.
@@ -3722,9 +4016,15 @@ what the desktop app offers.
 - **Application version** — the running version, the launch update-check toggle, and a manual
   "Check now". The outcome lands inline beside the version — the modal stays open, so a "no
   update" answer is seen where it was asked for — and while the check is in flight every
-  dismissal locks (Close disables, an outside press and Escape are inert), bounded by the
-  check's 10 s timeout. Only an accepted update closes the modal, since the scrim would hide
-  the download status.
+  dismissal locks (Close disables, an outside press and Escape are inert), for the check and its
+  confirm only, which the check's request timeout and the operator's answer bound. Every control of
+  the two columns is disabled for the same span, "Check now" among them, so no setting changes under
+  a panel that is not redrawn, and each one wears the disabled face for it — the buttons, the
+  segmented faces and the selects alike, dimmed with a `not-allowed` cursor; a row already locked
+  keeps its own dim rather than taking a second one. When the check settles the modal is drawn again — a language switch
+  or a live-sync lock that arrived meanwhile lands there — the outcome is written into the fresh row
+  and focus returns to "Check now". Only an accepted update closes the modal, since the scrim would hide the download status, and the download runs
+  after the lock is released, so a Preferences reopened during it closes as usual.
 - **Warnings** — visibility of the untested-firmware confirm and the sample-rate / Ducker-bypass
   warning cards. Display-only: the behavior locks (rate-disabled nodes, the stereo-EQ force-off)
   stay on regardless.
@@ -3747,7 +4047,7 @@ what the desktop app offers.
 ```jsonc
 {
   "format": "urx-router-plan",
-  "version": 1,
+  "version": 4,
   "modelId": "URX44V",
   "sampleRate": 48000,
   "positions": { "ch1": { "x": 1, "y": 0 } },
@@ -3769,7 +4069,15 @@ native save/open dialogs (`tauri-plugin-dialog`) plus a recent-plans list; file 
 app commands (`read_text_file` / `read_binary_file` / `write_text_file` / `write_binary_file`), each
 `async` with the `std::fs` work on a worker thread (`spawn_blocking`, like the vd commands) and each
 enforcing an extension allowlist (read text: `json`; read binary: `urxf`; write text: `json` / `md`;
-write binary: `png` / `pdf`).
+write binary: `png` / `pdf`), asked of the name the dialog returned and again of the file it resolves to — a
+link named like a plan does not make the file it points at one to read or write.
+A write fills a temp file and renames it into place, so a failure leaves the previous file whole. Over an
+existing file it goes through to the file the path resolves to — a symlink keeps naming it — and keeps what
+was set on it: the mode, on macOS the extended attributes (Finder tags) and the ACL, on Windows the ACL,
+attributes and alternate data streams (`ReplaceFileW`). A symlink that points at nothing yet is followed too:
+the file it names is created and the link stays a link. A directory the app cannot write fails the save;
+nothing is written in place. A file with more than one hard link is replaced the same way: the name saved to
+gets the new file, and its other names keep the old contents.
 `write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
 array — with the destination path in a percent-encoded `x-file-path` request header. The webview
 itself runs under a strict CSP (`security.csp` + `devCsp` in `tauri.conf.json`): scripts from
@@ -3783,12 +4091,15 @@ keeps the plan dirty. A recent-plans entry whose file no longer loads (moved / d
 corrupted) is dropped from the list automatically — keeping it would only reproduce the same
 error — and the status line says so; declining the discard confirm attempts nothing and keeps
 the entry. The `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
-`noteCollapsed` fields are optional (a file without them gets their defaults on load). Loading (`deserialize`) is tolerant of
+`noteCollapsed` fields are optional (a file without them gets their defaults on load). `version` is the format
+the file was written in (`PLAN_VERSION` in `src/core/plan.ts`): a newer one is refused (`planVersionUnsupported`),
+an absent or non-numeric one is read as the current format, and an older one is migrated forward on load. Loading (`deserialize`) is tolerant of
 corrupt input at two levels. A collection that is not the right container at all falls back to its
 empty default (`positions` included, symmetrically); within a collection each element is validated on
 its own and a non-conforming one is dropped rather than the document refused — a wire that is null,
 wrong-typed or carries an unknown `kind`; a node parameter leaf that is not a finite number or a
-boolean; a note, name or colour that is not a string; a hidden / note-collapsed id that is not a
+boolean; a note, name or colour that is not a string (a colour that is a string but not one the
+unit has is the load funnel's, which drops it and says so); a hidden / note-collapsed id that is not a
 string; a position whose coordinates are not both finite. This keeps garbled values from a hand edit,
 a generator or an older build out of the plan, where they would break routing invariants or reach a
 formatter that throws on them — a note written as an object would load cleanly and then take the
@@ -3807,7 +4118,7 @@ type's defaults, and selecting the old type back does not bring the old values w
 is put in front of the operator instead of being taken by a document's silence:
 `app/unauthored-writes.ts` reports the strips a write moves at addresses whose value the operator
 did not choose, and the write confirm names them. The join is `planToCommandOrigins`: the emit runs
-once over a plan whose node parameters record their reads, and `rawCommand` — the one seat holding
+once over a plan whose node parameters and wire params record their reads, and `rawCommand` — the one seat holding
 both a command and the value it carries — writes the key onto the command as it builds it. Carried
 there rather than in a table beside it, because the shared-address collapse hands back a COPY of
 the command that survives it.
@@ -3819,9 +4130,8 @@ LEVEL go out as one chain — therefore gives each its own key, which reading th
 not. What the command CARRIES need not be what the key holds: the emit inverts (the SSMCS bank's
 COMP and EQ send ON as 0), rounds and clamps, and each of those is that key's value going out. A
 run of commands sending one value to every linked instance takes the name from the one before it,
-matched on the parameter as well as the value — matched on the value alone, a channel's fader, which
-comes off a connection rather than a node parameter, would take whichever parameter had last been read
-carrying a zero.
+matched on the parameter as well as the value — matched on the value alone, a command the emit supplies
+itself would take whichever parameter had last been read carrying the same value.
 
 Three answers, not two. A key the plan does not carry names nothing: the emit asks before it decides
 whether to send one, then supplies the value itself, and that is nobody's to have chosen — except at a
@@ -3949,17 +4259,18 @@ The value is authored FROM the device (`authorFromDevice`), the seat a device-si
 takes, rather than pushed as an edit: it is the write path's value rather than the operator's, and an undo
 that put the unwritable raw back would only have it normalised again on the next write.
 
-**SCOPE: the FX channel effect, and nothing else.** The premise holds wherever the emit normalises —
-`translate.ts` has eighteen `boundRaw` and ten `boundEnum` call sites against the two FX ones — and the
-reachable sibling is insert FX, whose engine slots are bounded at the emit while `readback.ts` stores the
-unit's raw verbatim. That case is untouched here: it diverges the same way and `comparePlan` sees it no
-better. The mechanism is bounded to `paramRangeProblems`' own walk for the same reason that walk is
-(`plan-validate.ts`'s SCOPE note): the FX catalogue is the family whose windows have actually moved.
-The walk's two node keys — a HI-Z channel's +48V and A.Gain — are not taken back: `paramRangeAddrs`
-answers only for an FX `params` entry, and the emit sends both keys as the plan holds them.
+**SCOPE: an FX `params` entry, and every node-param leaf the write bounds** — the leaves the load
+bounds too (`paramRangeProblems`). The node-param case a plan reaches here with is an insert-FX engine slot:
+`readback.ts` stores the unit's raw verbatim, the emit bounds it, and the write's confirmation is what brings
+the plan onto the bound. A node-param leaf has no `paramRangeAddrs` entry; its addresses are the commands
+whose value came from it (`planToCommandOrigins`), so a value the emit sends to every linked instance — a
+MIX bus's 1-knob level, a stereo channel's gain — is taken back only once each of them is confirmed. It is
+taken back only where holding the bound sends what was sent at those addresses, which a leaf the load bounds
+to a narrower window than its encoder does (a gain, the oscillator level, the HPF frequency) meets only where
+the encoder's clamp lands on the bound; elsewhere the unit holds the value the write let through
+(`app/adopt-writes.ts`).
 
-A value is **rewritten** rather than dropped in the DESERIALIZER (the node name, below) and in the loader one
-layer later, after validation, whose repairs are listed under `plan-validate.ts` in "Source layout". Among
+A value is **rewritten** rather than dropped in the loader, after validation, whose repairs are listed under `plan-validate.ts` in "Source layout". Among
 them, an FX value outside what the app can write is bounded, and one there is nothing to bound is dropped: a
 leaf that is not a finite number (so the selected type's own default applies rather than one type's guessed
 in), a `type` no menu offers, and an `fxEffect` or `params` that is not an object. That last pair is why this
@@ -3967,9 +4278,12 @@ repair reaches past the leaves — the
 sanitiser above keeps a boolean and a non-empty object under any key, so an unreadable effect object loads
 and every reader below reads it as absent, and a truthy one is worse still, since the write path then sends
 that channel's factory defaults over whatever the unit holds. Both actions are reported (`plan-validate.ts`), in
-two sentences rather than one count. The same step bounds two keys of a channel whose HI-Z is on — +48V to
-off and A.Gain to +40 dB (`input-lock.ts`) — and counts them with the bounded FX values. In the deserializer: a **node name** is cut to
-**8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
+two sentences rather than one count. The same step drops a node-param value whose kind is not the factory
+value's at its path, bounds every node-param leaf the write bounds to the value the write sends, by the rule
+the write bounds it by (`nodeLeafRules` / `admitLeaf` in `translate.ts`), and bounds two keys of a channel whose
+HI-Z is on — +48V to off and A.Gain to +40 dB (`input-lock.ts`) — counting each with the dropped or bounded FX
+values. The same step rewrites a document's names and notes (`documentTextProblems`), and says so: a **node
+name** is cut to **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
 would lose a name for being long, and keeping one the unit could not have produced puts a label on
 the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: measured
 on a URX44V, the broker accepts a 20-character name and reads it back unchanged, and the settings
@@ -3978,8 +4292,13 @@ limit would be a mistake. The name is also the one plan string the unit is sent 
 (`planToNameWrites`: the SSMCS Sweet Spot Data preset rides the same path, but the plan holds it as a numeric index,
 and an enum string such as a send's `tap` goes out as a number). The numeric leaves have `boundRaw` and a string has
 no bound of its own, so the cut is applied again at the emit site: a name reaches the plan from a device read and from a rename made on
-the unit itself, neither of which passes this funnel. Notes and colours are the app's own and stay
-unbounded.
+the unit itself, neither of which passes this funnel. Notes are the app's own and stay unbounded, and a
+colour is one of the unit's palette values. Before the cut, a document's names and notes lose every code
+point XML 1.0 refuses (`stripXmlInvalid`): an image export serializes both into an SVG, and one such
+character fails the whole export. A name read from the unit is not cleaned that way
+(`normalizeDocumentName` against `normalizeNodeName`), so no write rewrites the unit's own name for it,
+and the rasterizer removes the same code points from the serialized markup (`rasterizeSvg`), which is what
+covers a name that reaches the board from the unit.
 
 The cut carries a second rule, and the order between them is load-bearing: **trailing whitespace is
 stripped after the cut**, never before. A leading space is kept — the unit right-aligns the numbers
@@ -4011,7 +4330,10 @@ them:
 | Payload | real file paths | `File` objects, no path |
 | Consequence | a dropped plan joins the recent list, exactly as if opened from the dialog | no recent-list entry (there is no path to record) |
 
-The DOM handlers are registered only outside Tauri, so a drop is never handled twice. Both paths
+The DOM handlers are registered only outside Tauri, so a drop is never handled twice. On desktop the
+shell raises the three drag events for the window a file is dragged onto, and the main window takes
+only the ones raised for itself: a file dropped onto the MIDI control window shows no overlay and
+opens nothing. Both paths
 funnel into the same check: the extension has to be one the build accepts, and exactly one file may
 be dropped — a multi-file drop is refused rather than resolved by guessing which one was meant.
 A refused drop reports on the status line (a routine "not that file"); a dropped plan that fails to
@@ -4019,7 +4341,11 @@ parse raises the same modal File > Open would.
 
 `listenEvent` drives the event plugin directly through
 `window.__TAURI_INTERNALS__.transformCallback` + `plugin:event|listen`, keeping the frontend free of
-npm runtime dependencies like the dialog / updater calls.
+npm runtime dependencies like the dialog / updater calls. Its scope is what selects the window: the
+default `"any"` registers for every emitter (the Edit menu's event), while the drop zone's `"window"`
+names the page's own window — the label the shell writes into `__TAURI_INTERNALS__.metadata` — as the
+target, and a page with no such label is refused that registration rather than widened to every
+window.
 
 ### Settings file (`.urxf`) import — experimental
 
@@ -4030,14 +4356,18 @@ parses the file and exposes one chunk as a `ParamSource`, and `readback.ts` runs
 source travels as a parameter: the pass and each reading helper bind their own `vdGet` / `vdGetStr`
 from it, so a device follow reconcile and a file import cannot read each other's source and need no
 guard against overlapping. Because an import replaces every value at once — which Live sync cannot
-follow — it is refused while a session is up, the same rule fetch and write already follow.
+follow — it is refused while a session is up, the same rule fetch and write already follow. It is refused
+while any other device action holds the link as well (a Live sync still connecting holds it with no session up
+yet), and the import asks again once its confirms are answered, since the window keeps running behind them.
 
 Format notes that shape the reader (full spec: the private reference repository):
 
 - **Endianness alternates by level.** Record headers and the F descriptor records are big-endian;
   block headers and every value in the D block are little-endian.
 - **D is a frameless concatenation** walked only with its own F table. `Σ(elemSize × count) == D
-  length` and `record bytes == F length` are the file's only integrity checks, so both are asserted.
+  length` and `record bytes == F length` are the file's only integrity checks, so both are asserted. A
+  descriptor with an element size of 0 is refused: it spans no bytes whatever its count says, so it would
+  pass both checks while turning one descriptor into up to 65535 values.
 - **Branch on `typecode`, never on element size** — a 4-byte unsigned bitmask and a 4-byte ASCII
   field are the same width, and reading either by width alone gives a wrong value silently.
 - **An x axis is stored flattened onto consecutive ids** (id + band), folded back into an `(id, x)`
@@ -4184,8 +4514,16 @@ to date, or check failed). The Tauri updater / process plugins are registered
 in `src-tauri/` on desktop only, and the frontend calls `plugin:updater|check` /
 `plugin:updater|download_and_install` / `plugin:process|restart` directly from `src/core/platform.ts`, the
 same way as the dialog calls (no added npm runtime dependency). When an update exists it shows a confirm
-dialog, then downloads, installs, and restarts. Browser / demo builds disable this via the `DEMO` branch,
-which is eliminated as dead code.
+dialog, then downloads, installs, and restarts. The download carries a total deadline
+(`UPDATE_DOWNLOAD_TIMEOUT_MS` in `platform.ts`), passed to the plugin as its request timeout — the update
+a check returns carries none of its own, so a stalled download would otherwise never settle; a download
+that outlives it fails and is reported like any other. An accepted update ends the app, so it asks the discard confirm first when the plan has unsaved edits (declining
+installs nothing), and it takes the device link as holder `update` for the download and the relaunch: an
+install accepted while another action holds the link is refused (`status.deviceLinkBusy`, on the Preferences
+note for a manual check), and no device action can start while the bundle downloads. A failure after the accept names what failed and
+why: the download or install (`status.updateInstallFailed`, with the cause), or the relaunch after an install
+that succeeded (`status.updateRestartFailed`, which says to reopen the app). Browser / demo builds disable this via the `DEMO`
+branch, which is eliminated as dead code.
 
 Distribution rides on GitHub Releases. Enabling `bundle.createUpdaterArtifacts` in `tauri.conf.json` makes
 `tauri-action` emit signed bundles plus a `latest.json`, served from the
@@ -4217,7 +4555,10 @@ the plain text as is and the user must accept it to proceed. The macOS `.dmg` is
 agreement page, so a **first-run consent gate** covers it: `src/ui/consent.ts` shows the same disclaimer in
 a full-screen modal and, once accepted, records it in `localStorage` (`urx-disclaimer-accepted`) so it is
 never shown again (no re-consent after an auto-update). Declining quits the app (`plugin:process|exit`). The
-gate runs only on the desktop (`isTauri()`); the browser/demo never sees it.
+gate runs only on the desktop (`isTauri()`); the browser/demo never sees it. The headless launch actions
+(`--self-test`, `--prepare-modified`) wait on the same consent: a profile that has not accepted it shows the gate,
+logs `[self-test] waiting for first-run consent` (or `[prepare-modified] …`), and runs nothing until the gate is
+accepted — they reach the device layer with nothing on screen to press, so the inert app does not hold them.
 
 ## Third-party licenses
 

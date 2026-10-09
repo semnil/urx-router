@@ -141,6 +141,7 @@ export const ja: Messages = {
     param2: "Parameter 2",
     knobsNote: "BANK は本体のバンク切替と同じ単位です。",
     unset: "—",
+    unknownValue: (v: number | string): string => `不明 (${v})`,
   },
   midi: {
     menuItem: "MIDI コントロール",
@@ -157,6 +158,7 @@ export const ja: Messages = {
       "ラーンをオンにしてコンソールまたは調整画面のコントロールをクリックし、MIDI 機器のコントロールを動かします。",
     hintLearn: "割り当てるコンソールまたは調整画面のコントロールをクリックしてください。",
     hintArmed: (control: string): string => `${control} に割り当てる MIDI コントロールを動かしてください…`,
+    learnOff: "ラーンをオフにしました: コンソールと調整画面は再び値を編集します。",
     mappings: "割り当て",
     noMappings: "割り当てはまだありません。",
     remove: "割り当てを削除",
@@ -188,6 +190,12 @@ export const ja: Messages = {
         "トグルボタン (押すたび 127/0 交互送信、Stream Deck 等) 向け: 値がそのまま状態になる — 64 以上で ON、未満で OFF。モーメンタリーボタンなら押している間だけ ON。",
     },
     bound: (control: string, addr: string): string => `${addr} を ${control} に割り当てました`,
+    learnKindMismatch: (control: string, addr: string): string =>
+      `割り当てません: ${addr} は ${control} と種類の違うコントロールを既に動かしています — スイッチと連続値のコントロールは 1 つの MIDI コントロールを共有できません`,
+    learnUnresolved: (control: string, addr: string): string =>
+      `割り当てません: ${control}、または ${addr} が既に動かしているものが現在のプランにありません`,
+    mixedGangAbsolute: (addrs: string): string =>
+      `${addrs} の取り込みモードを Absolute にしました: スイッチと連続値のコントロールが共有しており、スイッチの後ろでは Pickup が効きません`,
     windowError: (message: string): string => `MIDI コントロールウィンドウを開けませんでした: ${message}`,
     inputError: (message: string): string => `MIDI 入力エラー: ${message}`,
     outputError: (message: string): string => `MIDI 出力エラー: ${message}`,
@@ -260,15 +268,34 @@ export const ja: Messages = {
       "ノードをドラッグして配置し、出力ポート (右) から入力ポート (左) へ" +
       "ドラッグして結線します。接続可能なポートは結線中に緑でハイライトされます。" +
       "チャンネルのダイレクト出力・録音は、上辺の Rec Point タップから配線します。" +
-      "ノード右上のペンでノートを追加し、ノートをクリックすると編集できます。",
+      "ノード右上のペンでノートを追加し、ノートをクリックすると編集できます。" +
+      "キーボードでは Tab で盤面に入り、矢印キーでノード間を移動し、Enter で選択します。" +
+      "選択したノードのルーティング欄からポートを結線し、結線を選択できます。",
     type: "種別",
     // 実機の CH SETTING 画面が持つ行。実機は表示言語を日本語にしても英語のままなので訳さない。
     name: "Name",
     color: "Color",
+    colorName: {
+      blue: "Blue",
+      orange: "Orange",
+      yellow: "Yellow",
+      purple: "Purple",
+      cyan: "Cyan",
+      magenta: "Magenta",
+      red: "Red",
+      green: "Green",
+      ltGreen: "LtGreen",
+      white: "White",
+      off: "Off",
+    },
     recPoint: "Rec Point",
     inputsFrom: (n: number): string => `接続元から (${n})`,
     outputsTo: (n: number): string => `接続先へ (${n})`,
     routing: "ルーティング",
+    connectSource: "ソースを接続",
+    connectOutput: "出力の接続先",
+    connectRecPoint: "Rec Point の接続先",
+    connectChoose: "選択…",
     connection: "接続",
     from: "元",
     to: "先",
@@ -581,7 +608,7 @@ export const ja: Messages = {
       mbcBandBypassed:
         "このバンドはバイパスされています。圧縮もメイクアップも掛からず unity で素通しします。下の値は保持され、ここで編集もできます。",
       mbcOneKnob:
-        "1-knob が ON です。ここの値はすべて本体が自身のレベルから設定しており、ここでの編集は本体へ送られません。",
+        "1-knob が ON です。バンドの値・Release・クロスオーバーは本体がレベルから設定し、その編集は送られません。Out Gain と 1-knob は送られます。",
       deviceOnlyTag: "本体で設定",
     },
   },
@@ -620,8 +647,15 @@ export const ja: Messages = {
     paramsBounded: (count: number): string =>
       `このアプリが書き込める範囲の外にあった保存値 ${count} 件を、送信できる最も近い値に寄せました`,
     paramsDropped: (count: number): string =>
-      `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、エフェクト自身の既定値を使います`,
+      `このアプリが書き込める値ではなかった保存値 ${count} 件を削除し、既定値を使います`,
     streamingSourceSupplied: "計画に STREAMING のソースが無かったため、STREAMING を STEREO にしました",
+    textsRewritten: (count: number): string =>
+      `名前・メモ ${count} 件を、本体の名前画面と画像出力が扱える形に書き換えました`,
+    colorsDropped: (count: number): string => `本体に無いノードの色 ${count} 件を削除し、既定の色を使います`,
+    linkedPairsAligned: (count: number): string =>
+      `STEREO リンクしたペア ${count} 組で、共有する設定を本体と同じく奇数チャンネルの値にそろえました`,
+    sendLevelsSupplied: (count: number): string =>
+      `レベルの書かれていなかった Send ${count} 件を、書き込みが送る 0 dB にしました`,
     booleanParamsConverted: (count: number): string =>
       `数値で書かれていたオン/オフの値 ${count} 件を、オン/オフの値に変換しました`,
     linkedSendPansAligned: (count: number): string =>
@@ -646,6 +680,7 @@ export const ja: Messages = {
     pdfExported: "PDF を出力しました",
     arranged: "既定レイアウトに整列しました",
     busyDeviceRead: "本体から読み取り中です — 完了してからもう一度お試しください",
+    busyFileFlow: "ファイルを開くか保存している最中です — 完了してからもう一度お試しください",
     busySwitchRead: "この計画はデバイスの機種の計画に差し替え中です — 読み取りが終わってからもう一度お試しください",
     deviceLinkBusy: "別のデバイス操作が接続を掴んでいます — 完了してからもう一度お試しください",
     fetchConnecting: "デバイスに接続しています…",
@@ -676,6 +711,8 @@ export const ja: Messages = {
       `${channels} で +48V と Hi-Z が両方オンになっています — どちらかを切ってから書き込んでください。何も送信していません`,
     writeConnecting: "デバイスに接続しています…",
     writeNoChanges: "デバイスは計画と一致しています — 書き込む変更はありません",
+    writeNamesNotSent: (strips: string): string =>
+      `書き込む変更はありません — ${strips} の名前は空のため送信せず、デバイスは自身の名前を保ちます`,
     written: (n: number): string => `${n} 件の設定をデバイスに書き込みました`,
     writePartial: (n: number, failed: number): string => `${n} 件書き込み、${failed} 件失敗`,
     writeStopped: (n: number, notSent: number): string => `失敗のため書き込みを停止: ${n} 件送信、${notSent} 件未送信`,
@@ -691,14 +728,19 @@ export const ja: Messages = {
     selfTestRunning: "デバイスのセルフテストを実行中… 切断しないでください (メニューから中止できます)",
     selfTestRefused:
       "セルフテストを開始しませんでした — 復元に必要なパラメーターの一部を事前に読み取れませんでした。デバイスには何も書き込んでいません。",
+    selfTestRefusedHead:
+      "セルフテストを開始しませんでした — 書き込むと他の設定も変わる設定をデバイスから読み取れませんでした。デバイスには何も書き込んでいません。",
+    selfTestModelMismatch: (device: string, model: string): string =>
+      `セルフテストを開始しませんでした — 接続中のデバイスは ${device} で、${model} ではありません。デバイスには触れていません。`,
     selfTestCancelled: "セルフテストを中止しました — デバイスは無音状態です。元に戻すには再度取得してください",
+    selfTestCancelledUntouched: "セルフテストを書き込み前に中止しました — デバイスには触れていません",
     selfTestPass: (n: number): string => `セルフテスト合格: ${n} 件のパラメータを書き込み、同一に読み戻しました`,
     selfTestFail: (n: number): string => `セルフテスト失敗: 書き込み後に ${n} 件が一致しませんでした`,
     selfTestIncomplete: (n: number): string =>
       `セルフテスト中断: 停止した時点で ${n} 件が差分のままです — レポートを確認してください`,
     selfTestRestoreFail: "セルフテスト: デバイスが復元されていない可能性があります — 再度取得して確認してください",
-    selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
-      `セルフテストの推測: 確認 ${confirmed} 件・否定 ${refuted} 件・検証不能 ${untestable} 件`,
+    selfTestUnverified: (confirmed: number, roundTripped: number, refuted: number, untestable: number): string =>
+      `セルフテストの推測: 確認 ${confirmed} 件・往復のみ ${roundTripped} 件・否定 ${refuted} 件・検証不能 ${untestable} 件`,
     selfTestError: (message: string): string => `セルフテストのエラー: ${message}`,
     liveConnecting: "ライブ同期のため接続中…",
     liveOn: (model: string, n: number): string => `ライブ同期 オン · ${model} · ${n} 件読込`,
@@ -740,9 +782,9 @@ export const ja: Messages = {
     undoBusyDrag: "ドラッグを終えてから元に戻してください",
     undoDeviceBusy: "本体との通信中です — 完了するまで元に戻せません",
     undoModal: "開いているダイアログを閉じてから元に戻してください",
-    undoRateLive: "ライブ同期中のサンプルレートは本体に追従します — ここでは元に戻せません",
-    undoRateLiveMixed:
-      "この操作はサンプルレートの変更を含みます — ライブ同期中は本体に追従するため、操作全体を保留しました。破棄はしていません。ライブ同期をオフにすれば同じ操作が通ります",
+    undoRateLocked: "デバイス操作の実行中はサンプルレートを元に戻せません",
+    undoRateLockedMixed:
+      "この操作はサンプルレートの変更を含みます — デバイス操作の実行中はサンプルレートを元に戻せないため、操作全体を保留しました。破棄はしていません。その操作が終われば同じ操作が通ります",
     undoPhantomHiZ: (channels: string): string =>
       `この操作は ${channels} で +48V と Hi-Z を両方オンにします — どちらかを切ってからやり直してください。操作は保留しました。破棄はしていません`,
     midiBusy: "本体との通信中またはファイル操作中です — 完了するまで MIDI 入力は無視されます",
@@ -754,6 +796,9 @@ export const ja: Messages = {
     saveError: (message: string): string => `保存エラー: ${message}`,
     exportError: (message: string): string => `出力エラー: ${message}`,
     updateDownloading: "更新をダウンロード中… 完了後にアプリを再起動します",
+    updateInstallFailed: (message: string): string => `更新をダウンロード・インストールできませんでした: ${message}`,
+    updateRestartFailed: (message: string): string =>
+      `更新はインストールしましたが、アプリを再起動できませんでした (${message})。新しいバージョンを使うにはアプリを終了して開き直してください。`,
   },
   confirm: {
     discard: "保存していない変更があります。破棄してよろしいですか?",
@@ -764,6 +809,8 @@ export const ja: Messages = {
     write: (n: number): string => `${n} 件の変更をデバイスに書き込みますか? デバイスの現在の設定を上書きします。`,
     unauthoredWrite: (strips: string): string =>
       `操作していない設定も変更されます — プランが補った既定値、または読み込み後にデバイス側で変わった値です。\n対象: ${strips}`,
+    namesNotSent: (strips: string): string =>
+      `${strips} の名前は空のため送信しません — デバイスは自身の名前を保ちます。`,
     firmwareMismatch: (device: string, supported: string): string =>
       `接続中のデバイスのファームウェア (${device}) は、このアプリの動作確認バージョン (${supported}) と異なります。正しく動作しない可能性があります。続行しますか?`,
     selfTest:
@@ -937,6 +984,7 @@ export const ja: Messages = {
     trackCountReread: (message: string): string =>
       `サンプルレートの書き込みを送信しましたが、その後 microSD レコーダーの Track Count を読み戻せませんでした: ${message}。レートが運べない本数は実機が自分で下げるため、画面の表示は変更前の値である可能性があります。実機を読み取って確認してください。`,
     deviceSetupRead: (message: string): string => `本体の設定を読み込めませんでした: ${message}`,
+    followUsbRead: (message: string): string => `本体の Follow USB の設定を読み込めませんでした: ${message}`,
     deviceSetupWrite: (message: string): string => `設定を適用できませんでした: ${message}`,
     noRule: "この経路は接続できません",
     duplicate: "すでに接続済みです",
@@ -967,8 +1015,11 @@ export const ja: Messages = {
       fileDenied: "ファイルへのアクセスが拒否されました",
       fileIo: (detail: string): string => `ファイルの読み書きに失敗しました (${detail})`,
       fileBadExtension: (detail: string): string => `対応していない拡張子です (この操作で扱えるのは ${detail})`,
+      fileNoTemp: "一時ファイルの名前がすべて使われているため、ファイルの隣に一時ファイルを作れませんでした",
       pngEncode: "画像を PNG に変換できませんでした",
       canvasUnavailable: "描画キャンバスを利用できないため画像を生成できませんでした",
+      svgRasterize: "盤面を画像として描画できませんでした",
+      convergeFailed: "デバイスへの書き込みが理由を示さずに失敗しました",
       midiPortNotFound: "その MIDI ポートは使用できません。デバイスを接続し直して選び直してください。",
       midiOutputNotOpen: "MIDI 出力ポートが開いていません",
       midiInitFailed: (detail: string): string => `MIDI サブシステムを開始できませんでした (${detail})`,
@@ -983,6 +1034,8 @@ export const ja: Messages = {
       `${n} 件の設定を読み取れず、デバイスの状態を完全には把握できません。Live sync の開始には完全な読み取りが必要です。`,
     liveFollowStopped:
       "セッション開始中にデバイス追従が停止したため、実機側の変更がプランに届かない状態でした。Live sync は開始していません。",
+    liveSyncStopped:
+      "セッション開始中にデバイスへの送信が停止したため、編集が実機に届かない状態でした。Live sync は開始していません。",
     followReadHeld: (cause: string, unrunnable: number, source: number): string =>
       [
         cause,
@@ -995,11 +1048,11 @@ export const ja: Messages = {
       `デバイスのサンプルレートと Follow USB の状態を読み取れませんでした (${message})。計画のレートを実機と照合していないため、何も書き込んでいません。`,
     trackCountUnread: (message: string): string =>
       `microSD レコーダーの Track Count を読み取れませんでした (${message})。レート変更はこの値を元に戻せない形で下げることがあるため、何も書き込んでいません。`,
-    followUsbWrite: (message: string): string =>
-      `Follow USB を OFF にできませんでした (${message})。何も書き込んでいません。`,
+    followUsbWrite: (message: string, on = false): string =>
+      `Follow USB を ${on ? "ON" : "OFF"} にできませんでした (${message})。何も書き込んでいません。`,
     unknownModel: (model: string): string => `未知の機種: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
-      `接続中のデバイスは ${device} ですが、${ui} を選択中です。書き込む前に一致する計画を開くか切り替えてください。`,
+      `接続中のデバイスは ${device} ですが、${ui} を選択中です。先にその機種の計画を開くか切り替えてください。`,
     notWhileLive:
       "先にライブ同期を停止してください — 取り込みは全設定を一度に置き換えるため、ライブ同期中は追従できません。",
     notPlanFile: "URX Router の計画ファイルではありません",

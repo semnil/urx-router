@@ -34,7 +34,13 @@ vi.mock("../core/meters", async (importOriginal) => {
 
 import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
-import { COMP_EQ_SSMCS, COMP_KNEE_OPTIONS } from "../core/control/params";
+import { COMP_EQ_SSMCS, COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS } from "../core/control/params";
+import {
+  DUCKER_DECAY_STOPS_MS,
+  DYN_ATTACK_STOPS_MS,
+  DYN_HOLD_STOPS_MS,
+  DYN_RELEASE_STOPS_MS,
+} from "../core/control/dyn-time-stops";
 import { barLevels, dynHost, pickBand, readouts, rowsByKey, segments } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import { MeterStore } from "../core/meters";
@@ -423,6 +429,39 @@ describe("painting", () => {
     expect(after.value).not.toBe(loud);
   });
 
+  // The hold is a span of wall time, not a count of repaints: the repaint cadence follows the
+  // display's refresh rate, and a hold counted in repaints ended at about half its length on a
+  // 60 Hz display and sooner on a faster one. Timed from the paint that first shows the value.
+  it("holds a peak for 1.2 s of frame time, however many repaints that is", async () => {
+    host = dynHost({ live: true });
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    await Promise.resolve();
+    const gr = subscribedAddrs().find(([id]) => id === 107)!;
+    const held = (): boolean => !host.box.querySelector<HTMLElement>(".gt-peak.gr")!.classList.contains("off");
+    /** A deep reduction followed by the idle value, so only the hold keeps it on screen. */
+    const catchOne = (): void => {
+      feed([{ meterId: gr[0], x: gr[1], value: -400 }]);
+      host.frame();
+      feed([{ meterId: gr[0], x: gr[1], value: 32767 }]);
+      expect(held()).toBe(true);
+    };
+
+    // Many short repaints: 34 of them, 1156 ms.
+    catchOne();
+    for (let i = 0; i < 34; i++) host.frame(34);
+    expect(held()).toBe(true);
+    host.frame(100);
+    expect(held()).toBe(false);
+
+    // One long one, the same span.
+    catchOne();
+    host.frame(1150);
+    expect(held()).toBe(true);
+    host.frame(100);
+    expect(held()).toBe(false);
+  });
+
   it("stops the frame loop when the screen is closed mid-feed", async () => {
     host = dynHost({ live: true });
     const screen = new DynScreen(host.hooks);
@@ -435,19 +474,35 @@ describe("painting", () => {
     expect(host.pending()).toBe(0);
   });
 
+  // In the order the app's own live-off takes — the session state first, then the screen —
+  // which stops the frame loop. What is on screen then has to be the no-feed state without
+  // another frame arriving to paint it.
   it("falls back to the placeholder when the session goes away", async () => {
     host = dynHost({ live: true });
     const screen = new DynScreen(host.hooks);
     screen.open(GATE, "ch1");
     await Promise.resolve();
-    const [addr] = subscribedAddrs();
-    feed([{ meterId: addr[0], x: addr[1], value: -120 }]);
-    host.frame();
+    feed(subscribedAddrs().map(([meterId, x]) => ({ meterId, x, value: -120 })));
+    for (let i = 0; i < 5; i++) host.frame();
+    const none = t().dynTuning.noReading;
+    // The premise: every lane reads something, and the plot prints the reduction.
+    expect(readouts(host.box).every((c) => c.value !== none)).toBe(true);
+    expect(host.canvas.texts.some((x) => x.text.startsWith("GR "))).toBe(true);
 
     host.setLive(false);
-    // Five frames: the readout text is throttled to every fifth.
-    for (let i = 0; i < 6; i++) host.frame();
-    expect(readouts(host.box).every((c) => c.value === t().dynTuning.noReading)).toBe(true);
+    const from = host.canvas.texts.length;
+    screen.setLive(false);
+    expect(host.pending()).toBe(0);
+    expect(readouts(host.box).every((c) => c.value === none)).toBe(true);
+    expect(readouts(host.box).every((c) => c.peak === `${t().dynTuning.peakPrefix} ${none}`)).toBe(true);
+    expect(barLevels(host.box).every((v) => v === 0)).toBe(true);
+    // …and the plot it redrew, and the next one a slider move asks for, carry no reduction.
+    const slider = rowsByKey(host.box).get("threshold")!;
+    slider.value = String(Number(slider.value) + 6);
+    slider.dispatchEvent(new Event("input"));
+    host.frame();
+    expect(host.canvas.texts.length).toBeGreaterThan(from);
+    expect(host.canvas.texts.slice(from).filter((x) => x.text.startsWith("GR "))).toEqual([]);
   });
 });
 
@@ -532,6 +587,37 @@ describe("parameter rows", () => {
     expect(keys).toContain("threshold");
     expect(keys.length).toBeGreaterThan(1);
   });
+
+  // A time row's position is an index into the unit's own table: every position the slider
+  // can take writes a stop, in order, and the two ends are the table's — so the top
+  // (80 ms attack, 1960 ms hold, 999 ms decay and release, 5000 ms ducker decay) and the
+  // bottom are both reachable, and nothing between two stops is.
+  it.each([
+    ["gate", "ch1", "attack", DYN_ATTACK_STOPS_MS, 80],
+    ["gate", "ch1", "hold", DYN_HOLD_STOPS_MS, 1960],
+    ["gate", "ch1", "decay", DYN_RELEASE_STOPS_MS, 999],
+    ["comp", "ch1", "attack", DYN_ATTACK_STOPS_MS, 80],
+    ["comp", "ch1", "release", DYN_RELEASE_STOPS_MS, 999],
+    ["ducker", "out.ducker1", "attack", DYN_ATTACK_STOPS_MS, 80],
+    ["ducker", "out.ducker1", "decay", DUCKER_DECAY_STOPS_MS, 5000],
+  ] as const)("steps the %s %s's %s row on the unit's stops, both ends included", (kind, node, key, stops, top) => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(DYN_PROCESSORS[kind], node);
+    const row = (): HTMLInputElement => rowsByKey(host.box).get(key)!;
+    expect([row().min, row().max, row().step]).toEqual(["0", String(stops.length - 1), "1"]);
+
+    const written: number[] = [];
+    for (let i = 0; i < stops.length; i++) {
+      const slider = row();
+      slider.value = String(i);
+      slider.dispatchEvent(new Event("input"));
+      written.push((host.patches.at(-1)!.patch as Record<string, Record<string, number>>)[kind][key]);
+    }
+    expect(written).toEqual([...stops]);
+    expect(written[0]).toBe(stops[0]);
+    expect(written[written.length - 1]).toBe(top);
+  });
 });
 
 describe("selecting within a screen", () => {
@@ -584,6 +670,31 @@ describe("selecting within a screen", () => {
 
     screen.open(proc, "ch1");
     expect(modes()[2].getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // The store is read while the screen is constructed, which the app does while its entry
+  // module is still running — so a container that is not an object must not throw there,
+  // and the next choice has to be saved as an object again.
+  it("reads a stored selection that is not an object as none, and saves the next one over it", () => {
+    for (const stored of ["null", "[3]", "5"]) {
+      localStorage.setItem("urx-dyn-display2", stored);
+      host = dynHost();
+      let screen: DynScreen | null = null;
+      expect(() => (screen = new DynScreen(host.hooks)), stored).not.toThrow();
+      screen!.open(bank(), "ch1");
+      expect(modes()[1].getAttribute("aria-pressed"), stored).toBe("true");
+      modes()[2].click();
+      const saved: unknown = JSON.parse(localStorage.getItem("urx-dyn-display2")!);
+      expect(saved, stored).toEqual({ [SSMCS_COMP.key]: expect.any(Number) });
+      screen!.close();
+      // …and read back by the next screen, which is what saving it was for.
+      const next = new DynScreen(host.hooks);
+      next.open(bank(), "ch1");
+      expect(modes()[2].getAttribute("aria-pressed"), stored).toBe("true");
+      next.close();
+      host.restore();
+      document.body.replaceChildren();
+    }
   });
 
   it("resets a cursor-like choice per open, and moves it from the plot's own markers", () => {
@@ -712,18 +823,134 @@ describe("refresh", () => {
   });
 
   // The same verdict has to be reached before the deferral, or a screen held open
-  // by a pointer would keep writing into a bank the plan no longer emits.
-  it("closes on a vanished processor even while a pointer is down", () => {
+  // by a pointer would keep writing into a bank the plan no longer emits. And the close
+  // has to end the drag that pointer is making: the cap keeps its capture otherwise, and
+  // every captured move writes the threshold into a bank nothing emits.
+  it("closes on a vanished processor even while a pointer is down, and ends the drag", () => {
     host = dynHost();
     let present = true;
     const vanishing = { ...GATE, bind: (ctx: Parameters<typeof GATE.bind>[0]) => (present ? GATE.bind(ctx) : null) };
     const screen = new DynScreen(host.hooks);
     screen.open(vanishing, "ch1");
-    host.box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    const cap = host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
+    const at = (type: string, clientY: number): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, clientY, pointerId: 1 });
+    cap.dispatchEvent(at("pointerdown", 40));
+    cap.dispatchEvent(at("pointermove", 80));
+    // The positive control: the drag is live before the processor goes.
+    const written = host.patches.length;
+    expect(written).toBeGreaterThan(0);
 
     present = false;
     screen.refresh();
     expect(screen.isOpen()).toBe(false);
+    cap.dispatchEvent(at("pointermove", 150));
+    expect(host.patches.length).toBe(written);
+    expect(cap.hasPointerCapture(1)).toBe(false);
+  });
+
+  // Escape closes the screen from the keyboard while the mouse button can still be down on
+  // the cap or the plot. Neither drag may outlive the screen: their moves would go on
+  // writing the threshold into the plan and out to a live unit until the release.
+  const escape = (): void =>
+    void document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+  it("ends a cap drag when Escape closes the screen under it", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const cap = host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
+    const at = (type: string, clientY: number): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, clientY, pointerId: 1 });
+    cap.dispatchEvent(at("pointerdown", 40));
+    cap.dispatchEvent(at("pointermove", 80));
+    const written = host.patches.length;
+    expect(written).toBeGreaterThan(0);
+    escape();
+    expect(screen.isOpen()).toBe(false);
+    cap.dispatchEvent(at("pointermove", 150));
+    expect(host.patches.length).toBe(written);
+    expect(cap.hasPointerCapture(1)).toBe(false);
+  });
+
+  it("ends a plot drag when Escape closes the screen under it", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    host.frame();
+    const cv = host.box.querySelector<HTMLCanvasElement>("#dyn-curve")!;
+    const at = (type: string, offsetX: number): PointerEvent => {
+      const ev = new PointerEvent(type, { bubbles: true, pointerId: 1 });
+      Object.defineProperty(ev, "offsetX", { value: offsetX });
+      return ev;
+    };
+    cv.dispatchEvent(at("pointerdown", 200));
+    cv.dispatchEvent(at("pointermove", 300));
+    const written = host.patches.length;
+    expect(written).toBeGreaterThan(0);
+    escape();
+    expect(screen.isOpen()).toBe(false);
+    cv.dispatchEvent(at("pointermove", 500));
+    expect(host.patches.length).toBe(written);
+    expect(cv.hasPointerCapture(1)).toBe(false);
+  });
+
+  // The native context menu takes the release of the press that opened it, so the page
+  // hears a right press and then a mouse moving with no button held. That move ends the
+  // cap's and the plot's drag, and lands a repaint the press deferred, as a release would; a
+  // move with the button held still drives the drag.
+  describe("a press whose release never arrived", () => {
+    const mouse = (type: string, init: PointerEventInit): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: "mouse", ...init });
+
+    it("ends a cap drag at a mouse move with no button held", () => {
+      host = dynHost();
+      const screen = new DynScreen(host.hooks);
+      screen.open(GATE, "ch1");
+      const cap = host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
+      cap.dispatchEvent(mouse("pointerdown", { clientY: 40, button: 2, buttons: 2 }));
+      cap.dispatchEvent(mouse("pointermove", { clientY: 80, buttons: 2 }));
+      const written = host.patches.length;
+      expect(written).toBeGreaterThan(0);
+      cap.dispatchEvent(mouse("pointermove", { clientY: 120, buttons: 0 }));
+      cap.dispatchEvent(mouse("pointermove", { clientY: 150, buttons: 0 }));
+      expect(host.patches.length).toBe(written);
+      expect(cap.hasPointerCapture(1)).toBe(false);
+    });
+
+    it("ends a plot drag at a mouse move with no button held", () => {
+      host = dynHost();
+      const screen = new DynScreen(host.hooks);
+      screen.open(GATE, "ch1");
+      host.frame();
+      const cv = host.box.querySelector<HTMLCanvasElement>("#dyn-curve")!;
+      const at = (type: string, offsetX: number, buttons: number): PointerEvent => {
+        const ev = mouse(type, { buttons, button: type === "pointerdown" ? 2 : -1 });
+        Object.defineProperty(ev, "offsetX", { value: offsetX });
+        return ev;
+      };
+      cv.dispatchEvent(at("pointerdown", 200, 2));
+      cv.dispatchEvent(at("pointermove", 300, 2));
+      const written = host.patches.length;
+      expect(written).toBeGreaterThan(0);
+      cv.dispatchEvent(at("pointermove", 400, 0));
+      cv.dispatchEvent(at("pointermove", 500, 0));
+      expect(host.patches.length).toBe(written);
+      expect(cv.hasPointerCapture(1)).toBe(false);
+    });
+
+    it("lands the repaint a press deferred at a mouse move with no button held", () => {
+      host = dynHost();
+      const screen = new DynScreen(host.hooks);
+      screen.open(GATE, "ch1");
+      const slider = rowsByKey(host.box).get("threshold")!;
+      host.box.dispatchEvent(mouse("pointerdown", { button: 2, buttons: 2 }));
+      screen.refresh();
+      window.dispatchEvent(mouse("pointermove", { buttons: 2 }));
+      expect(rowsByKey(host.box).get("threshold"), "a move with the button held").toBe(slider);
+      window.dispatchEvent(mouse("pointermove", { buttons: 0 }));
+      expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
+    });
   });
 
   // Device follow runs on its own clock and, under COMP 1-knob, on every step of a
@@ -742,6 +969,64 @@ describe("refresh", () => {
 
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
     expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
+  });
+
+  // The EQ 1-knob's level is the gesture that drives a refetch on every step: the unit
+  // recomputes the band gains and the follow merges them into the plan while the slider is
+  // still held. With 1-knob on the band rows are reserved out of sight, so the plot is where
+  // those values show — and it has to follow them during the press, not only after it.
+  it("redraws the plot from values a follow lands while a press is held", () => {
+    host = dynHost();
+    const np = host.plan.nodeParams.ch1!;
+    np.eqOneKnob = { ...np.eqOneKnob, on: true };
+    const screen = new DynScreen(host.hooks);
+    screen.open(EQ, "ch1");
+    host.frame();
+    const level = host.box.querySelector<HTMLInputElement>("#dyn-oneknob-level")!;
+    level.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+
+    // Merged in place, as the refetch does: the plan object is the one the press began on.
+    np.eqBands = (np.eqBands ?? []).map((b, i) => (i === 1 ? { ...b, gain: 9 } : b));
+    const from = host.canvas.ys.length;
+    screen.refresh(["ch1"]);
+    host.frame();
+    const held = host.canvas.ys.slice(from);
+    // Still the element under the pointer: the rebuild waits, the plot does not.
+    expect(host.box.querySelector("#dyn-oneknob-level")).toBe(level);
+    expect(held.length).toBeGreaterThan(0);
+
+    // …and what it drew is the curve the rebuild at the release draws from the same values.
+    const after = host.canvas.ys.length;
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    host.frame();
+    expect(host.box.querySelector("#dyn-oneknob-level")).not.toBe(level);
+    expect(host.canvas.ys.slice(after)).toEqual(held);
+  });
+
+  // A knob card's picture is its indicator, painted over a range that is not visible. The
+  // in-place pass moves the range, so the indicator has to move with it.
+  it("turns a knob card's indicator with a value a follow lands while a press is held", () => {
+    host = dynHost();
+    const fx = host.plan.nodeParams["bus.fx2"]?.fxEffect ?? {};
+    host.plan.nodeParams["bus.fx2"] = { ...host.plan.nodeParams["bus.fx2"], fxEffect: { ...fx, type: 1024 } };
+    const screen = new DynScreen(host.hooks);
+    screen.open(DYN_PROCESSORS.fx, "bus.fx2");
+    const rows = rowsByKey(host.box);
+    const held = rows.get("fx:delayHpf")!;
+    const other = rows.get("fx:delayLpf")!;
+    const rot = (input: HTMLInputElement): string =>
+      input.closest(".con-knob")!.querySelector<HTMLElement>(".ind")!.style.getPropertyValue("--rot");
+    held.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+
+    const before = rot(other);
+    const np = host.plan.nodeParams["bus.fx2"]!;
+    np.fxEffect = { ...np.fxEffect, params: { ...np.fxEffect?.params, delayLpf: Number(other.min) } };
+    screen.refresh(["bus.fx2"]);
+    expect(rowsByKey(host.box).get("fx:delayLpf")).toBe(other);
+    expect(other.value).toBe(other.min);
+    // The bottom of the knob's 270° sweep, where the range now sits.
+    expect(rot(other)).toBe("-135deg");
+    expect(rot(other)).not.toBe(before);
   });
 
   it("does not rebuild on a release that follows no deferred refresh", () => {
@@ -894,10 +1179,8 @@ describe("refresh", () => {
 
   // The other order, and the one an ordinary gesture takes: the press ends while the app is
   // still in the background, and the refresh lands at that release. What must not happen is
-  // a row left disabled by the treatment, or focus parked on the node that was replaced.
-  // Focus is not moved to the new row: no rebuild in this app restores focus (the CONSOLE
-  // and the inspector do not either), and doing it on this path alone would make this the
-  // one repaint that behaves differently.
+  // a row left disabled by the treatment, or focus parked on the node that was replaced: the
+  // rebuild carries focus to the row that replaced it, as every rebuild of this screen does.
   it("leaves no disabled row and no focus on a detached node when a release lands a deferred refresh", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);
@@ -915,7 +1198,7 @@ describe("refresh", () => {
     expect(now).not.toBe(row);
     expect(now.disabled).toBe(false);
     expect(row.isConnected).toBe(false);
-    expect(document.activeElement).not.toBe(row);
+    expect(document.activeElement).toBe(now);
   });
 
   // The wiring itself, on the path with no rebuild racing it: the row this screen builds
@@ -995,6 +1278,129 @@ describe("refresh", () => {
 // The panel reads in the order the unit's own screen reads it, and the 1-knob is a stage
 // above it rather than three rows inside it. Both are rules over every screen; COMP is
 // where they were broken, so it is where they are pinned.
+// Every rebuild replaces every element in the box, so focus is carried across it — to the
+// same control in the new box — while the plan is the one the screen was drawn from. The
+// CONSOLE and the inspector carry theirs the same way.
+describe("keyboard focus across a rebuild", () => {
+  it("stays on a value row a device follow rebuilds under it", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(GATE, "ch1");
+    const before = rowsByKey(host.box).get("threshold")!;
+    before.focus();
+    host.plan.nodeParams.ch1 = { ...host.plan.nodeParams.ch1, gate: { threshold: -30 } };
+    screen.refresh(["ch1"]);
+    const after = rowsByKey(host.box).get("threshold")!;
+    expect(after).not.toBe(before);
+    expect(document.activeElement).toBe(after);
+  });
+
+  // The commonest rebuild is the operator's own: an ON/OFF press. Here it also locks the cap,
+  // which takes it out of the tab order ahead of the button — a position counted over tab
+  // stops alone would then land on the button after this one.
+  it("stays on the ON/OFF button the operator pressed, through the lock it applies", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    const knobOn = (): HTMLButtonElement =>
+      [...host.box.querySelectorAll<HTMLElement>(".prefs-section")]
+        .find((s) => s.querySelector("h3")?.textContent === t().inspector.oneKnob)!
+        .querySelector<HTMLButtonElement>(".prefs-row button")!;
+    const pressed = knobOn();
+    expect(pressed.textContent).toBe(t().inspector.on);
+    pressed.focus();
+    pressed.click();
+    expect((host.plan.nodeParams.ch1?.comp as { oneKnob?: boolean }).oneKnob).toBe(true);
+    expect(pressed.isConnected).toBe(false);
+    expect(host.box.querySelector("#dyn-threshold-cap")!.getAttribute("tabindex")).toBe("-1");
+    expect(document.activeElement).toBe(knobOn());
+  });
+
+  it("stays on a select whose change rebuilt the screen", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    screen.open(EQ, "ch1");
+    // The band's filter type, in Parameters: LOW is a band that has one.
+    const typeSelect = (): HTMLSelectElement =>
+      [...host.box.querySelectorAll<HTMLElement>(".prefs-row")]
+        .find((r) => r.querySelector(".lbl")?.textContent === t().inspector.type)!
+        .querySelector<HTMLSelectElement>("select")!;
+    const before = typeSelect();
+    expect(before.disabled).toBe(false);
+    before.focus();
+    before.value = [...before.options].find((o) => o.value !== before.value)!.value;
+    before.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(before.isConnected).toBe(false);
+    expect(document.activeElement).toBe(typeSelect());
+  });
+
+  // The control focus was on belongs to the plan that was replaced; carrying it would hand
+  // the keyboard a control of a document the operator did not reach it in.
+  it("drops focus when the plan was replaced", () => {
+    host = dynHost();
+    let plan = host.plan;
+    const screen = new DynScreen({ ...host.hooks, getPlan: () => plan });
+    screen.open(GATE, "ch1");
+    rowsByKey(host.box).get("threshold")!.focus();
+    plan = structuredClone(host.plan);
+    screen.refresh();
+    expect(screen.isOpen()).toBe(true);
+    expect(host.box.contains(document.activeElement)).toBe(false);
+  });
+});
+
+// The inert hold gives focus back to the element that opened the screen. The surfaces that
+// open it rebuild their controls while it is open, so that element can be gone at the close —
+// and then the screen asks for its successor by what it opens.
+describe("focus at the close", () => {
+  const launch = (): HTMLButtonElement => {
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    opener.focus();
+    return opener;
+  };
+
+  it("asks for the opener's successor when the opener was rebuilt while the screen was open", () => {
+    host = dynHost();
+    const asked: Array<[string, string]> = [];
+    const screen = new DynScreen({ ...host.hooks, focusOpener: (key, id) => void asked.push([key, id]) });
+    const opener = launch();
+    screen.open(EQ, "ch1");
+    opener.remove();
+    screen.close();
+    expect(asked).toEqual([[EQ.key, "ch1"]]);
+  });
+
+  it("leaves focus on an opener that is still there", () => {
+    host = dynHost();
+    const asked: Array<[string, string]> = [];
+    const screen = new DynScreen({ ...host.hooks, focusOpener: (key, id) => void asked.push([key, id]) });
+    const opener = launch();
+    screen.open(EQ, "ch1");
+    screen.close();
+    expect(document.activeElement).toBe(opener);
+    expect(asked).toEqual([]);
+  });
+
+  // The rule a rebuild carries focus by: an opener belongs to the plan the screen was opened on.
+  it("asks for none once the plan was replaced", () => {
+    host = dynHost();
+    let plan = host.plan;
+    const asked: Array<[string, string]> = [];
+    const screen = new DynScreen({
+      ...host.hooks,
+      getPlan: () => plan,
+      focusOpener: (key, id) => void asked.push([key, id]),
+    });
+    const opener = launch();
+    screen.open(EQ, "ch1");
+    opener.remove();
+    plan = structuredClone(host.plan);
+    screen.close();
+    expect(asked).toEqual([]);
+  });
+});
+
 describe("the compressor's panel", () => {
   /** The parameter rows' visible labels, in the order they were built. */
   const labels = (): string[] =>
@@ -1027,6 +1433,67 @@ describe("the compressor's panel", () => {
     expect(rows).toEqual([t().inspector.on, t().inspector.autoMakeup, t().inspector.oneKnobLevel]);
     // …and none of the three is left behind in Parameters.
     expect(labels()).not.toContain(t().inspector.autoMakeup);
+    screen.close();
+  });
+
+  // 1-knob hands the threshold to the unit, and the native row beside the cap is disabled
+  // for it. The cap is a custom slider, so it has to say the same thing itself.
+  it("takes a locked threshold cap out of the tab order and marks it disabled", () => {
+    host = dynHost();
+    const screen = new DynScreen(host.hooks);
+    const comp = host.plan.nodeParams.ch1?.comp as Record<string, unknown>;
+    const capAt = (oneKnob: boolean): HTMLElement => {
+      host.plan.nodeParams.ch1 = { ...host.plan.nodeParams.ch1, comp: { ...comp, oneKnob } };
+      screen.refresh();
+      return host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
+    };
+    screen.open(COMP, "ch1");
+    const live = capAt(false);
+    expect(live.tabIndex).toBe(0);
+    expect(live.hasAttribute("aria-disabled")).toBe(false);
+    const locked = capAt(true);
+    expect(rowsByKey(host.box).get("threshold")!.disabled).toBe(true);
+    expect(locked.tabIndex).toBe(-1);
+    expect(locked.getAttribute("aria-disabled")).toBe("true");
+    screen.close();
+  });
+
+  // The Knee row and the curve read one value. Knee is a selector rather than a field, so the
+  // host's own fallback for a key the plan does not hold is 0 — Soft — and the curve drew
+  // that under a row showing the default.
+  it("draws a comp group holding no knee at the knee its Knee row shows", () => {
+    host = dynHost();
+    const base = { ...(host.plan.nodeParams.ch1?.comp ?? {}) } as Record<string, unknown>;
+    delete base.knee;
+    const withKnee = (knee?: number): void => {
+      host.plan.nodeParams.ch1 = { ...host.plan.nodeParams.ch1, comp: knee === undefined ? base : { ...base, knee } };
+    };
+    const screen = new DynScreen(host.hooks);
+    withKnee(undefined);
+    screen.open(COMP, "ch1");
+    /** The points one redraw puts on the canvas. */
+    const drawn = (): number[] => {
+      const from = host.canvas.ys.length;
+      screen.refresh();
+      return host.canvas.ys.slice(from);
+    };
+    const pressed = (): string[] =>
+      Array.from(
+        [...host.box.querySelectorAll<HTMLElement>(".prefs-row")]
+          .find((r) => r.querySelector(".lbl")?.textContent === t().inspector.dyn.knee)!
+          .querySelectorAll("button[aria-pressed=true]"),
+        (b) => b.textContent ?? "",
+      );
+    const absent = drawn();
+    const absentRow = pressed();
+    withKnee(COMP_KNEE_DEFAULT);
+    const byDefault = drawn();
+    withKnee(COMP_KNEE_OPTIONS.find((o) => o.value !== COMP_KNEE_DEFAULT)!.value);
+    const other = drawn();
+    // The positive control: the knee does move the curve, so equality below is a reading.
+    expect(other).not.toEqual(byDefault);
+    expect(absent).toEqual(byDefault);
+    expect(absentRow).toEqual([COMP_KNEE_OPTIONS.find((o) => o.value === COMP_KNEE_DEFAULT)!.label]);
     screen.close();
   });
 

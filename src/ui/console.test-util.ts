@@ -46,6 +46,8 @@ export interface ConsoleHost {
    *  arbitrates by. A count cannot see a funnel claiming a key it did not write, which is
    *  how a mirror takes the device's answer away from a value it left alone. */
   changeKeys: () => readonly (readonly string[])[];
+  /** Per `onChange`, the (node, path) pairs it named as a type's defaults. */
+  changeDefaults: () => readonly (readonly (readonly [string, string])[])[];
   /** Meter-stream errors the view surfaced. */
   meterErrors: string[];
   /** Tuning screens the view asked the app to open. */
@@ -107,6 +109,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
   const opened: ConsoleHost["opened"] = [];
   let changes = 0;
   const changeKeys: string[][] = [];
+  const changeDefaults: (readonly [string, string])[][] = [];
 
   // jsdom has no pointer capture. The view calls it on every drag opener, and an
   // unimplemented method would end the gesture before its first move. Tracked per
@@ -175,9 +178,10 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
   const hooks: ConsoleHooks = {
     getModel: () => model,
     getPlan: () => plan,
-    onChange: (keys) => {
+    onChange: (keys, defaults) => {
       changes++;
       changeKeys.push([...(keys ?? [])]);
+      changeDefaults.push([...(defaults ?? [])]);
     },
     onMeterError: (message) => void meterErrors.push(message),
     onOpenDynScreen: (kind, id) => void opened.push({ kind, id }),
@@ -207,6 +211,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
     plan,
     changes: () => changes,
     changeKeys: () => changeKeys,
+    changeDefaults: () => changeDefaults,
     meterErrors,
     opened,
     strip,

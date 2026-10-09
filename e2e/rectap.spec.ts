@@ -1,5 +1,7 @@
 import { test, expect, type Locator, type Page } from "./fixtures";
 import { drag, port, tapJack, wire } from "./graph-helpers";
+import { LIVE_COMMANDS, notifyParam, setDeviceValue, setHeldReads, stubTauriDevice } from "./tauri-stub";
+import { PARAMS } from "../src/core/control/params";
 
 // A channel has two source jacks. The right-edge output feeds the mixer stage
 // (bus sends, ducker keys); the Rec Point tap on the top edge feeds the direct
@@ -121,6 +123,32 @@ test("dragging back from a USB input offers the channel's tap, not its output", 
   await expect(outJack(page, "bus.stereo")).toHaveAttribute("r", "8");
 
   await page.mouse.up();
+});
+
+// A device-side STEREO fader move repaints that one node while the drag is under way. Its
+// input jack comes back lit: the drag still offers it. The full read the idle net would
+// follow with is held, so what the case reads is the fine-grained repaint alone.
+test("a fine-grained follow repaint mid-drag keeps the candidate it rebuilt lit", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  const stereo = page.locator('#graph-host g.node[data-id="bus.stereo"]');
+  const stereoIn = stereo.locator('circle[data-dir="in"]');
+
+  await beginDrag(page, port(page, "ch1:out"));
+  await expect(stereoIn).toHaveAttribute("r", "8");
+  await stereo.evaluate((el) => el.setAttribute("data-before", ""));
+  await setHeldReads(page, [PARAMS.STEREO_MASTER_FADER.id]);
+  await setDeviceValue(page, PARAMS.STEREO_MASTER_FADER.id, 0, -600);
+  await notifyParam(page, PARAMS.STEREO_MASTER_FADER.id, 0, -600);
+  await expect(page.locator('#graph-host g.node[data-id="bus.stereo"][data-before]'), "repainted").toHaveCount(0);
+  expect(await stereoIn.getAttribute("r")).toBe("8");
+
+  await page.mouse.up();
+  await setHeldReads(page, []);
 });
 
 test("a recording can be wired backwards, from the track slot to the tap", async ({ page }) => {

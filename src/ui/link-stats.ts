@@ -80,8 +80,11 @@ export class LinkStatsView {
   private readonly button: HTMLButtonElement;
   private pop: HTMLElement | null = null;
   private rows: LedgerRow[] = [];
+  // The panel lives inside #app, so a modal's hold makes it inert with the rest of the app;
+  // while that holds, an Escape or a press is the modal's, not the panel's.
   private readonly dismiss = wireDismiss({
     keep: (target) => this.pop?.contains(target) === true || this.button.contains(target),
+    inert: () => document.getElementById("app")?.inert === true,
     close: () => this.closePop(),
   });
   private timer: number | null = null;
@@ -182,7 +185,9 @@ export class LinkStatsView {
     copy.dataset.ledgerCopy = "";
     copy.addEventListener("click", () => void this.copy());
     pop.append(el("h4", ""), table, copy);
-    document.body.append(pop);
+    // Inside #app rather than on <body>: a modal's hold inerts #app, which takes the panel out
+    // of the tab order behind the modal's scrim along with everything else the app draws.
+    (this.host.closest("#app") ?? document.body).append(pop);
     this.pop = pop;
     this.applyLabels();
     const anchor = this.button.getBoundingClientRect();
@@ -196,11 +201,15 @@ export class LinkStatsView {
 
   private closePop(): void {
     if (!this.pop) return;
+    // Focus inside the panel goes back to the readout that opened it, rather than to <body>
+    // with the removed panel.
+    const hadFocus = this.pop.contains(document.activeElement);
     this.dismiss.detach();
     this.pop.remove();
     this.pop = null;
     this.rows = [];
     this.button.setAttribute("aria-expanded", "false");
+    if (hadFocus) this.button.focus();
   }
 
   /** The panel's VALUE cells. Its labels belong to `applyLabels`, so a poll that runs

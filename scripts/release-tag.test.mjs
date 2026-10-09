@@ -84,13 +84,26 @@ function runBlock(text, anchor) {
 
 // `stubs` record their whole argv, so a case can assert what a block DID rather than what it
 // printed — which is the only way to see a `git push` that should not have happened.
-function sandbox({ version = "1.9.0", previous = "1.0.0", script = null } = {}) {
+//
+// `remote` is what `git ls-remote` lists for the tag — empty, as git prints it for a tag the
+// remote does not have, with exit 2 under `--exit-code` — and `remoteFails` makes it fail the
+// way an unreachable remote does.
+// `runs` is how many release.yml runs `gh run list` reports on the tag.
+function sandbox({
+  version = "1.9.0",
+  previous = "1.0.0",
+  script = null,
+  remote = "",
+  remoteFails = false,
+  runs = 0,
+} = {}) {
   const dir = mkdtempSync(join(tmpdir(), "urx-release-gate-"));
   mkdirSync(join(dir, "scripts"));
   mkdirSync(join(dir, "bin"));
   if (script === null) copyFileSync(join(ROOT, SHAPE), join(dir, SHAPE));
   else if (script !== false) writeFileSync(join(dir, SHAPE), script, { mode: 0o644 });
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "urx-router", version }, null, 2));
+  writeFileSync(join(dir, "remote.txt"), remote);
   const calls = join(dir, "calls.log");
   writeFileSync(calls, "");
   const stub = (name, body) => {
@@ -104,12 +117,14 @@ function sandbox({ version = "1.9.0", previous = "1.0.0", script = null } = {}) 
       'case "$1" in',
       "  rev-parse) echo 1111111111111111111111111111111111111111 ;;",
       `  show) printf '{"version":"%s"}\\n' ${previous} ;;`,
-      "  ls-remote) exit 1 ;;",
+      remoteFails
+        ? "  ls-remote) echo 'fatal: unable to access the remote' >&2; exit 128 ;;"
+        : `  ls-remote) cat ${join(dir, "remote.txt")}; [[ -s ${join(dir, "remote.txt")} || " $* " != *" --exit-code "* ]] || exit 2 ;;`,
       "esac",
       "exit 0",
     ].join("\n"),
   );
-  stub("gh", "exit 0");
+  stub("gh", ['if [[ "$1 $2" == "run list" ]]; then', `  echo ${runs}`, "fi", "exit 0"].join("\n"));
   return {
     dir,
     calls: () =>
@@ -364,6 +379,44 @@ describe.skipIf(!toolsAvailable)("tag-release.yml's block", () => {
     expect(r.status).toBe(0);
     expect(r.calls.filter((c) => c.startsWith("git push"))).toEqual([]);
     expect(r.stdout).toContain("not a release");
+  });
+
+  const writes = (calls) =>
+    calls.filter((c) => c.startsWith("git tag") || c.startsWith("git push") || c.startsWith("gh workflow run"));
+
+  // A re-run of a run whose dispatch failed after its push: the tag is on the remote at this
+  // commit and release.yml never ran on it. The half still owed is the dispatch, and the tag is
+  // not pushed a second time.
+  it("dispatches the release it never started when its own tag is already there", () => {
+    const r = merge("1.9.0", { remote: "abcdef0\trefs/tags/v1.9.0\n" });
+    expect(r.status).toBe(0);
+    expect(writes(r.calls)).toEqual(["gh workflow run release.yml --ref v1.9.0"]);
+  });
+
+  it("reads an annotated tag by the commit it peels to", () => {
+    const r = merge("1.9.0", { remote: "9999999\trefs/tags/v1.9.0\nabcdef0\trefs/tags/v1.9.0^{}\n" });
+    expect(r.status).toBe(0);
+    expect(writes(r.calls)).toEqual(["gh workflow run release.yml --ref v1.9.0"]);
+  });
+
+  it("dispatches nothing when release.yml has already run on its own tag", () => {
+    const r = merge("1.9.0", { remote: "abcdef0\trefs/tags/v1.9.0\n", runs: 1 });
+    expect(r.status).toBe(0);
+    expect(r.calls).toContainEqual("gh run list --workflow release.yml --branch v1.9.0 --json databaseId --jq length");
+    expect(writes(r.calls)).toEqual([]);
+  });
+
+  it("leaves a tag at another commit alone, and starts nothing on it", () => {
+    const r = merge("1.9.0", { remote: "1234567\trefs/tags/v1.9.0\n" });
+    expect(r.status).toBe(0);
+    expect(writes(r.calls)).toEqual([]);
+    expect(r.stdout).toContain("leaving it alone");
+  });
+
+  it("stops rather than pushing when the remote cannot be read", () => {
+    const r = merge("1.9.0", { remoteFails: true });
+    expect(r.status).not.toBe(0);
+    expect(writes(r.calls)).toEqual([]);
   });
 });
 

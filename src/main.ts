@@ -26,6 +26,7 @@ import {
   PlanError,
   processorOn,
   SDREC_NODE_ID,
+  LEVEL_MIN_DB,
   serialize,
   setPlanSampleRate,
   SSMCS_INITIAL,
@@ -43,6 +44,7 @@ import {
   applyPatch,
   clonePlanState,
   connectionContestKey,
+  connParamContestKey,
   diffPlans,
   nodeParamContestPath,
   PlanWriteWitness,
@@ -77,7 +79,7 @@ import {
   REC_POINT_PRE_EQ,
 } from "./core/control/params";
 import { Graph } from "./ui/graph";
-import type { LabelSource, Selection, ThemeName } from "./ui/graph";
+import type { ConnectOrigin, LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
 import { copyText, focusables, preserveFocus } from "./ui/dom";
 import { ownsNativeUndo } from "./ui/keys";
@@ -89,7 +91,7 @@ import { initFineMode } from "./ui/fine";
 import { installEditMenu } from "./ui/edit-menu";
 import { PlanHistory } from "./ui/history";
 import { installKeyProbe } from "./ui/keyprobe";
-import { showLoadReport } from "./ui/load-report";
+import { closeLoadReport, showLoadReport } from "./ui/load-report";
 import { showErrorBox } from "./ui/error-box";
 import { showLicenses } from "./ui/licenses";
 import { PrefsPanel } from "./ui/prefs";
@@ -132,6 +134,7 @@ import {
   exitApp,
   installUpdate,
   isTauri,
+  prepareForExit,
   restartApp,
   experimentalEnabled,
   selfTestRequested,
@@ -144,6 +147,7 @@ import {
   vdWatchLink,
   type Connection,
   type DeviceSummary,
+  type UpdateInfo,
 } from "./core/platform";
 import {
   applyDeviceState,
@@ -186,10 +190,15 @@ import {
   type SendOutcome,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
-import { cmdAddr, collisionOwners } from "./core/control/translate";
+import { cmdAddr, collisionOwners, planToCommands, planToNameWrites, unnamedNodes } from "./core/control/translate";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
-import { markParamSource as markSource } from "./app/param-source";
+import {
+  markAuthored,
+  markParamSource as markSource,
+  noteSeededDefaults,
+  type SeededDefault,
+} from "./app/param-source";
 import type { SharedOwners, WriteScope } from "./core/control/translate";
 import { LiveSync } from "./core/control/live";
 import { DeviceFollow } from "./core/control/follow";
@@ -198,7 +207,7 @@ import { LinkLedgerTracker } from "./core/control/link-stats";
 import type { LinkSessionEnd } from "./core/control/link-stats";
 import { LinkStatsView } from "./ui/link-stats";
 import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
-import { formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
+import { cancelledBeforeWriting, formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
 import { runPrepareModified } from "./core/control/prepare";
 import { DeviceSetupPanel } from "./ui/device-setup";
 import { readDeviceSetup, sendDeviceSetup } from "./core/control/device-setup";
@@ -208,8 +217,15 @@ import type { DeviceSetup } from "./core/control/device-setup";
 // files / inspector sections / user preferences) when the browser dev app is opened with ?reset (or
 // #reset) — done synchronously here, before anything below reads localStorage, and
 // the flag is stripped so a later manual reload doesn't clear again. The desktop
-// app uses the --reset-storage launch flag instead (handled async in boot()).
+// app uses the --reset-storage launch flag instead, whose answer arrives async.
 resetStorageFromUrl();
+
+// The desktop flag's query is started here, ahead of every reader below, and boot()
+// awaits it. A stored value that makes the synchronous init below throw then still gets
+// its clear and its reload: the query is already in flight, and its answer runs the clear
+// whether or not the rest of this module finished.
+const RESET_DONE_KEY = "urx-reset-done";
+const resetGate = resetStorageIfRequested();
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -236,7 +252,7 @@ let followUsbState: boolean | null = null;
 // Paint the badge from the state above. Separate from the setter so the language
 // switch can re-label it without pretending to change the state (applyStaticI18n).
 //
-// Three states, not two. Unknown is drawn as its own thing (dimmed, aria-pressed
+// Three states, not two. Unknown is drawn as its own thing (dashed, aria-pressed
 // "mixed") rather than hidden: the badge exists to warn that the rate picker will
 // not stick, and hiding it until a device action meant the warning only ever
 // arrived after the operator had already committed to one. It must still never be
@@ -357,8 +373,8 @@ function sharedSettingText(owners: SharedOwners[]): string {
  *  Every strip by name, not the first few and a count: the list is bounded by the model, and a
  *  name is the only part of this the operator can act on — a count tells them something is
  *  wrong somewhere and leaves them the whole board to look through. */
-function unauthoredNoteFor(changing: ReadonlySet<number>, scope: WriteScope): string {
-  const nodes = unauthoredWriteNodes(getModel(modelId), plan, scope, changing);
+function unauthoredNoteFor(changing: ReadonlySet<number>, scope: WriteScope, renaming?: ReadonlySet<string>): string {
+  const nodes = unauthoredWriteNodes(getModel(modelId), plan, scope, changing, renaming);
   if (!nodes.length) return "";
   return t().confirm.unauthoredWrite(nodes.map((id) => graph.labelOf(id)).join(", "));
 }
@@ -376,7 +392,7 @@ let linkStatsView: LinkStatsView | null = null;
 // own latch) and every time in the console (see architecture.md "Aborting on failure").
 function warnLinkLog(message: string): void {
   console.warn("link ledger:", message);
-  setStatus(t().status.linkLogFailed(message));
+  setStatus(t().status.linkLogFailed(errorText(message)));
 }
 
 /** Start the ledger for a session. Called on the connect rather than once the session
@@ -414,8 +430,12 @@ function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   // in front of it beginning. allSettled rather than all: a ledger that rejects still has
   // to release the link.
   const reads = Promise.all([...followReads].map((r) => r.done));
+  // …and so does the session's own flush: end() stops it at its next round trip, and the
+  // command it has on the wire then is answered over this connection rather than over one
+  // another action installs after the disconnect.
+  const flush = live?.idle() ?? Promise.resolve();
   return (
-    Promise.allSettled([ledger, reads])
+    Promise.allSettled([ledger, reads, flush])
       .then(() => vdDisconnect(epoch))
       // The holder goes back HERE and not in deactivateLive, because it is what stops
       // another action from connecting: an install replaces the worker, and the read still
@@ -499,7 +519,7 @@ const live = DEMO
             // The one caller that skips the names, and it says so itself — the reconciles
             // below carry pending writes too, and reading names is what makes a rename
             // made on the unit arrive (readback.ts's name section).
-            applyNodeState(getModel(modelId), into, nodeIds, signal, pending, true),
+            applyNodeStateScoped(into, nodeIds, signal, pending, true),
           edits,
         );
         // The plan this read was issued for is gone (a file flow replaced it): its
@@ -632,7 +652,13 @@ const consoleView = new Console(consoleHost, {
   // A console edit changed the plan: flag dirty + schedule live sync. The console
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
-  onChange: (written) => markChanged("ui", written),
+  onChange: (written, defaults) => {
+    noteSeededDefaults(plan, seededDefaults, defaults ?? []);
+    markChanged("ui", written);
+    // The panel this view hides was drawn before the edit, and its locks and ranges are
+    // taken at draw time: it is rebuilt on the way back to the graph.
+    inspectorDeferred = true;
+  },
   // The meter stream failed to register. Floor-stuck bars read as "no signal",
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
@@ -1239,7 +1265,7 @@ const follow =
           // value the device does not hold until the idle sweep re-reads past it.
           const pending = live?.recentPending(nodeIds);
           const merged = await followRead("device-follow scoped readback", (into, signal) =>
-            applyNodeState(getModel(modelId), into, nodeIds, signal, pending),
+            applyNodeStateScoped(into, nodeIds, signal, pending),
           );
           if (!merged) return;
           // A Signal Type moved on the unit's own panel reaches the plan here, with no edit
@@ -1336,7 +1362,7 @@ function setView(next: ViewName): void {
 // refuses while it is held — the UI lock below is the affordance, this is what makes
 // it true. A holder name rather than a flag, because the entry that holds it is also
 // its own way out (its Cancel; for a session, its stop) and must stay usable.
-type LinkHolder = "fetch" | "write" | "compare" | "device-setup" | "follow-usb" | "live" | "run";
+type LinkHolder = "fetch" | "write" | "compare" | "device-setup" | "follow-usb" | "live" | "run" | "update";
 let deviceLinkHolder: LinkHolder | null = null;
 
 // Each device entry and the holder it belongs to. While the link is held, every
@@ -1413,7 +1439,7 @@ function syncDeviceActionUi(): void {
 // Only ever called in the desktop live-sync path, so re-enabling on `off` is safe.
 function setLiveUi(on: boolean): void {
   const liveBtn = document.getElementById("btn-live");
-  if (liveBtn) liveBtn.setAttribute("aria-pressed", String(on));
+  if (liveBtn) liveBtn.setAttribute("aria-checked", String(on));
   const tally = document.getElementById("live-tally");
   if (tally) {
     tally.hidden = !on;
@@ -1451,6 +1477,7 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   live?.end();
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
+  liveAdopted = 0;
   void releaseLive(liveEpoch, end);
   setLiveUi(false);
   // A CH → FX tap shown read-only while live becomes editable again off-line.
@@ -1458,12 +1485,28 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   if (status) setStatus(status);
 }
 
+// A Live-sync start from live.begin() until the session counts as up, and the first
+// failure reported inside that window. The session is not up there, so nothing is torn
+// down for it yet; the start throws the recorded cause instead of declaring the session up.
+let liveStarting = false;
+let liveStartFailure: string | null = null;
+
 // A live/follow runtime error: stop sync, drop the connection, and surface the
 // cause as a dialog (a mirror that did not complete). Several errors can arrive in
 // one teardown (live + follow); deactivateLive clears liveSessionUp synchronously,
 // so the second and later calls return here before re-showing the dialog.
 function stopLiveOnError(message: string): void {
-  if (!liveSessionUp) return;
+  if (!liveSessionUp) {
+    // Inside a start's window: recorded for the start to report, and the live half ended
+    // now, so a flush waiting behind a failed read stops at its generation check rather
+    // than sending the write the read was in front of. Outside one (a release still
+    // running after its session) a late failure has nobody to report to.
+    if (liveStarting && liveStartFailure === null) {
+      liveStartFailure = message;
+      live?.end();
+    }
+    return;
+  }
   deactivateLive(undefined, "error");
   // The badge asserts something about the device on the other end of a link that
   // just went away, so it goes back to unknown rather than keeping a claim about
@@ -1507,6 +1550,9 @@ async function applyPreventSleep(on: boolean): Promise<string | null> {
 // Undo / redo over the plan. Assigned below (after the views it re-renders exist),
 // so every funnel reaches it optionally — the same shape as live / midi.
 let planHistory: PlanHistory | null = null;
+// The engine slots an effect selection seeded with its type's defaults, held until the history
+// entry carrying them closes, when they are recorded as the fill's rather than the operator's.
+const seededDefaults = new Map<string, SeededDefault>();
 
 // A device read that carries a model switch (Fetch / Live-sync start) runs against a plan of
 // the unit's model, and that plan replaces the one on screen once the read lands — so while
@@ -1690,6 +1736,7 @@ const inspectorActions = {
       refreshInspector();
       return;
     }
+    const wasOff = (conn.params?.level ?? 0) <= LEVEL_MIN_DB;
     conn.params = { ...conn.params, ...patch };
     // A STEREO-linked pair moves as one: copy the same send change to the partner
     // channel. The pan goes with it in BAL, where it is the pair's one shared balance,
@@ -1698,11 +1745,19 @@ const inspectorActions = {
     const mirrored = mirrorLinkedPair(getModel(modelId), plan, source);
     // A linked MIX's send pans from this source (and a mirrored partner) follow its position.
     markChanged("ui", alignLinkedSendPans(plan, withLinkedPartner(getModel(modelId), plan, source)));
-    // A PRE/POST change flips the wire's pre-fader marker; a send ON/OFF or an OSC
-    // L/R assign change flips the wire's (and its jacks') off-state dimming. Repaint
-    // when any is in play. Level/pan carry no on-canvas marker, so they keep mutating
-    // in place (slider keeps focus).
-    if (patch.tap !== undefined || patch.on !== undefined || patch.oscL !== undefined || patch.oscR !== undefined)
+    // A PRE/POST change flips the wire's pre-fader marker; a send ON/OFF, an OSC L/R
+    // assign change, or a level that crosses -∞ flips the wire's (and its jacks') off-state
+    // dimming. Those repaint the wire layer, which leaves the panel and the slider holding
+    // the pointer alone; a level move that stays on one side of -∞ and a pan move change
+    // nothing drawn there.
+    const crossedOff = patch.level !== undefined && wasOff !== patch.level <= LEVEL_MIN_DB;
+    if (
+      patch.tap !== undefined ||
+      patch.on !== undefined ||
+      patch.oscL !== undefined ||
+      patch.oscR !== undefined ||
+      crossedOff
+    )
       graph.repaintWires();
     // Refresh the console so a mirrored partner keeps up (a no-op while hidden).
     if (mirrored) consoleView.refresh();
@@ -1711,7 +1766,7 @@ const inspectorActions = {
     // ducked-channel PRE-send note appears/clears with the tap.
     if (patch.oscL !== undefined || patch.oscR !== undefined || patch.tap !== undefined) refreshInspector();
   },
-  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[]) => {
+  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[], defaults?: readonly string[]) => {
     const prev = plan.nodeParams[id];
     const partner = partnerChannel(getModel(modelId), id);
     plan.nodeParams[id] = { ...prev, ...patch };
@@ -1729,12 +1784,20 @@ const inspectorActions = {
         : patch.panLink !== undefined && patch.panLink !== (prev?.panLink === true)
           ? sendPansToSources(plan, id)
           : [];
+    const fx = nodeParamEffects(patch, prev);
+    // A COMP/EQ Type change loads the destination bank, ahead of the pair mirror for the
+    // reason the transition above is: the partner takes the settled bank.
+    if (fx.resetCompEqBank) resetCompEqBank(id, patch.compEqType as number);
     // A STEREO-linked pair moves as one: copy this channel's params to the partner
     // (the pair-level Signal Type / PAN-BAL fields stay on the primary).
     const mirrored = mirrorLinkedPair(getModel(modelId), plan, id);
     // The insert FX takes a pass of its own beside it, which is what names the pair's
     // three insert-FX keys whatever this edit was. Both write the same values.
     const insFxMirrored = mirrorLinkedInsertFx(getModel(modelId), plan, id);
+    // The insert-FX mirror copies the engine values, defaults included.
+    const seeded = (defaults ?? []).map((path) => [id, path] as const);
+    if (partner && insFxMirrored) seeded.push(...(defaults ?? []).map((path) => [partner, path] as const));
+    noteSeededDefaults(plan, seededDefaults, seeded);
     // The patch's own keys, not only the ones whose value moved: this funnel asserts
     // every member it carries, and a device read in flight must not take back one that
     // happened to already hold the asserted value.
@@ -1765,12 +1828,11 @@ const inspectorActions = {
     if (insFxMirrored) for (const key of INSERT_FX_PAIR_KEYS) mirroredKeys.add(key);
     if (partner) for (const name of mirroredKeys) keys.push(nodeParamContestPath(partner, name));
     markChanged("ui", keys);
-    // Two of the side effects below write the plan AFTER markChanged took the ledger
-    // sample, so their keys would land in whatever samples next — under live follow a
-    // device notify, which invariant 13 then reads as the device authoring a key the
-    // operator moved. Re-sampled as this edit once the last of them has run.
+    // The pair snap below writes the plan AFTER markChanged took the ledger sample, so its
+    // keys would land in whatever samples next — under live follow a device notify, which
+    // invariant 13 then reads as the device authoring a key the operator moved. Re-sampled
+    // as this edit once it has run.
     let lateWrite = false;
-    const fx = nodeParamEffects(patch, prev);
     // Linking a pair snaps its partner next to the kept node so the tie isn't drawn
     // across a gap an earlier manual move may have opened.
     if (fx.alignStereoPair) {
@@ -1781,10 +1843,6 @@ const inspectorActions = {
     if (fx.repaintWires) graph.repaintWires();
     if (fx.rerender) graph.render();
     if (mirrored || insFxMirrored) consoleView.refresh();
-    if (fx.resetCompEqBank) {
-      resetCompEqBank(id, patch.compEqType as number);
-      lateWrite = true;
-    }
     if (lateWrite) traceProbe?.sample("ui");
     if (fx.refreshInspector) refreshInspector();
   },
@@ -1816,6 +1874,18 @@ const inspectorActions = {
   // these actions, so it cannot be constructed until they exist.
   onOpenDynScreen: (kind: DynKind, id: string) => dynScreen.open(DYN_PROCESSORS[kind], id),
   onClose: () => graph.clearSelection(),
+  connectOrigins: (id: string) => graph.connectOrigins(id),
+  onConnect: (origin: ConnectOrigin, other: string) => graph.connectTo(origin, other),
+  wireDrawn: (from: string, to: string) => graph.wireDrawn(from, to),
+  // The routing row that was pressed goes with the node's panel, so the wire's panel takes
+  // the focus: its first control, the mobile close button aside.
+  onSelectConnection: (from: string, to: string) => {
+    graph.selectConnection(from, to);
+    if (selection?.type !== "conn") return;
+    focusables(inspectorHost)
+      .find((el) => !el.classList.contains("inspector-close"))
+      ?.focus({ preventScroll: true });
+  },
 };
 graph.setTheme(theme);
 graph.setLabelSource(labelSource);
@@ -1854,7 +1924,7 @@ function applyStaticI18n(): void {
   $("btn-device-setup").textContent = m.deviceSetup.menuItem;
   $("btn-compare").textContent = compareAbort ? m.toolbar.compareCancel : m.toolbar.compare;
   $("btn-selftest").textContent = selfTestAbort ? m.toolbar.selfTestCancel : m.toolbar.selfTest;
-  // Live-sync toggle keeps a static label; aria-pressed and the on-air tally
+  // Live-sync toggle keeps a static label; aria-checked and the on-air tally
   // carry the on/off state. The tally is relabelled too — the tag is its whole
   // text, and a language may translate it.
   const liveBtn = document.getElementById("btn-live");
@@ -1871,15 +1941,14 @@ function applyStaticI18n(): void {
   const prefsBtn = $("btn-prefs");
   prefsBtn.title = m.prefs.title;
   prefsBtn.setAttribute("aria-label", m.prefs.title);
-  // Labels toggle shows the source the canvas is currently using.
-  labelsBtn.textContent = labelSource === "device" ? m.toolbar.labelsDevice : m.toolbar.labelsModel;
+  // The two View toggles keep one label each, as Live sync does: checked is the state
+  // the label names, carried by aria-checked and the pressed look.
+  labelsBtn.textContent = m.toolbar.labelsDevice;
   labelsBtn.title = m.toolbar.labelsHint;
-  labelsBtn.setAttribute("aria-pressed", String(labelSource === "device"));
-  // Off-sends toggle: the label names the action it will perform next.
-  const hideOff = graph.isHideOffSends();
-  hideOffBtn.textContent = hideOff ? m.toolbar.showOffSends : m.toolbar.hideOffSends;
+  labelsBtn.setAttribute("aria-checked", String(labelSource === "device"));
+  hideOffBtn.textContent = m.toolbar.hideOffSends;
   hideOffBtn.title = m.toolbar.hideOffSendsHint;
-  hideOffBtn.setAttribute("aria-pressed", String(hideOff));
+  hideOffBtn.setAttribute("aria-checked", String(graph.isHideOffSends()));
   // Demo-only desktop-app link (present in the DOM, shown only in the demo build).
   const desktopLbl = document.getElementById("lbl-desktop");
   const desktopLink = document.getElementById("btn-desktop");
@@ -1962,12 +2031,13 @@ const guarded = (run: () => Promise<void>): (() => void) =>
  *  label is the discriminator (Pan vs Level), taken from the `data-param-label`
  *  paramBlock stamps while building the row rather than searched for again here: this
  *  runs once per candidate control on a path that repeats at ~20 Hz during device
- *  follow. No match on the rebuilt panel = focus is dropped, which is the wanted
- *  outcome. */
+ *  follow. A control whose text changes with the plan — a connect picker's options —
+ *  stamps a `data-focus-key` that stands in for that text. No match on the rebuilt panel =
+ *  focus is dropped, which is the wanted outcome. */
 function inspectorFocusKey(el: HTMLElement): string {
   const label = el.closest<HTMLElement>(".param")?.dataset.paramLabel ?? "";
   const type = el instanceof HTMLInputElement ? el.type : "";
-  return [label, el.tagName, type, el.className, el.textContent?.slice(0, 24) ?? ""].join("|");
+  return [label, el.tagName, type, el.className, el.dataset.focusKey ?? el.textContent?.slice(0, 24) ?? ""].join("|");
 }
 
 /**
@@ -2124,9 +2194,10 @@ function actionsFor(built: Plan): typeof inspectorActions {
 // board is deferred while the console view is up, the panel while the graph view is.
 function applyRateConstraints(): void {
   const c = rateConstraints(getModel(modelId), plan.sampleRate);
-  // Asked before the store, so the answer is about the board on screen. A set that
-  // moved while the console view is up owes the graph a repaint it must not do here:
-  // graphDirty is the same deferral the follow reflect uses two lines from its own.
+  // Asked before the store, so the answer is about the board on screen. A set — or a set
+  // of gated record slots — that moved while the console view is up owes the graph a
+  // repaint it must not do here: graphDirty is the same deferral the follow reflect uses
+  // two lines from its own.
   if (graphHost.hidden && !graph.hasDisabledNodes(c.disabledNodes)) graphDirty = true;
   graph.setDisabledNodes(c.disabledNodes);
   refreshInspector();
@@ -2153,6 +2224,10 @@ function rerenderPlan(): void {
   graph.setModel(getModel(modelId), plan);
   selection = null;
   syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
+  // An open tuning screen draws what it was built from, and every value under it was just
+  // re-authored. Refresh redraws it, and closes it when the channel no longer carries the
+  // processor it edits.
+  dynScreen.refresh();
   // Every value here was re-authored — by the device or by the settings file — so the
   // entries recorded against the old contents describe states this plan cannot return
   // to.
@@ -2239,6 +2314,25 @@ async function applyDeviceStateScoped(
   return result;
 }
 
+/** A read of a few nodes under the device scope, for the two scoped reads a live session
+ *  takes (a follow reconcile and a sideEffect refetch). Under "Scene only" the plan's
+ *  scene-external values are put back afterwards, as `applyDeviceStateScoped` does for a
+ *  whole-device read: a node read here carries some of them (an oscillator assign into
+ *  STEREO, a MIX or an FX channel), and the two reads must not disagree about one value
+ *  under one setting. */
+async function applyNodeStateScoped(
+  target: Plan,
+  nodeIds: ReadonlySet<string>,
+  signal: AbortSignal | undefined,
+  pending: PendingWrites | undefined,
+  skipNames = false,
+): Promise<ReadbackResult> {
+  const keep = getSettings().deviceScope === "scene" ? captureSceneExternal(target) : null;
+  const result = await applyNodeState(getModel(target.modelId), target, nodeIds, signal, pending, skipNames);
+  if (keep) applySceneExternal(target, keep);
+  return result;
+}
+
 // A fresh plan, opened at the rate this session last worked at. The model picker
 // already keeps the last model across New; the rate belongs to the same rig and
 // does not change because a new plan was started. newPlan itself stays at the
@@ -2250,27 +2344,37 @@ function newPlanAtLastRate(id: ModelId): Plan {
   return next;
 }
 
-/** Replace the open document. Returns false when the replacement did not happen — a
- *  device read holds the plan, or the new one could not be drawn — and the caller must
- *  not then report the load as having happened. Both refusals report themselves, so no
- *  caller needs a failure surface of its own.
+/** Replace the open document. Returns true when it did; null when it was refused before
+ *  anything was attempted (a device read holds the plan); false when the new one could not
+ *  be drawn. A caller must not report the load as having happened unless it is true. Both
+ *  refusals report themselves, so no caller needs a failure surface of its own.
  *
  *  `readHoldsLatch` is the device read that holds the latch replacing the plan with the
  *  one it read into — the model switch a Fetch or Live-sync start offered, applied once
  *  its read has landed complete — and is the one replacement the latch does not refuse. */
-function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boolean } = {}): boolean {
+function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boolean } = {}): boolean | null {
   // A device read (fetch / Live-sync start) is merging into the module `plan`;
-  // replacing it now would strand the merge (see deviceReadInFlight). Every external
-  // entry point is already blocked at fileFlow / the model picker, so this is the
-  // backstop — and it says so, because its one reachable caller went on to announce a
-  // load that never happened.
+  // replacing it now would strand the merge (see deviceReadInFlight). A file flow that
+  // entered before the read raised the latch reaches here with the latch up, so this is
+  // where that flow is refused, and it says so.
   if (flow.deviceReadInFlight && !readHoldsLatch) {
     setStatus(t().status.busyDeviceRead);
-    return false;
+    return null;
+  }
+  // A write converges the plan it was confirmed for and re-reads it after every await, so
+  // a document replacing it mid-write is the one the write would put on the unit. A file
+  // flow that entered before the write took the link reaches here and is refused.
+  if (deviceLinkHolder === "write") {
+    setStatus(t().status.deviceLinkBusy);
+    return null;
   }
   // Replacing the whole plan invalidates the live snapshot; leave sync first.
   // (Live's own enable path calls loadPlan before begin(), so this is a no-op there.)
   deactivateLive();
+  // A seeded slot names a node of the plan being replaced.
+  seededDefaults.clear();
+  // …and a decision report still up was about a document this one replaces.
+  closeLoadReport();
   // deactivateLive drops the subscription and the timers, but a reconcile / refetch
   // already awaiting the device is not reachable from there — the read itself is what
   // still points at the plan being replaced.
@@ -2316,6 +2420,9 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
     // gesture stamps, which is an app edit.
     traceProbe?.sample("load");
     dirty = false;
+    // A different model is plausibly a different unit, so what the badge read from the last
+    // one is no longer a claim the app can make, whichever entry switched it.
+    if (modelId !== prevModelId) setFollowUsbBadge(null);
   } catch (err) {
     // Put the previous document back on screen and report, rather than throwing: three
     // of the four callers pass an app-generated plan and do not catch, so a throw would
@@ -2361,6 +2468,8 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
     ...problems.map((p) => {
       if (p.reason === "insertFxSlot") return `[${p.reason}] ${p.slot}: ${p.nodes.join(", ")}`;
       if (p.reason === "insertFxPair") return `[${p.reason}] ${p.nodes.join(" / ")}: ${p.keys.join(", ")}`;
+      if (p.reason === "linkedPair")
+        return `[${p.reason}] ${p.nodes.join(" / ")}: ${[...p.keys, ...p.sends.map((to) => `send -> ${to}`)].join(", ")}`;
       if (p.reason === "paramRange") {
         // JSON rather than String(): a stored value is a number in the ordinary case but can be
         // a boolean or an object, and `[object Object]` names neither what was there nor why.
@@ -2370,6 +2479,9 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
       if (p.reason === "linkedSendPan")
         return `[${p.reason}] ${p.from} -> ${p.to}: ${p.stored ?? "(none)"} -> ${p.pan}`;
       if (p.reason === "booleanParam") return `[${p.reason}] ${p.node}.${p.path}: ${p.stored} -> ${p.value}`;
+      if (p.reason === "nodeColor") return `[${p.reason}] ${p.node}: ${JSON.stringify(p.stored)} -> (dropped)`;
+      if (p.reason === "documentText")
+        return `[${p.reason}] ${p.field}.${p.node}: ${JSON.stringify(p.stored)} -> ${JSON.stringify(p.value)}`;
       return `[${p.reason}] ${p.from} -> ${p.to}`;
     }),
   ].join("\n");
@@ -2379,7 +2491,7 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
 // as a recent plan. Returns true on success and false on failure (which sets the
 // error status); null when the plan carries a problem the operator has been asked
 // about — nothing has loaded and nothing has failed, and the load runs from the
-// report modal if they proceed.
+// report modal if they proceed — and null when the replacement was refused.
 function loadFromText(text: string, path?: string): boolean | null {
   try {
     const doc = deserializeDocument(text);
@@ -2416,7 +2528,11 @@ function loadFromText(text: string, path?: string): boolean | null {
     // omits is a key the panel draws a default for and the write does not send. The DEVICE
     // paths do not come through here: a fetch fills from the unit, and a node it could not
     // read stays absent on purpose.
-    const { booleans, ranged, supplied, linkedPans } = prepareLoadedPlan(getModel(next.modelId), next, problems);
+    const { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, colors, texts } = prepareLoadedPlan(
+      getModel(next.modelId),
+      next,
+      problems,
+    );
     // A STREAMING source the load supplied is recorded as the fill's, so the write confirm
     // names that receiver when the write moves it.
     markSource(
@@ -2432,17 +2548,27 @@ function loadFromText(text: string, path?: string): boolean | null {
       for (const name of sceneExternalParamNames(next)) {
         markSource(next, [name], plan.paramSource?.get(name) ?? "default");
       }
-      // The same for the device-wide wires, whose record is the one a load completion leaves.
+      // The same for the device-wide wires, whose record is the one a load completion leaves,
+      // and for the params they carry, which answer to the wire's record where they have none
+      // of their own — so one with no record here has none there either.
       for (const c of next.connections.filter(isSceneExternalConnection)) {
         const name = connectionContestKey(c.from, c.to);
         const from = plan.paramSource?.get(name);
         if (from !== undefined) markSource(next, [name], from);
+        for (const key of Object.keys(c.params ?? {})) {
+          const leaf = connParamContestKey(c.from, c.to, key);
+          const leafFrom = plan.paramSource?.get(leaf);
+          if (leafFrom !== undefined) markSource(next, [leaf], leafFrom);
+          else next.paramSource?.delete(leaf);
+        }
       }
     }
-    const finishLoad = (): boolean => {
-      // Refused (a device read holds the plan): loadPlan said so, and the caller must
-      // not go on to remember a recent path and announce a document that never opened.
-      if (!loadPlan(next)) return false;
+    const finishLoad = (): boolean | null => {
+      // Refused (null: nothing was attempted) or failed to draw (false): loadPlan said so,
+      // and the caller must not go on to remember a recent path and announce a document
+      // that never opened. A refusal is not a file that fails to load.
+      const loaded = loadPlan(next);
+      if (loaded !== true) return loaded;
       // LEADS the line rather than trailing it. The status bar is one ellipsized line and a
       // file name has no length limit, so a notice placed after the name is off screen for a
       // long one. This is the only thing said about a document the loader changed, and a
@@ -2458,7 +2584,11 @@ function loadFromText(text: string, path?: string): boolean | null {
         ...(boundCount > 0 ? [t().status.paramsBounded(boundCount)] : []),
         ...(dropCount > 0 ? [t().status.paramsDropped(dropCount)] : []),
         ...(supplied.length > 0 ? [t().status.streamingSourceSupplied] : []),
+        ...(sendLevels.length > 0 ? [t().status.sendLevelsSupplied(sendLevels.length)] : []),
+        ...(linkedPairs.length > 0 ? [t().status.linkedPairsAligned(linkedPairs.length)] : []),
         ...(linkedPans.length > 0 ? [t().status.linkedSendPansAligned(linkedPans.length)] : []),
+        ...(colors.length > 0 ? [t().status.colorsDropped(colors.length)] : []),
+        ...(texts.length > 0 ? [t().status.textsRewritten(texts.length)] : []),
       ];
       const line = (what: string): string => [...notes, what].join(" — ");
       if (path) {
@@ -2473,13 +2603,34 @@ function loadFromText(text: string, path?: string): boolean | null {
     const decisions = problems.filter(needsDecision);
     if (decisions.length > 0) {
       const m = t().loadReport;
+      // What the decision is about: the plan on screen as it stood when the report opened,
+      // whose discard has already been confirmed.
+      const onScreen = plan;
+      const stateAtOpen = clonePlanState(plan);
       showLoadReport(buildPlanReport(next.modelId, problems, false), {
         title: m.slotTitle,
         intro: m.slotIntro,
-        // This one runs from the modal's click handler, outside the try below — which
-        // has already returned by then. Safe because the only step it takes that can
-        // fail is `loadPlan`, and that reports and returns false rather than throwing.
-        proceed: { label: m.loadAnyway, run: () => void finishLoad() },
+        // This one runs from the modal's click handler, after the flow that opened the
+        // report has let the latch go, so it takes the latch again — and it asks again what
+        // the opening flow asked: a plan replaced since is refused (loadPlan closes the
+        // report when one is), and one edited since asks the discard confirm once more. The
+        // only step that can fail is `loadPlan`, which reports and returns rather than
+        // throwing.
+        proceed: {
+          label: m.loadAnyway,
+          run: () =>
+            void fileFlow(
+              async () => {
+                if (plan !== onScreen) {
+                  setStatus(t().status.canceled);
+                  return;
+                }
+                if (diffPlans(stateAtOpen, plan).length && !(await confirmDiscard())) return;
+                finishLoad();
+              },
+              { replaces: true },
+            ),
+        },
       });
       // Neither loaded nor failed: the decision is on screen. Null rather than false,
       // so a recent entry pointing at a file that opens perfectly well is not dropped
@@ -2506,20 +2657,23 @@ function showLoadError(err: unknown): void {
 // all three share. `read` resolves null when its dialog was canceled; `path` is
 // what the plan is remembered by, so it is absent for a browser pick or drop.
 // Resolves true on success, false when the load was attempted and failed, and
-// null when nothing was attempted (canceled, another file flow in flight, or the
-// plan's problem is on screen for the operator to decide on).
+// null when nothing was attempted (canceled, another file flow in flight, the
+// replacement refused, or the plan's problem is on screen for the operator to decide on).
 async function openPlanFrom(read: () => Promise<{ text: string; path?: string } | null>): Promise<boolean | null> {
-  return fileFlow(async () => {
-    if (!(await confirmDiscard())) return null;
-    try {
-      const doc = await read();
-      if (!doc) return null;
-      return loadFromText(doc.text, doc.path);
-    } catch (err) {
-      showLoadError(err);
-      return false;
-    }
-  });
+  return fileFlow(
+    async () => {
+      if (!(await confirmDiscard())) return null;
+      try {
+        const doc = await read();
+        if (!doc) return null;
+        return loadFromText(doc.text, doc.path);
+      } catch (err) {
+        showLoadError(err);
+        return false;
+      }
+    },
+    { replaces: true },
+  );
 }
 
 async function openRecent(path: string): Promise<void> {
@@ -2565,7 +2719,16 @@ const flow = new FileFlowLatch({
   // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
   onReleased: () => midi?.gateReleased(),
 });
-const fileFlow = <T>(run: () => Promise<T>): Promise<T | null> => flow.run(run);
+// `replaces`: the flow replaces the plan wholesale (New, Open, a recent row, a drop, the model
+// picker). Refused at its entry while a write holds the link, for the reason loadPlan refuses
+// one that entered before the write did.
+const fileFlow = <T>(run: () => Promise<T>, { replaces = false }: { replaces?: boolean } = {}): Promise<T | null> => {
+  if (replaces && deviceLinkHolder === "write") {
+    setStatus(t().status.deviceLinkBusy);
+    return Promise.resolve(null);
+  }
+  return flow.run(run);
+};
 
 // Warn before touching a unit whose System firmware differs from the version this
 // build was validated against — the parameter mappings may not match. Returns true
@@ -2617,18 +2780,17 @@ function readTarget(switchTo: Plan | null): () => Plan {
 }
 
 // Replace the plan on screen with the switch's plan, which a read has just landed in.
-// False when the replacement did not happen (loadPlan reported why). The badge goes
-// back to unknown, as in a switch from the model picker; the read's own Follow USB
-// value is set after this.
+// False when the replacement did not happen (loadPlan reported why). loadPlan puts the
+// badge back to unknown for the new model; the read's own Follow USB value is set after
+// this.
 function applyModelSwitch(next: Plan): boolean {
-  if (!loadPlan(next, { readHoldsLatch: true })) return false;
-  setFollowUsbBadge(null);
-  return true;
+  return loadPlan(next, { readHoldsLatch: true }) === true;
 }
 
 // Refuse to act on a device whose model differs from the plan's — the plan's
-// channels would map onto the wrong hardware. Shared by write and compare, which
-// (unlike fetch / Live sync) cannot offer to switch: they act on the plan as it is.
+// channels would map onto the wrong hardware. Shared by withCheckedDevice's four call
+// sites (write, compare, device setup read, device setup apply), which (unlike fetch /
+// Live sync) cannot offer to switch: they act on the plan as it is.
 // `wrap` builds the action-specific error message from the mismatch text. Returns
 // true to proceed, false when it refused (having surfaced the error).
 function refuseModelMismatch(device: DeviceSummary, wrap: (message: string) => string): boolean {
@@ -2642,18 +2804,19 @@ picker.addEventListener("change", async () => {
   if (next === modelId) return;
   // The same shared latch File > New / Open / drop / recent use: the switch runs the
   // one discard confirm + a wholesale plan replacement, so it must not stack with
-  // another file flow, and it is refused while a device read holds the plan.
-  const switched = await fileFlow(async () => {
-    if (!(await confirmDiscard())) return false;
-    loadPlan(newPlanAtLastRate(next));
-    // A different model is plausibly a different unit, so what was read from the last
-    // one is no longer a claim we can make.
-    setFollowUsbBadge(null);
-    setStatus(t().status.switchedModel(next));
-    return true;
-  });
-  // Declined discard, another file flow held the latch (null), or a device read
-  // refused it: restore the picker to the model still on screen.
+  // another file flow, and it is refused while a device read or a write holds the plan.
+  const switched = await fileFlow(
+    async () => {
+      if (!(await confirmDiscard())) return false;
+      // A refusal said why; the picker goes back to the model still on screen.
+      if (!loadPlan(newPlanAtLastRate(next))) return false;
+      setStatus(t().status.switchedModel(next));
+      return true;
+    },
+    { replaces: true },
+  );
+  // Declined discard, another file flow held the latch (null), or a device read or a
+  // write refused it: restore the picker to the model still on screen.
   if (!switched) picker.value = modelId;
 });
 
@@ -2671,11 +2834,14 @@ ratePicker.addEventListener("change", () => {
 $("btn-new").addEventListener(
   "click",
   () =>
-    void fileFlow(async () => {
-      if (!(await confirmDiscard())) return;
-      loadPlan(newPlanAtLastRate(modelId));
-      setStatus(t().status.newPlan);
-    }),
+    void fileFlow(
+      async () => {
+        if (!(await confirmDiscard())) return;
+        if (!loadPlan(newPlanAtLastRate(modelId))) return;
+        setStatus(t().status.newPlan);
+      },
+      { replaces: true },
+    ),
 );
 
 $("btn-open").addEventListener(
@@ -2864,6 +3030,17 @@ const dynScreen = new DynScreen({
     refreshInspector();
     consoleView.refresh();
   },
+  // The launcher as the surface on screen draws it now: the inspector's button for the
+  // node it shows, or the CONSOLE's opener on that node's strip.
+  focusOpener: (key, nodeId) => {
+    if (!(key in DYN_PROCESSORS)) return;
+    const kind = key as DynKind;
+    if (!inspectorHost.hidden) {
+      if (selection?.type === "node" && selection.id === nodeId) document.getElementById(`btn-${kind}-screen`)?.focus();
+      return;
+    }
+    consoleView.focusOpener(kind, nodeId);
+  },
 });
 
 // The macOS Edit menu, built first so the history's depth hook can push into it. Its
@@ -2881,7 +3058,7 @@ planHistory = new PlanHistory({
   reflect: (touch) => reflectHistory(touch),
   labelOf: (id) => graph.labelOf(id),
   onStatus: (msg) => setStatus(msg),
-  onAuthored: (names) => markSource(plan, names, "manual"),
+  onAuthored: (names) => markAuthored(plan, names, seededDefaults),
   // A device read merges into `plan` across many awaits and re-bases the live snapshot
   // from its own copy, and a file flow can replace the plan outright: patching under
   // either acts on a premise that is still moving. Every read that RE-AUTHORS the plan
@@ -2907,7 +3084,9 @@ planHistory = new PlanHistory({
         : modalOpen() && !dynScreen.isOpen()
           ? t().status.undoModal
           : null,
-  rateLocked: () => liveSessionUp,
+  // Every holder, as the rate picker locks: a write converges the plan it re-reads each
+  // round, and a session holds the rate at the unit's.
+  rateLocked: () => deviceLinkHolder !== null,
   // Asked of the state the entry would leave behind rather than of the keys it carries: an
   // undo turns a switch on as much as the gesture it reverses did, and which of the two an
   // entry moved does not decide the answer. The patch is applied to a copy, which is the
@@ -3095,9 +3274,9 @@ if (!DEMO) {
       // unknown would have to guess which way, and the operator's first question here
       // is "what is it?", not "change it".
       if (followUsbState === null) {
-        // A read that fails is reported through withDevice like any other device read,
-        // and the badge stays unknown.
-        await withDevice("follow-usb", t().status.writeConnecting, t().status.writeError, async () => {
+        // A read that fails is reported through withDevice as a failed READ, and the badge
+        // stays unknown.
+        await withDevice("follow-usb", t().status.fetchConnecting, t().error.followUsbRead, async () => {
           setFollowUsbBadge(await readFollowUsb());
         });
         return;
@@ -3128,6 +3307,13 @@ if (!DEMO) {
         try {
           await apply();
         } catch (err) {
+          // The confirm leaves the window running, so the session can have ended behind it,
+          // and its teardown reported its own cause and nothing about this write. A write
+          // that failed with no session left is reported as this write's failure.
+          if (!liveSessionUp) {
+            showError(t().status.writeError(t().error.followUsbWrite(errorText(err), next)));
+            return;
+          }
           stopLiveOnError(errorText(err));
         }
         return;
@@ -3178,6 +3364,13 @@ if (!DEMO) {
         }
         if (switchTo === "canceled") {
           setStatus(t().status.canceled);
+          return;
+        }
+        // A file flow that is already running (a save or open dialog the operator has up,
+        // a document being read) holds the plan as it stood when it began: the read would
+        // replace that plan under it, so the read does not start.
+        if (flow.busy) {
+          setStatus(t().status.busyFileFlow);
           return;
         }
         // Hold off every wholesale plan replacement for the duration of the read and
@@ -3249,8 +3442,8 @@ if (!DEMO) {
           // A link that dropped part-way leaves the badge unknown, as a session's drop does
           // (stopLiveOnError).
           setFollowUsbBadge(linkFailureIn(merged.errors) ? null : followUsb);
-          // Per-node provenance: nodes whose body read failed still show their plan
-          // default, so the graph/inspector flag them as not read from the device.
+          // Per-node provenance: nodes a read failed on still show their plan
+          // value, so the graph/inspector flag them as not read from the device.
           plan.unreadNodes = merged.unreadNodes;
           rerenderPlan();
           dirty = true;
@@ -3313,16 +3506,13 @@ if (!DEMO) {
   // last authored, which would both miss real drops and invent false ones. A read that
   // fails throws, and the settle that asked aborts the write on it, as it does on a clock
   // read that fails.
-  // What the settle decided a rate change would cost the recorder, held until the write
-  // either sends the rate or does not. NOT a flag set at the confirm: the operator can
-  // approve the re-clock and then decline the change count, and the write then sends
-  // nothing at all — re-reading there would apply the unit's UNCHANGED count over a plan
-  // whose rate had already moved, leaving a count the rate cannot carry and an Inspector
-  // whose menu does not contain its own value.
-  let pendingTrackCost: { from: number; to: number } | null = null;
-  // Set once the rate has actually gone out, and consumed after the write: the unit does
+  // Set once a rate has actually gone out, and consumed after the write: the unit does
   // the lowering itself, and whether it announces one is not something this app has
   // measured, so the plan is re-read rather than left to a notify that may never come.
+  // Set by the send rather than by the settle's confirm: the operator can approve the
+  // re-clock and then decline the change count, and the write then sends nothing at all —
+  // re-reading there would apply the unit's UNCHANGED count over a plan whose rate had
+  // already moved.
   let trackCountMayHaveDropped = false;
 
   async function trackCountCost(nextRate: number): Promise<{ from: number; to: number } | null> {
@@ -3380,10 +3570,7 @@ if (!DEMO) {
       // plain yes/no: the plan's rate is the one that sticks.
       const cost = trackCost ? t().confirm.trackCountDrop(trackCost.from, trackCost.to) : "";
       const ask = [t().confirm.reclock(deviceRate, planRate), cost].filter(Boolean).join(" ");
-      if (await confirmDialog(ask)) {
-        pendingTrackCost = trackCost;
-        return true;
-      }
+      if (await confirmDialog(ask)) return true;
       setStatus(t().status.canceled);
       return false;
     }
@@ -3395,10 +3582,11 @@ if (!DEMO) {
     // The note belongs to the whole dialog, so it may only say what is true of every arm.
     // `limits` is: adopting the device's high rate and releasing to the plan's each leave
     // those features out. The Track Count warning is NOT — it is what RELEASING costs, and
-    // adopting costs nothing — so it goes on that button rather than into the note.
+    // adopting costs nothing — so it gets a line of its own rather than going into the note,
+    // worded to name the release arm.
     const note = limits ? t().rateChoice.hiRateNote(limits) : null;
     // Its own wording, not the confirm's: this arm is one of three answers and the sentence
-    // has to say which one it is about. `trackWarning` decides WHETHER, the message decides
+    // has to say which one it is about. `trackCost` decides WHETHER, the message decides
     // how it reads here.
     const releaseNote = trackCost ? t().rateChoice.trackCountDrop(trackCost.from, trackCost.to) : "";
     const choice = await askRateChoice(planRate, deviceRate, note, releaseNote);
@@ -3423,9 +3611,6 @@ if (!DEMO) {
       return false;
     }
     setFollowUsbBadge(false);
-    // Only this arm writes the plan's rate. `adopt` takes the DEVICE's, which the recorder
-    // is already living with, so it costs the Track Count nothing.
-    pendingTrackCost = trackCost;
     return true;
   }
 
@@ -3468,7 +3653,6 @@ if (!DEMO) {
           // Scene scope drops SAMPLE_RATE from the write set, so there is no
           // rate to settle — the device keeps running at its own.
           const scope = getSettings().deviceScope;
-          pendingTrackCost = null;
           if (scope !== "scene" && !(await settleSampleRate())) return;
           // One attempt of the whole diff → confirm → send sequence. Returns the
           // sent/not-sent split when the send stopped part-way (so the caller can
@@ -3532,12 +3716,18 @@ if (!DEMO) {
             // owner's, which reports "no changes to write".
             const owners = collisionOwners(dryRun(getModel(modelId), plan));
             const sharedNote = owners.length ? sharedSettingText(owners) : "";
+            // A node whose name is empty has no name to send, and the unit keeps its own: said
+            // rather than counted as a match, since nothing here knows whether the two agree.
+            const unnamed = unnamedNodes(getModel(modelId), plan);
+            const unnamedLabels = unnamed.map((id) => graph.labelOf(id)).join(", ");
             if (total === 0) {
-              setStatus(
-                (sharedNote ? `${t().status.writeNoChanges} ${sharedNote}` : t().status.writeNoChanges) + adoptedNote(),
-              );
+              const nothing = unnamed.length
+                ? t().status.writeNamesNotSent(unnamedLabels, unnamed.length)
+                : t().status.writeNoChanges;
+              setStatus((sharedNote ? `${nothing} ${sharedNote}` : nothing) + adoptedNote());
               return null;
             }
+            const renaming = new Set(nameWrites.filter((w) => w.name === undefined).map((w) => w.node));
             // What the operator never chose, from the addresses that will actually move. The
             // plan is dense, so a write carries keys nobody set; naming the strips is what makes
             // that a decision rather than a surprise. Built inside the ask, since a retry is the
@@ -3545,7 +3735,8 @@ if (!DEMO) {
             const ask = (): string =>
               [
                 sharedNote,
-                unauthoredNoteFor(new Set(diffs.map((d) => cmdAddr(d.command))), scope),
+                unauthoredNoteFor(new Set(diffs.map((d) => cmdAddr(d.command))), scope, renaming),
+                unnamed.length ? t().confirm.namesNotSent(unnamedLabels, unnamed.length) : "",
                 t().confirm.write(total),
               ]
                 .filter(Boolean)
@@ -3579,9 +3770,11 @@ if (!DEMO) {
                 // the recorder would never be re-read. Everything but an explicit refusal
                 // arms it: the shell sends before it waits, so a write whose answer never
                 // came may have landed and taken the Track Count down with it, and the
-                // recorder would then be left showing a count the unit no longer has.
+                // recorder would then be left showing a count the unit no longer has. Any
+                // rate that goes out arms it, whatever put it in the plan, on a model that
+                // has the recorder.
                 onSent: (o: SendOutcome) => {
-                  if (pendingTrackCost !== null && o.result !== "refused" && o.command.name === "SAMPLE_RATE") {
+                  if (o.result !== "refused" && o.command.name === "SAMPLE_RATE" && hasRecorder(device.model)) {
                     trackCountMayHaveDropped = true;
                   }
                 },
@@ -3849,9 +4042,11 @@ if (!DEMO) {
         await releaseLive(device.epoch, "error");
         showError(message, supplied ?? "");
       };
-      if (!(await confirmFirmware(device))) return await abort(t().status.canceled);
-      if (!(await confirmDiscard())) return await abort(t().status.canceled);
       try {
+        // Inside the try, so a confirm that rejects instead of answering takes the same exit a
+        // failure does and the connection and the ledger close behind it.
+        if (!(await confirmFirmware(device))) return await abort(t().status.canceled);
+        if (!(await confirmDiscard())) return await abort(t().status.canceled);
         // A device of a different model maps onto the wrong channels; offer to
         // switch the UI to a fresh plan of the device's model (mirrors fetch).
         const switchTo = await offerModelSwitch(device);
@@ -3859,6 +4054,8 @@ if (!DEMO) {
           return await failLive(t().status.liveError(t().error.unknownModel(device.model)));
         }
         if (switchTo === "canceled") return await abort(t().status.canceled);
+        // Not while a file flow runs, as for a fetch.
+        if (flow.busy) return await abort(t().status.busyFileFlow);
         // Hold off every wholesale plan replacement until the session is established
         // (cleared in the finally below). The read mutates `plan` in place and
         // live.begin() snapshots it as device truth, so a New/Open/switch landing in
@@ -3917,6 +4114,10 @@ if (!DEMO) {
         // the session is still registering stays undoable, and a read that did not land
         // (cancelled, failed, stopped before it, or incomplete) leaves the history alone.
         planReadFromDevice();
+        // This read established the unit's rate, so a rate an earlier session was told about
+        // decides nothing in this one. No follow read is in flight here and no notify can
+        // arrive before follow.begin() below.
+        announcedRates.length = 0;
         noteMergeConflicts(merged);
         notePatchFromDevice(merged.devicePatch);
         takeRefusedEdits(merged);
@@ -3930,6 +4131,13 @@ if (!DEMO) {
         // the session's control (syncDeviceActionUi) — the only Follow USB control while
         // live.
         setFollowUsbBadge(followUsb);
+        // A count left by a session that ended without the line that would have carried it
+        // belongs to that session; this one's first flush starts from nothing.
+        liveAdopted = 0;
+        // From here until the session is declared up, a failure is recorded rather than
+        // dropped (stopLiveOnError).
+        liveStartFailure = null;
+        liveStarting = true;
         // The copy the starting read ran against: without it an edit made during the
         // multi-second read is snapshotted as a value the device was already given.
         live.begin(merged.deviceView);
@@ -3948,6 +4156,10 @@ if (!DEMO) {
         // the app says "Live sync on" over a follow that discards every notify, and
         // nothing restarts it.
         if (follow && !follow.isActive()) throw new Error(t().error.liveFollowStopped);
+        // …and the live half is still sending: a flush that failed in the same window, or a
+        // read in front of a write that failed there, recorded its cause and ended it.
+        if (liveStartFailure !== null || !live.isActive())
+          throw new Error(liveStartFailure ?? t().error.liveSyncStopped);
         // Remember which generation the session holds, so deactivateLive releases
         // exactly this one even when its disconnect lands after a later connect.
         liveEpoch = device.epoch;
@@ -3965,6 +4177,7 @@ if (!DEMO) {
       } catch (err) {
         await failLive(t().status.liveError(errorText(err)));
       } finally {
+        liveStarting = false;
         flow.deviceReadInFlight = false;
         switchRead = null;
         // The MIDI gate's reported window ends with the latch (see MidiEngine.gateReleased).
@@ -4008,12 +4221,8 @@ if (!DEMO) {
       const partner = mirrored ? partnerChannel(getModel(modelId), control.node) : undefined;
       if (partner) followDirtyNodes.add(partner);
       requestReflect();
-      // Kept exactly where the coalesced reflect used to make it, so moving that call
-      // out changes one behaviour and not two: a MIDI message inside the idle window
-      // drops the operator's open entry (pinned by T4's midi-rebase ladder). That is a
-      // defect of its own — a MIDI apply is an app edit through markChanged, not a
-      // device read — and removing it is a separate decision with its own cells.
-      planHistory?.rebase();
+      // An app edit like any other: the entry markChanged opened commits at its own
+      // boundary, which records the keys as the operator's and makes the edit undoable.
       // No wire repaint here: the reflect requested above redraws them. Its direct
       // branch ends in graph.repaintDirtyNodes, whose own tail is redrawWires, and both
       // sites carry the same `!graphHost.hidden` guard — so a toggle's wire dimming
@@ -4136,9 +4345,15 @@ if (!DEMO) {
   async function importSettingsFlow(load: () => Promise<{ bytes: Uint8Array; name: string } | null>): Promise<void> {
     // Replacing every value at once is what Live sync cannot follow, so the import
     // is refused while a session is up — the same rule fetch and write follow, which
-    // setLiveUi enforces on the menu entry. The drop target needs it stated here.
+    // setLiveUi enforces on the menu entry. The drop target needs it stated here, and it
+    // greys for every link holder, so the drop is refused for every one of them too: a
+    // Live sync that is still connecting holds the link with no session up yet.
     if (liveSessionUp) {
       showError(t().error.notWhileLive);
+      return;
+    }
+    if (deviceLinkHolder !== null) {
+      setStatus(t().status.deviceLinkBusy);
       return;
     }
     let name = "";
@@ -4163,15 +4378,21 @@ if (!DEMO) {
     // Re-checked HERE, not only at the flow's entry. This is the one wholesale plan
     // replacement that does not go through `loadPlan` — it mutates the module plan in
     // place — so it has no share of that backstop, and the entry check is separated
-    // from the mutation by two confirm dialogs. The UI stays clickable during those
-    // (the confirm's own comment says so), so an operator can start a Fetch or Live
-    // sync in between: the read raises the latch and spends seconds merging into the
-    // same plan object this is about to overwrite key by key. Neither side reports
-    // anything, the import does not pass `markChanged` so the write witness has no
-    // entry for it, and what is left is a mixture with a history and a live snapshot
-    // that describe neither half.
+    // from the mutation by two confirm dialogs. Those leave the window running, so a
+    // device action can take the link behind them — a write converging the plan object
+    // this is about to overwrite key by key, a read merging into it, a session that would
+    // take every imported value, the sample rate included, on its next flush with no
+    // confirm.
+    if (liveSessionUp) {
+      showError(t().error.notWhileLive);
+      return;
+    }
     if (flow.deviceReadInFlight) {
       setStatus(t().status.busyDeviceRead);
+      return;
+    }
+    if (deviceLinkHolder !== null) {
+      setStatus(t().status.deviceLinkBusy);
       return;
     }
     let result: ReadbackResult;
@@ -4267,10 +4488,14 @@ if (!DEMO) {
       try {
         await withCheckedDevice("compare", t().status.compareConnecting, t().status.compareError, async (device) => {
           const model = getModel(modelId);
+          // Both halves are taken from the plan on screen NOW: the numeric sweep spans
+          // seconds, and the plan read again after it can be another document.
+          const commands = planToCommands(model, plan);
+          const names = planToNameWrites(model, plan);
           const startedAt = performance.now();
-          const { entries, errors } = await comparePlan(model, plan, signal);
+          const { entries, errors } = await comparePlan(commands, signal);
           signal.throwIfAborted();
-          const { entries: nameEntries, errors: nameErrors } = await compareNames(model, plan);
+          const { entries: nameEntries, errors: nameErrors } = await compareNames(names);
           const elapsedMs = Math.round(performance.now() - startedAt);
           const reads = [...errors, ...nameErrors];
           const { compared, differ } = compareCounts(entries, nameEntries);
@@ -4340,17 +4565,28 @@ if (!DEMO) {
         const neverCompared = report.residual.length - divergence;
         setStatus(
           report.aborted
-            ? t().status.selfTestCancelled
+            ? cancelledBeforeWriting(report)
+              ? t().status.selfTestCancelledUntouched
+              : t().status.selfTestCancelled
             : // Before the restore verdict: a refusal wrote nothing, so `restored` is
               // false only because there was nothing to restore — reading it as a failed
               // restore tells the operator their unit may be left perturbed when it was
               // never touched.
               report.phase === "refused"
-              ? t().status.selfTestRefused
+              ? report.refusal === "modelMismatch"
+                ? t().status.selfTestModelMismatch(report.device, modelId)
+                : report.refusal === "sideEffectUnheld"
+                  ? t().status.selfTestRefusedHead
+                  : t().status.selfTestRefused
               : !report.restored
                 ? t().status.selfTestRestoreFail
                 : report.unverified.length
-                  ? t().status.selfTestUnverified(verdicts.confirmed, verdicts.refuted, verdicts.untestable)
+                  ? t().status.selfTestUnverified(
+                      verdicts.confirmed,
+                      verdicts.roundTripped,
+                      verdicts.refuted,
+                      verdicts.untestable,
+                    )
                   : report.ok
                     ? t().status.selfTestPass(report.written)
                     : // `residual` holds two things once a pass can stop partway: what the
@@ -4403,32 +4639,42 @@ if (!DEMO) {
       if (await confirmDialog(t().confirm.selfTest)) await runDeviceSelfTest();
     });
     // Headless trigger: when launched with --self-test, run it once on startup
-    // (no dialog), so it can be driven from the command line without the UI.
-    void selfTestRequested().then((auto) => {
-      if (auto) void runDeviceSelfTest(true);
-    });
+    // (no dialog), so it can be driven from the command line without the UI. Behind the
+    // first-run consent like every device write, and its one-shot flag is read once the
+    // reset gate has passed, so a --reset-storage reload cannot take the flag with it.
+    void resetGate
+      .then(() => selfTestRequested())
+      .then(async (auto) => {
+        if (!auto) return;
+        if (!consentSettled) console.warn("[self-test] waiting for first-run consent");
+        if (await consented) void runDeviceSelfTest(true);
+      });
 
     // Headless trigger (audit): --prepare-modified writes a distinctive silent
     // state to the device and leaves it (no restore), so a scene SAVE/RECALL audit
     // can save and diff it. Reports go to the dev-server log like the self-test.
-    void prepareModifiedRequested().then(async (auto) => {
-      if (!auto) return;
-      if (!holdDeviceLink("run")) return;
-      setStatus(t().status.selfTestRunning);
-      try {
-        const report = await runPrepareModified(getModel(modelId));
-        console.warn(`[prepare-modified] ${report.aborted ? "CANCELLED" : "DONE"}`, JSON.stringify(report));
-        if (report.errors.length) console.warn("[prepare-modified] issues:", JSON.stringify(report.errors));
-        setStatus(`prepare-modified: wrote ${report.written}, residual ${report.residual}`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn("[prepare-modified] ERROR", message);
-        showError(connectFailureStatus(err, t().status.selfTestError));
-      } finally {
-        releaseDeviceLink("run");
-        midi?.gateReleased();
-      }
-    });
+    void resetGate
+      .then(() => prepareModifiedRequested())
+      .then(async (auto) => {
+        if (!auto) return;
+        if (!consentSettled) console.warn("[prepare-modified] waiting for first-run consent");
+        if (!(await consented)) return;
+        if (!holdDeviceLink("run")) return;
+        setStatus(t().status.selfTestRunning);
+        try {
+          const report = await runPrepareModified(getModel(modelId));
+          console.warn(`[prepare-modified] ${report.aborted ? "CANCELLED" : "DONE"}`, JSON.stringify(report));
+          if (report.errors.length) console.warn("[prepare-modified] issues:", JSON.stringify(report.errors));
+          setStatus(`prepare-modified: wrote ${report.written}, residual ${report.residual}`);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn("[prepare-modified] ERROR", message);
+          showError(connectFailureStatus(err, t().status.selfTestError));
+        } finally {
+          releaseDeviceLink("run");
+          midi?.gateReleased();
+        }
+      });
   });
 }
 
@@ -4486,6 +4732,9 @@ hideOffBtn.addEventListener("click", () => {
   setStatus(next ? t().toolbar.hideOffSends : t().toolbar.showOffSends);
 });
 
+/** An entry of a toolbar menu: an action, or a toggle that carries aria-checked. */
+const MENU_ITEM = ':is([role="menuitem"], [role="menuitemcheckbox"])';
+
 // Wire the File dropdown: open/close, click-outside, and roving keyboard focus
 // across its menu items. The panel is positioned fixed (toolbar clips overflow),
 // so its coordinates are derived from the trigger each time it opens.
@@ -4497,7 +4746,7 @@ setupMenu($<HTMLButtonElement>("btn-view"), $<HTMLElement>("view-menu"));
 
 function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
   const items = (): HTMLButtonElement[] =>
-    Array.from(panel.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled]):not([hidden])'));
+    Array.from(panel.querySelectorAll<HTMLButtonElement>(`${MENU_ITEM}:not([disabled]):not([hidden])`));
   let open = false;
 
   function setOpen(next: boolean, focusFirst = false): void {
@@ -4554,13 +4803,17 @@ function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
       setOpen(true, true);
     }
   });
-  // Each item runs its own action listener; close the menu once one is chosen.
-  // Delegated to the panel so items enabled after setup (the experimental device
-  // self-test, disabled at this point) is covered too. An item's async action
-  // yields at its first await, so this runs and hides the menu before any
-  // confirm dialog renders.
+  // Each item runs its own action listener; close the menu once one is chosen and put
+  // focus back on the trigger, as Escape leaves it. Delegated to the panel so items
+  // enabled after setup (the experimental device self-test, disabled at this point) is
+  // covered too. An item's async action yields at its first await, so this runs, hides
+  // the menu and focuses the trigger before any confirm dialog renders — and a modal
+  // the action opens afterwards records the trigger, not the item this hides, as the
+  // place to return to on close.
   panel.addEventListener("click", (e) => {
-    if ((e.target as Element).closest('[role="menuitem"]')) setOpen(false);
+    if (!(e.target as Element).closest(MENU_ITEM)) return;
+    setOpen(false);
+    trigger.focus();
   });
 }
 
@@ -4597,13 +4850,14 @@ function modalOpen(): boolean {
  * graph's selection, and the inspector's contents with it, were cleared for an Escape
  * addressed to Preferences, the licences notice or Device setup. This listener is
  * registered in the capture phase on `window`, which is the first thing the event
- * reaches, so it records the state the operator's key was actually aimed at.
+ * reaches, so it records the state the operator's key was actually aimed at. The link
+ * ledger's panel dismisses on Escape the same way, so an open one consumes the key too.
  */
 let escapeConsumed = false;
 window.addEventListener(
   "keydown",
   (e) => {
-    if (e.key === "Escape") escapeConsumed = modalOpen();
+    if (e.key === "Escape") escapeConsumed = modalOpen() || document.querySelector(".linkbar-pop") !== null;
   },
   true,
 );
@@ -4688,14 +4942,14 @@ void loadPlanFromUrl();
 // at runtime there since it has no device control. The call is at the end of the
 // module so CONSENT_KEY (a const requireConsent reads) is already initialized.
 async function boot(): Promise<void> {
-  await resetStorageIfRequested();
+  await resetGate;
   await requireConsent();
   if (!DEMO) {
     if (getSettings().updateCheck) await checkForUpdates();
   }
 }
 
-// Desktop --reset-storage: the flag arrives async (after the synchronous init above
+// Desktop --reset-storage: the flag arrives async (after the synchronous init has
 // already read localStorage), so clear it and reload once to re-init clean. A
 // sessionStorage guard stops the still-present flag from looping the reload.
 async function resetStorageIfRequested(): Promise<void> {
@@ -4717,15 +4971,28 @@ async function resetStorageIfRequested(): Promise<void> {
   await new Promise(() => {}); // hold boot() until the reload takes over
 }
 
-const RESET_DONE_KEY = "urx-reset-done";
-
 const CONSENT_KEY = "urx-disclaimer-accepted";
+
+// The first-run consent's outcome: true once it was given (or where no gate applies), false
+// when it was declined. The headless launch actions wait on it, since they reach the device
+// layer without anything on screen to press.
+let consentSettled = false;
+let settleConsent: (agreed: boolean) => void = () => {};
+const consented = new Promise<boolean>((resolve) => {
+  settleConsent = (agreed) => {
+    consentSettled = true;
+    resolve(agreed);
+  };
+});
 
 // First-run consent: the Windows installer shows the same notice, but the macOS
 // drag-install and auto-updates bypass it, so gate the desktop app once. Stored
 // acceptance survives updates, so an updated user is not asked again.
 async function requireConsent(): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    settleConsent(true);
+    return;
+  }
   let accepted = false;
   try {
     accepted = localStorage.getItem(CONSENT_KEY) === "1";
@@ -4733,44 +5000,74 @@ async function requireConsent(): Promise<void> {
     // Storage unavailable: treat as not yet accepted and ask again, rather than
     // letting a throw reject boot() and leave the app running un-gated.
   }
-  if (accepted) return;
+  if (accepted) {
+    settleConsent(true);
+    return;
+  }
   if (await showConsent()) {
     try {
       localStorage.setItem(CONSENT_KEY, "1");
     } catch {
       // ignore (storage may be unavailable; consent will be asked again next launch)
     }
+    settleConsent(true);
     return;
   }
   // Declined: the app must not start without consent.
+  settleConsent(false);
   await exitApp();
 }
 
+// The check and its confirm. Answers once the operator has answered, so the Preferences lock
+// (which waits on this) covers the check only: an accepted update's download runs after it.
 async function checkForUpdates(): Promise<UpdateCheckOutcome> {
-  let accepted = false;
+  let update: UpdateInfo | null;
   try {
-    const update = await checkUpdate();
+    update = await checkUpdate();
     if (!update) return { kind: "upToDate" };
     if (!(await confirmDialog(t().confirm.update(update.version)))) {
       return { kind: "declined", version: update.version };
     }
-    accepted = true;
-    // An accepted update is the one outcome that leaves the Preferences modal:
-    // the scrim would hide the download status. No-op at the launch check.
-    prefs.close();
-    setStatus(t().status.updateDownloading);
-    await installUpdate(update.rid);
-    // The new bundle is installed; relaunch into it. Nothing runs past here.
-    await restartApp();
-    return { kind: "installing" };
+    // The install ends the app, so unsaved edits are asked about first, as a New or an
+    // Open asks; declining keeps them and installs nothing.
+    if (!(await confirmDiscard())) return { kind: "declined", version: update.version };
   } catch {
-    // Before the accept this is best-effort — offline, or no release published yet:
-    // the launch check stays silent and a manual check reports it through the
-    // Preferences inline note. But once accepted, "Downloading update…" is on screen
-    // with the modal closed, so a download/install failure has to clear that stuck
-    // status and surface — otherwise it reads as a download that never ends.
-    if (accepted) showError(t().prefs.updateCheckFailed);
+    // Best-effort — offline, or no release published yet: the launch check stays silent
+    // and a manual check reports it through the Preferences inline note.
     return { kind: "failed" };
+  }
+  // The install also ends whatever device action is running, so it takes the link: one
+  // already holding it refuses the install, and none can start while the bundle downloads.
+  if (!holdDeviceLink("update")) return { kind: "busy" };
+  // An accepted update is the one outcome that leaves the Preferences modal:
+  // the scrim would hide the download status. No-op at the launch check.
+  prefs.close();
+  setStatus(t().status.updateDownloading);
+  void installAccepted(update);
+  return { kind: "installing" };
+}
+
+// Download, install, and relaunch into the new bundle. "Downloading update…" is on screen with
+// the modal closed, so a failure has to clear that status and surface — otherwise it reads as a
+// download that never ends.
+async function installAccepted(update: UpdateInfo): Promise<void> {
+  try {
+    // What the app's own exit would save and close, first: on Windows the install ends the
+    // process from inside itself.
+    await prepareForExit();
+    await installUpdate(update.rid);
+  } catch (err) {
+    releaseDeviceLink("update");
+    showError(t().status.updateInstallFailed(errorText(err)));
+    return;
+  }
+  // The new bundle is installed; relaunch into it. Nothing runs past here. A relaunch that
+  // fails leaves the installed bundle waiting for the next start, which its line says.
+  try {
+    await restartApp();
+  } catch (err) {
+    releaseDeviceLink("update");
+    showError(t().status.updateRestartFailed(errorText(err)));
   }
 }
 

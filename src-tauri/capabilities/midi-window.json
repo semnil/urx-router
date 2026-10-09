@@ -1,13 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "midi-window",
-  "description": "The MIDI control window's access. It is a view of the main window's state: the relay pair below is every app command it may invoke, so it has no device, file, dialog, updater or process access of its own — enforced now rather than described.",
+  "description": "The MIDI control window's access. It is a view of the main window's state: the relay pair below is every app command it may invoke, so it has no device, file, dialog, updater or process access of its own — enforced now rather than described. Of the core permissions it holds only the devtools hotkey a development build injects into every webview, a command a release build does not contain: none that emits or listens for an event, so a script in it cannot raise an event the main window listens for.",
   "windows": [
     "midi"
   ],
   "permissions": [
-    "core:default",
     "allow-midi-ui-attach-window",
-    "allow-midi-ui-to-main"
+    "allow-midi-ui-to-main",
+    "core:webview:allow-internal-toggle-devtools"
   ]
 }

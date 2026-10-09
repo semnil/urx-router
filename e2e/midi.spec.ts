@@ -1,14 +1,18 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, colorToken, contrastRatio, type Page } from "./fixtures";
 import { planParamZ } from "./plan-param";
-import { LIVE_COMMANDS } from "./tauri-stub";
+import { LIVE_COMMANDS, answerTimingOf, installAnswerQueue, untilAnswered } from "./tauri-stub";
 import { pickBand, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
 import { selectWire } from "./graph-helpers";
+import { en } from "../src/i18n/en";
+import { ja } from "../src/i18n/ja";
 
 // External MIDI control is desktop-only (isTauri gate), so these tests stub the
 // Tauri IPC bridge before the app boots: invoke() answers the boot-time queries,
 // captures the MIDI input channel (so the test can push messages into the app),
-// and records outgoing midi_send bytes (so feedback is observable).
+// and records outgoing midi_send bytes (so feedback is observable). Each command is
+// recorded when it is sent and answered on a later task, through the queue the shared
+// stubs settle through, as the shell's IPC answers.
 //
 // MIDI control is a second OS window, which is a second PAGE here. The stub is
 // installed on the context rather than the page so both get it, and the relay the
@@ -86,8 +90,12 @@ const openMidiWindow = async (page: Page): Promise<Page> => {
   return win;
 };
 
+/** Wait until the window offers the stub's input ports, which it does once the refresh that
+ *  lists them has been answered. */
+const portsListed = (win: Page) => expect(win.locator(".mw-in option")).toHaveCount(3); // None + Stub In + Broken In
+
 const pickInputPort = async (page: Page, win: Page) => {
-  await expect(win.locator(".mw-in option")).toHaveCount(3); // None + Stub In + Broken In
+  await portsListed(win);
   await chooseOption(win.locator(".mw-in"), "Stub In");
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
 };
@@ -136,6 +144,7 @@ const LOCKED_UNDER_A_RUN = [
 test.beforeEach(async ({ page }) => {
   // The Live-sync registrations are taken from the shared stub rather than copied,
   // so this stub cannot fall behind what a session actually asks the shell for.
+  await page.context().addInitScript(installAnswerQueue);
   await page.context().addInitScript((extra: Record<string, unknown>) => {
     localStorage.setItem("urx-lang", "en");
     localStorage.setItem("urx-theme", "dark");
@@ -171,9 +180,9 @@ test.beforeEach(async ({ page }) => {
       if (e.data.dir === "main") toMain?.onmessage(e.data.payload);
       else toWindow?.onmessage(e.data.payload);
     };
-    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
+    const internals = {
       Channel,
-      invoke: (cmd: string, args: Record<string, unknown>) => {
+      invoke: (cmd: string, args: Record<string, unknown>): Promise<unknown> => {
         switch (cmd) {
           // MIDI control ships without the flag (only the self-test is gated), so this
           // is off unless a test asks for it — through localStorage, which is the same
@@ -197,16 +206,11 @@ test.beforeEach(async ({ page }) => {
           // port "from the shell" the way the page-load teardown once did.
           case "midi_open_ports": {
             // The answer describes the moment it is taken, and the app receives it
-            // later: `openPortsDelayMs` opens that gap on purpose, so a test can let a
-            // port be opened inside the round trip and see whether the stale answer
-            // wins. Zero by default, which is one task's delay — as it is in Tauri.
+            // later: `openPortsDelayMs` holds it before it joins the queue, so a test can
+            // let a port be opened inside the round trip and see whether the stale answer
+            // wins. Zero by default, which leaves the queue's own later task.
             const answer: [string | null, string | null] = [state.inputPort, state.outputPort];
-            return new Promise((r) =>
-              setTimeout(() => {
-                state.openPortsAnswered++;
-                r(answer);
-              }, state.openPortsDelayMs),
-            );
+            return new Promise((r) => setTimeout(() => r(answer), state.openPortsDelayMs));
           }
           case "midi_open_input":
             if (args.port === "Broken In") return Promise.reject(new Error("port busy"));
@@ -303,6 +307,20 @@ test.beforeEach(async ({ page }) => {
         }
       },
     };
+    // The switch above records and answers a command when it is sent; the answer itself
+    // settles through the queue.
+    const answer = internals.invoke;
+    internals.invoke = (cmd, args) => {
+      const settled = window.__urxAnswerLater(cmd, answer(cmd, args));
+      // Counted as the answer reaches the app, ahead of the app's own continuation.
+      if (cmd === "midi_open_ports")
+        settled.then(
+          () => state.openPortsAnswered++,
+          () => {},
+        );
+      return settled;
+    };
+    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
   }, LIVE_COMMANDS);
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
@@ -317,8 +335,125 @@ test("MIDI control is available without --experimental; only the self-test is ga
   await page.click("#btn-device");
   await expect(page.locator("#btn-fetch")).toBeVisible(); // the menu itself is open
   await expect(page.locator("#btn-midi")).toBeVisible();
+  // The flag's answer has reached the app, which is where a launch that sets it reveals
+  // the self-test.
+  await untilAnswered(page, "experimental_enabled");
   await expect(page.locator("#btn-selftest")).toBeHidden();
 });
+
+test("this spec's stub answers each command on a later task, in the order asked", async ({ page }) => {
+  const cmds = ["midi_list_inputs", "stub_unknown_command", "midi_window_open"];
+  expect(await answerTimingOf(page, cmds)).toEqual({ inSendingTask: [], order: cmds });
+});
+
+// Learn mode's marks are state graphics on the panel, so each reads at 3:1 there in the
+// light theme too: the dashed ring on an armable control, the armed ring and the dot on a
+// control that is already bound, all in the accent's ink. Reduced motion holds the armed
+// ring still, so the one colour it has is the one measured.
+test("learn mode's rings and dot read on the light panel", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  await page.click("#btn-view-console");
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  const panel = await colorToken(page, "--panel");
+  const fader = strip(page, "CH 1").locator(".con-fader");
+  const ring = () => fader.evaluate((el) => getComputedStyle(el).outlineColor);
+  await setLearn(page, win, true);
+  await expect(fader).toHaveClass(/\bmidi-target\b/);
+  expect(await contrastRatio(page, await ring(), panel), "an armable control's ring").toBeGreaterThanOrEqual(3);
+  await fader.click();
+  await expect(fader).toHaveClass(/\bmidi-armed\b/);
+  expect(await contrastRatio(page, await ring(), panel), "the armed ring").toBeGreaterThanOrEqual(3);
+  await sendMidi(page, [0xb0, 7, 100], [0xb0, 7, 101]);
+  await expect(fader).toHaveClass(/\bmidi-mapped\b/);
+  const dot = await fader.evaluate((el) => getComputedStyle(el, "::before").backgroundColor);
+  expect(dot).toBe(await colorToken(page, "--led-ink"));
+  expect(await contrastRatio(page, dot, panel), "the bound dot").toBeGreaterThanOrEqual(3);
+});
+
+// Every intent comes back as a state push that repaints the window. Keyboard focus stays on
+// the control the operator used, and the status line stays the one live region.
+test("the MIDI window keeps keyboard focus and its status line across a state push", async ({ page }) => {
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await win.locator(".mw-status").evaluate((node) => node.setAttribute("data-probe", "kept"));
+
+  const learn = win.locator(".mw-learnbtn");
+  await learn.focus();
+  await win.keyboard.press("Space");
+  await expect(learn).toHaveAttribute("aria-pressed", "true");
+  await expect(learn).toBeFocused();
+  await win.keyboard.press("Space"); // lands only because focus came back to the button
+  await expect(learn).toHaveAttribute("aria-pressed", "false");
+  await expect(learn).toBeFocused();
+
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 7, 100],
+    [0xb0, 7, 101],
+  );
+  await expect(win.locator(".mw-status")).toContainText("Assigned");
+  await expect(win.locator('.mw-status[data-probe="kept"]')).toHaveCount(1);
+
+  const mode = mapRow(win, "ch1/level").locator(".mw-mode");
+  await chooseOption(mode, "pickup");
+  await expect(mode).toHaveValue("pickup");
+  await expect(mode).toBeFocused();
+});
+
+// The armed ring is a picture: what it means — this control's keys now arm rather than
+// edit — is said on the main window's status line, which is a live region.
+test("learn on, the armed control and learn off are said on the main status line", async ({ page }) => {
+  const win = await openMidiWindow(page);
+  const status = page.locator("#statusbar");
+  await expect(status).toHaveAttribute("role", "status");
+  await setLearn(page, win, true);
+  await expect(status).toHaveText("Click a control on the console or a tuning screen to arm it for binding.");
+  await strip(page, "CH 1").locator(".con-fader").click();
+  await expect(status).toHaveText("Move a MIDI control to bind CH 1 · Level…");
+  await setLearn(page, win, false);
+  await expect(status).toHaveText("Learn is off: the console and the tuning screens edit again.");
+});
+
+// The hint beside LEARN changes wording with the learn state, and at the width the window
+// opens at each wording wraps to its own number of lines. The hint keeps the height of the
+// tallest one, so turning learn on, arming a control and turning learn off move nothing below.
+for (const lang of ["en", "ja"] as const) {
+  test(`the learn hint keeps one height through idle, learn and armed (${lang}) @webkit`, async ({ page }) => {
+    const win = await openMidiWindow(page);
+    if (lang === "ja") {
+      await page.click("#btn-prefs");
+      await chooseOption(page.locator("#prefs-lang"), "ja");
+      await page.keyboard.press("Escape");
+      await expect(page.locator("#prefs-modal")).toBeHidden();
+      await expect(win.locator(".mw-title")).toHaveText(ja.midi.title);
+    }
+    // The inner size the shell opens the window at (src-tauri/src/midiwin.rs).
+    await win.setViewportSize({ width: 440, height: 620 });
+    const hint = win.locator(".mw-hint");
+    const below = win.locator(".mw-sec").nth(2);
+    // One wording is painted at a time, and it is the one the state calls for.
+    const painted = hint.locator(":scope > *").filter({ visible: true });
+    const read = async (wording: string | RegExp): Promise<{ hint: number; below: number }> => {
+      await expect(painted).toHaveCount(1);
+      await expect(painted).toHaveText(wording);
+      return { hint: (await hint.boundingBox())!.height, below: (await below.boundingBox())!.y };
+    };
+    const m = (lang === "ja" ? ja : en).midi;
+    const idle = await read(m.hintIdle);
+    await setLearn(page, win, true);
+    const learn = await read(m.hintLearn);
+    await strip(page, "CH 1").locator(".con-fader").click();
+    const armed = await read(m.hintArmed(`CH 1 · ${m.param.level}`));
+    await setLearn(page, win, false);
+    const back = await read(m.hintIdle);
+    expect({ learn, armed, back }).toEqual({ learn: idle, armed: idle, back: idle });
+  });
+}
 
 test("closing the MIDI window drops learn mode", async ({ page }) => {
   const win = await openMidiWindow(page);
@@ -479,6 +614,19 @@ test("one physical control can gang several console controls", async ({ page }) 
   await expect(member).toHaveClass(/\blinked\b/);
   await expect(member.locator(".mw-addr, .mw-linked")).toHaveText("Linked");
   await expect(member).not.toContainText("CC 7"); // no repeated code address
+  // The rail is a fill, which a Windows contrast theme forces to the background; there
+  // it becomes an edge of the same place.
+  await win.emulateMedia({ forcedColors: "active" });
+  const rail = await member
+    .locator("td")
+    .first()
+    .evaluate((td) => {
+      const s = getComputedStyle(td, "::before");
+      return { edge: s.borderLeftStyle, fill: s.backgroundColor };
+    });
+  expect(rail.edge).toBe("solid");
+  expect(rail.fill).toMatch(/, 0\)$|^transparent$/);
+  await win.emulateMedia({ forcedColors: "none" });
   // The reported bug: the marker must not shift the mode/behavior select column.
   // Head and member selects stay left-aligned.
   const headSel = await head.locator(".mw-mode, .mw-btn").boundingBox();
@@ -492,6 +640,76 @@ test("one physical control can gang several console controls", async ({ page }) 
   await sendMidi(page, [0xb0, 7, 0]);
   await expect(readLevel(page, "CH 1")).toHaveText("-∞");
   await expect(readLevel(page, "CH 2")).toHaveText("-∞");
+});
+
+// A gang holds one kind of control: a fader learned onto the MIDI control a MUTE chip is
+// bound to is refused, on both status lines, and the list stays as it was.
+test("a fader cannot join the MIDI control a switch is bound to", async ({ page }) => {
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  const muteChip = () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" });
+  await learnBinding(page, win, () => muteChip().click(), [0xb0, 20, 127], [0xb0, 20, 127]);
+  await expect(mapRow(win, "ch1/mute")).toContainText("CH 1 CC 20");
+  await learnBinding(
+    page,
+    win,
+    () => strip(page, "CH 1").locator(".con-fader").click(),
+    [0xb0, 20, 100],
+    [0xb0, 20, 101],
+  );
+  await expect(win.locator(".mw-status")).toContainText("Not assigned: CH 1 CC 20");
+  await expect(page.locator("#statusbar")).toContainText("Not assigned: CH 1 CC 20");
+  await expect(mapRow(win, "ch1/level")).toHaveCount(0);
+  await expect(win.locator(".mw-list tbody tr")).toHaveCount(1);
+  // Nothing is left armed: the next click arms afresh.
+  await expect(strip(page, "CH 1").locator(".con-fader")).not.toHaveClass(/\bmidi-armed\b/);
+});
+
+// A gang saved before that rule existed can still mix the two kinds. Its fader row offers no
+// take-in mode — Absolute is the one a fader works in behind a switch — while the switch keeps
+// its button behaviour and a fader on a MIDI control of its own keeps the select.
+test("the MIDI window offers no take-in mode on a fader that shares a switch's MIDI control", async ({ page }) => {
+  await page.addInitScript(() => {
+    const cc = (controller: number) => ({ type: "cc", channel: 0, controller });
+    const URX44V = [
+      { control: "ch1/mute", addr: cc(20), mode: "pickup" },
+      { control: "ch2/level", addr: cc(20), mode: "pickup" },
+      { control: "ch3/level", addr: cc(21), mode: "pickup" },
+    ];
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V } }));
+  });
+  await page.reload();
+  const win = await openMidiWindow(page);
+  await expect(mapRow(win, "ch2/level")).toHaveClass(/\blinked\b/);
+  await expect(mapRow(win, "ch2/level").locator(".mw-mode, .mw-btn")).toHaveCount(0);
+  await expect(mapRow(win, "ch1/mute").locator(".mw-btn")).toHaveCount(1);
+  await expect(mapRow(win, "ch3/level").locator(".mw-mode")).toHaveValue("pickup");
+});
+
+// An insert effect's switch is a control only while its strip holds an effect, so a gang
+// saved with one beside a fader is no mix of kinds until an effect is chosen. Choosing one
+// makes it one, and it is set to Absolute and said then, as a load does.
+test("choosing an insert effect sets a fader ganged with its switch to Absolute", async ({ page }) => {
+  await page.addInitScript(() => {
+    const addr = { type: "cc", channel: 0, controller: 22 };
+    const URX44V = [
+      { control: "ch1/insertFxOn", addr, mode: "pickup" },
+      { control: "ch3/level", addr, mode: "pickup" },
+    ];
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V } }));
+  });
+  await page.reload();
+  await page.click("#btn-view-console");
+  const win = await openMidiWindow(page);
+  await expect(mapRow(win, "ch3/level").locator(".mw-mode")).toHaveValue("pickup");
+
+  await strip(page, "CH 1").locator(".con-ifxopen").click();
+  await page.locator(".con-ifxpop .irow", { hasText: "Clean" }).first().click();
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+  const said = "Take-in mode set to Absolute on CH 1 CC 22";
+  await expect(win.locator(".mw-status")).toContainText(said);
+  await expect(page.locator("#statusbar")).toContainText(said);
+  await expect(mapRow(win, "ch3/level").locator(".mw-mode, .mw-btn")).toHaveCount(0);
 });
 
 test("learn binds a note to MUTE and note-on toggles it", async ({ page }) => {
@@ -842,14 +1060,15 @@ test("feedback follows UI edits out of the output port", async ({ page }) => {
   // PLAN's values, and until a Live-sync readback settles those are whatever was loaded
   // rather than what the unit holds. On a shared bus that push is another listener's
   // incoming gesture, which is how a second instance of this app rewrote CH 1's gain.
+  // The open's answer has reached the app, and a pass the open sends goes out with it.
   await pickOutputPort(page, win);
-  await page.waitForTimeout(300);
+  await untilAnswered(page, "midi_open_output");
   expect(await page.evaluate(() => window.__midiTest.sent.length)).toBe(0);
 
   // The session's readback is what opens it, and every binding is resynced there.
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await expect.poll(() => page.evaluate(() => window.__midiTest.sent.length)).toBeGreaterThan(0);
   const synced = await page.evaluate(() => window.__midiTest.sent.at(-1));
   expect(synced?.[0]).toBe(0xb0);
@@ -877,7 +1096,7 @@ test("a toggle ignores the echo of its own feedback", async ({ page }) => {
   // case is about what comes BACK off that wire.
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   // Waited on the send itself rather than on the session: the port's own open and the
   // session's readback race here, and whichever runs second is the pass that carries
   // the state out. Moving on before one of them has is what leaves the guard unarmed.
@@ -936,14 +1155,17 @@ test("a device fetch does not open the output port; the live session does", asyn
   await page.click("#btn-device");
   await page.click("#btn-fetch");
   await expect(readLevel(page, "CH 1")).toHaveText("0.0"); // the fetch landed
-  await page.waitForTimeout(300); // past the feedback debounce
+  // The fetch has released the link and that answer has reached the app. The output side
+  // opens only with a pass that re-sends every binding at once, so a fetch that opened it
+  // has sent by now.
+  await untilAnswered(page, "vd_disconnect");
   expect(await page.evaluate(() => window.__midiTest.sent.length)).toBe(0);
 
   // The positive control: the same value goes out the moment a session establishes it,
   // so the silence above is the gate rather than a rig that never sends.
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await expect
     .poll(() => page.evaluate(() => window.__midiTest.sent.find((b) => b[0] === 0xb0 && b[1] === 7)?.[2] ?? -1))
     .toBeGreaterThan(0);
@@ -963,8 +1185,9 @@ test("Live sync start pushes every assignment to the controller, not just what c
   await setLearn(page, win, false);
   await pickOutputPort(page, win);
 
-  // Nothing at all until the session: the port opening states no values of its own.
-  await page.waitForTimeout(300);
+  // Nothing at all until the session: the port opening states no values of its own. The
+  // open's answer has reached the app, and a pass the open sends goes out with it.
+  await untilAnswered(page, "midi_open_output");
   expect(await page.evaluate(() => window.__midiTest.sent.length)).toBe(0);
 
   await page.click("#btn-device");
@@ -1071,6 +1294,7 @@ test("a port that fails to open reverts its select to none and reports the error
   // another app); the select must fall back to "none" instead of keeping a
   // choice that is not actually open.
   const win = await openMidiWindow(page);
+  await portsListed(win);
   await chooseOption(win.locator(".mw-in"), "Broken In");
   await expect(page.locator("#statusbar")).toContainText("MIDI input error");
   await expect(win.locator(".mw-in")).toHaveValue("");
@@ -1103,6 +1327,10 @@ test("a port closed from the shell stops being offered as the chosen one", async
   await win.close();
   await expect.poll(() => page.evaluate(() => window.__midiTest.windowOpened)).toBe(true);
   const again = await openMidiWindow(page);
+  // The window paints an empty state before any push reaches it, and every push ahead of
+  // the open-ports answer still names the closed port, so the selection is read once the
+  // ports are listed.
+  await portsListed(again);
   await expect(again.locator(".mw-in")).toHaveValue("");
 
   // And the choice is live again: picking the port reopens it for real.
@@ -1118,7 +1346,11 @@ test("a port opened while the shell is being asked survives the answer", async (
   // this reconcile exists to remove, caused by the reconcile. Standing down while an
   // open is in flight is not enough on its own: an open that begins and ends inside the
   // round trip puts the in-flight count back to zero before the answer lands.
+  const answeredAtOpen = await page.evaluate(() => window.__midiTest.openPortsAnswered);
   const win = await openMidiWindow(page);
+  // The window's first refresh is answered before the hold is set, so the answer held below
+  // is the reopen's own, and the ports that refresh listed are what the reopened window offers.
+  await expect.poll(() => page.evaluate(() => window.__midiTest.openPortsAnswered)).toBeGreaterThan(answeredAtOpen);
   await page.evaluate(() => {
     window.__midiTest.openPortsDelayMs = 600;
   });
@@ -1353,4 +1585,33 @@ test("the INS FX face arms, and its assignment names the strip and the insert", 
   await expect(face, "one press bypasses it").toHaveAttribute("aria-pressed", "false");
   await sendMidi(page, [0xb0, 42, 127]);
   await expect(face, "and the next brings it back").toHaveAttribute("aria-pressed", "true");
+});
+
+// The face is a control only while its strip holds an effect. Armed, and then left with no
+// effect to switch, it is not bound to the MIDI control moved next — even one nothing drives
+// yet — and both status lines say why.
+test("an armed INS FX face whose effect is released is not bound", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch1: { insertFx: 256, insertFxOn: true } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await page.click("#btn-view-console");
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
+  await strip(page, "CH 1").locator(".con-ifxface").click();
+  await expect(win.locator(".mw-hint")).toContainText("CH 1 · INS FX");
+
+  await strip(page, "CH 1").locator(".con-ifxopen").click();
+  await page.locator(".con-ifxpop .irow", { hasText: "No Effect" }).click();
+  await expect(strip(page, "CH 1").locator(".con-ifxface")).toHaveClass(/\bvacant\b/);
+  await sendMidi(page, [0xb0, 30, 10], [0xb0, 30, 11]);
+  const said = "Not assigned: CH 1 · INS FX, or something CH 1 CC 30 already drives, is not in the current plan";
+  await expect(win.locator(".mw-status")).toContainText(said);
+  await expect(page.locator("#statusbar")).toContainText(said);
+  await expect(mapRow(win, "ch1/insertFxOn")).toHaveCount(0);
 });

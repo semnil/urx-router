@@ -42,8 +42,12 @@ const ADDR: [number, number, number] = [139, 0, 0];
 // node-scoped read; direct/escalation tests override lookup.
 const SCOPED: FollowAddr = { name: "CH_FADER", node: "ch1", direct: false };
 
+// Every session a case starts, ended after it: `writeSettle` is module state, and a sink a
+// case leaves armed is one the next case's settle reports are delivered to.
+const made: DeviceFollow[] = [];
+
 function followFor(overrides: Partial<DeviceFollowHooks> = {}): DeviceFollow {
-  return new DeviceFollow({
+  const follow = new DeviceFollow({
     addrs: () => [ADDR],
     isEcho: () => false,
     lookup: () => SCOPED,
@@ -56,6 +60,8 @@ function followFor(overrides: Partial<DeviceFollowHooks> = {}): DeviceFollow {
     onError: () => {},
     ...overrides,
   });
+  made.push(follow);
+  return follow;
 }
 
 function notify(value: number): void {
@@ -82,6 +88,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const follow of made.splice(0)) follow.end();
   vi.useRealTimers();
 });
 
@@ -628,6 +635,34 @@ describe("DeviceFollow", () => {
     expect(follow.isActive()).toBe(true);
   });
 
+  // The reconcile half of the same rule. A reconcile still running when its session ends
+  // holds back nothing in the next one, and its late failure stops nothing there.
+  it("does not stop, or hold back, the session that FOLLOWED the one a failed reconcile belonged to", async () => {
+    let reject!: (e: Error) => void;
+    const stalled = new Promise<void>((_, r) => (reject = r));
+    const reconcileNodes = vi.fn<DeviceFollowHooks["reconcileNodes"]>(async () => {});
+    reconcileNodes.mockImplementationOnce(() => stalled);
+    const onError = vi.fn();
+    const follow = followFor({ reconcileNodes, onError });
+    await follow.begin();
+    notify(5);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(reconcileNodes).toHaveBeenCalledTimes(1); // A's, held open
+
+    follow.end();
+    await follow.begin(); // B
+    notify(6);
+    await vi.advanceTimersByTimeAsync(400);
+    // B's own reconcile ran rather than waiting behind A's.
+    expect(reconcileNodes).toHaveBeenCalledTimes(2);
+
+    reject(new Error("late"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onError).not.toHaveBeenCalled();
+    expect(follow.isActive()).toBe(true);
+    follow.end();
+  });
+
   it("stops and reports when a re-registration fails", async () => {
     // The rule a failed reconcile takes, on the path a structural edit now reaches every
     // time. `subscribe` releases the old handle BEFORE it awaits, so a throw leaves the
@@ -770,10 +805,10 @@ describe("DeviceFollow", () => {
     expect(staleUnsub).toHaveBeenCalledTimes(1);
   });
 
-  // The settle cannot tell a re-registration from a new session — from there both are
-  // a release followed by an arm — so a watch armed under the old session can fire
-  // into the new one's sink. The stamp is what stops it arming a sweep that session
-  // has no reason for.
+  // From the settle, a re-registration and a new session are both a release followed by an
+  // arm; what tells them apart is the sink, which is one function per session. So a watch
+  // armed under the old session does not fire into the new one's sink and arm a sweep that
+  // session has no reason for.
   it("ignores a settle report armed under a session that has since ended", async () => {
     const reconcileAll = vi.fn(async () => {});
     const follow = followFor({ reconcileAll });
@@ -788,6 +823,57 @@ describe("DeviceFollow", () => {
     await settled;
     await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 900);
     expect(reconcileAll).not.toHaveBeenCalled();
+    follow.end();
+  });
+
+  // …but a re-registration inside ONE session is the same listener coming back. A refresh
+  // that moves the address set releases the sink before its await and arms again after, so
+  // a watch armed in between has to reach the same session's idle net — or a write the unit
+  // acked and discarded before a set-moving flush ended is reported to nobody.
+  it("delivers a settle report armed before a same-session re-registration", async () => {
+    const reconcileAll = vi.fn(async () => {});
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const follow = followFor({ reconcileAll, addrs: () => addrs });
+    await follow.begin();
+    const k = addrKey(9002, 0, 0);
+    const settled = writeSettle.settle(new Map([[k, writeSettle.mark()]]), {
+      mustSettle: new Set(),
+      mustAnnounce: new Set([k]),
+    });
+    addrs = [ADDR, [9002, 0, 0]];
+    await follow.refresh();
+    expect(h.subscribeCalls, "the premise: the set moved, so the sink was armed again").toBe(2);
+    await settled;
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 900);
+    expect(reconcileAll).toHaveBeenCalledTimes(1);
+    follow.end();
+  });
+
+  // The gap itself: while the refresh's registration is at the broker, no sink is armed at
+  // all, and a flush landing then watches its writes with nobody listening. The sink armed
+  // once the registration lands is the one the report reaches.
+  it("delivers a settle report armed while a re-registration is at the broker", async () => {
+    const reconcileAll = vi.fn(async () => {});
+    let addrs: Array<[number, number, number]> = [ADDR];
+    const follow = followFor({ reconcileAll, addrs: () => addrs });
+    await follow.begin();
+    let release!: (v: () => void) => void;
+    const stalled = new Promise<() => void>((r) => (release = r));
+    const mod = await import("../platform");
+    const real = vi.mocked(mod.vdParamsSubscribe).getMockImplementation()!;
+    vi.mocked(mod.vdParamsSubscribe).mockImplementationOnce(async (a, onUpdate) => {
+      void real(a, onUpdate);
+      return stalled;
+    });
+    addrs = [ADDR, [9003, 0, 0]];
+    const refreshed = follow.refresh();
+    expect(h.subscribeCalls, "the premise: the registration is at the broker").toBe(2);
+    const k = addrKey(9003, 0, 0);
+    writeSettle.watch(new Map([[k, writeSettle.mark()]]), new Set([k]));
+    release(() => {});
+    await refreshed;
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS + 900);
+    expect(reconcileAll).toHaveBeenCalledTimes(1);
     follow.end();
   });
 

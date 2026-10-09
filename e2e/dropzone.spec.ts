@@ -47,7 +47,8 @@ test("dropping a plan file loads it", async ({ page }) => {
 });
 
 // A dropped document is a load as a link is: a send pan into a MIX whose Pan Link is on opens at
-// its channel's own PAN, and the status line says so ahead of the load.
+// its channel's own PAN, and the status line says so ahead of the load. The send carries its level,
+// so the pan is all the load has to say anything about.
 test("a dropped plan's linked send pans open at their channels' own PAN", async ({ page }) => {
   const plan = {
     format: "urx-router-plan",
@@ -56,7 +57,7 @@ test("a dropped plan's linked send pans open at their channels' own PAN", async 
     connections: [
       { from: "bus.stereo:out", to: "bus.stream:in", kind: "source" },
       { from: "ch1:out", to: "bus.stereo:in", kind: "send", params: { pan: -13 } },
-      { from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { pan: 40 } },
+      { from: "ch1:out", to: "bus.mix1:in", kind: "send", params: { level: 0, pan: 40 } },
     ],
     nodeParams: { "bus.mix1": { panLink: true } },
   };

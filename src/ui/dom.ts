@@ -315,6 +315,14 @@ export function holdInertOnBlur(
   });
 }
 
+/** A `pointermove` from a mouse with no button held: whatever that mouse pressed has been
+ *  released, whether or not the release reached the page — the native context menu takes
+ *  the right button's. Every press the app tracks ends at such a move, as it would at its
+ *  release. */
+export function mouseMovedUnpressed(e: PointerEvent): boolean {
+  return e.pointerType === "mouse" && e.buttons === 0;
+}
+
 /** Pointers the app currently believes are down, app-wide, and what to run when none are.
  *
  * One place answers "is the gesture over", rather than each hold reading the events for
@@ -443,15 +451,21 @@ export function focusables(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>('input, select, button, [tabindex="0"]')];
 }
 
+/** Whether a control `focusables` lists is one the Tab key stops on: in the tab order, not
+ *  disabled, and not inside a hidden or inert subtree. */
+export function tabbable(e: HTMLElement): boolean {
+  return e.tabIndex >= 0 && !e.matches(":disabled") && e.closest("[hidden], [inert]") === null;
+}
+
 /** Carry keyboard focus across a rebuild of `host`'s contents. Called BEFORE the
  *  rebuild — it reads the focused element then — and returns the restore to run once
  *  the new DOM is in place, which answers the element it focused (null when there was
  *  nothing to carry, or the key names nothing in the rebuilt panel — dropping focus is
  *  the wanted outcome there, not handing it to whatever moved into the slot).
  *
- *  How a control is keyed is the caller's: the console keys by strip + index, the
- *  inspector by the row's label. What must not differ lives here — the containment
- *  check, and `focus({ preventScroll: true })`, which keeps the surface where the
+ *  How a control is keyed is the caller's: the console keys by strip + the control's own
+ *  identity, the inspector by the row's label. What must not differ lives here — the
+ *  containment check, and `focus({ preventScroll: true })`, which keeps the surface where the
  *  operator left it when the restored control sits off screen (measured honoured on
  *  both engines; scripts/meter-bench.mjs's scrollCheck holds it against WKWebView on
  *  every bench run, so a copy that dropped it would show up there).
@@ -490,6 +504,31 @@ export function preserveFocus<K>(
 // in whichever modal a third screen happens to copy. The inspector deliberately
 // stays out: its controls wrap `paramBlock()`, a different row shape with its own
 // wheel and fine-mode hooks.
+
+/** Carry the operator's place across a rebuild of a settings modal's box: the focused
+ *  control, and the scroll offset of `.prefs-grid`, the box's scrolling region. Called
+ *  BEFORE the rebuild; the restore runs once the new grid is in place.
+ *
+ *  A control is keyed by its position among `focusables`, which holds because both modals
+ *  build the same control list on every pass — a locked row and an empty select are built
+ *  disabled, not left out. The offset is written to the NEW grid: `preserveFocus`'s own
+ *  `scrollTop` writes the host, and the box itself never scrolls. */
+export function preserveSettingsView(box: HTMLElement): () => void {
+  const top = box.querySelector<HTMLElement>(".prefs-grid")?.scrollTop ?? 0;
+  const restoreFocus = preserveFocus(
+    box,
+    (active) => {
+      const at = focusables(box).indexOf(active);
+      return at < 0 ? null : at;
+    },
+    (at) => focusables(box)[at],
+  );
+  return () => {
+    const grid = box.querySelector<HTMLElement>(".prefs-grid");
+    if (grid && top !== 0) grid.scrollTop = top;
+    restoreFocus();
+  };
+}
 
 /** A section heading, optionally carrying a dashed tag pill ("Desktop app only", a model
  *  name) that stays readable while the rows below it dim. `{ text, shown: false }` keeps the
@@ -530,14 +569,52 @@ export interface SettingsRowOptions {
   legend?: HTMLElement;
 }
 
+let labelSeq = 0;
+
+/** A fresh element id, unique for the document's lifetime, for a label a control points
+ *  its name at. */
+export function labelId(prefix = "lbl"): string {
+  return `${prefix}-${++labelSeq}`;
+}
+
+/** Point a row's control at the label that names it. A select or a text / range field takes
+ *  the label as its name; so does a switch carrying aria-pressed, whose pressed state is what
+ *  says on or off; any other lone button keeps its own words after the label; a set of
+ *  buttons becomes a group the label names. A control that already carries a name keeps it. */
+function nameControl(control: HTMLElement, id: string): void {
+  const named = (e: Element): boolean => e.hasAttribute("aria-label") || e.hasAttribute("aria-labelledby");
+  const fields = control.matches("select, input")
+    ? [control]
+    : [...control.querySelectorAll<HTMLElement>("select, input")];
+  if (fields.length) {
+    for (const f of fields) if (!named(f)) f.setAttribute("aria-labelledby", id);
+    return;
+  }
+  if (control.matches("button")) {
+    if (named(control)) return;
+    if (control.hasAttribute("aria-pressed")) control.setAttribute("aria-labelledby", id);
+    else {
+      if (!control.id) control.id = labelId("ctl");
+      control.setAttribute("aria-labelledby", `${id} ${control.id}`);
+    }
+    return;
+  }
+  if (control.querySelector("button") && !control.hasAttribute("role")) {
+    control.setAttribute("role", "group");
+    control.setAttribute("aria-labelledby", id);
+  }
+}
+
 /** A label + control row. A locked row keeps its tag at full opacity while the rest
  *  of it dims, and every control inside it is disabled — including `input`, which a
- *  row holding a slider needs. */
+ *  row holding a slider needs. The label names the control (`nameControl`). */
 export function settingsRow(labelText: string, control: HTMLElement, opts: SettingsRowOptions = {}): HTMLElement {
   const row = el("div", opts.cls ? `prefs-row ${opts.cls}` : "prefs-row");
   const lblc = el("span", "lblc");
   const lbl = el("span", "lbl");
   lbl.textContent = labelText;
+  lbl.id = labelId();
+  nameControl(control, lbl.id);
   lblc.append(lbl);
   if (opts.legend) lblc.append(opts.legend);
   if (opts.tag) lblc.append(settingsPill(opts.tag));

@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   clipNodeName,
+  normalizeDocumentName,
   normalizeNodeName,
   emptyPlan,
   ensureFixedConnections,
@@ -27,6 +28,14 @@ import { DEFAULT_SAMPLE_RATE } from "./constraints";
 import { MODELS, MODEL_IDS } from "../models/index";
 import { defaultPlan } from "../models/initial-state";
 import { ref } from "../models/types";
+import { getModel } from "../models";
+import { planProblems, prepareLoadedPlan } from "./plan-validate";
+
+/** Load `plan` the way the app does, and the names and notes the load said it rewrote. */
+function loadNames(plan: Plan): string[] {
+  const model = getModel(plan.modelId);
+  return prepareLoadedPlan(model, plan, planProblems(model, plan)).texts.map((p) => `${p.field}.${p.node}`);
+}
 
 describe("serialize / deserialize round-trip identity", () => {
   // The factory-seeded plans are the richest real documents (deep nodeParams,
@@ -240,6 +249,14 @@ describe("deserialize tolerance to malformed documents", () => {
   it("throws on a syntactically invalid JSON string (JSON.parse propagates)", () => {
     expect(() => deserialize("{ not json")).toThrow();
   });
+
+  // A file read on the desktop keeps a leading byte-order mark, which JSON.parse refuses,
+  // while a browser read strips it — one document, two answers by entry point.
+  it("loads a document behind one leading byte-order mark, and refuses a second", () => {
+    const plan = emptyPlan("URX44V");
+    expect(deserialize("\uFEFF" + serialize(plan))).toEqual(deserialize(serialize(plan)));
+    expect(() => deserialize("\uFEFF\uFEFF" + serialize(plan))).toThrow();
+  });
 });
 
 describe("ensureFixedConnections idempotency across models", () => {
@@ -438,6 +455,8 @@ describe("node names are bounded by what the unit can hold", () => {
     }
   });
 
+  // Applied by the load funnel rather than by the document sanitiser, which is what lets the load
+  // say it did: a crafted document cannot carry a name past the bound, and is told so.
   it("applies the bound at the load funnel, so a crafted document cannot carry one past it", () => {
     const doc = JSON.stringify({
       format: PLAN_FORMAT,
@@ -446,9 +465,11 @@ describe("node names are bounded by what the unit can hold", () => {
       nodeNames: { ch1: "z".repeat(4000), ch2: "Kick" },
     });
     const plan = deserialize(doc);
+    const reported = loadNames(plan);
     expect(plan.nodeNames["ch1"]).toBe("z".repeat(8));
     // An ordinary name is untouched — the guard bounds, it does not rewrite.
     expect(plan.nodeNames["ch2"]).toBe("Kick");
+    expect(reported).toEqual(["nodeNames.ch1"]);
   });
 
   // The second half of what a stored name is. The device keeps a trailing space rather
@@ -486,8 +507,34 @@ describe("node names are bounded by what the unit can hold", () => {
       nodeNames: { ch1: "Kick ", ch2: " 5/ 6" },
     });
     const plan = deserialize(doc);
+    const reported = loadNames(plan);
     expect(plan.nodeNames["ch1"]).toBe("Kick");
     expect(plan.nodeNames["ch2"]).toBe(" 5/ 6");
+    expect(reported).toEqual(["nodeNames.ch1"]);
+  });
+
+  // An image export serializes every name and note into an SVG, and a code point XML refuses fails
+  // the whole export. The load removes it from a document's names and notes and says so; a name
+  // read from the unit keeps it, so no write rewrites the unit's own name for that.
+  it("removes the code points XML refuses from a document's names and notes, and only there", () => {
+    const doc = JSON.stringify({
+      format: PLAN_FORMAT,
+      version: PLAN_VERSION,
+      modelId: "URX44V",
+      nodeNames: { ch1: "Vo\u0001x", ch2: "\u0001\u0002" },
+      notes: { ch1: "Vocal mic\u0007 check", ch2: "a\tb" },
+    });
+    const plan = deserialize(doc);
+    const reported = loadNames(plan);
+    expect(plan.nodeNames["ch1"]).toBe("Vox");
+    expect(plan.nodeNames["ch2"], "nothing left is no name, which the fill then names").toBe(
+      defaultPlan("URX44V").nodeNames.ch2,
+    );
+    expect(plan.notes["ch1"]).toBe("Vocal mic check");
+    expect(plan.notes["ch2"]).toBe("a\tb");
+    expect(reported).toEqual(["nodeNames.ch1", "nodeNames.ch2", "notes.ch1"]);
+    expect(normalizeNodeName("Vo\u0001x")).toBe("Vo\u0001x");
+    expect(normalizeDocumentName("Vo\u0001x")).toBe("Vox");
   });
 });
 

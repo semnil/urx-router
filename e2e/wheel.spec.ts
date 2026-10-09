@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { wheelOver } from "./graph-helpers";
+import { planParamZ } from "./plan-param";
 
 // Mouse-wheel adjust on hover: every continuous control (inspector native-range
 // sliders + the console faders / knobs) nudges one detent per wheel notch, matching
@@ -107,6 +108,40 @@ test.describe("graph inspector", () => {
   });
 });
 
+// A level the plan holds between two detents (a loaded plan, a device read) steps to the
+// adjacent detent in the direction of travel: the slider's native ArrowDown steps from the
+// NEAREST detent instead, and from -15.5 that is -16, so it used to land on -18.
+test.describe("an off-grid level in the Inspector", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("urx-lang", "en");
+      localStorage.setItem("urx-theme", "dark");
+    });
+    const plan = {
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { "bus.stereo": { level: -15.5 } },
+    };
+    await page.goto(`/?plan=${planParamZ(plan)}`);
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await node(page, "bus.stereo").click();
+  });
+
+  test("ArrowDown and a wheel notch each land on the adjacent detent", async ({ page }) => {
+    const row = param(page, "Level").first();
+    const value = row.locator(".param-val");
+    const slider = row.locator("input[type=range]");
+    await expect(value).toHaveText(/15\.5/);
+    await slider.focus();
+    await slider.press("ArrowDown");
+    await expect(value).toHaveText(/16\.0/);
+    await wheelOver(page, slider, 100);
+    await expect(value).toHaveText(/18\.0/);
+  });
+});
+
 test.describe("device-locked guard", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
@@ -136,5 +171,66 @@ test.describe("device-locked guard", () => {
     const before = await value.textContent();
     await wheelOver(page, knob, -100);
     await expect(value).toHaveText(before ?? "");
+  });
+});
+
+// The board reads a wheel gesture along the axis its first event moved on: sideways pans it,
+// up and down zooms it. A sideways scroll used to read its deltaY of 0 as a step out.
+test.describe("graph board", () => {
+  const viewport = (page: Page) => page.locator("#graph-host svg > g").first();
+  const transform = async (page: Page): Promise<{ x: number; scale: number }> => {
+    const m = /translate\(([-\d.e]+) [-\d.e]+\) scale\(([-\d.e]+)\)/.exec(
+      (await viewport(page).getAttribute("transform")) ?? "",
+    );
+    if (!m) throw new Error("no viewport transform");
+    return { x: Number(m[1]), scale: Number(m[2]) };
+  };
+  const hoverBoard = async (page: Page): Promise<void> => {
+    const box = (await page.locator("#graph-host").boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  };
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("urx-lang", "en");
+      localStorage.setItem("urx-theme", "dark");
+    });
+    await page.goto("/");
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  });
+
+  test("a sideways wheel pans the board and leaves its zoom alone", async ({ page }) => {
+    await hoverBoard(page);
+    const before = await transform(page);
+    await page.mouse.wheel(60, 0);
+    await expect.poll(async () => (await transform(page)).x).toBe(before.x - 60);
+    expect((await transform(page)).scale).toBe(before.scale);
+  });
+
+  // The native context menu takes the right button's release, so the page sees the press and
+  // then a move with no button held. Headless Chromium opens no menu, so that move is
+  // dispatched here; the press, and the held-button move after it, are real.
+  test("a right press whose release never arrived leaves no pan following the cursor", async ({ page }) => {
+    const box = (await page.locator("#graph-host").boundingBox())!;
+    await page.mouse.move(box.x + 12, box.y + 12);
+    await page.mouse.down({ button: "right" });
+    const before = await viewport(page).getAttribute("transform");
+    await page.locator("#graph-host svg").dispatchEvent("pointermove", {
+      pointerId: 1,
+      pointerType: "mouse",
+      buttons: 0,
+      clientX: box.x + 200,
+      clientY: box.y + 150,
+    });
+    await page.mouse.move(box.x + 300, box.y + 200, { steps: 4 });
+    expect(await viewport(page).getAttribute("transform")).toBe(before);
+    await page.mouse.up({ button: "right" });
+  });
+
+  test("an upward wheel zooms the board in", async ({ page }) => {
+    await hoverBoard(page);
+    const before = await transform(page);
+    await page.mouse.wheel(0, -100);
+    await expect.poll(async () => (await transform(page)).scale).toBeGreaterThan(before.scale);
   });
 });

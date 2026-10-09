@@ -41,8 +41,10 @@ Desktop builds auto-update.
 
 With the Device Center software (included in Yamaha's TOOLS for MGX / URX) running, desktop
 builds can **read** the connected interface's current mixer settings into the plan
-(**Device → Fetch from device**) and **write** a plan back to it (**Device → Write to device** /
-**Live sync**, which mirrors each edit as you make it). The parameter mapping is verified on
+(**Device → Fetch from device**) and **write** a plan back to it (**Device → Write to device**).
+**Live sync** starts by reading the interface's settings into the plan and then mirrors each edit
+as you make it, so a plan you have opened reaches the interface through Write to device, before
+Live sync is turned on. The parameter mapping is verified on
 hardware **only for URX44V**; **URX44** is assumed identical and **URX22** is inferred from it.
 The exception is the **URX22** console live-meter routing, which has been confirmed on real
 hardware; its control (write) map and factory-initial plan remain unverified. Writing overwrites

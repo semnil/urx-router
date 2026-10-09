@@ -67,7 +67,7 @@ export function t(): Messages {
  * entry. The Rust shell (file IO, the vd broker link, the MIDI bridge) and core's
  * export path return these instead of prose, so a failure never reaches a
  * localized dialog in English. Keep in step with the code lists in
- * `src-tauri/src/{lib,vd,midi,keepawake}.rs` and `core/storage.ts`.
+ * `src-tauri/src/{lib,vd,midi,keepawake}.rs`, `core/storage.ts` and `core/control/live.ts`.
  */
 export const SHELL_CODES: Record<string, keyof Messages["error"]["shell"]> = {
   "broker-unreachable": "brokerUnreachable",
@@ -86,8 +86,11 @@ export const SHELL_CODES: Record<string, keyof Messages["error"]["shell"]> = {
   "file-denied": "fileDenied",
   "file-io": "fileIo",
   "file-bad-extension": "fileBadExtension",
+  "file-no-temp": "fileNoTemp",
   "png-encode": "pngEncode",
   "canvas-unavailable": "canvasUnavailable",
+  "svg-rasterize": "svgRasterize",
+  "converge-failed": "convergeFailed",
   "midi-port-not-found": "midiPortNotFound",
   "midi-output-not-open": "midiOutputNotOpen",
   "midi-init-failed": "midiInitFailed",

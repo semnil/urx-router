@@ -183,7 +183,7 @@ export const DUCKER_DYN: DynPlotProcessor = {
     c.font = PLOT_FONT;
     c.strokeStyle = tok["--plot-line"];
     c.lineWidth = 1;
-    c.fillStyle = tok["--plot-faint"];
+    c.fillStyle = tok["--plot-dim"];
     c.textAlign = "center";
     for (const ms of T_TICKS) {
       c.beginPath();
@@ -233,9 +233,9 @@ export const DUCKER_DYN: DynPlotProcessor = {
     c.textAlign = "left";
     c.fillText(formatDyn(range, "db"), g.pad.l + 4, g.py(range) - 5);
     c.fillStyle = tok["--led"];
-    c.fillText(formatDyn(attack, "ms"), g.px(attack) + 5, g.pad.t + 11);
+    c.fillText(formatDyn(attack, "attack"), g.px(attack) + 5, g.pad.t + 11);
     c.textAlign = "right";
-    c.fillText(formatDyn(decay, "ms"), g.w - g.pad.r - 4, g.pad.t + 11);
+    c.fillText(formatDyn(decay, "duckerDecay"), g.w - g.pad.r - 4, g.pad.t + 11);
   },
 
   // No `drawLive`. A dashed rule at the live reduction was drawn here while the

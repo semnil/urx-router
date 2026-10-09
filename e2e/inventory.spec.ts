@@ -1,8 +1,8 @@
 import { test, expect } from "./fixtures";
-import { allItems, Inventory, itemsFor, itemsUnder, type Item } from "./inventory";
+import { allItems, composedKey, Inventory, itemsFor, itemsUnder, type ComposedEntry, type Item } from "./inventory";
 import { pickBand } from "./dyn-helpers";
 import { en } from "../src/i18n/en";
-import { LIVE_COMMANDS, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+import { LIVE_COMMANDS, answerTimingOf, installAnswerQueue, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
 import { planParam, planParamZ } from "./plan-param";
 import { listControls } from "../src/core/midi/controls";
 import { getModel } from "../src/models";
@@ -45,8 +45,9 @@ interface Surface {
   neverShown?: Record<string, string>;
   /** Messages the app shows only through a label attribute (see InventoryOptions). */
   viaAttribute?: string[];
-  /** Messages rendered inside a larger run (see InventoryOptions). */
-  composed?: string[];
+  /** Messages rendered inside a larger run, with the separators their composer joins
+   *  with where those are not the default ones (see InventoryOptions). */
+  composed?: ComposedEntry[];
 }
 
 // Named up front so `elsewhere` can be typed by them: a note that hands a message
@@ -69,6 +70,20 @@ const SURFACE_NAMES = [
 ] as const;
 type SurfaceName = (typeof SURFACE_NAMES)[number];
 
+// The load's notes and its own message, joined with " — " into one status run.
+const LOAD_STATUS = [
+  "status.booleanParamsConverted",
+  "status.paramsBounded",
+  "status.paramsDropped",
+  "status.streamingSourceSupplied",
+  "status.sendLevelsSupplied",
+  "status.linkedPairsAligned",
+  "status.linkedSendPansAligned",
+  "status.colorsDropped",
+  "status.textsRewritten",
+  "status.planLoaded",
+];
+
 const SURFACES: Record<SurfaceName, Surface> = {
   consent: {
     roots: ["consent"],
@@ -87,17 +102,10 @@ const SURFACES: Record<SurfaceName, Surface> = {
   },
   // What the status line says about a document the load repaired. The namespace as a whole is
   // OUT_OF_SCOPE; these are the notes a load leads the line with, each said nowhere else, joined
-  // into one run ahead of the load's own message.
+  // into one run ahead of the load's own message — so every one of them is composed.
   loadStatus: {
-    keys: [
-      "status.booleanParamsConverted",
-      "status.paramsBounded",
-      "status.paramsDropped",
-      "status.streamingSourceSupplied",
-      "status.linkedSendPansAligned",
-      "status.planLoaded",
-    ],
-    composed: ["status.streamingSourceSupplied", "status.planLoaded"],
+    keys: LOAD_STATUS,
+    composed: LOAD_STATUS,
   },
   rateChoice: {
     roots: ["rateChoice"],
@@ -117,7 +125,10 @@ const SURFACES: Record<SurfaceName, Surface> = {
     roots: ["deviceSetup"],
     elsewhere: { "deviceSetup.menuItem": "toolbar" },
     // The Date/Time section prints its two notes as one paragraph.
-    composed: ["deviceSetup.clockNote", "deviceSetup.timeZoneNote"],
+    composed: [
+      { key: "deviceSetup.clockNote", sep: [" "] },
+      { key: "deviceSetup.timeZoneNote", sep: [" "] },
+    ],
   },
   dynScreen: {
     roots: ["dynTuning"],
@@ -128,7 +139,7 @@ const SURFACES: Record<SurfaceName, Surface> = {
     // the same shape ("FX EFFECT — Rev-X Hall") for the same reason, and unlike INS FX it
     // is not also a chip label anywhere: the strip's face reads EFFECT, since the scribble
     // above it already says which FX channel this is.
-    composed: ["dynTuning.peakPrefix", "dynTuning.insfx.title", "dynTuning.fx.title"],
+    composed: [{ key: "dynTuning.peakPrefix", sep: [" "] }, "dynTuning.insfx.title", "dynTuning.fx.title"],
   },
   prefs: {
     roots: ["prefs"],
@@ -137,7 +148,7 @@ const SURFACES: Record<SurfaceName, Surface> = {
     viaAttribute: ["prefs.title"],
     // Under --experimental the scope note gains a sentence about the diagnostics,
     // printed as one paragraph with the note it extends.
-    composed: ["prefs.diagNote"],
+    composed: [{ key: "prefs.diagNote", sep: [" "] }],
     neverShown: {
       "prefs.planNoteShare": "the demo bundle only, and this suite serves the desktop-shaped one",
     },
@@ -158,6 +169,7 @@ const SURFACES: Record<SurfaceName, Surface> = {
       "midi.inputError": "the main window's status line",
       "midi.outputError": "the main window's status line",
       "midi.outputStalled": "the main window's status line",
+      "midi.learnOff": "the main window's status line",
     },
   },
   toolbar: {
@@ -179,6 +191,10 @@ const SURFACES: Record<SurfaceName, Surface> = {
       "prefs.title",
     ],
     neverShown: {
+      // The View toggles keep one label each and carry their state in aria-checked; the
+      // message for the state each turns away from is the status line's.
+      "toolbar.showOffSends": "the status line, when Hide off sends is turned off",
+      "toolbar.labelsModel": "the status line, when Device names is turned off",
       "toolbar.desktopApp": "the demo bundle only",
       "toolbar.desktopAppHint": "the demo bundle only",
       "toolbar.shareUrl": "the demo bundle only",
@@ -285,7 +301,10 @@ test("every message in the catalog is claimed by a surface or excused by name", 
   // The same for the other two escapes: a key a surface reads from an attribute, or
   // composes into a larger run, has to be one the catalog still carries — a message, or
   // a namespace of them (a composed vocabulary is named by its namespace).
-  const escapes = names.flatMap((n) => [...(SURFACES[n].viaAttribute ?? []), ...(SURFACES[n].composed ?? [])]);
+  const escapes = names.flatMap((n) => [
+    ...(SURFACES[n].viaAttribute ?? []),
+    ...(SURFACES[n].composed ?? []).map(composedKey),
+  ]);
   const carried = (k: string): boolean => live.has(k) || [...live].some((l) => l.startsWith(`${k}.`));
   expect(escapes.filter((k) => !carried(k))).toEqual([]);
   expect(Object.keys(OUT_OF_SCOPE).filter((ns) => !(ns in en))).toEqual([]);
@@ -363,8 +382,10 @@ test("the load report shows all three framings and both Copy faces", async ({ pa
 });
 
 // One document the load repairs every way it can: two on/off values written as numbers, two FX
-// values bounded and two dropped, no STREAMING source, and two send pans into a MIX whose Pan Link
-// is on — two of each, since a counted note is read in its plural wording. The Pan Link is one of
+// values bounded and two dropped, no STREAMING source, sends listed without a level, two
+// STEREO-linked pairs whose members disagree, two send pans into a MIX whose Pan Link is on, two
+// node colours that are not the unit's, and two names the load rewrites — two or more of each,
+// since a counted note is read in its plural wording. The Pan Link is one of
 // the numbers, so the send pans are set only because the conversion ran first.
 test("the status line after a load names every repair the load made", async ({ page }) => {
   const revxLpf = fxParams(0).find((d) => d.key === "revxLpf")!;
@@ -383,8 +404,13 @@ test("the status line after a load names every repair the load made", async ({ p
       "bus.fx1": { fxEffect: { type: 0, params: { revxLpf: revxLpf.rawMin! - 1, revxHpf: false } } },
       "bus.fx2": { fxEffect: { type: 1024, params: { delayLpf: delayLpf.rawMin! - 1, delayHiRatio: false } } },
       "bus.mix1": { panLink: 1 },
-      ch3: { hpf: 0 },
+      ch1: { stereoLink: true, panBal: 0 },
+      ch2: { hpf: true },
+      ch3: { hpf: 0, stereoLink: true, panBal: 0 },
+      ch4: { hpf: true },
     },
+    nodeColors: { ch1: "#ff0000", ch2: "url(https://example.invalid/x)" },
+    nodeNames: { ch1: "Long name past eight", ch2: "Vo\u0001x" },
   };
   await page.goto(`/?plan=${planParam(plan)}`);
   await expect(page.locator("#statusbar")).toContainText(en.status.planLoaded);
@@ -502,6 +528,13 @@ test("the device setup screen shows every page, on the model that has it and the
   await page.locator("#device-setup-brightness").dispatchEvent("change");
   await chooseOption(page.locator("#device-setup-apo-time"), { index: 1 });
   await expect(page.locator("#device-setup-pending")).toContainText("unapplied changes");
+  await inv.take(page, "#device-setup-modal");
+
+  // A unit holding a Time Zone index past the city list, which the screen offers as unknown.
+  await stubTauriDevice(page, { values: { 831: 200 } });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await openSetup();
   await inv.take(page, "#device-setup-modal");
 
   // The URX22 has neither Date/Time nor HDMI, and says so where those pages were.
@@ -652,6 +685,7 @@ test("the channel tuning screens show every processor, both displays and their n
   // selected, and the launcher's own wording is only on screen from that moment.
   const openInsFx = async (id: string, effect: string, faces: string[] = [], bypass = false): Promise<void> => {
     await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
+    await openInsertFxSection(page);
     await chooseOption(page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select"), {
       label: effect,
     });
@@ -818,24 +852,31 @@ test("the Preferences modal shows every section in both the browser and the desk
     // The outcome is read per call and the answer is HELD until the test releases
     // it, so the in-flight wording is on screen for exactly as long as the test
     // needs rather than for a guessed number of milliseconds.
+    // Its own answers settle through the stub's queue, as the stub's do.
     const w = window as unknown as { __update: string; __releaseUpdate: () => void };
     internals.invoke = (cmd: string, ...rest: unknown[]) => {
       if (cmd === "plugin:updater|check")
-        return new Promise((resolve, reject) => {
-          w.__releaseUpdate = () => {
-            if (w.__update === "none") resolve(null);
-            else if (w.__update === "fail") reject(new Error("network unreachable"));
-            else resolve({ version: "9.9.9", currentVersion: "1.0.0" });
-          };
-        });
+        return window.__urxAnswerLater(
+          cmd,
+          new Promise((resolve, reject) => {
+            w.__releaseUpdate = () => {
+              if (w.__update === "none") resolve(null);
+              else if (w.__update === "fail") reject(new Error("network unreachable"));
+              else resolve({ version: "9.9.9", currentVersion: "1.0.0" });
+            };
+          }),
+        );
       // Declining the offered update keeps the modal open on the version note.
-      if (cmd === "plugin:dialog|confirm") return Promise.resolve(false);
-      if (cmd === "set_keep_awake") return Promise.reject(new Error("PowerCreateRequest failed"));
+      if (cmd === "plugin:dialog|confirm") return window.__urxAnswerLater(cmd, Promise.resolve(false));
+      if (cmd === "set_keep_awake")
+        return window.__urxAnswerLater(cmd, Promise.reject(new Error("PowerCreateRequest failed")));
       return invoke(cmd, ...rest);
     };
   });
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  const ownAnswers = ["plugin:dialog|confirm", "set_keep_awake", "experimental_enabled"];
+  expect(await answerTimingOf(page, ownAnswers)).toEqual({ inSendingTask: [], order: ownAnswers });
   await page.click("#btn-prefs");
   await expect(page.locator("#prefs-modal")).toBeVisible();
   await inv.take(page, "#prefs-modal");
@@ -862,7 +903,7 @@ test("the Preferences modal shows every section in both the browser and the desk
   await page.click("#prefs-modal .consent-btn-secondary");
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await page.click("#btn-prefs");
   await page.click('#prefs-prevent-sleep button:has-text("ON")');
   await expect(page.locator("#prefs-sleep-error")).not.toHaveText("");
@@ -897,7 +938,7 @@ test("the toolbar and its three menus show every entry, in each of their states"
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   await takeMenus();
 
-  // Both faces of the two View toggles, each of which names its next action.
+  // Both states of the two View toggles, whose labels stay put while aria-checked moves.
   await page.click("#btn-view");
   await page.click("#btn-hide-off");
   await page.click("#btn-view");
@@ -907,7 +948,7 @@ test("the toolbar and its three menus show every entry, in each of their states"
   // Live sync: the toggle's hint, and the on-air tally that only a session prints.
   await page.click("#btn-device");
   await page.click("#btn-live");
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#live-tally")).toBeVisible();
   await takeMenus();
   await page.click("#btn-device");
@@ -1052,9 +1093,17 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
   const inv = inventoryOf("midiWindow");
   const mappings = everyControlMapping();
   // Two mappings on one address: the second is a gang member, which is the only
-  // state that prints the Linked marker and its explanation.
+  // state that prints the Linked marker and its explanation. The two are a fader and
+  // a switch saved in Pickup, which the load puts back to Absolute and says so on the
+  // window's status line — the only state that prints that line.
+  expect([mappings[0].control, mappings[1].control]).toEqual(["ch1/level", "ch1/mute"]);
+  mappings[0] = { ...mappings[0], mode: "pickup" };
   mappings.push({ ...mappings[0], control: mappings[1].control });
+  // A binding no control of this model answers to, on an address of its own: a learn onto
+  // it cannot be checked against it, which is the only state that prints that refusal.
+  mappings.push({ control: "gone/level", addr: { type: "cc", channel: 14, controller: 0 }, mode: "absolute" });
 
+  await page.context().addInitScript(installAnswerQueue);
   await page.context().addInitScript((list) => {
     localStorage.setItem("urx-lang", "en");
     localStorage.setItem("urx-theme", "dark");
@@ -1083,9 +1132,9 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
     class Channel {
       onmessage: (data: unknown) => void = () => {};
     }
-    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
+    const internals = {
       Channel,
-      invoke: (cmd: string, args: Record<string, unknown>) => {
+      invoke: (cmd: string, args: Record<string, unknown>): Promise<unknown> => {
         switch (cmd) {
           case "experimental_enabled":
           case "self_test_requested":
@@ -1132,20 +1181,30 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
         }
       },
     };
+    // The switch above records and answers a command when it is sent; the answer itself
+    // settles through the queue the shared stubs settle through.
+    const answer = internals.invoke;
+    internals.invoke = (cmd, args) => window.__urxAnswerLater(cmd, answer(cmd, args));
+    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
   }, mappings);
 
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  const cmds = ["midi_list_inputs", "stub_unknown_command", "midi_window_open"];
+  expect(await answerTimingOf(page, cmds)).toEqual({ inSendingTask: [], order: cmds });
   await page.click("#btn-device");
   await page.click("#btn-midi");
   const win = await page.context().newPage();
   await win.goto("/midi.html");
   await expect(win.locator(".mw-title")).toHaveText("MIDI CONTROL");
   await expect(win.locator(".mw-list tr").first()).toBeVisible();
+  await expect(win.locator(".mw-status")).toContainText("Take-in mode set to Absolute on CH 1 CC 0");
   await inv.take(win, "#midi-window");
 
   // Learn on with nothing armed, then armed at a control: three hints in all,
-  // and only one of them is on screen at a time.
+  // and only one of them is on screen at a time. The port is chosen once the refresh
+  // that lists it has been answered.
+  await expect(win.locator(".mw-in option")).toHaveCount(2); // None + Stub In
   await chooseOption(win.locator(".mw-in"), "Stub In");
   await win.locator(".mw-learnbtn").click();
   await expect(win.locator(".mw-learnbtn")).toHaveAttribute("aria-pressed", "true");
@@ -1158,11 +1217,35 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
   await expect(win.locator(".mw-hint")).toContainText("Move a MIDI control");
   await inv.take(win, "#midi-window");
   // The binding lands, and its confirmation is mirrored onto the window's status
-  // line — the only place that message is ever printed here.
-  await page.evaluate(() => {
-    window.__midiTest.inChannel!.onmessage([{ bytes: [0xb0, 100, 64] }, { bytes: [0xb0, 100, 65] }]);
-  });
+  // line — the only place that message is ever printed here. On channel 16, which no
+  // seeded binding uses: the address is a new one rather than a gang to join.
+  const fader = page.locator(".con-strip", { has: page.getByText("CH 1", { exact: true }) }).locator(".con-fader");
+  const move = (bytes: number[][]) =>
+    page.evaluate((list) => window.__midiTest.inChannel!.onmessage(list.map((b) => ({ bytes: b }))), bytes);
+  await move([
+    [0xbf, 100, 64],
+    [0xbf, 100, 65],
+  ]);
   await expect(win.locator(".mw-status")).toContainText("Assigned");
+  await inv.take(win, "#midi-window");
+  // A learn the gang rule refuses: CH 1 CC 100 drives a switch (a seeded binding), and the
+  // fader is continuous.
+  await fader.click();
+  await expect(win.locator(".mw-hint")).toContainText("Move a MIDI control");
+  await move([
+    [0xb0, 100, 64],
+    [0xb0, 100, 65],
+  ]);
+  await expect(win.locator(".mw-status")).toContainText("Not assigned: CH 1 CC 100");
+  await inv.take(win, "#midi-window");
+  // …and one onto the binding this model does not carry.
+  await fader.click();
+  await expect(win.locator(".mw-hint")).toContainText("Move a MIDI control");
+  await move([
+    [0xbe, 0, 64],
+    [0xbe, 0, 65],
+  ]);
+  await expect(win.locator(".mw-status")).toContainText("already drives, is not in the current plan");
   await inv.take(win, "#midi-window");
 
   // The empty list, whose own line replaces the table. The window is a view — the

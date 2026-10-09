@@ -209,6 +209,7 @@ export const en = {
     param2: dev("Parameter 2"),
     knobsNote: tr("Banks match the unit's own bank switching."),
     unset: tr("—"),
+    unknownValue: (v: number | string): string => `unknown (${v})`,
   },
   midi: {
     menuItem: tr("MIDI control"),
@@ -228,6 +229,8 @@ export const en = {
     ),
     hintLearn: tr("Click a control on the console or a tuning screen to arm it for binding."),
     hintArmed: (control: string): string => `Move a MIDI control to bind ${control}…`,
+    // Said on the main window's status line when learn is turned off from the MIDI window.
+    learnOff: tr("Learn is off: the console and the tuning screens edit again."),
     mappings: tr("Assignments"),
     noMappings: tr("No assignments yet."),
     remove: tr("Remove assignment"),
@@ -267,6 +270,18 @@ export const en = {
       ),
     },
     bound: (control: string, addr: string): string => `Assigned ${addr} to ${control}`,
+    // A learn refused because a gang holds one kind of control: a switch and a continuous
+    // control behind one physical control leave the continuous one's Pickup unable to engage.
+    learnKindMismatch: (control: string, addr: string): string =>
+      `Not assigned: ${addr} already drives a different kind of control than ${control} — a switch and a continuous control cannot share one MIDI control`,
+    // …and one refused because the armed control has stopped being in the current plan — on
+    // any address, one nothing drives included — or because something the address already
+    // drives is not in it, so the two kinds cannot be compared.
+    learnUnresolved: (control: string, addr: string): string =>
+      `Not assigned: ${control}, or something ${addr} already drives, is not in the current plan`,
+    // Saved gangs that mixed the two kinds, put back to Absolute when they were read.
+    mixedGangAbsolute: (addrs: string): string =>
+      `Take-in mode set to Absolute on ${addrs}: switches and continuous controls share it, and Pickup does not engage behind a switch`,
     windowError: (message: string): string => `Could not open the MIDI control window: ${message}`,
     inputError: (message: string): string => `MIDI input error: ${message}`,
     outputError: (message: string): string => `MIDI output error: ${message}`,
@@ -353,15 +368,36 @@ export const en = {
         "input port (left) to connect. Connectable ports are highlighted in green " +
         "while connecting. A channel's direct outs and recordings start at the Rec " +
         "Point tap on its top edge instead. Click the pen on a node to add a note, " +
-        "then click the note to edit it.",
+        "then click the note to edit it. From the keyboard, Tab reaches the board, the " +
+        "arrow keys move between nodes and Enter selects one; its Routing section " +
+        "then connects its ports and selects its wires.",
     ),
     type: tr("Type"),
     name: dev("Name"),
     color: dev("Color"),
+    // The unit's [Color] picker prints these in English in every Language, in its palette
+    // order (COLOR_PALETTE's index), and its Off.
+    colorName: {
+      blue: dev("Blue"),
+      orange: dev("Orange"),
+      yellow: dev("Yellow"),
+      purple: dev("Purple"),
+      cyan: dev("Cyan"),
+      magenta: dev("Magenta"),
+      red: dev("Red"),
+      green: dev("Green"),
+      ltGreen: dev("LtGreen"),
+      white: dev("White"),
+      off: dev("Off"),
+    },
     recPoint: dev("Rec Point"),
     inputsFrom: (n: number): string => `Inputs (${n})`,
     outputsTo: (n: number): string => `Outputs (${n})`,
     routing: tr("Routing"),
+    connectSource: tr("Connect a source"),
+    connectOutput: tr("Connect the output to"),
+    connectRecPoint: tr("Connect the Rec Point to"),
+    connectChoose: tr("Choose…"),
     connection: tr("Connection"),
     from: tr("From"),
     to: tr("To"),
@@ -772,7 +808,7 @@ export const en = {
       // Shown in place of the line above while the unit is driving the panel. It says who
       // owns the values rather than what they do, because that is what changed.
       mbcOneKnob: tr(
-        "1-knob is on: the unit is setting every value here from its own level, and nothing edited here is sent to it.",
+        "1-knob is on: the unit sets the bands, Release and the crossovers from its level, so edits to them are not sent. Out Gain and the 1-knob are still sent.",
       ),
       // The pill on a row the unit has taken over — Pitch Fix's Scale and its twelve notes
       // while MIDI Control is not Off, which is when the notes the correction aims at come
@@ -817,8 +853,16 @@ export const en = {
     paramsBounded: (count: number): string =>
       `${count} stored ${count === 1 ? "value was" : "values were"} outside what this app can write, and now read as the nearest value it can send`,
     paramsDropped: (count: number): string =>
-      `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the effect's own default`,
+      `${count} stored ${count === 1 ? "value was" : "values were"} not a value this app can write, and now read as the default`,
     streamingSourceSupplied: tr("The plan named no STREAMING source, so STREAMING takes STEREO"),
+    textsRewritten: (count: number): string =>
+      `${count} ${count === 1 ? "name or note was" : "names or notes were"} rewritten to what the unit's name screen and an image export can take`,
+    colorsDropped: (count: number): string =>
+      `${count} ${count === 1 ? "node color was" : "node colors were"} not one the unit has, and now ${count === 1 ? "reads" : "read"} as the default`,
+    linkedPairsAligned: (count: number): string =>
+      `${count} STEREO-linked ${count === 1 ? "pair now holds" : "pairs now hold"} the odd channel's shared settings on both channels, as the unit does`,
+    sendLevelsSupplied: (count: number): string =>
+      `${count} ${count === 1 ? "send was" : "sends were"} listed without a level, and now ${count === 1 ? "reads" : "read"} 0 dB, the level a write sends`,
     booleanParamsConverted: (count: number): string =>
       `${count} on/off ${count === 1 ? "value written as a number was" : "values written as numbers were"} converted to on/off`,
     linkedSendPansAligned: (count: number): string =>
@@ -847,6 +891,7 @@ export const en = {
     pdfExported: tr("PDF exported"),
     arranged: tr("Arranged to the default layout"),
     busyDeviceRead: tr("Reading from the device — try that again when it finishes"),
+    busyFileFlow: tr("A file is being opened or saved — try that again when it finishes"),
     busySwitchRead: tr(
       "This plan is being replaced by one for the device's model — try that again when the read finishes",
     ),
@@ -880,6 +925,8 @@ export const en = {
       `+48V and Hi-Z are both on for ${channels} — turn one of them off before writing to the device; nothing was sent`,
     writeConnecting: tr("Connecting to the device…"),
     writeNoChanges: tr("Device already matches the plan — nothing to write"),
+    writeNamesNotSent: (strips: string, count: number): string =>
+      `Nothing to write — ${count === 1 ? "the name of" : "the names of"} ${strips} ${count === 1 ? "is" : "are"} empty and not sent, so the device keeps its own`,
     written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
     writePartial: (n: number, failed: number): string => `Wrote ${n}, ${failed} failed`,
     writeStopped: (n: number, notSent: number): string =>
@@ -898,7 +945,13 @@ export const en = {
     selfTestRefused: tr(
       "Self-test did not start — some parameters it would have to restore could not be read first. The device was not touched.",
     ),
+    selfTestRefusedHead: tr(
+      "Self-test did not start — a setting whose write changes other settings could not be read from the device. The device was not touched.",
+    ),
+    selfTestModelMismatch: (device: string, model: string): string =>
+      `Self-test did not start — the connected device is ${device}, not ${model}. The device was not touched.`,
     selfTestCancelled: tr("Self-test canceled — device left silent; fetch again to restore your state"),
+    selfTestCancelledUntouched: tr("Self-test canceled before it wrote anything — the device was not touched"),
     selfTestPass: (n: number): string => `Self-test passed: ${n} params written and read back identically`,
     selfTestFail: (n: number): string => `Self-test FAILED: ${n} param${n === 1 ? "" : "s"} did not match after write`,
     // "did not match after write" is a claim about the device, and a run that stopped
@@ -906,8 +959,8 @@ export const en = {
     selfTestIncomplete: (n: number): string =>
       `Self-test did not complete: ${n} param${n === 1 ? "" : "s"} still differed when the run stopped — see the report`,
     selfTestRestoreFail: tr("Self-test: device may not be restored — fetch again to check"),
-    selfTestUnverified: (confirmed: number, refuted: number, untestable: number): string =>
-      `Self-test guesses: ${confirmed} confirmed, ${refuted} refuted, ${untestable} untestable`,
+    selfTestUnverified: (confirmed: number, roundTripped: number, refuted: number, untestable: number): string =>
+      `Self-test guesses: ${confirmed} confirmed, ${roundTripped} round-tripped only, ${refuted} refuted, ${untestable} untestable`,
     selfTestError: (message: string): string => `Self-test error: ${message}`,
     liveConnecting: tr("Connecting for live sync…"),
     liveOn: (model: string, n: number): string => `Live sync on · ${model} · ${n} setting${n === 1 ? "" : "s"} read`,
@@ -951,9 +1004,9 @@ export const en = {
     undoBusyDrag: tr("Finish the current drag before undoing"),
     undoDeviceBusy: tr("Busy with the device — undo is unavailable until it finishes"),
     undoModal: tr("Close the open dialog before undoing"),
-    undoRateLive: tr("The sample rate follows the device while Live sync is on — it cannot be undone here"),
-    undoRateLiveMixed: tr(
-      "This step also changes the sample rate, which follows the device while Live sync is on — the whole step is held back, not lost; it works again with Live sync off",
+    undoRateLocked: tr("The sample rate cannot be undone while a device operation is running"),
+    undoRateLockedMixed: tr(
+      "This step also changes the sample rate, which cannot be undone while a device operation is running — the whole step is held back, not lost; it works again once that operation ends",
     ),
     // The step is held back rather than taken: the same press works once the channel holds
     // one of the two.
@@ -968,6 +1021,9 @@ export const en = {
     saveError: (message: string): string => `Save error: ${message}`,
     exportError: (message: string): string => `Export error: ${message}`,
     updateDownloading: tr("Downloading update… the app will restart"),
+    updateInstallFailed: (message: string): string => `The update could not be downloaded and installed: ${message}`,
+    updateRestartFailed: (message: string): string =>
+      `The update was installed, but the app could not restart (${message}). Quit the app and open it again to use the new version.`,
   },
   confirm: {
     discard: tr("You have unsaved changes. Discard them?"),
@@ -979,6 +1035,8 @@ export const en = {
       `Write ${n} change${n === 1 ? "" : "s"} to the device? This overwrites the device's current settings.`,
     unauthoredWrite: (strips: string): string =>
       `The write also changes settings you did not edit — values the plan filled in for you, or values the device has moved since it was read.\nAffected: ${strips}`,
+    namesNotSent: (strips: string, count: number): string =>
+      `${count === 1 ? "The name of" : "The names of"} ${strips} ${count === 1 ? "is" : "are"} empty and not sent — the device keeps its own.`,
     firmwareMismatch: (device: string, supported: string): string =>
       `The connected device's firmware (${device}) differs from the version this app was tested with (${supported}). It may not work correctly. Continue anyway?`,
     selfTest: tr(
@@ -1191,6 +1249,7 @@ export const en = {
     trackCountReread: (message: string): string =>
       `A sample rate write went out, but the microSD recorder's Track Count could not be read back afterwards: ${message}. The unit lowers it by itself when the rate cannot carry it, so what the panel shows may be the value from before the change — read the device to find out.`,
     deviceSetupRead: (message: string): string => `Could not read the device's settings: ${message}`,
+    followUsbRead: (message: string): string => `Could not read the device's Follow USB setting: ${message}`,
     deviceSetupWrite: (message: string): string => `Could not apply the settings: ${message}`,
     noRule: tr("This route cannot be connected"),
     duplicate: tr("Already connected"),
@@ -1236,8 +1295,11 @@ export const en = {
       fileDenied: tr("access to the file was denied"),
       fileIo: (detail: string): string => `the file could not be read or written (${detail})`,
       fileBadExtension: (detail: string): string => `unsupported file extension (this action takes: ${detail})`,
+      fileNoTemp: tr("no temporary file could be created beside the file, as every name for one is already taken"),
       pngEncode: tr("the image could not be encoded as PNG"),
       canvasUnavailable: tr("the drawing canvas is unavailable, so the image could not be rendered"),
+      svgRasterize: tr("the board could not be drawn as an image"),
+      convergeFailed: tr("a write to the device failed without giving a reason"),
       midiPortNotFound: tr("That MIDI port is no longer available. Reconnect the device and pick it again."),
       midiOutputNotOpen: tr("no MIDI output port is open"),
       midiInitFailed: (detail: string): string => `the MIDI subsystem could not be started (${detail})`,
@@ -1253,6 +1315,9 @@ export const en = {
       `${n} setting${n === 1 ? "" : "s"} could not be read, so the device's state is not fully known. Live sync needs a complete read to start.`,
     liveFollowStopped: tr(
       "Device follow stopped while the session was starting, so a change made on the device would not reach the plan. Live sync was not started.",
+    ),
+    liveSyncStopped: tr(
+      "Sending edits to the device stopped while the session was starting, so an edit would not reach the device. Live sync was not started.",
     ),
     followReadHeld: (cause: string, unrunnable: number, source: number): string =>
       [
@@ -1274,11 +1339,11 @@ export const en = {
       `The device's sample rate and Follow USB state could not be read (${message}), so the plan's rate was not checked against the unit. Nothing was written.`,
     trackCountUnread: (message: string): string =>
       `The microSD recorder's Track Count could not be read (${message}), and a rate change can lower it for good. Nothing was written.`,
-    followUsbWrite: (message: string): string =>
-      `Follow USB could not be turned off (${message}). Nothing was written.`,
+    followUsbWrite: (message: string, on = false): string =>
+      `Follow USB could not be turned ${on ? "on" : "off"} (${message}). Nothing was written.`,
     unknownModel: (model: string): string => `Unknown model: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
-      `The connected device is ${device}, but ${ui} is selected. Open or switch to the matching plan before writing.`,
+      `The connected device is ${device}, but ${ui} is selected. Open or switch to a plan for that model first.`,
     notWhileLive: tr(
       "Stop Live sync first — importing replaces every setting at once, which a live session cannot follow.",
     ),

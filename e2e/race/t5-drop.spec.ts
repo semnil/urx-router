@@ -160,7 +160,7 @@ test.describe("T5 drop", () => {
         // mark, so what the mark measures is escape rather than teardown.
         await page.waitForTimeout(200);
         await mark(page, "teardown");
-        await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+        await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
 
         await releaseBarrier(page);
         await waitQuiet(page);
@@ -410,7 +410,7 @@ test.describe("T5 drop", () => {
     // Counted from the trace rather than from the fake's counters: under the latch a
     // command never reaches the fake's bookkeeping, so the counters would report the
     // release as never attempted when in fact it was issued and rejected.
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
 
     // A fetch attempted afterwards must fail at the connect, not half-run.
     await mark(page, "fetch");
@@ -496,9 +496,9 @@ test.describe("T5 drop", () => {
     const all = spans(trace);
     const writeAt = markTime(trace, "write")!;
     // Split the two attempts at the rejected command's SEQUENCE number, not at a
-    // wall-clock mark: the retry's whole re-diff (795 reads) resolves inside one task
-    // at zero read latency, so the retry's first write lands ~4 ms after the failure —
-    // sooner than any driver round trip could stamp a mark between them.
+    // wall-clock mark: the retry follows the failure inside the app's own flow — the fake
+    // answers the retry offer itself — so no driver step lands between the two to stamp
+    // a mark there.
     const sets = all.filter((s) => s.cmd === "vd_set" && s.start > writeAt);
     const failedIdx = sets.findIndex((s) => s.detail === "transport");
     expect(failedIdx).toBeGreaterThanOrEqual(0);
@@ -521,8 +521,8 @@ test.describe("T5 drop", () => {
     console.log(`dialogs: ${dialogs.map((d) => d.slice(0, 48)).join(" | ")}`);
 
     // The standing device-link rule, confirmed: a failed command aborts the whole
-    // operation. Six landed, the seventh was rejected, and the rest of the burst —
-    // nearly two hundred commands — was never sent.
+    // operation. Six landed, the seventh was rejected, and the rest of the burst was
+    // never sent.
     expect(attempt1).toHaveLength(7);
     expect(landed).toHaveLength(6);
     expect(trace.some((e) => e.kind === "status" && (e.detail ?? "").includes("Write stopped after a failure"))).toBe(
@@ -531,10 +531,21 @@ test.describe("T5 drop", () => {
     // The retry was offered rather than reported as a breakdown…
     expect(dialogs.some((d) => d.includes("The write stopped after a failure"))).toBe(true);
     // …and it re-read the whole device and re-diffed rather than replaying the tail,
-    // so not one of the six that already landed is written a second time.
+    // so not one of the six that already landed is written a second time, while what the
+    // first attempt left unsent — the count its own status line gives — goes out, with the
+    // rejected command beside it where the retry finds the unit not holding its value.
     expect(rediffReads.length).toBeGreaterThan(500);
     expect(attempt2.filter((s) => landed.includes(s.addr!))).toHaveLength(0);
-    expect(attempt2.length).toBeGreaterThan(100);
+    const stopped = trace
+      .map((e) =>
+        e.kind === "status" ? /Write stopped after a failure: (\d+) sent, (\d+) not sent/.exec(e.detail ?? "") : null,
+      )
+      .find((m) => m !== null);
+    expect(stopped, "the first attempt's own count").toBeTruthy();
+    expect(Number(stopped![1])).toBe(landed.length);
+    const rejectedResent = attempt2.some((s) => s.addr === attempt1.at(-1)!.addr);
+    expect(attempt2.length).toBeGreaterThan(0);
+    expect(attempt2.length).toBe(Number(stopped![2]) + (rejectedResent ? 1 : 0));
     // NOTE (harness, not app): the fake applies a vd_set at the queue point, before
     // the refusal check, so the value of the rejected 7th command is in its state map
     // even though the command failed. The retry therefore does not see that address as

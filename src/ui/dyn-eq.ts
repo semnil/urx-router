@@ -134,6 +134,7 @@ export const EQ_DYN: DynPlotProcessor = {
         const i = pickBandMarker(c, g, bandMarks(bands, ctx.sel), at);
         return i === null ? null : bands[i].index;
       },
+      label: (i) => ctx.m.inspector.eqBand[EQ_BAND_NAMES[i]],
     };
   },
   hint: (ctx) => ctx.m.dynTuning.eq.plotHint,

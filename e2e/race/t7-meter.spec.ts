@@ -226,13 +226,13 @@ test.describe("T7 meter", () => {
       // asking the driver to defeat a modal that is doing its job.
       await mark(page, "live-off");
       await page.locator("#btn-live").dispatchEvent("click");
-      await expect(page.locator('#btn-live[aria-pressed="false"]')).toBeAttached();
+      await expect(page.locator('#btn-live[aria-checked="false"]')).toBeAttached();
       await waitQuiet(page);
       const off = await countersOf(page);
 
       await mark(page, "live-on");
       await page.locator("#btn-live").dispatchEvent("click");
-      await page.waitForSelector('#btn-live[aria-pressed="true"]', { state: "attached", timeout: 30_000 });
+      await page.waitForSelector('#btn-live[aria-checked="true"]', { state: "attached", timeout: 30_000 });
       await waitQuiet(page);
 
       const end = await countersOf(page);
@@ -692,7 +692,7 @@ test.describe("T7 meter", () => {
       await mark(page, "tap-change");
       await tapBadge(page, "CH 1").click();
       await page.locator(".con-tappop .crow", { has: page.getByText("PRE EQ", { exact: true }) }).click();
-      await expect(page.locator('#btn-live[aria-pressed="false"]')).toBeAttached();
+      await expect(page.locator('#btn-live[aria-checked="false"]')).toBeAttached();
       await mark(page, "session-ended");
       // Invariant 16's verdict is an absence, so the settle has to wait for the link to
       // wake after the mark (the teardown's own traffic) before believing the silence.
@@ -749,7 +749,7 @@ test.describe("T7 meter", () => {
       await refuseAt(page, "vd_meters_subscribe", 1);
       await mark(page, "live-off");
       await page.locator("#btn-live").dispatchEvent("click");
-      await expect(page.locator('#btn-live[aria-pressed="false"]')).toBeAttached();
+      await expect(page.locator('#btn-live[aria-checked="false"]')).toBeAttached();
       await mark(page, "live-on");
       await page.locator("#btn-live").dispatchEvent("click");
       // Up, then straight back down. The "on" state is too short-lived to poll for,
@@ -757,7 +757,7 @@ test.describe("T7 meter", () => {
       // collapse from the error dialog — which stopLiveOnError only raises for a
       // session that was actually up.
       await expect.poll(() => dialogsOf(page)).toHaveLength(1);
-      await expect(page.locator('#btn-live[aria-pressed="false"]')).toBeAttached();
+      await expect(page.locator('#btn-live[aria-checked="false"]')).toBeAttached();
       await waitQuiet(page);
 
       const midTrace = await traceOf(page);
@@ -821,7 +821,7 @@ test.describe("T7 meter", () => {
       expect(observed).toBeGreaterThan(WINDOW_MS - 200); // the window really was observed
       await expect(meterReadout(page, "CH 1")).toHaveText("-15.3");
       await expect(meterReadout(page, "CH 2")).toHaveText("-20.1");
-      await expect(page.locator('#btn-live[aria-pressed="true"]')).toBeAttached();
+      await expect(page.locator('#btn-live[aria-checked="true"]')).toBeAttached();
       expect(during).toHaveLength(0);
       expect(await dialogsOf(page)).toHaveLength(0);
     });

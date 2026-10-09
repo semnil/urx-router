@@ -1,14 +1,17 @@
-import { test, expect, type Page } from "./fixtures";
-import { selectWire } from "./graph-helpers";
+import { test, expect, colorToken, textContrast, type Page } from "./fixtures";
+import { drag, port, selectWire, wire } from "./graph-helpers";
 import { panelHeight, pickBand, pickPlot, screenBox } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
+import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
+import { answerTimingOf, installAnswerQueue } from "./tauri-stub";
 
 // Channel tuning screens (GATE / COMP / EQ). The meter half needs a live session,
 // which is desktop-only, so this spec stubs the Tauri IPC bridge before boot — and
 // unlike the other specs it keeps the meter channel, so it can push readings in and
 // assert what the screen makes of them. That is the only way to cover the parts the
 // measurements decided: GR's two idle values, and "no frame yet" printing "—"
-// rather than a number.
+// rather than a number. Each command is recorded when it is sent and answered on a
+// later task, through the queue the shared stubs settle through, as the shell's IPC answers.
 //
 // Both processors run on one host, so the two halves below share every helper.
 
@@ -20,6 +23,8 @@ declare global {
         onmessage: (batch: Array<{ param_id: number; x: number; y: number; value: number }>) => void;
       } | null;
       meterAddrs: Array<[number, number]>;
+      /** The link watch's channel, so a case can report the link lost the way the shell does. */
+      linkChannel: { onmessage: (event: { reason: string }) => void } | null;
       mem: Record<string, number>;
       /** Reads the app has issued. The only evidence a test has that a background
        *  reconcile ran at all — it is hundreds of reads and nothing else it does is
@@ -100,6 +105,7 @@ const openFromInspector = async (page: Page, id: string, kind: keyof typeof SECT
 };
 
 test.beforeEach(async ({ page }) => {
+  await page.addInitScript(installAnswerQueue);
   await page.addInitScript(() => {
     localStorage.setItem("urx-lang", "en");
     localStorage.setItem("urx-theme", "dark");
@@ -109,6 +115,7 @@ test.beforeEach(async ({ page }) => {
       meterChannel: null,
       paramChannel: null,
       meterAddrs: [],
+      linkChannel: null,
       // `vd_get` answers 0 for an address nobody seeded, and 0 is a real value for an
       // enum: CH 1's Rec Point (137:0:0) would read as PRE GATE, which the readback
       // then puts in the plan. The DUCKER key lane reads the tap that names, so a case
@@ -126,9 +133,9 @@ test.beforeEach(async ({ page }) => {
     class Channel {
       onmessage: (data: unknown) => void = () => {};
     }
-    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
+    const internals = {
       Channel,
-      invoke: (cmd: string, args: Record<string, unknown>) => {
+      invoke: (cmd: string, args: Record<string, unknown>): Promise<unknown> => {
         switch (cmd) {
           case "experimental_enabled":
           case "self_test_requested":
@@ -159,7 +166,9 @@ test.beforeEach(async ({ page }) => {
             state.paramChannel = args.channel as Window["__dynTest"]["paramChannel"];
             return Promise.resolve();
           case "vd_params_unsubscribe":
+            return Promise.resolve();
           case "vd_watch_link":
+            state.linkChannel = args.channel as Window["__dynTest"]["linkChannel"];
             return Promise.resolve();
           case "vd_meters_subscribe":
             state.subscribes++;
@@ -176,9 +185,19 @@ test.beforeEach(async ({ page }) => {
         }
       },
     };
+    // The switch above records and answers a command when it is sent; the answer itself
+    // settles through the queue.
+    const answer = internals.invoke;
+    internals.invoke = (cmd, args) => window.__urxAnswerLater(cmd, answer(cmd, args));
+    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
   });
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+});
+
+test("this spec's stub answers each command on a later task, in the order asked", async ({ page }) => {
+  const cmds = ["experimental_enabled", "stub_unknown_command", "vd_get_str"];
+  expect(await answerTimingOf(page, cmds)).toEqual({ inSendingTask: [], order: cmds });
 });
 
 test("gate: opens from the inspector for a mono channel, scoped to that channel", async ({ page }) => {
@@ -348,6 +367,32 @@ test("the threshold cap moves with the value and shares its ruler", async ({ pag
 // because Playwright emulates focus and no tier can take the OS foreground away. The unit
 // suite is the opposite pair — a real blur listener, no engine drag — so neither alone
 // covers this.
+// A time row stops on the unit's own table: a key moves to the neighbouring stop, Home and End
+// reach the table's ends, and the readout prints the stop it is on.
+test("steps a time row on the unit's stops, both ends included", async ({ page }) => {
+  await openFromInspector(page, "ch1");
+  const box = screenBox(page);
+  const attack = box.locator('input[data-dyn="attack"]');
+  const attackVal = box.locator('[data-dyn-val="attack"]');
+  await expect(attackVal).toHaveText("20.17 ms");
+  await attack.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(attackVal).toHaveText("20.78 ms");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await expect(attackVal).toHaveText("19.57 ms");
+  await page.keyboard.press("End");
+  await expect(attackVal).toHaveText("80.00 ms");
+  await page.keyboard.press("Home");
+  await expect(attackVal).toHaveText("0.092 ms");
+
+  const holdVal = box.locator('[data-dyn-val="hold"]');
+  await expect(holdVal).toHaveText("15.3 ms");
+  await box.locator('input[data-dyn="hold"]').focus();
+  await page.keyboard.press("End");
+  await expect(holdVal).toHaveText("1.96 s");
+});
+
 test("a value row stops following the pointer once the window is gone", async ({ page }) => {
   await openFromInspector(page, "ch1");
   const slider = paramRow(page, "Threshold").locator("input[type=range]");
@@ -401,6 +446,31 @@ test("a value row stops following the pointer once the window is gone", async ({
   expect(await value()).not.toBe(dragged);
 });
 
+// Escape closes the screen from the keyboard while the mouse button is still down on the cap.
+// The drag ends with the screen: the moves that follow, button still held, write nothing —
+// the threshold the reopened screen reads is the one the cap had when Escape was pressed.
+test("Escape mid-drag ends the cap's drag with the screen", async ({ page }) => {
+  await openFromInspector(page, "ch1");
+  const cap = screenBox(page).locator("#dyn-threshold-cap");
+  const box = (await cap.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + 30, { steps: 3 });
+  const dragged = await cap.getAttribute("aria-valuenow");
+  // The premise: the drag moved the value before Escape.
+  expect(dragged).not.toBe("-50");
+
+  await page.keyboard.press("Escape");
+  await expect(screenBox(page)).toBeHidden();
+  await page.mouse.move(x, y + 90, { steps: 3 });
+  await page.mouse.up();
+
+  await openFromInspector(page, "ch1");
+  await expect(screenBox(page).locator("#dyn-threshold-cap")).toHaveAttribute("aria-valuenow", dragged!);
+});
+
 test("prints — for a tap that has not reported, never a floor value", async ({ page }) => {
   await openFromInspector(page, "ch1");
   // Not live: no frame has arrived, and a GR of 0 dB would claim the gate is
@@ -442,7 +512,7 @@ test.describe("with a live session", () => {
   test.beforeEach(async ({ page }) => {
     await page.click("#btn-device");
     await page.click("#btn-live");
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   });
 
   test("subscribes to exactly the three taps of the opened channel", async ({ page }) => {
@@ -560,6 +630,75 @@ test.describe("with a live session", () => {
     await pushMeters(page, [107, 0, 32767]);
     await expect(readout(page, "GATE GR").locator(".v")).toHaveText("0.0");
     await expect(readout(page, "GATE GR").locator(".p")).toHaveText("pk -40.0");
+  });
+
+  // A session that ends by itself — here the link reported lost — stops the screen's frame
+  // loop, and the screen stays open behind the error. What it shows then is the no-feed
+  // state, not the last frame it painted.
+  test("drops its readings when the session ends under it", async ({ page }) => {
+    await openFromInspector(page, "ch1");
+    await pushMeters(page, [106, 0, -153], [107, 0, -239]);
+    await expect(readout(page, "GATE GR").locator(".v")).toHaveText("-23.9");
+    await expect(readout(page, "PRE GATE").locator(".v")).toHaveText("-15.3");
+
+    await page.evaluate(() => window.__dynTest.linkChannel?.onmessage({ reason: "lost" }));
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+    await expect(screenBox(page)).toBeVisible();
+    for (const label of ["PRE GATE", "GATE GR"]) {
+      await expect(readout(page, label).locator(".v")).toHaveText("—");
+      await expect(readout(page, label).locator(".p")).toHaveText("pk —");
+    }
+  });
+
+  // The compander's reduction meter reads from the flat region's gain, which the unit lifts
+  // by -T(1 - 1/R) — 7.1 dB at Compander-H's factory settings — so merged into the output
+  // column its bar is shortened by that lift, while the tile prints what the meter reports.
+  test("shortens the compander's merged reduction by the lift the unit applies", async ({ page }) => {
+    await node(page, "ch1").click();
+    await openInsertFxSection(page);
+    await chooseOption(insertFxSection(page).locator(".param", { hasText: "EFFECT TYPE" }).locator("select"), {
+      label: "Compander-H",
+    });
+    await insertFxSection(page).locator("#btn-insfx-screen").click();
+    await expect(screenBox(page)).toBeVisible();
+    const bar = () =>
+      screenBox(page)
+        .locator(".gt-shade.gr")
+        .evaluate((el) => (el as HTMLElement).style.getPropertyValue("--lvl"));
+
+    // 6 dB of reduction is inside the 7.1 dB lift: the tile reads it, the bar is empty.
+    await pushMeters(page, [132, 0, -60]);
+    await expect(readout(page, "INS FX GR").locator(".v")).toHaveText("-6.0");
+    await expect.poll(bar).toBe("0.000");
+    // 12 dB reaches past it by 4.9 dB, on a 54 dB ruler.
+    await pushMeters(page, [132, 0, -120]);
+    await expect(readout(page, "INS FX GR").locator(".v")).toHaveText("-12.0");
+    await expect.poll(bar).toBe(((12 - 10 * (1 - 1 / 3.5)) / 54).toFixed(3));
+  });
+
+  // A multi-band compressor band's reduction, merged into the output column, is shortened by
+  // the gain between the band's input and that column: its make-up and Out Gain, +2 and +4 dB
+  // at the factory settings.
+  test("shortens a multi-band band's merged reduction by its make-up and Out Gain", async ({ page }) => {
+    await node(page, "bus.mix1").click();
+    await openInsertFxSection(page);
+    await chooseOption(insertFxSection(page).locator(".param", { hasText: "EFFECT TYPE" }).locator("select"), {
+      label: "M.B.Comp",
+    });
+    await insertFxSection(page).locator("#btn-insfx-screen").click();
+    await expect(screenBox(page)).toBeVisible();
+    await screenBox(page).locator("#dyn-face-insfx-low").click();
+    const bar = () =>
+      screenBox(page)
+        .locator(".gt-shade.gr")
+        .evaluate((el) => (el as HTMLElement).style.getPropertyValue("--lvl"));
+
+    await pushMeters(page, [133, 0, -50]);
+    await expect(readout(page, "INS FX GR").locator(".v")).toHaveText("-5.0");
+    await expect.poll(bar).toBe("0.000");
+    await pushMeters(page, [133, 0, -120]);
+    await expect(readout(page, "INS FX GR").locator(".v")).toHaveText("-12.0");
+    await expect.poll(bar).toBe((6 / 54).toFixed(3));
   });
 
   test("keeps its meters when the device is operated under it", async ({ page }) => {
@@ -690,11 +829,18 @@ test.describe("comp", () => {
 
     // 1-knob on: the device computes threshold / ratio / gain from one level and
     // announces each recomputation, so they stay on screen and stop being editable.
+    const cap = screenBox(page).locator("#dyn-threshold-cap");
+    await expect(cap).toHaveAttribute("tabindex", "0");
+    await expect(cap).not.toHaveAttribute("aria-disabled", /.*/);
     await oneKnobSwitch(page).locator("button", { hasText: "ON" }).click();
     await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
     for (const label of ["Threshold", "Ratio", "Gain"]) {
       await expect(paramRow(page, label).locator("input[type=range]")).toBeDisabled();
     }
+    // The threshold's cap is a custom slider, so it says the same thing the native row does
+    // itself: out of the tab order, and disabled to a reader.
+    await expect(cap).toHaveAttribute("tabindex", "-1");
+    await expect(cap).toHaveAttribute("aria-disabled", "true");
     // Auto Makeup cannot be operated while 1-knob is on. Its row keeps its place
     // rather than going, so nothing below it moves; it only stops being editable.
     await expect(paramRow(page, "Auto Makeup")).toHaveClass(/locked/);
@@ -706,6 +852,18 @@ test.describe("comp", () => {
     await paramRow(page, "Auto Makeup").locator("button", { hasText: "On" }).click();
     await expect(paramRow(page, "Gain").locator("input[type=range]")).toBeDisabled();
     await expect(paramRow(page, "Threshold").locator("input[type=range]")).toBeEnabled();
+  });
+
+  // The press rebuilds the column under the focused button. From the keyboard, focus stays on
+  // the switch that was operated rather than falling to the document.
+  test("keeps keyboard focus on the 1-knob switch it rebuilds", async ({ page }) => {
+    await openFromInspector(page, "ch1", "comp");
+    const on = oneKnobSwitch(page).locator("button", { hasText: "ON" });
+    await on.focus();
+    await page.keyboard.press("Space");
+    await expect(page.locator("#dyn-oneknob-level")).toBeEnabled();
+    await expect(on).toHaveAttribute("aria-pressed", "true");
+    await expect(on).toBeFocused();
   });
 
   test("does not move under the pointer that toggles 1-knob", async ({ page }) => {
@@ -734,7 +892,7 @@ test.describe("comp", () => {
     test.beforeEach(async ({ page }) => {
       await page.click("#btn-device");
       await page.click("#btn-live");
-      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
     });
 
     test("subscribes to the compressor's own three taps", async ({ page }) => {
@@ -772,7 +930,7 @@ test.describe("comp, dragging while the device follows", () => {
   test.beforeEach(async ({ page }) => {
     await page.click("#btn-device");
     await page.click("#btn-live");
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
   });
 
   test("the 1-knob level survives its own edit and the follow it provokes", async ({ page }) => {
@@ -814,6 +972,17 @@ const bandRow = (page: Page, label: string) =>
  *  below carry the same tag element. */
 const bandPill = (page: Page) => params(page).locator("h3 .prefs-lock");
 
+// The GR readout prints the reduction as text on the tile beside the lanes, which in the
+// light theme is a light ground — not the dark groove the GR colour is drawn on.
+test("the GR readout's value clears AA in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await page.reload();
+  await openFromInspector(page, "ch1", "gate");
+  const value = screenBox(page).locator(".gt-ro.gr .v");
+  await expect(value).toBeVisible();
+  expect(await textContrast(page, value)).toBeGreaterThanOrEqual(4.5);
+});
+
 test.describe("eq", () => {
   test("shows the response and the levels at once, with the plot selecting a band", async ({ page }) => {
     await openFromInspector(page, "ch1", "eq");
@@ -824,8 +993,36 @@ test.describe("eq", () => {
     // The plot itself takes the press, and says so by being in the tab order.
     await expect(pickPlot(page)).toHaveAttribute("tabindex", "0");
     await expect(bandPill(page)).toHaveText("LOW");
+    // …and it is a slider whose value is the band, by name, so the band it is set to is
+    // stated on the control being operated rather than only on the heading below it.
+    await expect(pickPlot(page)).toHaveAttribute("role", "slider");
+    await expect(pickPlot(page)).toHaveAttribute("aria-valuetext", "LOW");
     await pickBand(page, 1);
     await expect(bandPill(page)).toHaveText("LOW MID");
+    await expect(pickPlot(page)).toHaveAttribute("aria-valuetext", "LOW MID");
+    await expect(pickPlot(page)).toHaveAttribute("aria-valuenow", "1");
+  });
+
+  // The plot is a focus stop inside a box that clips its overflow, so its ring is drawn
+  // inside the canvas; a ring outside would be cut off by the box.
+  test("draws the plot's focus ring inside it when the keyboard reaches it", async ({ page }) => {
+    await openFromInspector(page, "ch1", "eq");
+    await pickBand(page, 0);
+    const plot = pickPlot(page);
+    await expect(plot).toBeFocused();
+    const ring = await plot.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return {
+        visible: el.matches(":focus-visible"),
+        style: s.outlineStyle,
+        color: s.outlineColor,
+        offset: s.outlineOffset,
+      };
+    });
+    expect(ring.visible, "the premise: a keyboard focus").toBe(true);
+    expect(ring.style).toBe("solid");
+    expect(ring.color).toBe(await colorToken(page, "--led"));
+    expect(parseFloat(ring.offset)).toBeLessThan(0);
   });
 
   test("says which values the filter type does not read, and never drops their rows", async ({ page }) => {
@@ -894,6 +1091,26 @@ test.describe("eq", () => {
     await expect(bandPill(page)).toHaveText("HIGH MID");
   });
 
+  // The band's own ON / OFF changes which inspector rows exist, so the panel — and the
+  // launcher in it — is rebuilt while the screen is open. Closing still hands focus back to
+  // the launcher, as the panel draws it now.
+  test("gives focus back to the launcher the screen's own edit rebuilt", async ({ page }) => {
+    await node(page, "ch1").click();
+    const sec = section(page, SECTION_OF.eq);
+    if (!(await sec.evaluate((el) => (el as HTMLDetailsElement).open))) await sec.locator("summary").click();
+    await page.locator("#btn-eq-screen").focus();
+    await page.keyboard.press("Enter");
+    await expect(screenBox(page)).toBeVisible();
+    const marked = await page.locator("#btn-eq-screen").evaluate((el) => ((el as HTMLElement).dataset.probe = "1"));
+    expect(marked).toBe("1");
+    await bandRow(page, "Band").locator("button", { hasText: "OFF" }).click();
+    // The premise: the launcher on the panel now is not the element that opened the screen.
+    await expect(page.locator("#btn-eq-screen")).not.toHaveAttribute("data-probe", "1");
+    await page.keyboard.press("Escape");
+    await expect(screenBox(page)).toBeHidden();
+    await expect(page.locator("#btn-eq-screen")).toBeFocused();
+  });
+
   test("reopens on LOW, because the band is a cursor rather than a way of reading", async ({ page }) => {
     await openFromInspector(page, "ch1", "eq");
     await pickBand(page, 3);
@@ -951,7 +1168,7 @@ test.describe("eq", () => {
     test.beforeEach(async ({ page }) => {
       await page.click("#btn-device");
       await page.click("#btn-live");
-      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
     });
 
     test("subscribes to both sides of a stereo node's EQ, L and R", async ({ page }) => {
@@ -1007,9 +1224,11 @@ test.describe("ducker", () => {
     // coordinate — so the lane folds to that one number instead of drawing L and R.
     await selectWire(page, "ch1:out", "out.ducker1:in");
     await page.keyboard.press("Delete");
-    await page.locator('[data-ref="bus.stereo:out"]').dispatchEvent("pointerdown");
-    await page.locator('[data-ref="out.ducker1:in"]').dispatchEvent("pointerup");
+    await drag(page, port(page, "bus.stereo:out"), port(page, "out.ducker1:in"));
+    // The premise: the key is wired from the stereo bus, and the screen names it.
+    await expect(wire(page, "bus.stereo:out", "out.ducker1:in")).toHaveCount(1);
     await openDucker(page);
+    await expect(screenBox(page).locator(".gt-cap-label:not([aria-hidden])").first()).toContainText("STEREO");
     const keySlot = screenBox(page).locator(".gt-slot").first();
     await expect(keySlot.locator(".gt-bar")).toHaveCount(1);
   });
@@ -1068,7 +1287,7 @@ test.describe("ducker", () => {
     test.beforeEach(async ({ page }) => {
       await page.click("#btn-device");
       await page.click("#btn-live");
-      await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
     });
 
     test("subscribes to the key tap, the host's pair and its own reduction", async ({ page }) => {
@@ -1095,7 +1314,7 @@ test.describe("ducker", () => {
     // lane's caption names the source channel, not the stage.
     test("registers the key tap the source's Rec Point names", async ({ page }) => {
       await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
-      await chooseOption(page.locator("#inspector .param", { hasText: "Rec Point" }).locator("select"), {
+      await chooseOption(page.locator("#inspector").getByLabel("Rec Point", { exact: true }), {
         label: "PRE GATE",
       });
       await openDucker(page);
@@ -1153,6 +1372,20 @@ test.describe("the note under the display fits the space reserved for it", () =>
 
       await openFromInspector(page, "out.ducker1", "ducker");
       await check();
+      await screenBox(page).locator(".consent-btn-secondary").click();
+
+      // The multi-band compressor with its 1-knob on, whose line is the longest the INS FX
+      // screen prints.
+      await node(page, "bus.mix1").click();
+      await openInsertFxSection(page);
+      await chooseOption(insertFxSection(page).locator(".param", { hasText: "EFFECT TYPE" }).locator("select"), {
+        label: "M.B.Comp",
+      });
+      await insertFxSection(page).locator("#btn-insfx-screen").click();
+      await expect(screenBox(page)).toBeVisible();
+      await oneKnobSwitch(page).locator("button", { hasText: "ON" }).click();
+      await expect(screenBox(page).locator(".gt-note")).toContainText("Out Gain");
+      await check();
     });
   }
 });
@@ -1166,7 +1399,7 @@ test.describe("ducker envelope", () => {
   const openDucker = async (page: Page): Promise<void> => {
     await page.click("#btn-device");
     await page.click("#btn-live");
-    await expect(page.locator("#btn-live")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
     await openFromInspector(page, "out.ducker1", "ducker");
   };
 

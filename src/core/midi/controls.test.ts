@@ -8,11 +8,12 @@ import {
   COMP_EQ_COMP_FIRST,
   COMP_EQ_SSMCS,
   EQ_TYPE_PASS,
+  INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   PAN_BAL_BAL,
   PAN_BAL_PAN,
 } from "../control/params";
-import { channelDynamics, planToCommands, DUCKER_FIELDS } from "../control/translate";
+import { channelDynamics, insertFxControl, planToCommands, DUCKER_FIELDS } from "../control/translate";
 import type { DynField } from "../control/translate";
 import {
   bindControl,
@@ -45,6 +46,7 @@ import {
   type InsertFxFamily,
 } from "../control/insert-fx-effect";
 import { wireRaw, wireSteps } from "./mapping";
+import { FX_CHANNEL_NODE_INDEX, fxEffectTypes } from "../control/fx-effect";
 
 const model = getModel("URX44V");
 let plan: Plan;
@@ -545,6 +547,15 @@ describe("channel tuning screen parameters", () => {
     expect(bindControl(model, plan, "ch_5_6/oneKnob@eq")!.set(1)).toBe(false);
     // A mono channel's EQ is unaffected by the rate.
     expect(bindControl(model, plan, "ch1/gain@eq.low")!.set(0.25)).toBe(true);
+    // The 1-knob Level carries a lock of its own (the knob being off), which the rate joins.
+    // With the knob on, the rate is the only thing that refuses it.
+    plan.nodeParams.ch_5_6 = { ...plan.nodeParams.ch_5_6, eqOneKnob: { on: true, type: 0, level: 20 } };
+    const level = (): boolean => bindControl(model, plan, "ch_5_6/oneKnobLevel@eq")!.set(0.4);
+    expect(level(), "at 192 kHz with the knob on").toBe(false);
+    expect(plan.nodeParams.ch_5_6?.eqOneKnob?.level).toBe(20);
+    plan.sampleRate = 48000;
+    expect(level(), "at 48 kHz with the knob on").toBe(true);
+    expect(plan.nodeParams.ch_5_6?.eqOneKnob?.level).not.toBe(20);
   });
 
   it("drops COMP entirely in SSMCS mode, keeping GATE and losing the EQ", () => {
@@ -605,16 +616,16 @@ describe("every writable control reaches the device", () => {
   });
 });
 
-// The property the engine's echo guard is built on. A feedback message crosses the
-// wire at 7 or 14 bits; if the decoded value snaps to a DIFFERENT plan value, the echo
-// of that message is an edit rather than a no-op, and under Live sync it reaches the
-// unit. The engine therefore guards the 7-bit forms and deliberately leaves the 14-bit
-// ones unguarded — a cc14 echo arrives as two halves it cannot match anyway. That
-// exclusion is only safe while the 14-bit round trip is exact for EVERY control, which
-// is what this pins. At 7 bits a whole class of controls fails the same check (the tuning
-// screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER
-// attack / decay), which is why the guard exists at all; architecture.md "External MIDI
-// control" carries the reading.
+// What a feedback message crossing the wire does to the value it left from. If the decoded
+// value snaps to a DIFFERENT plan value, the echo of that message is an edit rather than a
+// no-op, and under Live sync it reaches the unit. At 7 bits a whole class of controls does
+// (the tuning screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release,
+// DUCKER attack), which is why the engine arms a one-shot echo guard on the 7-bit forms;
+// architecture.md "External MIDI control" carries the reading. At 14 bits the engine
+// refuses an incoming position equal to the one the plan's value encodes to, and the last
+// case here drives that through the engine on the values a plan holds. The cases before it
+// pin the codecs: a position `set` lands on reads back as that position, a field's own
+// ends hold, and a stop table is hit at every position.
 describe("feedback round trip", () => {
   const STEPS = 257; // finer than 7-bit, so every CC bucket is entered from both sides
   /** Any 14-bit address; `wireRaw` reads only its resolution here. */
@@ -630,11 +641,12 @@ describe("feedback round trip", () => {
     return p;
   };
 
-  // What that sweep cannot see, stated where it is blind. It compares `c.get()` either side
-  // of the trip, and the FX delay time's codec snaps its READING to the wire's grid — so a
-  // value between two positions round-trips as "unchanged" there while the plan underneath
-  // it has moved. The control is offered all the same (a controller reaches 16384 of its
-  // 27000 settings), so what is pinned is the SIZE of the move and that it happens once.
+  // What the round-trip sweep cannot see, stated where it is blind. It compares `c.get()`
+  // either side of the trip, and the FX delay time's codec snaps its READING to the wire's
+  // grid — so a value between two positions reads as unchanged there while a write of that
+  // position moves the plan underneath it. Pinned here at the codec: that write moves it by
+  // at most one raw, and a second lands where the first did. Through the engine, a message at
+  // the position a value already reads at edits nothing (the held-value case below).
   it("snaps the FX delay time to the wire grid once, and no further", () => {
     const m = getModel("URX44V");
     const plan = seeded("URX44V");
@@ -656,42 +668,16 @@ describe("feedback round trip", () => {
     expect(raw(), "and no further: the snapped value is on the grid").toBe(settled);
   });
 
-  // Where a field's span is not a whole number of steps, the top position rounds either way.
-  // FALL SHORT and it is the last value on the grid, like every other position. OVERSHOOT and
-  // `linearCodec` bounds it to the field's own maximum rather than snapping down to that grid
-  // value — and which of the two it lands on is not a detail of the bound: the unit reports its
-  // own ceiling AS that maximum (`vdToHold(196000)` is 1960), so a codec answering the grid
-  // value for it would let a 14-bit echo move a value nobody moved. The sweep below cannot see
-  // that: it only ever offers values `set` produced, and the unit's ceiling is not one of them.
-  it.each(["URX22", "URX44", "URX44V"] as const)("holds a field's own maximum through an echo on %s", (id) => {
+  /** Every GATE / COMP / DUCKER field a model binds a control for, with its id and where the
+   *  plan keeps its value. */
+  type Row = { cid: string; node: string; scope: string; f: DynField };
+  const dynRows = (id: "URX22" | "URX44" | "URX44V", p: Plan): Row[] => {
     const m = getModel(id);
-    const p = seeded(id);
-    ensureFixedConnections(m, p);
-    const held = (nodeId: string, scope: string, key: string): number | undefined =>
-      ((p.nodeParams[nodeId] ?? {}) as Record<string, Record<string, number> | undefined>)[scope]?.[key];
-    const seedAt = (nodeId: string, scope: string, key: string, v: number): void => {
-      const np = (p.nodeParams[nodeId] ??= {}) as Record<string, Record<string, number>>;
-      np[scope] = { ...(np[scope] ?? {}), [key]: v };
-    };
-
-    // Derived rather than listed, and split by what the arithmetic actually does: which fields
-    // overshoot moves with the tables, and a table that stops overshooting should take its rows
-    // to the other side rather than fail the case.
-    type Row = { cid: string; node: string; scope: string; f: DynField; top: number; grid: number };
-    const over: Row[] = [];
-    const short: Row[] = [];
+    const rows: Row[] = [];
     const collect = (node: string, scope: string, fields: readonly DynField[]): void => {
       for (const f of fields) {
-        // Both kinds that carry POSITIONS are out: the arithmetic below is about a field
-        // whose grid is min / max / step, and neither of those has one.
-        if (f.logSteps !== undefined || f.steps !== undefined) continue;
-        const span = f.max - f.min;
         const cid = controlId(node, f.key as ControlParam, scope);
-        if (!bindControl(m, p, cid)) continue;
-        const top = Number((f.min + Math.round(span / f.step) * f.step).toFixed(4));
-        const grid = Number((f.min + Math.floor(span / f.step) * f.step).toFixed(4));
-        if (top > f.max) over.push({ cid, node, scope, f, top, grid });
-        else if (grid < f.max) short.push({ cid, node, scope, f, top, grid });
+        if (bindControl(m, p, cid)) rows.push({ cid, node, scope, f });
       }
     };
     for (const n of m.nodes) {
@@ -701,58 +687,97 @@ describe("feedback round trip", () => {
       collect(n.id, GATE_SCOPE, dyn.gate);
       if (dyn.comp) collect(n.id, COMP_SCOPE, dyn.comp);
     }
-    // The positive controls: every assertion below is about a population, and an empty one
-    // satisfies all of them. Both halves of the rule need a member to be a rule at all.
-    expect(over.length, "no field on this model overshoots its maximum").toBeGreaterThan(0);
-    expect(short.length, "no field on this model falls short of its maximum").toBeGreaterThan(0);
+    return rows;
+  };
 
-    for (const { cid, node, scope, f } of over) {
+  // Both ends of every field are reachable from the wire and hold through an echo. Full scale
+  // is the field's own maximum and zero its minimum — for a field with a stop table, its top
+  // and bottom stops, which are the unit's own ceiling and floor — and a reading the UNIT
+  // reports at either end is a fixed point: `vdToHold(196000)` is 1960, and a write of the
+  // position that reading sits at lands back on 1960. The sweep below cannot see that: it only
+  // ever offers values `set` produced, and a seeded reading is not one of them.
+  it.each(["URX22", "URX44", "URX44V"] as const)("holds a field's own ends through an echo on %s", (id) => {
+    const m = getModel(id);
+    const p = seeded(id);
+    ensureFixedConnections(m, p);
+    const held = (nodeId: string, scope: string, key: string): number | undefined =>
+      ((p.nodeParams[nodeId] ?? {}) as Record<string, Record<string, number> | undefined>)[scope]?.[key];
+    const seedAt = (nodeId: string, scope: string, key: string, v: number): void => {
+      const np = (p.nodeParams[nodeId] ??= {}) as Record<string, Record<string, number>>;
+      np[scope] = { ...(np[scope] ?? {}), [key]: v };
+    };
+    const rows = dynRows(id, p);
+    // The positive controls: both kinds of field are in the population, or the assertions
+    // below are about whichever kind is left.
+    expect(rows.filter((r) => r.f.steps !== undefined).length, "no field carries a stop table").toBeGreaterThan(0);
+    expect(rows.filter((r) => r.f.steps === undefined).length, "every field carries a stop table").toBeGreaterThan(0);
+
+    for (const { cid, node, scope, f } of rows) {
       const c = bindControl(m, p, cid)!;
-      // Full scale lands on the field's own maximum, not on the last value of the grid.
-      expect(c.set(1), cid).toBe(true);
-      expect(held(node, scope, f.key), cid).toBe(f.max);
-
-      // …and one 14-bit echo of that maximum leaves it there. Seeded directly: this is the
-      // reading the UNIT reports at its ceiling, which does not arrive through `set`.
-      seedAt(node, scope, f.key, f.max);
-      expect(c.set(wireRaw(PAIR, c.get()) / wireSteps(PAIR)), cid).toBe(true);
-      expect(held(node, scope, f.key), `${cid} moved under a 14-bit echo of its own maximum`).toBe(f.max);
-    }
-
-    // The other half, which is what keeps the rule about the ARITHMETIC rather than about a
-    // ragged span: a top position that falls short is the grid value, and the bound is inert.
-    for (const { cid, node, scope, f, grid } of short) {
-      const c = bindControl(m, p, cid)!;
-      expect(c.set(1), cid).toBe(true);
-      expect(held(node, scope, f.key), `${cid} is below its maximum, so nothing bounds it`).toBe(grid);
+      for (const [v, end] of [
+        [1, f.max],
+        [0, f.min],
+      ] as const) {
+        expect(c.set(v), cid).toBe(true);
+        expect(held(node, scope, f.key), `${cid} at ${v}`).toBe(end);
+        seedAt(node, scope, f.key, end);
+        expect(c.set(wireRaw(PAIR, c.get()) / wireSteps(PAIR)), cid).toBe(true);
+        expect(held(node, scope, f.key), `${cid} moved under a 14-bit echo of ${end}`).toBe(end);
+      }
     }
   });
 
   // A field whose values are a STOP TABLE is driven by the same codec, and what it must not
   // do is land between two stops: the unit has no setting there, and a controller sweeping
-  // the fader would author one at every position the ladder does not hold. Asked in both
-  // directions — nothing off the table is reachable, and nothing on it is unreachable —
-  // because a codec that answered one value for every input would satisfy only the first.
+  // the fader would author one at every position the table does not hold. Asked at every
+  // position of both wire resolutions, and in both directions — nothing off the table is
+  // reachable, and at 14 bits nothing on it is unreachable — because a codec that answered
+  // one value for every input would satisfy only the first. A 7-bit controller has fewer
+  // positions than the longer tables have stops, so there the ends are what is asked.
   it.each(["URX22", "URX44", "URX44V"] as const)("lands on a stop at every wire position on %s", (id) => {
     const m = getModel(id);
     const p = seeded(id);
     ensureFixedConnections(m, p);
-    const dyn = channelDynamics(m, "ch2", COMP_EQ_COMP_FIRST);
-    const f = dyn?.comp?.find((x) => x.key === "ratio");
-    expect(f?.steps, "the COMP ratio field carries a stop table").toBeDefined();
-    const stops = f!.steps!;
-    const c = bindControl(m, p, controlId("ch2", "ratio" as ControlParam, COMP_SCOPE))!;
-    const reached = new Set<number>();
-    for (let i = 0; i < STEPS; i++) {
-      expect(c.set(i / (STEPS - 1))).toBe(true);
-      const v = p.nodeParams.ch2?.comp?.ratio as number;
-      expect(stops, `wire ${i} landed off the ladder at ${v}`).toContain(v);
-      reached.add(v);
+    const held = (nodeId: string, scope: string, key: string): number =>
+      ((p.nodeParams[nodeId] ?? {}) as Record<string, Record<string, number>>)[scope][key];
+    const rows = dynRows(id, p).filter((r) => r.f.steps !== undefined);
+    // The ratio and the seven time values, on the first channel that has them and the first
+    // ducker: the codec is one per field table, so another channel asks nothing new.
+    const firstOf = new Map<string, Row>();
+    for (const r of rows) {
+      const kind = `${r.scope}/${r.f.key}`;
+      if (!firstOf.has(kind)) firstOf.set(kind, r);
     }
+    const wanted = ["ratio@comp", "attack@comp", "release@comp", "attack@gate", "hold@gate", "decay@gate"];
+    if (m.nodes.some((n) => n.kind === "ducker")) wanted.push("attack@ducker", "decay@ducker");
     expect(
-      [...reached].sort((a, b) => a - b),
-      "every stop is reachable from the wire",
-    ).toEqual([...stops]);
+      [...firstOf.values()].map((r) => `${r.f.key}@${r.scope}`).sort(),
+      "the fields carrying a stop table",
+    ).toEqual(wanted.sort());
+
+    for (const { cid, node, scope, f } of firstOf.values()) {
+      const stops = f.steps!;
+      const table = new Set(stops);
+      const c = bindControl(m, p, cid)!;
+      for (const steps of [127, 16383]) {
+        const reached = new Set<number>();
+        const off: string[] = [];
+        for (let i = 0; i <= steps; i++) {
+          if (!c.set(i / steps)) off.push(`wire ${i}/${steps} refused`);
+          const v = held(node, scope, f.key);
+          if (!table.has(v)) off.push(`wire ${i}/${steps} landed at ${v}`);
+          reached.add(v);
+        }
+        expect(off, `${cid}: off the table`).toEqual([]);
+        expect(reached.has(stops[0]), `${cid}: the bottom stop at ${steps}`).toBe(true);
+        expect(reached.has(stops[stops.length - 1]), `${cid}: the top stop at ${steps}`).toBe(true);
+        if (steps === 16383)
+          expect(
+            [...reached].sort((a, b) => a - b),
+            `${cid}: every stop is reachable from a 14-bit wire`,
+          ).toEqual([...stops]);
+      }
+    }
   });
 
   it.each(["URX22", "URX44", "URX44V"] as const)("is exact at 14 bits for every %s control", (id) => {
@@ -781,6 +806,128 @@ describe("feedback round trip", () => {
       }
     }
     expect([...offenders]).toEqual([]);
+  });
+
+  // The engine's own decision, asked of the values a plan HOLDS rather than of values `set`
+  // produced: a feedback pass at 14 bits with every byte it sends fed straight back, the way a
+  // reflecting transport returns it, on each continuous control in turn. The populations are
+  // the factory capture (what a unit at its factory state reads back as), the morphing bank, a
+  // 0.1 dB fine-mode step on every COMP and EQ band gain, every insert effect on every node that
+  // offers it and every FX type — most of them off the codec's grid, so applying an echo would
+  // move the value, and while live write the move to the unit.
+  it.each(["URX22", "URX44", "URX44V"] as const)("edits nothing on a 14-bit echo of a held value, %s", (id) => {
+    const m = getModel(id);
+    type Addr = { type: "cc14"; channel: 0; controller: 7 } | { type: "pitchbend"; channel: 0 };
+    const ADDRS: Addr[] = [
+      { type: "cc14", channel: 0, controller: 7 },
+      { type: "pitchbend", channel: 0 },
+    ];
+    type Variant = { name: string; seed: (p: Plan) => void; pick: (cid: string) => boolean };
+    const variants: Variant[] = [
+      { name: "factory", seed: () => {}, pick: () => true },
+      {
+        name: "SSMCS",
+        seed: (p) => void (p.nodeParams.ch1 = { ...p.nodeParams.ch1, compEqType: COMP_EQ_SSMCS }),
+        pick: (cid) => cid.includes("@ssmcs"),
+      },
+      {
+        name: "fine gains",
+        seed: (p) => {
+          for (const np of Object.values(p.nodeParams)) {
+            if (!np) continue;
+            if (np.comp) np.comp = { ...np.comp, gain: 2.3 };
+            if (np.eqBands) np.eqBands = np.eqBands.map((b) => ({ ...b, gain: 2.3 }));
+          }
+        },
+        pick: (cid) => /\/gain@(comp|eq\.)/.test(cid),
+      },
+    ];
+    const effects = new Set<number>();
+    for (const n of m.nodes) for (const o of insertFxControl(m, n.id)?.options ?? []) effects.add(o.value);
+    effects.delete(INSERT_FX_NONE);
+    for (const value of effects) {
+      variants.push({
+        name: `insert effect ${value}`,
+        seed: (p) => {
+          for (const n of m.nodes) {
+            if (!insertFxControl(m, n.id)?.options.some((o) => o.value === value)) continue;
+            p.nodeParams[n.id] = { ...p.nodeParams[n.id], insertFx: value, insertFxOn: true };
+          }
+        },
+        pick: (cid) => cid.includes(`@${INSFX_SCOPE}.`),
+      });
+    }
+    for (const [node, index] of Object.entries(FX_CHANNEL_NODE_INDEX)) {
+      if (!m.nodes.some((n) => n.id === node)) continue;
+      for (const type of fxEffectTypes(index)) {
+        variants.push({
+          name: `${node} ${type.label}`,
+          seed: (p) => void (p.nodeParams[node] = { ...p.nodeParams[node], fxEffect: { type: type.value } }),
+          pick: (cid) => cid.startsWith(`${node}/fx@${FX_SCOPE}.`),
+        });
+      }
+    }
+
+    const fresh = (v: Variant): Plan => {
+      const p = defaultPlan(id);
+      ensureFixedConnections(m, p);
+      v.seed(p);
+      return p;
+    };
+    /** Feed back what one 14-bit pass sends for `cid`, through `shift` (the identity for an
+     *  echo), and answer whether the plan moved or `applied` fired. */
+    const moves = (p: Plan, cid: string, addr: Addr, shift: (bytes: number[]) => number[] = (b) => b): boolean => {
+      const before = JSON.stringify(p);
+      const sent: number[][] = [];
+      let applied = 0;
+      const engine = new MidiEngine({
+        resolve: (x) => bindControl(m, p, x),
+        gate: () => null,
+        refused: () => {},
+        applied: () => void applied++,
+        send: (bytes) => void sent.push(bytes),
+        learned: () => {},
+        learnPending: () => {},
+        now: () => 0,
+      });
+      engine.setMappings([{ control: cid, addr, mode: "absolute" }]);
+      engine.feedback(true, true);
+      expect(sent.length, `${cid} sent nothing on ${addr.type}`).toBeGreaterThan(0);
+      for (const bytes of sent) engine.onMessage(shift(bytes));
+      return applied > 0 || JSON.stringify(p) !== before;
+    };
+
+    // The positive control: the same wiring sees a move when the message is NOT the echo — a
+    // pitch bend 64 positions away from what was sent, on a control fine enough to take it.
+    const away = (bytes: number[]): number[] => {
+      const v = Math.min(16383, (bytes[1] | (bytes[2] << 7)) + 64);
+      return [bytes[0], v & 0x7f, v >> 7];
+    };
+    expect(moves(fresh(variants[0]), controlId("ch1", "attack", GATE_SCOPE), ADDRS[1], away)).toBe(true);
+
+    const offenders: string[] = [];
+    const swept = new Set<string>();
+    for (const v of variants) {
+      let p = fresh(v);
+      const ids = listControls(m, p)
+        .filter((d) => d.kind === "continuous" && v.pick(d.id))
+        .map((d) => d.id);
+      expect(ids.length, `${v.name} lists no control to sweep`).toBeGreaterThan(0);
+      for (const cid of ids) {
+        swept.add(cid);
+        for (const addr of ADDRS) {
+          if (!moves(p, cid, addr)) continue;
+          offenders.push(`${v.name} / ${addr.type} / ${cid}`);
+          p = fresh(v);
+        }
+      }
+    }
+    // The populations the factory plan does not reach, named so a seeding that stops listing
+    // them fails here rather than passing on a smaller sweep.
+    expect([...swept].some((cid) => cid.endsWith(`@${INSFX_SCOPE}.compander.9`))).toBe(true);
+    expect([...swept].some((cid) => cid.includes(`@${FX_SCOPE}.delay`))).toBe(true);
+    expect([...swept].some((cid) => cid.includes("@ssmcs"))).toBe(true);
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -834,6 +981,56 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [th]: 100 }, "mbc");
     expect(push(cid, 0.75), "with the knob off").toBe(true);
     expect(slotVal("bus.stereo", "mbc", th)).not.toBe(100);
+  });
+
+  // The band bypasses are switches, bound through their own setter: the slider case above says
+  // nothing about them. They are the only toggles the 1-knob drives.
+  it.each(MBC_BANDS.map((b) => [b.band, b.bypass] as const))(
+    "refuses the %s band's bypass while the 1-knob drives it, and takes it back",
+    (_band, slot) => {
+      const cid = controlId("bus.stereo", "insfx", `insfx.mbc.${slot}`);
+      holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 1, [slot]: 0 }, "mbc");
+      expect(push(cid, 1), "while the knob is on").toBe(false);
+      expect(slotVal("bus.stereo", "mbc", slot)).toBe(0);
+      holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: 0, [slot]: 0 }, "mbc");
+      expect(push(cid, 1), "with the knob off").toBe(true);
+      expect(slotVal("bus.stereo", "mbc", slot)).toBe(1);
+    },
+  );
+
+  // A controller is told the switch the way the write sends it, which is the question the lock
+  // above asks of the same slot: a value the write sends as 0, or not at all, reads OFF here
+  // and leaves the bands writable, rather than lighting the switch over unlocked bands.
+  it.each([
+    [true, 0],
+    [-1, 0],
+    [1, 1],
+  ])("tells a controller a 1-knob switch holding %j as %i", (v, told) => {
+    const th = MBC_BANDS[0].threshold;
+    holding("bus.stereo", 1792, { [MBC_ONE_KNOB.on.slot]: v as number, [th]: 100 }, "mbc");
+    const sw = bindControl(model, plan, controlId("bus.stereo", "insfx", `insfx.mbc.${MBC_ONE_KNOB.on.slot}`))!;
+    expect(sw.get()).toBe(told);
+    expect(push(controlId("bus.stereo", "insfx", `insfx.mbc.${th}`), 0.75), "a band, as the lock reads it").toBe(
+      told === 0,
+    );
+  });
+
+  // Auto Makeup computes the gain, so a mapping's write to it is refused the way the screen
+  // locks the row and the writer leaves it out — and only the gain: the threshold it computes
+  // the gain from stays the operator's.
+  it("refuses the COMP gain while Auto Makeup is on, and takes it back when it is off", () => {
+    const gain = controlId("ch1", "gain", "comp");
+    const threshold = controlId("ch1", "threshold", "comp");
+    const comp = (autoMakeup: boolean): void => {
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { gain: 6, threshold: -20, autoMakeup, oneKnob: false } };
+    };
+    comp(true);
+    expect(push(gain, 0.75), "while Auto Makeup is on").toBe(false);
+    expect(plan.nodeParams.ch1?.comp?.gain).toBe(6);
+    expect(push(threshold, 0.75), "the threshold stays the operator's").toBe(true);
+    comp(false);
+    expect(push(gain, 0.75), "with Auto Makeup off").toBe(true);
+    expect(plan.nodeParams.ch1?.comp?.gain).not.toBe(6);
   });
 
   it("refuses the 1-knob's own Level while the knob is off", () => {
@@ -1396,9 +1593,11 @@ describe("what a mirrored pair covers", () => {
         },
       }),
     );
-    // Reachable, like the insert-FX pair: nothing makes the two agree before a press arrives.
+    // Reachable, like the insert-FX pair: the codec keeps it, and while a DOCUMENT carrying it is
+    // repaired on load — the primary's value copied onto the secondary — a device read that
+    // reached one member alone still brings it.
     expect([back.nodeParams.ch1?.on, back.nodeParams.ch2?.on]).toEqual([true, false]);
-    expect(planProblems(model, back)).toEqual([]);
+    expect(planProblems(model, back).map((p) => p.reason)).toEqual(["linkedPair"]);
 
     const a = press("ch1", PAN_BAL_BAL, true, false);
     const b = press("ch2", PAN_BAL_BAL, true, false);

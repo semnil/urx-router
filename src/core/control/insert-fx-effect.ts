@@ -10,7 +10,10 @@
 // Plan storage keeps RAW broker integers keyed by engine SLOT (insertFxParams on
 // the node), so a captured plan round-trips and the inspector edits raw with a
 // display-only formatter. The selector binds the engine and populates per-type
-// defaults; urx-router only writes the slots the plan explicitly carries.
+// defaults on the transition INTO a type; urx-router writes the slots the plan
+// carries, and a selection and a load put every writable slot of the selected type
+// in the plan at that type's default (`seedInsertFxParams`), so the plan holds what
+// the screen shows.
 //
 // A SELECTOR WRITE IS NOT REVERSIBLE. Writing the selector makes the device fill
 // the bound engine array with that type's defaults, and selecting the ORIGINAL type
@@ -24,14 +27,16 @@
 // channel's selector read No Effect. So a selector write can overwrite settings
 // belonging to whatever else uses the same engine.
 //
-// The unit does not let two channels reach one engine at the same time, which is what
-// makes the shared area safe in practice: the user guide's Effect list gives each
-// effect a "Number of simultaneous uses", and the compander's reads "MONO IN channels:
-// 1 slot; output channels: 1 slot", with the Supported-channels row adding that it
-// "cannot be inserted into two mono channels". That is the grounding for the 1-of slot
-// rule in params.ts (InsertFxSlot) — it is a documented device constraint, not an app
-// policy. Cited by section rather than page: the list moved from p.180 to p.184 between
-// the C0 and D0 revisions.
+// The user guide's Effect list gives each effect a "Number of simultaneous uses", and
+// the compander's reads "MONO IN channels: 1 slot; output channels: 1 slot", with the
+// Supported-channels row adding that it "cannot be inserted into two mono channels".
+// That is the grounding for the 1-of slot rule in params.ts (InsertFxSlot) — it is a
+// documented device constraint, not an app policy. Cited by section rather than page:
+// the list moved from p.180 to p.184 between the C0 and D0 revisions. The control link
+// does not enforce it: a second channel selecting the compander while another holds it
+// is accepted, and both then point at the one array. What keeps the shared area
+// consistent is the app's side — the 1-of menu (insertFxMenu), and collapseSharedAddrs
+// in translate.ts, which sends one value per address whatever put two owners in a plan.
 //
 // planToCommands is safe here because it emits the selector and then immediately
 // overwrites the array with the plan's own values, so the device ends up matching
@@ -40,6 +45,7 @@
 // and write them all back explicitly; re-selecting the old type does not restore.
 
 import { preferredNumber, R40 } from "./preferred-numbers";
+import { boundRaw } from "./vd";
 
 // Engine array param_id each effect family binds (confirmed by the live pointer
 // read; the selector/enable/pointer params themselves live in params.ts).
@@ -408,8 +414,10 @@ export const mbcReleaseLabel = (index: number): string => {
   const ms = MBC_RELEASE_MS[index] ?? 0;
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`;
 };
-/** MBC Out Gain raw → display ("+4 dB"). raw = dB + 64. */
-export const mbcOutGainLabel = (raw: number): string => `${raw - 64} dB`;
+/** MBC Out Gain raw → dB. raw = dB + 64. */
+export const mbcOutGainDb = (raw: number): number => raw - 64;
+/** MBC Out Gain raw → display ("+4 dB"). */
+export const mbcOutGainLabel = (raw: number): string => `${mbcOutGainDb(raw)} dB`;
 
 /**
  * One band's compressor in the plot's own units, from the three raws that shape it.
@@ -814,9 +822,10 @@ function companderTyped(selector: number | undefined): InsertFxParamDesc[] {
 // ---- writable-slot enumeration (translate / readback) ----
 //
 // Every engine array slot urx-router writes for a family, plus any mirror slot.
-// Plan storage is a slot→raw map; translate only emits the slots the plan carries
-// (absent slots keep the device's per-type default), and readback reads them all.
-// slot0 (type) / slot1 (on) / slot2 (mix) are device-managed by the selector.
+// Plan storage is a slot→raw map; translate emits the slots the plan carries, a
+// selection and a load fill the ones it does not (`seedInsertFxParams`), and readback
+// reads them all. slot0 (type) / slot1 (on) / slot2 (mix) are device-managed by the
+// selector.
 
 export interface InsertFxSlotSpec {
   slot: number;
@@ -824,7 +833,7 @@ export interface InsertFxSlotSpec {
   mirror?: number;
   /** Calibrated raw bounds, carried from the catalog so the emit path can bound a
    *  hand-edited plan to the same range the inspector enforces. Every slot states
-   *  them: an absent bound is an opt-out of that firewall (translate.ts boundRaw
+   *  them: an absent bound is an opt-out of that firewall (vd.ts boundRaw
    *  passes the raw through), which is silent at the catalog and audible at the
    *  device. */
   rawMin: number;
@@ -951,6 +960,81 @@ export function reKeyInsertFxParams(
   return next;
 }
 
+/** Pitch Fix's slots no descriptor row carries, at what the unit comes up at: MIDI Control
+ *  off (both bits), Scale Chromatic, and every note of the mask on. */
+const PITCH_UNLISTED_DEFS: Readonly<Record<number, number>> = {
+  [PITCH_MIDI_ENABLE_SLOT]: 0,
+  [PITCH_MIDI_REALTIME_SLOT]: 0,
+  [PITCH_SCALE_SLOT]: PITCH_SCALE_CHROMATIC,
+  ...Object.fromEntries(PITCH_NOTE_SLOTS.map((slot) => [slot, 1])),
+};
+
+/** Every writable slot of `family` at the default its type comes up at, keyed by slot — what
+ *  the screen shows for a slot the plan does not hold, and what a selection or a load puts in
+ *  the plan there. `selector` matters to the compander alone, as in `insertFxParams`. */
+export function insertFxDefaults(family: InsertFxFamily, selector?: number): Readonly<Record<number, number>> {
+  const out: Record<number, number> = {};
+  for (const d of insertFxParams(family, selector)) out[d.slot] = d.def;
+  if (family === "pitch") Object.assign(out, PITCH_UNLISTED_DEFS);
+  return out;
+}
+
+/**
+ * `params` with every writable slot of the effect `selector` names that it does not hold —
+ * under the family's own key or the bare slot number — set to that type's default under the
+ * family's key, and the keys it set. The unit fills the engine with those defaults on the
+ * transition into a type and not on a same-value write, so a plan that leaves a slot out is
+ * one whose write sends nothing there while the screen prints the default. A value the map
+ * holds is never replaced, and a selector naming no family (No Effect, an unknown value)
+ * seeds nothing.
+ */
+export function seedInsertFxParams(
+  params: Record<string, number> | undefined,
+  selector: number,
+): { params: Record<string, number> | undefined; seeded: string[] } {
+  const family = insertFxFamilyOf(selector);
+  if (!family) return { params, seeded: [] };
+  const defaults = insertFxDefaults(family, selector);
+  const next = { ...params };
+  const seeded: string[] = [];
+  for (const { slot } of insertFxWritableSlots(family)) {
+    const key = insertFxParamKey(family, slot);
+    if (next[key] !== undefined || next[String(slot)] !== undefined) continue;
+    next[key] = defaults[slot];
+    seeded.push(key);
+  }
+  return { params: seeded.length > 0 ? next : params, seeded };
+}
+
+/** The raw the emit sends for a stored engine-slot value: a finite number, rounded and bounded
+ *  to the slot's window. Undefined for anything else, which the emit does not send. */
+export function insertFxSlotRaw(v: unknown, spec: Pick<InsertFxSlotSpec, "rawMin" | "rawMax">): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? boundRaw(v, spec.rawMin, spec.rawMax) : undefined;
+}
+
+const SWITCH_WINDOW = { rawMin: 0, rawMax: 1 } as const;
+
+/** Whether a 0..1 switch slot holding `v` is on: the raw the emit sends there is not 0. A
+ *  value the emit does not send (a boolean, a string) counts as off. */
+export function insertFxSwitchOn(v: unknown): boolean {
+  return (insertFxSlotRaw(v, SWITCH_WINDOW) ?? 0) !== 0;
+}
+
+/**
+ * Whether a driver slot — the multi-band compressor's 1-knob On, Pitch Fix's MIDI Control
+ * bits — is on, answered from the raw the emit sends there (`insertFxSwitchOn`). The driven
+ * sets the writer skips, the locks the screen and the MIDI catalogue draw, and the screen's
+ * own switch and mode all ask this one question, so none of them can call a value on that
+ * the write sends as off, or the other way round.
+ */
+export function insertFxDriverOn(
+  params: Record<string, number> | undefined,
+  family: InsertFxFamily,
+  slot: number,
+): boolean {
+  return insertFxSwitchOn(insertFxSlotVal(params, family, slot, 0));
+}
+
 export function insertFxDeviceDriven(
   family: InsertFxFamily,
   params: Record<string, number> | undefined,
@@ -959,8 +1043,7 @@ export function insertFxDeviceDriven(
 }
 
 export function mbcDeviceDriven(params: Record<string, number> | undefined): ReadonlySet<number> {
-  const on = insertFxSlotVal(params, "mbc", MBC_ONE_KNOB.on.slot, 0);
-  return on ? MBC_LEVEL_DRIVEN : EMPTY_SLOTS;
+  return insertFxDriverOn(params, "mbc", MBC_ONE_KNOB.on.slot) ? MBC_LEVEL_DRIVEN : EMPTY_SLOTS;
 }
 const MBC_LEVEL_DRIVEN: ReadonlySet<number> = new Set([
   // EVERY per-band slot, read off the descriptors rather than named here: that is the rule
@@ -1039,7 +1122,7 @@ export function insertFxLockedSlots(
   params: Record<string, number> | undefined,
 ): ReadonlySet<number> {
   if (family === "mbc") {
-    return insertFxSlotVal(params, family, MBC_ONE_KNOB.on.slot, 0) ? mbcDeviceDriven(params) : ONE_KNOB_LEVEL_ONLY;
+    return insertFxDriverOn(params, family, MBC_ONE_KNOB.on.slot) ? mbcDeviceDriven(params) : ONE_KNOB_LEVEL_ONLY;
   }
   if (family === "pitch") return pitchDeviceDriven(params);
   return EMPTY_SLOTS;
@@ -1048,8 +1131,7 @@ const ONE_KNOB_LEVEL_ONLY: ReadonlySet<number> = new Set([MBC_ONE_KNOB.level.slo
 const MOD_GATED: ReadonlySet<number> = new Set([GUITAR_MOD.speed, GUITAR_MOD.depth]);
 
 export function pitchDeviceDriven(params: Record<string, number> | undefined): ReadonlySet<number> {
-  const on = insertFxSlotVal(params, "pitch", PITCH_MIDI_ENABLE_SLOT, 0);
-  return on ? PITCH_MIDI_DRIVEN : EMPTY_SLOTS;
+  return insertFxDriverOn(params, "pitch", PITCH_MIDI_ENABLE_SLOT) ? PITCH_MIDI_DRIVEN : EMPTY_SLOTS;
 }
 const PITCH_MIDI_DRIVEN: ReadonlySet<number> = new Set([PITCH_SCALE_SLOT, ...PITCH_NOTE_SLOTS]);
 const EMPTY_SLOTS: ReadonlySet<number> = new Set();

@@ -36,13 +36,25 @@ The desktop app reflects a plan to a connected URX. Steps for the user:
 2. **Open the plan:** save the skill's plan JSON to a file, then in the desktop
    app use **File → Open** and pick it. The graph and CONSOLE views populate.
 3. **Reflect to hardware**, via the **Device** menu:
-   - **Write to device** — a one-shot push. It reports how many settings differ
+   - **Write to device** — a one-shot push, and the only way to put an opened plan
+     on the unit. It reports how many settings differ
      and overwrites the device's current settings with the plan. It asks first
      when the unit's firmware is not the version the app was tested with, and when
-     the unit runs a different sample rate than the plan (re-clocking it interrupts
-     audio, so the user can also write at the device's own rate instead).
-   - **Live sync** — a continuous toggle: further edits reflect to the device as
-     you make them (and the board follows the device's own knob/LCD moves).
+     the unit runs a different sample rate than the plan. With the unit's
+     SETUP > Follow USB off, that is a yes/no before re-clocking it (which interrupts
+     audio for a moment); to keep the unit's rate instead, set the plan's **Rate** to
+     it before writing. With Follow USB on, a write of the plan's rate would be pulled
+     back to the computer's rate a moment later, so the app offers three answers:
+     write at the unit's rate, turn Follow USB off and write the plan's, or cancel.
+   - **Live sync** — a continuous toggle that STARTS by reading the unit into the
+     plan: the unit's values replace the opened plan's rather than the plan's being
+     written. It asks before discarding only when the plan has unsaved edits, so a
+     plan just opened from a file is replaced without a prompt. From then on, further
+     edits reflect to the device as you make them (and the board follows the device's
+     own knob/LCD moves).
+
+   To apply a plan and keep editing it live: **Write to device first, then turn on
+   Live sync**.
 4. **Fetch from device** goes the other way — it reads the device's current state
    back into a plan, useful as a starting point to edit.
 5. **Scope** (Preferences → *Device read / write* → *Scope*) governs Fetch, Write

@@ -84,6 +84,7 @@ export function nodeParamEffects(patch: NodeParams, prev: NodeParams | undefined
       patch.clipSafe !== undefined ||
       patch.hiZ !== undefined ||
       patch.insertFx !== undefined ||
+      patch.insertFxOn !== undefined ||
       patch.compEqType !== undefined ||
       patch.eqOn !== undefined ||
       patch.gateOn !== undefined ||

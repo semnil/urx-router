@@ -233,10 +233,15 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     expect([53, 54, 55].map(fx2FreqHz)).toEqual([315, 335, 355]);
     expect([44, 45, 46].map(revxFreqHz)).toEqual([3150, 3550, 4000]);
   });
-  it("Initial/ER delay = raw × 200/127", () => {
-    expect(initDelayMs(0)).toBeCloseTo(0, 1);
-    expect(initDelayMs(26)).toBeCloseTo(41.0, 0);
-    expect(initDelayMs(127)).toBeCloseTo(200, 1);
+  // The unit's LCD prints these to 0.1 ms, so each point is held to that: raw 0 is the
+  // range's own 0.1 ms floor, raw 2 is REV-X's factory Initial Delay, and the other three
+  // are the points a law through the ends has to pass on its way.
+  it("Initial/ER delay = 0.1 + raw × 199.9/127, on the points the LCD prints", () => {
+    expect(initDelayMs(0)).toBeCloseTo(0.1, 1);
+    expect(initDelayMs(2)).toBeCloseTo(3.2, 1);
+    expect(initDelayMs(4)).toBeCloseTo(6.4, 1);
+    expect(initDelayMs(26)).toBeCloseTo(41.0, 1);
+    expect(initDelayMs(127)).toBeCloseTo(200.0, 1);
   });
   it("Mono delay = raw / 10, on the three points that disproved raw / 14.976", () => {
     // Read off the unit with Sync off. 7563 is the raw the retired record claimed was
@@ -248,6 +253,33 @@ describe("fx-effect encodings (live calibration anchors)", () => {
   });
   it("both delay types read a raw the same way", () => {
     for (const raw of [10, 5000, 13500]) expect(delayMs(raw)).toBe(pingPongDelayMs(raw));
+  });
+  // The LCD prints a delay to 0.1 ms across the whole range, and that is also the step an
+  // arrow key moves a Mono row by — so a label rounded to whole ms above 10 ms gave ten
+  // consecutive settings one reading.
+  it("prints every delay time to 0.1 ms, as the LCD does", () => {
+    const mono = fxParams(1024).find((d) => d.key === MONO_DELAY_KEY)!;
+    expect(mono.format!(7563, {})).toBe("756.3 ms");
+    expect(mono.format!(5000, {})).toBe("500.0 ms");
+    expect(mono.format!(5004, {})).toBe("500.4 ms");
+    expect(mono.format!(27000, {})).toBe("2700.0 ms");
+    expect(mono.format!(1, {})).toBe("0.1 ms");
+    // Initial / ER-Rev Delay, on the points its law is held to.
+    const revx = fxParams(0).find((d) => d.key === "revxInitialDelay")!;
+    expect([0, 2, 4, 127].map((r) => revx.format!(r, {}))).toEqual(["0.1 ms", "3.2 ms", "6.4 ms", "200.0 ms"]);
+    const revr3 = fxParams(768).find((d) => d.label === "initialDelay")!;
+    expect(revr3.format!(26, {})).toBe("41.0 ms");
+  });
+  it("prints a REV-X Reverb Time to three significant figures, as the LCD does", () => {
+    const hall = fxParams(0).find((d) => d.key === "reverbTime")!;
+    expect(hall.format!(24, { roomSize: 0 })).toBe("0.927 s");
+    expect(hall.format!(69, { roomSize: 0 })).toBe("10.3 s");
+    // The three types' floors, which a fixed two decimals printed as 0.10 / 0.15 / 0.18.
+    expect([0, 1, 2].map((t) => fxParams(t).find((d) => d.key === "reverbTime")!.format!(0, { roomSize: 0 }))).toEqual([
+      "0.103 s",
+      "0.152 s",
+      "0.176 s",
+    ]);
   });
   it("Ping Pong delay = raw / 10 (LCD-confirmed 2026-07-19)", () => {
     expect(pingPongDelayMs(13500)).toBeCloseTo(1350, 1); // official max
@@ -263,7 +295,7 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     expect(mono.rawMax).toBe(27000); // 2700 ms
     // Same raw, same displayed ms — the split is the range, and it is what keeps a
     // Mono time above 1350 ms off a descriptor that would have the device clamp it.
-    expect(pp.format!(13500, {})).toBe("1350 ms");
+    expect(pp.format!(13500, {})).toBe("1350.0 ms");
     expect(pp.format!(13500, {})).toBe(mono.format!(13500, {}));
     expect(mono.rawMax).toBeGreaterThan(pp.rawMax!);
   });
@@ -628,6 +660,26 @@ describe("fx-effect parameter keys", () => {
     expect(deserialize(serialize(plan)).nodeParams["bus.fx2"]?.fxEffect?.params).toEqual({
       [MONO_DELAY_KEY]: 12000,
     });
+  });
+
+  // A version-1 document whose parameter map is a number or `true` reaches the migration
+  // before the load-time repair that drops a non-object map, so the migration has to leave
+  // it for that repair rather than reading it as a map.
+  it("leaves a version-1 parameter map that is not an object to the load repair", () => {
+    for (const params of [5, true]) {
+      const plan = emptyPlan("URX44V");
+      const legacy = JSON.stringify({
+        ...JSON.parse(serialize(plan)),
+        version: 1,
+        nodeParams: { "bus.fx1": { fxEffect: { type: 0, params } } },
+      });
+      const loaded = deserialize(legacy);
+      expect(loaded.nodeParams["bus.fx1"]?.fxEffect?.params, String(params)).toBe(params);
+      expect(
+        paramRangeProblems(loaded).map((p) => [p.node, p.where, p.key, p.action]),
+        String(params),
+      ).toContainEqual(["bus.fx1", "field", "params", "drop"]);
+    }
   });
 
   it("keeps an already-qualified value and a key the saved family does not have", () => {

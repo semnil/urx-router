@@ -265,7 +265,9 @@ source under it. A write of such a plan sends nothing to that selector, so the u
 until a source is drawn onto STREAMING.
 
 The STREAMING channel carries a **DELAY** (the DELAY screen, STREAMING channel only): an on/off, a
-**Delay Time** (1.00 … 1000.00 ms, 0.01 ms steps), and a **Frame rate** selector (24 / 25 / 29.97D /
+**Delay Time** (1.00 … 1000.00 ms, carried in 0.01 ms; the unit's own ms knob steps 1.00 ms, or 0.02 ms
+pressed, keeping the hundredths a value holds, so a value on the 0.02 ms grid stays on it and one off it
+stays off it, and the app's controls step the same way), and a **Frame rate** selector (24 / 25 / 29.97D /
 29.97 / 30D / 30 / 60 / 120). The delay is a single time value; the frame rate only changes how that
 time is shown in frames on the device — it does not alter the delay. Edited on the streaming bus node
 (inspector DELAY section), not a wire.
@@ -385,7 +387,10 @@ refused at load.
   PRE EQ / PRE FADER. Default PRE FADER. Stored as a per-channel parameter, not a wire.
   In SSMCS mode the list drops PRE EQ (the morphing strip has no discrete EQ stage), and
   switching to SSMCS with PRE EQ selected moves the tap to PRE COMP (device behavior,
-  mirrored by the planner).
+  mirrored by the planner). The write sends a channel only a stage its own list offers
+  (`recPointOptionsFor` in `core/control/params.ts`, shared by the Inspector's menu and the
+  self-test's sweep): a stage it does not offer goes out as PRE FADER, a PRE EQ in SSMCS mode
+  as PRE COMP, and a loaded document holding one opens there, reported.
   - **A channel direct out to USB MAIN / SUB or microSD Rec is tapped at this Rec Point** (i.e.
     before the fader and Ducker). To send a fader/Ducker-processed signal to those outputs you must
     route via a STEREO / MIX bus (the bus is post-Ducker). The planner surfaces this
@@ -472,7 +477,8 @@ refused at load.
 
 | Constraint | Condition |
 | --- | --- |
-| INS FX unavailable | sample rate above 96 kHz |
+| Every INS FX unavailable | sample rate above 96 kHz |
+| Pitch Fix (INS FX) unavailable | sample rate above 48 kHz (88.2 / 96 kHz; the user guide's Effect list) |
 | Stereo channel (CH 5/6–11/12) EQ unavailable | sample rate 176.4 / 192 kHz |
 | FX2 unavailable | sample rate above 96 kHz |
 

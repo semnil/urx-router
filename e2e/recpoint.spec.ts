@@ -2,7 +2,9 @@ import { test, expect, colorToken, type Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
-const recSelect = (page: Page) => page.locator("#inspector .param", { hasText: "Rec Point" }).locator("select");
+// By the select's own name: the Routing section's "Connect the Rec Point to" picker carries
+// the words too, and a row-text match would find both.
+const recSelect = (page: Page) => page.locator("#inspector").getByLabel("Rec Point", { exact: true });
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {

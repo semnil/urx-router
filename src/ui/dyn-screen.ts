@@ -34,7 +34,9 @@ import {
   el,
   holdAppInert,
   holdInertOnBlur,
+  mouseMovedUnpressed,
   onInertHoldsEnd,
+  preserveFocus,
   settingsRow,
   settingsSection,
   sliderRow,
@@ -60,7 +62,7 @@ import type { MeterTap } from "../core/meters";
 import { dynFromPos, dynPosRange, dynToPos, dynValueText, formatDyn } from "../core/control/translate";
 import type { DynField } from "../core/control/translate";
 import type { DeviceModel } from "../models/types";
-import { processorOn } from "../core/plan";
+import { isPlainRecord, processorOn } from "../core/plan";
 import type { NodeParams, Plan, PROCESSOR_ON_DEFAULT } from "../core/plan";
 import { loadJson, saveJson } from "../core/storage";
 
@@ -183,8 +185,9 @@ export interface DynBinding {
   readoutCols?: number;
   /** The height a bank reserves for all of its faces, where the stylesheet's own number is
    *  not enough. Declared by the binding, like `readoutCols`, because it is a property of
-   *  what the node HOLDS: a guitar amp's panel is eleven rows and overflows the shared
-   *  reserve, and raising that reserve would grow every other bank's faces with it.
+   *  what the node HOLDS: the INS FX screen declares one for every family, since a follow
+   *  can replace the family under an open screen and some families' grids are taller than
+   *  the shared reserve — raising that reserve would grow every other bank's faces with it.
    *  Absent = the stylesheet's number. Every face of one bank must answer the same value,
    *  or the modal resizes between them, which is what the reserve exists to stop. */
   faceReserve?: number;
@@ -263,6 +266,9 @@ export interface DynBarItem {
 export interface DynPlotPicks {
   count: number;
   hit: (c: CanvasRenderingContext2D, g: DynPlotGeo, at: { x: number; y: number }) => number | null;
+  /** What pick `i` is called — the band's own name — which the canvas exposes as the value
+   *  it is set to, since a canvas has no text of its own to say which one is selected. */
+  label: (i: number) => string;
 }
 
 export interface DynRowCtx extends DynCtx {
@@ -509,10 +515,12 @@ export interface DynProcessor {
  *  `DynProcessor` from spreading into every caller. */
 export type DynPlotProcessor = DynProcessor & Required<Pick<DynProcessor, "plotGeo" | "drawAxes" | "drawCurve">>;
 
-/** Peak hold, in notify frames (100 ms each). Nothing on the device sets this —
- *  the level meters hold in hardware and GR holds not at all — so it is a UI
- *  choice: long enough to read a value that arrived while looking elsewhere. */
-const PEAK_HOLD_FRAMES = 12;
+/** Peak hold, in milliseconds of wall time from when the held value was first painted.
+ *  Nothing on the device sets this — the level meters hold in hardware and GR holds not
+ *  at all — so it is a UI choice: long enough to read a value that arrived while looking
+ *  elsewhere. Timed by the frame clock rather than counted in repaints, so it lasts the
+ *  same on every display's refresh rate. */
+const PEAK_HOLD_MS = 1200;
 
 /** Repaint cap. The feed is 10 Hz; this only bounds how soon a new frame reaches
  *  the screen, since no interpolation is applied between frames. */
@@ -545,6 +553,11 @@ export interface DynScreenHooks {
   midi?: MidiLearnHooks;
   /** The screen closed: the surfaces that print these values re-render. */
   onClosed: () => void;
+  /** Focus the control that opens processor `key`'s screen for `nodeId`, as the surface
+   *  that carries it draws it now. Asked at close when focus did not land back on the
+   *  element that opened the screen — that surface rebuilt it while the screen was open,
+   *  or replaced it before the screen claimed focus. */
+  focusOpener?: (key: string, nodeId: string) => void;
 }
 
 interface BarRefs {
@@ -554,12 +567,14 @@ interface BarRefs {
 
 /** One bar's held peak, in dB. Kept in the meter's own unit rather than as a
  *  fraction so the readout prints it directly; `db === null` is "nothing held
- *  yet", which is the same distinction the readouts draw between a value and "—". */
+ *  yet", which is the same distinction the readouts draw between a value and "—".
+ *  `at` is the frame time the hold started, NaN for a value taken between frames,
+ *  which the next paint stamps. */
 interface PeakHold {
   db: number | null;
-  age: number;
+  at: number;
 }
-const noPeak = (): PeakHold => ({ db: null, age: 0 });
+const noPeak = (): PeakHold => ({ db: null, at: Number.NaN });
 
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
@@ -634,6 +649,8 @@ export class DynScreen {
 
   private readonly store = new MeterStore();
   private paintN = 0; // frame counter gating the throttled readout text
+  /** The frame clock's time at the last tick, which the peak holds are timed against. */
+  private frameAt = 0;
   /** Last value written per bar, quantized: an idle bar then writes nothing. */
   private barCache = new Map<string, { v: number; p: number }[]>();
   /** The live overlay's last state per lane, so a frame that moved nothing draws nothing. */
@@ -657,7 +674,13 @@ export class DynScreen {
    *  GATE curve maps `offsetX` — in the NEW width — through the geometry cached for the
    *  old one, so the threshold that gets written is not the one the operator clicked,
    *  and while live it goes to the unit. A ResizeObserver rather than a window `resize`
-   *  listener: it also catches a DPR change and a layout shift that is not a resize. */
+   *  listener: it also catches a layout shift that is not a window resize.
+   *
+   *  It does not catch a device-pixel-ratio change. The observed box is in CSS pixels and
+   *  `measure()` compares CSS sizes only, so a window moved to a display of another scale
+   *  keeps the old backing resolution until the next `drawPlot` — a parameter, theme or
+   *  language change, a rebuild, or a meter frame that moves the overlay — which resizes
+   *  the backing to the current ratio. */
   private plotResize: ResizeObserver | null = null;
   private plotSize = { w: 0, h: 0 };
   private geoCache: DynPlotGeo | null = null;
@@ -731,6 +754,9 @@ export class DynScreen {
   private endDrag: (() => void) | null = null;
   /** The plan the screen was drawn from. A different one at a refresh is that plan replaced. */
   private drawnFor: Plan | null = null;
+  /** The plan the screen was opened on. Focus goes back to an opener only while it is still
+   *  the plan on screen, the same rule a rebuild carries focus by. */
+  private openedOn: Plan | null = null;
   /** The press in flight began on a plan since replaced: what it drives writes nothing, and
    *  the rows go back to what the plan holds once it ends. */
   private stalePress = false;
@@ -780,6 +806,11 @@ export class DynScreen {
     // prevent for the value rows. The deferral therefore lasts as long as the press, which
     // is what it meant before the blur was added as an end at all.
     window.addEventListener("blur", () => this.endDrag?.());
+    // A mouse moving with no button held is a release too, for a press whose own the page
+    // never heard — the native context menu takes a right press's — so it runs the same
+    // release as `pointerup`. Capture phase, so the cap's and the plot's drags end before
+    // their own move handlers see it.
+    window.addEventListener("pointermove", (e) => void (mouseMovedUnpressed(e) && release()), true);
   }
 
   isOpen(): boolean {
@@ -834,6 +865,7 @@ export class DynScreen {
     this.applyBinding(bound);
     this.peaks.clear();
     this.drawnFor = this.hooks.getPlan();
+    this.openedOn = this.drawnFor;
     this.render();
     this.releaseInert ??= holdAppInert(this.scrim);
     this.scrim.hidden = false;
@@ -846,6 +878,13 @@ export class DynScreen {
 
   close(): void {
     if (!this.isOpen()) return;
+    // A gesture does not outlive the screen it was made on: Escape and a processor taken
+    // away both close with the button still down, and a cap or plot drag left armed would
+    // go on writing through the captured pointer until the release.
+    this.endDrag?.();
+    this.grabbed = false;
+    this.refreshPending = false;
+    this.stalePress = false;
     if (this.redrawRaf) cancelAnimationFrame(this.redrawRaf);
     this.redrawRaf = 0;
     this.dismiss.detach();
@@ -857,6 +896,14 @@ export class DynScreen {
     this.stopMeters();
     this.hooks.regainMeters();
     this.hooks.onClosed();
+    // The inert hold's release put focus back on the element that opened the screen if it is
+    // still there. Where it is not, focus is on the body or still inside the hidden box, and
+    // the opener's successor is asked for by what it opens rather than by the element.
+    const at = document.activeElement;
+    const stranded = at === null || at === document.body || this.box.contains(at);
+    if (stranded && this.entryProc && this.hooks.getPlan() === this.openedOn) {
+      this.hooks.focusOpener?.(this.entryProc.key, this.nodeId);
+    }
   }
 
   /** The nodes whose plan values the open face draws. Asked of the descriptor, which
@@ -901,7 +948,8 @@ export class DynScreen {
     // the plan that took its place without waiting for the press, and what the press drives
     // writes nothing until it ends.
     const plan = this.hooks.getPlan();
-    if (plan !== this.drawnFor) {
+    const replaced = plan !== this.drawnFor;
+    if (replaced) {
       this.drawnFor = plan;
       this.endDrag?.();
       this.stalePress = this.grabbed;
@@ -921,7 +969,9 @@ export class DynScreen {
       this.syncValues();
       return;
     }
-    this.render();
+    // Keyboard focus is carried while the plan is the one the screen was drawn from, and
+    // dropped when it was replaced: the control it was on belongs to a plan that is gone.
+    this.render(!replaced);
     this.measure();
     // render() replaced the canvas, so the size watch has to be re-attached to it.
     this.watchPlotSize();
@@ -956,7 +1006,9 @@ export class DynScreen {
 
   /** Write the current parameter values into the rows already on screen. Covers a
    *  device-side change arriving mid-gesture; anything structural (which rows exist,
-   *  which are read-only) waits for the rebuild. */
+   *  which are read-only) waits for the rebuild. A knob card's indicator is turned with
+   *  its range, and the plot is redrawn from the same values — on the EQ with 1-knob on,
+   *  the plot is the only place the band values the unit recomputes are shown. */
   private syncValues(): void {
     // One read for the pass. This runs on the follow clock WHILE a control is held, and
     // `val` per input rebuilt the whole record per row — sixteen times on a band face.
@@ -971,10 +1023,13 @@ export class DynScreen {
       if (!f) continue;
       const v = valOf(f);
       if (dynFromPos(f, Number(input.value)) !== v) input.value = String(dynToPos(f, v));
+      const ind = input.closest(".con-knob")?.querySelector<HTMLElement>(".ind");
+      if (ind) turnKnob(ind, input);
       const out = this.box.querySelector<HTMLElement>(`[data-dyn-val="${f.key}"]`);
       if (out) setLevelText(out, this.valueText(f, v));
     }
     this.syncCap();
+    this.markPlotDirty();
   }
 
   /**
@@ -1023,12 +1078,22 @@ export class DynScreen {
   /** Live sync turned on/off while this screen is open. It holds the meter slot
    *  for as long as it is open, so nothing else will re-establish the stream for
    *  it: without this a session that drops and returns leaves the screen dark
-   *  until it is closed and reopened. The readouts already fall back to "—" on
-   *  their own, since every paint reads the live state. */
+   *  until it is closed and reopened.
+   *
+   *  Turning it off stops the frame loop, which is the only thing that paints, so the
+   *  readings are dropped and one paint runs here: the bars go to the floor, the readouts
+   *  and their peaks to "—", and the plot is redrawn without its live overlay. */
   setLive(active: boolean): void {
     if (!this.isOpen()) return;
-    if (active) this.startMeters();
-    else this.stopMeters();
+    if (active) {
+      this.startMeters();
+      return;
+    }
+    this.stopMeters();
+    this.readings.clear();
+    this.liveLast = [];
+    this.paintN = 0;
+    this.paint();
   }
 
   // ---------------------------------------------------------------- meters
@@ -1078,7 +1143,7 @@ export class DynScreen {
           const p = this.peakFor(lane.key, 0);
           if (p.db === null || db < p.db) {
             p.db = db;
-            p.age = 0;
+            p.at = Number.NaN;
           }
         }
       })
@@ -1116,6 +1181,7 @@ export class DynScreen {
     if (!this.raf) {
       let last = 0;
       const tick = (now: number): void => {
+        this.frameAt = now;
         if (now - last >= FRAME_MS) {
           last = now;
           this.paint();
@@ -1196,11 +1262,11 @@ export class DynScreen {
         // is one comparison for every lane — no level/reduction branch.
         if (
           db !== null &&
-          (p.db === null || this.laneFrac(lane, db) > this.laneFrac(lane, p.db) || p.age > PEAK_HOLD_FRAMES)
+          (p.db === null || this.laneFrac(lane, db) > this.laneFrac(lane, p.db) || this.frameAt - p.at > PEAK_HOLD_MS)
         ) {
           p.db = db;
-          p.age = 0;
-        } else if (db !== null) p.age++;
+          p.at = this.frameAt;
+        } else if (p.db !== null && Number.isNaN(p.at)) p.at = this.frameAt;
         const bar = db === null || !off ? db : Math.min(0, db + off);
         const pk = p.db === null || !off ? p.db : Math.min(0, p.db + off);
         this.setBar(lane, i, bar === null ? 0 : this.laneFrac(lane, bar), pk === null ? 0 : this.laneFrac(lane, pk));
@@ -1299,8 +1365,10 @@ export class DynScreen {
     return this.p().read(this.ctx());
   }
 
+  /** Writes nothing while closed, which also covers a native range whose drag the engine
+   *  goes on driving after the screen is hidden. */
   private setVals(patch: Record<string, number | boolean>): void {
-    if (this.stalePress) return;
+    if (this.stalePress || !this.isOpen()) return;
     const ctx = this.ctx();
     this.hooks.onUpdateNodeParams(this.nodeId, this.p().patch(ctx, patch), this.p().written?.(ctx, patch));
   }
@@ -1394,11 +1462,21 @@ export class DynScreen {
 
   // ---------------------------------------------------------------- rendering
 
-  private render(): void {
+  /** Rebuild the box. `carryFocus` hands keyboard focus from a control in the old box to
+   *  the same control in the new one — the rebuild replaces every element, so focus would
+   *  otherwise fall to the body on every rebuild, the operator's own ON/OFF press included. */
+  private render(carryFocus = true): void {
     const m = t();
     const proc = this.proc;
     if (!proc) return;
     const g = m.dynTuning;
+    const restoreFocus = carryFocus
+      ? preserveFocus(
+          this.box,
+          (active) => this.focusMark(active),
+          (mark) => this.focusTarget(mark),
+        )
+      : null;
     this.readTokens();
     this.box.replaceChildren();
     this.bars.clear();
@@ -1458,6 +1536,47 @@ export class DynScreen {
     this.box.append(title, grid, actions);
     this.syncCap();
     this.paint();
+    restoreFocus?.();
+  }
+
+  /**
+   * Where keyboard focus sits in the box, as the key the rebuilt box is searched by: a value
+   * row by the field it edits, a control with an id by that id, and anything else by its
+   * position among the box's controls plus the classes that say what it is.
+   *
+   * The position is counted over every control the box builds, tab stop or not, so a lock
+   * that takes the cap or the plot out of the tab order does not move the controls after it.
+   * The classes leave out the ones that say what STATE a control is in — a pressed choice,
+   * a lock, a MIDI arming — since pressing a choice is exactly what rebuilds it.
+   */
+  private focusMark(active: HTMLElement): FocusMark | null {
+    const idx = screenControls(this.box).indexOf(active);
+    if (idx < 0) return null;
+    return {
+      dyn: active instanceof HTMLInputElement ? active.dataset.dyn : undefined,
+      id: active.id || undefined,
+      idx,
+      shape: controlShape(active),
+    };
+  }
+
+  /** The control a focus mark names in the rebuilt box, or null — dropping the focus is
+   *  the outcome where the control is gone, or locked by the rebuild. A field key that no
+   *  longer has a row names nothing, rather than falling through to a position. */
+  private focusTarget(mark: FocusMark): HTMLElement | null {
+    let hit: HTMLElement | null | undefined;
+    if (mark.dyn !== undefined) {
+      hit = [...this.box.querySelectorAll<HTMLInputElement>("input[data-dyn]")].find((i) => i.dataset.dyn === mark.dyn);
+    } else {
+      const byId = mark.id === undefined ? null : document.getElementById(mark.id);
+      if (byId && this.box.contains(byId)) hit = byId;
+      else {
+        const at = screenControls(this.box)[mark.idx];
+        if (at && controlShape(at) === mark.shape) hit = at;
+      }
+    }
+    if (!hit || (hit as HTMLButtonElement).disabled || hit.getAttribute("aria-disabled") === "true") return null;
+    return hit;
   }
 
   private displayColumn(proc: DynProcessor): HTMLElement {
@@ -1722,7 +1841,10 @@ export class DynScreen {
   private capControl(track: HTMLElement): HTMLElement {
     const cap = el("div", "gt-cap");
     cap.id = "dyn-threshold-cap";
-    cap.tabIndex = 0;
+    // A locked cap leaves the tab order and says it is disabled, the way the native row
+    // beside it does when its control is disabled.
+    const locked = this.capLocked();
+    cap.tabIndex = locked ? -1 : 0;
     cap.setAttribute("role", "slider");
     const field = this.capField();
     const m = t();
@@ -1734,7 +1856,10 @@ export class DynScreen {
     );
     cap.setAttribute("aria-valuemin", String(this.capField()?.min ?? this.p().loDb));
     cap.setAttribute("aria-valuemax", String(HI_DB));
-    if (this.capLocked()) cap.classList.add("locked");
+    if (locked) {
+      cap.classList.add("locked");
+      cap.setAttribute("aria-disabled", "true");
+    }
     this.cap = cap;
 
     // The slot's rect is read once per gesture: reading it per move is a forced
@@ -1876,6 +2001,14 @@ export class DynScreen {
     if (picks.count <= 0) return;
     cv.tabIndex = 0;
     cv.classList.add("gt-pickplot");
+    // A slider over the picks, which is what its keys already are: the arrows step, Home and
+    // End go to the ends, and the value is the selected one, by name. The hint stays the
+    // canvas's own name.
+    cv.setAttribute("role", "slider");
+    cv.setAttribute("aria-valuemin", "0");
+    cv.setAttribute("aria-valuemax", String(picks.count - 1));
+    cv.setAttribute("aria-valuenow", String(this.sel));
+    cv.setAttribute("aria-valuetext", picks.label(this.sel));
     // Through `pressSegment` for the same reason the bar's buttons are: selecting rebuilds
     // the column, so the canvas the key was pressed on is replaced and focus falls to the
     // body — a keyboard user would land nowhere after one arrow press.
@@ -2065,22 +2198,16 @@ export class DynScreen {
     input.value = String(dynToPos(f, value));
     input.dataset.dyn = f.key;
     input.setAttribute("aria-label", label);
-    const lo = Number(input.min);
-    const hi = Number(input.max);
-    const turn = (pos: number): void => {
-      const frac = hi > lo ? (pos - lo) / (hi - lo) : 0;
-      ind.style.setProperty("--rot", `${-135 + frac * 270}deg`);
-    };
     const show = (v: number): void => {
       const text = this.valueText(f, v);
       setLevelText(val, text);
       input.setAttribute("aria-valuetext", text);
     };
     show(value);
-    turn(Number(input.value));
+    turnKnob(ind, input);
     input.addEventListener("input", () => {
       const pos = Number(input.value);
-      turn(pos);
+      turnKnob(ind, input);
       const v = dynFromPos(f, pos);
       show(v);
       this.setVals({ [f.key]: v });
@@ -2301,14 +2428,51 @@ export const PLOT_TOKENS = [
 
 /** The persisted bar selection per processor. A stored value is a segment INDEX, so it
  *  means whatever that bar's item at that position means: renumbering a bar's segments
- *  takes a new store key, since an old index and a new one are indistinguishable. */
+ *  takes a new store key, since an old index and a new one are indistinguishable.
+ *  A stored container that is not an object (null, an array, a primitive) reads as no
+ *  selection at all: the reader runs while the module that owns the screen is being
+ *  constructed, so a throw here would stop the whole app from starting. */
 function loadSels(): Record<string, number> {
-  const raw = loadJson<Record<string, unknown>>(SEL_STORE, {});
+  const raw = loadJson<unknown>(SEL_STORE, {});
+  if (!isPlainRecord(raw)) return {};
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(raw)) {
     if (typeof v === "number") out[k] = v;
   }
   return out;
+}
+
+/** Where keyboard focus was in a tuning screen's box, as `focusMark` records it. */
+interface FocusMark {
+  dyn?: string;
+  id?: string;
+  idx: number;
+  shape: string;
+}
+
+/** Every control a tuning screen's box builds, in document order, whether or not it is a tab
+ *  stop right now. */
+function screenControls(box: HTMLElement): HTMLElement[] {
+  return [...box.querySelectorAll<HTMLElement>("input, select, button, canvas, [tabindex]")];
+}
+
+/** Classes a control carries for the state it is in rather than for what it is. */
+const STATE_CLASSES: ReadonlySet<string> = new Set(["on", "locked", "midi-armed", "midi-mapped"]);
+
+/** What a control is, for telling a rebuilt control from another one in its place: the
+ *  element and its classes, less the state ones. */
+function controlShape(el: HTMLElement): string {
+  const cls = [...el.classList].filter((c) => !STATE_CLASSES.has(c)).sort();
+  return `${el.tagName}.${cls.join(".")}`;
+}
+
+/** A knob card's indicator angle for its range's current position: the same 270° sweep the
+ *  console's knobs use, written to the same custom property. */
+function turnKnob(ind: HTMLElement, input: HTMLInputElement): void {
+  const lo = Number(input.min);
+  const hi = Number(input.max);
+  const frac = hi > lo ? (Number(input.value) - lo) / (hi - lo) : 0;
+  ind.style.setProperty("--rot", `${-135 + frac * 270}deg`);
 }
 
 export function channelLabel(model: DeviceModel, nodeId: string): string {

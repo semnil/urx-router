@@ -2,11 +2,11 @@
 // parameters (level/pan/pre-post), removes a connection, and (no selection)
 // lists recent plans for quick reopen.
 
-import type { ConnectionKind, DeviceModel, NodeKind } from "../models/types";
+import type { DeviceModel, NodeKind } from "../models/types";
 import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
-import { clipNodeName, processorOn, SSMCS_INITIAL } from "../core/plan";
-import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../core/levels";
+import { clipNodeName, LEVEL_MIN_DB, LEVEL_OFF_DB, processorOn, SSMCS_INITIAL } from "../core/plan";
+import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
 import { channelGainRange, hiZPatch, inputOnRefused } from "../core/input-lock";
 import { formatHz, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 
@@ -43,8 +43,7 @@ import {
   OSC_MODE_OPTIONS,
   OSC_MODE_SINE,
   REC_POINT_DEFAULT,
-  REC_POINT_OPTIONS,
-  REC_POINT_PRE_EQ,
+  recPointOptionsFor,
   BUS_TYPE_VARI,
   BUS_TYPE_OPTIONS,
   SD_REC_TRACK_COUNT_DEFAULT,
@@ -53,7 +52,9 @@ import {
   PAN_BAL_PAN,
   PAN_BAL_OPTIONS,
   COMP_EQ_SSMCS,
+  COLOR_OFF,
   COLOR_PALETTE,
+  planColorHex,
   DELAY_FRAME_RATE_OPTIONS,
   DELAY_FRAME_RATE_DEFAULT,
   insertFxEngaged,
@@ -67,6 +68,7 @@ import {
   PAN_MAX,
   DELAY_TIME_MIN_MS,
   DELAY_TIME_MAX_MS,
+  DELAY_TIME_GRID_MS,
   PHONES_LEVEL_MIN,
   PHONES_LEVEL_MAX,
   PHONES_LEVEL_DEFAULT,
@@ -88,10 +90,19 @@ import {
 } from "../core/constraints";
 import { getSettings } from "../core/settings";
 import type { RecentEntry } from "../core/storage";
-import type { Selection } from "./graph";
+import type { ConnectOrigin, Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
 import { setLevelText } from "./glyph";
-import { holdInertOnBlur, isHoldingInert, onInertHoldsEnd, wheelStep } from "./dom";
+import {
+  holdInertOnBlur,
+  isHoldingInert,
+  labelId,
+  mouseMovedUnpressed,
+  onInertHoldsEnd,
+  onWheelStep,
+  scrubFloat,
+  wheelStep,
+} from "./dom";
 import { dynOpenLabel } from "./dyn-registry";
 import { insertFxScreenFamily } from "./insert-fx-screen";
 import type { DynKind } from "./dyn-registry";
@@ -99,7 +110,7 @@ import { EQ_FREQ_POS_MAX, eqFreqToPos, eqPosToHz, formatDb, formatGainDb, format
 import { clearSectionOverride, recordSectionOpen, resolveSectionOpen } from "./inspector-sections";
 import { isBalanceChannel, sendFields, sendlessNote } from "./send-fields";
 import type { ParamField } from "./send-fields";
-import { parkOutgoingInsertFxParams } from "./insert-fx-model";
+import { parkOutgoingInsertFxParams, seedInsertFxParams } from "./insert-fx-model";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 
@@ -109,8 +120,15 @@ export interface InspectorActions {
   /** `written` names what the edit ASSERTED, as dotted paths (`"osc.on"`), for the
    *  funnel's write witness. Give it wherever the patch REBUILDS a nested group: the
    *  patch key alone names the whole group, which claims every sibling the rebuild
-   *  merely copied. Absent means the patch's own keys, which is right for a scalar. */
-  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[]) => void;
+   *  merely copied. Absent means the patch's own keys, which is right for a scalar.
+   *  `defaults` names, the same way, the values the edit put in as a type's defaults rather
+   *  than as anything the operator chose — an effect selection's seeded engine slots. */
+  onUpdateNodeParams: (
+    id: string,
+    patch: NodeParams,
+    written?: readonly string[],
+    defaults?: readonly string[],
+  ) => void;
   onRenameNode: (id: string, name: string) => void;
   onRecolorNode: (id: string, color: string | null) => void;
   onOpenRecent: (path: string) => void;
@@ -118,6 +136,15 @@ export interface InspectorActions {
   /** Open the GATE tuning screen for a MONO IN channel. */
   onOpenDynScreen: (kind: DynKind, id: string) => void;
   onClose: () => void;
+  /** The node's jacks a wire can be drawn from, with where each can go: the keyboard's way
+   *  to connect, offered in the Routing section. */
+  connectOrigins: (id: string) => ConnectOrigin[];
+  /** Draw the wire from `origin` to `other`, as the board's drag does. */
+  onConnect: (origin: ConnectOrigin, other: string) => void;
+  /** Whether the board draws this wire; only such a wire is selectable from the panel. */
+  wireDrawn: (from: string, to: string) => boolean;
+  /** Select a wire, as a press on it does: the keyboard's way to its panel and its Delete. */
+  onSelectConnection: (from: string, to: string) => void;
 }
 
 // HA gain slider position shown for a channel whose gain has not been fetched or
@@ -229,6 +256,7 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
 export function compositionGate(host: HTMLElement, rebuild: () => void): { held: () => boolean; reset: () => void } {
   let composing = false;
   let pending = false;
+  let pressing = false;
   // Runs the held rebuild once the gate is no longer busy — asked on the event that
   // ENDS the busy state, by which point it has already ended. A composition clears its
   // own flag here.
@@ -245,7 +273,7 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // launcher appears, which between them are the whole route to the tuning screen.
   const flush = (pickerClosed = false): void => {
     if (!pending) return;
-    if (composing || isHoldingInert() || (!pickerClosed && openPicker())) return;
+    if (composing || pressing || isHoldingInert() || (!pickerClosed && openPicker())) return;
     pending = false;
     rebuild();
   };
@@ -267,12 +295,18 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   const openPicker = (): boolean =>
     document.activeElement instanceof HTMLSelectElement && host.contains(document.activeElement);
   // A row held inert is the third kind of in-flight input a rebuild destroys, and the
-  // worst of the three: replacing it hands the still-held pointer a live control, which
-  // is the state the hold exists to prevent. Same seam, one more reason.
-  const busy = (): boolean => composing || openPicker() || isHoldingInert();
-  // …and the only one of the three with no end event of its own: a hold ends on a pointer
-  // release this host never sees, so nothing here would fire and a rebuild held during it
-  // would wait for whatever the operator happened to do next. `flush` rather than `end`,
+  // worst of them: replacing it hands the still-held pointer a live control, which is the
+  // state the hold exists to prevent. Same seam, one more reason.
+  //
+  // A press that began inside the host is the fourth. The click a press produces is
+  // dispatched at its release, to the element the press began on, so a rebuild between
+  // the two removes that element and the click reaches nothing — a button, a segmented
+  // bar's segment, a section header, the field a press was focusing. Held from the
+  // pointerdown until that click has reached its target's own handlers.
+  const busy = (): boolean => composing || pressing || openPicker() || isHoldingInert();
+  // …and the hold has no end event of its own: a hold ends on a pointer release this host
+  // never sees, so nothing here would fire and a rebuild held during it would wait for
+  // whatever the operator happened to do next. `flush` rather than `end`,
   // which also clears `composing` — a backstop the two input kinds need and this one must
   // not take, since a hold can end while a composition is genuinely still in flight.
   // Each of these is wrapped rather than passed straight in: `flush` and `end` now take
@@ -280,12 +314,53 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // object, so every one of them would read as "the picker closed" and the check the
   // other two paths depend on would be gone.
   onInertHoldsEnd(() => flush());
+  // A press ends at its click, on this host's bubble phase — after the target's own
+  // handlers, so the rebuild the click itself asks for runs there once — and, for a press
+  // that produces no click here (released outside the host, a secondary button, a handler
+  // that stops the click), in the task after the next pointer release anywhere, at a mouse
+  // move with no button held, or when the window comes back from a release it never heard.
+  // The click is dispatched in the same task as the release producing it, so that task
+  // comes after it. Any release ends it rather than the app-wide count of pointers down
+  // reaching zero: a pointer that count never sees released would hold this panel for as
+  // long as the window keeps its focus.
+  // A press on a `<select>` is left out: the picker it opens holds the panel by focus,
+  // and its `change` releases that hold whether or not the page hears the press's release.
+  const release = (): void => {
+    if (!pressing) return;
+    pressing = false;
+    flush();
+  };
+  const releaseNextTask = (): void => void setTimeout(release, 0);
+  host.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (e.target instanceof Element && e.target.closest("select")) return;
+      pressing = true;
+    },
+    true,
+  );
+  host.addEventListener("click", release);
+  window.addEventListener("pointerup", releaseNextTask, true);
+  window.addEventListener("pointercancel", releaseNextTask, true);
+  // The native context menu takes a right press's release, and no click follows a move, so
+  // the move with no button held releases at once.
+  window.addEventListener("pointermove", (e) => void (pressing && mouseMovedUnpressed(e) && release()), true);
+  window.addEventListener("focus", release);
   host.addEventListener("compositionstart", () => {
     composing = true;
   });
   host.addEventListener("compositionend", () => end());
   host.addEventListener("change", () => end(true));
-  host.addEventListener("focusout", () => end());
+  // A focus move releases the hold in the NEXT task rather than inside the focusout. The
+  // focusout fires partway through the gesture that moves the focus — a Tab before the
+  // focus lands on the next control, a click or a tap before the click event — and a
+  // rebuild there removes the control the gesture is going to: the Tab's focus lands on
+  // nothing, and the click on nothing. One task later the focus has landed, which is what
+  // the rebuild carries across, and a pointer press still down holds it as above.
+  host.addEventListener("focusout", () => {
+    composing = false;
+    setTimeout(() => flush(), 0);
+  });
   return {
     held: () => {
       if (!busy()) return false;
@@ -301,7 +376,8 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
     // the caller rebuilds without asking, which removes the composing field, and the end
     // event for a composition whose field is gone may never arrive. Left set, `composing`
     // would latch for the rest of the session and the panel would stop updating at all —
-    // the failure this file's header names.
+    // the failure this file's header names. A press stays held: the caller's rebuild does
+    // not end it, and its own release does.
     reset: () => {
       composing = false;
       pending = false;
@@ -415,11 +491,9 @@ export function renderInspector(
     if (node.kind === "channel") {
       // MONO IN exposes all five tap stages; ST IN only the `stereo` ones. In
       // SSMCS mode the device drops PRE EQ (no discrete EQ stage to tap ahead of).
-      const isMono = channelControl(model, node.id)?.hasMicStrip;
+      const isMono = channelControl(model, node.id)?.hasMicStrip === true;
       const inSsmcs = isMono && plan.nodeParams[node.id]?.compEqType === COMP_EQ_SSMCS;
-      const recOptions = REC_POINT_OPTIONS.filter(
-        (o) => (isMono || o.stereo) && !(inSsmcs && o.value === REC_POINT_PRE_EQ),
-      );
+      const recOptions = recPointOptionsFor(!isMono, inSsmcs);
       host.append(
         enumSelect(m.inspector.recPoint, recOptions, plan.nodeParams[node.id]?.recPoint ?? REC_POINT_DEFAULT, (v) =>
           actions.onUpdateNodeParams(node.id, { recPoint: v }),
@@ -507,7 +581,7 @@ export function renderInspector(
     }
 
     // After a device readback, a node in plan.unreadNodes still shows its plan
-    // default (its body read failed); warn that its values are not the device's.
+    // value (a read failed on it); warn that its values are not the device's.
     // No provenance (a plan never fetched) shows nothing.
     if (plan.unreadNodes?.has(node.id)) {
       host.append(notReadBadge(m.inspector.notReadFromDevice));
@@ -518,12 +592,28 @@ export function renderInspector(
     // Routing lists default collapsed — wiring is done on the canvas, so the
     // inspector keeps this folded away behind a count summary. A header node
     // (microSD Rec) takes no direct wire of its own, so it shows no routing list.
+    // It is also the keyboard's way to wire: each wire the board draws is a button that
+    // selects it (its panel carries the delete), and each jack offers what it can connect
+    // to.
     if (!node.header) {
       const { el, body } = section(m.inspector.routing, { open: false, key: "routing" });
+      const origins = actions.connectOrigins(node.id);
+      const connect = (origin: ConnectOrigin): void => {
+        if (!origin.targets.length) return;
+        const label =
+          origin.dir === "in"
+            ? m.inspector.connectSource
+            : origin.tap
+              ? m.inspector.connectRecPoint
+              : m.inspector.connectOutput;
+        body.append(connectControl(label, origin, endpointLabel, actions, m));
+      };
       body.append(subheading(m.inspector.inputsFrom(incoming.length)));
-      for (const c of incoming) body.append(connRow(`${endpointLabel(c.from)} →`, c.kind));
+      for (const c of incoming) body.append(connRow(`${endpointLabel(c.from)} →`, c, actions));
+      for (const o of origins) if (o.dir === "in") connect(o);
       body.append(subheading(m.inspector.outputsTo(outgoing.length)));
-      for (const c of outgoing) body.append(connRow(`→ ${endpointLabel(c.to)}`, c.kind));
+      for (const c of outgoing) body.append(connRow(`→ ${endpointLabel(c.to)}`, c, actions));
+      for (const o of origins) if (o.dir === "out") connect(o);
       host.append(el);
     }
 
@@ -665,7 +755,16 @@ export function renderInspector(
         const locked = sec.key === "eqOn" && eqLocked;
         const on = locked ? false : processorOn(np, sec.key);
         const { el, body } = section(m.inspector[sec.key], { open: on, on, key: sec.key });
-        body.append(sectionToggle(node.id, sec.key, on, actions, locked ? m.inspector.eqRateLocked : undefined));
+        body.append(
+          sectionToggle(
+            node.id,
+            sec.key,
+            on,
+            actions,
+            m.inspector[sec.key],
+            locked ? m.inspector.eqRateLocked : undefined,
+          ),
+        );
         if (sec.key === "gateOn" && dyn) body.append(dynLauncher("gate", node.id, actions, m));
         else if (sec.key === "compOn" && ssmcs) body.append(dynLauncher("ssmcsComp", node.id, actions, m));
         else if (sec.key === "compOn" && dyn?.comp) body.append(dynLauncher("comp", node.id, actions, m));
@@ -713,7 +812,7 @@ export function renderInspector(
       if (oeq) {
         const on = processorOn(np, "eqOn");
         const { el, body } = section(m.inspector.eqOn, { open: on, on, key: "eqOn" });
-        body.append(sectionToggle(node.id, "eqOn", on, actions));
+        body.append(sectionToggle(node.id, "eqOn", on, actions, m.inspector.eqOn));
         body.append(dynLauncher("eq", node.id, actions, m));
         host.append(el);
       }
@@ -853,15 +952,19 @@ export function renderInspector(
         ),
       );
       ps.body.append(boolToggle(m.inspector.delayOn, delay.on ?? false, (v) => setDelay({ on: v })));
+      // The unit's own pressed-knob step, 0.02 ms. A key or a notch moves the held value by
+      // exactly that, as the unit's knob does, so a value off the 0.02 ms grid prints, is
+      // written and steps as itself; a drag lands on the grid.
       ps.body.append(
         rangeSlider(
           m.inspector.delayTime,
           DELAY_TIME_MIN_MS,
           DELAY_TIME_MAX_MS,
-          0.01,
+          DELAY_TIME_GRID_MS,
           delay.time ?? DELAY_TIME_MIN_MS,
           (v) => `${v.toFixed(2)} ms`,
           (v) => setDelay({ time: v }),
+          true,
         ),
       );
       host.append(ps.el);
@@ -915,8 +1018,16 @@ export function renderInspector(
             const sel = Number(v);
             const patch: NodeParams = sel === INSERT_FX_NONE ? { insertFx: sel } : { insertFx: sel, insertFxOn: true };
             const parked = parkOutgoingInsertFxParams(plan.nodeParams[node.id]);
-            if (parked) patch.insertFxParams = parked;
-            actions.onUpdateNodeParams(node.id, patch);
+            // The plan takes the selected type's defaults for every slot it does not hold,
+            // which is what the screen shows and what the unit fills the engine with.
+            const { params, seeded } = seedInsertFxParams(parked ?? undefined, sel);
+            if (parked || seeded.length > 0) patch.insertFxParams = params;
+            actions.onUpdateNodeParams(
+              node.id,
+              patch,
+              undefined,
+              seeded.map((key) => `insertFxParams.${key}`),
+            );
           },
         ),
       );
@@ -941,6 +1052,7 @@ export function renderInspector(
             "insertFxOn",
             !ifxRateLocked && ifxOn,
             actions,
+            m.inspector.insertFx,
             !ifxRateLocked
               ? undefined
               : ifxEntry?.option.maxRate !== undefined
@@ -1114,6 +1226,7 @@ function sectionToggle(
   key: string,
   on: boolean,
   actions: InspectorActions,
+  name: string,
   lockedTitle?: string,
 ): HTMLElement {
   // A lockedTitle shows the value with both buttons disabled + a tooltip (e.g. the
@@ -1126,6 +1239,7 @@ function sectionToggle(
       actions.onUpdateNodeParams(nodeId, { [key]: v });
     },
     lockedTitle,
+    name,
   );
 }
 
@@ -1209,6 +1323,11 @@ function paramControl(
 // A labeled range slider that updates its value readout and reports the numeric
 // value on every input. Mutates in place (no re-render) so it keeps focus while
 // dragging. Shared by the connection (panSlider) and node-level controls.
+//
+// With `heldSteps`, an arrow key or a wheel notch moves the value the row holds by exactly
+// `step` and stops at the ends, so a value off the step grid stays off it; a drag lands on
+// the grid. The range itself cannot hold such a value — it rounds one to the nearer step,
+// halfway up — so the row keeps it, and the thumb rests where the range rounds it.
 function rangeSlider(
   label: string,
   min: number,
@@ -1217,20 +1336,44 @@ function rangeSlider(
   cur: number,
   fmt: (v: number) => string,
   onInput: (v: number) => void,
+  heldSteps = false,
 ): HTMLElement {
-  const { row, value } = paramBlock(label, fmt(cur));
+  const { row, value, labelId: id } = paramBlock(label, fmt(cur));
   const slider = document.createElement("input");
   slider.type = "range";
   slider.min = String(min);
   slider.max = String(max);
   slider.step = String(step);
   slider.value = String(cur);
-  slider.addEventListener("input", () => {
-    const v = Number(slider.value);
+  nameBy(slider, id);
+  slider.setAttribute("aria-valuetext", fmt(cur));
+  let held = cur;
+  const write = (v: number): void => {
+    held = v;
     setLevelText(value, fmt(v));
+    slider.setAttribute("aria-valuetext", fmt(v));
     onInput(v);
-  });
-  wheelStep(slider);
+  };
+  slider.addEventListener("input", () => write(Number(slider.value)));
+  if (heldSteps) {
+    const stepHeld = (dir: 1 | -1): void => {
+      if (slider.disabled) return;
+      const next = Math.min(max, Math.max(min, scrubFloat(held + dir * step)));
+      if (next === held) return;
+      slider.value = String(next);
+      write(next);
+    };
+    slider.addEventListener("keydown", (e) => {
+      const dir =
+        e.key === "ArrowUp" || e.key === "ArrowRight" ? 1 : e.key === "ArrowDown" || e.key === "ArrowLeft" ? -1 : 0;
+      if (dir === 0 || e.altKey || e.ctrlKey || e.metaKey) return;
+      e.preventDefault();
+      stepHeld(dir);
+    });
+    onWheelStep(slider, stepHeld);
+  } else {
+    wheelStep(slider);
+  }
   holdInertOnBlur(slider);
   row.append(slider);
   return row;
@@ -1313,7 +1456,7 @@ function fxEffectSection(
 function duckerBlock(nodeId: string, np: NodeParams, plan: Plan, actions: InspectorActions, m: Messages): HTMLElement {
   const on = processorOn(np, "duckerOn");
   const { el, body } = section(m.inspector.duckerOn, { open: on, on, key: "duckerOn" });
-  body.append(sectionToggle(nodeId, "duckerOn", on, actions));
+  body.append(sectionToggle(nodeId, "duckerOn", on, actions, m.inspector.duckerOn));
   // The detail sliders moved to the tuning screen, for the reason stated on
   // `dynLauncher`: they belong beside the meters that say what they are doing, and a
   // second copy here would sit at a stale position after the screen moved a value and
@@ -1353,6 +1496,12 @@ function mergeSsmcs(actions: InspectorActions, plan: Plan, nodeId: string, patch
 // A range slider over discrete integer positions: the slider walks [0, posMax] by
 // 1, and toPos/fromPos map a domain value (dB, Hz, …) to and from a position. Used
 // where the domain is non-linear or a fixed grid, so every stop is a real value.
+//
+// With `step`, the keys and the wheel move from the value the row holds rather than from
+// the slider's position, which is the grid point NEAREST that value: `step(from, delta)`
+// answers the value `delta` grid points away. Arrow keys move one point (Up / Right raise),
+// PageUp / PageDown six, Home / End go to position 0 / posMax, and each wheel detent is one
+// point, the wheel-step preference deciding how many detents a notch is.
 function snappedSlider(
   label: string,
   cur: number,
@@ -1361,20 +1510,62 @@ function snappedSlider(
   fromPos: (pos: number) => number,
   fmt: (v: number) => string,
   onChange: (v: number) => void,
+  step?: (from: number, delta: number) => number,
 ): HTMLElement {
-  const { row, value } = paramBlock(label, fmt(cur));
+  const { row, value, labelId: id } = paramBlock(label, fmt(cur));
   const slider = document.createElement("input");
   slider.type = "range";
   slider.min = "0";
   slider.max = String(posMax);
   slider.step = "1";
   slider.value = String(toPos(cur));
+  nameBy(slider, id);
+  // The position is a grid index; what it stands for is the value the readout prints.
+  slider.setAttribute("aria-valuetext", fmt(cur));
+  let held = cur;
+  const show = (v: number): void => {
+    held = v;
+    setLevelText(value, fmt(v));
+    slider.setAttribute("aria-valuetext", fmt(v));
+  };
   slider.addEventListener("input", () => {
     const v = fromPos(Number(slider.value));
-    setLevelText(value, fmt(v));
+    show(v);
     onChange(v);
   });
-  wheelStep(slider);
+  if (step) {
+    const go = (next: number): void => {
+      if (slider.disabled || next === held) return;
+      slider.value = String(toPos(next));
+      show(next);
+      onChange(next);
+    };
+    const KEY_STEPS: Record<string, number> = {
+      ArrowUp: 1,
+      ArrowRight: 1,
+      ArrowDown: -1,
+      ArrowLeft: -1,
+      PageUp: 6,
+      PageDown: -6,
+    };
+    slider.addEventListener("keydown", (e) => {
+      const delta = KEY_STEPS[e.key];
+      const next =
+        delta !== undefined
+          ? step(held, delta)
+          : e.key === "Home"
+            ? fromPos(0)
+            : e.key === "End"
+              ? fromPos(posMax)
+              : null;
+      if (next === null) return;
+      e.preventDefault();
+      go(next);
+    });
+    onWheelStep(slider, (dir) => go(step(held, dir)));
+  } else {
+    wheelStep(slider);
+  }
   holdInertOnBlur(slider);
   row.append(slider);
   return row;
@@ -1390,8 +1581,12 @@ function eqFreqControl(cur: number, onChange: (hz: number) => void): HTMLElement
 // grid (LEVEL_STEPS_DB) instead of a uniform dB step — the hardware only stores
 // those detents, so a 0.5 dB step would offer unsettable values (e.g. -15.0).
 // The slider index maps to a grid position: 0 = -∞ (off), 1..N = LEVEL_STEPS_DB.
+// Its keys and wheel step through stepLevel from the plan's own value, so a level between two
+// detents moves to the adjacent one; a level below the floor steps from -∞.
 function levelSlider(label: string, cur: number, onChange: (v: number) => void): HTMLElement {
-  return snappedSlider(label, cur, LEVEL_POS_MAX, levelToPos, posToLevel, formatDb, onChange);
+  return snappedSlider(label, cur, LEVEL_POS_MAX, levelToPos, posToLevel, formatDb, onChange, (from, delta) =>
+    stepLevel(from < LEVEL_MIN_DB ? LEVEL_OFF_DB : from, delta),
+  );
 }
 
 // Node-level bus output fader (STEREO master / MIX / MONITOR): the level_gain
@@ -1414,27 +1609,45 @@ function balanceControl(label: string, cur: number, onChange: (v: number) => voi
 // (e.g. a plain send ON/OFF) do not re-render the inspector, so without this the
 // button would stay visually stale until the next selection.
 function selectToggle(group: HTMLElement, button: HTMLButtonElement): void {
-  group.querySelectorAll("button").forEach((x) => x.classList.remove("on"));
-  button.classList.add("on");
+  group.querySelectorAll("button").forEach((x) => {
+    x.classList.toggle("on", x === button);
+    x.setAttribute("aria-pressed", String(x === button));
+  });
+}
+
+/** A two-button group, named by its row's label or, for a section's bare toggle, by the
+ *  section's own name. */
+function toggleGroup(labelId: string | undefined, name?: string): HTMLElement {
+  const group = document.createElement("div");
+  group.className = "toggle";
+  group.setAttribute("role", "group");
+  if (labelId !== undefined) group.setAttribute("aria-labelledby", labelId);
+  else if (name !== undefined) group.setAttribute("aria-label", name);
+  return group;
 }
 
 // `lockedTitle`, when set, renders the pair read-only: both buttons disabled (no
 // click handler) and the reason shown as a row tooltip — the value is still visible.
-function boolToggle(label: string, value: boolean, onChange: (v: boolean) => void, lockedTitle?: string): HTMLElement {
-  // Read as truthiness, not `=== on`. The device write is `np.mono ? 1 : 0` and the
-  // load funnel passes a finite numeric leaf through unchecked, so a plan authored
-  // elsewhere reaches here carrying 1 — under a strict compare NEITHER button lights
-  // and the row emits aria-pressed="1", which is not an ARIA boolean at all.
+// `name` names a pair that has no row label of its own (a section's bare toggle).
+function boolToggle(
+  label: string,
+  value: boolean,
+  onChange: (v: boolean) => void,
+  lockedTitle?: string,
+  name?: string,
+): HTMLElement {
+  // Read as truthiness, not `=== on`, so a value that reaches here as a number (1 / 0)
+  // lights and presses the button the write would send.
   const state = Boolean(value);
-  const { row } = paramBlock(label, "");
+  const { row, labelId: id } = paramBlock(label, "");
   if (lockedTitle !== undefined) row.title = lockedTitle;
-  const group = document.createElement("div");
-  group.className = "toggle";
+  const group = toggleGroup(id, name);
   const make = (on: boolean, text: string): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = text;
     b.classList.toggle("on", state === on);
+    b.setAttribute("aria-pressed", String(state === on));
     if (lockedTitle === undefined)
       b.addEventListener("click", () => {
         selectToggle(group, b);
@@ -1457,8 +1670,9 @@ function selectControl(
   onChange: (v: string) => void,
   disabled = false,
 ): HTMLElement {
-  const { row } = paramBlock(label, "");
+  const { row, labelId: id } = paramBlock(label, "");
   const sel = document.createElement("select");
+  nameBy(sel, id);
   for (const o of options) {
     const opt = document.createElement("option");
     opt.value = o.value;
@@ -1498,28 +1712,45 @@ function enumSelect(
 // "none" swatch is the device "Off" state (no cap).
 const NODE_COLORS = COLOR_PALETTE.map((c) => c.hex);
 
-// A row of color swatches plus a "none" clear option. The active color (or none)
-// is ringed. Selecting toggles: clicking the active color clears it.
+/** The unit's own name for each palette entry, in COLOR_PALETTE's order. */
+export function colorNames(m: Messages): string[] {
+  const c = m.inspector.colorName;
+  return [c.blue, c.orange, c.yellow, c.purple, c.cyan, c.magenta, c.red, c.green, c.ltGreen, c.white];
+}
+
+// A row of color swatches plus a "none" option, which sets the device Off. The active color
+// (or none) is ringed and pressed; each swatch is named the way the unit's picker names it.
+// Selecting toggles: clicking the active color sets Off.
 function colorSwatches(
   label: string,
   current: string | undefined,
   onPick: (color: string | null) => void,
 ): HTMLElement {
-  const { row } = paramBlock(label, "");
+  const { row, labelId: id } = paramBlock(label, "");
   const strip = document.createElement("div");
   strip.className = "swatches";
-  const none = document.createElement("button");
-  none.type = "button";
-  none.className = "swatch swatch-none" + (current ? "" : " sel");
-  none.title = label;
-  none.addEventListener("click", () => onPick(null));
-  strip.append(none);
-  for (const c of NODE_COLORS) {
+  strip.setAttribute("role", "group");
+  nameBy(strip, id);
+  // What the plan holds, as the swatch it paints: none for Off and for a node with no color.
+  const shown = planColorHex(current);
+  const swatch = (name: string, selected: boolean): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "swatch" + (current === c ? " sel" : "");
+    b.className = "swatch" + (selected ? " sel" : "");
+    b.title = name;
+    b.setAttribute("aria-label", name);
+    b.setAttribute("aria-pressed", String(selected));
+    return b;
+  };
+  const none = swatch(t().inspector.colorName.off, !shown);
+  none.classList.add("swatch-none");
+  none.addEventListener("click", () => onPick(COLOR_OFF));
+  strip.append(none);
+  const names = colorNames(t());
+  for (const [i, c] of NODE_COLORS.entries()) {
+    const b = swatch(names[i], shown === c);
     b.style.background = c;
-    b.addEventListener("click", () => onPick(current === c ? null : c));
+    b.addEventListener("click", () => onPick(shown === c ? COLOR_OFF : c));
     strip.append(b);
   }
   row.append(strip);
@@ -1546,9 +1777,10 @@ function textInput(
   onInput: (v: string) => void,
   clip?: (v: string) => string,
 ): HTMLElement {
-  const { row } = paramBlock(label, "");
+  const { row, labelId: id } = paramBlock(label, "");
   const input = document.createElement("input");
   input.type = "text";
+  nameBy(input, id);
   input.value = value;
   input.placeholder = placeholder;
   let composing = false;
@@ -1583,9 +1815,8 @@ function textInput(
 
 function tapControl(conn: PlanConnection, onUpdate: UpdateParams, editable = true): HTMLElement {
   const cur = conn.params?.tap ?? "post";
-  const { row } = paramBlock(t().inspector.prePost, "");
-  const group = document.createElement("div");
-  group.className = "toggle";
+  const { row, labelId: id } = paramBlock(t().inspector.prePost, "");
+  const group = toggleGroup(id);
   // CH → FX taps are read-only: the device rejects software writes, so the device
   // (LCD) value is shown but the buttons are disabled, with an explanatory tooltip.
   if (!editable) row.title = t().inspector.prePostLcdOnly;
@@ -1594,6 +1825,7 @@ function tapControl(conn: PlanConnection, onUpdate: UpdateParams, editable = tru
     b.type = "button";
     b.textContent = text;
     b.classList.toggle("on", cur === tap);
+    b.setAttribute("aria-pressed", String(cur === tap));
     b.disabled = !editable;
     if (editable)
       b.addEventListener("click", () => {
@@ -1607,7 +1839,10 @@ function tapControl(conn: PlanConnection, onUpdate: UpdateParams, editable = tru
   return row;
 }
 
-function paramBlock(labelText: string, valueText: string): { row: HTMLElement; value: HTMLElement } {
+function paramBlock(
+  labelText: string,
+  valueText: string,
+): { row: HTMLElement; value: HTMLElement; labelId: string | undefined } {
   const row = document.createElement("div");
   row.className = "param";
   // What main.ts keys a carried-over focus by, stamped while the row is being built so
@@ -1617,16 +1852,25 @@ function paramBlock(labelText: string, valueText: string): { row: HTMLElement; v
   value.className = "param-val";
   setLevelText(value, valueText);
   // An empty label + value (a bare section ON/OFF toggle whose name is in the
-  // section header) skips the label row so the toggle sits flush.
+  // section header) skips the label row so the toggle sits flush. The label carries an id
+  // the row's control names itself by.
+  let id: string | undefined;
   if (labelText !== "" || valueText !== "") {
     const head = document.createElement("div");
     head.className = "param-label";
     const label = document.createElement("span");
     label.textContent = labelText;
+    id = labelId("insp-lbl");
+    label.id = id;
     head.append(label, value);
     row.append(head);
   }
-  return { row, value };
+  return { row, value, labelId: id };
+}
+
+/** Name a control by its row's label, where the row has one. */
+function nameBy(control: HTMLElement, id: string | undefined): void {
+  if (id !== undefined) control.setAttribute("aria-labelledby", id);
 }
 
 // Inline warning that the selected node's values were not read from the device
@@ -1775,15 +2019,54 @@ function legendRow(color: string, label: string, square = false): HTMLElement {
   return row;
 }
 
-function connRow(text: string, kind: ConnectionKind): HTMLElement {
-  const row = document.createElement("div");
+// A wire the board draws is a button that selects it, as a press on the wire does; one it
+// does not draw (an end on the shelf, an off send the declutter toggle hides) stays a row.
+function connRow(text: string, conn: PlanConnection, actions: InspectorActions): HTMLElement {
+  const drawn = actions.wireDrawn(conn.from, conn.to);
+  const row = document.createElement(drawn ? "button" : "div");
   row.className = "conn-row";
+  if (row instanceof HTMLButtonElement) {
+    row.type = "button";
+    row.addEventListener("click", () => actions.onSelectConnection(conn.from, conn.to));
+  }
   const dot = document.createElement("span");
   // The dot wears the wire's family, not its kind: the routing list and the board
   // have to agree, and the board is drawn from WIRE_GROUP.
-  dot.className = `dot dot-${WIRE_GROUP[kind]}`;
+  dot.className = `dot dot-${WIRE_GROUP[conn.kind]}`;
   const t = document.createElement("span");
   t.textContent = text;
   row.append(dot, t);
+  return row;
+}
+
+// One jack's connect picker: the ports a drag from it would be taken on, by name. Choosing
+// one draws that wire through the board's own commit.
+function connectControl(
+  label: string,
+  origin: ConnectOrigin,
+  endpointLabel: (ref: string) => string,
+  actions: InspectorActions,
+  m: Messages,
+): HTMLElement {
+  const { row, labelId: id } = paramBlock(label, "");
+  const sel = document.createElement("select");
+  sel.dataset.focusKey = `connect:${origin.ref}:${origin.tap ? "tap" : origin.dir}`;
+  nameBy(sel, id);
+  const prompt = document.createElement("option");
+  prompt.value = "";
+  prompt.textContent = m.inspector.connectChoose;
+  prompt.disabled = true;
+  prompt.selected = true;
+  sel.append(prompt);
+  for (const target of origin.targets) {
+    const opt = document.createElement("option");
+    opt.value = target;
+    opt.textContent = endpointLabel(target);
+    sel.append(opt);
+  }
+  sel.addEventListener("change", () => {
+    if (sel.value) actions.onConnect(origin, sel.value);
+  });
+  row.append(sel);
   return row;
 }

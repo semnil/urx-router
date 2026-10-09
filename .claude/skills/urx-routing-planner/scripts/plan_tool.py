@@ -4,6 +4,9 @@
 This mirrors the app exactly so that "the script says OK" implies "URX Router
 loads the plan as authored":
 
+- the text is read by the JSON grammar the app's JSON.parse reads, so a document
+  carrying NaN, Infinity or -Infinity — or anything else that is not JSON — is refused
+  (notPlanFile) as the app refuses it,
 - the document gate matches core/plan.ts `deserializeDocument` plus the model
   check the app runs right after it: a file refused there never reaches the
   routing check (notPlanFile / planVersionUnsupported / unknownModel), and a
@@ -16,6 +19,13 @@ loads the plan as authored":
   `requiredSources`) that the document gives no wire is completed on load with the
   model's default source (core/plan-validate.ts `requiredSourceProblems`), which is
   reported as a warning — the plan loads, with a wire it did not name,
+- a fixed send into a MIX or FX bus the document lists without a level is given 0 dB on
+  load, the level the write sends for it (core/plan-validate.ts `sendLevelProblems`), which
+  is reported as a warning — the plan loads with a level it did not write,
+- a STEREO-linked pair whose members disagree about a value the pair holds once has the
+  primary's values copied onto the secondary on load (core/plan-validate.ts
+  `linkedPairProblems`), which is reported as a warning — a document naming only the
+  primary loads with the secondary holding the primary's values,
 - a send into a MIX bus whose Pan Link is on takes its source's own pan / balance on
   load (core/plan-validate.ts `linkedSendPanProblems`) wherever the document gives it
   another, which is reported as a warning — the plan loads with the pan the unit
@@ -23,10 +33,33 @@ loads the plan as authored":
 - an on/off written as a number where the model's factory values hold an on/off
   (models.json `booleanLeaves`) is converted on load to on, or to off for 0
   (core/plan-validate.ts `booleanParamProblems`), which is reported as a warning —
-  every other check reads the plan as that conversion leaves it, and
+  every other check reads the plan as that conversion leaves it,
+- a value whose kind is not the factory value's at its path (models.json `factory`) —
+  an on/off or a group where a number belongs, a group where an on/off belongs, a
+  scalar where a group belongs — is dropped on load (core/plan-validate.ts
+  `paramRangeProblems`) and the factory value filled in, which is reported as a
+  warning,
+- a node colour that is not one of the unit's palette colours or its Off (models.json
+  `colors`) is dropped on load (core/plan-validate.ts `nodeColorProblems`), and a
+  colourable node left without one is given its factory colour (models.json
+  `factory.nodeColors`; `completeNodeColors`), which the write sends — both reported as
+  warnings,
+- a nameable node the document leaves unnamed is given its factory name on load
+  (models.json `factory.nodeNames`; core/plan-validate.ts `completeNodeNames`), and the
+  write sends it, which is reported as a warning,
+- a `sampleRate` the unit does not run at loads as the default rate, and a recorder Track
+  Count above the ceiling at the rate the plan loads at is lowered to it (models.json
+  `rates`), and a version-1 document's FX parameters stored under their old shared names
+  are renamed (models.json `fxChannels[...].legacyRenames`) before every check below reads
+  them — each reported as a warning,
+- every node-param leaf the write bounds (models.json `leafRules`, and the insert-FX
+  engine slots of `insertFxParamSpace`) is bounded on load to the value the write
+  sends (core/plan-validate.ts `paramRangeProblems`), which is reported as a
+  warning, and
 - the URL encoding matches core/plan.ts `encodePlanParam` ("z" + URL-safe base64
   of the raw-deflated UTF-8 JSON, padding stripped), read back by `?plan=` on
-  startup. Compression keeps full plans inside GitHub Pages' ~8 KB URL limit;
+  startup; the JSON it deflates is the document's own text, so the link carries
+  each number as the file spells it. Compression keeps full plans inside GitHub Pages' ~8 KB URL limit;
   the app also still decodes the legacy uncompressed base64 form.
 
 Routing ground truth lives in scripts/models.json (extracted from the device
@@ -38,7 +71,8 @@ Usage:
 
 Exit code is non-zero when the plan has hard validation problems, so the skill
 can branch on it. Warnings (a dropped wire or value, a wire the load adds, a
-linked send pan the load sets, an on/off the load converts, a misplaced Ducker
+send level the load completes, a linked pair the load aligns, a linked send pan
+the load sets, an on/off the load converts, a misplaced Ducker
 param, raw-encoded params, a destructive effect selector, a contended insert-FX
 slot)
 are advisory and never fail the plan — but they all mean something worth telling
@@ -116,9 +150,12 @@ def wire_dropped(conn):
         return "from / to must be strings"
     if conn.get("kind") not in KNOWN_KINDS:
         return f"unknown kind {conn.get('kind')!r}"
-    params = conn.get("params")
-    if params is None:
+    if "params" not in conn:
         return None
+    params = conn["params"]
+    # A JSON null is not absence to the app: it is a value that is not an object.
+    if params is None:
+        return "params is null, which is not an object — omit the key for a wire with no params"
     if not isinstance(params, dict):
         return "params must be an object"
     for key in ("level", "pan"):
@@ -213,8 +250,14 @@ def validate(plan, models):
     view = converted(plan, conversions)
 
     warnings.extend(required_source_warnings(view, model, kept))
-    warnings.extend(linked_send_pan_warnings(view, model, kept))
+    warnings.extend(send_level_warnings(model, kept))
+    pairs = linked_pair_problems(view, model, kept)
+    warnings.extend(linked_pair_warnings(pairs))
+    paired, paired_kept = paired_view(view, model, kept, pairs)
+    warnings.extend(linked_send_pan_warnings(paired, model, paired_kept))
     warnings.extend(collection_warnings(view))
+    warnings.extend(name_fill_warnings(view, (model.get("factory") or {}).get("nodeNames")))
+    warnings.extend(color_warnings(view, model.get("colors"), (model.get("factory") or {}).get("nodeColors")))
     warnings.extend(
         node_param_warnings(
             view,
@@ -223,8 +266,12 @@ def validate(plan, models):
             model.get("fxChannels"),
             model.get("insertFxParamSpace"),
             model.get("hiZ"),
+            (model.get("factory") or {}).get("nodeParams"),
+            model.get("leafRules"),
+            version if is_number(version) else PLAN_VERSION,
         )
     )
+    warnings.extend(rate_warnings(view, model.get("rates")))
     problems.extend(insert_fx_pair_problems(view, model.get("channelPairs"), model.get("insertFxParamSpace") or {}))
 
     return problems, warnings
@@ -301,6 +348,175 @@ def required_source_warnings(plan, model, kept):
         why = f"the unit never leaves {label} without a source, and the document gives it none"
         out.append(f"connection {frm} -> {to}: the app adds this wire on load — {why}")
     return out
+
+
+def send_level_warnings(model, kept):
+    """The send levels the app's load completes (core/plan-validate.ts `sendLevelProblems`): a
+    fixed send into a MIX or FX bus (models.json `rackSends`) the document lists with no level is
+    given 0 dB, the level the write sends for it. A main path into STEREO is not one. The pair
+    decides, whatever kind the wire is written under, since the load restates the kind; a wire
+    the loader dropped is not asked."""
+    sends = set(model.get("rackSends") or [])
+    out = []
+    for c in kept:
+        if f"{c['from']} -> {c['to']}" not in sends or (c.get("params") or {}).get("level") is not None:
+            continue
+        why = "the document lists it without one, and 0 dB is the level a write sends for it"
+        out.append(f"connection {c['from']} -> {c['to']}: the app sets this send's level to 0 on load — {why}")
+    return out
+
+
+def filled(carried, factory):
+    """One value as the app's load completes it from the factory value at the same place
+    (models/initial-state.ts `mergeUnder`): the document wins at every key, a group recurses, a
+    list merges by index, and a scalar where the factory holds a group or a list is replaced by
+    it. `carried` is MISSING where the document has nothing there."""
+    if carried is MISSING:
+        return copy.deepcopy(factory)
+    if isinstance(factory, list) and isinstance(carried, list):
+        out = [filled(carried[i] if i < len(carried) else MISSING, f) for i, f in enumerate(factory)]
+        return out + carried[len(factory):]
+    if isinstance(factory, dict) and isinstance(carried, dict):
+        out = dict(carried)
+        for key, value in factory.items():
+            out[key] = filled(carried.get(key, MISSING), value)
+        return out
+    if isinstance(factory, (dict, list)):
+        return copy.deepcopy(factory)
+    return carried
+
+
+def js_equal(a, b):
+    """The app's structural equality (`deepEqual`): an on/off never equals a number, which
+    Python's `True == 1` would say it does."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(js_equal(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(js_equal(x, y) for x, y in zip(a, b))
+    if isinstance(a, (dict, list)) or isinstance(b, (dict, list)):
+        return False
+    return a == b
+
+
+def pair_sends(model, a, b):
+    """The fixed sends both members of a pair have into one destination, in the primary's
+    rule order, as (primary's from, secondary's from, to)."""
+    rules = {(frm, to) for frm, to, kind, fixed in model["rules"] if fixed and kind == "send"}
+    return [
+        (frm, f"{b}:out", to)
+        for frm, to, kind, fixed in model["rules"]
+        if fixed and kind == "send" and frm == f"{a}:out" and (f"{b}:out", to) in rules
+    ]
+
+
+def sent_send(model, by_wire, frm, to):
+    """A send's params as the write reads them: a listed send's own, an omitted one's seed."""
+    spec = model["linkedPairs"]
+    listed = by_wire.get((frm, to))
+    params = (listed.get("params") or {}) if listed is not None else spec["sendSeeds"].get(f"{frm} -> {to}", {})
+    level = params.get("level")
+    on = params.get("on")
+    pan = params.get("pan")
+    return {
+        "level": spec["unnamedSendLevel"] if level is None else level,
+        "on": True if on is None else on,
+        "tap": "pre" if params.get("tap") == "pre" else "post",
+        "pan": 0 if pan is None else pan,
+    }
+
+
+def pair_copies(model, key):
+    spec = model["linkedPairs"]
+    return key not in spec["own"] and key not in spec["insertFx"]
+
+
+def pair_send_keys(view_np, model, primary):
+    bal = view_np.get(primary, {}).get("panBal") if isinstance(view_np.get(primary), dict) else None
+    shared_pan = is_number(bal) and bal == model["linkedPairs"]["bal"]
+    return ("level", "on", "tap", "pan") if shared_pan else ("level", "on", "tap")
+
+
+def linked_pair_problems(plan, model, kept):
+    """The STEREO-linked pairs whose members disagree (core/plan-validate.ts
+    `linkedPairProblems`): a node param the pair holds once, as the fill completes it, or a pair
+    of fixed sends into one destination, read the way the write reads them — the pan only in BAL.
+    The insert effect is the refusal's. Returns (primary, secondary, keys, sends)."""
+    node_params = plan.get("nodeParams")
+    node_params = node_params if isinstance(node_params, dict) else {}
+    factory = (model.get("factory") or {}).get("nodeParams") or {}
+    by_wire = {(c["from"], c["to"]): c for c in kept}
+    out = []
+    for a, b in model.get("channelPairs") or []:
+        if sanitized(node_params, a, "stereoLink") is not True:
+            continue
+        def done(node_id):
+            params = node_params.get(node_id)
+            carried = sanitize_record(params) if isinstance(params, dict) else MISSING
+            return filled(carried, factory.get(node_id, {}))
+        pa, pb = done(a), done(b)
+        keys = [
+            k
+            for k in dict.fromkeys([*pa.keys(), *pb.keys()])
+            if pair_copies(model, k) and not js_equal(pa.get(k, MISSING), pb.get(k, MISSING))
+        ]
+        send_keys = pair_send_keys(node_params, model, a)
+        sends = []
+        for fa, fb, to in pair_sends(model, a, b):
+            sa, sb = sent_send(model, by_wire, fa, to), sent_send(model, by_wire, fb, to)
+            if any(not js_equal(sa[k], sb[k]) for k in send_keys):
+                sends.append(to)
+        if keys or sends:
+            out.append((a, b, keys, sends))
+    return out
+
+
+def linked_pair_warnings(problems):
+    out = []
+    for a, b, keys, sends in problems:
+        what = ", ".join([*keys, *(f"send -> {to}" for to in sends)])
+        why = "a STEREO-linked pair holds one set of values, the odd channel's"
+        out.append(f"node {b}: the app copies {a}'s values onto it on load ({what}) — {why}")
+    return out
+
+
+def paired_view(plan, model, kept, problems):
+    """The plan and its kept wires as the linked-pair copy leaves them: the secondary's shared
+    node params replaced by the primary's, and each pair of sends' shared params copied, an
+    omitted member given its seed."""
+    if not problems:
+        return plan, kept
+    view = copy.deepcopy(plan)
+    wires = copy.deepcopy(kept)
+    node_params = view.get("nodeParams") if isinstance(view.get("nodeParams"), dict) else {}
+    seeds = model["linkedPairs"]["sendSeeds"]
+    for a, b, _keys, _sends in problems:
+        src = node_params.get(a) if isinstance(node_params.get(a), dict) else {}
+        own = node_params.get(b) if isinstance(node_params.get(b), dict) else {}
+        merged = {k: v for k, v in own.items() if not pair_copies(model, k)}
+        merged.update({k: copy.deepcopy(v) for k, v in src.items() if pair_copies(model, k)})
+        node_params[b] = merged
+        send_keys = pair_send_keys(node_params, model, a)
+        for fa, fb, to in pair_sends(model, a, b):
+            find = lambda frm: next((c for c in wires if c["from"] == frm and c["to"] == to), None)
+            if find(fa) is None and find(fb) is None:
+                continue
+            for frm in (fa, fb):
+                if find(frm) is None:
+                    seed = seeds.get(f"{frm} -> {to}", {})
+                    wires.append({"from": frm, "to": to, "kind": "send", **({"params": dict(seed)} if seed else {})})
+            ca, cb = find(fa), find(fb)
+            params = dict(cb.get("params") or {})
+            for k in send_keys:
+                value = (ca.get("params") or {}).get(k)
+                if value is None:
+                    params.pop(k, None)
+                else:
+                    params[k] = value
+            cb["params"] = params
+    view["nodeParams"] = node_params
+    return view, wires
 
 
 MIX_BUSES = ("bus.mix1", "bus.mix2")
@@ -392,21 +608,55 @@ def collection_warnings(plan):
 NODE_NAME_MAX_CHARS = 8
 
 
-def name_warnings(plan):
-    """The names the app rewrites on load (and again on the way to the device).
+# The code points XML 1.0 refuses, raw or as a reference (core/plan.ts `stripXmlInvalid`): an image
+# export serializes every name and note into an SVG, and one of these fails the whole export.
+XML_INVALID_RE = re.compile("[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]")
 
-    Two rewrites, in this order: cut to the bound, then strip TRAILING whitespace.
-    A leading space survives — the unit right-aligns its stereo pair labels, so
-    " 5/ 6" is the real name — and the order matters, since cutting can land on a
-    space the trim then has to take.
+
+# The characters the app's `trimEnd` strips: ECMAScript WhiteSpace and LineTerminator. Python's
+# bare `rstrip` reads str.isspace instead, which takes U+001C-U+001F and U+0085 and leaves U+FEFF.
+JS_WHITESPACE = (
+    "\t\n\v\f\r \xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+
+
+def document_name(value):
+    """A node name as the app's load keeps it (core/plan.ts `normalizeDocumentName`): without the
+    code points XML refuses, cut to the bound, trailing whitespace stripped."""
+    return XML_INVALID_RE.sub("", value)[:NODE_NAME_MAX_CHARS].rstrip(JS_WHITESPACE)
+
+
+def name_warnings(plan):
+    """The names and notes the app rewrites on load (core/plan-validate.ts
+    `documentTextProblems`).
+
+    A name takes three rewrites, in this order: the code points XML refuses are removed, the
+    rest is cut to the bound, then TRAILING whitespace is stripped. A leading space survives —
+    the unit right-aligns its stereo pair labels, so " 5/ 6" is the real name — and the order
+    matters, since cutting can land on a space the trim then has to take. A note takes the
+    first alone.
     """
     out = []
+    notes = plan.get("notes")
+    for node_id, value in (notes.items() if isinstance(notes, dict) else []):
+        if node_id != "__proto__" and isinstance(value, str) and XML_INVALID_RE.search(value):
+            out.append(
+                f"notes[{node_id}]: the app removes the control characters from this note on load — "
+                "an image export cannot carry them"
+            )
     names = plan.get("nodeNames")
     if not isinstance(names, dict):
         return out
     for node_id, value in names.items():
-        if not isinstance(value, str):
+        if not isinstance(value, str) or node_id == "__proto__":
             continue
+        if XML_INVALID_RE.search(value):
+            out.append(
+                f"nodeNames[{node_id}]: the app removes the control characters from this name on load — "
+                "an image export cannot carry them"
+            )
+            value = XML_INVALID_RE.sub("", value)
         size = len(value)
         if size > NODE_NAME_MAX_CHARS:
             out.append(
@@ -414,12 +664,67 @@ def name_warnings(plan):
                 f"({size} given) — the unit's own name screen takes no more"
             )
         cut = value[:NODE_NAME_MAX_CHARS]
-        if cut != cut.rstrip():
+        if cut != cut.rstrip(JS_WHITESPACE):
             out.append(
                 f"nodeNames[{node_id}]: the app strips the trailing whitespace from this on load — "
                 "the unit STORES a trailing space rather than padding it away, while every path that "
                 "reads a name back trims one off, so a plan keeping one is re-sent on every sync"
             )
+    return out
+
+
+def name_fill_warnings(plan, factory_names):
+    """The names the app's load supplies (core/plan-validate.ts `completeNodeNames`): every
+    nameable node — the ones models.json `factory.nodeNames` carries — that the document leaves
+    unnamed is given its factory name, and the write sends it. Unnamed is no entry, an entry
+    that is not a string, or one the load's own cut and trim leave empty."""
+    names = plan.get("nodeNames")
+    names = names if isinstance(names, dict) else {}
+    filled = []
+    for node_id in factory_names or {}:
+        value = names.get(node_id)
+        if not isinstance(value, str) or not document_name(value):
+            filled.append(node_id)
+    if not filled:
+        return []
+    return [
+        "nodeNames: the app gives the nodes this plan leaves unnamed their factory names on load, "
+        f"and the write sends them ({', '.join(filled)})"
+    ]
+
+
+def is_plan_color(value, colors):
+    """The app's admission rule for a node colour (core/control/params.ts `isPlanColor`): one of
+    the unit's palette hexes, compared without case, or its Off spelling — models.json `colors`."""
+    if not isinstance(value, str):
+        return False
+    return value == colors["off"] or value.lower() in {hex_.lower() for hex_ in colors["palette"]}
+
+
+def color_warnings(plan, colors, factory_colors):
+    """The colours the app's load drops and supplies (core/plan-validate.ts `nodeColorProblems` and
+    `completeNodeColors`): a string that is no plan colour is dropped, and every colourable node —
+    the ones models.json `factory.nodeColors` carries — left without one is given its factory
+    colour, which the write sends. A value that is not a string is the document sanitiser's, which
+    `collection_warnings` reports; it leaves the node without a colour all the same."""
+    if not colors:
+        return []
+    entries = plan.get("nodeColors")
+    entries = entries if isinstance(entries, dict) else {}
+    out = []
+    for node_id, value in entries.items():
+        if node_id == "__proto__" or not isinstance(value, str) or is_plan_color(value, colors):
+            continue
+        out.append(
+            f"nodeColors[{node_id}]: the app drops this colour on load — {value!r} is not one of the "
+            f"unit's palette colours ({', '.join(colors['palette'])}) or {colors['off']!r}"
+        )
+    filled = [n for n in factory_colors or {} if not is_plan_color(entries.get(n), colors)]
+    if filled:
+        out.append(
+            "nodeColors: the app gives the colourable nodes this plan leaves without a colour their "
+            f"factory colours on load, and the write sends them ({', '.join(filled)})"
+        )
     return out
 
 
@@ -608,14 +913,16 @@ def insert_fx_pair_params(node_params, node_id, selector, param_space):
     a way the unit can tell apart, so leaving one out makes this checker refuse a plan the
     app loads:
 
-    - the value is read under the FAMILY's namespace, bare key second;
+    - the value is read under the FAMILY's namespace, bare key second, and a slot holding
+      neither is the type's default, which the load fills it with;
     - a value that is not a finite number is not sent at all — a boolean included, since
       `Number.isFinite(true)` is false in the app;
-    - what IS sent is the value bounded to that slot's own range, so two numbers past the
-      same end arrive as one;
+    - what IS sent is the value rounded and bounded to that slot's own range, so two numbers
+      past the same end, or rounding to one integer, arrive as one;
     - a slot the unit drives itself is skipped while its gate is on (Pitch Fix clears the
       Scale and the note mask when MIDI Control is switched on, and re-sending the plan's
-      copy would put them back);
+      copy would put them back) — and the gate is on when the raw the write sends at it is
+      not 0, so a gate the write does not send (a boolean) gates nothing;
     - a driver slot goes out under its own command name.
 
     The emit's mirrored slots are left out: a mirror repeats a value this tuple already
@@ -636,13 +943,21 @@ def insert_fx_pair_params(node_params, node_id, selector, param_space):
     carried = node_params.get(node_id)
     params = sanitized_params(carried.get("insertFxParams") if isinstance(carried, dict) else None)
 
+    def sent(value, spec):
+        # The raw the write sends for a stored value (`insertFxSlotRaw`), or None for one it
+        # does not send.
+        if not is_number(value):
+            return None
+        return min(max(js_round(value), spec.get("rawMin")), spec.get("rawMax"))
+
     driven = set()
     gate_spec = space.get("driven")
     if isinstance(gate_spec, dict):
-        gate = insert_fx_slot_value(params, family, gate_spec.get("gate"))
-        # The app reads the gate as a bare truthiness with 0 for an absent one, so a boolean
-        # gates exactly as a 1 does.
-        if gate:
+        gate_slot = gate_spec.get("gate")
+        gate_window = next((s for s in slots if isinstance(s, dict) and s.get("slot") == gate_slot), None)
+        gate = insert_fx_slot_value(params, family, gate_slot)
+        # On where the write sends the gate as anything but 0 (`insertFxDriverOn`).
+        if gate_window is not None and (sent(gate, gate_window) or 0) != 0:
             driven = {s for s in gate_spec.get("slots") or []}
 
     out = []
@@ -653,14 +968,36 @@ def insert_fx_pair_params(node_params, node_id, selector, param_space):
         if slot in driven:
             continue
         value = insert_fx_slot_value(params, family, slot)
+        # A slot the document leaves out is given its type's default on load
+        # (`completeInsertFxParams`), and the write sends that.
+        if value is None:
+            value = spec.get("def")
         # `Number.isFinite` in the app, which a boolean is not — and `is_number` already
         # draws that line for the same reason, so it is asked rather than re-stated.
-        if not is_number(value):
+        raw = sent(value, spec)
+        if raw is None:
             continue
-        raw = min(max(value, spec.get("rawMin")), spec.get("rawMax"))
         name = "INSERT_FX_DRIVER" if spec.get("driver") else "INSERT_FX_EFFECT"
         out.append((name, slot, raw))
     return tuple(out)
+
+
+def insert_fx_seeded(params, param_space):
+    """The engine keys the app's load adds for a node's selected insert effect
+    (core/plan-validate.ts `completeInsertFxParams`): every slot the write can send that the
+    sanitised map holds under neither the family's key nor the bare slot number, at the type's
+    own default and under the family's key. `params` is one node's; the caller asks only where
+    the node's own menu carries the selector."""
+    space = param_space.get(str(params.get("insertFx"))) if isinstance(param_space, dict) else None
+    if not isinstance(space, dict):
+        return []
+    family = space.get("family")
+    held = sanitized_params(params.get("insertFxParams"))
+    return [
+        f"{family}:{spec['slot']}"
+        for spec in space.get("slots") or []
+        if insert_fx_slot_value(held, family, spec["slot"]) is None
+    ]
 
 
 def insert_fx_pair_problems(plan, pairs, param_space):
@@ -730,6 +1067,62 @@ def fx_admitted(spec, value):
     if hi is not None and v > hi:
         return hi
     return v
+
+
+def legacy_fx_renamed(fx, channel):
+    """One FX channel's effect section as a version-1 document's load leaves it
+    (core/control/fx-effect.ts `migrateFxEffectParams`), and the renames it took: each parameter
+    stored under its old shared name moves to the name the build reads, from models.json
+    `fxChannels[...].legacyRenames` for the type the section resolves to — its `type` where the
+    channel's menu offers it, the channel's `defaultType` otherwise. A key already held under the
+    new name keeps that value, and the old one goes either way."""
+    params = fx.get("params")
+    if not isinstance(params, dict) or not isinstance(channel, dict):
+        return fx, []
+    stored = fx.get("type")
+    resolved = stored if is_number(stored) and stored in (channel.get("types") or []) else channel.get("defaultType")
+    if not is_number(resolved):
+        return fx, []
+    pairs = (channel.get("legacyRenames") or {}).get(str(int(resolved))) or []
+    moved = dict(params)
+    renamed = []
+    for old, new in pairs:
+        if old not in moved:
+            continue
+        if new not in moved:
+            moved[new] = moved[old]
+        del moved[old]
+        renamed.append((old, new))
+    return ({**fx, "params": moved} if renamed else fx), renamed
+
+
+def rate_warnings(plan, rates):
+    """The two document-level rewrites the rate makes (core/plan.ts `deserializeDocument` and
+    `setPlanSampleRate`): a `sampleRate` the unit does not run at is read as models.json
+    `rates.defaultRate`, and a Track Count on the recorder (`rates.recorder`) above the ceiling at
+    the rate the document loads at is lowered to it."""
+    if not isinstance(rates, dict):
+        return []
+    out = []
+    written = plan.get("sampleRate")
+    known = is_number(written) and written in rates["rates"]
+    rate = written if known else rates["defaultRate"]
+    if "sampleRate" in plan and not known:
+        out.append(
+            f"sampleRate: the app loads this plan at {rates['defaultRate']} — {written!r} is not one of the "
+            f"rates the unit runs at ({', '.join(str(r) for r in rates['rates'])})"
+        )
+    node_params = plan.get("nodeParams")
+    recorder = rates["recorder"]
+    sdrec = node_params.get(recorder) if isinstance(node_params, dict) else None
+    count = sdrec.get("sdRecTrackCount") if isinstance(sdrec, dict) else None
+    ceiling = rates["trackCountCeiling"].get(str(int(rate)))
+    if is_number(count) and is_number(ceiling) and count > ceiling:
+        out.append(
+            f"node param {recorder}.sdRecTrackCount: the app lowers this to {ceiling} on load — the "
+            f"recorder holds no more tracks at {int(rate)} Hz"
+        )
+    return out
 
 
 def fx_catalogue_warnings(node_id, fx, channel, out, bounded):
@@ -1089,22 +1482,248 @@ def read_as_on(value):
     return survives_sanitizer(value) and (isinstance(value, list) or bool(value))
 
 
+MISSING = object()
+
+
+def sanitize(value):
+    """What the app's document sanitiser keeps of a node-param value, or MISSING: a boolean or a
+    finite number; an array whose every element is an object, each sanitised; a group that keeps
+    at least one entry. `__proto__` is never kept."""
+    if isinstance(value, bool) or is_number(value):
+        return value
+    if isinstance(value, list):
+        items = [sanitize_record(el) if isinstance(el, dict) else MISSING for el in value]
+        return MISSING if any(el is MISSING for el in items) else items
+    if isinstance(value, dict):
+        rec = sanitize_record(value)
+        return rec if rec else MISSING
+    return MISSING
+
+
+def sanitize_record(value):
+    out = {}
+    for k, v in value.items():
+        if k == "__proto__":
+            continue
+        kept = sanitize(v)
+        if kept is not MISSING:
+            out[k] = kept
+    return out
+
+
+# The node-param keys whose shape the FX checks own rather than the factory comparison.
+KIND_WALK_SKIPS = ("fxEffect",)
+
+KIND_WORDS = {"number": "a number", "boolean": "an on/off", "dict": "a group of values", "list": "a list"}
+
+
+def kind_of(value):
+    if isinstance(value, bool):
+        return "boolean"
+    if is_number(value):
+        return "number"
+    if isinstance(value, list):
+        return "list"
+    return "dict"
+
+
+def kind_drops(carried, factory, path=()):
+    """The paths whose value is not the factory value's kind there (core/plan-validate.ts
+    `kindMismatches`): a value that is not a number where the factory holds a number, a group
+    or a list where it holds an on/off, anything but a group where it holds one and anything but
+    a list where it holds one. A number where the factory holds an on/off is the conversion's,
+    not this. `carried` is SANITISED; a path the factory does not carry is left alone. Returns
+    (steps, value, expected kind)."""
+    if carried is MISSING or carried is None:
+        return []
+    fk = kind_of(factory)
+    if fk == "number":
+        return [] if is_number(carried) else [(path, carried, fk)]
+    if fk == "boolean":
+        return [(path, carried, fk)] if isinstance(carried, (dict, list)) else []
+    if fk == "list":
+        if not isinstance(carried, list):
+            return [(path, carried, fk)]
+        out = []
+        for i, f in enumerate(factory):
+            out.extend(kind_drops(carried[i] if i < len(carried) else MISSING, f, path + (i,)))
+        return out
+    if not isinstance(carried, dict):
+        return [(path, carried, fk)]
+    out = []
+    for key, f in factory.items():
+        if not path and key in KIND_WALK_SKIPS:
+            continue
+        out.extend(kind_drops(carried.get(key, MISSING), f, path + (key,)))
+    return out
+
+
+def step_path(node_id, steps):
+    """`node.eqBands[0].on` from the keys and indices that reach it."""
+    out = node_id
+    for step in steps:
+        out += f"[{step}]" if isinstance(step, int) else f".{step}"
+    return out
+
+
+def with_paths(params, paths, stand_in=MISSING):
+    """`params` with the values at `paths` removed, or replaced by `stand_in`. Removed, the node
+    reads as the load leaves it. Replaced by a leaf the sanitiser keeps, the sanitiser's own walk
+    does not report the group around it as emptied: the kind check runs after the sanitiser, so
+    a group it empties is still there."""
+    if not paths:
+        return params
+    view = copy.deepcopy(params)
+    for steps in paths:
+        holder = view
+        for step in steps[:-1]:
+            holder = holder[step]
+        if stand_in is not MISSING:
+            holder[steps[-1]] = stand_in
+        elif isinstance(holder, dict):
+            holder.pop(steps[-1], None)
+    return view
+
+
+def js_round(value):
+    """JavaScript's `Math.round`: the nearest integer, a tie going to +infinity."""
+    floor = math.floor(value)
+    return floor if value - floor < 0.5 else floor + 1
+
+
+def admit(rule, value):
+    """The value a leaf rule admits (core/control/translate.ts `admitLeaf`), which is the value
+    the write sends: a value off a menu is the menu's default; a window rounds first where it is
+    an integer one, then holds the value to the window, then moves it to the nearest point of a
+    grid from the window's floor (a tie going up), or to the nearest stop where the rule has a
+    stop table (the first of two equally near)."""
+    if "menu" in rule:
+        if value in rule["menu"]:
+            return value
+        for key, target in (rule.get("map") or {}).items():
+            if float(key) == value:
+                return target
+        return rule["def"]
+    v = js_round(value) if rule.get("integer") else value
+    v = rule["min"] if v < rule["min"] else rule["max"] if v > rule["max"] else v
+    grid = rule.get("grid")
+    if grid is not None:
+        return rule["min"] + grid * js_round((v - rule["min"]) / grid)
+    steps = rule.get("steps")
+    if steps:
+        best = 0
+        for i in range(1, len(steps)):
+            if abs(steps[i] - v) < abs(steps[best] - v):
+                best = i
+        v = steps[best]
+    return v
+
+
+def value_at(params, steps):
+    holder = params
+    for step in steps:
+        if isinstance(step, int):
+            holder = holder[step] if isinstance(holder, list) and step < len(holder) else None
+        else:
+            holder = holder.get(step) if isinstance(holder, dict) else None
+        if holder is None:
+            return None
+    return holder
+
+
+INSERT_FX_KEY = re.compile(r"^(.+):([0-9]+)$")
+
+
+def family_slots(param_space):
+    """Each insert-FX family's writable slots, by slot number."""
+    out = {}
+    for space in (param_space or {}).values():
+        if isinstance(space, dict) and isinstance(space.get("family"), str):
+            out[space["family"]] = {s["slot"]: s for s in space.get("slots") or [] if isinstance(s, dict)}
+    return out
+
+
+def leaf_rule_bounds(node_id, params, rules, param_space, takes_insert, contexts, dropped, bounded):
+    """The values the load moves to the value the write sends (core/plan-validate.ts
+    `paramRangeProblems`, by `nodeLeafRules`): each leaf models.json `leafRules` lists for the
+    node, and each insert-FX engine key under the rule of the family it names — a bare slot
+    under the family the selector names, the key it is re-keyed to on load. A leaf the write
+    never sends (`unsent`) is removed instead. A rule carrying a variant for a state the node is
+    in (`contexts`) is read under that variant."""
+    for path, rule in (rules or {}).items():
+        for context in contexts:
+            rule = rule.get(context, rule)
+        value = value_at(params, leaf_steps(path))
+        if not is_number(value):
+            continue
+        if rule.get("unsent"):
+            dropped.append((f"{node_id}.{path}", "the write never sends this key here, so the load removes it"))
+            continue
+        admitted = admit(rule, value)
+        if admitted != value:
+            bounded.append((f"{node_id}.{path}", f"{value!r} is bounded to {admitted!r}"))
+    slots = params.get("insertFxParams")
+    if not takes_insert or not isinstance(slots, dict):
+        return
+    family = insert_fx_family(params.get("insertFx"), param_space)
+    how = insert_fx_dispositions(slots, family)
+    by_family = family_slots(param_space)
+    for key, value in slots.items():
+        if not is_number(value):
+            continue
+        if how.get(key) == REKEY:
+            key = f"{family}:{int(key)}"
+        elif how.get(key) != KEEP:
+            continue
+        m = INSERT_FX_KEY.match(key)
+        spec = by_family.get(m.group(1), {}).get(int(m.group(2))) if m else None
+        if spec is None:
+            continue
+        admitted = admit({"min": spec["rawMin"], "max": spec["rawMax"], "integer": True}, value)
+        if admitted != value:
+            bounded.append((f"{node_id}.insertFxParams.{key}", f"{value!r} is bounded to {admitted!r}"))
+
+
+def comp_eq_type(node_id, params, leaf_rules, factory):
+    """A MONO IN's comp/EQ order as the write sends it: its own value admitted by its rule, or the
+    factory one the load fills in for an absent value."""
+    rule = ((leaf_rules or {}).get(node_id) or {}).get("compEqType")
+    value = params.get("compEqType")
+    if rule is None:
+        return None
+    if not is_number(value):
+        value = ((factory or {}).get(node_id) or {}).get("compEqType")
+    return admit(rule, value) if is_number(value) else None
+
+
+def hi_z_on(node_id, params, hi_z):
+    """Whether HI-Z is on for a node: it carries the switch and its params hold it on."""
+    return bool(hi_z) and node_id in hi_z.get("channels", []) and read_as_on(params.get("hiZ"))
+
+
 def hi_z_bounds(node_id, params, hi_z, bounded):
-    """A channel carrying HI-Z with HI-Z on: the load turns +48V off (HI-Z kept) and bounds
-    A.Gain above the HI-Z ceiling to that ceiling, the pair of repairs `paramRangeProblems`
-    makes. `hi_z` is the `hiZ` entry models.json carries."""
-    if not hi_z or node_id not in hi_z.get("channels", []) or not read_as_on(params.get("hiZ")):
+    """A channel carrying HI-Z with HI-Z on: the load turns +48V off (HI-Z kept), the repair
+    `paramRangeProblems` makes beside A.Gain's ceiling there, which is the `hiZ` variant of the
+    gain's rule. `hi_z` is the `hiZ` entry models.json carries."""
+    if not hi_z_on(node_id, params, hi_z):
         return
     if "phantom" in params and read_as_on(params["phantom"]):
         bounded.append(
             (f"{node_id}.phantom", f"{params['phantom']!r} is bounded to False — +48V and HI-Z are never on together")
         )
-    gain, ceiling = params.get("gain"), hi_z.get("gainMaxDb")
-    if is_number(gain) and ceiling is not None and gain > ceiling:
-        bounded.append((f"{node_id}.gain", f"{gain!r} is bounded to {ceiling!r} — A.Gain stops there while HI-Z is on"))
 
 
-def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=None):
+def node_param_warnings(
+    plan,
+    nodes,
+    pairs,
+    fx_channels,
+    param_space=None,
+    hi_z=None,
+    factory=None,
+    leaf_rules=None,
+    version=PLAN_VERSION,
+):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
     on real hardware (raw units, effect selectors), and insert-FX slots two nodes
@@ -1119,6 +1738,11 @@ def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=
     node_params = plan.get("nodeParams")
     if node_params is not None and not isinstance(node_params, dict):
         return ["nodeParams is not an object — the app loads the plan with no node params at all"]
+    def takes_insert_fx(node_id):
+        if node_id in OUTPUT_INSERT_FX_NODES:
+            return True
+        return nodes.get(node_id, {}).get("kind") == "channel" and not STEREO_CHANNEL_RE.match(node_id)
+
     for node_id, params in (node_params or {}).items():
         if node_id == "__proto__":
             out.append(f"node param {node_id}: the app drops this value on load — {PROTO_REMOVED}")
@@ -1127,16 +1751,56 @@ def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=
             out.append(f"node {node_id}: the app drops this node's params on load — nodeParams entries must be objects")
             continue
         dropped = []
+        # A value of the wrong kind for its key goes whole, so it is named at its own path and the
+        # walks after it read the node without it.
+        kinds = kind_drops(sanitize_record(params), (factory or {}).get(node_id), ())
+        for steps, value, expected in kinds:
+            dropped.append(
+                (step_path(node_id, steps), f"{value!r} is not {KIND_WORDS[expected]}, which this key holds")
+            )
+        kind_paths = [steps for steps, _value, _expected in kinds]
         # `insertFxOn` and `insertFxParams` are held out of the general walk and reported by
         # their own rule: it keeps a container, theirs does not.
-        walked = {k: v for k, v in params.items() if k not in ("fxEffect", "insertFxOn", "insertFxParams")}
+        walked = {
+            k: v
+            for k, v in with_paths(params, kind_paths, 0).items()
+            if k not in ("fxEffect", "insertFxOn", "insertFxParams")
+        }
         dropped_values(walked, node_id, dropped)
+        params = with_paths(params, kind_paths)
         scalar_only_drops(node_id, params, dropped, param_space)
         bounded = []
+        if version < 2 and isinstance(params.get("fxEffect"), dict):
+            fx, renamed = legacy_fx_renamed(params["fxEffect"], (fx_channels or {}).get(node_id))
+            for old, new in renamed:
+                out.append(
+                    f"node param {node_id}.fxEffect.params.{old}: the app renames this to {new} on load — "
+                    "a version-1 document's name for it"
+                )
+            params = {**params, "fxEffect": fx}
         if "fxEffect" in params:
             gone = fx_effect_warnings(node_id, params["fxEffect"], dropped)
             if not gone:
                 fx_catalogue_warnings(node_id, params["fxEffect"], (fx_channels or {}).get(node_id), dropped, bounded)
+        contexts = [
+            c
+            for c, on in (
+                ("hiZ", hi_z_on(node_id, params, hi_z)),
+                ("linked", params.get("stereoLink") is True),
+                ("ssmcs", comp_eq_type(node_id, params, leaf_rules, factory) == COMP_EQ_SSMCS),
+            )
+            if on
+        ]
+        leaf_rule_bounds(
+            node_id,
+            params,
+            (leaf_rules or {}).get(node_id),
+            param_space,
+            takes_insert_fx(node_id),
+            contexts,
+            dropped,
+            bounded,
+        )
         hi_z_bounds(node_id, params, hi_z, bounded)
         for path, why in dropped:
             out.append(f"node param {path}: the app drops this value on load — {why}")
@@ -1150,6 +1814,12 @@ def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=
         if "insertFx" in params:
             out.append(f"node {node_id}: {SELECTOR_KEYS['insertFx']} resets that effect's parameters on the device")
         slot = insert_fx_slot(node_id, params, nodes)
+        seeded = insert_fx_seeded(params, param_space) if slot else []
+        if seeded:
+            out.append(
+                f"node {node_id}: the app fills insertFxParams {', '.join(seeded)} with the selected "
+                "effect's own defaults on load, and the write sends them"
+            )
         if slot:
             held = slot_holders.setdefault(slot, [])
             # A STEREO-linked pair holds one insert effect between its two channels — the unit
@@ -1196,11 +1866,6 @@ def node_param_warnings(plan, nodes, pairs, fx_channels, param_space=None, hi_z=
     # only where the document itself puts the channel in that comp/EQ order, since the factory
     # order sends no SSMCS at all.
     written = {i: p for i, p in (node_params or {}).items() if isinstance(p, dict)}
-
-    def takes_insert_fx(node_id):
-        if node_id in OUTPUT_INSERT_FX_NODES:
-            return True
-        return nodes.get(node_id, {}).get("kind") == "channel" and not STEREO_CHANNEL_RE.match(node_id)
 
     # Each of these asks whether the document carries a value the app can USE, not whether the
     # key is present: the loader completes what it drops, so a key holding the wrong kind of
@@ -1262,8 +1927,27 @@ def format_report(plan, problems):
     return "\n".join(lines)
 
 
-def encode_plan_param(plan):
-    raw = json.dumps(plan, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+class NotJson(ValueError):
+    """Text the app's JSON.parse refuses."""
+
+
+def refuse_constant(name):
+    raise NotJson(f"{name} is not a JSON value")
+
+
+def parse_document(text):
+    """The plan in `text`, read by the grammar the app's JSON.parse reads: NaN, Infinity and
+    -Infinity raise NotJson like any other text that is not JSON."""
+    try:
+        return json.loads(text, parse_constant=refuse_constant)
+    except json.JSONDecodeError as err:
+        raise NotJson(str(err)) from err
+
+
+def encode_plan_param(text):
+    """The `?plan=` value for a document's own text, carried as written, so every number keeps
+    the spelling the document gave it."""
+    raw = text.encode("utf-8")
     co = zlib.compressobj(9, zlib.DEFLATED, -15)  # raw deflate = CompressionStream "deflate-raw"
     deflated = co.compress(raw) + co.flush()
     return "z" + base64.urlsafe_b64encode(deflated).rstrip(b"=").decode("ascii")
@@ -1285,8 +1969,14 @@ def main(argv=None):
     pu.add_argument("--base", default=DEFAULT_BASE, help="demo base URL")
     args = ap.parse_args(argv)
 
-    with open(args.plan, encoding="utf-8") as fh:
-        plan = json.load(fh)
+    # utf-8-sig drops one leading byte-order mark, as the app's loader does.
+    with open(args.plan, encoding="utf-8-sig") as fh:
+        text = fh.read()
+    try:
+        plan = parse_document(text)
+    except NotJson as err:
+        print(format_report(None, [("notPlanFile", f"not JSON: {err}", "")]))
+        return 1
     models = load_models()
     problems, warnings = validate(plan, models)
 
@@ -1302,7 +1992,7 @@ def main(argv=None):
         return 0
 
     base = args.base if args.base.endswith("/") else args.base + "/"
-    print(f"{base}?plan={encode_plan_param(plan)}")
+    print(f"{base}?plan={encode_plan_param(text)}")
     return 0
 
 

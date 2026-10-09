@@ -701,3 +701,131 @@ jobs:
     expect(asserted.join("\n")).toContain("runs ahead of `bundle`");
   });
 });
+
+// A step that fetches from a host outside GitHub carries its own `timeout-minutes`, and a
+// step using an action the checker does not classify is refused until it is classified.
+// The lists are spelled out here rather than imported: a test deriving them the way the
+// checker does cannot see the two drift together.
+describe("external fetches carry a step bound", () => {
+  const workflow = (steps) => `name: A
+on:
+  push:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+${steps}`;
+  const boundsIn = (text) => findingsOf(text).filter((f) => /timeout-minutes|does not classify|flow mapping/.test(f));
+  const boundFindings = (steps) => boundsIn(workflow(steps));
+
+  it.each([
+    "pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413",
+    "dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de",
+    "taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389",
+    "tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f",
+    "codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5",
+    "./.github/actions/install-browsers",
+  ])("requires a step bound on `uses: %s`", (uses) => {
+    const bare = boundFindings(`      - uses: ${uses}\n        with:\n          x: "1"\n`);
+    expect(bare.join("\n")).toContain("carries no step `timeout-minutes`");
+    expect(
+      boundFindings(`      - uses: ${uses}\n        timeout-minutes: 5\n        with:\n          x: "1"\n`),
+    ).toEqual([]);
+  });
+
+  it.each([
+    ["pnpm install --frozen-lockfile", "`pnpm install`"],
+    ["cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html", "`cargo about generate`"],
+    ["cargo test", "`cargo test`"],
+    ["cargo build --release ${{ matrix.args }}", "`cargo build`"],
+  ])("requires a step bound on `run: %s`", (command, named) => {
+    const bare = boundFindings(`      - run: ${command}\n`);
+    expect(bare.join("\n")).toContain(named);
+    expect(boundFindings(`      - run: ${command}\n        timeout-minutes: 10\n`)).toEqual([]);
+  });
+
+  // The command inside a block script, behind the step's `name:` and with the bound written
+  // after it, is the same step: the script is read whole and the bound is read wherever it
+  // sits among the step's own keys.
+  it("reads a fetch inside a block script and a bound written after it", () => {
+    const bare = `      - name: build
+        working-directory: src-tauri
+        run: |
+          echo start
+          cargo build --release
+`;
+    expect(boundFindings(bare).join("\n")).toContain("`cargo build`");
+    expect(boundFindings(`${bare}        timeout-minutes: 20\n`)).toEqual([]);
+  });
+
+  // A shell comment naming a command runs nothing, while the same words as a command do.
+  it("does not count a command that only a shell comment names", () => {
+    expect(boundFindings("      - run: |\n          # cargo test runs in ci.yml\n          echo ok\n")).toEqual([]);
+    expect(boundFindings("      - run: |\n          echo ok\n          cargo test\n").join("\n")).toContain(
+      "`cargo test`",
+    );
+  });
+
+  // The bound has to be the STEP's: one nested under `with:` is an input of the action, and
+  // one on the job bounds the job, which is what reports a stall as "cancelled".
+  it("does not take a `timeout-minutes` under `with:` for the step's own", () => {
+    const nested = boundFindings(
+      "      - uses: codecov/codecov-action@v7\n        with:\n          timeout-minutes: 5\n",
+    );
+    expect(nested.join("\n")).toContain("carries no step `timeout-minutes`");
+  });
+
+  // Each step is its own: a bound on one does not cover the step after it.
+  it("asks every step, not the first", () => {
+    const steps = `      - run: pnpm install --frozen-lockfile
+        timeout-minutes: 10
+      - run: cargo test
+`;
+    const found = boundFindings(steps);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain("`cargo test`");
+    expect(found[0]).toContain(".github/workflows/a.yml:11 (build)");
+  });
+
+  // An action in neither list is refused by name, which is what keeps a new fetch from
+  // arriving unbounded; a listed GitHub-only action passes without a bound.
+  it("refuses an action it does not classify, and passes one classified as GitHub's", () => {
+    expect(boundFindings("      - uses: someone/fetch-things@0123456789abcdef\n").join("\n")).toContain(
+      "uses `someone/fetch-things`, which this checker does not classify",
+    );
+    expect(boundFindings("      - uses: ./.github/actions/new-thing\n").join("\n")).toContain(
+      "uses `./.github/actions/new-thing`",
+    );
+    expect(boundFindings("      - uses: docker://alpine:3\n").join("\n")).toContain("uses `docker://alpine:3`");
+    for (const uses of [
+      "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+      "actions/upload-artifact@v7",
+      "actions/download-artifact@v8",
+      "actions/upload-pages-artifact@v5",
+      "actions/deploy-pages@v5",
+      "actions/github-script@v9",
+      "swatinem/rust-cache@v2",
+      "./.github/actions/playwright-version",
+    ]) {
+      expect(boundFindings(`      - uses: ${uses}\n`), uses).toEqual([]);
+    }
+  });
+
+  // A step this reader cannot see into is reported, not passed over.
+  it("refuses a step written as a flow mapping", () => {
+    expect(boundFindings("      - { run: cargo test }\n").join("\n")).toContain("flow mapping");
+  });
+
+  // The sequence style where items sit at `steps:`'s own column reads the same.
+  it("reads steps written at their key's own column", () => {
+    const text = workflow("").replace("    steps:\n", "    steps:\n    - run: cargo test\n");
+    expect(boundsIn(text).join("\n")).toContain("`cargo test`");
+    const bounded = workflow("").replace(
+      "    steps:\n",
+      "    steps:\n    - run: cargo test\n      timeout-minutes: 15\n",
+    );
+    expect(boundsIn(bounded)).toEqual([]);
+  });
+});
