@@ -136,7 +136,8 @@ still claims is given back — and that is the state an operator most needs to r
 ### Collapse
 
 - Clicking any `SENDS` header collapses/expands the rack on **all** strips at once (columns must
-  stay aligned). Hovering one header highlights every header, previewing the global scope;
+  stay aligned). Its arrow reads `▾` open and `▴` folded — never `▸`, which on the strip means
+  "opens a screen". Hovering one header highlights every header, previewing the global scope;
   `aria-expanded` is kept in sync across strips.
 - Persisted globally in `localStorage` (`urx-sends-open`, default open).
 - While collapsed the header shows one small amber dot per active (ON) send, keeping routing

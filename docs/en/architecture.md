@@ -947,8 +947,10 @@ in-house module `src/i18n/`:
 - `en.ts` — the base language and the source of truth for the message shape (the `Messages` type).
   Every string in it is wrapped in one of three markers, and interpolation functions sit beside
   them unwrapped: `dev()` for a control reproduced from one of the unit's own screens, `fixed()`
-  for one that is identical in every language for a reason that is not the device (all of them on
-  the CONSOLE strip: the group separators and the two readout captions), and `tr()` for this app's
+  for one that is identical in every language for a reason that is not the device (most on the
+  CONSOLE strip — the group separators and the two readout captions — plus the names the app gives
+  a face bar's segments and a control the unit leaves unlabelled; the Terminology note below names
+  each), and `tr()` for this app's
   own copy. `dev()` and `fixed()` are
   identity functions whose generic parameter keeps the value's **literal type**; `tr()` brands it
   as `Translatable`. `Messages` is `Unbrand<typeof en>`, which drops the brand — so a `tr()` slot

@@ -189,6 +189,8 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 > FIXED で LEVEL・PRE/POST・PAN、Pan Link で PAN を隠し、かかっているロックごとに短い注記を表示する。CONSOLE も SENDS ラックで
 > 同じロックを適用し、FIXED ではその MIX 列の PRE ボタン・ミニフェーダーと SEND PAN ノブを、Pan Link では
 > SEND PAN ノブを read-only にする。MIDI も同じで、ロック中の値に割り当てたコントロールは何も書かない。
+> 盤面も鳴らない送りの判定で同じ規則に従う: FIXED の Bus への Send を減光・点線で描くのは ON が OFF のときだけで、
+> 実機が使わない -∞ のレベルを保持しているだけでは点線にしない。
 
 > 盤面上では PRE の MIX/FX Send を **破線＋ソース直後の琥珀色「PRE」タップマーカー**で表示し、接続を選択せずに
 > 視認できる。POST (既定) は実線・無印。FIXED の MIX Bus への Send も、タップの値によらず実線・無印

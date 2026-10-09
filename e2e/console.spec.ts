@@ -1,4 +1,4 @@
-import { test, expect, scrollsByWheel, textContrast, type Locator, type Page } from "./fixtures";
+import { test, expect, colorToken, scrollsByWheel, textContrast, type Locator, type Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
 import { LIVE_COMMANDS, heldReadsOf, notifyParam, setDeviceValue, setHeldReads, stubTauriDevice } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
@@ -104,6 +104,17 @@ test("the longest channel name (CH 11/12) shrinks a step so it fits its scribble
   await expect(txt).toHaveCSS("font-size", "9px");
   const clipped = await txt.evaluate((n) => n.scrollWidth > n.clientWidth);
   expect(clipped).toBe(false);
+});
+
+// The chip rack rings focus inside the face, and in the dark theme the lit face IS the
+// amber the unlit chip rings in — so a lit chip rings in its own ink instead.
+test("a lit chip's focus ring takes the face's ink, not the lamp", async ({ page }) => {
+  const eqChip = strip(page, "CH 5/6").locator(".con-chip", { hasText: "EQ" }).first();
+  await expect(eqChip).toHaveClass(/\bon\b/);
+  await page.keyboard.press("Shift"); // keyboard modality, so the focus below is :focus-visible
+  await eqChip.focus();
+  await expect(eqChip).toHaveCSS("outline-color", await colorToken(page, "--on-accent-ink"));
+  await expect(eqChip).not.toHaveCSS("outline-color", await colorToken(page, "--led"));
 });
 
 test("the stereo-channel EQ chip locks read-only and off at 192 kHz", async ({ page }) => {
@@ -384,8 +395,15 @@ test("the global collapse folds every rack and shows active-send dots; it persis
   const host = page.locator("#console-host");
   await expect(host).not.toHaveClass(/sends-collapsed/);
   // Clicking any SENDS header collapses all racks at once.
+  const arrow = () =>
+    strip(page, "CH 1")
+      .locator(".con-sh .ar")
+      .evaluate((el) => getComputedStyle(el, "::after").content);
+  expect(await arrow()).toBe('"▾"');
   await strip(page, "CH 1").locator(".con-sh").click();
   await expect(host).toHaveClass(/sends-collapsed/);
+  // Folded points up: `▸` on a strip means "opens a screen", and this opens nothing.
+  expect(await arrow()).toBe('"▴"');
   // Collapsed, CH 1 shows one amber dot per active send (all four ship on).
   await expect(strip(page, "CH 1").locator(".con-sh .dots i")).toHaveCount(4);
   await expect(strip(page, "FX 1").locator(".con-sh .dots i")).toHaveCount(2); // MIX 1 + MIX 2

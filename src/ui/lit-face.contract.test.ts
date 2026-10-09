@@ -24,6 +24,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { CSS, RULES, THEME_SELECTOR, decl, faceDecl, tokensIn } from "./style-css.test-util";
+import type { CssRule } from "./style-css.test-util";
 import { NAMED_TOKENS, recorder, vals } from "./dyn-plot.test-util";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import { defaultPlan } from "../models/initial-state";
@@ -216,5 +217,48 @@ describe("a plot's text on a face of its own reads at 4.5:1", () => {
     // The positive control: the drive met text on a face — the EQ markers' — at all.
     expect([...pairs].some((p) => p.endsWith("on --led-face"))).toBe(true);
     expect(pairs.size).toBeGreaterThan(1);
+  });
+});
+
+// A ring drawn INSIDE a lit face in the lamp's own colour is invisible on it: in the dark
+// theme --led-face IS --led. The packed racks draw their ring inside (offset -2px), so every
+// lit state whose unlit control rings that way has to name a ring of its own. Derived from
+// the stylesheet — the lit faces, then the inset amber ring each one's control wears — so a
+// lit state added tomorrow is covered the day it is written.
+describe("a focus ring drawn inside a lit face does not take the lamp's colour", () => {
+  const LIT_STATE = /(\.on|\.active|\[aria-pressed="true"\])$/;
+  const litSelectors = RULES.filter((r) => faceDecl(r.body) === "var(--led-face)")
+    .flatMap((r) => r.selector.split(",").map((s) => s.trim()))
+    .filter((s) => LIT_STATE.test(s));
+  // The last rule that names the ring AND declares the property read from it: RULES flattens
+  // the @media blocks, so a later forced-colors rule that only restyles the ring's line would
+  // otherwise stand in for the one that gives it its colour.
+  const ringOf = (selector: string, prop: string): CssRule | undefined =>
+    RULES.filter(
+      (r) =>
+        r.selector
+          .split(",")
+          .map((s) => s.trim())
+          .includes(`${selector}:focus-visible`) && decl(r.body, prop) !== undefined,
+    ).at(-1);
+
+  it("finds lit states to hold", () => {
+    expect(litSelectors.length).toBeGreaterThan(3);
+  });
+
+  it("every lit state whose control rings inside in amber names an ink ring", () => {
+    const inset: string[] = [];
+    const missing: string[] = [];
+    for (const lit of litSelectors) {
+      const base = ringOf(lit.replace(LIT_STATE, ""), "outline");
+      if (!base) continue;
+      const offset = parseFloat(decl(base.body, "outline-offset") ?? "0");
+      if (!(offset < 0 && (decl(base.body, "outline") ?? "").includes("var(--led)"))) continue;
+      inset.push(lit);
+      if (decl(ringOf(lit, "outline-color")?.body ?? "", "outline-color") !== "var(--on-accent-ink)") missing.push(lit);
+    }
+    // The positive control: the racks this exists for are found by the derivation.
+    expect(inset).toEqual(expect.arrayContaining([".con-chip.on", ".con-ifxpop .irow.active"]));
+    expect(missing, "give the lit state `outline-color: var(--on-accent-ink)` on focus").toEqual([]);
   });
 });

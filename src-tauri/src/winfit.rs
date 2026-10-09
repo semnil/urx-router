@@ -2,7 +2,7 @@
 //
 // The window-state plugin restores a saved rectangle whenever ONE CORNER of it
 // still touches a monitor, and it never shrinks a window that no longer fits
-// (read in tauri-plugin-window-state 2.4.1; this is the module's whole reason to
+// (read in tauri-plugin-window-state 2.5.0; this is the module's whole reason to
 // exist, so a bump that tightens it is a reason to re-read this). Both gaps show
 // up on the machines this app runs on: a window last placed on a
 // second display comes back with one corner on the laptop panel and the rest of
