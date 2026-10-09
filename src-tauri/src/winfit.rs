@@ -858,6 +858,7 @@ mod tests {
     // whatever is has to be looked for somewhere this case does not reach —
     // in what was on disk at the time, or in the placement's platform half.
     #[test]
+    #[cfg(target_os = "macos")]
     fn the_midi_windows_saved_rectangle_lands_on_the_built_in_display() {
         let want = window_to_desk(
             PhysicalPosition::new(1072, 232),
