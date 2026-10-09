@@ -610,7 +610,7 @@ NODE_NAME_MAX_CHARS = 8
 
 # The code points XML 1.0 refuses, raw or as a reference (core/plan.ts `stripXmlInvalid`): an image
 # export serializes every name and note into an SVG, and one of these fails the whole export.
-XML_INVALID_RE = re.compile("[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]")
+XML_INVALID_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 
 
 # The characters the app's `trimEnd` strips: ECMAScript WhiteSpace and LineTerminator. Python's
