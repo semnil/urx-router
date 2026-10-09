@@ -194,7 +194,9 @@ still claims is given back — and that is the state an operator most needs to r
   open, and the re-open after a strip rebuild, leave the focus where it is. A focus that then moves
   to an element outside both the popover and its trigger closes the popover without handing the
   focus back. A focusout naming no new element is not that: the window losing the OS foreground
-  (`document.hasFocus()` false — WKWebView blurs on deactivation), and a press on a part of the
+  (`document.hasFocus()` false — WKWebView blurs on deactivation, and WebView2 does the same: measured
+  2026-10-09 across an Alt+Tab, it fires `blur` and a `focusout` naming no target, reports `hasFocus()` false
+  until the window is active again, and the popover stays open), and a press on a part of the
   popover that takes no focus, both leave it open.
 - **Tab leaves a popover at its trigger's place in the tab order.** Left to the browser, a Tab past
   the popover's last control would continue from the end of the document and a Shift+Tab before

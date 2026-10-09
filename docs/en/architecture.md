@@ -1205,7 +1205,13 @@ was measured against a real Windows contrast theme in WebView2 (2026-08-07) and 
 values are unguessable from their names, the opaque text backplate makes the usual
 `Highlight` / `HighlightText` idiom unreadable, `3px double` resolves as three distinct pixel rows, and
 the meter island keeps its three zones. The tuning-screen lane and the slider track were measured the
-same way (2026-08-08, hcblack and hcwhite) and hold under both themes.
+same way (2026-08-08, hcblack and hcwhite) and hold under both themes. The rules added on 2026-10-01 were
+read the same way on 2026-10-09 (WebView2 154.0.4258.62) in hcblack, hcwhite, hc1 and hc2, and read by shape in
+each: the pressed view tab alone wears `3px double`; the INS FX popover's held row is `3px dashed` with the
+keyboard focus on it and `3px double` beside a `2px solid` ring once the focus moves to the next row; the FOLLOW
+USB badge keeps its 95.27x25 box between its dashed rim and its double one (the state set on the element rather
+than by a device); the Inspector's section LEDs keep a `1px solid` rim, filled only when lit; and the board
+node's `focus-ring` is drawn.
 
 **A locked control is a question this block does not answer**, because `opacity` is one of the few things
 forced colors leaves alone, so the read-only dims written elsewhere are supposed to survive it. Measured
@@ -3088,7 +3094,9 @@ own; at exit it does not, and "told to close" and "closed" are the same thing on
 telling. An update install is the one exit that does not reach that handler on every platform — on Windows the
 updater ends the process from inside its install command — so the frontend calls `prepare_for_exit` before the
 download: it saves the window geometry and its scales and runs the same `vd::shutdown_blocking`, which is what
-the exit handler would have done.
+the exit handler would have done. On Windows (2026-10-09, debug build, URX44V) the call rewrote both geometry files
+with the window's rectangle and, with a session open, dropped its connection to Device Center before returning;
+commands after it answered `not-connected`.
 
 **A page load is the other teardown, and it is scoped to what that page owns.** `on_page_load`
 (`PageLoadEvent::Started`) shuts the worker down, closes both MIDI ports and releases the idle-sleep hold:
@@ -3438,7 +3446,11 @@ dismissed by Escape the pan it started went on following the buttonless cursor u
 and only where a window `blur` arrived (`endAllPointers` in `graph.ts`) did it stop. The same route in
 the Inspector, read by hand in the same engine (2026-10-04): a channel switched with a click, a right
 press on blank Inspector space, the menu dismissed by Escape, then `Cmd+Z` — refused with "Finish the
-current drag before undoing", and the channel stayed as switched.
+current drag before undoing", and the channel stayed as switched. WebView2 differs at the first step
+(2026-10-09, 154.0.4258.62, the same steps on STEREO (MAIN)): the right press's `pointerup` (button 2,
+`buttons` 0) reaches the page just before `contextmenu`, so the press is over before the menu opens; with the menu
+dismissed and the mouse moved, `Ctrl+Z` undid the switch. That run cannot say which of the `pointerup` and the
+buttonless move ended the press.
 
 **A select takes the comfortable target as a height.** The same breakpoint gives the rack's and the
 inspector's controls a 40px minimum height, and a `<select>` does not take it that way: WebKit keeps these
@@ -4077,7 +4089,12 @@ was set on it: the mode, on macOS the extended attributes (Finder tags) and the 
 attributes and alternate data streams (`ReplaceFileW`). A symlink that points at nothing yet is followed too:
 the file it names is created and the link stays a link. A directory the app cannot write fails the save;
 nothing is written in place. A file with more than one hard link is replaced the same way: the name saved to
-gets the new file, and its other names keep the old contents.
+gets the new file, and its other names keep the old contents. Each of these was read on Windows (2026-10-09, NTFS):
+an explicit ACE and an alternate data stream outlived an overwrite, a read-only file was refused with `file-denied`
+and left whole, a dangling link's target was created with the link left a link, a `.json` link to a `.txt` was
+refused on read and write, and a hard-linked file was replaced under the saved name only. The Windows save dialog
+refuses a read-only file itself, before the app receives a path, so `file-denied` comes from a path that reached
+the write some other way.
 `write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
 array — with the destination path in a percent-encoded `x-file-path` request header. The webview
 itself runs under a strict CSP (`security.csp` + `devCsp` in `tauri.conf.json`): scripts from

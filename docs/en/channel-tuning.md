@@ -1273,7 +1273,9 @@ without closing: a device follow that replaces the effect re-lays the same modal
 below some families' grids in Japanese — with macOS fonts at 1440x900, in Chromium and WebKit, the
 guitar amps' grid is 522.4-523.4px and the multi-band compressor's 525.4px on every face, against
 516.4px for Pitch Fix and 493.4px for the companders. 548px leaves 22.6px over the tallest of them for
-a wider font stack. `e2e/insertfx.spec.ts` opens every family and every multi-band face in Japanese
+a wider font stack. With Windows fonts in WebView2 (2026-10-09, 154.0.4258.62, 1280x900, Japanese) the grids
+read 493.4-517.4px for the single-face families and 520.4px on the multi-band compressor's LOW, MID and HIGH
+faces, and the modal kept one height, 689px, across every type and face read. `e2e/insertfx.spec.ts` opens every family and every multi-band face in Japanese
 and holds them to one height.
 
 **A gesture reads the Key the plan holds, not the one the row was drawn with.** A row's handlers
