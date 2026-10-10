@@ -17,6 +17,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf, getsOf, type Span } from "./analyze";
 import { stepLevel } from "../../src/core/levels";
+import { DEBOUNCE_MS } from "../../src/core/control/live";
 import {
   CH1_FADER,
   CH1_HPF_ADDR,
@@ -84,9 +85,6 @@ const seedMem = (page: Page, entries: Record<string, number>): Promise<void> =>
 
 const INSERT_FX_VD_NONE = 0xffffffff;
 
-/** src/core/control/live.ts. The trailing flush window the starvation stream has to
- *  keep re-arming — so a tick slower than this measures the driver, not the latch. */
-const DEBOUNCE_MS = 120;
 /** Ticks in the starvation stream. 55 of Up/Up/Down/Down net one detent up, which is
  *  what makes the trailing flush's value computable rather than merely non-zero. */
 const STREAM_TICKS = 55;
@@ -305,7 +303,7 @@ test.describe("T1b overtake", () => {
       console.log(timeline(trace, { from: from - 200 }));
       console.log(report(`converge latch — ${latched ? "latched" : "control"}`, findings));
       console.log(
-        `stream ${(to - from).toFixed(0)} ms, max tick gap ${maxGap.toFixed(0)} ms (re-arm window 120):` +
+        `stream ${(to - from).toFixed(0)} ms, max tick gap ${maxGap.toFixed(0)} ms (re-arm window ${DEBOUNCE_MS}):` +
           ` vd_set during = ${during.length}, after = ${after.length}` +
           ` (CH 1 fader ${faderAfter.length}); readout before=${before} streamed=${streamed}` +
           `; device now holds ${CH1_FADER} = ${(await memOf(page))[CH1_FADER]}, train settles at ${settledRaw}`,

@@ -14,6 +14,7 @@ import {
 import { analyze, report, timeline, markTime, spans, setsOf } from "./analyze";
 import { CH1_FADER, faderOf, faderReadout } from "./ui";
 import { answerTimingOf } from "../tauri-stub";
+import { DEBOUNCE_MS } from "../../src/core/control/live";
 
 // T0 baseline — the floor and the golden path. Every T1+ verdict is a difference
 // against these two traces, so without them a firing invariant cannot be told from
@@ -134,8 +135,8 @@ test.describe("T0 baseline", () => {
       expect(findings).toHaveLength(0);
       // The flush is a trailing throttle: the write lands about DEBOUNCE_MS after the
       // gesture, not immediately and not at the pointer's end.
-      expect(writes[0].start - editAt).toBeGreaterThan(100);
-      expect(writes[0].start - editAt).toBeLessThan(120 + lat + 400);
+      expect(writes[0].start - editAt).toBeGreaterThan(DEBOUNCE_MS - 20);
+      expect(writes[0].start - editAt).toBeLessThan(DEBOUNCE_MS + lat + 400);
     });
   }
 });

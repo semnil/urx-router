@@ -7,6 +7,7 @@ import { defaultPlan } from "../../src/models/initial-state";
 import type { ModelId } from "../../src/models/types";
 import { cmdAddr, planToCommandOrigins, planToCommands } from "../../src/core/control/translate";
 import { nodeParamContestPath, walkParamLeaves } from "../../src/core/plan-history";
+import { IDLE_FULL_MS } from "../../src/core/control/follow";
 
 // Fake URX device for the live-sync race harness (docs/{en,ja}/live-race-harness.md).
 //
@@ -1450,17 +1451,16 @@ export async function settleAfter(page: Page, markDetail: string, quiet = 900, g
 /**
  * Settle past device-follow's IDLE SAFETY NET, not merely past the burst that armed it.
  * `settleAfter` returns as soon as the link falls quiet, which for a notify is ~300 ms in —
- * before the 900 ms idle timer (follow.ts IDLE_FULL_MS) has fired the whole-device sweep it
+ * before the idle timer (follow.ts IDLE_FULL_MS) has fired the whole-device sweep it
  * schedules. An absence verdict taken there passes for free, which is the harness's own
  * first trap ("silence is also true before anything has started") one level out.
  *
- * The extra wait is the idle arm plus enough slack for the sweep to start; it lives here
- * rather than as a literal in each case so the two numbers track the one constant they
- * encode.
+ * The extra wait is the idle arm plus enough slack for the sweep to start; both waits are
+ * derived from IDLE_FULL_MS here rather than written into each case.
  */
 export async function settleThroughIdleNet(page: Page, markDetail: string, cap = 25_000): Promise<void> {
-  await settleAfter(page, markDetail, 900, cap);
-  await page.waitForTimeout(1500);
+  await settleAfter(page, markDetail, IDLE_FULL_MS, cap);
+  await page.waitForTimeout(IDLE_FULL_MS + 600);
   await waitQuiet(page);
 }
 
