@@ -164,6 +164,9 @@ export interface UnverifiedFinding {
   key: string;
   label: string;
   outcome: UnverifiedOutcome;
+  /** For a guess a round trip cannot settle, the observation that does — what the report
+   *  prints beside every verdict but a refutation, which a round trip CAN reach. */
+  howToSettle?: string;
   /** Addresses written for this guess that did not round-trip, from passes that
    *  completed. Non-empty exactly when the outcome is "refuted" — every other outcome is
    *  a statement that nothing was settled, and a list of differences printed under it
@@ -979,7 +982,13 @@ export async function runSelfTest(
                   ? "confirmed"
                   : "roundTripped"
                 : "unexercised";
-      return { key: m.key, label: m.label, outcome, mismatches };
+      return {
+        key: m.key,
+        label: m.label,
+        outcome,
+        mismatches,
+        ...(!m.roundTripSettles && m.howToSettle ? { howToSettle: m.howToSettle } : {}),
+      };
     });
 
     // 3. Restore the original state (converging, for the same reset behavior).
@@ -1331,6 +1340,8 @@ export function formatSelfTestReport(report: SelfTestReport): string {
       }[u.outcome];
       lines.push(`- **${u.label}** (${u.key}): ${verdict}`);
       for (const m of u.mismatches) lines.push(`  - ${mismatchLine(m)}`);
+      if (u.howToSettle && u.outcome !== "refuted" && u.outcome !== "collision")
+        lines.push(`  - NOT SETTLED BY THIS RUN — a round trip cannot answer it; to settle it, ${u.howToSettle}`);
     }
   }
 

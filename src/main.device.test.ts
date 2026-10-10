@@ -1372,6 +1372,53 @@ describe("the model the device turns out to be", () => {
     expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
   });
 
+  // A write the unit refuses at an address an unverified mapping names ends the session on a
+  // line that says which: on URX22 a jack's A.Gain rests on the jack axis.
+  it("names the guess a refused live write rests on", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const url = `/?plan=${encodeURIComponent(Buffer.from(serialize(defaultPlan("URX22")), "utf8").toString("base64url"))}`;
+    const shell = (await bootApp({
+      url,
+      tauri: deviceCommands({
+        ...connectAs("URX22"),
+        "plugin:dialog|message": "Ok",
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId === PARAMS.HA_GAIN.id) throw new Error("device-busy");
+        },
+      }),
+    }))!;
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    expect(errors(shell), "the premise: the session started").toEqual([]);
+    selectNode("ch1");
+    const slider = paramRow(t().inspector.gainAnalog).querySelector<HTMLInputElement>('input[type="range"]')!;
+    slider.value = String(Number(slider.value) + 5);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+    expect(errors(shell)[0]).toContain(t().status.unverifiedGuess("jack-axis"));
+  });
+
+  // …and the write's own report names it beside the refused command.
+  it("names the guess a refused write rests on in the write report", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const url = `/?plan=${encodeURIComponent(Buffer.from(serialize(defaultPlan("URX22")), "utf8").toString("base64url"))}`;
+    const shell = (await bootApp({
+      url,
+      tauri: deviceCommands({
+        ...connectAs("URX22"),
+        ...SAVES,
+        "plugin:dialog|message": byMessage((m) => !m.includes(RETRY_ASK)),
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId === PARAMS.HA_GAIN.id) throw new Error("device-busy");
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 25_000 });
+    const saved = shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string };
+    expect(saved.contents).toContain("- HA_GAIN (unverified mapping jack-axis) — device-busy");
+  });
+
   // Taken, the offer has to actually switch — otherwise the read that follows maps the
   // device's channels onto the wrong ones, which is the whole reason the offer exists.
   // This is the arm that makes the declined case above mean something.

@@ -191,7 +191,14 @@ import {
   type SendOutcome,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
-import { cmdAddr, collisionOwners, planToCommands, planToNameWrites, unnamedNodes } from "./core/control/translate";
+import {
+  cmdAddr,
+  collisionOwners,
+  planToCommands,
+  planToNameWrites,
+  unnamedNodes,
+  unverifiedGuessNote,
+} from "./core/control/translate";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
 import {
@@ -462,7 +469,8 @@ const live = DEMO
   : new LiveSync({
       getModel: () => getModel(modelId),
       getPlan: () => plan,
-      onError: (message) => stopLiveOnError(errorText(message)),
+      onError: (message, guess) =>
+        stopLiveOnError(errorText(message) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : "")),
       // The adoption's own count rides on this line rather than writing one of its own: the
       // converge that produces it runs INSIDE the flush, so a line written there is overwritten
       // by this one a moment later — the status bar is last-writer-wins, and a converge always
@@ -3826,9 +3834,10 @@ if (!DEMO) {
             const takenBack = adoptConfirmedWrites(confirmedAddrs(ledger));
             adopted += takenBack;
             const skipped = outcomes.filter((o) => o.skipped).length;
-            const failed: Array<{ name: string; error?: string }> = outcomes
-              .filter(reachedAndFailed)
-              .map((o) => ({ name: o.command.name, error: o.error }));
+            const failed: Array<{ name: string; error?: string }> = outcomes.filter(reachedAndFailed).map((o) => ({
+              name: o.command.name + unverifiedGuessNote(getModel(modelId), o.command.paramId, o.command.y),
+              error: o.error,
+            }));
             failed.push(...presetFailures);
             // On every outcome, not only the clean one: a write that stopped can still have
             // landed and read back the address the plan takes its value from, and a line that
@@ -4499,7 +4508,7 @@ if (!DEMO) {
           const commands = planToCommands(model, plan, "all", { everyInputHolder: true });
           const names = planToNameWrites(model, plan);
           const startedAt = performance.now();
-          const { entries, errors } = await comparePlan(commands, signal);
+          const { entries, errors } = await comparePlan(commands, signal, model);
           signal.throwIfAborted();
           const { entries: nameEntries, errors: nameErrors } = await compareNames(names);
           const elapsedMs = Math.round(performance.now() - startedAt);

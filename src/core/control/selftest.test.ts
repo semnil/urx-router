@@ -1450,6 +1450,11 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(summarizeVerdicts(report.unverified).refuted).toBe(1);
     const md = formatSelfTestReport(report);
     expect(md).toContain("REFUTED");
+    // A refutation is what a round trip CAN settle, so the refuted guess is not called
+    // unsettled — while the unread one beside it still is.
+    const settle = (key: string): string => UNVERIFIED_MAPPINGS.find((m) => m.key === key)!.howToSettle!;
+    expect(md).not.toContain(settle("input-ports"));
+    expect(md).toContain(settle("stereo-block"));
 
     // The outcome turns on what a completed pass saw; so must the DETAIL printed under
     // it. This guess also differs in every stopped pass — same address, no evidence —
@@ -1588,6 +1593,13 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(md).toContain("ROUND-TRIPPED");
     expect(md).not.toContain("CONFIRMED");
     expect(summarizeVerdicts(report.unverified)).toEqual({ confirmed: 0, roundTripped: 5, refuted: 0, untestable: 0 });
+    // …and says, per guess, that the run did not settle it and what would.
+    for (const m of UNVERIFIED_MAPPINGS.filter((x) => x.models.includes("URX22"))) {
+      expect(m.howToSettle, `${m.key} says what settles it`).toBeTruthy();
+      expect(md, m.key).toContain(
+        `NOT SETTLED BY THIS RUN — a round trip cannot answer it; to settle it, ${m.howToSettle}`,
+      );
+    }
   });
 
   // …and CONFIRMED is still what a round trip earns where it does answer the question. The

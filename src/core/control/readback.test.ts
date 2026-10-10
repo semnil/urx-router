@@ -334,6 +334,21 @@ describe("applyDeviceState round-trip", () => {
         expect(target.nodeParams[id], `${id} holds no ${key}`).not.toHaveProperty(key);
   });
 
+  // A failed read at an address an unverified mapping names says which: on URX22 the jacks
+  // rest on the jack axis.
+  it("names the guess a failed input-stage read rests on", async () => {
+    const m22 = getModel("URX22");
+    vi.mocked(vdGet).mockImplementation((id: number, _x: number, y: number) =>
+      id === PARAMS.HA_GAIN.id && y === 1
+        ? Promise.reject(new Error("timeout"))
+        : Promise.resolve(PORT_REF_PARAMS.has(id) ? PORT_REF_NONE : 0),
+    );
+    const result = await applyDeviceState(m22, emptyPlan("URX22"));
+    const label = m22.nodes.find((n) => n.id === "in.micline_1_2")!.label;
+    expect(result.errors).toEqual([`${label} (unverified mapping jack-axis): timeout`]);
+    expect([...result.unreadNodes]).toEqual(["in.micline_1_2"]);
+  });
+
   it("counts applied groups across every section, not just channels", async () => {
     // All-default device (every read returns 0 / none): only the groups that are
     // unconditionally read still increment `applied`. Confirms the count spans

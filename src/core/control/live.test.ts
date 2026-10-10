@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
+import { defaultPlan } from "../../models/initial-state";
 import { SSMCS_INITIAL, emptyPlan, ensureFixedConnections, setExclusiveConnection, type Plan } from "../plan";
 import { PlanWriteWitness, clonePlanState } from "../plan-history";
 
@@ -259,6 +260,30 @@ describe("LiveSync sideEffect converge", () => {
     // Ahead of the freeze — what the park wrote is in the copy the converge sends from.
     // Behind it, the read lands in a plan the converge is no longer looking at.
     expect(seen[0]?.nodeParams["in.aux"]?.dGain, "the parked value in the converged copy").toBe(12);
+  });
+
+  // A write that fails at an address an unverified mapping names hands the session's end that
+  // mapping, so the line it ends on can say what the address rests on.
+  it("names the guess a failed write rests on", async () => {
+    const m22 = getModel("URX22");
+    const plan = defaultPlan("URX22");
+    ensureFixedConnections(m22, plan);
+    const errors: Array<[string, string | undefined]> = [];
+    const live = new LiveSync({
+      getModel: () => m22,
+      getPlan: () => plan,
+      onError: (message, guess) => void errors.push([message, guess]),
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    live.begin();
+    vi.mocked(vdSet).mockImplementation((id) =>
+      id === PARAMS.HA_GAIN.id ? Promise.reject(new Error("device-busy")) : Promise.resolve(),
+    );
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: 30 };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(errors).toEqual([["device-busy", "jack-axis"]]);
   });
 
   // A source's D.Gain is written only while a channel reads it, and a panel move there announces

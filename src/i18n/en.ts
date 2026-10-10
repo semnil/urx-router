@@ -977,6 +977,7 @@ export const en = {
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} shares device settings with ${kept}${more > 0 ? ` (+${more} more)` : ""} — only ${kept}'s values reach the device`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
+    unverifiedGuess: (key: string): string => `the address rests on the unverified mapping ${key}`,
     linkLogFailed: (message: string): string => `Link ledger could not be written: ${message}`,
     connected: tr("Connected"),
     connectionDeleted: tr("Connection deleted"),

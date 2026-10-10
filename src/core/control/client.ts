@@ -8,7 +8,7 @@ import type { Plan } from "../plan";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import type { ParamSpec } from "./params";
-import { addrKey, cmdAddr, planToCommands, planToNameWrites } from "./translate";
+import { addrKey, cmdAddr, planToCommands, planToNameWrites, unverifiedGuessNote } from "./translate";
 import type { EmitOptions, NameWrite, VdCommand, WriteScope } from "./translate";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -172,7 +172,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
       } else matched?.add(cmdAddr(command));
     } catch (e) {
       const cause = e instanceof Error ? e.message : String(e);
-      errors.push(`${command.name}: ${cause}`);
+      errors.push(`${command.name}${unverifiedGuessNote(model, command.paramId, command.y)}: ${cause}`);
       causes.push(cause);
       unread.push(command);
       if (stopOnError) break;
@@ -872,6 +872,8 @@ export interface NameCompareEntry {
 export async function comparePlan(
   commands: readonly VdCommand[],
   signal?: AbortSignal,
+  /** Names the unverified mapping a failed read rests on, where one does. */
+  model?: DeviceModel,
 ): Promise<{ entries: CompareEntry[]; errors: string[] }> {
   const entries: CompareEntry[] = [];
   const errors: string[] = [];
@@ -881,7 +883,8 @@ export async function comparePlan(
       const device = await vdGet(command.paramId, command.x, command.y);
       entries.push({ command, device, match: device === command.vdValue });
     } catch (e) {
-      errors.push(`${command.name}: ${e instanceof Error ? e.message : String(e)}`);
+      const note = model ? unverifiedGuessNote(model, command.paramId, command.y) : "";
+      errors.push(`${command.name}${note}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   return { entries, errors };

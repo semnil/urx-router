@@ -3268,3 +3268,16 @@ export function unverifiedAddresses(model: DeviceModel): Map<string, string> {
   }
   return out;
 }
+
+/** The unverified mapping an address rests on, on this model, or undefined for an address no
+ *  guess names. A read or write that fails there is reported against it. */
+export function unverifiedGuessAt(model: DeviceModel, paramId: number, y: number): string | undefined {
+  return unverifiedAddresses(model).get(`${paramId}:${y}`);
+}
+
+/** " (unverified mapping <key>)" for an address a guess names, "" otherwise — the suffix a
+ *  failure line in a report carries. */
+export function unverifiedGuessNote(model: DeviceModel, paramId: number, y: number): string {
+  const key = unverifiedGuessAt(model, paramId, y);
+  return key === undefined ? "" : ` (unverified mapping ${key})`;
+}

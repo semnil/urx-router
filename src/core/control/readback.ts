@@ -89,6 +89,7 @@ import {
   fxChannelIndex,
   inputEq,
   inputStageReadSet,
+  unverifiedGuessNote,
   inputNodeForPort,
   insertFxControl,
   isStereoChannel,
@@ -710,7 +711,8 @@ export async function applySilentState(
       applied++;
     } catch (e) {
       failed.add(node.id);
-      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+      const note = unverifiedGuessNote(model, address.id, address.instances[0]);
+      errors.push(`${node.label}${note}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -844,24 +846,28 @@ async function readPass(
     const address = D_GAIN_SOURCES[node.id];
     if (base === undefined && !address) continue;
     attempted.add(node.id);
+    // The address being read, so a failure names the unverified mapping it rests on.
+    let at: [number, number] = [0, 0];
+    const get = (paramId: number, y: number): Promise<number> => ((at = [paramId, y]), vdGet(paramId, 0, y));
     try {
       const update: Record<string, number | boolean> = {};
       if (base !== undefined) {
         for (const side of ["L", "R"] as const) {
           const j = base + (side === "R" ? 1 : 0);
-          update[jackKey("phantom", side)] = vdToBool(await vdGet(PARAMS.PHANTOM.id, 0, j));
-          update[jackKey("gain", side)] = await readInputGain(source, PARAMS.HA_GAIN.id, j);
-          update[jackKey("clipSafe", side)] = vdToBool(await vdGet(PARAMS.CLIP_SAFE.id, 0, j));
+          update[jackKey("phantom", side)] = vdToBool(await get(PARAMS.PHANTOM.id, j));
+          update[jackKey("gain", side)] = vdToGain(await get(PARAMS.HA_GAIN.id, j));
+          update[jackKey("clipSafe", side)] = vdToBool(await get(PARAMS.CLIP_SAFE.id, j));
           if ((HI_Z_JACKS[model.id] ?? []).includes(j))
-            update[jackKey("hiZ", side)] = vdToBool(await vdGet(PARAMS.HI_Z.id, 0, j));
+            update[jackKey("hiZ", side)] = vdToBool(await get(PARAMS.HI_Z.id, j));
         }
       }
-      if (address) update.dGain = await readInputGain(source, address.id, address.instances[0]);
+      if (address) update.dGain = vdToGain(await get(address.id, address.instances[0]));
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
       applied++;
     } catch (e) {
       failed.add(node.id);
-      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+      const note = unverifiedGuessNote(model, at[0], at[1]);
+      errors.push(`${node.label}${note}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

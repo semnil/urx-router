@@ -757,6 +757,7 @@ export const ja: Messages = {
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} は ${kept} と本体上の設定を共有しています${more > 0 ? ` (他 ${more} 件)` : ""} — 本体に届くのは ${kept} の値だけです`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,
+    unverifiedGuess: (key: string): string => `このアドレスは未検証のマッピング ${key} に基づく`,
     linkLogFailed: (message: string): string => `リンク台帳を書き出せませんでした: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",

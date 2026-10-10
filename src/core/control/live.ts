@@ -22,6 +22,7 @@ import {
   planToFollowOnlyAddrs,
   nameControl,
   planToNameWrites,
+  unverifiedGuessAt,
 } from "./translate";
 import type { SharedOwners, NameWrite, VdCommand, WriteScope } from "./translate";
 import { confirmedAddrs, reachedAndFailed, sendConverging } from "./client";
@@ -85,8 +86,9 @@ export interface FollowAddr {
 export interface LiveSyncHooks {
   getModel: () => DeviceModel;
   getPlan: () => Plan;
-  /** A write failed; sync is already stopped — the caller drops the connection. */
-  onError: (message: string) => void;
+  /** A write failed; sync is already stopped — the caller drops the connection. `guess` names
+   *  the unverified mapping the failed address rests on, where one does. */
+  onError: (message: string, guess?: string) => void;
   /** A flush sent `count` writes — for an optional, quiet "→ device" status. */
   onSent: (count: number) => void;
   /** A converge in this flush read these addresses back and found the device at the plan's
@@ -1152,6 +1154,8 @@ export class LiveSync {
         this.inFlight.set(k, value);
         try {
           await vdSet(c.paramId, c.x, c.y, value);
+        } catch (e) {
+          throw withGuess(e, unverifiedGuessAt(model, c.paramId, c.y));
         } finally {
           this.inFlight.delete(k);
         }
@@ -1349,7 +1353,11 @@ export class LiveSync {
           // leaves behind, and `new Error("")` here would end the session with a
           // teardown that names nothing. The read's own message rather than the report
           // entry, which carries the parameter's name in front of the shell's code.
-          throw new Error(failed?.error || r.readCauses[0] || "converge-failed");
+          const at = failed?.command ?? r.unread[0];
+          throw withGuess(
+            new Error(failed?.error || r.readCauses[0] || "converge-failed"),
+            at && unverifiedGuessAt(model, at.paramId, at.y),
+          );
         }
         this.capture(converged, since, undefined, new Set([...ownOns, ...unsentHeads.keys()]));
         for (const [k, v] of unsentHeads) if (v === undefined) this.snapshot.delete(k);
@@ -1487,7 +1495,7 @@ export class LiveSync {
       // stopped by it.
       if (this.sessionGen !== gen) return;
       this.active = false;
-      this.hooks.onError(e instanceof Error ? e.message : String(e));
+      this.hooks.onError(e instanceof Error ? e.message : String(e), (e as { guess?: string } | null)?.guess);
       return;
     } finally {
       edits?.close();
@@ -1502,4 +1510,11 @@ export class LiveSync {
       }
     }
   }
+}
+
+/** `e` carrying the unverified mapping its address rests on, its message unchanged. */
+function withGuess(e: unknown, guess: string | undefined): unknown {
+  if (guess === undefined) return e;
+  const err = e instanceof Error ? e : new Error(String(e));
+  return Object.assign(err, { guess });
 }
