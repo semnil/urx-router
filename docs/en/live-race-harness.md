@@ -106,9 +106,14 @@ Each phase-offset value sits on the edge of one of these measured constants.
   300 ms (the pending queue, `SETTLE_TIMEOUT_MS` long), the value a write still on the wire carries
   there, or the value the snapshot holds. The flush writes the queue and the snapshot **after** the
   ack, so an echo that beats its own ack is recognised by the in-flight value alone, and the ack then
-  queues no announcement that has already arrived. A notify carrying any other value while the write
-  is in flight is taken as superseded (`hasUnannouncedWrite`) — nothing is applied, the node is re-read
-  once the write is announced — and the idle net still sweeps the whole device
+  queues no announcement that has already arrived. Either match also retires the writes queued before
+  it at that address — an in-flight match the whole queue, a queued one the newest entry carrying the
+  value and every older entry — so when the unit announces only a drag's last write, the unit moving
+  back to one of the earlier values inside the window is still followed. When it instead announces each
+  write in turn and late, the announcements after the first one read as the unit's own moves and the
+  plan follows them to the last. A notify carrying any other value while the write is in flight is
+  taken as superseded (`hasUnannouncedWrite`) — nothing is applied, the node is re-read once the write
+  is announced — and the idle net still sweeps the whole device
 
 ## Invariants
 
