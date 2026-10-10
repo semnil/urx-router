@@ -1,5 +1,6 @@
 // The document hook's reach into the private ledgers. `scripts/md-hook.sh` runs the anchor check
-// of the private checkout the EDITED FILE sits in, and nothing when the file sits in none. Driven
+// of the reference/ in this repository's main checkout when the EDITED FILE sits in it, from the
+// main checkout and from any worktree of it alike, and nothing for a file anywhere else. Driven
 // against a throwaway checkout — the real hook beside stand-ins for the public checkers, a private
 // reference/ carrying a stand-in for the anchor check, and a git worktree of that checkout, which
 // has no reference/ of its own because the directory is ignored. The worktree is the placement a
@@ -133,6 +134,25 @@ describe("the document hook and the private ledgers", () => {
     for (const from of [main, worktree]) {
       const res = run(from, ledgerOf(main));
       expect(res.stderr).toBe("");
+      expect(res.status).toBe(0);
+    }
+  });
+
+  it("runs no anchor check for a ledger-shaped file outside reference/, nor a checker found beside it", () => {
+    // The main checkout's own ledger is broken, so running its checker for this edit refuses too.
+    const { main, worktree } = checkout({ reference: true });
+    const elsewhere = realpathSync(scratch("md-hook-elsewhere-"));
+    mkdirSync(join(elsewhere, "scripts"));
+    mkdirSync(join(elsewhere, "work"));
+    writeFileSync(
+      join(elsewhere, "scripts", "check-ledger-anchors.mjs"),
+      'process.stderr.write("planted checker ran\\n"); process.exit(2);\n',
+    );
+    writeFileSync(join(elsewhere, "work", "e2e-flakes.md"), BROKEN_LEDGER);
+    for (const from of [main, worktree]) {
+      const res = run(from, join(elsewhere, "work", "e2e-flakes.md"));
+      expect(res.stderr).not.toContain("planted checker ran");
+      expect(res.stderr).not.toContain("ledger-anchors");
       expect(res.status).toBe(0);
     }
   });
