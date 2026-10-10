@@ -1064,6 +1064,31 @@ describe("LiveSync unannounced write", () => {
     expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(false);
   });
 
+  it("takes an announcement that overtakes its write's ack as that write's echo", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    let ack!: () => void;
+    vi.mocked(vdSet).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          ack = resolve;
+        }),
+    );
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    const cmd = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+    // On the wire, unacked: a different value is still the unit's own move…
+    expect(live.isEcho(cmd.paramId, cmd.x, cmd.y, cmd.vdValue - 600)).toBe(false);
+    // …and the value this write carries is its announcement, arriving first.
+    expect(live.isEcho(cmd.paramId, cmd.x, cmd.y, cmd.vdValue)).toBe(true);
+    // The ack queues no second announcement: the one it would wait for has been taken.
+    ack();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(live.hasUnannouncedWrite(cmd.paramId, cmd.x, cmd.y)).toBe(false);
+  });
+
   it("answers false once the retention window passes with no announcement", async () => {
     const plan = basePlan();
     const live = liveFor(plan);

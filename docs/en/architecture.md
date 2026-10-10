@@ -2511,7 +2511,7 @@ agreed with the plan at every key leaves both stacks as they were.
 | --- | --- | --- |
 | A drag's intermediate values | the plan itself — the next step overwrites the key inside the window | only the final value of an address ever becomes a command |
 | An address whose value equals the snapshot | the flush's diff | the device already holds it |
-| A notify whose value equals the snapshot | `isEcho`, before the settle window | our own write coming back is not a change |
+| A notify whose value equals the snapshot, a value an acked write is still waiting to hear announced, or the value a write still on the wire carries | `isEcho`, before the settle window | our own write coming back is not a change, whether it arrives after its ack or ahead of it |
 | A notify for Follow USB, 848 | `intercept`, ahead of node resolution | host-owned and outside the plan; it would otherwise force a full re-read |
 | A device read whose plan was replaced | `readIntoPlan`'s identity guard, after the read resolves | its values belong to a document nothing shows |
 | An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |

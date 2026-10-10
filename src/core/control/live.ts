@@ -292,11 +292,15 @@ export class LiveSync {
   // no notifies, no advance — and that is exactly when an unannounced write should be
   // forgotten. SETTLE_TIMEOUT_MS is borrowed for the LENGTH, not the axis.
   private readonly pendingValues = new Map<number, PendingQueue<number>>();
-  // Addresses whose numeric write is on the wire and not yet acked. A flush sends one
-  // command at a time and never overlaps another flush, so an address is in here at most
-  // once. Together with `pendingValues` it answers `hasUnannouncedWrite`: from the moment
-  // a write is issued until its announcement is taken as an echo.
-  private readonly inFlight = new Set<number>();
+  // Addresses whose numeric write is on the wire and not yet acked, with the value it
+  // carries. A flush sends one command at a time and never overlaps another flush, so an
+  // address is in here at most once. Together with `pendingValues` it answers
+  // `hasUnannouncedWrite`: from the moment a write is issued until its announcement is
+  // taken as an echo.
+  private readonly inFlight = new Map<number, number>();
+  // In-flight writes whose announcement arrived before their ack and was taken as their
+  // echo (`isEcho`), so the ack queues no announcement that has already come.
+  private readonly echoedInFlight = new Set<number>();
   // The same for the string writes, keyed as `pendingNames` is.
   private readonly inFlightNames = new Set<string>();
   /**
@@ -410,6 +414,7 @@ export class LiveSync {
     this.pendingValues.clear();
     this.pendingNames.clear();
     this.inFlight.clear();
+    this.echoedInFlight.clear();
     this.inFlightNames.clear();
     // Same session boundary: a mark taken on a previous link means nothing on this one.
     this.recentWrites.clear();
@@ -544,7 +549,14 @@ export class LiveSync {
     // Pending first, and it CONSUMES the entry it matches: this notify is that write's
     // announcement, so leaving it queued would let a later device-side change back to
     // the same value be swallowed for the rest of the retention window.
-    return this.takePending(this.pendingValues, k, value) || this.snapshot.get(k) === value;
+    if (this.takePending(this.pendingValues, k, value)) return true;
+    // A write still on the wire carrying this value: its announcement has overtaken its
+    // ack, and the unit holds what we sent.
+    if (this.inFlight.get(k) === value) {
+      this.echoedInFlight.add(k);
+      return true;
+    }
+    return this.snapshot.get(k) === value;
   }
 
   /** What the unit holds at an address as far as this session knows: its last announcement
@@ -599,7 +611,7 @@ export class LiveSync {
     return this.unannounced(this.inFlightNames, this.pendingNames, `${paramId}:${y}`);
   }
 
-  private unannounced<K, V>(inFlight: ReadonlySet<K>, queues: Map<K, PendingQueue<V>>, key: K): boolean {
+  private unannounced<K, V>(inFlight: { has(key: K): boolean }, queues: Map<K, PendingQueue<V>>, key: K): boolean {
     if (inFlight.has(key)) return true;
     const q = queues.get(key);
     if (!q) return false;
@@ -661,6 +673,7 @@ export class LiveSync {
     this.pendingValues.clear();
     this.pendingNames.clear();
     this.inFlight.clear();
+    this.echoedInFlight.clear();
     this.inFlightNames.clear();
     this.recentWrites.clear();
     this.pending = false;
@@ -1113,7 +1126,7 @@ export class LiveSync {
         // `hasUnannouncedWrite` answers for, so the follow layer re-reads its node
         // rather than putting its value into the plan (settle.ts).
         const mark = writeSettle.mark();
-        this.inFlight.add(k);
+        this.inFlight.set(k, value);
         try {
           await vdSet(c.paramId, c.x, c.y, value);
         } finally {
@@ -1125,7 +1138,7 @@ export class LiveSync {
         if (this.sessionGen !== gen) return;
         this.snapshot.set(k, value);
         this.announced.delete(k);
-        this.notePending(this.pendingValues, k, value);
+        if (!this.echoedInFlight.delete(k)) this.notePending(this.pendingValues, k, value);
         writes.set(k, { mark, node: c.node, changed: had !== undefined, value });
         this.recentWrites.set(k, { mark, node: c.node, at: Date.now() });
         sent++;

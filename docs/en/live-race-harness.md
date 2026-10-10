@@ -103,11 +103,12 @@ Each phase-offset value sits on the edge of one of these measured constants.
 - `REFLECT_MIN_MS` is a leading-edge rate limit, not a 50 ms coalesce delay. With no reflect in the
   previous 50 ms the wait is 0
 - `isEcho` takes a notify carrying a value this session was acked for at that address within the last
-  300 ms (the pending queue, `SETTLE_TIMEOUT_MS` long) or the value the snapshot holds, and the flush
-  writes both **after** the ack. An echo that beats its own ack is neither: it lands while the write
-  is in flight, so the follow layer takes it as superseded (`hasUnannouncedWrite`) — nothing is
-  applied, the node is re-read once the write is announced — and the idle net still sweeps the whole
-  device. The discriminating variable is whether an echo beats its own ack
+  300 ms (the pending queue, `SETTLE_TIMEOUT_MS` long), the value a write still on the wire carries
+  there, or the value the snapshot holds. The flush writes the queue and the snapshot **after** the
+  ack, so an echo that beats its own ack is recognised by the in-flight value alone, and the ack then
+  queues no announcement that has already arrived. A notify carrying any other value while the write
+  is in flight is taken as superseded (`hasUnannouncedWrite`) — nothing is applied, the node is re-read
+  once the write is announced — and the idle net still sweeps the whole device
 
 ## Invariants
 
@@ -887,10 +888,11 @@ agreement, zero findings.
 - **Converge-latch starvation**: with a converge param still in the diff and edits closer together
   than 120 ms, **not one command leaves the app for five seconds**. Nothing is lost, but the unit plays
   the old value for the whole gesture
-- **Echo versus ack**: a broker that echoes faster than it acks delivers the echo while the write is in
-  flight. The app takes it as superseded rather than applying it, re-reads the node once the write is
-  announced, and the idle net escalates to a whole-device readback — several hundred reads per echoed
-  write
+- **An echo that beat its own ack cost a whole-device read — fixed.** A broker that echoes faster than
+  it acks delivers the echo while the write is in flight; the app took it as superseded, re-read the
+  node once the write was announced, and the idle net escalated to a whole-device readback — several
+  hundred reads per echoed write. The value the write carries is now its echo, so the early echo is
+  dropped as the late one is, with no read
 - **A flush wrote a device-authored value back at the device — fixed.** With the send loop held at CH 1's
   fader and a pan notify delivered while it was held, the loop reached CH 1's pan — one command behind —
   and sent the **pre-notify** value: the device was left holding `0` after reporting `24`, and the idle
