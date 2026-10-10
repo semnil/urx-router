@@ -447,7 +447,9 @@ test.describe("T5 drop", () => {
     // doomed write → session end: +79 → +105 ms at 1x and +138 → +163 at 12x CPU
     // throttling, i.e. the teardown itself costs ~25 ms and it is the drag's own
     // cadence that moves.
-    const doomedSets = doomed.filter((s) => s.cmd === "vd_set");
+    // A doomed write is one the latch refused. The drag can issue a write between the mark
+    // and setDeviceLost, two driver calls apart, and that one is accepted.
+    const doomedSets = doomed.filter((s) => s.cmd === "vd_set" && s.detail === "device-lost");
     expect(endedAt - doomedSets[0].start).toBeLessThan(120);
     expect(doomedSets).toHaveLength(1);
     // (No assertion that every doomed command failed: after setDeviceLost the fake
