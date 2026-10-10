@@ -17,10 +17,33 @@ for check in check-md-tables check-assets-index check-merge-gates check-comment-
 done
 # The private ledgers under reference/ (a checkout of another repository, ignored here) carry
 # their own anchor check, and an edit made from this repository reaches them through this hook
-# rather than through that repository's own. Run when that checkout is present; a clone
-# without it has no ledger to break.
-anchors="$self/../reference/scripts/check-ledger-anchors.mjs"
-if [ -f "$anchors" ]; then
+# rather than through that repository's own. The checker run is the one of the checkout the
+# EDITED FILE sits in — the nearest directory above it holding scripts/check-ledger-anchors.mjs —
+# rather than one beside this hook, since a worktree of this repository has no reference/ while
+# the ledger it edits lives in the main checkout's. A file in no such checkout runs nothing.
+anchors=$(printf '%s' "$payload" | node -e '
+const { existsSync, readFileSync } = require("node:fs");
+const { dirname, join, resolve } = require("node:path");
+let payload;
+try {
+  payload = JSON.parse(readFileSync(0, "utf8"));
+} catch {
+  process.exit(0);
+}
+const file = payload?.tool_input?.file_path;
+if (typeof file !== "string" || !file) process.exit(0);
+let dir = dirname(resolve(typeof payload.cwd === "string" ? payload.cwd : process.cwd(), file));
+for (;;) {
+  const checker = join(dir, "scripts", "check-ledger-anchors.mjs");
+  if (existsSync(checker)) {
+    process.stdout.write(checker);
+    break;
+  }
+  if (dirname(dir) === dir) break;
+  dir = dirname(dir);
+}
+') || status=$?
+if [ -n "$anchors" ]; then
   printf '%s' "$payload" | node "$anchors" --hook || status=$?
 fi
 exit $status

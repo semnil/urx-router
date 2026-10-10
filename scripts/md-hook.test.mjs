@@ -1,62 +1,148 @@
-// The document hook's reach into the private ledgers. `scripts/md-hook.sh` runs the private
-// repository's anchor check when that checkout sits beside it as reference/, and nothing when it
-// does not. Driven against a throwaway layout — the real hook beside stand-in checkers — so the
-// question is the wiring rather than what any one checker decides: the stand-in for the anchor
-// check refuses everything, and the hook has to carry that refusal out.
+// The document hook's reach into the private ledgers. `scripts/md-hook.sh` runs the anchor check
+// of the private checkout the EDITED FILE sits in, and nothing when the file sits in none. Driven
+// against a throwaway checkout — the real hook beside stand-ins for the public checkers, a private
+// reference/ carrying a stand-in for the anchor check, and a git worktree of that checkout, which
+// has no reference/ of its own because the directory is ignored. The worktree is the placement a
+// session normally works from, and the hook that runs there is the worktree's own copy.
 import { afterAll, describe, expect, it } from "vitest";
-import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HOOK = fileURLToPath(new URL("./md-hook.sh", import.meta.url));
 const HOOK_NODE = fileURLToPath(new URL("./hook-node.sh", import.meta.url));
+const PUBLIC = ["check-md-tables", "check-assets-index", "check-merge-gates", "check-comment-provenance"];
 const PASSING = "process.exit(0);\n";
-const REFUSING = 'process.stderr.write("anchor check reached\\n"); process.exit(2);\n';
+const REFUSING_PUBLIC = 'process.stderr.write("public check refused\\n"); process.exit(2);\n';
+// The anchor check's own contract, reduced: it reads the payload, ignores anything that is not
+// one of its ledgers, and checks the ledger in ITS OWN checkout — so the root it names is the
+// checkout the hook delegated to.
+const ANCHORS = `import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const file = JSON.parse(readFileSync(0, "utf8")).tool_input?.file_path ?? "";
+if (!file.endsWith("work/e2e-flakes.md")) process.exit(0);
+if (readFileSync(join(root, "work", "e2e-flakes.md"), "utf8").includes("### 決着条件")) process.exit(0);
+process.stderr.write("ledger-anchors: broken ledger in " + root + "\\n");
+process.exit(2);
+`;
+const VALID_LEDGER = "## `e2e/a.spec.ts` — case\n\n### 決着条件\n\nA run that settles it.\n";
+const BROKEN_LEDGER = "## `e2e/a.spec.ts` — case\n\nNo settlement condition.\n";
 
 const made = [];
 afterAll(() => {
   for (const root of made) rmSync(root, { recursive: true, force: true });
 });
 
-/** A checkout-shaped directory holding the real hook and a stand-in for each checker it runs. */
-function layout(withReference) {
-  const root = mkdtempSync(join(tmpdir(), "md-hook-"));
-  made.push(root);
-  mkdirSync(join(root, "scripts"));
-  copyFileSync(HOOK, join(root, "scripts", "md-hook.sh"));
-  copyFileSync(HOOK_NODE, join(root, "scripts", "hook-node.sh"));
-  for (const name of ["check-md-tables", "check-assets-index", "check-merge-gates", "check-comment-provenance"]) {
-    writeFileSync(join(root, "scripts", `${name}.mjs`), PASSING);
-  }
-  if (withReference) {
-    mkdirSync(join(root, "reference", "scripts"), { recursive: true });
-    writeFileSync(join(root, "reference", "scripts", "check-ledger-anchors.mjs"), REFUSING);
-  }
-  return root;
+function scratch(prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
 }
 
-const run = (root) =>
-  spawnSync("sh", [join(root, "scripts", "md-hook.sh")], {
-    input: JSON.stringify({
-      tool_name: "Edit",
-      tool_input: { file_path: join(root, "reference", "work", "e2e-flakes.md") },
-    }),
+/**
+ * A main checkout holding the real hook and the public stand-ins, optionally a private
+ * reference/ with the anchor stand-in and a ledger, and a git worktree of it.
+ */
+function checkout({ reference, ledger = BROKEN_LEDGER, refusingPublic = false }) {
+  // Canonical, since the anchor check names its root by the real path node resolved it to.
+  const main = realpathSync(scratch("md-hook-main-"));
+  const config = join(scratch("md-hook-git-"), "empty-gitconfig");
+  writeFileSync(config, "");
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: config,
+    GIT_CONFIG_SYSTEM: config,
+    GIT_CONFIG_NOSYSTEM: "1",
+    LC_ALL: "C",
+    LANG: "C",
+  };
+  const git = (...args) => execFileSync("git", args, { cwd: main, encoding: "utf8", env });
+  mkdirSync(join(main, "scripts"));
+  mkdirSync(join(main, "src"));
+  copyFileSync(HOOK, join(main, "scripts", "md-hook.sh"));
+  copyFileSync(HOOK_NODE, join(main, "scripts", "hook-node.sh"));
+  for (const name of PUBLIC) {
+    const body = refusingPublic && name === "check-md-tables" ? REFUSING_PUBLIC : PASSING;
+    writeFileSync(join(main, "scripts", `${name}.mjs`), body);
+  }
+  writeFileSync(join(main, "src", "a.ts"), "export {};\n");
+  writeFileSync(join(main, ".gitignore"), "/reference\n/worktree\n");
+  if (reference) {
+    mkdirSync(join(main, "reference", "scripts"), { recursive: true });
+    mkdirSync(join(main, "reference", "work"));
+    writeFileSync(join(main, "reference", "scripts", "check-ledger-anchors.mjs"), ANCHORS);
+    writeFileSync(join(main, "reference", "work", "e2e-flakes.md"), ledger);
+  }
+  git("init", "-q", "-b", "main", ".");
+  git("add", ".gitignore", "scripts", "src");
+  git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "init");
+  const worktree = join(main, "worktree");
+  git("worktree", "add", "-q", "-b", "work", worktree);
+  return { main, worktree };
+}
+
+/** The hook of checkout `from`, handed an edit of `file`, as the harness runs it. */
+const run = (from, file) =>
+  spawnSync("sh", [join(from, "scripts", "md-hook.sh")], {
+    input: JSON.stringify({ tool_name: "Edit", cwd: from, tool_input: { file_path: file } }),
     encoding: "utf8",
     env: { ...process.env, PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ""}` },
   });
 
+const ledgerOf = (main) => join(main, "reference", "work", "e2e-flakes.md");
+
 describe("the document hook and the private ledgers", () => {
-  it("runs the anchor check when reference/ is there, and carries its refusal out", () => {
-    const res = run(layout(true));
-    expect(res.stderr).toContain("anchor check reached");
+  it("refuses a broken ledger edited from the checkout that holds reference/", () => {
+    const { main } = checkout({ reference: true });
+    const res = run(main, ledgerOf(main));
+    expect(res.stderr).toContain(`ledger-anchors: broken ledger in ${join(main, "reference")}`);
     expect(res.status).toBe(2);
   });
 
-  it("passes when there is no reference/ beside it", () => {
-    const res = run(layout(false));
-    expect(res.stderr).not.toContain("anchor check reached");
-    expect(res.status).toBe(0);
+  it("refuses the same ledger edited from a worktree, whose own tree has no reference/", () => {
+    const { main, worktree } = checkout({ reference: true });
+    const res = run(worktree, ledgerOf(main));
+    expect(res.stderr).toContain(`ledger-anchors: broken ledger in ${join(main, "reference")}`);
+    expect(res.status).toBe(2);
+  });
+
+  it("passes a valid ledger from either placement", () => {
+    const { main, worktree } = checkout({ reference: true, ledger: VALID_LEDGER });
+    for (const from of [main, worktree]) {
+      const res = run(from, ledgerOf(main));
+      expect(res.stderr).not.toContain("ledger-anchors");
+      expect(res.status).toBe(0);
+    }
+  });
+
+  it("passes an ordinary source edit beside a broken ledger", () => {
+    const { main, worktree } = checkout({ reference: true });
+    for (const from of [main, worktree]) {
+      const res = run(from, join(from, "src", "a.ts"));
+      expect(res.stderr).not.toContain("ledger-anchors");
+      expect(res.status).toBe(0);
+    }
+  });
+
+  it("passes in a clone with no private checkout", () => {
+    const { main, worktree } = checkout({ reference: false });
+    for (const from of [main, worktree]) {
+      const res = run(from, ledgerOf(main));
+      expect(res.stderr).toBe("");
+      expect(res.status).toBe(0);
+    }
+  });
+
+  it("still carries a public check's refusal out", () => {
+    const { main, worktree } = checkout({ reference: true, ledger: VALID_LEDGER, refusingPublic: true });
+    for (const from of [main, worktree]) {
+      const res = run(from, join(from, "src", "a.ts"));
+      expect(res.stderr).toContain("public check refused");
+      expect(res.status).toBe(2);
+    }
   });
 });
