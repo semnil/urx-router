@@ -5,8 +5,8 @@ import { en } from "../src/i18n/en";
 
 // A USB output takes one source, or the two channels of a MONO IN pair as two ordinary
 // patch wires — CH 3 and CH 4 on USB MAIN OUT A is the unit's own `CH 3/4`. These pin the
-// board's half of that: which gestures put the pair on the output, what refuses any other
-// second wire, and that each of the two stays a wire of its own.
+// board's half of that: which gestures put the pair on the output, that any other source
+// replaces what the output holds, and that each of the two stays a wire of its own.
 const USB_A_IN = "out.usbmain_a:in";
 const CH1 = "ch1:out";
 const CH3 = "ch3:out";
@@ -100,25 +100,25 @@ test("an unlinked channel goes on alone, and its partner joins it by its own dra
   await expect(status(page)).toHaveText(en.status.connected);
 });
 
-// Each refusal follows a draw that said "Connected", so the status it reads is the
-// refusal's own rather than one already on screen.
-test("any second wire but the partner, and any third, is refused as not a mono pair", async ({ page }) => {
+// A source that is not the held channel's partner takes the output's place rather than
+// joining it: drawn onto one channel it replaces that wire, drawn onto the pair it replaces both.
+test("any second wire but the partner, and any third, replaces what the output holds", async ({ page }) => {
   // A second wire that is not the partner of the one held.
   await drawOntoUsbA(page, CH3);
   await expect(status(page)).toHaveText(en.status.connected);
   await drawOntoUsbA(page, CH1);
-  await expect(status(page)).toHaveText(en.error.monoPairOnly);
-  await expect(wire(page, CH1, USB_A_IN)).toHaveCount(0);
+  await expect(wire(page, CH1, USB_A_IN)).toHaveCount(1);
+  await expect(wire(page, CH3, USB_A_IN)).toHaveCount(0);
   await expect(wiresIntoUsbA(page)).toHaveCount(1);
 
   // A third, onto the pair.
+  await drawOntoUsbA(page, CH3);
   await drawOntoUsbA(page, CH4);
-  await expect(status(page)).toHaveText(en.status.connected);
   await expect(wiresIntoUsbA(page)).toHaveCount(2);
   await drawOntoUsbA(page, CH1);
-  await expect(status(page)).toHaveText(en.error.monoPairOnly);
-  await expect(wire(page, CH1, USB_A_IN)).toHaveCount(0);
-  await expect(wiresIntoUsbA(page)).toHaveCount(2);
+  await expect(wire(page, CH1, USB_A_IN)).toHaveCount(1);
+  await expect(wiresIntoUsbA(page)).toHaveCount(1);
+  await expect(status(page)).toHaveText(en.status.connected);
 });
 
 // A wire to a shelved channel is not drawn, so a click on the output's jack picks the
@@ -150,12 +150,23 @@ test("with the odd channel on the shelf, a click on the output selects and delet
   await expect(wire(page, CH4, USB_A_IN)).toHaveCount(0);
 });
 
-test("a bus onto an output holding one channel is refused as not a mono pair", async ({ page }) => {
+test("a linked pair drawn onto an output holding another source replaces it with both wires", async ({ page }) => {
+  await drawOntoUsbA(page, CH1);
+  await expect(wiresIntoUsbA(page)).toHaveCount(1);
+  await linkPair(page, "ch3");
+  await drawOntoUsbA(page, CH3);
+  await expect(wire(page, CH1, USB_A_IN)).toHaveCount(0);
+  await expect(wire(page, CH3, USB_A_IN)).toHaveCount(1);
+  await expect(wire(page, CH4, USB_A_IN)).toHaveCount(1);
+  await expect(wiresIntoUsbA(page)).toHaveCount(2);
+});
+
+test("a bus onto an output holding one channel replaces it", async ({ page }) => {
   await drawOntoUsbA(page, CH3);
   await expect(status(page)).toHaveText(en.status.connected);
   await drag(page, port(page, STEREO), port(page, USB_A_IN));
-  await expect(status(page)).toHaveText(en.error.monoPairOnly);
-  await expect(wire(page, STEREO, USB_A_IN)).toHaveCount(0);
+  await expect(wire(page, STEREO, USB_A_IN)).toHaveCount(1);
+  await expect(wire(page, CH3, USB_A_IN)).toHaveCount(0);
   await expect(wiresIntoUsbA(page)).toHaveCount(1);
 });
 

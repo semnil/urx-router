@@ -1012,6 +1012,8 @@ export const en = {
     // one of the two.
     undoPhantomHiZ: (channels: string): string =>
       `This step would leave +48V and Hi-Z both on for ${channels} — turn one of them off there first; the step is held back, not lost`,
+    undoWireShape: (receivers: string): string =>
+      `This step would leave ${receivers} with a connection the unit cannot hold — two sources on one input, or STREAMING with none; the step is held back, not lost`,
     midiBusy: tr("Busy with the device or a file — incoming MIDI is ignored until it finishes"),
     themeDark: tr("Switched to dark mode"),
     themeLight: tr("Switched to light mode"),

@@ -28,6 +28,7 @@ import {
   sendTapWritable,
   upstreamNodes,
   validatePlan,
+  wireShapeBroken,
 } from "./routing";
 import { connParamContestKey, nodeParamContestKey } from "./plan-history";
 import { emptyPlan, type Plan, type PlanConnection } from "./plan";
@@ -115,6 +116,53 @@ describe("canConnect on URX44", () => {
   it("enforces single-input on an output patch", () => {
     plan.connections.push({ from: ref("bus.stereo", "out"), to: ref("out.main", "in"), kind: "patch" });
     expect(canConnect(u44, plan, ref("bus.mix1", "out"), ref("out.main", "in")).reason).toBe("singleInput");
+  });
+});
+
+// What an undo or redo may not leave behind: an input that takes one source with two, or a
+// receiver the unit never leaves without a source with none. Only what the change made, so a
+// plan that arrived in such a shape is not refused for edits elsewhere.
+describe("wireShapeBroken", () => {
+  const u44v = MODELS.URX44V;
+  const MON1 = ref("bus.mon1", "in");
+  const STREAM = Object.keys(u44v.requiredSources)[0];
+  const withWires = (base: Plan, wires: Array<[string, string]>): Plan => ({
+    ...base,
+    connections: [
+      ...base.connections,
+      ...wires.map(([from, to]) => ({ from, to, kind: ruleKind(u44v, from, to)! }) as PlanConnection),
+    ],
+  });
+  const without = (base: Plan, to: string): Plan => ({
+    ...base,
+    connections: base.connections.filter((c) => c.to !== to),
+  });
+
+  it("names an input that takes one source and is left with two", () => {
+    const before = without(defaultPlan("URX44V"), MON1);
+    const one = withWires(before, [[ref("bus.stereo", "out"), MON1]]);
+    const two = withWires(one, [[ref("bus.mix1", "out"), MON1]]);
+    expect(wireShapeBroken(u44v, one, two)).toEqual([MON1]);
+    expect(wireShapeBroken(u44v, before, one), "one source is a shape the unit holds").toEqual([]);
+  });
+
+  it("names STREAMING left with no source, and nothing else that empties", () => {
+    const before = defaultPlan("URX44V");
+    expect(
+      before.connections.some((c) => c.to === STREAM),
+      "the premise: STREAMING has its source",
+    ).toBe(true);
+    expect(wireShapeBroken(u44v, before, without(before, STREAM))).toEqual([STREAM]);
+    expect(wireShapeBroken(u44v, before, without(before, MON1)), "MONITOR may be left empty").toEqual([]);
+  });
+
+  it("does not blame the change for a shape the plan already had", () => {
+    const base = without(defaultPlan("URX44V"), MON1);
+    const two = withWires(base, [
+      [ref("bus.stereo", "out"), MON1],
+      [ref("bus.mix1", "out"), MON1],
+    ]);
+    expect(wireShapeBroken(u44v, two, two)).toEqual([]);
   });
 });
 

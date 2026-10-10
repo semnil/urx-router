@@ -56,7 +56,7 @@ import {
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
 import { applyParamRange, isRefusal, needsDecision, planProblems, prepareLoadedPlan } from "./core/plan-validate";
-import { phantomHiZBothOn, phantomHiZNewlyBothOn, switchAddr } from "./core/input-lock";
+import { phantomHiZBothOn, switchAddr } from "./core/input-lock";
 import type { InputSwitch, SwitchSession } from "./core/input-lock";
 import type { LoadProblem } from "./core/plan-validate";
 import {
@@ -103,6 +103,7 @@ import type { ThemeMode, UpdateCheckOutcome } from "./ui/prefs";
 import { FileFlowLatch, singleFlight } from "./app/flow-latch";
 import { nodeParamEffects } from "./app/node-param-effects";
 import { changesLinkState } from "./app/link-state-change";
+import { undoRefusal } from "./app/undo-refusal";
 import {
   detectHideOffSends,
   detectLabelSource,
@@ -3095,8 +3096,7 @@ planHistory = new PlanHistory({
   patchBlocked: (patch) => {
     const after = clonePlanState(plan);
     applyPatch(after, patch);
-    const channels = phantomHiZNewlyBothOn(getModel(modelId), plan, after).map((id) => graph.labelOf(id));
-    return channels.length ? t().status.undoPhantomHiZ(channels.join(", ")) : null;
+    return undoRefusal(getModel(modelId), plan, after, (id) => graph.labelOf(id));
   },
   // The macOS application menu's Undo / Redo render this state (a no-op elsewhere).
   onDepthChange: () => editMenu.pushState(),
