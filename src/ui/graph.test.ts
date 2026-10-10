@@ -1316,24 +1316,23 @@ describe("a USB output's mono pair", () => {
     tap.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
   });
 
-  it("draws one wire from an unlinked channel, takes its partner as a second, and nothing else", () => {
+  it("draws one wire from an unlinked channel, takes its partner as a second, and replaces the pair with a third", () => {
     fx = graphFixture({ seed: seed(false) });
     drag(tapHit(fx.host, "ch4:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
     expect(sourcesOfA()).toEqual(["ch4:out"]);
     drag(tapHit(fx.host, "ch3:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
     expect(sourcesOfA()).toEqual(["ch4:out", "ch3:out"]);
     drag(tapHit(fx.host, "ch1:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
-    expect(sourcesOfA(), "a third wire is refused").toEqual(["ch4:out", "ch3:out"]);
-    expect(statuses().at(-1)).toBe(t().error.monoPairOnly);
+    expect(sourcesOfA(), "a third source replaces the pair").toEqual(["ch1:out"]);
+    expect(statuses().at(-1)).toBe(t().status.connected);
   });
 
-  it("refuses a channel that is not the partner, in the USB output's own words", () => {
+  it("replaces the held channel with one that is not its partner", () => {
     fx = graphFixture({ seed: seed(false, "ch3") });
     drag(tapHit(fx.host, "ch2:out")!, { x: 400, y: 200 }, portHit(fx.host, USB_A));
-    expect(sourcesOfA()).toEqual(["ch3:out"]);
-    expect(statuses().at(-1)).toBe(t().error.monoPairOnly);
-    // A receiver that takes one source keeps its own sentence.
-    expect(t().error.monoPairOnly).not.toBe(t().error.singleInput);
+    expect(sourcesOfA()).toEqual(["ch2:out"]);
+    expect(statuses().at(-1)).toBe(t().status.connected);
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1); // one change, so one undo puts ch3 back
   });
 
   it("deletes one wire of the pair and leaves the other", () => {
@@ -1467,7 +1466,7 @@ describe("STREAMING always has one source", () => {
     src.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
   });
 
-  it("opens a drag from its input, which a full single-input port does not", () => {
+  it("opens a drag from its full input, as every single-input port does", () => {
     fx = graphFixture();
     const src = portHit(fx.host, STREAM)!;
     src.dispatchEvent(pointer("pointerdown", 0));
@@ -1476,9 +1475,9 @@ describe("STREAMING always has one source", () => {
     src.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
   });
 
-  // Both are STREAMING's alone: MONITOR's list on the unit offers None, so a second source is
-  // refused there (and not lit as a legal drop), and its last wire can be deleted.
-  it("leaves MONITOR's single-input refusal and its last-wire delete as they were", () => {
+  // The replacing drop is every single-input port's; keeping a last wire is STREAMING's alone —
+  // MONITOR's list on the unit offers None, so its last wire can be deleted.
+  it("replaces MONITOR's source on a drop, and deletes its last wire", () => {
     const MON1 = "bus.mon1:in";
     const sourcesOfMon = (): string[] => fx.plan.connections.filter((c) => c.to === MON1).map((c) => c.from);
     fx = graphFixture({ seed: freeUsbB });
@@ -1489,13 +1488,13 @@ describe("STREAMING always has one source", () => {
     expect(jackOf("out.usbmain_b:in").getAttribute("fill"), "the control: an empty USB output is lit").toBe(
       PALETTES.dark.legalFill,
     );
-    expect(jackOf(MON1).getAttribute("fill")).not.toBe(PALETTES.dark.legalFill);
+    expect(jackOf(MON1).getAttribute("fill")).toBe(PALETTES.dark.legalFill);
     src.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
     drag(portHit(fx.host, "bus.mix1:out")!, { x: 400, y: 200 }, portHit(fx.host, MON1));
-    expect(sourcesOfMon()).toEqual(["bus.stereo:out"]);
-    expect(statuses().at(-1)).toBe(t().error.singleInput);
-    expect(fx.cb.onChange).not.toHaveBeenCalled();
-    fx.graph.deleteConnection("bus.stereo:out", MON1);
+    expect(sourcesOfMon()).toEqual(["bus.mix1:out"]);
+    expect(statuses().at(-1)).toBe(t().status.connected);
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
+    fx.graph.deleteConnection("bus.mix1:out", MON1);
     expect(sourcesOfMon()).toEqual([]);
     expect(statuses().at(-1)).toBe(t().status.connectionDeleted);
   });
@@ -2370,5 +2369,37 @@ describe("image export", () => {
     src.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: 60, clientY: 0, bubbles: true }));
     await fx.graph.exportPng("board.png");
     expect(vi.mocked(exportSvgToPng).mock.calls[0][0].querySelector(".overlay-temp")).toBeNull();
+  });
+});
+
+// Drawing onto an input that takes one source and holds one replaces its wire, in one change, on
+// every such receiver — not only STREAMING and MONITOR. The factory plan seeds each receiver below.
+describe("a drop onto an input that holds a source", () => {
+  const sourcesOf = (to: string): string[] => fx.plan.connections.filter((c) => c.to === to).map((c) => c.from);
+
+  it("replaces a channel input's source, and its pair partner's with it", () => {
+    fx = graphFixture();
+    expect(sourcesOf("ch1:in"), "the premise: the factory source").toEqual(["in.micline_1_2:out"]);
+    drag(portHit(fx.host, "in.aux:out")!, { x: 400, y: 200 }, portHit(fx.host, "ch1:in"));
+    expect(sourcesOf("ch1:in")).toEqual(["in.aux:out"]);
+    expect(sourcesOf("ch2:in"), "the pair shares its source").toEqual(["in.aux:out"]);
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
+    expect(statuses().at(-1)).toBe(t().status.connected);
+  });
+
+  it("replaces a ducker's key", () => {
+    fx = graphFixture();
+    expect(sourcesOf("out.ducker1:in"), "the premise: the factory key").toEqual(["ch1:out"]);
+    drag(portHit(fx.host, "bus.mix1:out")!, { x: 400, y: 200 }, portHit(fx.host, "out.ducker1:in"));
+    expect(sourcesOf("out.ducker1:in")).toEqual(["bus.mix1:out"]);
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces an SD Rec track's source", () => {
+    fx = graphFixture();
+    expect(sourcesOf("out.sdrec.t1:in"), "the premise: the factory track source").toEqual(["ch1:out"]);
+    drag(portHit(fx.host, "bus.mix2:out")!, { x: 400, y: 200 }, portHit(fx.host, "out.sdrec.t1:in"));
+    expect(sourcesOf("out.sdrec.t1:in")).toEqual(["bus.mix2:out"]);
+    expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
   });
 });

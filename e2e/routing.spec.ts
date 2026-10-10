@@ -89,13 +89,20 @@ test("refuses to delete a fixed CH -> STEREO wire", async ({ page }) => {
   await expect(page.locator("#statusbar")).toHaveText("Fixed connection — cannot be removed");
 });
 
-test("rejects a second source into a single-input receiver", async ({ page }) => {
+// An input that takes one source holds one: another drawn onto it replaces the one it holds, in
+// one step to undo, rather than being added or refused.
+test("replaces a single-input receiver's source when another is drawn onto it, as one undo step", async ({ page }) => {
   await connect(page, "in.micline_1_2:out", "ch_5_6:in");
   await expect(wires(page)).toHaveCount(SEEDED + 1);
-  // ch_5_6:in already holds a source; a second one must be refused, not added.
   await connect(page, "in.aux:out", "ch_5_6:in");
+  await expect(page.locator("#statusbar")).toHaveText("Connected");
+  await expect(wire(page, "in.aux:out", "ch_5_6:in")).toHaveCount(1);
+  await expect(wire(page, "in.micline_1_2:out", "ch_5_6:in")).toHaveCount(0);
   await expect(wires(page)).toHaveCount(SEEDED + 1);
-  await expect(page.locator("#statusbar")).toContainText("only one source");
+
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(wire(page, "in.micline_1_2:out", "ch_5_6:in")).toHaveCount(1);
+  await expect(wire(page, "in.aux:out", "ch_5_6:in")).toHaveCount(0);
 });
 
 // STREAMING's source list on the unit is STEREO / MIX 1 / MIX 2 with no None, so the board

@@ -22,7 +22,6 @@ import {
   partnerChannel,
   possibleSources,
   possibleTargets,
-  requiresSource,
   ruleKind,
   sendIsPreFader,
   upstreamNodes,
@@ -2589,11 +2588,11 @@ export class Graph {
     let possible = dir === "out" ? possibleTargets(this.model, from) : possibleSources(this.model, from);
     // Two drops the rule engine refuses are taken by finishConnect, so they are lit as legal:
     // a channel of a STEREO-linked pair onto the USB output holding it alone (it brings its
-    // partner), and another source onto a receiver the unit never leaves without one (it
-    // replaces the wire there).
+    // partner), and another source onto an input that takes one and holds one (it replaces
+    // the wire there).
     for (const r of possible) {
       const [out, into] = dir === "out" ? [from, r] : [r, from];
-      if (this.completesLinkedPair(out, into) || this.replacesSource(out, into)) legal.add(r);
+      if (this.completesLinkedPair(out, into) || this.replacesWire(out, into)) legal.add(r);
     }
     // A channel's two source jacks are separate origins: the Rec Point tap offers
     // only the direct outs and recordings, the right-edge output only the routes
@@ -2671,7 +2670,7 @@ export class Graph {
       return;
     }
     const result = canConnect(this.model, this.plan, out, into);
-    const replaces = this.replacesSource(out, into);
+    const replaces = this.replacesWire(out, into);
     if (!result.ok && !replaces && !this.completesLinkedPair(out, into)) {
       this.cb.onStatus(result.reason ? t().error[result.reason] : t().error.cannotConnect);
       return;
@@ -2721,10 +2720,12 @@ export class Graph {
     );
   }
 
-  /** A drop of `out` onto a receiver the unit never leaves without a source, which holds
-   *  another: the board takes it in place of the wire there rather than as a second one. */
-  private replacesSource(out: string, into: string): boolean {
-    return requiresSource(this.model, into) && canConnect(this.model, this.plan, out, into).reason === "singleInput";
+  /** A drop of `out` onto an input that takes one source and holds another: the board takes
+   *  it in place of the wire there rather than refusing it. On a USB output that is anything
+   *  but the held channel's mono-pair partner, which joins the output as a second wire. */
+  private replacesWire(out: string, into: string): boolean {
+    const reason = canConnect(this.model, this.plan, out, into).reason;
+    return reason === "singleInput" || reason === "monoPairOnly";
   }
 
   /** Whether a wire is on the board: neither of its nodes is on the shelf. */
