@@ -6,8 +6,17 @@
 // hedge in a file the ledger does not name, one more in a file already at its ceiling, and
 // a cleaned file printing its lower count. The hand runs measured the guard on one day;
 // this is the same measurement on every run.
-import { describe, expect, it } from "vitest";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, it } from "vitest";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { delimiter, dirname, extname, join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
@@ -19,6 +28,7 @@ import {
   comments,
   escapesRoot,
   findingsIn,
+  checkoutOf,
   hookDecision,
   htmlComments,
   nextLedger,
@@ -641,6 +651,51 @@ describe("what the edit-time hook decides", () => {
     const d = hookDecision("/tmp/elsewhere.ts", "// x (measured)\n", {});
     expect(d.exit).toBe(0);
     expect(repoPath("/tmp/elsewhere.ts").startsWith("..")).toBe(true);
+  });
+});
+
+// The hook runs from the main checkout's scripts/, and a worktree of this repository lives
+// inside that checkout (.claude/worktrees/<name>). Keyed from the main checkout, an edit to a
+// worktree's file named a row no ledger has — `.claude/worktrees/<name>/src/a.ts` — and was
+// refused at a ceiling of zero however few findings it carried. A nested checkout of ANOTHER
+// repository (reference/) is named by none of this repository's ledgers at all.
+describe("which checkout an edited file belongs to", () => {
+  const made = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  /** A main checkout with a worktree of itself and a different repository nested inside. */
+  const tree = () => {
+    const main = realpathSync(mkdtempSync(join(tmpdir(), "prov-root-")));
+    made.push(main);
+    mkdirSync(join(main, ".git", "worktrees", "w"), { recursive: true });
+    const wt = join(main, ".claude", "worktrees", "w");
+    mkdirSync(join(wt, "src"), { recursive: true });
+    writeFileSync(join(wt, ".git"), `gitdir: ${join(main, ".git", "worktrees", "w")}\n`);
+    mkdirSync(join(main, "reference", ".git"), { recursive: true });
+    mkdirSync(join(main, "reference", "work"), { recursive: true });
+    mkdirSync(join(main, "src"), { recursive: true });
+    for (const f of [join(wt, "src", "a.ts"), join(main, "reference", "work", "p.mjs"), join(main, "src", "a.ts")])
+      writeFileSync(f, "// x (measured)\n");
+    return { main, wt };
+  };
+
+  it("keys a worktree's file from the worktree, against the worktree's ledger", () => {
+    const { main, wt } = tree();
+    const file = join(wt, "src", "a.ts");
+    expect(checkoutOf(file, main)).toBe(wt);
+    const d = hookDecision(file, "// x (measured)\n", { "src/a.ts": 1 }, checkoutOf(file, main));
+    expect([d.key, d.exit]).toEqual(["src/a.ts", 0]);
+  });
+
+  it("answers null for a different repository checked out inside this one", () => {
+    const { main } = tree();
+    expect(checkoutOf(join(main, "reference", "work", "p.mjs"), main)).toBeNull();
+  });
+
+  it("answers the main checkout for a file in no nested checkout", () => {
+    const { main } = tree();
+    expect(checkoutOf(join(main, "src", "a.ts"), main)).toBe(main);
   });
 });
 

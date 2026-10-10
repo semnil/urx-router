@@ -39,7 +39,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SKIP_ANYWHERE = new Set(["node_modules", ".git", "dist", "dist-trace", "coverage", "target"]);
@@ -2589,13 +2589,40 @@ export function escapesRoot(rel, p = { isAbsolute, sep }) {
   return rel === ".." || rel.startsWith(".." + p.sep) || rel.startsWith("../") || p.isAbsolute(rel);
 }
 
-/** The per-file ceilings, keyed by repo-relative path. */
-export function readLedger() {
+/** The per-file ceilings, keyed by repo-relative path — the ledger of the checkout at
+ *  `root`, which is this script's own unless a worktree's is asked for. */
+export function readLedger(root = ROOT) {
   try {
-    return JSON.parse(readFileSync(LEDGER, "utf8")).files ?? {};
+    const at = root === ROOT ? LEDGER : join(root, "scripts", "comment-provenance-baseline.json");
+    return JSON.parse(readFileSync(at, "utf8")).files ?? {};
   } catch {
     return {};
   }
+}
+
+/**
+ * The checkout an edited file belongs to, for the hook: the innermost directory between the
+ * file and `root` that carries a `.git`. A worktree of this repository keeps a `.git` FILE
+ * pointing into `root`'s own `.git/worktrees/`, and its tree and ledger are its own, so its
+ * files are keyed from its top rather than from `root`. A `.git` DIRECTORY below `root` is a
+ * different repository checked out inside this one — `reference/` — and none of this
+ * repository's ledgers names its files: null. A file under no nested checkout is `root`'s.
+ */
+export function checkoutOf(path, root = ROOT) {
+  const top = canonical(root);
+  let dir = dirname(canonical(path));
+  while (dir !== top && !escapesRoot(relative(top, dir))) {
+    const git = join(dir, ".git");
+    if (existsSync(git)) {
+      if (statSync(git).isDirectory()) return null;
+      const target = /^gitdir:\s*(.+)$/m.exec(readFileSync(git, "utf8"))?.[1]?.trim();
+      return target && !escapesRoot(relative(join(top, ".git", "worktrees"), canonical(target))) ? dir : null;
+    }
+    const up = dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return top;
 }
 
 /** Findings grouped by repo-relative path. */
@@ -2642,11 +2669,12 @@ export function verdict(grouped, ledger, scanned = null) {
  * at all — which is what the first version did — refuses every edit to each of the files
  * the ledger already names, so the backlog would stop the work instead of the other way
  * round. A path outside this repository has no row and never will, and reported by relative
- * path would read as "../../../tmp/x.ts", naming nothing.
+ * path would read as "../../../tmp/x.ts", naming nothing. `root` is the checkout the file
+ * belongs to (`checkoutOf`) and `ledger` that checkout's own.
  */
-export function hookDecision(path, src, ledger) {
-  const key = repoPath(path);
-  if (escapesRoot(relative(ROOT, resolve(path))))
+export function hookDecision(path, src, ledger, root = ROOT) {
+  const key = relative(root, canonical(path)).split(sep).join("/");
+  if (escapesRoot(relative(root, resolve(path))))
     return { exit: 0, key, ceiling: 0, findings: [], reason: "outside this repository" };
   const findings = findingsIn(src, path);
   const ceiling = ledger[key] ?? 0;
@@ -2734,7 +2762,9 @@ if (hook) {
   }
   if (!path || !EXTS.has(extname(path).toLowerCase()) || isSelf(path)) process.exit(0);
   if (!existsSync(path)) process.exit(0);
-  const d = hookDecision(path, readFileSync(path, "utf8"), readLedger());
+  const checkout = checkoutOf(path);
+  if (checkout === null) process.exit(0);
+  const d = hookDecision(path, readFileSync(path, "utf8"), readLedger(checkout), checkout);
   if (d.exit === 0) process.exit(0);
   console.error(`${d.key}: ${d.findings.length} finding(s), ledger allows ${d.ceiling}`);
   report(d.findings);
