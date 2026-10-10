@@ -123,6 +123,23 @@ describe("midi probe", () => {
     expect(text).not.toContain("clock:");
   });
 
+  // Each mark's reply is measured from that mark, not from the start of the ring: a mark
+  // that is not the first record, and a second mark the same reply answers, both read the
+  // gap from where they stand.
+  it("measures each mark's first reply from that mark", () => {
+    const now = vi.spyOn(performance, "now");
+    for (const t of [1000, 1010, 1011, 1020, 1024]) now.mockReturnValueOnce(t);
+    probe.note("before any mark");
+    probe.mark("first");
+    probe.tx([0xbf, 80, 95]);
+    probe.mark("second");
+    probe.rx([0xbf, 80, 12]);
+    now.mockRestore();
+    const text = handle().report();
+    expect(text).toContain("first: tx=1, first rx +14 ms");
+    expect(text).toContain("second: tx=0, first rx +4 ms");
+  });
+
   it("says so when a mark's window drew no reply at all", () => {
     probe.mark("midi:resync");
     probe.tx([0xbf, 80, 95]);

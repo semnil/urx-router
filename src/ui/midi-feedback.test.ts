@@ -59,6 +59,7 @@ import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { MidiUiIntent } from "./midi-protocol";
 import { MidiControl, type MidiHooks } from "./midi";
+import { MidiEngine } from "../core/midi/engine";
 import { getLang, setLang, t } from "../i18n";
 
 const MAPPING = {
@@ -420,6 +421,22 @@ describe("feedback to the controller", () => {
 
     await vi.advanceTimersByTimeAsync(400); // quiet at last
     expect(mocks.midiSend).toHaveBeenCalled();
+  });
+
+  // A pass deferred against a port is the port's: once the operator chooses no output port
+  // the retry has nothing to carry to, and whatever port is opened next gets its own pass.
+  // Counted at the engine, since with no port open a pass sends nothing either way.
+  it("drops a deferred pass when the output port is closed", async () => {
+    const { control } = await sweptRig();
+
+    control.scheduleFeedback();
+    await vi.advanceTimersByTimeAsync(200); // deferred, settle armed
+    dispatch({ type: "port", dir: "out", name: null });
+    await vi.waitFor(() => expect(mocks.midiCloseOutput).toHaveBeenCalled());
+    const passes = vi.spyOn(MidiEngine.prototype, "feedback");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(passes).not.toHaveBeenCalled();
+    passes.mockRestore();
   });
 
   // A failed send means the controller never got the value, so what the engine thinks
