@@ -48,7 +48,10 @@
     {
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "T3b undo > a sampleRate-touching entry is refused while live",
-      "unguarded": "The reason is that no sampleRate entry can exist while live: the rate picker is disabled from the session start (pinned in src/main.device.test.ts) and the readback re-authors the plan. The refusal that would fire if such an entry existed is pinned too, in src/ui/history.test.ts — but that test sets rateLocked itself, so it asserts the branch, not the unreachability. The middle step — that the readback path drops both stacks — IS asserted, in e2e/race/tzb-tail.spec.ts (depth 3 before a Fetch, 0 after, with rerenderPlan named in the comment); it is just asserted in this tier, which skips a documentation-only pull request that does not move the version, and a guard here has to be a unit test that runs on every one. What would settle it: that same assertion at unit level. The E2E reading comes from depthOf on the VITE_TRACE probe, which has no unit-side equivalent — an attempt through the app entry was withdrawn on 2026-08-13 because set_edit_menu_state, the only observable outside a trace build, reports canUndo from an OPEN, uncommitted entry while the stack stays at u=0 r=0, so deleting rerenderPlan's reset changed nothing the test could see. The measurement is in reference/work/e2e-flakes.md."
+      "guardedBy": {
+        "file": "src/main.device.test.ts",
+        "title": "Fetch from device > drops the undo history on a live start whose read changed no value"
+      }
     },
     {
       "file": "e2e/race/t3b-undo.spec.ts",

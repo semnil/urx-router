@@ -1408,18 +1408,12 @@ test.describe("T3b undo", () => {
   // — a ?plan= link and a file load both go through loadPlan, which resets too — so
   // there is nothing here that could fail.
   //
-  // Facts are pinned around this, and none of them is a guard for the reason — the
-  // ledger entry stays `unguarded` and says why. The refusal that would fire if such an
-  // entry existed is asserted in `src/ui/history.test.ts`, but that test sets
-  // `rateLocked` itself, so it asserts the branch and not the unreachability. The picker
-  // being locked is asserted in `src/main.device.test.ts`.
-  //
-  // The step between them — the readback dropping both stacks — IS asserted, in
-  // `tzb-tail.spec.ts` (depth 3 before a Fetch, 0 after). That is this tier, which runs
-  // on the version-bump pull request alone, and a ledger guard has to be a unit test
-  // that runs on every one. The E2E reading is `depthOf` on the trace probe; there is no
-  // unit-side equivalent, and an attempt through the app entry was withdrawn as vacuous
-  // on 2026-08-13 (`reference/work/e2e-flakes.md`).
+  // The reason is guarded at unit level (the ledger names the test): the readback a
+  // session starts with drops both stacks, read through the status line an undo and a
+  // redo write afterwards — "Nothing to undo" / "Nothing to redo" answer whether an entry
+  // is left, which the edit menu's state does not (it counts an open entry as undoable).
+  // The refusal that would fire if such an entry existed is asserted in
+  // `src/ui/history.test.ts`, and the picker being locked in `src/main.device.test.ts`.
   test.skip("a sampleRate-touching entry is refused while live", () => {});
 
   // Reset path (g), a .urxf settings import, is behind the --experimental launch flag,
