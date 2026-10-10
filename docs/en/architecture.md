@@ -4394,6 +4394,11 @@ Format notes that shape the reader (full spec: the private reference repository)
   field are the same width, and reading either by width alone gives a wrong value silently.
 - **An x axis is stored flattened onto consecutive ids** (id + band), folded back into an `(id, x)`
   address by the parameter source.
+- **A chunk may declare more bytes than its two blocks fill.** The unit can write a SCENE chunk whose
+  declared length runs past its D block, the rest holding no parameters, so the reader reads F and D and
+  steps over the rest. Blocks that run past the declared length are still refused. The chunk lengths then
+  no longer pin where the record chain ends, so a file whose chain never reaches the `#END` record is
+  refused as truncated.
 
 Two things a settings file cannot supply, both stated in the import confirm:
 
