@@ -1280,6 +1280,24 @@ describe("Fetch from device", () => {
       expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
       expect(statusText()).toBe(t().status.nothingToUndo);
     });
+
+    // …and the redo half: an entry undone before the read is one no redo may put back, so
+    // no entry of any kind — a rate change included — outlives the read on either stack.
+    it(`drops the redo history on a ${flow} whose read changed no value`, SLOW, async () => {
+      const shell = await bootDevice();
+      $("btn-fetch").click();
+      await invoked(shell, "vd_disconnect");
+      await fetchEnded();
+      turnOscOn();
+      expect(oscFace(), "the premise: the edit landed").toBe("ON");
+      await new Promise((r) => setTimeout(r, 0)); // the press's own entry closes
+      await undoTo(shell, "OFF"); // the ON now waits on the redo stack
+      start();
+      await landed(shell);
+      selectNode("ch1");
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_REDO_ID)).toBe(1);
+      expect(statusText()).toBe(t().status.nothingToRedo);
+    });
   }
 });
 
