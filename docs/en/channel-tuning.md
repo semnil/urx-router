@@ -1932,7 +1932,9 @@ writing into the plan and out to the unit while another application is frontmost
 and the plot also end at their own mouse moving with no button held, the release the native context menu
 takes from a right press (the app-wide rule is in architecture.md, "Responsive layout (mobile)"). The cap
 follows the pointer that pressed it and no other: a mouse moving over it, or released on it, while a finger
-drags it is not that finger.
+drags it is not that finger. Each of the two drags ends with the pointer making it, whatever other pointer is
+still down: a mouse dragging the cap while a finger rests on the screen stops at that mouse's release, or at its
+move with no button held, and only the repaint the press deferred waits for the finger.
 
 The cap and the plot are the view's own gestures, so ending them is dropping what the view holds. **A
 value row is a native `<input type="range">`, and the engine owns its drag**, which makes it a different
