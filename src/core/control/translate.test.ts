@@ -2,15 +2,17 @@ import { describe, expect, it } from "vitest";
 import { getModel, MODEL_IDS } from "../../models";
 import { defaultPlan } from "../../models/initial-state";
 import type { ModelId } from "../../models/types";
-import { emptyPlan, ensureFixedConnections } from "../plan";
+import { emptyPlan, ensureFixedConnections, setExclusiveConnection } from "../plan";
 import type { Plan } from "../plan";
 import {
   COLOR_OFF,
   COLOR_OFF_INDEX,
   COLOR_PALETTE,
   COMP_EQ_COMP_FIRST,
+  D_GAIN_SOURCES,
   EQ_TYPE_PASS,
   PARAMS,
+  paramNameForId,
   colorIndexToHex,
   colorIndexToPlan,
   hexToColorIndex,
@@ -27,7 +29,11 @@ import {
   dynPosRange,
   dynToPos,
   formatAddrKey,
+  inputStageOf,
+  inputStageReaders,
+  inputStageReadSet,
   insertFxControl,
+  auditUnverified,
   nameControl,
   planToCommands,
   planToCommandsUncollapsed,
@@ -1870,5 +1876,143 @@ describe("reset chains (sideEffect heads vs converge groups)", () => {
         if (members.length > 1) expect(members[0].group, `${key} carries no group`).toBeDefined();
       }
     }
+  });
+});
+
+describe("input stage resolver", () => {
+  const wired = (id: ModelId, wires: Array<[string, string]>): Plan => {
+    const plan = defaultPlan(id);
+    for (const [from, to] of wires) setExclusiveConnection(plan, `${from}:out`, `${to}:in`, "source");
+    return plan;
+  };
+  const unwired = (id: ModelId, channel: string): Plan => {
+    const plan = defaultPlan(id);
+    plan.connections = plan.connections.filter((c) => !(c.to === `${channel}:in` && c.kind === "source"));
+    return plan;
+  };
+  const sorted = (set: Map<string, Set<string>>) =>
+    Object.fromEntries([...set].sort().map(([k, v]) => [k, [...v].sort()]));
+
+  // A mono channel reads the jack its input slot's parity names (odd slot = the second jack),
+  // whatever channel number it is; a stereo channel reads the side asked for.
+  it("names the jack or source each channel reads", () => {
+    const m = getModel("URX44V");
+    const swapped = wired("URX44V", [
+      ["in.micline_3_4", "ch1"],
+      ["in.micline_3_4", "ch2"],
+      ["in.micline_1_2", "ch3"],
+      ["in.micline_1_2", "ch4"],
+      ["in.micline_1_2", "ch_5_6"],
+    ]);
+    expect(inputStageOf(m, swapped, "ch1")).toEqual({
+      kind: "jack",
+      node: "in.micline_3_4",
+      side: "L",
+      jack: 2,
+      hiZ: true,
+    });
+    expect(inputStageOf(m, swapped, "ch2")).toEqual({
+      kind: "jack",
+      node: "in.micline_3_4",
+      side: "R",
+      jack: 3,
+      hiZ: true,
+    });
+    expect(inputStageOf(m, swapped, "ch3")).toEqual({
+      kind: "jack",
+      node: "in.micline_1_2",
+      side: "L",
+      jack: 0,
+      hiZ: false,
+    });
+    expect(inputStageOf(m, swapped, "ch4")).toEqual({
+      kind: "jack",
+      node: "in.micline_1_2",
+      side: "R",
+      jack: 1,
+      hiZ: false,
+    });
+    expect(inputStageOf(m, swapped, "ch_5_6", "R")).toEqual({
+      kind: "jack",
+      node: "in.micline_1_2",
+      side: "R",
+      jack: 1,
+      hiZ: false,
+    });
+    const digital = wired("URX44V", [
+      ["in.aux", "ch1"],
+      ["in.usbdaw_3_4", "ch_7_8"],
+    ]);
+    expect(inputStageOf(m, digital, "ch1")).toEqual({ kind: "digital", node: "in.aux", param: 9, instances: [0, 1] });
+    expect(inputStageOf(m, digital, "ch_7_8")).toEqual({
+      kind: "digital",
+      node: "in.usbdaw_3_4",
+      param: 12,
+      instances: [2],
+    });
+    expect(inputStageOf(m, unwired("URX44V", "ch1"), "ch1")).toEqual({ kind: "none" });
+    const u22 = getModel("URX22");
+    expect(inputStageOf(u22, defaultPlan("URX22"), "ch2")).toEqual({
+      kind: "jack",
+      node: "in.micline_1_2",
+      side: "R",
+      jack: 1,
+      hiZ: true,
+    });
+  });
+
+  // The holders some channel reads — the factory routing on each model, and nothing on a plan
+  // whose channels read no source.
+  it("collects the jacks and sources the channels read", () => {
+    for (const id of ["URX44V", "URX44"] as const) {
+      const set = inputStageReadSet(getModel(id), defaultPlan(id));
+      expect(sorted(set.jacks), id).toEqual({ "in.micline_1_2": ["L", "R"], "in.micline_3_4": ["L", "R"] });
+      expect([...set.sources].sort(), id).toEqual(["in.aux", "in.usbmain_a", "in.usbmain_b", "in.usbmain_c"]);
+    }
+    const u22 = inputStageReadSet(getModel("URX22"), defaultPlan("URX22"));
+    expect(sorted(u22.jacks)).toEqual({ "in.micline_1_2": ["L", "R"] });
+    expect([...u22.sources].sort()).toEqual(["in.aux", "in.usbmain_a", "in.usbmain_b", "in.usbmain_c"]);
+    const none = emptyPlan("URX44V");
+    ensureFixedConnections(getModel("URX44V"), none);
+    const empty = inputStageReadSet(getModel("URX44V"), none);
+    expect(empty.jacks.size + empty.sources.size).toBe(0);
+    // A stereo channel on a MIC/LINE node adds its second jack only when both sides are read.
+    const st = wired("URX44V", [
+      ["in.aux", "ch1"],
+      ["in.aux", "ch2"],
+      ["in.micline_1_2", "ch_5_6"],
+    ]);
+    expect(sorted(inputStageReadSet(getModel("URX44V"), st).jacks)["in.micline_1_2"]).toEqual(["L"]);
+    expect(sorted(inputStageReadSet(getModel("URX44V"), st, true).jacks)["in.micline_1_2"]).toEqual(["L", "R"]);
+  });
+
+  it("names the channels reading one holder, with the side a stereo reader reads", () => {
+    const m = getModel("URX44V");
+    const plan = wired("URX44V", [
+      ["in.micline_1_2", "ch3"],
+      ["in.micline_1_2", "ch4"],
+      ["in.micline_1_2", "ch_5_6"],
+    ]);
+    expect(inputStageReaders(m, plan, "in.micline_1_2", "L")).toEqual([
+      { channel: "ch1" },
+      { channel: "ch3" },
+      { channel: "ch_5_6", side: "L" },
+    ]);
+    expect(inputStageReaders(m, plan, "in.micline_1_2", "R")).toEqual([
+      { channel: "ch2" },
+      { channel: "ch4" },
+      { channel: "ch_5_6", side: "R" },
+    ]);
+    expect(inputStageReaders(m, plan, "in.usbmain_a")).toEqual([{ channel: "ch_7_8" }]);
+  });
+
+  // The D.Gain table names the sources the unit keeps a D.Gain for, and no guess claims the
+  // id the new catalog entry is named by.
+  it("names the D.Gain addresses and keeps the guess audit clean", () => {
+    expect([...new Set(Object.values(D_GAIN_SOURCES).map((s) => s.id))].sort((a, b) => a - b)).toEqual([
+      9, 11, 12, 13, 14, 15, 16, 17,
+    ]);
+    expect(paramNameForId(9)).toBe("D_GAIN");
+    for (const id of MODEL_IDS) expect(auditUnverified(id), id).toEqual([]);
   });
 });

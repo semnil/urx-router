@@ -21,6 +21,7 @@ import {
   eqOneKnob,
   inputEq,
   planToCommands,
+  selectableInputIds,
   UNVERIFIED_MAPPINGS,
   unverifiedAddresses,
 } from "./translate";
@@ -47,7 +48,6 @@ import {
   PASSES,
   perturbedPlan,
   runSelfTest,
-  selectableInputIds,
   stereoLinkedPass,
   summarizeVerdicts,
   unlinkedPassesFor,

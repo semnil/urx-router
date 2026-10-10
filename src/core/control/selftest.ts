@@ -81,9 +81,9 @@ import {
   channelControl,
   cmdAddr,
   formatAddrKey,
-  inputPorts,
   insertFxControl,
   planToCommands,
+  selectableInputIds,
   UNVERIFIED_MAPPINGS,
   unverifiedAddresses,
 } from "./translate";
@@ -552,13 +552,6 @@ function sweepInsertFx(plan: Plan, pass: number, model: DeviceModel): void {
   if (outputs.length) {
     plan.nodeParams[outputs[pass % outputs.length]].insertFx = legalOut[pass % legalOut.length].value;
   }
-}
-
-// Ids of the model's selectable input nodes — those with a physical port map
-// (INPUT_PORTS). Shared by the input-source sweep (which cycles channel groups
-// across them) and the pass count (which needs their count, N). Exported for tests.
-export function selectableInputIds(model: DeviceModel): string[] {
-  return model.nodes.filter((n) => n.kind === "input" && inputPorts(n.id)).map((n) => n.id);
 }
 
 // Group channels into source-selection units: a linked mono pair, or a single

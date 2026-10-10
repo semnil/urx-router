@@ -367,6 +367,10 @@ export const PARAMS = {
   HI_Z: { id: 6, encoding: "bool" },
   /** Input channel head-amp (HA) gain (-8 … +70 dB). */
   HA_GAIN: { id: 1, encoding: "gain", follow: "direct" },
+  /** D.Gain of a digital input source (±24 dB). Named by AUX IN's id; the other sources
+   *  (D_GAIN_SOURCES) are written under the same name at their own ids. The unit
+   *  announces nothing when its own panel moves one. */
+  D_GAIN: { id: 9, encoding: "gain" },
   /** Output (mix) fader level. */
   OUT_FADER: { id: 674, encoding: "level", follow: "direct" },
   /** MIX bus master balance (676, fader+2, parallel to STEREO_MASTER_BAL 583). The
@@ -1178,6 +1182,34 @@ const D_GAIN_URX22: Record<string, number> = {
  *  none. URX44 shares the URX44V label map; URX22 uses the positional map (above). */
 export const dGainParam = (modelId: string, nodeId: string): number | undefined =>
   (modelId === "URX22" ? D_GAIN_URX22 : D_GAIN_URX44V)[nodeId];
+
+/** The jack index (the y of the analog input-stage params 0 / 1 / 5 / 6) of each MIC/LINE
+ *  input node's first jack; its second jack is the next index. */
+export const MIC_LINE_JACK_BASE: Readonly<Record<string, number>> = { "in.micline_1_2": 0, "in.micline_3_4": 2 };
+
+/** The jacks that carry HI-Z on each model, by jack index. */
+export const HI_Z_JACKS: Readonly<Record<string, readonly number[]>> = { URX44V: [2, 3], URX44: [2, 3], URX22: [1] };
+
+/** The D.Gain address of each digital input source: its param id and the instances the app
+ *  writes. Every source but USB DAW is written at y 0 and 1, which the unit keeps linked; a
+ *  USB DAW pair has one instance per pair on param 12. The table is the URX44V's; URX44 and
+ *  URX22 carry a subset of these sources at the same addresses (registered in
+ *  UNVERIFIED_MAPPINGS). */
+export const D_GAIN_SOURCES: Readonly<Record<string, { id: number; instances: readonly number[] }>> = {
+  "in.aux": { id: 9, instances: [0, 1] },
+  "in.sdplay": { id: 11, instances: [0, 1] },
+  "in.usbdaw_1_2": { id: 12, instances: [0] },
+  "in.usbdaw_3_4": { id: 12, instances: [2] },
+  "in.usbdaw_5_6": { id: 12, instances: [4] },
+  "in.usbdaw_7_8": { id: 12, instances: [6] },
+  "in.usbdaw_9_10": { id: 12, instances: [8] },
+  "in.usbdaw_11_12": { id: 12, instances: [10] },
+  "in.usbmain_a": { id: 13, instances: [0, 1] },
+  "in.usbmain_b": { id: 14, instances: [0, 1] },
+  "in.usbmain_c": { id: 15, instances: [0, 1] },
+  "in.usbsub": { id: 16, instances: [0, 1] },
+  "in.hdmi": { id: 17, instances: [0, 1] },
+};
 
 // microSD Rec Track Count (RECORDER menu): how many tracks record, an even 2..16.
 // The plan stores the actual count (readback = device raw × 2). Planned here but

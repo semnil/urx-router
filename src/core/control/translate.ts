@@ -23,7 +23,7 @@ import type {
   SsmcsParams,
 } from "../plan";
 import { incomingConnection, normalizeNodeName, SEND_LEVEL_UNNAMED_DB, SSMCS_INITIAL } from "../plan";
-import type { NodeParams } from "../plan";
+import type { JackSide, NodeParams } from "../plan";
 import { connParamContestKey, nodeColorContestKey, nodeParamContestPath } from "../plan-history";
 import type { ParamRangeProblem } from "../plan-validate";
 import {
@@ -49,6 +49,9 @@ import { isFixedConnection, monoPairOf, requiresSource, sendTapWritable } from "
 import { channelGainRange } from "../input-lock";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
+  D_GAIN_SOURCES,
+  HI_Z_JACKS,
+  MIC_LINE_JACK_BASE,
   BUS_TYPE_OPTIONS,
   BUS_TYPE_VARI,
   COMP_EQ_COMP_FIRST,
@@ -480,6 +483,92 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
     phases: [{ name: "PHASE", key: "phase", param: PARAMS.PHASE.id, y, side: "" }],
     gain: { param: PARAMS.HA_GAIN.id, instances: [y], minDb: A_GAIN_MIN_DB, maxDb: A_GAIN_MAX_DB, analog: true },
   };
+}
+
+/** What a channel's input stage is under the plan's source wire: one jack of a MIC/LINE
+ *  input node (its index is the y of the analog input-stage params), a digital source's
+ *  D.Gain address, or nothing — no source, or a source with no input stage. */
+export type InputStage =
+  | { kind: "jack"; node: string; side: JackSide; jack: number; hiZ: boolean }
+  | { kind: "digital"; node: string; param: number; instances: readonly number[] }
+  | { kind: "none" };
+
+/** The input stage a channel reads. A mono channel on a MIC/LINE node reads the jack its
+ *  input slot's parity names (odd slot = the node's second jack), as the source select
+ *  writes it; a stereo channel reads the side asked for. */
+export function inputStageOf(model: DeviceModel, plan: Plan, channelId: string, side: JackSide = "L"): InputStage {
+  const conn = incomingConnection(plan, ref(channelId, "in"), "source");
+  if (!conn) return { kind: "none" };
+  const source = parseRef(conn.from).nodeId;
+  if (!inputPorts(source)) return { kind: "none" };
+  const base = MIC_LINE_JACK_BASE[source];
+  if (base !== undefined) {
+    let read: JackSide = side;
+    if (!isStereoChannel(channelId)) {
+      const slots = channelInputSlots(model, channelId);
+      if (!slots) return { kind: "none" };
+      read = slots[0] & 1 ? "R" : "L";
+    }
+    const jack = base + (read === "R" ? 1 : 0);
+    return { kind: "jack", node: source, side: read, jack, hiZ: (HI_Z_JACKS[model.id] ?? []).includes(jack) };
+  }
+  const address = D_GAIN_SOURCES[source];
+  if (address && model.nodes.some((n) => n.id === source)) {
+    return { kind: "digital", node: source, param: address.id, instances: address.instances };
+  }
+  return { kind: "none" };
+}
+
+/** The input-stage holders some channel reads: the sides of each MIC/LINE node and the
+ *  digital sources. A stereo channel on a MIC/LINE node reads its first jack, and its
+ *  second too when `stereoBothSides` is set. */
+export interface InputReadSet {
+  jacks: Map<string, Set<JackSide>>;
+  sources: Set<string>;
+}
+export function inputStageReadSet(model: DeviceModel, plan: Plan, stereoBothSides = false): InputReadSet {
+  const set: InputReadSet = { jacks: new Map(), sources: new Set() };
+  for (const n of model.nodes) {
+    if (n.kind !== "channel") continue;
+    const sides: JackSide[] = isStereoChannel(n.id) && stereoBothSides ? ["L", "R"] : ["L"];
+    for (const side of sides) {
+      const stage = inputStageOf(model, plan, n.id, side);
+      if (stage.kind === "jack") {
+        const read = set.jacks.get(stage.node) ?? new Set<JackSide>();
+        read.add(stage.side);
+        set.jacks.set(stage.node, read);
+      } else if (stage.kind === "digital") set.sources.add(stage.node);
+    }
+  }
+  return set;
+}
+
+/** The channels that read one holder — a MIC/LINE node's side, or a digital source — each
+ *  with the side it reads on when it is a stereo channel. */
+export function inputStageReaders(
+  model: DeviceModel,
+  plan: Plan,
+  holder: string,
+  side?: JackSide,
+): Array<{ channel: string; side?: JackSide }> {
+  const out: Array<{ channel: string; side?: JackSide }> = [];
+  for (const n of model.nodes) {
+    if (n.kind !== "channel") continue;
+    const stereo = isStereoChannel(n.id);
+    for (const s of stereo ? (["L", "R"] as const) : (["L"] as const)) {
+      const stage = inputStageOf(model, plan, n.id, s);
+      if (stage.kind === "none" || stage.node !== holder) continue;
+      if (stage.kind === "jack" && side !== undefined && stage.side !== side) continue;
+      out.push(stereo && stage.kind === "jack" ? { channel: n.id, side: stage.side } : { channel: n.id });
+      if (stage.kind === "digital") break;
+    }
+  }
+  return out;
+}
+
+/** Ids of the model's selectable input nodes — those with a physical port map (INPUT_PORTS). */
+export function selectableInputIds(model: DeviceModel): string[] {
+  return model.nodes.filter((n) => n.kind === "input" && inputPorts(n.id)).map((n) => n.id);
 }
 
 /**

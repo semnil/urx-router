@@ -240,6 +240,15 @@ export interface FxEffectParams {
 // Per-node device parameters that are not tied to a single wire (a channel's own
 // processing/state). Each field is optional; absence means the device default
 // (channel on, HPF off). Stored keyed by node id, alongside positions / notes.
+/** A side of a MIC/LINE input node: its first jack (L) or its second (R). */
+export type JackSide = "L" | "R";
+/** The input-stage fields a MIC/LINE input node keeps per jack. */
+export type JackField = "gain" | "phantom" | "clipSafe" | "hiZ";
+/** The NodeParams key holding one jack field on one side. */
+export const jackKey = (field: JackField, side: JackSide): `${JackField}${JackSide}` => `${field}${side}`;
+/** The keys whose true value switches +48V on at a jack. */
+export const PHANTOM_KEYS = ["phantomL", "phantomR"] as const;
+
 export interface NodeParams {
   /** ON / mute for a node with its own master switch: a channel (CH_ON), the STEREO
    *  master (STEREO_MASTER_ON), an FX channel (FX_CHANNEL_ON) or a MONITOR bus
@@ -315,6 +324,20 @@ export interface NodeParams {
   hiZ?: boolean;
   /** HA_GAIN: head-amp input gain in dB (-8 … +70). Absent = device default. */
   gain?: number;
+  /** The input stage of a MIC/LINE input node, one value per jack: `…L` is the node's
+   *  first jack and `…R` its second. A.Gain in dB (-8 … +70, +40 while that jack's HI-Z is
+   *  on); +48V, Clip Safe and HI-Z on/off. HI-Z exists only on the jacks that carry it. */
+  gainL?: number;
+  gainR?: number;
+  phantomL?: boolean;
+  phantomR?: boolean;
+  clipSafeL?: boolean;
+  clipSafeR?: boolean;
+  hiZL?: boolean;
+  hiZR?: boolean;
+  /** D.Gain of a digital input source (AUX IN, USB, microSD playback, HDMI) in dB
+   *  (-24 … +24): one value per source, applied by every channel that reads it. */
+  dGain?: number;
   /** A node-level fader in dB (e.g. monitor level). Absent = device default. */
   level?: number;
   /** Output bus master balance (STEREO 583 / MIX 676): the bus output's L/R

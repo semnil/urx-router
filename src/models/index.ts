@@ -49,3 +49,11 @@ export const MODELS: Record<ModelId, DeviceModel> = Object.fromEntries(
 export function getModel(id: ModelId): DeviceModel {
   return MODELS[id];
 }
+
+/** The name of one side of a two-sided node (a MIC/LINE input node's jack, a stereo
+ *  channel's channel); a node with no sides answers its own label. */
+export function sideLabel(model: DeviceModel, nodeId: string, side: "L" | "R"): string {
+  const node = model.nodes.find((n) => n.id === nodeId);
+  if (!node) return nodeId;
+  return node.sideLabels?.[side === "R" ? 1 : 0] ?? node.label;
+}
