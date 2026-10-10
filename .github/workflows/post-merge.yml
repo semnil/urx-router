@@ -77,6 +77,15 @@ jobs:
       # notice is a placeholder rather than the generated one.
       - run: pnpm build
       - run: echo "" > src-tauri/THIRD_PARTY_LICENSES.html
-      - run: cargo build --release ${{ matrix.args }}
+      # macOS builds through the Tauri CLI, as release.yml's tauri-action does: the CLI
+      # exports MACOSX_DEPLOYMENT_TARGET from bundle.macOS.minimumSystemVersion, and the
+      # build scripts of objc2, objc2-exception-helper and ring rerun when that variable
+      # changes, so a cache built without it is rebuilt from those crates up at release
+      # time. --no-bundle stops after the compile, so nothing is bundled or signed.
+      - if: runner.os == 'macOS'
+        run: pnpm tauri build --no-bundle ${{ matrix.args }}
+        timeout-minutes: 20 # hang detector, not a budget — see .github/actions/install-browsers
+      - if: runner.os != 'macOS'
+        run: cargo build --release ${{ matrix.args }}
         working-directory: src-tauri
         timeout-minutes: 20 # hang detector, not a budget — see .github/actions/install-browsers

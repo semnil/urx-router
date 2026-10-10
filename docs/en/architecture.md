@@ -4486,7 +4486,12 @@ default branch only, and every tag is its own scope, so a cache saved during a r
 from the next one. `post-merge.yml`'s `warm-cache` job fills it — and the platform pnpm caches — by
 building the same targets on `main` instead, which is what keeps a release from recompiling the whole
 dependency tree. Both sides pass the same rust-cache `shared-key`, which the action otherwise derives
-from the job name.
+from the job name. On macOS the warm build goes through the same Tauri CLI the release does
+(`pnpm tauri build --no-bundle`): the CLI exports `MACOSX_DEPLOYMENT_TARGET` from
+`bundle.macOS.minimumSystemVersion`, and the build scripts of `objc2`, `objc2-exception-helper` and `ring`
+rerun when it changes. Measured locally on 2026-10-10: a release-shaped `tauri build` after a plain
+`cargo build --release` recompiled 35 crates, and after `pnpm tauri build --no-bundle` it recompiled
+`urx-router` alone.
 
 macOS signing and notarization are optional: when the signing secrets (`MACOS_SIGNING_CERT` /
 `MACOS_SIGNING_CERT_PASSWORD` / `MACOS_SIGNING_IDENTITY`) and notarization secrets

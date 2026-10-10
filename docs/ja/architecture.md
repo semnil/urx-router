@@ -3955,6 +3955,11 @@ SDK で crate をコンパイルするため。その選択の背後にあるラ
 から読めない。代わりに `post-merge.yml` の `warm-cache` ジョブが `main` 上で同じターゲットをビルドして
 Rust とプラットフォーム版 pnpm のキャッシュを温める — これがリリースの依存ツリー全体の再コンパイルを
 防いでいる。rust-cache のキーは既定でジョブ名から導出されるため、両者で同じ `shared-key` を渡す。
+macOS の warm build はリリースと同じ Tauri CLI を通す (`pnpm tauri build --no-bundle`): CLI は
+`bundle.macOS.minimumSystemVersion` から `MACOSX_DEPLOYMENT_TARGET` を渡し、`objc2`・`objc2-exception-helper`・`ring`
+の build script はこの値が変わると走り直す。2026-10-10 の手元の実測では、素の `cargo build --release` の後に
+リリースと同じ形の `tauri build` を走らせると 35 crate が再コンパイルされ、`pnpm tauri build --no-bundle` の後では
+`urx-router` 自身の 1 つだけだった。
 
 macOS の署名・公証は任意で、署名 secret (`MACOS_SIGNING_CERT` / `MACOS_SIGNING_CERT_PASSWORD` /
 `MACOS_SIGNING_IDENTITY`) と公証 secret (`MACOS_NOTARIZATION_USERNAME` / `MACOS_NOTARIZATION_PASSWORD` /
