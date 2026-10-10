@@ -1342,10 +1342,9 @@ macOS ではアームしたコントロールをクリックした瞬間に**メ
   入力 1 + 出力 1 の接続を保持する。受信メッセージは vd メーターポンプと同様にバースト単位でバッチし Tauri
   Channel で frontend へ配信する (`midi_list_inputs/outputs`・`midi_open_input`・`midi_close_input`・
   `midi_open_output`・`midi_close_output`・`midi_send`)。すべてローカル OS API の往復のみで broker を経由しない
-  ため同期 command のままでよい。ブリッジは `core/platform.ts` (Tauri 外は no-op)。midir は fork (`semnil/midir`、`src-tauri/Cargo.toml` の
-  `[patch.crates-io]` でコミット固定) から取る: リリース済みの 0.11.0 は、メッセージの途中で終わるパケットを CoreMIDI の
-  入力ハンドラが範囲外までスライスしてプロセスを落とし (Boddlnagg/midir#160)、fork はそのメッセージをパケットの末尾で
-  終える。frontend のデコーダは 3 バイト未満のメッセージを元から無視する。midir にホットプラグ通知は
+  ため同期 command のままでよい。ブリッジは `core/platform.ts` (Tauri 外は no-op)。midir は 0.11.1 以上を使う (`src-tauri/Cargo.toml`):
+  0.11.0 は、メッセージの途中で終わるパケットを CoreMIDI の入力ハンドラが範囲外までスライスしてプロセスを落とし
+  (Boddlnagg/midir#160)、0.11.1 はそのメッセージをパケットの末尾で終える。frontend のデコーダは 3 バイト未満のメッセージを元から無視する。midir にホットプラグ通知は
   無いため、ポート一覧は MIDI ウィンドウが名乗り出るたびに再列挙する。開けなかったポートはエラーを status 行
   (アプリ側とウィンドウ側の両方) に出し、セレクトを
   「なし」へ戻す (保存済みポートのエントリも破棄する)。逆向き — **ネイティブ側から閉じられたポート**

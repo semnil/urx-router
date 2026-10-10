@@ -1628,10 +1628,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   idea as the vd meter pump — and streamed to the frontend through a Tauri channel (`midi_list_inputs/outputs`,
   `midi_open_input`, `midi_close_input`, `midi_open_output`, `midi_close_output`, `midi_send`). Everything is a
   local OS-API round-trip (no broker), so the commands stay synchronous. The frontend bridge is
-  `core/platform.ts` (no-ops outside Tauri). midir is taken from a fork (`semnil/midir`, pinned by commit through
-  `[patch.crates-io]` in `src-tauri/Cargo.toml`): the released 0.11.0's CoreMIDI input handler slices past a packet
-  that ends before its message does and aborts the process (Boddlnagg/midir#160), and the fork ends such a message
-  at the packet's end. The frontend's decoder already ignores a message shorter than three bytes. midir has no hot-plug notification, so the port lists are
+  `core/platform.ts` (no-ops outside Tauri). midir starts at 0.11.1 (`src-tauri/Cargo.toml`): 0.11.0's CoreMIDI
+  input handler slices past a packet that ends before its message does and aborts the process
+  (Boddlnagg/midir#160), and 0.11.1 ends such a message at the packet's end. The frontend's decoder already ignores a message shorter than three bytes. midir has no hot-plug notification, so the port lists are
   re-enumerated every time the MIDI window announces itself. A port that fails to open reports the error on the
   status line — the app's and the window's own — and drops the select back to "None" (the stored port entry is
   removed too). The reverse direction — a port closed from the NATIVE side, which the page-load teardown
