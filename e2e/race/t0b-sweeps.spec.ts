@@ -27,6 +27,7 @@ import {
   strip,
 } from "./ui";
 import { chooseOption } from "../choose-option";
+import { en } from "../../src/i18n/en";
 
 // T0b baseline sweeps — the reachability half of the T0 floor
 // (docs/{en,ja}/live-race-harness.md). The latency ladder in t0-baseline.spec.ts pins
@@ -296,10 +297,37 @@ test.describe("T0b baseline sweeps", () => {
       },
       {
         // Every channel input already carries a source on the factory plan, so this
-        // drop is refused — and a refused connection is one of the few gestures whose
-        // no-write can be asserted rather than assumed.
-        label: "drag onto an occupied single-source input (refused)",
-        run: () => drag(page, port(page, "in.micline_1_2:out"), port(page, "ch_5_6:in")),
+        // drop replaces the wire there: the input still holds exactly one source, and it
+        // is the one just drawn.
+        label: "drag onto an occupied single-source input (replaces its wire)",
+        run: async () => {
+          await expect(page.locator('.wire-hit[data-to="ch_5_6:in"]')).toHaveCount(1);
+          await expect(wire("in.micline_1_2:out", "ch_5_6:in")).toHaveCount(0);
+          await drag(page, port(page, "in.micline_1_2:out"), port(page, "ch_5_6:in"));
+          await expect(wire("in.micline_1_2:out", "ch_5_6:in")).toHaveCount(1);
+          await expect(page.locator('.wire-hit[data-to="ch_5_6:in"]')).toHaveCount(1);
+        },
+      },
+      {
+        // STREAMING is never left without a source, so its last wire's panel carries the
+        // note in place of a delete.
+        label: "select STREAMING's only source wire",
+        run: async () => {
+          await wire("bus.stereo:out", "bus.stream:in").dispatchEvent("pointerdown");
+          await wire("bus.stereo:out", "bus.stream:in").dispatchEvent("pointerup");
+          await expect(page.locator("#inspector")).toContainText(en.status.streamingSourceRequired);
+          await expect(page.locator("#inspector button.danger")).toHaveCount(0);
+        },
+        silent: true,
+      },
+      {
+        // The keyboard's Delete still reaches the board and is refused there — a refused
+        // connection edit, whose no-write can be asserted rather than assumed.
+        label: "Delete STREAMING's only source wire (refused)",
+        run: async () => {
+          expect(await statusAfter(page, () => page.keyboard.press("Delete"))).toBe(en.status.streamingSourceRequired);
+          await expect(wire("bus.stereo:out", "bus.stream:in")).toHaveCount(1);
+        },
         silent: true,
       },
       {
@@ -382,6 +410,9 @@ test.describe("T0b baseline sweeps", () => {
     // so the write is attributed; what it is not is a read-only gesture.
     const dbl = outcomes.find((o) => o.label === "double-press a node with a collapsed note")!;
     expect(dbl.fields).toEqual(["noteCollapsed"]);
+    // The replacing drop is one wiring edit: it writes the connections and nothing else.
+    const replace = outcomes.find((o) => o.label === "drag onto an occupied single-source input (replaces its wire)")!;
+    expect(replace.fields).toEqual(["connections"]);
     // Nothing on the graph mutates the plan behind the funnel's back.
     // `unreported > 0` alone, not `reported === 0 && unreported > 0`: a gesture that
     // reports SOME of its keys and writes others behind the funnel is exactly the shape
@@ -798,19 +829,21 @@ test.describe("T0b baseline sweeps", () => {
     );
 
     // Pinned behaviour #1: with the value controls driven before the structural ones,
-    // exactly two controls are still unreachable when their slots run, both because an
-    // earlier gesture took the one thing they offered. The STEREO master's insert-FX
-    // dropdown: its only alternative is a slot the MIX bus took three gestures earlier, a
-    // constraint expressed as data (a disabled option) rather than as a refusal, and
-    // contention between two plan owners over one device resource, which is why it shows
-    // up in a sweep with no device attached. And ST IN's Rec Point picker: on the factory
-    // plan the only free port either channel's Rec Point can reach is microSD Rec track
-    // pair 13/14, which MONO IN's picker wired, so ST IN's has nothing left to offer and
-    // the Routing section stops drawing it.
-    expect(unavailable).toEqual([
-      'ST IN · Connect the Rec Point to (select) — row "Connect the Rec Point to" is no longer rendered',
-      "STEREO master · EFFECT TYPE (select) — select offers no alternative option",
-    ]);
+    // exactly one control is still unreachable when its slot runs, because an earlier
+    // gesture took the one thing it offered. The STEREO master's insert-FX dropdown: its
+    // only alternative is a slot the MIX bus took three gestures earlier, a constraint
+    // expressed as data (a disabled option) rather than as a refusal, and contention
+    // between two plan owners over one device resource, which is why it shows up in a
+    // sweep with no device attached.
+    expect(unavailable).toEqual(["STEREO master · EFFECT TYPE (select) — select offers no alternative option"]);
+    // A Rec Point picker is not exhausted that way: on the factory plan the only free port
+    // either channel's Rec Point can reach is microSD Rec track pair 13/14, which MONO IN's
+    // picker wired, but the picker also offers every port already holding a source, and a
+    // pick there replaces that wire as the drop does. So ST IN's is still drawn when its
+    // slot runs, and it writes the wiring.
+    const stInRecPoint = outcomes.find((o) => o.label === "ST IN · Connect the Rec Point to (select)")!;
+    expect(stInRecPoint.error).toBeUndefined();
+    expect(stInRecPoint.fields).toEqual(["connections"]);
 
     // Turned over from a pinned defect the ledger alone could see: two inspector
     // controls mutate the plan AFTER calling the change funnel — both selectors whose
