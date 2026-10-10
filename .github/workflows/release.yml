@@ -200,9 +200,11 @@ jobs:
           - platform: macos-26
             args: --target aarch64-apple-darwin
             rustTargets: aarch64-apple-darwin
+            cacheKey: release-tauri
           - platform: windows-latest
             args: ''
             rustTargets: ''
+            cacheKey: release
     runs-on: ${{ matrix.platform }}
     # The most generous bound in the repository, and deliberately so: this job signs,
     # notarizes and packages, its Rust cache can be cold, and a false timeout here fails
@@ -226,13 +228,15 @@ jobs:
           targets: ${{ matrix.rustTargets }}
       # shared-key, not the default job-derived one: post-merge.yml's warm-cache
       # job fills this cache on main, which is the only scope a tag run can
-      # restore from — its matrix and this key have to stay identical, since a
-      # mismatch only shows up as a slow release. Read-only for the same reason:
-      # a cache saved here lands in the tag's own scope, where nothing reads it.
+      # restore from — its matrix, each entry's cacheKey included, has to stay
+      # identical to this one, since a mismatch only shows up as a slow release.
+      # Read-only for the same reason: a cache saved here lands in the tag's own
+      # scope, where nothing reads it. Why macOS has a key of its own is stated
+      # beside post-merge.yml's matrix.
       - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
-          shared-key: release
+          shared-key: ${{ matrix.cacheKey }}
           save-if: false
       - run: pnpm install --frozen-lockfile
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers

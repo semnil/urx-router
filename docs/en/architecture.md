@@ -4486,12 +4486,17 @@ default branch only, and every tag is its own scope, so a cache saved during a r
 from the next one. `post-merge.yml`'s `warm-cache` job fills it — and the platform pnpm caches — by
 building the same targets on `main` instead, which is what keeps a release from recompiling the whole
 dependency tree. Both sides pass the same rust-cache `shared-key`, which the action otherwise derives
-from the job name. On macOS the warm build goes through the same Tauri CLI the release does
+from the job name; it is a per-entry `cacheKey` in the two matrices, `release-tauri` on macOS and
+`release` on Windows. On macOS the warm build goes through the same Tauri CLI the release does
 (`pnpm tauri build --no-bundle`): the CLI exports `MACOSX_DEPLOYMENT_TARGET` from
 `bundle.macOS.minimumSystemVersion`, and the build scripts of `objc2`, `objc2-exception-helper` and `ring`
 rerun when it changes. Measured locally on 2026-10-10: a release-shaped `tauri build` after a plain
 `cargo build --release` recompiled 35 crates, and after `pnpm tauri build --no-bundle` it recompiled
-`urx-router` alone.
+`urx-router` alone. That build fills a key of its own because rust-cache saves nothing after a restore
+that matched its key exactly, and the full key moves only with the lockfile, the manifests, the
+toolchain or the `CARGO*` / `RUST*` environment. Under `release`, the post-merge run of 2026-10-10
+restored the cache the plain `cargo build` had filled with `full match: true` and ended with
+`Cache up-to-date.`, and the v1.14.0 release, which restored that same key, recompiled 35 crates on macOS.
 
 macOS signing and notarization are optional: when the signing secrets (`MACOS_SIGNING_CERT` /
 `MACOS_SIGNING_CERT_PASSWORD` / `MACOS_SIGNING_IDENTITY`) and notarization secrets
