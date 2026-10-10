@@ -732,12 +732,13 @@ const GITHUB_ONLY_ACTIONS = new Set([
 
 // The commands a `run:` fetches from outside GitHub with, matched in the step's script
 // with its shell comment lines left out. `cargo build` is matched with or without
-// `--release`, since a debug build fetches the same crates.
+// `--release`, since a debug build fetches the same crates, and `tauri build` runs one.
 const FETCHING_COMMANDS = [
   ["pnpm install", /\bpnpm\s+install\b/],
   ["cargo about generate", /\bcargo\s+about\s+generate\b/],
   ["cargo test", /\bcargo\s+test\b/],
   ["cargo build", /\bcargo\s+build\b/],
+  ["tauri build", /\btauri\s+build\b/],
 ];
 
 const BLOCK_SCALAR = /^[|>][-+0-9]*$/;

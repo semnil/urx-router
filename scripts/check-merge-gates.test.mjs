@@ -739,6 +739,7 @@ ${steps}`;
     ["cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html", "`cargo about generate`"],
     ["cargo test", "`cargo test`"],
     ["cargo build --release ${{ matrix.args }}", "`cargo build`"],
+    ["pnpm tauri build --no-bundle ${{ matrix.args }}", "`tauri build`"],
   ])("requires a step bound on `run: %s`", (command, named) => {
     const bare = boundFindings(`      - run: ${command}\n`);
     expect(bare.join("\n")).toContain(named);
