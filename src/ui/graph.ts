@@ -2514,7 +2514,7 @@ export class Graph {
 
   /** Every jack of a drawn node a wire can be drawn from, each with the drawn ports a drag
    *  from it would be taken on: the drag's own candidates (`connectCandidates`), so an
-   *  occupied receiver the drop replaces the wire on — STREAMING's source — is among them. */
+   *  occupied input the drop replaces the wire on is among them. */
   connectOrigins(nodeId: string): ConnectOrigin[] {
     const node = this.nodeById.get(nodeId);
     if (!node || node.header || this.isHidden(nodeId)) return [];

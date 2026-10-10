@@ -3997,7 +3997,8 @@ panel, whose delete removes it, and a wire the board does not draw — an end on
 toggle hides — stays a plain row. Each of the node's jacks — its input, its output, a channel's Rec Point tap — gets a
 picker of the ports a drag from that jack would be taken on (`connectOrigins`, which asks the drag's own
 `connectCandidates`), and the choice commits through the drag's own `finishConnect` (`connectTo`), so a source chosen for
-STREAMING replaces the one it holds, and a linked channel brings its partner onto a USB output, as the drag does. The
+an input that takes one source and holds one replaces the wire there, and a linked channel brings its partner onto a USB
+output, as the drag does. The
 picker keeps the focus across the rebuild the new wire causes (`data-focus-key`, which `inspectorFocusKey` in `main.ts`
 reads in place of a control's text).
 
