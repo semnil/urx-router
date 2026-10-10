@@ -1108,6 +1108,9 @@ The palette is split into two layers, kept in correspondence per theme:
 The connection and node colors live in both layers: wire colors as `--w-*` (CSS) / `PALETTES.wire`
 (graph.ts), and node-rail colors as `--rail-*` (CSS) / `PALETTES.rail`. The inspector's empty-state
 **legend** reads the CSS variables, so it labels exactly the colors the graph draws and follows the theme.
+Where one swatch stands for two things the canvas draws alike, the row's text says which: the Bus send row
+names TO ST and the oscillator as on/off only (`sendSwitch`, no level), and the Rec Point tap row says the tap is a
+channel's — a recording taken from STEREO or a MIX bus leaves that bus's right edge like any other route.
 
 **Six connection kinds share three wire colors.** `WIRE_GROUP` in graph.ts maps each `ConnectionKind`
 to one of `select` / `send` / `out`, and both layers are keyed by that group rather than by the kind:
