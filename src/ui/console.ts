@@ -494,7 +494,7 @@ export interface ConsoleHooks {
 }
 
 // The bars animate every frame; the numeric readout text is refreshed only every
-// Nth frame (~6 Hz at 30 fps) so its text relayout/repaint isn't a per-frame cost.
+// Nth painted frame so its text relayout/repaint isn't a per-frame cost.
 const READOUT_EVERY = 5;
 
 export class Console {

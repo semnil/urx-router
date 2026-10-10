@@ -1181,8 +1181,10 @@ CONSOLE のフェーダーとインスペクタの Level スライダー (バス
   インスペクタの値表示で共通の `src/ui/glyph.ts`)。
 - **ライブメーター** — メーター列は常時表示し、信号が流れるのは Live sync 中のみ (`console.setLive`・待機時は底=空)。
   `core/meters.ts` がノード id を broker のメーターアドレス (`meterId:x`) へ写像し、生値 (deci-dBFS、
-  32767 = OVER) を dBFS へデコードして `MeterStore` に保持する。UI は約 30 fps に制限した `requestAnimationFrame`
-  ループでサンプリングし (実機の更新は約 10 Hz なのでこれ以上速く描いても利得が無い)、速いアタック・遅いリリースと
+  32767 = OVER) を dBFS へデコードして `MeterStore` に保持する。UI は前回の描画から 1000/30 ms 経ったときだけ描く
+  `requestAnimationFrame` ループでサンプリングする。60 Hz の画面では 2 フレームか 3 フレームに 1 回の描画になるので、
+  30 fps を下回る (WebKit で 22.2 fps、`node scripts/meter-bench-run.mjs --seconds 20`、2026-10-10)。実機の更新は約 10 Hz なので
+  これ以上速く描いても利得が無い。速いアタック・遅いリリースと
   ピークホールド、チャンネル別 OVER ラッチ (上部の OVER 枠) で描画する
   (前回値と整数% で比較し、変化したレーン (ステレオは L/R) だけ書き込む)。**描画は合成のみ (compositor-only) に保つ**: バーは
   `height`/`bottom` ではなく `transform: scaleY`/`translateY` を 0..1 の型付き (`@property`) カスタムプロパティで
@@ -2137,7 +2139,7 @@ sequenceDiagram
   Note over G: グラフが非表示ビューの間は作業を遅延し<br/>戻った時に 1 回だけ実行する
   Note over I: インスペクタも CONSOLE ビューに隠されている間は同じ形で遅延する
   M->>C: メーター読み値、アドレスあたり毎秒およそ 10
-  C->>C: 30 fps の描画ループ、バーはコンポジタ変換で駆動<br/>数値表示は 5 フレームに 1 回
+  C->>C: 上限 30 fps の描画ループ、バーはコンポジタ変換で駆動<br/>数値表示は 5 フレームに 1 回
   Note over M,C: メーター読み値は plan に入らない<br/>書き戻し・アンドゥ・送信のいずれの対象にもならない
 ```
 
