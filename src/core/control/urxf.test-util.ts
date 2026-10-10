@@ -62,6 +62,10 @@ export interface ChunkSpec {
   readonly block: string;
   readonly label: string;
   readonly fields: readonly Field[];
+  /** Bytes written after the D block and counted in the chunk's declared length. A unit
+   *  can write a SCENE chunk whose declared length runs past its values block, the rest
+   *  holding no parameters; this reproduces that shape. */
+  readonly trailing?: Uint8Array;
 }
 
 /** Fixed-width text, refusing what will not fit rather than cutting it.
@@ -179,8 +183,9 @@ function buildChunk(
   blockName: string,
   label: string,
   fields: readonly Field[],
+  trailing: Uint8Array = new Uint8Array(0),
 ): Uint8Array {
-  const body = buildChunkBody(blockName, fields);
+  const body = concat([buildChunkBody(blockName, fields), trailing]);
   const header = new Uint8Array(CHUNK_HEADER);
   header.set(cstring("#ChunkData", 12));
   header.set(cstring(chunkName, 12), 12);
@@ -206,7 +211,7 @@ export function buildUrxf(chunks: readonly ChunkSpec[], model = "URX"): Uint8Arr
 
   const parts: Uint8Array[] = [header];
   for (const spec of chunks) {
-    const record = buildChunk(spec.chunk, spec.block, spec.label, spec.fields);
+    const record = buildChunk(spec.chunk, spec.block, spec.label, spec.fields, spec.trailing);
     parts.push(record);
     // Records are NUL-padded up to the next 4-byte boundary.
     const pad = (4 - (record.length % 4)) % 4;

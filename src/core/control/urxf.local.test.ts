@@ -52,6 +52,27 @@ describe.skipIf(!present)("device-written settings files (private samples)", () 
     expect(file.chunks.map((chunk) => chunk.label)).toEqual(["", "My Data 1", "My Data 2"]);
   });
 
+  // Every SCENE chunk in this file declares a length past its F + D pair, the rest filled
+  // with leftover fragments that include `F_SCENE` block heads and `#ChunkData` record heads.
+  it("reads a file whose scene chunks carry bytes past their values block", async () => {
+    const file = parseUrxf(read("29-pre-simple-11-scenes.urxf"));
+    const result = await applySourceState(getModel("URX44V"), emptyPlan("URX44V"), paramSourceOf(file.chunks[0]));
+    expect(result.errors).toEqual([]);
+    expect(result.unreadNodes).toEqual(new Set());
+    expect(file.chunks.map((chunk) => chunk.label)).toEqual([
+      "",
+      "Initial Data",
+      "Initial Data",
+      "Initial Data",
+      "t1",
+      "Initial Data",
+      "Initial Data",
+      "Initial Data",
+      "Initial Data",
+      "SENDS",
+    ]);
+  });
+
   // The whole point of the reader: a real file drives the device→plan inverse and
   // lands the unit's settings cleanly — no failures, no unread nodes. The one
   // structural gap (oscillator ON, which no file carries) is filled with its

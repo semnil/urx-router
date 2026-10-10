@@ -90,9 +90,13 @@ export function parseUrxf(bytes: Uint8Array): UrxfFile {
   const chunks: UrxfChunk[] = [];
 
   let at = RECORD_HEADER + header.extraLen + header.dataLen;
+  let ended = false;
   while (at < bytes.length) {
     const rec = readRecordHeader(view, bytes, at);
-    if (rec.tag === END_TAG) break;
+    if (rec.tag === END_TAG) {
+      ended = true;
+      break;
+    }
     if (rec.tag !== CHUNK_TAG) throw new UrxfError("truncated", `record "${rec.tag}" at ${at}`);
     const body = at + RECORD_HEADER + rec.extraLen;
     require(bytes, body, rec.dataLen, at);
@@ -107,6 +111,10 @@ export function parseUrxf(bytes: Uint8Array): UrxfFile {
     });
     at = skipPadding(bytes, body + rec.dataLen);
   }
+  // A chunk may declare more than its blocks fill, so the chunk lengths alone do not say
+  // the chain is whole: a file cut at a record boundary, or a last chunk whose length runs
+  // over the terminator, is refused here.
+  if (!ended) throw new UrxfError("truncated", "no #END record");
   if (chunks.length === 0) throw new UrxfError("truncated", "no chunks");
   return { model, chunks };
 }
@@ -176,12 +184,14 @@ function readRecordHeader(view: DataView, bytes: Uint8Array, at: number): Record
   };
 }
 
-/** A chunk body is exactly two blocks: the F descriptor table then the D values. */
+/** A chunk body is the F descriptor table then the D values. The declared length may run
+ *  past D: a unit can leave bytes there that hold no parameters — fragments of block
+ *  headers, descriptor tables and record tags included — and they are not read. */
 function readChunkBody(view: DataView, bytes: Uint8Array, at: number, len: number): Map<number, UrxfValues> {
   const f = readBlockHeader(view, bytes, at, "F_");
   const d = readBlockHeader(view, bytes, f.payload + f.length, "D_");
   const end = d.payload + d.length;
-  if (end !== at + len) throw new UrxfError("badBlock", `blocks end at ${end}, chunk at ${at + len}`);
+  if (end > at + len) throw new UrxfError("badBlock", `blocks end at ${end}, chunk at ${at + len}`);
   const table = readDescriptors(view, bytes, f.payload, f.length);
   return readValues(view, bytes, d.payload, d.length, table);
 }

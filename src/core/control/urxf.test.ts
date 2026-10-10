@@ -5,7 +5,15 @@
 
 import { describe, expect, it } from "vitest";
 import { parseUrxf, paramSourceOf } from "./urxf";
-import { BLOCK_HEADER, buildUrxf, CHUNK_HEADER, FILE_HEADER, sampleUrxf as sample } from "./urxf.test-util";
+import {
+  BLOCK_HEADER,
+  buildUrxf,
+  CHUNK_HEADER,
+  CURRENT_FIELDS,
+  FILE_HEADER,
+  SCENE_FIELDS,
+  sampleUrxf as sample,
+} from "./urxf.test-util";
 
 describe("parseUrxf", () => {
   it("reads the header, both chunks, and the scene label", () => {
@@ -112,6 +120,61 @@ describe("parseUrxf", () => {
     // has to be right rather than merely close.
     new DataView(bytes.buffer).setUint32(FILE_HEADER + CHUNK_HEADER + 24, 1, true);
     expect(() => parseUrxf(bytes)).toThrow(expect.objectContaining({ code: "badBlock" }));
+  });
+
+  // A unit can declare a SCENE chunk longer than its F + D pair and fill the rest with
+  // leftovers: fragments of earlier block headers and descriptor tables, and record tags.
+  // The parse has to read the pair and step over the rest — reading the leftovers as a
+  // third block, or as the next record, refuses a file the unit wrote.
+  it("reads a chunk whose declared length runs past its values block", () => {
+    const enc = new TextEncoder();
+    const trailing = new Uint8Array(104);
+    trailing.set(enc.encode("F_SCENE"), 4);
+    new DataView(trailing.buffer).setUint32(4 + 24, 10000, true);
+    trailing.set(enc.encode("#ChunkData"), 72);
+    const file = parseUrxf(
+      buildUrxf([
+        { chunk: "CURRENT", block: "CSF_BACKUP", label: "", fields: CURRENT_FIELDS },
+        { chunk: "SCENE", block: "SCENE", label: "My Data 1", fields: SCENE_FIELDS, trailing },
+        {
+          chunk: "SCENE",
+          block: "SCENE",
+          label: "My Data 2",
+          fields: [{ id: 96, typecode: 1, elemSize: 2, values: [201] }],
+        },
+      ]),
+    );
+    expect(file.chunks.map((c) => c.label)).toEqual(["", "My Data 1", "My Data 2"]);
+    expect(file.chunks[1].params).toEqual(new Map([[96, [200]]]));
+    expect(file.chunks[2].params).toEqual(new Map([[96, [201]]]));
+  });
+
+  // The other direction stays a refusal: blocks that run past the length their chunk
+  // declares would read the next record's bytes as values.
+  it("rejects blocks that run past their chunk", () => {
+    const bytes = sample();
+    const view = new DataView(bytes.buffer);
+    // dataLen is a BE u32 28 bytes into the chunk record header.
+    view.setUint32(FILE_HEADER + 28, view.getUint32(FILE_HEADER + 28, false) - 1, false);
+    expect(() => parseUrxf(bytes)).toThrow(expect.objectContaining({ code: "badBlock" }));
+  });
+
+  // With room after D allowed, the chunk lengths no longer pin where the record chain ends,
+  // so the terminator does: a file cut at a record boundary, or a last chunk whose declared
+  // length swallows `#END`, reads as complete otherwise.
+  it("rejects a record chain that never reaches #END", () => {
+    const bytes = sample();
+    expect(() => parseUrxf(bytes.subarray(0, bytes.length - 36))).toThrow(
+      expect.objectContaining({ code: "truncated" }),
+    );
+    // The last chunk record, found by its tag rather than by adding up the builder's lengths.
+    const tag = new TextEncoder().encode("#ChunkData");
+    let sceneAt = bytes.length;
+    while (sceneAt-- > 0 && !tag.every((b, i) => bytes[sceneAt + i] === b));
+    const swallowed = bytes.slice();
+    // Declared to end exactly at EOF, so every byte the record claims exists.
+    new DataView(swallowed.buffer).setUint32(sceneAt + 28, bytes.length - sceneAt - CHUNK_HEADER, false);
+    expect(() => parseUrxf(swallowed)).toThrow(expect.objectContaining({ code: "truncated" }));
   });
 });
 
