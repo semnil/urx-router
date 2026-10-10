@@ -1115,7 +1115,7 @@ test("every strip's head holds its own contents, so --head-h is not hand-measure
       const used =
         kids.reduce((sum, k) => sum + k.getBoundingClientRect().height, 0) + gap * Math.max(0, kids.length - 1);
       return {
-        name: strip.querySelector(".con-scribble-name")?.textContent?.trim() ?? "?",
+        name: strip.querySelector(".con-scribble .name .txt")?.textContent?.trim() ?? "?",
         over: +(used + pad - head.getBoundingClientRect().height).toFixed(1),
       };
     }),
