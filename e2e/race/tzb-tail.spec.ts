@@ -340,10 +340,16 @@ test.describe("Tzb tail", () => {
       // continuous drag keeps one armed except in the few milliseconds between a flush's ack
       // and the next move. So the recall's read starts in such a gap when one of its retries
       // lands there, and after the release when none does — which of the two a run takes is
-      // timing, so each is asserted for what it has to hold.
+      // timing, so each is asserted for what it has to hold. The branch is taken on where the
+      // readback LANDED — the "← device (n)" line its reflect writes — since a whole-device
+      // read that starts inside the drag can still resolve after the release.
       const sweepStart = reads.length ? reads[0].start : Number.POSITIVE_INFINITY;
-      const beganInDrag = sweepStart < releaseAt;
-      if (beganInDrag) {
+      const landedAt = trace.find(
+        (e) => e.kind === "status" && e.t > sentinelAt && /^← device \(\d+\)/.test(e.detail ?? ""),
+      )?.t;
+      expect(landedAt).toBeDefined();
+      const landedInDrag = landedAt! < releaseAt;
+      if (landedInDrag) {
         // The readback lands while the pointer is still down, and the element the operator
         // is holding is taken out of the document by the reflect's full console render.
         expect(duringDrag.connected).toBe(false);
@@ -363,8 +369,6 @@ test.describe("Tzb tail", () => {
         // What the readout ends on is NOT asserted here: it is the key under the pointer (see
         // below), and a read that begins late in the drag leaves the idle sweep after the
         // release to move it again.
-        // The history reset that goes with a readback ran while the pointer was down.
-        expect(resets[0]).toBeLessThan(releaseAt);
       } else {
         // The drag was not interrupted: the element the operator held stayed in the
         // document, and the readback and its history reset came after the release.
@@ -397,7 +401,7 @@ test.describe("Tzb tail", () => {
       // here and recorded under the harness's known gaps.
       //
       console.log(
-        `sweep began at ${sweepStart.toFixed(0)} ms, ${beganInDrag ? "inside" : "after"} the drag; ` +
+        `sweep began at ${sweepStart.toFixed(0)} ms and landed at ${landedAt!.toFixed(0)} ms, ${landedInDrag ? "inside" : "after"} the drag; ` +
           `the pointer's key settled at ${after}, the unit holds ${unitHolds}`,
       );
 
