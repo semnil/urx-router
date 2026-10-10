@@ -36,19 +36,26 @@ jobs:
   # Builds the binary only (no bundling or signing). Runs on every merge rather
   # than on src-tauri changes alone: a restore refreshes the cache's eviction
   # clock, and a tag can follow any merge. A miss is silent — it only shows up
-  # as a slow release — so the matrix and the shared-key below have to stay
-  # identical to release.yml's build job.
+  # as a slow release — so the matrix, each entry's cacheKey included, has to
+  # stay identical to release.yml's build job.
   warm-cache:
     strategy:
       fail-fast: false
       matrix:
         include:
+          # cacheKey is the rust-cache shared-key. macOS has its own because its cache is
+          # filled by the Tauri CLI build below rather than by plain cargo, and rust-cache
+          # saves nothing after a restore that matched its key exactly: under the key a
+          # cargo-only build filled, that cache is restored as a full match and kept as it
+          # is, so the Tauri CLI build's result is never saved.
           - platform: macos-26
             args: --target aarch64-apple-darwin
             rustTargets: aarch64-apple-darwin
+            cacheKey: release-tauri
           - platform: windows-latest
             args: ''
             rustTargets: ''
+            cacheKey: release
     runs-on: ${{ matrix.platform }}
     # A cold Rust build is what this job is FOR, so the bound is generous: 5.1 minutes
     # is the slowest of sixteen recent runs.
@@ -69,7 +76,7 @@ jobs:
       - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
-          shared-key: release
+          shared-key: ${{ matrix.cacheKey }}
       - run: pnpm install --frozen-lockfile
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       # tauri-build reads the frontend output and copies bundle.resources at
@@ -77,6 +84,15 @@ jobs:
       # notice is a placeholder rather than the generated one.
       - run: pnpm build
       - run: echo "" > src-tauri/THIRD_PARTY_LICENSES.html
-      - run: cargo build --release ${{ matrix.args }}
+      # macOS builds through the Tauri CLI, as release.yml's tauri-action does: the CLI
+      # exports MACOSX_DEPLOYMENT_TARGET from bundle.macOS.minimumSystemVersion, and the
+      # build scripts of objc2, objc2-exception-helper and ring rerun when that variable
+      # changes, so a cache built without it is rebuilt from those crates up at release
+      # time. --no-bundle stops after the compile, so nothing is bundled or signed.
+      - if: runner.os == 'macOS'
+        run: pnpm tauri build --no-bundle ${{ matrix.args }}
+        timeout-minutes: 20 # hang detector, not a budget — see .github/actions/install-browsers
+      - if: runner.os != 'macOS'
+        run: cargo build --release ${{ matrix.args }}
         working-directory: src-tauri
         timeout-minutes: 20 # hang detector, not a budget — see .github/actions/install-browsers
