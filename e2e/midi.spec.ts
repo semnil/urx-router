@@ -815,7 +815,7 @@ test("the SENDS rack controls arm with send-scoped control ids", async ({ page }
 test("the scribble power LED arms the node master (chOn) and a note toggles it", async ({ page }) => {
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
-  const power = () => strip(page, "CH 1").locator(".con-scribble.power");
+  const power = () => strip(page, "CH 1").locator(".con-power");
   await learnBinding(page, win, () => power().click(), [0x90, 62, 127]);
   await expect(mapRow(win, "ch1/chOn")).toBeVisible();
   await setLearn(page, win, false);

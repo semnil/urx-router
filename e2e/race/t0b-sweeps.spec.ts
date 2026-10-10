@@ -524,7 +524,7 @@ test.describe("T0b baseline sweeps", () => {
         },
         silent: true,
       },
-      { label: "scribble power LED", run: () => ch1.locator(".con-scribble").click() },
+      { label: "scribble power LED", run: () => ch1.locator(".con-power").click() },
       { label: "MUTE chip", run: () => chip(ch1, "MUTE").click() },
       { label: "+48 chip", run: () => chip(ch1, "+48").click() },
       { label: "polarity chip", run: () => chip(ch1, "φ").click() },
@@ -590,9 +590,13 @@ test.describe("T0b baseline sweeps", () => {
     // losing the operator's. The E2E project is Chromium-only, so this pins the app's
     // own restore, not the engine's.
     const scrolled = await rack.evaluate((el) => el.scrollLeft);
-    await ch1.locator(".con-scribble").dispatchEvent("click"); // unconditional full render
+    const stripBefore = await ch1.elementHandle();
+    await ch1.locator(".con-power").dispatchEvent("click"); // unconditional full render
     await page.waitForTimeout(250);
     const afterRender = await rack.evaluate((el) => el.scrollLeft);
+    // The press did render: the strip it was made on is no longer in the document, so the
+    // offset compared below is the one a re-render left rather than one nothing touched.
+    expect(await stripBefore!.evaluate((el) => el.isConnected)).toBe(false);
 
     printSweep("CONSOLE surface sweep", outcomes);
     console.log(`strip rack scrollLeft: ${scrolled} → ${afterRender} across a forced render`);

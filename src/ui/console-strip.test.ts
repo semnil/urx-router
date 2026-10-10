@@ -932,6 +932,24 @@ describe("the INS FX chip", () => {
     expect(scribble("ch4").style.background).not.toBe("");
   });
 
+  // The strip's on/off is its power LED: the scribble around it, the name and the device
+  // name are no button, so a press on the name changes nothing.
+  it("makes the power LED the strip's on/off and leaves the name inert", () => {
+    h = consoleHost();
+    const root = h.strip("ch1").root;
+    const scrib = root.querySelector<HTMLElement>(".con-scribble")!;
+    expect(scrib.getAttribute("role")).toBeNull();
+    expect(scrib.hasAttribute("tabindex")).toBe(false);
+    const power = (): HTMLElement => h.strip("ch1").root.querySelector<HTMLElement>(".con-power")!;
+    expect(power().getAttribute("role")).toBe("button");
+    expect(power().getAttribute("aria-pressed")).toBe("true");
+    h.strip("ch1").root.querySelector<HTMLElement>(".con-scribble .txt")!.click();
+    expect(h.plan.nodeParams.ch1?.on).not.toBe(false);
+    power().click();
+    expect(h.plan.nodeParams.ch1?.on).toBe(false);
+    expect(power().getAttribute("aria-pressed")).toBe("false");
+  });
+
   // The unit fills the engine with the type's defaults on the transition into it and not on a  // The unit fills the engine with the type's defaults on the transition into it and not on a
   // same-value write, so the selection puts them in the plan, where the screen reads them and the
   // write sends them — and names them as defaults rather than as values the operator chose.

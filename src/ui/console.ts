@@ -1870,17 +1870,21 @@ export class Console {
   // The scribble strip: the CH SETTING colour + a power LED, the node name and the
   // device CH SETTING name row ("—" when unset, so every strip is the same height).
   // Shared by both strip builders. When the strip has an on/off (every strip but
-  // STREAMING) the whole scribble is the power button; the LED reflects its state.
+  // STREAMING) the LED is the power button, its hit area reaching from the strip's
+  // corner to the name text and down to the chip row; the name text itself is not.
   private scribble(m: StripModel): HTMLElement {
     const scrib = el("div", "con-scribble");
     this.paintScribble(scrib, m);
     const name = el("div", "name");
     const spec = this.powerSpec(m);
+    let power: HTMLElement | undefined;
     let led: HTMLElement | undefined;
     if (spec) {
+      power = el("span", "con-power");
       led = el("span", "con-pled");
       led.append(el("i", "dot"));
-      name.append(led);
+      power.append(led);
+      name.append(power);
     }
     const txt = el("span", "txt");
     txt.textContent = m.label;
@@ -1894,7 +1898,7 @@ export class Console {
     dev.textContent = m.deviceName || "—";
     if (!m.deviceName) dev.classList.add("empty");
     scrib.append(name, dev);
-    if (spec && led) this.wirePower(scrib, led, m, spec);
+    if (spec && power && led) this.wirePower(power, led, m, spec);
     return scrib;
   }
 
@@ -1932,7 +1936,7 @@ export class Console {
   // Wire an element as an activatable button: keyboard (Space / Enter), MIDI-learn
   // mark + arming, and click. `run` performs the edit, told whether the keyboard
   // activated it; in learn mode arming consumes the activation instead. Shared by the
-  // toggle chips and the scribble power button.
+  // toggle chips and the scribble's power LED.
   private wireActivate(el: HTMLElement, midiId: string | undefined, run: (viaKey: boolean) => void): void {
     el.tabIndex = 0;
     this.midiMark(el, midiId);
@@ -1949,17 +1953,17 @@ export class Console {
     });
   }
 
-  // Make the scribble a power button: the LED reflects the on-state, click / Enter /
-  // Space toggle the node master (or oscillator) through the shared funnel. A full
-  // re-render follows so the strip's inactive dim updates.
-  private wirePower(scrib: HTMLElement, led: HTMLElement, m: StripModel, spec: PowerSpec): void {
+  // Make the LED a power button: the LED reflects the on-state, click / Enter / Space
+  // toggle the node master (or oscillator) through the shared funnel. A full re-render
+  // follows so the strip's inactive dim updates. The button's class carries no state —
+  // the lit state is the LED's — so the focus restore after that render finds it by class.
+  private wirePower(power: HTMLElement, led: HTMLElement, m: StripModel, spec: PowerSpec): void {
     led.classList.toggle("on", spec.on);
-    scrib.classList.add("power");
-    scrib.dataset.ctl = spec.midiId;
-    scrib.setAttribute("role", "button");
-    scrib.setAttribute("aria-pressed", String(spec.on));
-    scrib.setAttribute("aria-label", `${m.label} ${t().console.power}`);
-    this.wireActivate(scrib, spec.midiId, () => {
+    power.dataset.ctl = spec.midiId;
+    power.setAttribute("role", "button");
+    power.setAttribute("aria-pressed", String(spec.on));
+    power.setAttribute("aria-label", `${m.label} ${t().console.power}`);
+    this.wireActivate(power, spec.midiId, () => {
       this.commit(m.id, spec.toggle());
       this.render();
     });

@@ -26,7 +26,7 @@ test("the OSCILLATOR on/off is the power LED (no ON chip); off by default = dimm
   const osc = strip(page, "OSCILLATOR");
   await expect(osc.getByRole("button", { name: "ON", exact: true })).toHaveCount(0); // no ON chip
   await expect(osc).toHaveClass(/inactive/); // osc.on ships off → strip rests dimmed
-  const power = osc.locator(".con-scribble.power");
+  const power = osc.locator(".con-power");
   await expect(power).toHaveAttribute("aria-pressed", "false");
   await power.click();
   await expect(power).toHaveAttribute("aria-pressed", "true");

@@ -632,12 +632,42 @@ test("the head MUTE drives the CH → STEREO assign, not the channel master", as
   await expect(mute).toHaveAttribute("aria-pressed", "true"); // → STEREO assign off
   // The channel master is untouched: the strip is not dimmed, the power LED stays on.
   await expect(ch).not.toHaveClass(/inactive/);
-  await expect(ch.locator(".con-scribble.power")).toHaveAttribute("aria-pressed", "true");
+  await expect(ch.locator(".con-power")).toHaveAttribute("aria-pressed", "true");
+});
+
+// The power LED's hit area reaches from the strip's own corner to where the name text starts
+// and down to the chip row: every point in it presses the LED, and the name text, the rest of
+// the device-name row and the chip row below do not.
+test("the power LED's hit area covers the strip corner and stops at the name and the chips", async ({ page }) => {
+  const ch = strip(page, "CH 1");
+  await expect(ch.locator(".con-power")).toBeVisible();
+  const hits = await ch.evaluate((stripEl) => {
+    const s = stripEl.getBoundingClientRect();
+    const txt = stripEl.querySelector(".con-scribble .name .txt")!.getBoundingClientRect();
+    const id = stripEl.querySelector(".con-scribble .id")!.getBoundingClientRect();
+    const chips = stripEl.querySelector(".con-chips")!.getBoundingClientRect();
+    const onPower = (x: number, y: number): boolean => document.elementFromPoint(x, y)?.closest(".con-power") !== null;
+    return {
+      corners: [
+        onPower(s.left + 1, s.top + 1),
+        onPower(txt.left - 1, s.top + 1),
+        onPower(s.left + 1, chips.top - 1),
+        onPower(txt.left - 1, chips.top - 1),
+      ],
+      nameText: onPower(txt.left + 1, txt.top + txt.height / 2),
+      idRow: onPower(txt.left + 4, id.top + id.height / 2),
+      chipRow: onPower(s.left + 8, chips.top + 2),
+    };
+  });
+  expect(hits.corners).toEqual([true, true, true, true]);
+  expect(hits.nameText).toBe(false);
+  expect(hits.idRow).toBe(false);
+  expect(hits.chipRow).toBe(false);
 });
 
 test("the scribble power LED toggles the node master and dims the strip", async ({ page }) => {
   const ch = strip(page, "CH 1");
-  const power = ch.locator(".con-scribble.power");
+  const power = ch.locator(".con-power");
   await expect(power).toHaveAttribute("aria-pressed", "true"); // CH_ON ships on
   await expect(ch).not.toHaveClass(/inactive/);
   await power.click();
@@ -671,7 +701,7 @@ test("a re-render keeps the strip scroll offset and the focused control", async 
   const scrolled = await scrollStripsToEnd(page);
   // The rightmost strip carrying a power LED — on screen at this offset, so the click
   // itself never scrolls.
-  const power = page.locator(".con-strip .con-scribble.power").last();
+  const power = page.locator(".con-strip .con-power").last();
   await power.click();
   await expect(power).toHaveAttribute("aria-pressed", "false");
   await expect(power).toBeFocused();
@@ -717,20 +747,20 @@ test("a re-render keeps the offset when the focused control is scrolled out of v
   // (scrollCheck in scripts/meter-bench.mjs), since this is engine behaviour.
   // Driven from the keyboard: a pointer would move focus to whatever it pressed, and
   // the point here is a control that keeps focus while sitting off screen.
-  const power = strip(page, "CH 1").locator(".con-scribble.power");
+  const power = strip(page, "CH 1").locator(".con-power");
   await power.focus();
   const scrolled = await scrollStripsToEnd(page);
   await page.keyboard.press("Enter"); // the per-strip dim re-renders every strip
   await expect(strip(page, "CH 1")).toHaveClass(/inactive/);
   expect(await stripsScroll(page)).toBe(scrolled);
-  await expect(strip(page, "CH 1").locator(".con-scribble.power")).toBeFocused();
+  await expect(strip(page, "CH 1").locator(".con-power")).toBeFocused();
 });
 
 test("muting the channel master in the inspector dims the console strip", async ({ page }) => {
   await muteMasterViaInspector(page, "ch1"); // leaves the view on the console
   const ch = strip(page, "CH 1");
   await expect(ch).toHaveClass(/inactive/);
-  await expect(ch.locator(".con-scribble.power")).toHaveAttribute("aria-pressed", "false");
+  await expect(ch.locator(".con-power")).toHaveAttribute("aria-pressed", "false");
 });
 
 /** How strongly an element is drawn: its own opacity times every ancestor's. */
@@ -834,7 +864,7 @@ test("a MIX strip's head MUTE drives the MIX → STEREO TO ST switch", async ({ 
 test("a MONITOR strip has no MUTE chip; its on/off is the power LED (MONITOR_ON)", async ({ page }) => {
   const mon = strip(page, "MONITOR 1");
   await expect(mon.getByRole("button", { name: "MUTE" })).toHaveCount(0); // no → STEREO send
-  const power = mon.locator(".con-scribble.power");
+  const power = mon.locator(".con-power");
   await expect(power).toHaveAttribute("aria-pressed", "true"); // MONITOR_ON ships on
   await expect(mon).not.toHaveClass(/inactive/);
   await power.click();
@@ -859,7 +889,7 @@ test("the OSCILLATOR strip has no MUTE / ON chip; its on/off is the power LED", 
   const osc = strip(page, "OSCILLATOR");
   await expect(osc.getByRole("button", { name: "MUTE" })).toHaveCount(0);
   await expect(osc.getByRole("button", { name: "ON", exact: true })).toHaveCount(0); // no ON chip
-  const power = osc.locator(".con-scribble.power");
+  const power = osc.locator(".con-power");
   await expect(power).toHaveAttribute("aria-pressed", "false"); // OSC off at the factory
   await power.click();
   await expect(power).toHaveAttribute("aria-pressed", "true"); // generating

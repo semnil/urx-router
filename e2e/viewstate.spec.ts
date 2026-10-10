@@ -66,7 +66,7 @@ test("a graph-side channel mute dims the console strip and unlights its power LE
   await page.click("#btn-view-console");
   const ch = strip(page, "CH 1");
   await expect(ch).toHaveClass(/inactive/);
-  await expect(ch.locator(".con-scribble.power")).toHaveAttribute("aria-pressed", "false");
+  await expect(ch.locator(".con-power")).toHaveAttribute("aria-pressed", "false");
 });
 
 test("a console MUTE persists across a GRAPH round-trip", async ({ page }) => {

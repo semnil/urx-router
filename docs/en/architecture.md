@@ -1300,8 +1300,10 @@ Strips whose fader/meter top out at 0 dB (the meter-only STREAMING and OSCILLATO
 unreachable +5/+10 ticks. Each tick centres its digits with the minus sign hanging left, so `10` and
 `-10` line up vertically. Above the zone the scribble shows two lines — **node name + device CH SETTING
 name** (the monitor buses carry no CH SETTING name, so their second line names the linked PHONES output instead —
-`Phone 1` / `Phone 2`). Left of the name sits a **power LED** — the whole scribble is a button toggling the
-node master ON/OFF (see the inactive-dim note below). Below it sit two 2-column chip groups: (1) channel / input (HA) — **MUTE**, only on the strips that
+`Phone 1` / `Phone 2`). Left of the name sits a **power LED** — the LED is a button toggling the
+node master ON/OFF (see the inactive-dim note below). Its hit area reaches from the strip's own top-left corner across
+to where the name text starts and down to the chip row, so it covers the start of the device-name row; the name text is
+not part of it. Below it sit two 2-column chip groups: (1) channel / input (HA) — **MUTE**, only on the strips that
 send to STEREO (channels, FX channels, MIX buses): it drives that fixed → STEREO send's ON/OFF — an **input /
 FX channel's → STEREO assign ON** (firmware V1.3, the post-fader SEND TO STEREO switch) or a **MIX bus's
 MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off) — never the node master (CH_ON / FX-channel ON /

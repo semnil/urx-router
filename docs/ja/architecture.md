@@ -1039,7 +1039,7 @@ Live sync 中のみ) が各 dBFS 読み値を対応する dB 目盛と同じ位�
 可動域に揃えるので、1 本の目盛でフェーダーとメーターの両方を読める (機能的な目盛、10/5/0/-5/-10/-20/-40/-∞)。
 0 dB の横線はフェーダーつまみの中心を貫き、−∞ 目盛は可動域の最下端 (フェーダーの off 位置、−96 detent の 1 ノッチ下) に置く。フェーダー/メーターが 0 dB で頭打ちになるストリップ
 (メーターのみの STREAMING と OSCILLATOR) は届かない +5/+10 目盛を表示しない。目盛の数字は符号を分離して中央寄せ (「−」を左へハングさせ `10` と
-`-10` の桁を縦に揃える)。上部のスクリブルは **ノード名 + 実機 CH SETTING 名** の 2 行 (MONITOR Bus は CH SETTING 名を持たないため、2 行目はリンク先の PHONES 出力名 `Phone 1` / `Phone 2` を表示する)。名前の左には **電源 LED** を置き、スクリブル全体がノード master ON/OFF のボタンになる (下記の inactive 減光を参照)。その下にトグルチップを
+`-10` の桁を縦に揃える)。上部のスクリブルは **ノード名 + 実機 CH SETTING 名** の 2 行 (MONITOR Bus は CH SETTING 名を持たないため、2 行目はリンク先の PHONES 出力名 `Phone 1` / `Phone 2` を表示する)。名前の左には **電源 LED** を置き、その LED がノード master ON/OFF のボタンになる (下記の inactive 減光を参照)。当たり判定はストリップ自身の左上の角から名前の文字の手前まで、下はチップの行までで、実機名の行の左端を含む。名前の文字は含まない。その下にトグルチップを
 2 列グリッドで 2 グループ置く: ①チャンネル/入力 (HA) — **MUTE** は → STEREO send を持つストリップ (チャンネル・FX チャンネル・MIX Bus) のみが持ち、その固定 → STEREO send の ON/OFF を切り替える (**入力/FX チャンネルは → STEREO アサイン ON**〈ファーム V1.3・フェーダー後段の SEND TO STEREO スイッチ〉、**MIX Bus は MIX → STEREO の TO ST スイッチ**〈`params.on`、muted = TO ST OFF〉)。ノード master (CH_ON / FX チャンネル ON / MIX 675) ではなく、それは電源 LED が担う。STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップを持たず、master ON は電源 LED のみ。MONITOR Bus はさらに **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`、工場 ON) と **MONO** (`mono` → `MONITOR_MONO`、工場 OFF) のチップを持つ。モノ MIC CH は +48 / φ / HPF (CH3/4 と URX22 の CH2 は Hi-Z)、
 ステレオ CH は φL / φR (`channelControl` の `phases`/フラグで判定) ②処理チェーン — GATE → COMP → EQ →
 INS FX、ステレオ CH は EQ + DUCKER (直下に吊るした ducker ノードの `duckerOn` をトグル)。SSMCS モードの

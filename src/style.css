@@ -776,7 +776,7 @@ select:focus-visible,
    .tools button neighbour — now differ in ring colour alone; that is a known
    cost of stating the rule once, and dropping those five selectors is all it
    takes to reverse it. */
-.con-scribble.power:focus-visible,
+.con-power:focus-visible,
 .consent-actions button:focus-visible,
 .prefs-toggle button:focus-visible,
 .prefs-btn:focus-visible,
@@ -2279,12 +2279,6 @@ input[type="range"]:focus-visible,
     var(--ctl-shadow),
     inset 0 0 0 100vmax var(--inactive-veil);
 }
-.con-strip.inactive .con-scribble.power:focus-visible {
-  box-shadow:
-    var(--ctl-shadow),
-    inset 0 0 0 100vmax var(--inactive-veil),
-    0 0 0 4px rgba(0, 0, 0, 0.9);
-}
 
 .con-head {
   height: var(--head-h);
@@ -2366,14 +2360,29 @@ input[type="range"]:focus-visible,
   background: var(--led);
   box-shadow: 0 0 4px 1px color-mix(in srgb, var(--led) 78%, transparent);
 }
-/* The scribble is a button when it carries a power LED: pointer, no text-selection
-   (so a stray drag while reading a name doesn't toggle the master). */
-.con-scribble.power {
+/* The power LED is the strip's on/off button. Its focus ring is the white-on-halo one,
+   declared with the other surfaces that need it beside the amber rule near the top of
+   this file, and drawn round the LED itself. */
+.con-power {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border-radius: 50%;
   cursor: pointer;
   user-select: none;
 }
-/* Its focus ring is the white-on-halo one, declared with the other seven surfaces
-   that need it beside the amber rule near the top of this file. */
+/* Its hit area is wider than the LED: from the strip's own left and top edges (through the
+   head's 6px padding) across to where the name text starts (scribble padding 6 + LED 12 +
+   the name row's gap 6), and down to the chip row under the scribble (the head's 4px gap).
+   It covers the start of the device-name row and none of the name text. Positioned against
+   the scribble, which is the nearest positioned box. */
+.con-power::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: -6px;
+  width: 30px;
+  height: calc(100% + 10px);
+}
 .con-chips {
   display: flex;
   flex-wrap: wrap;
