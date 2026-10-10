@@ -37,11 +37,9 @@ const hpfRow = (page: Page) =>
     .filter({ hasText: "HPF" })
     .first();
 
-// The scoped read's line is replaced by the whole-device read's once the session idles, so the
-// press is made inside the page rather than by the driver, whose round trips put it at no fixed
-// point between the two reads. The observer records each status line as it is written. The
-// notify's own line is written in the task that arms the idle timer, and from it the observer
-// times the press; at that moment it presses OFF only if the scoped read has landed, the
+// Runs in the page and makes the press itself. It records each status line as it is written.
+// The notify's own line is written in the task that arms the idle timer, and the press is
+// timed from it; at that moment it presses OFF only if the scoped read has landed, the
 // Inspector shows HPF ON and the whole-device read has not landed.
 function pressOffBeforeIdleRead([following, scoped, full, pressAfter]: [string, string, string, number]): void {
   const followingLine = new RegExp(following);
