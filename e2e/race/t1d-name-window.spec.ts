@@ -38,6 +38,7 @@ import {
 } from "./fake-device";
 import { getsOf, markTime } from "./analyze";
 import { openEqScreen, sampleShown, shownOf } from "./ui";
+import { DEBOUNCE_MS } from "../../src/core/control/live";
 
 /** CH1's name (vd-params.md `18`: 64-byte fixed-length string, one instance per mono
  *  channel). The only name address this case touches. */
@@ -118,7 +119,7 @@ test.describe("T1d name window", () => {
     );
     expect(nameWrite, "the rename never reached the device").toBeDefined();
     expect(knobWrite, "the 1-knob write never reached the device").toBeDefined();
-    expect(Math.abs(nameWrite!.t - knobWrite!.t)).toBeLessThan(120);
+    expect(Math.abs(nameWrite!.t - knobWrite!.t)).toBeLessThan(DEBOUNCE_MS);
 
     // The device took the rename: this is about what the app does with the READ, not
     // about the write.

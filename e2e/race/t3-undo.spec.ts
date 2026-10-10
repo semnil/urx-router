@@ -23,6 +23,7 @@ import {
 import { analyze, report, timeline, markTime, spans, setsOf, getsOf } from "./analyze";
 import { CH1_FADER, CH1_HPF_FREQ, faderOf, faderReadout, graphNode, openEqScreen } from "./ui";
 import { chooseOption } from "../choose-option";
+import { IDLE_FULL_MS } from "../../src/core/control/follow";
 
 // T3 undo — the boundary, refusal, rebase and native-menu tier of the race harness
 // (docs/{en,ja}/live-race-harness.md). e2e/undo.spec.ts already pins the simple
@@ -714,7 +715,7 @@ test.describe("T3 undo", () => {
       await mark(page, "sweep-end");
       // The sweep's idle net runs one full re-read; let it finish before the control
       // arm, or its own planHistory.reset() would be credited to the sweep.
-      await waitQuiet(page, 1500, 120_000);
+      await waitQuiet(page, IDLE_FULL_MS + 600, 120_000);
       // Read here, not at the bottom: the control arm edits the same fader again, so
       // the unit's state after the two presses is only readable before it runs.
       const sweptDeviceHolds = (await memOf(page))[CH3_FADER];
@@ -1099,9 +1100,9 @@ test.describe("T3 undo — a late announcement", () => {
     const edited = (await faderReadout(page, "CH 1").textContent())!;
     expect(edited).not.toBe(before);
 
-    // Past the late announcement, past follow's idle full reconcile (IDLE_FULL_MS =
-    // 900), and past the whole-device sweep that reconcile would run.
-    await waitQuiet(page, 1500, 120_000);
+    // Past the late announcement, past follow's idle full reconcile (IDLE_FULL_MS),
+    // and past the whole-device sweep that reconcile would run.
+    await waitQuiet(page, IDLE_FULL_MS + 600, 120_000);
 
     const after = (await faderReadout(page, "CH 1").textContent())!;
     const device = (await memOf(page))[CH1_FADER];

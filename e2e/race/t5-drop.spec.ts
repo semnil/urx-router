@@ -26,6 +26,8 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, type Span } from "./analyze";
 import { CH1_FADER, faderOf, faderReadout } from "./ui";
+import { IDLE_FULL_MS } from "../../src/core/control/follow";
+import { DEBOUNCE_MS } from "../../src/core/control/live";
 
 // T5 drop — failure injection (docs/{en,ja}/live-race-harness.md).
 //
@@ -432,7 +434,7 @@ test.describe("T5 drop", () => {
         ` doomed vd_set issued at ${doomed
           .filter((s) => s.cmd === "vd_set")
           .map((s) => `+${(s.start - latchAt).toFixed(0)}→${(s.end - latchAt).toFixed(0)}`)
-          .join(", ")} (flush window 120)`,
+          .join(", ")} (flush window ${DEBOUNCE_MS})`,
     );
     console.log(`fetch after the latch: ${duringFetch.map((s) => `${s.cmd}:${s.detail ?? "ok"}`).join(", ")}`);
     console.log(`dialogs: ${dialogs.length} — ${dialogs.join(" | ")}`);
@@ -452,7 +454,7 @@ test.describe("T5 drop", () => {
     // A doomed write is one the latch refused. The drag can issue a write between the mark
     // and setDeviceLost, two driver calls apart, and that one is accepted.
     const doomedSets = doomed.filter((s) => s.cmd === "vd_set" && s.detail === "device-lost");
-    expect(endedAt - doomedSets[0].start).toBeLessThan(120);
+    expect(endedAt - doomedSets[0].start).toBeLessThan(DEBOUNCE_MS);
     expect(doomedSets).toHaveLength(1);
     // (No assertion that every doomed command failed: after setDeviceLost the fake
     // stamps "device-lost" on every vd_ command by construction, so such a check would
@@ -634,9 +636,9 @@ test.describe("T5 drop", () => {
     }
     await mark(page, "registered-burst-end");
     // A direct-classified burst produces no IPC at all, so waitQuiet would return on
-    // the previous phase's silence and end the run before the 900 ms idle net could
-    // arm — sit out the idle deadline explicitly, then wait on the trace as usual.
-    await page.waitForTimeout(1400);
+    // the previous phase's silence and end the run before the idle net could arm —
+    // sit out the idle deadline explicitly, then wait on the trace as usual.
+    await page.waitForTimeout(IDLE_FULL_MS + 500);
     await waitQuiet(page, 1500);
     await mark(page, "registered-done");
 
@@ -650,7 +652,7 @@ test.describe("T5 drop", () => {
     // apart rather than added into one number.
     const lastRegNotify = [...t2].reverse().find((e) => e.kind === "notify" && e.addr && e.t >= regAt)!.t;
     expect(lastRegNotify).toBeLessThan(burstEnd);
-    const regSettleReads = readsIn(spans(t2), regAt + 300, lastRegNotify + 850);
+    const regSettleReads = readsIn(spans(t2), regAt + 300, lastRegNotify + IDLE_FULL_MS - 50);
     const regWall = regDoneAt - regAt;
 
     // Arm 3 — the five planExternal addresses, kept as a refusal probe. They are in no
