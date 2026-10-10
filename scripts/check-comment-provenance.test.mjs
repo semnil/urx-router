@@ -6,10 +6,19 @@
 // hedge in a file the ledger does not name, one more in a file already at its ceiling, and
 // a cleaned file printing its lower count. The hand runs measured the guard on one day;
 // this is the same measurement on every run.
-import { describe, expect, it } from "vitest";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, it } from "vitest";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { delimiter, dirname, extname, join, relative, sep } from "node:path";
+import { delimiter, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { atLeast, newestPython } from "./python.test-util.mjs";
@@ -19,6 +28,7 @@ import {
   comments,
   escapesRoot,
   findingsIn,
+  checkoutOf,
   hookDecision,
   htmlComments,
   nextLedger,
@@ -642,6 +652,147 @@ describe("what the edit-time hook decides", () => {
     expect(d.exit).toBe(0);
     expect(repoPath("/tmp/elsewhere.ts").startsWith("..")).toBe(true);
   });
+});
+
+// The hook runs from the main checkout's scripts/, and a worktree of this repository lives
+// inside that checkout (.claude/worktrees/<name>). Keyed from the main checkout, an edit to a
+// worktree's file named a row no ledger has — `.claude/worktrees/<name>/src/a.ts` — and was
+// refused at a ceiling of zero however few findings it carried. A nested checkout of ANOTHER
+// repository (reference/) is named by none of this repository's ledgers at all.
+describe("which checkout an edited file belongs to", () => {
+  const made = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  /** A main checkout with a worktree of itself and a different repository nested inside. */
+  const tree = () => {
+    const main = realpathSync(mkdtempSync(join(tmpdir(), "prov-root-")));
+    made.push(main);
+    mkdirSync(join(main, ".git", "worktrees", "w"), { recursive: true });
+    const wt = join(main, ".claude", "worktrees", "w");
+    mkdirSync(join(wt, "src"), { recursive: true });
+    writeFileSync(join(wt, ".git"), `gitdir: ${join(main, ".git", "worktrees", "w")}\n`);
+    mkdirSync(join(main, "reference", ".git"), { recursive: true });
+    mkdirSync(join(main, "reference", "work"), { recursive: true });
+    mkdirSync(join(main, "src"), { recursive: true });
+    for (const f of [join(wt, "src", "a.ts"), join(main, "reference", "work", "p.mjs"), join(main, "src", "a.ts")])
+      writeFileSync(f, "// x (measured)\n");
+    return { main, wt };
+  };
+
+  it("keys a worktree's file from the worktree, against the worktree's ledger", () => {
+    const { main, wt } = tree();
+    const file = join(wt, "src", "a.ts");
+    expect(checkoutOf(file, main)).toBe(wt);
+    const d = hookDecision(file, "// x (measured)\n", { "src/a.ts": 1 }, checkoutOf(file, main));
+    expect([d.key, d.exit]).toEqual(["src/a.ts", 0]);
+  });
+
+  it("answers null for a different repository checked out inside this one", () => {
+    const { main } = tree();
+    expect(checkoutOf(join(main, "reference", "work", "p.mjs"), main)).toBeNull();
+  });
+
+  it("answers the main checkout for a file in no nested checkout", () => {
+    const { main } = tree();
+    expect(checkoutOf(join(main, "src", "a.ts"), main)).toBe(main);
+  });
+});
+
+// The same question asked of the PROGRAM, over worktrees git itself made, because the two
+// defects it exists for sit between the functions above and the command line. A worktree's
+// own copies of this checker and its pins were held to a ceiling of zero, since the
+// self-exclusion was asked of the main checkout's paths; and a worktree made with
+// `--relative-paths` carries a gitdir relative to its own `.git` file, which read against the
+// process's working directory belonged to no repository at all — exit 0, nothing checked.
+describe("the hook as the program, over real worktrees", () => {
+  const made = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  // An empty git configuration: the operator's own could sign commits or name a hook path.
+  const beside = mkdtempSync(join(tmpdir(), "prov-hook-config-"));
+  made.push(beside);
+  const config = join(beside, "empty-gitconfig");
+  writeFileSync(config, "");
+  const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_SYSTEM: config, GIT_CONFIG_NOSYSTEM: "1" };
+  const git = (cwd, ...args) =>
+    execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+      encoding: "utf8",
+      env: gitEnv,
+    });
+  /** A main checkout carrying this checker, a worktree of it, and a worktree of ANOTHER
+   *  repository placed inside it — both made with `--relative-paths` or both without. */
+  const checkouts = (relativePaths) => {
+    const main = realpathSync(mkdtempSync(join(tmpdir(), "prov-hook-")));
+    const other = realpathSync(mkdtempSync(join(tmpdir(), "prov-other-")));
+    made.push(main, other);
+    const flag = relativePaths ? ["--relative-paths"] : [];
+    git(main, "init", "-q", "-b", "main");
+    mkdirSync(join(main, "scripts"));
+    copyFileSync(join(HERE, "check-comment-provenance.mjs"), join(main, "scripts", "check-comment-provenance.mjs"));
+    writeFileSync(join(main, "scripts", "comment-provenance-baseline.json"), '{ "files": { "src/a.ts": 1 } }\n');
+    writeFileSync(join(main, ".gitignore"), ".claude/\nvendor/\n");
+    git(main, "add", ".");
+    git(main, "commit", "-q", "-m", "init");
+    const wt = join(main, ".claude", "worktrees", "w");
+    git(main, "worktree", "add", "-q", ...flag, "-b", "w", wt);
+    git(other, "init", "-q", "-b", "main");
+    writeFileSync(join(other, "x"), "x\n");
+    git(other, "add", ".");
+    git(other, "commit", "-q", "-m", "init");
+    const foreign = join(main, "vendor", "o");
+    git(other, "worktree", "add", "-q", ...flag, "-b", "o", foreign);
+    return { main, wt, foreign };
+  };
+  /** The main checkout's copy run as the hook on one edited file (written first unless
+   *  `src` is null); its exit status. */
+  const hook = (main, file, src, cwd) => {
+    mkdirSync(dirname(file), { recursive: true });
+    if (src !== null) writeFileSync(file, src);
+    const run = spawnSync(process.execPath, [join(main, "scripts", "check-comment-provenance.mjs"), "--hook"], {
+      cwd,
+      input: JSON.stringify({ tool_input: { file_path: file } }),
+      encoding: "utf8",
+    });
+    return run.status;
+  };
+
+  for (const relativePaths of [false, true]) {
+    const kind = relativePaths ? "a relative gitdir" : "an absolute gitdir";
+
+    it(`makes a worktree whose .git file carries ${kind}`, () => {
+      const { wt } = checkouts(relativePaths);
+      const target = /^gitdir:\s*(.+)$/m.exec(readFileSync(join(wt, ".git"), "utf8"))[1].trim();
+      expect(isAbsolute(target)).toBe(!relativePaths);
+    });
+
+    // Run from three working directories, since a relative gitdir read against the process's
+    // own resolves correctly from exactly one of them: the worktree's top.
+    it(`holds a worktree with ${kind} to its own ledger, from any working directory`, () => {
+      const { main, wt } = checkouts(relativePaths);
+      for (const cwd of [tmpdir(), main, wt]) {
+        expect(hook(main, join(wt, "src", "a.ts"), "// x (measured)\n", cwd), cwd).toBe(0);
+        expect(hook(main, join(wt, "src", "a.ts"), "// x (measured)\n".repeat(2), cwd), cwd).toBe(2);
+      }
+    });
+
+    // The worktree's checker is the real file, findings and all; its pin is written with one.
+    it(`excludes the checker and its pins in a worktree with ${kind}, by their path there`, () => {
+      const { main, wt } = checkouts(relativePaths);
+      expect(hook(main, join(wt, "scripts", "check-comment-provenance.mjs"), null, main)).toBe(0);
+      expect(hook(main, join(wt, "scripts", "check-comment-provenance.test.mjs"), "// x (measured)\n", main)).toBe(0);
+      expect(hook(main, join(wt, "src", "check-comment-provenance.mjs"), "// x (measured)\n", main)).toBe(2);
+      expect(hook(main, join(main, "src", "check-comment-provenance.test.mjs"), "// x (measured)\n", main)).toBe(2);
+    });
+
+    // Placed inside this checkout, a worktree of another repository is keyed by no ledger
+    // here; read as this checkout's, its file would be refused at a ceiling of zero.
+    it(`leaves a worktree of another repository with ${kind} unchecked`, () => {
+      const { main, foreign } = checkouts(relativePaths);
+      expect(hook(main, join(foreign, "src", "a.ts"), "// x (measured)\n".repeat(2), main)).toBe(0);
+    });
+  }
 });
 
 describe("what counts as outside the repository", () => {
