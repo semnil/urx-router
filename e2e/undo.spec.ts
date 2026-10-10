@@ -135,6 +135,7 @@ test("creating a wire is one step, and deleting it round-trips with Ctrl+Y", asy
   await expect(wires(page)).toHaveCount(base + 1);
 
   await wires(page).last().dispatchEvent("pointerdown");
+  await wires(page).last().dispatchEvent("pointerup");
   await page.keyboard.press("Delete");
   await expect(wires(page)).toHaveCount(base);
   await undo(page);
@@ -293,8 +294,8 @@ test("refuses while a fader drag is still in progress", async ({ page }) => {
 });
 
 // A finger dragging a node while the mouse is used: a wheel event's buttons and a mouse move
-// say nothing about the finger, so the drag still stands and the undo stays refused until the
-// finger lifts. The touches go through Chromium's own input pipeline over CDP, so the page
+// say nothing about the finger, and a mouse click is not the finger lifting, so the drag still
+// stands and the undo stays refused until the finger lifts. The touches go through Chromium's own input pipeline over CDP, so the page
 // hears trusted touch pointer events, and the mouse is the real one.
 test.describe("a touch drag held while the mouse is used", () => {
   type Seen = { wheel: number[]; move: number[] };
@@ -376,6 +377,12 @@ test.describe("a touch drag held while the mouse is used", () => {
     await expect.poll(async () => (await t.seen()).move).toEqual([0, 0]);
     await t.refusedThenLifted();
   });
+
+  test("a mouse click elsewhere does not end it", async ({ page }) => {
+    const t = await touchDrag(page);
+    await page.mouse.click(t.bar.x + 60, t.bar.y + t.bar.height / 2);
+    await t.refusedThenLifted();
+  });
 });
 
 // The native context menu takes the release of the press that opened it, so the page hears a
@@ -432,6 +439,72 @@ test.describe("a right press inside the Inspector whose release never arrived", 
     await expect(channelRow(page, ja.inspector.channelOn)).toHaveCount(1);
     await page.mouse.up({ button: "right" });
   });
+});
+
+// A finger holding a control in the Inspector holds the panel's repaint until it lifts. The mouse
+// used meanwhile — moved with no button held, or clicked outside the panel — is not that finger
+// lifting, so a repaint arriving from the keyboard waits for the finger. The touch goes through
+// Chromium's own input pipeline over CDP; the mouse is the real one.
+test.describe("a finger holding the Inspector while the mouse is used", () => {
+  const channelRow = (page: Page, label: string) =>
+    page
+      .locator("#inspector .param")
+      .filter({ has: page.locator(".toggle") })
+      .filter({ hasText: label });
+
+  for (const meanwhile of ["a mouse move with no button held", "a mouse click outside the panel"] as const) {
+    test(`holds the repaint across ${meanwhile} until the finger lifts`, async ({ page }) => {
+      await node(page, "ch1").click();
+      const row = (await channelRow(page, en.inspector.channelOn).boundingBox())!;
+      const bar = (await status(page).boundingBox())!;
+      await page.mouse.move(bar.x + 10, bar.y + bar.height / 2);
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+      // On the row's label, off its buttons, so the lift toggles nothing.
+      const finger = { x: row.x + 6, y: row.y + row.height / 2, radiusX: 1, radiusY: 1 };
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [finger] });
+
+      // A repaint that arrives without a pointer: a language switch made from the keyboard.
+      await page.locator("#btn-prefs").focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#prefs-modal")).toBeVisible();
+      await chooseOption(page.locator("#prefs-lang"), "ja");
+      await page.keyboard.press("Escape");
+      await expect(page.locator("#prefs-modal")).toBeHidden();
+      // The premise: the finger is holding it.
+      await expect(channelRow(page, en.inspector.channelOn)).toHaveCount(1);
+
+      if (meanwhile === "a mouse move with no button held")
+        await page.mouse.move(bar.x + 40, bar.y + bar.height / 2, { steps: 2 });
+      else await page.mouse.click(bar.x + 40, bar.y + bar.height / 2);
+      // A release this hold acted on would land its repaint in the next task; a frame past it.
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0))));
+      await expect(channelRow(page, en.inspector.channelOn)).toHaveCount(1);
+
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await expect(channelRow(page, ja.inspector.channelOn)).toHaveCount(1);
+    });
+  }
+});
+
+// Selecting a wire dispatches its own release, as a click does, so it leaves no press standing:
+// two wheel bursts a second apart are two entries, and one undo takes back the second alone.
+test("selecting a wire leaves no press behind to merge two wheel bursts", async ({ page }) => {
+  await selectSend(page);
+  const level = levelSlider(page);
+  const v0 = await level.inputValue();
+  const box = (await level.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -100);
+  await expect(level).not.toHaveValue(v0);
+  const v1 = await level.inputValue();
+  // Longer than the idle backstop, so the first burst's entry has closed.
+  await page.waitForTimeout(1000);
+  await page.mouse.wheel(0, -100);
+  await expect(level).not.toHaveValue(v1);
+  await undo(page);
+  await expect(level).toHaveValue(v1);
+  await expect(status(page)).not.toHaveText(en.status.undoBusyDrag);
 });
 
 test("Ctrl+Z inside the name field belongs to the field, not to the plan", async ({ page }) => {
@@ -504,6 +577,7 @@ test("Delete and Escape still behave with the shortcut sharing the handler", asy
   await connect(page);
   await expect(wires(page)).toHaveCount(base + 1);
   await wires(page).last().dispatchEvent("pointerdown");
+  await wires(page).last().dispatchEvent("pointerup");
   await page.keyboard.press("Delete");
   await expect(wires(page)).toHaveCount(base);
   await expect(status(page)).toHaveText("Connection deleted");

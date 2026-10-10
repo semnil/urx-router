@@ -1929,8 +1929,10 @@ down fires `blur`, fires **no** `pointercancel`, and keeps the pointer capture (
 Chromium and on the shipping WKWebView). Without it, a press held through an app switch would go on
 writing into the plan and out to the unit while another application is frontmost, and — since
 `history.ts` also ends its press at a `blur` — the remainder would land in a *new* undo entry. The cap
-and the plot also end at a mouse move with no button held, the release the native context menu takes
-from a right press (the app-wide rule is in architecture.md, "Responsive layout (mobile)").
+and the plot also end at their own mouse moving with no button held, the release the native context menu
+takes from a right press (the app-wide rule is in architecture.md, "Responsive layout (mobile)"). The cap
+follows the pointer that pressed it and no other: a mouse moving over it, or released on it, while a finger
+drags it is not that finger.
 
 The cap and the plot are the view's own gestures, so ending them is dropping what the view holds. **A
 value row is a native `<input type="range">`, and the engine owns its drag**, which makes it a different
@@ -1960,9 +1962,11 @@ the shared `sliderRow`, and Device setup's brightness — for the same reason `w
 this screen adds is where a deferred refresh lands. The blur ends the gestures this view runs itself but
 leaves `grabbed` set, because the press is still in flight and a rebuild under it would hand the
 still-held pointer a live control — the state the hold exists to prevent. So the deferral outlives the
-blur, and the refresh runs at the **first** release to arrive: this screen's own `pointerup` or
-`pointercancel`, a mouse move with no button held, or the end of the last hold anywhere in the app — which the window coming back also
-produces, so a return with the button still down lands it there. Whichever runs first clears `grabbed`;
+blur, and the refresh runs at the **first** release to arrive: the `pointerup` or `pointercancel` of the
+last pointer pressed on this screen, that pointer's mouse moving with no button held, the window coming
+back, or the end of the last hold anywhere in the app — so a return with the button still down lands it
+there. Each pointer pressed here is tracked until its own release, so the mouse moved or clicked elsewhere
+while a finger holds the cap lands nothing under that finger. Whichever runs first clears `grabbed`;
 the others find it already cleared. The one refresh that does not wait is a plan **replaced** under the press —
 the model switch a Fetch or a Live-sync start applies: the plan the press began on is gone, so the screen
 rebuilds against the plan that took its place without waiting. Until that press ends, nothing it drives writes —

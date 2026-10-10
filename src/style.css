@@ -4918,6 +4918,7 @@ button.consent-btn-primary {
   border-radius: 2px;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
   cursor: ns-resize;
+  touch-action: none;
   z-index: 2;
 }
 /* The fader cap and the meter it rides, side by side rather than one inside the other.

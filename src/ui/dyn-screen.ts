@@ -747,6 +747,10 @@ export class DynScreen {
    *  under the pointer would be replaced and the drag would end there. A plan replaced
    *  under the press is the exception, and ends it (`refresh`). */
   private grabbed = false;
+  /** The pointers pressed on this screen and not yet released. The press is over when the
+   *  last of them is: a mouse used elsewhere while a finger drags the cap is not that
+   *  finger lifting. */
+  private readonly pressed = new Set<number>();
   /** A refresh arrived while grabbed and still has to happen. */
   private refreshPending = false;
   /** How to end the drag currently in flight, for the ends that carry no pointer event
@@ -767,10 +771,12 @@ export class DynScreen {
     // The box itself outlives every rebuild, so one listener covers whatever it
     // holds. Release is watched on the window because a drag routinely ends with
     // the pointer outside the control, and outside the modal.
-    this.box.addEventListener("pointerdown", () => {
+    this.box.addEventListener("pointerdown", (e) => {
+      this.pressed.add(e.pointerId);
       this.grabbed = true;
     });
     const release = (): void => {
+      this.pressed.clear();
       this.endDrag?.();
       if (this.stalePress) {
         this.stalePress = false;
@@ -783,8 +789,13 @@ export class DynScreen {
       this.refreshPending = false;
       this.refresh();
     };
-    window.addEventListener("pointerup", release);
-    window.addEventListener("pointercancel", release);
+    // A pointer's own release, and only once no other pointer pressed here is still down.
+    const released = (e: PointerEvent): void => {
+      if (!this.pressed.delete(e.pointerId) || this.pressed.size > 0) return;
+      release();
+    };
+    window.addEventListener("pointerup", released);
+    window.addEventListener("pointercancel", released);
     // The third registration of the SAME release, so a repaint the press deferred is also
     // due when the app-wide holds end — which is a signal this screen has no pointer event
     // for, since a hold is released by the window coming back as well as by a pointer.
@@ -806,11 +817,16 @@ export class DynScreen {
     // prevent for the value rows. The deferral therefore lasts as long as the press, which
     // is what it meant before the blur was added as an end at all.
     window.addEventListener("blur", () => this.endDrag?.());
-    // A mouse moving with no button held is a release too, for a press whose own the page
-    // never heard — the native context menu takes a right press's — so it runs the same
-    // release as `pointerup`. Capture phase, so the cap's and the plot's drags end before
-    // their own move handlers see it.
-    window.addEventListener("pointermove", (e) => void (mouseMovedUnpressed(e) && release()), true);
+    // A mouse moving with no button held is a release too, of that mouse's own press whose
+    // release the page never heard — the native context menu takes a right press's — so it
+    // runs the same release as `pointerup`. It says nothing about a finger or a pen still
+    // down. Capture phase, so the cap's and the plot's drags end before their own move
+    // handlers see it.
+    window.addEventListener("pointermove", (e) => void (mouseMovedUnpressed(e) && released(e)), true);
+    // The window coming back ends every press, since a release another application took is
+    // never delivered here. Not `capture: true`, which would also take every element's own
+    // focus inside the page.
+    window.addEventListener("focus", release);
   }
 
   isOpen(): boolean {
@@ -883,6 +899,7 @@ export class DynScreen {
     // go on writing through the captured pointer until the release.
     this.endDrag?.();
     this.grabbed = false;
+    this.pressed.clear();
     this.refreshPending = false;
     this.stalePress = false;
     if (this.redrawRaf) cancelAnimationFrame(this.redrawRaf);
@@ -1880,8 +1897,10 @@ export class DynScreen {
       this.endDrag = end;
       e.preventDefault();
     });
+    // The drag follows the pointer that started it: another pointer moving over the cap, or
+    // released on it, is not that pointer.
     cap.addEventListener("pointermove", (e) => {
-      if (dragging) fromY(e.clientY);
+      if (dragging && e.pointerId === pointer) fromY(e.clientY);
     });
     const end = (): void => {
       dragging = false;
@@ -1892,8 +1911,9 @@ export class DynScreen {
       if (pointer !== null && cap.hasPointerCapture(pointer)) cap.releasePointerCapture(pointer);
       pointer = null;
     };
-    cap.addEventListener("pointerup", end);
-    cap.addEventListener("pointercancel", end);
+    const ownEnd = (e: PointerEvent): void => void (e.pointerId === pointer && end());
+    cap.addEventListener("pointerup", ownEnd);
+    cap.addEventListener("pointercancel", ownEnd);
     // A press on the track jumps the cap, matching the console faders. On the wrapper rather
     // than on the meter, so the strip either side of the cap answers a press the same way the
     // meter does — the cap is the wrapper's child and the slot's sibling.

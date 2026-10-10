@@ -27,6 +27,7 @@ import {
   strip,
 } from "./ui";
 import { chooseOption } from "../choose-option";
+import { selectWire } from "../graph-helpers";
 
 // T2 shape-change — the parameters that reshape the WRITABLE ADDRESS SET rather
 // than a value inside it (docs/{en,ja}/live-race-harness.md).
@@ -945,10 +946,10 @@ test.describe("T2 shape-change", () => {
     expect(tapRates.length === 0 || tapReads[0].start < tapRates[0].start).toBe(true);
     // Still never written, and the operator's front-panel PRE is now on screen. The
     // inspector shows a send's Pre/Post when the WIRE is selected, not the node; the
-    // dispatchEvent is how the other specs get past the overlapping wire-hit bands.
+    // dispatched press is how the other specs get past the overlapping wire-hit bands.
     expect(setsOf(trace).filter((s) => s.addr === CH1_FX1_TAP)).toHaveLength(0);
     await page.click("#btn-view-graph");
-    await page.locator('.wire-hit[data-from="ch1:out"][data-to="bus.fx1:in"]').dispatchEvent("pointerdown");
+    await selectWire(page, "ch1:out", "bus.fx1:in");
     const preBtn = page
       .locator("#inspector .param", { hasText: "Pre/Post" })
       .getByRole("button", { name: "PRE", exact: true });

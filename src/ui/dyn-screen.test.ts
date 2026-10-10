@@ -953,6 +953,80 @@ describe("refresh", () => {
     });
   });
 
+  // Each press ends at its own pointer's release. The mouse used while a finger drags the
+  // cap — moved with no button held, over the cap or anywhere, or clicked elsewhere — is not
+  // that finger lifting, and the cap goes on following the finger alone.
+  describe("a finger's press while the mouse is used", () => {
+    const finger = (type: string, clientY = 0): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, clientY, pointerId: 2, pointerType: "touch", buttons: 1 });
+    const mouse = (type: string, buttons: number, clientY = 0): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, clientY, pointerId: 1, pointerType: "mouse", buttons });
+
+    const fingerOnCap = (): { cap: HTMLElement; screen: DynScreen } => {
+      host = dynHost();
+      const screen = new DynScreen(host.hooks);
+      screen.open(GATE, "ch1");
+      const cap = host.box.querySelector<HTMLElement>("#dyn-threshold-cap")!;
+      cap.dispatchEvent(finger("pointerdown", 40));
+      cap.dispatchEvent(finger("pointermove", 80));
+      expect(host.patches.length).toBeGreaterThan(0);
+      return { cap, screen };
+    };
+    const threshold = (): unknown => host.plan.nodeParams["ch1"]?.gate?.threshold;
+
+    it("keeps the cap on the finger across a mouse moving over it with no button held", () => {
+      const { cap } = fingerOnCap();
+      const at80 = threshold();
+      cap.dispatchEvent(mouse("pointermove", 0, 150));
+      expect(threshold(), "the mouse's move is not the finger's").toBe(at80);
+      cap.dispatchEvent(finger("pointermove", 120));
+      expect(threshold()).not.toBe(at80);
+      expect(cap.hasPointerCapture(2)).toBe(true);
+    });
+
+    it("keeps the cap on the finger across a mouse click elsewhere on the screen", () => {
+      const { cap } = fingerOnCap();
+      const at80 = threshold();
+      const title = host.box.querySelector<HTMLElement>("h2") ?? host.box;
+      title.dispatchEvent(mouse("pointerdown", 1));
+      window.dispatchEvent(mouse("pointerup", 0));
+      cap.dispatchEvent(mouse("pointerup", 0));
+      cap.dispatchEvent(finger("pointermove", 120));
+      expect(threshold()).not.toBe(at80);
+      expect(cap.hasPointerCapture(2)).toBe(true);
+    });
+
+    it("lands the repaint a finger's press deferred at that finger's release, not the mouse's", () => {
+      host = dynHost();
+      const screen = new DynScreen(host.hooks);
+      screen.open(GATE, "ch1");
+      const slider = rowsByKey(host.box).get("threshold")!;
+      host.box.dispatchEvent(finger("pointerdown"));
+      screen.refresh();
+      host.box.dispatchEvent(mouse("pointerdown", 1));
+      window.dispatchEvent(mouse("pointerup", 0));
+      window.dispatchEvent(mouse("pointermove", 0));
+      expect(rowsByKey(host.box).get("threshold"), "the mouse released").toBe(slider);
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 2, pointerType: "touch" }));
+      expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
+    });
+
+    // A release another application took is never delivered, so the window coming back is
+    // what ends that press — or the next press here would wait on it for good.
+    it("lands the repaint when the window comes back from a release it never heard", () => {
+      host = dynHost();
+      const screen = new DynScreen(host.hooks);
+      screen.open(GATE, "ch1");
+      const slider = rowsByKey(host.box).get("threshold")!;
+      host.box.dispatchEvent(finger("pointerdown"));
+      screen.refresh();
+      window.dispatchEvent(new FocusEvent("blur"));
+      expect(rowsByKey(host.box).get("threshold")).toBe(slider);
+      window.dispatchEvent(new FocusEvent("focus"));
+      expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
+    });
+  });
+
   // Device follow runs on its own clock and, under COMP 1-knob, on every step of a
   // drag. Rebuilding then would replace the control under the pointer.
   it("updates values in place while a pointer is down, and rebuilds on release", () => {

@@ -236,9 +236,9 @@ test.describe("T3 undo", () => {
     await page.waitForTimeout(600);
     expect(await levelSlider(page).inputValue()).not.toBe(probe);
 
-    // Re-select the wire with a dispatched pointerdown and no pointerup, as every e2e spec
-    // does, but typed as a mouse press: a click whose release never reached the page. The
-    // press never lifts, so history's press state stays "down".
+    // Re-select the wire with a dispatched pointerdown and no pointerup, typed as a mouse
+    // press: a click whose release never reached the page. The press never lifts, so
+    // history's press state stays "down".
     await sendWire(page).dispatchEvent("pointerdown", { pointerType: "mouse", buttons: 1 });
     await expect(levelSlider(page)).toHaveCount(1);
     // Still permitted, and now discriminating: only a press that has MOVED is a drag,

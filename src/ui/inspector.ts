@@ -256,7 +256,8 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
 export function compositionGate(host: HTMLElement, rebuild: () => void): { held: () => boolean; reset: () => void } {
   let composing = false;
   let pending = false;
-  let pressing = false;
+  /** Pointers pressed inside the host and not yet released. */
+  const pressing = new Set<number>();
   // Runs the held rebuild once the gate is no longer busy — asked on the event that
   // ENDS the busy state, by which point it has already ended. A composition clears its
   // own flag here.
@@ -273,7 +274,7 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // launcher appears, which between them are the whole route to the tuning screen.
   const flush = (pickerClosed = false): void => {
     if (!pending) return;
-    if (composing || pressing || isHoldingInert() || (!pickerClosed && openPicker())) return;
+    if (composing || pressing.size > 0 || isHoldingInert() || (!pickerClosed && openPicker())) return;
     pending = false;
     rebuild();
   };
@@ -303,7 +304,7 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // the two removes that element and the click reaches nothing — a button, a segmented
   // bar's segment, a section header, the field a press was focusing. Held from the
   // pointerdown until that click has reached its target's own handlers.
-  const busy = (): boolean => composing || pressing || openPicker() || isHoldingInert();
+  const busy = (): boolean => composing || pressing.size > 0 || openPicker() || isHoldingInert();
   // …and the hold has no end event of its own: a hold ends on a pointer release this host
   // never sees, so nothing here would fire and a rebuild held during it would wait for
   // whatever the operator happened to do next. `flush` rather than `end`,
@@ -314,38 +315,55 @@ export function compositionGate(host: HTMLElement, rebuild: () => void): { held:
   // object, so every one of them would read as "the picker closed" and the check the
   // other two paths depend on would be gone.
   onInertHoldsEnd(() => flush());
-  // A press ends at its click, on this host's bubble phase — after the target's own
-  // handlers, so the rebuild the click itself asks for runs there once — and, for a press
-  // that produces no click here (released outside the host, a secondary button, a handler
-  // that stops the click), in the task after the next pointer release anywhere, at a mouse
-  // move with no button held, or when the window comes back from a release it never heard.
-  // The click is dispatched in the same task as the release producing it, so that task
-  // comes after it. Any release ends it rather than the app-wide count of pointers down
-  // reaching zero: a pointer that count never sees released would hold this panel for as
-  // long as the window keeps its focus.
+  // Each press is tracked by its pointer, and ends at that pointer's click, on this host's
+  // bubble phase — after the target's own handlers, so the rebuild the click itself asks
+  // for runs there once — and, for a press that produces no click here (released outside
+  // the host, a secondary button, a handler that stops the click), in the task after its
+  // own pointer's release, at its own mouse moving with no button held, or when the window
+  // comes back from a release it never heard. The click is dispatched in the same task as
+  // the release producing it, so that task comes after it. Another pointer's release ends
+  // nothing: a mouse clicking elsewhere while a finger holds a control here is not that
+  // finger lifting. A pointer pressed outside the host holds nothing here, so a press never
+  // seen released elsewhere — a synthetic one, a release another window took — cannot keep
+  // the panel from updating.
   // A press on a `<select>` is left out: the picker it opens holds the panel by focus,
   // and its `change` releases that hold whether or not the page hears the press's release.
-  const release = (): void => {
-    if (!pressing) return;
-    pressing = false;
+  /** Pointers released whose click has not reached the host yet. */
+  const lifted = new Set<number>();
+  const release = (id: number): void => {
+    lifted.delete(id);
+    if (pressing.delete(id) && pressing.size === 0) flush();
+  };
+  const releaseAll = (): void => {
+    lifted.clear();
+    if (pressing.size === 0) return;
+    pressing.clear();
     flush();
   };
-  const releaseNextTask = (): void => void setTimeout(release, 0);
+  const releaseNextTask = (e: PointerEvent): void => {
+    if (!pressing.has(e.pointerId)) return;
+    lifted.add(e.pointerId);
+    setTimeout(() => release(e.pointerId), 0);
+  };
   host.addEventListener(
     "pointerdown",
     (e) => {
       if (e.target instanceof Element && e.target.closest("select")) return;
-      pressing = true;
+      pressing.add(e.pointerId);
     },
     true,
   );
-  host.addEventListener("click", release);
+  // The click belongs to a pointer already released, so it ends those presses and none
+  // still down.
+  host.addEventListener("click", () => {
+    for (const id of [...lifted]) release(id);
+  });
   window.addEventListener("pointerup", releaseNextTask, true);
   window.addEventListener("pointercancel", releaseNextTask, true);
   // The native context menu takes a right press's release, and no click follows a move, so
-  // the move with no button held releases at once.
-  window.addEventListener("pointermove", (e) => void (pressing && mouseMovedUnpressed(e) && release()), true);
-  window.addEventListener("focus", release);
+  // the move with no button held releases that mouse's press at once.
+  window.addEventListener("pointermove", (e) => void (mouseMovedUnpressed(e) && release(e.pointerId)), true);
+  window.addEventListener("focus", releaseAll);
   host.addEventListener("compositionstart", () => {
     composing = true;
   });

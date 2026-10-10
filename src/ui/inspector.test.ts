@@ -615,6 +615,62 @@ describe("compositionGate", () => {
       expect(gate.held()).toBe(false);
     });
 
+    // Each press ends at its own pointer's release. A mouse used elsewhere while a finger
+    // holds a control here — moved with no button held, or clicked — is not that finger
+    // lifting, and a rebuild then would replace the control under the finger.
+    describe("a finger's press while the mouse is used", () => {
+      const finger = (type: string): PointerEvent =>
+        new PointerEvent(type, {
+          bubbles: true,
+          pointerId: 2,
+          pointerType: "touch",
+          buttons: type === "pointerup" ? 0 : 1,
+        });
+      const mouse = (type: string, buttons: number): PointerEvent =>
+        new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: "mouse", buttons });
+
+      it("stays held across a mouse move with no button held", async () => {
+        button.dispatchEvent(finger("pointerdown"));
+        expect(gate.held()).toBe(true);
+        window.dispatchEvent(mouse("pointermove", 0));
+        await nextTask();
+        expect(rebuilds).toBe(0);
+        button.dispatchEvent(finger("pointerup"));
+        await nextTask();
+        expect(rebuilds).toBe(1);
+      });
+
+      it("stays held across a mouse click outside the panel", async () => {
+        button.dispatchEvent(finger("pointerdown"));
+        expect(gate.held()).toBe(true);
+        const outside = document.createElement("button");
+        document.body.append(outside);
+        outside.dispatchEvent(mouse("pointerdown", 1));
+        outside.dispatchEvent(mouse("pointerup", 0));
+        outside.click();
+        await nextTask();
+        expect(rebuilds).toBe(0);
+        button.dispatchEvent(finger("pointerup"));
+        await nextTask();
+        expect(rebuilds).toBe(1);
+      });
+
+      it("stays held across a mouse click on another control in the panel", async () => {
+        const other = document.createElement("button");
+        el.append(other);
+        button.dispatchEvent(finger("pointerdown"));
+        expect(gate.held()).toBe(true);
+        other.dispatchEvent(mouse("pointerdown", 1));
+        other.dispatchEvent(mouse("pointerup", 0));
+        other.click();
+        await nextTask();
+        expect(rebuilds).toBe(0);
+        button.dispatchEvent(finger("pointerup"));
+        button.click();
+        expect(rebuilds).toBe(1);
+      });
+    });
+
     // A press on a select opens its picker, which focus already holds the panel for, and
     // the picker's change has to release it even when the press's own release never
     // reaches the page.
