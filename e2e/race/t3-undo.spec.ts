@@ -244,9 +244,10 @@ test.describe("T3 undo", () => {
     await page.waitForTimeout(600);
     expect(await levelSlider(page).inputValue()).not.toBe(probe);
 
-    // Re-select the wire the way every e2e spec does — a dispatched pointerdown with
-    // no pointerup. The press never lifts, so history's press state stays "down".
-    await sendWire(page).dispatchEvent("pointerdown");
+    // Re-select the wire with a dispatched pointerdown and no pointerup, as every e2e spec
+    // does, but typed as a mouse press: a click whose release never reached the page. The
+    // press never lifts, so history's press state stays "down".
+    await sendWire(page).dispatchEvent("pointerdown", { pointerType: "mouse", buttons: 1 });
     await expect(levelSlider(page)).toHaveCount(1);
     // Still permitted, and now discriminating: only a press that has MOVED is a drag,
     // so the entry above is undone instead of refused.
@@ -289,8 +290,8 @@ test.describe("T3 undo", () => {
     else expect(depthControl).toBe(2);
     // The unmatched pointerdown leaves a press standing, and note() does not arm the idle
     // backstop while one is — so without anything to end it, two bursts seconds apart
-    // would collapse into one entry. A wheel turned with no button held ends it, as an
-    // unpressed move does, so the orphan arm splits exactly as the control arm does. The
+    // would collapse into one entry. A wheel turned with no button held ends a mouse press,
+    // as an unpressed move does, so the orphan arm splits exactly as the control arm does. The
     // two bursts are identical in both arms and the stack is empty when each pair starts;
     // the only variable is the missing pointerup.
     const splitOrphan = gapsB1.concat(gapsB2).some((g) => g >= 300);

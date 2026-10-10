@@ -292,6 +292,92 @@ test("refuses while a fader drag is still in progress", async ({ page }) => {
   await expect(readout).toHaveText(before);
 });
 
+// A finger dragging a node while the mouse is used: a wheel event's buttons and a mouse move
+// say nothing about the finger, so the drag still stands and the undo stays refused until the
+// finger lifts. The touches go through Chromium's own input pipeline over CDP, so the page
+// hears trusted touch pointer events, and the mouse is the real one.
+test.describe("a touch drag held while the mouse is used", () => {
+  type Seen = { wheel: number[]; move: number[] };
+
+  /** Seed one entry, park the mouse, and start dragging CH 1 with one finger. Returns the
+   *  places the two nodes have to end up at, and the rest of the finger's gesture. */
+  async function touchDrag(page: Page) {
+    // A node drag opens no entry until it ends, so against an empty stack every press state
+    // answers "Nothing to undo" alike. CH 2's drag is that entry; where it leaves CH 2 is
+    // what a wrongly permitted undo would take back.
+    const seed = (await faceplate(page, "ch2").boundingBox())!;
+    await page.mouse.move(seed.x + seed.width / 2, seed.y + seed.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(seed.x + seed.width / 2 + 60, seed.y + seed.height / 2 + 30, { steps: 4 });
+    await page.mouse.up();
+    const seeded = (await node(page, "ch2").getAttribute("transform"))!;
+    // Parked over the status line, so the wheel below lands on no control of its own.
+    const bar = (await status(page).boundingBox())!;
+    await page.mouse.move(bar.x + 10, bar.y + bar.height / 2);
+
+    const before = (await node(page, "ch1").getAttribute("transform"))!;
+    const face = (await faceplate(page, "ch1").boundingBox())!;
+    // Low and to the left, away from the Rec Point tap jack: from the face's centre the
+    // touch hit test lands on that jack, and the press starts a wire instead of a drag.
+    const x = face.x + face.width * 0.25;
+    const y = face.y + face.height * 0.7;
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+    const touch = (type: "touchStart" | "touchMove" | "touchEnd", dx = 0, dy = 0) =>
+      cdp.send("Input.dispatchTouchEvent", {
+        type,
+        touchPoints: type === "touchEnd" ? [] : [{ x: x + dx, y: y + dy, radiusX: 1, radiusY: 1 }],
+      });
+    await touch("touchStart");
+    await touch("touchMove", 40, 30);
+    await expect(node(page, "ch1")).not.toHaveAttribute("transform", before);
+    await undo(page);
+    await expect(status(page)).toHaveText(en.status.undoBusyDrag);
+
+    // What the history is handed from here on, recorded where it reads it.
+    await page.evaluate(() => {
+      const seen: Seen = { wheel: [], move: [] };
+      (window as unknown as { __seen: Seen }).__seen = seen;
+      window.addEventListener("wheel", (e) => seen.wheel.push(e.buttons), true);
+      window.addEventListener("pointermove", (e) => e.pointerType === "mouse" && seen.move.push(e.buttons), true);
+    });
+    const seen = () => page.evaluate(() => (window as unknown as { __seen: Seen }).__seen);
+
+    /** Undo under the held finger, keep dragging, lift, and undo again. */
+    async function refusedThenLifted(): Promise<void> {
+      await undo(page);
+      await expect(status(page)).toHaveText(en.status.undoBusyDrag);
+      // Still dragging: the node goes on following the finger.
+      const during = (await node(page, "ch1").getAttribute("transform"))!;
+      await touch("touchMove", 80, 60);
+      await expect(node(page, "ch1")).not.toHaveAttribute("transform", during);
+      await touch("touchEnd");
+      // The whole drag is one entry, and it is the one taken back.
+      await undo(page);
+      await expect(node(page, "ch1")).toHaveAttribute("transform", before);
+      // Asked only now, after an undo that has visibly landed: keys are handled in order, so
+      // the refused undo above has been handled too, and had it been permitted it would
+      // have taken CH 2's entry.
+      await expect(node(page, "ch2")).toHaveAttribute("transform", seeded);
+    }
+    return { bar, seen, refusedThenLifted };
+  }
+
+  test("a wheel turned with the mouse does not end it", async ({ page }) => {
+    const t = await touchDrag(page);
+    await page.mouse.wheel(0, 100);
+    await expect.poll(async () => (await t.seen()).wheel).toEqual([0]);
+    await t.refusedThenLifted();
+  });
+
+  test("the mouse moving with no button held does not end it", async ({ page }) => {
+    const t = await touchDrag(page);
+    await page.mouse.move(t.bar.x + 60, t.bar.y + t.bar.height / 2, { steps: 2 });
+    await expect.poll(async () => (await t.seen()).move).toEqual([0, 0]);
+    await t.refusedThenLifted();
+  });
+});
+
 // The native context menu takes the release of the press that opened it, so the page hears a
 // right press and then a mouse moving with no button held. Headless Chromium opens no menu,
 // so that move is dispatched here; the press is real.

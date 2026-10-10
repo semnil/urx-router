@@ -91,6 +91,10 @@ export class PlanHistory {
    *  is additionally what an undo refuses, since a drag holds start values and
    *  element references in closures the repaint would rebuild under it. */
   private press: "none" | "down" | "drag" = "none";
+  /** The `pointerType` of the pointerdown that opened the standing press. A wheel event's
+   *  `buttons`, like a mouse move's, reports a mouse's buttons and never a touch or a pen
+   *  contact, so only a mouse press can be read as released from either. */
+  private pressType = "";
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private commitTimer: ReturnType<typeof setTimeout> | null = null;
   /** The last (canUndo, canRedo) pair reported, so only real transitions are. Seeded
@@ -105,13 +109,14 @@ export class PlanHistory {
   install(): void {
     window.addEventListener(
       "pointerdown",
-      () => {
+      (e) => {
         // A new press ends the previous gesture for good, and that gesture's own
         // click has already been dispatched by now, so land its deferred commit
         // rather than let this press join it — a late macrotask on a busy page
         // would otherwise merge two deliberate clicks into one entry.
         if (this.commitTimer !== null) this.commit();
         this.press = "down";
+        this.pressType = e.pointerType;
         this.clearIdle();
       },
       true,
@@ -126,9 +131,10 @@ export class PlanHistory {
       "pointermove",
       (e) => {
         if (this.press === "none") return;
-        // A mouse moving with no button held has released the press — the native context
-        // menu takes a right press's release — so the move ends it as the release would.
-        if (mouseMovedUnpressed(e)) return up();
+        // A mouse moving with no button held has released a mouse press — the native context
+        // menu takes a right press's release — so the move ends it as the release would. It
+        // says nothing about a touch or a pen contact, which stays down until its own release.
+        if (this.pressType === "mouse" && mouseMovedUnpressed(e)) return up();
         // Only the transition matters. A press that never moves is not a drag, so a
         // script-dispatched pointerdown with no matching pointerup (how a wire is
         // selected) cannot wedge the refusal.
@@ -140,16 +146,18 @@ export class PlanHistory {
     );
     window.addEventListener("pointerup", up, true);
     window.addEventListener("pointercancel", up, true);
-    // A wheel turned with no button held ends a press whose release never reached the
-    // page, as an unpressed move does. A wheel edit has no boundary of its own, so a press
-    // left standing would keep the idle backstop from ever closing its entry. Captured, so
-    // the press is over before the wheel's own edit arrives at note(); nothing is committed
-    // here, since the wheel's edit and the notches after it are one entry that the backstop
-    // closes.
+    // A wheel turned with no button held ends a mouse press whose release never reached
+    // the page, as an unpressed move does. A wheel edit has no boundary of its own, so a
+    // press left standing would keep the idle backstop from ever closing its entry. A touch
+    // or pen press is left standing: the wheel's `buttons` does not show its contact, so a
+    // finger still dragging reads the same as one lifted, and its own pointerup,
+    // pointercancel or blur ends it. Captured, so the press is over before the wheel's own
+    // edit arrives at note(); nothing is committed here, since the wheel's edit and the
+    // notches after it are one entry that the backstop closes.
     window.addEventListener(
       "wheel",
       (e) => {
-        if (this.press !== "none" && e.buttons === 0) this.press = "none";
+        if (this.press !== "none" && this.pressType === "mouse" && e.buttons === 0) this.press = "none";
       },
       { capture: true, passive: true },
     );

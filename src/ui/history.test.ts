@@ -549,15 +549,15 @@ describe("refusals", () => {
       expect(undoDepth(h)).toBe(1);
     });
 
-    // A wheel edit has no boundary of its own, so a press left standing — a wire selected
-    // by a pointerdown that no pointerup followed — would keep the backstop from closing
-    // its entry, and two bursts seconds apart would read as one.
+    // A wheel edit has no boundary of its own, so a mouse press left standing — a click
+    // whose pointerup never reached the page — would keep the backstop from closing its
+    // entry, and two bursts seconds apart would read as one.
     const wheel = (buttons: number): void =>
       void window.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, buttons, bubbles: true }));
 
-    it("ends a press at a wheel turned with no button held, so the backstop closes each burst", () => {
+    it("ends a mouse press at a wheel turned with no button held, so the backstop closes each burst", () => {
       const h = harness();
-      press("pointerdown");
+      mouse("pointerdown", { buttons: 1 });
       wheel(0);
       h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
       wheel(0);
@@ -582,6 +582,47 @@ describe("refusals", () => {
       settle();
       expect(undoDepth(h)).toBe(1);
     });
+
+    // A wheel event's buttons and a mouse move's never show a touch or a pen contact, so a
+    // buttonless wheel or move made with the mouse says nothing about whether that finger or
+    // pen has lifted.
+    const mouseInputs: [string, () => void][] = [
+      ["a buttonless wheel", () => wheel(0)],
+      ["a buttonless mouse move", () => mouse("pointermove", { buttons: 0 })],
+    ];
+    for (const pointerType of ["touch", "pen"]) {
+      const contact = (type: "pointerdown" | "pointermove" | "pointerup", buttons: number): void =>
+        void window.dispatchEvent(new PointerEvent(type, { pointerId: 2, pointerType, buttons, bubbles: true }));
+
+      it.each(mouseInputs)(`keeps a ${pointerType} drag standing across %s until its own release`, (_, other) => {
+        const h = harness();
+        h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
+        idle();
+        contact("pointerdown", 1);
+        contact("pointermove", 1);
+        h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+        other();
+        h.history.undo();
+        expect(h.statuses.at(-1)).toBe("Finish the current drag before undoing");
+        h.history.redo();
+        expect(h.statuses.at(-1)).toBe("Finish the current drag before undoing");
+        idle();
+        h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+        idle();
+        h.history.undo();
+        expect(h.statuses.at(-1)).toBe("Finish the current drag before undoing");
+        expect(h.plan.nodeParams.ch1).toEqual({ gain: 2 });
+        contact("pointerup", 0);
+        settle();
+        // One entry for the whole drag, the idle pauses under it included.
+        h.history.undo();
+        settle();
+        expect(h.plan.nodeParams.ch1).toEqual({ hpf: true });
+        h.history.redo();
+        settle();
+        expect(h.plan.nodeParams.ch1).toEqual({ gain: 2 });
+      });
+    }
   });
 
   it("refuses a rate change while a device action holds the rate", () => {
