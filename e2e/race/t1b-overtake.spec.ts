@@ -454,25 +454,22 @@ test.describe("T1b overtake", () => {
       expect(findings.filter((f) => f.class === "case")).toHaveLength(0);
 
       if (variant === "early-echo") {
-        // PINNED DEFECT. The message is our own write coming back, but it overtook our
-        // ack: nothing is pending for it yet and the snapshot still holds the pre-edit
-        // value, so isEcho says "no". The write is in flight, so the notify is superseded
-        // rather than applied — the node is re-read once the write is announced — and the
-        // idle net escalates to a WHOLE-DEVICE readback. The price of a broker that echoes
-        // faster than it acks is several hundred reads per echoed write.
-        expect(readsAfter.length).toBeGreaterThan(100);
-        // The value itself is unharmed — it is the same value either way — so nothing
-        // but the read volume distinguishes this from a correct classification.
+        // Our own write coming back ahead of its ack: nothing is pending for it yet and the
+        // snapshot still holds the pre-edit value, but the value is the one on the wire for
+        // this address, so isEcho takes it as that write's announcement — no apply, no
+        // settle, no idle net, not one read, exactly as the late echo below. The value is
+        // the same either way, so the read volume is what separates this from treating
+        // the echo as a device-side change.
+        expect(readsAfter).toHaveLength(0);
         // (The device holding `written` is the fake restating itself; the screen
         // keeping the operator's value is the property under test.)
         expect(finalReadout).toBe(editedReadout);
       } else if (variant === "genuine") {
         // The device really moved, on the same address and at the same instant as the
-        // echo above. It is superseded the same way — not applied while our write is in
-        // flight — and the screen follows through the node's re-read and the idle net's
-        // whole-device read after it. The app pays the same several-hundred-read
-        // escalation it paid for its own echo — which is the point of holding delta-t and
-        // address fixed.
+        // echo above, to a value that is not the one on the wire. It is superseded — not
+        // applied while our write is in flight — and the screen follows through the node's
+        // re-read and the idle net's whole-device read after it. Holding delta-t and the
+        // address fixed is what makes the value the only difference from the echo above.
         expect(finalReadout).not.toBe(editedReadout);
         expect(readsAfter.length).toBeGreaterThan(100);
       } else {

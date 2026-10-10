@@ -292,11 +292,15 @@ export class LiveSync {
   // no notifies, no advance — and that is exactly when an unannounced write should be
   // forgotten. SETTLE_TIMEOUT_MS is borrowed for the LENGTH, not the axis.
   private readonly pendingValues = new Map<number, PendingQueue<number>>();
-  // Addresses whose numeric write is on the wire and not yet acked. A flush sends one
-  // command at a time and never overlaps another flush, so an address is in here at most
-  // once. Together with `pendingValues` it answers `hasUnannouncedWrite`: from the moment
-  // a write is issued until its announcement is taken as an echo.
-  private readonly inFlight = new Set<number>();
+  // Addresses whose numeric write is on the wire and not yet acked, with the value it
+  // carries. A flush sends one command at a time and never overlaps another flush, so an
+  // address is in here at most once. Together with `pendingValues` it answers
+  // `hasUnannouncedWrite`: from the moment a write is issued until its announcement is
+  // taken as an echo.
+  private readonly inFlight = new Map<number, number>();
+  // In-flight writes whose announcement arrived before their ack and was taken as their
+  // echo (`isEcho`), so the ack queues no announcement that has already come.
+  private readonly echoedInFlight = new Set<number>();
   // The same for the string writes, keyed as `pendingNames` is.
   private readonly inFlightNames = new Set<string>();
   /**
@@ -410,6 +414,7 @@ export class LiveSync {
     this.pendingValues.clear();
     this.pendingNames.clear();
     this.inFlight.clear();
+    this.echoedInFlight.clear();
     this.inFlightNames.clear();
     // Same session boundary: a mark taken on a previous link means nothing on this one.
     this.recentWrites.clear();
@@ -541,10 +546,20 @@ export class LiveSync {
         converge.ownOns.add(own);
         converge.exclude.add(own);
       }
-    // Pending first, and it CONSUMES the entry it matches: this notify is that write's
-    // announcement, so leaving it queued would let a later device-side change back to
-    // the same value be swallowed for the rest of the retention window.
-    return this.takePending(this.pendingValues, k, value) || this.snapshot.get(k) === value;
+    // The write still on the wire first: a notify carrying its value is its announcement,
+    // overtaking its ack, and the unit holds what we sent. Every acked write queued before
+    // it goes with it — left queued, one of them would swallow the unit moving back to its
+    // value for the rest of the retention window — so a later notify carrying an older
+    // value is the unit's own move.
+    if (this.inFlight.get(k) === value) {
+      this.pendingValues.delete(k);
+      this.echoedInFlight.add(k);
+      return true;
+    }
+    // Then the acked writes, and the match CONSUMES its entry and every one queued before
+    // it, for the same reason (`takePending`).
+    if (this.takePending(this.pendingValues, k, value)) return true;
+    return this.snapshot.get(k) === value;
   }
 
   /** What the unit holds at an address as far as this session knows: its last announcement
@@ -599,7 +614,7 @@ export class LiveSync {
     return this.unannounced(this.inFlightNames, this.pendingNames, `${paramId}:${y}`);
   }
 
-  private unannounced<K, V>(inFlight: ReadonlySet<K>, queues: Map<K, PendingQueue<V>>, key: K): boolean {
+  private unannounced<K, V>(inFlight: { has(key: K): boolean }, queues: Map<K, PendingQueue<V>>, key: K): boolean {
     if (inFlight.has(key)) return true;
     const q = queues.get(key);
     if (!q) return false;
@@ -633,9 +648,11 @@ export class LiveSync {
    * settle window first. True = this notify is the late echo of one of our own writes.
    *
    * MUTATES, so it must be asked once per notify — which is what the single call site
-   * (follow.ts's gate, through main.ts) does. Everything up to and including the match
-   * is spliced out, not just the match: a stale earlier entry left in front would
-   * otherwise match a genuinely later device value and swallow it.
+   * (follow.ts's gate, through main.ts) does. The match is the NEWEST entry carrying the
+   * value, and everything up to and including it is spliced out, not just the match: a
+   * stale earlier entry left in front would otherwise match a genuinely later device value
+   * and swallow it, and a queue holding the value twice — a drag that returned to it —
+   * would keep the write between the two.
    *
    * `Date.now()` and not `performance.now()`: vitest fakes Date by default and does not
    * fake performance, so a performance clock makes the retention untestable — and the
@@ -645,7 +662,8 @@ export class LiveSync {
     const q = queues.get(key);
     if (!q) return false;
     dropExpired(q, Date.now() - SETTLE_TIMEOUT_MS);
-    const i = q.findIndex((e) => e.value === value);
+    let i = q.length - 1;
+    while (i >= 0 && q[i].value !== value) i--;
     if (i >= 0) q.splice(0, i + 1);
     if (!q.length) queues.delete(key);
     return i >= 0;
@@ -661,6 +679,7 @@ export class LiveSync {
     this.pendingValues.clear();
     this.pendingNames.clear();
     this.inFlight.clear();
+    this.echoedInFlight.clear();
     this.inFlightNames.clear();
     this.recentWrites.clear();
     this.pending = false;
@@ -1113,7 +1132,7 @@ export class LiveSync {
         // `hasUnannouncedWrite` answers for, so the follow layer re-reads its node
         // rather than putting its value into the plan (settle.ts).
         const mark = writeSettle.mark();
-        this.inFlight.add(k);
+        this.inFlight.set(k, value);
         try {
           await vdSet(c.paramId, c.x, c.y, value);
         } finally {
@@ -1125,7 +1144,7 @@ export class LiveSync {
         if (this.sessionGen !== gen) return;
         this.snapshot.set(k, value);
         this.announced.delete(k);
-        this.notePending(this.pendingValues, k, value);
+        if (!this.echoedInFlight.delete(k)) this.notePending(this.pendingValues, k, value);
         writes.set(k, { mark, node: c.node, changed: had !== undefined, value });
         this.recentWrites.set(k, { mark, node: c.node, at: Date.now() });
         sent++;
