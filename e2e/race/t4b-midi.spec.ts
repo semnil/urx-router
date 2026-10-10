@@ -724,10 +724,24 @@ test.describe("T4b midi", () => {
    *  ~120 ms later, so a baseline taken inside can already include it — and then the
    *  1 ms poll never terminates and the case hangs to the Playwright timeout with no
    *  diagnosis at all. The poll carries a deadline for the same reason: a gesture that
-   *  emits nothing has to fail saying which wait it was in. */
-  const loopbackAfter = (page: Page, d: number, value: number, since: number, cap = 5000): Promise<[number, number]> =>
+   *  emits nothing has to fail saying which wait it was in.
+   *
+   *  With `pair`, the same message is delivered a second time straight after the
+   *  first, both from the page, since a driver round trip between them has no bound
+   *  under load and carries the second past the window. Between the two it counts the
+   *  plan writes the trace probe attributed to MIDI — recorded inside the same call as
+   *  the apply, where the chip itself is repainted later — and returns that count and
+   *  the second message's phase as the third and fourth values. */
+  const loopbackAfter = (
+    page: Page,
+    d: number,
+    value: number,
+    since: number,
+    cap = 5000,
+    pair = false,
+  ): Promise<[number, number, number?, number?]> =>
     page.evaluate(
-      async ([delay, v, n0, deadlineMs]) => {
+      async ([delay, v, n0, deadlineMs, twice]) => {
         const w = window as unknown as { __sendAt: number[] };
         const f = window.__urxFake;
         const deadline = performance.now() + deadlineMs;
@@ -744,25 +758,19 @@ test.describe("T4b midi", () => {
         const bytes = f.midi.sent[f.midi.sent.length - 1];
         const at = w.__sendAt[w.__sendAt.length - 1];
         await new Promise<void>((res) => setTimeout(res, Math.max(0, delay - (performance.now() - at))));
+        const ledger = (window as unknown as { __urxTrace?: { ledger: { source: string }[] } }).__urxTrace?.ledger;
+        const midiWrites = (): number => ledger?.filter((e) => e.source === "midi").length ?? Number.NaN;
+        const writesBefore = midiWrites();
         const before = performance.now() - at;
         f.pushMidi([[bytes[0], bytes[1], v]]);
-        return [before, performance.now() - at] as [number, number];
+        const after = performance.now() - at;
+        if (!twice) return [before, after] as [number, number];
+        const firstWrote = midiWrites() - writesBefore;
+        f.pushMidi([[bytes[0], bytes[1], v]]);
+        return [before, after, firstWrote, performance.now() - at] as [number, number, number, number];
       },
-      [d, value, since, cap] as [number, number, number, number],
+      [d, value, since, cap, pair] as [number, number, number, number, boolean],
     );
-
-  /** Push a MIDI message from INSIDE the page and return its phase from the last
-   *  outgoing feedback emit. A driver `pushMidi` is a round trip whose lateness is
-   *  unbounded, so a case whose verdict turns on "inside the echo window"
-   *  cannot measure the push from outside — under driver lag it would be measuring the
-   *  window expiring rather than the thing it claims. */
-  const pushAtPhase = (page: Page, bytes: number[]): Promise<number> =>
-    page.evaluate((b) => {
-      const w = window as unknown as { __sendAt: number[] };
-      const at = w.__sendAt[w.__sendAt.length - 1];
-      window.__urxFake.pushMidi([b]);
-      return performance.now() - at;
-    }, bytes);
 
   // The two rungs that BRACKET the window, one margin either side of the edge. It ran
   // five (10 / 25 / 40 | 60 / 400) while the window itself was being sized; what those
@@ -875,29 +883,24 @@ test.describe("T4b midi", () => {
     await mark(page, "ui-mute");
     await muteChip(page, "CH 1").click();
     await expect(muteChip(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
-    // Both messages have to land inside ONE window, and the state read between them
-    // costs a driver round trip — measured at ~5 ms (the second message landed at
-    // 105 ms with the first at 50 and a 50 ms sleep between). That was free against a
-    // 300 ms window and is a fraction of a 50 ms one, so the first rung goes near zero
-    // and the sleep goes: the second then lands around 15 ms with 35 to spare, and if
-    // a loaded renderer spends that, the phase assertion below is what fails.
-    const [, achieved] = await loopbackAfter(page, 5, 127, armIdx); // the bracket's far end
-    const afterFirst = await muteChip(page, "CH 1").getAttribute("aria-pressed");
-    // Pushed in-page and stamped, like the first one: the claim is that the guard was
-    // SPENT, and under driver lag an unmeasured push measures the window expiring
-    // instead — which produces the same "flipped back" reading for the opposite reason.
-    const secondPhase = await pushAtPhase(page, cc7(127));
+    // Both messages have to land inside ONE window, so the pair and what the first did
+    // are taken in the page: read from the driver, the read alone cost a round trip that
+    // a loaded renderer stretched past the window. Both are stamped — the claim is that
+    // the guard was SPENT, and a second message that missed the window measures the
+    // window expiring instead, which produces the same "flipped back" reading for the
+    // opposite reason.
+    const [, achieved, firstWrote, secondPhase] = await loopbackAfter(page, 5, 127, armIdx, 5000, true);
     await page.waitForTimeout(150);
     const afterSecond = await muteChip(page, "CH 1").getAttribute("aria-pressed");
 
     await dump(page, "toggle echo, one-shot guard", "ui-mute", { ledger: await ledgerOf(page) });
     console.log(
-      `D achieved=${achieved.toFixed(0)} ms, second at ${secondPhase.toFixed(0)} ms;` +
-        ` MUTE after first=${afterFirst} after second=${afterSecond}`,
+      `D achieved=${achieved.toFixed(0)} ms, second at ${secondPhase!.toFixed(0)} ms;` +
+        ` plan writes from the first=${firstWrote}, MUTE after second=${afterSecond}`,
     );
 
     expect(achieved).toBeLessThan(ECHO_WINDOW_MS);
-    expect(afterFirst).toBe("true"); // eaten
+    expect(firstWrote).toBe(0); // eaten
     // Both messages inside one window — the precondition the "one-shot" claim rests on.
     expect(secondPhase).toBeLessThan(ECHO_WINDOW_MS);
     expect(afterSecond).toBe("false"); // applied — the guard was spent on the first
