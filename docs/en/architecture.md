@@ -2776,7 +2776,10 @@ arms a write on it. **Live sync does not**, because its snapshot would enshrine 
 and the first sideEffect edit would converge them onto the hardware unconfirmed — so an incomplete read refuses to
 start the session and merges none of what it read into the plan (`readIntoPlan`'s `accept`), leaving the undo
 history as it was, and a reconcile that cannot read stops following instead of letting the next converge write a
-stale value back over the operator's own edit on the device. **A silent-address park is the same rule with the write
+stale value back over the operator's own edit on the device. **Every read that goes through `followRead` is held to the
+same rule** — the two reconciles, the side-effect refetch, the silent-address park and the recorder's track count
+after a rate change: one that comes back incomplete merges nothing, so the plan, its undo history and the
+`unreadNodes` provenance stay as they stood before the read. **A silent-address park is the same rule with the write
 still ahead of it**: a read that fails ends the session, and it is the flush's own generation check that stops the
 write behind it, the read being for exactly what that write would replace (channel-tuning.md, "FX EFFECT"; which
 parks a flush takes is under [Event timing while Live sync is up](#event-timing-while-live-sync-is-up)). **What the
