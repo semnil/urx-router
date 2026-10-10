@@ -13,7 +13,7 @@
 // harness runs it, since a checker nobody calls refuses nothing while every case here passes.
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -146,29 +146,46 @@ describe.skipIf(tools.some((path) => path === ""))("which app the check names, a
     // started through a link takes the link's name.
     const binary = join(dir, "urx-router");
     symlinkSync(tools[2], binary);
-    const child = spawn(binary, ["30"], { cwd: dir, stdio: "ignore" });
+    const child = spawn(binary, ["30"], { cwd: dir, stdio: ["ignore", "ignore", "pipe"] });
     children.push(child);
-    return String(child.pid);
+    const dummy = { tree: join(root, name), pid: String(child.pid), exit: null, stderr: "" };
+    child.stderr.on("data", (chunk) => (dummy.stderr += chunk));
+    child.on("exit", (code, signal) => (dummy.exit = `${code}/${signal}`));
+    return dummy;
   };
+  // Waits until the check names the dummy; a dummy that is not running is reported as such,
+  // with what it printed and what the process table holds under the app's name, rather than
+  // as a check that answered null.
+  const named = (dummy) =>
+    vi.waitFor(
+      () => {
+        const table = spawnSync("pgrep", ["-lx", "urx-router"], { encoding: "utf8" }).stdout.trim();
+        expect(
+          { answer: devAppPid(dummy.tree), exit: dummy.exit, stderr: dummy.stderr },
+          `pgrep -lx urx-router: [${table}]; the link resolves to ${realpathSync(tools[2])}`,
+        ).toEqual({ answer: dummy.pid, exit: null, stderr: "" });
+      },
+      { timeout: 5000 },
+    );
   const cli = (tree) => spawnSync(process.execPath, [SCRIPT, "--pid", tree], { encoding: "utf8" });
 
   it("waits through an app another tree built and answers once this tree's is up", async () => {
     mkdirSync(join(root, "tree", "src-tauri"), { recursive: true });
     const other = launch("other");
-    await vi.waitFor(() => expect(devAppPid(join(root, "other"))).toBe(other), { timeout: 5000 });
+    await named(other);
     expect(devAppPid(join(root, "tree"))).toBeNull();
     const refused = cli(join(root, "tree"));
     expect([refused.status, refused.stdout]).toEqual([1, ""]);
 
     const own = launch("tree");
-    await vi.waitFor(() => expect(devAppPid(join(root, "tree"))).toBe(own), { timeout: 5000 });
+    await named(own);
     const answered = cli(join(root, "tree"));
-    expect([answered.status, answered.stdout.trim()]).toEqual([0, own]);
+    expect([answered.status, answered.stdout.trim()]).toEqual([0, own.pid]);
   });
   it("waits while the tree's app is not running and exits with its PID once it is", async () => {
     mkdirSync(join(root, "late", "src-tauri"), { recursive: true });
     const other = launch("elsewhere");
-    await vi.waitFor(() => expect(devAppPid(join(root, "elsewhere"))).toBe(other), { timeout: 5000 });
+    await named(other);
     const waiter = spawn(process.execPath, [SCRIPT, "--pid", join(root, "late"), "--wait"], { stdio: "pipe" });
     children.push(waiter);
     let stdout = "";
@@ -179,7 +196,7 @@ describe.skipIf(tools.some((path) => path === ""))("which app the check names, a
 
     const own = launch("late");
     expect(await exited).toBe(0);
-    expect(stdout.trim()).toBe(own);
+    expect(stdout.trim()).toBe(own.pid);
   });
   it.each([[[]], [["--wait"]]])(
     "exits 2 at once for a tree with no src-tauri, which waiting must not read as not yet (%j)",
