@@ -1979,8 +1979,7 @@ dependencies = [
 [[package]]
 name = "midir"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c12e74a8604bc07f9a3fcf3d5889a81bc96ca6e07d6a114d63fc0371f3e5a4"
+source = "git+https://github.com/semnil/midir?rev=9c98d83e0657eec7423120557d68d2aabc61d4ae#9c98d83e0657eec7423120557d68d2aabc61d4ae"
 dependencies = [
  "alsa",
  "cc",
