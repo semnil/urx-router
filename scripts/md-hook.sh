@@ -7,13 +7,19 @@ hook_name=md-hook
 # whether the edited file is one it cares about, so the payload is read once here and
 # replayed. Piping the hook's own stdin through them in sequence would leave the second
 # one reading a drained fd, where it parses nothing and exits 0 — wired, and checking
-# nothing. Both exit 2 on a finding, and 2 is what the hook has to return for the
-# message to reach Claude, so the first non-zero status is carried to the end.
+# nothing. Each exits 2 on a finding, and 2 is what the hook has to return for the
+# message to reach Claude, so a 2 from any check is what the hook returns, whatever the
+# checks before or after it return; otherwise it returns the first non-zero status.
 payload=$(cat)
 self=$(dirname "$0")
 status=0
+record() {
+  if [ "$1" -eq 2 ] || [ "$status" -eq 0 ]; then
+    status=$1
+  fi
+}
 for check in check-md-tables check-assets-index check-merge-gates check-comment-provenance; do
-  printf '%s' "$payload" | node "$self/$check.mjs" --hook || status=$?
+  printf '%s' "$payload" | node "$self/$check.mjs" --hook || record $?
 done
 # The private ledgers under reference/ (a checkout of another repository, ignored here) carry
 # their own anchor check, and an edit made from this repository reaches them through this hook
@@ -47,8 +53,8 @@ const real = (p) => {
 const edited = relative(real(reference), real(resolve(typeof payload.cwd === "string" ? payload.cwd : process.cwd(), file)));
 if (!edited || edited === ".." || edited.startsWith(`..${sep}`) || isAbsolute(edited)) process.exit(0);
 process.stdout.write(checker);
-' "$main") || status=$?
+' "$main") || record $?
 if [ -n "$anchors" ]; then
-  printf '%s' "$payload" | node "$anchors" --hook || status=$?
+  printf '%s' "$payload" | node "$anchors" --hook || record $?
 fi
 exit $status
