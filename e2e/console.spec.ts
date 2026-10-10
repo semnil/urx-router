@@ -941,6 +941,26 @@ test("a grabbed fader cap moves by the distance dragged", async ({ page }) => {
   expect(Math.abs(after.y - cap.y - 3 * detent)).toBeLessThanOrEqual(detent / 2 + 1);
 });
 
+// The SENDS mini-fader is measured against its full height too, so its cap tracks the pointer
+// 1:1 as the main fader's does, rather than running ahead of it.
+test("a send column fader's cap moves by the distance dragged", async ({ page }) => {
+  const fader = col(page, "CH 1", "M1").locator(".con-vfad");
+  const box = (await fader.boundingBox())!;
+  const detent = box.height / 40; // the level grid's detents span the cap's travel
+  const cap = (await fader.locator(".cap").boundingBox())!;
+  const x = cap.x + cap.width / 2;
+  const from = cap.y + cap.height / 2;
+
+  await page.mouse.move(x, from);
+  await page.mouse.down();
+  await page.mouse.move(x, from - 6 * detent, { steps: 4 });
+  await page.mouse.up();
+
+  const after = (await fader.locator(".cap").boundingBox())!;
+  // Half a detent for the grid snap, a pixel for the device scale factor.
+  expect(Math.abs(cap.y - after.y - 6 * detent)).toBeLessThanOrEqual(detent / 2 + 1);
+});
+
 // A press on the bare track still jumps, as an <input type="range"> does when clicked
 // away from its thumb — and it now lands the cap centre on the pointer rather than up
 // to six pixels off it.

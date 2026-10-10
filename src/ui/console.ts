@@ -1369,7 +1369,9 @@ export class Console {
       let startY = e.clientY;
       let startFrac = dbToFrac(level(), range);
       let wasShift = e.shiftKey;
-      const travel = fader.getBoundingClientRect().height - 12;
+      // The cap centre travels the element's whole height (`--pos`, under a -50% translate),
+      // the main fader's scale too, so a pixel dragged is the same share of the level on both.
+      const travel = fader.getBoundingClientRect().height;
       let moved = false;
       trackDrag(
         fader,

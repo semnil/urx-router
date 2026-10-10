@@ -174,6 +174,20 @@ describe("a column's fader", () => {
     expect(h.changes()).toBeGreaterThan(0);
   });
 
+  // The cap stays under the pointer, and a pixel moves the level by the same share as on the
+  // main fader: the drag is measured against the element's full height, which is what the cap
+  // centre travels. Not to the pixel — the detent grid decides where the level lands — but a
+  // drag measured against a shorter span moves the cap a quarter as far again.
+  it("moves the cap by the distance dragged", () => {
+    h = consoleHost();
+    const col = h.sendCol("ch1", "bus.mix1");
+    const pos = (): number => parseFloat(col.cap.style.getPropertyValue("--pos"));
+    const before = pos();
+    const height = col.fader.getBoundingClientRect().height;
+    dragY(col.fader, 30);
+    expect(pos() - before).toBeCloseTo(-(30 / height) * 100, 0);
+  });
+
   // Shift is a quarter of the travel per pixel. Measured as "less far", not as an
   // exact value: the detent grid decides where it lands.
   it("moves a shorter distance with Shift held", () => {
