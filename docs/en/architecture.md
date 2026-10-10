@@ -1433,7 +1433,7 @@ drag lands on the nearest.
   at full strength too; its unlit chip and the cap's dim bar say it is off.
 - **Scribble colour** — the scribble uses each node's **CH SETTING colour** (`plan.nodeColors`, a device
   parameter) rather than the node-kind rail. The text colour is whichever of black/white has the higher
-  actual contrast ratio (WCAG relative luminance, `inkOn`), paired with a faint opposite-tone halo
+  APCA lightness contrast (Lc, `inkOn`), paired with a faint opposite-tone halo
   (`text-shadow`) so the small device name stays legible over a mid-tone colour; nodes with no assigned
   colour fall back to the rail colour.
 - **Layout / scroll** — `#console-host` uses `min-width:0; overflow:hidden` to stay within `#stage`, keeping
