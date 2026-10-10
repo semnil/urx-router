@@ -753,9 +753,10 @@ export class DynScreen {
   private readonly pressed = new Set<number>();
   /** A refresh arrived while grabbed and still has to happen. */
   private refreshPending = false;
-  /** How to end the drag currently in flight, for the ends that carry no pointer event
-   *  of their own. Set by the gesture, cleared by whichever end runs first. */
-  private endDrag: (() => void) | null = null;
+  /** The drag currently in flight: the pointer making it, and how to end it for the ends
+   *  that carry no pointer event of their own. Set by the gesture, cleared by whichever end
+   *  runs first. */
+  private drag: { pointerId: number; end: () => void } | null = null;
   /** The plan the screen was drawn from. A different one at a refresh is that plan replaced. */
   private drawnFor: Plan | null = null;
   /** The plan the screen was opened on. Focus goes back to an opener only while it is still
@@ -777,7 +778,7 @@ export class DynScreen {
     });
     const release = (): void => {
       this.pressed.clear();
-      this.endDrag?.();
+      this.drag?.end();
       if (this.stalePress) {
         this.stalePress = false;
         this.refresh();
@@ -789,9 +790,13 @@ export class DynScreen {
       this.refreshPending = false;
       this.refresh();
     };
-    // A pointer's own release, and only once no other pointer pressed here is still down.
+    // A pointer's own release. The drag that pointer makes ends with it, whatever other pointer
+    // is still down; the press — and the repaint it defers — ends only once no other pointer
+    // pressed here is still down.
     const released = (e: PointerEvent): void => {
-      if (!this.pressed.delete(e.pointerId) || this.pressed.size > 0) return;
+      if (!this.pressed.delete(e.pointerId)) return;
+      if (this.drag?.pointerId === e.pointerId) this.drag.end();
+      if (this.pressed.size > 0) return;
       release();
     };
     window.addEventListener("pointerup", released);
@@ -816,7 +821,7 @@ export class DynScreen {
     // still-held pointer a live control — which is the state `holdInertOnBlur` exists to
     // prevent for the value rows. The deferral therefore lasts as long as the press, which
     // is what it meant before the blur was added as an end at all.
-    window.addEventListener("blur", () => this.endDrag?.());
+    window.addEventListener("blur", () => this.drag?.end());
     // A mouse moving with no button held is a release too, of that mouse's own press whose
     // release the page never heard — the native context menu takes a right press's — so it
     // runs the same release as `pointerup`. It says nothing about a finger or a pen still
@@ -897,7 +902,7 @@ export class DynScreen {
     // A gesture does not outlive the screen it was made on: Escape and a processor taken
     // away both close with the button still down, and a cap or plot drag left armed would
     // go on writing through the captured pointer until the release.
-    this.endDrag?.();
+    this.drag?.end();
     this.grabbed = false;
     this.pressed.clear();
     this.refreshPending = false;
@@ -968,7 +973,7 @@ export class DynScreen {
     const replaced = plan !== this.drawnFor;
     if (replaced) {
       this.drawnFor = plan;
-      this.endDrag?.();
+      this.drag?.end();
       this.stalePress = this.grabbed;
       this.grabbed = false;
       this.refreshPending = false;
@@ -1894,7 +1899,7 @@ export class DynScreen {
       rect = track.getBoundingClientRect();
       dragging = true;
       pointer = e.pointerId;
-      this.endDrag = end;
+      this.drag = { pointerId: e.pointerId, end };
       e.preventDefault();
     });
     // The drag follows the pointer that started it: another pointer moving over the cap, or
@@ -1905,7 +1910,7 @@ export class DynScreen {
     const end = (): void => {
       dragging = false;
       rect = null;
-      if (this.endDrag === end) this.endDrag = null;
+      if (this.drag?.end === end) this.drag = null;
       // Dropped with the gesture, for the reason console.ts's trackDrag states: the blur
       // end is the one no engine follows with a release of its own.
       if (pointer !== null && cap.hasPointerCapture(pointer)) cap.releasePointerCapture(pointer);
@@ -1993,9 +1998,9 @@ export class DynScreen {
       // this drag ends by dropping it.
       const away = (): void => {
         end(e);
-        if (this.endDrag === away) this.endDrag = null;
+        if (this.drag?.end === away) this.drag = null;
       };
-      this.endDrag = away;
+      this.drag = { pointerId: e.pointerId, end: away };
     });
     cv.addEventListener("pointermove", (e) => {
       if (cv.hasPointerCapture(e.pointerId)) apply(e);
