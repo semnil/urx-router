@@ -2763,6 +2763,10 @@ async function offerModelSwitch(device: DeviceSummary): Promise<Plan | null | "u
   if (!MODEL_IDS.includes(device.model as ModelId)) return "unknown";
   if (!(await confirmDialog(t().confirm.switchModel(device.model, modelId)))) return "canceled";
   const next = emptyPlan(device.model as ModelId);
+  // That model's shelf, as every fresh plan takes it: the switch's plan is drawn through
+  // loadPlan, which records the plan's hidden set as the model's, so one built empty here
+  // would erase the layout the operator shelved on that model.
+  next.hidden = loadHidden(next.modelId);
   // The connections the model always has, as loadPlan gives a plan it adopts, so the read
   // measures the unit's values on them against the values this plan holds there.
   ensureFixedConnections(getModel(next.modelId), next);

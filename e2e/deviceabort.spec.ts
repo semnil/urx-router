@@ -124,6 +124,28 @@ test("a fetch that switched models and then failed leaves the plan and its model
   await expect(ch3).toHaveCount(0);
 });
 
+// A fetch that switches models starts the new model's plan from that model's shelf, as every
+// fresh plan does: CH 1 shelved on the URX22 the last time it was on screen stays shelved.
+test("a fetch that switches models keeps the nodes shelved on the model it switches to", async ({ page }) => {
+  await stubTauriDevice(page, { model: "URX22", confirm: "Ok", values: { 766: 48000, 848: 0 } });
+  // The unit is a URX22 and the plan on screen a URX44V (see DeviceStubOptions.model).
+  await page.addInitScript(() => {
+    localStorage.setItem("urx-model", "URX44V");
+    localStorage.setItem("urx-hidden", JSON.stringify({ URX22: ["ch1"] }));
+  });
+  await page.goto("/");
+  const picker = page.locator("#model-picker");
+  await expect(picker).toHaveValue("URX44V");
+  await expect(page.locator('#graph-host g.node[data-id="ch1"]')).toHaveCount(1); // URX44V's own CH 1
+
+  await page.click("#btn-device");
+  await page.click("#btn-fetch");
+  await expect(page.locator("#statusbar")).toContainText("Fetched", { timeout: 20_000 });
+  await expect(picker).toHaveValue("URX22");
+  await expect(page.locator('#graph-host g.node[data-id="ch1"]')).toHaveCount(0);
+  await expect(page.locator(".hidden-shelf .chip", { hasText: "CH 1" })).toHaveCount(1);
+});
+
 // While a fetch that carries a model switch is reading, the plan on screen is the one the
 // switch discards, so an edit to it is refused rather than kept and then lost: the control
 // keeps the value the plan holds and the status line says why. The fetch is held at its Follow

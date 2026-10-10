@@ -1343,6 +1343,20 @@ describe("the model the device turns out to be", () => {
     );
   });
 
+  // The switch's plan starts from that model's shelf, as every fresh plan does: drawn
+  // through loadPlan, the plan's hidden set is recorded as the model's, so a plan built with
+  // none would erase what the operator shelved on that model the last time it was on screen.
+  it("keeps the shelf of the model a Fetch switches to", SLOW, async () => {
+    const shell = (await bootApp({
+      tauri: deviceCommands({ ...connectAs("URX22"), "plugin:dialog|message": "Ok" }),
+      seed: { "urx-hidden": JSON.stringify({ URX22: ["ch1"] }) },
+    }))!;
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(() => expect($<HTMLSelectElement>("model-picker").value).toBe("URX22"), { timeout: 10_000 });
+    expect(JSON.parse(localStorage.getItem("urx-hidden") ?? "{}").URX22).toEqual(["ch1"]);
+  });
+
   // The same three answers on the Live-sync side, where they end differently: the unknown
   // model is a failure (a dialog) while the decline is user-neutral (the status line), and
   // both have to give the connection back.
