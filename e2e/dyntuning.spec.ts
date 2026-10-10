@@ -33,6 +33,16 @@ declare global {
       subscribes: number;
       unsubscribes: number;
       sets: Array<{ id: number; value: number }>;
+      /** Stop the clock the page's animation frames are handed, at the current instant. The
+       *  tuning screen times its paints and its peak hold by those frames, so from here a
+       *  case moves that clock itself (`advanceClock`) and a wall-clock wait spends none of
+       *  it. Frames still run; each is handed the frozen instant. */
+      freezeClock: () => void;
+      /** Move a frozen clock forward by `ms`; the next frame is handed the new instant. */
+      advanceClock: (ms: number) => void;
+      /** Run `n` frames on a frozen clock, moving it 40 ms before each — past the screen's
+       *  own frame gate, so each of them paints. */
+      paintFrames: (n: number) => Promise<void>;
     };
   }
 }
@@ -128,7 +138,22 @@ test.beforeEach(async ({ page }) => {
       subscribes: 0,
       unsubscribes: 0,
       sets: [],
+      freezeClock: () => {
+        frozenAt = performance.now();
+      },
+      advanceClock: (ms) => {
+        if (frozenAt !== null) frozenAt += ms;
+      },
+      paintFrames: async (n) => {
+        for (let i = 0; i < n; i++) {
+          if (frozenAt !== null) frozenAt += 40;
+          await new Promise<void>((resolve) => realFrame(() => resolve()));
+        }
+      },
     };
+    let frozenAt: number | null = null;
+    const realFrame = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (cb) => realFrame((now) => cb(frozenAt ?? now));
     window.__dynTest = state;
     class Channel {
       onmessage: (data: unknown) => void = () => {};
@@ -622,14 +647,27 @@ test.describe("with a live session", () => {
 
   test("holds the deepest reduction, which the device does not hold itself", async ({ page }) => {
     await openFromInspector(page, "ch1");
+    const gr = readout(page, "GATE GR");
+    // The hold is timed by the screen's frames from the paint that first draws the peak, so
+    // the clock stops before that paint and moves only when the case moves it: the polls
+    // between the steps below cost the hold nothing however long they take.
+    await page.evaluate(() => window.__dynTest.freezeClock());
     // A single deep frame followed by idle ones: the live value returns to 0 but
     // the peak keeps the reading that arrived, which is the only trace a gate
     // action shorter than a frame leaves.
+    // Five paints each time: the readout text is rewritten on one paint in five.
     await pushMeters(page, [107, 0, -400]);
-    await expect(readout(page, "GATE GR").locator(".p")).toHaveText("pk -40.0");
+    await page.evaluate(() => window.__dynTest.paintFrames(5));
+    await expect(gr.locator(".p")).toHaveText("pk -40.0");
     await pushMeters(page, [107, 0, 32767]);
-    await expect(readout(page, "GATE GR").locator(".v")).toHaveText("0.0");
-    await expect(readout(page, "GATE GR").locator(".p")).toHaveText("pk -40.0");
+    await page.evaluate(() => window.__dynTest.paintFrames(5));
+    await expect(gr.locator(".v")).toHaveText("0.0");
+    await expect(gr.locator(".p")).toHaveText("pk -40.0");
+    // …and it is a hold rather than a latch: moved far past it, the next paints let the
+    // held reading go to the live one.
+    await page.evaluate(() => window.__dynTest.advanceClock(10_000));
+    await page.evaluate(() => window.__dynTest.paintFrames(5));
+    await expect(gr.locator(".p")).toHaveText("pk 0.0");
   });
 
   // A session that ends by itself — here the link reported lost — stops the screen's frame
