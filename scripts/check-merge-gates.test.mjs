@@ -477,7 +477,7 @@ describe.skipIf(!rubyAvailable)("ref patterns, differentially against File.fnmat
       puts JSON.generate(JSON.parse(STDIN.read).map { |p, r| File.fnmatch?(p, r, flags) })
     `;
     const pairs = PATTERNS.filter(([pattern]) => !pattern.startsWith("~")).map(([pattern, ref]) => [pattern, ref]);
-    const out = spawnSync("ruby", ["-e", script], { input: JSON.stringify(pairs), encoding: "utf8" });
+    const out = spawnSync("ruby", ["-E", "UTF-8", "-e", script], { input: JSON.stringify(pairs), encoding: "utf8" });
     expect(out.status, out.stderr).toBe(0);
     const oracle = JSON.parse(out.stdout);
     const mine = pairs.map(([pattern, ref]) => refMatches(pattern, ref));
