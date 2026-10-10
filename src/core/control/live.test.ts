@@ -8,16 +8,25 @@ import { PlanWriteWitness, clonePlanState } from "../plan-history";
 // (how many device writes a drag produces), so vdSet's call count is the metric.
 // vdGetStr is here for the one case whose refetch hook runs the REAL readback rather
 // than a stand-in (the cadence pin below): a scoped pass reads names too.
-vi.mock("../platform", () => ({ vdSet: vi.fn(), vdSetStr: vi.fn(), vdGet: vi.fn(), vdGetStr: vi.fn() }));
+// vdParamsSubscribe is here for the cases that put the follow layer on top of the session,
+// where the notify stream is what a case delivers.
+vi.mock("../platform", () => ({
+  vdSet: vi.fn(),
+  vdSetStr: vi.fn(),
+  vdGet: vi.fn(),
+  vdGetStr: vi.fn(),
+  vdParamsSubscribe: vi.fn(),
+}));
 
-import { vdSet, vdSetStr, vdGet, vdGetStr } from "../platform";
+import { vdSet, vdSetStr, vdGet, vdGetStr, vdParamsSubscribe, type ParamUpdate } from "../platform";
+import { DeviceFollow } from "./follow";
 import { COMP_EQ_SSMCS, PARAMS, silentKey } from "./params";
 import { addrKey, cmdAddr, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
 import { LiveSync } from "./live";
 import { MBC_ONE_KNOB, insertFxParamKey } from "./insert-fx-effect";
 import { fxParams } from "./fx-effect";
-import { applyNodeState, readIntoPlan } from "./readback";
+import { applyDirect, applyNodeState, readIntoPlan } from "./readback";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { gainToVd } from "./vd";
@@ -1202,6 +1211,132 @@ describe("LiveSync late echo of a write the snapshot has moved past", () => {
     // The earlier value is no longer pending, so the unit reporting it now is a real
     // device-side move back — not our own write arriving late.
     expect(live.isEcho(a.paramId, a.x, a.y, a.vdValue)).toBe(false);
+  });
+
+  /** A live session with the follow layer on top of it, wired the way main.ts wires the two.
+   *  `announce` is the unit announcing what it holds, `flushTo` an edit going out — its ack
+   *  held back when asked, so the case decides whether the announcement lands ahead of it —
+   *  and a re-read takes what the unit holds. */
+  async function followedSession() {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin(clonePlanState(plan));
+    let deliver!: (p: ParamUpdate) => void;
+    vi.mocked(vdParamsSubscribe).mockImplementationOnce(async (_addrs, onUpdate) => {
+      deliver = onUpdate;
+      return () => {};
+    });
+    let held = 0;
+    const reread = vi.fn(async () => {
+      setCh1Fader(plan, held);
+      live.resync(clonePlanState(plan));
+    });
+    const follow = new DeviceFollow({
+      addrs: () => live.followAddrs(),
+      isEcho: (p) => live.isEcho(p.paramId, p.x, p.y, p.value),
+      isSuperseded: (p) => live.hasUnannouncedWrite(p.paramId, p.x, p.y),
+      lookup: () => ({ name: "CH_FADER", node: "ch1", direct: true }),
+      applyDirect: (node, name, value) => applyDirect(plan, node, name, value),
+      noteDirect: (id, x, y, value) => live.noteDirect(id, x, y, value),
+      flushDirect: () => {},
+      reconcileNodes: reread,
+      reconcileAll: reread,
+      onFollow: () => {},
+      onError: (message) => {
+        throw new Error(message);
+      },
+      deferReconcile: () => live.isWriting(),
+    });
+    await follow.begin();
+    const announce = (db: number): void => {
+      held = db;
+      const c = ch1FaderCmd(db);
+      deliver({ paramId: c.paramId, x: c.x, y: c.y, value: c.vdValue });
+    };
+    const flushTo = async (db: number, ack: "at once" | "held" = "at once"): Promise<() => Promise<void>> => {
+      let release = (): void => {};
+      if (ack === "held")
+        vi.mocked(vdSet).mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve) => {
+              release = resolve;
+            }),
+        );
+      setCh1Fader(plan, db);
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      return async () => {
+        release();
+        await vi.advanceTimersByTimeAsync(0);
+      };
+    };
+    /** The drag's last write, with its announcement — the only one the unit makes for the
+     *  writes still queued — arriving ahead of or behind its ack. */
+    const landLast = async (db: number, echo: "ahead of" | "behind"): Promise<void> => {
+      const ack = await flushTo(db, "held");
+      if (echo === "ahead of") announce(db);
+      await ack();
+      if (echo === "behind") announce(db);
+    };
+    const level = (): number | undefined => plan.connections.find((c) => c.from === "ch1:out")?.params?.level;
+    const end = (): void => {
+      follow.end();
+      live.end();
+    };
+    return { live, announce, flushTo, landLast, level, reread, end };
+  }
+
+  // The unit announces only a drag's last write, so the earlier writes are still queued
+  // when that announcement lands. Taken as the last write's echo, it retires them too, and
+  // the operator moving the unit back to one of them inside the retention window reaches
+  // the plan rather than reading as our own write arriving late.
+  for (const echo of ["ahead of", "behind"] as const) {
+    it(`follows the unit back to a drag's first value when the last write's echo lands ${echo} its ack`, async () => {
+      const s = await followedSession();
+      await s.flushTo(-6);
+      await s.landLast(-12, echo);
+      expect(s.level()).toBe(-12);
+
+      s.announce(-6);
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(s.level()).toBe(-6);
+      s.end();
+    });
+
+    it(`follows the unit to a value a drag returned from when the last write's echo lands ${echo} its ack`, async () => {
+      const s = await followedSession();
+      await s.flushTo(-6);
+      await s.flushTo(-12);
+      await s.landLast(-6, echo);
+      expect(s.level()).toBe(-6);
+
+      s.announce(-12);
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(s.level()).toBe(-12);
+      s.end();
+    });
+
+    it(`takes the one announcement of a drag landing ${echo} its ack as an echo, with no re-read`, async () => {
+      const s = await followedSession();
+      await s.flushTo(-6);
+      await s.landLast(-12, echo);
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(s.level()).toBe(-12);
+      expect(s.reread).not.toHaveBeenCalled();
+      s.end();
+    });
+  }
+
+  // Taken from the newest match, the first of a drag's announcements retires every write
+  // queued before it, so when the unit announces each write in turn and late, the ones
+  // after it read as the unit's own moves. The last is what the unit ends on, and the plan
+  // follows it there as it arrives, ahead of any re-read.
+  it("ends on the unit's last announcement when a drag's writes are each announced late, in order", async () => {
+    const s = await followedSession();
+    for (const db of [-6, -12, -6]) await s.flushTo(db);
+    for (const db of [-6, -12, -6]) s.announce(db);
+    expect(s.level()).toBe(-6);
+    s.end();
   });
 
   // A name the field holds empty has no value to send, so the flush sends nothing for it and the

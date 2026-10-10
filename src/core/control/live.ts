@@ -546,16 +546,19 @@ export class LiveSync {
         converge.ownOns.add(own);
         converge.exclude.add(own);
       }
-    // Pending first, and it CONSUMES the entry it matches: this notify is that write's
-    // announcement, so leaving it queued would let a later device-side change back to
-    // the same value be swallowed for the rest of the retention window.
-    if (this.takePending(this.pendingValues, k, value)) return true;
-    // A write still on the wire carrying this value: its announcement has overtaken its
-    // ack, and the unit holds what we sent.
+    // The write still on the wire first: a notify carrying its value is its announcement,
+    // overtaking its ack, and the unit holds what we sent. Every acked write queued before
+    // it goes with it — left queued, one of them would swallow the unit moving back to its
+    // value for the rest of the retention window — so a later notify carrying an older
+    // value is the unit's own move.
     if (this.inFlight.get(k) === value) {
+      this.pendingValues.delete(k);
       this.echoedInFlight.add(k);
       return true;
     }
+    // Then the acked writes, and the match CONSUMES its entry and every one queued before
+    // it, for the same reason (`takePending`).
+    if (this.takePending(this.pendingValues, k, value)) return true;
     return this.snapshot.get(k) === value;
   }
 
@@ -645,9 +648,11 @@ export class LiveSync {
    * settle window first. True = this notify is the late echo of one of our own writes.
    *
    * MUTATES, so it must be asked once per notify — which is what the single call site
-   * (follow.ts's gate, through main.ts) does. Everything up to and including the match
-   * is spliced out, not just the match: a stale earlier entry left in front would
-   * otherwise match a genuinely later device value and swallow it.
+   * (follow.ts's gate, through main.ts) does. The match is the NEWEST entry carrying the
+   * value, and everything up to and including it is spliced out, not just the match: a
+   * stale earlier entry left in front would otherwise match a genuinely later device value
+   * and swallow it, and a queue holding the value twice — a drag that returned to it —
+   * would keep the write between the two.
    *
    * `Date.now()` and not `performance.now()`: vitest fakes Date by default and does not
    * fake performance, so a performance clock makes the retention untestable — and the
@@ -657,7 +662,8 @@ export class LiveSync {
     const q = queues.get(key);
     if (!q) return false;
     dropExpired(q, Date.now() - SETTLE_TIMEOUT_MS);
-    const i = q.findIndex((e) => e.value === value);
+    let i = q.length - 1;
+    while (i >= 0 && q[i].value !== value) i--;
     if (i >= 0) q.splice(0, i + 1);
     if (!q.length) queues.delete(key);
     return i >= 0;
