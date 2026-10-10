@@ -17,6 +17,8 @@ const HOOK_NODE = fileURLToPath(new URL("./hook-node.sh", import.meta.url));
 const PUBLIC = ["check-md-tables", "check-assets-index", "check-merge-gates", "check-comment-provenance"];
 const PASSING = "process.exit(0);\n";
 const REFUSING_PUBLIC = 'process.stderr.write("public check refused\\n"); process.exit(2);\n';
+// A checker that dies rather than answering: node exits 1 on an uncaught throw.
+const CRASHING = (what) => `throw new Error("${what} crashed");\n`;
 // The anchor check's own contract, reduced: it reads the payload, ignores anything that is not
 // one of its ledgers, and checks the ledger in ITS OWN checkout — so the root it names is the
 // checkout the hook delegated to.
@@ -48,7 +50,7 @@ function scratch(prefix) {
  * A main checkout holding the real hook and the public stand-ins, optionally a private
  * reference/ with the anchor stand-in and a ledger, and a git worktree of it.
  */
-function checkout({ reference, ledger = BROKEN_LEDGER, refusingPublic = false }) {
+function checkout({ reference, ledger = BROKEN_LEDGER, refusingPublic = false, publics = {}, anchors = ANCHORS }) {
   // Canonical, since the anchor check names its root by the real path node resolved it to.
   const main = realpathSync(scratch("md-hook-main-"));
   const config = join(scratch("md-hook-git-"), "empty-gitconfig");
@@ -67,7 +69,7 @@ function checkout({ reference, ledger = BROKEN_LEDGER, refusingPublic = false })
   copyFileSync(HOOK, join(main, "scripts", "md-hook.sh"));
   copyFileSync(HOOK_NODE, join(main, "scripts", "hook-node.sh"));
   for (const name of PUBLIC) {
-    const body = refusingPublic && name === "check-md-tables" ? REFUSING_PUBLIC : PASSING;
+    const body = publics[name] ?? (refusingPublic && name === "check-md-tables" ? REFUSING_PUBLIC : PASSING);
     writeFileSync(join(main, "scripts", `${name}.mjs`), body);
   }
   writeFileSync(join(main, "src", "a.ts"), "export {};\n");
@@ -75,7 +77,7 @@ function checkout({ reference, ledger = BROKEN_LEDGER, refusingPublic = false })
   if (reference) {
     mkdirSync(join(main, "reference", "scripts"), { recursive: true });
     mkdirSync(join(main, "reference", "work"));
-    writeFileSync(join(main, "reference", "scripts", "check-ledger-anchors.mjs"), ANCHORS);
+    writeFileSync(join(main, "reference", "scripts", "check-ledger-anchors.mjs"), anchors);
     writeFileSync(join(main, "reference", "work", "e2e-flakes.md"), ledger);
   }
   git("init", "-q", "-b", "main", ".");
@@ -164,5 +166,53 @@ describe("the document hook and the private ledgers", () => {
       expect(res.stderr).toContain("public check refused");
       expect(res.status).toBe(2);
     }
+  });
+
+  // Only an exit 2 reaches Claude, so a refusal has to survive whatever the checks after it, or
+  // before it, return — a crash is exit 1, which the harness shows the operator and not Claude.
+  it("returns a refusal even when a later check crashes", () => {
+    const { main } = checkout({
+      reference: true,
+      ledger: VALID_LEDGER,
+      refusingPublic: true,
+      publics: { "check-comment-provenance": CRASHING("provenance") },
+    });
+    const res = run(main, join(main, "src", "a.ts"));
+    expect(res.stderr).toContain("public check refused");
+    expect(res.stderr).toContain("provenance crashed");
+    expect(res.status).toBe(2);
+  });
+
+  it("returns a refusal even when an earlier check crashed", () => {
+    const { main } = checkout({
+      reference: true,
+      ledger: VALID_LEDGER,
+      publics: { "check-md-tables": CRASHING("tables"), "check-comment-provenance": REFUSING_PUBLIC },
+    });
+    const res = run(main, join(main, "src", "a.ts"));
+    expect(res.stderr).toContain("tables crashed");
+    expect(res.stderr).toContain("public check refused");
+    expect(res.status).toBe(2);
+  });
+
+  it("returns a public check's refusal when the anchor check crashes after it", () => {
+    const { main, worktree } = checkout({ reference: true, refusingPublic: true, anchors: CRASHING("anchors") });
+    for (const from of [main, worktree]) {
+      const res = run(from, ledgerOf(main));
+      expect(res.stderr).toContain("public check refused");
+      expect(res.stderr).toContain("anchors crashed");
+      expect(res.status).toBe(2);
+    }
+  });
+
+  it("returns a crash as a non-zero status when nothing refused", () => {
+    const { main } = checkout({
+      reference: true,
+      ledger: VALID_LEDGER,
+      publics: { "check-merge-gates": CRASHING("gates") },
+    });
+    const res = run(main, join(main, "src", "a.ts"));
+    expect(res.stderr).toContain("gates crashed");
+    expect(res.status).toBe(1);
   });
 });
