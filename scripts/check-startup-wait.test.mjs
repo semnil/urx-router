@@ -2,15 +2,21 @@
 // The refused commands are the shapes that waited on a dev app already running: a sleeping
 // loop around a grep of the dev server's log, in each spelling that has been written, and
 // `pgrep -f` naming the binary. The allowed ones carry the same loop, the same grep or the
-// same word, so a rule that fires on any of them alone fires on ordinary work.
+// same word, so a rule that fires on any of them alone fires on ordinary work — including the
+// same words quoted as a search pattern, and a log grep written after a loop has ended.
+//
+// The check the hook points at is run against real processes: an app built by another tree
+// must not answer for this one, which is the case a bare `pgrep -x` cannot tell apart.
 //
 // It also drives the wiring: the command `.claude/settings.json` registers is run as the
 // harness runs it, since a checker nobody calls refuses nothing while every case here passes.
-import { describe, expect, it } from "vitest";
-import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hookMessage, launchReminder, startupWaitFinding } from "./check-startup-wait.mjs";
+import { devAppPid, hookMessage, launchReminder, startupWaitFinding } from "./check-startup-wait.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPT = fileURLToPath(new URL("./check-startup-wait.mjs", import.meta.url));
@@ -24,6 +30,9 @@ const REFUSED = [
   "tail -f work/dev.log | grep -m1 Running",
   'pgrep -f "/Users/x/urx-router/src-tauri/target/debug/urx-router"',
   "pgrep -fl urx-router",
+  'until [ -n "$(pgrep -f urx-router)" ]; do sleep 1; done',
+  "while true; do if grep -q Running work/dev.log; then break; fi; sleep 5; done",
+  "tail -F work/dev.log | sed -u 's/x/y/' | grep -m1 Running",
 ];
 
 const ALLOWED = [
@@ -34,6 +43,13 @@ const ALLOWED = [
   'until grep -q "ready" work/server.log; do sleep 1; done',
   "while read line; do echo $line; done < work/list.txt",
   "pgrep -f vitest",
+  "rg -n 'pgrep -f urx-router' scripts CLAUDE.md",
+  'grep -n "until grep -q Running work/dev.log; do sleep 5; done" CLAUDE.md',
+  "while kill -0 $pid; do sleep 5; done; rg -n panicked work/cargo-test.log",
+  "until ! pgrep -x cargo >/dev/null; do sleep 5; done\ngrep -n Finished work/cargo-test.log",
+  "tail -n 50 work/dev.log | grep Running",
+  "tail -f work/dev.log > work/copy.log; grep Running work/dev.log",
+  "until node scripts/check-startup-wait.mjs --pid /x/tree; do sleep 5; done",
 ];
 
 describe("what a command may wait on", () => {
@@ -89,6 +105,64 @@ describe("the program", () => {
     const res = run("not json");
     expect(res.status).toBe(1);
     expect(res.stderr).toMatch(/nothing checked/);
+  });
+});
+
+describe("which app the check names", () => {
+  const cwds = { 11: "/x/other/src-tauri", 12: "/x/tree/src-tauri", 13: null };
+  const tree = mkdtempSync(join(tmpdir(), "startup-wait-"));
+  mkdirSync(join(tree, "src-tauri"));
+  const cwdOf = (pid) => (pid === "12" ? join(tree, "src-tauri") : cwds[pid]);
+
+  it("names the process whose working directory is the tree's src-tauri, and no other", () => {
+    expect(devAppPid(tree, { pids: () => ["11", "13"], cwdOf })).toBeNull();
+    expect(devAppPid(tree, { pids: () => ["11", "13", "12"], cwdOf })).toBe("12");
+  });
+  it("refuses a tree with no src-tauri rather than reading it as an app not running", () => {
+    expect(() => devAppPid(join(tree, "missing"), { pids: () => [], cwdOf })).toThrow();
+  });
+});
+
+const which = (cmd) => spawnSync("sh", ["-c", `command -v ${cmd}`], { encoding: "utf8" }).stdout.trim();
+const tools = ["pgrep", "lsof", "sleep"].map(which);
+
+describe.skipIf(tools.some((path) => path === ""))("which app the check names, among real processes", () => {
+  const root = mkdtempSync(join(tmpdir(), "startup-wait-"));
+  const children = [];
+  afterEach(() => {
+    for (const child of children.splice(0)) child.kill("SIGKILL");
+  });
+  const launch = (name) => {
+    const dir = join(root, name, "src-tauri");
+    mkdirSync(dir, { recursive: true });
+    // A link rather than a copy: macOS kills a copied system binary at exec, and a process
+    // started through a link takes the link's name.
+    const binary = join(dir, "urx-router");
+    symlinkSync(tools[2], binary);
+    const child = spawn(binary, ["30"], { cwd: dir, stdio: "ignore" });
+    children.push(child);
+    return String(child.pid);
+  };
+  const cli = (tree) => spawnSync(process.execPath, [SCRIPT, "--pid", tree], { encoding: "utf8" });
+
+  it("waits through an app another tree built and answers once this tree's is up", async () => {
+    mkdirSync(join(root, "tree", "src-tauri"), { recursive: true });
+    const other = launch("other");
+    await vi.waitFor(() => expect(devAppPid(join(root, "other"))).toBe(other), { timeout: 5000 });
+    expect(devAppPid(join(root, "tree"))).toBeNull();
+    const refused = cli(join(root, "tree"));
+    expect([refused.status, refused.stdout]).toEqual([1, ""]);
+
+    const own = launch("tree");
+    await vi.waitFor(() => expect(devAppPid(join(root, "tree"))).toBe(own), { timeout: 5000 });
+    const answered = cli(join(root, "tree"));
+    expect([answered.status, answered.stdout.trim()]).toEqual([0, own]);
+  });
+  it("exits 2 for a tree with no src-tauri, which a waiting loop must not read as not yet", () => {
+    const res = cli(join(root, "missing"));
+    expect(res.status).toBe(2);
+    expect(res.stderr).toMatch(/cannot tell/);
+    rmSync(root, { recursive: true, force: true });
   });
 });
 
