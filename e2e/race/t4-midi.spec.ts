@@ -15,6 +15,7 @@ import {
   midiSentOf,
   openMidiWindow,
   type InstallOptions,
+  statusAfter,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf } from "./analyze";
 import { CH1_FADER, CH2_FADER, faderOf, faderReadout, openEqScreen } from "./ui";
@@ -56,8 +57,6 @@ function midiStore(
 ): InstallOptions["storage"] {
   return { "urx-midi": JSON.stringify({ ...ports, models: { URX44V: mappings } }) };
 }
-
-const statusLine = (page: Page) => page.locator("#statusbar");
 
 /** The EQ tuning screen's 1-knob ON button (located from the level slider's id, the
  *  only stable anchor in that section — the same handle t1-overtake uses). */
@@ -238,9 +237,7 @@ test.describe("T4 midi", () => {
 
       await page.waitForTimeout(Math.max(0, 3000 - d));
       await mark(page, "undo");
-      await page.keyboard.press("ControlOrMeta+z");
-      await expect(statusLine(page)).not.toHaveText("");
-      const undoStatus = (await statusLine(page).textContent())!;
+      const undoStatus = await statusAfter(page, () => page.keyboard.press("ControlOrMeta+z"));
       const ch2AfterUndo = (await faderReadout(page, "CH 2").textContent())!;
       const ch1AfterUndo = (await faderReadout(page, "CH 1").textContent())!;
       // The link has been idle for 3 s by now, so waitQuiet would return on the spot
@@ -319,9 +316,7 @@ test.describe("T4 midi", () => {
     await pushMidi(page, [cc7(114)]); // no port is open: the bridge has no channel to deliver on
     await page.waitForTimeout(3000);
     await mark(page, "undo");
-    await page.keyboard.press("ControlOrMeta+z");
-    await expect(statusLine(page)).not.toHaveText("");
-    const undoStatus = (await statusLine(page).textContent())!;
+    const undoStatus = await statusAfter(page, () => page.keyboard.press("ControlOrMeta+z"));
     const ch2AfterUndo = (await faderReadout(page, "CH 2").textContent())!;
     await settleAfter(page, "undo"); // same reason as the ladder: the link is idle here
 

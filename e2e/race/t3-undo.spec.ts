@@ -18,6 +18,7 @@ import {
   setDialogAnswer,
   openMidiWindow,
   type TraceEvent,
+  statusAfter,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf, getsOf } from "./analyze";
 import { CH1_FADER, CH1_HPF_FREQ, faderOf, faderReadout, graphNode, openEqScreen } from "./ui";
@@ -50,8 +51,6 @@ const DRAG_REFUSAL = "Finish the current drag before undoing";
 const MODAL_REFUSAL = "Close the open dialog before undoing";
 const BUSY_REFUSAL = "Busy with the device — undo is unavailable until it finishes";
 
-const statusOf = (page: Page) => page.locator("#statusbar");
-
 /** The fixed CH 1 → MIX 1 send wire, and the Level slider its selection puts in the
  *  inspector — the one plan-editing range control reachable without a pointer press
  *  of its own, which is what the orphan-press pair needs. */
@@ -67,17 +66,9 @@ const sinceLastSubscribe = (trace: TraceEvent[]): { from: number } | undefined =
   return last ? { from: last.t } : undefined;
 };
 
-const readStatus = (page: Page): Promise<string> =>
-  statusOf(page)
-    .textContent()
-    .then((s) => s ?? "");
-
-/** One Ctrl+Z, returning the status line it produced. The status is written
- *  synchronously by the same handler, so no settle is needed to read the verdict. */
-async function undoOnce(page: Page): Promise<string> {
-  await page.keyboard.press("ControlOrMeta+z");
-  return readStatus(page);
-}
+/** One Ctrl+Z, returning the status line it produced — the verdict the handler writes,
+ *  waited for, since the line still holds the last flush's until the press is handled. */
+const undoOnce = (page: Page): Promise<string> => statusAfter(page, () => page.keyboard.press("ControlOrMeta+z"));
 
 /**
  * How many entries the stack holds, measured by draining it. Every other way of
@@ -603,12 +594,15 @@ test.describe("T3 undo", () => {
       const after = (await faderReadout(page, "CH 1").textContent())!;
       // The press was refused, so nothing should have reached the redo side. Asserting
       // that is what separates "refused" from "applied and then hidden".
-      await page.keyboard.press("ControlOrMeta+Shift+z");
-      const redoStatus = await readStatus(page);
+      const redoStatus = await statusAfter(page, () => page.keyboard.press("ControlOrMeta+Shift+z"));
       const afterRedo = (await faderReadout(page, "CH 1").textContent())!;
+      // Draining the stack applies the entry the press left, and that undo writes; the window
+      // the refused press is judged over ends where the drain begins.
+      await mark(page, "drain");
       const depth = await undoDepth(page);
       const trace = await traceOf(page);
       const undoAt = markTime(trace, "undo-in-full")!;
+      const drainAt = markTime(trace, "drain")!;
       const writes = setsOf(trace).filter((s) => s.addr === CH1_FADER);
       console.log(timeline(trace, { from: markTime(trace, "notify")! - 50, limit: 60 }));
       console.log(
@@ -633,7 +627,7 @@ test.describe("T3 undo", () => {
       // an await that is several hundred round trips long.
       expect(status).toBe(BUSY_REFUSAL);
       expect(justAfter).toBe(edited);
-      expect(writes.filter((w) => w.start > undoAt)).toHaveLength(0);
+      expect(writes.filter((w) => w.start > undoAt && w.start < drainAt)).toHaveLength(0);
       // Nothing was undone, so nothing is on the redo side.
       expect(redoStatus).toBe("Nothing to redo");
       expect(afterRedo).toBe(after);
@@ -820,9 +814,8 @@ test.describe("T3 undo", () => {
     const edited = (await faderReadout(page, "CH 1").textContent())!;
     expect(edited).not.toBe(before);
     await mark(page, "menu-undo");
-    await pushMenu(page, "edit-undo");
+    const menuUndoStatus = await statusAfter(page, () => pushMenu(page, "edit-undo"));
     await expect(faderReadout(page, "CH 1")).toHaveText(before);
-    const menuUndoStatus = await readStatus(page);
     expect(menuUndoStatus).toMatch(UNDO_APPLIED);
 
     await mark(page, "menu-redo");

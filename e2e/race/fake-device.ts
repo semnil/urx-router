@@ -1264,6 +1264,30 @@ export const mark = (page: Page, detail: string): Promise<void> =>
   page.evaluate((d) => window.__urxFake.mark(d), detail);
 
 /**
+ * The first status line written after `act` was started, passing over the link's own
+ * traffic lines (`→ device …`, `← device …`). A keypress resolves when it has been
+ * dispatched, not when the page has handled it, so the line read straight after one can
+ * still be whatever the previous flush wrote; and an action's verdict can land between two
+ * lines a sweep or a flush writes, the next of which replaces it. For an action that always
+ * writes a verdict — an undo / redo press, a wire deleted or drawn — this waits on that
+ * write rather than on a guessed delay or on the line still holding it.
+ */
+export async function statusAfter(page: Page, act: () => Promise<void>): Promise<string> {
+  const from = await page.evaluate(() => window.__urxFake.log.length);
+  await act();
+  // Polled in the page every few milliseconds and returned the moment the line is there:
+  // a case goes on to release a barrier or read a window straight after the press, and a
+  // wait that lags the write moves those steps later than the case placed them.
+  const line = await page.waitForFunction(
+    (n) =>
+      window.__urxFake.log.slice(n).find((e) => e.kind === "status" && !/^[←→]/.test(e.detail ?? ""))?.detail ?? false,
+    from,
+    { polling: 5, timeout: 10_000 },
+  );
+  return (await line.jsonValue()) as string;
+}
+
+/**
  * The BULK_CHANGE sentinel the unit emits on a scene recall: no address, no value, and
  * therefore no node — `follow.lookup` returns undefined and the settle escalates to a
  * re-read of the whole device. The largest event the link can deliver. src-tauri/src/vd.rs

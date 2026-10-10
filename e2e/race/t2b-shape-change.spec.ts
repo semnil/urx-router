@@ -22,6 +22,7 @@ import {
   depthOf,
   hasProbe,
   type TraceEvent,
+  statusAfter,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, deviceReflectsAfter } from "./analyze";
 import { CH1_FADER, CH2_FADER, faderOf, faderReadout, graphNode, openSsmcsScreen, screenRow } from "./ui";
@@ -532,8 +533,7 @@ test.describe("T2b shape-change", () => {
     // is actively cleared.
     await port(page, "out.usbmain_a:in").click();
     await mark(page, "delete-usb-a");
-    await page.keyboard.press("Delete");
-    await expect(page.locator("#statusbar")).toHaveText("Connection deleted");
+    expect(await statusAfter(page, () => page.keyboard.press("Delete"))).toBe("Connection deleted");
     await settleAfter(page, "delete-usb-a", 1200);
 
     let trace = await traceOf(page);
@@ -552,8 +552,9 @@ test.describe("T2b shape-change", () => {
 
     // Phase 2 — recreate it by dragging. The port refs come back, both slots, one flush.
     await mark(page, "recreate-usb-a");
-    await drag(page, port(page, "bus.stereo:out"), port(page, "out.usbmain_a:in"));
-    await expect(page.locator("#statusbar")).toHaveText("Connected");
+    expect(
+      await statusAfter(page, () => drag(page, port(page, "bus.stereo:out"), port(page, "out.usbmain_a:in"))),
+    ).toBe("Connected");
     await settleAfter(page, "recreate-usb-a", 1200);
 
     trace = await traceOf(page);
@@ -578,8 +579,7 @@ test.describe("T2b shape-change", () => {
     await recWire.dispatchEvent("pointerdown");
     await recWire.dispatchEvent("pointerup");
     await mark(page, "delete-record");
-    await page.keyboard.press("Delete");
-    await expect(page.locator("#statusbar")).toHaveText("Connection deleted");
+    expect(await statusAfter(page, () => page.keyboard.press("Delete"))).toBe("Connection deleted");
     await settleAfter(page, "delete-record", 1200);
 
     trace = await traceOf(page);
