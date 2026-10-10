@@ -78,7 +78,9 @@ const SELF = relative(SELF_ROOT, fileURLToPath(import.meta.url))
   .split(sep)
   .join("/");
 const SELF_FILES = new Set([SELF, SELF.replace(/\.mjs$/, ".test.mjs")]);
-const isSelf = (path) => SELF_FILES.has(relative(SELF_ROOT, resolve(path)).split(sep).join("/"));
+// `root` is the checkout the path is keyed from: a worktree carries its own copies of the two
+// files, at the same path within it.
+const isSelf = (path, root = SELF_ROOT) => SELF_FILES.has(relative(root, resolve(path)).split(sep).join("/"));
 /** The enforced shapes, each named for what it is so the finding can say it. */
 const RULES = [
   {
@@ -2763,10 +2765,10 @@ if (hook) {
   } catch {
     process.exit(0);
   }
-  if (!path || !EXTS.has(extname(path).toLowerCase()) || isSelf(path)) process.exit(0);
+  if (!path || !EXTS.has(extname(path).toLowerCase())) process.exit(0);
   if (!existsSync(path)) process.exit(0);
   const checkout = checkoutOf(path);
-  if (checkout === null) process.exit(0);
+  if (checkout === null || isSelf(canonical(path), checkout)) process.exit(0);
   const d = hookDecision(path, readFileSync(path, "utf8"), readLedger(checkout), checkout);
   if (d.exit === 0) process.exit(0);
   console.error(`${d.key}: ${d.findings.length} finding(s), ledger allows ${d.ceiling}`);

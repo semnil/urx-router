@@ -699,8 +699,10 @@ describe("which checkout an edited file belongs to", () => {
   });
 });
 
-// The same question asked of the PROGRAM, over worktrees git itself made, because the defect
-// it exists for sits between the functions above and the command line: a worktree made with
+// The same question asked of the PROGRAM, over worktrees git itself made, because the two
+// defects it exists for sit between the functions above and the command line. A worktree's
+// own copies of this checker and its pins were held to a ceiling of zero, since the
+// self-exclusion was asked of the main checkout's paths; and a worktree made with
 // `--relative-paths` carries a gitdir relative to its own `.git` file, which read against the
 // process's working directory belonged to no repository at all — exit 0, nothing checked.
 describe("the hook as the program, over real worktrees", () => {
@@ -773,6 +775,15 @@ describe("the hook as the program, over real worktrees", () => {
         expect(hook(main, join(wt, "src", "a.ts"), "// x (measured)\n", cwd), cwd).toBe(0);
         expect(hook(main, join(wt, "src", "a.ts"), "// x (measured)\n".repeat(2), cwd), cwd).toBe(2);
       }
+    });
+
+    // The worktree's checker is the real file, findings and all; its pin is written with one.
+    it(`excludes the checker and its pins in a worktree with ${kind}, by their path there`, () => {
+      const { main, wt } = checkouts(relativePaths);
+      expect(hook(main, join(wt, "scripts", "check-comment-provenance.mjs"), null, main)).toBe(0);
+      expect(hook(main, join(wt, "scripts", "check-comment-provenance.test.mjs"), "// x (measured)\n", main)).toBe(0);
+      expect(hook(main, join(wt, "src", "check-comment-provenance.mjs"), "// x (measured)\n", main)).toBe(2);
+      expect(hook(main, join(main, "src", "check-comment-provenance.test.mjs"), "// x (measured)\n", main)).toBe(2);
     });
 
     // Placed inside this checkout, a worktree of another repository is keyed by no ledger
