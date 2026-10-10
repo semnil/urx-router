@@ -23,14 +23,20 @@ export const wire = (page: Page, from: string, to: string): Locator =>
  *  ordinary tier had it written by hand in eighteen places across eight specs and
  *  forked into a named local four more times, comment and all.
  *
+ *  The press is released, as a click releases it. The undo history tracks each press
+ *  until its own pointer's release, and a dispatched press never released would stand
+ *  for the rest of the spec, keeping the idle backstop from closing a wheel or MIDI
+ *  entry.
+ *
  *  Two other shapes are not this one and are left alone. Five locators over four
  *  specs (ducker, nodeoff twice, nodestate, pathtrace) reach the painted path
  *  THROUGH the hit band's attributes, which is a different element. And e2e/race
- *  still spells the selector out ten times over six files, three of those lines
- *  dispatching the gesture (two of them one pointerdown/pointerup site, which this
- *  helper does not do) — left for a change whose own checks can run that tier. */
-export const selectWire = (page: Page, from: string, to: string): Promise<void> =>
-  wire(page, from, to).dispatchEvent("pointerdown");
+ *  still spells the selector out nine times over six files, two of those lines
+ *  dispatching the gesture as one pointerdown/pointerup site. */
+export async function selectWire(page: Page, from: string, to: string): Promise<void> {
+  await wire(page, from, to).dispatchEvent("pointerdown");
+  await wire(page, from, to).dispatchEvent("pointerup");
+}
 
 /** A node's own panel — the first rect in its group. Pointer geometry comes from
  *  here rather than the group's box, which also covers the Rec Point tap jack

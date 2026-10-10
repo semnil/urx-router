@@ -86,20 +86,25 @@ export class PlanHistory {
   private open = false;
   /** Suppresses recording while an undo's own reflect runs back through the funnel. */
   private applying = false;
-  /** Where the pointer is in a gesture. `down` means the gesture will close its own
-   *  entry, so the idle backstop must not split it at a pause; `drag` (it has moved)
-   *  is additionally what an undo refuses, since a drag holds start values and
-   *  element references in closures the repaint would rebuild under it. */
-  private press: "none" | "down" | "drag" = "none";
-  /** The `pointerType` of the pointerdown that opened the standing press. A wheel event's
-   *  `buttons`, like a mouse move's, reports a mouse's buttons and never a touch or a pen
-   *  contact, so only a mouse press can be read as released from either. */
-  private pressType = "";
+  /** Every press standing, by pointer id: the `pointerType` its pointerdown carried, and
+   *  whether that pointer has moved since. Each press ends at its own pointer's release, so
+   *  a mouse used while a finger drags neither ends the finger's press nor is ended by it. */
+  private readonly presses = new Map<number, { type: string; moved: boolean }>();
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private commitTimer: ReturnType<typeof setTimeout> | null = null;
   /** The last (canUndo, canRedo) pair reported, so only real transitions are. Seeded
    *  with the state a fresh history is in; the initial push is the caller's, once. */
   private reported = { undo: false, redo: false };
+
+  /** Where the pointers are in a gesture. `down` means the gesture will close its own
+   *  entry, so the idle backstop must not split it at a pause; `drag` (a pressed pointer
+   *  has moved) is additionally what an undo refuses, since a drag holds start values and
+   *  element references in closures the repaint would rebuild under it. */
+  private get press(): "none" | "down" | "drag" {
+    if (this.presses.size === 0) return "none";
+    for (const p of this.presses.values()) if (p.moved) return "drag";
+    return "down";
+  }
 
   constructor(private readonly hooks: PlanHistoryHooks) {
     this.stack = new PlanHistoryStack(hooks.getPlan());
@@ -115,38 +120,43 @@ export class PlanHistory {
         // rather than let this press join it — a late macrotask on a busy page
         // would otherwise merge two deliberate clicks into one entry.
         if (this.commitTimer !== null) this.commit();
-        this.press = "down";
-        this.pressType = e.pointerType;
+        this.presses.set(e.pointerId, { type: e.pointerType, moved: false });
         this.clearIdle();
       },
       true,
     );
-    const up = (): void => {
-      this.press = "none";
-      // One macrotask later: click and dblclick are dispatched after pointerup, so
-      // a chip toggle's edit arrives after the gesture that produced it ended.
-      this.commitSoon();
+    // The gesture ends when the last press does. One macrotask later: click and dblclick
+    // are dispatched after pointerup, so a chip toggle's edit arrives after the gesture
+    // that produced it ended. A release while another pointer is still down commits
+    // nothing: what both pointers edit is one entry, closed when the second one lifts.
+    const ended = (): void => {
+      if (this.presses.size === 0) this.commitSoon();
+    };
+    const up = (e: PointerEvent): void => {
+      this.presses.delete(e.pointerId);
+      ended();
     };
     window.addEventListener(
       "pointermove",
       (e) => {
-        if (this.press === "none") return;
-        // A mouse moving with no button held has released a mouse press — the native context
-        // menu takes a right press's release — so the move ends it as the release would. It
-        // says nothing about a touch or a pen contact, which stays down until its own release.
-        if (this.pressType === "mouse" && mouseMovedUnpressed(e)) return up();
-        // Only the transition matters. A press that never moves is not a drag, so a
-        // script-dispatched pointerdown with no matching pointerup (how a wire is
-        // selected) cannot wedge the refusal.
-        if (this.press !== "down") return;
-        this.press = "drag";
+        const p = this.presses.get(e.pointerId);
+        if (!p) return;
+        // A mouse moving with no button held has released its own press — the native context
+        // menu takes a right press's release — so the move ends it as the release would. A
+        // touch or a pen contact is ended by its own release alone.
+        if (mouseMovedUnpressed(e)) return up(e);
+        // Only the transition matters, and only the pressed pointer's own move makes it. A
+        // press that never moves is not a drag, so a script-dispatched pointerdown with no
+        // matching pointerup cannot wedge the refusal.
+        if (p.moved) return;
+        p.moved = true;
         this.clearIdle();
       },
       true,
     );
     window.addEventListener("pointerup", up, true);
     window.addEventListener("pointercancel", up, true);
-    // A wheel turned with no button held ends a mouse press whose release never reached
+    // A wheel turned with no button held ends every mouse press whose release never reached
     // the page, as an unpressed move does. A wheel edit has no boundary of its own, so a
     // press left standing would keep the idle backstop from ever closing its entry. A touch
     // or pen press is left standing: the wheel's `buttons` does not show its contact, so a
@@ -157,13 +167,18 @@ export class PlanHistory {
     window.addEventListener(
       "wheel",
       (e) => {
-        if (this.press !== "none" && this.pressType === "mouse" && e.buttons === 0) this.press = "none";
+        if (e.buttons !== 0) return;
+        for (const [id, p] of this.presses) if (p.type === "mouse") this.presses.delete(id);
       },
       { capture: true, passive: true },
     );
     // A press that never lifts because the window went away must not leave a drag
-    // standing — the same reasoning fine.ts applies to a missed Shift keyup.
-    window.addEventListener("blur", up);
+    // standing — the same reasoning fine.ts applies to a missed Shift keyup. Every press
+    // ends here, since a release taken by another application is never delivered.
+    window.addEventListener("blur", () => {
+      this.presses.clear();
+      ended();
+    });
     window.addEventListener(
       "keyup",
       (e) => {

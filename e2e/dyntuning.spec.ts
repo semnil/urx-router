@@ -499,37 +499,50 @@ test("Escape mid-drag ends the cap's drag with the screen", async ({ page }) => 
 // A finger drags the cap the way a mouse does. The touches go through Chromium's own input
 // pipeline over CDP, so the engine decides whether the gesture is the page's or a pan — and
 // a pan sends pointercancel after the first move, which leaves the cap where that move put it.
-// The mouse drag along the same path is the reference the finger has to end at.
-test("the threshold cap follows a touch drag to where the finger lifts", async ({ page }) => {
-  await openFromInspector(page, "ch1");
-  const cap = screenBox(page).locator("#dyn-threshold-cap");
-  const slider = paramRow(page, "Threshold").locator("input[type=range]");
-  await expect(cap).toHaveAttribute("aria-valuenow", "-50");
-  const box = (await cap.boundingBox())!;
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
+// The mouse drag along the same path is the reference the finger has to end at. The mouse used
+// part-way through the finger's drag — moved with no button held, or clicked on the screen's
+// title — is not that finger lifting, and the cap stays on the finger.
+test.describe("the threshold cap under a finger", () => {
+  for (const meanwhile of ["nothing", "a mouse move with no button held", "a mouse click elsewhere"] as const) {
+    test(`follows a touch drag to where the finger lifts, with ${meanwhile} part-way`, async ({ page }) => {
+      await openFromInspector(page, "ch1");
+      const cap = screenBox(page).locator("#dyn-threshold-cap");
+      const slider = paramRow(page, "Threshold").locator("input[type=range]");
+      await expect(cap).toHaveAttribute("aria-valuenow", "-50");
+      const box = (await cap.boundingBox())!;
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
 
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x, y + 50, { steps: 5 });
-  await page.mouse.up();
-  const byMouse = (await cap.getAttribute("aria-valuenow"))!;
-  // The premise: the path is long enough to take the cap past where one move puts it.
-  expect(Number(byMouse)).toBeLessThan(-56);
-  await slider.fill("-50");
-  await expect(cap).toHaveAttribute("aria-valuenow", "-50");
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x, y + 50, { steps: 5 });
+      await page.mouse.up();
+      const byMouse = (await cap.getAttribute("aria-valuenow"))!;
+      // The premise: the path is long enough to take the cap past where one move puts it.
+      expect(Number(byMouse)).toBeLessThan(-56);
+      await slider.fill("-50");
+      await expect(cap).toHaveAttribute("aria-valuenow", "-50");
+      // Parked on the screen's title, off every control.
+      const title = (await screenBox(page).locator("#dyn-screen-title").boundingBox())!;
+      await page.mouse.move(title.x + 5, title.y + title.height / 2);
 
-  const cdp = await page.context().newCDPSession(page);
-  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-  const touch = (type: "touchStart" | "touchMove" | "touchEnd", dy = 0) =>
-    cdp.send("Input.dispatchTouchEvent", {
-      type,
-      touchPoints: type === "touchEnd" ? [] : [{ x, y: y + dy, radiusX: 1, radiusY: 1 }],
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+      const touch = (type: "touchStart" | "touchMove" | "touchEnd", dy = 0) =>
+        cdp.send("Input.dispatchTouchEvent", {
+          type,
+          touchPoints: type === "touchEnd" ? [] : [{ x, y: y + dy, radiusX: 1, radiusY: 1 }],
+        });
+      await touch("touchStart");
+      await touch("touchMove", 10);
+      if (meanwhile === "a mouse move with no button held")
+        await page.mouse.move(title.x + 25, title.y + title.height / 2, { steps: 2 });
+      if (meanwhile === "a mouse click elsewhere") await page.mouse.click(title.x + 5, title.y + title.height / 2);
+      for (let i = 2; i <= 5; i++) await touch("touchMove", i * 10);
+      await touch("touchEnd");
+      await expect(cap).toHaveAttribute("aria-valuenow", byMouse);
     });
-  await touch("touchStart");
-  for (let i = 1; i <= 5; i++) await touch("touchMove", i * 10);
-  await touch("touchEnd");
-  await expect(cap).toHaveAttribute("aria-valuenow", byMouse);
+  }
 });
 
 test("prints — for a tap that has not reported, never a floor value", async ({ page }) => {

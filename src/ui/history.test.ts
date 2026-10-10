@@ -625,6 +625,80 @@ describe("refusals", () => {
     }
   });
 
+  // Each press ends at its own pointer's release. A second pointer pressed and lifted while
+  // the first drags — the mouse clicking while a finger drags, or a finger tapping while the
+  // mouse drags — neither ends the drag nor splits its entry.
+  describe("two pointers at once", () => {
+    const pointer =
+      (pointerId: number, pointerType: string) =>
+      (type: "pointerdown" | "pointermove" | "pointerup", buttons: number): void =>
+        void window.dispatchEvent(new PointerEvent(type, { pointerId, pointerType, buttons, bubbles: true }));
+    const cases: [string, string, string][] = [
+      ["touch", "a mouse click", "mouse"],
+      ["mouse", "a finger's tap", "touch"],
+      ["pen", "a mouse click", "mouse"],
+    ];
+
+    it.each(cases)("keeps a %s drag refused and one entry across %s", (dragType, _, otherType) => {
+      const drag = pointer(2, dragType);
+      const other = pointer(3, otherType);
+      const h = harness();
+      h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
+      idle();
+      drag("pointerdown", 1);
+      drag("pointermove", 1);
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+      other("pointerdown", 1);
+      h.history.undo();
+      expect(h.statuses.at(-1), "the other pointer pressed").toBe("Finish the current drag before undoing");
+      other("pointerup", 0);
+      settle();
+      h.history.undo();
+      expect(h.statuses.at(-1), "the other pointer lifted").toBe("Finish the current drag before undoing");
+      // The backstop stays off while the drag stands, so a pause under it does not split it.
+      drag("pointermove", 1);
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+      idle();
+      drag("pointermove", 1);
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 3 }));
+      drag("pointerup", 0);
+      settle();
+      h.history.undo();
+      settle();
+      expect(h.plan.nodeParams.ch1, "the whole drag is one entry").toEqual({ hpf: true });
+    });
+
+    // The press a script dispatches with no release carries no pointer type and no buttons.
+    // Another pointer's move is not that press moving, so it never becomes a drag to refuse —
+    // neither the mouse hovering nor a finger whose press this page never saw.
+    it("does not take another pointer's move for a standing press moving", () => {
+      const h = harness();
+      h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
+      idle();
+      window.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      pointer(1, "mouse")("pointermove", 0);
+      pointer(5, "touch")("pointermove", 1);
+      h.history.undo();
+      expect(h.statuses.at(-1)).toBe("Undid the change to CH1");
+    });
+
+    // A mouse press whose release the native context menu took ends at that mouse's move with
+    // no button held. The finger dragging meanwhile is not that mouse, and stays a drag.
+    it("ends only the moving mouse's own press at its move with no button held", () => {
+      const drag = pointer(2, "touch");
+      const mouse = pointer(1, "mouse");
+      const h = harness();
+      h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
+      idle();
+      drag("pointerdown", 1);
+      drag("pointermove", 1);
+      mouse("pointerdown", 2);
+      mouse("pointermove", 0);
+      h.history.undo();
+      expect(h.statuses.at(-1)).toBe("Finish the current drag before undoing");
+    });
+  });
+
   it("refuses a rate change while a device action holds the rate", () => {
     const h = harness();
     h.edit((p) => (p.sampleRate = 96000));

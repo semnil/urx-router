@@ -317,8 +317,8 @@ test.describe("T0b baseline sweeps", () => {
         run: () => drag(page, port(page, "in.micline_1_2:out"), port(page, "ch1:in")),
       },
       {
-        // The unmatched pointerdown every e2e spec uses to select a wire. Kept in the
-        // vocabulary deliberately: it leaves the history's press state "down".
+        // An unmatched pointerdown that selects a wire. Kept in the vocabulary deliberately:
+        // it leaves the history's press state "down" until a window blur.
         label: "select a wire by dispatched pointerdown",
         run: async () => {
           await wire("in.micline_1_2:out", "ch1:in").dispatchEvent("pointerdown");

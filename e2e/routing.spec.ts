@@ -84,6 +84,7 @@ test("refuses to delete a fixed CH -> STEREO wire", async ({ page }) => {
   // The first wire drawn is a seeded fixed send (off sends paint first); selecting it and
   // pressing Delete must leave it in place and report it as fixed.
   await wires(page).first().dispatchEvent("pointerdown");
+  await wires(page).first().dispatchEvent("pointerup");
   await page.keyboard.press("Delete");
   await expect(wires(page)).toHaveCount(SEEDED);
   await expect(page.locator("#statusbar")).toHaveText("Fixed connection — cannot be removed");
@@ -193,6 +194,7 @@ test("deletes a selected connection with the Delete key", async ({ page }) => {
   // The user wire is the last one drawn; selecting it goes through its
   // pointerdown handler.
   await wires(page).last().dispatchEvent("pointerdown");
+  await wires(page).last().dispatchEvent("pointerup");
   await page.keyboard.press("Delete");
   await expect(wires(page)).toHaveCount(SEEDED);
   await expect(page.locator("#statusbar")).toHaveText("Connection deleted");
@@ -205,6 +207,7 @@ test("mirrors a paired channel's source onto its partner (CH1/CH2)", async ({ pa
 
   // Deleting either source wire clears the partner's mirrored source too.
   await wires(page).last().dispatchEvent("pointerdown");
+  await wires(page).last().dispatchEvent("pointerup");
   await page.keyboard.press("Delete");
   await expect(wires(page)).toHaveCount(SEEDED);
 });

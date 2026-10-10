@@ -524,10 +524,11 @@ class (l) had already fixed on the param side.
 
 - Where a value is the point, prefer focus plus key stepping over a synthetic drag. It is the most
   robust path, and one press equals one undo entry
-- The wire-selection trick (a dispatched pointerdown with no pointerup) must be used deliberately and
-  its effect on press state recorded in the trace: it leaves a press standing that carries no pointer type,
-  and a buttonless move or wheel ends only a mouse press, so the idle backstop stays suppressed until a
-  `pointerup`, a `pointercancel` or a window `blur`
+- A dispatched pointerdown with no pointerup must be used deliberately and its effect on press state
+  recorded in the trace: it leaves a press standing that carries no pointer type, each press ends only at
+  its own pointer's release, and a buttonless move or wheel ends only a mouse press, so the idle backstop
+  stays suppressed until a window `blur`. Selecting a wire does not need one: `selectWire` in
+  `e2e/graph-helpers.ts` dispatches the release as well
 - Every step records **both the intended and the achieved offset**. A ladder is only interpretable
   with the achieved values beside the intended ones — and a rung is placed against the achieved
   figure, never the intended one. The driver's own cost between the sleep and the mark (clicks,
@@ -952,9 +953,9 @@ agreement, zero findings.
   "down" for ever and suppressed the 300 ms idle backstop, so **two wheel bursts 1.2 s apart collapsed into
   one entry** where the control arm produced two (achieved gaps 121 ms). A wheel turned with no button held
   now ends a mouse press, as an unpressed move does, and the orphan arm — its pointerdown dispatched as a
-  mouse press — splits as the control arm does. A touch or pen press is left to its own release. The
-  standard e2e wire-selection trick dispatches no pointer type, and dispatched that way the orphan arm still
-  collapses into one entry
+  mouse press — splits as the control arm does. A touch or pen press is left to its own release. A press
+  dispatched with no pointer type and no release still collapses the arm into one entry, so the e2e
+  wire-selection helper releases the press it dispatches
 - **An edit made while the device was being touched was silently un-undoable — fixed.** Every
   direct-follow notify ran `planHistory.rebase()`, which drops the open entry and cancels the 300 ms
   idle backstop, so a wheel edit landing between two notifies recorded nothing and the Ctrl+Z spent the
@@ -1520,10 +1521,11 @@ Tab from the select lost its focus and a tap lost its click (the T1 finding abov
 
 The fix: the `focusout` runs the release in the next task, once the focus has landed, and a press that began inside
 the panel is a fourth thing the gate holds for — from its `pointerdown` until its click has reached the target's own
-handlers, or, for a press that produces no click in the panel, until the task after the next pointer release, or the
+handlers, or, for a press that produces no click in the panel, until the task after its own pointer's release, or the
 window coming back from a release it never heard. A press on a `<select>` is left to the picker's own hold. The press
 does not wait for the app-wide count of pointers down that `dom.ts` keeps for the inert holds to reach zero: the
-ordinary tier's `selectWire` dispatches a `pointerdown` no release follows. Measured 2026-10-03: with the hold released
+ordinary tier's `selectWire` dispatched a `pointerdown` no release followed, and a press on the board is never one
+the panel's own hold tracks. Measured 2026-10-03: with the hold released
 on that count, four ordinary-tier cases failed (two in `directout.spec.ts`, one in `midi.spec.ts`, one in
 `inventory.spec.ts`); in the first `directout.spec.ts` case the `pointerdown` was still counted when the panel stopped
 rebuilding, and a window `focus` dispatched before the press, which clears the count, made it pass. Released on any
