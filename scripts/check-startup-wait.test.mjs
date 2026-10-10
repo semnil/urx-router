@@ -133,7 +133,7 @@ describe("which app the check names", () => {
 });
 
 const which = (cmd) => spawnSync("sh", ["-c", `command -v ${cmd}`], { encoding: "utf8" }).stdout.trim();
-const tools = ["pgrep", "lsof"].map(which);
+const tools = ["pgrep", "lsof", "bash"].map(which);
 
 describe.skipIf(tools.some((path) => path === ""))("which app the check names, among real processes", () => {
   const root = mkdtempSync(join(tmpdir(), "startup-wait-"));
@@ -145,20 +145,18 @@ describe.skipIf(tools.some((path) => path === ""))("which app the check names, a
   const launch = (name) => {
     const dir = join(root, name, "src-tauri");
     mkdirSync(dir, { recursive: true });
-    // A link to node: a process started through a link takes the link's name, and node runs
-    // under any name, where a multi-call coreutils binary refuses a name that is not its own.
+    // A link to bash: a process started through a link takes the link's name and bash keeps it,
+    // and a builtin read on a pipe nothing writes holds it up with no child to leave behind.
     const binary = join(dir, "urx-router");
-    symlinkSync(process.execPath, binary);
-    const child = spawn(binary, ["-e", "setTimeout(() => {}, 30000)"], {
-      cwd: dir,
-      stdio: ["ignore", "ignore", "pipe"],
-    });
+    symlinkSync(tools[2], binary);
+    const child = spawn(binary, ["-c", "read -t 30 _"], { cwd: dir, stdio: ["pipe", "ignore", "pipe"] });
     children.push(child);
     const dummy = { tree: join(root, name), pid: String(child.pid), exit: null, stderr: "" };
     child.stderr.on("data", (chunk) => (dummy.stderr += chunk));
     child.on("exit", (code, signal) => (dummy.exit = `${code}/${signal}`));
     return dummy;
   };
+  const nameOf = (pid) => spawnSync("ps", ["-o", "comm=", "-p", pid], { encoding: "utf8" }).stdout.trim();
   // Waits until the check names the dummy; a dummy that is not running is reported as such,
   // with what it printed and what the process table holds under the app's name, rather than
   // as a check that answered null.
@@ -168,7 +166,7 @@ describe.skipIf(tools.some((path) => path === ""))("which app the check names, a
         const table = spawnSync("pgrep", ["-lx", "urx-router"], { encoding: "utf8" }).stdout.trim();
         expect(
           { answer: devAppPid(dummy.tree), exit: dummy.exit, stderr: dummy.stderr },
-          `pgrep -lx urx-router: [${table}]; the link resolves to ${realpathSync(process.execPath)}`,
+          `pgrep -lx urx-router: [${table}]; the dummy runs as [${nameOf(dummy.pid)}], through a link to ${realpathSync(tools[2])}`,
         ).toEqual({ answer: dummy.pid, exit: null, stderr: "" });
       },
       { timeout: 5000 },
