@@ -290,7 +290,7 @@ single source of truth. This table states what each case measures.
 | id | Surface | What it measures |
 | --- | --- | --- |
 | `undo-pointer-boundary-ladder` | console | Deferred commit, pending landing and drag collapse, straddling the macrotask |
-| `undo-drag-latch-and-orphan-press` | mixed | A synthetic pointerdown with no pointerup suppressing the idle backstop indefinitely |
+| `undo-drag-latch-and-orphan-press` | mixed | A synthetic pointerdown with no pointerup, and the buttonless wheel that ends the press it leaves standing |
 | `undo-keyup-autorepeat-boundary` | console | Stepping keys are boundaries and character keys are not, in one run |
 | `undo-focusout-text-boundary` | graph | The only shape where the idle interval is deliberately exceeded without wanting a commit |
 | `undo-idle-backstop-wheel-ladder` | inspector | The only gesture with no DOM boundary of its own, laddered across the constant that defines it |
@@ -519,7 +519,8 @@ class (l) had already fixed on the param side.
 - Where a value is the point, prefer focus plus key stepping over a synthetic drag. It is the most
   robust path, and one press equals one undo entry
 - The wire-selection trick (a dispatched pointerdown with no pointerup) must be used deliberately and
-  its effect on press state recorded in the trace: it silently suppresses the idle backstop
+  its effect on press state recorded in the trace: it leaves a press standing, which suppresses the idle
+  backstop until a buttonless move or wheel ends it
 - Every step records **both the intended and the achieved offset**. A ladder is only interpretable
   with the achieved values beside the intended ones — and a rung is placed against the achieved
   figure, never the intended one. The driver's own cost between the sleep and the mark (clicks,
@@ -939,9 +940,11 @@ agreement, zero findings.
 
 **T3 — undo**
 
-- **A dispatched pointerdown with no pointerup** (the standard e2e wire-selection trick) leaves the
-  press "down" for ever and suppresses the 300 ms idle backstop: **two wheel bursts 1.2 s apart collapse
-  into one entry**, where the control arm produces two (achieved gaps 121 ms)
+- **A dispatched pointerdown with no pointerup left wheel bursts un-split — fixed.** The standard e2e
+  wire-selection trick left the press "down" for ever and suppressed the 300 ms idle backstop, so **two
+  wheel bursts 1.2 s apart collapsed into one entry** where the control arm produced two (achieved gaps
+  121 ms). A wheel turned with no button held now ends the press, as an unpressed move does, and the
+  orphan arm splits as the control arm does
 - **An edit made while the device was being touched was silently un-undoable — fixed.** Every
   direct-follow notify ran `planHistory.rebase()`, which drops the open entry and cancels the 300 ms
   idle backstop, so a wheel edit landing between two notifies recorded nothing and the Ctrl+Z spent the

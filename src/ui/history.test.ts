@@ -548,6 +548,40 @@ describe("refusals", () => {
       idle();
       expect(undoDepth(h)).toBe(1);
     });
+
+    // A wheel edit has no boundary of its own, so a press left standing — a wire selected
+    // by a pointerdown that no pointerup followed — would keep the backstop from closing
+    // its entry, and two bursts seconds apart would read as one.
+    const wheel = (buttons: number): void =>
+      void window.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, buttons, bubbles: true }));
+
+    it("ends a press at a wheel turned with no button held, so the backstop closes each burst", () => {
+      const h = harness();
+      press("pointerdown");
+      wheel(0);
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+      wheel(0);
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+      idle();
+      wheel(0);
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 3 }));
+      idle();
+      expect(undoDepth(h)).toBe(2);
+    });
+
+    it("keeps a press whose button is held across a wheel", () => {
+      const h = harness();
+      mouse("pointerdown", { buttons: 1 });
+      wheel(1);
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+      idle();
+      wheel(1);
+      h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+      idle();
+      press("pointerup");
+      settle();
+      expect(undoDepth(h)).toBe(1);
+    });
   });
 
   it("refuses a rate change while a device action holds the rate", () => {

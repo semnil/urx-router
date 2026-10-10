@@ -140,6 +140,19 @@ export class PlanHistory {
     );
     window.addEventListener("pointerup", up, true);
     window.addEventListener("pointercancel", up, true);
+    // A wheel turned with no button held ends a press whose release never reached the
+    // page, as an unpressed move does. A wheel edit has no boundary of its own, so a press
+    // left standing would keep the idle backstop from ever closing its entry. Captured, so
+    // the press is over before the wheel's own edit arrives at note(); nothing is committed
+    // here, since the wheel's edit and the notches after it are one entry that the backstop
+    // closes.
+    window.addEventListener(
+      "wheel",
+      (e) => {
+        if (this.press !== "none" && e.buttons === 0) this.press = "none";
+      },
+      { capture: true, passive: true },
+    );
     // A press that never lifts because the window went away must not leave a drag
     // standing — the same reasoning fine.ts applies to a missed Shift keyup.
     window.addEventListener("blur", up);

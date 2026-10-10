@@ -168,7 +168,7 @@ test.describe("T3 undo", () => {
   // ---------------------------------------------------------------------------
   // undo-drag-latch-and-orphan-press
   // ---------------------------------------------------------------------------
-  test("a script-dispatched pointerdown with no pointerup wedges the idle backstop", async ({ page }) => {
+  test("a script-dispatched pointerdown with no pointerup does not wedge the idle backstop", async ({ page }) => {
     // An entry on the stack FIRST. run() peeks the stack before it consults blocked()
     // or the press state, so against an empty stack every press state answers
     // "nothing to undo" alike and nothing about a press is observable. Selected with a
@@ -287,13 +287,15 @@ test.describe("T3 undo", () => {
     const split = gapsA1.concat(gapsA2).some((g) => g >= 300);
     if (split) expect(depthControl).toBeGreaterThan(2);
     else expect(depthControl).toBe(2);
-    // PINNED DEFECT. The unmatched pointerdown leaves press === "down" forever, and
-    // note() refuses to arm the idle backstop while a press is down — so nothing ever
-    // closes the entry and two bursts seconds apart collapse into one. The two bursts
-    // are identical in both arms and the stack is empty when each pair starts; the
-    // only variable is the missing pointerup, which is what attributes the collapse to
-    // the orphan press rather than to the idle timer.
-    expect(depthOrphan).toBe(1);
+    // The unmatched pointerdown leaves a press standing, and note() does not arm the idle
+    // backstop while one is — so without anything to end it, two bursts seconds apart
+    // would collapse into one entry. A wheel turned with no button held ends it, as an
+    // unpressed move does, so the orphan arm splits exactly as the control arm does. The
+    // two bursts are identical in both arms and the stack is empty when each pair starts;
+    // the only variable is the missing pointerup.
+    const splitOrphan = gapsB1.concat(gapsB2).some((g) => g >= 300);
+    if (splitOrphan) expect(depthOrphan).toBeGreaterThan(2);
+    else expect(depthOrphan).toBe(2);
   });
 
   // ---------------------------------------------------------------------------
