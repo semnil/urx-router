@@ -133,7 +133,7 @@ describe("which app the check names", () => {
 });
 
 const which = (cmd) => spawnSync("sh", ["-c", `command -v ${cmd}`], { encoding: "utf8" }).stdout.trim();
-const tools = ["pgrep", "lsof", "sleep"].map(which);
+const tools = ["pgrep", "lsof"].map(which);
 
 describe.skipIf(tools.some((path) => path === ""))("which app the check names, among real processes", () => {
   const root = mkdtempSync(join(tmpdir(), "startup-wait-"));
@@ -145,11 +145,14 @@ describe.skipIf(tools.some((path) => path === ""))("which app the check names, a
   const launch = (name) => {
     const dir = join(root, name, "src-tauri");
     mkdirSync(dir, { recursive: true });
-    // A link rather than a copy: macOS kills a copied system binary at exec, and a process
-    // started through a link takes the link's name.
+    // A link to node: a process started through a link takes the link's name, and node runs
+    // under any name, where a multi-call coreutils binary refuses a name that is not its own.
     const binary = join(dir, "urx-router");
-    symlinkSync(tools[2], binary);
-    const child = spawn(binary, ["30"], { cwd: dir, stdio: ["ignore", "ignore", "pipe"] });
+    symlinkSync(process.execPath, binary);
+    const child = spawn(binary, ["-e", "setTimeout(() => {}, 30000)"], {
+      cwd: dir,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
     children.push(child);
     const dummy = { tree: join(root, name), pid: String(child.pid), exit: null, stderr: "" };
     child.stderr.on("data", (chunk) => (dummy.stderr += chunk));
@@ -165,7 +168,7 @@ describe.skipIf(tools.some((path) => path === ""))("which app the check names, a
         const table = spawnSync("pgrep", ["-lx", "urx-router"], { encoding: "utf8" }).stdout.trim();
         expect(
           { answer: devAppPid(dummy.tree), exit: dummy.exit, stderr: dummy.stderr },
-          `pgrep -lx urx-router: [${table}]; the link resolves to ${realpathSync(tools[2])}`,
+          `pgrep -lx urx-router: [${table}]; the link resolves to ${realpathSync(process.execPath)}`,
         ).toEqual({ answer: dummy.pid, exit: null, stderr: "" });
       },
       { timeout: 5000 },
