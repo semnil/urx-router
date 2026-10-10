@@ -2616,7 +2616,10 @@ export function checkoutOf(path, root = ROOT) {
     if (existsSync(git)) {
       if (statSync(git).isDirectory()) return null;
       const target = /^gitdir:\s*(.+)$/m.exec(readFileSync(git, "utf8"))?.[1]?.trim();
-      return target && !escapesRoot(relative(join(top, ".git", "worktrees"), canonical(target))) ? dir : null;
+      // A relative gitdir (`git worktree add --relative-paths`) is relative to the `.git` file.
+      return target && !escapesRoot(relative(join(top, ".git", "worktrees"), canonical(resolve(dir, target))))
+        ? dir
+        : null;
     }
     const up = dirname(dir);
     if (up === dir) break;

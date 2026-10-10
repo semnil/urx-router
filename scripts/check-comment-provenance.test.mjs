@@ -18,7 +18,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { delimiter, dirname, extname, join, relative, sep } from "node:path";
+import { delimiter, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { atLeast, newestPython } from "./python.test-util.mjs";
@@ -697,6 +697,91 @@ describe("which checkout an edited file belongs to", () => {
     const { main } = tree();
     expect(checkoutOf(join(main, "src", "a.ts"), main)).toBe(main);
   });
+});
+
+// The same question asked of the PROGRAM, over worktrees git itself made, because the defect
+// it exists for sits between the functions above and the command line: a worktree made with
+// `--relative-paths` carries a gitdir relative to its own `.git` file, which read against the
+// process's working directory belonged to no repository at all — exit 0, nothing checked.
+describe("the hook as the program, over real worktrees", () => {
+  const made = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  // An empty git configuration: the operator's own could sign commits or name a hook path.
+  const beside = mkdtempSync(join(tmpdir(), "prov-hook-config-"));
+  made.push(beside);
+  const config = join(beside, "empty-gitconfig");
+  writeFileSync(config, "");
+  const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_SYSTEM: config, GIT_CONFIG_NOSYSTEM: "1" };
+  const git = (cwd, ...args) =>
+    execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+      encoding: "utf8",
+      env: gitEnv,
+    });
+  /** A main checkout carrying this checker, a worktree of it, and a worktree of ANOTHER
+   *  repository placed inside it — both made with `--relative-paths` or both without. */
+  const checkouts = (relativePaths) => {
+    const main = realpathSync(mkdtempSync(join(tmpdir(), "prov-hook-")));
+    const other = realpathSync(mkdtempSync(join(tmpdir(), "prov-other-")));
+    made.push(main, other);
+    const flag = relativePaths ? ["--relative-paths"] : [];
+    git(main, "init", "-q", "-b", "main");
+    mkdirSync(join(main, "scripts"));
+    copyFileSync(join(HERE, "check-comment-provenance.mjs"), join(main, "scripts", "check-comment-provenance.mjs"));
+    writeFileSync(join(main, "scripts", "comment-provenance-baseline.json"), '{ "files": { "src/a.ts": 1 } }\n');
+    writeFileSync(join(main, ".gitignore"), ".claude/\nvendor/\n");
+    git(main, "add", ".");
+    git(main, "commit", "-q", "-m", "init");
+    const wt = join(main, ".claude", "worktrees", "w");
+    git(main, "worktree", "add", "-q", ...flag, "-b", "w", wt);
+    git(other, "init", "-q", "-b", "main");
+    writeFileSync(join(other, "x"), "x\n");
+    git(other, "add", ".");
+    git(other, "commit", "-q", "-m", "init");
+    const foreign = join(main, "vendor", "o");
+    git(other, "worktree", "add", "-q", ...flag, "-b", "o", foreign);
+    return { main, wt, foreign };
+  };
+  /** The main checkout's copy run as the hook on one edited file (written first unless
+   *  `src` is null); its exit status. */
+  const hook = (main, file, src, cwd) => {
+    mkdirSync(dirname(file), { recursive: true });
+    if (src !== null) writeFileSync(file, src);
+    const run = spawnSync(process.execPath, [join(main, "scripts", "check-comment-provenance.mjs"), "--hook"], {
+      cwd,
+      input: JSON.stringify({ tool_input: { file_path: file } }),
+      encoding: "utf8",
+    });
+    return run.status;
+  };
+
+  for (const relativePaths of [false, true]) {
+    const kind = relativePaths ? "a relative gitdir" : "an absolute gitdir";
+
+    it(`makes a worktree whose .git file carries ${kind}`, () => {
+      const { wt } = checkouts(relativePaths);
+      const target = /^gitdir:\s*(.+)$/m.exec(readFileSync(join(wt, ".git"), "utf8"))[1].trim();
+      expect(isAbsolute(target)).toBe(!relativePaths);
+    });
+
+    // Run from three working directories, since a relative gitdir read against the process's
+    // own resolves correctly from exactly one of them: the worktree's top.
+    it(`holds a worktree with ${kind} to its own ledger, from any working directory`, () => {
+      const { main, wt } = checkouts(relativePaths);
+      for (const cwd of [tmpdir(), main, wt]) {
+        expect(hook(main, join(wt, "src", "a.ts"), "// x (measured)\n", cwd), cwd).toBe(0);
+        expect(hook(main, join(wt, "src", "a.ts"), "// x (measured)\n".repeat(2), cwd), cwd).toBe(2);
+      }
+    });
+
+    // Placed inside this checkout, a worktree of another repository is keyed by no ledger
+    // here; read as this checkout's, its file would be refused at a ceiling of zero.
+    it(`leaves a worktree of another repository with ${kind} unchecked`, () => {
+      const { main, foreign } = checkouts(relativePaths);
+      expect(hook(main, join(foreign, "src", "a.ts"), "// x (measured)\n".repeat(2), main)).toBe(0);
+    });
+  }
 });
 
 describe("what counts as outside the repository", () => {
