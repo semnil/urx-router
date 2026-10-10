@@ -450,7 +450,7 @@ test.describe("Tzb tail", () => {
     const status = await page.evaluate(() => document.getElementById("statusbar")?.textContent ?? "");
 
     // Which plan a live writer lands in. Nothing replaced the plan object on this
-    // path (the readback mutates it in place), so the MIDI cache is still pointing at
+    // path (the readback mutates it in place), so MIDI still resolves against
     // the plan on screen and the CC moves what the operator can see.
     const beforeCc = (await faderReadout(page, "CH 1").textContent())!;
     await pushMidi(page, cc(100));
@@ -499,10 +499,10 @@ test.describe("Tzb tail", () => {
   // drop-read-reject-mid-fetch, the restore half — the failure the catalog named.
   // Cancelling a fetch used to replace `plan` with a pre-read clone through
   // rerenderPlan, which (unlike loadPlan) does not call midi.onModelChanged, so every
-  // BoundControl in the MIDI cache closed over the discarded object. Both halves of
+  // BoundControl MIDI held closed over the discarded object. Both halves of
   // that are gone: the read works on a private copy, so a cancel has nothing to restore
-  // and never replaces the object; and `resolve` drops its memo when the plan it was
-  // bound against is no longer the one main.ts holds, so no future replacement path has
+  // and never replaces the object; and `resolve` asks the catalogue against the plan
+  // main.ts holds on every call, with no memo to drop, so no future replacement path has
   // to remember to notify midi either.
   //
   // Three phases, because "the readout moved" on its own cannot tell a live binding
@@ -661,7 +661,7 @@ test.describe("Tzb tail", () => {
     await settleAfter(page, "release", 1200, 15_000);
 
     // The second operator resolves against the model now on screen: loadPlan calls
-    // midi.onModelChanged, which drops the bound cache and reloads the per-model
+    // midi.onModelChanged, which reloads the per-model
     // mappings. Without that reload the URX22 mapping set would never be installed.
     await expect(faderReadout(page, "CH 1")).toBeVisible();
     const freshCh1 = (await faderReadout(page, "CH 1").textContent())!;
@@ -703,7 +703,7 @@ test.describe("Tzb tail", () => {
     // switch that does it, not the teardown that preceded it.
     expect(depthAfterLiveOff.undo).toBeGreaterThan(0);
     expect(depthAfterSwitch).toEqual({ undo: 0, redo: 0 });
-    // …and the MIDI cache was re-pointed, so the second operator resolves against the
+    // …and MIDI resolves on every call, so the second operator resolves against the
     // model now on screen.
     expect(afterCc).not.toBe(freshCh1);
   });
