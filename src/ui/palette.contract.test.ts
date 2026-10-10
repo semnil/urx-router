@@ -133,6 +133,30 @@ describe("the wire palette's two layers", () => {
     }
   });
 
+  // The node rail colours the board's kind strip and every chip the page draws for a node,
+  // and the page background is what an export under a fixed theme rasterizes behind the
+  // board — the one pair whose drift shows nowhere on screen, only in the PNG / PDF of the
+  // theme that is not the active one.
+  it("draws the node rail and the page background in the stylesheet's values", () => {
+    for (const theme of Object.keys(PALETTES) as (keyof typeof PALETTES)[]) {
+      const tokens = tokensIn(THEME_SELECTOR[theme]);
+      for (const [kind, colour] of Object.entries(PALETTES[theme].rail)) {
+        expect(tokens[`--rail-${kind}`], `--rail-${kind} in ${THEME_SELECTOR[theme]}`).toBe(colour);
+      }
+      expect(tokens["--canvas-bg"], `--canvas-bg in ${THEME_SELECTOR[theme]}`).toBe(PALETTES[theme].canvasBg);
+    }
+  });
+
+  it("declares a --rail-* token for exactly the kinds the palette paints", () => {
+    const declared = [...CSS.matchAll(/^\s*--rail-([a-z0-9-]+):/gm)].map((m) => m[1]);
+    for (const theme of Object.keys(PALETTES) as (keyof typeof PALETTES)[]) {
+      const kinds = Object.keys(PALETTES[theme].rail).sort();
+      // Once per theme, and nothing the palette does not name.
+      expect([...new Set(declared)].sort()).toEqual(kinds);
+      expect(declared.length).toBe(kinds.length * Object.keys(PALETTES).length);
+    }
+  });
+
   it("keeps the borrowed gang rail on the send colour", () => {
     // The MIDI window's linked-row rail is not a wire; it borrows the send colour to
     // say "these move together". If the token is ever renamed, this is the one reader
