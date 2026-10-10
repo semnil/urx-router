@@ -5,7 +5,9 @@
 //   node scripts/check-startup-wait.mjs --hook         read a Claude Code PreToolUse or PostToolUse
 //                                                      payload from stdin
 //   node scripts/check-startup-wait.mjs --pid <tree>   print the PID of the dev app <tree> built,
-//                                                      or exit 1 when it is not running
+//                                                      or exit 1 when it is not running and 2
+//                                                      when that cannot be told
+//   ... --pid <tree> --wait                            poll until it runs; exit 2 still stops it
 //
 // PreToolUse, Bash: a command that waits for the app by reading the dev server's log — a
 // `while` / `until` loop that sleeps with a grep for the lines cargo prints inside it, or a grep
@@ -35,21 +37,27 @@ const FOLLOW = /^-[a-zA-Z]*[fF]|^--follow/;
 const LEADING = new Set(["!", "{", "}", "do", "then", "else", "elif", "fi", "if", "time"]);
 const TAURI_DEV = /\btauri\s+dev\b/;
 
+const POLL_MS = 1000;
+
 const CHECK = [
   "Check the process instead, once and in this turn: `node scripts/check-startup-wait.mjs --pid <tree>` prints",
   "the PID of the `urx-router` process (`pgrep -x urx-router`) whose working directory is `<tree>/src-tauri`",
-  "(`lsof -a -p <pid> -d cwd -Fn`), and exits 1 while that tree's app is not running — an app another tree",
-  "built does not count. To wait, run `until node scripts/check-startup-wait.mjs --pid <tree>; do sleep 5; done`",
-  "in the background, after that one check has shown the app is not already up, and act on the PID it prints.",
+  "(`lsof -a -p <pid> -d cwd -Fn`), exits 1 while that tree's app is not running — an app another tree built",
+  "does not count — and exits 2 with the reason when it cannot tell. To wait, run the same command with `--wait`",
+  "in the background, after that one check has shown the app is not already up: it polls while the answer is",
+  "not running, prints the PID and exits 0 once the app is up, and exits 2 as soon as it cannot tell. Act on",
+  "the PID it prints.",
 ].join(" ");
 
 /** The simple commands of a shell command line: each one's words with quoting removed, and the
  *  operator that ends it. A redirection's target is not a word, and a command substitution inside
  *  double quotes is read as the commands it runs, listed after the command that holds it; one
- *  that never closes is text. */
+ *  that never closes is text. A here-document's body is text too, apart from the substitutions an
+ *  unquoted delimiter leaves it running. */
 export function simpleCommands(command) {
   const out = [];
   const inner = [];
+  const heredocs = [];
   let words = [];
   let word = null;
   let redirect = false;
@@ -93,6 +101,31 @@ export function simpleCommands(command) {
     } else if (c === "#" && word === null) {
       const end = command.indexOf("\n", i);
       i = (end < 0 ? command.length : end) - 1;
+    } else if (c === "<" && next === "<" && command[i + 2] !== "<") {
+      endWord();
+      i += 2;
+      const strip = command[i] === "-";
+      if (strip) i++;
+      while (command[i] === " " || command[i] === "\t") i++;
+      let delim = "";
+      let quoted = false;
+      for (; i < command.length && !/[\s;&|<>()]/.test(command[i]); i++) {
+        const q = command[i];
+        if (q === "'" || q === '"') {
+          const end = command.indexOf(q, i + 1);
+          const stop = end < 0 ? command.length : end;
+          delim += command.slice(i + 1, stop);
+          quoted = true;
+          i = stop;
+        } else if (q === "\\") {
+          delim += command[++i] ?? "";
+          quoted = true;
+        } else {
+          delim += q;
+        }
+      }
+      i--;
+      heredocs.push({ delim, strip, quoted });
     } else if (c === ">" || c === "<" || (c === "&" && next === ">")) {
       endWord();
       while (/[<>&|]/.test(command[i + 1] ?? "")) i++;
@@ -104,6 +137,25 @@ export function simpleCommands(command) {
       const op = next === c ? c + c : c;
       endCommand(op);
       i += op.length - 1;
+    } else if (c === "\n" && heredocs.length > 0) {
+      endCommand(c);
+      for (const { delim, strip, quoted } of heredocs.splice(0)) {
+        let start = i + 1;
+        for (;;) {
+          const end = command.indexOf("\n", start);
+          const stop = end < 0 ? command.length : end;
+          const line = command.slice(start, stop);
+          const closes = (strip ? line.replace(/^\t+/, "") : line) === delim;
+          if (!closes && !quoted) out.push(...substitutions(line));
+          if (closes || end < 0) {
+            i = stop - 1;
+            break;
+          }
+          start = end + 1;
+        }
+        i++;
+      }
+      i--;
     } else if (c === "\n" || c === "(" || c === ")" || c === "`") {
       endCommand(c);
     } else if (c === " " || c === "\t") {
@@ -114,6 +166,19 @@ export function simpleCommands(command) {
   }
   endCommand(null);
   return out;
+}
+
+/** The commands the substitutions in a line of text run; text with none runs nothing. */
+function substitutions(text) {
+  const found = [];
+  for (let i = 0; i < text.length; i++) {
+    const open = text[i] === "`" ? "`" : text.startsWith("$(", i) ? "$(" : null;
+    const end = open === null ? -1 : open === "`" ? text.indexOf("`", i + 1) : closingParen(text, i + 2);
+    if (end < 0) continue;
+    found.push(...simpleCommands(text.slice(i + open.length, end)));
+    i = end;
+  }
+  return found;
 }
 
 /** The index of the `)` closing a parenthesis opened just before `from`, or -1. */
@@ -238,20 +303,26 @@ function main() {
       console.error("usage: node scripts/check-startup-wait.mjs --pid <tree>");
       process.exit(2);
     }
-    let pid;
-    try {
-      pid = devAppPid(tree);
-    } catch (err) {
-      console.error(`startup-wait: cannot tell whether ${tree}'s dev app is running (${err.message})`);
-      process.exit(2);
-    }
-    if (pid === null) process.exit(1);
-    console.log(pid);
+    const wait = process.argv.includes("--wait");
+    const answer = () => {
+      let pid;
+      try {
+        pid = devAppPid(tree);
+      } catch (err) {
+        console.error(`startup-wait: cannot tell whether ${tree}'s dev app is running (${err.message})`);
+        process.exitCode = 2;
+        return;
+      }
+      if (pid !== null) console.log(pid);
+      else if (wait) setTimeout(answer, POLL_MS);
+      else process.exitCode = 1;
+    };
+    answer();
     return;
   }
   if (!process.argv.includes("--hook")) {
     console.error("usage: node scripts/check-startup-wait.mjs --hook  (a hook payload on stdin)");
-    console.error("       node scripts/check-startup-wait.mjs --pid <tree>");
+    console.error("       node scripts/check-startup-wait.mjs --pid <tree> [--wait]");
     process.exit(1);
   }
   let payload;

@@ -6,11 +6,12 @@
 // same words quoted as a search pattern, and a log grep written after a loop has ended.
 //
 // The check the hook points at is run against real processes: an app built by another tree
-// must not answer for this one, which is the case a bare `pgrep -x` cannot tell apart.
+// must not answer for this one, which is the case a bare `pgrep -x` cannot tell apart, and its
+// waiting form must go on waiting only while the answer is "not running".
 //
 // It also drives the wiring: the command `.claude/settings.json` registers is run as the
 // harness runs it, since a checker nobody calls refuses nothing while every case here passes.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,6 +34,8 @@ const REFUSED = [
   'until [ -n "$(pgrep -f urx-router)" ]; do sleep 1; done',
   "while true; do if grep -q Running work/dev.log; then break; fi; sleep 5; done",
   "tail -F work/dev.log | sed -u 's/x/y/' | grep -m1 Running",
+  "cat <<'EOF'\nok\nEOF\npgrep -f urx-router",
+  "cat <<EOF\n$(pgrep -f urx-router)\nEOF",
 ];
 
 const ALLOWED = [
@@ -49,7 +52,10 @@ const ALLOWED = [
   "until ! pgrep -x cargo >/dev/null; do sleep 5; done\ngrep -n Finished work/cargo-test.log",
   "tail -n 50 work/dev.log | grep Running",
   "tail -f work/dev.log > work/copy.log; grep Running work/dev.log",
-  "until node scripts/check-startup-wait.mjs --pid /x/tree; do sleep 5; done",
+  "node scripts/check-startup-wait.mjs --pid /x/tree --wait",
+  "cat <<'EOF'\npgrep -f urx-router\nEOF",
+  'cat <<-"EOF"\n\tpgrep -f urx-router\n\tEOF',
+  "cat <<'EOF' > work/repro.sh\nuntil grep -q Running work/dev.log; do sleep 1; done\nEOF",
 ];
 
 describe("what a command may wait on", () => {
@@ -132,6 +138,7 @@ describe.skipIf(tools.some((path) => path === ""))("which app the check names, a
   afterEach(() => {
     for (const child of children.splice(0)) child.kill("SIGKILL");
   });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
   const launch = (name) => {
     const dir = join(root, name, "src-tauri");
     mkdirSync(dir, { recursive: true });
@@ -158,12 +165,33 @@ describe.skipIf(tools.some((path) => path === ""))("which app the check names, a
     const answered = cli(join(root, "tree"));
     expect([answered.status, answered.stdout.trim()]).toEqual([0, own]);
   });
-  it("exits 2 for a tree with no src-tauri, which a waiting loop must not read as not yet", () => {
-    const res = cli(join(root, "missing"));
-    expect(res.status).toBe(2);
-    expect(res.stderr).toMatch(/cannot tell/);
-    rmSync(root, { recursive: true, force: true });
+  it("waits while the tree's app is not running and exits with its PID once it is", async () => {
+    mkdirSync(join(root, "late", "src-tauri"), { recursive: true });
+    const other = launch("elsewhere");
+    await vi.waitFor(() => expect(devAppPid(join(root, "elsewhere"))).toBe(other), { timeout: 5000 });
+    const waiter = spawn(process.execPath, [SCRIPT, "--pid", join(root, "late"), "--wait"], { stdio: "pipe" });
+    children.push(waiter);
+    let stdout = "";
+    waiter.stdout.on("data", (chunk) => (stdout += chunk));
+    const exited = new Promise((resolve) => waiter.on("exit", (code) => resolve(code)));
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    expect(waiter.exitCode).toBeNull();
+
+    const own = launch("late");
+    expect(await exited).toBe(0);
+    expect(stdout.trim()).toBe(own);
   });
+  it.each([[[]], [["--wait"]]])(
+    "exits 2 at once for a tree with no src-tauri, which waiting must not read as not yet (%j)",
+    (extra) => {
+      const res = spawnSync(process.execPath, [SCRIPT, "--pid", join(root, "missing"), ...extra], {
+        encoding: "utf8",
+        timeout: 5000,
+      });
+      expect([res.signal, res.status]).toEqual([null, 2]);
+      expect(res.stderr).toMatch(/cannot tell/);
+    },
+  );
 });
 
 describe("the wiring", () => {
