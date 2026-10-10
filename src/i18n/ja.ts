@@ -787,6 +787,8 @@ export const ja: Messages = {
       "この操作はサンプルレートの変更を含みます — デバイス操作の実行中はサンプルレートを元に戻せないため、操作全体を保留しました。破棄はしていません。その操作が終われば同じ操作が通ります",
     undoPhantomHiZ: (channels: string): string =>
       `この操作は ${channels} で +48V と Hi-Z を両方オンにします — どちらかを切ってからやり直してください。操作は保留しました。破棄はしていません`,
+    undoWireShape: (receivers: string): string =>
+      `この操作は ${receivers} を本体が持てない結線にします — 1 本しか受けない入力に 2 本、または STREAMING のソースが無い状態です。操作は保留しました。破棄はしていません`,
     midiBusy: "本体との通信中またはファイル操作中です — 完了するまで MIDI 入力は無視されます",
     themeDark: "ダークモードに切り替えました",
     themeLight: "ライトモードに切り替えました",

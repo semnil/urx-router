@@ -52,6 +52,29 @@ export function isLastRequiredSource(model: DeviceModel, plan: Plan, from: strin
   return requiresSource(model, to) && !plan.connections.some((c) => c.to === to && c.from !== from);
 }
 
+/**
+ * The receivers a change leaves in a shape the unit cannot hold that `before` did not
+ * already have: a single-input receiver carrying more wires than it takes (two sources, or
+ * on a USB output anything but one source or the two channels of a mono pair), or a
+ * receiver the unit never leaves without a source left with none. A plan that arrived with
+ * such a receiver is not blamed on the change.
+ */
+export function wireShapeBroken(model: DeviceModel, before: Plan, after: Plan): string[] {
+  const overfilled = (p: Plan): Set<string> =>
+    new Set(
+      validatePlan(model, p)
+        .filter((x) => x.reason === "singleInput" || x.reason === "monoPairOnly")
+        .map((x) => x.to),
+    );
+  const was = overfilled(before);
+  const broken = [...overfilled(after)].filter((to) => !was.has(to));
+  for (const to of Object.keys(model.requiredSources)) {
+    const had = before.connections.some((c) => c.to === to);
+    if (had && !after.connections.some((c) => c.to === to)) broken.push(to);
+  }
+  return broken;
+}
+
 // Whether a send carries a PRE/POST tap: a send's PRE/POST is taken relative to
 // the STEREO main-fader level, so only the STEREO main-fader paths (CH / FX
 // channel → STEREO, which ARE that reference) carry no tap. Every other send
