@@ -1433,7 +1433,7 @@ drag lands on the nearest.
   at full strength too; its unlit chip and the cap's dim bar say it is off.
 - **Scribble colour** — the scribble uses each node's **CH SETTING colour** (`plan.nodeColors`, a device
   parameter) rather than the node-kind rail. The text colour is whichever of black/white has the higher
-  actual contrast ratio (WCAG relative luminance, `inkOn`), paired with a faint opposite-tone halo
+  APCA lightness contrast (Lc, `inkOn`), paired with a faint opposite-tone halo
   (`text-shadow`) so the small device name stays legible over a mid-tone colour; nodes with no assigned
   colour fall back to the rail colour.
 - **Layout / scroll** — `#console-host` uses `min-width:0; overflow:hidden` to stay within `#stage`, keeping
@@ -1451,8 +1451,10 @@ drag lands on the nearest.
 - **Live meters** — the meter column is always shown; signal only flows while Live sync is on
   (`console.setLive`; at rest it sits at the floor). `core/meters.ts` maps node ids to broker meter addresses
   (`meterId:x`), decodes the raw value (deci-dBFS, 32767 = OVER) to dBFS, and holds the latest reading in a
-  `MeterStore`. The UI samples the readings on a `requestAnimationFrame` loop capped to ~30 fps (the device
-  updates at ~10 Hz, so painting faster gives no gain) and renders with fast attack / slow release, peak hold,
+  `MeterStore`. The UI samples the readings on a `requestAnimationFrame` loop that paints only once 1000/30 ms
+  have passed since its last paint. On a 60 Hz display that lands on every second or third frame, so the loop
+  paints below 30 fps (22.2 fps in WebKit, `node scripts/meter-bench-run.mjs --seconds 20`, 2026-10-10); the device
+  updates at ~10 Hz, so painting faster gives no gain and renders with fast attack / slow release, peak hold,
   and a per-channel OVER latch (the top OVER box), writing only the lanes (L/R on a stereo strip) that changed
   (compared at integer-percent). **The paint is kept compositor-only**: the bars are driven by
   `transform: scaleY` / `translateY` from typed (`@property`) 0..1 custom properties rather than an animated
@@ -2493,7 +2495,7 @@ sequenceDiagram
   Note over G: while the graph is the hidden view its work is deferred<br/>and done once on the way back
   Note over I: the inspector defers the same way while the console view hides it
   M->>C: meter readings, about 10 per second per address
-  C->>C: paint loop at 30 fps, bars driven by compositor transforms<br/>numeric readout on every 5th frame
+  C->>C: paint loop capped at 30 fps, bars driven by compositor transforms<br/>numeric readout on every 5th frame
   Note over M,C: a meter reading never enters the plan<br/>nothing about it is written back, undone or sent
 ```
 

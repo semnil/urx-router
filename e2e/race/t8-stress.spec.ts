@@ -769,7 +769,7 @@ test.describe("T8 stress", () => {
 
   // stress-long-session-quiescence is not reachable from here. Its assertions are
   // about state that SURVIVES an operation — armed timers, registered listeners, undo
-  // stack depth, MIDI bound-cache size, the number of Plan objects still reachable
+  // stack depth, the number of Plan objects still reachable
   // from a writer — and none of those is observable through the four surfaces this
   // harness has (DOM, status line, localStorage, the fake's IPC). Subscription
   // counters alone would pin one of the four assertions and silently pass the rest.

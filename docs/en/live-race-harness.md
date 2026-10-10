@@ -993,11 +993,12 @@ agreement, zero findings.
   duration (`syncDeviceActionUi`), so what an operator is left with is leave live, then switch. The flush
   is held across both halves, and the reading separates them — the teardown moves the session generation
   and leaves the history alone (undo depth 1), the switch resets it (0). Nothing escapes either half:
-  0 late `vd_set`, 0 orphan addresses, and the MIDI cache re-points (`0.0` → `+4.0`). The same lock is
+  0 late `vd_set`, 0 orphan addresses, and MIDI resolves against the new plan (`0.0` → `+4.0`). The same lock is
   why the unguarded reconcile half now contrasts two flows and not three — the picker's cover there comes
   from the session, and the reconcile gate it was standing in for is still missing for the other two
-- A rejected read during Fetch **commits a partial plan**, and MIDI's bound cache keeps a reference to
-  the discarded one
+- A rejected read during Fetch **commits a partial plan**. MIDI kept a reference to the discarded plan on the
+  cancel path — **fixed**: the read works on a private copy, and `src/ui/midi.ts` resolves every control against
+  the plan on screen on each call rather than from a cache
 - A Close press on a tuning screen can be **swallowed** between a deferred refresh and its own click
 
 **T2c–T2f — the eight cases filled in later** (all measured, all pinned)

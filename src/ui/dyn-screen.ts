@@ -1863,7 +1863,7 @@ export class DynScreen {
     this.cap = cap;
 
     // The slot's rect is read once per gesture: reading it per move is a forced
-    // layout in the subtree the 30 fps meter loop is writing to, and the modal can
+    // layout in the subtree the meter loop is writing to, and the modal can
     // neither scroll nor resize while a pointer is down.
     let rect: DOMRect | null = null;
     const fromY = (clientY: number): void => {
@@ -2340,7 +2340,7 @@ export class DynScreen {
   }
 
   /** Split into a cached static layer and a live overlay. Everything but the overlay
-   *  depends only on the parameters, size and theme, so at 30 fps against a 10 Hz
+   *  depends only on the parameters, size and theme, so at up to 30 fps against a 10 Hz
    *  feed redrawing it every frame was hundreds of stroked paths a second for at
    *  most 10 meaningful positions. */
   private drawPlot(): void {
