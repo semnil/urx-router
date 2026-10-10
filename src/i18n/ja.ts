@@ -527,10 +527,10 @@ export const ja: Messages = {
       signals: "接続の種類",
       nodes: "ノード",
       source: "ソース選択",
-      send: "Bus send",
+      send: "Bus send (TO ST・OSC はオン・オフのみ)",
       patch: "出力・録音の選択",
       pre: "Pre-fader send",
-      recPoint: "Rec Point タップ",
+      recPoint: "Rec Point タップ (チャンネルのみ)",
     },
   },
   // レーンのキャプション (プロセッサのどちら端か) と表示モード名は ja でも英語のまま
