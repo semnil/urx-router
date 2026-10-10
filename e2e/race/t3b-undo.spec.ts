@@ -15,6 +15,7 @@ import {
   ledgerOf,
   depthOf,
   hasProbe,
+  statusAfter,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf } from "./analyze";
 import { CH1_FADER, faderOf, faderReadout, graphNode, insertFxSelect, strip } from "./ui";
@@ -44,7 +45,6 @@ const DRAG_REFUSAL = "Finish the current drag before undoing";
  *  `blocked`). A deferral, not a loss: the open entry is not committed. */
 const BUSY_REFUSAL = "Busy with the device — undo is unavailable until it finishes";
 
-const statusOf = (page: Page) => page.locator("#statusbar");
 const nameInput = (page: Page) => page.locator("#inspector input[type='text']").first();
 const noteOverlay = (page: Page) => page.locator("#graph-host .note-edit-overlay");
 const wireHits = (page: Page) => page.locator("#graph-host .wire-hit");
@@ -58,15 +58,8 @@ const levelSlider = (page: Page) =>
 // a second "Rec Point".
 const insp = (page: Page, label: string) => page.locator("#inspector").getByLabel(label, { exact: true });
 
-const readStatus = (page: Page): Promise<string> =>
-  statusOf(page)
-    .textContent()
-    .then((s) => s ?? "");
-
-async function undoOnce(page: Page): Promise<string> {
-  await page.keyboard.press("ControlOrMeta+z");
-  return readStatus(page);
-}
+/** One Ctrl+Z, returning the verdict the handler writes, waited for. */
+const undoOnce = (page: Page): Promise<string> => statusAfter(page, () => page.keyboard.press("ControlOrMeta+z"));
 
 /**
  * Long enough for every deferred boundary to have landed: the pointerup macrotask,

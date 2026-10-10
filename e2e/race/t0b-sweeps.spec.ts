@@ -11,6 +11,7 @@ import {
   dialogsOf,
   divergeAt,
   openMidiWindow,
+  statusAfter,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf } from "./analyze";
 import { drag, port, tapJack, faceplate } from "../graph-helpers";
@@ -1116,9 +1117,7 @@ test.describe("T0b baseline sweeps", () => {
       await page.keyboard.press("Delete");
       await page.waitForTimeout(80);
       const after = await wires();
-      await page.keyboard.press("ControlOrMeta+z");
-      await page.waitForTimeout(80);
-      const status = (await page.locator("#statusbar").textContent()) ?? "";
+      const status = await statusAfter(page, () => page.keyboard.press("ControlOrMeta+z"));
       return `${what}: Ctrl+Z → "${status}"; Delete ${after === before ? "refused" : `REMOVED ${before - after} wire(s)`}`;
     };
 

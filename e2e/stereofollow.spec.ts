@@ -35,8 +35,8 @@ async function liveWithParkedPartner(page: Page) {
   await page.mouse.down();
   await page.mouse.move(grab.x + grab.width * 0.35 + 240, grab.y + 150, { steps: 10 });
   await page.mouse.up();
-  const parked = (await node(page, "ch2").boundingBox())!;
-  const primary = (await node(page, "ch1").boundingBox())!;
+  const parked = await boxOf(page, "ch2");
+  const primary = await boxOf(page, "ch1");
   expect(Math.abs(parked.x - primary.x)).toBeGreaterThan(20);
   await expect(stereoTie(page)).toHaveCount(0);
   // The unit now holds STEREO on the pair. Both members carry the flag; the app reads it
@@ -47,12 +47,25 @@ async function liveWithParkedPartner(page: Page) {
 }
 
 /** CH 2 is back in CH 1's column, below it, and CH 1 did not move. */
+/** A node's box, re-resolved until one is read. A board render after the tie lands can take
+ *  the element a locator resolved out of the document before it is measured, and a detached
+ *  element measures as null while the same selector finds its replacement at once. */
+async function boxOf(page: Page, id: string) {
+  let box: { x: number; y: number; width: number; height: number } | null = null;
+  for (let i = 0; i < 20 && !box; i++) {
+    box = await node(page, id).boundingBox();
+    if (!box) await page.waitForTimeout(50);
+  }
+  expect(box, `${id} never held still long enough to be measured`).not.toBeNull();
+  return box!;
+}
+
 async function expectSnapped(page: Page, before: Awaited<ReturnType<typeof liveWithParkedPartner>>) {
   // The tie appearing is the reconcile having landed — a settle window plus a device read,
   // neither of which has a clock this test should guess at.
   await expect(stereoTie(page)).toHaveCount(1, { timeout: 30_000 });
-  const after1 = (await node(page, "ch1").boundingBox())!;
-  const after2 = (await node(page, "ch2").boundingBox())!;
+  const after1 = await boxOf(page, "ch1");
+  const after2 = await boxOf(page, "ch2");
   expect(Math.abs(after1.x - before.primary.x)).toBeLessThan(2); // the primary stays put
   expect(Math.abs(after2.x - after1.x)).toBeLessThan(2); // partner back in its column
   expect(after2.y).toBeGreaterThan(after1.y); // and below it
@@ -106,8 +119,8 @@ test("a link arriving through a side-effect refetch shows on an already adjacent
   await oneKnob(page).locator("button", { hasText: "ON" }).click();
 
   // CH 2 never moved, so the tie appearing is the whole of what this case measures.
-  const ch1 = (await node(page, "ch1").boundingBox())!;
-  const ch2 = (await node(page, "ch2").boundingBox())!;
+  const ch1 = await boxOf(page, "ch1");
+  const ch2 = await boxOf(page, "ch2");
   expect(Math.abs(ch2.x - ch1.x)).toBeLessThan(2);
   await expect(stereoTie(page)).toHaveCount(1, { timeout: 30_000 });
 

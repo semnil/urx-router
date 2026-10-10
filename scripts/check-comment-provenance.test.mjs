@@ -2118,7 +2118,7 @@ describe.skipIf(rubyForFolds.error || rubyForFolds.status !== 0)("quoted scalars
       require "json"
       puts JSON.generate(JSON.parse(STDIN.read).map { |doc| Psych.load(doc)["k"] })
     `;
-    const run = spawnSync("ruby", ["-e", script], {
+    const run = spawnSync("ruby", ["-E", "UTF-8", "-e", script], {
       input: JSON.stringify(FOLDS.map(([src]) => src)),
       encoding: "utf8",
     });
@@ -2204,7 +2204,7 @@ describe.skipIf(rubyForPlains.error || rubyForPlains.status !== 0)(
       end
       puts JSON.generate(JSON.parse(STDIN.read).map { |doc| scalar(YAML.load(doc)) })
     `;
-      const run = spawnSync("ruby", ["-e", script], {
+      const run = spawnSync("ruby", ["-E", "UTF-8", "-e", script], {
         input: JSON.stringify(PLAINS.map(([doc]) => doc)),
         encoding: "utf8",
       });
@@ -2256,7 +2256,7 @@ describe.skipIf(rubyForBlocks.error || rubyForBlocks.status !== 0)(
       require "json"
       puts JSON.generate(JSON.parse(STDIN.read).map { |doc| Psych.load(doc)["k"] })
     `;
-      const run = spawnSync("ruby", ["-e", script], {
+      const run = spawnSync("ruby", ["-E", "UTF-8", "-e", script], {
         input: JSON.stringify(BLOCKS_VALUES.map(([doc]) => doc)),
         encoding: "utf8",
       });
@@ -2298,7 +2298,7 @@ describe.skipIf(!rubyAvailable)("block scalars, differentially against Ruby's YA
       end
       puts JSON.generate(JSON.parse(STDIN.read).map { |doc| scalar(YAML.load(doc)) })
     `;
-    const run = spawnSync("ruby", ["-e", script], {
+    const run = spawnSync("ruby", ["-E", "UTF-8", "-e", script], {
       input: JSON.stringify(BLOCKS.map(([doc]) => doc)),
       encoding: "utf8",
     });
