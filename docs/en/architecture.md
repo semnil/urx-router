@@ -1306,7 +1306,8 @@ measured against the cap's own travel — the fader element's full height, since
 it under a `-50%` translate. One absolute mapping over the *groove's* inset span (`height - 12`) for both
 halves would make the press position agree with the cap at mid-travel only and put a plain press
 on the cap's edge up to 1.7 detents out at the default window size (3.6 at the minimum one) — reaching the
-unit, live, before the operator had moved. The channel tuning screens' threshold cap has the same split
+unit, live, before the operator had moved. The SENDS mini-fader's drag is measured against its own full height
+the same way, so a pixel dragged is the same share of the level on both faders. The channel tuning screens' threshold cap has the same split
 (`dyn-screen.ts`: the cap's own listener grabs it, the slot's jumps and defers to the cap with
 `e.target === cap`), so the two surfaces share one press grammar.
 
