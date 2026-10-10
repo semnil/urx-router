@@ -224,7 +224,7 @@ test.describe("T5 drop", () => {
   // drop-link-loss-mid-reconcile, run A: a scoped reconcile of one node, cut in
   // half. The question is not whether the read fails — it is what the half that
   // succeeded does to the plan and to the undo stack on its way out.
-  test("a scoped reconcile cut in half still reflects its partial read and resets the history", async ({ page }) => {
+  test("a scoped reconcile cut in half merges none of its read and keeps the history", async ({ page }) => {
     await goLive(page);
     await page.click("#btn-view-console");
     await expect(faderReadout(page, "CH 1")).toBeVisible();
@@ -271,16 +271,19 @@ test.describe("T5 drop", () => {
     console.log(`readout: before=${before} after=${after}; reads after teardown=${lateReads.length}`);
     console.log(`edit-menu state after teardown: ${states.join(" → ") || "(unchanged)"}`);
 
-    // PINNED DEFECT. requestReflect() and followFull are set BEFORE
-    // assertReadComplete throws, so the groups that did answer are reflected into the
-    // views as if the pass had completed — the plan now holds the device's −12.0 dB
-    // for the one node whose body group got through…
-    expect(after).not.toBe(before);
-    expect(after).toContain("-12");
-    // …and reflectFollow's full branch runs planHistory.reset() and live.resync() on
-    // a session that is already down, so the operator's undo stack is spent on a plan
-    // that is part device state and part never-read.
-    expect(states.at(-1)).toBe("false/false");
+    // The control: the group carrying the diverged fader DID answer before the cut, so
+    // the read held the device's −12.00 dB and had something to merge.
+    const linkDropAt = markTime(trace, "link-drop")!;
+    const faderRead = all.filter((s) => s.cmd === "vd_get" && s.addr === CH1_FADER && s.end < linkDropAt && !s.detail);
+    expect(faderRead.length).toBeGreaterThan(0);
+    // All or nothing, as the session's starting read is: the incomplete read merges
+    // none of it, so the readout still shows the plan's own value…
+    expect(after).toBe(before);
+    expect(after).not.toContain("-12");
+    // …and nothing re-bases the history: no menu push follows the teardown, and the
+    // operator's edit is still the undoable state on screen.
+    expect(states).toHaveLength(0);
+    expect(menuStates(trace).at(-1)).toBe("true/false");
     // The reads that were still queued behind the barrier are issued after the
     // teardown too — the readback sweep has no active check inside its loop either.
     expect(lateReads.length).toBeGreaterThan(0);
@@ -297,7 +300,7 @@ test.describe("T5 drop", () => {
   // drop-link-loss-mid-reconcile, run B: the same cut through a FULL reconcile,
   // where the provenance marker (plan.unreadNodes) exists and can be checked against
   // what actually failed.
-  test("a full reconcile cut in half marks the nodes it never read and reflects the rest", async ({ page }) => {
+  test("a full reconcile cut in half merges none of its read and marks nothing", async ({ page }) => {
     await goLive(page);
     await setLatency(page, { get: 4, set: 8 });
     const unreadAtStart = await unreadBadges(page);
@@ -340,20 +343,19 @@ test.describe("T5 drop", () => {
     console.log(`unread nodes after the cut: ${unread.length} of ${nodeCount} — ${unread.slice(0, 8).join(", ")}`);
     console.log(`reads after teardown: ${all.filter((s) => s.cmd === "vd_get" && s.start > downAt).length}`);
 
-    // The half-read plan is reflected and the provenance is set from the partial
-    // result, so the "?" badges appear on a plan the app has rebased against, and the
-    // session that would have repaired it is gone.
-    expect(unread.length).toBeGreaterThan(0);
-    expect(unread.length).toBeLessThan(nodeCount); // some nodes WERE read and applied
+    // The control: the whole-device read was under way when the link went — reads of
+    // it completed between the notify and the cut.
+    const notifyAt = markTime(trace, "notify")!;
+    const linkDropAt = markTime(trace, "link-drop")!;
+    const answered = all.filter((s) => s.cmd === "vd_get" && s.start > notifyAt && s.end < linkDropAt && !s.detail);
+    expect(answered.length).toBeGreaterThan(0);
+    // All or nothing: the incomplete read merges none of what it got, so it sets no
+    // provenance either — no node is marked as unread on a plan the read never touched.
+    expect(unread).toHaveLength(0);
     expect(findings.some((f) => f.inv === 16)).toBe(true);
     expect(await dialogsOf(page)).toHaveLength(1);
-    // The operator's edit survives the cut. This cell used to pin the opposite — the
-    // reflect reset the history unconditionally, so the last menu push after teardown
-    // was "false/false" and the one entry went with a read that had authored nothing.
-    // The reset is now conditional on the read having authored something: the nodes it
-    // DID read agreed with the plan, and the nodes it never reached are marked rather
-    // than written. So no push follows the teardown at all, and the state standing from
-    // before the window is still the one on screen.
+    // The operator's edit survives the cut: no push follows the teardown at all, and the
+    // state standing from before the window is still the one on screen.
     expect(menuStates(trace, downAt)).toHaveLength(0);
     expect(menuStates(trace).at(-1)).toBe("true/false");
   });

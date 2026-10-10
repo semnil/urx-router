@@ -906,20 +906,13 @@ let flushReadNotes: string[] = [];
 // its hook contract already declares. Shared by both reconcile hooks so the rule
 // has one spelling.
 function assertReadComplete(merged: MergedRead, label: string): void {
-  // What the read HELD is reported first and unconditionally. The hold has already taken
-  // effect inside the merge, so a report that ran only past this throw would leave the
-  // plan keeping values the unit does not have with nothing saying so — and reporting it
-  // here rather than at each call site is what stops a fourth caller getting that order
-  // wrong.
+  // What the read HELD is reported here rather than at each call site, so no caller can
+  // leave the plan keeping values the unit does not have with nothing saying so. A read
+  // with errors merged nothing (followRead's accept), so it held nothing either.
   if (merged.held.length) console.warn("device read: the plan keeps its own value", merged.held);
   if (!merged.errors.length) return;
   console.warn(label, merged.errors);
-  const cause = linkFailureIn(merged.errors) ?? t().error.followReadIncomplete(merged.errors.length);
-  // The count travels with the teardown's own message: the status line this read would
-  // have written is about to be replaced by `stopLiveOnError`, and the console does not
-  // reach an installed build.
-  const held = heldByHold(merged.held);
-  throw new Error(merged.held.length ? t().error.followReadHeld(cause, held.unrunnable, held.source) : cause);
+  throw new Error(linkFailureIn(merged.errors) ?? t().error.followReadIncomplete(merged.errors.length));
 }
 // A merged device read could not place part of its result: a wire the operator removed
 // while it was in flight, or an edit a device-side routing change left nowhere to land.
@@ -1124,7 +1117,10 @@ async function followRead(
           ...sourceChoiceHoldKeys(model, ctx),
         ]);
       },
-      undefined,
+      // All or nothing, as the session's starting read is: a read that comes back with
+      // errors merges none of what it got, so the reflect, the history and the snapshot
+      // behind it are not built on a plan that is part device state and part never read.
+      (result) => !result.errors.length,
       switchSession,
     );
     if (!merged) console.warn(`${label}: the plan was replaced during the read; its values are discarded with it`);
@@ -1277,14 +1273,13 @@ const follow =
           // ran against says what the device holds, it is not reachable from there, and
           // the reflect's delay is a window in which an undo would diff against a
           // snapshot that still describes the pre-read plan.
+          // Ahead of the re-base and the reflect: an incomplete read merged nothing, and
+          // the session it belongs to ends at this throw.
+          assertReadComplete(merged, "device-follow scoped readback issues:");
           live?.resync(merged.deviceView, since, nodeIds);
-          // Before assertReadComplete, which throws: a partial read's authored keys
-          // still invalidate the history, exactly as followFull / requestReflect
-          // already survive that throw.
           followAuthored += merged.devicePatch.length;
           followFull = true;
           requestReflect();
-          assertReadComplete(merged, "device-follow scoped readback issues:");
           reapplyHeld(merged);
         },
         // Escalation / idle safety net: pull the whole device into the plan.
@@ -1303,12 +1298,13 @@ const follow =
           snapLinkedPairs();
           traceProbe?.sample("follow-full");
           noteMergeConflicts(merged);
+          // Ahead of the re-base and the reflect, as in the scoped reconcile above.
+          assertReadComplete(merged, "device-follow readback issues:");
           plan.unreadNodes = merged.unreadNodes;
           live?.resync(merged.deviceView, since);
           followAuthored += merged.devicePatch.length;
           followFull = true;
           requestReflect();
-          assertReadComplete(merged, "device-follow readback issues:");
           reapplyHeld(merged);
         },
         onFollow: () => setStatus(t().status.liveFollowing),
