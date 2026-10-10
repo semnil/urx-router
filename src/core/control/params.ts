@@ -1154,35 +1154,6 @@ export const DELAY_FRAME_RATE_OPTIONS = [
 ];
 export const DELAY_FRAME_RATE_DEFAULT = 5;
 
-// Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain). The unit keeps
-// one D.Gain per INPUT SOURCE, not per channel — ids 9 and 11..17, ±2400 centi-dB (±24 dB) —
-// and every channel reading a source shows and applies that source's value. The app writes
-// y = 0 and 1, which the unit keeps linked.
-//
-// These maps send a stereo channel's gain to the D.Gain of the source that channel reads at
-// the factory — on URX44V and URX44, CH5/6 = AUX IN (9), CH7/8 = USB MAIN A (13), CH9/10 =
-// USB MAIN B (14), CH11/12 = USB MAIN C (15) — so a write reaches the channel only while it
-// reads that source, and reaches every other channel reading the same source. URX22's map
-// puts the same ids on its stereo pairs by position (CH3/4 = 9 … CH9/10 = 15) and is
-// registered in UNVERIFIED_MAPPINGS ("dgain-urx22"). A self-test round trip shows the ids
-// take a value, not which channel each one reaches.
-const D_GAIN_URX44V: Record<string, number> = {
-  ch_5_6: 9,
-  ch_7_8: 13,
-  ch_9_10: 14,
-  ch_11_12: 15,
-};
-const D_GAIN_URX22: Record<string, number> = {
-  ch_3_4: 9,
-  ch_5_6: 13,
-  ch_7_8: 14,
-  ch_9_10: 15,
-};
-/** D.Gain param id for a stereo channel on a model, or undefined when the node has
- *  none. URX44 shares the URX44V label map; URX22 uses the positional map (above). */
-export const dGainParam = (modelId: string, nodeId: string): number | undefined =>
-  (modelId === "URX22" ? D_GAIN_URX22 : D_GAIN_URX44V)[nodeId];
-
 /** The jack index (the y of the analog input-stage params 0 / 1 / 5 / 6) of each MIC/LINE
  *  input node's first jack; its second jack is the next index. */
 export const MIC_LINE_JACK_BASE: Readonly<Record<string, number>> = { "in.micline_1_2": 0, "in.micline_3_4": 2 };
@@ -1209,6 +1180,21 @@ export const D_GAIN_SOURCES: Readonly<Record<string, { id: number; instances: re
   "in.usbmain_c": { id: 15, instances: [0, 1] },
   "in.usbsub": { id: 16, instances: [0, 1] },
   "in.hdmi": { id: 17, instances: [0, 1] },
+};
+
+// Load data for documents written before the input stage moved to its jacks and sources: a
+// document from then keeps each mono channel's +48V, A.Gain and Clip Safe at the jack its
+// channel number names (CH n = jack n), its HI-Z on the channels listed here, and a stereo
+// channel's gain on the D.Gain source these maps name per model.
+export const LEGACY_STEREO_DGAIN_ID: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  URX44V: { ch_5_6: 9, ch_7_8: 13, ch_9_10: 14, ch_11_12: 15 },
+  URX44: { ch_5_6: 9, ch_7_8: 13, ch_9_10: 14, ch_11_12: 15 },
+  URX22: { ch_3_4: 9, ch_5_6: 13, ch_7_8: 14, ch_9_10: 15 },
+};
+export const LEGACY_HI_Z_CHANNELS: Readonly<Record<string, readonly string[]>> = {
+  URX44V: ["ch3", "ch4"],
+  URX44: ["ch3", "ch4"],
+  URX22: ["ch2"],
 };
 
 // microSD Rec Track Count (RECORDER menu): how many tracks record, an even 2..16.

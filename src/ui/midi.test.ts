@@ -394,7 +394,7 @@ describe("MidiControl", () => {
     expect(keys, "and the partner the mirror wrote").toContain(wire("ch2"));
   });
 
-  // …and only where the pair shares the key. The head amp is each member's own, so the
+  // …and only where the pair shares the key. The head amp is the jack each member reads, so the
   // mirror leaves the partner's alone and naming it would take the device's answer away.
   it("does not name the partner's head amp", async () => {
     localStorage.setItem(
@@ -412,8 +412,9 @@ describe("MidiControl", () => {
 
     mocks.inputReceiver!([0xb0, 7, 127]);
     const keys = vi.mocked(hooks.onApplied).mock.calls.at(-1)?.[2] ?? [];
-    expect(keys).toContain(nodeParamContestPath("ch1", "gain"));
-    expect(keys).not.toContain(nodeParamContestPath("ch2", "gain"));
+    // CH 1 reads jack 1 and CH 2 jack 2.
+    expect(keys).toContain(nodeParamContestPath("in.micline_1_2", "gainL"));
+    expect(keys).not.toContain(nodeParamContestPath("in.micline_1_2", "gainR"));
   });
 
   // The bound-control memo is the one holder of a plan reference here — every other
@@ -1032,31 +1033,34 @@ describe("MidiControl under HI-Z", () => {
     return rig;
   };
 
+  // CH 3 reads jack 3, which carries HI-Z.
+  const JACK3 = "in.micline_3_4";
+
   it("says why a +48V write under HI-Z is refused, and edits nothing", async () => {
     const { hooks, plan } = await listen("ch3/phantom");
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: false };
+    plan.nodeParams[JACK3] = { ...plan.nodeParams[JACK3], hiZL: true, phantomL: false };
     mocks.inputReceiver!([0xb0, 9, 127]);
     expect(hooks.onStatus).toHaveBeenCalledWith(t().inspector.phantomLockedByHiZ);
     expect(hooks.onApplied).not.toHaveBeenCalled();
-    expect(plan.nodeParams.ch3?.phantom).toBe(false);
+    expect(plan.nodeParams[JACK3]?.phantomL).toBe(false);
   });
 
   it("asserts A.Gain among the keys of a HI-Z write that lowered it", async () => {
     const { hooks, plan } = await listen("ch3/hiZ");
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, phantom: false, gain: 60 };
+    plan.nodeParams[JACK3] = { ...plan.nodeParams[JACK3], hiZL: false, phantomL: false, gainL: 60 };
     mocks.inputReceiver!([0xb0, 9, 127]);
-    expect(plan.nodeParams.ch3).toMatchObject({ hiZ: true, gain: 40 });
+    expect(plan.nodeParams[JACK3]).toMatchObject({ hiZL: true, gainL: 40 });
     expect(hooks.onApplied).toHaveBeenCalledWith(expect.anything(), false, [
-      nodeParamContestPath("ch3", "hiZ"),
-      nodeParamContestPath("ch3", "gain"),
+      nodeParamContestPath(JACK3, "hiZL"),
+      nodeParamContestPath(JACK3, "gainL"),
     ]);
   });
 
   it("leaves A.Gain out of the keys of a HI-Z write that found it at +40 dB", async () => {
     const { hooks, plan } = await listen("ch3/hiZ");
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, phantom: false, gain: 40 };
+    plan.nodeParams[JACK3] = { ...plan.nodeParams[JACK3], hiZL: false, phantomL: false, gainL: 40 };
     mocks.inputReceiver!([0xb0, 9, 127]);
-    expect(plan.nodeParams.ch3).toMatchObject({ hiZ: true, gain: 40 });
-    expect(hooks.onApplied).toHaveBeenCalledWith(expect.anything(), false, [nodeParamContestPath("ch3", "hiZ")]);
+    expect(plan.nodeParams[JACK3]).toMatchObject({ hiZL: true, gainL: 40 });
+    expect(hooks.onApplied).toHaveBeenCalledWith(expect.anything(), false, [nodeParamContestPath(JACK3, "hiZL")]);
   });
 });

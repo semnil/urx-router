@@ -46,7 +46,7 @@ import {
   insertFxDriverSlots,
 } from "./insert-fx-effect";
 import { isFixedConnection, monoPairOf, requiresSource, sendTapWritable } from "../routing";
-import { channelGainRange } from "../input-lock";
+import { jackGainRange } from "../input-lock";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
   D_GAIN_SOURCES,
@@ -64,7 +64,6 @@ import {
   DELAY_FRAME_RATE_DEFAULT,
   DELAY_FRAME_RATE_OPTIONS,
   denormalizeInsertFx,
-  dGainParam,
   EQ_BAND_DEFAULT_FREQ_HZ,
   EQ_ONE_KNOB_LEVEL_MAX,
   EQ_ONE_KNOB_LEVEL_MIN,
@@ -119,6 +118,7 @@ import {
   boundRaw,
   burstWidthToVd,
   centiDbToVd,
+  clamp,
   D_GAIN_MAX_DB,
   D_GAIN_MIN_DB,
   delayTimeToVd,
@@ -347,28 +347,6 @@ export function isStereoChannel(nodeId: string): boolean {
   return /^ch_\d+_\d+$/.test(nodeId);
 }
 
-// Hi-Z (instrument) input is on specific mono channels per model: CH3/CH4 on
-// URX44/44V (verified on 44V), CH2 on URX22 (extrapolated, unverified).
-const HI_Z_CHANNELS: Record<string, string[]> = {
-  URX44V: ["ch3", "ch4"],
-  URX44: ["ch3", "ch4"],
-  URX22: ["ch2"],
-};
-
-/** Whether a node on a model carries the HI-Z (instrument input) switch. */
-export function hasHiZInput(modelId: string, nodeId: string): boolean {
-  return (HI_Z_CHANNELS[modelId] ?? []).includes(nodeId);
-}
-
-/** Input gain for a channel: which param, the linked instances, range, and whether it is the analog A.Gain. */
-export interface ChannelGain {
-  param: number;
-  instances: number[];
-  minDb: number;
-  maxDb: number;
-  analog: boolean;
-}
-
 /**
  * One polarity-invert (Ø) toggle. Mono channels have a single one; a stereo
  * channel has two independent ones (its L and R sides).
@@ -408,13 +386,11 @@ export interface ChannelControl {
   recPoint: number;
   y: number;
   hasHpf: boolean;
-  /** The analog mic-strip toggles (+48V / Clip Safe) exist only on the mono mic channels. */
+  /** A MONO IN channel: its strip carries the dynamics (GATE / COMP->EQ / SSMCS) and the
+   *  COMP/EQ type. Its input stage is the jack or source it reads (`inputStageOf`). */
   hasMicStrip: boolean;
-  /** Hi-Z (instrument input) exists only on CH3/CH4. */
-  hasHiZ: boolean;
   /** Polarity invert: one toggle on a mono channel, two (L/R) on a stereo one. */
   phases: PhaseToggle[];
-  gain: ChannelGain | null;
 }
 
 // Stereo channels are indexed by their position among the model's stereo
@@ -433,19 +409,17 @@ export function stereoIndexMap(model: DeviceModel): Map<string, number> {
 
 /**
  * Resolve everything live control needs for a channel node, in one place:
- * fader / ON / pan device params + instance index, whether it has an HPF, and
- * its gain (param, linked instances, range, A.Gain vs D.Gain). Mono channels use
- * 139/140/141/25 at the input index with the analog A.Gain (param 1), the
- * mic-strip toggles (+48V/Clip Safe) and a single phase (24); stereo channels
- * use the separate 266/267/268 block at the stereo index, the digital D.Gain
- * written to both L/R instances, independent L/R phase (211/212), and no HPF or
- * mic strip. Null for non-channels.
+ * fader / ON / pan device params + instance index and whether it has an HPF.
+ * Mono channels use 139/140/141/25 at the input index and a single phase (24);
+ * stereo channels use the separate 266/267/268 block at the stereo index,
+ * independent L/R phase (211/212), and no HPF or MONO IN strip. A channel's input
+ * stage is not here: it is the jack or source the channel reads (`inputStageOf`).
+ * Null for non-channels.
  */
 export function channelControl(model: DeviceModel, nodeId: string): ChannelControl | null {
   if (isStereoChannel(nodeId)) {
     const si = stereoIndexMap(model).get(nodeId);
     if (si === undefined) return null;
-    const dParam = dGainParam(model.id, nodeId);
     return {
       fader: STEREO_FADER,
       on: STEREO_ON,
@@ -455,16 +429,11 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
       y: si,
       hasHpf: false,
       hasMicStrip: false,
-      hasHiZ: false,
       // Stereo channels invert L and R independently (params 211 / 212).
       phases: [
         { name: "PHASE_L", key: "phaseL", param: PARAMS.PHASE_L.id, y: si, side: "L" },
         { name: "PHASE_R", key: "phaseR", param: PARAMS.PHASE_R.id, y: si, side: "R" },
       ],
-      gain:
-        dParam === undefined
-          ? null
-          : { param: dParam, instances: [0, 1], minDb: D_GAIN_MIN_DB, maxDb: D_GAIN_MAX_DB, analog: false },
     };
   }
   const mono = /^ch(\d+)$/.exec(nodeId);
@@ -479,9 +448,7 @@ export function channelControl(model: DeviceModel, nodeId: string): ChannelContr
     y,
     hasHpf: true,
     hasMicStrip: true,
-    hasHiZ: hasHiZInput(model.id, nodeId),
     phases: [{ name: "PHASE", key: "phase", param: PARAMS.PHASE.id, y, side: "" }],
-    gain: { param: PARAMS.HA_GAIN.id, instances: [y], minDb: A_GAIN_MIN_DB, maxDb: A_GAIN_MAX_DB, analog: true },
   };
 }
 
@@ -1410,8 +1377,13 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
     const compEqType = admitLeaf(menuRule(COMP_EQ_OPTIONS, COMP_EQ_COMP_FIRST), np?.compEqType ?? COMP_EQ_COMP_FIRST);
     out.push(["recPoint", recPointRule(!cc.hasMicStrip, cc.hasMicStrip && compEqType === COMP_EQ_SSMCS)]);
   }
-  const gain = channelGainRange(model, nodeId, np);
-  if (gain) out.push(["gain", { min: gain.minDb, max: gain.maxDb }]);
+  // A MIC/LINE node's A.Gain per jack, to its jack's range; a digital source's D.Gain.
+  for (const side of ["L", "R"] as const) {
+    const gain = jackGainRange(model.id, { node: nodeId, side }, np);
+    if (gain) out.push([`gain${side}`, { min: gain.minDb, max: gain.maxDb }]);
+  }
+  if (D_GAIN_SOURCES[nodeId] && model.nodes.some((n) => n.id === nodeId))
+    out.push(["dGain", { min: D_GAIN_MIN_DB, max: D_GAIN_MAX_DB }]);
   if (cc?.hasHpf) out.push(["hpfFreq", { min: HPF_FREQ_MIN_HZ, max: HPF_FREQ_MAX_HZ, grid: HPF_FREQ_STEP_HZ }]);
   // PAN/BAL exists only while the pair is linked; an unlinked pair reads PAN.
   if (model.channelPairs.some(([primary]) => primary === nodeId))
@@ -2163,6 +2135,12 @@ export interface EmitOptions {
    * it backwards demonstrated by leaving a band at a fifth of its value.
    */
   includeDeviceDriven?: boolean;
+  /**
+   * Also emit the input stage of every jack and every D.Gain source the model has, whether
+   * or not a channel reads it. A write sends only the ones some channel reads; Compare with
+   * device, which reads and never writes, compares them all.
+   */
+  everyInputHolder?: boolean;
 }
 
 /**
@@ -2377,7 +2355,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   out.push(command("SAMPLE_RATE", 0, plan.sampleRate));
   own(undefined);
 
-  // Channel node parameters: ON / HPF / gain.
+  // Channel node parameters: ON / HPF / polarity / COMP-EQ type / Rec Point / dynamics.
   for (const node of model.nodes) {
     if (node.kind !== "channel") continue;
     const np = plan.nodeParams[node.id];
@@ -2387,19 +2365,11 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     if (np.on !== undefined) out.push(rawCommand("CH_ON", cc.on, "bool", cc.y, np.on ? 1 : 0));
     if (cc.hasHpf && np.hpf !== undefined) out.push(command("HPF_ON", cc.y, np.hpf ? 1 : 0));
     if (cc.hasHpf && np.hpfFreq !== undefined) out.push(command("HPF_FREQ", cc.y, np.hpfFreq));
-    // Whichever of +48V / HI-Z the plan holds off is sent first, so a write taking the
-    // unit from one to the other never has both on in between. HI-Z always goes out
-    // ahead of A.Gain, which the unit bounds to +40 dB while HI-Z is on.
-    const hiZOffFirst = cc.hasHiZ && np.hiZ !== undefined && !np.hiZ;
-    if (hiZOffFirst) out.push(command("HI_Z", cc.y, 0));
-    if (cc.hasMicStrip && np.phantom !== undefined) out.push(command("PHANTOM", cc.y, np.phantom ? 1 : 0));
-    if (cc.hasMicStrip && np.clipSafe !== undefined) out.push(command("CLIP_SAFE", cc.y, np.clipSafe ? 1 : 0));
     // Polarity invert: one toggle (mono) or two independent L/R (stereo).
     for (const ph of cc.phases) {
       const v = np[ph.key];
       if (v !== undefined) out.push(rawCommand(ph.name, ph.param, "bool", ph.y, v ? 1 : 0));
     }
-    if (cc.hasHiZ && np.hiZ !== undefined && !hiZOffFirst) out.push(command("HI_Z", cc.y, np.hiZ ? 1 : 0));
     // COMP/EQ type (COMP->EQ vs SSMCS) is a MONO IN channel feature (= mic strip).
     if (cc.hasMicStrip && np.compEqType !== undefined)
       out.push(command("COMP_EQ_TYPE", cc.y, boundEnum(np.compEqType, COMP_EQ_OPTIONS, COMP_EQ_COMP_FIRST)));
@@ -2465,10 +2435,6 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       if (!dyn.comp && cc.hasMicStrip && (np.compEqType ?? COMP_EQ_COMP_FIRST) === COMP_EQ_SSMCS) {
         pushSsmcsCommands(out, dyn.y, np.ssmcs);
       }
-    }
-    if (cc.gain && np.gain !== undefined) {
-      // A.Gain (mono) is one instance; D.Gain (stereo) writes both linked L/R.
-      for (const yi of cc.gain.instances) out.push(rawCommand("HA_GAIN", cc.gain.param, "gain", yi, np.gain));
     }
     own(node.id);
   }
@@ -2738,6 +2704,51 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     own(node.id);
   }
 
+  // The input stage, per MIC/LINE jack and per digital source — the unit keeps it there, and
+  // every channel reading one applies it. Sent for the holders some channel reads, after the
+  // source selects above, so a write that rewires and sets a value in one pass lands the
+  // value on a jack the channel already reads. Each value is bounded to its own address's
+  // range: A.Gain to -8..+70 dB, D.Gain to ±24 dB.
+  const reads = emit.everyInputHolder ? null : inputStageReadSet(model, plan);
+  for (const node of model.nodes) {
+    const base = MIC_LINE_JACK_BASE[node.id];
+    if (base === undefined) continue;
+    const np = plan.nodeParams[node.id];
+    if (!np) continue;
+    for (const side of ["L", "R"] as const) {
+      if (reads && !reads.jacks.get(node.id)?.has(side)) continue;
+      const j = base + (side === "R" ? 1 : 0);
+      const hasHiZ = (HI_Z_JACKS[model.id] ?? []).includes(j);
+      // Whichever of +48V / HI-Z the plan holds off is sent first, so a write taking the
+      // unit from one to the other never has both on in between. HI-Z always goes out
+      // ahead of A.Gain, which the unit bounds to +40 dB while HI-Z is on.
+      const hiZ = hasHiZ ? np[`hiZ${side}`] : undefined;
+      const hiZOffFirst = hiZ === false;
+      if (hiZOffFirst) out.push(command("HI_Z", j, 0));
+      const phantom = np[`phantom${side}`];
+      if (phantom !== undefined) out.push(command("PHANTOM", j, phantom ? 1 : 0));
+      const clipSafe = np[`clipSafe${side}`];
+      if (clipSafe !== undefined) out.push(command("CLIP_SAFE", j, clipSafe ? 1 : 0));
+      if (hasHiZ && !hiZOffFirst) {
+        const on = np[`hiZ${side}`];
+        if (on !== undefined) out.push(command("HI_Z", j, on ? 1 : 0));
+      }
+      const gain = np[`gain${side}`];
+      if (gain !== undefined)
+        out.push(rawCommand("HA_GAIN", PARAMS.HA_GAIN.id, "gain", j, clamp(gain, A_GAIN_MIN_DB, A_GAIN_MAX_DB)));
+    }
+    own(node.id);
+  }
+  for (const node of model.nodes) {
+    const address = D_GAIN_SOURCES[node.id];
+    if (!address || (reads && !reads.sources.has(node.id))) continue;
+    const gain = plan.nodeParams[node.id]?.dGain;
+    if (gain === undefined) continue;
+    const v = clamp(gain, D_GAIN_MIN_DB, D_GAIN_MAX_DB);
+    for (const y of address.instances) out.push(rawCommand("D_GAIN", address.id, "gain", y, v));
+    own(node.id);
+  }
+
   // Streaming / USB-out / monitor / analog-patch selects — absolute. One incoming
   // wire → source port(s); the two wires of a mono pair into a USB output → L = the
   // primary's slot, R = the partner's, whatever order the wires are in. No wire emits
@@ -2896,6 +2907,9 @@ export interface FollowOnlyAddr {
    *  routes the notify to a full read — nothing needs that today, and an address that
    *  did would also have to be readable on a scoped read to be worth indexing. */
   node: string;
+  /** Take the owner's scoped read for a notify here, even for a param that is otherwise
+   *  followed directly: the address is one the emit does not carry. */
+  scoped?: true;
 }
 
 /**
@@ -2957,6 +2971,23 @@ export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: Wri
     for (const f of dyn.comp) {
       if (COMP_AUTO_MAKEUP_DRIVEN.has(f.key))
         out.push({ param: PARAMS[f.name].id, x: 0, y: dyn.y, name: f.name, node: node.id });
+    }
+  }
+  // The jacks no channel reads. The unit keeps their input stage and announces a panel move
+  // there, while the emit carries only the jacks some channel reads — so these are
+  // registered here, and a notify takes the MIC/LINE node's scoped read, which keeps the
+  // plan's copy current for when a channel is routed there. D.Gain sources are not here: a
+  // panel move of one announces nothing.
+  const reads = inputStageReadSet(model, plan);
+  for (const node of model.nodes) {
+    const base = MIC_LINE_JACK_BASE[node.id];
+    if (base === undefined) continue;
+    for (const side of ["L", "R"] as const) {
+      if (reads.jacks.get(node.id)?.has(side)) continue;
+      const j = base + (side === "R" ? 1 : 0);
+      const names: ParamName[] = ["PHANTOM", "HA_GAIN", "CLIP_SAFE"];
+      if ((HI_Z_JACKS[model.id] ?? []).includes(j)) names.push("HI_Z");
+      for (const name of names) out.push({ param: PARAMS[name].id, x: 0, y: j, name, node: node.id, scoped: true });
     }
   }
   // microSD Rec Track Count: the broker caps it at 1, so the only values software can
@@ -3085,6 +3116,9 @@ export interface UnverifiedMapping {
    *  was written reports `roundTripped` rather than `confirmed`. Stated per entry, with no
    *  default, so a new guess has to say which kind it is. */
   roundTripSettles: boolean;
+  /** For a guess a round trip does not settle, the observation that does — printed by the
+   *  self-test beside the entry, since its run cannot reach a verdict there. */
+  howToSettle?: string;
   /** Param ids this guess INVENTS — subject to the collision audit. A guess that
    *  only reuses a confirmed param's id (value/instance guess) leaves this empty. */
   guessedIds: number[];
@@ -3094,40 +3128,62 @@ export interface UnverifiedMapping {
 
 export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
   {
-    // URX22 D.Gain channel→id map is the positional hypothesis (CH3/4, CH5/6,
-    // CH7/8, CH9/10 = ids 9, 13, 14, 15 by stereo-pair position — see D_GAIN maps
-    // in params.ts). It reuses URX44V-confirmed ids, so it invents none (empty
-    // guessedIds); what is unverified is the assignment on a real URX22. A round
-    // trip shows the ids take a value, not which channel each one reaches.
-    key: "dgain-urx22",
-    label: "URX22 D.Gain channel→id map (positional: CH3/4,5/6,7/8,9/10 = 9,13,14,15)",
-    models: ["URX22"],
+    // The D.Gain address of each digital source on URX22 / URX44: the URX44V's table, by
+    // source. Their sources are a subset of the URX44V's, so the table invents no id; what is
+    // unverified is that each address reaches that source's gain on these units. A value
+    // stored and read back says the address keeps one, not which source it feeds.
+    key: "dgain-source",
+    label: "D.Gain address of each digital input source (the URX44V table: AUX 9, USB MAIN A/B/C 13/14/15, …)",
+    models: ["URX22", "URX44"],
     guessedIds: [],
     roundTripSettles: false,
+    howToSettle:
+      "write a distinct D.Gain to one source at a time and read which channel's D.Gain the unit's LCD shows for a channel routed to it",
     addresses: (model) =>
-      [...stereoIndexMap(model).keys()].flatMap((nodeId) => {
-        const id = dGainParam(model.id, nodeId);
-        return id === undefined ? [] : [[id, 0] as GuessAddress, [id, 1] as GuessAddress];
+      model.nodes.flatMap((node) => {
+        const a = D_GAIN_SOURCES[node.id];
+        return a ? a.instances.map((y) => [a.id, y] as GuessAddress) : [];
       }),
     suppress: (plan) => {
-      for (const nodeId of ["ch_3_4", "ch_5_6", "ch_7_8", "ch_9_10"]) {
-        if (plan.nodeParams[nodeId]) delete plan.nodeParams[nodeId].gain;
-      }
+      for (const id of Object.keys(D_GAIN_SOURCES)) if (plan.nodeParams[id]) delete plan.nodeParams[id].dGain;
     },
   },
   {
-    // Which channel carries the Hi-Z switch. A value that holds at the address says the
-    // address takes one, not that the channel has the switch.
+    // Which jack carries the Hi-Z switch on URX22: its second jack. A value that holds at the
+    // address says the address takes one, not that the jack has the switch.
     key: "hiz-channel",
-    label: "URX22 Hi-Z (instrument) input channel",
+    label: "URX22 Hi-Z (instrument) input jack (jack 2)",
     models: ["URX22"],
     guessedIds: [],
     roundTripSettles: false,
-    addresses: (model) =>
-      model.nodes.flatMap((node) => {
-        const cc = channelControl(model, node.id);
-        return cc?.hasHiZ ? [[PARAMS.HI_Z.id, cc.y] as GuessAddress] : [];
-      }),
+    howToSettle: "turn HI-Z on for jack 2 from the app and read on the unit's INPUT screen which input shows HI-Z on",
+    addresses: (model) => (HI_Z_JACKS[model.id] ?? []).map((j) => [PARAMS.HI_Z.id, j] as GuessAddress),
+  },
+  {
+    // The analog input stage addressed by jack: +48V, A.Gain and Clip Safe at y = the jack's
+    // index, and HI-Z at its HI-Z jacks. Recorded on the URX44V alone. Off the factory wiring
+    // (CH n reads jack n) the jack and the channel number part, and a wrong axis puts a value
+    // on the other physical input.
+    key: "jack-axis",
+    label: "MIC/LINE input stage addressed by jack (+48V / A.Gain / Clip Safe / HI-Z at y = jack index)",
+    models: ["URX22", "URX44"],
+    guessedIds: [],
+    roundTripSettles: false,
+    howToSettle:
+      "route a channel to a MIC/LINE jack other than its own number, write a distinct A.Gain to that jack, and read the value the unit's LCD shows for that channel",
+    addresses: (model) => {
+      const hiZ = model.id === "URX22" ? [] : (HI_Z_JACKS[model.id] ?? []);
+      return model.nodes.flatMap((node) => {
+        const base = MIC_LINE_JACK_BASE[node.id];
+        if (base === undefined) return [];
+        return [base, base + 1].flatMap((j) => [
+          [PARAMS.PHANTOM.id, j] as GuessAddress,
+          [PARAMS.HA_GAIN.id, j] as GuessAddress,
+          [PARAMS.CLIP_SAFE.id, j] as GuessAddress,
+          ...(hiZ.includes(j) ? [[PARAMS.HI_Z.id, j] as GuessAddress] : []),
+        ]);
+      });
+    },
   },
   {
     // Two guesses in one, and the round trip only settles the first: whether the
@@ -3143,6 +3199,8 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     models: ["URX22", "URX44"],
     guessedIds: [STEREO_FADER, STEREO_ON, STEREO_PAN],
     roundTripSettles: false,
+    howToSettle:
+      "write a distinct fader level to one stereo index at a time and read on the unit's LCD which stereo channel's fader moved",
     addresses: (model) => {
       const ys = [...stereoIndexMap(model).values()];
       return [STEREO_FADER, STEREO_ON, STEREO_PAN].flatMap((id) => ys.map((y) => [id, y] as GuessAddress));
@@ -3159,6 +3217,8 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     models: ["URX22", "URX44"],
     guessedIds: [],
     roundTripSettles: false,
+    howToSettle:
+      "point a mono channel at each port value in turn with a signal on one physical input, and read which value moves that channel's input meter",
     addresses: (model) =>
       model.nodes.flatMap((node) =>
         node.kind === "channel" && !isStereoChannel(node.id)

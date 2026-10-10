@@ -56,7 +56,7 @@ import {
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
 import { applyParamRange, isRefusal, needsDecision, planProblems, prepareLoadedPlan } from "./core/plan-validate";
-import { phantomHiZBothOn, switchAddr } from "./core/input-lock";
+import { jackName, phantomHiZBothOn, switchAddr, switchOfKey } from "./core/input-lock";
 import type { InputSwitch, SwitchSession } from "./core/input-lock";
 import type { LoadProblem } from "./core/plan-validate";
 import {
@@ -848,11 +848,12 @@ function reflectFollow(): void {
   bothOnNoted = both;
 }
 
-// The channels holding +48V and HI-Z both on, as the status line last named them.
+// The jacks holding +48V and HI-Z both on, as the status line last named them.
 let bothOnNoted = "";
 function bothOnLabels(): string {
-  return phantomHiZBothOn(getModel(modelId), plan)
-    .map((id) => graph.labelOf(id))
+  const model = getModel(modelId);
+  return phantomHiZBothOn(model, plan)
+    .map((j) => jackName(model, plan, j, (id) => graph.labelOf(id)))
     .join(", ");
 }
 /** A device read's status line, led by what it did about +48V / HI-Z: the ONs it refused
@@ -876,11 +877,12 @@ let refusalLine: { line: string; notes: string[] } | null = null;
 /** One sentence per switch a read refused (`MergedRead.refusedOn`), channels in model order. */
 function refusalNotes(merged: MergedRead | undefined): string[] {
   if (!merged?.refusedOn.length) return [];
-  const order = getModel(modelId).nodes.map((n) => n.id);
+  const model = getModel(modelId);
   const named = (key: InputSwitch): string =>
-    order
-      .filter((id) => merged.refusedOn.some((r) => r.nodeId === id && r.key === key))
-      .map((id) => graph.labelOf(id))
+    merged.refusedOn
+      .map((r) => ({ node: r.nodeId, sw: switchOfKey(r.key) }))
+      .filter((r) => r.sw?.on === key)
+      .map((r) => jackName(model, plan, { node: r.node, side: r.sw!.side }, (id) => graph.labelOf(id)))
       .join(", ");
   const phantom = named("phantom");
   const hiZ = named("hiZ");
@@ -1213,7 +1215,7 @@ const follow =
         // A direct (node-local scalar) change: decode the notify value straight into
         // the plan, no read-back, and record the node so the coalesced reflect
         // repaints just it. The reflect is scheduled by flushDirect.
-        applyDirect: (node, name, value) => authorFromDevice(node, () => applyDirect(plan, node, name, value)),
+        applyDirect: (node, name, value, y) => authorFromDevice(node, () => applyDirect(plan, node, name, value, y)),
         // A rename made on the unit's own LCD. It arrives as a string notify on a
         // name address, which the numeric follow path cannot carry — the value is
         // text, the address has no catalog entry, and the live snapshot holds no
@@ -4218,6 +4220,8 @@ if (!DEMO) {
         ...alignLinkedSendPans(plan, withLinkedPartner(getModel(modelId), plan, control.node)),
       ]);
       followDirtyNodes.add(control.node);
+      // A channel's input-stage control writes the jack or source it reads.
+      if (control.writes?.kind === "node" && control.writes.node) followDirtyNodes.add(control.writes.node);
       const partner = mirrored ? partnerChannel(getModel(modelId), control.node) : undefined;
       if (partner) followDirtyNodes.add(partner);
       requestReflect();
@@ -4489,8 +4493,10 @@ if (!DEMO) {
         await withCheckedDevice("compare", t().status.compareConnecting, t().status.compareError, async (device) => {
           const model = getModel(modelId);
           // Both halves are taken from the plan on screen NOW: the numeric sweep spans
-          // seconds, and the plan read again after it can be another document.
-          const commands = planToCommands(model, plan);
+          // seconds, and the plan read again after it can be another document. The input
+          // stage of every jack and source is compared, read by a channel or not — the unit
+          // keeps them all, and a settings file carries them all.
+          const commands = planToCommands(model, plan, "all", { everyInputHolder: true });
           const names = planToNameWrites(model, plan);
           const startedAt = performance.now();
           const { entries, errors } = await comparePlan(commands, signal);

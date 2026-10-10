@@ -31,7 +31,8 @@ import {
   wireShapeBroken,
 } from "./routing";
 import { connParamContestKey, nodeParamContestKey } from "./plan-history";
-import { emptyPlan, type Plan, type PlanConnection } from "./plan";
+import { emptyPlan, setExclusiveConnection, type Plan, type PlanConnection } from "./plan";
+import { inputStageOf } from "./control/translate";
 import { defaultPlan } from "../models/initial-state";
 import {
   BUS_TYPE_FIXED,
@@ -600,10 +601,10 @@ describe("isBalLinkedPair / mirrorLinkedPair", () => {
   });
 
   it("does not mirror when the pair is unlinked", () => {
-    const before = plan.nodeParams.ch2?.gain;
-    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, gain: 12 };
+    const before = plan.nodeParams.ch2?.hpfFreq;
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hpfFreq: 120 };
     expect(mirrorLinkedPair(u44, plan, "ch1")).toBe(false);
-    expect(plan.nodeParams.ch2?.gain).toBe(before); // partner untouched
+    expect(plan.nodeParams.ch2?.hpfFreq).toBe(before); // partner untouched
   });
 
   it("mirrors node params in PAN mode too, which is what the unit does", () => {
@@ -614,47 +615,48 @@ describe("isBalLinkedPair / mirrorLinkedPair", () => {
     expect(plan.nodeParams.ch2?.eqOn).toBe(false);
   });
 
-  // The head amp is the pair's exception in EITHER mode, all five values of it: the unit gives
-  // each member its own input, so a mirror that carried them would write the partner's preamp —
-  // its gain, and the phantom power feeding whatever is plugged into it.
+  // The polarity is the pair's exception in EITHER mode: each member keeps its own. The input
+  // stage is no member's at all — it is on the jack each one reads — so the mirror writes
+  // nothing on an input node.
   it.each([
     ["BAL", PAN_BAL_BAL],
     ["PAN", PAN_BAL_PAN],
-  ])("leaves the partner its own head amp, %s", (_label, panBal) => {
-    plan.nodeParams.ch1 = {
-      stereoLink: true,
-      panBal,
-      gain: 12,
-      clipSafe: true,
-      phase: true,
-      phantom: true,
-      hiZ: true,
-      on: false,
-    };
-    plan.nodeParams.ch2 = { gain: 40, clipSafe: false, phantom: false, hiZ: false };
+  ])("leaves the partner its own polarity and the jacks alone, %s", (_label, panBal) => {
+    const jacks = structuredClone(plan.nodeParams["in.micline_1_2"]);
+    plan.nodeParams.ch1 = { stereoLink: true, panBal, phase: true, on: false };
+    plan.nodeParams.ch2 = {};
     expect(mirrorLinkedPair(u44, plan, "ch1")).toBe(true);
-    expect(plan.nodeParams.ch2?.gain, "the partner's preamp gain").toBe(40);
-    expect(plan.nodeParams.ch2?.clipSafe, "the partner's clip safe").toBe(false);
-    expect(plan.nodeParams.ch2?.phantom, "the partner's phantom power").toBe(false);
-    expect(plan.nodeParams.ch2?.hiZ, "the partner's instrument input").toBe(false);
     // The partner carried no phase of its own, so it takes none rather than the source's.
     expect(plan.nodeParams.ch2?.phase).toBeUndefined();
     expect(plan.nodeParams.ch2?.on, "everything else still mirrors").toBe(false);
+    expect(plan.nodeParams["in.micline_1_2"], "nothing written on the jacks").toEqual(jacks);
   });
 
   // Linking is its own rule, and on the unit it copies the secondary's state from the primary
-  // — with the input stage left out. The app writes no head amp at the transition either, so a
-  // pair linked from two different sources keeps both preamps.
-  it("leaves both members their own head amp across a link", () => {
-    plan.nodeParams.ch1 = { gain: 12, phantom: true };
-    plan.nodeParams.ch2 = { gain: 40, phantom: false };
+  // — with the input stage left out. A pair on one MIC/LINE node reads two jacks, which are two
+  // holders, so both keep their own preamp across the link.
+  it("leaves both jacks of a linked pair their own A.Gain and +48V", () => {
+    plan.nodeParams["in.micline_1_2"] = {
+      ...plan.nodeParams["in.micline_1_2"],
+      gainL: 12,
+      phantomL: true,
+      gainR: 40,
+      phantomR: false,
+    };
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_BAL };
     applyPairTransition(u44, plan, "ch1", { stereoLink: true });
     expect(mirrorLinkedPair(u44, plan, "ch1")).toBe(true);
-    expect(plan.nodeParams.ch1?.gain).toBe(12);
-    expect(plan.nodeParams.ch2?.gain).toBe(40);
-    expect(plan.nodeParams.ch1?.phantom).toBe(true);
-    expect(plan.nodeParams.ch2?.phantom).toBe(false);
+    expect(plan.nodeParams["in.micline_1_2"]).toMatchObject({ gainL: 12, phantomL: true, gainR: 40, phantomR: false });
+    expect(inputStageOf(u44, plan, "ch1")).toMatchObject({ node: "in.micline_1_2", side: "L" });
+    expect(inputStageOf(u44, plan, "ch2")).toMatchObject({ node: "in.micline_1_2", side: "R" });
+  });
+
+  // A linked pair on a digital source reads that source's one D.Gain.
+  it("reads one D.Gain for a linked pair on a digital source", () => {
+    for (const ch of ["ch1", "ch2"]) setExclusiveConnection(plan, "in.aux:out", `${ch}:in`, "source");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true };
+    expect(inputStageOf(u44, plan, "ch1")).toMatchObject({ kind: "digital", node: "in.aux" });
+    expect(inputStageOf(u44, plan, "ch2")).toMatchObject({ kind: "digital", node: "in.aux" });
   });
 
   it("carries a send's level / PRE-POST / ON in PAN, and leaves the partner's own pan", () => {

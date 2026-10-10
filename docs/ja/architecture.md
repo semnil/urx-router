@@ -3616,18 +3616,22 @@ localStorage レコード (`urx-settings`、`core/settings.ts`。`?reset` のク
 ```jsonc
 {
   "format": "urx-router-plan",
-  "version": 4,
+  "version": 5,
   "modelId": "URX44V",
   "sampleRate": 48000,
   "positions": { "ch1": { "x": 1, "y": 0 } },
   "connections": [
-    { "from": "in.micline1:out", "to": "ch1:in", "kind": "source" },
+    { "from": "in.micline_1_2:out", "to": "ch1:in", "kind": "source" },
     { "from": "ch1:out", "to": "bus.stereo:in", "kind": "send",
       "params": { "level": 0, "pan": 0, "tap": "post" } }
   ],
   "nodeNames": { "ch1": "メインVo" },
   "nodeColors": { "ch1": "#4a78c0" },
-  "hidden": ["in.micline2", "out.sdrec"],
+  "nodeParams": {
+    "ch1": { "hpf": true, "hpfFreq": 100 },
+    "in.micline_1_2": { "gainL": 32, "phantomL": true }
+  },
+  "hidden": ["in.micline_3_4", "out.sdrec"],
   "notes": { "ch1": "メインVo — Comp + サビ +2 dB" },
   "noteCollapsed": ["ch1"]
 }

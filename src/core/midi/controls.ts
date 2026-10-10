@@ -8,10 +8,12 @@
 // composed by the UI from the node label + the scope + the param token.
 
 import type { DeviceModel } from "../../models/types";
-import { channelGainRange, hiZPatch, inputOnRefused } from "../input-lock";
-import type { InputSwitch } from "../input-lock";
+import { hiZPatch, inputOnRefused, jackGainRange } from "../input-lock";
+import type { InputSwitch, Jack } from "../input-lock";
+import { factoryNodeParams } from "../../models/initial-state";
 import { isMonitorBus } from "../constraints";
 import {
+  jackKey,
   LEVEL_OFF_DB,
   sendConnection,
   SSMCS_INITIAL,
@@ -41,6 +43,7 @@ import {
   eqBandFields,
   eqBandHasType,
   hasEq,
+  inputStageOf,
   isSsmcsScKey,
   ssmcsEqBandFields,
   ssmcsEqBandHasQ,
@@ -73,7 +76,15 @@ import {
   MBC_ONE_KNOB,
 } from "../control/insert-fx-effect";
 import { channelEqUnavailable, insertFxMenu, insertFxRateLock, nodeRateDisabled } from "../constraints";
-import { PAN_MAX, PAN_MIN, PHONES_LEVEL_DEFAULT, PHONES_LEVEL_MAX, PHONES_LEVEL_MIN } from "../control/vd";
+import {
+  D_GAIN_MAX_DB,
+  D_GAIN_MIN_DB,
+  PAN_MAX,
+  PAN_MIN,
+  PHONES_LEVEL_DEFAULT,
+  PHONES_LEVEL_MAX,
+  PHONES_LEVEL_MIN,
+} from "../control/vd";
 
 /** The STEREO master — every channel's / FX channel's fixed main send target. */
 export const MAIN_BUS = "bus.stereo";
@@ -258,11 +269,12 @@ export interface ControlDesc {
  * What a control writes, in the plan's own terms. A NODE write names a `nodeParams` path on
  * the control's own node, dotted for a value inside a nested group (`gate.threshold`,
  * `ssmcs.comp.attack`, `eqBands.0.gain`) — the same spelling a tuning screen's write list
- * uses, and the granularity `patchContestNames` names. A SEND write names one param of the
- * control's send into `to` (a node id; the fixed main path is MAIN_BUS), which lives on the
- * wire rather than on the node.
+ * uses, and the granularity `patchContestNames` names — or, with `node`, on another node: a
+ * channel's input-stage controls write the jack or source the channel reads. A SEND write
+ * names one param of the control's send into `to` (a node id; the fixed main path is
+ * MAIN_BUS), which lives on the wire rather than on the node.
  */
-export type ControlWrite = { kind: "node"; path: string } | { kind: "send"; to: string; param: string };
+export type ControlWrite = { kind: "node"; node?: string; path: string } | { kind: "send"; to: string; param: string };
 
 /** Why a control refuses one write while it accepts others: +48V cannot be turned on while
  *  HI-Z is on, nor HI-Z while +48V is on. The UI names the reason. */
@@ -490,18 +502,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   });
 
   type BoolKey =
-    | "gateOn"
-    | "compOn"
-    | "eqOn"
-    | "phantom"
-    | "phase"
-    | "phaseL"
-    | "phaseR"
-    | "hpf"
-    | "hiZ"
-    | "cueInterrupt"
-    | "mono"
-    | "duckerOn";
+    "gateOn" | "compOn" | "eqOn" | "phase" | "phaseL" | "phaseR" | "hpf" | "cueInterrupt" | "mono" | "duckerOn";
   const boolControl = (param: BoolKey, def: boolean, locked?: () => boolean): BoundControl => ({
     id: controlId(id, param),
     node: id,
@@ -516,26 +517,34 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     },
   });
 
-  // +48V and HI-Z: turning one on while the other is on is refused, turning either off is
-  // not, and turning HI-Z on carries A.Gain down to +40 dB in the same write.
-  const inputSwitch = (param: InputSwitch): BoundControl => {
+  // +48V and HI-Z of the jack a channel reads: turning one on while the other is on is
+  // refused, turning either off is not, and turning HI-Z on carries the jack's A.Gain down to
+  // +40 dB in the same write. The control is the channel's; the value is the jack's.
+  const inputSwitch = (param: InputSwitch, jack: Jack): BoundControl => {
+    const key = jackKey(param, jack.side);
+    const jnp = (): NodeParams => (plan.nodeParams[jack.node] ??= {});
     const refuses = (v: number): ControlRefusal | null =>
-      v >= 0.5 && inputOnRefused(model.id, id, plan.nodeParams[id], param)
+      v >= 0.5 && inputOnRefused(model.id, jack, plan.nodeParams[jack.node], param)
         ? param === "phantom"
           ? "phantomUnderHiZ"
           : "hiZUnderPhantom"
         : null;
     let alsoWrote: readonly string[] = [];
     return {
-      ...boolControl(param, false),
+      id: controlId(id, param),
+      node: id,
+      param,
+      writes: { kind: "node", node: jack.node, path: key },
+      kind: "toggle",
+      get: () => (plan.nodeParams[jack.node]?.[key] ? 1 : 0),
       refuses,
       set: (v) => {
         if (refuses(v)) return false;
         if (param === "hiZ") {
-          const patch = hiZPatch(plan.nodeParams[id], v >= 0.5);
-          alsoWrote = "gain" in patch ? ["gain"] : [];
-          Object.assign(np(), patch);
-        } else np().phantom = v >= 0.5;
+          const patch = hiZPatch(plan.nodeParams[jack.node], jack.side, v >= 0.5);
+          alsoWrote = Object.keys(patch).filter((k) => k !== key);
+          Object.assign(jnp(), patch);
+        } else (jnp() as Record<string, unknown>)[key] = v >= 0.5;
         return true;
       },
       alsoWrote: () => alsoWrote,
@@ -544,7 +553,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
 
   // A continuous control persisted on the node's own params.
   const nodeControl = (
-    param: "level" | "pan" | "gain" | "phonesLevel",
+    param: "level" | "pan" | "phonesLevel",
     codec: { get(x: number): number; set(v: number): number },
     fallback: number,
   ): BoundControl => ({
@@ -1153,27 +1162,43 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   if (busBalance(id)) out.push(nodeControl("pan", panCodec, 0));
 
   const cc = channelControl(model, id);
-  if (isChannel && cc?.gain) {
-    // Fallback = the factory value (A.GAIN -8 on mono mic strips, D.GAIN 0). The codec follows
-    // the channel's range as it stands, so HI-Z maps the full throw to -8..+40 dB.
-    const range = (): { minDb: number; maxDb: number } => channelGainRange(model, id, plan.nodeParams[id])!;
-    out.push(
-      nodeControl(
-        "gain",
-        {
-          get: (x) => linearCodec(range().minDb, range().maxDb, 1).get(x),
-          set: (v) => linearCodec(range().minDb, range().maxDb, 1).set(v),
-        },
-        cc.gain.analog ? -8 : 0,
-      ),
-    );
+  // A channel's input stage is the jack or source it reads: A.GAIN, +48V and HI-Z on a jack,
+  // D.GAIN on a digital source, none of them with no source. The ids stay the channel's.
+  const stage = isChannel ? inputStageOf(model, plan, id) : { kind: "none" as const };
+  if (stage.kind !== "none") {
+    const holder = stage.node;
+    const path = stage.kind === "jack" ? jackKey("gain", stage.side) : "dGain";
+    const range = (): { minDb: number; maxDb: number } =>
+      stage.kind === "jack"
+        ? jackGainRange(model.id, stage, plan.nodeParams[holder])!
+        : { minDb: D_GAIN_MIN_DB, maxDb: D_GAIN_MAX_DB };
+    const codec = (): ReturnType<typeof linearCodec> => linearCodec(range().minDb, range().maxDb, 1);
+    // Fallback = the holder's factory value.
+    const fallback = (): number => {
+      const f = (factoryNodeParams(model.id, holder) as Record<string, unknown> | undefined)?.[path];
+      return typeof f === "number" ? f : range().minDb;
+    };
+    out.push({
+      id: controlId(id, "gain"),
+      node: id,
+      param: "gain",
+      writes: { kind: "node", node: holder, path },
+      kind: "continuous",
+      get: () => {
+        const v = (plan.nodeParams[holder] as Record<string, unknown> | undefined)?.[path];
+        return codec().get(typeof v === "number" ? v : fallback());
+      },
+      set: (v) => {
+        ((plan.nodeParams[holder] ??= {}) as Record<string, unknown>)[path] = codec().set(v);
+        return true;
+      },
+    });
   }
   if (isChannel) {
-    // The mic-strip channels (mono ch1..4) are the only GATE/COMP-bearing strips.
-    if (cc?.hasMicStrip) out.push(inputSwitch("phantom"));
+    if (stage.kind === "jack") out.push(inputSwitch("phantom", stage));
     for (const ph of cc?.phases ?? []) out.push(boolControl(ph.key, false));
     if (cc?.hasHpf) out.push(boolControl("hpf", false));
-    if (cc?.hasHiZ) out.push(inputSwitch("hiZ"));
+    if (stage.kind === "jack" && stage.hiZ) out.push(inputSwitch("hiZ", stage));
     if (cc?.hasMicStrip) out.push(boolControl("gateOn", false));
     if (cc?.hasMicStrip) out.push(boolControl("compOn", false));
   }
@@ -1206,7 +1231,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   if (primary !== null && primary !== id && isStereoLinkedPair(model, plan, id)) {
     const sharedPan = isBalLinkedPair(model, plan, id);
     for (const c of out) {
-      if (c.writes?.kind === "node" && !pairSharesNodeKey(c.writes.path)) continue;
+      if (c.writes?.kind === "node" && (c.writes.node !== undefined || !pairSharesNodeKey(c.writes.path))) continue;
       if (!sharedPan && c.param === "pan") continue;
       c.mirrorId = controlId(primary, c.param, c.scope);
     }

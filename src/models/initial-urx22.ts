@@ -6,7 +6,9 @@
 //     so URX22 CH3/4 <- URX44V CH5/6, CH5/6 <- CH7/8, CH7/8 <- CH9/10, CH9/10 <- CH11/12.
 //   - No LINE OUT and no microSD on URX22, so the MIX 1 -> LINE OUT default
 //     patch is dropped and no SD nodes are seeded.
-//   - Hi-Z lives on CH2 (HI_Z_CHANNELS in translate.ts), so only CH2 carries hiZ.
+//   - The input stage is kept per jack and per source. URX22 has one MIC/LINE pair, whose
+//     second jack carries Hi-Z (HI_Z_JACKS in params.ts), and the digital sources it has
+//     take the URX44V's factory D.Gain.
 // Values not affected by the model differences mirror URX44V verbatim, and most of
 // this file is an unverified factory-state estimate. The INS FX values are the one
 // exception: they are the adopted URX22 implementation values, not an estimate held
@@ -23,14 +25,10 @@ const EQ_FLAT = (): NodeParams["eqBands"] => [
   { on: true, q: 0.71, freq: 10000, gain: 0, type: 1 },
 ];
 
-const monoChannel = (hiZ?: boolean): NodeParams => ({
+const monoChannel = (): NodeParams => ({
   on: true,
-  gain: -8,
   hpf: false,
   hpfFreq: 80,
-  phantom: false,
-  clipSafe: false,
-  ...(hiZ === undefined ? {} : { hiZ }),
   compEqType: 0,
   recPoint: 4,
   phase: false,
@@ -56,10 +54,9 @@ const monoChannel = (hiZ?: boolean): NodeParams => ({
   insertFxOn: false,
 });
 
-const stereoChannel = (gain: number): NodeParams => ({
+const stereoChannel = (): NodeParams => ({
   on: true,
   recPoint: 4,
-  gain,
   phaseL: false,
   phaseR: false,
   eqOn: true,
@@ -83,13 +80,32 @@ const ducker = (): NodeParams => ({
 });
 
 export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
+  "in.micline_1_2": {
+    gainL: -8,
+    gainR: -8,
+    phantomL: false,
+    phantomR: false,
+    clipSafeL: false,
+    clipSafeR: false,
+    hiZR: false,
+  },
+  "in.aux": { dGain: 0 },
+  "in.usbmain_a": { dGain: -14 },
+  "in.usbmain_b": { dGain: -14 },
+  "in.usbmain_c": { dGain: -14 },
+  "in.usbdaw_1_2": { dGain: 0 },
+  "in.usbdaw_3_4": { dGain: 0 },
+  "in.usbdaw_5_6": { dGain: 0 },
+  "in.usbdaw_7_8": { dGain: 0 },
+  "in.usbdaw_9_10": { dGain: 0 },
+  "in.usbsub": { dGain: -14 },
   // Signal Type (stereoLink) / PAN-BAL live on the mono pair's primary (CH1) only.
   ch1: { ...monoChannel(), stereoLink: false, panBal: 0 },
-  ch2: monoChannel(false),
-  ch_3_4: stereoChannel(0),
-  ch_5_6: stereoChannel(-14),
-  ch_7_8: stereoChannel(-14),
-  ch_9_10: stereoChannel(-14),
+  ch2: monoChannel(),
+  ch_3_4: stereoChannel(),
+  ch_5_6: stereoChannel(),
+  ch_7_8: stereoChannel(),
+  ch_9_10: stereoChannel(),
   "bus.stereo": { ...outputBus(), on: true },
   "bus.mix1": { ...outputBus(), busType: 0, on: true, panLink: false },
   "bus.mix2": { ...outputBus(), busType: 0, on: true, panLink: false },

@@ -76,8 +76,8 @@ export interface DeviceFollowHooks {
   lookup: (paramId: number, x: number, y: number) => FollowAddr | undefined;
   /** Apply one direct param change into the plan now (no read-back). Returns false
    *  when the param is not actually directly placeable (flagged direct but unhandled),
-   *  so the caller falls back to a scoped read. */
-  applyDirect: (node: string, name: ParamName, value: number) => boolean;
+   *  so the caller falls back to a scoped read. `y` is the address's instance. */
+  applyDirect: (node: string, name: ParamName, value: number, y: number) => boolean;
   /** A rename made on the unit. Returns the owning node when the address is a name
    *  one and the value was placed, so the caller can repaint just that node — or
    *  undefined when it is not a name address at all. The app's own rename echoed
@@ -401,7 +401,7 @@ export class DeviceFollow {
       // A param flagged direct but not actually placeable falls back to a scoped read, and
       // so does a value one of our own unannounced writes replaces: the plan keeps the
       // value that write carries, and the read takes what the unit holds once it lands.
-      if (addr.direct && !superseded && this.hooks.applyDirect(addr.node, addr.name, p.value)) {
+      if (addr.direct && !superseded && this.hooks.applyDirect(addr.node, addr.name, p.value, p.y)) {
         this.hooks.noteDirect(p.paramId, p.x, p.y, p.value);
         this.hooks.flushDirect();
       } else {

@@ -22,6 +22,12 @@ loads the plan as authored":
 - a fixed send into a MIX or FX bus the document lists without a level is given 0 dB on
   load, the level the write sends for it (core/plan-validate.ts `sendLevelProblems`), which
   is reported as a warning — the plan loads with a level it did not write,
+- a channel's +48V / A.Gain / Clip Safe / HI-Z / D.Gain, which the unit keeps on the MIC/LINE
+  jack or the digital source rather than on the channel, is moved on load onto the jack or
+  source the channel's index addressed (models.json `inputStage`; core/plan.ts
+  `migrateInputStage`), and an input-stage key that addresses nothing on this model is
+  dropped — each reported as a warning, and every check below reads the plan as the move
+  leaves it,
 - a STEREO-linked pair whose members disagree about a value the pair holds once has the
   primary's values copied onto the secondary on load (core/plan-validate.ts
   `linkedPairProblems`), which is reported as a warning — a document naming only the
@@ -93,7 +99,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MODELS_PATH = os.path.join(HERE, "models.json")
 DEFAULT_BASE = "https://urx-router.semnil.com/"
 PLAN_FORMAT = "urx-router-plan"
-PLAN_VERSION = 4
+PLAN_VERSION = 5
 
 SINGLE_INPUT_KINDS = {"source", "patch", "key", "record"}
 KNOWN_KINDS = {"source", "patch", "send", "sendSwitch", "key", "record"}
@@ -192,6 +198,13 @@ def validate(plan, models):
     model = models[model_id]
     by_pair = rule_index(model)
     nodes = model["nodes"]
+
+    # The input stage moves first: the app runs it inside the document read, ahead of every
+    # repair below.
+    if isinstance(plan.get("nodeParams"), dict):
+        migrated, rewrites = migrate_input_stage(plan["nodeParams"], model)
+        warnings.extend(rewrites)
+        plan = {**plan, "nodeParams": migrated}
 
     conns = plan.get("connections")
     if conns is not None and not isinstance(conns, list):
@@ -1696,21 +1709,129 @@ def comp_eq_type(node_id, params, leaf_rules, factory):
     return admit(rule, value) if is_number(value) else None
 
 
-def hi_z_on(node_id, params, hi_z):
-    """Whether HI-Z is on for a node: it carries the switch and its params hold it on."""
-    return bool(hi_z) and node_id in hi_z.get("channels", []) and read_as_on(params.get("hiZ"))
+def hi_z_on(node_id, params, hi_z, side):
+    """Whether HI-Z is on for one jack of a MIC/LINE node: that jack carries the switch and the
+    node's params hold it on."""
+    return (
+        bool(hi_z)
+        and side in (hi_z.get("jacks") or {}).get(node_id, [])
+        and read_as_on(params.get(f"hiZ{side}"))
+    )
 
 
 def hi_z_bounds(node_id, params, hi_z, bounded):
-    """A channel carrying HI-Z with HI-Z on: the load turns +48V off (HI-Z kept), the repair
-    `paramRangeProblems` makes beside A.Gain's ceiling there, which is the `hiZ` variant of the
-    gain's rule. `hi_z` is the `hiZ` entry models.json carries."""
-    if not hi_z_on(node_id, params, hi_z):
-        return
-    if "phantom" in params and read_as_on(params["phantom"]):
-        bounded.append(
-            (f"{node_id}.phantom", f"{params['phantom']!r} is bounded to False — +48V and HI-Z are never on together")
+    """A jack carrying HI-Z with HI-Z on: the load turns that jack's +48V off (HI-Z kept), the
+    repair `paramRangeProblems` makes beside A.Gain's ceiling there, which is the `hiZL` /
+    `hiZR` variant of the gain's rule. `hi_z` is the `hiZ` entry models.json carries."""
+    for side in ("L", "R"):
+        key = f"phantom{side}"
+        if hi_z_on(node_id, params, hi_z, side) and key in params and read_as_on(params[key]):
+            bounded.append(
+                (f"{node_id}.{key}", f"{params[key]!r} is bounded to False — +48V and HI-Z are never on together")
+            )
+
+
+LEGACY_CHANNEL_INPUT_KEYS = ("gain", "phantom", "clipSafe", "hiZ")
+JACK_KEYS = tuple(f"{field}{side}" for field in LEGACY_CHANNEL_INPUT_KEYS for side in ("L", "R"))
+MONO_CHANNEL_RE = re.compile(r"^ch(\d+)$")
+# D.Gain id 12 is shared by the USB DAW sources, one instance each, so it names no one source.
+SHARED_D_GAIN_ID = 12
+
+
+def migrate_input_stage(node_params, model):
+    """The load's move of a document's channel-held input stage (core/plan.ts
+    `migrateInputStage`): a mono channel CH n's key goes to jack n of the MIC/LINE node holding
+    it, a stereo channel's gain to the D.Gain of the source its model's legacy map names, and a
+    key the document also writes at the destination wins over the channel's copy. Every
+    input-stage key that addresses nothing on this model — a stereo channel's +48V / Clip Safe /
+    HI-Z, HI-Z on a channel or jack without it, a jack key off a MIC/LINE node, a D.Gain on a
+    node with none — is dropped. Only what the sanitiser keeps is moved; what it drops is named
+    at the path the document wrote it. Returns the node params as the move leaves them and one
+    warning per key."""
+    stage = model.get("inputStage") or {}
+    jack_base = stage.get("jackBase") or {}
+    d_gain = stage.get("dGainSources") or {}
+    legacy_stereo = stage.get("legacyStereoDGain") or {}
+    legacy_hi_z = stage.get("legacyHiZChannels") or []
+    hi_z_jacks = (model.get("hiZ") or {}).get("jacks") or {}
+    source_of_id = {i: n for n, i in d_gain.items() if i != SHARED_D_GAIN_ID}
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in node_params.items()}
+    warnings = []
+
+    def drop(node_id, key, why):
+        del out[node_id][key]
+        warnings.append(f"node param {node_id}.{key}: the app drops this value on load — {why}")
+
+    def move(node_id, key, to, to_key):
+        value = out[node_id].pop(key)
+        dest = out.get(to)
+        if dest is not None and not isinstance(dest, dict):
+            warnings.append(f"node {to}: the app drops this node's params on load — nodeParams entries must be objects")
+            dest = None
+        if dest is None:
+            dest = out[to] = {}
+        if to_key in dest and sanitize(dest[to_key]) is not MISSING:
+            warnings.append(
+                f"node param {node_id}.{key}: the app drops this value on load — the document also writes "
+                f"{to}.{to_key}, which is the one kept"
+            )
+            return
+        dest[to_key] = value
+        warnings.append(
+            f"node param {node_id}.{key}: the app moves this value to {to}.{to_key} on load — the unit keeps "
+            "it there, on the jack or the source the channel's index addressed"
         )
+
+    for node_id in list(out):
+        params = out[node_id]
+        if node_id == "__proto__" or not isinstance(params, dict):
+            continue
+        mono = MONO_CHANNEL_RE.match(node_id)
+        stereo = STEREO_CHANNEL_RE.match(node_id)
+        for key in LEGACY_CHANNEL_INPUT_KEYS:
+            if key not in params:
+                continue
+            kept = sanitize(params[key])
+            if kept is MISSING:
+                continue
+            gone = []
+            dropped_values(params[key], f"{node_id}.{key}", gone)
+            warnings.extend(f"node param {path}: the app drops this value on load — {why}" for path, why in gone)
+            params[key] = kept
+            if mono:
+                jack = int(mono.group(1)) - 1
+                holder = next((n for n, base in jack_base.items() if jack in (base, base + 1)), None)
+                if holder is None:
+                    drop(node_id, key, "this model has no MIC/LINE jack at this channel's index")
+                elif key == "hiZ" and node_id not in legacy_hi_z:
+                    drop(node_id, key, "this channel's jack carries no HI-Z")
+                else:
+                    move(node_id, key, holder, f"{key}{'R' if jack - jack_base[holder] else 'L'}")
+            elif stereo and key == "gain":
+                source = source_of_id.get(legacy_stereo.get(node_id))
+                if source is None:
+                    drop(node_id, key, "this model has no D.Gain source at this channel's address")
+                else:
+                    move(node_id, key, source, "dGain")
+            else:
+                drop(node_id, key, "this node holds no input stage")
+    for node_id in list(out):
+        params = out[node_id]
+        if node_id == "__proto__" or not isinstance(params, dict):
+            continue
+        base = jack_base.get(node_id)
+        for key in list(params):
+            if sanitize(params[key]) is MISSING:
+                continue
+            if key in JACK_KEYS:
+                side = key[-1]
+                if base is None:
+                    drop(node_id, key, "this node is not a MIC/LINE input")
+                elif key.startswith("hiZ") and side not in hi_z_jacks.get(node_id, []):
+                    drop(node_id, key, "this jack carries no HI-Z")
+            elif key == "dGain" and node_id not in d_gain:
+                drop(node_id, key, "this node has no D.Gain")
+    return out, warnings
 
 
 def node_param_warnings(
@@ -1732,7 +1853,7 @@ def node_param_warnings(
     A finite FX value outside what its control admits, and a `type` the channel's menu does
     not offer, are covered too — by `fx_catalogue_warnings`, which reads the `fxChannels`
     entry models.json carries. What needs no catalogue at all is a value that is not a number,
-    which is fx_effect_warnings. +48V and A.Gain on a HI-Z channel with HI-Z on are hi_z_bounds."""
+    which is fx_effect_warnings. +48V and A.Gain on a HI-Z jack with HI-Z on are hi_z_bounds."""
     out = []
     slot_holders = {}
     node_params = plan.get("nodeParams")
@@ -1785,7 +1906,8 @@ def node_param_warnings(
         contexts = [
             c
             for c, on in (
-                ("hiZ", hi_z_on(node_id, params, hi_z)),
+                ("hiZL", hi_z_on(node_id, params, hi_z, "L")),
+                ("hiZR", hi_z_on(node_id, params, hi_z, "R")),
                 ("linked", params.get("stereoLink") is True),
                 ("ssmcs", comp_eq_type(node_id, params, leaf_rules, factory) == COMP_EQ_SSMCS),
             )

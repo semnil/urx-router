@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { confirmedAdoptions } from "./adopt-writes";
-import { emptyPlan, type Plan } from "../core/plan";
+import { emptyPlan, setExclusiveConnection, type Plan } from "../core/plan";
 import { getModel } from "../models";
 import { cmdAddr, planToCommands } from "../core/control/translate";
 import { fxParams } from "../core/control/fx-effect";
@@ -140,18 +140,21 @@ describe("confirmedAdoptions — node-param leaves", () => {
     ]);
   });
 
-  // The load bounds a gain to the channel's own range, which is narrower than the window the
-  // encoder clamps the write to. Below -8 dB on an A.Gain channel the write sends the document's
-  // value and the unit is not at the bound; above +70 dB the encoder's clamp lands on the bound.
+  // The load bounds a jack's gain to the window the write clamps that address to, so the bound
+  // is the value the write sent at either end; a value the write sent as stored is not bounded.
   it("takes a bound only where it is the value the write sent", () => {
-    const below = withNodes({ ch1: { gain: -12 } });
-    const [low] = addrsOf(below, "ch1", "HA_GAIN", [0]);
-    expect(confirmedAdoptions(model, below, below, new Set([low!]))).toEqual([]);
-
-    const above = withNodes({ ch1: { gain: 80 } });
-    const [high] = addrsOf(above, "ch1", "HA_GAIN", [0]);
-    expect(confirmedAdoptions(model, above, above, new Set([high!])).map((p) => [p.key, p.bound])).toEqual([
-      ["gain", 70],
-    ]);
+    const jack = (gainL: number): Plan => {
+      const plan = withNodes({ "in.micline_1_2": { gainL } });
+      setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+      return plan;
+    };
+    const taken = (plan: Plan): Array<[string, unknown]> => {
+      const [addr] = addrsOf(plan, "in.micline_1_2", "HA_GAIN", [0]);
+      expect(addr, "the premise: jack 1's gain is sent").toBeDefined();
+      return confirmedAdoptions(model, plan, plan, new Set([addr!])).map((p) => [p.key, p.bound]);
+    };
+    expect(taken(jack(-12))).toEqual([["gainL", -8]]);
+    expect(taken(jack(80))).toEqual([["gainL", 70]]);
+    expect(taken(jack(20))).toEqual([]);
   });
 });

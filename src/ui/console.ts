@@ -14,18 +14,21 @@ import { ref as portRef } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
 import {
   isPlainRecord,
+  jackKey,
   LEVEL_MAX_DB,
   LEVEL_MIN_DB,
   LEVEL_OFF_DB,
   sendConnection,
   SSMCS_INITIAL,
+  type JackSide,
   type NodeParams,
   type Plan,
   type PlanConnection,
   type SsmcsParams,
 } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
-import { channelGainRange, hiZPatch, inputOnRefused } from "../core/input-lock";
+import { hiZPatch, inputOnRefused, jackGainRange } from "../core/input-lock";
+import type { InputSwitch } from "../core/input-lock";
 import {
   defaultTapKey,
   hasMeter,
@@ -64,6 +67,8 @@ import {
   channelDynamics,
   effectiveInsertFx,
   hasEq,
+  inputStageOf,
+  inputStageReaders,
   insertFxControl,
 } from "../core/control/translate";
 import { nodeParamContestPath } from "../core/plan-history";
@@ -85,6 +90,8 @@ import { INSERT_FX_NONE, insertFxEngaged, insertFxSelected } from "../core/contr
 import { parkOutgoingInsertFxParams, seedInsertFxParams } from "./insert-fx-model";
 import { insertFxScreenFamily } from "./insert-fx-screen";
 import {
+  D_GAIN_MAX_DB,
+  D_GAIN_MIN_DB,
   DELAY_TIME_GRID_MS,
   DELAY_TIME_MAX_MS,
   DELAY_TIME_MIN_MS,
@@ -541,6 +548,14 @@ export class Console {
    *  focused control is dropped; the meter subscription is untouched (same tap). */
   refreshStrip(id: string): void {
     if (!this.visible) return;
+    // An input node has no strip either: its input stage shows on every channel that reads
+    // it, so each of those strips is the one to repaint.
+    const model = this.hooks.getModel();
+    if (model.nodes.some((n) => n.id === id && n.kind === "input")) {
+      const readers = new Set(inputStageReaders(model, this.hooks.getPlan(), id).map((r) => r.channel));
+      for (const ch of readers) this.refreshStrip(ch);
+      return;
+    }
     // A hung node (a ducker) has no strip of its own — its chip lives on the
     // parent strip (attachTo). Retarget to the parent so an external edit of the
     // child (a MIDI DUCKER toggle / device follow) repaints that chip; without
@@ -2557,13 +2572,22 @@ export class Console {
   // is here for the shape of that compensation rather than for a height seen to move: it
   // costs one re-measure per rate change, and either rule changing without it is the
   // clipped head above, in silence.
+  //
+  // Each channel's input stage is in the key as well: the jack or source it reads decides
+  // whether its head carries +48, Hi-Z and a gain knob at all — a channel with no source
+  // carries none of them.
   private mainHeadHeight(): number {
     const plan = this.hooks.getPlan();
-    const types = this.hooks
-      .getModel()
-      .nodes.map((n) => plan.nodeParams[n.id]?.compEqType)
-      .join(",");
-    const key = [this.hooks.getModel().id, [...plan.hidden].sort().join(","), plan.sampleRate, types].join("|");
+    const model = this.hooks.getModel();
+    const types = model.nodes.map((n) => plan.nodeParams[n.id]?.compEqType).join(",");
+    const stages = model.nodes
+      .filter((n) => n.kind === "channel")
+      .map((n) => {
+        const s = inputStageOf(model, plan, n.id);
+        return s.kind === "jack" ? `j${s.hiZ ? "h" : ""}` : s.kind[0];
+      })
+      .join("");
+    const key = [model.id, [...plan.hidden].sort().join(","), plan.sampleRate, types, stages].join("|");
     if (this.headH.key === key) return this.headH.px;
     const savedRefs = this.refs;
     this.refs = new Map(); // buildStrip registers refs/listeners; keep them off the live map
@@ -2615,23 +2639,15 @@ export class Console {
     head.append(this.scribble(m));
 
     const cc = channelControl(model, m.id);
+    // The jack or source this channel reads, which holds its input stage.
+    const stage = m.isChannel ? inputStageOf(model, this.hooks.getPlan(), m.id) : ({ kind: "none" } as const);
+    const jack = stage.kind === "jack" ? stage : null;
 
     // Toggle chips in two 2-column groups: channel + input (HA) toggles, then the
     // processing chain GATE → COMP → EQ → INS FX. Each chip flips a plan flag (the
     // device mirrors it via the shared change funnel). An odd group gets an unused
     // spacer chip so the last real chip never stretches to full width.
-    type BoolKey =
-      | "gateOn"
-      | "compOn"
-      | "eqOn"
-      | "phantom"
-      | "phase"
-      | "phaseL"
-      | "phaseR"
-      | "hpf"
-      | "hiZ"
-      | "cueInterrupt"
-      | "mono";
+    type BoolKey = "gateOn" | "compOn" | "eqOn" | "phase" | "phaseL" | "phaseR" | "hpf" | "cueInterrupt" | "mono";
     const planOf = (): NodeParams => this.hooks.getPlan().nodeParams[m.id] ?? {};
     const boolChip = (parent: HTMLElement, label: string, key: BoolKey, def: boolean, title?: string): void => {
       this.makeChip(
@@ -2673,38 +2689,41 @@ export class Console {
         { midiId: controlId(m.id, "mute") },
       );
     }
-    // +48V and HI-Z are never turned on together: while one is on, the other's chip is
-    // read-only and says why; turning the lit one off stays available. Either toggle
-    // rebuilds the strip, so the other chip and the A.GAIN range follow it. The read-only
-    // chip keeps its control id, so it can still be MIDI-learned; the bound controller's
-    // ON is refused while the lock holds.
-    const inputChip = (label: string, key: "phantom" | "hiZ"): void => {
-      if (inputOnRefused(model.id, m.id, planOf(), key)) {
-        this.makeChip(m.id, top, label, false, false, () => false, {
+    // +48V and HI-Z of the jack this channel reads are never turned on together: while one
+    // is on, the other's chip is read-only and says why; turning the lit one off stays
+    // available. The value is the jack's, so either toggle re-renders every strip — each
+    // channel reading that jack shows it. The read-only chip keeps its control id, so it can
+    // still be MIDI-learned; the bound controller's ON is refused while the lock holds.
+    const jackNp = (): NodeParams => (jack ? (this.hooks.getPlan().nodeParams[jack.node] ?? {}) : {});
+    const inputChip = (label: string, key: InputSwitch): void => {
+      if (!jack) return;
+      const planKey = jackKey(key, jack.side);
+      if (inputOnRefused(model.id, jack, jackNp(), key)) {
+        this.makeChip(jack.node, top, label, false, false, () => false, {
           readonlyTitle: key === "phantom" ? t().inspector.phantomLockedByHiZ : t().inspector.hiZLockedByPhantom,
           midiId: controlId(m.id, key),
         });
         return;
       }
-      const written: string[] = [key];
+      const written: string[] = [planKey];
       this.makeChip(
-        m.id,
+        jack.node,
         top,
         label,
         false,
-        Boolean(planOf()[key]),
+        Boolean(jackNp()[planKey]),
         () => {
-          const next = !planOf()[key];
-          const patch = key === "hiZ" ? hiZPatch(planOf(), next) : { phantom: next };
-          Object.assign(this.nodeParamsOf(m.id), patch);
+          const next = !jackNp()[planKey];
+          const patch = key === "hiZ" ? hiZPatch(jackNp(), jack.side, next) : { [planKey]: next };
+          Object.assign(this.nodeParamsOf(jack.node), patch);
           written.splice(0, written.length, ...Object.keys(patch));
           return next;
         },
         { midiId: controlId(m.id, key), keys: written, rerender: true },
       );
     };
-    // HA input toggles (+48 / polarity / HPF / Hi-Z).
-    if (cc?.hasMicStrip) inputChip("+48", "phantom");
+    // HA input toggles (+48 / polarity / HPF / Hi-Z). +48 and Hi-Z are the jack's.
+    if (jack) inputChip("+48", "phantom");
     // Polarity: one φ on a mono channel, independent φL / φR on a stereo one. Keep
     // the stereo pair on a single row by padding to an even count before them.
     if ((cc?.phases.length ?? 0) === 2 && top.childElementCount % 2 === 1) {
@@ -2714,7 +2733,7 @@ export class Console {
       boolChip(top, ph.key === "phase" ? "φ" : ph.key === "phaseL" ? "φL" : "φR", ph.key, false);
     }
     if (cc?.hasHpf) boolChip(top, "HPF", "hpf", false);
-    if (cc?.hasHiZ) inputChip("Hi-Z", "hiZ");
+    if (jack?.hiZ) inputChip("Hi-Z", "hiZ");
     // MONITOR strips carry the device [CUE] (cue interrupt) and [MONO] buttons.
     // Both are confirmed device params (MONITOR_CUE_INTERRUPT / MONITOR_MONO), so
     // they sync live like the channel toggles. CUE Interrupt ships ON, MONO OFF.
@@ -2948,30 +2967,38 @@ export class Console {
       if (group.childElementCount) head.append(group);
     }
 
-    // A.GAIN / D.GAIN is the channel head-amp / digital gain.
-    if (m.isChannel) {
-      const range = channelGainRange(model, m.id, planOf());
-      const min = range?.minDb ?? (m.isMono ? -8 : -24);
-      const max = range?.maxDb ?? (m.isMono ? 70 : 24);
-      const factory = this.factoryPlan().nodeParams[m.id]?.gain ?? (m.isMono ? -8 : 0);
+    // A.GAIN of the jack, or D.GAIN of the source, this channel reads; none with no source.
+    if (stage.kind !== "none") {
+      const analog = stage.kind === "jack";
+      const holder = stage.node;
+      const key = analog ? jackKey("gain", stage.side) : "dGain";
+      const range = analog
+        ? jackGainRange(model.id, stage, this.hooks.getPlan().nodeParams[holder])!
+        : { minDb: D_GAIN_MIN_DB, maxDb: D_GAIN_MAX_DB };
+      const fromFactory = (this.factoryPlan().nodeParams[holder] as Record<string, unknown> | undefined)?.[key];
+      const factory = typeof fromFactory === "number" ? fromFactory : range.minDb;
+      const held = (): number | undefined => {
+        const v = (this.hooks.getPlan().nodeParams[holder] as Record<string, unknown> | undefined)?.[key];
+        return typeof v === "number" ? v : undefined;
+      };
       // Horizontal-marking values: A.Gain +8/+55, D.Gain -14/+15.
-      const [hl, hr] = m.isMono ? [8, 55] : [-14, 15];
+      const [hl, hr] = analog ? [8, 55] : [-14, 15];
       this.addKnob(
         head,
-        m.isMono ? "A.GAIN" : "D.GAIN",
+        analog ? "A.GAIN" : "D.GAIN",
         {
-          get: () => this.hooks.getPlan().nodeParams[m.id]?.gain ?? factory,
-          set: (v) => void (this.nodeParamsOf(m.id).gain = v),
-          keys: ["gain"],
+          get: () => held() ?? factory,
+          set: (v) => void ((this.nodeParamsOf(holder) as Record<string, unknown>)[key] = v),
+          keys: [key],
           pairs: "own",
-          min,
-          max,
+          min: range.minDb,
+          max: range.maxDb,
           step: 1,
           format: (v) => (v > 0 ? "+" : "") + v,
           reset: factory,
           angle: (v) => -90 + ((v - hl) / (hr - hl)) * 180,
         },
-        m.id,
+        holder,
         controlId(m.id, "gain"),
       );
     }
@@ -3483,6 +3510,27 @@ export class Console {
     this.render();
   }
 
+  /** A gain knob that writes a jack or a source (`holder`) shows its value on every other
+   *  strip reading that jack or source, in place, while it moves: each of those channels
+   *  applies the one value. A strip on the other jack of the same MIC/LINE node, and a knob
+   *  on any other node, are left alone. */
+  private mirrorHolderKnob(holder: string, knob: HTMLElement, val: HTMLElement, keys?: readonly string[]): void {
+    const model = this.hooks.getModel();
+    if (!model.nodes.some((n) => n.id === holder && n.kind === "input")) return;
+    // A jack's gain names its side; a source's D.Gain has none.
+    const side = keys?.find((k) => /^gain[LR]$/.test(k))?.slice(-1) as JackSide | undefined;
+    for (const r of inputStageReaders(model, this.hooks.getPlan(), holder, side)) {
+      const other = this.refs
+        .get(r.channel)
+        ?.root.querySelector<HTMLElement>(`.con-knob[data-ctl="${controlId(r.channel, "gain")}"]`);
+      if (!other || other === knob) continue;
+      other.style.setProperty("--rot", knob.style.getPropertyValue("--rot"));
+      for (const a of ["aria-valuenow", "aria-valuetext"]) other.setAttribute(a, knob.getAttribute(a) ?? "");
+      const otherVal = other.parentElement?.querySelector<HTMLElement>(".val");
+      if (otherVal) otherVal.textContent = val.textContent;
+    }
+  }
+
   /** Push a STEREO-linked strip's mirrored fader level onto the partner strip's level
    *  DOM in place, so a linked fader tracks live without a rebuild (keeps focus). */
   private mirrorPartnerLevel(id: string): void {
@@ -3740,6 +3788,7 @@ export class Console {
       k.set(v);
       show(v);
       this.commit(id, k.keys);
+      this.mirrorHolderKnob(id, knob, val, k.keys);
     };
     const apply = (raw: number, st = k.step): void => {
       const to = k.grid ?? st;

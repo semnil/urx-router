@@ -2,12 +2,13 @@
 // parameters (level/pan/pre-post), removes a connection, and (no selection)
 // lists recent plans for quick reopen.
 
-import type { DeviceModel, NodeKind } from "../models/types";
+import type { DeviceModel, ModelId, NodeKind } from "../models/types";
+import { factoryNodeParams } from "../models/initial-state";
 import { fullLabel, parseRef } from "../models/types";
 import type { ConnParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
-import { clipNodeName, LEVEL_MIN_DB, LEVEL_OFF_DB, processorOn, SSMCS_INITIAL } from "../core/plan";
+import { clipNodeName, jackKey, LEVEL_MIN_DB, LEVEL_OFF_DB, processorOn, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
-import { channelGainRange, hiZPatch, inputOnRefused } from "../core/input-lock";
+import { hiZPatch, inputOnRefused, jackGainRange } from "../core/input-lock";
 import { formatHz, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 
 import {
@@ -31,6 +32,7 @@ import {
   duckerControl,
   fxChannelIndex,
   inputEq,
+  inputStageOf,
   insertFxControl,
   oscAssign,
   outputEq,
@@ -60,6 +62,8 @@ import {
   insertFxEngaged,
 } from "../core/control/params";
 import {
+  D_GAIN_MAX_DB,
+  D_GAIN_MIN_DB,
   HPF_FREQ_DEFAULT_HZ,
   HPF_FREQ_MAX_HZ,
   HPF_FREQ_MIN_HZ,
@@ -147,10 +151,6 @@ export interface InspectorActions {
   onSelectConnection: (from: string, to: string) => void;
 }
 
-// HA gain slider position shown for a channel whose gain has not been fetched or
-// set yet; matches the device's default head-amp gain.
-const HA_GAIN_DEFAULT_DB = -8;
-
 /** The nodes the panel's rendering is derived from — not the nodes the SELECTION names,
  *  which is a smaller set. A node selection reads that node's params; a connection reads
  *  BOTH endpoints' — the destination bus's BUS Type / Pan Link decide which send controls
@@ -219,7 +219,11 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
   // is the MIDI route, where the plan is written without a device read.
   // The selected node is prepended rather than pushed, so a ducker that is also a
   // candidate above appears once.
-  const own = duckers.includes(selection.id) ? duckers : [selection.id, ...duckers];
+  const listed = duckers.includes(selection.id) ? duckers : [selection.id, ...duckers];
+  // A channel's INPUT rows are the jack's or the source's it reads, so a change there — a
+  // direct A.Gain follow, a MIDI apply, another channel's edit — moves what this panel draws.
+  const stage = inputStageOf(model, plan, selection.id);
+  const own = stage.kind === "none" ? listed : [...listed, stage.node];
   if (!canPatchFromMonitor(model, selection.id)) return own;
   const mono = outputMono(plan, selection.id);
   return mono.via === "monitor" ? [...own, mono.monitorId] : own;
@@ -654,49 +658,69 @@ export function renderInspector(
       const input = inSec.body;
 
       // INPUT screen order (device top-left → bottom-right): +48V, A.Gain, HI-Z,
-      // Clip Safe, Ø, HPF, HPF Freq. The analog mic-strip controls (+48V / Clip
-      // Safe / HPF) exist only on the mono mic channels; Hi-Z only on CH3/CH4 (CH2 on URX22).
-      // +48V and HI-Z are never turned on together: while one is on, the other's toggle is
-      // read-only and says why (turning the lit one off stays available).
-      if (cc?.hasMicStrip) {
+      // Clip Safe, Ø, HPF, HPF Freq. +48V, A.Gain, HI-Z and Clip Safe are the jack's this
+      // channel reads, and D.Gain the digital source's — written there, so every channel
+      // reading it applies the value; a channel with no source shows none of them. HI-Z
+      // only on a jack that carries it. +48V and HI-Z are never turned on together: while one
+      // is on, the other's toggle is read-only and says why (turning the lit one off stays
+      // available).
+      const stage = inputStageOf(model, plan, node.id);
+      if (stage.kind !== "none" && plan.unreadNodes?.has(stage.node)) {
+        input.append(notReadBadge(m.inspector.notReadFromDevice));
+      }
+      if (stage.kind === "jack") {
+        const holder = stage.node;
+        const jnp = plan.nodeParams[holder] ?? {};
+        const key = (f: "gain" | "phantom" | "clipSafe" | "hiZ"): string => jackKey(f, stage.side);
+        const flag = (f: "phantom" | "clipSafe" | "hiZ"): boolean => Boolean((jnp as Record<string, unknown>)[key(f)]);
         input.append(
           boolToggle(
             m.inspector.phantom,
-            np.phantom ?? false,
-            (v) => actions.onUpdateNodeParams(node.id, { phantom: v }),
-            inputOnRefused(model.id, node.id, np, "phantom") ? m.inspector.phantomLockedByHiZ : undefined,
+            flag("phantom"),
+            (v) => actions.onUpdateNodeParams(holder, { [key("phantom")]: v }),
+            inputOnRefused(model.id, stage, jnp, "phantom") ? m.inspector.phantomLockedByHiZ : undefined,
           ),
         );
-      }
-      // Gain label / range come from the channel descriptor: mono = A.Gain
-      // (-8..+70, -8..+40 while HI-Z is on), stereo = D.Gain (-24..+24), matching the
-      // device's own labels.
-      const gainRange = channelGainRange(model, node.id, np);
-      if (cc?.gain && gainRange) {
-        const gainLabel = cc.gain.analog ? m.inspector.gainAnalog : m.inspector.gainDigital;
+        // A.Gain: -8..+70, -8..+40 while the jack's HI-Z is on.
+        const range = jackGainRange(model.id, stage, jnp)!;
+        const held = (jnp as Record<string, unknown>)[key("gain")];
         input.append(
-          gainControl(gainLabel, gainRange.minDb, gainRange.maxDb, np.gain ?? HA_GAIN_DEFAULT_DB, (v) =>
-            actions.onUpdateNodeParams(node.id, { gain: v }),
+          gainControl(
+            m.inspector.gainAnalog,
+            range.minDb,
+            range.maxDb,
+            typeof held === "number" ? held : factoryGain(model.id, holder, key("gain"), range.minDb),
+            (v) => actions.onUpdateNodeParams(holder, { [key("gain")]: v }),
           ),
         );
-      }
-      if (cc?.hasHiZ) {
+        if (stage.hiZ) {
+          input.append(
+            boolToggle(
+              m.inspector.hiZ,
+              flag("hiZ"),
+              // The cap reads the plan, not the `jnp` this row was built from: a gain slide
+              // does not rebuild the panel (the slider has to keep the pointer), so the
+              // snapshot holds the gain as it was when the node was selected.
+              (v) => actions.onUpdateNodeParams(holder, hiZPatch(plan.nodeParams[holder], stage.side, v)),
+              inputOnRefused(model.id, stage, jnp, "hiZ") ? m.inspector.hiZLockedByPhantom : undefined,
+            ),
+          );
+        }
         input.append(
-          boolToggle(
-            m.inspector.hiZ,
-            np.hiZ ?? false,
-            // The cap reads the plan, not the `np` this row was built from: a gain slide
-            // does not rebuild the panel (the slider has to keep the pointer), so the
-            // snapshot holds the gain as it was when the node was selected.
-            (v) => actions.onUpdateNodeParams(node.id, hiZPatch(plan.nodeParams[node.id], v)),
-            inputOnRefused(model.id, node.id, np, "hiZ") ? m.inspector.hiZLockedByPhantom : undefined,
+          boolToggle(m.inspector.clipSafe, flag("clipSafe"), (v) =>
+            actions.onUpdateNodeParams(holder, { [key("clipSafe")]: v }),
           ),
         );
-      }
-      if (cc?.hasMicStrip) {
+      } else if (stage.kind === "digital") {
+        // D.Gain: -24..+24, one value per source.
+        const held = plan.nodeParams[stage.node]?.dGain;
         input.append(
-          boolToggle(m.inspector.clipSafe, np.clipSafe ?? false, (v) =>
-            actions.onUpdateNodeParams(node.id, { clipSafe: v }),
+          gainControl(
+            m.inspector.gainDigital,
+            D_GAIN_MIN_DB,
+            D_GAIN_MAX_DB,
+            held ?? factoryGain(model.id, stage.node, "dGain", 0),
+            (v) => actions.onUpdateNodeParams(stage.node, { dGain: v }),
           ),
         );
       }
@@ -1893,6 +1917,13 @@ function nameBy(control: HTMLElement, id: string | undefined): void {
 
 // Inline warning that the selected node's values were not read from the device
 // (shown after a partial readback). Reuses the warning box styling (--warn).
+/** The factory value of one input-stage key on its holder, or `fallback` where the model's
+ *  factory values carry none. */
+function factoryGain(modelId: ModelId, holder: string, key: string, fallback: number): number {
+  const v = (factoryNodeParams(modelId, holder) as Record<string, unknown> | undefined)?.[key];
+  return typeof v === "number" ? v : fallback;
+}
+
 function notReadBadge(text: string): HTMLElement {
   const box = document.createElement("div");
   box.className = "warning";

@@ -7,8 +7,14 @@
 // SAFETY: the written state is silent by construction, exactly like the self-test
 // — every output/send level is floored to -inf, the oscillator generator is off,
 // and phantom power is off — so mass-writing gains and routing cannot produce hot
-// or +48V output. Head-amp gain is left distinctive (not floored): with the
-// outputs down it carries no signal, and its round-trip is what we want to audit.
+// or +48V output. Input gain is left distinctive (not floored): with the outputs
+// down it carries no signal, and its round-trip is what we want to audit.
+//
+// INPUT STAGE: a write carries the input stage of the jacks and sources some channel
+// reads. So the run then routes the channels through every input in turn, writing the
+// input stage each pass, which puts a distinctive value on every jack and source the
+// unit keeps; and it ends by writing the captured routing back, so the unit is left on
+// the routing it started with.
 //
 // VALUES: each scalar is moved to a value spread across its legal range by a cycled
 // set of non-round fractions, never the captured value + 1. Adjacent-to-factory
@@ -18,13 +24,19 @@
 // value never has to be clamped by the device to become legal.
 
 import type { DeviceModel } from "../../models/types";
+import { PHANTOM_KEYS } from "../plan";
 import type { Plan } from "../plan";
 import { vdConnect, vdDisconnect } from "../platform";
 import { dryRun, reachedAndFailed, sendCommands } from "./client";
-import { captureDeviceState, floorSilent } from "./selftest";
+import { captureDeviceState, floorSilent, sweepInputSource } from "./selftest";
+import { selectableInputIds } from "./translate";
+import type { VdCommand } from "./translate";
+import type { ParamName } from "./params";
 import {
   A_GAIN_MIN_DB,
   D_GAIN_MAX_DB,
+  D_GAIN_MIN_DB,
+  HI_Z_A_GAIN_MAX_DB,
   DELAY_TIME_MAX_MS,
   DELAY_TIME_MIN_MS,
   DUCKER_DECAY_MAX_MS,
@@ -93,10 +105,11 @@ const RANGES: Record<string, [number, number]> = {
   // both are writable scalars that had no range, so they fell through unspread.
   pan: [PAN_MIN, PAN_MAX],
   phonesLevel: [PHONES_LEVEL_MIN, PHONES_LEVEL_MAX],
-  // Head-amp gain: the intersection of the analog A.Gain and digital D.Gain ranges,
-  // so one value is legal on both — a value above the digital max (fine for analog)
-  // is rejected by a digital channel (broker 400).
-  gain: [A_GAIN_MIN_DB, D_GAIN_MAX_DB],
+  // A jack's A.Gain, inside the window HI-Z leaves it (the spread turns every jack's HI-Z
+  // on), and a source's D.Gain.
+  gainL: [A_GAIN_MIN_DB, HI_Z_A_GAIN_MAX_DB],
+  gainR: [A_GAIN_MIN_DB, HI_Z_A_GAIN_MAX_DB],
+  dGain: [D_GAIN_MIN_DB, D_GAIN_MAX_DB],
   "eqOneKnob.level": [0, 100],
   "eqBands.freq": [EQ_FREQ_MIN_HZ, EQ_FREQ_MAX_HZ],
   "eqBands.q": [EQ_Q_MIN, EQ_Q_MAX],
@@ -184,7 +197,8 @@ function spread(obj: Record<string, unknown>, path: string, ctr: { n: number }):
   for (const [k, v] of Object.entries(obj)) {
     if (SKIP.has(k)) continue;
     if (typeof v === "boolean") {
-      obj[k] = k === "phantom" ? false : !ON_BY_DEFAULT.has(k); // phantom off for safety
+      // +48V off for safety.
+      obj[k] = (PHANTOM_KEYS as readonly string[]).includes(k) ? false : !ON_BY_DEFAULT.has(k);
       continue;
     }
     // The PRE/POST tap is a string, not a number/toggle: set it to the non-default
@@ -215,6 +229,21 @@ function spread(obj: Record<string, unknown>, path: string, ctr: { n: number }):
   }
 }
 
+// The channel source selects, and those plus the input stage they put on a jack or source.
+const SOURCE_SELECTS: ReadonlySet<ParamName> = new Set([
+  "INPUT_SOURCE",
+  "STEREO_INPUT_SOURCE_L",
+  "STEREO_INPUT_SOURCE_R",
+]);
+const ROUTING_AND_INPUT_STAGE: ReadonlySet<ParamName> = new Set([
+  ...SOURCE_SELECTS,
+  "PHANTOM",
+  "HA_GAIN",
+  "CLIP_SAFE",
+  "HI_Z",
+  "D_GAIN",
+]);
+
 /**
  * Return a distinctive, silent copy of `plan`: every writable scalar spread across
  * its legal range, then the shared silence pass applied. Pure (clones its input) so
@@ -227,6 +256,24 @@ export function buildModifiedPlan(plan: Plan): Plan {
   for (const c of next.connections) if (c.params) spread(c.params as Record<string, unknown>, "conn", ctr);
   floorSilent(next); // shared with the self-test: floor levels, osc + phantom off
   return next;
+}
+
+/**
+ * The write batches a run sends for a modified plan, in order: the whole plan; then, for each
+ * selectable input, the channels routed through that input with the source selects and the
+ * input stage they put on a jack or source; then the plan's own source selects, which leaves the
+ * unit on the routing it was captured with. Each batch is sent tolerantly on its own.
+ */
+export function prepareBatches(model: DeviceModel, plan: Plan): VdCommand[][] {
+  const batches = [dryRun(model, plan)];
+  const inputs = selectableInputIds(model).length;
+  for (let pass = 0; pass < inputs; pass++) {
+    const routed = structuredClone(plan);
+    sweepInputSource(routed, pass, model);
+    batches.push(dryRun(model, routed).filter((c) => ROUTING_AND_INPUT_STAGE.has(c.name)));
+  }
+  if (inputs > 0) batches.push(dryRun(model, plan).filter((c) => SOURCE_SELECTS.has(c.name)));
+  return batches;
 }
 
 /**
@@ -247,31 +294,34 @@ export async function runPrepareModified(model: DeviceModel, signal?: AbortSigna
     if (!cap.ok) return report;
 
     const plan = buildModifiedPlan(cap.plan);
-    // Write the whole modified plan (dryRun = planToCommands): the values are
-    // deliberately distinctive, so almost everything differs from the device anyway
-    // — a diffPlan pre-read would re-read the entire device to filter almost nothing.
     // Tolerant send: the live write path aborts the whole operation at the first
     // failure, but a scene audit wants every writable parameter to land. sendCommands
     // stops at the first rejection and marks the rest skipped, so drop the rejected
     // command and retry the remainder — only the genuinely device-locked params are
     // recorded, the rest still get written.
-    let commands = dryRun(model, plan);
     const rejected: string[] = [];
-    while (commands.length) {
-      signal?.throwIfAborted();
-      const outcomes = await sendCommands(commands, signal);
-      report.written += outcomes.filter((o) => o.ok).length;
-      const idx = outcomes.findIndex(reachedAndFailed);
-      if (idx === -1) break;
-      const c = commands[idx];
-      // `||`, not `??`: sendCommands always sets `error` to a string on a reached
-      // failure, so the nullish form never fired — while an Error carrying an empty
-      // message (a rejection with no reason, which the transport can produce) got
-      // through it and printed a bare trailing colon. Both are "the device refused
-      // and said nothing", and both have to read as that.
-      rejected.push(`${c.name}@${c.paramId}:${c.x}:${c.y}: ${outcomes[idx].error || "rejected"}`);
-      commands = commands.slice(idx + 1);
-    }
+    const send = async (list: VdCommand[]): Promise<void> => {
+      let commands = list;
+      while (commands.length) {
+        signal?.throwIfAborted();
+        const outcomes = await sendCommands(commands, signal);
+        report.written += outcomes.filter((o) => o.ok).length;
+        const idx = outcomes.findIndex(reachedAndFailed);
+        if (idx === -1) break;
+        const c = commands[idx];
+        // `||`, not `??`: sendCommands always sets `error` to a string on a reached
+        // failure, so the nullish form never fired — while an Error carrying an empty
+        // message (a rejection with no reason, which the transport can produce) got
+        // through it and printed a bare trailing colon. Both are "the device refused
+        // and said nothing", and both have to read as that.
+        rejected.push(`${c.name}@${c.paramId}:${c.x}:${c.y}: ${outcomes[idx].error || "rejected"}`);
+        commands = commands.slice(idx + 1);
+      }
+    };
+    // Write the whole modified plan (dryRun = planToCommands): the values are
+    // deliberately distinctive, so almost everything differs from the device anyway
+    // — a diffPlan pre-read would re-read the entire device to filter almost nothing.
+    for (const batch of prepareBatches(model, plan)) await send(batch);
     report.residual = rejected.length;
     report.errors.push(...rejected);
     return report;

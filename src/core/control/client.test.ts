@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
+import { emptyPlan, ensureFixedConnections, setExclusiveConnection, type Plan } from "../plan";
 
 // client.ts drives the device through platform.vdGet / vdSet (numbers) and
 // vdGetStr / vdSetStr (the CH SETTING names), so mock those four: the rest of
@@ -253,7 +253,7 @@ describe("sendConverging", () => {
   // A plan that differs from a blank device (so there is something to write).
   function dirtyPlan(): Plan {
     const plan = basePlan();
-    plan.nodeParams["ch1"] = { on: true, hpf: true, gain: 6 };
+    plan.nodeParams["ch1"] = { on: true, hpf: true };
     return plan;
   }
 
@@ -281,7 +281,7 @@ describe("sendConverging", () => {
 
   // A chain of sideEffect heads, each of which moves a value the round before it had already
   // settled: unlinking the pair drops CH2's COMP/EQ type, the type rebuilds CH2's SSMCS, and
-  // the SSMCS morphing moves CH2's gain. Every link is a round of its own, four in all.
+  // the SSMCS morphing moves the A.Gain of the jack CH2 reads. Every link is a round of its own, four in all.
   function installHeadChainDevice(plan: Plan): Map<string, number> {
     const table = installDevice();
     for (const c of planToCommands(model, plan)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
@@ -301,7 +301,10 @@ describe("sendConverging", () => {
   function headChainPlan(): Plan {
     const plan = dirtyPlan();
     plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], stereoLink: false };
-    plan.nodeParams["ch2"] = { on: true, gain: 6, compEqType: 1, ssmcs: { compDrive: 120, morphing: 40 } };
+    plan.nodeParams["ch2"] = { on: true, compEqType: 1, ssmcs: { compDrive: 120, morphing: 40 } };
+    // CH 2 reads jack 2, whose A.Gain (HA_GAIN y 1) the morph moves.
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch2:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { gainR: 6 };
     return plan;
   }
 
@@ -606,8 +609,15 @@ describe("sendConverging", () => {
   // found it, holds the other one on — and a round that turns the other one off first still
   // sends it, since the command order puts the OFF ahead of it.
   describe("+48V and HI-Z", () => {
-    const Y = 2; // CH 3
+    const Y = 2; // jack 3, which CH 3 reads
     const key = (id: number): string => `${id}:0:${Y}`;
+    const JACK = "in.micline_3_4";
+    const jackPlan = (phantomL: boolean, hiZL: boolean): Plan => {
+      const plan = basePlan();
+      setExclusiveConnection(plan, `${JACK}:out`, "ch3:in", "source");
+      plan.nodeParams[JACK] = { ...plan.nodeParams[JACK], phantomL, hiZL };
+      return plan;
+    };
     const switchWrites = (): Array<[number, number]> =>
       vi
         .mocked(vdSet)
@@ -617,8 +627,7 @@ describe("sendConverging", () => {
     it("does not turn +48V back on while the unit holds HI-Z on", async () => {
       // The plan holds both on, as a read of a unit holding both leaves it; the unit's panel
       // has since turned +48V off.
-      const plan = basePlan();
-      plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, phantom: true, hiZ: true };
+      const plan = jackPlan(true, true);
       const table = installDevice();
       for (const [k, v] of deviceTableFor(plan)) table.set(k, v);
       table.set(key(PARAMS.PHANTOM.id), 0);
@@ -631,8 +640,7 @@ describe("sendConverging", () => {
     // The live flush adds to `exclude` while the loop runs, as the unit announces a switch turned
     // on at its own panel, and a round sends nothing to an address it names by then.
     it("sends nothing to an address excluded after the round's read found it", async () => {
-      const plan = basePlan();
-      plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, phantom: false, hiZ: false };
+      const plan = jackPlan(false, false);
       const table = installDevice();
       for (const [k, v] of deviceTableFor(plan)) table.set(k, v);
       table.set(key(PARAMS.HI_Z.id), 1);
@@ -649,8 +657,7 @@ describe("sendConverging", () => {
     });
 
     it("sends +48V ON behind the HI-Z OFF the same round sends", async () => {
-      const plan = basePlan();
-      plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, phantom: true, hiZ: false };
+      const plan = jackPlan(true, false);
       const table = installDevice();
       for (const [k, v] of deviceTableFor(plan)) table.set(k, v);
       table.set(key(PARAMS.PHANTOM.id), 0);
@@ -1299,7 +1306,7 @@ describe("compareNames", () => {
 describe("confirmedAddrs", () => {
   const dirty = (): Plan => {
     const plan = basePlan();
-    plan.nodeParams["ch1"] = { on: true, hpf: true, gain: 6 };
+    plan.nodeParams["ch1"] = { on: true, hpf: true };
     return plan;
   };
   /** A device that stores what it is written, with `breakAt` deciding which read throws. */

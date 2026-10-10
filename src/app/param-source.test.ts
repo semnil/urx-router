@@ -18,7 +18,7 @@ describe("markParamSource", () => {
   // absence it cannot answer for.
   it("creates the record on the first key and keeps what is already there", () => {
     const plan = filledPlan();
-    const gain = nodeParamContestPath("ch1", "gain");
+    const gain = nodeParamContestPath("in.micline_1_2", "gainL");
     expect(plan.paramSource!.get(gain), "the premise: the fill recorded it").toBe("default");
     markParamSource(plan, [gain], "manual");
     expect(plan.paramSource!.get(gain)).toBe("manual");

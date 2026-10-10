@@ -16,6 +16,7 @@ import { isPlanColor, type InsertFxSlot } from "./control/params";
 import {
   fixedConnection,
   isPlainRecord,
+  jackKey,
   normalizeDocumentName,
   requiredSourceWire,
   SEND_LEVEL_UNNAMED_DB,
@@ -154,9 +155,9 @@ export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPa
  *  fill supplies the factory value) — a number where the factory holds an on/off is converted
  *  instead (`booleanParamProblems`); every node-param leaf the write bounds, bounded by the rule
  *  the write bounds it by (`nodeLeafRules` / `admitLeaf` in translate.ts, `where: "node"`); plus
- *  +48V on a channel carrying HI-Z with HI-Z on, bounded to off (HI-Z kept) — the app never
- *  turns the two on together. A channel's gain is bounded to its own range (`channelGainRange`:
- *  A.Gain -8..+70 dB, -8..+40 under HI-Z, D.Gain -24..+24), the oscillator level to -96..0
+ *  +48V on a jack with HI-Z on, bounded to off (HI-Z kept) — the app never turns the two on
+ *  together. A jack's A.Gain is bounded to its own range (`jackGainRange`: -8..+70 dB, -8..+40
+ *  under HI-Z), a source's D.Gain to -24..+24, the oscillator level to -96..0
  *  dB and the HPF frequency to the nearest of its five 20 Hz detents — their encoders clamp
  *  only to a wider window (the HPF's at 0.1 Hz), so here the load moves what the write sends,
  *  onto a value the unit's own panel can set. A device read keeps +48V and HI-Z both on where the unit holds
@@ -287,17 +288,12 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
       out.push({ reason: "paramRange", node, where: "node", key: path.join("."), stored: parent[key], action: "drop" });
       delete parent[key];
     }
-    // A HI-Z channel with HI-Z on: +48V goes off (A.Gain's +40 dB ceiling is in its rule).
-    if (hiZOn(plan.modelId, node, np) && np.phantom) {
-      out.push({
-        reason: "paramRange",
-        node,
-        where: "node",
-        key: "phantom",
-        stored: np.phantom,
-        action: "bound",
-        bound: false,
-      });
+    // A jack with HI-Z on: its +48V goes off (A.Gain's +40 dB ceiling is in its rule).
+    for (const side of ["L", "R"] as const) {
+      const key = jackKey("phantom", side);
+      if (hiZOn(plan.modelId, { node, side }, np) && np[key]) {
+        out.push({ reason: "paramRange", node, where: "node", key, stored: np[key], action: "bound", bound: false });
+      }
     }
     // A value outside what the write sends for it: the value the write sends.
     const model = MODEL_IDS.includes(plan.modelId) ? getModel(plan.modelId) : null;

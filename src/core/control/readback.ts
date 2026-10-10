@@ -18,6 +18,7 @@ import type {
 import {
   clearIncoming,
   ensureFixedConnections,
+  jackKey,
   normalizeNodeName,
   removeConnection,
   setExclusiveConnection,
@@ -38,14 +39,17 @@ import {
 } from "../plan-history";
 import type { PlanPatch, PlanWriteWitness } from "../plan-history";
 import { carriedByOn, readRefusedSwitches, unsentRefusedSwitches } from "../input-lock";
-import type { InputSwitch, SwitchSession } from "../input-lock";
+import type { SwitchSession } from "../input-lock";
 import { vdGet as vdGetLive, vdGetStr as vdGetStrLive } from "../platform";
 import { silentKey } from "./params";
 import type { SilentFamily } from "./params";
 import {
   colorIndexToPlan,
   COMP_EQ_SSMCS,
+  D_GAIN_SOURCES,
   FX_STEREO_ASSIGN_ON,
+  HI_Z_JACKS,
+  MIC_LINE_JACK_BASE,
   insertFxAvailable,
   insertFxSelected,
   normalizeInsertFx,
@@ -84,6 +88,7 @@ import {
   eqOneKnob,
   fxChannelIndex,
   inputEq,
+  inputStageReadSet,
   inputNodeForPort,
   insertFxControl,
   isStereoChannel,
@@ -687,17 +692,21 @@ export async function applySilentState(
     }
   }
 
-  // D.Gain only. `channelControl` answers with A.Gain on a mono channel, and that one is
-  // announced — reading it here would put a second read on an address device follow already
-  // covers, and adopt it on a trigger the operator's own gesture does not share.
+  // D.Gain, per digital source some channel of this plan reads — the ones a write would send.
+  // A jack's A.Gain is announced, so reading it here would put a second read on an address
+  // device follow already covers, and adopt it on a trigger the operator's own gesture does
+  // not share.
+  const read = inputStageReadSet(model, plan).sources;
   for (const node of model.nodes) {
     signal?.throwIfAborted();
-    if (node.kind !== "channel" || !isStereoChannel(node.id) || !covers("dGain", node.id)) continue;
-    const cc = channelControl(model, node.id);
-    if (!cc?.gain) continue;
+    const address = D_GAIN_SOURCES[node.id];
+    if (!address || !read.has(node.id) || !covers("dGain", node.id)) continue;
     attempted.add(node.id);
     try {
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], gain: await readChannelGain(source, cc.gain) };
+      plan.nodeParams[node.id] = {
+        ...plan.nodeParams[node.id],
+        dGain: await readInputGain(source, address.id, address.instances[0]),
+      };
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -767,17 +776,10 @@ async function readPass(
       const pan = vdToPan(await vdGet(cc.pan, 0, cc.y));
       const on = vdToBool(await vdGet(cc.on, 0, cc.y));
       const update: NodeParams = { on };
-      // Gain: A.Gain (mono) / D.Gain (stereo, linked L/R — read the first instance).
-      if (cc.gain) update.gain = await readChannelGain(source, cc.gain);
       if (cc.hasHpf) {
         update.hpf = vdToBool(await vdGet(PARAMS.HPF_ON.id, 0, cc.y));
         update.hpfFreq = vdToFreq(await vdGet(PARAMS.HPF_FREQ.id, 0, cc.y));
       }
-      if (cc.hasMicStrip) {
-        update.phantom = vdToBool(await vdGet(PARAMS.PHANTOM.id, 0, cc.y));
-        update.clipSafe = vdToBool(await vdGet(PARAMS.CLIP_SAFE.id, 0, cc.y));
-      }
-      if (cc.hasHiZ) update.hiZ = vdToBool(await vdGet(PARAMS.HI_Z.id, 0, cc.y));
       if (cc.hasMicStrip) update.compEqType = await vdGet(PARAMS.COMP_EQ_TYPE.id, 0, cc.y);
       // Rec Point: per-channel record / direct-out tap (cc.recPoint = mono 137 / stereo 264).
       update.recPoint = await vdGet(cc.recPoint, 0, cc.y);
@@ -823,6 +825,38 @@ async function readPass(
       // → STEREO bus assign ON (post-fader, V1.3) onto the main path connection's on.
       const stereoOn = vdToBool(await vdGet(cc.stereoOn, 0, cc.y));
       conn.params = { ...conn.params, level, pan, on: stereoOn };
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
+      applied++;
+    } catch (e) {
+      failed.add(node.id);
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // The input stage, on the node that holds it: every jack of each MIC/LINE node (+48V,
+  // A.Gain, Clip Safe, and HI-Z where the jack has it) and every digital source's D.Gain. Read
+  // whatever the routing — the unit keeps them all, and a channel routed to one later shows
+  // and writes the value the unit holds.
+  for (const node of model.nodes) {
+    signal?.throwIfAborted();
+    if (!want(node.id)) continue;
+    const base = MIC_LINE_JACK_BASE[node.id];
+    const address = D_GAIN_SOURCES[node.id];
+    if (base === undefined && !address) continue;
+    attempted.add(node.id);
+    try {
+      const update: Record<string, number | boolean> = {};
+      if (base !== undefined) {
+        for (const side of ["L", "R"] as const) {
+          const j = base + (side === "R" ? 1 : 0);
+          update[jackKey("phantom", side)] = vdToBool(await vdGet(PARAMS.PHANTOM.id, 0, j));
+          update[jackKey("gain", side)] = await readInputGain(source, PARAMS.HA_GAIN.id, j);
+          update[jackKey("clipSafe", side)] = vdToBool(await vdGet(PARAMS.CLIP_SAFE.id, 0, j));
+          if ((HI_Z_JACKS[model.id] ?? []).includes(j))
+            update[jackKey("hiZ", side)] = vdToBool(await vdGet(PARAMS.HI_Z.id, 0, j));
+        }
+      }
+      if (address) update.dGain = await readInputGain(source, address.id, address.instances[0]);
       plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...update };
       applied++;
     } catch (e) {
@@ -1511,7 +1545,7 @@ export interface MergedRead extends ReadbackResult {
    *  plan had not yet heard it — and, for a read in a live session, an ON made before it that
    *  the unit never received (`unsentRefusedSwitches`). The plan holds the unit's OFF for each.
    *  Empty for a read that refused nothing. */
-  refusedOn: Array<{ nodeId: string; key: InputSwitch }>;
+  refusedOn: Array<{ nodeId: string; key: string }>;
   /** The patch that took them back, from the operator's values to the unit's: each refused
    *  switch, and the keys the same edit carried with it (`carriedByOn`). Kept apart from
    *  `devicePatch` because the history treats the two oppositely — the read's own keys go
@@ -1831,7 +1865,7 @@ export async function readIntoPlan(
 function takeBackRefused(
   plan: Plan,
   unit: Plan,
-  refusedOn: ReadonlyArray<{ nodeId: string; key: InputSwitch }>,
+  refusedOn: ReadonlyArray<{ nodeId: string; key: string }>,
   edits: ReadonlyMap<string, number> | undefined,
 ): PlanPatch {
   const names = new Set<string>();
@@ -1854,7 +1888,7 @@ function takeBackRefused(
 /** The part of a read's own patch that took each switch in `taken` back, and the keys an ON of
  *  it carries (`carriedByOn`) where the patch moved them too — the refused ON's edit, as the
  *  history has to take it out. */
-function takenByMerge(devicePatch: PlanPatch, taken: ReadonlyArray<{ nodeId: string; key: InputSwitch }>): PlanPatch {
+function takenByMerge(devicePatch: PlanPatch, taken: ReadonlyArray<{ nodeId: string; key: string }>): PlanPatch {
   const names = new Set<string>();
   for (const { nodeId, key } of taken) {
     names.add(nodeParamContestKey(nodeId, key));
@@ -1870,9 +1904,9 @@ function takenByMerge(devicePatch: PlanPatch, taken: ReadonlyArray<{ nodeId: str
  * reset); their incoming raw value is decoded and written to the owner node's
  * plan slot. Returns true when applied; false for any param not in the direct
  * set, so the caller falls back to a scoped readback. `node` is the address's
- * owner (VdCommand.node), `name` its catalog ParamName.
+ * owner (VdCommand.node), `name` its catalog ParamName, `y` the address's instance.
  */
-export function applyDirect(plan: Plan, node: string, name: ParamName, raw: number): boolean {
+export function applyDirect(plan: Plan, node: string, name: ParamName, raw: number, y = 0): boolean {
   const setNp = (patch: Partial<NodeParams>): void => {
     plan.nodeParams[node] = { ...plan.nodeParams[node], ...patch };
   };
@@ -1900,9 +1934,13 @@ export function applyDirect(plan: Plan, node: string, name: ParamName, raw: numb
     case "MONITOR_ON":
       setNp({ on: vdToBool(raw) });
       return true;
-    case "HA_GAIN":
-      setNp({ gain: vdToGain(raw) });
+    case "HA_GAIN": {
+      // A jack's A.Gain, on the MIC/LINE node that owns the address: the instance names the jack.
+      const base = MIC_LINE_JACK_BASE[node];
+      if (base === undefined || (y !== base && y !== base + 1)) return false;
+      setNp({ [jackKey("gain", y === base ? "L" : "R")]: vdToGain(raw) });
       return true;
+    }
     case "OUT_FADER":
     case "STEREO_MASTER_FADER":
     case "MONITOR_LEVEL":
@@ -2075,19 +2113,19 @@ async function readFxEffectInto(
   };
 }
 
-/** A channel's input gain: A.Gain on a mono channel, D.Gain on a stereo one (linked
- *  L/R, so the first instance answers for the pair). Shared with the silent-address
- *  park, which reads the D.Gain half of it — a second copy there could decode the
- *  same address differently from the full read and neither would be wrong on its own. */
-async function readChannelGain(source: ParamSource, gain: { param: number; instances: number[] }): Promise<number> {
+/** An input gain at one address: a jack's A.Gain, or a source's D.Gain (whose linked L/R
+ *  instances the first one answers for). Shared with the silent-address park, which reads the
+ *  D.Gain half of it — a second copy there could decode the same address differently from
+ *  the full read and neither would be wrong on its own. */
+async function readInputGain(source: ParamSource, param: number, y: number): Promise<number> {
   const { vdGet } = readers(source);
-  return vdToGain(await vdGet(gain.param, 0, gain.instances[0]));
+  return vdToGain(await vdGet(param, 0, y));
 }
 
 /**
  * A node's insert FX — the selector, the bypass and the engine array — applied to the
  * plan. Shared by the full read and the silent-address park for the reason
- * `readChannelGain` is: the engine array is the silent half, and the selector is what
+ * `readInputGain` is: the engine array is the silent half, and the selector is what
  * says which family's slots those raws belong to.
  *
  * Throws on a read failure so the caller keeps the provenance it already tracks.

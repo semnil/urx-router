@@ -1308,17 +1308,17 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       // path: an on/off or a group where a number belongs, a group or a list where an on/off
       // does, a scalar where a group does and a group where a list does. A group that is half
       // gone to the sanitiser is still named once, at the group.
-      '{"ch1":{"gain":true}}',
-      '{"ch1":{"gain":{"x":30}}}',
-      '{"ch1":{"gain":{"x":1,"y":"s"}}}',
-      '{"ch1":{"gain":[{}]}}',
+      '{"in.micline_1_2":{"gainL":true}}',
+      '{"in.micline_1_2":{"gainL":{"x":30}}}',
+      '{"in.micline_1_2":{"gainL":{"x":1,"y":"s"}}}',
+      '{"in.micline_1_2":{"gainL":[{}]}}',
       '{"ch1":{"hpf":{"x":true}}}',
       '{"ch1":{"comp":{"oneKnobLevel":true}}}',
       '{"ch1":{"eqOneKnob":true}}',
       '{"ch1":{"eqBands":{"a":{"b":1}}}}',
       '{"bus.stream":{"delay":true}}',
       '{"bus.mon1":{"phonesLevel":true}}',
-      '{"ch3":{"hiZ":{"a":1},"phantom":true}}',
+      '{"in.micline_3_4":{"hiZL":{"a":1},"phantomL":true}}',
       // A filter type on a fixed-peaking band, which the write never sends.
       '{"ch1":{"eqBands":[{},{"type":2},{},{}]}}',
       '{"bus.mix1":{"eqBands":[{},{},{"type":0},{}]}}',
@@ -1326,7 +1326,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       // would fail here rather than passing every row above.
       '{"ch1":{"gate":{"threshold":-20}}}',
       '{"ch1":{"eqBands":[]}}',
-      '{"ch1":{"gain":12,"hpf":1,"extra":{"a":true}}}',
+      '{"ch1":{"hpf":1,"extra":{"a":true}},"in.micline_1_2":{"gainL":12}}',
       '{"bus.fx1":{"fxEffect":{"type":0,"params":{"revxLpf":40}}}}',
     ];
 
@@ -2210,7 +2210,10 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       ["an agreeing pair", { ch1: { stereoLink: true, hpfFreq: 100 }, ch2: { hpfFreq: 100 } }],
       ["an unlinked pair", { ch1: { hpfFreq: 100 }, ch2: { hpfFreq: 60 } }],
       ["a link written off", { ch1: { stereoLink: false, hpfFreq: 100 } }],
-      ["a pair apart in its input stages", { ch1: { stereoLink: true, gain: 10, phantom: true }, ch2: { gain: 30 } }],
+      [
+        "a pair apart in its input stages",
+        { ch1: { stereoLink: true }, "in.micline_1_2": { gainL: 10, phantomL: true, gainR: 30 } },
+      ],
       [
         "an insert effect stored but not sent",
         {
@@ -2541,19 +2544,88 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     expect(bounded, "the corpus reaches documents the load bounds").toBeGreaterThan(0);
   });
 
-  // A channel carrying HI-Z with HI-Z on opens with +48V off and A.Gain no higher than +40 dB.
+  // The input stage leaves the channels at the load: a channel's key goes to the jack or the
+  // source its index addressed, whatever the document wires the channel to, and a key that
+  // addresses nothing on the model is dropped. The tool has to name the same moves and drops,
+  // in the same order, as the app's own record of them (`inputStageRewrites`).
+  it("agrees with the app about the input stage the load moves off the channels", () => {
+    const rewritesOf = (stderr) =>
+      stderr.split(/\r?\n/).flatMap((l) => {
+        const move = /^WARNING: node param (\S+): the app moves this value to (\S+) on load/.exec(l);
+        if (move) return [{ from: move[1], to: move[2], action: "move" }];
+        const drop = /^WARNING: node param (\S+): the app drops this value on load/.exec(l);
+        return drop && /\.(gain|phantom|clipSafe|hiZ)[LR]?$|\.dGain$/.test(drop[1])
+          ? [{ from: drop[1], action: "drop" }]
+          : [];
+      });
+    let moves = 0;
+    let drops = 0;
+    for (const modelId of MODEL_IDS) {
+      const m = getModel(modelId);
+      const channels = m.nodes.filter((n) => n.kind === "channel").map((n) => n.id);
+      const every = Object.fromEntries(
+        channels.map((id) => [id, { gain: 7, phantom: true, clipSafe: false, hiZ: true }]),
+      );
+      const DOCS = [
+        ["every channel's four keys", every, []],
+        // By address, not by the wire: CH 1 wired to MIC/LINE 3/4 still wrote jack 1.
+        ...(m.nodes.some((n) => n.id === "in.micline_3_4")
+          ? [
+              [
+                "a channel wired to another jack",
+                { ch1: { gain: 12 } },
+                [{ from: "in.micline_3_4:out", to: "ch1:in", kind: "source" }],
+              ],
+            ]
+          : []),
+        ["the jack's own value beside the channel's", { ch1: { gain: 12 }, "in.micline_1_2": { gainL: 30 } }, []],
+        [
+          "keys that address nothing",
+          {
+            "in.micline_1_2": { hiZL: true, gainR: 3 },
+            "in.aux": { gainL: 3, dGain: 2 },
+            "bus.mix1": { dGain: 3, gain: 1 },
+          },
+          [],
+        ],
+      ];
+      for (const [name, nodeParams, connections] of DOCS) {
+        const text = JSON.stringify({
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          connections,
+          nodeParams,
+        });
+        const app = deserializeDocument(text).inputStageRewrites;
+        const file = join(dir, "plan.json");
+        writeFileSync(file, text);
+        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        expect(rewritesOf(r.stderr), `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        moves += app.filter((x) => x.action === "move").length;
+        drops += app.filter((x) => x.action === "drop").length;
+      }
+    }
+    // The positive control: both kinds of rewrite are a real population in the corpus.
+    expect(moves, "the corpus reaches moves").toBeGreaterThan(0);
+    expect(drops, "the corpus reaches drops").toBeGreaterThan(0);
+  });
+
+  // A jack carrying HI-Z with HI-Z on opens with +48V off and A.Gain no higher than +40 dB.
   // The leaves the app's repair CHANGES are compared with the paths the tool says it bounds,
   // with the documents the repair must leave alone beside them.
   it("agrees with the app about +48V and A.Gain under HI-Z", async () => {
     const { deserializeDocument } = await import("../src/core/plan.ts");
     const { paramRangeProblems: prp, applyParamRange } = await import("../src/core/plan-validate.ts");
     const DOCS = [
-      '{"ch3":{"hiZ":true,"phantom":true,"gain":60}}',
-      '{"ch4":{"hiZ":1,"phantom":1,"gain":41}}',
-      '{"ch3":{"hiZ":true,"phantom":false,"gain":70},"ch4":{"hiZ":true,"phantom":true}}',
-      // …and a gain past its channel's own range, with HI-Z off, on an A.Gain and a D.Gain
-      // channel, beside the oscillator level.
-      '{"ch1":{"gain":-12},"ch2":{"gain":71},"ch_5_6":{"gain":30},"bus.osc":{"osc":{"level":5}}}',
+      '{"in.micline_3_4":{"hiZL":true,"phantomL":true,"gainL":60}}',
+      '{"in.micline_3_4":{"hiZR":1,"phantomR":1,"gainR":41}}',
+      '{"in.micline_3_4":{"hiZL":true,"phantomL":false,"gainL":70,"hiZR":true,"phantomR":true}}',
+      // …and a gain past its own range, with HI-Z off, on a jack's A.Gain and a source's D.Gain,
+      // beside the oscillator level.
+      '{"in.micline_1_2":{"gainL":-12,"gainR":71},"in.aux":{"dGain":30},"bus.osc":{"osc":{"level":5}}}',
       // …and PAN/BAL, which an unlinked pair holds at PAN; the secondary's is never sent.
       '{"ch1":{"stereoLink":false,"panBal":1}}',
       '{"ch1":{"stereoLink":true,"panBal":1},"ch2":{"panBal":1}}',
@@ -2562,9 +2634,9 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       '{"ch_5_6":{"recPoint":0},"ch1":{"compEqType":1,"recPoint":2},"ch2":{"recPoint":2}}',
       '{"ch1":{"compEqType":5,"recPoint":2}}',
       // …and the documents nothing may be said about.
-      '{"ch3":{"hiZ":true,"gain":40}}',
-      '{"ch3":{"hiZ":false,"phantom":true,"gain":70}}',
-      '{"ch1":{"hiZ":true,"phantom":true,"gain":70}}',
+      '{"in.micline_3_4":{"hiZL":true,"gainL":40}}',
+      '{"in.micline_3_4":{"hiZL":false,"phantomL":true,"gainL":70}}',
+      '{"in.micline_1_2":{"phantomL":true,"gainL":70}}',
     ];
     let changed = 0;
     for (const np of DOCS) {

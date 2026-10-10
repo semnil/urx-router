@@ -208,7 +208,7 @@ describe("DeviceFollow", () => {
     await follow.begin();
     notify(-600);
     // Applied synchronously; the host coalesces the render via flushDirect.
-    expect(applyDirect).toHaveBeenCalledWith("ch1", "CH_FADER", -600);
+    expect(applyDirect).toHaveBeenCalledWith("ch1", "CH_FADER", -600, ADDR[2]);
     // The snapshot is patched with the notify's address + value (no full re-translate).
     expect(noteDirect).toHaveBeenCalledWith(ADDR[0], ADDR[1], ADDR[2], -600);
     expect(flushDirect).toHaveBeenCalled();
@@ -216,6 +216,19 @@ describe("DeviceFollow", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(reconcileNodes).not.toHaveBeenCalled();
     expect(reconcileAll).not.toHaveBeenCalled();
+  });
+
+  // The instance names which of an owner's addresses moved: a MIC/LINE node owns two jacks.
+  it("hands the direct apply the instance the notify came from", async () => {
+    const applyDirect = vi.fn(() => true);
+    const follow = followFor({
+      addrs: () => [[1, 0, 3]],
+      lookup: () => ({ name: "HA_GAIN", node: "in.micline_3_4", direct: true }),
+      applyDirect,
+    });
+    await follow.begin();
+    h.onUpdate?.({ paramId: 1, x: 0, y: 3, value: 2000 });
+    expect(applyDirect).toHaveBeenCalledWith("in.micline_3_4", "HA_GAIN", 2000, 3);
   });
 
   it("routes a value one of our unannounced writes replaces to a scoped read, held until the write is announced", async () => {
@@ -277,7 +290,7 @@ describe("DeviceFollow", () => {
     });
     await follow.begin();
     notify(-600);
-    expect(applyDirect).toHaveBeenCalledWith("ch1", "CH_FADER", -600);
+    expect(applyDirect).toHaveBeenCalledWith("ch1", "CH_FADER", -600, ADDR[2]);
   });
 
   it("does not patch the snapshot when a direct apply reports unplaceable", async () => {

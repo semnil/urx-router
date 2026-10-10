@@ -60,23 +60,26 @@ import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
 import { errorCode, errorText, getLang, t } from "../i18n";
 
 /** The contest keys an applied control's write lands on, named for `node` — the member the
- *  message names, or the partner a mirror copied the same write to. Empty for a control the
- *  catalogue leaves unnamed (an insert-FX slot, whose pair keys the insert-FX mirror names in
- *  full, and a node no pair mirror reaches) and for a send this plan does not carry. */
+ *  message names, or the partner a mirror copied the same write to — or for the node the
+ *  write itself names (a channel's input stage lands on its jack or source). Empty for a
+ *  control the catalogue leaves unnamed (an insert-FX slot, whose pair keys the insert-FX
+ *  mirror names in full, and a node no pair mirror reaches) and for a send this plan does not
+ *  carry. */
 function appliedKeys(plan: Plan, control: BoundControl, node: string): string[] {
   const w = control.writes;
   if (w === undefined) return [];
-  if (w.kind === "node") return [nodeParamContestPath(node, w.path)];
+  if (w.kind === "node") return [nodeParamContestPath(w.node ?? node, w.path)];
   const c = sendConnection(plan, node, w.to);
   return c ? [connParamContestKey(c.from, c.to, w.param)] : [];
 }
 
 /** Whether the pair mirror carries THIS control's value to the partner: everything but the
- *  head amp, and — outside BAL — the pan, which each member keeps its own of. */
+ *  polarity, a write on another node (a channel's input stage, which is its jack's or its
+ *  source's), and — outside BAL — the pan, which each member keeps its own of. */
 function mirrorCarries(model: DeviceModel, plan: Plan, control: BoundControl): boolean {
   const w = control.writes;
   if (w === undefined) return false;
-  if (w.kind === "node") return pairSharesNodeKey(w.path);
+  if (w.kind === "node") return w.node === undefined && pairSharesNodeKey(w.path);
   return w.param !== "pan" || isBalLinkedPair(model, plan, control.node);
 }
 
@@ -246,8 +249,10 @@ export class MidiControl {
             : []),
         ];
         if (insFxMirrored && partner) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestPath(partner, k));
-        // A HI-Z write that lowered A.Gain to the HI-Z ceiling asserted the gain as well.
-        for (const path of control.alsoWrote?.() ?? []) keys.push(nodeParamContestPath(control.node, path));
+        // A HI-Z write that lowered A.Gain to the HI-Z ceiling asserted the gain as well, on the
+        // jack the write landed on.
+        const wroteOn = control.writes?.kind === "node" ? (control.writes.node ?? control.node) : control.node;
+        for (const path of control.alsoWrote?.() ?? []) keys.push(nodeParamContestPath(wroteOn, path));
         hooks.onApplied(control, pairMirrored || insFxMirrored, keys);
         this.scheduleFeedback();
       },

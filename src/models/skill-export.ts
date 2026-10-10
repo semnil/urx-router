@@ -13,10 +13,15 @@ import {
   COLOR_OFF,
   COLOR_PALETTE,
   COMP_EQ_SSMCS,
+  D_GAIN_SOURCES,
   INSERT_FX_OPTIONS,
+  LEGACY_HI_Z_CHANNELS,
+  LEGACY_STEREO_DGAIN_ID,
+  MIC_LINE_JACK_BASE,
   OUTPUT_INSERT_FX_OPTIONS,
   PAN_BAL_BAL,
 } from "../core/control/params";
+import { jackHasHiZ } from "../core/input-lock";
 import {
   fixedConnection,
   isPlainRecord,
@@ -28,14 +33,7 @@ import {
 import { factoryNodeColors, factoryNodeNames, factoryNodeParams } from "./initial-state";
 import { INSERT_FX_PAIR_KEYS, monoPairsInto, PAIR_OWN_NODE_KEYS } from "../core/routing";
 import { isRackSend } from "../core/plan-validate";
-import {
-  channelControl,
-  colorControl,
-  hasHiZInput,
-  nameControl,
-  nodeLeafRules,
-  type LeafRule,
-} from "../core/control/translate";
+import { channelControl, colorControl, nameControl, nodeLeafRules, type LeafRule } from "../core/control/translate";
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
 import {
   FX_CHANNEL_NODE_INDEX,
@@ -126,9 +124,21 @@ export interface SkillModel {
    *  and, per rate, the Track Count ceiling the load lowers the recorder's count to
    *  (`trackCountCeiling`), the recorder being the node `recorder`. */
   rates: { rates: number[]; defaultRate: number; trackCountCeiling: Record<string, number>; recorder: string };
-  /** The channels carrying the HI-Z switch, and A.Gain's upper bound while it is on. With HI-Z
-   *  on, the load turns +48V off and bounds A.Gain to that value. */
-  hiZ: { channels: string[]; gainMaxDb: number };
+  /** Per MIC/LINE node, the sides whose jack carries the HI-Z switch, and A.Gain's upper bound
+   *  while it is on. With a jack's HI-Z on, the load turns that jack's +48V off and bounds its
+   *  A.Gain to that value. */
+  hiZ: { jacks: Record<string, string[]>; gainMaxDb: number };
+  /** Where the input stage lives on this model, for the load's move of a document's channel
+   *  keys onto it (`migrateInputStage`): the jack index of each MIC/LINE node's first jack, the
+   *  D.Gain sources the model carries, and the legacy maps that name where a document's
+   *  channel keys were written — a stereo channel's gain by the D.Gain id of its source, and
+   *  the channels whose HI-Z was sent. */
+  inputStage: {
+    jackBase: Record<string, number>;
+    dGainSources: Record<string, number>;
+    legacyStereoDGain: Record<string, number>;
+    legacyHiZChannels: string[];
+  };
   /** Per node, every on/off leaf the model's factory values carry, in the validator's path
    *  spelling (`eqBands[0].on`). The load converts a number written at one of them to on, or to
    *  off for 0 (`booleanParamProblems`). */
@@ -152,7 +162,7 @@ export interface SkillModel {
    *  moves to the nearest of `steps`, a menu with its default, or a leaf the write never sends
    *  (`unsent`). The load bounds a value outside it to the value the write sends, and removes an
    *  unsent one (`paramRangeProblems`). A rule that depends on the node's own state carries the
-   *  rule that state gives under the state's name — `hiZ` while HI-Z is on, `linked` while a
+   *  rule that state gives under the state's name — `hiZL` / `hiZR` while that jack's HI-Z is on, `linked` while a
    *  pair's primary holds `stereoLink` on, `ssmcs` while a MONO IN's `compEqType` is SSMCS —
    *  beside the rule the factory state gives. A menu rule may carry a `map` from a value off the
    *  menu to the one it stands for, which wins over the default. The insert-FX engine keys are not here: which rule a key takes is its
@@ -193,8 +203,25 @@ function skillModel(model: DeviceModel): SkillModel {
       recorder: SDREC_NODE_ID,
     },
     hiZ: {
-      channels: model.nodes.filter((n) => hasHiZInput(model.id, n.id)).map((n) => n.id),
+      jacks: Object.fromEntries(
+        model.nodes
+          .filter((n) => MIC_LINE_JACK_BASE[n.id] !== undefined)
+          .map(
+            (n) => [n.id, (["L", "R"] as const).filter((side) => jackHasHiZ(model.id, { node: n.id, side }))] as const,
+          )
+          .filter(([, sides]) => sides.length > 0),
+      ),
       gainMaxDb: HI_Z_A_GAIN_MAX_DB,
+    },
+    inputStage: {
+      jackBase: Object.fromEntries(
+        model.nodes.filter((n) => MIC_LINE_JACK_BASE[n.id] !== undefined).map((n) => [n.id, MIC_LINE_JACK_BASE[n.id]]),
+      ),
+      dGainSources: Object.fromEntries(
+        model.nodes.filter((n) => D_GAIN_SOURCES[n.id]).map((n) => [n.id, D_GAIN_SOURCES[n.id].id]),
+      ),
+      legacyStereoDGain: { ...LEGACY_STEREO_DGAIN_ID[model.id] },
+      legacyHiZChannels: [...(LEGACY_HI_Z_CHANNELS[model.id] ?? [])],
     },
     booleanLeaves: booleanLeaves(model),
     factory: {
@@ -248,12 +275,13 @@ function leafRules(model: DeviceModel): SkillModel["leafRules"] {
 }
 
 /** A node state a rule can depend on, by the name the validator asks it under. */
-type LeafContext = "hiZ" | "linked" | "ssmcs";
+type LeafContext = "hiZL" | "hiZR" | "linked" | "ssmcs";
 
 /** The states that change a node's rules, each as the params that put the node in it. */
 function leafContexts(model: DeviceModel, nodeId: string): [LeafContext, NodeParams][] {
   const out: [LeafContext, NodeParams][] = [];
-  if (hasHiZInput(model.id, nodeId)) out.push(["hiZ", { hiZ: true }]);
+  for (const side of ["L", "R"] as const)
+    if (jackHasHiZ(model.id, { node: nodeId, side })) out.push([`hiZ${side}`, { [`hiZ${side}`]: true }]);
   if (model.channelPairs.some(([primary]) => primary === nodeId)) out.push(["linked", { stereoLink: true }]);
   if (channelControl(model, nodeId)?.hasMicStrip) out.push(["ssmcs", { compEqType: COMP_EQ_SSMCS }]);
   return out;

@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { getModel } from "../../models";
 import { defaultPlan } from "../../models/initial-state";
 import type { Plan } from "../plan";
-import { deserialize, ensureFixedConnections, LEVEL_OFF_DB, sendConnection, serialize } from "../plan";
+import {
+  deserialize,
+  ensureFixedConnections,
+  LEVEL_OFF_DB,
+  sendConnection,
+  serialize,
+  setExclusiveConnection,
+} from "../plan";
 import { ref } from "../../models/types";
 import {
   COMP_EQ_COMP_FIRST,
@@ -209,14 +216,35 @@ describe("normalized value access", () => {
     }
   });
 
-  it("maps gain over the channel's own dB range in 1 dB steps", () => {
-    const c = bindControl(model, plan, "ch1/gain")!; // A.GAIN -8 … +70
+  // The input-stage controls follow the channel's source wire: a jack's four, HI-Z where that
+  // jack has it; a source's D.Gain at ±24 dB; none for a channel on no source.
+  it("lists the input-stage controls of the jack or source the channel reads", () => {
+    const ids = (): string[] => listControls(model, plan).map((d) => d.id);
+    setExclusiveConnection(plan, "in.micline_3_4:out", "ch1:in", "source");
+    expect(ids(), "CH 1 on jack 3 has HI-Z").toContain("ch1/hiZ");
+    setExclusiveConnection(plan, "in.aux:out", "ch3:in", "source");
+    expect(ids()).not.toContain("ch3/phantom");
+    expect(ids()).not.toContain("ch3/hiZ");
+    const gain = bindControl(model, plan, "ch3/gain")!;
+    gain.set(0);
+    expect(plan.nodeParams["in.aux"]?.dGain).toBe(-24);
+    gain.set(1);
+    expect(plan.nodeParams["in.aux"]?.dGain).toBe(24);
+    expect(gain.writes).toEqual({ kind: "node", node: "in.aux", path: "dGain" });
+    plan.connections = plan.connections.filter((c) => !(c.to === "ch4:in" && c.kind === "source"));
+    expect(bindControl(model, plan, "ch4/gain"), "a channel on no source").toBeNull();
+    expect(ids()).not.toContain("ch4/gain");
+  });
+
+  it("maps gain over the dB range of the jack the channel reads, in 1 dB steps", () => {
+    const c = bindControl(model, plan, "ch1/gain")!; // jack 1's A.GAIN -8 … +70
+    const jack = () => plan.nodeParams["in.micline_1_2"]?.gainL;
     c.set(0);
-    expect(plan.nodeParams.ch1?.gain).toBe(-8);
+    expect(jack()).toBe(-8);
     c.set(1);
-    expect(plan.nodeParams.ch1?.gain).toBe(70);
+    expect(jack()).toBe(70);
     c.set(0.5);
-    expect(plan.nodeParams.ch1?.gain).toBe(31);
+    expect(jack()).toBe(31);
   });
 
   it("maps pan L63 … R63 and phones 0.0 … 10.0 without float dust", () => {
@@ -1650,8 +1678,9 @@ describe("what a mirrored pair covers", () => {
     ["BAL", PAN_BAL_BAL],
     ["PAN", PAN_BAL_PAN],
   ])("%s: both members' A.GAIN move, since the pair does not share a head amp", (_label, link) => {
-    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: link, gain: -8 };
-    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, gain: 0 };
+    // CH 1 and CH 2 read jacks 1 and 2: two preamps.
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: link };
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: -8, gainR: 0 };
     const engine = new MidiEngine({
       resolve: (cid) => bindControl(model, plan, cid),
       gate: () => null,
@@ -1670,8 +1699,8 @@ describe("what a mirrored pair covers", () => {
       ["ch1", "ch2"].map((ch) => ({ control: controlId(ch, "gain"), addr, mode: "absolute" }) as const),
     );
     engine.onMessage([0xb0, 9, 127]); // the top of the range, which neither member is holding
-    expect(plan.nodeParams.ch1?.gain).toBe(70);
-    expect(plan.nodeParams.ch2?.gain, "the partner's own binding decided nothing").toBe(70);
+    expect(plan.nodeParams["in.micline_1_2"]?.gainL).toBe(70);
+    expect(plan.nodeParams["in.micline_1_2"]?.gainR, "the partner's own binding decided nothing").toBe(70);
   });
 
   // The head-amp exception is asked of the plan KEY a control writes, not of its param

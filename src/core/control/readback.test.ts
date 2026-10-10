@@ -11,7 +11,8 @@ import { vdGet, vdGetStr } from "../platform";
 import {
   COLOR_OFF,
   COLOR_PALETTE,
-  dGainParam,
+  D_GAIN_SOURCES,
+  MIC_LINE_JACK_BASE,
   PARAMS,
   PORT_REF_PARAM_IDS as PORT_REF_PARAMS,
   silentKey,
@@ -86,14 +87,14 @@ function richPlan(): Plan {
   // Use pan extremes that survive the ±63 device quantization exactly.
   ch1Stereo!.params = { level: -6, pan: 63 };
 
-  // Mono channel strip (CH1): on/gain/hpf/mic-strip/phase/comp-eq + GATE/COMP/EQ.
+  // Mono channel strip (CH1): on/hpf/phase/comp-eq + GATE/COMP/EQ, reading jack 1, whose
+  // A.Gain / +48V / Clip Safe it applies.
+  setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+  plan.nodeParams["in.micline_1_2"] = { gainL: -8, phantomL: true, clipSafeL: true };
   plan.nodeParams.ch1 = {
     on: false,
-    gain: -8,
     hpf: true,
     hpfFreq: 120,
-    phantom: true,
-    clipSafe: true,
     phase: true,
     compEqType: 0,
     gateOn: true,
@@ -109,8 +110,10 @@ function richPlan(): Plan {
     ],
   };
 
-  // Stereo channel (CH5/6): D.Gain + independent L/R phase.
-  plan.nodeParams.ch_5_6 = { gain: -12, phaseL: true, phaseR: false };
+  // Stereo channel (CH5/6): independent L/R phase, reading USB MAIN A, whose D.Gain it applies.
+  setExclusiveConnection(plan, "in.usbmain_a:out", "ch_5_6:in", "source");
+  plan.nodeParams["in.usbmain_a"] = { dGain: -12 };
+  plan.nodeParams.ch_5_6 = { phaseL: true, phaseR: false };
 
   // CH1 → MIX1 send (level/pan/PRE tap) and CH1 → FX1 send (level only — CH → FX
   // taps are read-only, so a tap cannot round-trip through a software write). Both
@@ -167,11 +170,11 @@ describe("applyDeviceState round-trip", () => {
 
     // Channel strip values decoded back to plan units.
     expect(target.nodeParams.ch1.on).toBe(false);
-    expect(target.nodeParams.ch1.gain).toBe(-8);
+    expect(target.nodeParams["in.micline_1_2"].gainL).toBe(-8);
     expect(target.nodeParams.ch1.hpf).toBe(true);
     expect(target.nodeParams.ch1.hpfFreq).toBe(120);
-    expect(target.nodeParams.ch1.phantom).toBe(true);
-    expect(target.nodeParams.ch1.clipSafe).toBe(true);
+    expect(target.nodeParams["in.micline_1_2"].phantomL).toBe(true);
+    expect(target.nodeParams["in.micline_1_2"].clipSafeL).toBe(true);
     expect(target.nodeParams.ch1.phase).toBe(true);
     expect(target.nodeParams.ch1.gateOn).toBe(true);
     expect(target.nodeParams.ch1.compOn).toBe(true);
@@ -186,8 +189,8 @@ describe("applyDeviceState round-trip", () => {
     expect(target.nodeParams.ch1.comp).toMatchObject({ threshold: -30, ratio: 4, gain: 6 });
     expect(target.nodeParams.ch1.eqBands?.[0]).toMatchObject({ on: true, gain: 3 });
 
-    // Stereo channel D.Gain + L/R phase.
-    expect(target.nodeParams.ch_5_6.gain).toBe(-12);
+    // The source's D.Gain + the stereo channel's L/R phase.
+    expect(target.nodeParams["in.usbmain_a"].dGain).toBe(-12);
     expect(target.nodeParams.ch_5_6.phaseL).toBe(true);
     expect(target.nodeParams.ch_5_6.phaseR).toBe(false);
 
@@ -274,6 +277,63 @@ describe("applyDeviceState round-trip", () => {
     expect(conn!.params).toMatchObject({ level: -6, pan: 63 });
   });
 
+  // Every jack and source holds its own value, so a read at the wrong y or the wrong id lands a
+  // number that belongs to another holder. Read on a plan with no wires: the read takes every
+  // jack and source whether or not a channel reads it.
+  it("reads every jack's input stage and every source's D.Gain onto its own node", async () => {
+    vi.mocked(vdGet).mockImplementation((paramId: number, _x: number, y: number) => {
+      if (paramId === PARAMS.HA_GAIN.id) return Promise.resolve((10 + y) * 100);
+      if (paramId === PARAMS.PHANTOM.id) return Promise.resolve(y % 2);
+      if (paramId === PARAMS.CLIP_SAFE.id) return Promise.resolve((y + 1) % 2);
+      if (paramId === PARAMS.HI_Z.id) return Promise.resolve(y === 2 ? 1 : 0);
+      if (paramId === 12) return Promise.resolve(100 * (3 + y));
+      if (Object.values(D_GAIN_SOURCES).some((a) => a.id === paramId)) return Promise.resolve(paramId * 100);
+      return Promise.resolve(PORT_REF_PARAMS.has(paramId) ? PORT_REF_NONE : 0);
+    });
+    const target = emptyPlan("URX44V");
+    const result = await applyDeviceState(model, target);
+    expect(result.errors).toEqual([]);
+    expect(target.nodeParams["in.micline_1_2"]).toEqual({
+      gainL: 10,
+      gainR: 11,
+      phantomL: false,
+      phantomR: true,
+      clipSafeL: true,
+      clipSafeR: false,
+    });
+    expect(target.nodeParams["in.micline_3_4"]).toEqual({
+      gainL: 12,
+      gainR: 13,
+      phantomL: false,
+      phantomR: true,
+      clipSafeL: true,
+      clipSafeR: false,
+      hiZL: true,
+      hiZR: false,
+    });
+    const dGain = Object.fromEntries(
+      model.nodes.filter((n) => D_GAIN_SOURCES[n.id]).map((n) => [n.id, target.nodeParams[n.id]?.dGain]),
+    );
+    expect(dGain).toEqual({
+      "in.aux": 9,
+      "in.sdplay": 11,
+      "in.usbdaw_1_2": 3,
+      "in.usbdaw_3_4": 5,
+      "in.usbdaw_5_6": 7,
+      "in.usbdaw_7_8": 9,
+      "in.usbdaw_9_10": 11,
+      "in.usbdaw_11_12": 13,
+      "in.usbmain_a": 13,
+      "in.usbmain_b": 14,
+      "in.usbmain_c": 15,
+      "in.usbsub": 16,
+      "in.hdmi": 17,
+    });
+    for (const id of ["ch1", "ch2", "ch3", "ch4", "ch_5_6"])
+      for (const key of ["gain", "phantom", "clipSafe", "hiZ", "dGain"])
+        expect(target.nodeParams[id], `${id} holds no ${key}`).not.toHaveProperty(key);
+  });
+
   it("counts applied groups across every section, not just channels", async () => {
     // All-default device (every read returns 0 / none): only the groups that are
     // unconditionally read still increment `applied`. Confirms the count spans
@@ -307,6 +367,9 @@ describe("applyDeviceState round-trip", () => {
     const colors = 8 + 6; // CH SETTING color: 8 channels + STEREO/MIX1/MIX2/FX1/FX2/STREAMING
     const names = 8 + 6; // CH SETTING name: same node set as color
     const sdRec = 8 + 1; // microSD Rec: 8 track-pair source slots + Track Count
+    // The input stage: every MIC/LINE node and every digital source with a D.Gain address.
+    const inputStage = model.nodes.filter((n) => MIC_LINE_JACK_BASE[n.id] !== undefined || D_GAIN_SOURCES[n.id]).length;
+    expect(inputStage, "the premise: MIC/LINE 1/2 + 3/4 and 13 sources").toBe(15);
     const expected =
       channels +
       sends +
@@ -328,7 +391,8 @@ describe("applyDeviceState round-trip", () => {
       selectors +
       colors +
       names +
-      sdRec;
+      sdRec +
+      inputStage;
     expect(result.applied).toBe(expected);
     // Sanity: far more than the channel-only count, proving every group counts.
     expect(result.applied).toBeGreaterThan(channels);
@@ -1166,21 +1230,28 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(result.unreadNodes.size).toBe(0);
   });
 
-  it("never flags physical input source nodes or out.sdrec — they hold no body parameters", async () => {
-    // Force every body group to throw (reject all reads): only attempted body
-    // nodes may appear, so the never-attempted input/sdrec nodes must stay out.
-    // bus.osc is kind "input" but is the oscillator generator, which does carry
-    // body params (on/level/mode/freq), so it is legitimately attemptable —
-    // exclude it; this asserts the physical mic/line/USB source nodes only.
+  it("flags an input node only when it holds an input stage, and never out.sdrec", async () => {
+    // Force every body group to throw (reject all reads): only attempted body nodes may
+    // appear. A MIC/LINE node holds its jacks' input stage and a digital source its D.Gain,
+    // so their reads are attempted; an input with neither, and out.sdrec, are never read.
+    // bus.osc is kind "input" but is the oscillator generator, which carries body params of
+    // its own, so it is left out of both halves.
     vi.mocked(vdGet).mockImplementation(() => Promise.reject(new Error("read timeout")));
     const target = emptyPlan("URX44V");
     const result = await applyDeviceState(model, target);
 
+    const holds = (id: string): boolean => MIC_LINE_JACK_BASE[id] !== undefined || D_GAIN_SOURCES[id] !== undefined;
+    let held = 0;
     for (const node of model.nodes) {
-      if ((node.kind === "input" && node.id !== "bus.osc") || node.id === "out.sdrec") {
-        expect(result.unreadNodes.has(node.id)).toBe(false);
+      if (node.id === "bus.osc") continue;
+      if (node.kind === "input" && holds(node.id)) {
+        expect(result.unreadNodes.has(node.id), node.id).toBe(true);
+        held++;
+      } else if (node.kind === "input" || node.id === "out.sdrec") {
+        expect(result.unreadNodes.has(node.id), node.id).toBe(false);
       }
     }
+    expect(held, "the premise: the model has input-stage holders").toBeGreaterThan(0);
   });
 
   it("adds a node to unreadNodes when its body group throws, but not the others", async () => {
@@ -1517,7 +1588,7 @@ describe("applySilentState", () => {
   const FX_TYPE = new Set([679, 683]);
   const FX_ARRAY = new Set([681, 685]);
   const dGainIds = (): Set<number> =>
-    new Set(model.nodes.map((n) => dGainParam("URX44V", n.id)).filter((p): p is number => p !== undefined));
+    new Set(model.nodes.flatMap((n) => (D_GAIN_SOURCES[n.id] ? [D_GAIN_SOURCES[n.id].id] : [])));
   /**
    * Every param id the park may touch.
    *
@@ -1550,6 +1621,20 @@ describe("applySilentState", () => {
     return seen;
   };
 
+  // The D.Gain park reads a source once however many channels read it, a source a mono channel
+  // reads as well as one a stereo channel reads, and no source nothing reads.
+  it("parks the D.Gain of each source a channel reads, once, and of no other", async () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.aux:out", "ch_7_8:in", "source");
+    setExclusiveConnection(plan, "in.usbsub:out", "ch1:in", "source");
+    const seen = await parkedAddrs(plan, { only: new Set(model.nodes.map((n) => silentKey("dGain", n.id))) });
+    const at = (node: string): number => seen.filter((a) => a === `${D_GAIN_SOURCES[node].id}:0:0`).length;
+    expect(at("in.aux"), "AUX, which CH 5/6 and CH 7/8 read").toBe(1);
+    expect(at("in.usbsub"), "USB SUB, which CH 1 reads").toBe(1);
+    expect(at("in.usbmain_a"), "USB MAIN A, which nothing reads now").toBe(0);
+    expect(at("in.usbmain_b"), "the positive control: USB MAIN B, still read by CH 9/10").toBe(1);
+  });
+
   it("reads the three silent families and nothing else", async () => {
     const plan = defaultPlan("URX44V");
     const seen = await parkedAddrs(plan);
@@ -1562,7 +1647,7 @@ describe("applySilentState", () => {
     // The positive control: an emptiness assertion is also satisfied by a park that read
     // nothing at all, and by one that never found a D.Gain.
     expect([...ids].filter((id) => FX_ARRAY.has(id)).length, "both FX channels' arrays").toBe(2);
-    expect([...ids].filter((id) => dGainIds().has(id)).length, "every stereo channel's D.Gain").toBe(4);
+    expect([...ids].filter((id) => dGainIds().has(id)).length, "the D.Gain of every source a channel reads").toBe(4);
     // How many times each address is asked for, which is latency in the operator's own
     // gesture: the park stands between it and the write it precedes. A family a HEAD lays out
     // is read TWICE — the pair that has to agree before anything is applied, which is the
@@ -1593,9 +1678,7 @@ describe("applySilentState", () => {
     const plan = defaultPlan("URX44V");
     const seen = new Set(await parkedAddrs(plan));
     const read = (id: number): boolean => [...seen].some((a) => a.startsWith(`${id}:`));
-    // A.Gain is `channelControl(...).gain` on a MONO channel — the same field D.Gain fills
-    // on a stereo one, and the reason this park selects by node rather than by the field
-    // being present. The unit announces it.
+    // A jack's A.Gain is announced by the unit, so the park leaves it to device follow.
     expect(read(PARAMS.HA_GAIN.id), "A.Gain").toBe(false);
     expect(read(PARAMS.HPF_ON.id), "the channel HPF").toBe(false);
     expect(read(PARAMS.PHANTOM.id), "phantom power").toBe(false);
@@ -2059,7 +2142,7 @@ describe("applySilentState", () => {
   // Every OTHER node in the scope is untouched by that head and still read.
   it("leaves a family named in exclude unread", async () => {
     const plan = defaultPlan("URX44V");
-    const exclude = new Set([silentKey("fx", "bus.fx1"), silentKey("dGain", "ch_5_6"), silentKey("insertFx", "ch1")]);
+    const exclude = new Set([silentKey("fx", "bus.fx1"), silentKey("dGain", "in.aux"), silentKey("insertFx", "ch1")]);
     const seen = new Set(await parkedAddrs(plan, { exclude }));
     const read = (id: number): boolean => [...seen].some((a) => a.startsWith(`${id}:`));
     const ifx = insertFxControl(model, "ch1")!;
@@ -2067,12 +2150,12 @@ describe("applySilentState", () => {
     // One per family, since the three are separate passes and each has its own guard.
     expect(read(679), "FX1's effect type").toBe(false);
     expect(read(681), "FX1's engine array").toBe(false);
-    expect(read(dGainParam("URX44V", "ch_5_6")!), "CH 5/6's D.Gain").toBe(false);
+    expect(read(D_GAIN_SOURCES["in.aux"].id), "AUX's D.Gain").toBe(false);
     expect(seen.has(`${ifx.param}:0:${ifx.instances[0]}`), "CH 1's insert-FX selector").toBe(false);
     // The positive control, one per family: an emptiness assertion is also satisfied by a
     // park that read nothing at all, or by one `exclude` emptied.
     expect(read(685), "FX2's engine array, which no head named").toBe(true);
-    expect(read(dGainParam("URX44V", "ch_7_8")!), "CH 7/8's D.Gain").toBe(true);
+    expect(read(D_GAIN_SOURCES["in.usbmain_a"].id), "USB MAIN A's D.Gain").toBe(true);
     expect(seen.has(`${otherIfx.param}:0:${otherIfx.instances[0]}`), "CH 2's selector").toBe(true);
   });
 
@@ -2102,7 +2185,7 @@ describe("applySilentState", () => {
     const read = (id: number): boolean => [...seen].some((a) => a.startsWith(`${id}:`));
     expect(read(681), "FX1's engine array").toBe(true);
     expect(read(685), "FX2's, which it did not name").toBe(false);
-    expect(read(dGainParam("URX44V", "ch_5_6")!), "and no D.Gain").toBe(false);
+    expect(read(D_GAIN_SOURCES["in.aux"].id), "and no D.Gain").toBe(false);
   });
 
   // What the caller acts on when a read fails: the park's own completeness check reads
@@ -2122,7 +2205,7 @@ describe("applySilentState", () => {
       insertFxControl(model, "ch1")!.instances[0]!,
       "ch1",
     ],
-    ["D.Gain", dGainParam("URX44V", "ch_5_6")!, null, "ch_5_6"],
+    ["D.Gain", D_GAIN_SOURCES["in.aux"].id, null, "in.aux"],
   ])("names the node whose read of %s failed", async (_family, paramId, instance, nodeId) => {
     const plan = defaultPlan("URX44V");
     const table = deviceTableFor(plan);

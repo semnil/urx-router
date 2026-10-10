@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
 import type { ConsoleMidiHooks } from "./console";
-import { sendConnection } from "../core/plan";
+import { sendConnection, setExclusiveConnection } from "../core/plan";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { nodeParamContestPath } from "../core/plan-history";
 import {
@@ -1101,16 +1101,19 @@ describe("a STEREO-linked pair", () => {
     expect(h.strip("ch2").fader).toBe(partner); // in place, as in BAL
   });
 
-  // The funnel names what it WROTE, and the head amp is not among it: claiming the partner's
-  // gain would take the device's answer away for a value the mirror left alone, which a read
-  // in flight then drops (src/main.device.test.ts carries that end of it).
+  // The funnel names what it WROTE, and the head amp is not among it: each member reads its
+  // own jack, and claiming the partner's gain would take the device's answer away for a value
+  // the mirror left alone, which a read in flight then drops (src/main.device.test.ts carries
+  // that end of it).
   it("does not name the partner's head amp as written", () => {
     h = consoleHost();
     linkPair();
     key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='A.GAIN']")!, "ArrowRight");
     const named = h.changeKeys().flat();
-    expect(named, "the edited member's own gain is named").toContain(nodeParamContestPath("ch1", "gain"));
-    expect(named, "the partner's is not").not.toContain(nodeParamContestPath("ch2", "gain"));
+    expect(named, "the edited member's own jack's gain is named").toContain(
+      nodeParamContestPath("in.micline_1_2", "gainL"),
+    );
+    expect(named, "the partner's is not").not.toContain(nodeParamContestPath("in.micline_1_2", "gainR"));
   });
 
   // The PAN knob is the exception: outside BAL the partner's pan did not move, so a rebuild
@@ -1364,5 +1367,37 @@ describe("where the focus goes after the INS FX popover closes", () => {
     expect(document.activeElement).toBe(root);
     h.view.refreshStrip("ch1");
     expect(document.activeElement).toBe(h.strip("ch1").root);
+  });
+});
+
+describe("a gain held on a jack or source", () => {
+  let h: ConsoleHost;
+  afterEach(() => h?.restore());
+
+  // A gain is held on the jack or source, so every strip reading the same one shows the edit at
+  // once — and a strip reading the other jack of the same MIC/LINE pair does not move.
+  it("carries an A.GAIN edit to every strip on the same jack, and to none on the other", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch3:in", "source");
+    h = consoleHost({ plan });
+    const gain = (id: string): string | null =>
+      h.strip(id).root.querySelector<HTMLElement>(".con-knob[aria-label='A.GAIN']")!.getAttribute("aria-valuenow");
+    const before = { ch2: gain("ch2"), ch3: gain("ch3") };
+    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='A.GAIN']")!, "ArrowRight");
+    expect(gain("ch1")).not.toBe(before.ch3);
+    expect(gain("ch3"), "CH 3 reads jack 1 too").toBe(gain("ch1"));
+    expect(gain("ch2"), "CH 2 reads jack 2").toBe(before.ch2);
+  });
+
+  it("carries a D.GAIN edit to every strip on the same source", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.aux:out", "ch3:in", "source");
+    h = consoleHost({ plan });
+    const gain = (id: string): string | null =>
+      h.strip(id).root.querySelector<HTMLElement>(".con-knob[aria-label='D.GAIN']")!.getAttribute("aria-valuenow");
+    const before = gain("ch3");
+    key(h.strip("ch_5_6").root.querySelector<HTMLElement>(".con-knob[aria-label='D.GAIN']")!, "ArrowRight");
+    expect(gain("ch_5_6")).not.toBe(before);
+    expect(gain("ch3"), "CH 3 reads AUX too").toBe(gain("ch_5_6"));
   });
 });

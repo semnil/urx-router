@@ -26,11 +26,14 @@ describe("fillFactoryParams", () => {
     expect(plan.nodeParams["ch1"]?.on).toBe(true);
   });
 
+  // A legacy channel gain is the document's too, on the jack the load moved it to.
   it("keeps every value the document wrote, and completes the group around it", () => {
     const plan = load({ ...MINIMAL, nodeParams: { ch1: { gain: 12, gate: { threshold: -30 } } } });
     fillFactoryParams("URX44V", plan);
     const ch1 = plan.nodeParams["ch1"]!;
-    expect(ch1.gain).toBe(12);
+    expect(plan.nodeParams["in.micline_1_2"]?.gainL).toBe(12);
+    expect(plan.paramSource?.get(nodeParamContestPath("in.micline_1_2", "gainL"))).toBe("load");
+    expect(plan.paramSource?.get(nodeParamContestPath("in.micline_1_2", "gainR"))).toBe("default");
     // The written member stands and its siblings arrive — a group written in part is
     // completed rather than replaced, or the rest of the gate stays absent.
     expect(ch1.gate?.threshold).toBe(-30);
@@ -63,7 +66,7 @@ describe("fillFactoryParams", () => {
     fillFactoryParams("URX44V", plan);
     const source = plan.paramSource!;
     // Written by whoever wrote the document…
-    expect(source.get(nodeParamContestPath("ch1", "gain"))).toBe("load");
+    expect(source.get(nodeParamContestPath("in.micline_1_2", "gainL"))).toBe("load");
     expect(source.get(nodeParamContestPath("ch1", "gate.threshold"))).toBe("load");
     // …completed by the loader, at the same granularity, inside the same group.
     expect(source.get(nodeParamContestPath("ch1", "gate.attack"))).toBe("default");
@@ -122,7 +125,7 @@ describe("a document that wrote a scalar where a group belongs", () => {
 // for, so the whole warning would fall silent.
 it("does not read its own completions as the document's", () => {
   const plan = emptyPlan("URX44V");
-  plan.nodeParams.ch1 = { gain: -20 };
+  plan.nodeParams["in.micline_1_2"] = { gainL: -20 };
   fillFactoryParams("URX44V", plan);
   const before = new Map(plan.paramSource!);
   fillFactoryParams("URX44V", plan);

@@ -5,7 +5,7 @@ import { consoleHost, type ConsoleHost } from "./console.test-util";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
-import type { Plan } from "../core/plan";
+import { setExclusiveConnection, type Plan } from "../core/plan";
 import { t } from "../i18n";
 
 describe("Console UI", () => {
@@ -125,9 +125,11 @@ describe("Console UI", () => {
       [...h.strip("ch3").root.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === label)!;
     const knob = (id: string, label: string): HTMLElement =>
       h.strip(id).root.querySelector<HTMLElement>(`.con-knob[aria-label="${label}"]`)!;
+    // CH 3 reads jack 3, which carries HI-Z.
+    const JACK = "in.micline_3_4";
     const withHiZ = (on: boolean): Plan => {
       const plan = defaultPlan("URX44V");
-      plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: on, phantom: false };
+      plan.nodeParams[JACK] = { ...plan.nodeParams[JACK], hiZL: on, phantomL: false };
       return plan;
     };
 
@@ -136,7 +138,7 @@ describe("Console UI", () => {
       expect(chip("+48").tabIndex, "the premise: +48V is locked out of the order").toBe(-1);
       chip("Hi-Z").focus();
       chip("Hi-Z").dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
-      expect(h.plan.nodeParams.ch3?.hiZ).toBe(false);
+      expect(h.plan.nodeParams[JACK]?.hiZL).toBe(false);
       expect(chip("+48").tabIndex, "and is back in it").toBe(0);
       expect(document.activeElement).toBe(chip("Hi-Z"));
     });
@@ -144,7 +146,7 @@ describe("Console UI", () => {
     it("keeps it on φ when the unit turns Hi-Z off under it", () => {
       h = consoleHost({ plan: withHiZ(true) });
       chip("φ").focus();
-      h.plan.nodeParams.ch3 = { ...h.plan.nodeParams.ch3, hiZ: false };
+      h.plan.nodeParams[JACK] = { ...h.plan.nodeParams[JACK], hiZL: false };
       h.view.refresh();
       expect(document.activeElement).toBe(chip("φ"));
     });
@@ -152,7 +154,7 @@ describe("Console UI", () => {
     it("keeps it on A.GAIN when the unit turns Hi-Z on under it", () => {
       h = consoleHost({ plan: withHiZ(false) });
       knob("ch3", "A.GAIN").focus();
-      h.plan.nodeParams.ch3 = { ...h.plan.nodeParams.ch3, hiZ: true };
+      h.plan.nodeParams[JACK] = { ...h.plan.nodeParams[JACK], hiZL: true };
       h.view.refresh();
       expect(document.activeElement).toBe(knob("ch3", "A.GAIN"));
     });
@@ -163,7 +165,7 @@ describe("Console UI", () => {
     it("drops it from +48V when the unit turns Hi-Z on and locks +48V", () => {
       h = consoleHost({ plan: withHiZ(false) });
       chip("+48").focus();
-      h.plan.nodeParams.ch3 = { ...h.plan.nodeParams.ch3, hiZ: true };
+      h.plan.nodeParams[JACK] = { ...h.plan.nodeParams[JACK], hiZL: true };
       h.view.refresh();
       expect(chip("+48").getAttribute("aria-disabled"), "the premise: +48V is locked").toBe("true");
       expect(h.host.contains(document.activeElement)).toBe(false);
@@ -402,6 +404,37 @@ describe("the head-height cache", () => {
 
     expect(measures).toBeGreaterThan(measuredOnce);
     expect(headH(h)).toBe(at48);
+    expect(headH(h)).toBe(`${tallest(h)}px`);
+  });
+
+  // The input stage a channel's head carries is its source's: a jack's +48V and Clip Safe chips,
+  // HI-Z where that jack has it, none for a channel on no source. So a rewire is a key term too.
+  it.each<[string, (plan: Plan) => void]>([
+    [
+      "CH 1/2 onto the jacks with HI-Z",
+      (plan) => {
+        for (const ch of ["ch1", "ch2"]) setExclusiveConnection(plan, "in.micline_3_4:out", `${ch}:in`, "source");
+      },
+    ],
+    [
+      "every mono channel onto no source",
+      (plan) => {
+        plan.connections = plan.connections.filter((c) => !(/^ch\d:in$/.test(c.to) && c.kind === "source"));
+      },
+    ],
+  ])("re-measures when a rewire changes a head's chips: %s", (_name, rewire) => {
+    const plan = defaultPlan("URX44V");
+    for (const ch of ["ch1", "ch2", "ch3", "ch4"])
+      setExclusiveConnection(plan, "in.micline_1_2:out", `${ch}:in`, "source");
+    h = mount(plan);
+    const before = chipText(h);
+    const measuredOnce = measures;
+
+    rewire(plan);
+    h.view.refresh();
+
+    expect(chipText(h), "the premise: the chips changed").not.toBe(before);
+    expect(measures).toBeGreaterThan(measuredOnce);
     expect(headH(h)).toBe(`${tallest(h)}px`);
   });
 

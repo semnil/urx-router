@@ -4,11 +4,18 @@
 
 import type { ConnectionKind, DeviceModel, ModelId, RoutingRule } from "../models/types";
 import { parseRef, ref } from "../models/types";
-import { getModel } from "../models";
+import { getModel, MODELS } from "../models";
 import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES, trackCountAtRate } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, migrateFxEffectParams } from "./control/fx-effect";
 import { insertFxFamilyOf, qualifyInsertFxParams } from "./control/insert-fx-effect";
-import { NODE_NAME_MAX_CHARS } from "./control/params";
+import {
+  D_GAIN_SOURCES,
+  HI_Z_JACKS,
+  LEGACY_HI_Z_CHANNELS,
+  LEGACY_STEREO_DGAIN_ID,
+  MIC_LINE_JACK_BASE,
+  NODE_NAME_MAX_CHARS,
+} from "./control/params";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "./control/vd";
 import { stripSceneExternal } from "./scene-scope";
 
@@ -311,19 +318,11 @@ export interface NodeParams {
   gateOn?: boolean;
   /** COMP_ON: compressor section on (MONO IN channels). Absent or false = off. */
   compOn?: boolean;
-  /** PHANTOM: +48V phantom power (analog mic channels only). Absent or false = off. */
-  phantom?: boolean;
   /** PHASE: polarity invert (Ø) on a mono mic channel. Absent or false = off. */
   phase?: boolean;
   /** PHASE_L / PHASE_R: independent polarity invert for a stereo channel's L/R sides. */
   phaseL?: boolean;
   phaseR?: boolean;
-  /** CLIP_SAFE: head-amp clip protection (analog mic channels only). Absent or false = off. */
-  clipSafe?: boolean;
-  /** HI_Z: high-impedance instrument input (CH3/CH4 only). Absent or false = off. */
-  hiZ?: boolean;
-  /** HA_GAIN: head-amp input gain in dB (-8 … +70). Absent = device default. */
-  gain?: number;
   /** The input stage of a MIC/LINE input node, one value per jack: `…L` is the node's
    *  first jack and `…R` its second. A.Gain in dB (-8 … +70, +40 while that jack's HI-Z is
    *  on); +48V, Clip Safe and HI-Z on/off. HI-Z exists only on the jacks that carry it. */
@@ -449,7 +448,15 @@ export const PLAN_FORMAT = "urx-router-plan";
 // 4 is the same step for the array's slot 1. To a version-3 build an absent `on` is not
 // silence either: its writer sends 1 there. Tagged 3, a file written here would load in that
 // build and move a unit holding 0 at that address; tagged 4 it is refused there.
-export const PLAN_VERSION = 4;
+//
+// 5 is the input stage leaving the channels: +48V, A.Gain, Clip Safe and HI-Z are kept per
+// MIC/LINE jack on the input nodes, and D.Gain per digital source. A version-4 build reads a
+// channel with none of those keys as one the loader fills with the factory values, and writes
+// them at the channel's own index. Tagged 4, a file written here would load there and turn the
+// unit's +48V off and its gains down on whatever jacks those indexes name; tagged 5 it is
+// refused there. A document of any version that still carries the channel keys is moved onto
+// the jacks and sources by address (`migrateInputStage`).
+export const PLAN_VERSION = 5;
 
 // Language-agnostic load failures. The UI maps the code to a localized message.
 export type PlanErrorCode = "notPlanFile" | "missingModel" | "planUrlUnsupported" | "planVersionUnsupported";
@@ -532,6 +539,8 @@ export function serialize(plan: Plan, opts?: SerializeOptions): string {
 
 export interface PlanDocument {
   plan: Plan;
+  /** The input-stage keys the load moved off the channels or dropped (`migrateInputStage`). */
+  inputStageRewrites: InputStageRewrite[];
   /** True when the document was saved scene-scoped (serialize `sceneOnly`): the
    *  loader should keep the current plan's scene-external values instead of the
    *  defaults deserialize filled in for the absent fields. */
@@ -582,7 +591,8 @@ export function deserializeDocument(text: string): PlanDocument {
   // in, through the same one-way transition a rate change takes, so nothing downstream has
   // to ask whether the pair it was handed is consistent.
   setPlanSampleRate(plan, loadedRate);
-  return { plan, sceneScoped: data.scope === "scene" };
+  const inputStageRewrites = migrateInputStage(plan.nodeParams, plan.modelId);
+  return { plan, sceneScoped: data.scope === "scene", inputStageRewrites };
 }
 
 // Encode a plan for the `?plan=` deep link: "z" + URL-safe base64 of the
@@ -832,6 +842,90 @@ function sanitizeParamRecord(rec: Record<string, unknown>): Record<string, unkno
  *  numbers it lets through are already finite. */
 function isParamScalar(v: unknown): boolean {
   return typeof v === "boolean" || typeof v === "number";
+}
+
+/** One input-stage key the load rewrote: moved to another node's key, or dropped. Paths are
+ *  `node.key`. */
+export interface InputStageRewrite {
+  from: string;
+  to?: string;
+  action: "move" | "drop";
+}
+
+const LEGACY_CHANNEL_INPUT_KEYS = ["gain", "phantom", "clipSafe", "hiZ"] as const;
+const JACK_KEYS: ReadonlySet<string> = new Set(
+  (["gain", "phantom", "clipSafe", "hiZ"] as const).flatMap((f) => [jackKey(f, "L"), jackKey(f, "R")]),
+);
+
+/**
+ * Move a document's channel-held input stage onto the jacks and sources that hold it, by the
+ * address the channel key was written at: a mono channel CH n wrote at jack n, and a stereo
+ * channel's gain at the D.Gain source its model's legacy map names. A key the document also
+ * carries on the destination wins, and the channel copy is dropped. Keys that address nothing
+ * the app writes, reads or shows are dropped as well — a stereo channel's +48V / Clip Safe /
+ * HI-Z, HI-Z on a channel or jack without it, a jack key off a MIC/LINE node, a D.Gain on a node
+ * that has none, and any of those on a node the model does not carry. Runs on every version.
+ */
+export function migrateInputStage(nodeParams: Record<string, NodeParams>, modelId: string): InputStageRewrite[] {
+  const out: InputStageRewrite[] = [];
+  const model = (MODELS as Record<string, DeviceModel | undefined>)[modelId];
+  const present = (id: string): boolean => model === undefined || model.nodes.some((n) => n.id === id);
+  const hiZJacks = HI_Z_JACKS[modelId] ?? [];
+  const sourceOfId = new Map<number, string>(
+    Object.entries(D_GAIN_SOURCES)
+      .filter(([, a]) => a.instances.includes(0) && a.id !== 12)
+      .map(([node, a]) => [a.id, node]),
+  );
+  const raw = (id: string): Record<string, unknown> => nodeParams[id] as Record<string, unknown>;
+  const drop = (id: string, key: string): void => {
+    delete raw(id)[key];
+    out.push({ from: `${id}.${key}`, action: "drop" });
+  };
+  const move = (id: string, key: string, to: string, toKey: string): void => {
+    const value = raw(id)[key];
+    delete raw(id)[key];
+    const dest = (nodeParams[to] ??= {}) as Record<string, unknown>;
+    if (toKey in dest) {
+      out.push({ from: `${id}.${key}`, action: "drop" });
+      return;
+    }
+    dest[toKey] = value;
+    out.push({ from: `${id}.${key}`, to: `${to}.${toKey}`, action: "move" });
+  };
+  for (const id of Object.keys(nodeParams)) {
+    const np = raw(id);
+    const mono = /^ch(\d+)$/.exec(id);
+    const stereo = /^ch_\d+_\d+$/.test(id);
+    for (const key of LEGACY_CHANNEL_INPUT_KEYS) {
+      if (!(key in np)) continue;
+      if (mono) {
+        const jack = Number(mono[1]) - 1;
+        const holder = Object.keys(MIC_LINE_JACK_BASE).find((n) => {
+          const base = MIC_LINE_JACK_BASE[n];
+          return jack === base || jack === base + 1;
+        });
+        const hiZDropped = key === "hiZ" && !(LEGACY_HI_Z_CHANNELS[modelId] ?? []).includes(id);
+        if (!holder || !present(holder) || hiZDropped) drop(id, key);
+        else move(id, key, holder, jackKey(key, jack - MIC_LINE_JACK_BASE[holder] ? "R" : "L"));
+      } else if (stereo && key === "gain") {
+        const source = sourceOfId.get(LEGACY_STEREO_DGAIN_ID[modelId]?.[id] ?? -1);
+        if (source === undefined || !present(source)) drop(id, key);
+        else move(id, key, source, "dGain");
+      } else drop(id, key);
+    }
+  }
+  for (const id of Object.keys(nodeParams)) {
+    const np = raw(id);
+    const base = MIC_LINE_JACK_BASE[id];
+    for (const key of Object.keys(np)) {
+      if (JACK_KEYS.has(key)) {
+        const side = key.endsWith("R") ? 1 : 0;
+        const noHiZ = key.startsWith("hiZ") && (base === undefined || !hiZJacks.includes(base + side));
+        if (base === undefined || !present(id) || noHiZ) drop(id, key);
+      } else if (key === "dGain" && (!D_GAIN_SOURCES[id] || !present(id))) drop(id, key);
+    }
+  }
+  return out;
 }
 
 function sanitizeNodeParams(v: unknown, version: number): Record<string, NodeParams> {

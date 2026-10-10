@@ -20,7 +20,8 @@ const NOTHING = {
 
 describe("an edit that earns nothing", () => {
   it("asks for no repaint at all for a plain value slick", () => {
-    expect(fx({ gain: 12 })).toEqual(NOTHING);
+    expect(fx({ gainL: 12 })).toEqual(NOTHING);
+    expect(fx({ dGain: 6 })).toEqual(NOTHING);
     expect(fx({ pan: 20 })).toEqual(NOTHING);
     expect(fx({ hpfFreq: 100 })).toEqual(NOTHING);
     expect(fx({ phonesLevel: 5 })).toEqual(NOTHING);
@@ -103,12 +104,15 @@ describe("inspector re-render: the toggles", () => {
   const TOGGLES: Array<[string, NodeParams]> = [
     ["channel on", { on: false }],
     ["HPF", { hpf: true }],
-    ["phantom", { phantom: true }],
+    ["phantom L", { phantomL: true }],
+    ["phantom R", { phantomR: true }],
     ["phase", { phase: true }],
     ["phase L", { phaseL: true }],
     ["phase R", { phaseR: true }],
-    ["clip safe", { clipSafe: true }],
-    ["Hi-Z", { hiZ: true }],
+    ["clip safe L", { clipSafeL: true }],
+    ["clip safe R", { clipSafeR: true }],
+    ["Hi-Z L", { hiZL: true }],
+    ["Hi-Z R", { hiZR: true }],
     ["insert FX", { insertFx: 512 }],
     ["insert FX bypass", { insertFxOn: false }],
     ["COMP/EQ type", { compEqType: 1 }],

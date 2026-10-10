@@ -29,7 +29,8 @@ vi.mock("./selftest", async (importOriginal) => ({
   captureDeviceState: mocks.captureDeviceState,
 }));
 
-import { buildModifiedPlan, runPrepareModified } from "./prepare";
+import { buildModifiedPlan, prepareBatches, runPrepareModified } from "./prepare";
+import { D_GAIN_SOURCES, MIC_LINE_JACK_BASE, PARAMS } from "./params";
 import { dryRun } from "./client";
 
 // A node carrying every sub-structure the spread pass touches, at factory-ish
@@ -38,8 +39,11 @@ const richNode = (): NodeParams => ({
   on: true,
   hpf: false,
   hpfFreq: 80,
-  gain: 0,
-  phantom: true,
+  gainL: 0,
+  gainR: 0,
+  dGain: 0,
+  phantomL: true,
+  phantomR: true,
   gateOn: false,
   gate: { threshold: -20, range: -30, attack: 1, hold: 10, decay: 100 },
   compOn: false,
@@ -75,7 +79,9 @@ describe("buildModifiedPlan value strategy", () => {
   const ssmcs = np.ssmcs!;
 
   it("keeps every spread scalar inside its legal range", () => {
-    expect(inRange(np.gain, -8, 24)).toBe(true);
+    expect(inRange(np.gainL, -8, 40)).toBe(true);
+    expect(inRange(np.gainR, -8, 40)).toBe(true);
+    expect(inRange(np.dGain, -24, 24)).toBe(true);
     expect([40, 60, 100, 120]).toContain(np.hpfFreq);
     expect(inRange(np.gate!.threshold, -72, -3)).toBe(true);
     expect(inRange(np.gate!.attack, 0.092, 80)).toBe(true);
@@ -107,7 +113,8 @@ describe("buildModifiedPlan value strategy", () => {
   });
 
   it("stays silent and safe: levels floored, osc/phantom off", () => {
-    expect(np.phantom).toBe(false);
+    expect(np.phantomL).toBe(false);
+    expect(np.phantomR).toBe(false);
     const conn = out.connections.find((c) => c.params?.pan !== undefined);
     expect(conn!.params!.level).toBeLessThan(-96);
     for (const p of Object.values(out.nodeParams)) if (p.osc) expect(p.osc.on).toBe(false);
@@ -134,18 +141,62 @@ describe("buildModifiedPlan value strategy", () => {
   });
 });
 
+// A write carries the input stage of the jacks and sources some channel reads, so the run routes
+// the channels through every input in turn. Over a plan holding every jack and source, the
+// batches together put a value on each of them, with +48V off throughout, and the last batch is
+// the plan's own source selects.
+describe("prepareBatches", () => {
+  const model = getModel("URX44V");
+  const plan = buildModifiedPlan(defaultPlan("URX44V"));
+  const batches = prepareBatches(model, plan);
+  const at = (c: { paramId: number; x: number; y: number }): string => `${c.paramId}:${c.x}:${c.y}`;
+  const gainAddrs = (cmds: ReturnType<typeof dryRun>): Set<string> =>
+    new Set(cmds.filter((c) => c.name === "HA_GAIN" || c.name === "D_GAIN").map(at));
+  const every = new Set([
+    ...Object.values(MIC_LINE_JACK_BASE).flatMap((base) => [base, base + 1].map((y) => `${PARAMS.HA_GAIN.id}:0:${y}`)),
+    ...Object.entries(D_GAIN_SOURCES)
+      .filter(([id]) => model.nodes.some((n) => n.id === id))
+      .flatMap(([, a]) => a.instances.map((y) => `${a.id}:0:${y}`)),
+  ]);
+
+  it("puts a value on every jack and source between them", () => {
+    expect(gainAddrs(batches[0]).size, "the premise: the plan alone reaches fewer").toBeLessThan(every.size);
+    expect(gainAddrs(batches.flat())).toEqual(every);
+  });
+
+  it("sends +48V off in every batch", () => {
+    const phantom = batches.flat().filter((c) => c.name === "PHANTOM");
+    expect(phantom.length, "the premise: the batches carry +48V").toBeGreaterThan(0);
+    expect(phantom.every((c) => c.planValue === 0)).toBe(true);
+  });
+
+  it("ends on the plan's own source selects", () => {
+    const selects = (cmds: ReturnType<typeof dryRun>) =>
+      cmds.filter((c) => c.name.includes("INPUT_SOURCE")).map((c) => [at(c), c.vdValue]);
+    expect(batches.at(-1)!.map((c) => [at(c), c.vdValue])).toEqual(selects(batches[0]));
+    expect(batches.at(-1)!.length, "the premise: the plan carries source selects").toBeGreaterThan(0);
+  });
+});
+
 describe("runPrepareModified", () => {
   const model = getModel("URX44V");
 
   const captured = (): Plan => {
     const plan = emptyPlan("URX44V");
-    plan.nodeParams["ch1"] = { on: true, gain: 0, hpfFreq: 80 };
+    plan.nodeParams["ch1"] = { on: true, hpfFreq: 80 };
+    plan.nodeParams["in.micline_1_2"] = { gainL: 0 };
     return plan;
   };
 
   // What the run will actually try to send, so a test can address a command by
   // position without pinning the emit order itself.
-  const plannedCommands = (): ReturnType<typeof dryRun> => dryRun(model, buildModifiedPlan(captured()));
+  const plannedCommands = (): ReturnType<typeof dryRun> => prepareBatches(model, buildModifiedPlan(captured())).flat();
+  // Commands of the first batch whose address the run sends once, so refusing one refuses one send.
+  const sentOnce = (): ReturnType<typeof dryRun> => {
+    const all = plannedCommands();
+    const at = (c: (typeof all)[number]): string => `${c.paramId}:${c.x}:${c.y}`;
+    return dryRun(model, buildModifiedPlan(captured())).filter((c) => all.filter((d) => at(d) === at(c)).length === 1);
+  };
 
   const captureOk = (): void => {
     mocks.captureDeviceState.mockResolvedValue({ ok: true, plan: captured(), applied: 7, errors: [] });
@@ -213,7 +264,7 @@ describe("runPrepareModified", () => {
   it("retries past a refused command instead of skipping the rest", async () => {
     captureOk();
     const expected = plannedCommands();
-    const bad = expected[1];
+    const bad = sentOnce()[1];
     mocks.vdSet.mockImplementation((id, x, y) =>
       id === bad.paramId && x === bad.x && y === bad.y ? Promise.reject(new Error("locked")) : Promise.resolve(),
     );
@@ -228,7 +279,8 @@ describe("runPrepareModified", () => {
   it("records every refusal when more than one command is device-locked", async () => {
     captureOk();
     const expected = plannedCommands();
-    const locked = new Set([expected[0], expected[2]].map((c) => `${c.paramId}:${c.x}:${c.y}`));
+    const once = sentOnce();
+    const locked = new Set([once[0], once[2]].map((c) => `${c.paramId}:${c.x}:${c.y}`));
     mocks.vdSet.mockImplementation((id, x, y) =>
       locked.has(`${id}:${x}:${y}`) ? Promise.reject(new Error("locked")) : Promise.resolve(),
     );

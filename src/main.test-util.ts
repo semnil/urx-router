@@ -116,9 +116,28 @@ const addr = (a: Record<string, unknown>): string => `${a.paramId}/${a.x}/${a.y}
 
 /** What an address nothing wrote or seeded answers where 0 is not a value the unit can hold
  *  there: STREAMING's source (705 / 706), whose list offers STEREO / MIX 1 / MIX 2, answers the
- *  factory STEREO as tagged port refs. Written as the raw values the unit answers rather than
- *  taken from the app's encoder. */
-const UNWRITTEN: Record<string, number> = { "705/0/0": 0x80000100, "706/0/0": 0x80000101 };
+ *  factory STEREO as tagged port refs; and the channels' input sources answer the factory
+ *  routing — each mono slot its own MIC/LINE jack (22), and the stereo channels AUX IN, USB MAIN
+ *  A, B and C by position (209 / 210). All 0 there would be every mono slot and both sides of
+ *  every stereo channel on jack 1, which the unit's own panel cannot produce (a mono pair takes
+ *  one source together). Written as the raw values the unit answers rather than taken from the
+ *  app's encoder. */
+const UNWRITTEN: Record<string, number> = {
+  "705/0/0": 0x80000100,
+  "706/0/0": 0x80000101,
+  "22/0/0": 0,
+  "22/0/1": 1,
+  "22/0/2": 2,
+  "22/0/3": 3,
+  "209/0/0": 256,
+  "210/0/0": 257,
+  "209/0/1": 512,
+  "210/0/1": 513,
+  "209/0/2": 514,
+  "210/0/2": 515,
+  "209/0/3": 516,
+  "210/0/3": 517,
+};
 
 /** What the unit answers at an address nothing wrote or seeded. A reader a case supplies in
  *  place of the table's falls back to this rather than to a bare 0, so the unit it describes

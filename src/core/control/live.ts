@@ -142,11 +142,13 @@ export interface LiveSyncHooks {
    * Three families announce nothing when the unit's own panel moves them — the FX effect
    * arrays, the insert-FX engine arrays and D.Gain — so the plan's copy of them can be
    * arbitrarily old, and a write derived from that copy discards what the operator tuned
-   * there. There are TWO boundaries where such a write goes out and this is called at each
-   * under its own condition, so one flush calls it 0, 1 or 2 times: in front of the head
-   * writes where some head this flush is MOVING declares `ParamSpec.resets`, and in front
-   * of the converge where the flush converges at all. An ordinary edit takes neither, and a
-   * converging head that resets no silent family takes only the second.
+   * there. There are THREE boundaries where such a write goes out and this is called at each
+   * under its own condition, so one flush calls it 0 to 3 times: in front of the head
+   * writes where some head this flush is MOVING declares `ParamSpec.resets`, in front of a
+   * source's D.Gain the snapshot holds no entry for (a source a channel is routed back to,
+   * whose D.Gain the write had stopped carrying), and in front of the converge where the
+   * flush converges at all. An ordinary edit takes none, and a converging head that resets
+   * no silent family takes only the last.
    *
    * In front of its own HEAD writes, `only` names the families those heads reset —
    * `silentKey` entries, one per family per node, from `ParamSpec.resets`. The head refills
@@ -888,7 +890,7 @@ export class LiveSync {
     // disagree about the same value under the same preference.
     for (const f of planToFollowOnlyAddrs(model, plan, scope)) {
       addrs.push([f.param, f.x, f.y]);
-      const direct = (PARAMS as Record<string, ParamSpec>)[f.name].follow === "direct";
+      const direct = !f.scoped && (PARAMS as Record<string, ParamSpec>)[f.name].follow === "direct";
       this.index.set(addrKey(f.param, f.x, f.y), { name: f.name, node: f.node, direct });
     }
     this.followAddrList = addrs;
@@ -1040,6 +1042,21 @@ export class LiveSync {
         await this.hooks.parkSilent?.({ only: outgoing, keepHeads: true });
         if (this.sessionGen !== gen) return;
         // Derived again: the park merged the unit's own values into the plan.
+        commands = planToCommands(model, plan, scope);
+      }
+      // A source's D.Gain the snapshot holds no entry for is one this session has not sent and
+      // no capture holds: the write carries it only while some channel reads the source, so a
+      // channel routed back to one takes it out of the plan's copy, which a panel move there
+      // never updates. Read before it goes out, as the head writes are.
+      const reentering = new Set<string>();
+      for (const c of commands) {
+        if (c.name !== "D_GAIN" || c.node === undefined) continue;
+        if (this.snapshot.get(cmdAddr(c)) !== undefined) continue;
+        reentering.add(silentKey("dGain", c.node));
+      }
+      if (reentering.size) {
+        await this.hooks.parkSilent?.({ only: reentering });
+        if (this.sessionGen !== gen) return;
         commands = planToCommands(model, plan, scope);
       }
       // A write that provokes a refetch has that read issued only once the flush's writes have

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
-import { SSMCS_INITIAL, emptyPlan, ensureFixedConnections, type Plan } from "../plan";
+import { SSMCS_INITIAL, emptyPlan, ensureFixedConnections, setExclusiveConnection, type Plan } from "../plan";
 import { PlanWriteWitness, clonePlanState } from "../plan-history";
 
 // LiveSync drives the device through platform.vdSet / vdSetStr and re-reads via
@@ -225,6 +225,7 @@ describe("LiveSync sideEffect converge", () => {
   // tuned on the unit, and no event anywhere says it happened.
   it("reads the silent addresses into the plan the converge sends from", async () => {
     const plan = basePlan();
+    setExclusiveConnection(plan, "in.aux:out", "ch_5_6:in", "source");
     const seen: Plan[] = [];
     const excluded: ReadonlySet<string>[] = [];
     const live = new LiveSync({
@@ -239,8 +240,8 @@ describe("LiveSync sideEffect converge", () => {
         // and is the case above.
         if (!scope.exclude) return;
         excluded.push(scope.exclude);
-        // What a read of the unit's D.Gain would have put here.
-        plan.nodeParams.ch_5_6 = { ...plan.nodeParams.ch_5_6, gain: 12 };
+        // What a read of the unit's D.Gain would have put here: AUX IN's, which CH 5/6 reads.
+        plan.nodeParams["in.aux"] = { ...plan.nodeParams["in.aux"], dGain: 12 };
       },
     });
     live.begin();
@@ -257,7 +258,71 @@ describe("LiveSync sideEffect converge", () => {
     expect([...excluded[0]!]).toEqual([]);
     // Ahead of the freeze — what the park wrote is in the copy the converge sends from.
     // Behind it, the read lands in a plan the converge is no longer looking at.
-    expect(seen[0]?.nodeParams.ch_5_6?.gain, "the parked value in the converged copy").toBe(12);
+    expect(seen[0]?.nodeParams["in.aux"]?.dGain, "the parked value in the converged copy").toBe(12);
+  });
+
+  // A source's D.Gain is written only while a channel reads it, and a panel move there announces
+  // nothing, so the plan's copy of a source no channel read can be stale. The first flush that
+  // routes a channel onto it reads it before sending, and sends what the unit holds.
+  it("reads a source's D.Gain before the flush that routes a channel back onto it", async () => {
+    const plan = basePlan();
+    setExclusiveConnection(plan, "in.usbsub:out", "ch_5_6:in", "source");
+    plan.nodeParams["in.aux"] = { dGain: 0 };
+    plan.nodeParams["in.usbsub"] = { dGain: 4 };
+    const scopes: Array<ReadonlySet<string> | undefined> = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async (scope) => {
+        scopes.push(scope.only);
+        // The unit's AUX D.Gain, moved at its panel while no channel read AUX.
+        if (scope.only?.has(silentKey("dGain", "in.aux")))
+          plan.nodeParams["in.aux"] = { ...plan.nodeParams["in.aux"], dGain: 10 };
+      },
+    });
+    live.begin();
+    setExclusiveConnection(plan, "in.aux:out", "ch_5_6:in", "source");
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+
+    expect(scopes.map((s) => [...(s ?? [])])).toEqual([[silentKey("dGain", "in.aux")]]);
+    const sent = vi
+      .mocked(vdSet)
+      .mock.calls.filter(([id]) => id === 9)
+      .map(([, , , v]) => v);
+    expect(sent, "AUX's D.Gain goes out as the unit holds it").toEqual([1000, 1000]);
+    expect(plan.nodeParams["in.aux"]?.dGain).toBe(10);
+  });
+
+  // …and only on entry: a source the session already sent is in the snapshot and is not read.
+  it("does not read a source's D.Gain the session already holds", async () => {
+    const plan = basePlan();
+    setExclusiveConnection(plan, "in.aux:out", "ch_5_6:in", "source");
+    plan.nodeParams["in.aux"] = { dGain: 0 };
+    const scopes: unknown[] = [];
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: () => {},
+      onSent: () => {},
+      onCollapsed: () => {},
+      parkSilent: async (scope) => void scopes.push(scope),
+    });
+    live.begin();
+    plan.nodeParams["in.aux"] = { dGain: 6 };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(scopes).toEqual([]);
+    expect(
+      vi
+        .mocked(vdSet)
+        .mock.calls.filter(([id]) => id === 9)
+        .map(([, , , v]) => v),
+      "the positive control: the edit went out",
+    ).toEqual([600, 600]);
   });
 
   // …and how MANY parks such a flush takes. The two calls are guarded independently — the
@@ -998,8 +1063,8 @@ describe("LiveSync direct-follow journal across a read", () => {
 
     // (3) The read resolves with ch4's value, which the merge puts into both the plan
     // and the copy it read into. Nothing in it knows about ch1.
-    deviceView.nodeParams.ch4 = { ...deviceView.nodeParams.ch4, gain: 30 };
-    plan.nodeParams.ch4 = { ...plan.nodeParams.ch4, gain: 30 };
+    deviceView.nodeParams["in.micline_3_4"] = { ...deviceView.nodeParams["in.micline_3_4"], gainR: 30 };
+    plan.nodeParams["in.micline_3_4"] = { ...plan.nodeParams["in.micline_3_4"], gainR: 30 };
     live.resync(deviceView, since);
 
     // (4) The operator un-mutes ch1 on the hardware. A snapshot rebuilt from the copy
@@ -2008,7 +2073,7 @@ describe("LiveSync sideEffect refetch", () => {
 
     it("keeps an SSMCS morph set while the morph a numeric re-take picked up is being written", async () => {
       const plan = basePlan();
-      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, gain: 20 };
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hpfFreq: 80 };
       plan.nodeParams.ch2 = {
         ...plan.nodeParams.ch2,
         compEqType: COMP_EQ_SSMCS,
@@ -2020,9 +2085,8 @@ describe("LiveSync sideEffect refetch", () => {
       const unit = heldUnit(plan);
       const at = (name: string, node: string): number =>
         planToCommands(model, plan).findIndex((c) => c.name === name && c.node === node);
-      expect(at("HA_GAIN", "ch1"), "the premise: CH 1's A.Gain goes out ahead of CH 2's morph").toBeLessThan(
-        at("SSMCS_MORPHING", "ch2"),
-      );
+      expect(at("HPF_FREQ", "ch1"), "the premise: CH 1's HPF frequency goes out").toBeGreaterThanOrEqual(0);
+      expect(at("HPF_FREQ", "ch1"), "the premise: …ahead of CH 2's morph").toBeLessThan(at("SSMCS_MORPHING", "ch2"));
       const morphCmd = () => planToCommands(model, plan).find((c) => c.name === "SSMCS_MORPHING" && c.node === "ch2")!;
       const morphWrites = (): number[] => {
         const c = morphCmd();
@@ -2034,14 +2098,14 @@ describe("LiveSync sideEffect refetch", () => {
       const ch3Fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch3")!;
       unit.live.begin();
 
-      // The flush takes CH 1's A.Gain alone. While it is on the wire CH 2's morph moves and the
+      // The flush takes CH 1's HPF frequency alone. While it is on the wire CH 2's morph moves and the
       // unit's panel moves something else, so the loop re-takes its values and the morph goes
       // out as a refetch head the flush's first list did not carry…
       unit.holdNext("set");
-      unit.edit(() => (plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, gain: 30 }));
+      unit.edit(() => (plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hpfFreq: 100 }));
       unit.live.schedule();
       await vi.advanceTimersByTimeAsync(120);
-      expect(unit.held(), "the premise: the A.Gain write is held").toBe(1);
+      expect(unit.held(), "the premise: the HPF write is held").toBe(1);
       const ch2FaderFirst = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch2")!.vdValue;
       unit.edit(() => {
         setMorph(40);
@@ -3101,6 +3165,23 @@ describe("LiveSync read-only follow registrations", () => {
     expect(addr?.direct).toBe(false);
   });
 
+  // A jack no channel reads is not written, and the unit announces a panel move there: the
+  // address is registered and takes the MIC/LINE node's scoped read, even for A.Gain, which a
+  // jack some channel reads applies directly.
+  it("routes a notify at a jack no channel reads to its MIC/LINE node's scoped read", () => {
+    const plan = basePlan();
+    for (const ch of ["ch1", "ch2", "ch3", "ch4"])
+      setExclusiveConnection(plan, "in.micline_1_2:out", `${ch}:in`, "source");
+    plan.nodeParams["in.micline_1_2"] = { gainL: 0, gainR: 0 };
+    const live = liveFor(plan);
+    live.begin();
+    expect(addrsOf(live).has(`${PARAMS.HA_GAIN.id}:0:2`)).toBe(true);
+    expect(live.lookup(PARAMS.HA_GAIN.id, 0, 2)).toMatchObject({ node: "in.micline_3_4", direct: false });
+    expect(live.lookup(PARAMS.HI_Z.id, 0, 3)).toMatchObject({ node: "in.micline_3_4", direct: false });
+    // The control: jack 1, which CH 1 reads, applies directly.
+    expect(live.lookup(PARAMS.HA_GAIN.id, 0, 0)).toMatchObject({ node: "in.micline_1_2", direct: true });
+  });
+
   it("routes a Track Count notify to out.sdrec, the node whose scoped read holds 839", () => {
     const { live } = begun();
     expect(addrsOf(live).has("839:0:0")).toBe(true);
@@ -3399,15 +3480,17 @@ describe("LiveSync recentPending", () => {
 // while the unit turns the other switch on at its own panel, before the follow read that notify
 // schedules has brought it into the plan.
 describe("LiveSync and the +48V / HI-Z exclusion", () => {
-  const Y = 2; // CH 3
+  const Y = 2; // jack 3, which CH 3 reads
   const switchSends = (): Array<[number, number]> =>
     vi
       .mocked(vdSet)
       .mock.calls.filter(([id, , y]) => y === Y && (id === PARAMS.PHANTOM.id || id === PARAMS.HI_Z.id))
       .map(([id, , , v]) => [id, v]);
-  const planWith = (ch3: { phantom: boolean; hiZ: boolean }): Plan => {
+  // CH 3 / CH 4 read MIC/LINE 3/4, so the write carries jack 3.
+  const planWith = (jack3: { phantom: boolean; hiZ: boolean }): Plan => {
     const plan = basePlan();
-    plan.nodeParams.ch3 = ch3;
+    for (const ch of ["ch3", "ch4"]) setExclusiveConnection(plan, "in.micline_3_4:out", `${ch}:in`, "source");
+    plan.nodeParams["in.micline_3_4"] = { phantomL: jack3.phantom, hiZL: jack3.hiZ };
     return plan;
   };
   const flush = async (live: LiveSync): Promise<void> => {
@@ -3419,7 +3502,7 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
     const plan = planWith({ phantom: false, hiZ: false });
     const live = liveFor(plan);
     live.begin();
-    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    plan.nodeParams["in.micline_3_4"] = { phantomL: true, hiZL: false };
     await flush(live);
     expect(switchSends()).toEqual([[PARAMS.PHANTOM.id, 1]]);
   });
@@ -3431,7 +3514,7 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
     const live = liveFor(plan);
     live.begin();
     vi.mocked(vdGet).mockImplementation(async (id, x, y) => (id === PARAMS.HI_Z.id && x === 0 && y === Y ? 1 : 0));
-    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    plan.nodeParams["in.micline_3_4"] = { phantomL: true, hiZL: false };
     await flush(live);
     expect(vi.mocked(vdGet).mock.calls, "the premise: the unit was asked").toContainEqual([PARAMS.HI_Z.id, 0, Y]);
     expect(switchSends()).toEqual([]);
@@ -3451,7 +3534,7 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
     });
     live.begin();
     vi.mocked(vdGet).mockRejectedValue(new Error("read refused"));
-    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    plan.nodeParams["in.micline_3_4"] = { phantomL: true, hiZL: false };
     await flush(live);
     expect(errors).toEqual(["read refused"]);
     expect(live.isActive()).toBe(false);
@@ -3463,7 +3546,7 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
     const live = liveFor(plan);
     live.begin();
     expect(live.isEcho(PARAMS.HI_Z.id, 0, Y, 1), "the premise: a change at the unit's panel").toBe(false);
-    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    plan.nodeParams["in.micline_3_4"] = { phantomL: true, hiZL: false };
     await flush(live);
     expect(switchSends()).toEqual([]);
     // Nothing edits the plan from here: the announcement alone asks again.
@@ -3476,7 +3559,7 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
     const plan = planWith({ phantom: false, hiZ: true });
     const live = liveFor(plan);
     live.begin();
-    plan.nodeParams.ch3 = { phantom: true, hiZ: true };
+    plan.nodeParams["in.micline_3_4"] = { phantomL: true, hiZL: true };
     await flush(live);
     expect(switchSends()).toEqual([]);
   });
@@ -3486,7 +3569,7 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
     const live = liveFor(plan);
     live.begin();
     live.isEcho(PARAMS.HI_Z.id, 0, Y, 1);
-    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    plan.nodeParams["in.micline_3_4"] = { phantomL: true, hiZL: false };
     await flush(live);
     expect(switchSends()).toEqual([
       [PARAMS.HI_Z.id, 0],
@@ -3496,26 +3579,26 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
 
   // A notify can be lost. The read that re-reads the node after the announcement carries what
   // the unit holds, and a HI-Z the read found off lets the held ON out; a read of another node
-  // carries nothing about CH 3, so the announcement still stands.
-  it("lets the held ON out once a read issued after the announcement covers the channel", async () => {
+  // carries nothing about jack 3, so the announcement still stands.
+  it("lets the held ON out once a read issued after the announcement covers the jack", async () => {
     const plan = planWith({ phantom: false, hiZ: false });
     const live = liveFor(plan);
     live.begin();
     live.isEcho(PARAMS.HI_Z.id, 0, Y, 1);
-    plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+    plan.nodeParams["in.micline_3_4"] = { phantomL: true, hiZL: false };
     await flush(live);
     expect(switchSends()).toEqual([]);
 
     const view = (): Plan => {
       const unit = clonePlanState(plan);
-      unit.nodeParams.ch3 = { phantom: false, hiZ: false };
+      unit.nodeParams["in.micline_3_4"] = { phantomL: false, hiZL: false };
       return unit;
     };
     live.resync(view(), live.directMark(), new Set(["ch1"]));
     await vi.advanceTimersByTimeAsync(120);
     expect(switchSends(), "a read of another node").toEqual([]);
 
-    live.resync(view(), live.directMark(), new Set(["ch3"]));
+    live.resync(view(), live.directMark(), new Set(["in.micline_3_4"]));
     await vi.advanceTimersByTimeAsync(120);
     expect(switchSends()).toEqual([[PARAMS.PHANTOM.id, 1]]);
   });
@@ -3530,12 +3613,12 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
         .map(([, , , v]) => v);
 
     it("waits with a held HI-Z ON, and goes out with it once the unit says +48V is off", async () => {
-      const plan = basePlan();
-      plan.nodeParams.ch3 = { phantom: false, hiZ: false, gain: 60 };
+      const plan = planWith({ phantom: false, hiZ: false });
+      plan.nodeParams["in.micline_3_4"] = { phantomL: false, hiZL: false, gainL: 60 };
       const live = liveFor(plan);
       live.begin();
       live.isEcho(PARAMS.PHANTOM.id, 0, Y, 1);
-      plan.nodeParams.ch3 = { phantom: false, hiZ: true, gain: 40 };
+      plan.nodeParams["in.micline_3_4"] = { phantomL: false, hiZL: true, gainL: 40 };
       await flush(live);
       expect({ switches: switchSends(), gain: gainSends() }).toEqual({ switches: [], gain: [] });
 
@@ -3548,25 +3631,25 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
     });
 
     it("sends an A.Gain the operator set on their own while a HI-Z ON waits", async () => {
-      const plan = basePlan();
-      plan.nodeParams.ch3 = { phantom: false, hiZ: false, gain: 60 };
+      const plan = planWith({ phantom: false, hiZ: false });
+      plan.nodeParams["in.micline_3_4"] = { phantomL: false, hiZL: false, gainL: 60 };
       const live = liveFor(plan);
       live.begin();
       live.isEcho(PARAMS.PHANTOM.id, 0, Y, 1);
-      plan.nodeParams.ch3 = { phantom: false, hiZ: true, gain: 40 };
+      plan.nodeParams["in.micline_3_4"] = { phantomL: false, hiZL: true, gainL: 40 };
       await flush(live);
-      plan.nodeParams.ch3 = { phantom: false, hiZ: true, gain: 30 };
+      plan.nodeParams["in.micline_3_4"] = { phantomL: false, hiZL: true, gainL: 30 };
       await flush(live);
       expect({ switches: switchSends(), gain: gainSends() }).toEqual({ switches: [], gain: [gainToVd(30)] });
     });
 
     it("sends an A.Gain moved with no HI-Z ON waiting, while +48V is on (the control)", async () => {
-      const plan = basePlan();
-      plan.nodeParams.ch3 = { phantom: false, hiZ: false, gain: 60 };
+      const plan = planWith({ phantom: false, hiZ: false });
+      plan.nodeParams["in.micline_3_4"] = { phantomL: false, hiZL: false, gainL: 60 };
       const live = liveFor(plan);
       live.begin();
       live.isEcho(PARAMS.PHANTOM.id, 0, Y, 1);
-      plan.nodeParams.ch3 = { phantom: false, hiZ: false, gain: 50 };
+      plan.nodeParams["in.micline_3_4"] = { phantomL: false, hiZL: false, gainL: 50 };
       await flush(live);
       expect(gainSends()).toEqual([gainToVd(50)]);
     });
@@ -3599,7 +3682,7 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
       expect(vi.mocked(vdGet), "the premise: the converge read the unit").toHaveBeenCalled();
       expect(switchSends(), "the unit's own HI-Z is left on").toEqual([]);
 
-      plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+      plan.nodeParams["in.micline_3_4"] = { phantomL: true, hiZL: false };
       await flush(live);
       await vi.advanceTimersByTimeAsync(3000);
       expect(switchSends(), "no +48V ON while the unit holds HI-Z on").toEqual([]);
@@ -3611,7 +3694,7 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
       live.begin();
       const sw = { phantom: 0, hiZ: 1 };
       live.isEcho(PARAMS.HI_Z.id, 0, Y, 1);
-      plan.nodeParams.ch3 = { phantom: true, hiZ: false };
+      plan.nodeParams["in.micline_3_4"] = { phantomL: true, hiZL: false };
       await flush(live);
       expect(switchSends(), "the premise: the ON is held").toEqual([]);
 
