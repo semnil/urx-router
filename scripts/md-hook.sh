@@ -15,4 +15,12 @@ status=0
 for check in check-md-tables check-assets-index check-merge-gates check-comment-provenance; do
   printf '%s' "$payload" | node "$self/$check.mjs" --hook || status=$?
 done
+# The private ledgers under reference/ (a checkout of another repository, ignored here) carry
+# their own anchor check, and an edit made from this repository reaches them through this hook
+# rather than through that repository's own. Run when that checkout is present; a clone
+# without it has no ledger to break.
+anchors="$self/../reference/scripts/check-ledger-anchors.mjs"
+if [ -f "$anchors" ]; then
+  printf '%s' "$payload" | node "$anchors" --hook || status=$?
+fi
 exit $status
