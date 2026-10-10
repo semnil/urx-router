@@ -32,7 +32,7 @@ const RECONCILE_DEBOUNCE_MS = 300;
 // After the device has been quiet for this long, run one full reconcile as a
 // safety net against any missed notify, then rely on the push stream again. 900 ms
 // = 3 settle windows: a human rides a control in bursts shorter than this.
-const IDLE_FULL_MS = 900;
+export const IDLE_FULL_MS = 900;
 
 // Two hands plus one stray interaction = at most three logical controls changing
 // at once. More distinct controls inside a single settle window is not hand
