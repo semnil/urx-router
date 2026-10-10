@@ -30,12 +30,14 @@ percent-encoding = "2"
 # bundle, and process restarts the app afterwards. Live hardware control speaks
 # the Device Center broker's WebSocket (plain ws://, no TLS) and is likewise
 # desktop-only, as is the external MIDI control bridge (midir: CoreMIDI on
-# macOS, WinMM on Windows).
+# macOS, WinMM on Windows). midir starts at 0.11.1, whose CoreMIDI input
+# handler ends a message at the end of a packet that cuts it short instead of
+# slicing past it and aborting the process (Boddlnagg/midir#160).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tungstenite = "0.30"
-midir = "0.11"
+midir = "0.11.1"
 tauri-plugin-window-state = "2"
 
 # Power-management bindings for the idle-sleep hold (keepawake.rs). Both are
@@ -55,10 +57,3 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_Power",
   "Win32_System_Threading",
 ] }
-
-# midir comes from a fork: the released 0.11.0's CoreMIDI input handler slices
-# past a packet that ends before its message does and aborts the process
-# (Boddlnagg/midir#160). The fork is 0.11.0 plus a bound that ends such a
-# message at the packet's end, pinned by commit.
-[patch.crates-io]
-midir = { git = "https://github.com/semnil/midir", rev = "9c98d83e0657eec7423120557d68d2aabc61d4ae" }
