@@ -1319,20 +1319,6 @@ export const en = {
     liveSyncStopped: tr(
       "Sending edits to the device stopped while the session was starting, so an edit would not reach the device. Live sync was not started.",
     ),
-    followReadHeld: (cause: string, unrunnable: number, source: number): string =>
-      [
-        cause,
-        ...(unrunnable
-          ? [
-              `${unrunnable} setting${unrunnable === 1 ? "" : "s"} the unit cleared ${unrunnable === 1 ? "is" : "are"} still held in the plan`,
-            ]
-          : []),
-        ...(source
-          ? [
-              `${source} source${source === 1 ? "" : "s"} drawn here ${source === 1 ? "is" : "are"} still held in the plan`,
-            ]
-          : []),
-      ].join("; "),
     followReadIncomplete: (n: number): string =>
       `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
     clockUnread: (message: string): string =>

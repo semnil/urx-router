@@ -3328,6 +3328,52 @@ describe("the live session", () => {
     await vi.waitFor(() => expect(slider().getAttribute("aria-valuenow")).toBe(before), { timeout: 10_000 });
   });
 
+  // A follow read is all or nothing, as the session's starting read is: one that comes back
+  // incomplete merges none of what it got, so a value it did read never reaches the plan.
+  it("merges nothing from a reconcile whose read comes back incomplete", SLOW, async () => {
+    const shell = await bootDevice();
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    await quiet(shell);
+
+    $("btn-view-console").click();
+    // CH 1's fader readout.
+    const level = (): string | null =>
+      $("console-host").querySelector(".con-strip")!.querySelector(".con-readout .rv")!.textContent;
+    const before = level();
+
+    // The unit answers CH 1's fader at a value the plan does not hold and refuses a read of
+    // CH 2, so a reconcile of the two reads CH 1 whole and still comes back incomplete.
+    let faderAnswered = false;
+    let refused = false;
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      if (a.paramId === 142 && a.y === 1) {
+        refused = true;
+        throw new Error("read refused");
+      }
+      if (a.paramId === PARAMS.CH_FADER.id && a.y === 0) {
+        faderAnswered = true;
+        return levelToVd(-10);
+      }
+      return unwrittenRead(a);
+    });
+    const at = shell.invokes.indexOf("vd_params_subscribe");
+    const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
+    channel.onmessage([
+      { param_id: 26, x: 0, y: 0, value: 40 }, // CH1 HPF freq
+      { param_id: 26, x: 0, y: 1, value: 40 }, // CH2 HPF freq
+    ]);
+
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+    expect(faderAnswered, "the control: the read got CH 1's fader").toBe(true);
+    expect(refused, "the premise: the read reached the refused address").toBe(true);
+    // Drawn again from the plan: the session's teardown cancels the reflect a merge asks
+    // for, so the strip on screen would show the old value whatever the plan now holds.
+    $("btn-view-graph").click();
+    $("btn-view-console").click();
+    expect(level()).toBe(before);
+  });
+
   // What a read that HELD values tells the operator, and what it does about them. The
   // race tier owns the re-send's addresses and their order; it uploads no coverage and
   // its trigger skips a documentation-only pull request, so both branches below were
@@ -3881,21 +3927,19 @@ describe("the live session", () => {
     await endLive();
   });
 
-  // And when the read is partial as well, the count travels with the teardown's own
-  // message rather than the status line: that line is about to be replaced by the one
-  // stopLiveOnError writes, and the console does not reach an installed build.
-  it("names the values it kept inside the failure a partial read raises", SLOW, async () => {
+  // And when the read is partial as well, it merges nothing — a follow read is all or
+  // nothing, as the session's starting read is — so it holds nothing either, and the
+  // teardown names the incomplete read alone.
+  it("ends on the incomplete read alone when a read that would hold is partial", SLOW, async () => {
     const shell = await bootDevice();
     await heldByExcursion(shell);
 
     notifyRate(shell, { refuseY: 3 }); // CH 4's reads refused; CH 1, which holds, is y0
 
     await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
-    // The same two keys the case above counts, inside the cause rather than beside it.
+    // The whole line is the incomplete-read message: nothing kept is appended to it.
     expect(
-      countFor(errors(shell).at(-1) ?? "", (n) =>
-        t().status.liveError(t().error.followReadHeld(t().error.followReadIncomplete(n), 2, 0)),
-      ),
+      countFor(errors(shell).at(-1) ?? "", (n) => t().status.liveError(t().error.followReadIncomplete(n))),
     ).not.toBeNaN();
   });
 

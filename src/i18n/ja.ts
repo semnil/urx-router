@@ -1036,12 +1036,6 @@ export const ja: Messages = {
       "セッション開始中にデバイス追従が停止したため、実機側の変更がプランに届かない状態でした。Live sync は開始していません。",
     liveSyncStopped:
       "セッション開始中にデバイスへの送信が停止したため、編集が実機に届かない状態でした。Live sync は開始していません。",
-    followReadHeld: (cause: string, unrunnable: number, source: number): string =>
-      [
-        cause,
-        ...(unrunnable ? [`実機が消去した ${unrunnable} 件はプランに保持したまま`] : []),
-        ...(source ? [`ここで描いたソース ${source} 件はプランに保持したまま`] : []),
-      ].join("。"),
     followReadIncomplete: (n: number): string =>
       `デバイス側の変更後、${n} 件の設定を読み戻せず、プランが実機と一致しなくなりました。取得し直して同期してください。`,
     clockUnread: (message: string): string =>
