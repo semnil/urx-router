@@ -484,8 +484,9 @@ carries a one-line map of the same directories and points here.
   wording is chosen by `touch.fields.size === 1`: an entry that moved something else too says the whole step
   is held back, since naming only the rate leaves the collateral edits refused in silence. It is a deferral,
   not a discard: the refusal runs on a peeked entry before `take()`, and `deactivateLive` does not reset the
-  history), and for a patch whose RESULT the host refuses (`patchBlocked` — today the +48V / HI-Z exclusion,
-  asked of the state the patch would leave rather than of the keys it carries; `peekUndo` answers with the
+  history), and for a patch whose RESULT the host refuses (`patchBlocked` — the +48V / HI-Z exclusion and
+  a wiring the unit cannot hold (`app/undo-refusal.ts`), asked of the state the patch would leave rather
+  than of the keys it carries; `peekUndo` answers with the
   patch that would land, which is the entry's inverse). A text field / textarea / `contenteditable` keeps the chord (no `preventDefault`) — measured on
   macOS: the page receives `Cmd+Z` even with a native Edit menu installed, and `preventDefault` is what
   suppresses WebKit's own field undo. `menu(kind)` is the macOS Edit menu's entry point and delegates to
@@ -676,7 +677,10 @@ carries a one-line map of the same directories and points here.
   completed is `default`, and a fixed send the document left out, which the install seeds, carries no
   record — with the wire's own record standing for a param nothing recorded separately. A routing selector is named only for a wire the app completed —
   the load, or a Fetch / Live-sync start that found the unit on NONE (see "A plan that names no STREAMING
-  source")
+  source") /
+  `undo-refusal.ts` why an undo / redo entry is held back, judged on the plan it would leave: +48V and HI-Z
+  both on for a channel, an input that takes one source left with two, or STREAMING left with none. The
+  states it refuses are ones no surface produces, so a case reaches them by handing it that plan
 
 - `src-tauri/` — Rust shell. Webview host + tauri-plugin-dialog + file IO commands
   (`read_text_file`/`read_binary_file`/`write_text_file`/`write_binary_file`; `third_party_licenses` reads
@@ -786,7 +790,11 @@ The constraint core (`core/routing.ts`):
   file carrying a malformed / mismatched kind cannot slip a second input past the guard. **A USB output
   is the one exception**: holding one channel of a MONO IN pair, it takes the partner's wire as its
   second, and it refuses any other second wire — and any third — with `monoPairOnly` rather than
-  `singleInput`, which the analog outputs, channel inputs, ducker keys and SD Rec tracks keep.
+  `singleInput`, which the analog outputs, channel inputs, ducker keys and SD Rec tracks keep. The board
+  takes a drop either reason refuses as a replacement (below); the load-time check (`validatePlan`)
+  still refuses a document carrying either. `wireShapeBroken(model, before, after)` names the receivers
+  a change leaves overfilled — or, for one in `requiredSources`, empty — that `before` did not, which is
+  what an undo / redo is refused on.
   `monoPairsInto(model, toRef)` names the pairs a receiver takes — every `channelPairs` entry both of
   whose channels have a `patch` rule into it, which only a USB output has — and
   `monoPairOf(model, toRef, fromRefs)` names the pair a set of wires makes, primary first whatever order
@@ -897,14 +905,20 @@ that holds that same channel alone adds the missing partner. An unlinked channel
 output holding it stays a legal target for its partner, which joins by its own drag. The two wires are
 deleted one at a time. Clicking a single-input port that already holds a source selects that wire, the
 same as clicking the wire itself; on a USB output holding a pair it selects the primary's wire.
-**Drawing another source onto STREAMING replaces the wire it holds**, in one change and so one undo step:
-the unit's source list for STREAMING has no None, so the board never leaves it empty
-(`DeviceModel.requiredSources`, asked through `requiresSource`). That drop is lit as legal, in the same
-set a render or a fine-grained repaint (`repaintDirtyNodes`) mid-drag relights (`connectCandidates` serves the drag's start and the repaint alike), which
-also lets a drag open from STREAMING's own input; a click there still selects its wire. Its last wire is
-kept: the board's Delete key reaches `deleteConnection`, which refuses it with a status message, and the
-Inspector offers no delete for it — a hint in that refusal's own words instead (`isLastRequiredSource` is
-the one predicate both ask).
+**Drawing another source onto an input that takes one replaces the wire it holds**, in one change and so
+one undo step — a channel input, an analog output, a MONITOR, a ducker key, an SD Rec track, STREAMING and
+a USB output alike (`replacesWire`: the drop `canConnect` refuses with `singleInput` or `monoPairOnly`).
+On a USB output the held channel's mono-pair partner still joins as a second wire; any other source
+replaces what the output holds, and a channel of a STEREO-linked pair replaces it with both of the pair's
+wires. A mono channel's replaced source carries to its pair partner, as any source drawn onto it does
+(`mirrorPairSource`). That drop is lit as legal, in the same set a render or a fine-grained repaint
+(`repaintDirtyNodes`) mid-drag relights (`connectCandidates` serves the drag's start and the repaint
+alike), which also lets a drag open from an occupied input; a click there still selects its wire.
+**STREAMING alone keeps its last wire**: the unit's source list for STREAMING has no None, so the board
+never leaves it empty (`DeviceModel.requiredSources`, asked through `requiresSource`). The board's Delete
+key reaches `deleteConnection`, which refuses it with a status message, and the Inspector offers no
+delete for it — a hint in that refusal's own words instead (`isLastRequiredSource` is the one predicate
+both ask). Every other input's last wire can be deleted.
 
 **Path trace**: long-pressing a node (`LONG_PRESS_MS`, ~450ms, held without moving past
 `LONG_PRESS_TOLERANCE`) highlights the signal path feeding it. `routing.ts`
@@ -2518,6 +2532,7 @@ agreed with the plan at every key leaves both stacks as they were.
 | A gesture still in progress on the plan a switch replaces | the surface holding it, as the plan is replaced — the board (`Graph.setModel` handed another plan), the inspector (rebuilt past its gate, its actions answering only for the plan the panel was built for), a tuning screen (`refresh`) and the CONSOLE (`render`, which hands keyboard focus on only across a rebuild of the same plan) | the plan the gesture began on is gone, so a pointer or a key still held writes nothing into the one that replaced it |
 | A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
 | An undo / redo whose result would leave +48V and HI-Z both on for a channel | `patchBlocked` on the peeked entry, over the state the patch would create | the app never turns one of the two on while the other is on, and an undo turns one on as much as the gesture it reverses did |
+| An undo / redo whose result would leave an input that takes one source with two, or STREAMING with none | `patchBlocked` on the peeked entry (`wireShapeBroken`), over the state the patch would create | the board never draws either — a drop onto an occupied input replaces its wire — and replaying an entry after a device read moved that input's source under it would |
 | An ON of +48V / HI-Z made while a device read was in flight, on a channel where that read finds the other one on | `readIntoPlan`, after the merge (`readRefusedSwitches`): the switch and the keys the witness saw the same edit write go back to the read's values, and the edit leaves the undo stack (`PlanHistory.retract`). In a live session, an ON its flush already sent is on the unit and is not refused (`SwitchSession.holdsOn`), and an ON the flush held back that the merge replaced with the read's value is reported and retracted the same way (`unsentRefusedSwitches`) | the surface asked the rule of a plan that had not heard what the unit holds; the unit's own switch is what the read found, and it stays |
 | A +48V / HI-Z ON the unit would receive while holding the other one on, and the +40 dB A.Gain a held HI-Z ON lowered | the live flush's send loop (`onExcludedBy` against the snapshot, what the unit announced since, which a follow read has not yet brought into the plan, and a read of the other switch taken just before the ON goes; `carrierOf` for the A.Gain) and each converge round (against the round's own read) | left in the plan, not dropped: a read that finds the other one on takes it back, and a later announcement or capture asks the flush again |
 | A live converge's write to a +48V / HI-Z the unit announced it turned on at its panel, and to the other switch on that channel | the live flush, before its converge (`exclude`, joined by an announcement that arrives while it runs, which each later read and round send of the converge asks again); the capture behind it keeps what the snapshot and the announcements held there | the switch is the unit's until the follow read the announcement scheduled brings it in, and the plan's older OFF would write it off |
@@ -3867,8 +3882,10 @@ An undo is refused, with the reason on the status line and **without spending th
   rate, the status line says so (`undoRateLockedMixed`, chosen by whether the entry's field set is
   nothing but `sampleRate`). Either way the entry is held back, not lost — the refusal runs on a peeked
   entry and nothing consumes it, and once the action ends the same press works;
-- the host refuses the state the patch would leave behind (`patchBlocked`) — today the +48V / HI-Z
-  exclusion, which an entry can otherwise walk around, since its patch is applied whole and nothing
+- the host refuses the state the patch would leave behind (`patchBlocked`, decided in
+  `app/undo-refusal.ts`) — the +48V / HI-Z exclusion, and a wiring the unit cannot hold (an input that
+  takes one source left with two, or STREAMING with none; status `undoWireShape`). The +48V / HI-Z one
+  is the exclusion an entry can otherwise walk around, since its patch is applied whole and nothing
   between the edit that recorded it and this asks what the two switches end up at. Asked of the state
   rather than of the keys, because an undo turns a switch on as much as the gesture it reverses did,
   and which of the two the entry moved does not decide the answer. Held back the same way, and the
@@ -4220,9 +4237,9 @@ decoded source that list does not offer — a channel's slot — is not taken at
 STREAMING is read as incomplete (`ReadbackResult.sourceUnread`, and the node in `unreadNodes`), so a Fetch
 reports a partial read and Live sync does not start.
 
-A follow read and a `.urxf` import that find NONE leave the plan with no STREAMING wire, as does an undo or
-redo that removes it — undoing a source drawn onto such a plan, or replaying an entry after a device read has
-moved STREAMING's source under it. The emit then sends nothing to that selector (it never sends NONE there)
+A follow read and a `.urxf` import that find NONE leave the plan with no STREAMING wire; an undo or redo that
+would remove it — undoing a source drawn onto such a plan, or replaying an entry after a device read has
+moved STREAMING's source under it — is held back instead (`undoWireShape`). The emit then sends nothing to that selector (it never sends NONE there)
 and registers the address as a follow-only one (`planToFollowOnlyAddrs`). The unit announces a source picked
 on its own panel at that address, one notify per half, as it announces a write there (measured on the unit),
 so that source reaches the plan through the registration.

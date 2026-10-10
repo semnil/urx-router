@@ -259,10 +259,11 @@ software write reaches it: a Fetch or a Live-sync start that finds it gives the 
 and says so on the status line, and the next write brings the unit to STEREO (in a Live session, the flush
 the operator's next edit starts). A read that finds a source the list does not offer (a channel's slot) does not take it —
 STREAMING is left unread, and Live sync does not start. A plan can still hold no STREAMING wire after a
-follow read or a `.urxf` import that finds NONE, and after an undo or redo that removes the wire —
-undoing a source drawn onto such a plan, or replaying an entry after a device read has moved STREAMING's
-source under it. A write of such a plan sends nothing to that selector, so the unit keeps its state
-until a source is drawn onto STREAMING.
+follow read or a `.urxf` import that finds NONE. An undo or redo that would remove the wire — undoing a
+source drawn onto such a plan, or replaying an entry after a device read has moved STREAMING's source
+under it — is held back instead, and the status line says so; so is one that would leave any input that
+takes one source with two. A write of a plan with no STREAMING wire sends nothing to that selector, so
+the unit keeps its state until a source is drawn onto STREAMING.
 
 The STREAMING channel carries a **DELAY** (the DELAY screen, STREAMING channel only): an on/off, a
 **Delay Time** (1.00 … 1000.00 ms, carried in 0.01 ms; the unit's own ms knob steps 1.00 ms, or 0.02 ms
@@ -296,9 +297,9 @@ The unit's own list offers each MONO IN pair beside the single channels. The pai
 channel pairs: **CH 1/2 and CH 3/4 on the URX44 / URX44V, CH 1/2 alone on the URX22**, whose CH 3/4 is a
 stereo channel and so is one source already. A plan holds a pair as **two ordinary `patch` wires** into
 the output, one from each channel, with no field of its own. A USB output therefore takes one wire, or two
-that are the two channels of one pair in either order; any other second wire, and any third, is refused
-(`monoPairOnly`): the canvas does not draw it, and a document carrying one (a file, a `?plan=` link) is
-refused at load.
+that are the two channels of one pair in either order; any other second wire, and any third, is not held
+(`monoPairOnly`): a drop of one onto the canvas replaces what the output holds, and a document carrying
+one (a file, a `?plan=` link) is refused at load.
 
 - **What is written.** The source select has an L and an R half. A single source writes its own L / R
   ports — a single mono channel is its one input slot on both halves — and a pair writes **L = the
