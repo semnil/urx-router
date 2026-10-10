@@ -2609,7 +2609,8 @@ export class Graph {
   }
 
   /** Reset every port to its default look, then light the partners: legal ones filled,
-   *  occupied-but-possible ones outline-only. Dragging back from an input lights each
+   *  occupied-but-possible ones outline-only. A legal partner whose drop would replace the
+   *  wire already there is ringed in the warn colour instead of the legal one. Dragging back from an input lights each
    *  source at the jack that route would actually leave from, so a channel offers its
    *  tap for a USB / microSD target and its output otherwise.
    *
@@ -2627,8 +2628,9 @@ export class Graph {
       if (!el) continue;
       el.setAttribute("r", String(JACK_R_CANDIDATE));
       if (legal.has(r)) {
+        const [out, into] = dir === "out" ? [from, r] : [r, from];
         el.setAttribute("fill", this.palette.legalFill);
-        el.setAttribute("stroke", this.palette.legalStroke);
+        el.setAttribute("stroke", this.replacesWire(out, into) ? this.palette.warn : this.palette.legalStroke);
       } else {
         el.setAttribute("stroke", this.palette.possibleStroke);
       }

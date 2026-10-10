@@ -1313,6 +1313,9 @@ describe("a USB output's mono pair", () => {
     const legalFill = jackOf("out.usbmain_b:in").getAttribute("fill");
     expect(legalFill, "the control: an empty USB output is lit").toBe(PALETTES.dark.legalFill);
     expect(jackOf(USB_A).getAttribute("fill")).toBe(legalFill);
+    expect(jackOf(USB_A).getAttribute("stroke"), "completing the pair adds a wire, so no warn ring").toBe(
+      PALETTES.dark.legalStroke,
+    );
     tap.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
   });
 
@@ -1489,6 +1492,10 @@ describe("STREAMING always has one source", () => {
       PALETTES.dark.legalFill,
     );
     expect(jackOf(MON1).getAttribute("fill")).toBe(PALETTES.dark.legalFill);
+    expect(jackOf("out.usbmain_b:in").getAttribute("stroke"), "an adding drop keeps the legal ring").toBe(
+      PALETTES.dark.legalStroke,
+    );
+    expect(jackOf(MON1).getAttribute("stroke"), "a replacing drop is ringed in warn").toBe(PALETTES.dark.warn);
     src.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
     drag(portHit(fx.host, "bus.mix1:out")!, { x: 400, y: 200 }, portHit(fx.host, MON1));
     expect(sourcesOfMon()).toEqual(["bus.mix1:out"]);

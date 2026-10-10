@@ -911,7 +911,7 @@ a USB output alike (`replacesWire`: the drop `canConnect` refuses with `singleIn
 On a USB output the held channel's mono-pair partner still joins as a second wire; any other source
 replaces what the output holds, and a channel of a STEREO-linked pair replaces it with both of the pair's
 wires. A mono channel's replaced source carries to its pair partner, as any source drawn onto it does
-(`mirrorPairSource`). That drop is lit as legal, in the same set a render or a fine-grained repaint
+(`mirrorPairSource`). That drop is lit as legal — filled like any legal target, but ringed in the warn colour rather than the legal one, since it removes a wire — in the same set a render or a fine-grained repaint
 (`repaintDirtyNodes`) mid-drag relights (`connectCandidates` serves the drag's start and the repaint
 alike), which also lets a drag open from an occupied input; a click there still selects its wire.
 **STREAMING alone keeps its last wire**: the unit's source list for STREAMING has no None, so the board
