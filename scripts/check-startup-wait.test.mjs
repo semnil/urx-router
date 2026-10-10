@@ -13,7 +13,7 @@
 // harness runs it, since a checker nobody calls refuses nothing while every case here passes.
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +36,8 @@ const REFUSED = [
   "tail -F work/dev.log | sed -u 's/x/y/' | grep -m1 Running",
   "cat <<'EOF'\nok\nEOF\npgrep -f urx-router",
   "cat <<EOF\n$(pgrep -f urx-router)\nEOF",
+  "cat <<EOF\n\\\\$(pgrep -f urx-router)\nEOF",
+  'echo "\\\\$(pgrep -f urx-router)"',
 ];
 
 const ALLOWED = [
@@ -56,11 +58,14 @@ const ALLOWED = [
   "cat <<'EOF'\npgrep -f urx-router\nEOF",
   'cat <<-"EOF"\n\tpgrep -f urx-router\n\tEOF',
   "cat <<'EOF' > work/repro.sh\nuntil grep -q Running work/dev.log; do sleep 1; done\nEOF",
+  "cat <<EOF\n\\$(pgrep -f urx-router)\nEOF",
+  "cat <<EOF\n\\`pgrep -f urx-router\\`\nEOF",
+  'echo "\\$(pgrep -f urx-router)"',
 ];
 
 describe("what a command may wait on", () => {
   it.each(REFUSED)("refuses %s", (command) => {
-    expect(startupWaitFinding(command)).toMatch(/pgrep -x urx-router/);
+    expect(startupWaitFinding(command)).toMatch(/--pid <tree>/);
   });
   it.each(ALLOWED)("allows %s", (command) => {
     expect(startupWaitFinding(command)).toBeNull();
@@ -69,9 +74,7 @@ describe("what a command may wait on", () => {
 
 describe("what a launch is answered with", () => {
   it("answers a background tauri dev launch with the process check", () => {
-    expect(launchReminder("pnpm tauri dev -- -- --experimental > work/dev.log 2>&1", true)).toMatch(
-      /pgrep -x urx-router/,
-    );
+    expect(launchReminder("pnpm tauri dev -- -- --experimental > work/dev.log 2>&1", true)).toMatch(/--pid <tree>/);
   });
   it("says nothing about a foreground launch or another background command", () => {
     expect(launchReminder("pnpm tauri dev", false)).toBeNull();
@@ -100,7 +103,7 @@ describe("the program", () => {
   it("exits 2 with the reason on stderr for a refused wait", () => {
     const res = run(payload("PreToolUse", REFUSED[2]));
     expect(res.status).toBe(2);
-    expect(res.stderr).toMatch(/pgrep -x urx-router/);
+    expect(res.stderr).toMatch(/--pid <tree>/);
   });
   it("exits 0 in silence for an allowed command", () => {
     const res = run(payload("PreToolUse", ALLOWED[0]));
@@ -198,6 +201,27 @@ describe.skipIf(tools.some((path) => path === ""))("which app the check names, a
     expect(await exited).toBe(0);
     expect(stdout.trim()).toBe(own.pid);
   });
+  it("reads a process that has exited as no app rather than as a failed read", () => {
+    const gone = String(spawnSync("true").pid);
+    expect(devAppPid(join(root, "tree"), { pids: () => [gone] })).toBeNull();
+  });
+  it.each([[[]], [["--wait"]]])(
+    "exits 2 at once when lsof cannot read a running app's directory (%j)",
+    async (extra) => {
+      const bin = join(root, "failing-lsof");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "lsof"), "#!/bin/sh\necho 'lsof: injected failure' >&2\nexit 1\n", { mode: 0o755 });
+      const running = launch(`unread-${extra.length}`);
+      await named(running);
+      const res = spawnSync(process.execPath, [SCRIPT, "--pid", running.tree, ...extra], {
+        encoding: "utf8",
+        timeout: 5000,
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      });
+      expect([res.signal, res.status, res.stdout]).toEqual([null, 2, ""]);
+      expect(res.stderr).toMatch(/injected failure/);
+    },
+  );
   it.each([[[]], [["--wait"]]])(
     "exits 2 at once for a tree with no src-tauri, which waiting must not read as not yet (%j)",
     (extra) => {
@@ -225,6 +249,6 @@ describe("the wiring", () => {
     ["PostToolUse", payload("PostToolUse", "pnpm tauri dev > work/dev.log 2>&1", true)],
   ])("a command %s registers for Bash refuses what the checker refuses", (event, input) => {
     const results = commandsFor(event).map((command) => runRegistered(command, input));
-    expect(results.some((res) => res.status === 2 && /pgrep -x urx-router/.test(res.stderr))).toBe(true);
+    expect(results.some((res) => res.status === 2 && /--pid <tree>/.test(res.stderr))).toBe(true);
   });
 });

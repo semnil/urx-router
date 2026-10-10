@@ -41,7 +41,7 @@ const POLL_MS = 1000;
 
 const CHECK = [
   "Check the process instead, once and in this turn: `node scripts/check-startup-wait.mjs --pid <tree>` prints",
-  "the PID of the `urx-router` process (`pgrep -x urx-router`) whose working directory is `<tree>/src-tauri`",
+  "the PID of your `urx-router` process (`pgrep -x -u <uid> urx-router`) whose working directory is `<tree>/src-tauri`",
   "(`lsof -a -p <pid> -d cwd -Fn`), exits 1 while that tree's app is not running — an app another tree built",
   "does not count — and exits 2 with the reason when it cannot tell. To wait, run the same command with `--wait`",
   "in the background, after that one check has shown the app is not already up: it polls while the answer is",
@@ -84,6 +84,10 @@ export function simpleCommands(command) {
     } else if (c === '"') {
       let text = "";
       for (i++; i < command.length && command[i] !== '"'; i++) {
+        if (command[i] === "\\" && i + 1 < command.length) {
+          text += command[++i];
+          continue;
+        }
         const open = command[i] === "`" ? "`" : command.startsWith("$(", i) ? "$(" : null;
         const end = open === null ? -1 : open === "`" ? command.indexOf("`", i + 1) : closingParen(command, i + 2);
         if (end >= 0) {
@@ -91,7 +95,6 @@ export function simpleCommands(command) {
           i = end;
           continue;
         }
-        if (command[i] === "\\" && i + 1 < command.length) i++;
         text += command[i];
       }
       word = (word ?? "") + text;
@@ -168,10 +171,15 @@ export function simpleCommands(command) {
   return out;
 }
 
-/** The commands the substitutions in a line of text run; text with none runs nothing. */
+/** The commands the substitutions in a line of text run; text with none runs nothing, and a
+ *  backslash makes the character after it text. */
 function substitutions(text) {
   const found = [];
   for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\\") {
+      i++;
+      continue;
+    }
     const open = text[i] === "`" ? "`" : text.startsWith("$(", i) ? "$(" : null;
     const end = open === null ? -1 : open === "`" ? text.indexOf("`", i + 1) : closingParen(text, i + 2);
     if (end < 0) continue;
@@ -244,20 +252,35 @@ export function startupWaitFinding(command) {
 
 const run = (cmd, args) => spawnSync(cmd, args, { encoding: "utf8", env: { ...process.env, LC_ALL: "C", LANG: "C" } });
 
-/** The PIDs of the processes named like the app. */
+/** The PIDs of this user's processes named like the app. */
 function appPids() {
-  const res = run("pgrep", ["-x", APP]);
+  const res = run("pgrep", ["-x", "-u", String(process.getuid()), APP]);
   if (res.error) throw res.error;
   if (res.status > 1) throw new Error(`pgrep exited ${res.status}: ${res.stderr.trim()}`);
   return res.stdout.split("\n").filter(Boolean);
 }
 
-/** A process's working directory, or null once it has exited. */
+/** A process's working directory, or null once it has exited. Throws when lsof reads none from
+ *  a process that is still running. */
 function processCwd(pid) {
   const res = run("lsof", ["-a", "-p", pid, "-d", "cwd", "-Fn"]);
   if (res.error) throw res.error;
   const line = res.stdout.split("\n").find((l) => l.startsWith("n"));
-  return line === undefined ? null : line.slice(1);
+  if (line !== undefined) return line.slice(1);
+  if (!isRunning(pid)) return null;
+  const said = res.stderr.trim();
+  throw new Error(
+    `lsof read no working directory for running PID ${pid} (exit ${res.status}${said ? `: ${said}` : ""})`,
+  );
+}
+
+function isRunning(pid) {
+  try {
+    process.kill(Number(pid), 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
 }
 
 function canonical(path) {
