@@ -1,15 +1,8 @@
 #!/bin/sh
 # Claude Code PostToolUse wrapper for the repository's own file checks (documents, and
 # the workflow arrangement the branch ruleset depends on).
-# Hook processes do not inherit the login shell PATH, so node has to be located
-# first (nodenv shims on this Mac, Homebrew elsewhere; Git Bash already has it).
-for dir in "$HOME/.anyenv/envs/nodenv/shims" /opt/homebrew/bin /usr/local/bin; do
-  [ -x "$dir/node" ] && PATH="$dir:$PATH"
-done
-command -v node >/dev/null 2>&1 || {
-  echo "md-hook: node not found, document checks skipped" >&2
-  exit 1
-}
+hook_name=md-hook
+. "$(dirname "$0")/hook-node.sh"
 # Each checker reads the whole PostToolUse payload from fd 0 and decides for itself
 # whether the edited file is one it cares about, so the payload is read once here and
 # replayed. Piping the hook's own stdin through them in sequence would leave the second
