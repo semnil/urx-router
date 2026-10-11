@@ -1324,11 +1324,30 @@ export class LiveSync {
           .filter((w) => nameHead(w) && this.nameSnapshot.get(nameKey(w)) !== w.value)
           .map((w) => [nameKey(w), this.nameSnapshot.get(nameKey(w))] as const);
         this.converge = { ownOns, exclude };
+        // The converge's writes are this session's as much as the send loop's, and the unit
+        // announces them the same way: each is registered as the loop registers its own, so
+        // its announcement is taken as its echo rather than as a change on the unit's panel.
+        // The copy it sends from can hold a value the operator has moved past since.
+        const marks = new Map<number, number>();
         const r = await sendConverging(model, converged, {
           scope: this.scope(),
           pending: seedPending,
           exclude,
           signal,
+          onSending: (c) => {
+            const k = cmdAddr(c);
+            marks.set(k, writeSettle.mark());
+            this.inFlight.set(k, c.vdValue);
+          },
+          onSent: (o) => {
+            if (this.sessionGen !== gen) return;
+            const k = cmdAddr(o.command);
+            this.inFlight.delete(k);
+            const echoed = this.echoedInFlight.delete(k);
+            if (o.result !== "accepted") return;
+            if (!echoed) this.notePending(this.pendingValues, k, o.command.vdValue);
+            this.recentWrites.set(k, { mark: marks.get(k)!, node: o.command.node, at: Date.now() });
+          },
         }).finally(() => {
           this.converge = null;
         });

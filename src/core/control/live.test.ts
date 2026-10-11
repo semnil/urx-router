@@ -3762,3 +3762,58 @@ describe("LiveSync and the +48V / HI-Z exclusion", () => {
     });
   });
 });
+
+// The converge sends from a copy of the plan frozen after the flush's own writes, so a value
+// the operator set in between reaches the unit from the converge and from nowhere else. The
+// unit announces that write like any other; read as a change made on the unit's panel, the
+// follow layer would write the frozen value over whatever the operator has set since.
+describe("LiveSync converge writes and their announcements", () => {
+  for (const arrival of ["after its ack", "before its ack"] as const)
+    it(`takes the announcement of a value only the converge sent as its echo (${arrival})`, async () => {
+      const plan = basePlan();
+      const key = (id: number, x: number, y: number): string => `${id}:${x}:${y}`;
+      const table = new Map(planToCommands(model, plan).map((c) => [key(c.paramId, c.x, c.y), c.vdValue]));
+      const fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+      const isFader = (id: number, x: number, y: number): boolean =>
+        id === fader.paramId && x === fader.x && y === fader.y;
+      const sentToFader: number[] = [];
+      const verdicts: boolean[] = [];
+      // Read once the write has been acked and announced: nothing about it is left waiting,
+      // and a follow read starting now still holds the address in its settle.
+      const after: Array<{ unannounced: boolean; settles: boolean }> = [];
+      let live!: LiveSync;
+      vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+        // The operator moves the fader while the COMP/EQ type head is on the wire: past the
+        // point where the flush's own loop could still send it.
+        if (id === PARAMS.COMP_EQ_TYPE.id) setCh1Fader(plan, -6);
+        if (isFader(id, x, y)) {
+          sentToFader.push(v);
+          if (arrival === "before its ack") verdicts.push(live.isEcho(id, x, y, v));
+          else setTimeout(() => verdicts.push(live.isEcho(id, x, y, v)), 1);
+          setTimeout(
+            () =>
+              after.push({
+                unannounced: live.hasUnannouncedWrite(id, x, y),
+                settles: live.recentPending().written.has(cmdAddr(fader)),
+              }),
+            2,
+          );
+        }
+        table.set(key(id, x, y), v);
+        return Promise.resolve();
+      });
+      vi.mocked(vdGet).mockImplementation((id, x, y) => Promise.resolve(table.get(key(id, x, y)) ?? 0));
+      live = liveFor(plan);
+      live.begin();
+      setCh1CompEqType(plan, 1);
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(120);
+      await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
+
+      expect(sentToFader, "the premise: the fader went out from the converge alone").toEqual([-600]);
+      expect(verdicts, "the unit's announcement of that write").toEqual([true]);
+      expect(after).toEqual([{ unannounced: false, settles: true }]);
+      // The positive control: a value nobody sent is still the unit's own.
+      expect(live.isEcho(fader.paramId, fader.x, fader.y, -1200)).toBe(false);
+    });
+});
