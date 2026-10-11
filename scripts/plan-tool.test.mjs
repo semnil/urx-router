@@ -17,11 +17,11 @@
 // them — and a row that stops warning tomorrow lands in that count rather than passing as one
 // more green case.
 
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decodePlanParam, deserialize, deserializeDocument, PLAN_VERSION } from "../src/core/plan";
 import { insertFxPairProblems, paramRangeProblems } from "../src/core/plan-validate";
@@ -36,6 +36,7 @@ import {
 import { insertFxWritableSlots } from "../src/core/control/insert-fx-effect";
 import { fxParams } from "../src/core/control/fx-effect";
 import { atLeast, newestPython } from "./python.test-util.mjs";
+import { planToolSession } from "./plan-tool.test-util.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TOOL = join(ROOT, ".claude/skills/urx-routing-planner/scripts/plan_tool.py");
@@ -44,6 +45,13 @@ const NODE = "bus.fx1";
 // 3.7 is where a text stream gained the reconfigure the tool writes its output through.
 const found = newestPython();
 const python = atLeast(found, 3, 7) ? found.exe : null;
+
+// The tool's command line, answered by one interpreter for the whole file (scripts/plan-tool.test-util.mjs).
+// The cases about the process itself — its stream encoding, its reading of the file — spawn the
+// tool instead, and "the pin's one-process driver" below holds the two answers equal.
+const session = python ? planToolSession(python, dirname(TOOL)) : null;
+afterAll(() => session?.close());
+const runTool = (...argv) => session.run(argv);
 
 const doc = (fx) => ({
   format: "urx-router-plan",
@@ -61,7 +69,7 @@ const doc = (fx) => ({
 const toolWarnings = (dir, plan) => {
   const file = join(dir, "plan.json");
   writeFileSync(file, JSON.stringify(plan));
-  const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+  const r = runTool("validate", file);
   expect(r.status, r.stdout).toBe(0);
   return r.stderr;
 };
@@ -89,7 +97,7 @@ const removalPath = (line) => {
 const toolPaths = (dir, plan) => {
   const file = join(dir, "plan.json");
   writeFileSync(file, JSON.stringify(plan));
-  const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+  const r = runTool("validate", file);
   // Warnings go to stderr and the verdict to stdout; a document that fails outright is a
   // different answer than a clean one, so the exit code is asserted rather than assumed.
   expect(r.status, r.stdout).toBe(0);
@@ -219,6 +227,54 @@ describe.skipIf(!python)("plan_tool.py's output", () => {
   });
 });
 
+// Every other case asks the session rather than the command line, so the session has to give
+// the command line's answer: the exit status, stdout and stderr, line endings aside, for a clean
+// document, one with warnings carrying a non-ASCII dash, one the tool refuses, the url command,
+// an argument argparse rejects and a file that does not exist. The last one's traceback names
+// the driver's own frames, so it is compared by its exception line rather than by its text.
+describe.skipIf(!python)("the pin's one-process driver", () => {
+  const dir = mkdtempSync(join(tmpdir(), "urx-plan-tool-session-"));
+  const lf = (s) => s.replace(/\r\n/g, "\n");
+  const both = (argv) => {
+    const cli = spawnSync(python, [TOOL, ...argv], { encoding: "utf8" });
+    return { cli: { status: cli.status, stdout: lf(cli.stdout), stderr: lf(cli.stderr) }, session: runTool(...argv) };
+  };
+  const write = (name, plan) => {
+    const file = join(dir, name);
+    writeFileSync(file, JSON.stringify(plan));
+    return file;
+  };
+  const DOCS = [
+    ["a clean document", doc({ type: 0, params: { revxLpf: 40 } }), 0],
+    ["a document with warnings", { ...doc({}), connections: "x" }, 0],
+    ["a document the tool refuses", { ...doc({}), modelId: "URX44Vé—" }, 1],
+  ];
+
+  for (const [name, plan, status] of DOCS)
+    for (const cmd of ["validate", "url"])
+      it(`answers ${cmd} on ${name} as the command line does`, () => {
+        const { cli, session } = both([cmd, write("plan.json", plan)]);
+        expect(cli.status).toBe(status);
+        expect(session).toEqual(cli);
+      });
+
+  it("answers an argument argparse rejects as the command line does", () => {
+    const { cli, session } = both(["validate"]);
+    expect(cli.status).toBe(2);
+    expect(session).toEqual(cli);
+  });
+
+  it("answers a file that does not exist with the command line's status and exception", () => {
+    const { cli, session } = both(["validate", join(dir, "absent.json")]);
+    const raised = (s) => s.trimEnd().split("\n").at(-1);
+    expect(cli.status).toBe(1);
+    expect(session.status).toBe(cli.status);
+    expect(session.stdout).toBe(cli.stdout);
+    expect(raised(session.stderr)).toBe(raised(cli.stderr));
+    expect(raised(cli.stderr)).toMatch(/^FileNotFoundError: /);
+  });
+});
+
 // Python's JSON reader also takes NaN, Infinity and -Infinity, which the app's JSON.parse refuses,
 // and it reads an overflowing literal such as -1e400 as an infinity that a re-serialisation writes
 // back as -Infinity. So both halves of the tool are asked of the same TEXT — written by hand, since
@@ -244,7 +300,7 @@ describe.skipIf(!python)("plan_tool.py on a number the two JSON readers disagree
   const tool = (cmd, text) => {
     const file = join(dir, "plan.json");
     writeFileSync(file, text);
-    return spawnSync(python, [TOOL, cmd, file], { encoding: "utf8" });
+    return runTool(cmd, file);
   };
   const appRead = (text) => {
     try {
@@ -554,7 +610,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     const run = (plan) => {
       const file = join(dir, "plan.json");
       writeFileSync(file, JSON.stringify(plan));
-      return spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      return runTool("validate", file);
     };
 
     for (const [name, ch1, ch2] of [
@@ -702,7 +758,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         };
         const file = join(dir, "plan.json");
         writeFileSync(file, JSON.stringify(plan));
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         const loaded = deserialize(JSON.stringify(plan));
         expect(loaded).not.toBeNull();
         return {
@@ -826,7 +882,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     };
     const file = join(dir, "plan.json");
     writeFileSync(file, JSON.stringify(plan));
-    const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+    const r = runTool("validate", file);
     const loaded = deserialize(JSON.stringify(plan));
     expect(loaded).not.toBeNull();
 
@@ -868,7 +924,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
               };
               const file = join(dir, "plan.json");
               writeFileSync(file, JSON.stringify(plan));
-              const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+              const r = runTool("validate", file);
               const loaded = deserialize(JSON.stringify(plan));
               expect(loaded).not.toBeNull();
               return {
@@ -973,7 +1029,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     };
     const file = join(dir, "plan.json");
     writeFileSync(file, JSON.stringify(plan));
-    const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+    const r = runTool("validate", file);
     const loaded = deserialize(JSON.stringify(plan));
     expect(loaded).not.toBeNull();
 
@@ -1016,7 +1072,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       };
       const file = join(dir, "plan.json");
       writeFileSync(file, JSON.stringify(plan));
-      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const r = runTool("validate", file);
       const loaded = deserialize(JSON.stringify(plan));
       expect(loaded).not.toBeNull();
       return { app: paramRangeProblems(loaded), tool: r.stderr };
@@ -1210,7 +1266,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
 
       const file = join(dir, "plan.json");
       writeFileSync(file, doc);
-      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const r = runTool("validate", file);
       expect(r.status, r.stdout).toBe(0);
       const said = r.stderr.split(/\r?\n/).some((l) => l.startsWith("WARNING: node param "));
       expect(said, `the tool says so: ${name}`).toBe(removes);
@@ -1222,7 +1278,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     expect(Object.keys(loaded.nodeParams), "the app builds no such node").not.toContain("__proto__");
     const file = join(dir, "plan.json");
     writeFileSync(file, asNode);
-    expect(spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" }).stderr).toContain("node param __proto__");
+    expect(runTool("validate", file).stderr).toContain("node param __proto__");
   });
 
   // The REMOVAL UNIT, derived rather than written down. Every case above names the path it
@@ -1345,7 +1401,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
 
       const file = join(dir, "plan.json");
       writeFileSync(file, text);
-      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const r = runTool("validate", file);
       expect(r.status, r.stdout).toBe(0);
       const tool = r.stderr
         .split(/\r?\n/)
@@ -1445,7 +1501,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
 
         const file = join(dir, "plan.json");
         writeFileSync(file, text);
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         expect(r.status, r.stdout).toBe(0);
         const tool = r.stderr
           .split(/\r?\n/)
@@ -1474,7 +1530,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         `"connections":[],"nodeParams":{},"${key}":{${entry}}}`;
       const file = join(dir, "plan.json");
       writeFileSync(file, text);
-      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const r = runTool("validate", file);
       expect(r.status, r.stdout).toBe(0);
       expect(r.stderr, `${key} carries the key the app drops`).toContain(`${key}[__proto__]`);
       // …and the entry beside it, which the app keeps, is not reported.
@@ -1505,7 +1561,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       };
       const file = join(dir, "plan.json");
       writeFileSync(file, JSON.stringify(plan));
-      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const r = runTool("validate", file);
       const loaded = deserialize(JSON.stringify(plan));
       expect(loaded).not.toBeNull();
       return {
@@ -1587,7 +1643,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     };
     const file = join(dir, "plan.json");
     writeFileSync(file, JSON.stringify(plan));
-    const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+    const r = runTool("validate", file);
     const toolSaysOk = r.status === 0;
     // The app's own answer, over the document as the loader hands it on: deserialize applies
     // the same sanitiser the tool has to stand in for.
@@ -1639,7 +1695,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           .sort();
         const file = join(dir, "plan.json");
         writeFileSync(file, JSON.stringify(plan));
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         const tool = r.stdout
           .split(/\r?\n/)
           .filter((l) => /^\[(noRule|singleInput|monoPairOnly|duplicate)\] /.test(l))
@@ -1710,7 +1766,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           .sort();
         const file = join(dir, "plan.json");
         writeFileSync(file, JSON.stringify(plan));
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
         const tool = r.stderr
           .split(/\r?\n/)
@@ -1774,7 +1830,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         .sort();
       const file = join(dir, "plan.json");
       writeFileSync(file, JSON.stringify(plan));
-      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const r = runTool("validate", file);
       expect(r.status, `${name}\n${r.stdout}`).toBe(0);
       const tool = [
         ...new Set(
@@ -1858,7 +1914,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       const rewritten = String(loadedOf(loaded)) !== String(writtenOf(plan));
       const file = join(dir, "plan.json");
       writeFileSync(file, JSON.stringify(plan));
-      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const r = runTool("validate", file);
       expect(r.status, `${name}\n${r.stdout}`).toBe(0);
       const said = r.stderr
         .split(/\r?\n/)
@@ -1896,7 +1952,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       const differs = read.nodeNames.ch1 !== written;
       const file = join(dir, "plan.json");
       writeFileSync(file, JSON.stringify(plan));
-      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const r = runTool("validate", file);
       expect(r.status, r.stdout).toBe(0);
       const warned = r.stderr.split(/\r?\n/).some((l) => l.startsWith("WARNING: nodeNames[ch1]: the app "));
       expect(warned, JSON.stringify(written)).toBe(differs);
@@ -1951,7 +2007,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           .sort();
         const file = join(dir, "plan.json");
         writeFileSync(file, JSON.stringify(plan));
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
         const lines = r.stderr.split(/\r?\n/);
         const toolDropped = lines
@@ -2019,7 +2075,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           .sort();
         const file = join(dir, "plan.json");
         writeFileSync(file, JSON.stringify(plan));
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
         const tool = r.stderr
           .split(/\r?\n/)
@@ -2081,7 +2137,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         .sort();
       const file = join(dir, "plan.json");
       writeFileSync(file, JSON.stringify(plan));
-      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const r = runTool("validate", file);
       expect(r.status, `${name}\n${r.stdout}`).toBe(0);
       const tool = r.stderr
         .split(/\r?\n/)
@@ -2138,7 +2194,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           .sort();
         const file = join(dir, "plan.json");
         writeFileSync(file, JSON.stringify(plan));
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
         const tool = r.stderr
           .split(/\r?\n/)
@@ -2249,7 +2305,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           .sort();
         const file = join(dir, "plan.json");
         writeFileSync(file, JSON.stringify(plan));
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
         const tool = r.stderr
           .split(/\r?\n/)
@@ -2348,7 +2404,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           .sort();
         const file = join(dir, "plan.json");
         writeFileSync(file, JSON.stringify(plan));
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
         const tool = r.stderr
           .split(/\r?\n/)
@@ -2418,7 +2474,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           .sort();
         const file = join(dir, "plan.json");
         writeFileSync(file, JSON.stringify(plan));
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
         const tool = r.stderr
           .split(/\r?\n/)
@@ -2528,7 +2584,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
           .sort();
         const file = join(dir, "plan.json");
         writeFileSync(file, JSON.stringify(plan));
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
         const tool = r.stderr
           .split(/\r?\n/)
@@ -2601,7 +2657,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
         const app = deserializeDocument(text).inputStageRewrites;
         const file = join(dir, "plan.json");
         writeFileSync(file, text);
-        const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+        const r = runTool("validate", file);
         expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
         expect(rewritesOf(r.stderr), `${modelId} ${name}\n${r.stderr}`).toEqual(app);
         moves += app.filter((x) => x.action === "move").length;
@@ -2653,7 +2709,7 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       changed += app.length;
       const file = join(dir, "plan.json");
       writeFileSync(file, text);
-      const r = spawnSync(python, [TOOL, "validate", file], { encoding: "utf8" });
+      const r = runTool("validate", file);
       expect(r.status, r.stdout).toBe(0);
       const tool = r.stderr
         .split(/\r?\n/)
