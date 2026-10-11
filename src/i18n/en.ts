@@ -240,6 +240,9 @@ export const en = {
     // In the behaviour column of an assignment whose control is gone because its channel reads
     // no source: the input stage it drove belongs to no jack or source until one is chosen.
     inactiveNoSource: (channel: string): string => `Inactive — ${channel} has no source`,
+    // …or whose channel's jack or source carries no such switch (a source has no +48V or Hi-Z,
+    // and only some jacks have Hi-Z).
+    inactiveNoSwitch: (channel: string, control: string): string => `Inactive — ${channel}'s input has no ${control}`,
     linkedHint: tr(
       "Shares one MIDI control with the first assignment for this address; they move together, and MIDI feedback follows that first assignment.",
     ),

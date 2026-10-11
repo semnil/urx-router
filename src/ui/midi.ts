@@ -1106,16 +1106,22 @@ export class MidiControl {
     });
   }
 
-  /** Why an assignment this plan cannot bind is inactive, where the reason is that its
-   *  channel reads no source: the input stage it drove has no jack or source to sit on. */
+  /** Why an input-stage assignment this plan cannot bind is inactive: its channel reads no
+   *  source, or the jack or source it reads carries no such switch (a source has no +48V or
+   *  Hi-Z, and only some jacks have Hi-Z). */
   private inactiveReason(id: string): string | undefined {
     const parsed = parseControlId(id);
     if (!parsed || parsed.scope !== undefined || !INPUT_STAGE_PARAMS.has(parsed.param)) return undefined;
     const model = this.hooks.getModel();
     const node = model.nodes.find((n) => n.id === parsed.node);
     if (node?.kind !== "channel") return undefined;
-    if (inputStageOf(model, this.hooks.getPlan(), node.id).kind !== "none") return undefined;
-    return t().midi.inactiveNoSource(node.label);
+    const stage = inputStageOf(model, this.hooks.getPlan(), node.id);
+    if (stage.kind === "none") return t().midi.inactiveNoSource(node.label);
+    const m = t().inspector;
+    if (parsed.param === "phantom" && stage.kind === "digital") return t().midi.inactiveNoSwitch(node.label, m.phantom);
+    if (parsed.param === "hiZ" && (stage.kind === "digital" || !stage.hiZ))
+      return t().midi.inactiveNoSwitch(node.label, m.hiZ);
+    return undefined;
   }
 
   /** Raise the window, so one that drifted behind the app comes back. Called when

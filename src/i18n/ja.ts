@@ -166,6 +166,8 @@ export const ja: Messages = {
     // フィードバックは最初の割り当てに追従する。
     linked: "連動",
     inactiveNoSource: (channel: string): string => `無効 — ${channel} にソースがありません`,
+    inactiveNoSwitch: (channel: string, control: string): string =>
+      `無効 — ${channel} の入力に ${control} がありません`,
     linkedHint:
       "このアドレスの最初の割り当てと 1 つの MIDI コントロールを共有します。一緒に動き、MIDI フィードバックは最初の割り当てに追従します。",
     // 選択肢ラベルは英語表記のまま (幅固定のセレクトでカタカナ表記は

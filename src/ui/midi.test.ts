@@ -136,8 +136,9 @@ beforeEach(() => {
 });
 
 describe("MidiControl", () => {
-  // An input-stage assignment on a channel that reads no source has nothing to drive; the
-  // window is told why, in place of the behaviour option. Another unbound assignment is not.
+  // An input-stage assignment on a channel that reads no source, or on a switch its jack or
+  // source does not carry, has nothing to drive; the window is told why, in place of the
+  // behaviour option. An assignment unbound for another reason is not.
   it("marks an input-stage assignment on a channel with no source inactive, and says why", async () => {
     const at = (controller: number) => ({ type: "cc", channel: 0, controller });
     localStorage.setItem(
@@ -149,6 +150,7 @@ describe("MidiControl", () => {
             { control: "ch4/phantom", addr: at(21), mode: "absolute" },
             { control: "ch3/gain", addr: at(22), mode: "absolute" },
             { control: "ch3/phantom", addr: at(24), mode: "absolute" },
+            { control: "ch1/hiZ", addr: at(25), mode: "absolute" },
             { control: "gone/level", addr: at(23), mode: "absolute" },
           ],
         },
@@ -160,13 +162,15 @@ describe("MidiControl", () => {
     setExclusiveConnection(plan, "in.aux:out", "ch3:in", "source");
     await attached();
     dispatch({ type: "ready" });
-    await vi.waitFor(() => expect(lastState().rows).toHaveLength(5));
+    await vi.waitFor(() => expect(lastState().rows).toHaveLength(6));
     const inactive = Object.fromEntries(lastState().rows.map((r) => [r.control, r.inactive]));
     expect(inactive).toEqual({
       "ch4/gain": t().midi.inactiveNoSource("CH 4"),
       "ch4/phantom": t().midi.inactiveNoSource("CH 4"),
       "ch3/gain": undefined,
-      "ch3/phantom": undefined,
+      "ch3/phantom": t().midi.inactiveNoSwitch("CH 3", t().inspector.phantom),
+      // CH 1 reads jack 1, which has no Hi-Z.
+      "ch1/hiZ": t().midi.inactiveNoSwitch("CH 1", t().inspector.hiZ),
       "gone/level": undefined,
     });
   });
