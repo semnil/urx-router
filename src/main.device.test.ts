@@ -10657,6 +10657,72 @@ describe("the displayed side and the unit's LCD selection", () => {
     await end(shell);
   });
 
+  // A session that ends with an LCD write on the wire waits for its answer before it
+  // disconnects, and that answer acts on nothing in a session started after it.
+  it("waits for an LCD write on the wire before it disconnects", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
+    await goLive();
+    let finish!: () => void;
+    let settled = false;
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      if (a.paramId !== PARAMS.LCD_SELECTION.id) return;
+      return new Promise<void>((resolve) => {
+        finish = () => {
+          settled = true;
+          resolve();
+        };
+      });
+    });
+    nameArea().click();
+    expect(lcdWrites(shell)).toEqual([0x0101]);
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"));
+    await drainShell(shell, () => false);
+    expect(shell.count("vd_disconnect"), "no disconnect ahead of the write's answer").toBe(0);
+    finish();
+    await invoked(shell, "vd_disconnect");
+    expect(settled).toBe(true);
+  });
+
+  it("lets a refused LCD write of an ended session leave the next session up", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
+    await goLive();
+    let refuse!: (error: Error) => void;
+    let held = true;
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      if (a.paramId !== PARAMS.LCD_SELECTION.id || !held) return;
+      held = false;
+      return new Promise<void>((_resolve, reject) => (refuse = reject));
+    });
+    nameArea().click();
+    expect(lcdWrites(shell)).toEqual([0x0101]);
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"));
+    await drainShell(shell, () => false);
+    // Whichever comes first, the disconnect or the answer, the refusal lands in the order the
+    // app allows: a session started over a link released ahead of the answer is the one it
+    // could end.
+    const reconnect = async (): Promise<void> => {
+      await vi.waitFor(() => expect(($("rate-picker") as HTMLSelectElement).disabled).toBe(false));
+      await goLive();
+    };
+    if (shell.count("vd_disconnect") > 0) {
+      await reconnect();
+      refuse(new Error("old-session-refused"));
+    } else {
+      refuse(new Error("old-session-refused"));
+      await invoked(shell, "vd_disconnect");
+      await reconnect();
+    }
+    await drainShell(shell, () => false);
+    expect(live().getAttribute("aria-checked"), "the next session is still up").toBe("true");
+    expect(errors(shell).some((m) => m.includes("old-session-refused"))).toBe(false);
+    // The positive control: a switch in the new session is written.
+    nameArea().click();
+    await vi.waitFor(() => expect(lcdWrites(shell).at(-1)).toBe(0x0100));
+    await end(shell);
+  });
+
   it("writes no switch made off-line", async () => {
     const shell = await bootDevice({}, true, { [LCD]: 0x0101 });
     $("btn-view-console").click();

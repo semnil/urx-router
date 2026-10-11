@@ -2118,7 +2118,8 @@ written at all:
   carrying a value the app wrote moments earlier is the unit's answer to it and is consumed (`LcdEchoes`), so
   two switches in a row do not bounce. One write is on the wire at a time: the switches made while it is go
   out as one write of the latest side, and not at all when that is the side the write sent — the unit leaves
-  most of two writes 20 ms apart unannounced, so the answers cannot be counted. No plan key moves either way.
+  most of two writes 20 ms apart unannounced, so the answers cannot be counted. A session's release waits for its write on the wire before it disconnects,
+  so that write's answer lands before another session can start. No plan key moves either way.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being

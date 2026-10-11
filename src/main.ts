@@ -448,8 +448,10 @@ function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   // command it has on the wire then is answered over this connection rather than over one
   // another action installs after the disconnect.
   const flush = live?.idle() ?? Promise.resolve();
+  // …and the LCD selection write the session has on the wire, for the same reason.
+  const lcd = lcdInFlight ?? Promise.resolve();
   return (
-    Promise.allSettled([ledger, reads, flush])
+    Promise.allSettled([ledger, reads, flush, lcd])
       .then(() => vdDisconnect(epoch))
       // The holder goes back HERE and not in deactivateLive, because it is what stops
       // another action from connecting: an install replaces the worker, and the read still
@@ -2143,9 +2145,12 @@ function refreshInspector(): void {
 const lcdEchoes = new LcdEchoes();
 // One LCD selection write at a time: a switch made while one is on the wire waits, and only the
 // latest of those goes out once it returns — and not at all when it is the value just written.
+// The write on the wire is what a session's release waits for before it disconnects, so its
+// answer lands before another session can start.
 let lcdWriting = false;
 let lcdNext: number | null = null;
 let lcdLast: number | null = null;
+let lcdInFlight: Promise<void> | null = null;
 
 function writeLcd(raw: number, guess: string | undefined): void {
   if (lcdWriting) {
@@ -2155,9 +2160,12 @@ function writeLcd(raw: number, guess: string | undefined): void {
   lcdWriting = true;
   lcdLast = raw;
   lcdEchoes.note(raw);
-  writeLcdSelection(raw)
+  const write = writeLcdSelection(raw);
+  lcdInFlight = write;
+  write
     .catch((err: unknown) => stopLiveOnError(errorText(err) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : "")))
     .finally(() => {
+      if (lcdInFlight === write) lcdInFlight = null;
       lcdWriting = false;
       const next = lcdNext;
       lcdNext = null;
