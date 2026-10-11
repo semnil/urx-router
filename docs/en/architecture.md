@@ -550,7 +550,10 @@ carries a one-line map of the same directories and points here.
   webview (`accept_first_mouse` defaults to false), so raising per binding would make every following assignment
   two clicks; gang members render contiguously below their head with a Linked tag, and the Behavior column's
   vocabularies are printed as a key under the table — for the vocabularies the list actually uses, since a
-  native dropdown cannot annotate its own options and a hover-revealed card is an affordance nobody finds /
+  native dropdown cannot annotate its own options and a hover-revealed card is an affordance nobody finds; the
+  vocabularies share one name column through `subgrid`, so their notes start on one left edge (WebView2
+  154.0.4258.62, 2026-10-11: every note at x = 95.38, the first vocabulary's column as wide as the second's
+  widest name) /
   `midi-learn.ts` the one MIDI-learn treatment and arming path, shared by the CONSOLE strips and the channel
   tuning screens (target ring, armed pulse, mapped dot — plus the bound address as a tooltip at all times,
   since the MIDI window can sit behind the app and a dot says only "assigned", never to what) /
@@ -1184,7 +1187,11 @@ pixel-identical.
   of its padding, and the INS FX popover's held row draws it as an inset outline, which turns dashed while
   the keyboard focus is on that row, since the focus ring and the held state share the one outline. Anything whose job is to mark a position or a path — the knob
   pointer, the fader and mini-fader cap bars, the 0-dB lines, the slot each cap rides in, and the
-  parameter sliders' track — trades its fill for an outline of the same geometry.
+  parameter sliders' track — trades its fill for an outline of the same geometry. Making the knob pointer an
+  island instead does not keep its fill: with `forced-color-adjust: none` on the pointer, its computed
+  background returns to the authored amber and nothing on screen changes — 0 px against the same pointer
+  without it, in Chromium and in WebView2 154.0.4258.62 under hc2 and hcblack (2026-10-11), where the outline
+  against no outline differs by 32–33 px in the same clip.
 - **An island.** A surface whose colours ARE the reading — the scribble's device colour, the meters'
   green/yellow/red zones on the CONSOLE **and on the tuning screens' lanes**, the board's whole
   vocabulary of wires and rails — opts out with `forced-color-adjust: none`. Forcing those into two
