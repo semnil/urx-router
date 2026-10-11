@@ -24,6 +24,7 @@ import { initialMidiUiState, startMidiWindow } from "./midi-window-app";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
 import { recordWindowListeners } from "./listener-scope.test-util";
 import { getLang, setLang, t } from "../i18n";
+import { ja } from "../i18n/ja";
 
 const sentIntents = (): MidiUiIntent[] => mocks.toMain.mock.calls.map(([p]) => JSON.parse(p) as MidiUiIntent);
 
@@ -138,6 +139,34 @@ describe("startMidiWindow — state pushes", () => {
     mocks.receiver!(JSON.stringify(stateWith({ lang: "ja" })));
     expect(getLang()).toBe("ja");
     expect(host.querySelector(".mw-title")!.textContent).toBe(t().midi.title);
+  });
+
+  // The language is the main window's preference, and this window shares its
+  // storage. With nothing stored the main window follows the browser language, so a
+  // copy written from here would pin whatever the main window happened to send.
+  it("follows a pushed language without storing it", () => {
+    const host = start();
+    localStorage.removeItem("urx-lang");
+    mocks.receiver!(JSON.stringify(stateWith({ lang: "ja" })));
+    expect(getLang()).toBe("ja");
+    expect(host.querySelector(".mw-title")!.textContent).toBe(ja.midi.title);
+    expect(localStorage.getItem("urx-lang")).toBeNull();
+  });
+
+  // A storage reset clears every key and reloads the main window, which then pushes
+  // its language and theme to a window that is still showing the cleared ones.
+  it("writes nothing to storage when a push changes the language and the theme", () => {
+    start();
+    localStorage.clear();
+    const writes = vi.spyOn(Storage.prototype, "setItem");
+    try {
+      mocks.receiver!(JSON.stringify(stateWith({ lang: "ja", theme: "light" })));
+      expect(getLang()).toBe("ja");
+      expect(writes).not.toHaveBeenCalled();
+      expect(localStorage.length).toBe(0);
+    } finally {
+      writes.mockRestore();
+    }
   });
 
   it("adopts the theme the push carries", () => {
