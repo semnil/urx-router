@@ -894,9 +894,13 @@ agreement, zero findings.
   done (`justAfter=+0.4`, where it used to revert to `0.0`)
 - **An edit during a converge await survives** (the counter-example), which is what established that
   the refetch loss was not a consequence of a long await
-- **Converge-latch starvation**: with a converge param still in the diff and edits closer together
-  than 120 ms, **not one command leaves the app for five seconds**. Nothing is lost, but the unit plays
-  the old value for the whole gesture
+- **Converge-latch starvation — bounded.** With a converge param still in the diff and edits closer
+  together than 120 ms, **not one command left the app for five seconds**: nothing was lost, but the unit
+  played the old value for the whole gesture. The window is now re-armed for `CONVERGE_DEFER_MAX_MS`
+  (500 ms) at most; past it the pending converge goes out in the middle of the stream and the stream
+  reaches the unit behind it. On a URX44V, with a MIX 2 BUS Type change pending in front of a 6 s fader
+  drag stepping every 30 ms, the uncapped hold was 6.1 s; a 500 ms hold first sent the fader 0.62 s into
+  the drag, and the longest gap between two fader writes during it was 1.0 s, across the converge round
 - **An echo that beat its own ack cost a whole-device read — fixed.** A broker that echoes faster than
   it acks delivers the echo while the write is in flight; the app took it as superseded, re-read the
   node once the write was announced, and the idle net escalated to a whole-device readback — several

@@ -2535,7 +2535,7 @@ sequenceDiagram
     H-->>L: the clone the read ran against
     L->>L: capture from it
   end
-  Note over L: the next schedule asks the diff whether the same is about to happen again<br/>while it would, the 120 ms window re-arms rather than firing
+  Note over L: the next schedule asks the diff whether the same is about to happen again<br/>while it would, the 120 ms window re-arms rather than firing, for 500 ms at most
 ```
 
 The split between the two is who owns what moved: **converge** pushes the plan's own values back at a unit that
