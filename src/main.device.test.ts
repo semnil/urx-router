@@ -10562,3 +10562,93 @@ describe("a scoped read under the Scene only device scope", () => {
     expect(oscDrawn()).toEqual(["bus.stereo:in"]);
   });
 });
+
+// The side a stereo channel shows is linked to the unit's LCD selection while live: the
+// unit's selection of a stereo channel shows that channel's side, a switch made in the app
+// moves the unit's selection, and the unit's answer to that write is not taken as a selection
+// of its own.
+describe("the displayed side and the unit's LCD selection", () => {
+  const LCD = `${PARAMS.LCD_SELECTION.id}/0/0`;
+  const strip = (name: string): HTMLElement | undefined =>
+    [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")].find(
+      (s) => s.getAttribute("aria-label") === name,
+    );
+  const nameArea = (): HTMLElement => strip("CH 5/6")!.querySelector<HTMLElement>(".con-side")!;
+  const showing = (): string => nameArea().getAttribute("aria-label") ?? "";
+  const lcdWrites = (shell: TauriShell): number[] =>
+    shell.invokes.flatMap((cmd, i) => {
+      const a = shell.args[i];
+      return cmd === "vd_set" && a?.paramId === PARAMS.LCD_SELECTION.id ? [a.value as number] : [];
+    });
+  const goLive = async (): Promise<void> => {
+    $("btn-view-console").click();
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+  };
+  const end = async (shell: TauriShell): Promise<void> => {
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+  };
+
+  it("takes the selected channel's side at live start, and the unit's selections after it", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0101 });
+    await goLive();
+    const { addrs } = shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: number[][] };
+    expect(addrs, "the session registers the LCD selection").toContainEqual([PARAMS.LCD_SELECTION.id, 0, 0]);
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
+    await vi.waitFor(() => expect(showing()).toBe("CH 5/6, showing CH 5 (L)"));
+    // A selection of anything but a stereo channel names no side.
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0000 }]);
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0300 }]);
+    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    expect(lcdWrites(shell), "a side the unit chose is not written back").toEqual([]);
+    await end(shell);
+  });
+
+  // Two switches in a row, then the unit's late answer to the FIRST: it is the app's own
+  // write, so the side stays where the second switch left it.
+  it("writes a switch made in the app while live, and takes the unit's answer as no selection", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
+    await goLive();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    await vi.waitFor(() => expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]));
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+    expect(showing(), "the late answer to the first write").toBe("CH 5/6, showing CH 5 (L)");
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
+    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    // The positive control: a selection made on the unit itself still shows.
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    await end(shell);
+  });
+
+  it("writes no switch made off-line", async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0101 });
+    $("btn-view-console").click();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    expect(lcdWrites(shell)).toEqual([]);
+    expect(shell.count("vd_connect")).toBe(0);
+  });
+
+  it("ends the session on a refused write, and keeps the side", SLOW, async () => {
+    const shell = await bootDevice(
+      {
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId === PARAMS.LCD_SELECTION.id) throw new Error("write-refused");
+        },
+      },
+      true,
+      { [LCD]: 0x0000 },
+    );
+    await goLive();
+    nameArea().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
+    expect(errors(shell).some((m) => m.includes("write-refused"))).toBe(true);
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+  });
+});

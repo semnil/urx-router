@@ -78,7 +78,11 @@ const SETUP_SCENE_EXTERNAL = [
   "USB_SUPPRESSION",
 ].sort();
 
-const SCENE_EXTERNAL_NAMES = [...AUDITED_SCENE_EXTERNAL, ...SETUP_SCENE_EXTERNAL].sort();
+// The unit's LCD selection: UI state the factory settings file carries outside every scene,
+// and which a scene recall leaves where it was.
+const UI_STATE_SCENE_EXTERNAL = ["LCD_SELECTION"];
+
+const SCENE_EXTERNAL_NAMES = [...AUDITED_SCENE_EXTERNAL, ...SETUP_SCENE_EXTERNAL, ...UI_STATE_SCENE_EXTERNAL].sort();
 
 describe("scene boundary contract", () => {
   it("params.ts flags exactly the audited scene-external set", () => {

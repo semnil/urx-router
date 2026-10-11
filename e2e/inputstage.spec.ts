@@ -4,7 +4,7 @@
 import { test, expect, type Page } from "./fixtures";
 import { drag, port } from "./graph-helpers";
 import { planParamZ } from "./plan-param";
-import { LIVE_COMMANDS, deviceValueOf, setDeviceValue, stubTauriDevice, writesOf } from "./tauri-stub";
+import { LIVE_COMMANDS, deviceValueOf, notifyParam, setDeviceValue, stubTauriDevice, writesOf } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
 
 const strip = (page: Page, name: string) => page.locator(`.con-strip[aria-label="${name}"]`);
@@ -120,4 +120,29 @@ test("a live A.GAIN edit writes the jack the channel reads", async ({ page }) =>
   expect(await deviceValueOf(page, PARAMS.HA_GAIN.id, 2)).toBe(1700);
   expect((await writesOf(page)).filter(([id]) => id === PARAMS.HA_GAIN.id).length - before).toBe(1);
   await expect(page.locator("#statusbar")).not.toContainText("shares device settings");
+});
+
+// Live: the side a stereo channel shows and the unit's LCD selection move together. A switch
+// in the app writes the selection; the unit's selection of a stereo channel shows its side,
+// and a selection of anything else leaves every side as it was.
+test("a live side switch writes the unit's selection, and the unit's selection shows its side", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS, values: { 766: 48000, 848: 0 } });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await setDeviceValue(page, PARAMS.LCD_SELECTION.id, 0, 0x0000);
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await page.click("#btn-view-console");
+  const side = (shown: string) =>
+    strip(page, "CH 5/6").getByRole("button", { name: `CH 5/6, showing ${shown}`, exact: true });
+  await side("CH 5 (L)").click();
+  await expect(side("CH 6 (R)")).toBeVisible();
+  await expect
+    .poll(async () => (await writesOf(page)).filter(([id]) => id === PARAMS.LCD_SELECTION.id).map(([, v]) => v))
+    .toEqual([0x0101]);
+  await notifyParam(page, PARAMS.LCD_SELECTION.id, 0, 0x0100);
+  await expect(side("CH 5 (L)")).toBeVisible();
+  await notifyParam(page, PARAMS.LCD_SELECTION.id, 0, 0x0000);
+  await expect(side("CH 5 (L)")).toBeVisible();
 });

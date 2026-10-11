@@ -385,6 +385,10 @@ carries a one-line map of the same directories and points here.
       index from 76 on
     - `firmware.ts` validated System firmware version gate (matches against `SUPPORTED_SYSTEM_FIRMWARE` and
       warns before read/write/live-sync on a version mismatch; an empty version skips the check)
+    - `lcd-selection.ts` the unit's LCD selection (762) as a stereo channel's displayed side: the block-1
+      encode / decode (2 × the stereo position, plus 1 for R) and `LcdEchoes`, which tells the unit's answer
+      to the app's own write from a selection made on the panel. `main.ts` reads the selection at a Live-sync
+      start, takes its notifies through the follow `intercept`, and writes it from `switchSide`
     - `link-stats.ts` the link ledger (it owns its own session policy — the opening line, the per-minute
       interval, the warn-once latch — behind `begin`/`end`, as `LiveSync` and `DeviceFollow` do, so the
       timer's lifetime and `startedAt` cannot be kept in step by hand and drift) — what one session asked of

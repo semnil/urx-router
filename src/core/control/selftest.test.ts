@@ -1575,24 +1575,26 @@ describe("unverified-guess workflow (URX22)", () => {
 
   // Every guess registered today asks which instance an address reaches or what a value
   // means there, and writing y and reading y back passes whichever one it is. So a faithful
-  // device round-trips all four and confirms none: a CONFIRMED here would be the promotion
-  // to "verified on hardware" for a question the run never asked.
+  // device round-trips every guess a pass writes and confirms none: a CONFIRMED here would be
+  // the promotion to "verified on hardware" for a question the run never asked. The LCD side
+  // link's address is one no pass writes, so the run leaves it unexercised.
   it("reports every unverified guess as round-tripped, not confirmed, on a faithful device", async () => {
     installMock22(seed22());
     const report = await runSelfTest(m22, 0);
     expect(report.device).toBe("URX22");
     expect(report.collisions).toEqual([]);
     expect(report.unverified.map((u) => u.key).sort()).toEqual(
-      ["dgain-source", "hiz-channel", "input-ports", "jack-axis", "stereo-block"].sort(),
+      ["dgain-source", "hiz-channel", "input-ports", "jack-axis", "lcd-side", "stereo-block"].sort(),
     );
-    for (const u of report.unverified) expect(u.outcome, u.key).toBe("roundTripped");
+    for (const u of report.unverified)
+      expect(u.outcome, u.key).toBe(u.key === "lcd-side" ? "unexercised" : "roundTripped");
     expect(report.restored).toBe(true);
     // The exported report leads with the per-guess verdicts.
     const md = formatSelfTestReport(report);
     expect(md).toContain("# URX self-test report — URX22");
     expect(md).toContain("ROUND-TRIPPED");
     expect(md).not.toContain("CONFIRMED");
-    expect(summarizeVerdicts(report.unverified)).toEqual({ confirmed: 0, roundTripped: 5, refuted: 0, untestable: 0 });
+    expect(summarizeVerdicts(report.unverified)).toEqual({ confirmed: 0, roundTripped: 5, refuted: 0, untestable: 1 });
     // …and says, per guess, that the run did not settle it and what would.
     for (const m of UNVERIFIED_MAPPINGS.filter((x) => x.models.includes("URX22"))) {
       expect(m.howToSettle, `${m.key} says what settles it`).toBeTruthy();

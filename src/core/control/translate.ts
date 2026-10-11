@@ -3225,6 +3225,19 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
           : [],
       ),
   },
+  {
+    // Which stereo channel and side each block-1 value of the LCD selection names on URX22 /
+    // URX44: 2 × the channel's stereo position, plus 1 for R, as on the URX44V. The unit keeps
+    // any value written there, so a round trip says nothing about where its LCD moved.
+    key: "lcd-side",
+    label: "LCD side link: 762 index = 2 × stereo position, +1 for R",
+    models: ["URX22", "URX44"],
+    guessedIds: [],
+    roundTripSettles: false,
+    howToSettle:
+      "switch the side of each stereo channel in the app while Live sync is on, and read which channel and side the unit's LCD shows",
+    addresses: () => [[PARAMS.LCD_SELECTION.id, 0]],
+  },
 ];
 
 /** A guessed param id that a confirmed catalog param already owns. */

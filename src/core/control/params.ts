@@ -656,6 +656,13 @@ export const PARAMS = {
    *  every Live-sync flush re-assert it. The write path reads it as a pre-check and
    *  the badge writes it with a single vdSet. */
   FOLLOW_USB: { id: 848, encoding: "bool", sceneExternal: true, planExternal: true },
+  /** The unit's LCD selection (global, y0): the element its selection frame is on, packed
+   *  `(block << 8) | index` — block 1 the stereo channels, whose index is 2 × the channel's
+   *  stereo position plus 1 while its R side is shown. Readable and writable: a write moves
+   *  the frame and, for a stereo channel, the side its screens show. The unit announces a
+   *  change only for the element it has selected. UI state rather than a setting, so never
+   *  part of the plan; the live session reads and writes it directly (`lcd-selection.ts`). */
+  LCD_SELECTION: { id: 762, encoding: "raw", sceneExternal: true, planExternal: true },
   /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
    *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
    *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.

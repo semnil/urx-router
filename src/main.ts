@@ -176,10 +176,12 @@ import {
   formatCompareReport,
   formatWriteReport,
   FOLLOW_USB_ADDR,
+  LCD_SELECTION_ADDR,
   reachedAndFailed,
   rateAction,
   readClockState,
   readFollowUsb,
+  readLcdSelection,
   readTrackCount,
   confirmedAddrs,
   newConfirmLedger,
@@ -187,6 +189,7 @@ import {
   sendNames,
   sendPresetsAndReconverge,
   setFollowUsb,
+  writeLcdSelection,
   type CommandDiff,
   type ConvergeResult,
   type SendOutcome,
@@ -198,8 +201,10 @@ import {
   planToCommands,
   planToNameWrites,
   unnamedNodes,
+  unverifiedGuessAt,
   unverifiedGuessNote,
 } from "./core/control/translate";
+import { decodeLcdSelection, encodeStereoSide, LcdEchoes } from "./core/control/lcd-selection";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
 import {
@@ -673,7 +678,7 @@ const consoleView = new Console(consoleHost, {
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
   onOpenDynScreen: (kind, id) => dynScreen.open(DYN_PROCESSORS[kind], id),
-  onSwitchSide: (channelId, side) => switchSide(channelId, side),
+  onSwitchSide: (channelId, side) => switchSide(channelId, side, "app"),
   // MIDI learn: while learn mode is on, console controls arm for binding instead
   // of editing.
   midi: midiLearnHooks,
@@ -1182,16 +1187,25 @@ const follow =
   DEMO || !live
     ? null
     : new DeviceFollow({
-        // The plan's follow set plus Follow USB, which the plan deliberately does
-        // not carry (params.ts) but the badge has to keep in step with the device.
-        addrs: () => [...(live?.followAddrs() ?? []), FOLLOW_USB_ADDR],
+        // The plan's follow set plus Follow USB and the LCD selection, which the plan
+        // deliberately does not carry (params.ts): the badge and the side a stereo channel
+        // shows are kept in step with the device.
+        addrs: () => [...(live?.followAddrs() ?? []), FOLLOW_USB_ADDR, LCD_SELECTION_ADDR],
         // Held off while a flush is armed, running or queued: a read taken then answers an
         // edit the flush has not sent, or a write the unit has not announced, with the value
         // it replaces, and the merge takes that value over the operator's edit.
         deferReconcile: () => live?.isWriting() ?? false,
         intercept: (p) => {
-          const [id, x, y] = FOLLOW_USB_ADDR;
-          if (p.paramId !== id || p.x !== x || p.y !== y) return false;
+          const at = (a: [number, number, number]): boolean => p.paramId === a[0] && p.x === a[1] && p.y === a[2];
+          // The unit's own answer to a side this app wrote is consumed; any other selection
+          // of a stereo channel shows that channel's side. Neither opens a reconcile.
+          if (at(LCD_SELECTION_ADDR)) {
+            if (lcdEchoes.take(p.value)) return true;
+            const sel = decodeLcdSelection(getModel(modelId), p.value);
+            if (sel) switchSide(sel.channel, sel.side, "device");
+            return true;
+          }
+          if (!at(FOLLOW_USB_ADDR)) return false;
           setFollowUsbBadge(p.value !== 0);
           return true;
         },
@@ -1484,6 +1498,8 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   midi?.liveEnded();
   follow?.end();
   live?.end();
+  // The sides the session left stay; what it wrote has no session left to answer it.
+  lcdEchoes.clear();
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
   liveAdopted = 0;
@@ -1882,7 +1898,7 @@ const inspectorActions = {
   // Declared here but bound below: the dynamics screen's hooks reach back into
   // these actions, so it cannot be constructed until they exist.
   onOpenDynScreen: (kind: DynKind, id: string) => dynScreen.open(DYN_PROCESSORS[kind], id),
-  onSwitchSide: (channelId: string, side: JackSide) => switchSide(channelId, side),
+  onSwitchSide: (channelId: string, side: JackSide) => switchSide(channelId, side, "app"),
   onClose: () => graph.clearSelection(),
   connectOrigins: (id: string) => graph.connectOrigins(id),
   onConnect: (origin: ConnectOrigin, other: string) => graph.connectTo(origin, other),
@@ -2117,15 +2133,30 @@ function refreshInspector(): void {
   rebuildInspector();
 }
 
-/** Show `side` of a stereo channel: the one funnel both views' switches reach. UI state
- *  rather than a plan edit — no dirty flag, no live write, no undo entry — so each surface
- *  that shows it is told here: both views, and the MIDI feedback, since a bound control on
- *  that channel now reads the other side. */
-function switchSide(channelId: string, side: JackSide): void {
+// The LCD selections this app has written that the unit has not announced yet.
+const lcdEchoes = new LcdEchoes();
+
+/** Show `side` of a stereo channel: the one funnel both views' switches and the unit's own
+ *  selection reach. UI state rather than a plan edit — no dirty flag, no undo entry — so each
+ *  surface that shows it is told here: both views, and the MIDI feedback, since a bound
+ *  control on that channel now reads the other side. A switch made in the app during a live
+ *  session also moves the unit's LCD selection to that channel and side; a write the unit
+ *  refuses ends the session and keeps the side. */
+function switchSide(channelId: string, side: JackSide, origin: "app" | "device"): void {
   if (!setDisplayedSide(channelId, side)) return;
   consoleView.refresh();
   if (inspectorNodes(getModel(modelId), plan, selection).includes(channelId)) rebuildInspectorNow();
   midi?.scheduleFeedback();
+  if (origin !== "app" || !liveSessionUp) return;
+  const model = getModel(modelId);
+  const raw = encodeStereoSide(model, channelId, side);
+  if (raw === null) return;
+  lcdEchoes.note(raw);
+  const [id, , y] = LCD_SELECTION_ADDR;
+  const guess = unverifiedGuessAt(model, id, y);
+  writeLcdSelection(raw).catch((err: unknown) =>
+    stopLiveOnError(errorText(err) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : "")),
+  );
 }
 
 /**
@@ -4100,14 +4131,17 @@ if (!DEMO) {
         // as a fetch's does (see there).
         //
         // live.begin() then snapshots through the same scope filter, so a kept
-        // scene-external value is neither written back nor tracked.
+        // scene-external value is neither written back nor tracked. The LCD selection is
+        // read beside Follow USB, for the same reason and with the same failure.
         let followUsb = false;
+        let lcdSelection = 0;
         let merged: MergedRead | null;
         try {
           merged = await readIntoPlan(
             readTarget(switchTo),
             async (into) => {
               followUsb = await readFollowUsb();
+              lcdSelection = await readLcdSelection();
               return applyDeviceStateScoped(into);
             },
             switchTo ? undefined : planWrites,
@@ -4158,6 +4192,11 @@ if (!DEMO) {
         // the session's control (syncDeviceActionUi) — the only Follow USB control while
         // live.
         setFollowUsbBadge(followUsb);
+        // The unit announces the side of the channel it has selected and of no other, so
+        // that channel's side is taken from the unit here — over one switched in the app
+        // while the read ran — and every other stereo channel keeps the side the app shows.
+        const lcd = decodeLcdSelection(getModel(modelId), lcdSelection);
+        if (lcd) switchSide(lcd.channel, lcd.side, "device");
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.
         liveAdopted = 0;

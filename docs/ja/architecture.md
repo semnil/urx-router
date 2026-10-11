@@ -353,6 +353,10 @@ flowchart TD
       index が全部ずれる
     - `firmware.ts` 検証済み System ファームウェアのバージョンゲート (`SUPPORTED_SYSTEM_FIRMWARE` と照合し、
       不一致なら読み / 書き / ライブ同期の前に警告する。バージョンが空なら検査を飛ばす)
+    - `lcd-selection.ts` 実機の LCD 選択 (762) をステレオのチャンネルの表示する側として扱う: ブロック 1 の
+      符号化・復号 (ステレオ位置 × 2、R なら +1) と、アプリ自身の書込への実機の応答をパネルでの選択と見分ける
+      `LcdEchoes`。`main.ts` がライブ同期の開始時に選択を読み、その通知を follow の `intercept` で受け、
+      `switchSide` から書く
     - `link-stats.ts` リンク台帳 (`LiveSync` や `DeviceFollow` と同じく `begin` / `end` の後ろに自分のセッション
       方針 — 冒頭行、毎分の間隔、一度だけ警告するラッチ — を持つ。タイマーの寿命と `startedAt` を手で歩調を
       合わせようとすると必ずずれるためである) — 1 セッションがブローカーに何を求めたか (コマンド、購読の

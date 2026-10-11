@@ -86,6 +86,21 @@ export function setFollowUsb(on: boolean): Promise<void> {
  *  rather than getting it from the plan's writable set. */
 export const FOLLOW_USB_ADDR: [number, number, number] = [PARAMS.FOLLOW_USB.id, 0, 0];
 
+/** Read the unit's LCD selection (params.ts LCD_SELECTION). */
+export function readLcdSelection(): Promise<number> {
+  return vdGet(PARAMS.LCD_SELECTION.id, 0, 0);
+}
+
+/** Move the unit's LCD selection: a single write, outside the plan. The caller must have
+ *  connected first. */
+export function writeLcdSelection(raw: number): Promise<void> {
+  return vdSet(PARAMS.LCD_SELECTION.id, 0, 0, raw);
+}
+
+/** The LCD selection's notify address, registered by the caller for the reason
+ *  FOLLOW_USB_ADDR is. */
+export const LCD_SELECTION_ADDR: [number, number, number] = [PARAMS.LCD_SELECTION.id, 0, 0];
+
 /** The vd commands a plan currently implies — the confirm-before-send preview. */
 export function dryRun(model: DeviceModel, plan: Plan): VdCommand[] {
   return planToCommands(model, plan);
