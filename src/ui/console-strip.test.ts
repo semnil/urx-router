@@ -950,7 +950,7 @@ describe("the INS FX chip", () => {
     expect(power().getAttribute("aria-pressed")).toBe("false");
   });
 
-  // The unit fills the engine with the type's defaults on the transition into it and not on a  // The unit fills the engine with the type's defaults on the transition into it and not on a
+  // The unit fills the engine with the type's defaults on the transition into it and not on a
   // same-value write, so the selection puts them in the plan, where the screen reads them and the
   // write sends them — and names them as defaults rather than as values the operator chose.
   it("seeds the chosen type's defaults and names them as defaults", () => {
