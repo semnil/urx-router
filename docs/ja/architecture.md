@@ -810,8 +810,11 @@ UI は英語を基本とし、日本語ローカライズに対応する。実�
   **選択が正しいかは検査できない** (実機の行を `tr()` と書いて訳してもコンパイルは通る) ため、その 1 点は
   プルリクエストに書き、レビューで確認する。
 - `ja.ts` — `Messages` 型に従う日本語訳。キーを追加すると TypeScript が全言語の翻訳を要求する。
-- `index.ts` — 現在の言語状態、`t()` (現在のカタログを返す)、`setLang()` / `onLangChange()`。
+- `index.ts` — 現在の言語状態、`t()` (現在のカタログを返す)、`setLang()` / `adoptLang()` / `onLangChange()`。
   起動時に `localStorage("urx-lang")` を読み、無ければ `navigator.language` で判定し、最終フォールバックは英語。
+  `setLang()` は選択を保存する。`adoptLang()` は保存せずに切り替え、MIDI コントロールウィンドウがメインウィンドウから
+  中継された言語に追従するときに使う — このウィンドウはメインウィンドウとストレージを共有するため、保存すると
+  未設定 (「自動」) の設定が固定値に変わってしまう。
 
 > **コアは言語非依存に保つ**。`core/routing.ts` の `canConnect` は失敗を `ConnectError` コードで返し、
 > `core/plan.ts` の `deserialize` は `PlanError` (コード付き) を投げる。UI 側 (`t().error[code]`) で文言に変換する。

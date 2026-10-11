@@ -1044,8 +1044,11 @@ in-house module `src/i18n/`:
 - `ja.ts` — the Japanese translation that satisfies `Messages`. Adding a key makes TypeScript
   require a translation in every language.
 - `index.ts` — the current language state, `t()` (returns the active catalog), and
-  `setLang()` / `onLangChange()`. On startup it reads `localStorage("urx-lang")`; if absent it
-  detects from `navigator.language`, with English as the final fallback.
+  `setLang()` / `adoptLang()` / `onLangChange()`. On startup it reads `localStorage("urx-lang")`; if absent it
+  detects from `navigator.language`, with English as the final fallback. `setLang()` stores the choice;
+  `adoptLang()` switches without storing it, and is what the MIDI control window uses to follow the language the
+  main window relays — that window shares the main window's storage, so a stored copy would turn an unset
+  ("auto") preference into a pinned one.
 
 > **The core stays language-agnostic.** `canConnect` in `core/routing.ts` returns failures as
 > `ConnectError` codes, and `deserialize` in `core/plan.ts` throws a `PlanError` (with a code). The

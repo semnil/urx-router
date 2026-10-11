@@ -1,7 +1,8 @@
 // Minimal, dependency-free i18n. English is the base language; Japanese is the
-// first supported translation. The active language persists to localStorage and
-// registered listeners re-render when it changes. Only browser-side modules
-// import this; core/* stays language-agnostic by returning message codes.
+// first supported translation. The language the operator chooses persists to
+// localStorage, and registered listeners re-render when the active language
+// changes. Only browser-side modules import this; core/* stays language-agnostic
+// by returning message codes.
 
 import { en } from "./en";
 import type { Messages } from "./en";
@@ -41,16 +42,31 @@ export function getLang(): Lang {
   return current;
 }
 
-export function setLang(lang: Lang): void {
+function switchTo(lang: Lang, persist: boolean): void {
   if (lang === current) return;
   current = lang;
-  try {
-    localStorage.setItem(STORAGE_KEY, lang);
-  } catch {
-    // storage unavailable — the choice just won't persist across reloads
+  if (persist) {
+    try {
+      localStorage.setItem(STORAGE_KEY, lang);
+    } catch {
+      // storage unavailable — the choice just won't persist across reloads
+    }
   }
   document.documentElement.lang = lang;
   for (const fn of listeners) fn();
+}
+
+/** Switch to the operator's choice of language and store it as the profile's preference. */
+export function setLang(lang: Lang): void {
+  switchTo(lang, true);
+}
+
+/** Switch to a language another window chose, without storing it. A window that only
+ *  mirrors the main window's language (the MIDI control window) shares this origin's
+ *  storage, so a stored copy would turn the main window's unset ("auto") preference
+ *  into a pinned one. */
+export function adoptLang(lang: Lang): void {
+  switchTo(lang, false);
 }
 
 export function onLangChange(fn: () => void): void {
