@@ -812,7 +812,7 @@ export class DynScreen {
     // 2026-08-14 on Chromium and on the shipping WKWebView: losing the foreground with
     // the button down fires `blur`, fires no `pointercancel` and keeps the capture — so
     // the cap and plot drags below stayed armed, with that surviving capture routing
-    // every later move straight to them. console.ts's trackDrag carries the readings.
+    // every later move straight to them. channel-tuning.md carries the readings.
     // Not `capture: true`: that would also catch the cap's and the canvas's own element
     // blur, which happens whenever focus moves inside the screen.
     //
@@ -1911,7 +1911,7 @@ export class DynScreen {
       dragging = false;
       rect = null;
       if (this.drag?.end === end) this.drag = null;
-      // Dropped with the gesture, for the reason console.ts's trackDrag states: the blur
+      // Dropped with the gesture, for the reason dom.ts's trackDrag states: the blur
       // end is the one no engine follows with a release of its own.
       if (pointer !== null && cap.hasPointerCapture(pointer)) cap.releasePointerCapture(pointer);
       pointer = null;

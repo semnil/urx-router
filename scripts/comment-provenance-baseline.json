@@ -89,7 +89,7 @@
     "src/style.css": 22,
     "src/ui/console-sends.test.ts": 2,
     "src/ui/console-strip.test.ts": 4,
-    "src/ui/console.ts": 5,
+    "src/ui/console.ts": 4,
     "src/ui/device-setup.ts": 2,
     "src/ui/dom.test.ts": 5,
     "src/ui/dom.ts": 8,
