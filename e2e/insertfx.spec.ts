@@ -476,6 +476,43 @@ test("MBC 1-knob is operable, and locks what its Level recomputes", async ({ pag
   await closeScreen(page);
 });
 
+// A knob card is turned the way the CONSOLE's knobs are: up and down from where it was
+// pressed. The range holding its value is a horizontal slider laid under the face, and while
+// it took the pointer itself a press jumped the value to wherever it landed on a track nobody
+// can see — the Volume knob went from 1.9 to 5.0 on a press at its centre — and a vertical
+// drag, the one the face's own cursor offers, moved nothing.
+test("a knob card turns with a vertical drag, and a press alone moves nothing", async ({ page }) => {
+  await node(page, "ch1").click();
+  await chooseOption(await insertSelect(page), { label: "Clean" });
+  await openScreen(page);
+  const card = screenRow(page, "Volume");
+  const face = card.locator(".con-knob");
+  const input = card.locator("input[type=range]");
+  const start = Number(await input.inputValue());
+  const reading = await card.locator(".gt-val").innerText();
+
+  const box = (await face.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  expect(Number(await input.inputValue())).toBe(start);
+  await expect(card.locator(".gt-val")).toHaveText(reading);
+  // Sideways is not a turn.
+  await page.mouse.move(x + 30, y, { steps: 3 });
+  expect(Number(await input.inputValue())).toBe(start);
+  // Up is, and by the distance rather than to an end of the range.
+  await page.mouse.move(x + 30, y - 30, { steps: 3 });
+  await page.mouse.up();
+  const turned = Number(await input.inputValue());
+  expect(turned).toBeGreaterThan(start);
+  expect(turned).toBeLessThan(Number(await input.getAttribute("max")));
+  await expect(card.locator(".gt-val")).not.toHaveText(reading);
+  // …and the pointer the face shows offers that drag.
+  expect(await face.evaluate((n) => getComputedStyle(n).cursor)).toBe("ns-resize");
+  await closeScreen(page);
+});
+
 // A CONTINUOUS value has to survive the gesture that sets it. This one did not: its input
 // event went through the rebuilding `set`, so the screen re-rendered on the first step and
 // replaced the element under the pointer — the drag then ended and the slider could only be

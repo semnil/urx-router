@@ -26,6 +26,7 @@ import {
 } from "../core/control/insert-fx-effect";
 import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { recorder, vals } from "./dyn-plot.test-util";
+import { KNOB_TRAVEL_PX } from "./dom";
 import { setLang, t } from "../i18n";
 
 let h: DynHost;
@@ -1647,5 +1648,127 @@ describe("the multi-band compressor", () => {
     INSFX_DYN.drawCurve!(ok.ctx, geo, vals({ "ifx:mbc:9": 107, "ifx:mbc:10": 2, "ifx:mbc:11": 39 }), TOK, ctx);
     expect(ok.ys[0]).toBeLessThanOrEqual(geo.py(-60));
     expect(reductions(ok.texts)).toEqual(["-10.0 dB"]);
+  });
+});
+
+describe("turning a knob card", () => {
+  // The face takes the pointer and the range under it does not: a range is a horizontal
+  // slider, so pressed directly it jumped to wherever the press landed on a track nobody can
+  // see, and a vertical drag — the one a knob is turned with — moved nothing.
+  const volume = (): { knob: HTMLElement; input: HTMLInputElement } => {
+    const card = [...h.box.querySelectorAll<HTMLElement>(".gt-knob")].find(
+      (c) => c.querySelector(".lbl")?.textContent === "Volume",
+    )!;
+    return { knob: card.querySelector<HTMLElement>(".con-knob")!, input: card.querySelector("input")! };
+  };
+  const ptr = (type: string, clientX: number, clientY: number, buttons = 1): PointerEvent =>
+    new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: "mouse", clientX, clientY, buttons });
+  const params = (): string => JSON.stringify(h.plan.nodeParams.ch1?.insertFxParams ?? {});
+  let screen: DynScreen;
+
+  beforeEach(() => {
+    holding("ch1", "Clean");
+    screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+  });
+  afterEach(() => {
+    window.dispatchEvent(ptr("pointerup", 0, 0, 0));
+    screen.close();
+  });
+
+  it("changes nothing on a press, and turns with the vertical distance from it", () => {
+    const { knob, input } = volume();
+    const start = Number(input.value);
+    const before = params();
+    knob.dispatchEvent(ptr("pointerdown", 40, 100));
+    expect(Number(input.value)).toBe(start);
+    expect(params()).toBe(before);
+    // Sideways is not a turn.
+    window.dispatchEvent(ptr("pointermove", 90, 100));
+    expect(Number(input.value)).toBe(start);
+    // Up turns it up, by the whole range over KNOB_TRAVEL_PX.
+    window.dispatchEvent(ptr("pointermove", 40, 70));
+    const per = (Number(input.max) - Number(input.min)) / KNOB_TRAVEL_PX;
+    expect(Number(input.value)).toBe(Math.min(Number(input.max), start + Math.round(30 * per)));
+    expect(params()).not.toBe(before);
+    // …and the reading follows the value it wrote.
+    expect(input.getAttribute("aria-valuetext")).toBe(
+      volume().knob.closest(".gt-knob")!.querySelector(".gt-val")!.textContent,
+    );
+    // Back down past the press is below where it started.
+    window.dispatchEvent(ptr("pointermove", 40, 130));
+    expect(Number(input.value)).toBeLessThan(start);
+  });
+
+  it("ends the turn at the release, and with the screen", () => {
+    const { knob, input } = volume();
+    knob.dispatchEvent(ptr("pointerdown", 40, 100));
+    window.dispatchEvent(ptr("pointerup", 40, 100, 0));
+    const released = input.value;
+    window.dispatchEvent(ptr("pointermove", 40, 40));
+    expect(input.value).toBe(released);
+
+    // A screen closed under the press — Escape with the button still down — takes the
+    // gesture with it: the hidden knob lets the pointer go and stops turning.
+    knob.dispatchEvent(ptr("pointerdown", 40, 100));
+    screen.close();
+    expect(knob.hasPointerCapture(1)).toBe(false);
+    const before = params();
+    const atClose = input.value;
+    window.dispatchEvent(ptr("pointermove", 40, 40));
+    expect(input.value).toBe(atClose);
+    expect(params()).toBe(before);
+  });
+
+  it("ends the turn at its own pointer's release while a finger rests on the screen", () => {
+    const { knob, input } = volume();
+    h.box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 2, pointerType: "touch" }));
+    knob.dispatchEvent(ptr("pointerdown", 40, 100));
+    window.dispatchEvent(ptr("pointerup", 40, 100, 0));
+    const released = input.value;
+    window.dispatchEvent(ptr("pointermove", 40, 40));
+    expect(input.value).toBe(released);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 2, pointerType: "touch" }));
+  });
+
+  // The window taken away mid-press: macOS still delivers the scroll wheel to the window
+  // underneath, so the range has to be held inert from the blur until the press is over —
+  // the treatment a value row's own range gets, started from a press on the face.
+  const ends: Array<[string, () => void]> = [
+    ["its release", () => void window.dispatchEvent(ptr("pointerup", 40, 100, 0))],
+    ["its cancel", () => void window.dispatchEvent(ptr("pointercancel", 40, 100, 0))],
+    ["the window coming back", () => void window.dispatchEvent(new FocusEvent("focus"))],
+  ];
+  it.each(ends)("holds the value through a wheel while the window is away mid-press, until %s", (_, endPress) => {
+    const { knob, input } = volume();
+    const wheel = (): void => void knob.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, cancelable: true }));
+    // The positive control: an ordinary notch steps it.
+    const start = Number(input.value);
+    wheel();
+    const stepped = input.value;
+    expect(Number(stepped)).toBeGreaterThan(start);
+    const before = params();
+    const writes = h.patches.length;
+
+    knob.dispatchEvent(ptr("pointerdown", 40, 100));
+    window.dispatchEvent(new FocusEvent("blur"));
+    wheel();
+    expect(input.value).toBe(stepped);
+    expect(params()).toBe(before);
+    expect(h.patches.length).toBe(writes);
+
+    // …and the press ending gives the wheel back.
+    endPress();
+    wheel();
+    expect(Number(input.value)).toBeGreaterThan(Number(stepped));
+  });
+
+  it("takes no press while the card is locked", () => {
+    const { knob, input } = volume();
+    input.disabled = true;
+    const before = params();
+    knob.dispatchEvent(ptr("pointerdown", 40, 100));
+    window.dispatchEvent(ptr("pointermove", 40, 40));
+    expect(params()).toBe(before);
   });
 });

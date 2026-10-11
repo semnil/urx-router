@@ -37,11 +37,14 @@ import {
   mouseMovedUnpressed,
   onInertHoldsEnd,
   preserveFocus,
+  scrubFloat,
   settingsRow,
   settingsSection,
   sliderRow,
+  trackDrag,
   wheelStep,
   wireDismiss,
+  KNOB_TRAVEL_PX,
 } from "./dom";
 import type { SettingsRowOptions } from "./dom";
 import { fineTag, optInFine } from "./fine";
@@ -812,7 +815,7 @@ export class DynScreen {
     // 2026-08-14 on Chromium and on the shipping WKWebView: losing the foreground with
     // the button down fires `blur`, fires no `pointercancel` and keeps the capture — so
     // the cap and plot drags below stayed armed, with that surviving capture routing
-    // every later move straight to them. console.ts's trackDrag carries the readings.
+    // every later move straight to them. channel-tuning.md carries the readings.
     // Not `capture: true`: that would also catch the cap's and the canvas's own element
     // blur, which happens whenever focus moves inside the screen.
     //
@@ -1911,7 +1914,7 @@ export class DynScreen {
       dragging = false;
       rect = null;
       if (this.drag?.end === end) this.drag = null;
-      // Dropped with the gesture, for the reason console.ts's trackDrag states: the blur
+      // Dropped with the gesture, for the reason dom.ts's trackDrag states: the blur
       // end is the one no engine follows with a release of its own.
       if (pointer !== null && cap.hasPointerCapture(pointer)) cap.releasePointerCapture(pointer);
       pointer = null;
@@ -2189,12 +2192,14 @@ export class DynScreen {
    * One continuous value as a rotary knob: its name, its reading, and the knob under
    * them, boxed.
    *
-   * The control INSIDE it is the same `<input type="range">` every other row carries, laid
-   * over the knob face and painted away. That is the whole point rather than an
-   * implementation detail: the value, the step, the keyboard, the wheel gate, the
-   * blur-inert hold and the MIDI arming are the range's own contract, and a bespoke rotary
-   * would have to reimplement each of them — which is where the console's knob and this
-   * one would drift. The knob is the picture; the range is the control.
+   * The value INSIDE it is the same `<input type="range">` every other row carries, laid
+   * over the knob face and painted away: the value, the step, the keyboard and the wheel gate
+   * stay the range's own contract. The pointer is the face's, and so is the MIDI arming. A range
+   * is a horizontal slider, so pressed directly it jumps to wherever the press lands on a
+   * track nobody can see and ignores the vertical drag a knob is turned with; the face
+   * instead takes the console knob's drag — vertical, relative to the press, the whole
+   * range over `KNOB_TRAVEL_PX` — and writes the range's value, so a press alone changes
+   * nothing.
    *
    * The indicator's angle is the same 270° sweep the console's knobs use, written to the
    * same custom property, so the two read as one instrument.
@@ -2240,8 +2245,39 @@ export class DynScreen {
       this.syncReadouts();
       this.markPlotDirty();
     });
-    wheelStep(input, () => this.hooks.midi?.learnActive());
-    holdInertOnBlur(input, { live: () => this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`) });
+    wheelStep(input, () => this.hooks.midi?.learnActive(), knob);
+    holdInertOnBlur(input, {
+      live: () => this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`),
+      pressOn: knob,
+    });
+    knob.addEventListener("pointerdown", (e) => {
+      // MIDI learn arms on this same press (`armable`), and a locked card takes none.
+      if (input.disabled || this.hooks.midi?.learnActive()) return;
+      e.preventDefault();
+      input.focus({ preventScroll: true });
+      const lo = Number(input.min);
+      const hi = Number(input.max);
+      const step = Number(input.step) || 1;
+      const startY = e.clientY;
+      const start = Number(input.value);
+      const end = trackDrag(
+        knob,
+        e,
+        (ev) => {
+          const raw = start + ((startY - ev.clientY) * (hi - lo)) / KNOB_TRAVEL_PX;
+          const next = Math.min(hi, Math.max(lo, scrubFloat(lo + Math.round((raw - lo) / step) * step)));
+          if (next === Number(input.value)) return;
+          input.value = String(next);
+          input.dispatchEvent(new Event("input"));
+        },
+        {
+          onEnd: () => {
+            if (this.drag?.end === end) this.drag = null;
+          },
+        },
+      );
+      this.drag = { pointerId: e.pointerId, end };
+    });
     if (opts?.locked) input.disabled = true;
     knob.append(ind, input);
     // A row's tag ("Vib only", "Synced") is what says when its value applies — on a LOCKED row

@@ -193,10 +193,16 @@ export function wireDismiss(opts: {
 // the Device setup brightness row and the gate screen's parameter rows — every
 // range input in the app steps by the wheel-step preference, or none should.
 // `blocked` short-circuits the notch (the tuning screens pass MIDI learn, where a
-// stray scroll would move the value being assigned).
-export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | undefined): void {
+// stray scroll would move the value being assigned). `over` is the element the wheel is
+// read on, for a slider that takes no pointer input of its own (a knob card's range sits
+// under its face with `pointer-events: none`).
+export function wheelStep(
+  slider: HTMLInputElement,
+  blocked?: () => boolean | undefined,
+  over: HTMLElement = slider,
+): void {
   onWheelStep(
-    slider,
+    over,
     (dir) => {
       // A disabled slider takes no pointer input, but the wheel is delivered to it anyway
       // (measured in both engines) — and this is the app's own write path, not the
@@ -254,12 +260,17 @@ export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | un
  * value the operator dragged to is either committed early or lost outright; the caller
  * commits it here instead, before anything is disabled, and `live` is resolved after that
  * in case the commit rebuilt the row.
+ *
+ * `pressOn` is the element whose press starts the hold, for a range that takes no pointer of
+ * its own: a knob card's range sits under its face with `pointer-events: none`, and the face
+ * runs the drag. The drag ends at the blur by itself (`trackDrag`); the hold is what keeps
+ * the range from taking a wheel notch while the window is away and the button still down.
  */
 export function holdInertOnBlur(
   input: HTMLInputElement,
-  opts: { live?: () => HTMLInputElement | null; beforeDisable?: () => void } = {},
+  opts: { live?: () => HTMLInputElement | null; beforeDisable?: () => void; pressOn?: HTMLElement } = {},
 ): void {
-  input.addEventListener("pointerdown", (e) => {
+  (opts.pressOn ?? input).addEventListener("pointerdown", (e) => {
     // The tracker is installed lazily, on the first press this helper sees — which is
     // this one, and by then its own capture-phase listener has already been passed over.
     // So this press registers itself; every later one arrives through the tracker.
@@ -321,6 +332,105 @@ export function holdInertOnBlur(
  *  release. */
 export function mouseMovedUnpressed(e: PointerEvent): boolean {
   return e.pointerType === "mouse" && e.buttons === 0;
+}
+
+/** How far a rotary knob's vertical drag travels to sweep its whole range, in CSS pixels —
+ *  the CONSOLE's knobs and the tuning screens' knob cards alike. */
+export const KNOB_TRAVEL_PX = 150;
+
+/**
+ * Track a pointer drag that started on `control`, in the one place the CONSOLE's drags and
+ * the tuning screens' knob cards share: the capture, the two `window` listeners, the
+ * teardown, and the rule that ends the gesture when its control leaves the document.
+ *
+ * The listeners have to be on `window` — a capture on the control alone stops reporting
+ * the moment the pointer leaves it — so a rebuild that replaces the strip (device
+ * follow, MIDI, a scene recall, a language or theme switch) used to leave them running
+ * against an element no longer on screen: the plan and the unit kept taking the drag
+ * while the fader the operator can see showed what the rebuild painted, and the two
+ * stayed apart for the rest of the session. The gesture now ends where its control did.
+ *
+ * Asked of the element rather than coordinated with the rebuild on purpose: the rebuild
+ * sites do not have to know a gesture exists, and nothing is deferred (a banked repaint
+ * replayed on pointerup is what swallowed a Close press on the tuning screens).
+ *
+ * `onMove` is also applied to the opening event when `seed` is set — the main fader
+ * jumps to a press that landed off its cap. That runs before the listeners are
+ * registered, so a seed can never be answered by a teardown that does not exist yet.
+ *
+ * Returns the teardown, for an owner that ends the gesture on a signal of its own (a tuning
+ * screen closing under the press). It is the same teardown the pointer ends run, and a
+ * second call runs `onEnd` again, so an owner holding it drops it from `onEnd`.
+ */
+export function trackDrag(
+  control: HTMLElement,
+  e: PointerEvent,
+  onMove: (ev: PointerEvent) => void,
+  opts: { seed?: boolean; onEnd?: () => void } = {},
+): () => void {
+  control.setPointerCapture(e.pointerId);
+  if (opts.seed) onMove(e);
+  // Filtered by pointer id, and ended on `pointercancel` as well as `pointerup`.
+  //
+  // A cancelled drag fires no `pointerup` at all — touch-scroll takeover, a native
+  // context menu, an alert (graph.ts documents the same set) — so teardown bound to
+  // `pointerup` alone left the move listener installed. The control is still connected,
+  // so every LATER pointer movement, including the operator's next unrelated gesture,
+  // re-entered `onMove` with the stale `startY`/`startFrac`, wrote a level into the plan
+  // and committed it to the live device; the SENDS header readout stayed latched too.
+  // It ended only at the next `pointerup` anywhere.
+  //
+  // The id filter is the second half of the same defect: with none, a second pointer's
+  // moves drove this control while the operator was dragging something else.
+  const mine = (ev: PointerEvent): boolean => ev.pointerId === e.pointerId;
+  // A mouse moving with no button held has released the press — the native context menu
+  // takes a right press's release — so the drag ends there rather than following it.
+  const move = (ev: PointerEvent): void => {
+    if (!mine(ev)) return;
+    if (!control.isConnected || mouseMovedUnpressed(ev)) return end();
+    onMove(ev);
+  };
+  const stop = (ev: PointerEvent): void => {
+    if (mine(ev)) end();
+  };
+  // Losing the window is the third way a press ends, and the drag outlives it: with the
+  // button down and the pointer captured, taking the OS foreground away fires `blur`, fires
+  // no `pointercancel`, and KEEPS the capture, in Chromium and in the shipping WKWebView —
+  // so without this a fader went on following the pointer while another app was frontmost,
+  // writing levels to the plan and out to the unit the whole time. Ended here, the drag
+  // leaves the value where the window was lost. The readings are in
+  // docs/en/channel-tuning.md, "A gesture the window is taken away from".
+  //
+  // No E2E tier caught it and none can reproduce it: Playwright emulates focus, so a page
+  // under it reports itself focused whatever the foreground is. A spec could still
+  // dispatch a synthetic blur — what puts the pins in the unit suite is what they read
+  // (a plan value and the element's capture), not the event.
+  //
+  // On macOS the release itself still arrived (the button was let go
+  // over another app and the drag ended there), so what this closes on that platform is
+  // the writing done while the window is away rather than a drag standing forever — and
+  // history.ts already ends its press at a blur, so those writes were also landing in a
+  // NEW undo entry.
+  const end = (): void => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", stop);
+    window.removeEventListener("pointercancel", stop);
+    window.removeEventListener("blur", end);
+    // The capture goes with the gesture. On the two pointer ends the engine drops it
+    // anyway; on the blur end nothing does, and an engine that also loses the release
+    // would leave this control holding the capture for that pointer id — routing the
+    // operator's next press to a fader they are not pressing. The tuning screens' plot
+    // drag already ended this way; this is the same answer for the other two.
+    if (control.hasPointerCapture(e.pointerId)) control.releasePointerCapture(e.pointerId);
+    opts.onEnd?.();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", stop);
+  window.addEventListener("pointercancel", stop);
+  // Not `capture: true`: blur does not bubble, so a capturing listener would also be
+  // handed every field's own blur inside the strip and end the drag on the first one.
+  window.addEventListener("blur", end);
+  return end;
 }
 
 /** Pointers the app currently believes are down, app-wide, and what to run when none are.

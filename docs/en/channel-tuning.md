@@ -1013,10 +1013,11 @@ a slot rather than what is in it.
 - **A guitar amp's and Pitch Fix's continuous values are knobs.** A dozen of them, all the same kind of thing,
   against a display that is a level rack and nothing else — a column of horizontal sliders that
   long reads as a list rather than as an amp, and this is the one panel here whose real-world
-  control is a row of knobs. The control INSIDE each one is still the same `<input type="range">`
+  control is a row of knobs. The value INSIDE each one is still the same `<input type="range">`
   every other row carries, laid over the knob face and painted away: the value, the step, the
-  keyboard, the wheel gate, the blur-inert hold and the MIDI arming are the range's own
-  contract, and a bespoke rotary would have to reimplement each of them. The rows that are not
+  keyboard and the wheel gate are the range's own contract. The pointer is the face's, which
+  turns the value with the CONSOLE knob's vertical drag rather than the range's horizontal one
+  (see "The guitar amp is one face"), and the MIDI arming is the face's too. The rows that are not
   continuous — a type selector, an on/off — keep their own shape and span the grid, so the order
   the signal meets them survives the layout.
 - **Fields name an engine slot, not a parameter.** Insert-FX values live in `insertFxParams` keyed by
@@ -1166,6 +1167,17 @@ the label and the knob; the knob face is clamp(48px, 5vw, 56px).
 same height, and a family with one face has nothing to hold still against. The cabinet's Gate is therefore a **single
 button carrying its own state** (`onOffButton`) rather than the settings ON/OFF pair: a pair costs
 two of the row's columns and prints the word that is not in effect beside the one that is.
+
+**A knob card turns the way the CONSOLE's knobs do**: up and down from where it was pressed, the
+whole range over `KNOB_TRAVEL_PX` (`src/ui/dom.ts`), ending the way their drag ends (`trackDrag`). A
+press alone moves nothing. The value itself is the range input every other row carries, laid under
+the face with `pointer-events: none`, where it keeps the step, the keyboard and the wheel. It does
+not take the pointer because a range is a horizontal slider: while it did, a press at the face's
+centre took Clean's Volume from 1.9 to 5.0 — at the press in Chromium, at the first movement in
+WebKit — and the vertical drag the face's cursor offers moved nothing. WebView2 behaves the same way
+(154.0.4258.62, the Windows build driven over its DevTools socket, 2026-10-11): a press at the centre
+left Volume at 1.9, a 30 px upward drag took it to 3.9, a sideways one left it, and one wheel notch
+and one ArrowUp each stepped it by 0.1; before this change the same press took it to 5.0 there too.
 
 **Where a card prints its tag depends on what the card holds.** A knob card puts it beside the name:
 the tag qualifies the name, and under the knob it would read as a second value. A card whose control
@@ -1923,20 +1935,23 @@ open, so it sits above the gates rather than behind the thing it interrupts.
 
 ### A gesture the window is taken away from
 
-The three drags this screen runs itself — the threshold cap, the plot, and the value rows — end when the
+The four drags this screen runs itself — the threshold cap, the plot, a knob card's face, and the value rows — end when the
 window loses focus, because no engine ends them for you: taking the OS foreground away with the button
 down fires `blur`, fires **no** `pointercancel`, and keeps the pointer capture (measured 2026-08-14 on
-Chromium and on the shipping WKWebView). Without it, a press held through an app switch would go on
+Chromium and on the shipping WKWebView). WebView2 fires `blur` and no `pointercancel` the same way
+(154.0.4258.62, 2026-10-11): with a CONSOLE fader held through Alt+Tab, the pointer moves that went on
+reaching the page left its value where the window was lost. Without it, a press held through an app switch would go on
 writing into the plan and out to the unit while another application is frontmost, and — since
-`history.ts` also ends its press at a `blur` — the remainder would land in a *new* undo entry. The cap
-and the plot also end at their own mouse moving with no button held, the release the native context menu
+`history.ts` also ends its press at a `blur` — the remainder would land in a *new* undo entry. The cap,
+the plot and a knob card's face also end at their own mouse moving with no button held, the release the native context menu
 takes from a right press (the app-wide rule is in architecture.md, "Responsive layout (mobile)"). The cap
 follows the pointer that pressed it and no other: a mouse moving over it, or released on it, while a finger
-drags it is not that finger. Each of the two drags ends with the pointer making it, whatever other pointer is
+drags it is not that finger. Each of the three drags ends with the pointer making it, whatever other pointer is
 still down: a mouse dragging the cap while a finger rests on the screen stops at that mouse's release, or at its
 move with no button held, and only the repaint the press deferred waits for the finger.
 
-The cap and the plot are the view's own gestures, so ending them is dropping what the view holds. **A
+The cap, the plot and a knob card's face are the view's own gestures, so ending them is dropping what the
+view holds — the face's through `trackDrag` (`src/ui/dom.ts`), the CONSOLE's own drag helper. **A
 value row is a native `<input type="range">`, and the engine owns its drag**, which makes it a different
 problem in three ways, each measured:
 
@@ -1960,7 +1975,12 @@ shot enabled and disabled is byte-identical in both.
 
 **This is not the tuning screen's rule but the app's**: `holdInertOnBlur` in `ui/dom.ts` carries it, and
 every `<input type="range">` goes through it — the tuning rows, both of the inspector's slider builders,
-the shared `sliderRow`, and Device setup's brightness — for the same reason `wheelStep` is shared. What
+the shared `sliderRow`, and Device setup's brightness — for the same reason `wheelStep` is shared. A knob
+card's range goes through it too, with the hold started by a press on the face (`pressOn`), since the range
+takes no pointer of its own: its drag already ends at the blur, and the hold is what keeps a wheel notch
+from moving it while the window is away and the button still down. In WebView2 (2026-10-11), with the
+Volume face held and another application frontmost, a wheel notch over the knob reached the page —
+Windows delivers the wheel to an inactive window — and left the value where it was. What
 this screen adds is where a deferred refresh lands. The blur ends the gestures this view runs itself but
 leaves `grabbed` set, because the press is still in flight and a rebuild under it would hand the
 still-held pointer a live control — the state the hold exists to prevent. So the deferral outlives the

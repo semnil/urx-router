@@ -1592,7 +1592,8 @@ describe("node drag", () => {
   // down fires `blur` and no `pointercancel`, and keeps the capture — so the node kept
   // following the pointer while another application was frontmost, and since history.ts
   // ends its press at that same blur, the rest of the travel landed in a second undo
-  // entry. console.ts's `trackDrag` carries the readings.
+  // entry. docs/en/channel-tuning.md, "A gesture the window is taken away from", carries the
+  // readings.
   it("ends a node drag when the window loses focus", () => {
     fx = graphFixture();
     const rect = faceplate(fx.host, "ch1")!;
