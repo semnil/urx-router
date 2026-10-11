@@ -36,6 +36,7 @@ import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale
 import { sendlessNote } from "./send-fields";
 import { isChord } from "./keys";
 import { mouseMovedUnpressed, preserveFocus } from "./dom";
+import { spoken } from "./glyph";
 import { t } from "../i18n";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -1285,7 +1286,7 @@ export class Graph {
     g.classList.add("node");
     g.dataset.id = node.id;
     g.setAttribute("role", "button");
-    g.setAttribute("aria-label", this.labelOf(node.id));
+    g.setAttribute("aria-label", spoken(this.labelOf(node.id)));
     g.setAttribute("aria-pressed", String(this.selectedNodes.has(node.id)));
     g.setAttribute("tabindex", "-1");
     const pos = this.posOf(node.id);

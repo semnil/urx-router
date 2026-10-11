@@ -1066,7 +1066,7 @@ the inspector, and the open modal itself.
 > channel's sides) through `midi.paramSpoken`, which the MIDI window's row and the controls on it are
 > named by. A sentence that names a control by its caption — the binding, the armed control and a refused
 > learn, on the app's status line and the MIDI window's, and the window's armed hint — is written through
-> `setCaptionedText`, which leaves the text as it is and announces each caption symbol in it by its word.
+> `setSpokenText` with its `captioned` flag, which leaves the text as it is and announces each caption symbol in it by its word.
 > Only those sentences are: the MIDI side marks them (`onStatus`'s `captioned`, `statusCaptioned` in the
 > window's state), since a port or file name holding the same character is not a caption. `src/ui/glyph.test.ts` holds the captions to Ф and refuses the other marks in the sources and
 > these documents. On Windows 11 (WebView2 154), read through the DevTools protocol, the chip and the
@@ -1075,6 +1075,19 @@ the inspector, and the open modal itself.
 > `フェーズ` / `Phase` and holds a status line's `ФR` as an image named `フェーズ R`. Narrator with its
 > Japanese voice read the chip as "フェーズ、切り替えボタン、オフ" and the armed status line's caption as
 > "フェーズ、アール", and spelled out Ф as a letter nowhere.
+
+> **A name's marks are read as words, and only by assistive technology.** The printed text keeps
+> `CH 5/6 · Source`; what a screen reader is handed spells `CH` as `C H`, reads an a/b pair as its two
+> halves with the slash's word between them, a slash on its own and the middle dot `·` by their words —
+> `slash` / `dot` in English, `スラッシュ` / `てん` in Japanese (`speech` in the message catalog). Read
+> as printed, Windows' Japanese voice took `CH` for a country, `5/6` for a fraction or a date and `·` for
+> its character name; VoiceOver took `5/6` in a sentence for a date and left `·` silent, as Windows'
+> English voices did.
+> `spoken` (`src/ui/glyph.ts`) builds the form for a name handed over as a string — a CONSOLE strip's
+> group, its name area, its power LED and main fader, a graph node, a MIDI row's controls — and
+> `setSpokenText` writes text that is announced as it stands with each mark as an image named by its
+> reading: both status lines, the MIDI window's hint and rows, the Inspector's title and side switch,
+> and a tuning screen's channel. `src/ui/glyph.test.ts` holds the readings in both languages.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
 > `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **Those five apply to prose as much

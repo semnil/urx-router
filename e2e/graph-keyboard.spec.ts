@@ -35,7 +35,10 @@ test("Tab reaches the board, and Enter selects the node it reached", async ({ pa
   await expect(node(page, first)).toHaveAttribute("aria-pressed", "false");
   await page.keyboard.press("Enter");
   await expect(node(page, first)).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator("#inspector h2").first()).toHaveText((await node(page, first).getAttribute("aria-label"))!);
+  // The panel's title is announced as the node is: the same name, marks read the same way.
+  await expect(page.locator("#inspector h2").first()).toHaveAccessibleName(
+    (await node(page, first).getAttribute("aria-label"))!,
+  );
   expect(await focusedId(page)).toBe(first);
 });
 

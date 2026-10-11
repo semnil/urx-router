@@ -99,7 +99,7 @@ import { getSettings } from "../core/settings";
 import type { RecentEntry } from "../core/storage";
 import type { ConnectOrigin, Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
-import { setLevelText, setSymbolText } from "./glyph";
+import { setLevelText, setSpokenText, setSymbolText } from "./glyph";
 import {
   holdInertOnBlur,
   isHoldingInert,
@@ -1251,7 +1251,7 @@ function nodeKindLabel(kind: NodeKind): string {
 
 function heading(text: string): HTMLElement {
   const h = document.createElement("h2");
-  h.textContent = text;
+  setSpokenText(h, text);
   return h;
 }
 
@@ -1706,7 +1706,7 @@ function sideSwitch(model: DeviceModel, id: string, actions: InspectorActions, m
   for (const side of ["L", "R"] as const) {
     const b = document.createElement("button");
     b.type = "button";
-    b.textContent = (side === "L" ? m.inspector.sideL : m.inspector.sideR)(sideLabel(model, id, side));
+    setSpokenText(b, (side === "L" ? m.inspector.sideL : m.inspector.sideR)(sideLabel(model, id, side)));
     b.setAttribute("aria-pressed", String(side === shown));
     b.addEventListener("click", () => actions.onSwitchSide(id, side));
     bar.append(b);

@@ -718,7 +718,8 @@ test.describe("T3b undo", () => {
     await expect(faderReadout(page, "CH 1")).toBeVisible();
     const st = strip(page, "CH 5/6");
     const phi = st.locator(".con-chip", { hasText: "Ф" });
-    const side = (shown: string) => st.getByRole("button", { name: `CH 5/6, showing ${shown}`, exact: true });
+    const side = (shown: string) =>
+      st.getByRole("button", { name: `C H 5 slash 6, showing ${shown.replace(/^CH /, "C H ")}`, exact: true });
     await phi.click();
     await expect(phi).toHaveAttribute("aria-pressed", "true");
     await settleHistory(page);

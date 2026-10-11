@@ -245,6 +245,7 @@ const OUT_OF_SCOPE: Record<string, string> = {
     "the link ledger — a status-bar readout and its panel, covered field by field in linkstats.spec.ts, whose expectation tables are typed over the view's own key lists",
   confirm: "the shell's native confirm dialogs — outside the webview",
   filter: "EQ filter-type names — a value vocabulary, printed wherever a band is",
+  speech: "the words a mark is read as — inside a name a screen reader is handed, never printed",
   error: "error text — routed to the status line or a native dialog by its caller",
 };
 

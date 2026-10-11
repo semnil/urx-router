@@ -832,14 +832,16 @@ test("learn on a stereo strip's Ф binds the side it shows", async ({ page }) =>
   await pickInputPort(page, win);
   const s = strip(page, "CH 5/6");
   await setLearn(page, win, true);
-  await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
-  await expect(s.getByRole("button", { name: "CH 5/6, showing CH 6 (R)", exact: true })).toBeVisible();
+  await s.getByRole("button", { name: "C H 5 slash 6, showing C H 5 (L)", exact: true }).click();
+  await expect(s.getByRole("button", { name: "C H 5 slash 6, showing C H 6 (R)", exact: true })).toBeVisible();
   await s.getByRole("button", { name: "Phase", exact: true }).click();
   // Both lines that name the armed control announce its caption by its word.
   const spoken = (scope: Locator) => scope.getByRole("img", { name: "Phase R", exact: true });
   await expect(page.locator("#statusbar")).toContainText("CH 5/6 · ФR");
   await expect(spoken(page.locator("#statusbar"))).toHaveText("ФR");
   await expect(spoken(win.locator(".mw-hint > :not([aria-hidden])"))).toHaveText("ФR");
+  // …and its other marks by their readings: the pair as its halves around the slash's word.
+  await expect(page.locator("#statusbar").getByRole("img", { name: "5 slash 6", exact: true })).toHaveText("5/6");
   await sendMidi(page, [0x90, 64, 127]);
   await expect(mapRow(win, "ch_5_6/phaseR")).toBeVisible();
   await expect(page.locator("#statusbar")).toContainText("CH 5/6 · ФR");
@@ -848,7 +850,9 @@ test("learn on a stereo strip's Ф binds the side it shows", async ({ page }) =>
   await expect(mapRow(win, "ch_5_6/phaseL")).toHaveCount(0);
   // The row prints the caption and is announced by the word it stands for.
   await expect(mapRow(win, "ch_5_6/phaseR").locator(".mw-ctl")).toHaveText("CH 5/6 · ФR");
-  await expect(mapRow(win, "ch_5_6/phaseR").getByRole("cell", { name: "CH 5/6 · Phase R", exact: true })).toBeVisible();
+  await expect(
+    mapRow(win, "ch_5_6/phaseR").getByRole("cell", { name: "C H 5 slash 6 dot Phase R", exact: true }),
+  ).toBeVisible();
 });
 
 test("learn mode ignores a wheel over a fader so a stray scroll never edits it", async ({ page }) => {
@@ -1007,8 +1011,8 @@ test("every assignment row prints its control, address and behavior", async ({ p
   await expect(mute.locator(".mw-addr")).toHaveText("CH 1 NOTE 60");
   await expect(mute.locator(".mw-btn")).toBeVisible(); // toggle → button behavior
   // The same select repeats down the column, so it announces its own row too.
-  await expect(level.locator(".mw-mode")).toHaveAttribute("aria-label", "Take-in mode — CH 1 · Level");
-  await expect(mute.locator(".mw-btn")).toHaveAttribute("aria-label", "Button behavior — CH 1 · MUTE");
+  await expect(level.locator(".mw-mode")).toHaveAttribute("aria-label", "Take-in mode — C H 1 dot Level");
+  await expect(mute.locator(".mw-btn")).toHaveAttribute("aria-label", "Button behavior — C H 1 dot MUTE");
 });
 
 test("the behavior column prints a key for the vocabularies the list uses", async ({ page }) => {

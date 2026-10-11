@@ -989,6 +989,10 @@ export const ja: Messages = {
     plan: "計画ファイル (.json) をドロップして開く",
     planOrSettings: "計画ファイル (.json) または URX 設定ファイル (.urxf) をドロップ",
   },
+  speech: {
+    slash: "スラッシュ",
+    dot: "てん",
+  },
   filter: {
     plan: "URX Router 計画",
     settings: "URX 設定ファイル",

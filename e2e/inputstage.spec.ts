@@ -7,7 +7,7 @@ import { planParamZ } from "./plan-param";
 import { LIVE_COMMANDS, deviceValueOf, notifyParam, setDeviceValue, stubTauriDevice, writesOf } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
 
-const strip = (page: Page, name: string) => page.locator(`.con-strip[aria-label="${name}"]`);
+const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 const knob = (page: Page, name: string, label: string) => strip(page, name).locator(`.con-knob[aria-label="${label}"]`);
 const chip = (page: Page, name: string, text: string) =>
   strip(page, name).getByRole("button", { name: text, exact: true });
@@ -135,7 +135,10 @@ test("a live side switch writes the unit's selection, and the unit's selection s
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
   await page.click("#btn-view-console");
   const side = (shown: string) =>
-    strip(page, "CH 5/6").getByRole("button", { name: `CH 5/6, showing ${shown}`, exact: true });
+    strip(page, "CH 5/6").getByRole("button", {
+      name: `C H 5 slash 6, showing ${shown.replace(/^CH /, "C H ")}`,
+      exact: true,
+    });
   await side("CH 5 (L)").click();
   await expect(side("CH 6 (R)")).toBeVisible();
   await expect

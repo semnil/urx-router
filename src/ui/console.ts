@@ -107,7 +107,7 @@ import {
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
-import { setLevelText, setSymbolText } from "./glyph";
+import { setLevelText, setSymbolText, spoken } from "./glyph";
 import {
   el,
   focusables,
@@ -264,7 +264,7 @@ function meterReadCell(): { cell: HTMLElement; value: HTMLElement } {
 // ("MUTE", "PAN", "FX 1") — is announced with the channel it belongs to.
 function nameStrip(strip: HTMLElement, m: { label: string }): void {
   strip.setAttribute("role", "group");
-  strip.setAttribute("aria-label", m.label);
+  strip.setAttribute("aria-label", spoken(m.label));
 }
 
 // Focus inside an open popover: the popover, the strip it belongs to, and the row as its
@@ -1921,7 +1921,7 @@ export class Console {
       txt.setAttribute("role", "button");
       const model = this.hooks.getModel();
       const which = shown === "L" ? t().inspector.sideL : t().inspector.sideR;
-      txt.setAttribute("aria-label", t().console.sideShowing(m.label, which(sideLabel(model, m.id, shown))));
+      txt.setAttribute("aria-label", spoken(t().console.sideShowing(m.label, which(sideLabel(model, m.id, shown)))));
       this.wireActivate(txt, undefined, () => this.hooks.onSwitchSide?.(m.id, shown === "L" ? "R" : "L"));
     } else {
       txt.textContent = m.label;
@@ -2014,7 +2014,7 @@ export class Console {
     power.dataset.ctl = spec.midiId;
     power.setAttribute("role", "button");
     power.setAttribute("aria-pressed", String(spec.on));
-    power.setAttribute("aria-label", `${m.label} ${t().console.power}`);
+    power.setAttribute("aria-label", spoken(`${m.label} ${t().console.power}`));
     this.wireActivate(power, spec.midiId, () => {
       this.commit(m.id, spec.toggle());
       this.render();
@@ -3124,7 +3124,7 @@ export class Console {
 
     const fader = el("div", "con-fader");
     fader.setAttribute("role", "slider");
-    fader.setAttribute("aria-label", m.label);
+    fader.setAttribute("aria-label", spoken(m.label));
     fader.dataset.ctl = controlId(m.id, "level");
     setLevelRange(fader, m.range);
     fader.tabIndex = 0;

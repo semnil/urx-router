@@ -43,6 +43,10 @@ function fixture(state: MidiUiState): { host: HTMLElement; sent: MidiUiIntent[] 
 }
 
 /** The hint wording that is painted and read: the one the stack does not hide. */
+/** The image a mark or caption symbol is announced through, found by the text it prints. */
+const imgOf = (el: Element, text: string): Element | undefined =>
+  [...el.querySelectorAll("[role='img']")].find((i) => i.textContent === text);
+
 const shownHint = (host: HTMLElement): string | null | undefined =>
   host.querySelector(".mw-hint > :not([aria-hidden])")?.textContent;
 
@@ -327,7 +331,7 @@ describe("renderMidiWindow — assignment list", () => {
   it("names the assignment in every select's aria-label, not just the setting", () => {
     const { host } = fixture(baseState({ rows: [row({ label: "CH 3 · Level" })] }));
     const sel = host.querySelector(".mw-mode") as HTMLSelectElement;
-    expect(sel.getAttribute("aria-label")).toBe(`${t().midi.modeTitle} — CH 3 · Level`);
+    expect(sel.getAttribute("aria-label")).toBe(`${t().midi.modeTitle} — C H 3 dot Level`);
     expect(sel.title).toBe(t().midi.modeTitle);
   });
 
@@ -336,7 +340,7 @@ describe("renderMidiWindow — assignment list", () => {
     const btn = host.querySelector(".mw-del") as HTMLButtonElement;
     expect(btn.type).toBe("button");
     expect(btn.title).toBe(t().midi.remove);
-    expect(btn.getAttribute("aria-label")).toBe(`${t().midi.remove} — CH 4 · MUTE`);
+    expect(btn.getAttribute("aria-label")).toBe(`${t().midi.remove} — C H 4 dot MUTE`);
     btn.click();
     expect(sent).toEqual([{ type: "remove", control: "ch4/mute" }]);
   });
@@ -350,13 +354,13 @@ describe("renderMidiWindow — assignment list", () => {
     const name = host.querySelector(".mw-ctl") as HTMLElement;
     expect(name.textContent).toBe("CH 1 · Ф");
     expect(name.title).toBe("CH 1 · Ф");
-    expect(name.querySelector("[role='img']")?.getAttribute("aria-label")).toBe(t().midi.paramSpoken.phase);
+    expect(imgOf(name, "Ф")?.getAttribute("aria-label")).toBe(t().midi.paramSpoken.phase);
     expect(host.querySelector(".mw-btn")?.getAttribute("aria-label")).toBe(
-      `${t().midi.buttonModeTitle} — CH 1 · Phase`,
+      `${t().midi.buttonModeTitle} — C H 1 dot Phase`,
     );
-    expect(host.querySelector(".mw-del")?.getAttribute("aria-label")).toBe(`${t().midi.remove} — CH 1 · Phase`);
+    expect(host.querySelector(".mw-del")?.getAttribute("aria-label")).toBe(`${t().midi.remove} — C H 1 dot Phase`);
     const plain = fixture(baseState({ rows: [row()] })).host.querySelector(".mw-ctl") as HTMLElement;
-    expect(plain.querySelector("[role='img']"), "a row with no symbol is plain text").toBeNull();
+    expect(imgOf(plain, "Ф"), "a row with no caption symbol carries none").toBeUndefined();
   });
 
   // The status line and the armed hint name controls by their captions, so their symbols are
@@ -372,10 +376,10 @@ describe("renderMidiWindow — assignment list", () => {
     );
     const status = host.querySelector(".mw-status") as HTMLElement;
     expect(status.textContent).toBe("Assigned CC 7 ch 1 to CH 5/6 · ФR");
-    expect(status.querySelector("[role='img']")?.getAttribute("aria-label")).toBe(t().midi.paramSpoken.phaseR);
+    expect(imgOf(status, "ФR")?.getAttribute("aria-label")).toBe(t().midi.paramSpoken.phaseR);
     expect(shownHint(host)).toBe(t().midi.hintArmed("CH 5/6 · ФR"));
     const hint = host.querySelector(".mw-hint > :not([aria-hidden])") as HTMLElement;
-    expect(hint.querySelector("[role='img']")?.getAttribute("aria-label")).toBe(t().midi.paramSpoken.phaseR);
+    expect(imgOf(hint, "ФR")?.getAttribute("aria-label")).toBe(t().midi.paramSpoken.phaseR);
     const port = fixture(baseState({ status: "MIDI input error: Ф port" })).host.querySelector(".mw-status")!;
     expect(port.querySelector("[role='img']"), "an unmarked status is written as text").toBeNull();
   });

@@ -29,6 +29,7 @@ import { fxEffectTypes } from "../core/control/fx-effect";
 import { insertFxDefaults, insertFxWritableSlots } from "../core/control/insert-fx-effect";
 import { defaultPlan } from "../models/initial-state";
 import { t } from "../i18n";
+import { spoken } from "./glyph";
 
 let h: ConsoleHost;
 
@@ -631,7 +632,7 @@ describe("the strip root", () => {
     for (const s of strips) {
       const name = s.querySelector(".con-scribble .name .txt")!.textContent;
       expect(s.getAttribute("role"), name ?? "").toBe("group");
-      expect(s.getAttribute("aria-label")).toBe(name);
+      expect(s.getAttribute("aria-label"), "named by the spoken form of its printed name").toBe(spoken(name ?? ""));
     }
     // The main fader carries the same name, which is the channel the group says.
     expect(h.strip("ch1").root.getAttribute("aria-label")).toBe(h.strip("ch1").fader!.getAttribute("aria-label"));
@@ -962,7 +963,7 @@ describe("the INS FX chip", () => {
     const side = (): HTMLElement => root().querySelector<HTMLElement>(".con-side")!;
     const gain = (): HTMLElement => root().querySelector<HTMLElement>('.con-knob[aria-label="A.GAIN"]')!;
     expect(side().getAttribute("role")).toBe("button");
-    expect(side().getAttribute("aria-label")).toBe("CH 5/6, showing CH 5 (L)");
+    expect(side().getAttribute("aria-label")).toBe("C H 5 slash 6, showing C H 5 (L)");
     expect(side().textContent).toBe("CH 5/6");
     expect(side().querySelector(".dim")?.textContent).toBe("6");
     expect(gain().getAttribute("aria-valuenow")).toBe("30");
@@ -970,7 +971,7 @@ describe("the INS FX chip", () => {
     expect([...chips(root()).keys()].filter((k) => k.startsWith("Ф"))).toEqual(["Ф"]);
     side().click();
     expect(h.switches).toEqual([{ id: "ch_5_6", side: "R" }]);
-    expect(side().getAttribute("aria-label")).toBe("CH 5/6, showing CH 6 (R)");
+    expect(side().getAttribute("aria-label")).toBe("C H 5 slash 6, showing C H 6 (R)");
     expect(side().querySelector(".dim")?.textContent).toBe("5");
     expect(gain().getAttribute("aria-valuenow")).toBe("12");
     expect(chips(root()).get("+48")!.getAttribute("aria-pressed")).toBe("true");

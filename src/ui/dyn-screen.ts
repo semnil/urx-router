@@ -50,7 +50,7 @@ import type { SettingsRowOptions } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import { armOnActivate, markMidi } from "./midi-learn";
 import type { MidiLearnHooks } from "./midi-learn";
-import { setLevelText } from "./glyph";
+import { setLevelText, setSpokenText } from "./glyph";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 import {
@@ -1531,7 +1531,7 @@ export class DynScreen {
     const title = el("h2", "");
     title.id = "dyn-screen-title";
     const ch = el("span", "gt-ch");
-    ch.textContent = proc.nodeLabel?.(this.ctx()) ?? channelLabel(this.hooks.getModel(), this.nodeId);
+    setSpokenText(ch, proc.nodeLabel?.(this.ctx()) ?? channelLabel(this.hooks.getModel(), this.nodeId));
     const name = el("span", "");
     name.textContent = proc.title(m, this.ctx());
     title.append(ch, name);

@@ -27,7 +27,10 @@ const LCD = 762;
 const LCD_ADDR = `${LCD}:0:0`;
 
 const side = (page: Page, shown: string) =>
-  strip(page, "CH 5/6").getByRole("button", { name: `CH 5/6, showing ${shown}`, exact: true });
+  strip(page, "CH 5/6").getByRole("button", {
+    name: `C H 5 slash 6, showing ${shown.replace(/^CH /, "C H ")}`,
+    exact: true,
+  });
 
 /** The unit's announcements of 762 after `after`. */
 const lcdAnnouncements = async (page: Page, after: number): Promise<number[]> =>

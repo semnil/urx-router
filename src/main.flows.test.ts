@@ -28,6 +28,7 @@ vi.mock("./core/storage", async (importOriginal) => {
 import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
 import { downloadText, exportSvgToPdf, exportSvgToPng, saveTextDocument } from "./core/storage";
 import { t } from "./i18n";
+import { spoken } from "./ui/glyph";
 import { $, APP_SETTLE, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 import { faceplate, press, wireHit } from "./ui/graph.test-util";
 
@@ -1432,7 +1433,7 @@ describe("the inspector's Hi-Z switch and the gain it caps", () => {
 describe("the panel after edits made on the CONSOLE", () => {
   const consoleChip = (stripLabel: string, chip: string): HTMLElement => {
     const strip = [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")].find(
-      (s) => s.getAttribute("aria-label") === stripLabel,
+      (s) => s.getAttribute("aria-label") === spoken(stripLabel),
     );
     expect(strip, `the CONSOLE draws a "${stripLabel}" strip`).toBeDefined();
     const found = [...strip!.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === chip);

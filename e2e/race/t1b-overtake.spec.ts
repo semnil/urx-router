@@ -55,9 +55,11 @@ import {
 // loop is guaranteed to land in one window.
 
 // Addressed by the main fader's aria-label rather than by any text the strip prints
-// (the shared `strip` in ./ui), so a name the SENDS rack repeats stays unambiguous.
+// (the shared `strip` in ./ui), so a name the SENDS rack repeats stays unambiguous. The
+// fader is named by the strip's spoken form, which spells a channel's "CH".
+const faderName = (label: string): string => label.replace(/^CH /, "C H ");
 const strip = (page: Page, label: string) =>
-  page.locator(".con-strip", { has: page.locator(`.con-fader[aria-label="${label}"]`) });
+  page.locator(".con-strip", { has: page.locator(`.con-fader[aria-label="${faderName(label)}"]`) });
 const faderReadout = (page: Page, label: string) => readoutOf(strip(page, label));
 // A converge param written from the CONSOLE. The strip's INS FX face is a bypass and
 // writes one ordinary key; what writes INSERT_FX (135 / 578) is picking a type, which
@@ -116,11 +118,11 @@ const faderKey = (page: Page, label: string, key: "ArrowUp" | "ArrowDown"): Prom
       el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
       return true;
     },
-    [label, key] as [string, string],
+    [faderName(label), key] as [string, string],
   );
 
 /** A named strip, as a selector a query inside the page can take. */
-const stripSelector = (label: string): string => `.con-strip:has(.con-fader[aria-label="${label}"])`;
+const stripSelector = (label: string): string => `.con-strip:has(.con-fader[aria-label="${faderName(label)}"])`;
 
 /** A named strip's PAN knob, as the same kind of selector. */
 const panSel = (label: string): string => `${stripSelector(label)} .con-head .con-knob[aria-label="PAN"]`;
@@ -255,7 +257,7 @@ test.describe("T1b overtake", () => {
           const keys = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown"];
           const at: number[] = [];
           const edit = (i: number) => {
-            const el = document.querySelector('.con-strip .con-fader[aria-label="CH 1"]') as HTMLElement | null;
+            const el = document.querySelector('.con-strip .con-fader[aria-label="C H 1"]') as HTMLElement | null;
             at.push(performance.now());
             el?.dispatchEvent(new KeyboardEvent("keydown", { key: keys[i % 4], bubbles: true }));
           };

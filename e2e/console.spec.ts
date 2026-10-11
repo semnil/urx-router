@@ -91,7 +91,7 @@ test("the console lays out the input channels and the master", async ({ page }) 
 // The controls a strip repeats are named only for what they are, so the strip is a group
 // named by its node: that is what puts the channel on a MUTE reached from a control list.
 test("each strip is a group named by its node", async ({ page }) => {
-  const ch1 = page.getByRole("group", { name: "CH 1", exact: true });
+  const ch1 = page.getByRole("group", { name: "C H 1", exact: true });
   await expect(ch1.getByRole("button", { name: "MUTE", exact: true })).toBeVisible();
   await expect(ch1.getByRole("slider", { name: "PAN", exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "STREAMING", exact: true })).toHaveClass(/meter-only/);
@@ -221,8 +221,8 @@ test("DUCKER appears on stereo channels only, with one Ф for the side the strip
   await expect(phi).toHaveText("Ф");
   await phi.click();
   await expect(phi).toHaveAttribute("aria-pressed", "true");
-  await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
-  await expect(s.getByRole("button", { name: "CH 5/6, showing CH 6 (R)", exact: true })).toBeFocused();
+  await s.getByRole("button", { name: "C H 5 slash 6, showing C H 5 (L)", exact: true }).click();
+  await expect(s.getByRole("button", { name: "C H 5 slash 6, showing C H 6 (R)", exact: true })).toBeFocused();
   await expect(phi, "R's polarity is its own").toHaveAttribute("aria-pressed", "false");
 });
 
@@ -232,16 +232,16 @@ test("a stereo channel's name and its Inspector switch show the same side", asyn
   const s = strip(page, "CH 5/6");
   const power = s.locator(".con-power");
   await expect(power).toHaveAttribute("aria-pressed", "true");
-  await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
+  await s.getByRole("button", { name: "C H 5 slash 6, showing C H 5 (L)", exact: true }).click();
   await expect(power).toHaveAttribute("aria-pressed", "true");
   await page.click("#btn-view-graph");
   await page.locator('g.node[data-id="ch_5_6"]').click();
   const bar = page.getByRole("group", { name: "Displayed side" });
-  await expect(bar.getByRole("button", { name: "CH 6 (R)", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await bar.getByRole("button", { name: "CH 5 (L)", exact: true }).click();
-  await expect(bar.getByRole("button", { name: "CH 5 (L)", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(bar.getByRole("button", { name: "C H 6 (R)", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await bar.getByRole("button", { name: "C H 5 (L)", exact: true }).click();
+  await expect(bar.getByRole("button", { name: "C H 5 (L)", exact: true })).toHaveAttribute("aria-pressed", "true");
   await page.click("#btn-view-console");
-  await expect(s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true })).toBeVisible();
+  await expect(s.getByRole("button", { name: "C H 5 slash 6, showing C H 5 (L)", exact: true })).toBeVisible();
 });
 
 // ---- SENDS rack ----

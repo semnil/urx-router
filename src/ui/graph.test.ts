@@ -552,7 +552,7 @@ describe("keyboard", () => {
     expect(fx.svg.getAttribute("aria-label")).toBe(t().toolbar.viewGraphHint);
     const nodes = [...fx.host.querySelectorAll<SVGGElement>("g.node")];
     expect(nodes.every((g) => g.getAttribute("role") === "button")).toBe(true);
-    expect(nodeEl(fx.host, "ch1")!.getAttribute("aria-label")).toBe("CH 1");
+    expect(nodeEl(fx.host, "ch1")!.getAttribute("aria-label")).toBe("C H 1");
     expect(nodes.every((g) => g.getAttribute("aria-pressed") === "false")).toBe(true);
     expect(stops()).toEqual([nodes[0].dataset.id]);
   });

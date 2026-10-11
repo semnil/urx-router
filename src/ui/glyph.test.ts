@@ -2,7 +2,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { setCaptionedText, setSymbolText } from "./glyph";
+import { setSpokenText, setSymbolText, spoken } from "./glyph";
+import { setLang } from "../i18n";
 import { en } from "../i18n/en";
 import { ja } from "../i18n/ja";
 
@@ -26,21 +27,60 @@ describe("setSymbolText", () => {
   });
 });
 
-describe("setCaptionedText", () => {
-  it("announces each caption symbol in a sentence by its word, the longest caption first", () => {
+// What a mark is read as, in each language: "CH" spelled, the slash of an a/b pair and the
+// middle dot by their words, so neither becomes a country, a fraction, a date or a silence.
+describe("spoken", () => {
+  it.each([
+    ["en", "Ducker CH 5/6 · Source", "Ducker C H 5 slash 6 dot Source"],
+    ["ja", "Ducker CH 5/6 · Source", "Ducker C H 5 スラッシュ 6 てん Source"],
+    ["ja", "ステレオ ch", "ステレオ C H"],
+    ["en", "CH 5/6, showing CH 6 (R)", "C H 5 slash 6, showing C H 6 (R)"],
+    ["en", "USB DAW 1/2", "USB DAW 1 slash 2"],
+    ["en", "Output / Rec select", "Output slash Rec select"],
+    ["ja", "MIC/LINE 1/2", "MIC スラッシュ LINE 1 スラッシュ 2"],
+  ])("reads the marks of a name (%s): %s", (lang, text, read) => {
+    setLang(lang as "en" | "ja");
+    expect(spoken(text)).toBe(read);
+    setLang("en");
+  });
+
+  it("leaves a word that only contains the letters, and a name with no mark, as it is", () => {
+    expect(spoken("CHORUS · MACH 1")).toBe("CHORUS dot MACH 1");
+    expect(spoken("STEREO (MAIN)")).toBe("STEREO (MAIN)");
+  });
+
+  it("reads a caption symbol by its word only where the sentence is captioned", () => {
+    expect(spoken(`CH 1 · ${PHASE}`, true)).toBe("C H 1 dot Phase");
+    expect(spoken(`CH 1 · ${PHASE}`)).toBe(`C H 1 dot ${PHASE}`);
+  });
+});
+
+describe("setSpokenText", () => {
+  it("keeps the text as printed and announces each mark and caption by its reading", () => {
     const el = document.createElement("p");
-    setCaptionedText(el, `Assigned CC 7 to CH 5/6 · ${PHASE}R, then CH 1 · ${PHASE}`);
+    setSpokenText(el, `Assigned CC 7 to CH 5/6 · ${PHASE}R, then CH 1 · ${PHASE}`, true);
     expect(el.textContent).toBe(`Assigned CC 7 to CH 5/6 · ${PHASE}R, then CH 1 · ${PHASE}`);
     const imgs = [...el.querySelectorAll("[role='img']")].map((i) => [i.textContent, i.getAttribute("aria-label")]);
     expect(imgs).toEqual([
+      ["CH", "C H"],
+      ["5/6", `5 ${en.speech.slash} 6`],
+      ["·", en.speech.dot],
       [`${PHASE}R`, en.midi.paramSpoken.phaseR],
+      ["CH", "C H"],
+      ["·", en.speech.dot],
       [PHASE, en.midi.paramSpoken.phase],
     ]);
   });
 
-  it("writes a sentence with no caption symbol as plain text", () => {
+  it("leaves a caption symbol as text where the sentence is not captioned", () => {
     const el = document.createElement("p");
-    setCaptionedText(el, "Assigned CC 7 to CH 1 · MUTE");
+    setSpokenText(el, `MIDI input error: ${PHASE} port`);
+    expect(el.querySelector("[role='img']")).toBeNull();
+  });
+
+  it("writes a sentence with no mark as plain text", () => {
+    const el = document.createElement("p");
+    setSpokenText(el, "Assigned CC 7 to MUTE");
     expect(el.childNodes).toHaveLength(1);
     expect(el.firstChild?.nodeType).toBe(Node.TEXT_NODE);
   });

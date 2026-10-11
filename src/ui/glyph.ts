@@ -43,28 +43,72 @@ export function captionSymbols(): CaptionSymbol[] {
   return (["phaseL", "phaseR", "phase"] as const).map((k) => ({ symbol: param[k], name: paramSpoken[k] }));
 }
 
-// A sentence that names controls by their captions (a MIDI assignment, an armed control):
-// written as `text`, with every caption symbol in it announced by its word. Only for text
-// whose symbols are all captions — a file or port name holding the same character is not one.
-export function setCaptionedText(el: HTMLElement, text: string): void {
-  const symbols = captionSymbols();
-  el.replaceChildren();
+// The marks a screen reader reads as something other than what they are: "CH" as a word
+// (Japanese voices read it as a country), an a/b pair as a fraction or a date, a slash on its
+// own as nothing, and the middle dot as its character name or as nothing. Each is announced
+// by a reading of its own — "CH" spelled letter by letter, a pair as its two halves with the
+// slash's word between them, the slash and the dot by their words. A pair is one mark, so its
+// reading stays one run of words wherever it is announced.
+const SPOKEN_MARK = /(?<![A-Za-z0-9])ch(?![A-Za-z0-9])|([A-Za-z0-9.]+)\/([A-Za-z0-9.]+)|\/|\u00b7/gi;
+
+function markReading(mark: RegExpExecArray): string {
+  const m = t();
+  if (mark[1] !== undefined) return `${mark[1]} ${m.speech.slash} ${mark[2]}`;
+  return mark[0] === "/" ? m.speech.slash : mark[0] === "\u00b7" ? m.speech.dot : "C H";
+}
+
+type Run = { text: string; name?: string };
+
+// `text` cut into the runs it is printed as, each mark and (when `captioned`) each caption
+// symbol carrying the word it is announced as.
+function runsOf(text: string, captioned: boolean): Run[] {
+  const runs: Run[] = [];
+  const symbols = captioned ? captionSymbols() : [];
   let rest = text;
   while (rest) {
     let at = -1;
-    let hit: CaptionSymbol | undefined;
+    let hit: Run | undefined;
     for (const s of symbols) {
       const i = rest.indexOf(s.symbol);
-      if (i >= 0 && (at < 0 || i < at)) [at, hit] = [i, s];
+      if (i >= 0 && (at < 0 || i < at)) [at, hit] = [i, { text: s.symbol, name: s.name }];
     }
+    SPOKEN_MARK.lastIndex = 0;
+    const mark = SPOKEN_MARK.exec(rest);
+    if (mark && (at < 0 || mark.index < at)) [at, hit] = [mark.index, { text: mark[0], name: markReading(mark) }];
     if (!hit) {
-      el.append(document.createTextNode(rest));
+      runs.push({ text: rest });
       break;
     }
-    if (at > 0) el.append(document.createTextNode(rest.slice(0, at)));
-    el.append(symbolSpan(hit.symbol, hit.name));
-    rest = rest.slice(at + hit.symbol.length);
+    if (at > 0) runs.push({ text: rest.slice(0, at) });
+    runs.push(hit);
+    rest = rest.slice(at + hit.text.length);
   }
+  return runs;
+}
+
+/** The form `text` is announced in: each mark read by its reading, the words kept apart by
+ *  single spaces and no space before the punctuation that follows. For a name a screen reader
+ *  is handed as a string (an aria-label). */
+export function spoken(text: string, captioned = false): string {
+  return runsOf(text, captioned)
+    .map((r) => (r.name === undefined ? r.text : ` ${r.name} `))
+    .join("")
+    .replace(/ {2,}/g, " ")
+    .replace(/ ([,.、。)\]])/g, "$1")
+    .replace(/([(\[]) /g, "$1")
+    .trim();
+}
+
+// A name or sentence written as `text`, with every mark in it — and, when `captioned`, every
+// caption symbol — announced by its reading. `captioned` is only for a sentence whose symbols
+// are all captions (a MIDI assignment, an armed control): a file or port name holding the
+// same character is not one.
+export function setSpokenText(el: HTMLElement, text: string, captioned = false): void {
+  el.replaceChildren(
+    ...runsOf(text, captioned).map((r) =>
+      r.name === undefined ? document.createTextNode(r.text) : symbolSpan(r.text, r.name),
+    ),
+  );
 }
 
 function symbolSpan(symbol: string, name: string): HTMLElement {

@@ -1270,6 +1270,12 @@ export const en = {
     plan: tr("Drop a plan (.json) to open it"),
     planOrSettings: tr("Drop a plan (.json) or a URX settings file (.urxf)"),
   },
+  // The words a screen reader is handed in place of a mark it would misread (ui/glyph.ts,
+  // spoken): the slash of an a/b pair and the middle dot between a name's parts.
+  speech: {
+    slash: tr("slash"),
+    dot: tr("dot"),
+  },
   filter: {
     plan: tr("URX Router plan"),
     settings: tr("URX settings file"),

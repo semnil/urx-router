@@ -104,7 +104,7 @@ export interface MidiHooks {
    *  surfaces (the CONSOLE strips and an open tuning screen). */
   onLearnChanged: () => void;
   /** `captioned`: the message names controls by their captions, so a caption symbol in it
-   *  is announced by its word (ui/glyph.ts setCaptionedText). */
+   *  is announced by its word (ui/glyph.ts setSpokenText). */
   onStatus: (msg: string, captioned?: boolean) => void;
 }
 

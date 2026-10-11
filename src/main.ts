@@ -83,7 +83,7 @@ import { Graph } from "./ui/graph";
 import type { ConnectOrigin, LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
 import { copyText, focusables, preserveFocus } from "./ui/dom";
-import { setCaptionedText } from "./ui/glyph";
+import { setSpokenText } from "./ui/glyph";
 import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
 import { MidiControl } from "./ui/midi";
@@ -2031,11 +2031,10 @@ if (!isTauri()) {
   }
 }
 
-// `captioned`: the message names controls by their captions (see setCaptionedText); the
-// line's text is the message either way.
+// The line's text is the message, with its marks announced by their readings (setSpokenText);
+// `captioned`: the message names controls by their captions, whose symbols are read as words.
 function setStatus(msg: string, captioned = false): void {
-  if (captioned) setCaptionedText(statusbar, msg);
-  else statusbar.textContent = msg;
+  setSpokenText(statusbar, msg, captioned);
 }
 
 // Surface an operation that did not complete as a modal, so it is not missed the

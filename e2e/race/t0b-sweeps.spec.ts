@@ -558,7 +558,11 @@ test.describe("T0b baseline sweeps", () => {
       { label: "DUCKER chip (stereo strip)", run: () => chip(st, "DUCKER").click() },
       // The side a stereo strip shows is UI state: switching it writes nothing, and the one Ф
       // then writes the shown side's polarity.
-      { label: "stereo strip name (show R)", run: () => chip(st, "CH 5/6, showing CH 5 (L)").click(), silent: true },
+      {
+        label: "stereo strip name (show R)",
+        run: () => chip(st, "C H 5 slash 6, showing C H 5 (L)").click(),
+        silent: true,
+      },
       { label: "polarity chip (stereo strip, R shown)", run: () => chip(st, "Phase").click() },
       { label: "C.INT chip (monitor)", run: () => chip(strip(page, "MONITOR 1"), "C.INT").click() },
       { label: "MONO chip (monitor)", run: () => chip(strip(page, "MONITOR 1"), "MONO").click() },

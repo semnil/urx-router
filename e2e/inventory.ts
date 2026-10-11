@@ -141,10 +141,13 @@ async function shownParts(page: Page, selector: string): Promise<Shown> {
     const walk = (parent: Element): void => {
       // An element's OWN text is one run: a label composed of several elements is
       // several runs, which is what keeps one element's wording from standing in
-      // for another's.
+      // for another's. A mark written as an image named by its reading (ui/glyph.ts)
+      // prints inside its parent's run, so its text is part of that run.
+      const reading = (n: Node): boolean =>
+        n instanceof Element && n.getAttribute("role") === "img" && n.childElementCount === 0;
       const own = Array.from(parent.childNodes)
-        .filter((n) => n.nodeType === Node.TEXT_NODE)
-        .map((n) => n.nodeValue ?? "")
+        .filter((n) => n.nodeType === Node.TEXT_NODE || reading(n))
+        .map((n) => n.textContent ?? "")
         .join("");
       if (own.trim()) text.push(own);
       for (const child of parent.children) {
@@ -153,6 +156,7 @@ async function shownParts(page: Page, selector: string): Promise<Shown> {
           const v = child.getAttribute(a);
           if (v) attrs.push(v);
         }
+        if (reading(child)) continue;
         // A select's options carry text that is never laid out, so they have no
         // visibility of their own — the select's is what decides.
         if (child instanceof HTMLSelectElement) {

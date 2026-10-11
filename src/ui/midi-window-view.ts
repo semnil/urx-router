@@ -7,7 +7,7 @@
 // `send` callback it is handed.
 
 import { t } from "../i18n";
-import { setCaptionedText } from "./glyph";
+import { setSpokenText, spoken } from "./glyph";
 import { el, preserveFocus } from "./dom";
 import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
 import { BUTTON_MODES, TAKE_MODES } from "../core/midi/mapping";
@@ -124,10 +124,10 @@ export function mappingRow(row: MidiUiRow, m: MidiMessages, send: MidiUiSend): H
   const tr = el("tr", row.linked ? "linked" : "");
   tr.dataset.control = row.control;
   const name = el("td", "mw-ctl");
-  setCaptionedText(name, row.label);
+  setSpokenText(name, row.label, true);
   name.title = row.label;
   // The row's controls name the assignment they sit on, by the form it is announced as.
-  const who = row.spoken ?? row.label;
+  const who = spoken(row.spoken ?? row.label);
   const addr = el("td", row.addr ? "mw-addr" : "mw-linked");
   addr.textContent = row.addr ?? m.linked;
   if (!row.addr) addr.title = m.linkedHint;
@@ -230,8 +230,7 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
   for (const text of new Set([m.hintIdle, m.hintLearn, shown])) {
     const line = el("span", "");
     // The armed wording names the control by its caption.
-    if (state.armed && text === shown) setCaptionedText(line, text);
-    else line.textContent = text;
+    setSpokenText(line, text, Boolean(state.armed) && text === shown);
     if (text !== shown) line.setAttribute("aria-hidden", "true");
     hint.append(line);
   }
@@ -266,8 +265,7 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
   if (status.parentNode === host) status.before(head, body);
   else host.append(head, body, status);
   if (status.textContent !== state.status) {
-    if (state.statusCaptioned) setCaptionedText(status, state.status);
-    else status.textContent = state.status;
+    setSpokenText(status, state.status, Boolean(state.statusCaptioned));
   }
   restoreFocus();
 }
