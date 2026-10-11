@@ -237,6 +237,9 @@ export const en = {
     // Shown on a row that shares its MIDI control with an earlier assignment
     // (a gang): they move together, and feedback follows the first-assigned.
     linked: tr("Linked"),
+    // In the behaviour column of an assignment whose control is gone because its channel reads
+    // no source: the input stage it drove belongs to no jack or source until one is chosen.
+    inactiveNoSource: (channel: string): string => `Inactive — ${channel} has no source`,
     linkedHint: tr(
       "Shares one MIDI control with the first assignment for this address; they move together, and MIDI feedback follows that first assignment.",
     ),

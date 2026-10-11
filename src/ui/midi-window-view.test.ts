@@ -424,6 +424,14 @@ describe("localization", () => {
 });
 
 describe("mappingRow", () => {
+  it("shows an inactive assignment's reason in place of its behaviour option", () => {
+    const tr = mappingRow({ ...row(), inactive: "Inactive — CH 4 has no source" }, t().midi, () => {});
+    const opt = tr.querySelector("td.mw-opt")!;
+    expect(opt.querySelector(".mw-inactive")?.textContent).toBe("Inactive — CH 4 has no source");
+    expect(opt.querySelector("select")).toBeNull();
+    expect(mappingRow(row(), t().midi, () => {}).querySelector(".mw-inactive"), "the control").toBeNull();
+  });
+
   it("builds a standalone row usable outside a full paint", () => {
     const sent: MidiUiIntent[] = [];
     const tr = mappingRow(row(), t().midi, (i) => sent.push(i));

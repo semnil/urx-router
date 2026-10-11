@@ -57,6 +57,10 @@ import { insertFxControlLabel } from "./insert-fx-screen";
 import { fxControlLabel } from "./fx-effect-screen";
 import { parseRelay } from "./midi-protocol";
 import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
+import { inputStageOf } from "../core/control/translate";
+
+// The channel controls that drive the input stage of the jack or source the channel reads.
+const INPUT_STAGE_PARAMS: ReadonlySet<string> = new Set(["gain", "phantom", "hiZ"]);
 import { errorCode, errorText, getLang, t } from "../i18n";
 
 /** The contest keys an applied control's write lands on, named for `node` — the member the
@@ -1081,9 +1085,11 @@ export class MidiControl {
     return mappings.map((m) => {
       // An unbindable id (a mapping saved for another model) still has to be
       // listed and removable, so it falls back to the toggle column.
-      const kind = this.resolve(m.control)?.kind ?? "toggle";
+      const bound = this.resolve(m.control);
+      const kind = bound?.kind ?? "toggle";
       const option = optionOf(kind, m, mixed.has(addrKey(m.addr)));
       const linked = this.engine.isLinkedMember(m);
+      const inactive = bound ? undefined : this.inactiveReason(m.control);
       return {
         control: m.control,
         label: this.labelOf(m.control),
@@ -1095,8 +1101,21 @@ export class MidiControl {
         mode: m.mode,
         ...(m.button ? { button: m.button } : {}),
         linked,
+        ...(inactive ? { inactive } : {}),
       };
     });
+  }
+
+  /** Why an assignment this plan cannot bind is inactive, where the reason is that its
+   *  channel reads no source: the input stage it drove has no jack or source to sit on. */
+  private inactiveReason(id: string): string | undefined {
+    const parsed = parseControlId(id);
+    if (!parsed || parsed.scope !== undefined || !INPUT_STAGE_PARAMS.has(parsed.param)) return undefined;
+    const model = this.hooks.getModel();
+    const node = model.nodes.find((n) => n.id === parsed.node);
+    if (node?.kind !== "channel") return undefined;
+    if (inputStageOf(model, this.hooks.getPlan(), node.id).kind !== "none") return undefined;
+    return t().midi.inactiveNoSource(node.label);
   }
 
   /** Raise the window, so one that drifted behind the app comes back. Called when

@@ -50,7 +50,7 @@ vi.mock("../core/platform", () => ({
 // returned only one would let this suite exercise a combination no build produces.
 vi.mock("./midi-probe", () => ({ midiProbe: null, startMidiTrace: null }));
 
-import { ensureFixedConnections } from "../core/plan";
+import { ensureFixedConnections, setExclusiveConnection } from "../core/plan";
 import { connParamContestKey, nodeParamContestPath } from "../core/plan-history";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
@@ -136,6 +136,41 @@ beforeEach(() => {
 });
 
 describe("MidiControl", () => {
+  // An input-stage assignment on a channel that reads no source has nothing to drive; the
+  // window is told why, in place of the behaviour option. Another unbound assignment is not.
+  it("marks an input-stage assignment on a channel with no source inactive, and says why", async () => {
+    const at = (controller: number) => ({ type: "cc", channel: 0, controller });
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({
+        models: {
+          URX44V: [
+            { control: "ch4/gain", addr: at(20), mode: "absolute" },
+            { control: "ch4/phantom", addr: at(21), mode: "absolute" },
+            { control: "ch3/gain", addr: at(22), mode: "absolute" },
+            { control: "ch3/phantom", addr: at(24), mode: "absolute" },
+            { control: "gone/level", addr: at(23), mode: "absolute" },
+          ],
+        },
+      }),
+    );
+    const { plan } = install();
+    plan.connections = plan.connections.filter((c) => !(c.to === "ch4:in" && c.kind === "source"));
+    // CH 3 on AUX: a source with no +48V, so its +48V assignment is unbound for another reason.
+    setExclusiveConnection(plan, "in.aux:out", "ch3:in", "source");
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().rows).toHaveLength(5));
+    const inactive = Object.fromEntries(lastState().rows.map((r) => [r.control, r.inactive]));
+    expect(inactive).toEqual({
+      "ch4/gain": t().midi.inactiveNoSource("CH 4"),
+      "ch4/phantom": t().midi.inactiveNoSource("CH 4"),
+      "ch3/gain": undefined,
+      "ch3/phantom": undefined,
+      "gone/level": undefined,
+    });
+  });
+
   it("restores mappings and pushes a fully resolved state when the window is ready", async () => {
     seedMappings();
     const { control } = install();

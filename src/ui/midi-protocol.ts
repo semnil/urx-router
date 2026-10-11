@@ -34,6 +34,9 @@ export interface MidiUiRow {
   button?: ButtonMode;
   /** Shares one physical control with the assignment above it. */
   linked: boolean;
+  /** Localized: the control is gone because its channel reads no source. The row shows this
+   *  in place of the behaviour option. */
+  inactive?: string;
 }
 
 export interface MidiUiState {

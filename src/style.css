@@ -4569,6 +4569,19 @@ button.consent-btn-primary {
   color: var(--text-dim);
   font-style: italic;
 }
+/* An assignment whose control is gone (its channel reads no source): the reason, in the
+   behaviour column, as a warn pill. */
+.mw-inactive {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  color: var(--warn);
+  font-size: 10px;
+  line-height: 15px;
+  vertical-align: 1px;
+}
 /* A gang member shares one physical control with the row above it: the mixer's own
    link-group idiom — an indent under its head, marked by a rail. */
 .mw-list tr.linked td:first-child {
