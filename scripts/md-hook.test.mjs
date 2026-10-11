@@ -20,14 +20,14 @@ const REFUSING_PUBLIC = 'process.stderr.write("public check refused\\n"); proces
 // A checker that dies rather than answering: node exits 1 on an uncaught throw.
 const CRASHING = (what) => `throw new Error("${what} crashed");\n`;
 // The anchor check's own contract, reduced: it reads the payload, ignores anything that is not
-// one of its ledgers, and checks the ledger in ITS OWN checkout — so the root it names is the
-// checkout the hook delegated to.
+// one of its ledgers (named in the platform's own path form), and checks the ledger in ITS OWN
+// checkout — so the root it names is the checkout the hook delegated to.
 const ANCHORS = `import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const file = JSON.parse(readFileSync(0, "utf8")).tool_input?.file_path ?? "";
-if (!file.endsWith("work/e2e-flakes.md")) process.exit(0);
+if (!file.split(sep).join("/").endsWith("work/e2e-flakes.md")) process.exit(0);
 if (readFileSync(join(root, "work", "e2e-flakes.md"), "utf8").includes("### 決着条件")) process.exit(0);
 process.stderr.write("ledger-anchors: broken ledger in " + root + "\\n");
 process.exit(2);
