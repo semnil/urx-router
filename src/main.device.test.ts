@@ -9325,6 +9325,100 @@ describe("MIDI feedback and the live session", () => {
     expect(shell.count("midi_send")).toBe(0);
   });
 
+  // A device fetch and a settings-file import both move mapped values, and neither opens the
+  // output side: a fetch's plan agreed with the unit at the instant of its read and nothing holds
+  // it there afterwards, and a file holds what some unit held when it was saved. The live start
+  // behind each is the positive control — the same port and mapping do send once a session's
+  // read settles. Both flows set CH 1's fader to -6 dB, so a pass that ran would carry it.
+  for (const flow of ["fetch", "settings-file import"] as const)
+    it(`stays silent after a ${flow}, and sends once a session starts`, SLOW, async () => {
+      const fader = channelControl(getModel("URX44V"), "ch1")!.fader;
+      let file: Uint8Array | null = null;
+      let applied = 0;
+      if (flow === "settings-file import") {
+        // A whole file, built the way the import cases build theirs.
+        const { applySourceState } = await import("./core/control/readback");
+        const { defaultPlan } = await import("./models/initial-state");
+        const value = (id: number, y: number): number =>
+          id === PARAMS.SAMPLE_RATE.id
+            ? 48_000
+            : id === fader && y === 0
+              ? -600
+              : unwrittenRead({ paramId: id, x: 0, y });
+        const asked = new Map<number, { str: boolean; len: number }>();
+        const ask = (str: boolean, id: number, y: number): void => {
+          asked.set(id, { str, len: Math.max(asked.get(id)?.len ?? 0, y + 1) });
+        };
+        const expected = await applySourceState(getModel("URX44V"), defaultPlan("URX44V"), {
+          get: async (paramId, x, y) => (ask(false, paramId + x, y), value(paramId + x, y)),
+          getStr: async (paramId, x, y) => (ask(true, paramId + x, y), ""),
+        });
+        expect(expected.errors, "the premise: every address the read asks is answered").toEqual([]);
+        applied = expected.applied;
+        const fields = [...asked].map(([id, a]): Field =>
+          a.str
+            ? { id, typecode: 4, elemSize: 16, values: Array<string>(a.len).fill("") }
+            : (() => {
+                const values = Array.from({ length: a.len }, (_, y) => value(id, y));
+                return { id, typecode: values.some((v) => v > 0x7fffffff) ? 1 : 2, elemSize: 4, values };
+              })(),
+        );
+        file = buildUrxf([{ chunk: "CURRENT", block: "CSF_BACKUP", label: "", fields }]);
+      }
+      const shell = (await bootApp({
+        seed: {
+          "urx-midi": JSON.stringify({
+            output: "Controller Out",
+            models: {
+              URX44V: [{ control: "ch1/level", addr: { type: "cc", channel: 0, controller: 7 }, mode: "absolute" }],
+            },
+          }),
+        },
+        tauri: deviceCommands(
+          {
+            "plugin:dialog|message": "Ok",
+            ...MIDI_PORT,
+            ...connectAs("URX44V"),
+            ...(file
+              ? {
+                  experimental_enabled: true,
+                  "plugin:dialog|open": "C:/urx/backup.urxf",
+                  read_binary_file: () => file!.buffer,
+                  "plugin:dialog|save": null,
+                }
+              : {}),
+          },
+          file ? {} : { [`${fader}/0/0`]: -600 },
+        ),
+      }))!;
+      await invoked(shell, "midi_open_output");
+      // CH 1's main fader as the CONSOLE states it.
+      $("btn-view-console").click();
+      const ch1Level = (): string | null =>
+        $("console-host").querySelector(".con-strip")!.querySelector(".con-fader")!.getAttribute("aria-valuenow");
+      await vi.waitFor(() => expect(ch1Level()).not.toBeNull(), { timeout: 10_000 });
+      expect(ch1Level(), "the premise: the flow moves the mapped fader").not.toBe("-6");
+
+      if (file) {
+        await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
+        $("btn-open-settings").click();
+        await vi.waitFor(() => expect(statusText()).toBe(t().status.settingsImported("backup.urxf", applied)), {
+          timeout: 15_000,
+        });
+      } else {
+        $("btn-fetch").click();
+        await invoked(shell, "vd_disconnect");
+        await fetchEnded();
+      }
+      await vi.waitFor(() => expect(ch1Level()).toBe("-6"), { timeout: 10_000 });
+      await new Promise((r) => setTimeout(r, 300)); // past the feedback debounce
+      expect(shell.count("midi_send")).toBe(0);
+
+      $("btn-live").click();
+      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), SLOW);
+      await vi.waitFor(() => expect(shell.count("midi_send")).toBeGreaterThan(0));
+    });
+
   it("stays silent when the live session fails on the way up", SLOW, async () => {
     // Unknown model: the read never runs, and the flow lands in the same `finally` a
     // settled one does. What separates them is the session, which is why the re-send
