@@ -1204,8 +1204,9 @@ const follow =
           if (at(LCD_SELECTION_ADDR)) {
             if (lcdEchoes.take(p.value)) return true;
             // The unit moved its selection itself, so what this app last wrote is no longer what
-            // the unit holds.
+            // the unit holds, and a switch still waiting to be written is older than this one.
             lcdLast = null;
+            lcdNext = null;
             const sel = decodeLcdSelection(getModel(modelId), p.value);
             if (sel) switchSide(sel.channel, sel.side, "device");
             return true;

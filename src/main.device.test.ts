@@ -10723,6 +10723,39 @@ describe("the displayed side and the unit's LCD selection", () => {
     await end(shell);
   });
 
+  // A selection made on the unit while a write is on the wire takes the place of the switches
+  // waiting behind that write; a switch made after it is written as usual, and the unit's
+  // answer to the app's own write cancels nothing.
+  it("drops the queued switches when the unit selects something itself", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
+    await goLive();
+    let finish!: () => void;
+    let held = true;
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      if (a.paramId !== PARAMS.LCD_SELECTION.id || !held) return;
+      held = false;
+      return new Promise<void>((resolve) => (finish = resolve));
+    });
+    nameArea().click();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0103 }]);
+    expect(strip("CH 7/8")!.querySelector(".con-side")!.getAttribute("aria-label")).toBe("CH 7/8, showing CH 8 (R)");
+    finish();
+    await drainShell(shell, () => false);
+    expect(lcdWrites(shell), "the queued switch is not sent").toEqual([0x0101]);
+    // The app's own answer keeps the queue: a switch queued behind a write whose answer arrives
+    // first is still sent.
+    held = true;
+    nameArea().click();
+    nameArea().click();
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+    finish();
+    await drainShell(shell, () => false);
+    expect(lcdWrites(shell)).toEqual([0x0101, 0x0101, 0x0100]);
+    await end(shell);
+  });
+
   it("writes no switch made off-line", async () => {
     const shell = await bootDevice({}, true, { [LCD]: 0x0101 });
     $("btn-view-console").click();
