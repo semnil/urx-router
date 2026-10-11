@@ -3816,4 +3816,36 @@ describe("LiveSync converge writes and their announcements", () => {
       // The positive control: a value nobody sent is still the unit's own.
       expect(live.isEcho(fader.paramId, fader.x, fader.y, -1200)).toBe(false);
     });
+
+  // A converge write acked after its session ended belongs to that session: the next one has
+  // sent nothing, so the unit's word on the address is news to it.
+  it("registers nothing for a converge write that lands after its session ended", async () => {
+    const plan = basePlan();
+    const key = (id: number, x: number, y: number): string => `${id}:${x}:${y}`;
+    const table = new Map(planToCommands(model, plan).map((c) => [key(c.paramId, c.x, c.y), c.vdValue]));
+    const fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+    let land: (() => void) | null = null;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (id === PARAMS.COMP_EQ_TYPE.id) setCh1Fader(plan, -6);
+      table.set(key(id, x, y), v);
+      if (id === fader.paramId && x === fader.x && y === fader.y)
+        return new Promise<void>((resolve) => (land = resolve));
+      return Promise.resolve();
+    });
+    vi.mocked(vdGet).mockImplementation((id, x, y) => Promise.resolve(table.get(key(id, x, y)) ?? 0));
+    const live = liveFor(plan);
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.waitFor(() => expect(land, "the premise: the converge's fader write is on the wire").not.toBeNull());
+    expect(live.hasUnannouncedWrite(fader.paramId, fader.x, fader.y), "on the wire, it waits").toBe(true);
+    live.end();
+    live.begin();
+    land!();
+    // Read inside the window an ack would keep it waiting for its announcement.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(live.hasUnannouncedWrite(fader.paramId, fader.x, fader.y)).toBe(false);
+    expect(live.recentPending().written.has(cmdAddr(fader))).toBe(false);
+  });
 });
