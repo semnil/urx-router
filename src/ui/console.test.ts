@@ -452,6 +452,31 @@ describe("the head-height cache", () => {
   });
 });
 
+// A device read that could not read a jack or a source leaves the plan's value on every strip
+// reading it, so the gain knob there carries the board's "?" and says why.
+describe("a gain the device read could not confirm", () => {
+  let h: ConsoleHost;
+  afterEach(() => h?.restore());
+  const knob = (id: string, label: string): HTMLElement =>
+    h.strip(id).root.querySelector<HTMLElement>(`.con-knob[aria-label="${label}"]`)!;
+
+  it("marks the knob of every strip reading an unread jack or source, and of no other", () => {
+    const plan = defaultPlan("URX44V");
+    plan.unreadNodes = new Set(["in.micline_1_2", "in.aux"]);
+    h = consoleHost({ modelId: "URX44V", plan });
+    for (const [id, label] of [
+      ["ch1", "A.GAIN"],
+      ["ch2", "A.GAIN"],
+      ["ch_5_6", "D.GAIN"],
+    ]) {
+      expect(knob(id, label).querySelector(".con-unread")?.textContent, id).toBe("?");
+      expect(knob(id, label).getAttribute("aria-description"), id).toBe(t().inspector.notReadFromDevice);
+    }
+    expect(knob("ch3", "A.GAIN").querySelector(".con-unread"), "CH 3 reads a jack that was read").toBeNull();
+    expect(knob("ch_7_8", "D.GAIN").querySelector(".con-unread")).toBeNull();
+  });
+});
+
 // The morphing strip's own master, which is the one head chip whose value does not sit at
 // the top level of `nodeParams` — `boolChip`'s writer cannot reach it, so the strip builds
 // its own. What that costs is a second writer for one flag, and nothing else asserted it

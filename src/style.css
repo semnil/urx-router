@@ -69,6 +69,8 @@
 
   --warn: #e2794e;
   --warn-bg: #2a1a11;
+  /* Text printed on a --warn face (the "?" a value not read from the device carries). */
+  --warn-ink: #14110d;
 
   --tally: #ff4d4d;
   --tally-bg: #2a1212;
@@ -162,6 +164,7 @@
      enough to be read as ink on its own tint and on the panel. */
   --warn: #a8461a;
   --warn-bg: #f9ece3;
+  --warn-ink: #ffffff;
 
   --tally: #b71c1c;
   --tally-bg: #fbe9e9;
@@ -2505,6 +2508,21 @@ input[type="range"]:focus-visible,
   position: relative;
   cursor: ns-resize;
   touch-action: none;
+}
+/* A value the device read could not confirm: the board's "?" badge, on the knob's corner. */
+.con-knob .con-unread {
+  position: absolute;
+  left: -7px;
+  top: -5px;
+  min-width: 15px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--warn);
+  color: var(--warn-ink);
+  font: 700 9px/14px var(--mono);
+  text-align: center;
+  pointer-events: none;
 }
 .con-knob .ind {
   position: absolute;

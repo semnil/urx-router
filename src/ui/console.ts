@@ -2983,7 +2983,7 @@ export class Console {
       };
       // Horizontal-marking values: A.Gain +8/+55, D.Gain -14/+15.
       const [hl, hr] = analog ? [8, 55] : [-14, 15];
-      this.addKnob(
+      const knob = this.addKnob(
         head,
         analog ? "A.GAIN" : "D.GAIN",
         {
@@ -3001,6 +3001,16 @@ export class Console {
         holder,
         controlId(m.id, "gain"),
       );
+      // A device read that could not read the jack or source leaves the plan's value here.
+      if (this.hooks.getPlan().unreadNodes?.has(holder)) {
+        const badge = el("span", "con-unread");
+        badge.textContent = "?";
+        badge.setAttribute("aria-hidden", "true");
+        knob.append(badge);
+        const note = t().inspector.notReadFromDevice;
+        knob.title = knob.title ? `${knob.title}\n${note}` : note;
+        knob.setAttribute("aria-description", note);
+      }
     }
     // PAN (mono) / BALANCE (stereo) = the source's → STEREO main-path pan,
     // L63 – C – R63. Per-send pan lives in the SENDS rack's SEND PAN popover.
@@ -3704,7 +3714,7 @@ export class Console {
   // Build a labelled rotary knob (label / value / knob) in the strip head and
   // wire it. Shared by the channel gain and the monitor PHONES level.
   // `midiId` makes the knob armable for MIDI learn.
-  private addKnob(head: HTMLElement, label: string, k: KnobSpec, id: string, midiId?: string): void {
+  private addKnob(head: HTMLElement, label: string, k: KnobSpec, id: string, midiId?: string): HTMLElement {
     const box = el("div", "con-gain");
     const info = el("div", "info");
     const lbl = el("span", "lbl");
@@ -3719,6 +3729,7 @@ export class Console {
     info.append(lbl, val);
     box.append(info, knob);
     head.append(box);
+    return knob;
   }
 
   // The knob primitive: the con-knob element + its value span (readonly / aria /
