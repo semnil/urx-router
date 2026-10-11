@@ -3490,14 +3490,58 @@ describe("the live session", () => {
     await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
   };
 
+  /** Holds the first read of one address made after `arm()` until `release()`. */
+  const gate = (paramId: number, y: number) => {
+    let armed = false;
+    let held = false;
+    let release!: () => void;
+    const open = new Promise<void>((r) => (release = r));
+    return {
+      arm: () => void (armed = true),
+      held: () => held,
+      release: () => release(),
+      take: (a: Record<string, unknown>): Promise<void> | null => {
+        if (!armed || a.paramId !== paramId || a.y !== y) return null;
+        armed = false;
+        held = true;
+        return open;
+      },
+    };
+  };
+
+  /** Every line the status bar shows from now on, so a line a later one replaces before a
+   *  poll reads it is still seen. */
+  const recordStatus = (): { lines: string[]; stop: () => void } => {
+    const lines: string[] = [];
+    const watch = new MutationObserver(() => lines.push(statusText()));
+    watch.observe($("statusbar"), { childList: true, characterData: true, subtree: true });
+    return { lines, stop: () => watch.disconnect() };
+  };
+  const followedLine = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveFollowed(n)));
+  const heldLine = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveHeld(n, 2, 0)));
+
   // `delayMs` stretches each read, for the case that has to end the session inside one.
+  // `hold` answers a read only once the promise it returns for that read settles.
   // `refuseY` refuses every read of one channel index, for the case that needs the read
   // to be partial as well as holding — CH 1 is y0, so a later index leaves the held
   // route's own addresses answering.
   // `linked` answers Signal Type STEREO throughout, which is what a read that was
   // answered on that address BEFORE a transition landed looks like — the stale half of
   // the race the announcement exists to settle.
-  const notifyRate = (shell: TauriShell, { delayMs = 0, refuseY = -1, linked = false } = {}): void => {
+  const notifyRate = (
+    shell: TauriShell,
+    {
+      delayMs = 0,
+      hold = (): Promise<void> | null => null,
+      refuseY = -1,
+      linked = false,
+    }: {
+      delayMs?: number;
+      hold?: (a: Record<string, unknown>) => Promise<void> | null;
+      refuseY?: number;
+      linked?: boolean;
+    } = {},
+  ): void => {
     const answer = (a: Record<string, unknown>): number => {
       if (a.y === refuseY) throw new Error("read refused");
       if (linked && a.paramId === PARAMS.SIGNAL_TYPE.id) return 1;
@@ -3507,9 +3551,11 @@ describe("the live session", () => {
           ? denormalizeInsertFx(INSERT_FX_NONE)
           : unwrittenRead(a);
     };
-    shell.answer("vd_get", (a: Record<string, unknown>) =>
-      delayMs ? new Promise((r) => setTimeout(() => r(answer(a)), delayMs)) : answer(a),
-    );
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      const held = hold(a);
+      if (held) return held.then(() => answer(a));
+      return delayMs ? new Promise((r) => setTimeout(() => r(answer(a)), delayMs)) : answer(a);
+    });
     // Taken from the subscribe's own arguments rather than by position, so a second
     // channel opening beside it cannot silently redirect this.
     const at = shell.invokes.indexOf("vd_params_subscribe");
@@ -3781,25 +3827,26 @@ describe("the live session", () => {
     await heldByExcursion(shell);
 
     const written = insertFxWrites(shell).length;
-    const reads = shell.count("vd_get");
-    notifyRate(shell, { delayMs: 1 });
+    // INSIDE the read the rate notify escalated to, on CH 1's own selector: the read is held
+    // at that selector while the unit announces it.
+    const selector = gate(PARAMS.INSERT_FX.id, 0);
+    selector.arm();
+    notifyRate(shell, { hold: selector.take });
     const at = shell.invokes.indexOf("vd_params_subscribe");
     const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
-    // INSIDE the read the rate notify escalated to, on CH 1's own selector. Waited for
-    // past the count the session start left behind: a bare `> 5` is satisfied before the
-    // settle debounce has fired, and the announcement would then arrive ahead of the read
-    // it has to fall inside.
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 5), {
+    await vi.waitFor(() => expect(selector.held(), "the read reached CH 1's selector").toBe(true), {
       timeout: 25_000,
-      interval: 5,
     });
+    const status = recordStatus();
     channel.onmessage([{ param_id: PARAMS.INSERT_FX.id, x: 0, y: 0, value: denormalizeInsertFx(INSERT_FX_NONE) }]);
+    selector.release();
 
     // The ordinary followed line, not the held one — and nothing sent back.
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(status.lines.some((l) => followedLine(l) || heldLine(l))).toBe(true), {
       timeout: 25_000,
     });
-    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
+    status.stop();
+    expect(status.lines.filter(heldLine)).toEqual([]);
     expect(insertFxWrites(shell).length).toBe(written);
     await endLive();
   });
@@ -3940,24 +3987,6 @@ describe("the live session", () => {
     const shell = await bootDevice();
     await heldByExcursion(shell);
 
-    /** Holds the first read of one address made after `arm()` until `release()`. */
-    const gate = (paramId: number, y: number) => {
-      let armed = false;
-      let held = false;
-      let release!: () => void;
-      const open = new Promise<void>((r) => (release = r));
-      return {
-        arm: () => void (armed = true),
-        held: () => held,
-        release: () => release(),
-        take: (a: Record<string, unknown>): Promise<void> | null => {
-          if (!armed || a.paramId !== paramId || a.y !== y) return null;
-          armed = false;
-          held = true;
-          return open;
-        },
-      };
-    };
     // A CH 4 address the whole-device read reaches and a STEREO refetch does not, and a STEREO
     // address the refetch reads.
     const fullRead = gate(PARAMS.HPF_ON.id, 3);
@@ -4004,20 +4033,17 @@ describe("the live session", () => {
 
     // Now the operator clears it by hand, at a rate that runs it, while the refetch is still
     // open — so the follow read this announcement asks for is the next read of CH 1, held off
-    // until the flush carrying the refetch is done. Every line the status bar shows from here
-    // is kept, since a held line can be replaced before a poll reads it.
-    const lines: string[] = [];
-    const watch = new MutationObserver(() => lines.push(statusText()));
-    watch.observe($("statusbar"), { childList: true, characterData: true, subtree: true });
+    // until the flush carrying the refetch is done.
+    const status = recordStatus();
     channel.onmessage([{ param_id: PARAMS.INSERT_FX.id, x: 0, y: 0, value: denormalizeInsertFx(INSERT_FX_NONE) }]);
     refetch.release();
     $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions .consent-btn-secondary")!.click();
-    const followed = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveFollowed(n)));
-    const held = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveHeld(n, 2, 0)));
     // Whichever the read that took the clearing says first.
-    await vi.waitFor(() => expect(lines.some((l) => followed(l) || held(l))).toBe(true), { timeout: 25_000 });
-    watch.disconnect();
-    expect(lines.filter(held)).toEqual([]);
+    await vi.waitFor(() => expect(status.lines.some((l) => followedLine(l) || heldLine(l))).toBe(true), {
+      timeout: 25_000,
+    });
+    status.stop();
+    expect(status.lines.filter(heldLine)).toEqual([]);
     await endLive();
   });
 
@@ -4029,26 +4055,37 @@ describe("the live session", () => {
     await heldByExcursion(shell, true); // STEREO: the mirror gives both members the effect
 
     const written = insertFxWrites(shell).length;
-    const reads = shell.count("vd_get");
+    const from = shell.invokes.length;
     // The read keeps answering STEREO, so it is the stale half of the race: the pair's
     // Signal Type is read before the selector, and a transition in that gap leaves the
-    // predicate comparing two equal values. Only the announcement says what happened.
-    notifyRate(shell, { delayMs: 1, linked: true });
+    // predicate comparing two equal values. Only the announcement says what happened. The
+    // read is held at CH 1's selector, which is that gap.
+    const selector = gate(PARAMS.INSERT_FX.id, 0);
+    selector.arm();
+    notifyRate(shell, { hold: selector.take, linked: true });
     const at = shell.invokes.indexOf("vd_params_subscribe");
     const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 5), {
+    await vi.waitFor(() => expect(selector.held(), "the read reached CH 1's selector").toBe(true), {
       timeout: 25_000,
-      interval: 5,
     });
+    expect(
+      shell.args
+        .slice(from)
+        .some((a, i) => shell.invokes[from + i] === "vd_get" && a?.paramId === PARAMS.SIGNAL_TYPE.id),
+      "the premise: the read asked for the Signal Type first",
+    ).toBe(true);
     // The pair-level address, at the primary's index alone — which is the only index the
     // unit announces it on.
+    const status = recordStatus();
     channel.onmessage([{ param_id: PARAMS.SIGNAL_TYPE.id, x: 0, y: 0, value: 0 }]);
+    selector.release();
 
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(status.lines.some((l) => followedLine(l) || heldLine(l))).toBe(true), {
       timeout: 25_000,
     });
+    status.stop();
     // Neither member held: a partner left out would show as its own two kept keys.
-    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
+    expect(status.lines.filter(heldLine)).toEqual([]);
     expect(insertFxWrites(shell).length).toBe(written);
     await endLive();
   });
