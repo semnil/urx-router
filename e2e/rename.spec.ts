@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { drag, port } from "./graph-helpers";
 
 // A node is a g.node carrying its id; its faceplate label is the first <text>.
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
@@ -115,6 +116,8 @@ test("a color swatch adds a top accent cap; re-clicking it clears the cap", asyn
 // row's label names, each swatch by the unit's own colour name, the chosen one pressed; and
 // a two-button pair and a slider named by their rows.
 test("the inspector's controls are reachable by their names", async ({ page }) => {
+  // On a jack, so the panel carries the jack's +48V and A.Gain.
+  await drag(page, port(page, "in.micline_1_2:out"), port(page, "ch1:in"));
   await node(page, "ch1").click();
   const picker = page.getByRole("group", { name: "Color" });
   await expect(picker.getByRole("button")).toHaveCount(11);

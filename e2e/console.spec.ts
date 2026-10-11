@@ -2,6 +2,7 @@ import { test, expect, colorToken, scrollsByWheel, textContrast, type Locator, t
 import { chooseOption } from "./choose-option";
 import { LIVE_COMMANDS, heldReadsOf, notifyParam, setDeviceValue, setHeldReads, stubTauriDevice } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
+import { planParamZ } from "./plan-param";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
 // "CH 11/12"). The console runs against the factory plan, so we do NOT seed
@@ -1017,6 +1018,42 @@ test("a node hidden in the graph drops from the console", async ({ page }) => {
   await expect(strip(page, "CH 1")).toHaveCount(0);
   await expect(strip(page, "CH 2")).toBeVisible();
 });
+
+// A head's input chips are its source's: a jack's +48 (and Hi-Z where the jack has it), none on
+// a digital source or on no source. So the shared head height has to hold for every wiring, not
+// only the factory one — each shape below is a different set of chips on the same strips.
+for (const [shape, wires] of [
+  [
+    "mono channels on the jacks with HI-Z",
+    [
+      ["in.micline_3_4", "ch1"],
+      ["in.micline_3_4", "ch2"],
+      ["in.micline_3_4", "ch3"],
+      ["in.micline_3_4", "ch4"],
+    ],
+  ],
+  ["a stereo channel on MIC/LINE 3/4", [["in.micline_3_4", "ch_5_6"]]],
+  ["every channel on no source", []],
+] as Array<[string, Array<[string, string]>]>) {
+  test(`no head overflows the shared height, ${shape} @webkit`, async ({ page }) => {
+    const connections = wires.map(([from, to]) => ({ from: `${from}:out`, to: `${to}:in`, kind: "source" }));
+    await page.goto(
+      `/?plan=${planParamZ({ format: "urx-router-plan", version: 1, modelId: "URX44V", connections, nodeParams: {} })}`,
+    );
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await page.click("#btn-view-console");
+    const heads = page.locator(".con-strip .con-head");
+    await expect(heads.first()).toBeVisible();
+    const overflow = await heads.evaluateAll((els) =>
+      els.filter((e) => e.scrollHeight > e.clientHeight + 1).map((e) => e.textContent?.slice(0, 24) ?? ""),
+    );
+    expect(overflow, "a head taller than the shared height it is given").toEqual([]);
+    const tops = await page
+      .locator(".con-strip .con-fader")
+      .evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+    expect(new Set(tops).size, `faders start at ${new Set(tops).size} different offsets`).toBe(1);
+  });
+}
 
 test("scrolling stays inside the strip grid (no window scroll) @webkit", async ({ page }) => {
   const m = await page.evaluate(() => {
