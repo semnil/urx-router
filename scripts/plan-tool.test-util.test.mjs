@@ -38,11 +38,23 @@ const alive = (pid) => {
     return false;
   }
 };
-/** Polls until `pid` has exited, failing after `ms`. */
+/** The process's state letter from /proc where the OS has one (`Z` for an exited process nobody has
+ *  collected), or null. */
+const procState = (pid) => {
+  try {
+    return /^\d+ \(.*\) (\S)/.exec(readFileSync(`/proc/${pid}/stat`, "utf8"))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+};
+/** Polls until `pid` has exited and been collected, failing after `ms`. */
 const gone = async (pid, ms = 5_000) => {
   const deadline = Date.now() + ms;
   while (alive(pid)) {
-    if (Date.now() > deadline) throw new Error(`process ${pid} is still running`);
+    if (Date.now() > deadline) {
+      const state = procState(pid);
+      throw new Error(`process ${pid} is still running${state ? ` (state ${state})` : ""}`);
+    }
     await new Promise((r) => setTimeout(r, 50));
   }
 };

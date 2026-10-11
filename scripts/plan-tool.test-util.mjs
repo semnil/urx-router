@@ -18,14 +18,16 @@
 // `timeoutMs`, or an interpreter that exits, THROWS rather than returning a status — an answer
 // nobody produced must not read as the tool's — and a call that times out kills the interpreter.
 // `close()` ends a healthy interpreter by closing its input, kills one still running
-// `closeGraceMs` after that, and settles within `CLOSE_BOUND_MS` either way: past it the worker
-// is terminated, the interpreter killed, and `close()` rejects.
+// `closeGraceMs` after that, and settles within `CLOSE_BOUND_MS` either way: past it the
+// interpreter is killed while the worker that owns it can still collect its exit, the worker is
+// terminated if it has not exited `CLOSE_REAP_MS` later, and `close()` rejects.
 
 import { MessageChannel, receiveMessageOnPort, Worker } from "node:worker_threads";
 
 const TIMEOUT_MS = 30_000;
 const CLOSE_GRACE_MS = 2_000;
 const CLOSE_BOUND_MS = 5_000;
+const CLOSE_REAP_MS = 2_000;
 
 const DRIVER = `
 import contextlib, io, json, os, sys, traceback
@@ -154,23 +156,23 @@ export function planToolSession(python, toolDir, { timeoutMs = TIMEOUT_MS, close
     if (!worker) return;
     const w = worker;
     worker = null;
-    let timer;
     const done = new Promise((resolve) => w.once("exit", () => resolve(true)));
-    const late = new Promise((resolve) => (timer = setTimeout(() => resolve(false), CLOSE_BOUND_MS)));
+    const within = async (ms) => {
+      let timer;
+      const late = new Promise((resolve) => (timer = setTimeout(() => resolve(false), ms)));
+      const ended = await Promise.race([done, late]);
+      clearTimeout(timer);
+      return ended;
+    };
     w.postMessage({ close: true, graceMs: closeGraceMs });
-    const ended = await Promise.race([done, late]);
-    clearTimeout(timer);
-    if (!ended) {
-      await w.terminate();
-      try {
-        if (pid !== null) process.kill(pid);
-      } catch (err) {
-        if (err.code !== "ESRCH") throw err;
-      }
-      throw new Error(
-        `the plan_tool.py session did not end within ${CLOSE_BOUND_MS} ms; its worker was terminated and its interpreter killed`,
-      );
+    if (await within(CLOSE_BOUND_MS)) return;
+    try {
+      if (pid !== null) process.kill(pid);
+    } catch (err) {
+      if (err.code !== "ESRCH") throw err;
     }
+    if (!(await within(CLOSE_REAP_MS))) await w.terminate();
+    throw new Error(`the plan_tool.py session did not end within ${CLOSE_BOUND_MS} ms; its interpreter was killed`);
   };
   return { run, close };
 }
