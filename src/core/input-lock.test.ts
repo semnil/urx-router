@@ -7,8 +7,13 @@ import { addrKey, planToCommands } from "./control/translate";
 import { PARAMS } from "./control/params";
 import { clonePlanState, nodeParamContestKey } from "./plan-history";
 import {
+  carriedByOn,
   carrierOf,
   hiZPatch,
+  jackHasHiZ,
+  jackName,
+  switchAddr,
+  switchOfKey,
   inputOnRefused,
   jackGainRange,
   onExcludedBy,
@@ -351,5 +356,45 @@ describe("+48V and HI-Z against what the unit holds", () => {
     expect(onExcludedBy(at("HI_Z"), 1)).toBe(addrKey(PARAMS.PHANTOM.id, 0, y));
     expect(onExcludedBy(at("PHANTOM"), 0)).toBeNull();
     expect(onExcludedBy({ name: "CLIP_SAFE", x: 0, y }, 1)).toBeNull();
+  });
+});
+
+// The jack and key readers every surface asks: what a key names, which jacks carry HI-Z, the
+// address a switch key writes, and how a status line names a jack.
+describe("the jack readers", () => {
+  const m = getModel("URX44V");
+
+  it("names a switch key and what an ON carries", () => {
+    expect(switchOfKey("phantomR")).toEqual({ on: "phantom", side: "R" });
+    expect(switchOfKey("gainL")).toBeNull();
+    expect(carriedByOn("hiZL")).toEqual(["gainL"]);
+    expect(carriedByOn("phantomL")).toEqual([]);
+    expect(carriedByOn("gainL")).toEqual([]);
+  });
+
+  it("says which jacks carry HI-Z, on the models that list one", () => {
+    expect(jackHasHiZ("URX44V", { node: "in.micline_3_4", side: "L" })).toBe(true);
+    expect(jackHasHiZ("URX44V", { node: "in.micline_1_2", side: "L" })).toBe(false);
+    expect(jackHasHiZ("URX44V", { node: "in.aux", side: "L" }), "no jack at all").toBe(false);
+    expect(jackHasHiZ("URX99", { node: "in.micline_3_4", side: "L" }), "a model with no list").toBe(false);
+  });
+
+  it("addresses a switch only on a jack that carries it", () => {
+    expect(switchAddr(m, "in.micline_1_2", "phantomR")).toEqual({ paramId: PARAMS.PHANTOM.id, x: 0, y: 1 });
+    expect(switchAddr(m, "in.micline_3_4", "hiZL")).toEqual({ paramId: PARAMS.HI_Z.id, x: 0, y: 2 });
+    expect(switchAddr(m, "in.micline_1_2", "hiZL"), "no HI-Z on jack 1").toBeNull();
+    expect(switchAddr(m, "in.micline_1_2", "gainL"), "not a switch").toBeNull();
+    expect(switchAddr(m, "in.aux", "phantomL"), "no jack").toBeNull();
+    expect(switchAddr(getModel("URX22"), "in.micline_3_4", "phantomL"), "a node the model lacks").toBeNull();
+  });
+
+  it("names a jack by the channels reading it, or by itself when none does", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch_5_6:in", "source");
+    const label = (id: string): string => m.nodes.find((n) => n.id === id)!.label;
+    expect(jackName(m, plan, { node: "in.micline_1_2", side: "L" }, label)).toBe("CH 1, CH 5");
+    setExclusiveConnection(plan, "in.aux:out", "ch3:in", "source");
+    setExclusiveConnection(plan, "in.aux:out", "ch4:in", "source");
+    expect(jackName(m, plan, { node: "in.micline_3_4", side: "R" }, label)).toBe("MIC/LINE 4");
   });
 });

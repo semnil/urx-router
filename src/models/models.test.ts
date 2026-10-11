@@ -203,4 +203,8 @@ describe("side labels", () => {
     expect(sideLabel(MODELS.URX22, "ch_3_4", "L")).toBe("CH 3");
     expect(sideLabel(MODELS.URX22, "ch_3_4", "R")).toBe("CH 4");
   });
+
+  it("answers a node the model does not have with its id", () => {
+    expect(sideLabel(MODELS.URX22, "in.hdmi", "L")).toBe("in.hdmi");
+  });
 });

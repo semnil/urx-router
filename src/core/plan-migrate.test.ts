@@ -4,7 +4,7 @@
 // a crossed wiring is the case that separates the two readings. A key the document also writes
 // on the input node wins, and a key that addresses nothing on the model is dropped.
 import { describe, expect, it } from "vitest";
-import { deserializeDocument, type NodeParams } from "./plan";
+import { deserializeDocument, migrateInputStage, type NodeParams } from "./plan";
 import type { ModelId } from "../models/types";
 
 const load = (modelId: ModelId, nodeParams: Record<string, unknown>, connections: unknown[] = [], version = 4) =>
@@ -15,6 +15,18 @@ const moved = (from: string, to: string) => ({ from, to, action: "move" });
 const dropped = (from: string) => ({ from, action: "drop" });
 
 describe("migrateInputStage", () => {
+  // A channel past the jacks, a HI-Z on a model that lists none, and a stereo channel no legacy
+  // D.Gain table names all address nothing, so their keys are dropped.
+  it("drops a key that addresses nothing on the model", () => {
+    const np = {
+      ch9: { gain: 10 },
+      ch3: { hiZ: true },
+      ch_13_14: { gain: 4 },
+    } as unknown as Record<string, NodeParams>;
+    expect(migrateInputStage(np, "URX99")).toEqual([dropped("ch9.gain"), dropped("ch3.hiZ"), dropped("ch_13_14.gain")]);
+    expect(np).toEqual({ ch9: {}, ch3: {}, ch_13_14: {} });
+  });
+
   // One row per mono channel of each model: the four keys, at the jack the channel's index names.
   it.each<[ModelId, string, string, "L" | "R", boolean]>([
     ["URX44V", "ch1", "in.micline_1_2", "L", false],

@@ -1903,6 +1903,20 @@ describe("input stage resolver", () => {
   const sorted = (set: Map<string, Set<string>>) =>
     Object.fromEntries([...set].sort().map(([k, v]) => [k, [...v].sort()]));
 
+  // A wire from something that is no selectable input, a channel the model does not carry, and a
+  // source this model has no D.Gain address for all read no input stage.
+  it("reads no input stage where there is no jack or source to read", () => {
+    const m = getModel("URX44V");
+    const plan = wired("URX44V", [["bus.mix1", "ch1"]]);
+    expect(inputStageOf(m, plan, "ch1")).toEqual({ kind: "none" });
+    const lost = wired("URX44V", [["in.micline_1_2", "ch9"]]);
+    expect(inputStageOf(m, lost, "ch9")).toEqual({ kind: "none" });
+    const m22 = getModel("URX22");
+    const hdmi = wired("URX22", [["in.hdmi", "ch1"]]);
+    expect(inputStageOf(m22, hdmi, "ch1")).toEqual({ kind: "none" });
+    expect(inputStageOf(m22, wired("URX22", [["in.aux", "ch1"]]), "ch1").kind, "the positive control").toBe("digital");
+  });
+
   // A mono channel reads the jack its input slot's parity names (odd slot = the second jack),
   // whatever channel number it is; a stereo channel reads the side asked for.
   it("names the jack or source each channel reads", () => {
