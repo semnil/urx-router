@@ -138,8 +138,8 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 >
 > **What a channel shows by its source**: the input stage — +48V, A.Gain, Clip Safe and HI-Z — is the unit's
 > per MIC/LINE jack, and D.Gain per digital source; a channel applies the one it reads. A mono channel on
-> MIC/LINE reads the jack its position names (CH1 → jack 1, CH2 → jack 2), a stereo channel on MIC/LINE its
-> pair's L jack, a channel on a digital source that source's D.Gain, and a channel on no source (None) shows
+> MIC/LINE reads the jack its position names (CH1 → jack 1, CH2 → jack 2), a stereo channel on MIC/LINE both
+> jacks of its pair, a channel on a digital source that source's D.Gain, and a channel on no source (None) shows
 > no input stage at all. Two channels reading one jack or source show and set one value. How the app stores
 > and writes it: architecture.md, "The input stage: on the jack and the source".
 >

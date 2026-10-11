@@ -971,8 +971,8 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
   `clipSafeL` / `clipSafeR`, and `hiZL` / `hiZR` on a jack that carries HI-Z (jacks 3 and 4 on URX44 / URX44V,
   jack 2 on URX22) — and each digital source node holds one `dGain`. No channel holds any of them. Which jack or
   source a channel reads is its source wire (`inputStageOf` in `translate.ts`): a mono channel reads the jack its
-  input slot names, a stereo channel on a MIC/LINE pair reads the pair's L jack, and a channel on no source reads
-  none.
+  input slot names, a stereo channel on a MIC/LINE pair reads both of the pair's jacks, and a channel on no source
+  reads none.
 - **Write.** A write carries the input stage of the jacks and sources some channel reads (`inputStageReadSet`),
   after the source selects, so a write that rewires a channel and sets a value lands the value on a jack the channel
   already reads. Each value is bounded to its own address's range — A.Gain -8..+70 dB (+40 while that jack's HI-Z is
@@ -992,6 +992,11 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
   input-stage control keeps the channel's id and writes the jack or source; on a channel with no source it binds
   nothing, and the MIDI window says so in that assignment's row. The +48V / HI-Z rule, its refusals and the
   unauthored-write confirm name the channels reading the jack or source.
+- **One side at a time.** A stereo channel shows one side (`stereo-side.ts`, L until switched): its CONSOLE name
+  and the switch at the top of its INPUT section pick it, and the input rows, the gain knob, +48 / Hi-Z and the
+  one φ / Ø show and edit that side's jack and polarity. The MIDI `gain` / `phantom` / `hiZ` ids act on the side
+  shown, while each side's polarity keeps its own id (`phaseL` / `phaseR`). The side is UI state rather than plan
+  state — not saved, not undoable, not in a `?plan=` link — and goes back to L on a model switch.
 - **Load.** A document that carries the channel keys — every version before 5, or one written by hand — has them
   moved by the address they were written at (`migrateInputStage` in `plan.ts`): CH n's to jack n, a stereo
   channel's gain to the D.Gain of the source its model's legacy table names, the input node's own value winning.
@@ -1352,7 +1357,9 @@ name** (the monitor buses carry no CH SETTING name, so their second line names t
 `Phone 1` / `Phone 2`). Left of the name sits a **power LED** — the LED is a button toggling the
 node master ON/OFF (see the inactive-dim note below). Its hit area reaches from the strip's own top-left corner across
 to where the name text starts and down to the chip row, so it covers the start of the device-name row; the name text is
-not part of it. Below it sit two 2-column chip groups: (1) channel / input (HA) — **MUTE**, only on the strips that
+not part of it. On a stereo channel the name is the button that switches the side the strip shows: its hit area is the
+rest of the scribble, under the LED's, and the hidden side's number dims ("CH 5/6" with the 6 dimmed while CH 5 is
+shown). It arms no MIDI control. Below it sit two 2-column chip groups: (1) channel / input (HA) — **MUTE**, only on the strips that
 send to STEREO (channels, FX channels, MIX buses): it drives that fixed → STEREO send's ON/OFF — an **input /
 FX channel's → STEREO assign ON** (firmware V1.3, the post-fader SEND TO STEREO switch) or a **MIX bus's
 MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off) — never the node master (CH_ON / FX-channel ON /
@@ -1361,7 +1368,8 @@ no MUTE chip; their master ON is the power LED alone. A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
 `MONITOR_MONO`, ships OFF) chips. Then +48 / φ /
 HPF on a mono channel (+48 and Hi-Z are the jack's it reads: Hi-Z where that jack carries it, neither on a source
-or on no source) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
+or on no source) or one φ on a stereo channel, which inverts the side the strip shows (`phaseL` / `phaseR`,
+gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
 node hung under them). A mono channel in SSMCS mode carries **SSMCS** between GATE and COMP — the morphing
 strip's own master, and the one head chip whose value is a level down in the plan (`ssmcs.on`), so the strip
@@ -1804,7 +1812,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   Replacing the plan or model (a model switch, a plan load) cancels an in-flight
   learn, dropping the armed control instead of committing it under the new model's mapping key.
 - **Feedback (MIDI OUT)** — plan changes (UI edits, device follow, device readbacks, plan loads) are sent back
-  through the reverse lookup so motor faders / LEDs follow. It hangs off the shared change funnel
+  through the reverse lookup so motor faders / LEDs follow, and so is a switch of the side a stereo channel shows,
+  which moves what its input-stage ids read without being a plan change (`switchSide` in `main.ts` schedules the
+  pass itself). It hangs off the shared change funnel
   (`markChanged`) and its readback twin (`planReadFromDevice`: fetch, the initial readback at Live-sync start, the
   `.urxf` import; the follow reflect calls only `planValuesChanged`, the twin's feedback half), debounced at 120 ms
   and diffed against a sent cache so only changed values go out. Feedback
@@ -3883,7 +3893,8 @@ Character keyups inside a text field are deliberately **not** boundaries: the na
 plan per keystroke, so committing there would cost one `Ctrl+Z` per letter.
 
 A gesture that moved no value diffs to nothing and records no entry, so a mis-grab costs no `Ctrl+Z`
-and leaves the redo stack alone.
+and leaves the redo stack alone. Switching the side a stereo channel shows is such a gesture: the side is not
+in the plan, so it is no entry, and an undo leaves it where it is.
 
 ### The patch
 
