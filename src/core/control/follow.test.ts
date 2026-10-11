@@ -720,6 +720,27 @@ describe("DeviceFollow", () => {
     expect(reconcileAll).not.toHaveBeenCalled();
   });
 
+  // A notify that reaches the registered callback after end() changes nothing — not even a
+  // direct one, which would otherwise be applied on the spot.
+  it("drops a notify delivered after end()", async () => {
+    const applyDirect = vi.fn(() => true);
+    const reconcileNodes = vi.fn(async () => {});
+    const reconcileAll = vi.fn(async () => {});
+    const follow = followFor({
+      lookup: () => ({ name: "CH_FADER", node: "ch1", direct: true }),
+      applyDirect,
+      reconcileNodes,
+      reconcileAll,
+    });
+    await follow.begin();
+    follow.end();
+    notify(-600);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(applyDirect).not.toHaveBeenCalled();
+    expect(reconcileNodes).not.toHaveBeenCalled();
+    expect(reconcileAll).not.toHaveBeenCalled();
+  });
+
   // The subscription this class owns is the app's only notify stream, so it is also
   // what a write can be settled against (settle.ts). Two obligations come with that.
   it("feeds the settle before the echo filter drops our own write's answer", async () => {

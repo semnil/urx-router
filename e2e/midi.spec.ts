@@ -1577,6 +1577,39 @@ test("a MIDI window that outlives a reload of the app is spoken to again", async
   await expect(mapRow(win, "ch1/mute")).toBeVisible();
 });
 
+test("a MIDI window following the app's language leaves the stored preference alone", async ({ page }) => {
+  // The window shares the app's origin and so its storage. With no language stored the
+  // app follows the browser's, and a window that stored what it was handed would pin
+  // that choice for the operator — here across a reload that leaves the window up.
+  const auto = await page.evaluate(() => (navigator.language.toLowerCase().startsWith("ja") ? "ja" : "en"));
+  const pinned = auto === "ja" ? "en" : "ja";
+  const catalog = { en, ja };
+  // The shared stub stores English on every load. A flag in THIS page's session storage
+  // takes that back on the reload below, which is how the app boots with nothing stored.
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("urx-test-unset-lang") === "1") localStorage.removeItem("urx-lang");
+  });
+  const win = await openMidiWindow(page);
+  if (pinned !== "en") {
+    await page.click("#btn-prefs");
+    await chooseOption(page.locator("#prefs-lang"), pinned);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#prefs-modal")).toBeHidden();
+  }
+  await expect(win.locator(".mw-title")).toHaveText(catalog[pinned].midi.title);
+  expect(await page.evaluate(() => localStorage.getItem("urx-lang"))).toBe(pinned);
+
+  await page.evaluate(() => sessionStorage.setItem("urx-test-unset-lang", "1"));
+  await page.reload();
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  expect(await page.evaluate(() => document.documentElement.lang)).toBe(auto);
+  // The window has been handed the app's language and shows it ...
+  await expect(win.locator(".mw-title")).toHaveText(catalog[auto].midi.title);
+  // ... and the preference is still unset, so the next launch follows the browser again.
+  expect(await page.evaluate(() => localStorage.getItem("urx-lang"))).toBeNull();
+  expect(await win.evaluate(() => localStorage.getItem("urx-lang"))).toBeNull();
+});
+
 test("the FX strip's EFFECT face arms nothing, and a screen knob's assignment reads as words", async ({ page }) => {
   // The face is drawn lit and is not a control, so learn has nothing to take from it. An FX
   // scope carries the PLAN KEY, so an assignment made on the screen printed that key —

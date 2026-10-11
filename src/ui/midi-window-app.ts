@@ -7,7 +7,7 @@
 // The window's entry point does nothing but hand this module its host element.
 
 import { midiUiAttachWindow, midiUiToMain } from "../core/platform";
-import { LANGS, setLang } from "../i18n";
+import { adoptLang, LANGS } from "../i18n";
 import type { Lang } from "../i18n";
 import { parseRelay } from "./midi-protocol";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
@@ -50,8 +50,9 @@ export function startMidiWindow(host: HTMLElement): void {
     // The relay carries opaque JSON, so `lang` is a claim rather than a Lang: an
     // unregistered value would leave the catalog lookup undefined and every later
     // paint would throw, blanking the window for good. Keep the current language
-    // instead — the rest of the state is still worth showing.
-    if (LANGS.includes(state.lang)) setLang(state.lang as Lang);
+    // instead — the rest of the state is still worth showing. The language is the
+    // main window's preference, so it is applied here and never stored from here.
+    if (LANGS.includes(state.lang)) adoptLang(state.lang as Lang);
     paint();
   });
 

@@ -975,9 +975,10 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
 
   // The claim the repair rests on: what the load writes down is what the write was already
   // sending, for every leaf of every node, in each shape a document can be outside it in.
-  it("never changes what the write path sends, and settles in one pass", () => {
-    const offenders: string[] = [];
-    for (const id of ["URX44V", "URX22"] as const) {
+  // One case per node, each running only that node's shapes.
+  describe.each(["URX44V", "URX22"] as const)(
+    "never changes what the write path sends, and settles in one pass on %s",
+    (id) => {
       const model = getModel(id);
       const base = defaultPlan(id);
       ensureFixedConnections(model, base);
@@ -986,16 +987,19 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
         plan.nodeParams[node] = { ...plan.nodeParams[node], ...np } as never;
         return plan;
       };
-      const cases: [string, Plan, boolean, boolean][] = [];
-      for (const node of model.nodes) {
+      /** Every shape of every leaf of one node: its name, the plan holding it (built when asked
+       *  for), whether it is outside what the write sends, and whether the repair may move the
+       *  write. */
+      const shapesOf = (nodeId: string): [string, () => Plan, boolean, boolean][] => {
+        const cases: [string, () => Plan, boolean, boolean][] = [];
         const insertCases: Record<string, unknown>[] = [{}];
-        if (node.id === "ch1") for (const sel of [256, 512, 1793]) insertCases.push({ insertFx: sel });
-        if (node.id === "bus.stereo") for (const sel of [1792, 1794]) insertCases.push({ insertFx: sel });
+        if (nodeId === "ch1") for (const sel of [256, 512, 1793]) insertCases.push({ insertFx: sel });
+        if (nodeId === "bus.stereo") for (const sel of [1792, 1794]) insertCases.push({ insertFx: sel });
         for (const extra of insertCases) {
-          const at: NodeParams = { ...base.nodeParams[node.id], ...extra };
+          const at: NodeParams = { ...base.nodeParams[nodeId], ...extra };
           const withSlots: NodeParams =
             typeof extra.insertFx === "number" ? { ...at, insertFxParams: engineSlotsOf(extra.insertFx) } : at;
-          for (const [path, rule] of nodeLeafRules(model, node.id, withSlots)) {
+          for (const [path, rule] of nodeLeafRules(model, nodeId, withSlots)) {
             const shapes: [string, number, boolean][] =
               "unsent" in rule
                 ? [["unsent", 1, true]]
@@ -1021,31 +1025,40 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
               for (const k of keys.slice(0, -1)) holder = (holder[k] ??= {}) as Record<string, unknown>;
               holder[keys[keys.length - 1]] = v;
               cases.push([
-                `${id} ${node.id} ${path} ${shape}`,
-                seeded(node.id, np),
+                `${path} ${shape}`,
+                () => seeded(nodeId, np),
                 outside,
                 driverPath(path) || LOAD_ONLY.has(path),
               ]);
             }
           }
         }
-      }
-      for (const [name, plan, outside, driver] of cases) {
-        const before = planToCommands(model, plan).map((c) => `${c.paramId}:${c.y}=${c.vdValue}`);
-        const problems = paramRangeProblems(plan);
-        if (outside && !problems.length) offenders.push(`${name}: nothing reported`);
-        applyParamRange(plan, problems);
-        const after = planToCommands(model, plan).map((c) => `${c.paramId}:${c.y}=${c.vdValue}`);
-        // A slot that decides which others are the unit's is read for that by its stored value,
-        // which the repair moves to the value the write sends for the slot itself; and a value
-        // the load bounds to a narrower window than its encoder's is one the repair moves.
-        if (!driver && after.join() !== before.join()) offenders.push(`${name}: the write moved`);
-        if (paramRangeProblems(plan).length) offenders.push(`${name}: still reported`);
-      }
-      expect(cases.length, id).toBeGreaterThan(100);
-    }
-    expect(offenders).toEqual([]);
-  });
+        return cases;
+      };
+
+      it("sweeps more than 100 shapes", () => {
+        expect(model.nodes.reduce((n, node) => n + shapesOf(node.id).length, 0)).toBeGreaterThan(100);
+      });
+
+      it.each(model.nodes.map((n) => n.id).filter((n) => shapesOf(n).length))("%s", (nodeId) => {
+        const offenders: string[] = [];
+        for (const [name, planOf, outside, driver] of shapesOf(nodeId)) {
+          const plan = planOf();
+          const before = planToCommands(model, plan).map((c) => `${c.paramId}:${c.y}=${c.vdValue}`);
+          const problems = paramRangeProblems(plan);
+          if (outside && !problems.length) offenders.push(`${name}: nothing reported`);
+          applyParamRange(plan, problems);
+          const after = planToCommands(model, plan).map((c) => `${c.paramId}:${c.y}=${c.vdValue}`);
+          // A slot that decides which others are the unit's is read for that by its stored value,
+          // which the repair moves to the value the write sends for the slot itself; and a value
+          // the load bounds to a narrower window than its encoder's is one the repair moves.
+          if (!driver && after.join() !== before.join()) offenders.push(`${name}: the write moved`);
+          if (paramRangeProblems(plan).length) offenders.push(`${name}: still reported`);
+        }
+        expect(offenders).toEqual([]);
+      });
+    },
+  );
 
   it("finds nothing in any model's shipped default plan", () => {
     for (const id of MODEL_IDS) expect(paramRangeProblems(defaultPlan(id)), id).toEqual([]);

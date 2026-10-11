@@ -3929,49 +3929,96 @@ describe("the live session", () => {
     await endLive();
   });
 
-  // …and the read it was for CONSUMES it. What the announcement must not do is outlive
-  // that read: the next clearing is the operator's own, made by hand on the unit at a
-  // rate that runs the effect, and holding it against a rate the unit left long before
-  // overrides them. (Their clearing IS announced on the insert-FX addresses, but that
-  // announcement arrives BEFORE the read it escalates to, so it falls outside the window
-  // `announced` covers — the rate history is what decides it.)
+  // …and the read it was for CONSUMES it, whatever else is reading when it ends. What the
+  // announcement must not do is outlive that read: the next clearing is the operator's own,
+  // made by hand on the unit at a rate that runs the effect, and holding it against a rate
+  // the unit left long before overrides them. (Their clearing IS announced on the insert-FX
+  // addresses, but that announcement arrives BEFORE the read it escalates to, so it falls
+  // outside the window `announced` covers — the rate history is what decides it.) The read
+  // here ends while a side-effect refetch is still open: a follow read that establishes no
+  // rate of its own, so it consumes nothing either.
   it("adopts the operator's own clearing once the announcement has been consumed", SLOW, async () => {
     const shell = await bootDevice();
     await heldByExcursion(shell);
 
+    /** Holds the first read of one address made after `arm()` until `release()`. */
+    const gate = (paramId: number, y: number) => {
+      let armed = false;
+      let held = false;
+      let release!: () => void;
+      const open = new Promise<void>((r) => (release = r));
+      return {
+        arm: () => void (armed = true),
+        held: () => held,
+        release: () => release(),
+        take: (a: Record<string, unknown>): Promise<void> | null => {
+          if (!armed || a.paramId !== paramId || a.y !== y) return null;
+          armed = false;
+          held = true;
+          return open;
+        },
+      };
+    };
+    // A CH 4 address the whole-device read reaches and a STEREO refetch does not, and a STEREO
+    // address the refetch reads.
+    const fullRead = gate(PARAMS.HPF_ON.id, 3);
+    const refetch = gate(PARAMS.OSC_ASSIGN_STEREO.id, 0);
     let cleared = false;
+    const value = (a: Record<string, unknown>): number =>
+      a.paramId === PARAMS.SAMPLE_RATE.id
+        ? 48_000
+        : a.paramId === PARAMS.INSERT_FX.id && a.y === 0 && cleared
+          ? denormalizeInsertFx(INSERT_FX_NONE)
+          : a.paramId === PARAMS.INSERT_FX.id && a.y === 0
+            ? COMPANDER_H
+            : unwrittenRead(a);
     shell.answer("vd_get", (a: Record<string, unknown>) => {
-      const v =
-        a.paramId === PARAMS.SAMPLE_RATE.id
-          ? 48_000
-          : a.paramId === PARAMS.INSERT_FX.id && a.y === 0 && cleared
-            ? denormalizeInsertFx(INSERT_FX_NONE)
-            : a.paramId === PARAMS.INSERT_FX.id && a.y === 0
-              ? COMPANDER_H
-              : unwrittenRead(a);
-      return new Promise((r) => setTimeout(() => r(v), 1));
+      const wait = fullRead.take(a) ?? refetch.take(a);
+      return wait ? wait.then(() => value(a)) : value(a);
     });
     const at = shell.invokes.indexOf("vd_params_subscribe");
     const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
 
-    // The excursion, held and re-sent by the full read it escalates to.
+    // The excursion, held and re-sent by the full read it escalates to — parked part-way.
     cleared = true;
+    fullRead.arm();
     channel.onmessage([
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
     ]);
+    await vi.waitFor(() => expect(fullRead.held(), "the full read reached CH 4").toBe(true), { timeout: 25_000 });
+    // A STEREO EQ 1-knob switched on beside it, whose flush refetches STEREO — parked too.
+    refetch.arm();
+    selectNode("bus.stereo");
+    $("inspector").querySelector<HTMLButtonElement>("#btn-eq-screen")!.click();
+    $("dyn-screen-box")
+      .querySelector<HTMLElement>("#dyn-oneknob-level")!
+      .closest(".prefs-section")!
+      .querySelectorAll<HTMLButtonElement>(".prefs-toggle button")[0]
+      .click(); // ON
+    await vi.waitFor(() => expect(refetch.held(), "the refetch reached STEREO").toBe(true), { timeout: 25_000 });
+    // The full read ends with the refetch still open.
+    fullRead.release();
     await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
       timeout: 25_000,
     });
-    await quiet(shell);
 
-    // Now the operator clears it by hand, at a rate that runs it. The unit announces the
-    // selector, which settles into a scoped read of CH 1.
+    // Now the operator clears it by hand, at a rate that runs it, while the refetch is still
+    // open — so the follow read this announcement asks for is the next read of CH 1, held off
+    // until the flush carrying the refetch is done. Every line the status bar shows from here
+    // is kept, since a held line can be replaced before a poll reads it.
+    const lines: string[] = [];
+    const watch = new MutationObserver(() => lines.push(statusText()));
+    watch.observe($("statusbar"), { childList: true, characterData: true, subtree: true });
     channel.onmessage([{ param_id: PARAMS.INSERT_FX.id, x: 0, y: 0, value: denormalizeInsertFx(INSERT_FX_NONE) }]);
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
-      timeout: 25_000,
-    });
-    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
+    refetch.release();
+    $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions .consent-btn-secondary")!.click();
+    const followed = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveFollowed(n)));
+    const held = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveHeld(n, 2, 0)));
+    // Whichever the read that took the clearing says first.
+    await vi.waitFor(() => expect(lines.some((l) => followed(l) || held(l))).toBe(true), { timeout: 25_000 });
+    watch.disconnect();
+    expect(lines.filter(held)).toEqual([]);
     await endLive();
   });
 
@@ -9326,6 +9373,100 @@ describe("MIDI feedback and the live session", () => {
     expect(shell.count("midi_send")).toBe(0);
   });
 
+  // A device fetch and a settings-file import both move mapped values, and neither opens the
+  // output side: a fetch's plan agreed with the unit at the instant of its read and nothing holds
+  // it there afterwards, and a file holds what some unit held when it was saved. The live start
+  // behind each is the positive control — the same port and mapping do send once a session's
+  // read settles. Both flows set CH 1's fader to -6 dB, so a pass that ran would carry it.
+  for (const flow of ["fetch", "settings-file import"] as const)
+    it(`stays silent after a ${flow}, and sends once a session starts`, SLOW, async () => {
+      const fader = channelControl(getModel("URX44V"), "ch1")!.fader;
+      let file: Uint8Array | null = null;
+      let applied = 0;
+      if (flow === "settings-file import") {
+        // A whole file, built the way the import cases build theirs.
+        const { applySourceState } = await import("./core/control/readback");
+        const { defaultPlan } = await import("./models/initial-state");
+        const value = (id: number, y: number): number =>
+          id === PARAMS.SAMPLE_RATE.id
+            ? 48_000
+            : id === fader && y === 0
+              ? -600
+              : unwrittenRead({ paramId: id, x: 0, y });
+        const asked = new Map<number, { str: boolean; len: number }>();
+        const ask = (str: boolean, id: number, y: number): void => {
+          asked.set(id, { str, len: Math.max(asked.get(id)?.len ?? 0, y + 1) });
+        };
+        const expected = await applySourceState(getModel("URX44V"), defaultPlan("URX44V"), {
+          get: async (paramId, x, y) => (ask(false, paramId + x, y), value(paramId + x, y)),
+          getStr: async (paramId, x, y) => (ask(true, paramId + x, y), ""),
+        });
+        expect(expected.errors, "the premise: every address the read asks is answered").toEqual([]);
+        applied = expected.applied;
+        const fields = [...asked].map(([id, a]): Field =>
+          a.str
+            ? { id, typecode: 4, elemSize: 16, values: Array<string>(a.len).fill("") }
+            : (() => {
+                const values = Array.from({ length: a.len }, (_, y) => value(id, y));
+                return { id, typecode: values.some((v) => v > 0x7fffffff) ? 1 : 2, elemSize: 4, values };
+              })(),
+        );
+        file = buildUrxf([{ chunk: "CURRENT", block: "CSF_BACKUP", label: "", fields }]);
+      }
+      const shell = (await bootApp({
+        seed: {
+          "urx-midi": JSON.stringify({
+            output: "Controller Out",
+            models: {
+              URX44V: [{ control: "ch1/level", addr: { type: "cc", channel: 0, controller: 7 }, mode: "absolute" }],
+            },
+          }),
+        },
+        tauri: deviceCommands(
+          {
+            "plugin:dialog|message": "Ok",
+            ...MIDI_PORT,
+            ...connectAs("URX44V"),
+            ...(file
+              ? {
+                  experimental_enabled: true,
+                  "plugin:dialog|open": "C:/urx/backup.urxf",
+                  read_binary_file: () => file!.buffer,
+                  "plugin:dialog|save": null,
+                }
+              : {}),
+          },
+          file ? {} : { [`${fader}/0/0`]: -600 },
+        ),
+      }))!;
+      await invoked(shell, "midi_open_output");
+      // CH 1's main fader as the CONSOLE states it.
+      $("btn-view-console").click();
+      const ch1Level = (): string | null =>
+        $("console-host").querySelector(".con-strip")!.querySelector(".con-fader")!.getAttribute("aria-valuenow");
+      await vi.waitFor(() => expect(ch1Level()).not.toBeNull(), { timeout: 10_000 });
+      expect(ch1Level(), "the premise: the flow moves the mapped fader").not.toBe("-6");
+
+      if (file) {
+        await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
+        $("btn-open-settings").click();
+        await vi.waitFor(() => expect(statusText()).toBe(t().status.settingsImported("backup.urxf", applied)), {
+          timeout: 15_000,
+        });
+      } else {
+        $("btn-fetch").click();
+        await invoked(shell, "vd_disconnect");
+        await fetchEnded();
+      }
+      await vi.waitFor(() => expect(ch1Level()).toBe("-6"), { timeout: 10_000 });
+      await new Promise((r) => setTimeout(r, 300)); // past the feedback debounce
+      expect(shell.count("midi_send")).toBe(0);
+
+      $("btn-live").click();
+      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), SLOW);
+      await vi.waitFor(() => expect(shell.count("midi_send")).toBeGreaterThan(0));
+    });
+
   it("stays silent when the live session fails on the way up", SLOW, async () => {
     // Unknown model: the read never runs, and the flow lands in the same `finally` a
     // settled one does. What separates them is the session, which is why the re-send
@@ -10612,19 +10753,29 @@ describe("the displayed side and the unit's LCD selection", () => {
   it("writes a switch made in the app while live, and takes the unit's answer as no selection", SLOW, async () => {
     const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
     await goLive();
-    nameArea().click();
-    expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
-    nameArea().click();
-    expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
-    // Inside the answer window, which the case is about: two switches, so two writes at most.
-    await vi.waitFor(() => expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]));
-    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
-    expect(showing(), "the late answer to the first write").toBe("C H 5 slash 6, showing C H 5 (L)");
-    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
-    expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
-    // The positive control: a selection made on the unit itself still shows.
-    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
-    expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
+    // The answer window runs on `Date.now()`, held still from the first switch to the last
+    // answer, so every answer below lands inside it however long the steps between take.
+    // Timers stay real: the shell's answers run on them.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      nameArea().click();
+      expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
+      nameArea().click();
+      expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
+      // Two switches, so two writes at most. Polled on a real timer rather than `vi.waitFor`,
+      // which moves a faked clock forward by its interval on every poll.
+      for (let i = 0; i < 1000 && lcdWrites(shell).length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+      expect(showing(), "the late answer to the first write").toBe("C H 5 slash 6, showing C H 5 (L)");
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
+      expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
+      // The positive control: a selection made on the unit itself still shows.
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+      expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
+    } finally {
+      vi.useRealTimers();
+    }
     await end(shell);
   });
 
@@ -10749,10 +10900,17 @@ describe("the displayed side and the unit's LCD selection", () => {
     expect(lcdWrites(shell), "the queued switch is not sent").toEqual([0x0101]);
     // The app's own answer keeps the queue: a switch queued behind a write whose answer arrives
     // first is still sent.
+    // `Date.now()`, which the answer window runs on, is held still from the write to its
+    // answer, so the answer lands inside the window however long the two switches take.
     held = true;
-    nameArea().click();
-    nameArea().click();
-    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      nameArea().click();
+      nameArea().click();
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+    } finally {
+      vi.useRealTimers();
+    }
     finish();
     await drainShell(shell, () => false);
     expect(lcdWrites(shell)).toEqual([0x0101, 0x0101, 0x0100]);

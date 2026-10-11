@@ -1046,8 +1046,11 @@ in-house module `src/i18n/`:
 - `ja.ts` — the Japanese translation that satisfies `Messages`. Adding a key makes TypeScript
   require a translation in every language.
 - `index.ts` — the current language state, `t()` (returns the active catalog), and
-  `setLang()` / `onLangChange()`. On startup it reads `localStorage("urx-lang")`; if absent it
-  detects from `navigator.language`, with English as the final fallback.
+  `setLang()` / `adoptLang()` / `onLangChange()`. On startup it reads `localStorage("urx-lang")`; if absent it
+  detects from `navigator.language`, with English as the final fallback. `setLang()` stores the choice;
+  `adoptLang()` switches without storing it, and is what the MIDI control window uses to follow the language the
+  main window relays — that window shares the main window's storage, so a stored copy would turn an unset
+  ("auto") preference into a pinned one.
 
 > **The core stays language-agnostic.** `canConnect` in `core/routing.ts` returns failures as
 > `ConnectError` codes, and `deserialize` in `core/plan.ts` throws a `PlanError` (with a code). The
@@ -2591,7 +2594,7 @@ sequenceDiagram
     H-->>L: the clone the read ran against
     L->>L: capture from it
   end
-  Note over L: the next schedule asks the diff whether the same is about to happen again<br/>while it would, the 120 ms window re-arms rather than firing
+  Note over L: the next schedule asks the diff whether the same is about to happen again<br/>while it would, the 120 ms window re-arms rather than firing, for 500 ms at most
 ```
 
 The split between the two is who owns what moved: **converge** pushes the plan's own values back at a unit that
@@ -2646,7 +2649,7 @@ it read included; a reconcile reads the names of the nodes it covers and takes t
 | Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands, and an entry already recorded takes a nested `nodeParams` / `connParams` leaf only where its `before` AND its `after` both hold what the read measured from — both sides then take the read's value, and a whole field is never folded |
 | Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect, when the read authored at least one key (`followAuthored`) |
 | Side-effect refetch | `capture` from the read's clone for the nodes it read, their names excepted since the read carries none, then the same journal replay | `absorb` of the device-authored keys only |
-| Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel | untouched |
+| Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel, then the journal replay for the notifies stamped after the freeze — less an address a converge write the unit accepted has replaced since | untouched |
 
 #### The display update
 
@@ -2690,7 +2693,7 @@ agreed with the plan at every key leaves both stacks as they were.
 | --- | --- | --- |
 | A drag's intermediate values | the plan itself — the next step overwrites the key inside the window | only the final value of an address ever becomes a command |
 | An address whose value equals the snapshot | the flush's diff | the device already holds it |
-| A notify whose value equals the snapshot, a value an acked write is still waiting to hear announced, or the value a write still on the wire carries | `isEcho`, before the settle window | our own write coming back is not a change, whether it arrives after its ack or ahead of it; the match retires the writes queued before it, so the unit moving back to one of their values is still a change |
+| A notify whose value equals the snapshot, a value an acked write is still waiting to hear announced, or the value a write still on the wire carries | `isEcho`, before the settle window | our own write coming back is not a change, whether it arrives after its ack or ahead of it, and whether the send loop or a converge round sent it — a converge sends from a copy frozen after the loop's writes, so it can carry a value the loop never sent; the match retires the writes queued before it, so the unit moving back to one of their values is still a change |
 | A notify for Follow USB, 848 | `intercept`, ahead of node resolution | host-owned and outside the plan; it would otherwise force a full re-read |
 | A device read whose plan was replaced | `readIntoPlan`'s identity guard, after the read resolves | its values belong to a document nothing shows |
 | An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |

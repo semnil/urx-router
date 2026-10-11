@@ -165,6 +165,7 @@ describe("PrefsPanel", () => {
 
     change(document.querySelector("#prefs-lang") as HTMLSelectElement, "ja");
     expect(document.documentElement.lang).toBe("ja");
+    expect(localStorage.getItem("urx-lang")).toBe("ja");
 
     setLang("en");
     setLive(true);

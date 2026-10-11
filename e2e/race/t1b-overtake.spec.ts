@@ -17,7 +17,7 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, spans, setsOf, getsOf, type Span } from "./analyze";
 import { stepLevel } from "../../src/core/levels";
-import { DEBOUNCE_MS } from "../../src/core/control/live";
+import { CONVERGE_DEFER_MAX_MS, DEBOUNCE_MS } from "../../src/core/control/live";
 import {
   CH1_FADER,
   CH1_HPF_ADDR,
@@ -87,6 +87,8 @@ const seedMem = (page: Page, entries: Record<string, number>): Promise<void> =>
 
 const INSERT_FX_VD_NONE = 0xffffffff;
 
+/** The STEREO master's insert-FX selector, the converge the latched stream is held behind. */
+const STEREO_INSERT_FX = "578:0:0";
 /** Ticks in the starvation stream. 55 of Up/Up/Down/Down net one detent up, which is
  *  what makes the trailing flush's value computable rather than merely non-zero. */
 const STREAM_TICKS = 55;
@@ -184,10 +186,10 @@ test.describe("T1b overtake", () => {
   // LiveSync.schedule() normally lets an already-armed window absorb a new edit (a
   // trailing throttle), but when the last flush converged AND the diff still carries a
   // converge param it clears the timer and re-arms — turning the throttle into a
-  // re-arming debounce. An edit stream faster than DEBOUNCE_MS then never lets the
-  // window close, and a live mixer hears nothing for as long as the operator keeps
-  // moving. Every other case in this catalog looks for wrong traffic and reads this as
-  // a clean run.
+  // re-arming debounce — for CONVERGE_DEFER_MAX_MS at most. An edit stream faster than
+  // DEBOUNCE_MS used to keep the window open for as long as the operator kept moving, and
+  // a live mixer heard nothing until the pointer stopped. Every other case in this catalog
+  // looks for wrong traffic and reads that as a clean run.
   //
   // Exactly one variable moves: whether a converge param still differs when the stream
   // starts. Both runs converge CH 1's insert FX first (so lastFlushConverged is set in
@@ -197,10 +199,10 @@ test.describe("T1b overtake", () => {
   // dynamics), so neither run is really testing a 1-of-N resource conflict.
   // ---------------------------------------------------------------------------
   for (const latched of [true, false]) {
-    test(`a 90 ms edit stream ${latched ? "with a converge param still pending sends nothing" : "with the converge settled keeps flushing"}`, async ({
+    test(`a 90 ms edit stream ${latched ? "with a converge param still pending is held, then flushes" : "with the converge settled keeps flushing"}`, async ({
       page,
     }) => {
-      await seedMem(page, { "135:0:0": INSERT_FX_VD_NONE, "578:0:0": INSERT_FX_VD_NONE });
+      await seedMem(page, { "135:0:0": INSERT_FX_VD_NONE, [STEREO_INSERT_FX]: INSERT_FX_VD_NONE });
       await goLive(page);
       await page.click("#btn-view-console");
       await expect(faderReadout(page, "CH 1")).toBeVisible();
@@ -315,26 +317,26 @@ test.describe("T1b overtake", () => {
         // The cadence really was faster than the window it has to keep re-arming —
         // EVERY interval of it, the arming-to-first-edit one included, which is why
         // `gaps` starts at the click rather than at the first tick. Asserted BEFORE the
-        // absence: a slipped interval lets the trailing window close for a reason that
-        // belongs to the driver, and the write it produces would otherwise read as "the
-        // latch does not starve after all". This way a slipped run fails naming the slip.
+        // hold: a slipped interval lets the trailing window close for a reason that belongs
+        // to the driver, and the write it produces would otherwise read as the hold ending.
+        // This way a slipped run fails naming the slip.
         expect(maxGap).toBeLessThan(DEBOUNCE_MS);
-        // PINNED DEFECT. Five seconds of continuous operator movement on a live mixer
-        // and not one command left the app: the re-arm in schedule() never lets the
-        // window close while a converge param is still in the diff. Nothing is lost —
-        // the trailing flush after the stream carries the final value — but for the
-        // whole gesture the unit is playing the old one.
-        expect(during).toHaveLength(0);
-        // …and it really is starvation rather than a session that died: the moment the
-        // cadence stops, the same edits go out.
-        expect(faderAfter.length).toBeGreaterThan(0);
+        // The hold ends while the stream is still moving: the pending selector goes out in the
+        // middle of it, rather than once the stream stops. Before the hold was bounded, not one
+        // command left the app for the five seconds of the stream. What the fader writes after
+        // it is not asked: the windows behind the converge each take two ticks of a four-tick
+        // cycle, so whether a window finds a value the unit does not hold depends on where the
+        // cycle stands when the converge ends.
+        const selector = during.filter((s) => s.addr === STEREO_INSERT_FX);
+        expect(selector.length, "the pending converge went out during the stream").toBeGreaterThan(0);
+        // Not before the hold: the window is still re-armed for its whole length.
+        expect(during.filter((s) => s.start < from + CONVERGE_DEFER_MAX_MS)).toHaveLength(0);
         // …and it carries the value the operator ended on, not an intermediate one:
         // the trailing flush sends the settled plan. The train's landing value is
         // computed off the same grid the app steps on, so "an intermediate value" and
-        // "the settled value" are separable here — `> 0` was satisfied by both.
-        // (Asserting the fake's memory against the last write it accepted would only
-        // restate the harness.)
-        expect(faderAfter[faderAfter.length - 1].value).toBe(settledRaw);
+        // "the settled value" are separable here.
+        const faderSets = setsOf(trace).filter((s) => s.addr === CH1_FADER);
+        expect(faderSets[faderSets.length - 1].value).toBe(settledRaw);
         expect(await faderReadout(page, "CH 1").textContent()).toBe(streamed);
       } else {
         // The control. Same cadence, same fader, same lastFlushConverged — but with no
