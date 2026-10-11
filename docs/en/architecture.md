@@ -1105,8 +1105,12 @@ the inspector, and the open modal itself.
 > table cell is entered with, and `aria-description` beside it does not stop that. **A tooltip** on a
 > control the reader reaches whose spoken form differs — a mapped control's MIDI address, the gain knob's
 > notes, a shelf chip's, the labels toggle's — moves to a zone hidden from assistive technology that
-> covers the control, and the control is described by the spoken form instead (`setTip`); a wrapper
-> keeps its title, which is not read, and describes the controls inside it. Every ordinary E2E case
+> covers the control, and the control is described by the spoken form instead (`setTip`). A wrapper or a
+> group hands the tooltip to each control inside it, so no zone covers more than the one control it
+> belongs to — a zone laid over a split ON / OFF switch took every press meant for its buttons — and keeps
+> the title itself, which is not read, only for a control that cannot hold a zone (an input).
+> `src/ui/midi-arm.contract.test.ts` opens every tuning screen with every control mapped and fails on a
+> zone over an element holding other controls. Every ordinary E2E case
 > ends by checking the page for a name, a description or such a tooltip that still holds a mark in
 > its printed form (`e2e/fixtures.ts`). Read on both shipping engines, in both languages: VoiceOver reads a
 > MIDI row's cells and such a control in the spoken form alone — the description right after the name,

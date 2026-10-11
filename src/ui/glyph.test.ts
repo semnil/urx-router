@@ -172,6 +172,28 @@ describe("setTip", () => {
     expect(b.hasAttribute("aria-description")).toBe(false);
   });
 
+  // A zone over a group of buttons takes every press meant for them, so a group hands the
+  // tooltip to each button and keeps none of its own.
+  it("hands a group's tooltip to each button inside it", () => {
+    const group = document.createElement("div");
+    group.setAttribute("role", "group");
+    const [on, off] = ["ON", "OFF"].map((label) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      group.append(b);
+      return b;
+    });
+    setTip(group, "CH 1 CC 21");
+    expect(group.hasAttribute("title")).toBe(false);
+    expect(group.querySelector(":scope > .tip-zone")).toBeNull();
+    for (const b of [on, off]) {
+      expect(b.querySelector(":scope > .tip-zone")?.getAttribute("title")).toBe("CH 1 CC 21");
+      expect(b.getAttribute("aria-description")).toBe("C H 1 CC 21");
+      expect(b.textContent).toBe(b === on ? "ON" : "OFF");
+    }
+    expect(tipOf(group)).toBe("CH 1 CC 21");
+  });
+
   it("leaves a wrapper's tooltip where it is and describes the controls inside it", () => {
     const wrap = document.createElement("span");
     const input = document.createElement("input");

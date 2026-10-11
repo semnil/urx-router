@@ -1509,6 +1509,40 @@ test("the DUCKER screen's sliders arm under the ducker's own scope", async ({ pa
   await box.locator(".consent-btn-secondary").click();
 });
 
+// A split ON / OFF switch on a tuning screen is a group of buttons. Once it is mapped its tooltip
+// carries the MIDI address, and the tooltip has to sit on each button rather than over the whole
+// group: a zone over the group takes the press and the switch stops switching.
+test("a mapped split switch on a tuning screen still switches, and carries the address on each button", async ({
+  page,
+}) => {
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
+  await strip(page, "CH 1").locator('.con-chip-open[aria-label="Comp screen"]').click();
+  const box = screenBox(page);
+  await expect(box).toBeVisible();
+  const section = box.locator(".prefs-section").filter({ has: page.locator("h3", { hasText: /^1-knob$/ }) });
+  const toggle = section.locator(".prefs-row").first().locator(".prefs-toggle");
+  await toggle.click();
+  await sendMidi(page, [0xb0, 46, 100], [0xb0, 46, 101]);
+  await expect(win.locator(".mw-ctl", { hasText: "1-knob" })).toBeVisible();
+  await setLearn(page, win, false);
+
+  const on = toggle.getByRole("button", { name: "ON" });
+  await expect(on).toHaveAttribute("aria-pressed", "false");
+  const r = (await on.boundingBox())!;
+  const at = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  await page.mouse.click(at.x, at.y);
+  await expect(toggle.getByRole("button", { name: "ON" })).toHaveAttribute("aria-pressed", "true");
+  const tip = await page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.closest("[title]")?.getAttribute("title"),
+    at,
+  );
+  expect(tip, "the address shows from the button the pointer rests on").toBe("CH 1 CC 46");
+  await expect(on).toHaveAttribute("aria-description", "C H 1 CC 46");
+  await box.locator(".consent-btn-secondary").click();
+});
+
 test("an EQ band binds to that band, not to the selected one", async ({ page }) => {
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);

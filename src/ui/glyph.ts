@@ -133,23 +133,61 @@ export function setHeardText(el: HTMLElement, text: string, said: string, toolti
 // description it wrote and never one set for another reason.
 const tipDescribed = new WeakSet<HTMLElement>();
 
-/** The tooltip `el` carries, wherever `setTip` put it. */
+// Roles that hold controls rather than being one, and controls whose content cannot hold the
+// hover zone. A zone laid over a group of buttons takes every press meant for them.
+const HOLDS_CONTROLS = '[role="group"], [role="radiogroup"], [role="toolbar"]';
+const NO_CONTENT = "input, select, textarea";
+
+/** The tooltip `el` carries, wherever `setTip` put it: on `el` itself, on its zone, or —
+ *  for a wrapper or a group — on the zone of the first control inside it. */
 export function tipOf(el: HTMLElement): string {
-  return el.querySelector<HTMLElement>(":scope > .tip-zone")?.title ?? el.title;
+  return (
+    el.querySelector<HTMLElement>(":scope > .tip-zone")?.title ??
+    (el.title || el.querySelector<HTMLElement>(".tip-zone")?.title || "")
+  );
+}
+
+function describeBy(el: HTMLElement, said: string, on: boolean): void {
+  if (on) {
+    el.setAttribute("aria-description", said);
+    tipDescribed.add(el);
+  } else if (tipDescribed.has(el)) {
+    el.removeAttribute("aria-description");
+    tipDescribed.delete(el);
+  }
 }
 
 // A tooltip on `el`, shown on hover as `text` and announced in its spoken form. VoiceOver
 // reads an element's own title as a hint in its printed form, and an aria-description beside
 // it does not stop that, so where the two forms differ the title moves to a hidden zone
-// covering the element and the element is described by the spoken form instead. A wrapper
-// keeps its title, which is not read, and describes the controls inside it. `describe`
-// describes by the text even where the two forms agree.
+// covering the control and the control is described by the spoken form instead. A wrapper or
+// a group hands the tooltip to each control inside it, so no zone ever covers more than the
+// one control it belongs to; it keeps the title itself, which is not read, only for a control
+// that cannot hold a zone (an input). `describe` describes by the text even where the two
+// forms agree.
 export function setTip(el: HTMLElement, text: string, describe = false): void {
-  const same = spoken(text) === text;
+  if (el.matches(READ_AS_ELEMENT) && !el.matches(HOLDS_CONTROLS)) {
+    tipOnControl(el, text, describe);
+    return;
+  }
+  const controls = [...el.querySelectorAll<HTMLElement>(READ_AS_ELEMENT)].filter((c) => !c.matches(HOLDS_CONTROLS));
   const said = spoken(text).replace(/\s*\n\s*/g, " ");
-  const reached = el.matches(READ_AS_ELEMENT);
+  const describes = Boolean(text) && (describe || spoken(text) !== text);
+  let wrapperKeeps = controls.length === 0;
+  for (const c of controls) {
+    if (c.matches(NO_CONTENT)) {
+      describeBy(c, said, describes);
+      wrapperKeeps = true;
+    } else tipOnControl(c, text, describe);
+  }
+  if (text && wrapperKeeps) el.title = text;
+  else el.removeAttribute("title");
+}
+
+function tipOnControl(el: HTMLElement, text: string, describe: boolean): void {
+  const same = spoken(text) === text;
   let zone = el.querySelector<HTMLElement>(":scope > .tip-zone");
-  if (!reached || same) {
+  if (same || el.matches(NO_CONTENT)) {
     zone?.remove();
     el.classList.remove("tip-host");
     if (text) el.title = text;
@@ -165,13 +203,5 @@ export function setTip(el: HTMLElement, text: string, describe = false): void {
     zone.title = text;
     el.classList.add("tip-host");
   }
-  for (const d of reached ? [el] : el.querySelectorAll<HTMLElement>(READ_AS_ELEMENT)) {
-    if (text && (describe || !same)) {
-      d.setAttribute("aria-description", said);
-      tipDescribed.add(d);
-    } else if (tipDescribed.has(d)) {
-      d.removeAttribute("aria-description");
-      tipDescribed.delete(d);
-    }
-  }
+  describeBy(el, spoken(text).replace(/\s*\n\s*/g, " "), Boolean(text) && (describe || !same));
 }
