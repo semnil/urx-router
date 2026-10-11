@@ -21,7 +21,8 @@ import type { ConsoleHooks, ConsoleMidiHooks } from "./console";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { DeviceModel } from "../models/types";
-import type { Plan } from "../core/plan";
+import type { JackSide, Plan } from "../core/plan";
+import { resetDisplayedSides, setDisplayedSide } from "../core/stereo-side";
 
 /** The private strip record the view keeps, narrowed to what a test addresses. */
 export interface StripHandle {
@@ -52,6 +53,9 @@ export interface ConsoleHost {
   meterErrors: string[];
   /** Tuning screens the view asked the app to open. */
   opened: Array<{ kind: string; id: string }>;
+  /** The sides the view asked a stereo channel to show, in order. The host shows each one, as
+   *  the app does: the side is stored and the view re-rendered. */
+  switches: Array<{ id: string; side: JackSide }>;
   /** The strip record for a node id — the view's own `refs` entry. */
   strip: (id: string) => StripHandle;
   /** One send column of a strip, by send target ("bus.mix1", "fx1", …). */
@@ -107,6 +111,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
   const plan = opts.plan ?? defaultPlan(modelId);
   const meterErrors: string[] = [];
   const opened: ConsoleHost["opened"] = [];
+  const switches: ConsoleHost["switches"] = [];
   let changes = 0;
   const changeKeys: string[][] = [];
   const changeDefaults: (readonly [string, string])[][] = [];
@@ -185,6 +190,10 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
     },
     onMeterError: (message) => void meterErrors.push(message),
     onOpenDynScreen: (kind, id) => void opened.push({ kind, id }),
+    onSwitchSide: (id, side) => {
+      switches.push({ id, side });
+      if (setDisplayedSide(id, side)) view.refresh();
+    },
     midi: opts.midi,
   };
 
@@ -214,6 +223,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
     changeDefaults: () => changeDefaults,
     meterErrors,
     opened,
+    switches,
     strip,
     sendCol: (id, target) => {
       const col = strip(id).sendCols?.find((c) => c.target === target);
@@ -223,6 +233,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
     frame,
     restore: () => {
       resetPointerTracking();
+      resetDisplayedSides();
       windowScope.stop();
       windowScope.release();
       view.hide();

@@ -19,8 +19,8 @@ The rack gives every strip always-available controls for all of its sends, so th
 tabs, no send-on-fader mode and no console mode bar (`Output [MAIN]` / `Send to [...]`).
 The head MUTE chip controls the → STEREO main path (on the strips that have that send: channels,
 FX channels, MIX buses); the rack never touches the main path. The node master ON/OFF (CH_ON / MIX 675 /
-STEREO / MONITOR, all `np.on`, and the oscillator's `osc.on`) is a **power LED** on the scribble — the whole
-scribble is its button; when off the strip dims its grooves, meter, knob faces and scribble ground (the shared
+STEREO / MONITOR, all `np.on`, and the oscillator's `osc.on`) is a **power LED** on the scribble — the LED is
+its button, with a hit area reaching to the strip's corner; when off the strip dims its grooves, meter, knob faces and scribble ground (the shared
 `isNodeInactive` predicate, matching the graph) while its labels and fader caps keep their strength,
 so there is no separate red "CH MUTE" badge. STEREO and the MONITOR buses have no → STEREO send, so they carry no
 MUTE chip; the power LED is their only on/off.

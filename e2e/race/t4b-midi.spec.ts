@@ -68,7 +68,7 @@ function midiStore(
 const sendFader = (page: Page, name: string, send: string) =>
   strip(page, name).locator(`.con-vfad[aria-label="${send}"]`);
 const muteChip = (page: Page, name: string) => strip(page, name).locator(".con-chip.mute");
-const scribble = (page: Page, name: string) => strip(page, name).locator(".con-scribble");
+const power = (page: Page, name: string) => strip(page, name).locator(".con-power");
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
 
 /** A CC message. The level codec is posToLevel(round(v/127 × 40)) over the
@@ -630,8 +630,8 @@ test.describe("T4b midi", () => {
       { control: "ch1/chOn", addr: PB, mode: "absolute" },
       { control: "ch2/chOn", addr: CC14_10, mode: "absolute" },
     ]);
-    await expect(scribble(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
-    await expect(scribble(page, "CH 2")).toHaveAttribute("aria-pressed", "true");
+    await expect(power(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
+    await expect(power(page, "CH 2")).toHaveAttribute("aria-pressed", "true");
 
     await mark(page, "inert");
     await pushMidi(page, [
@@ -652,8 +652,8 @@ test.describe("T4b midi", () => {
     // Pinned behaviour: both bindings exist, both are listed, neither can ever fire
     // (toggleTarget refuses pitchbend and cc14), and no plan write was attempted.
     await expect(win.locator(".mw-list tbody tr")).toHaveCount(2);
-    await expect(scribble(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
-    await expect(scribble(page, "CH 2")).toHaveAttribute("aria-pressed", "true");
+    await expect(power(page, "CH 1")).toHaveAttribute("aria-pressed", "true");
+    await expect(power(page, "CH 2")).toHaveAttribute("aria-pressed", "true");
     expect((await ledgerOf(page)).filter((l) => l.source === "midi")).toHaveLength(0);
     // The rows carry no behaviour control at all — the take-in select is for
     // continuous controls and the button-mode select is skipped for these two

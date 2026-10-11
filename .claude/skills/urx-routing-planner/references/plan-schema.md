@@ -10,7 +10,7 @@ any private protocol knowledge.
 ```json
 {
   "format": "urx-router-plan",
-  "version": 4,
+  "version": 5,
   "modelId": "URX44V",
   "sampleRate": 48000,
   "connections": [ ... ],
@@ -155,13 +155,30 @@ or inside a group — is written `true` / `false`: a number there loads converte
 - `on` — channel / STEREO master / FX channel / MONITOR on. `false` = muted.
 - `hpf` (bool), `hpfFreq` (Hz, 40–120 in 20 Hz steps — 40 / 60 / 80 / 100 / 120 —
   default 80; a value between two steps opens at the nearer one, a tie going up).
-- `gain` — head-amp input gain in dB: -8 … +70 on an analog mic channel (A.Gain),
-  -8 … +40 while `hiZ` is on, -24 … +24 on a stereo channel (D.Gain). A gain past
-  its channel's range opens at the nearer end.
-- `phantom`, `phase`, `phaseL`, `phaseR`, `clipSafe`, `hiZ` (bool). `phantom` and
-  `hiZ` are never on together: on a channel carrying HI-Z (CH 3/4 on URX44/44V,
-  CH 2 on URX22) with `hiZ` on, the app opens the plan with `phantom` off and
-  `gain` bounded to +40, and `plan_tool.py` warns about both.
+- **The input stage is on the jack or the source, not on the channel.** A MIC/LINE
+  input node (`in.micline_1_2`, `in.micline_3_4`) holds its two jacks' keys, `L`
+  the first jack and `R` the second: `gainL` / `gainR` (A.Gain, -8 … +70 dB; -8 … +40
+  while that jack's HI-Z is on), `phantomL` / `phantomR`, `clipSafeL` / `clipSafeR`
+  (bool), and `hiZL` / `hiZR` (bool) on a jack carrying HI-Z — jacks 3 and 4 on
+  URX44/44V, jack 2 on URX22. A digital source node (`in.aux`, `in.usbmain_a`, …)
+  holds `dGain` (D.Gain, -24 … +24 dB). A channel applies the one it reads through its
+  `source` wire: a mono channel the jack its position names (CH 1 → jack 1, the `L`
+  side), a stereo channel on MIC/LINE the pair's `L` jack, a channel on a digital
+  source that source's `dGain`; a channel on no source has no input stage. Channels
+  reading one jack or source share its value. A gain past its range opens at the
+  nearer end. `phantom*` and `hiZ*` are never on together: on a jack with its HI-Z
+  on, the app opens the plan with that jack's +48V off and its gain bounded to +40,
+  and `plan_tool.py` warns about both. A key on the wrong node — a jack key off a
+  MIC/LINE node, HI-Z on a jack without it, `dGain` off a source — is dropped on load.
+- `phase`, `phaseL`, `phaseR` (bool) — the channel's polarity invert.
+- **A channel written with `gain` / `phantom` / `clipSafe` / `hiZ`** (the form a
+  version-4 document used) loads with each moved onto the jack or source the
+  channel's index addressed — CH n's to jack n, a stereo channel's `gain` to the
+  D.Gain of its model's legacy source (URX44/44V: CH 5/6 AUX, CH 7/8–11/12 USB MAIN
+  A–C; URX22: CH 3/4 AUX, CH 5/6–9/10 USB MAIN A–C) — whatever source the channel is
+  wired to; a value the document also writes on the input node wins, and a key that
+  addresses nothing is dropped. `plan_tool.py` reports each move and drop. Write new
+  plans with the input-node keys.
 - `level` — a node-level fader in dB (e.g. monitor level).
 - `pan` — output-bus master balance (STEREO / MIX), `-63` … `0` … `+63`. Absent =
   center. Distinct from a send's `pan`, which is a connection param.
@@ -200,7 +217,7 @@ or inside a group — is written `true` / `false`: a number there loads converte
   channel does not offer opens at PRE FADER — a PRE EQ in SSMCS mode at PRE COMP.
 - `stereoLink` — stereo-link a MONO IN pair (set on the odd/primary channel).
   A linked pair holds one set of values, the primary's: everything but `stereoLink`,
-  `panBal`, the input stage (`gain`, `clipSafe`, `phase`, `phantom`, `hiZ`) and the
+  `panBal`, `phase` (the input stage is on the jacks and sources, outside the pair) and the
   insert effect is the pair's, and so are its sends' `level`, `on` and `tap` (and
   `pan` in BAL). Writing the values on the primary alone is enough — the load copies
   them onto the secondary, which then holds the primary's rather than its own
@@ -370,7 +387,7 @@ its table), the `ssmcs` raws and the
 `insertFxParams` engine values to whole numbers inside their windows (an engine key by the family
 its own name gives, a bare slot by the one the selector names), the EQ 1-knob and COMP 1-knob
 levels to 0–100, the oscillator's `interval` to 1–30 and its `level` to -96–0, a channel's
-`gain` to its own range, an `hpfFreq` to the nearest of its five steps, an EQ band's `q`,
+jack's `gainL` / `gainR` and a source's `dGain` to their own ranges, an `hpfFreq` to the nearest of its five steps, an EQ band's `q`,
 `freq` and `gain` to their windows, and an enum
 off its menu — a LOW / HIGH band's `type`, `compEqType`,
 `recPoint`, `panBal`, `busType`, a COMP `knee`, an EQ 1-knob `type`, the oscillator's `mode`, the
@@ -380,13 +397,13 @@ repair reaches the oscillator too, which the Scene-only device scope does not wr
 
 The same step drops, on every node, a value whose KIND is not the factory value's at that
 path, and the factory value is filled in: an on/off or a group where a number belongs
-(`"gain": true`, `"gain": {"x": 30}`), a group or a list where an on/off belongs, and anything
+(`"gainL": true`, `"gainL": {"x": 30}`), a group or a list where an on/off belongs, and anything
 but a group where a group belongs (`"eqOneKnob": true`) — counted with the values removed. A
 number where an on/off belongs is converted instead (the nodeParams section above).
 
-The same step also repairs two keys outside `fxEffect`: on a channel carrying HI-Z
-with `hiZ` on, `phantom` is turned off and a `gain` above +40 is bounded to +40 (the `gain` /
-`phantom` entries above), counted with the values moved.
+The same step also repairs two keys outside `fxEffect`: on a jack carrying HI-Z
+with its `hiZL` / `hiZR` on, that jack's `phantom*` is turned off and a gain above +40 is bounded
+to +40 (the input-stage entry above), counted with the values moved.
 
 An **empty** `fxEffect` (`{}`) is removed by the sanitiser before any of that, and
 warned about for the same reason the rows above are: the document does not survive

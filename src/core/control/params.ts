@@ -367,6 +367,10 @@ export const PARAMS = {
   HI_Z: { id: 6, encoding: "bool" },
   /** Input channel head-amp (HA) gain (-8 … +70 dB). */
   HA_GAIN: { id: 1, encoding: "gain", follow: "direct" },
+  /** D.Gain of a digital input source (±24 dB). Named by AUX IN's id; the other sources
+   *  (D_GAIN_SOURCES) are written under the same name at their own ids. The unit
+   *  announces nothing when its own panel moves one. */
+  D_GAIN: { id: 9, encoding: "gain" },
   /** Output (mix) fader level. */
   OUT_FADER: { id: 674, encoding: "level", follow: "direct" },
   /** MIX bus master balance (676, fader+2, parallel to STEREO_MASTER_BAL 583). The
@@ -652,6 +656,13 @@ export const PARAMS = {
    *  every Live-sync flush re-assert it. The write path reads it as a pre-check and
    *  the badge writes it with a single vdSet. */
   FOLLOW_USB: { id: 848, encoding: "bool", sceneExternal: true, planExternal: true },
+  /** The unit's LCD selection (global, y0): the element its selection frame is on, packed
+   *  `(block << 8) | index` — block 1 the stereo channels, whose index is 2 × the channel's
+   *  stereo position plus 1 while its R side is shown. Readable and writable: a write moves
+   *  the frame and, for a stereo channel, the side its screens show. The unit announces a
+   *  change only for the element it has selected. UI state rather than a setting, so never
+   *  part of the plan; the live session reads and writes it directly (`lcd-selection.ts`). */
+  LCD_SELECTION: { id: 762, encoding: "raw", sceneExternal: true, planExternal: true },
   /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
    *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
    *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.
@@ -1150,34 +1161,48 @@ export const DELAY_FRAME_RATE_OPTIONS = [
 ];
 export const DELAY_FRAME_RATE_DEFAULT = 5;
 
-// Digital-channel input gain (D.Gain) is NOT param 1 (the analog A.Gain). The unit keeps
-// one D.Gain per INPUT SOURCE, not per channel — ids 9 and 11..17, ±2400 centi-dB (±24 dB) —
-// and every channel reading a source shows and applies that source's value. The app writes
-// y = 0 and 1, which the unit keeps linked.
-//
-// These maps send a stereo channel's gain to the D.Gain of the source that channel reads at
-// the factory — on URX44V and URX44, CH5/6 = AUX IN (9), CH7/8 = USB MAIN A (13), CH9/10 =
-// USB MAIN B (14), CH11/12 = USB MAIN C (15) — so a write reaches the channel only while it
-// reads that source, and reaches every other channel reading the same source. URX22's map
-// puts the same ids on its stereo pairs by position (CH3/4 = 9 … CH9/10 = 15) and is
-// registered in UNVERIFIED_MAPPINGS ("dgain-urx22"). A self-test round trip shows the ids
-// take a value, not which channel each one reaches.
-const D_GAIN_URX44V: Record<string, number> = {
-  ch_5_6: 9,
-  ch_7_8: 13,
-  ch_9_10: 14,
-  ch_11_12: 15,
+/** The jack index (the y of the analog input-stage params 0 / 1 / 5 / 6) of each MIC/LINE
+ *  input node's first jack; its second jack is the next index. */
+export const MIC_LINE_JACK_BASE: Readonly<Record<string, number>> = { "in.micline_1_2": 0, "in.micline_3_4": 2 };
+
+/** The jacks that carry HI-Z on each model, by jack index. */
+export const HI_Z_JACKS: Readonly<Record<string, readonly number[]>> = { URX44V: [2, 3], URX44: [2, 3], URX22: [1] };
+
+/** The D.Gain address of each digital input source: its param id and the instances the app
+ *  writes. Every source but USB DAW is written at y 0 and 1, which the unit keeps linked; a
+ *  USB DAW pair has one instance per pair on param 12. The table is the URX44V's; URX44 and
+ *  URX22 carry a subset of these sources at the same addresses (registered in
+ *  UNVERIFIED_MAPPINGS). */
+export const D_GAIN_SOURCES: Readonly<Record<string, { id: number; instances: readonly number[] }>> = {
+  "in.aux": { id: 9, instances: [0, 1] },
+  "in.sdplay": { id: 11, instances: [0, 1] },
+  "in.usbdaw_1_2": { id: 12, instances: [0] },
+  "in.usbdaw_3_4": { id: 12, instances: [2] },
+  "in.usbdaw_5_6": { id: 12, instances: [4] },
+  "in.usbdaw_7_8": { id: 12, instances: [6] },
+  "in.usbdaw_9_10": { id: 12, instances: [8] },
+  "in.usbdaw_11_12": { id: 12, instances: [10] },
+  "in.usbmain_a": { id: 13, instances: [0, 1] },
+  "in.usbmain_b": { id: 14, instances: [0, 1] },
+  "in.usbmain_c": { id: 15, instances: [0, 1] },
+  "in.usbsub": { id: 16, instances: [0, 1] },
+  "in.hdmi": { id: 17, instances: [0, 1] },
 };
-const D_GAIN_URX22: Record<string, number> = {
-  ch_3_4: 9,
-  ch_5_6: 13,
-  ch_7_8: 14,
-  ch_9_10: 15,
+
+// Load data for documents written before the input stage moved to its jacks and sources: a
+// document from then keeps each mono channel's +48V, A.Gain and Clip Safe at the jack its
+// channel number names (CH n = jack n), its HI-Z on the channels listed here, and a stereo
+// channel's gain on the D.Gain source these maps name per model.
+export const LEGACY_STEREO_DGAIN_ID: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  URX44V: { ch_5_6: 9, ch_7_8: 13, ch_9_10: 14, ch_11_12: 15 },
+  URX44: { ch_5_6: 9, ch_7_8: 13, ch_9_10: 14, ch_11_12: 15 },
+  URX22: { ch_3_4: 9, ch_5_6: 13, ch_7_8: 14, ch_9_10: 15 },
 };
-/** D.Gain param id for a stereo channel on a model, or undefined when the node has
- *  none. URX44 shares the URX44V label map; URX22 uses the positional map (above). */
-export const dGainParam = (modelId: string, nodeId: string): number | undefined =>
-  (modelId === "URX22" ? D_GAIN_URX22 : D_GAIN_URX44V)[nodeId];
+export const LEGACY_HI_Z_CHANNELS: Readonly<Record<string, readonly string[]>> = {
+  URX44V: ["ch3", "ch4"],
+  URX44: ["ch3", "ch4"],
+  URX22: ["ch2"],
+};
 
 // microSD Rec Track Count (RECORDER menu): how many tracks record, an even 2..16.
 // The plan stores the actual count (readback = device raw × 2). Planned here but

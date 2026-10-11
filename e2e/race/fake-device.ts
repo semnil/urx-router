@@ -99,7 +99,8 @@ export interface FakeConfig {
  * `planToCommandOrigins` names one of those leaves as the command's source. A unit holds a value
  * at each of these whether or not anything wrote it, and a value the control cannot take is not
  * one it holds — read as one, the app bounds it and the write's confirmation takes the bound back
- * into the plan. Everything else nothing wrote reads 0: routing selectors, wire params, colours.
+ * into the plan. Everything else nothing wrote reads 0 — wire params, colours, and the routing
+ * selectors but the channels' input sources, which the state map seeds (see `mem` below).
  */
 function factoryNodeParamMem(modelId: string): Record<string, number> {
   const model = getModel(modelId as ModelId);
@@ -408,8 +409,27 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         // A node-param leaf's address starts at its factory value (FakeConfig.factory), and any
         // other address nothing wrote reads 0, except STREAMING's source (705 / 706): its list
         // on the unit offers STEREO / MIX 1 / MIX 2, so it starts on the factory STEREO, as
-        // tagged port refs.
-        mem: { ...config.factory, "705:0:0": 0x80000100, "706:0:0": 0x80000101 },
+        // tagged port refs; and the channels' input sources, which start on the factory
+        // routing — each mono slot its own MIC/LINE jack (22), the stereo channels AUX IN, USB
+        // MAIN A, B and C by position (209 / 210) — since all 0 there is every channel on jack
+        // 1, which the unit's own panel cannot produce.
+        mem: {
+          ...config.factory,
+          "705:0:0": 0x80000100,
+          "706:0:0": 0x80000101,
+          "22:0:0": 0,
+          "22:0:1": 1,
+          "22:0:2": 2,
+          "22:0:3": 3,
+          "209:0:0": 256,
+          "210:0:0": 257,
+          "209:0:1": 512,
+          "210:0:1": 513,
+          "209:0:2": 514,
+          "210:0:2": 515,
+          "209:0:3": 516,
+          "210:0:3": 517,
+        },
         memStr: {},
         paramAddrs: [],
         meterAddrs: [],

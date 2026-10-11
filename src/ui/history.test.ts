@@ -126,7 +126,7 @@ describe("gesture boundaries", () => {
   it("collapses a whole drag into one entry", () => {
     const h = harness();
     press("pointerdown");
-    for (let i = 0; i < 20; i++) h.edit((p) => (p.nodeParams.ch1 = { gain: i }));
+    for (let i = 0; i < 20; i++) h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: i }));
     press("pointerup");
     settle();
     expect(undoDepth(h)).toBe(1);
@@ -136,10 +136,10 @@ describe("gesture boundaries", () => {
   it("does not split a drag that pauses mid-gesture", () => {
     const h = harness();
     press("pointerdown");
-    h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+    h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 1 }));
     idle();
     idle();
-    h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+    h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 2 }));
     press("pointerup");
     settle();
     expect(undoDepth(h)).toBe(1);
@@ -196,7 +196,7 @@ describe("gesture boundaries", () => {
     const h = harness();
     // No pointer gesture at all: a wheel notch dispatches only input events.
     for (let i = 0; i < 5; i++) {
-      h.edit((p) => (p.nodeParams.ch1 = { gain: i }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: i }));
       vi.advanceTimersByTime(IDLE_COMMIT_MS - 50); // still arriving — must not split
     }
     expect(h.history.canRedo()).toBe(false);
@@ -209,9 +209,9 @@ describe("gesture boundaries", () => {
     // No timer is advanced between the presses: a deferred keyup commit would let
     // the second edit join the first entry whenever the page is busy enough for the
     // macrotask to run late.
-    h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+    h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 1 }));
     keyUp("ArrowUp");
-    h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+    h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 2 }));
     keyUp("ArrowUp");
     expect(undoDepth(h)).toBe(2);
   });
@@ -233,7 +233,7 @@ describe("gesture boundaries", () => {
   it("closes one entry per key press for autorepeated stepping", () => {
     const h = harness();
     for (let i = 1; i <= 3; i++) {
-      h.edit((p) => (p.nodeParams.ch1 = { gain: i }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: i }));
       keyUp("ArrowDown");
       settle();
     }
@@ -258,7 +258,7 @@ describe("gesture boundaries", () => {
   it("still arms the backstop when the focused control owns no undo stack", () => {
     const h = harness();
     focused("range");
-    h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+    h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 1 }));
     idle();
     expect(h.history.canUndo()).toBe(true);
     // Committed by the backstop, not by a boundary: undoing needs no focusout.
@@ -333,13 +333,13 @@ describe("device follow", () => {
     h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
     idle();
     // The operator moved CH 3 on the unit: follow writes it and rebases.
-    h.plan.nodeParams.ch3 = { gain: 30 };
+    h.plan.nodeParams.ch3 = { hpfFreq: 30 };
     h.history.rebase();
     h.history.undo();
     settle();
     expect(h.plan.nodeParams.ch1).toBeUndefined();
     // Untouched by the inverse patch, so the live diff sends nothing for it.
-    expect(h.plan.nodeParams.ch3).toEqual({ gain: 30 });
+    expect(h.plan.nodeParams.ch3).toEqual({ hpfFreq: 30 });
   });
 
   it("drops the entry still open when the device writes into the plan", () => {
@@ -511,16 +511,16 @@ describe("refusals", () => {
       const h = harness();
       mouse("pointerdown", { buttons: 1 });
       mouse("pointermove", { buttons: 1 });
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 1 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 2 }));
       mouse("pointermove", { buttons: 0 });
       settle();
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 3 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 3 }));
       idle();
       // Two entries: the edit after the move, then the drag's, closed at the move.
       h.history.undo();
       settle();
-      expect(h.plan.nodeParams.ch1).toEqual({ gain: 2 });
+      expect(h.plan.nodeParams.ch1).toEqual({ hpfFreq: 2 });
       h.history.undo();
       settle();
       expect(h.plan.nodeParams.ch1).toBeUndefined();
@@ -541,10 +541,10 @@ describe("refusals", () => {
     // edit with no gesture of its own (a wheel burst, a MIDI sweep) leaves open.
     it("leaves an open entry alone when no press is standing", () => {
       const h = harness();
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 1 }));
       mouse("pointermove", { buttons: 0 });
       settle();
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 2 }));
       idle();
       expect(undoDepth(h)).toBe(1);
     });
@@ -559,12 +559,12 @@ describe("refusals", () => {
       const h = harness();
       mouse("pointerdown", { buttons: 1 });
       wheel(0);
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 1 }));
       wheel(0);
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 2 }));
       idle();
       wheel(0);
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 3 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 3 }));
       idle();
       expect(undoDepth(h)).toBe(2);
     });
@@ -573,10 +573,10 @@ describe("refusals", () => {
       const h = harness();
       mouse("pointerdown", { buttons: 1 });
       wheel(1);
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 1 }));
       idle();
       wheel(1);
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 2 }));
       idle();
       press("pointerup");
       settle();
@@ -600,18 +600,18 @@ describe("refusals", () => {
         idle();
         contact("pointerdown", 1);
         contact("pointermove", 1);
-        h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+        h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 1 }));
         other();
         h.history.undo();
         expect(h.statuses.at(-1)).toBe("Finish the current drag before undoing");
         h.history.redo();
         expect(h.statuses.at(-1)).toBe("Finish the current drag before undoing");
         idle();
-        h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+        h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 2 }));
         idle();
         h.history.undo();
         expect(h.statuses.at(-1)).toBe("Finish the current drag before undoing");
-        expect(h.plan.nodeParams.ch1).toEqual({ gain: 2 });
+        expect(h.plan.nodeParams.ch1).toEqual({ hpfFreq: 2 });
         contact("pointerup", 0);
         settle();
         // One entry for the whole drag, the idle pauses under it included.
@@ -620,7 +620,7 @@ describe("refusals", () => {
         expect(h.plan.nodeParams.ch1).toEqual({ hpf: true });
         h.history.redo();
         settle();
-        expect(h.plan.nodeParams.ch1).toEqual({ gain: 2 });
+        expect(h.plan.nodeParams.ch1).toEqual({ hpfFreq: 2 });
       });
     }
   });
@@ -647,7 +647,7 @@ describe("refusals", () => {
       idle();
       drag("pointerdown", 1);
       drag("pointermove", 1);
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 1 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 1 }));
       other("pointerdown", 1);
       h.history.undo();
       expect(h.statuses.at(-1), "the other pointer pressed").toBe("Finish the current drag before undoing");
@@ -657,10 +657,10 @@ describe("refusals", () => {
       expect(h.statuses.at(-1), "the other pointer lifted").toBe("Finish the current drag before undoing");
       // The backstop stays off while the drag stands, so a pause under it does not split it.
       drag("pointermove", 1);
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 2 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 2 }));
       idle();
       drag("pointermove", 1);
-      h.edit((p) => (p.nodeParams.ch1 = { gain: 3 }));
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 3 }));
       drag("pointerup", 0);
       settle();
       h.history.undo();
@@ -930,7 +930,7 @@ describe("depth reporting", () => {
   it("reports once for a whole drag, not once per edit", () => {
     const h = harness();
     press("pointerdown");
-    for (let i = 0; i < 20; i++) h.edit((p) => (p.nodeParams.ch1 = { gain: i }));
+    for (let i = 0; i < 20; i++) h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: i }));
     press("pointermove");
     press("pointerup");
     settle();
@@ -1037,13 +1037,13 @@ describe("the application menu's entry points", () => {
 describe("onAuthored", () => {
   it("reports the keys a closed gesture wrote, and the keys an undo moves back", () => {
     const h = harness();
-    h.edit((p) => (p.nodeParams.ch1 = { gain: 12 }));
+    h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: 12 }));
     idle();
-    expect(h.authored.map((n) => [...n].sort())).toEqual([[nodeParamContestPath("ch1", "gain")]]);
+    expect(h.authored.map((n) => [...n].sort())).toEqual([[nodeParamContestPath("ch1", "hpfFreq")]]);
 
     h.history.undo();
     expect(h.authored, "the undo reported as well").toHaveLength(2);
-    expect(h.authored[1]).toEqual([nodeParamContestPath("ch1", "gain")]);
+    expect(h.authored[1]).toEqual([nodeParamContestPath("ch1", "hpfFreq")]);
   });
 
   // A gesture that recorded nothing has no keys to report — the close still runs, and a

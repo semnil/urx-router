@@ -137,7 +137,7 @@ test.describe("language", () => {
     // is one of the five product terms the Japanese UI keeps in English, so the two
     // sides of the switch became the same bytes and the assertion stopped proving
     // that the console re-rendered at all. It is kept as the terminology pin instead.
-    await expect(page.locator(".con-scribble.power").first()).toHaveAttribute("aria-label", /on\/off$/);
+    await expect(page.locator(".con-power").first()).toHaveAttribute("aria-label", /on\/off$/);
     await expect(page.locator(".con-slp").first()).toHaveAttribute("title", "Pre-fader send");
 
     // The language dropdown lives in Preferences; picking 日本語 re-localizes the
@@ -152,7 +152,7 @@ test.describe("language", () => {
     await expect(page.locator("#btn-view-graph")).toHaveText("グラフ");
     await expect(page.locator("#btn-hide-unused")).toHaveText("未接続を隠す");
     // The console re-rendered: its own string followed the language …
-    await expect(page.locator(".con-scribble.power").first()).toHaveAttribute("aria-label", /オン\/オフ$/);
+    await expect(page.locator(".con-power").first()).toHaveAttribute("aria-label", /オン\/オフ$/);
     // … while the product term did not, in the same rack, at the same moment.
     await expect(page.locator(".con-slp").first()).toHaveAttribute("title", "Pre-fader send");
     // The separators do not follow the language: vertical writing mode makes a

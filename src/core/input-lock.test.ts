@@ -2,15 +2,20 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { Plan } from "./plan";
-import { ensureFixedConnections } from "./plan";
-import { addrKey, channelControl, planToCommands } from "./control/translate";
+import { ensureFixedConnections, setExclusiveConnection } from "./plan";
+import { addrKey, planToCommands } from "./control/translate";
 import { PARAMS } from "./control/params";
 import { clonePlanState, nodeParamContestKey } from "./plan-history";
 import {
+  carriedByOn,
   carrierOf,
-  channelGainRange,
   hiZPatch,
+  jackHasHiZ,
+  jackName,
+  switchAddr,
+  switchOfKey,
   inputOnRefused,
+  jackGainRange,
   onExcludedBy,
   phantomHiZBothOn,
   phantomHiZNewlyBothOn,
@@ -26,116 +31,135 @@ import { MidiEngine } from "./midi/engine";
 
 const model = getModel("URX44V");
 let plan: Plan;
+// The jacks CH 3 and CH 1 read on the factory routing: jack 3 carries HI-Z, jack 1 does not.
+const J3 = { node: "in.micline_3_4", side: "L" } as const;
+const J1 = { node: "in.micline_1_2", side: "L" } as const;
+const set3 = (over: Record<string, unknown>): void => {
+  plan.nodeParams[J3.node] = { ...plan.nodeParams[J3.node], ...over };
+};
+const np3 = (): Record<string, unknown> => plan.nodeParams[J3.node] as Record<string, unknown>;
 
 beforeEach(() => {
   plan = defaultPlan("URX44V");
   ensureFixedConnections(model, plan);
 });
 
-describe("+48V and HI-Z on one channel", () => {
+describe("+48V and HI-Z on one jack", () => {
   it("refuses turning one on while the other is on, and never refuses turning one off", () => {
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: false };
-    expect(inputOnRefused(model.id, "ch3", plan.nodeParams.ch3, "phantom")).toBe(true);
-    expect(inputOnRefused(model.id, "ch3", plan.nodeParams.ch3, "hiZ"), "the lit one").toBe(false);
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, phantom: true };
-    expect(inputOnRefused(model.id, "ch3", plan.nodeParams.ch3, "hiZ")).toBe(true);
-    expect(inputOnRefused(model.id, "ch3", plan.nodeParams.ch3, "phantom"), "the lit one").toBe(false);
+    set3({ hiZL: true, phantomL: false });
+    expect(inputOnRefused(model.id, J3, np3(), "phantom")).toBe(true);
+    expect(inputOnRefused(model.id, J3, np3(), "hiZ"), "the lit one").toBe(false);
+    set3({ hiZL: false, phantomL: true });
+    expect(inputOnRefused(model.id, J3, np3(), "hiZ")).toBe(true);
+    expect(inputOnRefused(model.id, J3, np3(), "phantom"), "the lit one").toBe(false);
     // Both on (a device read): either can be turned off, and neither is off to be refused.
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: true };
-    expect(inputOnRefused(model.id, "ch3", plan.nodeParams.ch3, "phantom")).toBe(false);
-    expect(inputOnRefused(model.id, "ch3", plan.nodeParams.ch3, "hiZ")).toBe(false);
-    // A channel with no HI-Z switch is not constrained by a key it does not have.
-    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hiZ: true, phantom: false };
-    expect(inputOnRefused(model.id, "ch1", plan.nodeParams.ch1, "phantom")).toBe(false);
+    set3({ hiZL: true, phantomL: true });
+    expect(inputOnRefused(model.id, J3, np3(), "phantom")).toBe(false);
+    expect(inputOnRefused(model.id, J3, np3(), "hiZ")).toBe(false);
+    // The other jack of the same node is not constrained by this one's switches.
+    expect(inputOnRefused(model.id, { ...J3, side: "R" }, np3(), "phantom")).toBe(false);
+    // A jack with no HI-Z switch is not constrained by a key it does not have.
+    plan.nodeParams[J1.node] = { ...plan.nodeParams[J1.node], hiZL: true, phantomL: false };
+    expect(inputOnRefused(model.id, J1, plan.nodeParams[J1.node], "phantom")).toBe(false);
   });
 
-  it("narrows A.Gain to -8..+40 dB while HI-Z is on", () => {
-    expect(channelGainRange(model, "ch3", { hiZ: true })).toEqual({ minDb: -8, maxDb: 40 });
-    expect(channelGainRange(model, "ch3", { hiZ: false })).toEqual({ minDb: -8, maxDb: 70 });
-    expect(channelGainRange(model, "ch1", { hiZ: true }), "no HI-Z on CH 1").toEqual({ minDb: -8, maxDb: 70 });
-    expect(channelGainRange(model, "ch_5_6", { hiZ: true }), "D.Gain").toEqual({ minDb: -24, maxDb: 24 });
+  it("narrows a jack's A.Gain to -8..+40 dB while its HI-Z is on", () => {
+    expect(jackGainRange(model.id, J3, { hiZL: true })).toEqual({ minDb: -8, maxDb: 40 });
+    expect(jackGainRange(model.id, J3, { hiZL: false })).toEqual({ minDb: -8, maxDb: 70 });
+    expect(jackGainRange(model.id, { ...J3, side: "R" }, { hiZL: true }), "the other jack").toEqual({
+      minDb: -8,
+      maxDb: 70,
+    });
+    expect(jackGainRange(model.id, J1, { hiZL: true }), "no HI-Z on jack 1").toEqual({ minDb: -8, maxDb: 70 });
+    expect(jackGainRange(model.id, { node: "in.aux", side: "L" }, {}), "no jack on a digital source").toBeNull();
   });
 
-  it("lowers A.Gain to +40 dB in the edit that turns HI-Z on, and leaves it alone otherwise", () => {
-    expect(hiZPatch({ gain: 60 }, true)).toEqual({ hiZ: true, gain: 40 });
-    expect(hiZPatch({ gain: 40 }, true)).toEqual({ hiZ: true });
-    expect(hiZPatch({ gain: 60 }, false)).toEqual({ hiZ: false });
-    expect(hiZPatch(undefined, true)).toEqual({ hiZ: true });
+  it("lowers the jack's A.Gain to +40 dB in the edit that turns its HI-Z on, and leaves it alone otherwise", () => {
+    expect(hiZPatch({ gainL: 60 }, "L", true)).toEqual({ hiZL: true, gainL: 40 });
+    expect(hiZPatch({ gainL: 40 }, "L", true)).toEqual({ hiZL: true });
+    expect(hiZPatch({ gainL: 60 }, "L", false)).toEqual({ hiZL: false });
+    expect(hiZPatch({ gainL: 60 }, "R", true), "the other jack's gain is not this one's").toEqual({ hiZR: true });
+    expect(hiZPatch(undefined, "L", true)).toEqual({ hiZL: true });
   });
 
-  it("names the channels a change would turn the second switch on for, and no others", () => {
+  it("names the jacks a change would turn the second switch on for, and no others", () => {
     const after = (over: Record<string, unknown>): Plan => {
       const next = structuredClone(plan);
-      next.nodeParams.ch3 = { ...next.nodeParams.ch3, ...over };
+      next.nodeParams[J3.node] = { ...next.nodeParams[J3.node], ...over };
       return next;
     };
     // HI-Z on, +48V going on — and the same the other way round.
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: false };
-    expect(phantomHiZNewlyBothOn(model, plan, after({ phantom: true }))).toEqual(["ch3"]);
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, phantom: true };
-    expect(phantomHiZNewlyBothOn(model, plan, after({ hiZ: true }))).toEqual(["ch3"]);
+    set3({ hiZL: true, phantomL: false });
+    expect(phantomHiZNewlyBothOn(model, plan, after({ phantomL: true }))).toEqual([J3]);
+    set3({ hiZL: false, phantomL: true });
+    expect(phantomHiZNewlyBothOn(model, plan, after({ hiZL: true }))).toEqual([J3]);
 
-    // A device read's both-on channel is not one: it holds both already, so a change that
-    // leaves it alone — and one that moves something else on the same channel — is not the
+    // A device read's both-on jack is not one: it holds both already, so a change that
+    // leaves it alone — and one that moves something else on the same jack — is not the
     // app turning anything on.
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: true };
+    set3({ hiZL: true, phantomL: true });
     expect(phantomHiZNewlyBothOn(model, plan, after({}))).toEqual([]);
-    expect(phantomHiZNewlyBothOn(model, plan, after({ gain: 12 }))).toEqual([]);
+    expect(phantomHiZNewlyBothOn(model, plan, after({ gainL: 12 }))).toEqual([]);
     // …and turning either of the two off is never named.
-    expect(phantomHiZNewlyBothOn(model, plan, after({ phantom: false }))).toEqual([]);
-    expect(phantomHiZNewlyBothOn(model, plan, after({ hiZ: false }))).toEqual([]);
+    expect(phantomHiZNewlyBothOn(model, plan, after({ phantomL: false }))).toEqual([]);
+    expect(phantomHiZNewlyBothOn(model, plan, after({ hiZL: false }))).toEqual([]);
 
-    // A channel with no HI-Z switch carries the key without carrying the rule.
-    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hiZ: true, phantom: false };
-    const withCh1 = structuredClone(plan);
-    withCh1.nodeParams.ch1 = { ...withCh1.nodeParams.ch1, phantom: true };
-    expect(phantomHiZNewlyBothOn(model, plan, withCh1)).toEqual([]);
+    // A jack with no HI-Z switch carries the key without carrying the rule.
+    plan.nodeParams[J1.node] = { ...plan.nodeParams[J1.node], hiZL: true, phantomL: false };
+    const withJ1 = structuredClone(plan);
+    withJ1.nodeParams[J1.node] = { ...withJ1.nodeParams[J1.node], phantomL: true };
+    expect(phantomHiZNewlyBothOn(model, plan, withJ1)).toEqual([]);
   });
 
-  it("names the channels a plan holds with both on", () => {
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: true };
-    plan.nodeParams.ch4 = { ...plan.nodeParams.ch4, hiZ: true, phantom: false };
-    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hiZ: true, phantom: true };
-    expect(phantomHiZBothOn(model, plan)).toEqual(["ch3"]);
+  it("names the jacks a plan holds with both on", () => {
+    set3({ hiZL: true, phantomL: true, hiZR: true, phantomR: false });
+    plan.nodeParams[J1.node] = { ...plan.nodeParams[J1.node], hiZL: true, phantomL: true };
+    expect(phantomHiZBothOn(model, plan)).toEqual([J3]);
   });
 });
 
 describe("the write order around HI-Z", () => {
-  const order = (np: Plan["nodeParams"][string]): string[] => {
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, ...np };
+  const order = (np: Record<string, unknown>): string[] => {
+    set3(np);
     return planToCommands(model, plan)
       .filter((c) => c.y === 2 && ["HI_Z", "PHANTOM", "HA_GAIN"].includes(c.name))
       .map((c) => c.name);
   };
 
   it("writes HI-Z ahead of A.Gain", () => {
-    const names = order({ hiZ: true, phantom: false, gain: 30 });
+    const names = order({ hiZL: true, phantomL: false, gainL: 30 });
     expect(names.indexOf("HI_Z")).toBeGreaterThanOrEqual(0);
     expect(names.indexOf("HI_Z")).toBeLessThan(names.indexOf("HA_GAIN"));
-    const off = order({ hiZ: false, phantom: false, gain: 60 });
+    const off = order({ hiZL: false, phantomL: false, gainL: 60 });
     expect(off.indexOf("HI_Z")).toBeLessThan(off.indexOf("HA_GAIN"));
   });
 
   it("writes whichever of +48V / HI-Z the plan holds off first", () => {
-    expect(order({ hiZ: true, phantom: false }).filter((n) => n !== "HA_GAIN")).toEqual(["PHANTOM", "HI_Z"]);
-    expect(order({ hiZ: false, phantom: true }).filter((n) => n !== "HA_GAIN")).toEqual(["HI_Z", "PHANTOM"]);
+    expect(order({ hiZL: true, phantomL: false }).filter((n) => n !== "HA_GAIN")).toEqual(["PHANTOM", "HI_Z"]);
+    expect(order({ hiZL: false, phantomL: true }).filter((n) => n !== "HA_GAIN")).toEqual(["HI_Z", "PHANTOM"]);
   });
 });
 
 describe("opening a document with HI-Z on", () => {
-  it("turns +48V off and bounds A.Gain to +40 dB, reported rather than refused", () => {
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: true, gain: 60 };
-    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hiZ: true, phantom: true, gain: 70 };
+  it("turns that jack's +48V off and bounds its A.Gain to +40 dB, reported rather than refused", () => {
+    set3({ hiZL: true, phantomL: true, gainL: 60, hiZR: false, phantomR: true, gainR: 60 });
+    plan.nodeParams[J1.node] = { ...plan.nodeParams[J1.node], phantomL: true, gainL: 70 };
     const found = paramRangeProblems(plan).filter((p) => p.where === "node");
     expect(found.map((p) => [p.node, p.key, p.action, p.bound])).toEqual([
-      ["ch3", "phantom", "bound", false],
-      ["ch3", "gain", "bound", 40],
+      [J3.node, "phantomL", "bound", false],
+      [J3.node, "gainL", "bound", 40],
     ]);
     const all = planProblems(model, plan).filter((p) => p.reason === "paramRange" && p.where === "node");
     expect(all.some(isRefusal) || all.some(needsDecision)).toBe(false);
     applyParamRange(plan, found);
-    expect(plan.nodeParams.ch3).toMatchObject({ hiZ: true, phantom: false, gain: 40 });
-    expect(plan.nodeParams.ch1, "no HI-Z on CH 1").toMatchObject({ hiZ: true, phantom: true, gain: 70 });
+    expect(plan.nodeParams[J3.node]).toMatchObject({
+      hiZL: true,
+      phantomL: false,
+      gainL: 40,
+      phantomR: true,
+      gainR: 60,
+    });
+    expect(plan.nodeParams[J1.node], "no HI-Z on jack 1").toMatchObject({ phantomL: true, gainL: 70 });
   });
 });
 
@@ -160,104 +184,113 @@ describe("MIDI under HI-Z", () => {
   };
 
   it("refuses turning +48V on under HI-Z and reports why, and lets it be turned off", () => {
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: false };
+    set3({ hiZL: true, phantomL: false });
     expect(press("ch3/phantom", 127)).toEqual(["phantomUnderHiZ"]);
-    expect(plan.nodeParams.ch3?.phantom, "nothing was edited").toBe(false);
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, phantom: true };
+    expect(np3().phantomL, "nothing was edited").toBe(false);
+    set3({ hiZL: false, phantomL: true });
     expect(press("ch3/hiZ", 127)).toEqual(["hiZUnderPhantom"]);
-    expect(plan.nodeParams.ch3?.hiZ).toBe(false);
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: true };
+    expect(np3().hiZL).toBe(false);
+    set3({ hiZL: true, phantomL: true });
     expect(press("ch3/phantom", 0)).toEqual([]);
-    expect(plan.nodeParams.ch3?.phantom).toBe(false);
+    expect(np3().phantomL).toBe(false);
   });
 
   it("lowers A.Gain with a HI-Z write, and maps the gain's full throw to -8..+40 dB while HI-Z is on", () => {
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, phantom: false, gain: 60 };
+    set3({ hiZL: false, phantomL: false, gainL: 60 });
     expect(press("ch3/hiZ", 127)).toEqual([]);
-    expect(plan.nodeParams.ch3).toMatchObject({ hiZ: true, gain: 40 });
+    expect(np3()).toMatchObject({ hiZL: true, gainL: 40 });
     const gain = bindControl(model, plan, "ch3/gain")!;
     expect(gain.get(), "+40 is the top of the throw").toBe(1);
     gain.set(1);
-    expect(plan.nodeParams.ch3?.gain).toBe(40);
+    expect(np3().gainL).toBe(40);
     // Turning HI-Z off moves the same value to a different position, which is what the
     // feedback pass re-sends.
-    plan.nodeParams.ch3!.hiZ = false;
+    set3({ hiZL: false });
     expect(gain.get()).toBeCloseTo(48 / 78, 6);
     gain.set(1);
-    expect(plan.nodeParams.ch3?.gain).toBe(70);
+    expect(np3().gainL).toBe(70);
+  });
+
+  // The switch belongs to the jack, not to the channel number: CH 1 routed to MIC/LINE 3/4
+  // reads jack 3 and offers its HI-Z, while CH 3 routed to MIC/LINE 1/2 offers none.
+  it("follows the jack a channel reads", () => {
+    for (const ch of ["ch1", "ch2"]) setExclusiveConnection(plan, "in.micline_3_4:out", `${ch}:in`, "source");
+    for (const ch of ["ch3", "ch4"]) setExclusiveConnection(plan, "in.micline_1_2:out", `${ch}:in`, "source");
+    expect(bindControl(model, plan, "ch1/hiZ")).not.toBeNull();
+    expect(bindControl(model, plan, "ch3/hiZ")).toBeNull();
+    set3({ hiZL: true, phantomL: false });
+    expect(press("ch1/phantom", 127)).toEqual(["phantomUnderHiZ"]);
   });
 });
 
 // Where a device read lands and where a flush sends, the same rule is asked of what the unit
 // holds rather than of what the plan held when a surface took the edit.
 describe("+48V and HI-Z against what the unit holds", () => {
-  const unitWith = (ch3: Record<string, unknown>): Plan => {
+  const unitWith = (jack3: Record<string, unknown>): Plan => {
     const unit = clonePlanState(plan);
-    unit.nodeParams.ch3 = { ...unit.nodeParams.ch3, ...ch3 };
+    unit.nodeParams[J3.node] = { ...unit.nodeParams[J3.node], ...jack3 };
     return unit;
   };
-  const planWith = (ch3: Record<string, unknown>): Plan => {
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, ...ch3 };
+  const planWith = (jack3: Record<string, unknown>): Plan => {
+    set3(jack3);
     return plan;
   };
 
   it("names the switch the plan turned on over the one the unit holds on", () => {
     expect(
-      readRefusedSwitches(unitWith({ phantom: false, hiZ: true }), planWith({ phantom: true, hiZ: true })),
-    ).toEqual([{ nodeId: "ch3", key: "phantom" }]);
+      readRefusedSwitches(unitWith({ phantomL: false, hiZL: true }), planWith({ phantomL: true, hiZL: true })),
+    ).toEqual([{ nodeId: J3.node, key: "phantomL" }]);
     expect(
-      readRefusedSwitches(unitWith({ phantom: true, hiZ: false }), planWith({ phantom: true, hiZ: true })),
-    ).toEqual([{ nodeId: "ch3", key: "hiZ" }]);
+      readRefusedSwitches(unitWith({ phantomL: true, hiZL: false }), planWith({ phantomL: true, hiZL: true })),
+    ).toEqual([{ nodeId: J3.node, key: "hiZL" }]);
   });
 
   it("names nothing where the unit holds both on, or where the plan does not hold both", () => {
-    expect(readRefusedSwitches(unitWith({ phantom: true, hiZ: true }), planWith({ phantom: true, hiZ: true }))).toEqual(
-      [],
-    );
     expect(
-      readRefusedSwitches(unitWith({ phantom: false, hiZ: true }), planWith({ phantom: false, hiZ: true })),
+      readRefusedSwitches(unitWith({ phantomL: true, hiZL: true }), planWith({ phantomL: true, hiZL: true })),
     ).toEqual([]);
-    // A channel with no HI-Z switch holds nothing the rule is about.
-    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, phantom: true, hiZ: true };
+    expect(
+      readRefusedSwitches(unitWith({ phantomL: false, hiZL: true }), planWith({ phantomL: false, hiZL: true })),
+    ).toEqual([]);
+    // A jack with no HI-Z switch holds nothing the rule is about.
+    plan.nodeParams[J1.node] = { ...plan.nodeParams[J1.node], phantomL: true, hiZL: true };
     expect(readRefusedSwitches(clonePlanState(defaultPlan("URX44V")), plan)).toEqual([]);
   });
 
   // An ON the live session sent after the read sampled the address is on the unit whatever the
   // read found there, so the unit holds both and the state is taken as it is.
   it("names nothing the unit is known to hold on beyond what the read found", () => {
-    const sent = (nodeId: string, key: string): boolean => nodeId === "ch3" && key === "phantom";
+    const sent = (nodeId: string, key: string): boolean => nodeId === J3.node && key === "phantomL";
     expect(
-      readRefusedSwitches(unitWith({ phantom: false, hiZ: true }), planWith({ phantom: true, hiZ: true }), sent),
+      readRefusedSwitches(unitWith({ phantomL: false, hiZL: true }), planWith({ phantomL: true, hiZL: true }), sent),
     ).toEqual([]);
     // Asked per switch: the one the session did not send is still refused.
     expect(
-      readRefusedSwitches(unitWith({ phantom: true, hiZ: false }), planWith({ phantom: true, hiZ: true }), sent),
-    ).toEqual([{ nodeId: "ch3", key: "hiZ" }]);
+      readRefusedSwitches(unitWith({ phantomL: true, hiZL: false }), planWith({ phantomL: true, hiZL: true }), sent),
+    ).toEqual([{ nodeId: J3.node, key: "hiZL" }]);
   });
 
   // The same rule from the other switch: the session sent HI-Z ON and the read found +48V on.
   it("names nothing the unit is known to hold on, whichever switch the session sent", () => {
-    const sent = (nodeId: string, key: string): boolean => nodeId === "ch3" && key === "hiZ";
+    const sent = (nodeId: string, key: string): boolean => nodeId === J3.node && key === "hiZL";
     expect(
-      readRefusedSwitches(unitWith({ phantom: true, hiZ: false }), planWith({ phantom: true, hiZ: true }), sent),
+      readRefusedSwitches(unitWith({ phantomL: true, hiZL: false }), planWith({ phantomL: true, hiZL: true }), sent),
     ).toEqual([]);
     expect(
-      readRefusedSwitches(unitWith({ phantom: false, hiZ: true }), planWith({ phantom: true, hiZ: true }), sent),
-    ).toEqual([{ nodeId: "ch3", key: "phantom" }]);
+      readRefusedSwitches(unitWith({ phantomL: false, hiZL: true }), planWith({ phantomL: true, hiZL: true }), sent),
+    ).toEqual([{ nodeId: J3.node, key: "phantomL" }]);
   });
 
-  it("names the HI-Z command an A.Gain at +40 dB waits with, on the channel's own A.Gain only", () => {
-    const cc = channelControl(model, "ch3")!;
-    const gain = { name: "HA_GAIN" as const, paramId: cc.gain!.param, x: 0, y: cc.y };
-    expect(carrierOf(gain, gainToVd(40))).toEqual({ name: "HI_Z", paramId: PARAMS.HI_Z.id, x: 0, y: cc.y });
+  it("names the HI-Z command an A.Gain at +40 dB waits with, on the jack's own A.Gain only", () => {
+    const y = 2;
+    const gain = { name: "HA_GAIN" as const, paramId: PARAMS.HA_GAIN.id, x: 0, y };
+    expect(carrierOf(gain, gainToVd(40))).toEqual({ name: "HI_Z", paramId: PARAMS.HI_Z.id, x: 0, y });
     // Any other A.Gain is the operator's own, not the one a HI-Z ON lowered it to.
     expect(carrierOf(gain, gainToVd(30))).toBeNull();
-    // A stereo channel's D.Gain shares the command name and an instance index with a mono
-    // channel, and carries no HI-Z.
-    const stereo = channelControl(model, "ch_5_6")!;
-    for (const y of stereo.gain!.instances)
-      expect(carrierOf({ name: "HA_GAIN", paramId: stereo.gain!.param, x: 0, y }, gainToVd(40))).toBeNull();
-    expect(carrierOf({ name: "CLIP_SAFE", paramId: PARAMS.CLIP_SAFE.id, x: 0, y: cc.y }, 1)).toBeNull();
+    // A source's D.Gain goes out at instance indexes a jack also uses, and carries no HI-Z.
+    for (const y of [0, 1])
+      expect(carrierOf({ name: "D_GAIN", paramId: PARAMS.D_GAIN.id, x: 0, y }, gainToVd(40))).toBeNull();
+    expect(carrierOf({ name: "CLIP_SAFE", paramId: PARAMS.CLIP_SAFE.id, x: 0, y }, 1)).toBeNull();
   });
 
   // An ON the plan held when a read was issued, which the session never put on the unit, is one
@@ -270,43 +303,45 @@ describe("+48V and HI-Z against what the unit holds", () => {
     });
     const before = (): Plan => {
       const p = clonePlanState(plan);
-      p.nodeParams.ch3 = { ...p.nodeParams.ch3, phantom: true, hiZ: false };
+      p.nodeParams[J3.node] = { ...p.nodeParams[J3.node], phantomL: true, hiZL: false };
       return p;
     };
-    const merged = (): Plan => unitWith({ phantom: false, hiZ: true });
+    const merged = (): Plan => unitWith({ phantomL: false, hiZL: true });
 
     it("is named where the unit holds the other switch on", () => {
       expect(unsentRefusedSwitches(before(), merged(), merged(), session(), new Set())).toEqual([
-        { nodeId: "ch3", key: "phantom" },
+        { nodeId: J3.node, key: "phantomL" },
       ]);
       // The other switch known on from the session alone.
       expect(
         unsentRefusedSwitches(
           before(),
-          unitWith({ phantom: false, hiZ: false }),
+          unitWith({ phantomL: false, hiZL: false }),
           merged(),
-          session([], ["ch3.hiZ"]),
+          session([], [`${J3.node}.hiZL`]),
           new Set(),
         ),
-      ).toEqual([{ nodeId: "ch3", key: "phantom" }]);
+      ).toEqual([{ nodeId: J3.node, key: "phantomL" }]);
     });
 
     it("is not named where the session had put it on, the operator turned it off, or the other one is off", () => {
-      expect(unsentRefusedSwitches(before(), merged(), merged(), session(["ch3.phantom"]), new Set())).toEqual([]);
+      expect(unsentRefusedSwitches(before(), merged(), merged(), session([`${J3.node}.phantomL`]), new Set())).toEqual(
+        [],
+      );
       expect(
         unsentRefusedSwitches(
           before(),
           merged(),
           merged(),
           session(),
-          new Set([nodeParamContestKey("ch3", "phantom")]),
+          new Set([nodeParamContestKey(J3.node, "phantomL")]),
         ),
       ).toEqual([]);
       expect(
         unsentRefusedSwitches(
           before(),
-          unitWith({ phantom: false, hiZ: false }),
-          unitWith({ phantom: false, hiZ: false }),
+          unitWith({ phantomL: false, hiZL: false }),
+          unitWith({ phantomL: false, hiZL: false }),
           session(),
           new Set(),
         ),
@@ -315,11 +350,51 @@ describe("+48V and HI-Z against what the unit holds", () => {
   });
 
   it("gives the other switch's address for an ON of either, and nothing for an OFF", () => {
-    const y = channelControl(model, "ch3")!.y;
+    const y = 2;
     const at = (name: "PHANTOM" | "HI_Z"): { name: "PHANTOM" | "HI_Z"; x: number; y: number } => ({ name, x: 0, y });
     expect(onExcludedBy(at("PHANTOM"), 1)).toBe(addrKey(PARAMS.HI_Z.id, 0, y));
     expect(onExcludedBy(at("HI_Z"), 1)).toBe(addrKey(PARAMS.PHANTOM.id, 0, y));
     expect(onExcludedBy(at("PHANTOM"), 0)).toBeNull();
     expect(onExcludedBy({ name: "CLIP_SAFE", x: 0, y }, 1)).toBeNull();
+  });
+});
+
+// The jack and key readers every surface asks: what a key names, which jacks carry HI-Z, the
+// address a switch key writes, and how a status line names a jack.
+describe("the jack readers", () => {
+  const m = getModel("URX44V");
+
+  it("names a switch key and what an ON carries", () => {
+    expect(switchOfKey("phantomR")).toEqual({ on: "phantom", side: "R" });
+    expect(switchOfKey("gainL")).toBeNull();
+    expect(carriedByOn("hiZL")).toEqual(["gainL"]);
+    expect(carriedByOn("phantomL")).toEqual([]);
+    expect(carriedByOn("gainL")).toEqual([]);
+  });
+
+  it("says which jacks carry HI-Z, on the models that list one", () => {
+    expect(jackHasHiZ("URX44V", { node: "in.micline_3_4", side: "L" })).toBe(true);
+    expect(jackHasHiZ("URX44V", { node: "in.micline_1_2", side: "L" })).toBe(false);
+    expect(jackHasHiZ("URX44V", { node: "in.aux", side: "L" }), "no jack at all").toBe(false);
+    expect(jackHasHiZ("URX99", { node: "in.micline_3_4", side: "L" }), "a model with no list").toBe(false);
+  });
+
+  it("addresses a switch only on a jack that carries it", () => {
+    expect(switchAddr(m, "in.micline_1_2", "phantomR")).toEqual({ paramId: PARAMS.PHANTOM.id, x: 0, y: 1 });
+    expect(switchAddr(m, "in.micline_3_4", "hiZL")).toEqual({ paramId: PARAMS.HI_Z.id, x: 0, y: 2 });
+    expect(switchAddr(m, "in.micline_1_2", "hiZL"), "no HI-Z on jack 1").toBeNull();
+    expect(switchAddr(m, "in.micline_1_2", "gainL"), "not a switch").toBeNull();
+    expect(switchAddr(m, "in.aux", "phantomL"), "no jack").toBeNull();
+    expect(switchAddr(getModel("URX22"), "in.micline_3_4", "phantomL"), "a node the model lacks").toBeNull();
+  });
+
+  it("names a jack by the channels reading it, or by itself when none does", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch_5_6:in", "source");
+    const label = (id: string): string => m.nodes.find((n) => n.id === id)!.label;
+    expect(jackName(m, plan, { node: "in.micline_1_2", side: "L" }, label)).toBe("CH 1, CH 5");
+    setExclusiveConnection(plan, "in.aux:out", "ch3:in", "source");
+    setExclusiveConnection(plan, "in.aux:out", "ch4:in", "source");
+    expect(jackName(m, plan, { node: "in.micline_3_4", side: "R" }, label)).toBe("MIC/LINE 4");
   });
 });

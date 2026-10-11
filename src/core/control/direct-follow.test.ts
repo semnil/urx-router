@@ -19,7 +19,7 @@
 
 import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan, ensureFixedConnections, type Plan } from "../plan";
+import { emptyPlan, ensureFixedConnections, setExclusiveConnection, type Plan } from "../plan";
 import { applyDirect } from "./readback";
 import { planToCommands } from "./translate";
 import type { ParamName, ParamSpec } from "./params";
@@ -31,9 +31,12 @@ const DIRECT_NAMES: ParamName[] = (Object.entries(PARAMS as Record<string, Param
   .filter(([, spec]) => spec.follow === "direct")
   .map(([name]) => name);
 
+// CH 1 and CH 2 read jacks 1 and 2, so both jacks' A.Gain is emitted.
 function base(): Plan {
   const plan = emptyPlan("URX44V");
   ensureFixedConnections(model, plan);
+  setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+  setExclusiveConnection(plan, "in.micline_1_2:out", "ch2:in", "source");
   return plan;
 }
 
@@ -47,17 +50,20 @@ function seeded(): Plan {
   plan.nodeParams["bus.mon2"] = { on: true, level: -12, phonesLevel: 3 };
   plan.nodeParams["bus.osc"] = { osc: { on: true, level: -20, mode: 0 } };
   plan.nodeParams["bus.fx1"] = { level: -4, pan: 8, on: false };
-  plan.nodeParams["ch1"] = { on: false, gain: 20 };
+  plan.nodeParams["ch1"] = { on: false };
+  plan.nodeParams["in.micline_1_2"] = { gainL: 20, gainR: 31 };
   return plan;
 }
 
 describe("device-follow direct path is complete over the catalog", () => {
   it('every follow: "direct" param is handled by applyDirect (no silent scoped fallback)', () => {
-    // applyDirect returns true purely by ParamName, so any owner node exercises the
-    // switch coverage; a param missing from the switch returns false and would be
-    // caught here (it would silently degrade to a scoped read at runtime).
+    // applyDirect returns true by ParamName for any channel-shaped owner, so ch1 exercises the
+    // switch coverage — except A.Gain, whose owner is the MIC/LINE node that holds the jack. A
+    // param missing from the switch returns false and would be caught here (it would silently
+    // degrade to a scoped read at runtime).
     for (const name of DIRECT_NAMES) {
-      expect.soft(applyDirect(base(), "ch1", name, 0), name).toBe(true);
+      const owner = name === "HA_GAIN" ? "in.micline_1_2" : "ch1";
+      expect.soft(applyDirect(base(), owner, name, 0), name).toBe(true);
     }
   });
 
@@ -76,12 +82,16 @@ describe("emit ∘ applyDirect fixed point (direct follow reflects a device edit
     const src = seeded();
     const directCmds = planToCommands(model, src).filter((c) => DIRECT_NAMES.includes(c.name) && c.node !== undefined);
     expect(directCmds.length).toBeGreaterThan(0);
+    expect(
+      directCmds.filter((c) => c.name === "HA_GAIN").map((c) => c.y),
+      "the premise: both jacks of the pair are emitted",
+    ).toEqual([0, 1]);
 
     for (const cmd of directCmds) {
       // Reflect the device-reported raw into a fresh plan through the direct path,
       // exactly as follow.ts does on a notify (no read-back).
       const dst = base();
-      const ok = applyDirect(dst, cmd.node!, cmd.name, cmd.vdValue);
+      const ok = applyDirect(dst, cmd.node!, cmd.name, cmd.vdValue, cmd.y);
       expect.soft(ok, `${cmd.name}@${cmd.node}`).toBe(true);
 
       // Re-translate: the same address must carry the same broker value, i.e. the

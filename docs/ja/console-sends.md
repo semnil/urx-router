@@ -19,7 +19,7 @@
 send-on-fader モード、コンソールのモードバー (`Output [MAIN]` / `Send to [...]`) を持たない。
 ヘッドの MUTE チップは → STEREO 主経路を制御し (その send を持つストリップ = チャンネル・FX
 チャンネル・MIX Bus のみ)、ラックは主経路に触れない。ノード master ON/OFF (CH_ON / MIX 675 / STEREO /
-MONITOR、いずれも `np.on`、および OSC の `osc.on`) はスクリブル上の**電源 LED** — スクリブル全体がそのボタンで、
+MONITOR、いずれも `np.on`、および OSC の `osc.on`) はスクリブル上の**電源 LED** — LED がそのボタンで (当たり判定はストリップの角まで広い)、
 オフのときストリップは溝・メーター・ノブの面・スクリブルの地を減光し (グラフと共有の `isNodeInactive` 述語)、
 ラベルとフェーダーキャップは減光しない。このため赤い「CH MUTE」バッジは別に持たない。
 STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップを持たず、電源 LED が唯一の ON/OFF。

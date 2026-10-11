@@ -148,10 +148,15 @@ test.describe("T2f shape-change", () => {
     // …and it is in the set exactly once: a global scalar emitted by one unconditional
     // push, not one per node like everything else in the list.
     expect(reg.filter((a) => a[0] === 766)).toHaveLength(1);
-    // …and Follow USB is appended past the end of it by main.ts's addrs hook: it is in
-    // the registration exactly once, at the tail, where nothing in the plan can put it.
-    expect(reg.at(-1)).toEqual([848, 0, 0]);
+    // …and Follow USB and the LCD selection are appended past the end of it by main.ts's
+    // addrs hook: each is in the registration exactly once, at the tail, where nothing in
+    // the plan can put it.
+    expect(reg.slice(-2)).toEqual([
+      [848, 0, 0],
+      [762, 0, 0],
+    ]);
     expect(reg.filter((a) => a[0] === 848)).toHaveLength(1);
+    expect(reg.filter((a) => a[0] === 762)).toHaveLength(1);
 
     // The device's rate reached the plan — the picker read 48000 a moment ago and the
     // only thing that has touched it since is the starting readback's read of 766 —
@@ -451,29 +456,35 @@ test.describe("T2f shape-change", () => {
     await goLive(page);
     await setLatency(page, { get: 1, set: 5 });
     const reg = await paramAddrsOf(page);
-    const registeredFlagged = [...SETUP_IDS, 848].filter((id) => reg.some((a) => a[0] === id));
+    const registeredFlagged = [...SETUP_IDS, 848, 762].filter((id) => reg.some((a) => a[0] === id));
 
     trace = await traceOf(page);
     const liveAt = markTime(trace, "live-start")!;
     const liveReads = getsOf(trace).filter((g) => g.start > liveAt);
     const setupReads = liveReads.filter((g) => SETUP_IDS.includes(paramIdOf(g.addr)));
     const followUsbReads = liveReads.filter((g) => g.addr === FOLLOW_USB_ADDR);
+    const lcdReads = liveReads.filter((g) => g.addr === "762:0:0");
 
     console.log(
       `live start: ${liveReads.length} read(s); ${setupReads.length} of them on a SETUP address` +
         `, ${followUsbReads.length} on 848. Registered planExternal ids: [${registeredFlagged.join(", ")}]`,
     );
 
-    // The one exception is the one with a hook. Fourteen addresses catalogued beside it
-    // with the same flag, and not one of them is registered — so nothing routes their
-    // notifies anywhere.
-    expect(registeredFlagged).toEqual([848]);
-    expect(reg.at(-1)).toEqual([848, 0, 0]);
+    // The two exceptions are the ones with a hook, Follow USB and the LCD selection.
+    // Fourteen addresses catalogued beside them with the same flag, and not one of them is
+    // registered — so nothing routes their notifies anywhere.
+    expect(registeredFlagged).toEqual([848, 762]);
+    expect(reg.slice(-2)).toEqual([
+      [848, 0, 0],
+      [762, 0, 0],
+    ]);
     // …and no readback group covers them either: a whole-device read of ~800 addresses
-    // asks for none of the fourteen. 848 is read once, by the Follow USB read the session
-    // start makes, which is the same asymmetry seen from the read side.
+    // asks for none of the fourteen. 848 and 762 are read once each, by the reads the
+    // session start makes beside the readback, which is the same asymmetry seen from the
+    // read side.
     expect(setupReads).toHaveLength(0);
     expect(followUsbReads).toHaveLength(1);
+    expect(lcdReads).toHaveLength(1);
     expect(liveReads.length).toBeGreaterThan(500);
 
     // Phase 3 — the catalog's "do the modal's reads disturb a live session" question,

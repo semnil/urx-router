@@ -96,6 +96,11 @@ export const en = {
     // Accessible name suffix for the scribble power LED (the node master on/off):
     // "<strip> on/off". Announced with aria-pressed; not shown on screen.
     power: tr("on/off"),
+    // Accessible name of a stereo channel's name area, which switches the side the strip
+    // shows: "CH 5/6, showing CH 6 (R)".
+    sideShowing: (pair: string, shown: string) => `${pair}, showing ${shown}`,
+    // The gain knob's tooltip when another channel reads the same jack or source.
+    gainShared: (others: string) => `Shared with ${others}`,
     eq: dev("EQ"),
     // The FX strip's processing chip. Named for what happens there rather than for the
     // strip — the scribble above it already reads FX 1 / FX 2 — and the unit's own
@@ -237,6 +242,12 @@ export const en = {
     // Shown on a row that shares its MIDI control with an earlier assignment
     // (a gang): they move together, and feedback follows the first-assigned.
     linked: tr("Linked"),
+    // In the behaviour column of an assignment whose control is gone because its channel reads
+    // no source: the input stage it drove belongs to no jack or source until one is chosen.
+    inactiveNoSource: (channel: string): string => `Inactive — ${channel} has no source`,
+    // …or whose channel's jack or source carries no such switch (a source has no +48V or Hi-Z,
+    // and only some jacks have Hi-Z).
+    inactiveNoSwitch: (channel: string, control: string): string => `Inactive — ${channel}'s input has no ${control}`,
     linkedHint: tr(
       "Shares one MIDI control with the first assignment for this address; they move together, and MIDI feedback follows that first assignment.",
     ),
@@ -590,6 +601,16 @@ export const en = {
     on: dev("ON"),
     off: dev("OFF"),
     notReadFromDevice: tr("Not read from the device — showing the plan default."),
+    // The switch at the top of a stereo channel's INPUT section: which side's input stage
+    // and polarity the panel shows and edits.
+    sideGroup: tr("Displayed side"),
+    sideL: (ch: string) => `${ch} (L)`,
+    sideR: (ch: string) => `${ch} (R)`,
+    // Under a channel's panel, when another channel reads the same jack or source: those
+    // channels, and the jack or source they share.
+    shareJack: (others: string, jack: string) => `Shared with ${others}: every channel on ${jack} uses these values.`,
+    shareSource: (others: string, source: string) =>
+      `Shared with ${others}: every channel on ${source} uses this value.`,
     selectionOnly: tr("Selection only — no send parameters."),
     directOutTap: tr(
       "Direct out — tapped at the channel Rec Point, before the fader and Ducker. Route via a STEREO or MIX bus to include them.",
@@ -977,6 +998,7 @@ export const en = {
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} shares device settings with ${kept}${more > 0 ? ` (+${more} more)` : ""} — only ${kept}'s values reach the device`,
     liveError: (message: string): string => `Live sync stopped: ${message}`,
+    unverifiedGuess: (key: string): string => `the address rests on the unverified mapping ${key}`,
     linkLogFailed: (message: string): string => `Link ledger could not be written: ${message}`,
     connected: tr("Connected"),
     connectionDeleted: tr("Connection deleted"),

@@ -131,8 +131,12 @@ export function mappingRow(row: MidiUiRow, m: MidiMessages, send: MidiUiSend): H
   const opt = el("td", "mw-opt");
   // Which control the row offers is the main window's verdict (see MidiUiRow.option):
   // an address that can never fire a toggle offers none, and the cell stays empty so
-  // the delete button keeps its column.
-  if (row.option === "mode") {
+  // the delete button keeps its column. An inactive assignment says why instead.
+  if (row.inactive) {
+    const tag = el("span", "mw-inactive");
+    tag.textContent = row.inactive;
+    opt.append(tag);
+  } else if (row.option === "mode") {
     opt.append(
       choice("mw-mode", TAKE_MODES, row.mode, m.mode, m.modeTitle, row.label, (mode) =>
         send({ type: "mode", control: row.control, mode }),

@@ -8,7 +8,7 @@ import type { Plan } from "../plan";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import type { ParamSpec } from "./params";
-import { addrKey, cmdAddr, planToCommands, planToNameWrites } from "./translate";
+import { addrKey, cmdAddr, planToCommands, planToNameWrites, unverifiedGuessNote } from "./translate";
 import type { EmitOptions, NameWrite, VdCommand, WriteScope } from "./translate";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -85,6 +85,21 @@ export function setFollowUsb(on: boolean): Promise<void> {
  *  caller that wants device-side changes to it must register the address itself
  *  rather than getting it from the plan's writable set. */
 export const FOLLOW_USB_ADDR: [number, number, number] = [PARAMS.FOLLOW_USB.id, 0, 0];
+
+/** Read the unit's LCD selection (params.ts LCD_SELECTION). */
+export function readLcdSelection(): Promise<number> {
+  return vdGet(PARAMS.LCD_SELECTION.id, 0, 0);
+}
+
+/** Move the unit's LCD selection: a single write, outside the plan. The caller must have
+ *  connected first. */
+export function writeLcdSelection(raw: number): Promise<void> {
+  return vdSet(PARAMS.LCD_SELECTION.id, 0, 0, raw);
+}
+
+/** The LCD selection's notify address, registered by the caller for the reason
+ *  FOLLOW_USB_ADDR is. */
+export const LCD_SELECTION_ADDR: [number, number, number] = [PARAMS.LCD_SELECTION.id, 0, 0];
 
 /** The vd commands a plan currently implies — the confirm-before-send preview. */
 export function dryRun(model: DeviceModel, plan: Plan): VdCommand[] {
@@ -172,7 +187,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
       } else matched?.add(cmdAddr(command));
     } catch (e) {
       const cause = e instanceof Error ? e.message : String(e);
-      errors.push(`${command.name}: ${cause}`);
+      errors.push(`${command.name}${unverifiedGuessNote(model, command.paramId, command.y)}: ${cause}`);
       causes.push(cause);
       unread.push(command);
       if (stopOnError) break;
@@ -872,6 +887,8 @@ export interface NameCompareEntry {
 export async function comparePlan(
   commands: readonly VdCommand[],
   signal?: AbortSignal,
+  /** Names the unverified mapping a failed read rests on, where one does. */
+  model?: DeviceModel,
 ): Promise<{ entries: CompareEntry[]; errors: string[] }> {
   const entries: CompareEntry[] = [];
   const errors: string[] = [];
@@ -881,7 +898,8 @@ export async function comparePlan(
       const device = await vdGet(command.paramId, command.x, command.y);
       entries.push({ command, device, match: device === command.vdValue });
     } catch (e) {
-      errors.push(`${command.name}: ${e instanceof Error ? e.message : String(e)}`);
+      const note = model ? unverifiedGuessNote(model, command.paramId, command.y) : "";
+      errors.push(`${command.name}${note}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   return { entries, errors };

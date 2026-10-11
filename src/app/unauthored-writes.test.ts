@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { cmdAddr, planToCommands } from "../core/control/translate";
+import { MIC_LINE_JACK_BASE } from "../core/control/params";
+import { setExclusiveConnection } from "../core/plan";
 import {
   connectionContestKey,
   connParamContestKey,
@@ -16,6 +18,14 @@ import { insertFxParamKey } from "../core/control/insert-fx-effect";
 import { unauthoredWriteNodes } from "./unauthored-writes";
 
 const MODEL = getModel("URX44V");
+
+const JACK = "in.micline_1_2";
+
+/** The A.Gain commands at one of `JACK`'s two jacks (0 = L, 1 = R). */
+const jackGain = (plan: Plan, side: 0 | 1) =>
+  planToCommands(MODEL, plan, "all").filter(
+    (c) => c.node === JACK && c.name === "HA_GAIN" && c.y === MIC_LINE_JACK_BASE[JACK] + side,
+  );
 
 const everyAddr = (plan: Plan): Set<number> => new Set(planToCommands(MODEL, plan, "all").map(cmdAddr));
 
@@ -56,7 +66,7 @@ describe("unauthoredWriteNodes", () => {
   // closed gesture, so a guard that only asked whether it exists went quiet from then on.
   it("names the strips around the one key an edit claimed", () => {
     const plan = defaultPlan("URX44V");
-    markParamSource(plan, [nodeParamContestPath("ch1", "gain")], "manual");
+    markParamSource(plan, [nodeParamContestPath("ch1", "hpfFreq")], "manual");
     expect(unauthoredWriteNodes(MODEL, plan, "all", everyAddr(plan))).toContain("ch2");
   });
 
@@ -71,7 +81,8 @@ describe("unauthoredWriteNodes", () => {
   });
 
   // The distinction the whole feature rests on: the operator's own keys, and the document's,
-  // are values someone chose. Only the fill and the unit's own readings are not.
+  // are values someone chose. Only the fill and the unit's own readings are not. CH 1's input
+  // stage is held on the jack it reads, so the strip's keys are the channel's and the jack's.
   it.each<[ParamSource, boolean]>([
     ["manual", false],
     ["load", false],
@@ -80,6 +91,7 @@ describe("unauthoredWriteNodes", () => {
   ])("reports a strip whose keys came from %s: %s", (source, reported) => {
     const plan = filledPlan();
     expect(markNode(plan, "ch1", source)).toBeGreaterThan(0);
+    expect(markNode(plan, JACK, source)).toBeGreaterThan(0);
     expect(unauthoredWriteNodes(MODEL, plan, "all", everyAddr(plan)).includes("ch1")).toBe(reported);
   });
 
@@ -250,11 +262,38 @@ describe("an authored leaf inside an array", () => {
 it("names a strip whose unauthored value sits at the end of its range", () => {
   const plan = filledPlan();
   for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "manual");
-  plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, gain: 70 };
-  plan.paramSource!.set(nodeParamContestPath("ch1", "gain"), "default");
-  const gain = planToCommands(MODEL, plan, "all").filter((c) => c.node === "ch1" && c.name === "HA_GAIN");
+  plan.nodeParams[JACK] = { ...plan.nodeParams[JACK], gainL: 70 };
+  plan.paramSource!.set(nodeParamContestPath(JACK, "gainL"), "default");
+  const gain = jackGain(plan, 0);
   expect(gain.length, "the premise: the gain reaches the wire").toBeGreaterThan(0);
   expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(gain.map(cmdAddr)))).toEqual(["ch1"]);
+});
+
+// The input stage is held on the jack, which has no panel: a value nobody chose there names
+// every channel that reads the jack, and none that reads the jack beside it.
+it("names the channels reading a jack whose unauthored value a write carries", () => {
+  const plan = filledPlan();
+  for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "manual");
+  setExclusiveConnection(plan, `${JACK}:out`, "ch3:in", "source");
+  plan.nodeParams[JACK] = { ...plan.nodeParams[JACK], gainL: 30, gainR: 30 };
+  plan.paramSource!.set(nodeParamContestPath(JACK, "gainL"), "default");
+  const gain = jackGain(plan, 0);
+  expect(gain.length, "the premise: jack 1's gain reaches the wire").toBe(1);
+  expect(jackGain(plan, 1).length, "the premise: jack 2's gain reaches the wire too").toBe(1);
+  const changing = new Set([...gain, ...jackGain(plan, 1)].map(cmdAddr));
+  expect(unauthoredWriteNodes(MODEL, plan, "all", changing)).toEqual(["ch1", "ch3"]);
+});
+
+// …and a digital source's D.Gain the same way, naming each channel that reads the source.
+it("names the channels reading a source whose unauthored D.Gain a write carries", () => {
+  const plan = filledPlan();
+  for (const key of plan.paramSource!.keys()) plan.paramSource!.set(key, "manual");
+  for (const ch of ["ch_5_6", "ch_7_8"]) setExclusiveConnection(plan, "in.aux:out", `${ch}:in`, "source");
+  plan.nodeParams["in.aux"] = { ...plan.nodeParams["in.aux"], dGain: 6 };
+  plan.paramSource!.set(nodeParamContestPath("in.aux", "dGain"), "default");
+  const dGain = planToCommands(MODEL, plan, "all").filter((c) => c.node === "in.aux" && c.name === "D_GAIN");
+  expect(dGain.length, "the premise: AUX's D.Gain reaches the wire").toBeGreaterThan(0);
+  expect(unauthoredWriteNodes(MODEL, plan, "all", new Set(dGain.map(cmdAddr)))).toEqual(["ch_5_6", "ch_7_8"]);
 });
 
 // An FX channel's parameters are emitted with the descriptor's own defaults when the plan

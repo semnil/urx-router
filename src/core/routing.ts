@@ -386,8 +386,9 @@ export function applyPairTransition(model: DeviceModel, plan: Plan, primary: str
 }
 
 /** The node params a linked pair does NOT share: the pair-level flags, which live on the
- *  primary alone, and the head-amp values each member keeps its own of. */
-export const PAIR_OWN_NODE_KEYS = ["stereoLink", "panBal", "gain", "clipSafe", "phase", "phantom", "hiZ"] as const;
+ *  primary alone, and the polarity each member keeps its own of. The input stage is no
+ *  channel's: it is on the jack each member reads, and two jacks are two holders. */
+export const PAIR_OWN_NODE_KEYS = ["stereoLink", "panBal", "phase"] as const;
 
 /** Whether an edit to `path` on one member of a linked pair reaches the other — the one
  *  place that question is answered, so `mirrorLinkedPair`'s copy, the MIDI catalogue's
@@ -414,8 +415,8 @@ export function mirrorLinkedPair(model: DeviceModel, plan: Plan, id: string): bo
   if (!partner) return false;
   const sharedPan = isBalLinkedPair(model, plan, id);
   // Replace the partner's node params with the source's, but keep the keys the pair does not
-  // share: the pair-level fields (only the primary carries stereoLink / panBal) and the head
-  // amp (each member has its own input). The copy is deep: a shallow spread would alias the
+  // share: the pair-level fields (only the primary carries stereoLink / panBal) and the
+  // polarity (each member keeps its own). The copy is deep: a shallow spread would alias the
   // nested groups (gate / comp / eqBands / ssmcs / osc / eqOneKnob) between the two channels,
   // so an in-place edit to one would bleed into the other — and the alias would outlive the
   // link, since it persists until a replace-style edit or a JSON round-trip breaks it.

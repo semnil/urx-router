@@ -86,11 +86,12 @@ export function buildModel(p: ModelParams): DeviceModel {
   // USB DAW every channel, All Input only the channels its table names), not
   // selectable sources, so they are not input nodes.
   const inputs: string[] = [];
-  const addInput = (id: string, label: string): void => {
-    add({ id, kind: "input", label, column: "input", ports: outPort() });
+  const addInput = (id: string, label: string, sideLabels?: readonly [string, string]): void => {
+    add({ id, kind: "input", label, column: "input", ports: outPort(), ...(sideLabels ? { sideLabels } : {}) });
     inputs.push(id);
   };
-  for (let i = 1; i <= p.micLine; i += 2) addInput(`in.micline_${i}_${i + 1}`, `MIC/LINE ${i}/${i + 1}`);
+  for (let i = 1; i <= p.micLine; i += 2)
+    addInput(`in.micline_${i}_${i + 1}`, `MIC/LINE ${i}/${i + 1}`, [`MIC/LINE ${i}`, `MIC/LINE ${i + 1}`]);
   addInput("in.aux", "AUX IN");
   if (p.hasSD) addInput("in.sdplay", "microSD Playback");
   addInput("in.usbmain_a", "USB MAIN A");
@@ -116,7 +117,14 @@ export function buildModel(p: ModelParams): DeviceModel {
     const a = stereoStart + 2 * k;
     const b = a + 1;
     const id = `ch_${a}_${b}`;
-    add({ id, kind: "channel", label: `CH ${a}/${b}`, column: "channel", ports: ioPort() });
+    add({
+      id,
+      kind: "channel",
+      label: `CH ${a}/${b}`,
+      sideLabels: [`CH ${a}`, `CH ${b}`],
+      column: "channel",
+      ports: ioPort(),
+    });
     channels.push(id);
     // Each stereo channel carries one ducker hung directly below it; reserve the
     // next grid row so the default layout leaves room for that hanging node.

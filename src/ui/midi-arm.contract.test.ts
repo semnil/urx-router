@@ -35,7 +35,11 @@ import type { DynCtx, DynProcessor } from "./dyn-screen";
 import { bindControl } from "../core/midi/controls";
 import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS } from "../core/control/params";
 import { defaultPlan } from "../models/initial-state";
+import { getModel } from "../models";
+import { isStereoChannel } from "../core/control/translate";
+import { setExclusiveConnection } from "../core/plan";
 import { setLang, t } from "../i18n";
+import { setDisplayedSide } from "../core/stereo-side";
 
 /** Learn is on, nothing is armed or mapped: every armable control marks itself. */
 const learnHooks = (armed: string[]) => ({
@@ -125,6 +129,46 @@ describe("arming surfaces against the control catalog", () => {
     expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
   });
 
+  // The strip's input-stage controls follow the channel's source wire, so the same pass is asked
+  // of a rewired board: a mono channel on a source, one on no source, one on the other MIC/LINE
+  // pair, and a stereo channel on MIC/LINE.
+  it.each(["URX22", "URX44", "URX44V"] as const)("CONSOLE arms only bindable ids on %s, rewired", (modelId) => {
+    const armed: string[] = [];
+    const plan = defaultPlan(modelId);
+    const m = getModel(modelId);
+    const mono = m.nodes.filter((n) => n.kind === "channel" && !isStereoChannel(n.id)).map((n) => n.id);
+    const stereo = m.nodes.filter((n) => isStereoChannel(n.id)).map((n) => n.id);
+    setExclusiveConnection(plan, "in.aux:out", `${mono[0]}:in`, "source");
+    plan.connections = plan.connections.filter((c) => !(c.to === `${mono.at(-1)}:in` && c.kind === "source"));
+    if (m.nodes.some((n) => n.id === "in.micline_3_4") && mono.length > 2)
+      setExclusiveConnection(plan, "in.micline_3_4:out", `${mono[1]}:in`, "source");
+    setExclusiveConnection(plan, "in.micline_1_2:out", `${stereo[0]}:in`, "source");
+    ch = consoleHost({ modelId, plan, midi: learnHooks(armed) });
+    const { marked, ids } = armEverything(ch.host, armed);
+    expect(ids, "the premise: a source's D.Gain is armable").toContain(`${mono[0]}/gain`);
+    expect(ids, "and a channel on no source offers no gain").not.toContain(`${mono.at(-1)}/gain`);
+    expect(ids.length).toBe(marked);
+    expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
+  });
+
+  // A stereo channel's one φ and its input stage act on the side it shows, under the ids of
+  // that side; with R shown, every id it arms still binds.
+  it.each(["URX22", "URX44", "URX44V"] as const)("CONSOLE arms the shown side's ids on %s", (modelId) => {
+    const armed: string[] = [];
+    const plan = defaultPlan(modelId);
+    const stereo = getModel(modelId).nodes.find((n) => isStereoChannel(n.id))!.id;
+    setExclusiveConnection(plan, "in.micline_1_2:out", `${stereo}:in`, "source");
+    ch = consoleHost({ modelId, plan, midi: learnHooks(armed) });
+    setDisplayedSide(stereo, "R");
+    ch.view.refresh();
+    const { marked, ids } = armEverything(ch.host, armed);
+    expect(ids).toContain(`${stereo}/phaseR`);
+    expect(ids).not.toContain(`${stereo}/phaseL`);
+    expect(ids, "the premise: the shown jack's gain is armable").toContain(`${stereo}/gain`);
+    expect(ids.length).toBe(marked);
+    expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
+  });
+
   // The case above compares two counts, and both of them count only controls that MARKED
   // themselves — so a chip carrying no id at all is absent from each side and the totals
   // still agree. That is the shape the FX strip's EFFECT face had: a toggle the CONSOLE
@@ -163,9 +207,11 @@ describe("arming surfaces against the control catalog", () => {
   // RATE locks offers nothing. The whole-surface pass runs with both on screen, so the
   // marked-versus-armed equality is asked of a strip carrying the locked chip.
   it("keeps a +48V chip HI-Z locks armable, and leaves a rate-locked chip unmarked", () => {
+    // CH 3 reads jack 3, which carries HI-Z.
+    const JACK3 = "in.micline_3_4";
     const armed: string[] = [];
     const plan = defaultPlan("URX44V");
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, phantom: false, hiZ: true };
+    plan.nodeParams[JACK3] = { ...plan.nodeParams[JACK3], phantomL: false, hiZL: true };
     plan.sampleRate = 192000;
     ch = consoleHost({ modelId: "URX44V", plan, midi: learnHooks(armed) });
     const chipOf = (node: string, label: string): HTMLElement => {
@@ -184,7 +230,7 @@ describe("arming surfaces against the control catalog", () => {
     expect(armed, "a press arms its id").toEqual(["ch3/phantom"]);
     phantom.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     expect(armed, "and so does Enter").toEqual(["ch3/phantom", "ch3/phantom"]);
-    expect(plan.nodeParams.ch3?.phantom, "and edits nothing").toBe(false);
+    expect(plan.nodeParams[JACK3]?.phantomL, "and edits nothing").toBe(false);
     expect(bindControl(ch.model, ch.plan, armed[0]), "which the catalog binds").toBeTruthy();
 
     const eq = chipOf("ch_5_6", t().console.eq);
@@ -203,13 +249,13 @@ describe("arming surfaces against the control catalog", () => {
     // Outside learn mode the locked chip is inert: a press turns nothing on.
     ch.restore();
     const idle = defaultPlan("URX44V");
-    idle.nodeParams.ch3 = { ...idle.nodeParams.ch3, phantom: false, hiZ: true };
+    idle.nodeParams[JACK3] = { ...idle.nodeParams[JACK3], phantomL: false, hiZL: true };
     ch = consoleHost({ modelId: "URX44V", plan: idle, midi: { ...learnHooks(armed), learnActive: () => false } });
     armed.length = 0;
     const idleChip = chipOf("ch3", "+48");
     expect(idleChip.tabIndex, "out of the tab order").toBe(-1);
     idleChip.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    expect(idle.nodeParams.ch3?.phantom, "a press outside learn mode leaves +48V off").toBe(false);
+    expect(idle.nodeParams[JACK3]?.phantomL, "a press outside learn mode leaves +48V off").toBe(false);
     expect(armed).toEqual([]);
   });
 

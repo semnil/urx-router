@@ -52,7 +52,7 @@
 import type { DeviceModel } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
-import { emptyPlan } from "../plan";
+import { emptyPlan, PHANTOM_KEYS } from "../plan";
 import { canConnect, isStereoLinkedPair, mirrorLinkedPair, partnerChannel } from "../routing";
 import { vdConnect, vdDisconnect, vdGet, vdSet } from "../platform";
 import {
@@ -74,6 +74,7 @@ import type { ParamSpec } from "./params";
 import { diffNames, diffPlan, reachedAndFailed, sendConverging, sendNames, sendPresetsAndReconverge } from "./client";
 import type { NameOutcome, SendOutcome } from "./client";
 import { SETTLE_TIMEOUT_MS } from "./settle";
+import { A_GAIN_MIN_DB, D_GAIN_MIN_DB } from "./vd";
 import type { ConvergeRound } from "./client";
 import { applyDeviceState } from "./readback";
 import {
@@ -81,9 +82,9 @@ import {
   channelControl,
   cmdAddr,
   formatAddrKey,
-  inputPorts,
   insertFxControl,
   planToCommands,
+  selectableInputIds,
   UNVERIFIED_MAPPINGS,
   unverifiedAddresses,
 } from "./translate";
@@ -163,6 +164,9 @@ export interface UnverifiedFinding {
   key: string;
   label: string;
   outcome: UnverifiedOutcome;
+  /** For a guess a round trip cannot settle, the observation that does — what the report
+   *  prints beside every verdict but a refutation, which a round trip CAN reach. */
+  howToSettle?: string;
   /** Addresses written for this guess that did not round-trip, from passes that
    *  completed. Non-empty exactly when the outcome is "refuted" — every other outcome is
    *  a statement that nothing was settled, and a list of differences printed under it
@@ -437,24 +441,22 @@ function perturb(obj: Record<string, unknown>, pass: number): void {
 export function floorSilent(plan: Plan): void {
   for (const np of Object.values(plan.nodeParams)) {
     if (typeof np.level === "number") np.level = SILENCE_DB;
-    if (np.phantom) np.phantom = false;
+    for (const key of PHANTOM_KEYS) if (np[key]) np[key] = false;
     if (np.osc) np.osc.on = false;
   }
   for (const c of plan.connections) c.params = { ...c.params, level: SILENCE_DB };
 }
 
-// Force the perturbed plan silent, applied last so it overrides perturb. Head-amp
-// gain is floored to each channel's own minimum (not SILENCE_DB, which would be
-// re-clamped and break the round trip): a still-unverified gain param id could
-// write to an unintended address, and the channel minimum is the safest value such
-// a write can carry while still letting a correct id round-trip.
-function makeSilent(model: DeviceModel, plan: Plan): void {
+// Force the perturbed plan silent, applied last so it overrides perturb. A jack's A.Gain
+// and a source's D.Gain are floored to their own minimum (not SILENCE_DB, which would be
+// re-clamped and break the round trip): a still-unverified gain address could write to an
+// unintended input, and the minimum is the safest value such a write can carry while still
+// letting a correct address round-trip.
+function makeSilent(plan: Plan): void {
   floorSilent(plan);
-  for (const [nodeId, np] of Object.entries(plan.nodeParams)) {
-    if (typeof np.gain === "number") {
-      const cc = channelControl(model, nodeId);
-      if (cc?.gain) np.gain = cc.gain.minDb;
-    }
+  for (const np of Object.values(plan.nodeParams)) {
+    for (const key of ["gainL", "gainR"] as const) if (typeof np[key] === "number") np[key] = A_GAIN_MIN_DB;
+    if (typeof np.dGain === "number") np.dGain = D_GAIN_MIN_DB;
   }
 }
 
@@ -554,13 +556,6 @@ function sweepInsertFx(plan: Plan, pass: number, model: DeviceModel): void {
   }
 }
 
-// Ids of the model's selectable input nodes — those with a physical port map
-// (INPUT_PORTS). Shared by the input-source sweep (which cycles channel groups
-// across them) and the pass count (which needs their count, N). Exported for tests.
-export function selectableInputIds(model: DeviceModel): string[] {
-  return model.nodes.filter((n) => n.kind === "input" && inputPorts(n.id)).map((n) => n.id);
-}
-
 // Group channels into source-selection units: a linked mono pair, or a single
 // channel (unpaired mono / stereo). Shared by the input-source sweep (which
 // assigns each group an input node) and the pass count (which needs the group
@@ -591,7 +586,7 @@ function channelSourceGroups(model: DeviceModel): string[][] {
 // matching how planToCommands derives the per-slot port. The port value written is
 // inputPorts(node), so a mismatch on read-back pins INPUT_PORTS as wrong. Levels
 // are floored by makeSilent, so re-routing inputs stays silent.
-function sweepInputSource(plan: Plan, pass: number, model: DeviceModel): void {
+export function sweepInputSource(plan: Plan, pass: number, model: DeviceModel): void {
   const inputs = selectableInputIds(model);
   if (!inputs.length) return;
   const groups = channelSourceGroups(model);
@@ -639,7 +634,7 @@ export function perturbedPlan(model: DeviceModel, original: Plan, pass: number, 
   sweepInsertFx(plan, pass, model);
   sweepInputSource(plan, pass, model);
   if (suppress) for (const m of UNVERIFIED_MAPPINGS) if (suppress.has(m.key)) m.suppress?.(plan);
-  makeSilent(model, plan);
+  makeSilent(plan);
   return plan;
 }
 
@@ -987,7 +982,13 @@ export async function runSelfTest(
                   ? "confirmed"
                   : "roundTripped"
                 : "unexercised";
-      return { key: m.key, label: m.label, outcome, mismatches };
+      return {
+        key: m.key,
+        label: m.label,
+        outcome,
+        mismatches,
+        ...(!m.roundTripSettles && m.howToSettle ? { howToSettle: m.howToSettle } : {}),
+      };
     });
 
     // 3. Restore the original state (converging, for the same reset behavior).
@@ -1339,6 +1340,8 @@ export function formatSelfTestReport(report: SelfTestReport): string {
       }[u.outcome];
       lines.push(`- **${u.label}** (${u.key}): ${verdict}`);
       for (const m of u.mismatches) lines.push(`  - ${mismatchLine(m)}`);
+      if (u.howToSettle && u.outcome !== "refuted" && u.outcome !== "collision")
+        lines.push(`  - NOT SETTLED BY THIS RUN — a round trip cannot answer it; to settle it, ${u.howToSettle}`);
     }
   }
 

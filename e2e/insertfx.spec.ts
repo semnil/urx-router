@@ -984,7 +984,8 @@ test("Tab out of the console INS FX list lands beside the disclosure that opened
   await expect(rows.last()).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(pop).toBeHidden();
-  await expect(strip.locator('.con-knob[aria-label="A.GAIN"]')).toBeFocused();
+  // CH 1 reads no source on this plan, so the knob after the disclosure is PAN.
+  await expect(strip.locator('.con-knob[aria-label="PAN"]')).toBeFocused();
 });
 
 // The launcher asks whether the SCREEN would open, not whether the strip holds something.

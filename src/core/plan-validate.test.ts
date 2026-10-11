@@ -419,9 +419,11 @@ describe("paramRangeProblems", () => {
   // sends the catalogue's 100 to slot 2 for an ABSENT level, and a version-3 writer sends 1 to
   // slot 1 for an absent on, so a file written here and tagged lower would load in such a build
   // and move a unit holding anything else at those addresses. The version is what stops it:
-  // that build refuses a document tagged higher than its own.
+  // that build refuses a document tagged higher than its own. A version-4 writer sends the
+  // factory input stage for a channel holding none, so the same holds for the channels, which
+  // carry no input-stage key once it lives on the jacks and sources.
   it("writes a version this change's own removal is safe under", () => {
-    expect(PLAN_VERSION).toBe(4);
+    expect(PLAN_VERSION).toBe(5);
     const doc = JSON.parse(serialize(defaultPlan("URX44V"))) as {
       version: number;
       nodeParams: Record<string, { fxEffect?: Record<string, unknown> }>;
@@ -436,6 +438,11 @@ describe("paramRangeProblems", () => {
       expect(fx, `the premise: ${node} carries a section`).toBeTypeOf("object");
       expect(fx, node).not.toHaveProperty("level");
       expect(fx, node).not.toHaveProperty("on");
+    }
+    expect(doc.nodeParams["in.micline_1_2"], "the premise: the jacks carry the input stage").toHaveProperty("gainL");
+    for (const node of ["ch1", "ch2", "ch3", "ch4", "ch_5_6", "ch_7_8"]) {
+      for (const key of ["gain", "phantom", "clipSafe", "hiZ"])
+        expect(doc.nodeParams[node], node).not.toHaveProperty(key);
     }
   });
 
@@ -711,6 +718,7 @@ describe("paramRangeProblems — a value whose kind is not the factory value's",
       .filter((p) => p.where === "node")
       .map((p) => `${p.node}.${p.key} ${p.action}`);
 
+  // A legacy channel key reaches the check on the jack the load moved it to.
   it("drops a non-number where the factory holds a number, and a group where it holds an on/off", () => {
     const plan = load({
       ch1: { gain: true, hpfFreq: { a: 1 }, comp: { oneKnobLevel: true }, hpf: { x: true } },
@@ -720,7 +728,7 @@ describe("paramRangeProblems — a value whose kind is not the factory value's",
     });
     expect(kinds(plan).sort()).toEqual(
       [
-        "ch1.gain drop",
+        "in.micline_1_2.gainL drop",
         "ch1.hpfFreq drop",
         "ch1.comp.oneKnobLevel drop",
         "ch1.hpf drop",
@@ -740,7 +748,7 @@ describe("paramRangeProblems — a value whose kind is not the factory value's",
     const plan = load({ ch1: { gain: true, eqOneKnob: true }, "bus.osc": { osc: { interval: true, level: -10 } } });
     const factory = defaultPlan("URX44V");
     prepareLoadedPlan(getModel("URX44V"), plan, planProblems(getModel("URX44V"), plan));
-    expect(plan.nodeParams.ch1?.gain).toBe(factory.nodeParams.ch1?.gain);
+    expect(plan.nodeParams["in.micline_1_2"]?.gainL).toBe(factory.nodeParams["in.micline_1_2"]?.gainL);
     expect(plan.nodeParams.ch1?.eqOneKnob).toEqual(factory.nodeParams.ch1?.eqOneKnob);
     expect(plan.nodeParams["bus.osc"]?.osc).toEqual({ ...factory.nodeParams["bus.osc"]?.osc, level: -10 });
     expect(planToCommands(getModel("URX44V"), plan).filter((c) => typeof c.vdValue !== "number")).toEqual([]);
@@ -753,8 +761,8 @@ describe("paramRangeProblems — a value whose kind is not the factory value's",
   });
 
   it("reads the node the drop leaves: a dropped HI-Z is not on", () => {
-    const plan = load({ ch3: { hiZ: { a: 1 }, phantom: true, gain: 60 } });
-    expect(paramRangeProblems(plan).map((p) => `${p.key} ${p.action}`)).toEqual(["hiZ drop"]);
+    const plan = load({ "in.micline_3_4": { hiZL: { a: 1 }, phantomL: true, gainL: 60 } });
+    expect(paramRangeProblems(plan).map((p) => `${p.key} ${p.action}`)).toEqual(["hiZL drop"]);
   });
 });
 
@@ -827,13 +835,14 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
   // previous gain, and past ±24 dB D.Gain or below the A.Gain descriptor the write is refused.
   // The oscillator level's encoder clamps to int16 alone. Both go to the range the unit's own
   // panel sets, the HI-Z ceiling included.
-  it("bounds a gain to the channel's own range and the oscillator level to -96..0 dB", () => {
+  // A jack's A.Gain to -8..+70 dB (+40 while its HI-Z is on), a source's D.Gain to ±24 dB — and
+  // a legacy channel key on the jack or source the load moved it to.
+  it("bounds a gain to its jack's or source's own range and the oscillator level to -96..0 dB", () => {
     const plan = load({
-      ch1: { gain: -12 },
-      ch2: { gain: 80 },
-      ch3: { hiZ: true, gain: 60 },
+      "in.micline_1_2": { gainL: -12, gainR: 80 },
+      "in.micline_3_4": { hiZL: true, gainL: 60 },
+      "in.usbmain_a": { dGain: -30, phantomL: true },
       ch_5_6: { gain: 30 },
-      ch_7_8: { gain: -30 },
       "bus.osc": { osc: { level: 5 } },
     });
     expect(
@@ -842,18 +851,26 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
         .sort(),
     ).toEqual(
       [
-        "ch1.gain -12 -> -8",
-        "ch2.gain 80 -> 70",
-        "ch3.gain 60 -> 40",
-        "ch_5_6.gain 30 -> 24",
-        "ch_7_8.gain -30 -> -24",
+        "in.micline_1_2.gainL -12 -> -8",
+        "in.micline_1_2.gainR 80 -> 70",
+        "in.micline_3_4.gainL 60 -> 40",
+        "in.aux.dGain 30 -> 24",
+        "in.usbmain_a.dGain -30 -> -24",
         "bus.osc.osc.level 5 -> 0",
       ].sort(),
     );
+    expect(plan.nodeParams["in.usbmain_a"], "a jack key on a source is dropped at the load").not.toHaveProperty(
+      "phantomL",
+    );
     applyParamRange(plan, paramRangeProblems(plan));
+    expect(plan.nodeParams["in.aux"]?.dGain).toBe(24);
     const sent = planToCommands(getModel("URX44V"), plan);
-    expect(sent.find((c) => c.name === "HA_GAIN" && c.node === "ch_5_6")?.vdValue).toBe(2400);
     expect(sent.find((c) => c.name === "OSC_LEVEL")?.vdValue).toBe(0);
+  });
+
+  it("drops a D.Gain that is not a number", () => {
+    const plan = load({ "in.aux": { dGain: true } });
+    expect(paramRangeProblems(plan).map((p) => `${p.node}.${p.key} ${p.action}`)).toEqual(["in.aux.dGain drop"]);
   });
 
   // PAN/BAL is a linked pair's mode: the unit's control and the app's exist only while the pair
@@ -1218,8 +1235,8 @@ describe("linkedPairProblems", () => {
     expect(repairs.linkedPairs).toEqual(problems);
     expect(plan.nodeParams.ch2?.gate).toEqual(plan.nodeParams.ch1?.gate);
     expect(plan.nodeParams.ch2?.hpfFreq).toBe(100);
-    // The input stage is each member's own.
-    expect(plan.nodeParams.ch2?.gain).toBe(40);
+    // The input stage is each member's own jack's.
+    expect(plan.nodeParams["in.micline_1_2"]?.gainR).toBe(40);
     for (const name of ["GATE_THRESHOLD", "HPF_FREQ"]) {
       const [a, b] = sentPair(plan, name);
       expect(b, name).toBe(a);
@@ -1237,7 +1254,9 @@ describe("linkedPairProblems", () => {
     load(plan);
     expect(plan.nodeParams.ch2?.gateOn).toBe(true);
     expect(plan.nodeParams.ch2?.gate?.threshold).toBe(-40);
-    expect(plan.nodeParams.ch2?.gain, "the factory input stage").toBe(defaultPlan("URX44V").nodeParams.ch2?.gain);
+    expect(plan.nodeParams["in.micline_1_2"]?.gainR, "the factory input stage").toBe(
+      defaultPlan("URX44V").nodeParams["in.micline_1_2"]?.gainR,
+    );
   });
 
   it("leaves an agreeing pair, an unlinked one and a pair differing only in its own values alone", () => {
@@ -1544,12 +1563,15 @@ describe("booleanParamProblems", () => {
         "duckerOn",
         "gateOn",
         "compOn",
-        "phantom",
+        "phantomL",
+        "phantomR",
         "phase",
         "phaseL",
         "phaseR",
-        "clipSafe",
-        "hiZ",
+        "clipSafeL",
+        "clipSafeR",
+        "hiZL",
+        "hiZR",
         "osc.on",
         "cueInterrupt",
         "mono",
@@ -1576,7 +1598,7 @@ describe("booleanParamProblems", () => {
     const u44v = getModel("URX44V");
     const plan = defaultPlan("URX44V");
     expect(booleanParamProblems(u44v, plan)).toEqual([]);
-    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, gain: 1 };
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: 1 };
     // ch2 is the pair's secondary, which carries no Signal Type of its own.
     plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, stereoLink: 1 as unknown as boolean };
     // An EQ band past the four the factory carries.
@@ -1627,12 +1649,12 @@ describe("prepareLoadedPlan", () => {
 
   it("converts an on/off before the HI-Z rule bounds it", () => {
     const plan = emptyPlan("URX44V");
-    plan.nodeParams.ch3 = { hiZ: 1 as unknown as boolean, phantom: 1 as unknown as boolean };
+    plan.nodeParams["in.micline_3_4"] = { hiZL: 1 as unknown as boolean, phantomL: 1 as unknown as boolean };
     const repairs = load(plan);
-    expect(repairs.booleans.map((p) => p.path).sort()).toEqual(["hiZ", "phantom"]);
-    expect(repairs.ranged.map((p) => [p.key, p.action])).toEqual([["phantom", "bound"]]);
-    expect(plan.nodeParams.ch3!.hiZ).toBe(true);
-    expect(plan.nodeParams.ch3!.phantom).toBe(false);
+    expect(repairs.booleans.map((p) => p.path).sort()).toEqual(["hiZL", "phantomL"]);
+    expect(repairs.ranged.map((p) => [p.key, p.action])).toEqual([["phantomL", "bound"]]);
+    expect(plan.nodeParams["in.micline_3_4"]!.hiZL).toBe(true);
+    expect(plan.nodeParams["in.micline_3_4"]!.phantomL).toBe(false);
   });
 
   it("completes a value a repair dropped from the factory values, where the repairs alone leave it absent", () => {

@@ -39,7 +39,8 @@ import {
   sceneExternalParamNames,
 } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
-import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
+import type { ConnParams, JackSide, NodeParams, Plan, SerializeOptions } from "./core/plan";
+import { resetDisplayedSides, setDisplayedSide } from "./core/stereo-side";
 import {
   applyPatch,
   clonePlanState,
@@ -56,7 +57,7 @@ import {
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
 import { applyParamRange, isRefusal, needsDecision, planProblems, prepareLoadedPlan } from "./core/plan-validate";
-import { phantomHiZBothOn, switchAddr } from "./core/input-lock";
+import { jackName, phantomHiZBothOn, switchAddr, switchOfKey } from "./core/input-lock";
 import type { InputSwitch, SwitchSession } from "./core/input-lock";
 import type { LoadProblem } from "./core/plan-validate";
 import {
@@ -175,10 +176,12 @@ import {
   formatCompareReport,
   formatWriteReport,
   FOLLOW_USB_ADDR,
+  LCD_SELECTION_ADDR,
   reachedAndFailed,
   rateAction,
   readClockState,
   readFollowUsb,
+  readLcdSelection,
   readTrackCount,
   confirmedAddrs,
   newConfirmLedger,
@@ -186,12 +189,22 @@ import {
   sendNames,
   sendPresetsAndReconverge,
   setFollowUsb,
+  writeLcdSelection,
   type CommandDiff,
   type ConvergeResult,
   type SendOutcome,
 } from "./core/control/client";
 import { askRateChoice } from "./ui/rate-choice";
-import { cmdAddr, collisionOwners, planToCommands, planToNameWrites, unnamedNodes } from "./core/control/translate";
+import {
+  cmdAddr,
+  collisionOwners,
+  planToCommands,
+  planToNameWrites,
+  unnamedNodes,
+  unverifiedGuessAt,
+  unverifiedGuessNote,
+} from "./core/control/translate";
+import { decodeLcdSelection, encodeStereoSide, LcdEchoes } from "./core/control/lcd-selection";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
 import {
@@ -435,8 +448,10 @@ function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   // command it has on the wire then is answered over this connection rather than over one
   // another action installs after the disconnect.
   const flush = live?.idle() ?? Promise.resolve();
+  // …and the LCD selection write the session has on the wire, for the same reason.
+  const lcd = lcdInFlight ?? Promise.resolve();
   return (
-    Promise.allSettled([ledger, reads, flush])
+    Promise.allSettled([ledger, reads, flush, lcd])
       .then(() => vdDisconnect(epoch))
       // The holder goes back HERE and not in deactivateLive, because it is what stops
       // another action from connecting: an install replaces the worker, and the read still
@@ -462,7 +477,8 @@ const live = DEMO
   : new LiveSync({
       getModel: () => getModel(modelId),
       getPlan: () => plan,
-      onError: (message) => stopLiveOnError(errorText(message)),
+      onError: (message, guess) =>
+        stopLiveOnError(errorText(message) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : "")),
       // The adoption's own count rides on this line rather than writing one of its own: the
       // converge that produces it runs INSIDE the flush, so a line written there is overwritten
       // by this one a moment later — the status bar is last-writer-wins, and a converge always
@@ -664,6 +680,7 @@ const consoleView = new Console(consoleHost, {
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
   onOpenDynScreen: (kind, id) => dynScreen.open(DYN_PROCESSORS[kind], id),
+  onSwitchSide: (channelId, side) => switchSide(channelId, side, "app"),
   // MIDI learn: while learn mode is on, console controls arm for binding instead
   // of editing.
   midi: midiLearnHooks,
@@ -848,11 +865,12 @@ function reflectFollow(): void {
   bothOnNoted = both;
 }
 
-// The channels holding +48V and HI-Z both on, as the status line last named them.
+// The jacks holding +48V and HI-Z both on, as the status line last named them.
 let bothOnNoted = "";
 function bothOnLabels(): string {
-  return phantomHiZBothOn(getModel(modelId), plan)
-    .map((id) => graph.labelOf(id))
+  const model = getModel(modelId);
+  return phantomHiZBothOn(model, plan)
+    .map((j) => jackName(model, plan, j, (id) => graph.labelOf(id)))
     .join(", ");
 }
 /** A device read's status line, led by what it did about +48V / HI-Z: the ONs it refused
@@ -876,11 +894,12 @@ let refusalLine: { line: string; notes: string[] } | null = null;
 /** One sentence per switch a read refused (`MergedRead.refusedOn`), channels in model order. */
 function refusalNotes(merged: MergedRead | undefined): string[] {
   if (!merged?.refusedOn.length) return [];
-  const order = getModel(modelId).nodes.map((n) => n.id);
+  const model = getModel(modelId);
   const named = (key: InputSwitch): string =>
-    order
-      .filter((id) => merged.refusedOn.some((r) => r.nodeId === id && r.key === key))
-      .map((id) => graph.labelOf(id))
+    merged.refusedOn
+      .map((r) => ({ node: r.nodeId, sw: switchOfKey(r.key) }))
+      .filter((r) => r.sw?.on === key)
+      .map((r) => jackName(model, plan, { node: r.node, side: r.sw!.side }, (id) => graph.labelOf(id)))
       .join(", ");
   const phantom = named("phantom");
   const hiZ = named("hiZ");
@@ -1170,16 +1189,29 @@ const follow =
   DEMO || !live
     ? null
     : new DeviceFollow({
-        // The plan's follow set plus Follow USB, which the plan deliberately does
-        // not carry (params.ts) but the badge has to keep in step with the device.
-        addrs: () => [...(live?.followAddrs() ?? []), FOLLOW_USB_ADDR],
+        // The plan's follow set plus Follow USB and the LCD selection, which the plan
+        // deliberately does not carry (params.ts): the badge and the side a stereo channel
+        // shows are kept in step with the device.
+        addrs: () => [...(live?.followAddrs() ?? []), FOLLOW_USB_ADDR, LCD_SELECTION_ADDR],
         // Held off while a flush is armed, running or queued: a read taken then answers an
         // edit the flush has not sent, or a write the unit has not announced, with the value
         // it replaces, and the merge takes that value over the operator's edit.
         deferReconcile: () => live?.isWriting() ?? false,
         intercept: (p) => {
-          const [id, x, y] = FOLLOW_USB_ADDR;
-          if (p.paramId !== id || p.x !== x || p.y !== y) return false;
+          const at = (a: [number, number, number]): boolean => p.paramId === a[0] && p.x === a[1] && p.y === a[2];
+          // The unit's own answer to a side this app wrote is consumed; any other selection
+          // of a stereo channel shows that channel's side. Neither opens a reconcile.
+          if (at(LCD_SELECTION_ADDR)) {
+            if (lcdEchoes.take(p.value)) return true;
+            // The unit moved its selection itself, so what this app last wrote is no longer what
+            // the unit holds, and a switch still waiting to be written is older than this one.
+            lcdLast = null;
+            lcdNext = null;
+            const sel = decodeLcdSelection(getModel(modelId), p.value);
+            if (sel) switchSide(sel.channel, sel.side, "device");
+            return true;
+          }
+          if (!at(FOLLOW_USB_ADDR)) return false;
           setFollowUsbBadge(p.value !== 0);
           return true;
         },
@@ -1213,7 +1245,7 @@ const follow =
         // A direct (node-local scalar) change: decode the notify value straight into
         // the plan, no read-back, and record the node so the coalesced reflect
         // repaints just it. The reflect is scheduled by flushDirect.
-        applyDirect: (node, name, value) => authorFromDevice(node, () => applyDirect(plan, node, name, value)),
+        applyDirect: (node, name, value, y) => authorFromDevice(node, () => applyDirect(plan, node, name, value, y)),
         // A rename made on the unit's own LCD. It arrives as a string notify on a
         // name address, which the numeric follow path cannot carry — the value is
         // text, the address has no catalog entry, and the live snapshot holds no
@@ -1472,6 +1504,11 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   midi?.liveEnded();
   follow?.end();
   live?.end();
+  // The sides the session left stay; what it wrote has no session left to answer it, and a
+  // switch still waiting to be written has no session to go to.
+  lcdEchoes.clear();
+  lcdNext = null;
+  lcdLast = null;
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
   liveAdopted = 0;
@@ -1870,6 +1907,7 @@ const inspectorActions = {
   // Declared here but bound below: the dynamics screen's hooks reach back into
   // these actions, so it cannot be constructed until they exist.
   onOpenDynScreen: (kind: DynKind, id: string) => dynScreen.open(DYN_PROCESSORS[kind], id),
+  onSwitchSide: (channelId: string, side: JackSide) => switchSide(channelId, side, "app"),
   onClose: () => graph.clearSelection(),
   connectOrigins: (id: string) => graph.connectOrigins(id),
   onConnect: (origin: ConnectOrigin, other: string) => graph.connectTo(origin, other),
@@ -2102,6 +2140,57 @@ const inspectorComposition = compositionGate(inspectorHost, () => rebuildInspect
 function refreshInspector(): void {
   if (inspectorComposition.held()) return;
   rebuildInspector();
+}
+
+// The LCD selections this app has written that the unit has not announced yet.
+const lcdEchoes = new LcdEchoes();
+// One LCD selection write at a time: a switch made while one is on the wire waits, and only the
+// latest of those goes out once it returns — and not at all when it is the value just written.
+// The write on the wire is what a session's release waits for before it disconnects, so its
+// answer lands before another session can start.
+let lcdWriting = false;
+let lcdNext: number | null = null;
+let lcdLast: number | null = null;
+let lcdInFlight: Promise<void> | null = null;
+
+function writeLcd(raw: number, guess: string | undefined): void {
+  if (lcdWriting) {
+    lcdNext = raw;
+    return;
+  }
+  lcdWriting = true;
+  lcdLast = raw;
+  lcdEchoes.note(raw);
+  const write = writeLcdSelection(raw);
+  lcdInFlight = write;
+  write
+    .catch((err: unknown) => stopLiveOnError(errorText(err) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : "")))
+    .finally(() => {
+      if (lcdInFlight === write) lcdInFlight = null;
+      lcdWriting = false;
+      const next = lcdNext;
+      lcdNext = null;
+      if (next !== null && next !== lcdLast && liveSessionUp) writeLcd(next, guess);
+    });
+}
+
+/** Show `side` of a stereo channel: the one funnel both views' switches and the unit's own
+ *  selection reach. UI state rather than a plan edit — no dirty flag, no undo entry — so each
+ *  surface that shows it is told here: both views, and the MIDI feedback, since a bound
+ *  control on that channel now reads the other side. A switch made in the app during a live
+ *  session also moves the unit's LCD selection to that channel and side; a write the unit
+ *  refuses ends the session and keeps the side. */
+function switchSide(channelId: string, side: JackSide, origin: "app" | "device"): void {
+  if (!setDisplayedSide(channelId, side)) return;
+  consoleView.refresh();
+  if (inspectorNodes(getModel(modelId), plan, selection).includes(channelId)) rebuildInspectorNow();
+  midi?.scheduleFeedback();
+  if (origin !== "app" || !liveSessionUp) return;
+  const model = getModel(modelId);
+  const raw = encodeStereoSide(model, channelId, side);
+  if (raw === null) return;
+  const [id, , y] = LCD_SELECTION_ADDR;
+  writeLcd(raw, unverifiedGuessAt(model, id, y));
 }
 
 /**
@@ -2407,6 +2496,8 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
   const prevDirty = dirty;
   modelId = next.modelId;
   plan = next;
+  // The side each stereo channel shows belongs to the model's channels.
+  if (modelId !== prevModelId) resetDisplayedSides();
   ensureFixedConnections(getModel(modelId), plan);
   selection = null;
   try {
@@ -3824,9 +3915,10 @@ if (!DEMO) {
             const takenBack = adoptConfirmedWrites(confirmedAddrs(ledger));
             adopted += takenBack;
             const skipped = outcomes.filter((o) => o.skipped).length;
-            const failed: Array<{ name: string; error?: string }> = outcomes
-              .filter(reachedAndFailed)
-              .map((o) => ({ name: o.command.name, error: o.error }));
+            const failed: Array<{ name: string; error?: string }> = outcomes.filter(reachedAndFailed).map((o) => ({
+              name: o.command.name + unverifiedGuessNote(getModel(modelId), o.command.paramId, o.command.y),
+              error: o.error,
+            }));
             failed.push(...presetFailures);
             // On every outcome, not only the clean one: a write that stopped can still have
             // landed and read back the address the plan takes its value from, and a line that
@@ -4073,14 +4165,17 @@ if (!DEMO) {
         // as a fetch's does (see there).
         //
         // live.begin() then snapshots through the same scope filter, so a kept
-        // scene-external value is neither written back nor tracked.
+        // scene-external value is neither written back nor tracked. The LCD selection is
+        // read beside Follow USB, for the same reason and with the same failure.
         let followUsb = false;
+        let lcdSelection = 0;
         let merged: MergedRead | null;
         try {
           merged = await readIntoPlan(
             readTarget(switchTo),
             async (into) => {
               followUsb = await readFollowUsb();
+              lcdSelection = await readLcdSelection();
               return applyDeviceStateScoped(into);
             },
             switchTo ? undefined : planWrites,
@@ -4131,6 +4226,11 @@ if (!DEMO) {
         // the session's control (syncDeviceActionUi) — the only Follow USB control while
         // live.
         setFollowUsbBadge(followUsb);
+        // The unit announces the side of the channel it has selected and of no other, so
+        // that channel's side is taken from the unit here — over one switched in the app
+        // while the read ran — and every other stereo channel keeps the side the app shows.
+        const lcd = decodeLcdSelection(getModel(modelId), lcdSelection);
+        if (lcd) switchSide(lcd.channel, lcd.side, "device");
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.
         liveAdopted = 0;
@@ -4218,6 +4318,8 @@ if (!DEMO) {
         ...alignLinkedSendPans(plan, withLinkedPartner(getModel(modelId), plan, control.node)),
       ]);
       followDirtyNodes.add(control.node);
+      // A channel's input-stage control writes the jack or source it reads.
+      if (control.writes?.kind === "node" && control.writes.node) followDirtyNodes.add(control.writes.node);
       const partner = mirrored ? partnerChannel(getModel(modelId), control.node) : undefined;
       if (partner) followDirtyNodes.add(partner);
       requestReflect();
@@ -4489,11 +4591,13 @@ if (!DEMO) {
         await withCheckedDevice("compare", t().status.compareConnecting, t().status.compareError, async (device) => {
           const model = getModel(modelId);
           // Both halves are taken from the plan on screen NOW: the numeric sweep spans
-          // seconds, and the plan read again after it can be another document.
-          const commands = planToCommands(model, plan);
+          // seconds, and the plan read again after it can be another document. The input
+          // stage of every jack and source is compared, read by a channel or not — the unit
+          // keeps them all, and a settings file carries them all.
+          const commands = planToCommands(model, plan, "all", { everyInputHolder: true });
           const names = planToNameWrites(model, plan);
           const startedAt = performance.now();
-          const { entries, errors } = await comparePlan(commands, signal);
+          const { entries, errors } = await comparePlan(commands, signal, model);
           signal.throwIfAborted();
           const { entries: nameEntries, errors: nameErrors } = await compareNames(names);
           const elapsedMs = Math.round(performance.now() - startedAt);

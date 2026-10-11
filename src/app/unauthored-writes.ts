@@ -15,16 +15,23 @@
 // on/off are values a write carries like any node's — with the wire's own record standing for a
 // param nothing recorded separately.
 //
+// The input stage is held on a MIC/LINE jack or a digital source rather than on a channel, and
+// those nodes have no panel of their own, so a value written there names the channels reading
+// that jack or source — the strips the operator sees it on.
+//
 // A routing selector is the exception, because its value is a WIRE rather than a key: every wire
 // is drawn on the board, so the one it names is the one nobody drew, loaded or read — a wire the
 // app completed (the load, or a Fetch / Live start that found the unit on NONE), recorded
 // `default` under the wire's own contest name.
 
+import { D_GAIN_SOURCES, MIC_LINE_JACK_BASE } from "../core/control/params";
 import {
+  inputStageReaders,
   planToCommandOrigins,
   planToCommands,
   cmdAddr,
   ROUTING_SELECTORS,
+  type VdCommand,
   type WriteScope,
 } from "../core/control/translate";
 import type { Plan } from "../core/plan";
@@ -84,6 +91,9 @@ export function unauthoredWriteNodes(
 
   const origins = planToCommandOrigins(model, plan, scope);
   const named = new Set<string>([...renaming].filter((id) => !chose(nodeNameContestKey(id))));
+  const name = (c: VdCommand & { node: string }): void => {
+    for (const id of panelsOf(model, plan, c)) named.add(id);
+  };
   for (const c of planToCommands(model, plan, scope)) {
     const addr = cmdAddr(c);
     if (c.node === undefined || !changing.has(addr)) continue;
@@ -96,7 +106,16 @@ export function unauthoredWriteNodes(
       if (completed.get(c.node)?.has(c.name)) named.add(c.node);
       continue;
     }
-    if (origin === undefined || !chose(origin)) named.add(c.node);
+    if (origin === undefined || !chose(origin)) name({ ...c, node: c.node });
   }
   return model.nodes.filter((n) => named.has(n.id)).map((n) => n.id);
+}
+
+/** The nodes a command's value shows on: its owner, or for an input-stage holder the channels
+ *  reading the jack or source it addresses. */
+function panelsOf(model: DeviceModel, plan: Plan, c: VdCommand & { node: string }): string[] {
+  const base = MIC_LINE_JACK_BASE[c.node];
+  if (base !== undefined) return inputStageReaders(model, plan, c.node, c.y === base ? "L" : "R").map((r) => r.channel);
+  if (D_GAIN_SOURCES[c.node]) return inputStageReaders(model, plan, c.node).map((r) => r.channel);
+  return [c.node];
 }

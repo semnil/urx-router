@@ -19,7 +19,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel, MODEL_IDS } from "../../models";
 import { defaultPlan } from "../../models/initial-state";
-import { emptyPlan, ensureFixedConnections, supplyRequiredSources, type Plan } from "../plan";
+import { emptyPlan, ensureFixedConnections, setExclusiveConnection, supplyRequiredSources, type Plan } from "../plan";
 import { ref, type ModelId } from "../../models/types";
 
 vi.mock("../platform", () => ({ vdGet: vi.fn() }));
@@ -30,6 +30,7 @@ import { planToCommands } from "./translate";
 import type { VdCommand } from "./translate";
 import { buildModifiedPlan } from "./prepare";
 import { PORT_REF_NONE } from "./vd";
+import { D_GAIN_SOURCES } from "./params";
 
 const model = getModel("URX44V");
 
@@ -240,5 +241,110 @@ describe("a new plan", () => {
       [...new Set(cmds.map((c) => `${c.name} ${c.paramId}:${c.x}:${c.y}`))].sort();
     const read = addrs(planToCommands(m, plan));
     expect(read.filter((a) => !addrs(fresh).includes(a))).toEqual([]);
+  });
+});
+
+// The input stage is written for the jacks and sources some channel reads and read for every one
+// of them, so no one routing reaches every holder: URX44V has four mono slots and four stereo
+// channels against four jacks and thirteen sources. Each row routes a different set, the unit
+// holds a distinct value at every holder, and the round trip is a fixed point per row — with the
+// unit keeping, between the rounds, the holders the write did not send.
+describe("the input stage across routings", () => {
+  const HOLDER_VALUES: Record<string, Record<string, number | boolean>> = {
+    "in.micline_1_2": { gainL: 11, gainR: 12, phantomL: true, phantomR: false, clipSafeL: true, clipSafeR: false },
+    "in.micline_3_4": {
+      gainL: 13,
+      gainR: 14,
+      phantomL: false,
+      phantomR: true,
+      clipSafeL: false,
+      clipSafeR: true,
+      hiZL: true,
+      hiZR: false,
+    },
+  };
+  const SOURCES = model.nodes.filter((n) => D_GAIN_SOURCES[n.id]).map((n) => n.id);
+  SOURCES.forEach((id, i) => (HOLDER_VALUES[id] = { dGain: i + 1 }));
+
+  const ROUTINGS: Array<[string, Array<[string, string]>]> = [
+    ["the factory routing", []],
+    [
+      "mono channels on sources, stereo channels on USB DAW",
+      [
+        ["in.sdplay", "ch1"],
+        ["in.usbsub", "ch2"],
+        ["in.hdmi", "ch3"],
+        ["in.usbdaw_1_2", "ch4"],
+        ["in.usbdaw_3_4", "ch_5_6"],
+        ["in.usbdaw_5_6", "ch_7_8"],
+        ["in.usbdaw_7_8", "ch_9_10"],
+        ["in.usbdaw_9_10", "ch_11_12"],
+      ],
+    ],
+    [
+      "crossed jacks, a stereo channel on MIC/LINE",
+      [
+        ["in.micline_3_4", "ch1"],
+        ["in.micline_3_4", "ch2"],
+        ["in.usbdaw_11_12", "ch3"],
+        ["in.usbdaw_11_12", "ch4"],
+        ["in.micline_1_2", "ch_5_6"],
+      ],
+    ],
+  ];
+
+  /** The unit holding the routing and a distinct value at every holder. */
+  const unitFor = (wires: Array<[string, string]>): Map<string, number> => {
+    const plan = defaultPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    for (const [from, to] of wires) setExclusiveConnection(plan, `${from}:out`, `${to}:in`, "source");
+    for (const [id, np] of Object.entries(HOLDER_VALUES)) plan.nodeParams[id] = { ...plan.nodeParams[id], ...np };
+    return tableFrom(planToCommands(model, plan, "all", { everyInputHolder: true }));
+  };
+  const STAGE = new Set(["PHANTOM", "HA_GAIN", "CLIP_SAFE", "HI_Z", "D_GAIN"]);
+
+  it("is a fixed point per routing, and the routings together write every holder", async () => {
+    const union = new Set<string>();
+    for (const [name, wires] of ROUTINGS) {
+      const unit = unitFor(wires);
+      const c1 = await readThenEmit(unit);
+      const after = new Map([...unit, ...tableFrom(c1)]);
+      const c2 = await readThenEmit(after);
+      expect(addrVals(c2), name).toEqual(addrVals(c1));
+      for (const c of c1) if (STAGE.has(c.name)) union.add(`${c.paramId}:${c.y}`);
+    }
+    const every = [
+      ...[0, 1, 5].flatMap((id) => [0, 1, 2, 3].map((y) => `${id}:${y}`)),
+      "6:2",
+      "6:3",
+      ...SOURCES.flatMap((id) => D_GAIN_SOURCES[id].instances.map((y) => `${D_GAIN_SOURCES[id].id}:${y}`)),
+    ];
+    expect(every.filter((a) => !union.has(a))).toEqual([]);
+  });
+
+  // A stereo channel on a MIC/LINE pair reads both of its jacks, so the write round-trips both.
+  it("writes both jacks of a MIC/LINE pair a stereo channel reads, as a fixed point", async () => {
+    const [, wires] = ROUTINGS.find(([name]) => name.includes("stereo channel on MIC/LINE"))!;
+    const c1 = await readThenEmit(unitFor(wires));
+    expect(c1.filter((c) => c.name === "HA_GAIN").map((c) => c.y)).toEqual(expect.arrayContaining([0, 1]));
+    expect(c1.filter((c) => c.name === "PHANTOM").map((c) => c.y)).toEqual(expect.arrayContaining([0, 1]));
+  });
+
+  // W2: a jack no channel reads is read into the plan and left out of the write.
+  it("reads a jack no channel reads into the plan and leaves it out of the write", async () => {
+    const wires: Array<[string, string]> = [
+      ["in.micline_1_2", "ch3"],
+      ["in.micline_1_2", "ch4"],
+    ];
+    mockDevice(unitFor(wires));
+    const plan = emptyPlan("URX44V");
+    await applyDeviceState(model, plan);
+    expect(plan.nodeParams["in.micline_3_4"]).toMatchObject({ gainL: 13, gainR: 14, hiZL: true });
+    const sent = planToCommands(model, plan).filter((c) => STAGE.has(c.name));
+    expect(sent.some((c) => c.y === 2 || c.y === 3)).toBe(false);
+    expect(
+      sent.some((c) => c.name === "HA_GAIN" && c.y === 0),
+      "the positive control: jack 1 is sent",
+    ).toBe(true);
   });
 });

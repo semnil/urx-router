@@ -21,13 +21,14 @@ import {
   eqOneKnob,
   inputEq,
   planToCommands,
+  selectableInputIds,
   UNVERIFIED_MAPPINGS,
   unverifiedAddresses,
 } from "./translate";
 import { planProblems } from "../plan-validate";
 import {
+  D_GAIN_SOURCES,
   denormalizeInsertFx,
-  dGainParam,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
@@ -41,13 +42,13 @@ import {
 import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
 import {
   cancelledBeforeWriting,
+  floorSilent,
   formatSelfTestReport,
   linkedPassesFor,
   passesFor,
   PASSES,
   perturbedPlan,
   runSelfTest,
-  selectableInputIds,
   stereoLinkedPass,
   summarizeVerdicts,
   unlinkedPassesFor,
@@ -59,7 +60,9 @@ const model = getModel("URX44V");
 function populatedPlan(): Plan {
   const plan = emptyPlan("URX44V");
   ensureFixedConnections(model, plan);
-  plan.nodeParams["ch1"] = { on: true, hpf: false, gain: -8, hpfFreq: 80 };
+  setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+  plan.nodeParams["in.micline_1_2"] = { gainL: -8 };
+  plan.nodeParams["ch1"] = { on: true, hpf: false, hpfFreq: 80 };
   plan.nodeParams["bus.stereo"] = { on: true };
   plan.connections.push({
     from: "ch1:out",
@@ -1224,24 +1227,40 @@ describe("runSelfTest", () => {
   });
 
   it("perturbed plans are silent — faders floored, oscillator and phantom off", () => {
-    // A live-sounding original: hot gain, master up, oscillator running, phantom on.
+    // A hot gain and the master up. +48V and the oscillator are seeded OFF: the sweep flips every
+    // on/off before the silence pass runs, so an ON seed is off before the floor sees it and the
+    // case would pass with the floor taken out.
     const original = populatedPlan();
-    original.nodeParams["ch1"] = { gain: 40, phantom: true };
+    for (const ch of ["ch3", "ch4"]) setExclusiveConnection(original, "in.micline_3_4:out", `${ch}:in`, "source");
+    setExclusiveConnection(original, "in.micline_1_2:out", "ch2:in", "source");
+    original.nodeParams["in.micline_1_2"] = { gainL: 40, phantomL: false, phantomR: false };
+    original.nodeParams["in.micline_3_4"] = { phantomL: false, phantomR: false, hiZL: false, hiZR: false };
     original.nodeParams["bus.stereo"] = { on: true, level: 5 };
-    original.nodeParams["bus.osc"] = { osc: { on: true, level: -6, mode: 0, freq: 1000 } };
+    original.nodeParams["bus.osc"] = { osc: { on: false, level: -6, mode: 0, freq: 1000 } };
 
     const plan = perturbedPlan(model, original, 0);
     expect(plan.nodeParams["bus.osc"]?.osc?.on).toBe(false);
-    expect(Object.values(plan.nodeParams).some((np) => np.phantom)).toBe(false);
+    expect(Object.values(plan.nodeParams).some((np) => np.phantomL || np.phantomR)).toBe(false);
 
     const cmds = planToCommands(model, plan);
     // Oscillator generator off, no phantom, and every fader / send level floored.
     expect(cmds.find((c) => c.name === "OSC_ON")!.vdValue).toBe(0);
+    expect(cmds.filter((c) => c.name === "PHANTOM").length, "the premise: every jack's +48V is sent").toBe(4);
     expect(cmds.filter((c) => c.name === "PHANTOM").every((c) => c.vdValue === 0)).toBe(true);
     const faders = cmds.filter((c) => /FADER|SEND_LEVEL/.test(c.name));
     expect(faders.length).toBeGreaterThan(0);
     expect(faders.every((c) => c.vdValue === VD_LEVEL_OFF)).toBe(true);
   });
+});
+
+// The silence pass on its own, over +48V on both MIC/LINE nodes' jacks.
+it("floorSilent turns every jack's +48V off", () => {
+  const plan = emptyPlan("URX44V");
+  plan.nodeParams["in.micline_3_4"] = { phantomL: true, phantomR: false };
+  plan.nodeParams["in.micline_1_2"] = { phantomL: false, phantomR: true };
+  floorSilent(plan);
+  expect(plan.nodeParams["in.micline_3_4"]).toEqual({ phantomL: false, phantomR: false });
+  expect(plan.nodeParams["in.micline_1_2"]).toEqual({ phantomL: false, phantomR: false });
 });
 
 describe("unverified-guess workflow (URX22)", () => {
@@ -1272,32 +1291,35 @@ describe("unverified-guess workflow (URX22)", () => {
     return table;
   }
 
-  it("has no static collisions: the URX22 D.Gain map reuses confirmed ids, inventing none", () => {
-    // The positional map (CH3/4 = 9) reuses URX44V-confirmed D.Gain ids, so there is
-    // no invented id to collide with a catalog param.
+  it("has no static collisions: the URX22 D.Gain addresses are the URX44V's source table, inventing none", () => {
     expect(auditUnverified("URX22")).toEqual([]);
-    expect(dGainParam("URX22", "ch_3_4")).toBe(9);
+    const sources = m22.nodes.filter((n) => D_GAIN_SOURCES[n.id]);
+    expect(sources.length, "the premise: URX22 has digital sources").toBeGreaterThan(0);
+    const guessed = [...unverifiedAddresses(m22)].filter(([, key]) => key === "dgain-source").map(([a]) => a);
+    expect(new Set(guessed)).toEqual(
+      new Set(sources.flatMap((n) => D_GAIN_SOURCES[n.id].instances.map((y) => `${D_GAIN_SOURCES[n.id].id}:${y}`))),
+    );
   });
 
-  it("suppressing dgain-urx22 drops every URX22 D.Gain write but leaves other params", () => {
+  it("suppressing dgain-source drops every URX22 D.Gain write but leaves other params", () => {
     const original = seed22();
-    original.nodeParams["ch_3_4"] = { gain: 6 };
-    original.nodeParams["ch_5_6"] = { gain: -3 };
-    original.nodeParams["ch1"] = { clipSafe: true };
-    const plan = perturbedPlan(m22, original, 0, new Set(["dgain-urx22"]));
-    expect(plan.nodeParams["ch_3_4"]?.gain).toBeUndefined();
-    expect(plan.nodeParams["ch_5_6"]?.gain).toBeUndefined();
+    for (const n of m22.nodes) if (D_GAIN_SOURCES[n.id]) original.nodeParams[n.id] = { dGain: 6 };
+    original.nodeParams["in.micline_1_2"] = { clipSafeL: true, clipSafeR: true };
+    const plan = perturbedPlan(m22, original, 0, new Set(["dgain-source"]));
+    expect(Object.values(plan.nodeParams).some((np) => np.dGain !== undefined)).toBe(false);
     const cmds = planToCommands(m22, plan);
-    // No D.Gain (HA_GAIN at a D.Gain block id) is sent; CLIP_SAFE is still sent.
-    expect(cmds.some((c) => c.name === "HA_GAIN" && [9, 13, 14, 15].includes(c.paramId))).toBe(false);
-    expect(cmds.some((c) => c.name === "CLIP_SAFE" && c.paramId === PARAMS.CLIP_SAFE.id)).toBe(true);
+    expect(cmds.some((c) => c.name === "D_GAIN")).toBe(false);
+    expect(
+      cmds.some((c) => c.name === "CLIP_SAFE"),
+      "the positive control: the jack's Clip Safe goes out",
+    ).toBe(true);
   });
 
-  it("floors a non-colliding stereo channel's gain to its device minimum", () => {
+  it("floors a source's D.Gain to its device minimum", () => {
     const original = seed22();
-    original.nodeParams["ch_5_6"] = { gain: 12 };
+    original.nodeParams["in.aux"] = { dGain: 12 };
     const plan = perturbedPlan(m22, original, 0);
-    expect(plan.nodeParams["ch_5_6"]?.gain).toBe(D_GAIN_MIN_DB);
+    expect(plan.nodeParams["in.aux"]?.dGain).toBe(D_GAIN_MIN_DB);
   });
 
   it("sweeps input source across real ports (not just the captured selection)", () => {
@@ -1315,12 +1337,14 @@ describe("unverified-guess workflow (URX22)", () => {
   it("does not confirm a guess whose addresses it could not read", async () => {
     const table = installMock22(seed22());
     const realGet = vi.mocked(vdGet).getMockImplementation()!;
-    // One address of the hi-Z guess. Failing only once writing has started keeps it in
-    // the captured plan (a read that fails during the capture leaves the parameter out
-    // of the plan entirely, so nothing would diff it and the case would be absent).
-    const hiZ = [...unverifiedAddresses(m22)].find(([, key]) => key === "hiz-channel");
-    expect(hiZ).toBeDefined();
-    const [addrKey] = hiZ!;
+    // One address of the stereo-block guess, which every pass writes — a guess on the input
+    // stage is written only in the passes whose routing reads it. Failing only once writing
+    // has started keeps it in the captured plan (a read that fails during the capture leaves
+    // the parameter out of the plan entirely, so nothing would diff it and the case would be
+    // absent).
+    const stereo = [...unverifiedAddresses(m22)].find(([, key]) => key === "stereo-block");
+    expect(stereo).toBeDefined();
+    const [addrKey] = stereo!;
     const paramId = Number(addrKey.split(":")[0]);
     let writing = false;
     vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
@@ -1334,20 +1358,20 @@ describe("unverified-guess workflow (URX22)", () => {
 
     const report = await runSelfTest(m22, 0);
 
-    const hiz = report.unverified.find((u) => u.key === "hiz-channel")!;
-    expect(hiz.outcome).toBe("unread");
-    expect(hiz.mismatches).toEqual([]);
+    const unread = report.unverified.find((u) => u.key === "stereo-block")!;
+    expect(unread.outcome).toBe("unread");
+    expect(unread.mismatches).toEqual([]);
     // And nothing else is refuted either. A read failure stops sendConverging early, so
     // the residual it leaves on OTHER guesses is evidence that the run stopped rather
     // than evidence about the device — in this fixture one unreadable address left
-    // `input-ports` holding 14 of them.
+    // `input-ports` holding some of them.
     // REFUTED is a claim about the DEVICE and needs its own evidence. Asserting the
     // outcome is what holds that: asserting only `mismatches` left the tally free to
     // count this as a refutation, which is what it did.
-    // Named, not just counted: `input-ports` is the guess holding those 14, and the
+    // Named, not just counted: `input-ports` is the guess holding those, and the
     // failure it must not fall into is the other direction as well — a divergence with no
     // complete pass behind it is not a refutation, and it is not a confirmation either.
-    // Its own addresses read FINE — the failure was hi-Z's — so the two land on different
+    // Its own addresses read FINE — the failure was stereo-block's — so the two land on different
     // verdicts, and "unread" is reserved for the one it is actually true of. Sharing it
     // had the report telling the owner a read of `input-ports` had failed when none had.
     expect(report.unverified.find((u) => u.key === "input-ports")!.outcome).toBe("incomplete");
@@ -1357,8 +1381,8 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(formatSelfTestReport(report)).not.toContain("REFUTED");
     // Per address, not a blanket downgrade: "unread" names the one guess whose own read
     // failed and no other…
-    expect(report.unverified.filter((u) => u.outcome === "unread").map((u) => u.key)).toEqual(["hiz-channel"]);
-    // …and none is credited with a round trip either: the hi-Z read fails in every pass, so
+    expect(report.unverified.filter((u) => u.outcome === "unread").map((u) => u.key)).toEqual(["stereo-block"]);
+    // …and none is credited with a round trip either: the stereo-block read fails in every pass, so
     // no pass in this run completed, and a completed pass is what a round trip rests on.
     expect(verdicts.confirmed + verdicts.roundTripped).toBe(0);
     // What a read-stopped residual actually contains, which is the opposite of what it
@@ -1426,6 +1450,11 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(summarizeVerdicts(report.unverified).refuted).toBe(1);
     const md = formatSelfTestReport(report);
     expect(md).toContain("REFUTED");
+    // A refutation is what a round trip CAN settle, so the refuted guess is not called
+    // unsettled — while the unread one beside it still is.
+    const settle = (key: string): string => UNVERIFIED_MAPPINGS.find((m) => m.key === key)!.howToSettle!;
+    expect(md).not.toContain(settle("input-ports"));
+    expect(md).toContain(settle("stereo-block"));
 
     // The outcome turns on what a completed pass saw; so must the DETAIL printed under
     // it. This guess also differs in every stopped pass — same address, no evidence —
@@ -1483,12 +1512,12 @@ describe("unverified-guess workflow (URX22)", () => {
     // refusal, so a guess whose command went out before it was asked and answered — and
     // is still in the residual anyway, because the residual is the pre-round diff. A
     // verdict reading "it was never asked to hold the value" is false about exactly those,
-    // and D.Gain is one: its addresses went out before the refused one.
-    const dgainDelivered = [...unverifiedAddresses(m22)].some(
-      ([addr, key]) => key === "dgain-urx22" && deliveredBeforeRefusal.has(addr),
+    // the guesses with an address that went out before the refused one.
+    const delivered = report.unverified.filter((u) =>
+      [...unverifiedAddresses(m22)].some(([addr, key]) => key === u.key && deliveredBeforeRefusal.has(addr)),
     );
-    expect(dgainDelivered).toBe(true);
-    expect(report.unverified.find((u) => u.key === "dgain-urx22")!.outcome).toBe("incomplete");
+    expect(delivered.length, "the premise: a guess's address went out before the refusal").toBeGreaterThan(0);
+    for (const u of delivered) expect(u.outcome, u.key).toBe("incomplete");
     expect(report.unverified.some((u) => u.outcome === "unread")).toBe(false);
     expect(md).not.toContain("never asked to hold the value");
     expect(md).not.toContain("a read failed");
@@ -1546,24 +1575,33 @@ describe("unverified-guess workflow (URX22)", () => {
 
   // Every guess registered today asks which instance an address reaches or what a value
   // means there, and writing y and reading y back passes whichever one it is. So a faithful
-  // device round-trips all four and confirms none: a CONFIRMED here would be the promotion
-  // to "verified on hardware" for a question the run never asked.
+  // device round-trips every guess a pass writes and confirms none: a CONFIRMED here would be
+  // the promotion to "verified on hardware" for a question the run never asked. The LCD side
+  // link's address is one no pass writes, so the run leaves it unexercised.
   it("reports every unverified guess as round-tripped, not confirmed, on a faithful device", async () => {
     installMock22(seed22());
     const report = await runSelfTest(m22, 0);
     expect(report.device).toBe("URX22");
     expect(report.collisions).toEqual([]);
     expect(report.unverified.map((u) => u.key).sort()).toEqual(
-      ["dgain-urx22", "hiz-channel", "input-ports", "stereo-block"].sort(),
+      ["dgain-source", "hiz-channel", "input-ports", "jack-axis", "lcd-side", "stereo-block"].sort(),
     );
-    for (const u of report.unverified) expect(u.outcome, u.key).toBe("roundTripped");
+    for (const u of report.unverified)
+      expect(u.outcome, u.key).toBe(u.key === "lcd-side" ? "unexercised" : "roundTripped");
     expect(report.restored).toBe(true);
     // The exported report leads with the per-guess verdicts.
     const md = formatSelfTestReport(report);
     expect(md).toContain("# URX self-test report — URX22");
     expect(md).toContain("ROUND-TRIPPED");
     expect(md).not.toContain("CONFIRMED");
-    expect(summarizeVerdicts(report.unverified)).toEqual({ confirmed: 0, roundTripped: 4, refuted: 0, untestable: 0 });
+    expect(summarizeVerdicts(report.unverified)).toEqual({ confirmed: 0, roundTripped: 5, refuted: 0, untestable: 1 });
+    // …and says, per guess, that the run did not settle it and what would.
+    for (const m of UNVERIFIED_MAPPINGS.filter((x) => x.models.includes("URX22"))) {
+      expect(m.howToSettle, `${m.key} says what settles it`).toBeTruthy();
+      expect(md, m.key).toContain(
+        `NOT SETTLED BY THIS RUN — a round trip cannot answer it; to settle it, ${m.howToSettle}`,
+      );
+    }
   });
 
   // …and CONFIRMED is still what a round trip earns where it does answer the question. The
@@ -1581,11 +1619,10 @@ describe("unverified-guess workflow (URX22)", () => {
     }
   });
 
-  // A capture that could not read a channel leaves the plan nothing to write at that
-  // channel's guess address, and the strip's heads went unread with it, so the run does not
-  // start: no pass writes the address and no guess is credited. Counted from the registry
-  // instead, the guess would read as round-tripped on the strength of a write that never went
-  // out.
+  // A capture that could not read a jack leaves the plan nothing to write at that jack's
+  // guess address, so no pass writes it and the guess is not credited, while the guesses the
+  // passes did write still are. Counted from the registry instead, the guess would read as
+  // round-tripped on the strength of a write that never went out.
   it("does not credit a guess whose address no pass wrote", async () => {
     installMock22(seed22());
     const realGet = vi.mocked(vdGet).getMockImplementation()!;
@@ -1607,8 +1644,11 @@ describe("unverified-guess workflow (URX22)", () => {
       vi.mocked(vdSet).mock.calls.filter(([id, , yy]) => id === paramId && yy === y),
       "the premise: no pass wrote it",
     ).toEqual([]);
-    expect(report.refusal).toBe("sideEffectUnheld");
-    expect(report.unverified.filter((u) => u.outcome === "confirmed" || u.outcome === "roundTripped")).toEqual([]);
+    expect(report.refusal, "the premise: a jack holds no head, so the run goes ahead").toBeUndefined();
+    const credited = (u: SelfTestReport["unverified"][number]): boolean =>
+      u.outcome === "confirmed" || u.outcome === "roundTripped";
+    expect(credited(report.unverified.find((u) => u.key === "hiz-channel")!)).toBe(false);
+    expect(credited(report.unverified.find((u) => u.key === "stereo-block")!), "the positive control").toBe(true);
   });
 
   // UNEXERCISED: no pass that completed wrote and read every address of the guess, and no pass left

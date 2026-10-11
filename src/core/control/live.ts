@@ -22,6 +22,7 @@ import {
   planToFollowOnlyAddrs,
   nameControl,
   planToNameWrites,
+  unverifiedGuessAt,
 } from "./translate";
 import type { SharedOwners, NameWrite, VdCommand, WriteScope } from "./translate";
 import { confirmedAddrs, reachedAndFailed, sendConverging } from "./client";
@@ -85,8 +86,9 @@ export interface FollowAddr {
 export interface LiveSyncHooks {
   getModel: () => DeviceModel;
   getPlan: () => Plan;
-  /** A write failed; sync is already stopped — the caller drops the connection. */
-  onError: (message: string) => void;
+  /** A write failed; sync is already stopped — the caller drops the connection. `guess` names
+   *  the unverified mapping the failed address rests on, where one does. */
+  onError: (message: string, guess?: string) => void;
   /** A flush sent `count` writes — for an optional, quiet "→ device" status. */
   onSent: (count: number) => void;
   /** A converge in this flush read these addresses back and found the device at the plan's
@@ -142,11 +144,13 @@ export interface LiveSyncHooks {
    * Three families announce nothing when the unit's own panel moves them — the FX effect
    * arrays, the insert-FX engine arrays and D.Gain — so the plan's copy of them can be
    * arbitrarily old, and a write derived from that copy discards what the operator tuned
-   * there. There are TWO boundaries where such a write goes out and this is called at each
-   * under its own condition, so one flush calls it 0, 1 or 2 times: in front of the head
-   * writes where some head this flush is MOVING declares `ParamSpec.resets`, and in front
-   * of the converge where the flush converges at all. An ordinary edit takes neither, and a
-   * converging head that resets no silent family takes only the second.
+   * there. There are THREE boundaries where such a write goes out and this is called at each
+   * under its own condition, so one flush calls it 0 to 3 times: in front of the head
+   * writes where some head this flush is MOVING declares `ParamSpec.resets`, in front of a
+   * source's D.Gain the snapshot holds no entry for (a source a channel is routed back to,
+   * whose D.Gain the write had stopped carrying), and in front of the converge where the
+   * flush converges at all. An ordinary edit takes none, and a converging head that resets
+   * no silent family takes only the last.
    *
    * In front of its own HEAD writes, `only` names the families those heads reset —
    * `silentKey` entries, one per family per node, from `ParamSpec.resets`. The head refills
@@ -888,7 +892,7 @@ export class LiveSync {
     // disagree about the same value under the same preference.
     for (const f of planToFollowOnlyAddrs(model, plan, scope)) {
       addrs.push([f.param, f.x, f.y]);
-      const direct = (PARAMS as Record<string, ParamSpec>)[f.name].follow === "direct";
+      const direct = !f.scoped && (PARAMS as Record<string, ParamSpec>)[f.name].follow === "direct";
       this.index.set(addrKey(f.param, f.x, f.y), { name: f.name, node: f.node, direct });
     }
     this.followAddrList = addrs;
@@ -1042,6 +1046,21 @@ export class LiveSync {
         // Derived again: the park merged the unit's own values into the plan.
         commands = planToCommands(model, plan, scope);
       }
+      // A source's D.Gain the snapshot holds no entry for is one this session has not sent and
+      // no capture holds: the write carries it only while some channel reads the source, so a
+      // channel routed back to one takes it out of the plan's copy, which a panel move there
+      // never updates. Read before it goes out, as the head writes are.
+      const reentering = new Set<string>();
+      for (const c of commands) {
+        if (c.name !== "D_GAIN" || c.node === undefined) continue;
+        if (this.snapshot.get(cmdAddr(c)) !== undefined) continue;
+        reentering.add(silentKey("dGain", c.node));
+      }
+      if (reentering.size) {
+        await this.hooks.parkSilent?.({ only: reentering });
+        if (this.sessionGen !== gen) return;
+        commands = planToCommands(model, plan, scope);
+      }
       // A write that provokes a refetch has that read issued only once the flush's writes have
       // returned, and the read covers the whole node — so an edit made after this flush took its
       // values, to the head or to anything else that node holds, is carried by none of the
@@ -1135,6 +1154,8 @@ export class LiveSync {
         this.inFlight.set(k, value);
         try {
           await vdSet(c.paramId, c.x, c.y, value);
+        } catch (e) {
+          throw withGuess(e, unverifiedGuessAt(model, c.paramId, c.y));
         } finally {
           this.inFlight.delete(k);
         }
@@ -1332,7 +1353,11 @@ export class LiveSync {
           // leaves behind, and `new Error("")` here would end the session with a
           // teardown that names nothing. The read's own message rather than the report
           // entry, which carries the parameter's name in front of the shell's code.
-          throw new Error(failed?.error || r.readCauses[0] || "converge-failed");
+          const at = failed?.command ?? r.unread[0];
+          throw withGuess(
+            new Error(failed?.error || r.readCauses[0] || "converge-failed"),
+            at && unverifiedGuessAt(model, at.paramId, at.y),
+          );
         }
         this.capture(converged, since, undefined, new Set([...ownOns, ...unsentHeads.keys()]));
         for (const [k, v] of unsentHeads) if (v === undefined) this.snapshot.delete(k);
@@ -1470,7 +1495,7 @@ export class LiveSync {
       // stopped by it.
       if (this.sessionGen !== gen) return;
       this.active = false;
-      this.hooks.onError(e instanceof Error ? e.message : String(e));
+      this.hooks.onError(e instanceof Error ? e.message : String(e), (e as { guess?: string } | null)?.guess);
       return;
     } finally {
       edits?.close();
@@ -1485,4 +1510,11 @@ export class LiveSync {
       }
     }
   }
+}
+
+/** `e` carrying the unverified mapping its address rests on, its message unchanged. */
+function withGuess(e: unknown, guess: string | undefined): unknown {
+  if (guess === undefined) return e;
+  const err = e instanceof Error ? e : new Error(String(e));
+  return Object.assign(err, { guess });
 }

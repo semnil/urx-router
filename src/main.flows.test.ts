@@ -409,8 +409,8 @@ describe("the deep link", () => {
       const { encodePlanParam } = await import("./core/plan");
       const { defaultPlan } = await import("./models/initial-state");
       const plan = defaultPlan("URX44V");
-      (plan.nodeParams.ch3 as Record<string, unknown>).hiZ = 1;
-      (plan.nodeParams.ch3 as Record<string, unknown>).phantom = 1;
+      (plan.nodeParams["in.micline_3_4"] as Record<string, unknown>).hiZL = 1;
+      (plan.nodeParams["in.micline_3_4"] as Record<string, unknown>).phantomL = 1;
       history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
       await boot();
 
@@ -1383,12 +1383,13 @@ describe("a send level edited across -∞ in the panel", () => {
 // taken from is the plan's at the moment the switch is pressed, not the one the row was
 // built with; the two differ by every slide made since.
 describe("the inspector's Hi-Z switch and the gain it caps", () => {
-  /** Open a plan whose CH 3 starts at `gain`, with both input switches off, and select it
-   *  — so the panel is drawn from that value. */
+  /** Open a plan whose CH 3 reads jack 3, which starts at `gain` with both input switches
+   *  off, and select it — so the panel is drawn from that value. */
   const openAt = async (gain: number): Promise<void> => {
-    const { serialize, emptyPlan } = await import("./core/plan");
+    const { serialize, emptyPlan, setExclusiveConnection } = await import("./core/plan");
     const doc = emptyPlan("URX44V");
-    doc.nodeParams.ch3 = { ...doc.nodeParams.ch3, gain, hiZ: false, phantom: false };
+    setExclusiveConnection(doc, "in.micline_3_4:out", "ch3:in", "source");
+    doc.nodeParams["in.micline_3_4"] = { gainL: gain, hiZL: false, phantomL: false };
     const link = encodeURIComponent(Buffer.from(serialize(doc), "utf8").toString("base64url"));
     await bootApp({ url: `/?plan=${link}`, tauri: false });
     selectNode("ch3");

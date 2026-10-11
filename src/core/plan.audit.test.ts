@@ -202,6 +202,8 @@ describe("deserialize tolerance to malformed documents", () => {
     // else is dropped on read — absence is the documented "device default" state,
     // whereas a surviving string would reach an inspector rangeSlider format
     // callback that calls .toFixed on it. A non-record node entry is dropped whole.
+    // AUDIT: a channel's legacy +48V that survives the drop is moved onto the jack the
+    // channel's index names (`migrateInputStage`), so it is asserted there.
     const doc = JSON.stringify({
       ...base,
       nodeParams: {
@@ -212,7 +214,8 @@ describe("deserialize tolerance to malformed documents", () => {
     });
     const plan = deserialize(doc);
     // Malformed leaves gone; well-formed ones (including a nested group) kept.
-    expect(plan.nodeParams.ch1).toEqual({ phantom: true, pan: 12 });
+    expect(plan.nodeParams.ch1).toEqual({ pan: 12 });
+    expect(plan.nodeParams["in.micline_1_2"]).toEqual({ phantomL: true });
     expect(plan.nodeParams.ch2).toBeUndefined();
     expect(plan.nodeParams["bus.osc"]?.osc).toEqual({ freq: 1000, on: true });
   });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { colorControl, insertFxControl, planToCommands } from "../core/control/translate";
 import { PORT_REF_NONE } from "../core/control/vd";
+import { D_GAIN_SOURCES, HI_Z_JACKS, MIC_LINE_JACK_BASE } from "../core/control/params";
 import { deserialize, serialize } from "../core/plan";
 import { validatePlan } from "../core/routing";
 import { MODELS } from "./index";
@@ -20,7 +21,9 @@ describe("defaultPlan", () => {
 
   it("reuses the URX44V capture for URX44 (identical node set bar the HDMI input)", () => {
     const plan = defaultPlan("URX44");
-    expect(plan.nodeParams).toEqual(URX44V_NODE_PARAMS);
+    const { "in.hdmi": hdmi, ...rest } = URX44V_NODE_PARAMS;
+    expect(hdmi, "the premise: the URX44V capture carries the HDMI input").toBeDefined();
+    expect(plan.nodeParams).toEqual(rest);
     expect(plan.connections).toEqual(URX44V_CONNECTIONS);
   });
 
@@ -92,10 +95,35 @@ describe("defaultPlan", () => {
 
   it("deep-clones the seed so edits never mutate the shared defaults", () => {
     const plan = defaultPlan("URX44V");
-    plan.nodeParams.ch1.gain = 99;
+    plan.nodeParams["in.micline_1_2"].gainL = 99;
     plan.connections.push({ from: "x:out", to: "y:in", kind: "send" });
-    expect(URX44V_NODE_PARAMS.ch1.gain).toBe(-8);
+    expect(URX44V_NODE_PARAMS["in.micline_1_2"].gainL).toBe(-8);
     expect(URX44V_CONNECTIONS.some((c) => c.from === "x:out")).toBe(false);
+  });
+
+  // The input stage is kept on the jacks and sources, so each of them carries the unit's
+  // factory values: every jack's four switches and gain where it has them, every source's
+  // D.Gain — and no channel carries any of it.
+  it.each(["URX22", "URX44", "URX44V"] as const)("%s seeds the input stage on every jack and source", (id) => {
+    const plan = defaultPlan(id);
+    const model = MODELS[id];
+    for (const node of model.nodes) {
+      const np = plan.nodeParams[node.id];
+      if (MIC_LINE_JACK_BASE[node.id] !== undefined) {
+        for (const key of ["gainL", "gainR", "phantomL", "phantomR", "clipSafeL", "clipSafeR"])
+          expect(np, `${node.id}.${key}`).toHaveProperty(key);
+      } else if (D_GAIN_SOURCES[node.id]) expect(np, `${node.id}.dGain`).toHaveProperty("dGain");
+      else if (node.kind === "channel")
+        for (const key of ["gain", "phantom", "clipSafe", "hiZ"]) expect(np, node.id).not.toHaveProperty(key);
+    }
+    for (const j of HI_Z_JACKS[id] ?? []) {
+      const holder = Object.keys(MIC_LINE_JACK_BASE).find(
+        (n) => j - MIC_LINE_JACK_BASE[n] === 0 || j - MIC_LINE_JACK_BASE[n] === 1,
+      )!;
+      expect(plan.nodeParams[holder], `jack ${j + 1}'s HI-Z`).toHaveProperty(
+        j === MIC_LINE_JACK_BASE[holder] ? "hiZL" : "hiZR",
+      );
+    }
   });
 
   // Each seeded default must only reference nodes the model actually has, and

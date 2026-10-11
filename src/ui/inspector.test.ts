@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { colorNames, compositionGate, inspectorNodes, renderInspector } from "./inspector";
 import type { InspectorActions } from "./inspector";
 import { resetSectionCache } from "./inspector-sections";
 import type { Selection } from "./graph";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
-import { emptyPlan } from "../core/plan";
+import { emptyPlan, setExclusiveConnection } from "../core/plan";
 import type { Plan } from "../core/plan";
 import { resetSettingsCache, updateSettings } from "../core/settings";
 import { pinSettingsReset } from "../core/settings-reset.test-util";
@@ -27,6 +27,7 @@ import { fxParams } from "../core/control/fx-effect";
 import { insertFxDefaults, insertFxWritableSlots } from "../core/control/insert-fx-effect";
 import type { DeviceModel } from "../models/types";
 import { setLang, t } from "../i18n";
+import { resetDisplayedSides, setDisplayedSide } from "../core/stereo-side";
 
 const DUCKER = "out.ducker1";
 const HOST = "ch_5_6"; // the stereo pair out.ducker1 hangs off (models/build.ts)
@@ -712,6 +713,7 @@ const actions = (): InspectorActions => ({
   onConnect: vi.fn(),
   wireDrawn: vi.fn(() => true),
   onSelectConnection: vi.fn(),
+  onSwitchSide: vi.fn(),
 });
 
 let panel: HTMLElement;
@@ -824,6 +826,160 @@ describe("renderInspector — empty selection", () => {
   });
 });
 
+// A channel's INPUT rows are the jack or source it reads: the jack's +48V, A.Gain, HI-Z where
+// that jack has it, and Clip Safe; a source's one D.Gain; none on no source. They write there.
+describe("renderInspector — the input stage a channel reads", () => {
+  const m = getModel("URX44V");
+  const inputRows = (): string[] => {
+    const sec = sectionByTitle(t().inspector.inputSection)!;
+    return [...sec.querySelectorAll<HTMLElement>(".param")].map((r) => r.dataset.paramLabel ?? "");
+  };
+  const rowValue = (label: string): string =>
+    [...panel.querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === label)
+      ?.querySelector(".param-val")?.textContent ?? "";
+  const wired = (wires: Array<[string, string]>, drop: string[] = []): Plan => {
+    const plan = defaultPlan("URX44V");
+    for (const [from, to] of wires) setExclusiveConnection(plan, `${from}:out`, `${to}:in`, "source");
+    plan.connections = plan.connections.filter((c) => !(drop.includes(c.to) && c.kind === "source"));
+    return plan;
+  };
+
+  it("draws no input-stage row for a channel on no source, Ø first", () => {
+    renderInspector(panel, m, wired([], ["ch1:in"]), nodeSel("ch1"), act);
+    const rows = inputRows();
+    expect(rows[0]).toBe(t().inspector.phase);
+    for (const label of [t().inspector.phantom, t().inspector.gainAnalog, t().inspector.clipSafe, t().inspector.hiZ])
+      expect(rows).not.toContain(label);
+  });
+
+  it.each([
+    ["in.usbmain_a", "-14"],
+    ["in.aux", "0"],
+  ])("draws one D.Gain row for a mono channel on %s, at the source's factory value", (source, shown) => {
+    const plan = wired([[source, "ch1"]]);
+    delete plan.nodeParams[source]!.dGain;
+    renderInspector(panel, m, plan, nodeSel("ch1"), act);
+    const rows = inputRows();
+    expect(rows.filter((r) => r === t().inspector.gainDigital)).toHaveLength(1);
+    expect(rows).not.toContain(t().inspector.phantom);
+    expect(rowValue(t().inspector.gainDigital)).toContain(shown);
+  });
+
+  it("draws HI-Z by the jack: CH 1 on jack 3 has it, CH 3 on jack 1 does not", () => {
+    renderInspector(panel, m, wired([["in.micline_3_4", "ch1"]]), nodeSel("ch1"), act);
+    expect(inputRows()).toContain(t().inspector.hiZ);
+    renderInspector(panel, m, wired([["in.micline_1_2", "ch3"]]), nodeSel("ch3"), act);
+    expect(inputRows()).not.toContain(t().inspector.hiZ);
+    expect(inputRows(), "the positive control: CH 3 still has the jack's +48V").toContain(t().inspector.phantom);
+  });
+
+  it("draws no INPUT section on an input node", () => {
+    for (const id of ["in.micline_1_2", "in.aux"]) {
+      renderInspector(panel, m, defaultPlan("URX44V"), nodeSel(id), act);
+      expect(sectionByTitle(t().inspector.inputSection), id).toBeUndefined();
+    }
+  });
+
+  // A device read that could not read the jack a channel reads leaves the row showing the
+  // plan's value, so the channel's INPUT section says so; a channel on a jack that was read
+  // says nothing.
+  it("marks the INPUT section of a channel whose jack the read could not read", () => {
+    const plan = defaultPlan("URX44V");
+    plan.unreadNodes = new Set(["in.micline_1_2"]);
+    renderInspector(panel, m, plan, nodeSel("ch1"), act);
+    expect(sectionByTitle(t().inspector.inputSection)!.textContent).toContain(t().inspector.notReadFromDevice);
+    renderInspector(panel, m, plan, nodeSel("ch3"), act);
+    expect(sectionByTitle(t().inspector.inputSection)!.textContent).not.toContain(t().inspector.notReadFromDevice);
+  });
+
+  // The channels that read the same jack or source are named under the panel; a channel reading
+  // it alone says nothing.
+  describe("the share line", () => {
+    afterEach(() => resetDisplayedSides());
+    const hints = (): string[] => [...panel.querySelectorAll<HTMLElement>("p.hint")].map((p) => p.textContent ?? "");
+    const shareOf = (): string[] => hints().filter((h) => h.startsWith("Shared with"));
+
+    it("names the other channels on the jack, the stereo one by its side, after the last section", () => {
+      const plan = wired([
+        ["in.micline_1_2", "ch3"],
+        ["in.micline_1_2", "ch_5_6"],
+      ]);
+      renderInspector(panel, m, plan, nodeSel("ch1"), act);
+      expect(shareOf()).toEqual([t().inspector.shareJack("CH 3 and CH 5 (L)", "MIC/LINE 1")]);
+      const line = [...panel.querySelectorAll<HTMLElement>("p.hint")].find((p) => p.textContent === shareOf()[0])!;
+      const sections = [...panel.querySelectorAll("details.insp-section")];
+      expect(
+        sections.at(-1)!.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING,
+        "under the last section",
+      ).toBeTruthy();
+      renderInspector(panel, m, plan, nodeSel("ch_5_6"), act);
+      expect(shareOf()).toEqual([t().inspector.shareJack("CH 1 and CH 3", "MIC/LINE 1")]);
+      setDisplayedSide("ch_5_6", "R");
+      renderInspector(panel, m, plan, nodeSel("ch_5_6"), act);
+      expect(shareOf(), "R reads jack 2, which CH 2 reads").toEqual([t().inspector.shareJack("CH 2", "MIC/LINE 2")]);
+    });
+
+    it("names a source's other readers, and says nothing for a channel reading it alone", () => {
+      const plan = wired([
+        ["in.aux", "ch3"],
+        ["in.micline_3_4", "ch1"],
+        ["in.micline_3_4", "ch2"],
+      ]);
+      renderInspector(panel, m, plan, nodeSel("ch3"), act);
+      expect(shareOf()).toEqual([t().inspector.shareSource("CH 5/6", "AUX IN")]);
+      renderInspector(panel, m, plan, nodeSel("ch1"), act);
+      expect(shareOf(), "CH 1 alone on jack 3").toEqual([]);
+    });
+  });
+
+  describe("a stereo channel's displayed side", () => {
+    afterEach(() => resetDisplayedSides());
+    const sideButtons = (): HTMLButtonElement[] => [
+      ...panel.querySelectorAll<HTMLButtonElement>(".side-switch button"),
+    ];
+
+    it.each([["in.micline_1_2"], ["in.usbmain_a"], [null]])(
+      "opens INPUT on a stereo channel on %s, and on no mono channel",
+      (source) => {
+        const plan = source ? wired([[source, "ch_5_6"]]) : wired([], ["ch_5_6:in"]);
+        renderInspector(panel, m, plan, nodeSel("ch_5_6"), act);
+        const bar = panel.querySelector<HTMLElement>(".side-switch")!;
+        expect(bar.getAttribute("aria-label")).toBe(t().inspector.sideGroup);
+        expect(bar.parentElement, "the switch opens the INPUT section").toBe(
+          sectionByTitle(t().inspector.inputSection)!.querySelector(".sec-body"),
+        );
+        expect(bar.parentElement!.firstElementChild).toBe(bar);
+        expect(sideButtons().map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([
+          ["CH 5 (L)", "true"],
+          ["CH 6 (R)", "false"],
+        ]);
+        renderInspector(panel, m, plan, nodeSel("ch1"), act);
+        expect(panel.querySelector(".side-switch")).toBeNull();
+      },
+    );
+
+    it("shows the R jack and inverts R once R is shown, and asks for the side a press names", () => {
+      const plan = wired([["in.micline_1_2", "ch_5_6"]]);
+      plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: 30, gainR: 12 };
+      renderInspector(panel, m, plan, nodeSel("ch_5_6"), act);
+      expect(rowValue(t().inspector.gainAnalog)).toContain("30");
+      sideButtons()[1].click();
+      expect(act.onSwitchSide).toHaveBeenCalledWith("ch_5_6", "R");
+      setDisplayedSide("ch_5_6", "R");
+      renderInspector(panel, m, plan, nodeSel("ch_5_6"), act);
+      expect(sideButtons().map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true"]);
+      expect(rowValue(t().inspector.gainAnalog)).toContain("12");
+      expect(inputRows().filter((r) => r === t().inspector.phase)).toHaveLength(1);
+      const phase = [...panel.querySelectorAll<HTMLElement>(".param")].find(
+        (r) => r.dataset.paramLabel === t().inspector.phase,
+      )!;
+      phase.querySelector<HTMLButtonElement>("button")!.click();
+      expect(act.onUpdateNodeParams).toHaveBeenCalledWith("ch_5_6", { phaseR: true });
+    });
+  });
+});
+
 // A raw outside a descriptor's window reaches the plan two ways and BOTH want the stored
 // value on screen. A device read stores what the unit holds (readback.ts reads each slot
 // verbatim), and the unit can hold a raw this window excludes because an earlier build of
@@ -860,16 +1016,15 @@ describe("renderInspector — a stored value outside its control's range", () =>
     );
   });
 
-  // The same rule one layer down, and the reason the bound is not applied in rangeSlider
-  // either: a mono channel's A.Gain slider runs -8..+70 while gainToVd clamps to the union of
-  // the analog and digital ranges (-24..+70), so there the slider is TIGHTER than the write
-  // path and a stored -20 is sent as -20.
-  it("does not clamp a row whose slider is tighter than the value it will send", () => {
+  // The same rule on a row the Inspector draws itself: the A.Gain slider runs -8..+70 and the
+  // write bounds the jack's value to the same window, while the row prints what the plan holds.
+  it("prints a jack's A.Gain below its window as held, while the write sends the bound", () => {
     const plan = defaultPlan("URX44V");
-    plan.nodeParams["ch1"] = { ...plan.nodeParams["ch1"], gain: -20 };
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: -20 };
     renderInspector(panel, getModel("URX44V"), plan, nodeSel("ch1"), act);
     expect(rowValue(t().inspector.gainAnalog)).toContain("-20");
-    expect(planToCommands(getModel("URX44V"), plan).some((c) => c.vdValue === -2000)).toBe(true);
+    const sent = planToCommands(getModel("URX44V"), plan).find((c) => c.name === "HA_GAIN" && c.y === 0);
+    expect(sent?.vdValue).toBe(-800);
   });
 });
 

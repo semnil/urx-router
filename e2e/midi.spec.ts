@@ -815,7 +815,7 @@ test("the SENDS rack controls arm with send-scoped control ids", async ({ page }
 test("the scribble power LED arms the node master (chOn) and a note toggles it", async ({ page }) => {
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
-  const power = () => strip(page, "CH 1").locator(".con-scribble.power");
+  const power = () => strip(page, "CH 1").locator(".con-power");
   await learnBinding(page, win, () => power().click(), [0x90, 62, 127]);
   await expect(mapRow(win, "ch1/chOn")).toBeVisible();
   await setLearn(page, win, false);
@@ -823,6 +823,21 @@ test("the scribble power LED arms the node master (chOn) and a note toggles it",
   await expect(power()).toHaveAttribute("aria-pressed", "true"); // CH_ON ships on
   await sendMidi(page, [0x90, 62, 127]);
   await expect(power()).toHaveAttribute("aria-pressed", "false"); // toggled off
+});
+
+// A stereo strip's one φ arms the id of the side it shows, and its name, which arms nothing,
+// still switches that side while learn is on.
+test("learn on a stereo strip's φ binds the side it shows", async ({ page }) => {
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  const s = strip(page, "CH 5/6");
+  await setLearn(page, win, true);
+  await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
+  await expect(s.getByRole("button", { name: "CH 5/6, showing CH 6 (R)", exact: true })).toBeVisible();
+  await s.getByRole("button", { name: "φ", exact: true }).click();
+  await sendMidi(page, [0x90, 64, 127]);
+  await expect(mapRow(win, "ch_5_6/phaseR")).toBeVisible();
+  await expect(mapRow(win, "ch_5_6/phaseL")).toHaveCount(0);
 });
 
 test("learn mode ignores a wheel over a fader so a stray scroll never edits it", async ({ page }) => {

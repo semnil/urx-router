@@ -2,6 +2,8 @@ import { test, expect, colorToken, scrollsByWheel, textContrast, type Locator, t
 import { chooseOption } from "./choose-option";
 import { LIVE_COMMANDS, heldReadsOf, notifyParam, setDeviceValue, setHeldReads, stubTauriDevice } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
+import { planParamZ } from "./plan-param";
+import { drag, port } from "./graph-helpers";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
 // "CH 11/12"). The console runs against the factory plan, so we do NOT seed
@@ -207,12 +209,37 @@ test("the MIX master BAL knob stays labeled BAL under Pan Link", async ({ page }
   await expect(strip(page, "MIX 1").locator(".con-knob[aria-label='PAN']")).toHaveCount(0);
 });
 
-test("DUCKER and φL/φR appear on stereo channels only", async ({ page }) => {
+test("DUCKER appears on stereo channels only, with one φ for the side the strip shows", async ({ page }) => {
   // `exact` because the tuning-screen opener beside it is labelled "Ducker screen",
   // which a substring match also picks up.
-  await expect(strip(page, "CH 5/6").getByRole("button", { name: "DUCKER", exact: true })).toBeVisible();
-  await expect(strip(page, "CH 5/6").getByRole("button", { name: "φL" })).toBeVisible();
+  const s = strip(page, "CH 5/6");
+  await expect(s.getByRole("button", { name: "DUCKER", exact: true })).toBeVisible();
   await expect(strip(page, "CH 1").getByRole("button", { name: "DUCKER", exact: true })).toHaveCount(0);
+  const phi = s.getByRole("button", { name: "φ", exact: true });
+  await expect(phi).toHaveCount(1);
+  await phi.click();
+  await expect(phi).toHaveAttribute("aria-pressed", "true");
+  await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
+  await expect(s.getByRole("button", { name: "CH 5/6, showing CH 6 (R)", exact: true })).toBeFocused();
+  await expect(phi, "R's polarity is its own").toHaveAttribute("aria-pressed", "false");
+});
+
+// The strip's name and the Inspector's switch are two faces of one state: either one moves the
+// other. The name is not the power: a press on it leaves the strip on.
+test("a stereo channel's name and its Inspector switch show the same side", async ({ page }) => {
+  const s = strip(page, "CH 5/6");
+  const power = s.locator(".con-power");
+  await expect(power).toHaveAttribute("aria-pressed", "true");
+  await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
+  await expect(power).toHaveAttribute("aria-pressed", "true");
+  await page.click("#btn-view-graph");
+  await page.locator('g.node[data-id="ch_5_6"]').click();
+  const bar = page.getByRole("group", { name: "Displayed side" });
+  await expect(bar.getByRole("button", { name: "CH 6 (R)", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await bar.getByRole("button", { name: "CH 5 (L)", exact: true }).click();
+  await expect(bar.getByRole("button", { name: "CH 5 (L)", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.click("#btn-view-console");
+  await expect(s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true })).toBeVisible();
 });
 
 // ---- SENDS rack ----
@@ -632,12 +659,42 @@ test("the head MUTE drives the CH → STEREO assign, not the channel master", as
   await expect(mute).toHaveAttribute("aria-pressed", "true"); // → STEREO assign off
   // The channel master is untouched: the strip is not dimmed, the power LED stays on.
   await expect(ch).not.toHaveClass(/inactive/);
-  await expect(ch.locator(".con-scribble.power")).toHaveAttribute("aria-pressed", "true");
+  await expect(ch.locator(".con-power")).toHaveAttribute("aria-pressed", "true");
+});
+
+// The power LED's hit area reaches from the strip's own corner to where the name text starts
+// and down to the chip row: every point in it presses the LED, and the name text, the rest of
+// the device-name row and the chip row below do not.
+test("the power LED's hit area covers the strip corner and stops at the name and the chips", async ({ page }) => {
+  const ch = strip(page, "CH 1");
+  await expect(ch.locator(".con-power")).toBeVisible();
+  const hits = await ch.evaluate((stripEl) => {
+    const s = stripEl.getBoundingClientRect();
+    const txt = stripEl.querySelector(".con-scribble .name .txt")!.getBoundingClientRect();
+    const id = stripEl.querySelector(".con-scribble .id")!.getBoundingClientRect();
+    const chips = stripEl.querySelector(".con-chips")!.getBoundingClientRect();
+    const onPower = (x: number, y: number): boolean => document.elementFromPoint(x, y)?.closest(".con-power") !== null;
+    return {
+      corners: [
+        onPower(s.left + 1, s.top + 1),
+        onPower(txt.left - 1, s.top + 1),
+        onPower(s.left + 1, chips.top - 1),
+        onPower(txt.left - 1, chips.top - 1),
+      ],
+      nameText: onPower(txt.left + 1, txt.top + txt.height / 2),
+      idRow: onPower(txt.left + 4, id.top + id.height / 2),
+      chipRow: onPower(s.left + 8, chips.top + 2),
+    };
+  });
+  expect(hits.corners).toEqual([true, true, true, true]);
+  expect(hits.nameText).toBe(false);
+  expect(hits.idRow).toBe(false);
+  expect(hits.chipRow).toBe(false);
 });
 
 test("the scribble power LED toggles the node master and dims the strip", async ({ page }) => {
   const ch = strip(page, "CH 1");
-  const power = ch.locator(".con-scribble.power");
+  const power = ch.locator(".con-power");
   await expect(power).toHaveAttribute("aria-pressed", "true"); // CH_ON ships on
   await expect(ch).not.toHaveClass(/inactive/);
   await power.click();
@@ -671,7 +728,7 @@ test("a re-render keeps the strip scroll offset and the focused control", async 
   const scrolled = await scrollStripsToEnd(page);
   // The rightmost strip carrying a power LED — on screen at this offset, so the click
   // itself never scrolls.
-  const power = page.locator(".con-strip .con-scribble.power").last();
+  const power = page.locator(".con-strip .con-power").last();
   await power.click();
   await expect(power).toHaveAttribute("aria-pressed", "false");
   await expect(power).toBeFocused();
@@ -717,20 +774,20 @@ test("a re-render keeps the offset when the focused control is scrolled out of v
   // (scrollCheck in scripts/meter-bench.mjs), since this is engine behaviour.
   // Driven from the keyboard: a pointer would move focus to whatever it pressed, and
   // the point here is a control that keeps focus while sitting off screen.
-  const power = strip(page, "CH 1").locator(".con-scribble.power");
+  const power = strip(page, "CH 1").locator(".con-power");
   await power.focus();
   const scrolled = await scrollStripsToEnd(page);
   await page.keyboard.press("Enter"); // the per-strip dim re-renders every strip
   await expect(strip(page, "CH 1")).toHaveClass(/inactive/);
   expect(await stripsScroll(page)).toBe(scrolled);
-  await expect(strip(page, "CH 1").locator(".con-scribble.power")).toBeFocused();
+  await expect(strip(page, "CH 1").locator(".con-power")).toBeFocused();
 });
 
 test("muting the channel master in the inspector dims the console strip", async ({ page }) => {
   await muteMasterViaInspector(page, "ch1"); // leaves the view on the console
   const ch = strip(page, "CH 1");
   await expect(ch).toHaveClass(/inactive/);
-  await expect(ch.locator(".con-scribble.power")).toHaveAttribute("aria-pressed", "false");
+  await expect(ch.locator(".con-power")).toHaveAttribute("aria-pressed", "false");
 });
 
 /** How strongly an element is drawn: its own opacity times every ancestor's. */
@@ -834,7 +891,7 @@ test("a MIX strip's head MUTE drives the MIX → STEREO TO ST switch", async ({ 
 test("a MONITOR strip has no MUTE chip; its on/off is the power LED (MONITOR_ON)", async ({ page }) => {
   const mon = strip(page, "MONITOR 1");
   await expect(mon.getByRole("button", { name: "MUTE" })).toHaveCount(0); // no → STEREO send
-  const power = mon.locator(".con-scribble.power");
+  const power = mon.locator(".con-power");
   await expect(power).toHaveAttribute("aria-pressed", "true"); // MONITOR_ON ships on
   await expect(mon).not.toHaveClass(/inactive/);
   await power.click();
@@ -859,7 +916,7 @@ test("the OSCILLATOR strip has no MUTE / ON chip; its on/off is the power LED", 
   const osc = strip(page, "OSCILLATOR");
   await expect(osc.getByRole("button", { name: "MUTE" })).toHaveCount(0);
   await expect(osc.getByRole("button", { name: "ON", exact: true })).toHaveCount(0); // no ON chip
-  const power = osc.locator(".con-scribble.power");
+  const power = osc.locator(".con-power");
   await expect(power).toHaveAttribute("aria-pressed", "false"); // OSC off at the factory
   await power.click();
   await expect(power).toHaveAttribute("aria-pressed", "true"); // generating
@@ -988,6 +1045,42 @@ test("a node hidden in the graph drops from the console", async ({ page }) => {
   await expect(strip(page, "CH 2")).toBeVisible();
 });
 
+// A head's input chips are its source's: a jack's +48 (and Hi-Z where the jack has it), none on
+// a digital source or on no source. So the shared head height has to hold for every wiring, not
+// only the factory one — each shape below is a different set of chips on the same strips.
+for (const [shape, wires] of [
+  [
+    "mono channels on the jacks with HI-Z",
+    [
+      ["in.micline_3_4", "ch1"],
+      ["in.micline_3_4", "ch2"],
+      ["in.micline_3_4", "ch3"],
+      ["in.micline_3_4", "ch4"],
+    ],
+  ],
+  ["a stereo channel on MIC/LINE 3/4", [["in.micline_3_4", "ch_5_6"]]],
+  ["every channel on no source", []],
+] as Array<[string, Array<[string, string]>]>) {
+  test(`no head overflows the shared height, ${shape} @webkit`, async ({ page }) => {
+    const connections = wires.map(([from, to]) => ({ from: `${from}:out`, to: `${to}:in`, kind: "source" }));
+    await page.goto(
+      `/?plan=${planParamZ({ format: "urx-router-plan", version: 1, modelId: "URX44V", connections, nodeParams: {} })}`,
+    );
+    await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+    await page.click("#btn-view-console");
+    const heads = page.locator(".con-strip .con-head");
+    await expect(heads.first()).toBeVisible();
+    const overflow = await heads.evaluateAll((els) =>
+      els.filter((e) => e.scrollHeight > e.clientHeight + 1).map((e) => e.textContent?.slice(0, 24) ?? ""),
+    );
+    expect(overflow, "a head taller than the shared height it is given").toEqual([]);
+    const tops = await page
+      .locator(".con-strip .con-fader")
+      .evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+    expect(new Set(tops).size, `faders start at ${new Set(tops).size} different offsets`).toBe(1);
+  });
+}
+
 test("scrolling stays inside the strip grid (no window scroll) @webkit", async ({ page }) => {
   const m = await page.evaluate(() => {
     const app = document.documentElement;
@@ -1085,11 +1178,23 @@ test("every strip's head holds its own contents, so --head-h is not hand-measure
       const used =
         kids.reduce((sum, k) => sum + k.getBoundingClientRect().height, 0) + gap * Math.max(0, kids.length - 1);
       return {
-        name: strip.querySelector(".con-scribble-name")?.textContent?.trim() ?? "?",
+        name: strip.querySelector(".con-scribble .name .txt")?.textContent?.trim() ?? "?",
         over: +(used + pad - head.getBoundingClientRect().height).toFixed(1),
       };
     }),
   );
   expect(overflow.length).toBeGreaterThan(10);
   expect(overflow.filter((s) => s.over > 0)).toEqual([]);
+});
+
+// Two channels on one jack name each other on the gain knob's tooltip, from the moment the
+// second one is wired to it.
+test("the gain knob names the other channel on its jack after a rewire", async ({ page }) => {
+  const gain = (name: string) => strip(page, name).locator(".con-knob[aria-label='A.GAIN']");
+  await expect(gain("CH 1")).not.toHaveAttribute("title", /Shared/);
+  await page.click("#btn-view-graph");
+  await drag(page, port(page, "in.micline_1_2:out"), port(page, "ch3:in"));
+  await page.click("#btn-view-console");
+  await expect(gain("CH 1")).toHaveAttribute("title", "Shared with CH 3");
+  await expect(gain("CH 3")).toHaveAttribute("title", "Shared with CH 1");
 });

@@ -97,6 +97,14 @@ channels' meters are indexed by stereo-pair position, which shifts on the URX22
 because it has only two mono channels, so its first stereo channel is CH3/4). Its
 control (write) map and factory-initial plan, however, are a conjectured mirror
 of the URX44V and are unverified, so those values may not match the device exactly.
+On both models the input stage is written per MIC/LINE jack and per digital source,
+at the addresses the URX44V uses; which jack each address reaches, which URX22 jack
+carries HI-Z (jack 2) and which source each D.Gain address feeds are registered as
+unverified mappings (`jack-axis`, `hiz-channel`, `dgain-source`). A read or write
+that fails at one of those addresses names the mapping, and the self-test says it
+cannot settle them and what would. The link between a stereo channel's displayed
+side and the unit's LCD selection uses the URX44V numbering on both models, registered
+as `lcd-side`.
 Offline planning, the plan JSON and image export are unaffected; this concerns
 only live sync on those two models.
 
@@ -117,21 +125,23 @@ cannot be turned on at the same time. The URX44V (System 1.3.1.0) panel does let
 both be on for one jack: pressing [HI-Z] with [+48V] on, or [+48V] with [HI-Z] on,
 leaves both on, and neither switches the other off.
 
-The app never turns one on while the other is on:
+Both switches belong to a MIC/LINE jack, and a channel shows those of the jack it
+reads, so the app names a jack by the channels reading it. The app never turns one
+on while the other is on:
 
-- **Inspector and CONSOLE.** While one of +48V / HI-Z is on for a channel, the
+- **Inspector and CONSOLE.** While one of +48V / HI-Z is on for a jack, the
   other's ON cannot be pressed — the Inspector toggle and the CONSOLE chip are
   read-only and their tooltip says which one to turn off first. Turning the lit
   one off is always available.
 - **MIDI.** A write that would turn the other one on is refused and the status
   line says why; nothing is edited. A write turning either one off goes through.
-- **Undo / redo.** A step whose result would leave both on for a channel is held
-  back rather than taken: the status line names the channel and says the step is
+- **Undo / redo.** A step whose result would leave both on for a jack is held
+  back rather than taken: the status line names the channels reading it and says the step is
   not lost, and the same press works once one of the two is off. A step that
-  leaves a channel exactly as the unit reported it is not held back, and neither
+  leaves a jack exactly as the unit reported it is not held back, and neither
   is one that moves anything else.
 - **Opening a plan** (a file, a `?plan=` link or a drop). A document holding both
-  on for one channel opens with +48V off and HI-Z kept, and the status line
+  on for one jack opens with +48V off and HI-Z kept, and the status line
   reports it with the other values the load normalized.
 - **A device read** (Fetch, starting Live sync, the device follow, a `.urxf`
   import). A unit holding both on is taken as it is and the status line names the
@@ -139,9 +149,9 @@ The app never turns one on while the other is on:
   turned off.
 - **An ON pressed while a device read is in flight.** Until the read lands, the
   app does not know what the unit holds, so it takes the press. Where the read
-  finds the other one on for that channel, the press is refused as it would have
+  finds the other one on for that jack, the press is refused as it would have
   been had the app known: the switch goes back off, the status line says so and
-  names the channel, and nothing is sent for it. The unit's own switch is left as
+  names the channels reading it, and nothing is sent for it. The unit's own switch is left as
   it is. A Hi-Z press that lowered A.Gain to +40 is refused whole — A.Gain goes
   back to what the unit holds, and the +40 is never sent — and no undo step is
   left that would put the press back. An edit made in the same window that has
@@ -149,7 +159,7 @@ The app never turns one on while the other is on:
   refused. A press the app had already sent before the unit announced turning the
   other one on is on the unit, which then holds both, and is taken as it is.
 - **During Live sync, a switch turned on at the unit's panel.** From the moment
-  the unit announces it, the app sends no ON of the other one for that channel —
+  the unit announces it, the app sends no ON of the other one for that jack —
   including one already pressed and waiting to be sent, and the +40 A.Gain a
   Hi-Z press lowered with it. The app asks the unit for the other switch just
   before it sends an ON, so this holds before the announcement has reached the
@@ -158,9 +168,9 @@ The app never turns one on while the other is on:
   announcement starts refuses
   a press made meanwhile as above, whether it was made before that read began or
   while it ran.
-- **Writing to the device.** A plan holding both on for a channel is not sent:
+- **Writing to the device.** A plan holding both on for a jack is not sent:
   the write stops before the link is opened and the status line names the
-  channel, so nothing reaches the unit. Turning either one off makes the write go
+  channels reading it, so nothing reaches the unit. Turning either one off makes the write go
   through. A plan holds both on only where the unit it was read from held both
   on, and a read or a `.urxf` import is the only way that state reaches a plan;
   it stays on screen until you turn one off. Once a plan is on the unit,
@@ -175,18 +185,28 @@ CONSOLE knob and a MIDI control's full throw take the same range while HI-Z is o
 Turning HI-Z on in the app with A.Gain above +40 lowers it to +40 in the same edit
 (one undo step restores both), and a plan holding HI-Z on with A.Gain above +40
 opens with A.Gain at +40, reported like the +48V repair — as a plan holding any gain
-outside its channel's own range opens with it at the nearer end (A.Gain -8 … +70,
+outside its jack's or source's own range opens with it at the nearer end (A.Gain -8 … +70,
 D.Gain -24 … +24): the unit does not apply an A.Gain below -8 and refuses a value
 past its descriptor. HI-Z is written ahead of
 A.Gain, and whichever of +48V / HI-Z the plan holds off is written ahead of the
 other, so a write never has both on in between.
+
+## Only the selected stereo channel's side comes from the unit
+
+The unit keeps the side each stereo channel shows (L or R), but it reports the side of
+the channel its LCD has selected and of no other. So when Live sync starts, the app takes
+that one channel's side from the unit, and every other stereo channel keeps the side the
+app was showing, which can differ from what the unit shows for it. While live, selecting a
+stereo channel on the unit, or switching its side there, shows that side in the app, and
+switching a side in the app moves the unit's LCD selection to that channel and side.
 
 ## The AUTO (auto gain) trigger is not modeled
 
 The device's input screens offer an **AUTO** button that runs a one-shot
 automatic input-gain measurement. The planner does not model it: it is a live
 action, not a stored setting, so there is nothing for a saved plan or a
-snapshot diff to represent. Input gain itself is planned and synced as usual;
+snapshot diff to represent. Input gain itself — A.Gain per MIC/LINE jack, D.Gain per
+digital source — is planned and synced as usual;
 only the auto-measure trigger is out of scope.
 
 ## SD Rec Track Count cannot be set from software

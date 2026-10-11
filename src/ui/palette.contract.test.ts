@@ -125,10 +125,14 @@ describe("the wire palette's two layers", () => {
   it("draws the board's warn frames and badges in the stylesheet's --warn", () => {
     // The OFF / "?" badges and the dashed frame of an unread or rate-disabled node are the
     // same warning the inspector's cards print in --warn, so a change to one layer's value
-    // has to reach the other.
+    // has to reach the other — and the "?" the CONSOLE prints on a value not read from the
+    // device is the board's badge, ink and face.
     for (const theme of Object.keys(PALETTES) as (keyof typeof PALETTES)[]) {
       expect(tokensIn(THEME_SELECTOR[theme])["--warn"], `--warn in ${THEME_SELECTOR[theme]}`).toBe(
         PALETTES[theme].warn,
+      );
+      expect(tokensIn(THEME_SELECTOR[theme])["--warn-ink"], `--warn-ink in ${THEME_SELECTOR[theme]}`).toBe(
+        PALETTES[theme].warnInk,
       );
     }
   });

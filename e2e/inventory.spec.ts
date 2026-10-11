@@ -1248,6 +1248,24 @@ test("the MIDI window shows its whole shell, both vocabularies and every control
   await expect(win.locator(".mw-status")).toContainText("already drives, is not in the current plan");
   await inv.take(win, "#midi-window");
 
+  // An input-stage assignment whose channel reads no source, or whose source carries no such
+  // switch, is inactive, and the row says why in its behaviour column — the only state that
+  // prints those lines. The main window opens a plan wiring CH 3 to AUX and nothing else, so
+  // CH 3's +48V has no switch to drive and every other channel is on no source.
+  await page.goto(
+    `/?plan=${planParamZ({
+      format: "urx-router-plan",
+      version: 1,
+      modelId: "URX44V",
+      connections: [{ from: "in.aux:out", to: "ch3:in", kind: "source" }],
+      nodeParams: {},
+    })}`,
+  );
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await win.reload();
+  await expect(win.locator(".mw-inactive").first()).toBeVisible();
+  await inv.take(win, "#midi-window");
+
   // The empty list, whose own line replaces the table. The window is a view — the
   // main window holds the mappings — so the store is emptied and the main window
   // reloaded onto it before the window asks for state again.

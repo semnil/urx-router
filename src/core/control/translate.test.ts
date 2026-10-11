@@ -2,15 +2,17 @@ import { describe, expect, it } from "vitest";
 import { getModel, MODEL_IDS } from "../../models";
 import { defaultPlan } from "../../models/initial-state";
 import type { ModelId } from "../../models/types";
-import { emptyPlan, ensureFixedConnections } from "../plan";
+import { emptyPlan, ensureFixedConnections, setExclusiveConnection } from "../plan";
 import type { Plan } from "../plan";
 import {
   COLOR_OFF,
   COLOR_OFF_INDEX,
   COLOR_PALETTE,
   COMP_EQ_COMP_FIRST,
+  D_GAIN_SOURCES,
   EQ_TYPE_PASS,
   PARAMS,
+  paramNameForId,
   colorIndexToHex,
   colorIndexToPlan,
   hexToColorIndex,
@@ -20,6 +22,7 @@ import type { ParamSpec } from "./params";
 import {
   addrKey,
   channelDynamics,
+  channelInputSlots,
   cmdAddr,
   collisionKey,
   collisionOwners,
@@ -27,7 +30,12 @@ import {
   dynPosRange,
   dynToPos,
   formatAddrKey,
+  inputStageOf,
+  inputStageReaders,
+  inputStageReadSet,
   insertFxControl,
+  isStereoChannel,
+  auditUnverified,
   nameControl,
   planToCommands,
   planToCommandsUncollapsed,
@@ -103,10 +111,12 @@ describe("planToCommands", () => {
     expect(fader!.vdValue).toBe(0);
   });
 
-  it("emits CH_ON / HPF_ON from node params", () => {
+  it("emits CH_ON / HPF_ON from node params, and the A.Gain of the jack the channel reads", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
-    plan.nodeParams.ch1 = { on: false, hpf: true, gain: -8 };
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+    plan.nodeParams.ch1 = { on: false, hpf: true };
+    plan.nodeParams["in.micline_1_2"] = { gainL: -8 };
     const cmds = planToCommands(model, plan);
     const on = cmds.find((c) => c.name === "CH_ON" && c.y === 0);
     const hpf = cmds.find((c) => c.name === "HPF_ON" && c.y === 0);
@@ -119,12 +129,13 @@ describe("planToCommands", () => {
     expect(uri(gain!)).toBe("/vd/parameters/1:0:0?operation=value");
   });
 
-  it("maps stereo D.Gain to its dedicated param on both L/R instances", () => {
+  it("maps a source's D.Gain to its own param on both L/R instances", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
-    plan.nodeParams.ch_5_6 = { gain: -24 };
+    setExclusiveConnection(plan, "in.aux:out", "ch_5_6:in", "source");
+    plan.nodeParams["in.aux"] = { dGain: -24 };
     const cmds = planToCommands(model, plan).filter((c) => c.paramId === 9);
-    // CH5/6 D.Gain = param 9, written to y0 and y1 (linked), -24 dB = -2400.
+    // AUX D.Gain = param 9, written to y0 and y1 (linked), -24 dB = -2400.
     expect(cmds.map((c) => uri(c))).toEqual([
       "/vd/parameters/9:0:0?operation=value",
       "/vd/parameters/9:0:1?operation=value",
@@ -173,21 +184,24 @@ describe("planToCommands", () => {
     expect(cmds.some((c) => c.name === "HPF_ON")).toBe(false);
   });
 
-  it("emits mic-strip toggles (+48V / Clip Safe / phase) on mono channels but not stereo", () => {
+  it("emits +48V / Clip Safe at the jack and phase at the channel, and no jack switch off a MIC/LINE node", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
-    plan.nodeParams.ch1 = { phantom: true, phase: true, clipSafe: true };
-    plan.nodeParams.ch_5_6 = { phantom: true, clipSafe: true };
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+    setExclusiveConnection(plan, "in.aux:out", "ch_5_6:in", "source");
+    plan.nodeParams.ch1 = { phase: true };
+    plan.nodeParams["in.micline_1_2"] = { phantomL: true, clipSafeL: true };
+    plan.nodeParams["in.aux"] = { phantomL: true, clipSafeL: true };
     const cmds = planToCommands(model, plan);
     const phantom = cmds.find((c) => c.name === "PHANTOM");
     const phase = cmds.find((c) => c.name === "PHASE");
     const clip = cmds.find((c) => c.name === "CLIP_SAFE");
-    // Mono CH1: +48V=param 0, phase=24, Clip Safe=5, all at y0.
+    // Jack 1: +48V=param 0, Clip Safe=5 at y0; CH1's phase=24 at y0.
     expect(uri(phantom!)).toBe("/vd/parameters/0:0:0?operation=value");
+    expect(phantom!.node).toBe("in.micline_1_2");
     expect(uri(phase!)).toBe("/vd/parameters/24:0:0?operation=value");
     expect(uri(clip!)).toBe("/vd/parameters/5:0:0?operation=value");
-    // Stereo channels have neither +48V nor Clip Safe.
-    expect(cmds.some((c) => ["PHANTOM", "CLIP_SAFE"].includes(c.name) && c.y !== 0)).toBe(false);
+    // A digital source has neither +48V nor Clip Safe.
     expect(cmds.filter((c) => ["PHANTOM", "PHASE", "CLIP_SAFE"].includes(c.name))).toHaveLength(3);
   });
 
@@ -353,13 +367,15 @@ describe("planToCommands", () => {
     expect(cmds.some((c) => ["GATE_ON", "COMP_ON", "SSMCS_COMP_ON"].includes(c.name))).toBe(false);
   });
 
-  it("emits Hi-Z only on CH3/CH4, not other channels", () => {
+  it("emits Hi-Z only on jacks 3/4, not other jacks", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
-    plan.nodeParams.ch1 = { hiZ: true };
-    plan.nodeParams.ch3 = { hiZ: true };
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+    setExclusiveConnection(plan, "in.micline_3_4:out", "ch3:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { hiZL: true };
+    plan.nodeParams["in.micline_3_4"] = { hiZL: true };
     const cmds = planToCommands(model, plan).filter((c) => c.name === "HI_Z");
-    // CH3 = param 6 at y2; CH1 has no Hi-Z so it is dropped.
+    // Jack 3 = param 6 at y2; jack 1 has no Hi-Z so it is dropped.
     expect(cmds).toHaveLength(1);
     expect(uri(cmds[0])).toBe("/vd/parameters/6:0:2?operation=value");
   });
@@ -1870,5 +1886,308 @@ describe("reset chains (sideEffect heads vs converge groups)", () => {
         if (members.length > 1) expect(members[0].group, `${key} carries no group`).toBeDefined();
       }
     }
+  });
+});
+
+describe("input stage resolver", () => {
+  const wired = (id: ModelId, wires: Array<[string, string]>): Plan => {
+    const plan = defaultPlan(id);
+    for (const [from, to] of wires) setExclusiveConnection(plan, `${from}:out`, `${to}:in`, "source");
+    return plan;
+  };
+  const unwired = (id: ModelId, channel: string): Plan => {
+    const plan = defaultPlan(id);
+    plan.connections = plan.connections.filter((c) => !(c.to === `${channel}:in` && c.kind === "source"));
+    return plan;
+  };
+  const sorted = (set: Map<string, Set<string>>) =>
+    Object.fromEntries([...set].sort().map(([k, v]) => [k, [...v].sort()]));
+
+  // A wire from something that is no selectable input, a channel the model does not carry, and a
+  // source this model has no D.Gain address for all read no input stage.
+  it("reads no input stage where there is no jack or source to read", () => {
+    const m = getModel("URX44V");
+    const plan = wired("URX44V", [["bus.mix1", "ch1"]]);
+    expect(inputStageOf(m, plan, "ch1")).toEqual({ kind: "none" });
+    const lost = wired("URX44V", [["in.micline_1_2", "ch9"]]);
+    expect(inputStageOf(m, lost, "ch9")).toEqual({ kind: "none" });
+    const m22 = getModel("URX22");
+    const hdmi = wired("URX22", [["in.hdmi", "ch1"]]);
+    expect(inputStageOf(m22, hdmi, "ch1")).toEqual({ kind: "none" });
+    expect(inputStageOf(m22, wired("URX22", [["in.aux", "ch1"]]), "ch1").kind, "the positive control").toBe("digital");
+  });
+
+  // A mono channel reads the jack its input slot's parity names (odd slot = the second jack),
+  // whatever channel number it is; a stereo channel reads the side asked for.
+  it("names the jack or source each channel reads", () => {
+    const m = getModel("URX44V");
+    const swapped = wired("URX44V", [
+      ["in.micline_3_4", "ch1"],
+      ["in.micline_3_4", "ch2"],
+      ["in.micline_1_2", "ch3"],
+      ["in.micline_1_2", "ch4"],
+      ["in.micline_1_2", "ch_5_6"],
+    ]);
+    expect(inputStageOf(m, swapped, "ch1")).toEqual({
+      kind: "jack",
+      node: "in.micline_3_4",
+      side: "L",
+      jack: 2,
+      hiZ: true,
+    });
+    expect(inputStageOf(m, swapped, "ch2")).toEqual({
+      kind: "jack",
+      node: "in.micline_3_4",
+      side: "R",
+      jack: 3,
+      hiZ: true,
+    });
+    expect(inputStageOf(m, swapped, "ch3")).toEqual({
+      kind: "jack",
+      node: "in.micline_1_2",
+      side: "L",
+      jack: 0,
+      hiZ: false,
+    });
+    expect(inputStageOf(m, swapped, "ch4")).toEqual({
+      kind: "jack",
+      node: "in.micline_1_2",
+      side: "R",
+      jack: 1,
+      hiZ: false,
+    });
+    expect(inputStageOf(m, swapped, "ch_5_6", "R")).toEqual({
+      kind: "jack",
+      node: "in.micline_1_2",
+      side: "R",
+      jack: 1,
+      hiZ: false,
+    });
+    const digital = wired("URX44V", [
+      ["in.aux", "ch1"],
+      ["in.usbdaw_3_4", "ch_7_8"],
+    ]);
+    expect(inputStageOf(m, digital, "ch1")).toEqual({ kind: "digital", node: "in.aux", param: 9, instances: [0, 1] });
+    expect(inputStageOf(m, digital, "ch_7_8")).toEqual({
+      kind: "digital",
+      node: "in.usbdaw_3_4",
+      param: 12,
+      instances: [2],
+    });
+    expect(inputStageOf(m, unwired("URX44V", "ch1"), "ch1")).toEqual({ kind: "none" });
+    const u22 = getModel("URX22");
+    expect(inputStageOf(u22, defaultPlan("URX22"), "ch2")).toEqual({
+      kind: "jack",
+      node: "in.micline_1_2",
+      side: "R",
+      jack: 1,
+      hiZ: true,
+    });
+  });
+
+  // The holders some channel reads — the factory routing on each model, and nothing on a plan
+  // whose channels read no source.
+  it("collects the jacks and sources the channels read", () => {
+    for (const id of ["URX44V", "URX44"] as const) {
+      const set = inputStageReadSet(getModel(id), defaultPlan(id));
+      expect(sorted(set.jacks), id).toEqual({ "in.micline_1_2": ["L", "R"], "in.micline_3_4": ["L", "R"] });
+      expect([...set.sources].sort(), id).toEqual(["in.aux", "in.usbmain_a", "in.usbmain_b", "in.usbmain_c"]);
+    }
+    const u22 = inputStageReadSet(getModel("URX22"), defaultPlan("URX22"));
+    expect(sorted(u22.jacks)).toEqual({ "in.micline_1_2": ["L", "R"] });
+    expect([...u22.sources].sort()).toEqual(["in.aux", "in.usbmain_a", "in.usbmain_b", "in.usbmain_c"]);
+    const none = emptyPlan("URX44V");
+    ensureFixedConnections(getModel("URX44V"), none);
+    const empty = inputStageReadSet(getModel("URX44V"), none);
+    expect(empty.jacks.size + empty.sources.size).toBe(0);
+    // A stereo channel on a MIC/LINE node reads both of its jacks.
+    const st = wired("URX44V", [
+      ["in.aux", "ch1"],
+      ["in.aux", "ch2"],
+      ["in.micline_1_2", "ch_5_6"],
+    ]);
+    expect(sorted(inputStageReadSet(getModel("URX44V"), st).jacks)["in.micline_1_2"]).toEqual(["L", "R"]);
+  });
+
+  it("names the channels reading one holder, with the side a stereo reader reads", () => {
+    const m = getModel("URX44V");
+    const plan = wired("URX44V", [
+      ["in.micline_1_2", "ch3"],
+      ["in.micline_1_2", "ch4"],
+      ["in.micline_1_2", "ch_5_6"],
+    ]);
+    expect(inputStageReaders(m, plan, "in.micline_1_2", "L")).toEqual([
+      { channel: "ch1" },
+      { channel: "ch3" },
+      { channel: "ch_5_6", side: "L" },
+    ]);
+    expect(inputStageReaders(m, plan, "in.micline_1_2", "R")).toEqual([
+      { channel: "ch2" },
+      { channel: "ch4" },
+      { channel: "ch_5_6", side: "R" },
+    ]);
+    expect(inputStageReaders(m, plan, "in.usbmain_a")).toEqual([{ channel: "ch_7_8" }]);
+  });
+
+  // The D.Gain table names the sources the unit keeps a D.Gain for, and no guess claims the
+  // id the new catalog entry is named by.
+  it("names the D.Gain addresses and keeps the guess audit clean", () => {
+    expect([...new Set(Object.values(D_GAIN_SOURCES).map((s) => s.id))].sort((a, b) => a - b)).toEqual([
+      9, 11, 12, 13, 14, 15, 16, 17,
+    ]);
+    expect(paramNameForId(9)).toBe("D_GAIN");
+    for (const id of MODEL_IDS) expect(auditUnverified(id), id).toEqual([]);
+  });
+});
+
+// The emit carries the input stage of the jacks and sources some channel reads (W2), after the
+// source selects, each value bounded to its own address's range, with whichever of +48V / HI-Z
+// the plan holds off sent first. The jacks no channel reads are registered for follow instead.
+describe("input stage emit", () => {
+  const model = getModel("URX44V");
+  const JACKS = "in.micline_3_4";
+  const plan = (wires: Array<[string, string]>): Plan => {
+    const p = emptyPlan("URX44V");
+    ensureFixedConnections(model, p);
+    for (const [from, to] of wires) setExclusiveConnection(p, `${from}:out`, `${to}:in`, "source");
+    p.nodeParams[JACKS] = { gainL: 20, gainR: 30, phantomL: false, phantomR: false, hiZL: false, hiZR: false };
+    p.nodeParams["in.aux"] = { dGain: 6 };
+    p.nodeParams["in.sdplay"] = { dGain: 3 };
+    return p;
+  };
+  const stage = (cmds: VdCommand[]): string[] =>
+    cmds
+      .filter((c) => ["PHANTOM", "HA_GAIN", "CLIP_SAFE", "HI_Z", "D_GAIN"].includes(c.name))
+      .map((c) => `${c.name}@${c.paramId}:${c.y}`);
+
+  it("sends the jacks and sources a channel reads, and no other", () => {
+    const cmds = planToCommands(
+      model,
+      plan([
+        [JACKS, "ch3"],
+        ["in.aux", "ch_5_6"],
+      ]),
+    );
+    expect(stage(cmds)).toEqual(["HI_Z@6:2", "PHANTOM@0:2", "HA_GAIN@1:2", "D_GAIN@9:0", "D_GAIN@9:1"]);
+  });
+
+  it("sends every jack and source under everyInputHolder", () => {
+    const cmds = planToCommands(model, plan([]), "all", { everyInputHolder: true });
+    const sent = new Set(stage(cmds));
+    for (const a of ["HA_GAIN@1:2", "HA_GAIN@1:3", "D_GAIN@9:0", "D_GAIN@11:0"]) expect(sent.has(a), a).toBe(true);
+  });
+
+  it("puts the source selects ahead of the input stage", () => {
+    const cmds = planToCommands(model, plan([[JACKS, "ch3"]]));
+    const select = cmds.findIndex((c) => c.name === "INPUT_SOURCE" && c.y === channelInputSlots(model, "ch3")![0]);
+    const gain = cmds.findIndex((c) => c.name === "HA_GAIN");
+    expect(select, "the premise: CH 3's source select goes out").toBeGreaterThanOrEqual(0);
+    expect(select).toBeLessThan(gain);
+  });
+
+  it("sends HI-Z ON behind +48V OFF, and HI-Z OFF ahead of +48V ON", () => {
+    const on = plan([[JACKS, "ch3"]]);
+    on.nodeParams[JACKS] = { ...on.nodeParams[JACKS], hiZL: true, phantomL: false };
+    expect(stage(planToCommands(model, on)).slice(0, 2)).toEqual(["PHANTOM@0:2", "HI_Z@6:2"]);
+    const off = plan([[JACKS, "ch3"]]);
+    off.nodeParams[JACKS] = { ...off.nodeParams[JACKS], hiZL: false, phantomL: true };
+    expect(stage(planToCommands(model, off)).slice(0, 2)).toEqual(["HI_Z@6:2", "PHANTOM@0:2"]);
+  });
+
+  it("bounds A.Gain to -8..+70 dB and D.Gain to ±24 dB", () => {
+    const p = plan([
+      [JACKS, "ch3"],
+      ["in.aux", "ch_5_6"],
+    ]);
+    p.nodeParams[JACKS] = { ...p.nodeParams[JACKS], gainL: 90 };
+    p.nodeParams["in.aux"] = { dGain: -40 };
+    const cmds = planToCommands(model, p);
+    expect(cmds.find((c) => c.name === "HA_GAIN")!.planValue).toBe(70);
+    expect(cmds.filter((c) => c.name === "D_GAIN").map((c) => c.planValue)).toEqual([-24, -24]);
+  });
+
+  // Crossed: CH 1/2 read MIC/LINE 3/4 and CH 3/4 read MIC/LINE 1/2, each jack side holding its
+  // own value, so a value taken off the channel's index would land on the wrong jack.
+  it("addresses the jack a channel reads, not the channel's own index", () => {
+    const p = plan([
+      [JACKS, "ch1"],
+      [JACKS, "ch2"],
+      ["in.micline_1_2", "ch3"],
+      ["in.micline_1_2", "ch4"],
+    ]);
+    p.nodeParams["in.micline_1_2"] = { gainL: 11, gainR: 12, phantomL: true, phantomR: false };
+    p.nodeParams[JACKS] = { gainL: 13, gainR: 14, phantomL: false, phantomR: true, hiZL: false, hiZR: false };
+    const at = (name: string, y: number) =>
+      planToCommands(model, p)
+        .filter((c) => c.name === name && c.y === y)
+        .map((c) => [c.node, c.planValue]);
+    expect(at("HA_GAIN", 0)).toEqual([["in.micline_1_2", 11]]);
+    expect(at("HA_GAIN", 1)).toEqual([["in.micline_1_2", 12]]);
+    expect(at("HA_GAIN", 2)).toEqual([[JACKS, 13]]);
+    expect(at("HA_GAIN", 3)).toEqual([[JACKS, 14]]);
+    expect(at("PHANTOM", 0)).toEqual([["in.micline_1_2", 1]]);
+    expect(at("PHANTOM", 3)).toEqual([[JACKS, 1]]);
+  });
+
+  it("sends a source's D.Gain for a mono channel on it, and none for a stereo channel on no source", () => {
+    const mono = plan([["in.aux", "ch1"]]);
+    mono.connections = mono.connections.filter((c) => c.to !== "ch_5_6:in");
+    const cmds = planToCommands(model, mono);
+    expect(cmds.filter((c) => c.name === "D_GAIN").map((c) => `${c.paramId}:${c.y}`)).toEqual(["9:0", "9:1"]);
+    expect(
+      cmds.some((c) => c.name === "HA_GAIN" && c.y === 0),
+      "and no A.Gain at the channel's index",
+    ).toBe(false);
+    const none = plan([]);
+    expect(planToCommands(model, none).some((c) => c.name === "D_GAIN")).toBe(false);
+  });
+
+  // A stereo channel on a MIC/LINE pair reads both jacks, one per side.
+  it("sends both jacks of a MIC/LINE pair a stereo channel reads", () => {
+    const p = plan([["in.micline_1_2", "ch_5_6"]]);
+    p.nodeParams["in.micline_1_2"] = { phantomL: true, phantomR: false };
+    expect(
+      planToCommands(model, p)
+        .filter((c) => c.name === "PHANTOM")
+        .map((c) => [c.node, c.y, c.planValue]),
+    ).toEqual([
+      ["in.micline_1_2", 0, 1],
+      ["in.micline_1_2", 1, 0],
+    ]);
+  });
+
+  it("sends URX22's HI-Z at its second jack", () => {
+    const m22 = getModel("URX22");
+    const p = emptyPlan("URX22");
+    ensureFixedConnections(m22, p);
+    setExclusiveConnection(p, "in.micline_1_2:out", "ch2:in", "source");
+    p.nodeParams["in.micline_1_2"] = { hiZR: true };
+    expect(stage(planToCommands(m22, p)).filter((a) => a.startsWith("HI_Z"))).toEqual(["HI_Z@6:1"]);
+  });
+
+  // Several channels on one holder share one address per value, so the write sends each once
+  // with one owner — no collision to report.
+  it.each(MODEL_IDS)("sends each input-stage address once when channels share a holder, %s", (id) => {
+    const m = getModel(id);
+    const p = defaultPlan(id);
+    for (const n of m.nodes.filter((n) => n.kind === "channel")) {
+      const from = isStereoChannel(n.id) ? "in.usbdaw_1_2" : "in.micline_1_2";
+      setExclusiveConnection(p, `${from}:out`, `${n.id}:in`, "source");
+    }
+    const cmds = planToCommands(m, p).filter((c) =>
+      ["PHANTOM", "HA_GAIN", "CLIP_SAFE", "HI_Z", "D_GAIN"].includes(c.name),
+    );
+    const addrs = cmds.map((c) => `${c.paramId}:${c.y}`);
+    expect(addrs.length, "the premise: the stage is sent").toBeGreaterThan(0);
+    expect(new Set(addrs).size).toBe(addrs.length);
+    expect(collisionOwners(planToCommands(m, p))).toEqual([]);
+    expect(cmds.some((c) => c.shadowed?.length)).toBe(false);
+  });
+
+  it("registers for follow the jacks no channel reads, and none it sends", () => {
+    const p = plan([[JACKS, "ch3"]]);
+    const follow = planToFollowOnlyAddrs(model, p).filter((f) => f.node === JACKS);
+    expect(follow.every((f) => f.scoped && f.y === 3)).toBe(true);
+    expect(new Set(follow.map((f) => f.name))).toEqual(new Set(["PHANTOM", "HA_GAIN", "CLIP_SAFE", "HI_Z"]));
   });
 });

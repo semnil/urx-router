@@ -11,9 +11,9 @@
 // threshold" shape. A press on the cap is the other half, and writes nothing.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
+import { chips, consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
 import type { ConsoleMidiHooks } from "./console";
-import { sendConnection } from "../core/plan";
+import { sendConnection, setExclusiveConnection } from "../core/plan";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { nodeParamContestPath } from "../core/plan-history";
 import {
@@ -932,7 +932,106 @@ describe("the INS FX chip", () => {
     expect(scribble("ch4").style.background).not.toBe("");
   });
 
-  // The unit fills the engine with the type's defaults on the transition into it and not on a  // The unit fills the engine with the type's defaults on the transition into it and not on a
+  // The strip's on/off is its power LED: the scribble around it, the name and the device
+  // name are no button, so a press on the name changes nothing.
+  it("makes the power LED the strip's on/off and leaves the name inert", () => {
+    h = consoleHost();
+    const root = h.strip("ch1").root;
+    const scrib = root.querySelector<HTMLElement>(".con-scribble")!;
+    expect(scrib.getAttribute("role")).toBeNull();
+    expect(scrib.hasAttribute("tabindex")).toBe(false);
+    const power = (): HTMLElement => h.strip("ch1").root.querySelector<HTMLElement>(".con-power")!;
+    expect(power().getAttribute("role")).toBe("button");
+    expect(power().getAttribute("aria-pressed")).toBe("true");
+    h.strip("ch1").root.querySelector<HTMLElement>(".con-scribble .txt")!.click();
+    expect(h.plan.nodeParams.ch1?.on).not.toBe(false);
+    power().click();
+    expect(h.plan.nodeParams.ch1?.on).toBe(false);
+    expect(power().getAttribute("aria-pressed")).toBe("false");
+  });
+
+  // A stereo channel's name is the switch for the side the strip shows: the hidden side's
+  // number dims, +48 / A.GAIN / φ read the shown side, learn mode does not arm it, and the
+  // power LED beside it stays the strip's on/off.
+  it("switches a stereo strip's side from its name, and its input stage and φ with it", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch_5_6:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: 30, gainR: 12, phantomR: true };
+    h = consoleHost({ plan });
+    const root = (): HTMLElement => h.strip("ch_5_6").root;
+    const side = (): HTMLElement => root().querySelector<HTMLElement>(".con-side")!;
+    const gain = (): HTMLElement => root().querySelector<HTMLElement>('.con-knob[aria-label="A.GAIN"]')!;
+    expect(side().getAttribute("role")).toBe("button");
+    expect(side().getAttribute("aria-label")).toBe("CH 5/6, showing CH 5 (L)");
+    expect(side().textContent).toBe("CH 5/6");
+    expect(side().querySelector(".dim")?.textContent).toBe("6");
+    expect(gain().getAttribute("aria-valuenow")).toBe("30");
+    expect(chips(root()).get("+48")!.getAttribute("aria-pressed")).toBe("false");
+    expect([...chips(root()).keys()].filter((k) => k.startsWith("φ"))).toEqual(["φ"]);
+    side().click();
+    expect(h.switches).toEqual([{ id: "ch_5_6", side: "R" }]);
+    expect(side().getAttribute("aria-label")).toBe("CH 5/6, showing CH 6 (R)");
+    expect(side().querySelector(".dim")?.textContent).toBe("5");
+    expect(gain().getAttribute("aria-valuenow")).toBe("12");
+    expect(chips(root()).get("+48")!.getAttribute("aria-pressed")).toBe("true");
+    chips(root()).get("φ")!.click();
+    expect(h.plan.nodeParams.ch_5_6?.phaseR).toBe(true);
+    expect(h.plan.nodeParams.ch_5_6?.phaseL ?? false).toBe(false);
+    expect(h.plan.nodeParams.ch_5_6?.on, "the name is not the power").not.toBe(false);
+    root().querySelector<HTMLElement>(".con-power")!.click();
+    expect(h.plan.nodeParams.ch_5_6?.on).toBe(false);
+    expect(h.switches, "the LED switches no side").toHaveLength(1);
+  });
+
+  // A gain edit on one jack moves every strip showing that jack, in place — a stereo strip
+  // showing the other jack of the same node is not one of them.
+  it("mirrors a jack's gain onto a stereo strip only while it shows that jack", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch_5_6:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: 30, gainR: 12 };
+    h = consoleHost({ plan });
+    const knob = (id: string): HTMLElement =>
+      h.strip(id).root.querySelector<HTMLElement>('.con-knob[aria-label="A.GAIN"]')!;
+    h.strip("ch_5_6").root.querySelector<HTMLElement>(".con-side")!.click();
+    key(knob("ch1"), "ArrowUp");
+    expect(h.plan.nodeParams["in.micline_1_2"]?.gainL, "the premise: CH 1 moved jack 1").toBe(31);
+    expect(knob("ch_5_6").getAttribute("aria-valuenow")).toBe("12");
+    h.strip("ch_5_6").root.querySelector<HTMLElement>(".con-side")!.click();
+    key(knob("ch1"), "ArrowUp");
+    expect(knob("ch_5_6").getAttribute("aria-valuenow")).toBe("32");
+  });
+
+  // The gain knob names the other channels reading the same jack or source on its tooltip,
+  // and carries none when it reads it alone.
+  it("names the other readers of the jack on the gain knob's tooltip", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch3:in", "source");
+    setExclusiveConnection(plan, "in.micline_3_4:out", "ch2:in", "source");
+    setExclusiveConnection(plan, "in.aux:out", "ch4:in", "source");
+    h = consoleHost({ plan });
+    const knob = (id: string): HTMLElement =>
+      h.strip(id).root.querySelector<HTMLElement>('.con-knob[aria-label="A.GAIN"]')!;
+    expect(knob("ch1").title).toBe(t().console.gainShared("CH 3"));
+    expect(knob("ch1").getAttribute("aria-description")).toBe(t().console.gainShared("CH 3"));
+    expect(knob("ch3").title).toBe(t().console.gainShared("CH 1"));
+    expect(knob("ch2").title, "CH 2 alone on jack 4").toBe("");
+    expect(knob("ch2").hasAttribute("aria-description")).toBe(false);
+  });
+
+  it("leaves a stereo strip's name out of MIDI learn, and arms the shown side's φ", () => {
+    const armed: string[] = [];
+    h = consoleHost({ midi: learnHooks(armed) });
+    const root = (): HTMLElement => h.strip("ch_5_6").root;
+    const side = root().querySelector<HTMLElement>(".con-side")!;
+    expect(side.classList.contains("midi-target")).toBe(false);
+    side.click();
+    expect(armed).toEqual([]);
+    expect(h.switches).toEqual([{ id: "ch_5_6", side: "R" }]);
+    chips(root()).get("φ")!.click();
+    expect(armed).toEqual(["ch_5_6/phaseR"]);
+  });
+
+  // The unit fills the engine with the type's defaults on the transition into it and not on a
   // same-value write, so the selection puts them in the plan, where the screen reads them and the
   // write sends them — and names them as defaults rather than as values the operator chose.
   it("seeds the chosen type's defaults and names them as defaults", () => {
@@ -1083,16 +1182,19 @@ describe("a STEREO-linked pair", () => {
     expect(h.strip("ch2").fader).toBe(partner); // in place, as in BAL
   });
 
-  // The funnel names what it WROTE, and the head amp is not among it: claiming the partner's
-  // gain would take the device's answer away for a value the mirror left alone, which a read
-  // in flight then drops (src/main.device.test.ts carries that end of it).
+  // The funnel names what it WROTE, and the head amp is not among it: each member reads its
+  // own jack, and claiming the partner's gain would take the device's answer away for a value
+  // the mirror left alone, which a read in flight then drops (src/main.device.test.ts carries
+  // that end of it).
   it("does not name the partner's head amp as written", () => {
     h = consoleHost();
     linkPair();
     key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='A.GAIN']")!, "ArrowRight");
     const named = h.changeKeys().flat();
-    expect(named, "the edited member's own gain is named").toContain(nodeParamContestPath("ch1", "gain"));
-    expect(named, "the partner's is not").not.toContain(nodeParamContestPath("ch2", "gain"));
+    expect(named, "the edited member's own jack's gain is named").toContain(
+      nodeParamContestPath("in.micline_1_2", "gainL"),
+    );
+    expect(named, "the partner's is not").not.toContain(nodeParamContestPath("in.micline_1_2", "gainR"));
   });
 
   // The PAN knob is the exception: outside BAL the partner's pan did not move, so a rebuild
@@ -1346,5 +1448,37 @@ describe("where the focus goes after the INS FX popover closes", () => {
     expect(document.activeElement).toBe(root);
     h.view.refreshStrip("ch1");
     expect(document.activeElement).toBe(h.strip("ch1").root);
+  });
+});
+
+describe("a gain held on a jack or source", () => {
+  let h: ConsoleHost;
+  afterEach(() => h?.restore());
+
+  // A gain is held on the jack or source, so every strip reading the same one shows the edit at
+  // once — and a strip reading the other jack of the same MIC/LINE pair does not move.
+  it("carries an A.GAIN edit to every strip on the same jack, and to none on the other", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch3:in", "source");
+    h = consoleHost({ plan });
+    const gain = (id: string): string | null =>
+      h.strip(id).root.querySelector<HTMLElement>(".con-knob[aria-label='A.GAIN']")!.getAttribute("aria-valuenow");
+    const before = { ch2: gain("ch2"), ch3: gain("ch3") };
+    key(h.strip("ch1").root.querySelector<HTMLElement>(".con-knob[aria-label='A.GAIN']")!, "ArrowRight");
+    expect(gain("ch1")).not.toBe(before.ch3);
+    expect(gain("ch3"), "CH 3 reads jack 1 too").toBe(gain("ch1"));
+    expect(gain("ch2"), "CH 2 reads jack 2").toBe(before.ch2);
+  });
+
+  it("carries a D.GAIN edit to every strip on the same source", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.aux:out", "ch3:in", "source");
+    h = consoleHost({ plan });
+    const gain = (id: string): string | null =>
+      h.strip(id).root.querySelector<HTMLElement>(".con-knob[aria-label='D.GAIN']")!.getAttribute("aria-valuenow");
+    const before = gain("ch3");
+    key(h.strip("ch_5_6").root.querySelector<HTMLElement>(".con-knob[aria-label='D.GAIN']")!, "ArrowRight");
+    expect(gain("ch_5_6")).not.toBe(before);
+    expect(gain("ch3"), "CH 3 reads AUX too").toBe(gain("ch_5_6"));
   });
 });

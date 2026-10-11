@@ -136,6 +136,19 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 > MIC/LINE 1/2 on CH1 also sets CH2 to MIC/LINE 1/2). The tool
 > wires the same source node to both channels (L/R is implied by channel position).
 >
+> **What a channel shows by its source**: the input stage — +48V, A.Gain, Clip Safe and HI-Z — is the unit's
+> per MIC/LINE jack, and D.Gain per digital source; a channel applies the one it reads. A mono channel on
+> MIC/LINE reads the jack its position names (CH1 → jack 1, CH2 → jack 2), a stereo channel on MIC/LINE both
+> jacks of its pair, a channel on a digital source that source's D.Gain, and a channel on no source (None) shows
+> no input stage at all. Two channels reading one jack or source show and set one value. How the app stores
+> and writes it: architecture.md, "The input stage: on the jack and the source".
+>
+> **One side of a stereo channel at a time**: the unit's screens show a stereo channel one side at a time — its
+> name area and `‹` `›` pick which — and its single [Φ] inverts the side shown, on a digital source as on
+> MIC/LINE (the two sides' polarity are separate parameters). The side stays as it is across a source change
+> and a scene recall. The LCD selection names the selected stereo channel's side, and a write of it moves both
+> the selection and the side.
+>
 > **All Input / All USB DAW are not sources**: the INPUT screen's `[All Input]` and `[All USB DAW]`
 > buttons are bulk-set actions that rewrite input sources from a fixed table (user guide, "Dedicated
 > channel screen > INPUT screen"). All USB DAW sets every channel: CHn/n+1 = USB DAW n/n+1. All Input
@@ -436,7 +449,7 @@ one (a file, a `?plan=` link) is refused at load.
   PAN hard-pans the odd channel left (L63 = −63) and the even one right (R63 = +63); BAL and leaving STEREO
   centre both (C = 0), and the send pan then reads as a BALANCE (as a native stereo channel does — shown
   identically in both GRAPH and CONSOLE). **A linked pair holds one set of values whatever the mode**: an edit
-  to either channel is auto-mirrored to the other (the node params except the head amp below, plus each
+  to either channel is auto-mirrored to the other (the node params except the polarity invert below, plus each
   send's LEVEL / PRE-POST / ON), because that is what the unit does. Measured on it with the pair in PAN: writing one member's gate
   threshold, gate ON, compressor threshold, HPF frequency, CH fader, CH ON, STEREO-assign ON, MIX send level,
   MIX send ON or MIX send PRE-POST moved the other member's with it. **What the mode decides is the pan.**
@@ -446,8 +459,10 @@ one (a file, a `?plan=` link) is refused at load.
   flags live on the primary alone. **The head amp is each member's own — A.Gain, Clip Safe, the polarity
   invert, +48V and Hi-Z**: with the pair linked, writing one member's left the partner's where it was, in
   BAL as well as in PAN, and LINKING an unlinked pair left both members theirs rather than copying the
-  secondary's from the primary. So the app's mirror keeps all five with the partner, and the link
-  transition writes none of them — a pair fed by two different sources keeps two preamps. The metering answers to Signal
+  secondary's from the primary. The polarity invert is the channel's and the app's mirror leaves it with the
+  partner; the other four are the jack's each member reads (§1), outside the pair's node params, so the mirror
+  never reaches them and the link transition writes none of them — a pair fed by two different jacks keeps two
+  preamps. The metering answers to Signal
   Type as well: the unit's channel tuning screens meter such a pair as one channel in either mode, which
   [channel-tuning.md](channel-tuning.md) carries.
 - **A STEREO pair may hold a compander as its insert FX, and nothing else.** COMPANDER-H / COMPANDER-S

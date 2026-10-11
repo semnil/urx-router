@@ -19,16 +19,17 @@ import { chooseOption } from "./choose-option";
 const LOCKED_48V = "Turn Hi-Z off first — +48V and Hi-Z are never on together";
 const LOCKED_HIZ = "Turn +48V off first — +48V and Hi-Z are never on together";
 
-const planWith = (ch3: Record<string, unknown>) => ({
+// CH 3 reads jack 3 (MIC/LINE 3/4 L), which holds the input stage named here by field.
+const planWith = (jack3: Record<string, unknown>) => ({
   format: "urx-router-plan",
   version: 2,
   modelId: "URX44V",
-  connections: [],
-  nodeParams: { ch3 },
+  connections: [{ from: "in.micline_3_4:out", to: "ch3:in", kind: "source" }],
+  nodeParams: { "in.micline_3_4": Object.fromEntries(Object.entries(jack3).map(([k, v]) => [`${k}L`, v])) },
 });
 
-const open = async (page: Page, ch3: Record<string, unknown>): Promise<void> => {
-  await page.goto(`/?plan=${planParamZ(planWith(ch3))}`);
+const open = async (page: Page, jack3: Record<string, unknown>): Promise<void> => {
+  await page.goto(`/?plan=${planParamZ(planWith(jack3))}`);
   await page.locator("#model-picker").waitFor();
 };
 

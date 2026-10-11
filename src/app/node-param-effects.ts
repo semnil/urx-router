@@ -77,12 +77,15 @@ export function nodeParamEffects(patch: NodeParams, prev: NodeParams | undefined
     refreshInspector:
       patch.on !== undefined ||
       patch.hpf !== undefined ||
-      patch.phantom !== undefined ||
+      patch.phantomL !== undefined ||
+      patch.phantomR !== undefined ||
       patch.phase !== undefined ||
       patch.phaseL !== undefined ||
       patch.phaseR !== undefined ||
-      patch.clipSafe !== undefined ||
-      patch.hiZ !== undefined ||
+      patch.clipSafeL !== undefined ||
+      patch.clipSafeR !== undefined ||
+      patch.hiZL !== undefined ||
+      patch.hiZR !== undefined ||
       patch.insertFx !== undefined ||
       patch.insertFxOn !== undefined ||
       patch.compEqType !== undefined ||

@@ -798,7 +798,7 @@ test.describe("with a live session", () => {
     await expectGateTaps(page);
 
     const getsBefore = await page.evaluate(() => window.__dynTest.gets);
-    await pushParam(page, 1, 0, 0, 300); // HA_GAIN on CH1 — a direct-follow scalar
+    await pushParam(page, 1, 0, 0, 300); // HA_GAIN on jack 1, which CH1 reads — a direct-follow scalar
     // IDLE_FULL_MS is 900 ms, and the reconcile that follows reads the whole device.
     // Waited for by its READS rather than by a clock: a blind 1800 ms left 900 ms for
     // several hundred sequential commands plus a console re-render, and if that tail

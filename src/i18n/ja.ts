@@ -61,6 +61,8 @@ export const ja: Messages = {
     mute: "MUTE",
     // スクリブル電源 LED (ノード master on/off) の読み上げ名サフィックス。
     power: "オン/オフ",
+    sideShowing: (pair: string, shown: string) => `${pair}、${shown} を表示中`,
+    gainShared: (others: string) => `${others} と共有`,
     eq: "EQ",
     effect: "EFFECT",
     effectHint:
@@ -165,6 +167,9 @@ export const ja: Messages = {
     // 先の割り当てと MIDI コントロールを共有する行 (連動) に表示。一緒に動き、
     // フィードバックは最初の割り当てに追従する。
     linked: "連動",
+    inactiveNoSource: (channel: string): string => `無効 — ${channel} にソースがありません`,
+    inactiveNoSwitch: (channel: string, control: string): string =>
+      `無効 — ${channel} の入力に ${control} がありません`,
     linkedHint:
       "このアドレスの最初の割り当てと 1 つの MIDI コントロールを共有します。一緒に動き、MIDI フィードバックは最初の割り当てに追従します。",
     // 選択肢ラベルは英語表記のまま (幅固定のセレクトでカタカナ表記は
@@ -473,6 +478,13 @@ export const ja: Messages = {
     on: "ON",
     off: "OFF",
     notReadFromDevice: "デバイスから読み込まれていません — 計画の初期値を表示しています。",
+    sideGroup: "表示する側",
+    sideL: (ch: string) => `${ch} (L)`,
+    sideR: (ch: string) => `${ch} (R)`,
+    shareJack: (others: string, jack: string) =>
+      `${others} と共有しています。${jack} に載るチャンネルはすべてこの値を使います。`,
+    shareSource: (others: string, source: string) =>
+      `${others} と共有しています。${source} に載るチャンネルはすべてこの値を使います。`,
     selectionOnly: "選択のみ — Send パラメータはありません。",
     directOutTap:
       "ダイレクト出力 — チャンネルの Rec Point でタップ (フェーダー・Ducker より前段)。含めるには STEREO / MIX Bus 経由で送ってください。",
@@ -757,6 +769,7 @@ export const ja: Messages = {
     sharedSetting: (dropped: string, kept: string, more: number): string =>
       `${dropped} は ${kept} と本体上の設定を共有しています${more > 0 ? ` (他 ${more} 件)` : ""} — 本体に届くのは ${kept} の値だけです`,
     liveError: (message: string): string => `ライブ同期を停止: ${message}`,
+    unverifiedGuess: (key: string): string => `このアドレスは未検証のマッピング ${key} に基づく`,
     linkLogFailed: (message: string): string => `リンク台帳を書き出せませんでした: ${message}`,
     connected: "接続しました",
     connectionDeleted: "接続を削除しました",

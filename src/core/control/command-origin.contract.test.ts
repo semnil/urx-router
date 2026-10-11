@@ -18,7 +18,7 @@
 // says the cheap one is right.
 
 import { describe, expect, it } from "vitest";
-import { cmdAddr, planToCommandOrigins, planToCommands } from "./translate";
+import { addrKey, planToCommandOrigins, planToCommands, cmdAddr } from "./translate";
 import { connParamContestKey, nodeColorContestKey, nodeParamContestPath, walkParamLeaves } from "../plan-history";
 import { isPlainRecord, type NodeParams, type Plan } from "../plan";
 import { getModel } from "../../models";
@@ -166,6 +166,17 @@ describe.each(MODEL_IDS.flatMap((id) => [[id, false] as const, [id, true] as con
     it("calls a command the emit's own only where no key moves it", () => {
       const missed = base.filter((c) => origins.get(cmdAddr(c)) === null && (moves.get(cmdAddr(c))?.size ?? 0) > 0);
       expect(missed.map((c) => `${c.node} ${c.name}`)).toEqual([]);
+    });
+
+    // The input stage is named on its holder: jack 1's A.Gain on the MIC/LINE node's `gainL`,
+    // and AUX's D.Gain, sent at both its instances, on the source's `dGain`.
+    it("names the jack or the source an input-stage command takes its value from", () => {
+      const at = (paramId: number, y: number) => origins.get(addrKey(paramId, 0, y));
+      const jack = nodeParamContestPath("in.micline_1_2", "gainL");
+      const aux = nodeParamContestPath("in.aux", "dGain");
+      expect(at(1, 0)).toBe(jack);
+      expect(moves.get(addrKey(1, 0, 0))?.has(jack)).toBe(true);
+      expect([at(9, 0), at(9, 1)]).toEqual([aux, aux]);
     });
 
     // The positive control: both readings above are satisfied by a run that measured nothing, so

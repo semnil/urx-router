@@ -9,7 +9,7 @@
 import type { DeviceModel } from "../models/types";
 import { parseRef } from "../models/types";
 import type { Plan } from "../core/plan";
-import { phantomHiZNewlyBothOn } from "../core/input-lock";
+import { jackName, phantomHiZNewlyBothOn } from "../core/input-lock";
 import { wireShapeBroken } from "../core/routing";
 import { t } from "../i18n";
 
@@ -21,8 +21,8 @@ export function undoRefusal(
   after: Plan,
   labelOf: (id: string) => string,
 ): string | null {
-  const channels = phantomHiZNewlyBothOn(model, plan, after).map(labelOf);
-  if (channels.length) return t().status.undoPhantomHiZ(channels.join(", "));
+  const jacks = phantomHiZNewlyBothOn(model, plan, after).map((j) => jackName(model, after, j, labelOf));
+  if (jacks.length) return t().status.undoPhantomHiZ(jacks.join(", "));
   const receivers = wireShapeBroken(model, plan, after).map((to) => labelOf(parseRef(to).nodeId));
   return receivers.length ? t().status.undoWireShape(receivers.join(", ")) : null;
 }

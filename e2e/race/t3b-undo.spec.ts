@@ -711,6 +711,31 @@ test.describe("T3b undo", () => {
   // The stack's own arithmetic, none of which is visible from the plan: an empty diff,
   // redo invalidation, the 100-entry cap and its eviction, and the transition-only
   // depth report that keeps a drag off the IPC boundary.
+  // The side a stereo strip shows is UI state rather than plan state: switching it is no
+  // entry, and an undo takes back the edit without moving the side.
+  test("a stereo strip's side switch is no entry, and an undo leaves the side shown", async ({ page }) => {
+    await page.click("#btn-view-console");
+    await expect(faderReadout(page, "CH 1")).toBeVisible();
+    const st = strip(page, "CH 5/6");
+    const phi = st.locator(".con-chip", { hasText: "φ" });
+    const side = (shown: string) => st.getByRole("button", { name: `CH 5/6, showing ${shown}`, exact: true });
+    await phi.click();
+    await expect(phi).toHaveAttribute("aria-pressed", "true");
+    await settleHistory(page);
+    const before = await undoDepth(page);
+    await mark(page, "side-switch");
+    await side("CH 5 (L)").click();
+    await expect(side("CH 6 (R)")).toBeVisible();
+    await settleHistory(page);
+    expect(await undoDepth(page)).toBe(before);
+    await expect(phi, "R's polarity is its own").toHaveAttribute("aria-pressed", "false");
+    expect(await undoOnce(page)).toMatch(UNDO_APPLIED);
+    await expect(side("CH 6 (R)")).toBeVisible();
+    await side("CH 6 (R)").click();
+    await expect(phi, "the undo took back L's polarity").toHaveAttribute("aria-pressed", "false");
+    expect(await undoDepth(page)).toBe(before - 1);
+  });
+
   test("a no-op gesture keeps the redo stack, a new edit clears it, and the stack caps at 100", async ({ page }) => {
     // One real edit, undone: redo is now available.
     const posBefore = (await graphNode(page, "ch1").getAttribute("transform"))!;

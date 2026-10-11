@@ -69,6 +69,8 @@
 
   --warn: #e2794e;
   --warn-bg: #2a1a11;
+  /* Text printed on a --warn face (the "?" a value not read from the device carries). */
+  --warn-ink: #14110d;
 
   --tally: #ff4d4d;
   --tally-bg: #2a1212;
@@ -162,6 +164,7 @@
      enough to be read as ink on its own tint and on the panel. */
   --warn: #a8461a;
   --warn-bg: #f9ece3;
+  --warn-ink: #ffffff;
 
   --tally: #b71c1c;
   --tally-bg: #fbe9e9;
@@ -775,8 +778,10 @@ select:focus-visible,
    five would work in amber, so two same-looking buttons — .prefs-btn and its
    .tools button neighbour — now differ in ring colour alone; that is a known
    cost of stating the rule once, and dropping those five selectors is all it
-   takes to reverse it. */
-.con-scribble.power:focus-visible,
+   takes to reverse it. The scribble's two buttons — the power LED and a stereo
+   channel's name — sit on whatever colour the channel was given. */
+.con-power:focus-visible,
+.con-side:focus-visible,
 .consent-actions button:focus-visible,
 .prefs-toggle button:focus-visible,
 .prefs-btn:focus-visible,
@@ -803,6 +808,8 @@ input[type="range"]:focus-visible,
 .con-slp.on:focus-visible,
 .gt-notes button[aria-pressed="true"]:focus-visible,
 .udk-banks button[aria-pressed="true"]:focus-visible,
+.side-switch button[aria-pressed="true"]:focus-visible,
+#inspector .side-switch button[aria-pressed="true"]:focus-visible,
 .con-ifxpop .irow.active:focus-visible {
   outline-color: var(--on-accent-ink);
 }
@@ -1351,7 +1358,8 @@ input[type="range"]:focus-visible,
    face does not bleed into a light panel. */
 #inspector .toggle button.on,
 .prefs-toggle button.on,
-.udk-banks button[aria-pressed="true"] {
+.udk-banks button[aria-pressed="true"],
+.side-switch button[aria-pressed="true"] {
   color: var(--on-accent-ink);
   background: var(--led-face);
   border-color: var(--led-ink);
@@ -1407,6 +1415,23 @@ input[type="range"]:focus-visible,
 #inspector button {
   margin-top: 16px;
   width: 100%;
+}
+/* A stereo channel's side switch, on the .view-tabs recipe: it opens the INPUT section,
+   and its two halves share the row at the desktop target height. Scoped to #inspector to
+   outrank the full-width rule above, and its ring drawn inside, where the bar's clip
+   cannot cut it. */
+#inspector .side-switch {
+  margin: 4px 0 6px;
+}
+#inspector .side-switch button {
+  flex: 1 1 0;
+  width: auto;
+  min-height: 36px;
+  margin-top: 0;
+  letter-spacing: 0.5px;
+}
+#inspector .side-switch button:focus-visible {
+  outline-offset: -2px;
 }
 
 /* The destructive-action recipe, shared with the MIDI window's per-assignment
@@ -2044,7 +2069,8 @@ input[type="range"]:focus-visible,
 
 /* Joined segmented bar, shared with the Device setup screen's knob-bank switch. */
 .view-tabs,
-.udk-banks {
+.udk-banks,
+.side-switch {
   display: flex;
   border: 1px solid var(--ctl-border);
   border-radius: 7px;
@@ -2111,6 +2137,7 @@ input[type="range"]:focus-visible,
 }
 .view-tabs button,
 .udk-banks button,
+.side-switch button,
 .gt-modes button {
   font: 700 11px var(--mono);
   letter-spacing: 1.5px;
@@ -2124,6 +2151,7 @@ input[type="range"]:focus-visible,
 }
 .view-tabs button:last-child,
 .udk-banks button:last-child,
+.side-switch button:last-child,
 .gt-modes button:last-child {
   border-right: 0;
 }
@@ -2139,6 +2167,7 @@ input[type="range"]:focus-visible,
 }
 .view-tabs button:focus-visible,
 .udk-banks button:focus-visible,
+.side-switch button:focus-visible,
 .gt-modes button:focus-visible {
   outline: 2px solid var(--led);
   outline-offset: -2px;
@@ -2279,12 +2308,6 @@ input[type="range"]:focus-visible,
     var(--ctl-shadow),
     inset 0 0 0 100vmax var(--inactive-veil);
 }
-.con-strip.inactive .con-scribble.power:focus-visible {
-  box-shadow:
-    var(--ctl-shadow),
-    inset 0 0 0 100vmax var(--inactive-veil),
-    0 0 0 4px rgba(0, 0, 0, 0.9);
-}
 
 .con-head {
   height: var(--head-h);
@@ -2366,14 +2389,44 @@ input[type="range"]:focus-visible,
   background: var(--led);
   box-shadow: 0 0 4px 1px color-mix(in srgb, var(--led) 78%, transparent);
 }
-/* The scribble is a button when it carries a power LED: pointer, no text-selection
-   (so a stray drag while reading a name doesn't toggle the master). */
-.con-scribble.power {
+/* The power LED is the strip's on/off button. Its focus ring is the white-on-halo one,
+   declared with the other surfaces that need it beside the amber rule near the top of
+   this file, and drawn round the LED itself. */
+.con-power {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border-radius: 50%;
   cursor: pointer;
   user-select: none;
 }
-/* Its focus ring is the white-on-halo one, declared with the other seven surfaces
-   that need it beside the amber rule near the top of this file. */
+/* Its hit area is wider than the LED: from the strip's own left and top edges (through the
+   head's 6px padding) across to where the name text starts (scribble padding 6 + LED 12 +
+   the name row's gap 6), and down to the chip row under the scribble (the head's 4px gap).
+   It covers the start of the device-name row and none of the name text. Positioned against
+   the scribble, which is the nearest positioned box. */
+.con-power::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: -6px;
+  top: -6px;
+  width: 30px;
+  height: calc(100% + 10px);
+}
+/* A stereo channel's name is the button that switches the side the strip shows. Its hit
+   area is the whole scribble, under the power LED's, which stays on top where they overlap. */
+.con-side {
+  cursor: pointer;
+  user-select: none;
+}
+.con-side::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.con-side .dim {
+  opacity: 0.4;
+}
 .con-chips {
   display: flex;
   flex-wrap: wrap;
@@ -2496,6 +2549,21 @@ input[type="range"]:focus-visible,
   position: relative;
   cursor: ns-resize;
   touch-action: none;
+}
+/* A value the device read could not confirm: the board's "?" badge, on the knob's corner. */
+.con-knob .con-unread {
+  position: absolute;
+  left: -7px;
+  top: -5px;
+  min-width: 15px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--warn);
+  color: var(--warn-ink);
+  font: 700 9px/14px var(--mono);
+  text-align: center;
+  pointer-events: none;
 }
 .con-knob .ind {
   position: absolute;
@@ -4542,6 +4610,19 @@ button.consent-btn-primary {
   color: var(--text-dim);
   font-style: italic;
 }
+/* An assignment whose control is gone (its channel reads no source): the reason, in the
+   behaviour column, as a warn pill. */
+.mw-inactive {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  color: var(--warn);
+  font-size: 10px;
+  line-height: 15px;
+  vertical-align: 1px;
+}
 /* A gang member shares one physical control with the row above it: the mixer's own
    link-group idiom — an indent under its head, marked by a rail. */
 .mw-list tr.linked td:first-child {
@@ -5103,6 +5184,7 @@ button.consent-btn-primary {
   #inspector .toggle button.on,
   .prefs-toggle button.on,
   .udk-banks button[aria-pressed="true"],
+  .side-switch button[aria-pressed="true"],
   .gt-notes button[aria-pressed="true"],
   .menu-panel .menu-item[aria-checked="true"],
   .mw-learnbtn.on,

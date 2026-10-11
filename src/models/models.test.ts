@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MODELS, MODEL_IDS } from "./index";
+import { MODELS, MODEL_IDS, sideLabel } from "./index";
 import { fullLabel, hangsUnderHeader, isSingleInput, parseRef, ref } from "./types";
 import type { ConnectionKind } from "./types";
 
@@ -184,5 +184,27 @@ describe("model structural invariants", () => {
       expect(isSingleInput(rule!.kind), `${from} -> ${to}`).toBe(true);
       expect(rule!.fixed, `${from} -> ${to}`).toBeUndefined();
     }
+  });
+});
+
+describe("side labels", () => {
+  // A MIC/LINE node's sides are its two jacks and a stereo channel's its two channels, each
+  // named by its own number; a node with no sides answers its label.
+  it("names each side of a two-sided node by its own number", () => {
+    for (const id of MODEL_IDS) {
+      const m = MODELS[id];
+      expect(sideLabel(m, "in.micline_1_2", "L"), id).toBe("MIC/LINE 1");
+      expect(sideLabel(m, "in.micline_1_2", "R"), id).toBe("MIC/LINE 2");
+      expect(sideLabel(m, "in.aux", "R"), id).toBe("AUX IN");
+    }
+    expect(sideLabel(MODELS.URX44V, "in.micline_3_4", "R")).toBe("MIC/LINE 4");
+    expect(sideLabel(MODELS.URX44, "in.micline_3_4", "L")).toBe("MIC/LINE 3");
+    expect(sideLabel(MODELS.URX44V, "ch_5_6", "R")).toBe("CH 6");
+    expect(sideLabel(MODELS.URX22, "ch_3_4", "L")).toBe("CH 3");
+    expect(sideLabel(MODELS.URX22, "ch_3_4", "R")).toBe("CH 4");
+  });
+
+  it("answers a node the model does not have with its id", () => {
+    expect(sideLabel(MODELS.URX22, "in.hdmi", "L")).toBe("in.hdmi");
   });
 });

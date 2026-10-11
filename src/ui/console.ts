@@ -12,20 +12,24 @@ import type { DeviceModel } from "../models/types";
 // helper has to stay reachable inside them.
 import { ref as portRef } from "../models/types";
 import { defaultPlan } from "../models/initial-state";
+import { sideLabel } from "../models";
 import {
   isPlainRecord,
+  jackKey,
   LEVEL_MAX_DB,
   LEVEL_MIN_DB,
   LEVEL_OFF_DB,
   sendConnection,
   SSMCS_INITIAL,
+  type JackSide,
   type NodeParams,
   type Plan,
   type PlanConnection,
   type SsmcsParams,
 } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
-import { channelGainRange, hiZPatch, inputOnRefused } from "../core/input-lock";
+import { hiZPatch, inputOnRefused, jackGainRange } from "../core/input-lock";
+import type { InputSwitch } from "../core/input-lock";
 import {
   defaultTapKey,
   hasMeter,
@@ -64,8 +68,12 @@ import {
   channelDynamics,
   effectiveInsertFx,
   hasEq,
+  inputStageReaders,
   insertFxControl,
+  isStereoChannel,
 } from "../core/control/translate";
+import { displayedSide, shownStage } from "../core/stereo-side";
+import { inputShare } from "./input-share";
 import { nodeParamContestPath } from "../core/plan-history";
 import {
   alignLinkedSendPans,
@@ -85,6 +93,8 @@ import { INSERT_FX_NONE, insertFxEngaged, insertFxSelected } from "../core/contr
 import { parkOutgoingInsertFxParams, seedInsertFxParams } from "./insert-fx-model";
 import { insertFxScreenFamily } from "./insert-fx-screen";
 import {
+  D_GAIN_MAX_DB,
+  D_GAIN_MIN_DB,
   DELAY_TIME_GRID_MS,
   DELAY_TIME_MAX_MS,
   DELAY_TIME_MIN_MS,
@@ -400,6 +410,8 @@ export interface ConsoleHooks {
   onMeterError?: (message: string) => void;
   /** Open the GATE tuning screen for a MONO IN channel. */
   onOpenDynScreen?: (kind: DynKind, id: string) => void;
+  /** Show the other side of a stereo channel (its name area was pressed). */
+  onSwitchSide?: (channelId: string, side: JackSide) => void;
   midi?: ConsoleMidiHooks;
 }
 
@@ -541,6 +553,14 @@ export class Console {
    *  focused control is dropped; the meter subscription is untouched (same tap). */
   refreshStrip(id: string): void {
     if (!this.visible) return;
+    // An input node has no strip either: its input stage shows on every channel that reads
+    // it, so each of those strips is the one to repaint.
+    const model = this.hooks.getModel();
+    if (model.nodes.some((n) => n.id === id && n.kind === "input")) {
+      const readers = new Set(inputStageReaders(model, this.hooks.getPlan(), id).map((r) => r.channel));
+      for (const ch of readers) this.refreshStrip(ch);
+      return;
+    }
     // A hung node (a ducker) has no strip of its own — its chip lives on the
     // parent strip (attachTo). Retarget to the parent so an external edit of the
     // child (a MIDI DUCKER toggle / device follow) repaints that chip; without
@@ -1870,20 +1890,42 @@ export class Console {
   // The scribble strip: the CH SETTING colour + a power LED, the node name and the
   // device CH SETTING name row ("—" when unset, so every strip is the same height).
   // Shared by both strip builders. When the strip has an on/off (every strip but
-  // STREAMING) the whole scribble is the power button; the LED reflects its state.
+  // STREAMING) the LED is the power button, its hit area reaching from the strip's
+  // corner to the name text and down to the chip row; the name text itself is not.
   private scribble(m: StripModel): HTMLElement {
     const scrib = el("div", "con-scribble");
     this.paintScribble(scrib, m);
     const name = el("div", "name");
     const spec = this.powerSpec(m);
+    let power: HTMLElement | undefined;
     let led: HTMLElement | undefined;
     if (spec) {
+      power = el("span", "con-power");
       led = el("span", "con-pled");
       led.append(el("i", "dot"));
-      name.append(led);
+      power.append(led);
+      name.append(power);
     }
     const txt = el("span", "txt");
-    txt.textContent = m.label;
+    const sides = this.sideParts(m);
+    if (sides) {
+      // A stereo channel's name switches the side the strip shows; the hidden side's number dims.
+      const shown = displayedSide(m.id);
+      const [l, r] = [el("span", ""), el("span", "")];
+      l.textContent = sides.l;
+      r.textContent = sides.r;
+      (shown === "L" ? r : l).classList.add("dim");
+      txt.append(sides.prefix, l, "/", r);
+      txt.classList.add("con-side");
+      txt.dataset.ctl = "side";
+      txt.setAttribute("role", "button");
+      const model = this.hooks.getModel();
+      const which = shown === "L" ? t().inspector.sideL : t().inspector.sideR;
+      txt.setAttribute("aria-label", t().console.sideShowing(m.label, which(sideLabel(model, m.id, shown))));
+      this.wireActivate(txt, undefined, () => this.hooks.onSwitchSide?.(m.id, shown === "L" ? "R" : "L"));
+    } else {
+      txt.textContent = m.label;
+    }
     // The LED steals ~2 chars; shrink long names a step (or two for OSCILLATOR) so
     // they fit beside it. "CH 11/12" (8 chars) overflows 11px by ~1px in SF Mono, so
     // 8-char names drop to 9px; STREAMING has no LED (spec null), so its 9-char name
@@ -1894,8 +1936,22 @@ export class Console {
     dev.textContent = m.deviceName || "—";
     if (!m.deviceName) dev.classList.add("empty");
     scrib.append(name, dev);
-    if (spec && led) this.wirePower(scrib, led, m, spec);
+    if (spec && power && led) this.wirePower(power, led, m, spec);
     return scrib;
+  }
+
+  // A stereo channel's name split into its two sides' numbers: "CH " + "11" + "/" + "12", read
+  // off the model's side labels. Null for any other strip, and for a label the side labels do
+  // not compose, which then shows as it is.
+  private sideParts(m: StripModel): { prefix: string; l: string; r: string } | null {
+    if (!m.isChannel || !isStereoChannel(m.id)) return null;
+    const model = this.hooks.getModel();
+    const [left, right] = [sideLabel(model, m.id, "L"), sideLabel(model, m.id, "R")];
+    if (!m.label.startsWith(`${left}/`)) return null;
+    const r = m.label.slice(left.length + 1);
+    const prefix = right.slice(0, right.length - r.length);
+    if (!r || !right.endsWith(r) || !left.startsWith(prefix) || left === prefix) return null;
+    return { prefix, l: left.slice(prefix.length), r };
   }
 
   // The strip's power control (the scribble LED): the node master ON on np.on — a
@@ -1932,7 +1988,7 @@ export class Console {
   // Wire an element as an activatable button: keyboard (Space / Enter), MIDI-learn
   // mark + arming, and click. `run` performs the edit, told whether the keyboard
   // activated it; in learn mode arming consumes the activation instead. Shared by the
-  // toggle chips and the scribble power button.
+  // toggle chips and the scribble's power LED.
   private wireActivate(el: HTMLElement, midiId: string | undefined, run: (viaKey: boolean) => void): void {
     el.tabIndex = 0;
     this.midiMark(el, midiId);
@@ -1949,17 +2005,17 @@ export class Console {
     });
   }
 
-  // Make the scribble a power button: the LED reflects the on-state, click / Enter /
-  // Space toggle the node master (or oscillator) through the shared funnel. A full
-  // re-render follows so the strip's inactive dim updates.
-  private wirePower(scrib: HTMLElement, led: HTMLElement, m: StripModel, spec: PowerSpec): void {
+  // Make the LED a power button: the LED reflects the on-state, click / Enter / Space
+  // toggle the node master (or oscillator) through the shared funnel. A full re-render
+  // follows so the strip's inactive dim updates. The button's class carries no state —
+  // the lit state is the LED's — so the focus restore after that render finds it by class.
+  private wirePower(power: HTMLElement, led: HTMLElement, m: StripModel, spec: PowerSpec): void {
     led.classList.toggle("on", spec.on);
-    scrib.classList.add("power");
-    scrib.dataset.ctl = spec.midiId;
-    scrib.setAttribute("role", "button");
-    scrib.setAttribute("aria-pressed", String(spec.on));
-    scrib.setAttribute("aria-label", `${m.label} ${t().console.power}`);
-    this.wireActivate(scrib, spec.midiId, () => {
+    power.dataset.ctl = spec.midiId;
+    power.setAttribute("role", "button");
+    power.setAttribute("aria-pressed", String(spec.on));
+    power.setAttribute("aria-label", `${m.label} ${t().console.power}`);
+    this.wireActivate(power, spec.midiId, () => {
       this.commit(m.id, spec.toggle());
       this.render();
     });
@@ -2553,13 +2609,22 @@ export class Console {
   // is here for the shape of that compensation rather than for a height seen to move: it
   // costs one re-measure per rate change, and either rule changing without it is the
   // clipped head above, in silence.
+  //
+  // Each channel's input stage is in the key as well: the jack or source it reads decides
+  // whether its head carries +48, Hi-Z and a gain knob at all — a channel with no source
+  // carries none of them, and a stereo channel's is the one on the side it shows.
   private mainHeadHeight(): number {
     const plan = this.hooks.getPlan();
-    const types = this.hooks
-      .getModel()
-      .nodes.map((n) => plan.nodeParams[n.id]?.compEqType)
-      .join(",");
-    const key = [this.hooks.getModel().id, [...plan.hidden].sort().join(","), plan.sampleRate, types].join("|");
+    const model = this.hooks.getModel();
+    const types = model.nodes.map((n) => plan.nodeParams[n.id]?.compEqType).join(",");
+    const stages = model.nodes
+      .filter((n) => n.kind === "channel")
+      .map((n) => {
+        const s = shownStage(model, plan, n.id);
+        return s.kind === "jack" ? `j${s.hiZ ? "h" : ""}` : s.kind[0];
+      })
+      .join("");
+    const key = [model.id, [...plan.hidden].sort().join(","), plan.sampleRate, types, stages].join("|");
     if (this.headH.key === key) return this.headH.px;
     const savedRefs = this.refs;
     this.refs = new Map(); // buildStrip registers refs/listeners; keep them off the live map
@@ -2611,23 +2676,16 @@ export class Console {
     head.append(this.scribble(m));
 
     const cc = channelControl(model, m.id);
+    // The jack or source this channel reads, which holds its input stage; a stereo channel's
+    // on the side it shows.
+    const stage = m.isChannel ? shownStage(model, this.hooks.getPlan(), m.id) : ({ kind: "none" } as const);
+    const jack = stage.kind === "jack" ? stage : null;
 
     // Toggle chips in two 2-column groups: channel + input (HA) toggles, then the
     // processing chain GATE → COMP → EQ → INS FX. Each chip flips a plan flag (the
     // device mirrors it via the shared change funnel). An odd group gets an unused
     // spacer chip so the last real chip never stretches to full width.
-    type BoolKey =
-      | "gateOn"
-      | "compOn"
-      | "eqOn"
-      | "phantom"
-      | "phase"
-      | "phaseL"
-      | "phaseR"
-      | "hpf"
-      | "hiZ"
-      | "cueInterrupt"
-      | "mono";
+    type BoolKey = "gateOn" | "compOn" | "eqOn" | "phase" | "phaseL" | "phaseR" | "hpf" | "cueInterrupt" | "mono";
     const planOf = (): NodeParams => this.hooks.getPlan().nodeParams[m.id] ?? {};
     const boolChip = (parent: HTMLElement, label: string, key: BoolKey, def: boolean, title?: string): void => {
       this.makeChip(
@@ -2669,48 +2727,46 @@ export class Console {
         { midiId: controlId(m.id, "mute") },
       );
     }
-    // +48V and HI-Z are never turned on together: while one is on, the other's chip is
-    // read-only and says why; turning the lit one off stays available. Either toggle
-    // rebuilds the strip, so the other chip and the A.GAIN range follow it. The read-only
-    // chip keeps its control id, so it can still be MIDI-learned; the bound controller's
-    // ON is refused while the lock holds.
-    const inputChip = (label: string, key: "phantom" | "hiZ"): void => {
-      if (inputOnRefused(model.id, m.id, planOf(), key)) {
-        this.makeChip(m.id, top, label, false, false, () => false, {
+    // +48V and HI-Z of the jack this channel reads are never turned on together: while one
+    // is on, the other's chip is read-only and says why; turning the lit one off stays
+    // available. The value is the jack's, so either toggle re-renders every strip — each
+    // channel reading that jack shows it. The read-only chip keeps its control id, so it can
+    // still be MIDI-learned; the bound controller's ON is refused while the lock holds.
+    const jackNp = (): NodeParams => (jack ? (this.hooks.getPlan().nodeParams[jack.node] ?? {}) : {});
+    const inputChip = (label: string, key: InputSwitch): void => {
+      if (!jack) return;
+      const planKey = jackKey(key, jack.side);
+      if (inputOnRefused(model.id, jack, jackNp(), key)) {
+        this.makeChip(jack.node, top, label, false, false, () => false, {
           readonlyTitle: key === "phantom" ? t().inspector.phantomLockedByHiZ : t().inspector.hiZLockedByPhantom,
           midiId: controlId(m.id, key),
         });
         return;
       }
-      const written: string[] = [key];
+      const written: string[] = [planKey];
       this.makeChip(
-        m.id,
+        jack.node,
         top,
         label,
         false,
-        Boolean(planOf()[key]),
+        Boolean(jackNp()[planKey]),
         () => {
-          const next = !planOf()[key];
-          const patch = key === "hiZ" ? hiZPatch(planOf(), next) : { phantom: next };
-          Object.assign(this.nodeParamsOf(m.id), patch);
+          const next = !jackNp()[planKey];
+          const patch = key === "hiZ" ? hiZPatch(jackNp(), jack.side, next) : { [planKey]: next };
+          Object.assign(this.nodeParamsOf(jack.node), patch);
           written.splice(0, written.length, ...Object.keys(patch));
           return next;
         },
         { midiId: controlId(m.id, key), keys: written, rerender: true },
       );
     };
-    // HA input toggles (+48 / polarity / HPF / Hi-Z).
-    if (cc?.hasMicStrip) inputChip("+48", "phantom");
-    // Polarity: one φ on a mono channel, independent φL / φR on a stereo one. Keep
-    // the stereo pair on a single row by padding to an even count before them.
-    if ((cc?.phases.length ?? 0) === 2 && top.childElementCount % 2 === 1) {
-      top.append(el("div", "con-chip spacer"));
-    }
-    for (const ph of cc?.phases ?? []) {
-      boolChip(top, ph.key === "phase" ? "φ" : ph.key === "phaseL" ? "φL" : "φR", ph.key, false);
-    }
+    // HA input toggles (+48 / polarity / HPF / Hi-Z). +48 and Hi-Z are the jack's.
+    if (jack) inputChip("+48", "phantom");
+    // Polarity: one φ. A stereo channel's inverts the side it shows (phaseL / phaseR).
+    const phase = cc?.phases.find((ph) => ph.side === "" || ph.side === displayedSide(m.id));
+    if (phase) boolChip(top, "φ", phase.key, false);
     if (cc?.hasHpf) boolChip(top, "HPF", "hpf", false);
-    if (cc?.hasHiZ) inputChip("Hi-Z", "hiZ");
+    if (jack?.hiZ) inputChip("Hi-Z", "hiZ");
     // MONITOR strips carry the device [CUE] (cue interrupt) and [MONO] buttons.
     // Both are confirmed device params (MONITOR_CUE_INTERRUPT / MONITOR_MONO), so
     // they sync live like the channel toggles. CUE Interrupt ships ON, MONO OFF.
@@ -2944,32 +3000,56 @@ export class Console {
       if (group.childElementCount) head.append(group);
     }
 
-    // A.GAIN / D.GAIN is the channel head-amp / digital gain.
-    if (m.isChannel) {
-      const range = channelGainRange(model, m.id, planOf());
-      const min = range?.minDb ?? (m.isMono ? -8 : -24);
-      const max = range?.maxDb ?? (m.isMono ? 70 : 24);
-      const factory = this.factoryPlan().nodeParams[m.id]?.gain ?? (m.isMono ? -8 : 0);
+    // A.GAIN of the jack, or D.GAIN of the source, this channel reads; none with no source.
+    if (stage.kind !== "none") {
+      const analog = stage.kind === "jack";
+      const holder = stage.node;
+      const key = analog ? jackKey("gain", stage.side) : "dGain";
+      const range = analog
+        ? jackGainRange(model.id, stage, this.hooks.getPlan().nodeParams[holder])!
+        : { minDb: D_GAIN_MIN_DB, maxDb: D_GAIN_MAX_DB };
+      const fromFactory = (this.factoryPlan().nodeParams[holder] as Record<string, unknown> | undefined)?.[key];
+      const factory = typeof fromFactory === "number" ? fromFactory : range.minDb;
+      const held = (): number | undefined => {
+        const v = (this.hooks.getPlan().nodeParams[holder] as Record<string, unknown> | undefined)?.[key];
+        return typeof v === "number" ? v : undefined;
+      };
       // Horizontal-marking values: A.Gain +8/+55, D.Gain -14/+15.
-      const [hl, hr] = m.isMono ? [8, 55] : [-14, 15];
-      this.addKnob(
+      const [hl, hr] = analog ? [8, 55] : [-14, 15];
+      const knob = this.addKnob(
         head,
-        m.isMono ? "A.GAIN" : "D.GAIN",
+        analog ? "A.GAIN" : "D.GAIN",
         {
-          get: () => this.hooks.getPlan().nodeParams[m.id]?.gain ?? factory,
-          set: (v) => void (this.nodeParamsOf(m.id).gain = v),
-          keys: ["gain"],
+          get: () => held() ?? factory,
+          set: (v) => void ((this.nodeParamsOf(holder) as Record<string, unknown>)[key] = v),
+          keys: [key],
           pairs: "own",
-          min,
-          max,
+          min: range.minDb,
+          max: range.maxDb,
           step: 1,
           format: (v) => (v > 0 ? "+" : "") + v,
           reset: factory,
           angle: (v) => -90 + ((v - hl) / (hr - hl)) * 180,
         },
-        m.id,
+        holder,
         controlId(m.id, "gain"),
       );
+      // The knob's notes, on its tooltip and its description: the other channels reading the
+      // same jack or source, and a device read that could not read it (the plan's value shows).
+      const notes: string[] = [];
+      const share = inputShare(model, this.hooks.getPlan(), m.id);
+      if (share) notes.push(t().console.gainShared(share.others));
+      if (this.hooks.getPlan().unreadNodes?.has(holder)) {
+        const badge = el("span", "con-unread");
+        badge.textContent = "?";
+        badge.setAttribute("aria-hidden", "true");
+        knob.append(badge);
+        notes.push(t().inspector.notReadFromDevice);
+      }
+      if (notes.length) {
+        knob.title = [knob.title, ...notes].filter(Boolean).join("\n");
+        knob.setAttribute("aria-description", notes.join(" "));
+      }
     }
     // PAN (mono) / BALANCE (stereo) = the source's → STEREO main-path pan,
     // L63 – C – R63. Per-send pan lives in the SENDS rack's SEND PAN popover.
@@ -3479,6 +3559,29 @@ export class Console {
     this.render();
   }
 
+  /** A gain knob that writes a jack or a source (`holder`) shows its value on every other
+   *  strip reading that jack or source, in place, while it moves: each of those channels
+   *  applies the one value. A strip on the other jack of the same MIC/LINE node — a stereo
+   *  strip showing that jack included — and a knob on any other node, are left alone. */
+  private mirrorHolderKnob(holder: string, knob: HTMLElement, val: HTMLElement, keys?: readonly string[]): void {
+    const model = this.hooks.getModel();
+    if (!model.nodes.some((n) => n.id === holder && n.kind === "input")) return;
+    // A jack's gain names its side; a source's D.Gain has none.
+    const side = keys?.find((k) => /^gain[LR]$/.test(k))?.slice(-1) as JackSide | undefined;
+    for (const r of inputStageReaders(model, this.hooks.getPlan(), holder, side)) {
+      // A stereo strip shows one side's knob; one showing the other jack is left alone.
+      if (r.side !== undefined && r.side !== displayedSide(r.channel)) continue;
+      const other = this.refs
+        .get(r.channel)
+        ?.root.querySelector<HTMLElement>(`.con-knob[data-ctl="${controlId(r.channel, "gain")}"]`);
+      if (!other || other === knob) continue;
+      other.style.setProperty("--rot", knob.style.getPropertyValue("--rot"));
+      for (const a of ["aria-valuenow", "aria-valuetext"]) other.setAttribute(a, knob.getAttribute(a) ?? "");
+      const otherVal = other.parentElement?.querySelector<HTMLElement>(".val");
+      if (otherVal) otherVal.textContent = val.textContent;
+    }
+  }
+
   /** Push a STEREO-linked strip's mirrored fader level onto the partner strip's level
    *  DOM in place, so a linked fader tracks live without a rebuild (keeps focus). */
   private mirrorPartnerLevel(id: string): void {
@@ -3652,7 +3755,7 @@ export class Console {
   // Build a labelled rotary knob (label / value / knob) in the strip head and
   // wire it. Shared by the channel gain and the monitor PHONES level.
   // `midiId` makes the knob armable for MIDI learn.
-  private addKnob(head: HTMLElement, label: string, k: KnobSpec, id: string, midiId?: string): void {
+  private addKnob(head: HTMLElement, label: string, k: KnobSpec, id: string, midiId?: string): HTMLElement {
     const box = el("div", "con-gain");
     const info = el("div", "info");
     const lbl = el("span", "lbl");
@@ -3667,6 +3770,7 @@ export class Console {
     info.append(lbl, val);
     box.append(info, knob);
     head.append(box);
+    return knob;
   }
 
   // The knob primitive: the con-knob element + its value span (readonly / aria /
@@ -3736,6 +3840,7 @@ export class Console {
       k.set(v);
       show(v);
       this.commit(id, k.keys);
+      this.mirrorHolderKnob(id, knob, val, k.keys);
     };
     const apply = (raw: number, st = k.step): void => {
       const to = k.grid ?? st;

@@ -49,7 +49,7 @@ import { getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { DeviceModel } from "./models/types";
 import { ruleKind } from "./core/routing";
-import type { Plan } from "./core/plan";
+import { setExclusiveConnection, type Plan } from "./core/plan";
 import { loadHidden } from "./app/view-state";
 import { drag, faceplate, portHit, press, wireHit } from "./ui/graph.test-util";
 import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
@@ -727,11 +727,12 @@ describe("Fetch from device", () => {
     expect(paramRow("HPF").querySelector("button.on")?.textContent).toBe("OFF");
   });
 
-  // The head amp is the other direction of the same rule: the pair mirror LEAVES it with the
-  // partner, so an edit to one member's Clip Safe sends nothing for the other's — and naming
-  // it on the partner would take the device's answer away for a value this gesture never
-  // wrote. The device holds this stub's default for CH 2's Clip Safe (unwritten, so OFF)
-  // while the plan says ON, which is the contest: the read's value has to win it.
+  // The head amp is the other direction of the same rule: each member reads a jack of its own,
+  // a key another node holds, which the pair mirror LEAVES with the partner — so an edit to
+  // one member's Clip Safe sends nothing for the other's jack, and naming it would take the
+  // device's answer away for a value this gesture never wrote. The device holds this stub's
+  // default for jack 2's Clip Safe (unwritten, so OFF) while the plan says ON, which is the
+  // contest: the read's value has to win it.
   it("keeps the device's answer for a key the mirror leaves with the partner", SLOW, async () => {
     const shell = await bootDevice();
     selectNode("ch1");
@@ -1369,6 +1370,53 @@ describe("the model the device turns out to be", () => {
     // started.
     expect(shell.count("vd_get")).toBe(0);
     expect($<HTMLSelectElement>("model-picker").value).toBe("URX44V");
+  });
+
+  // A write the unit refuses at an address an unverified mapping names ends the session on a
+  // line that says which: on URX22 a jack's A.Gain rests on the jack axis.
+  it("names the guess a refused live write rests on", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const url = `/?plan=${encodeURIComponent(Buffer.from(serialize(defaultPlan("URX22")), "utf8").toString("base64url"))}`;
+    const shell = (await bootApp({
+      url,
+      tauri: deviceCommands({
+        ...connectAs("URX22"),
+        "plugin:dialog|message": "Ok",
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId === PARAMS.HA_GAIN.id) throw new Error("device-busy");
+        },
+      }),
+    }))!;
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    expect(errors(shell), "the premise: the session started").toEqual([]);
+    selectNode("ch1");
+    const slider = paramRow(t().inspector.gainAnalog).querySelector<HTMLInputElement>('input[type="range"]')!;
+    slider.value = String(Number(slider.value) + 5);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+    expect(errors(shell)[0]).toContain(t().status.unverifiedGuess("jack-axis"));
+  });
+
+  // …and the write's own report names it beside the refused command.
+  it("names the guess a refused write rests on in the write report", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const url = `/?plan=${encodeURIComponent(Buffer.from(serialize(defaultPlan("URX22")), "utf8").toString("base64url"))}`;
+    const shell = (await bootApp({
+      url,
+      tauri: deviceCommands({
+        ...connectAs("URX22"),
+        ...SAVES,
+        "plugin:dialog|message": byMessage((m) => !m.includes(RETRY_ASK)),
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId === PARAMS.HA_GAIN.id) throw new Error("device-busy");
+        },
+      }),
+    }))!;
+    $("btn-write").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 25_000 });
+    const saved = shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string };
+    expect(saved.contents).toContain("- HA_GAIN (unverified mapping jack-axis) — device-busy");
   });
 
   // Taken, the offer has to actually switch — otherwise the read that follows maps the
@@ -6629,6 +6677,30 @@ describe("Compare with device", () => {
     expect(statusText()).not.toBe(t().status.compareConnecting);
   });
 
+  // The unit keeps the input stage of every jack and source, read by a channel or not, so
+  // Compare asks about all of them — a write would send only the ones some channel reads.
+  it("compares the input stage of a jack no channel reads", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const doc = defaultPlan("URX44V");
+    for (const ch of ["ch3", "ch4"]) setExclusiveConnection(doc, "in.micline_1_2:out", `${ch}:in`, "source");
+    doc.nodeParams["in.micline_3_4"] = { ...doc.nodeParams["in.micline_3_4"], gainL: 20 };
+    const url = `/?plan=${encodeURIComponent(Buffer.from(serialize(doc), "utf8").toString("base64url"))}`;
+    const shell = (await bootApp({
+      url,
+      tauri: deviceCommands(
+        { "plugin:dialog|message": "Ok", experimental_enabled: true },
+        { [`${PARAMS.HA_GAIN.id}/0/2`]: gainToVd(10) },
+      ),
+    }))!;
+    (await compare()).click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), { timeout: 10_000 });
+    expect($("load-report").textContent).toContain(
+      `HA_GAIN @ ${PARAMS.HA_GAIN.id}:0:2 — plan ${gainToVd(20)}, device ${gainToVd(10)}`,
+    );
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
   // The report is built while connected and shown after the disconnect, so an
   // indefinite modal cannot hold the broker connection open.
   //
@@ -8104,16 +8176,15 @@ describe("importing a settings file", () => {
       { timeout: 15_000 },
     );
 
-    // The plan holds the file's values, read back through a save: both on for CH 3, both off
-    // for CH 4, the other HI-Z jack.
+    // The plan holds the file's values, read back through a save: both on for jack 3, which CH 3
+    // reads, both off for jack 4, the other HI-Z jack.
     shell.answer("plugin:dialog|save", "/tmp/imported.json");
     shell.answer("write_text_file", null);
     $("btn-save").click();
     await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(1), { timeout: 10_000 });
     const saved = shell.args[shell.invokes.indexOf("write_text_file")] as { contents: string };
     const { nodeParams } = JSON.parse(saved.contents);
-    expect(nodeParams.ch3).toMatchObject({ phantom: true, hiZ: true });
-    expect(nodeParams.ch4).toMatchObject({ phantom: false, hiZ: false });
+    expect(nodeParams["in.micline_3_4"]).toMatchObject({ phantomL: true, hiZL: true, phantomR: false, hiZR: false });
     expect(shell.count("vd_set")).toBe(0);
   });
 
@@ -9394,11 +9465,14 @@ describe("a MIDI toggle dims its wire through the reflect alone", () => {
 // Two funnels write the plan, and both have to name what they asserted. These drive the
 // CONSOLE half and the BAL mirror's half against a read in flight.
 describe("the inspector while the CONSOLE hides it", () => {
-  /** CH 1's A.GAIN knob on the CONSOLE, which IS on screen while the panel is not —
+  /** A strip's A.GAIN knob on the CONSOLE, which IS on screen while the panel is not —
    *  so it says the follow reflect ran, and a stale panel cannot be read as a notify
    *  that never arrived. */
-  const consoleGain = (): string | null =>
-    $("console-host").querySelector<HTMLElement>('[aria-label="A.GAIN"]')?.getAttribute("aria-valuenow") ?? null;
+  const consoleGain = (strip: string): string | null =>
+    [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")]
+      .find((s) => s.getAttribute("aria-label") === strip)
+      ?.querySelector<HTMLElement>('[aria-label="A.GAIN"]')
+      ?.getAttribute("aria-valuenow") ?? null;
 
   // The panel is display:none for as long as the CONSOLE view is up, and a device
   // follow that touches the selected node would otherwise rebuild it there at the
@@ -9408,7 +9482,8 @@ describe("the inspector while the CONSOLE hides it", () => {
   // this file re-selects on the way back, which rebuilds a visible panel and would pass
   // with the drain deleted.
   it("holds the rebuild while the CONSOLE hides it, and pays it on the way back", SLOW, async () => {
-    const shell = await bootDevice();
+    // The unit has CH 3 on jack 1 as well, so the one gain shows on both strips.
+    const shell = await bootDevice({}, true, { [`${PARAMS.INPUT_SOURCE.id}/0/2`]: 0 });
     $("btn-live").click();
     await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     selectNode("ch1");
@@ -9420,7 +9495,8 @@ describe("the inspector while the CONSOLE hides it", () => {
     // where it was — the panel would then agree for the wrong reason.
     notifyChannel(shell).onmessage([{ param_id: PARAMS.HA_GAIN.id, x: 0, y: 0, value: 2000 }]);
     // The reflect is coalesced onto a timer, so wait for it where it IS visible.
-    await vi.waitFor(() => expect(consoleGain()).toBe("20"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(consoleGain("CH 1")).toBe("20"), { timeout: 25_000 });
+    expect(consoleGain("CH 3"), "CH 3 reads jack 1 too").toBe("20");
 
     // It ran, and it rebuilt no panel: the row is the same element.
     expect(paramRow(t().inspector.gainAnalog)).toBe(before);
@@ -9757,10 +9833,12 @@ describe("+48V and Hi-Z on one channel", () => {
       holds.push(hold.release);
       return { table, hold };
     };
-    const planLink = async (ch3: Record<string, unknown>): Promise<string> => {
+    /** A plan link whose jack 3 — the one CH 3 reads — holds `jack`, named by field. */
+    const planLink = async (jack: Record<string, unknown>): Promise<string> => {
       const { serialize } = await import("./core/plan");
       const doc = defaultPlan("URX44V");
-      doc.nodeParams.ch3 = { ...doc.nodeParams.ch3, ...ch3 };
+      const onJack = Object.fromEntries(Object.entries(jack).map(([k, v]) => [`${k}L`, v]));
+      doc.nodeParams["in.micline_3_4"] = { ...doc.nodeParams["in.micline_3_4"], ...onJack };
       return `/?plan=${encodeURIComponent(Buffer.from(serialize(doc), "utf8").toString("base64url"))}`;
     };
     const readHeld = (hold: { asked: number }): Promise<void> =>
@@ -9956,27 +10034,21 @@ describe("+48V and Hi-Z on one channel", () => {
       },
     );
 
-    // A read that resets no history — the refetch a `sideEffect: "refetch"` write takes — is
-    // where the refused edit could outlive its refusal as an undo entry. Hi-Z has gone on at
-    // the unit's panel with no notify reaching the app, so the plan learns it from this read.
-    it("takes a +48V ON a refetch refused out of the undo history", SLOW, async () => {
+    // The unit's panel turns Hi-Z on and announces it, which sends the follow layer to re-read
+    // the jack, and +48V is pressed while that read is out. A refetch reads its head's own node,
+    // and no head sits on a jack, so this is the read in flight that a live session takes over
+    // the input stage.
+    it("refuses a +48V ON pressed while a follow read of the jack reads a unit holding Hi-Z on", SLOW, async () => {
       const { table, hold } = holdingUnit({ [RATE]: 48_000 }, PARAMS.PHANTOM.id, false);
       const shell = (await bootApp({ tauri: table }))!;
       live().click();
       await liveUp();
-      hold.panel(PARAMS.HI_Z.id, 1);
+      await quiet(shell);
 
-      // The EQ 1-knob on CH 3: its flush reads CH 3 back, and that read is held.
-      selectNode("ch3");
-      $("inspector").querySelector<HTMLButtonElement>("#btn-eq-screen")!.click();
       hold.arm();
-      $("dyn-screen-box")
-        .querySelector<HTMLElement>("#dyn-oneknob-level")!
-        .closest(".prefs-section")!
-        .querySelectorAll<HTMLButtonElement>(".prefs-toggle button")[0]
-        .click(); // ON
+      hold.panel(PARAMS.HI_Z.id, 1);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
       await readHeld(hold);
-      $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions .consent-btn-secondary")!.click();
 
       selectNode("ch3");
       expect(litFace(t().inspector.hiZ), "the premise: the plan has not heard").toBe("OFF");
@@ -9987,22 +10059,13 @@ describe("+48V and Hi-Z on one channel", () => {
       on.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
       on.click();
       await new Promise((r) => setTimeout(r, 0)); // the release's deferred commit runs first
+      expect(litFace(t().inspector.phantom), "the premise: the press landed").toBe("ON");
       hold.release();
       await quiet(shell);
 
       selectNode("ch3");
       expect(switches()).toEqual({ phantom: "OFF", hiZ: "ON" });
       expect(statusText().startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true);
-      expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([]);
-      expect(writesAt(shell, PARAMS.EQ_ONE_KNOB_ON.id), "the premise: the 1-knob went out").toEqual([1]);
-
-      // One undo takes the 1-knob back: the refused press left no entry in front of it.
-      (document.activeElement as HTMLElement | null)?.blur();
-      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
-      await vi.waitFor(() => expect(writesAt(shell, PARAMS.EQ_ONE_KNOB_ON.id)).toEqual([1, 0]), { timeout: 10_000 });
-      await quiet(shell);
-      selectNode("ch3");
-      expect(switches()).toEqual({ phantom: "OFF", hiZ: "ON" });
       expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([]);
     });
 
@@ -10497,5 +10560,225 @@ describe("a scoped read under the Scene only device scope", () => {
     $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions .consent-btn-secondary")!.click();
     await quiet(shell);
     expect(oscDrawn()).toEqual(["bus.stereo:in"]);
+  });
+});
+
+// The side a stereo channel shows is linked to the unit's LCD selection while live: the
+// unit's selection of a stereo channel shows that channel's side, a switch made in the app
+// moves the unit's selection, and the unit's answer to that write is not taken as a selection
+// of its own.
+describe("the displayed side and the unit's LCD selection", () => {
+  const LCD = `${PARAMS.LCD_SELECTION.id}/0/0`;
+  const strip = (name: string): HTMLElement | undefined =>
+    [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")].find(
+      (s) => s.getAttribute("aria-label") === name,
+    );
+  const nameArea = (): HTMLElement => strip("CH 5/6")!.querySelector<HTMLElement>(".con-side")!;
+  const showing = (): string => nameArea().getAttribute("aria-label") ?? "";
+  const lcdWrites = (shell: TauriShell): number[] =>
+    shell.invokes.flatMap((cmd, i) => {
+      const a = shell.args[i];
+      return cmd === "vd_set" && a?.paramId === PARAMS.LCD_SELECTION.id ? [a.value as number] : [];
+    });
+  const goLive = async (): Promise<void> => {
+    $("btn-view-console").click();
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+  };
+  const end = async (shell: TauriShell): Promise<void> => {
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+  };
+
+  it("takes the selected channel's side at live start, and the unit's selections after it", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0101 });
+    await goLive();
+    const { addrs } = shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: number[][] };
+    expect(addrs, "the session registers the LCD selection").toContainEqual([PARAMS.LCD_SELECTION.id, 0, 0]);
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
+    await vi.waitFor(() => expect(showing()).toBe("CH 5/6, showing CH 5 (L)"));
+    // A selection of anything but a stereo channel names no side.
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0000 }]);
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0300 }]);
+    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    expect(lcdWrites(shell), "a side the unit chose is not written back").toEqual([]);
+    await end(shell);
+  });
+
+  // Two switches in a row, then the unit's late answer to the FIRST: it is the app's own
+  // write, so the side stays where the second switch left it.
+  it("writes a switch made in the app while live, and takes the unit's answer as no selection", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
+    await goLive();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    // Inside the answer window, which the case is about: two switches, so two writes at most.
+    await vi.waitFor(() => expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]));
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+    expect(showing(), "the late answer to the first write").toBe("CH 5/6, showing CH 5 (L)");
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
+    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    // The positive control: a selection made on the unit itself still shows.
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    await end(shell);
+  });
+
+  // Switches made while a write is on the wire go out as one write of the latest side, and
+  // not at all when the latest is the side that write sent.
+  it("writes the latest of the switches made while a write is on the wire", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
+    await goLive();
+    nameArea().click();
+    nameArea().click();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    // Past the write's return, where a queued one would go out.
+    await drainShell(shell, () => false);
+    expect(lcdWrites(shell)).toEqual([0x0101]);
+    nameArea().click();
+    nameArea().click();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    await drainShell(shell, () => false);
+    expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]);
+    // The unit moving its own selection while a write is on the wire: the latest switch goes
+    // out even when it is the value that write sent, since the unit no longer holds it.
+    nameArea().click();
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0102 }]);
+    nameArea().click();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    await drainShell(shell, () => false);
+    expect(lcdWrites(shell)).toEqual([0x0101, 0x0100, 0x0101, 0x0101]);
+    await end(shell);
+  });
+
+  // A session that ends with an LCD write on the wire waits for its answer before it
+  // disconnects, and that answer acts on nothing in a session started after it.
+  it("waits for an LCD write on the wire before it disconnects", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
+    await goLive();
+    let finish!: () => void;
+    let settled = false;
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      if (a.paramId !== PARAMS.LCD_SELECTION.id) return;
+      return new Promise<void>((resolve) => {
+        finish = () => {
+          settled = true;
+          resolve();
+        };
+      });
+    });
+    nameArea().click();
+    expect(lcdWrites(shell)).toEqual([0x0101]);
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"));
+    await drainShell(shell, () => false);
+    expect(shell.count("vd_disconnect"), "no disconnect ahead of the write's answer").toBe(0);
+    finish();
+    await invoked(shell, "vd_disconnect");
+    expect(settled).toBe(true);
+  });
+
+  it("lets a refused LCD write of an ended session leave the next session up", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
+    await goLive();
+    let refuse!: (error: Error) => void;
+    let held = true;
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      if (a.paramId !== PARAMS.LCD_SELECTION.id || !held) return;
+      held = false;
+      return new Promise<void>((_resolve, reject) => (refuse = reject));
+    });
+    nameArea().click();
+    expect(lcdWrites(shell)).toEqual([0x0101]);
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"));
+    await drainShell(shell, () => false);
+    // Whichever comes first, the disconnect or the answer, the refusal lands in the order the
+    // app allows: a session started over a link released ahead of the answer is the one it
+    // could end.
+    const reconnect = async (): Promise<void> => {
+      await vi.waitFor(() => expect(($("rate-picker") as HTMLSelectElement).disabled).toBe(false));
+      await goLive();
+    };
+    if (shell.count("vd_disconnect") > 0) {
+      await reconnect();
+      refuse(new Error("old-session-refused"));
+    } else {
+      refuse(new Error("old-session-refused"));
+      await invoked(shell, "vd_disconnect");
+      await reconnect();
+    }
+    await drainShell(shell, () => false);
+    expect(live().getAttribute("aria-checked"), "the next session is still up").toBe("true");
+    expect(errors(shell).some((m) => m.includes("old-session-refused"))).toBe(false);
+    // The positive control: a switch in the new session is written.
+    nameArea().click();
+    await vi.waitFor(() => expect(lcdWrites(shell).at(-1)).toBe(0x0100));
+    await end(shell);
+  });
+
+  // A selection made on the unit while a write is on the wire takes the place of the switches
+  // waiting behind that write; a switch made after it is written as usual, and the unit's
+  // answer to the app's own write cancels nothing.
+  it("drops the queued switches when the unit selects something itself", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
+    await goLive();
+    let finish!: () => void;
+    let held = true;
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      if (a.paramId !== PARAMS.LCD_SELECTION.id || !held) return;
+      held = false;
+      return new Promise<void>((resolve) => (finish = resolve));
+    });
+    nameArea().click();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0103 }]);
+    expect(strip("CH 7/8")!.querySelector(".con-side")!.getAttribute("aria-label")).toBe("CH 7/8, showing CH 8 (R)");
+    finish();
+    await drainShell(shell, () => false);
+    expect(lcdWrites(shell), "the queued switch is not sent").toEqual([0x0101]);
+    // The app's own answer keeps the queue: a switch queued behind a write whose answer arrives
+    // first is still sent.
+    held = true;
+    nameArea().click();
+    nameArea().click();
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+    finish();
+    await drainShell(shell, () => false);
+    expect(lcdWrites(shell)).toEqual([0x0101, 0x0101, 0x0100]);
+    await end(shell);
+  });
+
+  it("writes no switch made off-line", async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0101 });
+    $("btn-view-console").click();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    expect(lcdWrites(shell)).toEqual([]);
+    expect(shell.count("vd_connect")).toBe(0);
+  });
+
+  it("ends the session on a refused write, and keeps the side", SLOW, async () => {
+    const shell = await bootDevice(
+      {
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId === PARAMS.LCD_SELECTION.id) throw new Error("write-refused");
+        },
+      },
+      true,
+      { [LCD]: 0x0000 },
+    );
+    await goLive();
+    nameArea().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
+    expect(errors(shell).some((m) => m.includes("write-refused"))).toBe(true);
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
   });
 });

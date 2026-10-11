@@ -51,11 +51,13 @@ describe("why an undo or redo entry is held back", () => {
     );
   });
 
+  // CH 3 reads jack 3, which carries HI-Z; the jack is named by the channel reading it.
   it("names a channel an entry would leave with +48V and Hi-Z both on, ahead of any wiring", () => {
     const plan = defaultPlan("URX44V");
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: false };
+    const jack = "in.micline_3_4";
+    plan.nodeParams[jack] = { ...plan.nodeParams[jack], hiZL: true, phantomL: false };
     const both = after(plan, (p) => {
-      p.nodeParams.ch3 = { ...p.nodeParams.ch3, phantom: true };
+      p.nodeParams[jack] = { ...p.nodeParams[jack], phantomL: true };
       p.connections.push({ from: ref("bus.mix1", "out"), to: MON1, kind: "source" });
     });
     expect(undoRefusal(model, plan, both, label)).toBe(t().status.undoPhantomHiZ("CH3"));

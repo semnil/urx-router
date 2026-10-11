@@ -368,10 +368,10 @@ export function analyze(trace: TraceEvent[], spec: AnalyzeSpec = {}): Finding[] 
     //     invisible; and the meter registration, which is invariant 11's subject.
     //   - anything at all with no session: snapshotOf answers null and the clause is
     //     inert rather than reading "no keys" as "the app emits nothing".
-    // The reverse difference is not judged, and there are now four families in it:
-    // FOLLOW_USB (848), the name addresses, the CH → FX send taps and Track Count (839)
-    // are all appended to the registration by hand and are in no snapshot, because the
-    // app reads or intercepts them without ever writing them. What the clause below
+    // The reverse difference is not judged, and there are now five families in it:
+    // FOLLOW_USB (848), the LCD selection (762), the name addresses, the CH → FX send taps
+    // and Track Count (839) are all appended to the registration by hand and are in no
+    // snapshot, because the app reads, intercepts or writes them outside the plan's write. What the clause below
     // catches is an EMITTED address that is in no registration — the unit then announces
     // our own write to nobody. The reverse cannot produce that: an address registered and
     // not emitted delivers a notify into `DeviceFollow.onNotify`, which routes it by

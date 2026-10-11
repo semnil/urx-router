@@ -198,8 +198,8 @@ X を書き、staleness 窓の中の読みが書く前の値を返し、その�
 節 B の clean は「発行集合が登録集合に収まっている」を意味**しない**。次のものは見えない: `planToCommands`
 には既に居るがまだフラッシュされていないアドレス (不変条件 2 の主題)、既に閉じた窓、文字列パス
 (`vd_set_str` = CH 名・Sweet Spot Data。スナップショットにも登録にもエントリを持たない)、`planExternal`
-param、セッションが無い状態。逆向きの差は意図的に判定しない: `FOLLOW_USB` (848) は手で登録に足されて
-おりどのスナップショットにも無いが、これは無害な向きである。
+param、セッションが無い状態。逆向きの差は意図的に判定しない: `FOLLOW_USB` (848) と LCD 選択 (762) は手で登録に
+足されておりどのスナップショットにも無いが、これは無害な向きである。
 
 `vd_params_subscribe` の `addrs` 引数がそのまま登録集合なので、以上はすべて機械的に採れる。
 
@@ -253,6 +253,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | `overtake-drag-flush-backpressure` | console | 現実的なドラッグと現実的な回線。操作者が体感する収束時間 |
 | `overtake-refetch-reads-before-the-write-settles` | tuning | 疑似デバイスに状態が無かった唯一の窓 = 受理済みでまだ報告できない書込。`t1c-refetch-stale.spec.ts` |
 | `overtake-held-repaint-vs-the-next-gesture` | inspector | select がフォーカスを持つあいだインスペクタが保留した実機側の変更を、操作者の次の click・Tab・タップが解く: そのジェスチャーが届くか — 書込が出るか、フォーカスが再構築後のコントロールに残るか。`t1e-held-repaint.spec.ts` |
+| `overtake-side-link-echo-vs-panel-selection` | console | プランの外で実機の LCD 選択とつながる、ステレオのチャンネルが表示する側: ライブ開始が選択中のチャンネルの側を取るか、告知の遅れの内に 2 回切り替えても操作者が置いた側で終わるか、実機での選択がその側を表示して何も編集しないか、セッション後の切り替えが何も書かないか。`t1f-side-link.spec.ts` |
 
 ### T2 shape-change — 書込アドレス集合の形を変える param
 

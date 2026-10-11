@@ -209,8 +209,8 @@ A clean clause B is **not** "the emitted set is inside the registration". It can
 already in `planToCommands` but not yet flushed (that is invariant 2's subject), a window that has
 since closed, the string path (`vd_set_str` — channel names, Sweet Spot Data — which has neither a
 snapshot nor a registration entry), `planExternal` params, or anything at all with no session. The
-reverse difference is deliberately not judged: `FOLLOW_USB` (848) is appended to the registration by
-hand and is in no snapshot, which is the harmless direction.
+reverse difference is deliberately not judged: `FOLLOW_USB` (848) and the LCD selection (762) are appended
+to the registration by hand and are in no snapshot, which is the harmless direction.
 
 The `addrs` argument of `vd_params_subscribe` is the registration set, so all of this can be read
 mechanically.
@@ -266,6 +266,7 @@ single source of truth. This table states what each case measures.
 | `overtake-drag-flush-backpressure` | console | A realistic gesture on a realistic link, and the convergence latency an operator perceives |
 | `overtake-refetch-reads-before-the-write-settles` | tuning | The one window the fake had no state for: a write the unit accepted and cannot yet report. `t1c-refetch-stale.spec.ts` |
 | `overtake-held-repaint-vs-the-next-gesture` | inspector | A device change the inspector holds while a select keeps the focus, released by the operator's next click, Tab or tap: whether that gesture still lands — its write sent, its focus on a control the rebuild kept. `t1e-held-repaint.spec.ts` |
+| `overtake-side-link-echo-vs-panel-selection` | console | The side a stereo channel shows, linked to the unit's LCD selection outside the plan: a live start takes the selected channel's side, two switches inside the announce delay end where the operator left them, a selection on the unit shows its side and edits nothing, and a switch after the session writes nothing. `t1f-side-link.spec.ts` |
 
 ### T2 shape-change — params that reshape the writable address set
 

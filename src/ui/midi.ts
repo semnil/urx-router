@@ -57,26 +57,33 @@ import { insertFxControlLabel } from "./insert-fx-screen";
 import { fxControlLabel } from "./fx-effect-screen";
 import { parseRelay } from "./midi-protocol";
 import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
+import { shownStage } from "../core/stereo-side";
+
+// The channel controls that drive the input stage of the jack or source the channel reads.
+const INPUT_STAGE_PARAMS: ReadonlySet<string> = new Set(["gain", "phantom", "hiZ"]);
 import { errorCode, errorText, getLang, t } from "../i18n";
 
 /** The contest keys an applied control's write lands on, named for `node` — the member the
- *  message names, or the partner a mirror copied the same write to. Empty for a control the
- *  catalogue leaves unnamed (an insert-FX slot, whose pair keys the insert-FX mirror names in
- *  full, and a node no pair mirror reaches) and for a send this plan does not carry. */
+ *  message names, or the partner a mirror copied the same write to — or for the node the
+ *  write itself names (a channel's input stage lands on its jack or source). Empty for a
+ *  control the catalogue leaves unnamed (an insert-FX slot, whose pair keys the insert-FX
+ *  mirror names in full, and a node no pair mirror reaches) and for a send this plan does not
+ *  carry. */
 function appliedKeys(plan: Plan, control: BoundControl, node: string): string[] {
   const w = control.writes;
   if (w === undefined) return [];
-  if (w.kind === "node") return [nodeParamContestPath(node, w.path)];
+  if (w.kind === "node") return [nodeParamContestPath(w.node ?? node, w.path)];
   const c = sendConnection(plan, node, w.to);
   return c ? [connParamContestKey(c.from, c.to, w.param)] : [];
 }
 
 /** Whether the pair mirror carries THIS control's value to the partner: everything but the
- *  head amp, and — outside BAL — the pan, which each member keeps its own of. */
+ *  polarity, a write on another node (a channel's input stage, which is its jack's or its
+ *  source's), and — outside BAL — the pan, which each member keeps its own of. */
 function mirrorCarries(model: DeviceModel, plan: Plan, control: BoundControl): boolean {
   const w = control.writes;
   if (w === undefined) return false;
-  if (w.kind === "node") return pairSharesNodeKey(w.path);
+  if (w.kind === "node") return w.node === undefined && pairSharesNodeKey(w.path);
   return w.param !== "pan" || isBalLinkedPair(model, plan, control.node);
 }
 
@@ -246,8 +253,10 @@ export class MidiControl {
             : []),
         ];
         if (insFxMirrored && partner) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestPath(partner, k));
-        // A HI-Z write that lowered A.Gain to the HI-Z ceiling asserted the gain as well.
-        for (const path of control.alsoWrote?.() ?? []) keys.push(nodeParamContestPath(control.node, path));
+        // A HI-Z write that lowered A.Gain to the HI-Z ceiling asserted the gain as well, on the
+        // jack the write landed on.
+        const wroteOn = control.writes?.kind === "node" ? (control.writes.node ?? control.node) : control.node;
+        for (const path of control.alsoWrote?.() ?? []) keys.push(nodeParamContestPath(wroteOn, path));
         hooks.onApplied(control, pairMirrored || insFxMirrored, keys);
         this.scheduleFeedback();
       },
@@ -1076,9 +1085,11 @@ export class MidiControl {
     return mappings.map((m) => {
       // An unbindable id (a mapping saved for another model) still has to be
       // listed and removable, so it falls back to the toggle column.
-      const kind = this.resolve(m.control)?.kind ?? "toggle";
+      const bound = this.resolve(m.control);
+      const kind = bound?.kind ?? "toggle";
       const option = optionOf(kind, m, mixed.has(addrKey(m.addr)));
       const linked = this.engine.isLinkedMember(m);
+      const inactive = bound ? undefined : this.inactiveReason(m.control);
       return {
         control: m.control,
         label: this.labelOf(m.control),
@@ -1090,8 +1101,27 @@ export class MidiControl {
         mode: m.mode,
         ...(m.button ? { button: m.button } : {}),
         linked,
+        ...(inactive ? { inactive } : {}),
       };
     });
+  }
+
+  /** Why an input-stage assignment this plan cannot bind is inactive: its channel reads no
+   *  source, or the jack or source it reads carries no such switch (a source has no +48V or
+   *  Hi-Z, and only some jacks have Hi-Z). A stereo channel answers for the side it shows. */
+  private inactiveReason(id: string): string | undefined {
+    const parsed = parseControlId(id);
+    if (!parsed || parsed.scope !== undefined || !INPUT_STAGE_PARAMS.has(parsed.param)) return undefined;
+    const model = this.hooks.getModel();
+    const node = model.nodes.find((n) => n.id === parsed.node);
+    if (node?.kind !== "channel") return undefined;
+    const stage = shownStage(model, this.hooks.getPlan(), node.id);
+    if (stage.kind === "none") return t().midi.inactiveNoSource(node.label);
+    const m = t().inspector;
+    if (parsed.param === "phantom" && stage.kind === "digital") return t().midi.inactiveNoSwitch(node.label, m.phantom);
+    if (parsed.param === "hiZ" && (stage.kind === "digital" || !stage.hiZ))
+      return t().midi.inactiveNoSwitch(node.label, m.hiZ);
+    return undefined;
   }
 
   /** Raise the window, so one that drifted behind the app comes back. Called when

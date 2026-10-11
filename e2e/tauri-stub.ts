@@ -216,6 +216,24 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       // the factory STEREO as tagged port refs. Written as the raw values the unit answers
       // rather than taken from the app's encoder.
       const unwritten: Record<number, number> = { 705: 0x80000100, 706: 0x80000101 };
+      // The channels' input sources answer the factory routing, per instance: each mono slot
+      // its own MIC/LINE jack (22), and the stereo channels AUX IN, USB MAIN A, B and C by
+      // position (209 / 210). All 0 there would be every channel on jack 1, a state the unit's
+      // own panel cannot produce (a mono pair takes one source together).
+      const unwrittenAt: Record<string, number> = {
+        "22:0:0": 0,
+        "22:0:1": 1,
+        "22:0:2": 2,
+        "22:0:3": 3,
+        "209:0:0": 256,
+        "210:0:0": 257,
+        "209:0:1": 512,
+        "210:0:1": 513,
+        "209:0:2": 514,
+        "210:0:2": 515,
+        "209:0:3": 516,
+        "210:0:3": 517,
+      };
       const w = window as unknown as {
         __urxDialogs: string[];
         __urxWrites: Array<[number, number]>;
@@ -281,7 +299,8 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
               if (at !== undefined) return Promise.resolve(at);
               const v = values[id];
               if (v !== undefined) return Promise.resolve(v);
-              return o.failReads ? Promise.reject(new Error("read timeout")) : Promise.resolve(unwritten[id] ?? 0);
+              if (o.failReads) return Promise.reject(new Error("read timeout"));
+              return Promise.resolve(unwrittenAt[slotKey(args)] ?? unwritten[id] ?? 0);
             };
             if (w.__urxHoldReads.includes(id))
               return new Promise<void>((go) => w.__urxHeld.push({ id, go })).then(answer);

@@ -523,9 +523,23 @@ test("BAL mode links a MUTE toggle across both channels in the CONSOLE", async (
   await expect(m2).toHaveAttribute("aria-pressed", "true"); // partner follows in BAL
 });
 
-// The head amp is the pair's one exception in either mode: the unit gives each member its own
-// input, so linking two channels must not write the partner's preamp.
+/** Open a plan whose channels read the given sources — this file's seed wires nothing, and a
+ *  channel on no source shows no input stage at all. */
+const openWired = async (page: Page, wires: Array<[string, string]>): Promise<void> => {
+  const connections = wires.map(([from, to]) => ({ from: `${from}:out`, to: `${to}:in`, kind: "source" }));
+  await page.goto(
+    `/?plan=${planParam({ format: "urx-router-plan", version: 1, modelId: "URX44V", connections, nodeParams: {} })}`,
+  );
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+};
+
+// The head amp is the pair's one exception in either mode: each member reads its own jack, so
+// linking two channels must not write the partner's preamp.
 test("a linked pair leaves each channel its own A.GAIN in the CONSOLE", async ({ page }) => {
+  await openWired(page, [
+    ["in.micline_1_2", "ch1"],
+    ["in.micline_1_2", "ch2"],
+  ]);
   await node(page, "ch1").click();
   await chooseOption(sigSelect(page), "1"); // STEREO (lands in BAL)
 
@@ -548,6 +562,25 @@ test("a linked pair leaves each channel its own A.GAIN in the CONSOLE", async ({
   await page.keyboard.press("ArrowUp");
   await expect(rv("CH 1")).toHaveText("+0.4");
   await expect(rv("CH 2")).toHaveText("+0.4");
+});
+
+// …while a pair reading one source shares its D.Gain, which the source holds once.
+test("a pair reading one source moves one D.GAIN in the CONSOLE", async ({ page }) => {
+  await openWired(page, [
+    ["in.aux", "ch1"],
+    ["in.aux", "ch2"],
+  ]);
+  await page.click("#btn-view-console");
+  const gain = (name: string) =>
+    cstrip(page, name)
+      .locator(".con-gain", { has: page.locator(".con-knob[aria-label='D.GAIN']") })
+      .locator(".val");
+  await expect(gain("CH 1")).toHaveText("0");
+  await expect(gain("CH 2")).toHaveText("0");
+  await cstrip(page, "CH 1").locator(".con-knob[aria-label='D.GAIN']").focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(gain("CH 1")).toHaveText("+1");
+  await expect(gain("CH 2")).toHaveText("+1");
 });
 
 test("BAL mode shares one balance across both channels in the CONSOLE", async ({ page }) => {

@@ -78,7 +78,11 @@ const SETUP_SCENE_EXTERNAL = [
   "USB_SUPPRESSION",
 ].sort();
 
-const SCENE_EXTERNAL_NAMES = [...AUDITED_SCENE_EXTERNAL, ...SETUP_SCENE_EXTERNAL].sort();
+// The unit's LCD selection: UI state the factory settings file carries outside every scene,
+// and which a scene recall leaves where it was.
+const UI_STATE_SCENE_EXTERNAL = ["LCD_SELECTION"];
+
+const SCENE_EXTERNAL_NAMES = [...AUDITED_SCENE_EXTERNAL, ...SETUP_SCENE_EXTERNAL, ...UI_STATE_SCENE_EXTERNAL].sort();
 
 describe("scene boundary contract", () => {
   it("params.ts flags exactly the audited scene-external set", () => {
@@ -281,11 +285,16 @@ describe("sceneExternalParamNames", () => {
     const noTracks = { ...plan, nodeParams: { ...plan.nodeParams, "out.sdrec": {} } };
     expect(sceneExternalParamNames(noTracks).has(tracks)).toBe(false);
 
-    // …and the reverse, on a key it does not name: a channel's head-amp gain is sent under
-    // both scopes, so the set is a boundary rather than everything it happened to walk.
-    const gain = without(plan, "ch1", "gain");
-    expect(names.has(nodeParamContestPath("ch1", "gain"))).toBe(false);
-    expect(emit(gain, "all").size).toBeLessThan(allBase.size);
-    expect(emit(gain, "scene").size).toBeLessThan(sceneBase.size);
+    // …and the reverse, on keys it does not name: a jack's A.Gain and a source's D.Gain are sent
+    // under both scopes, so the set is a boundary rather than everything it happened to walk.
+    for (const [node, key] of [
+      ["in.micline_1_2", "gainL"],
+      ["in.aux", "dGain"],
+    ] as const) {
+      const gain = without(plan, node, key);
+      expect(names.has(nodeParamContestPath(node, key)), `${node}.${key}`).toBe(false);
+      expect(emit(gain, "all").size, `${node}.${key}`).toBeLessThan(allBase.size);
+      expect(emit(gain, "scene").size, `${node}.${key}`).toBeLessThan(sceneBase.size);
+    }
   });
 });

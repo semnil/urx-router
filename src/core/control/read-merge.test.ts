@@ -1064,18 +1064,22 @@ describe("sourceChoiceHoldKeys", () => {
 // plan has not heard what the unit holds: a surface asks the rule of the plan, so it takes an
 // ON the unit's own state would refuse. The merge asks the rule again where the read lands.
 describe("readIntoPlan and the +48V / HI-Z rule", () => {
-  /** CH 3's two switches and its A.Gain, as a read or an edit leaves them. */
+  // Jack 3 (MIC/LINE 3/4 L) carries HI-Z. The cases name its keys by field; `L` is the jack's.
+  const JACK = "in.micline_3_4";
+  const onJack = (patch: Record<string, unknown>): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(patch).map(([k, v]) => [`${k}L`, v]));
+  /** Jack 3's two switches and its A.Gain, as a read or an edit leaves them. */
   const ch3 = (plan: Plan): { phantom?: boolean; hiZ?: boolean; gain?: number } => {
-    const np = plan.nodeParams.ch3;
-    return { phantom: np?.phantom, hiZ: np?.hiZ, gain: np?.gain };
+    const np = plan.nodeParams[JACK];
+    return { phantom: np?.phantomL, hiZ: np?.hiZL, gain: np?.gainL };
   };
   const setCh3 = (plan: Plan, patch: Record<string, unknown>): void => {
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, ...patch };
+    plan.nodeParams[JACK] = { ...plan.nodeParams[JACK], ...onJack(patch) };
   };
   /** One edit funnel, the way markChanged reports it: the keys it wrote, in one sample. */
   const edit = (witness: PlanWriteWitness, plan: Plan, patch: Record<string, unknown>): void => {
     setCh3(plan, patch);
-    witness.note(Object.keys(patch).map((k) => nodeParamContestKey("ch3", k)));
+    witness.note(Object.keys(onJack(patch)).map((k) => nodeParamContestKey(JACK, k)));
   };
   const planWith = (patch: Record<string, unknown>): Plan => {
     const plan = basePlan();
@@ -1083,7 +1087,7 @@ describe("readIntoPlan and the +48V / HI-Z rule", () => {
     return plan;
   };
 
-  it("takes back a +48V ON made during the read on a channel the read found HI-Z on", async () => {
+  it("takes back a +48V ON made during the read on a jack the read found HI-Z on", async () => {
     const plan = planWith({ phantom: false, hiZ: false, gain: 20 });
     const witness = new PlanWriteWitness(() => plan);
     const merged = await readIntoPlan(
@@ -1096,13 +1100,13 @@ describe("readIntoPlan and the +48V / HI-Z rule", () => {
       witness,
     );
     expect(ch3(plan)).toEqual({ phantom: false, hiZ: true, gain: 20 });
-    expect(merged!.refusedOn).toEqual([{ nodeId: "ch3", key: "phantom" }]);
+    expect(merged!.refusedOn).toEqual([{ nodeId: JACK, key: "phantomL" }]);
     expect(merged!.refused).toEqual([
       {
         field: "nodeParams",
-        key: "ch3",
-        before: { phantom: { present: true, value: true } },
-        after: { phantom: { present: true, value: false } },
+        key: JACK,
+        before: { phantomL: { present: true, value: true } },
+        after: { phantomL: { present: true, value: false } },
       },
     ]);
     // The unit is described as the read found it, which is what the next diff measures from.
@@ -1122,7 +1126,7 @@ describe("readIntoPlan and the +48V / HI-Z rule", () => {
       witness,
     );
     expect(ch3(plan)).toEqual({ phantom: true, hiZ: false, gain: 55 });
-    expect(merged!.refusedOn).toEqual([{ nodeId: "ch3", key: "hiZ" }]);
+    expect(merged!.refusedOn).toEqual([{ nodeId: JACK, key: "hiZL" }]);
     // Placed now, so it is no longer reported as a key the merge left to the operator.
     expect(merged!.unplaced).toEqual([]);
   });
@@ -1186,7 +1190,7 @@ describe("readIntoPlan and the +48V / HI-Z rule", () => {
       },
       witness,
     );
-    expect({ ...ch3(plan), clipSafe: plan.nodeParams.ch3?.clipSafe }).toMatchObject({
+    expect({ ...ch3(plan), clipSafe: plan.nodeParams[JACK]?.clipSafeL }).toMatchObject({
       phantom: false,
       hiZ: true,
       clipSafe: true,
@@ -1215,7 +1219,7 @@ describe("readIntoPlan and the +48V / HI-Z rule", () => {
         witness,
         undefined,
         undefined,
-        session(["ch3.phantom"], ["ch3.phantom"]),
+        session([`${JACK}.phantomL`], [`${JACK}.phantomL`]),
       );
       expect(ch3(plan)).toMatchObject({ phantom: true, hiZ: true });
       expect(merged!.refusedOn).toEqual([]);
@@ -1236,7 +1240,7 @@ describe("readIntoPlan and the +48V / HI-Z rule", () => {
         witness,
         undefined,
         undefined,
-        session(["ch3.hiZ"], ["ch3.hiZ"]),
+        session([`${JACK}.hiZL`], [`${JACK}.hiZL`]),
       );
       expect(ch3(plan)).toEqual({ phantom: true, hiZ: true, gain: 40 });
       expect(merged!.refusedOn).toEqual([]);
@@ -1257,13 +1261,13 @@ describe("readIntoPlan and the +48V / HI-Z rule", () => {
         session([], []),
       );
       expect(ch3(plan)).toEqual({ phantom: true, hiZ: false, gain: 60 });
-      expect(merged!.refusedOn).toEqual([{ nodeId: "ch3", key: "hiZ" }]);
+      expect(merged!.refusedOn).toEqual([{ nodeId: JACK, key: "hiZL" }]);
       expect(merged!.refused).toEqual([
         {
           field: "nodeParams",
-          key: "ch3",
-          before: { hiZ: { present: true, value: true }, gain: { present: true, value: 40 } },
-          after: { hiZ: { present: true, value: false }, gain: { present: true, value: 60 } },
+          key: JACK,
+          before: { hiZL: { present: true, value: true }, gainL: { present: true, value: 40 } },
+          after: { hiZL: { present: true, value: false }, gainL: { present: true, value: 60 } },
         },
       ]);
     });

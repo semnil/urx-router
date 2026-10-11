@@ -524,7 +524,7 @@ test.describe("T0b baseline sweeps", () => {
         },
         silent: true,
       },
-      { label: "scribble power LED", run: () => ch1.locator(".con-scribble").click() },
+      { label: "scribble power LED", run: () => ch1.locator(".con-power").click() },
       { label: "MUTE chip", run: () => chip(ch1, "MUTE").click() },
       { label: "+48 chip", run: () => chip(ch1, "+48").click() },
       { label: "polarity chip", run: () => chip(ch1, "φ").click() },
@@ -556,6 +556,10 @@ test.describe("T0b baseline sweeps", () => {
       },
       { label: "INS FX face (bypass)", run: () => ch1.locator(".con-ifxface").click() },
       { label: "DUCKER chip (stereo strip)", run: () => chip(st, "DUCKER").click() },
+      // The side a stereo strip shows is UI state: switching it writes nothing, and the one φ
+      // then writes the shown side's polarity.
+      { label: "stereo strip name (show R)", run: () => chip(st, "CH 5/6, showing CH 5 (L)").click(), silent: true },
+      { label: "polarity chip (stereo strip, R shown)", run: () => chip(st, "φ").click() },
       { label: "C.INT chip (monitor)", run: () => chip(strip(page, "MONITOR 1"), "C.INT").click() },
       { label: "MONO chip (monitor)", run: () => chip(strip(page, "MONITOR 1"), "MONO").click() },
       { label: "A.GAIN knob drag", run: () => dragBy(page, knob(ch1, "A.GAIN"), 0, -20, 5) },
@@ -590,9 +594,13 @@ test.describe("T0b baseline sweeps", () => {
     // losing the operator's. The E2E project is Chromium-only, so this pins the app's
     // own restore, not the engine's.
     const scrolled = await rack.evaluate((el) => el.scrollLeft);
-    await ch1.locator(".con-scribble").dispatchEvent("click"); // unconditional full render
+    const stripBefore = await ch1.elementHandle();
+    await ch1.locator(".con-power").dispatchEvent("click"); // unconditional full render
     await page.waitForTimeout(250);
     const afterRender = await rack.evaluate((el) => el.scrollLeft);
+    // The press did render: the strip it was made on is no longer in the document, so the
+    // offset compared below is the one a re-render left rather than one nothing touched.
+    expect(await stripBefore!.evaluate((el) => el.isConnected)).toBe(false);
 
     printSweep("CONSOLE surface sweep", outcomes);
     console.log(`strip rack scrollLeft: ${scrolled} → ${afterRender} across a forced render`);
@@ -743,10 +751,14 @@ test.describe("T0b baseline sweeps", () => {
 
     // Every node kind the model has, plus the two selections that are not a node: a
     // wire and (below) the rows a stereo channel adds. The ducker is reached by its
-    // own node; SD Rec by the recorder node.
+    // own node; SD Rec by the recorder node. A stereo channel on a MIC/LINE pair carries
+    // the jack's rows, which a stereo channel on its factory source does not, so CH 7/8 is
+    // wired to MIC/LINE 1/2 for the sweep.
+    await drag(page, port(page, "in.micline_1_2:out"), port(page, "ch_7_8:in"));
     const KINDS: Array<[string, string]> = [
       ["MONO IN", "ch1"],
       ["ST IN", "ch_5_6"],
+      ["ST IN on MIC/LINE", "ch_7_8"],
       ["MIX bus", "bus.mix1"],
       ["STEREO master", "bus.stereo"],
       ["FX channel", "bus.fx1"],
@@ -785,6 +797,22 @@ test.describe("T0b baseline sweeps", () => {
       });
       for (const c of inDriveOrder(ctls)) {
         gestures.push({ label: `${kindLabel} · ${c.label} (${c.kind})`, run: () => drive(c) });
+      }
+      // A stereo channel shows one side's input stage and polarity at a time. Showing the
+      // other side writes nothing; on a MIC/LINE pair the same INPUT rows then write the R
+      // jack's keys (a digital source has one D.Gain for both sides, and the selects driven
+      // above may already have moved the channel off it).
+      if (id.startsWith("ch_")) {
+        gestures.push({
+          label: `${kindLabel} · show R (side switch)`,
+          run: () => page.locator("#inspector .side-switch button").nth(1).click(),
+          silent: true,
+        });
+      }
+      if (id === "ch_7_8") {
+        for (const c of inDriveOrder(ctls).filter((c) => c.section === en.inspector.inputSection)) {
+          gestures.push({ label: `${kindLabel} · R · ${c.label} (${c.kind})`, run: () => drive(c) });
+        }
       }
     }
     // A selected wire — the inspector's only non-node subject.

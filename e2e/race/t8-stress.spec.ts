@@ -46,7 +46,7 @@ const CH1_ON = "140:0:0"; // CH_ON — the scribble power LED
 const MIDI_CC_LEVEL = 7;
 const MIDI_NOTE_ON = 60;
 
-const powerOf = (page: Page, name: string) => strip(page, name).locator(".con-scribble.power");
+const powerOf = (page: Page, name: string) => strip(page, name).locator(".con-power");
 
 /** Seed the MIDI panel's persisted state so the second operator is present from
  *  boot: the saved ports reopen in MidiControl's constructor (restorePorts), with

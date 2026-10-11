@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 
 const mocks = vi.hoisted(() => ({
@@ -50,13 +50,14 @@ vi.mock("../core/platform", () => ({
 // returned only one would let this suite exercise a combination no build produces.
 vi.mock("./midi-probe", () => ({ midiProbe: null, startMidiTrace: null }));
 
-import { ensureFixedConnections } from "../core/plan";
+import { ensureFixedConnections, setExclusiveConnection } from "../core/plan";
 import { connParamContestKey, nodeParamContestPath } from "../core/plan-history";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
 import { MidiControl, type MidiHooks } from "./midi";
 import { t } from "../i18n";
+import { resetDisplayedSides, setDisplayedSide } from "../core/stereo-side";
 
 const MAPPING = {
   control: "ch1/level",
@@ -85,11 +86,11 @@ async function attached(): Promise<void> {
   await Promise.resolve();
 }
 
-function install() {
-  const model = getModel("URX44V");
+function install(modelId: "URX22" | "URX44V" = "URX44V") {
+  const model = getModel(modelId);
   // `let`, so a case can hand the hooks a different document mid-session the way a
   // cancelled Fetch does. Every other case keeps the object this returns.
-  let plan = defaultPlan("URX44V");
+  let plan = defaultPlan(modelId);
   ensureFixedConnections(model, plan);
   let blocked: string | null = null;
   const hooks: MidiHooks = {
@@ -136,6 +137,45 @@ beforeEach(() => {
 });
 
 describe("MidiControl", () => {
+  // An input-stage assignment on a channel that reads no source, or on a switch its jack or
+  // source does not carry, has nothing to drive; the window is told why, in place of the
+  // behaviour option. An assignment unbound for another reason is not.
+  it("marks an input-stage assignment on a channel with no source inactive, and says why", async () => {
+    const at = (controller: number) => ({ type: "cc", channel: 0, controller });
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({
+        models: {
+          URX44V: [
+            { control: "ch4/gain", addr: at(20), mode: "absolute" },
+            { control: "ch4/phantom", addr: at(21), mode: "absolute" },
+            { control: "ch3/gain", addr: at(22), mode: "absolute" },
+            { control: "ch3/phantom", addr: at(24), mode: "absolute" },
+            { control: "ch1/hiZ", addr: at(25), mode: "absolute" },
+            { control: "gone/level", addr: at(23), mode: "absolute" },
+          ],
+        },
+      }),
+    );
+    const { plan } = install();
+    plan.connections = plan.connections.filter((c) => !(c.to === "ch4:in" && c.kind === "source"));
+    // CH 3 on AUX: a source with no +48V, so its +48V assignment is unbound for another reason.
+    setExclusiveConnection(plan, "in.aux:out", "ch3:in", "source");
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().rows).toHaveLength(6));
+    const inactive = Object.fromEntries(lastState().rows.map((r) => [r.control, r.inactive]));
+    expect(inactive).toEqual({
+      "ch4/gain": t().midi.inactiveNoSource("CH 4"),
+      "ch4/phantom": t().midi.inactiveNoSource("CH 4"),
+      "ch3/gain": undefined,
+      "ch3/phantom": t().midi.inactiveNoSwitch("CH 3", t().inspector.phantom),
+      // CH 1 reads jack 1, which has no Hi-Z.
+      "ch1/hiZ": t().midi.inactiveNoSwitch("CH 1", t().inspector.hiZ),
+      "gone/level": undefined,
+    });
+  });
+
   it("restores mappings and pushes a fully resolved state when the window is ready", async () => {
     seedMappings();
     const { control } = install();
@@ -394,7 +434,7 @@ describe("MidiControl", () => {
     expect(keys, "and the partner the mirror wrote").toContain(wire("ch2"));
   });
 
-  // …and only where the pair shares the key. The head amp is each member's own, so the
+  // …and only where the pair shares the key. The head amp is the jack each member reads, so the
   // mirror leaves the partner's alone and naming it would take the device's answer away.
   it("does not name the partner's head amp", async () => {
     localStorage.setItem(
@@ -412,8 +452,9 @@ describe("MidiControl", () => {
 
     mocks.inputReceiver!([0xb0, 7, 127]);
     const keys = vi.mocked(hooks.onApplied).mock.calls.at(-1)?.[2] ?? [];
-    expect(keys).toContain(nodeParamContestPath("ch1", "gain"));
-    expect(keys).not.toContain(nodeParamContestPath("ch2", "gain"));
+    // CH 1 reads jack 1 and CH 2 jack 2.
+    expect(keys).toContain(nodeParamContestPath("in.micline_1_2", "gainL"));
+    expect(keys).not.toContain(nodeParamContestPath("in.micline_1_2", "gainR"));
   });
 
   // The bound-control memo is the one holder of a plan reference here — every other
@@ -1017,6 +1058,49 @@ describe("MidiControl against a control the plan has stopped carrying", () => {
   });
 });
 
+describe("MidiControl on a stereo channel's displayed side", () => {
+  afterEach(() => resetDisplayedSides());
+
+  // One id, the side the channel shows: a side switch is not a plan edit, so the feedback pass
+  // the app schedules for it is what brings the controller to the other jack's value.
+  it("reports the shown jack's gain, and the other jack's once that side is shown", async () => {
+    const GAIN = { control: "ch_5_6/gain", addr: { type: "cc", channel: 0, controller: 30 }, mode: "absolute" };
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V: [GAIN] } }));
+    const { control, plan } = install();
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch_5_6:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: -8, gainR: 70 };
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["Controller Out"]));
+    dispatch({ type: "port", dir: "out", name: "Controller Out" });
+    await vi.waitFor(() => expect(lastState().output).toBe("Controller Out"));
+    control.liveReadSettled();
+    const sent = (): number[][] => (mocks.midiSend.mock.calls as unknown as number[][][]).map(([bytes]) => bytes);
+    control.scheduleFeedback();
+    await vi.waitFor(() => expect(sent()).toContainEqual([0xb0, 30, 0]));
+    mocks.midiSend.mockClear();
+    setDisplayedSide("ch_5_6", "R");
+    control.scheduleFeedback();
+    await vi.waitFor(() => expect(sent()).toContainEqual([0xb0, 30, 127]));
+  });
+
+  // On a URX22 only the second jack carries Hi-Z, so a stereo channel on MIC/LINE 1/2 has the
+  // switch on one side and not the other.
+  it("says a Hi-Z assignment is inactive while the shown jack has none", async () => {
+    const HIZ = { control: "ch_3_4/hiZ", addr: { type: "cc", channel: 0, controller: 31 }, mode: "absolute" };
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX22: [HIZ] } }));
+    const { control, plan } = install("URX22");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch_3_4:in", "source");
+    await attached();
+    dispatch({ type: "ready" });
+    const inactive = (): string | undefined => lastState().rows.find((r) => r.control === HIZ.control)?.inactive;
+    await vi.waitFor(() => expect(inactive()).toBe(t().midi.inactiveNoSwitch("CH 3/4", t().inspector.hiZ)));
+    setDisplayedSide("ch_3_4", "R");
+    control.scheduleFeedback();
+    await vi.waitFor(() => expect(inactive()).toBeUndefined());
+  });
+});
+
 describe("MidiControl under HI-Z", () => {
   const listen = async (control: string): Promise<ReturnType<typeof install>> => {
     const addr = { type: "cc", channel: 0, controller: 9 };
@@ -1032,31 +1116,34 @@ describe("MidiControl under HI-Z", () => {
     return rig;
   };
 
+  // CH 3 reads jack 3, which carries HI-Z.
+  const JACK3 = "in.micline_3_4";
+
   it("says why a +48V write under HI-Z is refused, and edits nothing", async () => {
     const { hooks, plan } = await listen("ch3/phantom");
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: true, phantom: false };
+    plan.nodeParams[JACK3] = { ...plan.nodeParams[JACK3], hiZL: true, phantomL: false };
     mocks.inputReceiver!([0xb0, 9, 127]);
     expect(hooks.onStatus).toHaveBeenCalledWith(t().inspector.phantomLockedByHiZ);
     expect(hooks.onApplied).not.toHaveBeenCalled();
-    expect(plan.nodeParams.ch3?.phantom).toBe(false);
+    expect(plan.nodeParams[JACK3]?.phantomL).toBe(false);
   });
 
   it("asserts A.Gain among the keys of a HI-Z write that lowered it", async () => {
     const { hooks, plan } = await listen("ch3/hiZ");
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, phantom: false, gain: 60 };
+    plan.nodeParams[JACK3] = { ...plan.nodeParams[JACK3], hiZL: false, phantomL: false, gainL: 60 };
     mocks.inputReceiver!([0xb0, 9, 127]);
-    expect(plan.nodeParams.ch3).toMatchObject({ hiZ: true, gain: 40 });
+    expect(plan.nodeParams[JACK3]).toMatchObject({ hiZL: true, gainL: 40 });
     expect(hooks.onApplied).toHaveBeenCalledWith(expect.anything(), false, [
-      nodeParamContestPath("ch3", "hiZ"),
-      nodeParamContestPath("ch3", "gain"),
+      nodeParamContestPath(JACK3, "hiZL"),
+      nodeParamContestPath(JACK3, "gainL"),
     ]);
   });
 
   it("leaves A.Gain out of the keys of a HI-Z write that found it at +40 dB", async () => {
     const { hooks, plan } = await listen("ch3/hiZ");
-    plan.nodeParams.ch3 = { ...plan.nodeParams.ch3, hiZ: false, phantom: false, gain: 40 };
+    plan.nodeParams[JACK3] = { ...plan.nodeParams[JACK3], hiZL: false, phantomL: false, gainL: 40 };
     mocks.inputReceiver!([0xb0, 9, 127]);
-    expect(plan.nodeParams.ch3).toMatchObject({ hiZ: true, gain: 40 });
-    expect(hooks.onApplied).toHaveBeenCalledWith(expect.anything(), false, [nodeParamContestPath("ch3", "hiZ")]);
+    expect(plan.nodeParams[JACK3]).toMatchObject({ hiZL: true, gainL: 40 });
+    expect(hooks.onApplied).toHaveBeenCalledWith(expect.anything(), false, [nodeParamContestPath(JACK3, "hiZL")]);
   });
 });

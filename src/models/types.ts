@@ -23,6 +23,9 @@ export interface DeviceNode {
   label: string;
   /** Optional dim second-line legend on the node (e.g. a ducker's channel). */
   sublabel?: string;
+  /** The names of a two-sided node's sides, first then second: a MIC/LINE input node's
+   *  two jacks, a stereo channel's two channels. Absent on a node with no sides. */
+  sideLabels?: readonly [string, string];
   /** Layout column key (inputs | channels | buses | outputs). May differ from
    *  `kind`: the OSCILLATOR (kind "input") and MONITORs (kind "output") sit in
    *  the bus column but are kinded by their signal role for rail color. */

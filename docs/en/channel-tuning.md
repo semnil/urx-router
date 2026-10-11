@@ -1750,7 +1750,8 @@ selector, the read in front of the undo, and the panel value the undo hands back
 
 **The same read generalises to every converge**, which is where the rest of the silent addresses are covered: a
 converge re-sends whatever differs across its whole write scope, so a head on any node at all would put the plan's
-copy of the FX arrays, the insert-FX engine arrays and D.Gain back onto the unit. The park in front of a converge
+copy of the FX arrays, the insert-FX engine arrays and the D.Gain of each source a channel reads back onto the
+unit. The park in front of a converge
 reads them first and leaves the head's own nodes to the converge (architecture.md, "Live sync"); this section's
 park is that same read narrowed to one node, taken in front of one write instead.
 
@@ -2096,9 +2097,9 @@ and knobs. Each pair fills one row of the two-per-row chip grid — head height 
 so the SENDS racks, faders and meters stay aligned.
 
 The EQ's opener takes a fourth chip row on a mono channel, which the head has to carry: measured at a
-252 px head, its inner height is 254 px, a chip row costs 24 px, and the CH3/CH4 strips — the ones with
-a Hi-Z chip — have 0.9 px of slack there. **The height is not measured by hand**: an E2E case asserts that no
-strip's head overflows its own contents (`e2e/console.spec.ts`). `--head-h` is 276 px, which takes 24 px from the fader zone on
+252 px head, its inner height is 254 px, a chip row costs 24 px, and a strip with a Hi-Z chip (one reading jack
+3 or 4) has 0.9 px of slack there. **The height is not measured by hand**: E2E cases assert that no strip's head
+overflows its own contents, on the factory wiring and on rewired boards (`e2e/console.spec.ts`). `--head-h` is 276 px, which takes 24 px from the fader zone on
 every strip, including those with no chips at all. The opener is not offered where the rate has the
 EQ forced off, since the toggle beside it is read-only there.
 
