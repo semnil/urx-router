@@ -261,10 +261,14 @@ export async function sendCommands(
    *  what a write it cannot vouch for leaves standing. The commands after the stop are not
    *  reported here: nothing was sent for them. */
   onSent?: (outcome: SendOutcome) => void,
+  /** Told about each command immediately before it goes on the wire — the moment its
+   *  announcement can start to arrive, which can be ahead of its ack. */
+  onSending?: (command: VdCommand) => void,
 ): Promise<SendOutcome[]> {
   const outcomes: SendOutcome[] = [];
   for (const command of commands) {
     signal?.throwIfAborted();
+    onSending?.(command);
     let outcome: SendOutcome;
     try {
       await vdSet(command.paramId, command.x, command.y, command.vdValue);
@@ -606,6 +610,8 @@ export interface ConvergeOptions {
    *  an abort throws out of the loop and takes the collected outcomes with it, so a
    *  caller that must act on one command having reached the unit cannot wait for them. */
   onSent?: (outcome: SendOutcome) => void;
+  /** Told about each send immediately before it goes on the wire (see sendCommands). */
+  onSending?: (command: VdCommand) => void;
   /** What the caller wrote immediately before calling, when it is leaving the
    *  diff to be seeded. The seed read is otherwise issued inside those writes'
    *  own staleness window (see architecture.md, "A write is not readable when it
@@ -681,6 +687,7 @@ export async function sendConverging(
   const {
     initialDiffs,
     onSent,
+    onSending,
     pending,
     maxRounds = 3,
     // One source with settle.ts: this site's blind window and the notify wait's bounded
@@ -735,21 +742,26 @@ export async function sendConverging(
       roundCommands(model, plan, scope, emit, residual, exclude),
       residual,
     );
-    const sent = await sendCommands(sending, signal, (o) => {
-      const addr = cmdAddr(o.command);
-      if (o.result === "accepted") ledger.acked.add(addr);
-      // Invalidated as each write RESOLVES, not when the round is planned: a command the
-      // device declined moved nothing, and neither did one a cancel stopped before it went
-      // out, so what an earlier read established about every other address still holds. An
-      // explicit refusal is the only failure that says that — everything else leaves the write
-      // on the wire with its fate unknown, so it invalidates exactly as an acceptance does. A
-      // side-effect head resets addresses the catalogue does not enumerate, so it takes every
-      // address out rather than its own.
-      if (o.result === "refused") return void onSent?.(o);
-      if (SIDE_EFFECT_PARAMS.has(o.command.name)) matched.clear();
-      else matched.delete(addr);
-      onSent?.(o);
-    });
+    const sent = await sendCommands(
+      sending,
+      signal,
+      (o) => {
+        const addr = cmdAddr(o.command);
+        if (o.result === "accepted") ledger.acked.add(addr);
+        // Invalidated as each write RESOLVES, not when the round is planned: a command the
+        // device declined moved nothing, and neither did one a cancel stopped before it went
+        // out, so what an earlier read established about every other address still holds. An
+        // explicit refusal is the only failure that says that — everything else leaves the write
+        // on the wire with its fate unknown, so it invalidates exactly as an acceptance does. A
+        // side-effect head resets addresses the catalogue does not enumerate, so it takes every
+        // address out rather than its own.
+        if (o.result === "refused") return void onSent?.(o);
+        if (SIDE_EFFECT_PARAMS.has(o.command.name)) matched.clear();
+        else matched.delete(addr);
+        onSent?.(o);
+      },
+      onSending,
+    );
     outcomes.push(...sent);
     rounds++;
     sentHead = sending.some((c) => SIDE_EFFECT_PARAMS.has(c.name));

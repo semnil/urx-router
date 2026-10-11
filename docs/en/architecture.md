@@ -2590,7 +2590,7 @@ it read included; a reconcile reads the names of the nodes it covers and takes t
 | Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands, and an entry already recorded takes a nested `nodeParams` / `connParams` leaf only where its `before` AND its `after` both hold what the read measured from — both sides then take the read's value, and a whole field is never folded |
 | Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect, when the read authored at least one key (`followAuthored`) |
 | Side-effect refetch | `capture` from the read's clone for the nodes it read, their names excepted since the read carries none, then the same journal replay | `absorb` of the device-authored keys only |
-| Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel | untouched |
+| Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel, then the journal replay for the notifies stamped after the freeze — less an address a converge write the unit accepted has replaced since | untouched |
 
 #### The display update
 
@@ -2634,7 +2634,7 @@ agreed with the plan at every key leaves both stacks as they were.
 | --- | --- | --- |
 | A drag's intermediate values | the plan itself — the next step overwrites the key inside the window | only the final value of an address ever becomes a command |
 | An address whose value equals the snapshot | the flush's diff | the device already holds it |
-| A notify whose value equals the snapshot, a value an acked write is still waiting to hear announced, or the value a write still on the wire carries | `isEcho`, before the settle window | our own write coming back is not a change, whether it arrives after its ack or ahead of it; the match retires the writes queued before it, so the unit moving back to one of their values is still a change |
+| A notify whose value equals the snapshot, a value an acked write is still waiting to hear announced, or the value a write still on the wire carries | `isEcho`, before the settle window | our own write coming back is not a change, whether it arrives after its ack or ahead of it, and whether the send loop or a converge round sent it — a converge sends from a copy frozen after the loop's writes, so it can carry a value the loop never sent; the match retires the writes queued before it, so the unit moving back to one of their values is still a change |
 | A notify for Follow USB, 848 | `intercept`, ahead of node resolution | host-owned and outside the plan; it would otherwise force a full re-read |
 | A device read whose plan was replaced | `readIntoPlan`'s identity guard, after the read resolves | its values belong to a document nothing shows |
 | An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |
