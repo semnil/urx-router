@@ -1105,7 +1105,11 @@ the inspector, and the open modal itself.
 > covers the control, and the control is described by the spoken form instead (`setTip`); a wrapper
 > keeps its title, which is not read, and describes the controls inside it. Every ordinary E2E case
 > ends by checking the page for a name, a description or such a tooltip that still holds a mark in
-> its printed form (`e2e/fixtures.ts`). `src/ui/glyph.test.ts` holds the
+> its printed form (`e2e/fixtures.ts`). Read on both shipping engines, in both languages: VoiceOver reads a
+> MIDI row's cells and such a control in the spoken form alone — the description right after the name,
+> and no hint — and on WebView2, UI Automation names the cells in the spoken form with an empty HelpText,
+> and gives such a control an empty HelpText and its FullDescription in the spoken form, while a control
+> whose own title holds no mark keeps that title as its HelpText. `src/ui/glyph.test.ts` holds the
 > readings in both languages.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
