@@ -24,7 +24,7 @@ import { DeviceFollow } from "./follow";
 import { COMP_EQ_SSMCS, PARAMS, silentKey } from "./params";
 import { addrKey, cmdAddr, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
-import { LiveSync } from "./live";
+import { CONVERGE_DEFER_MAX_MS, DEBOUNCE_MS, LiveSync } from "./live";
 import { MBC_ONE_KNOB, insertFxParamKey } from "./insert-fx-effect";
 import { fxParams } from "./fx-effect";
 import { applyDirect, applyNodeState, readIntoPlan } from "./readback";
@@ -696,14 +696,90 @@ describe("LiveSync sideEffect converge", () => {
     await vi.advanceTimersByTimeAsync(2000); // let the converge finish
     const afterConverge = vi.mocked(vdSet).mock.calls.length;
 
-    // Now a continuous stream on the same sideEffect param: nothing may go out
-    // while it is in motion.
+    // Now a continuous stream on the same sideEffect param, shorter than the hold: nothing
+    // goes out while it is in motion.
     for (let i = 0; i < 10; i++) {
       setCh1CompEqType(plan, i % 2);
       live.schedule();
       await vi.advanceTimersByTimeAsync(16);
     }
     expect(vi.mocked(vdSet).mock.calls.length).toBe(afterConverge);
+  });
+
+  // A unit that keeps what it is sent, so each converge settles in one round, and a session that
+  // has converged once: the state a pending converge holds a stream back in.
+  async function convergedSession(): Promise<{ plan: Plan; live: LiveSync }> {
+    const plan = basePlan();
+    const key = (id: number, x: number, y: number): string => `${id}:${x}:${y}`;
+    const table = new Map<string, number>();
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      table.set(key(id, x, y), v);
+      return Promise.resolve();
+    });
+    vi.mocked(vdGet).mockImplementation((id, x, y) => Promise.resolve(table.get(key(id, x, y)) ?? 0));
+    const live = liveFor(plan);
+    live.begin();
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000); // the converge finishes
+    return { plan, live };
+  }
+  const headSends = (): number => vi.mocked(vdSet).mock.calls.filter((c) => c[0] === PARAMS.COMP_EQ_TYPE.id).length;
+  // The head moves and a fader drag starts with it, one step every 30 ms for `steps` steps.
+  // Returns how long into the drag the head went out, or null if it did not.
+  async function streamBehindHead(plan: Plan, live: LiveSync, type: number, steps: number): Promise<number | null> {
+    const before = headSends();
+    setCh1CompEqType(plan, type);
+    let firstHeadAt: number | null = null;
+    for (let i = 1; i <= steps; i++) {
+      setCh1Fader(plan, -(i % 12));
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(30);
+      if (firstHeadAt === null && headSends() > before) firstHeadAt = i * 30;
+    }
+    return firstHeadAt;
+  }
+
+  it("holds a stream behind a pending converge for CONVERGE_DEFER_MAX_MS, then sends", async () => {
+    // A drag that keeps its cadence under the window would otherwise send nothing until the
+    // pointer stops, however long that is. Past the hold the window fires once, the converge
+    // runs, and the drag reaches the unit again at the ordinary cadence.
+    const { plan, live } = await convergedSession();
+    const fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+    const faderSends = (): number => vi.mocked(vdSet).mock.calls.filter((c) => c[0] === fader.paramId).length;
+    const headBefore = headSends();
+    const faderBefore = faderSends();
+    const firstHeadAt = await streamBehindHead(plan, live, 0, 100);
+    expect(firstHeadAt, "the pending converge went out while the stream was still moving").not.toBeNull();
+    expect(firstHeadAt!, "and not before the hold ran out").toBeGreaterThan(CONVERGE_DEFER_MAX_MS);
+    expect(firstHeadAt!).toBeLessThanOrEqual(CONVERGE_DEFER_MAX_MS + DEBOUNCE_MS + 30);
+    expect(headSends() - headBefore, "the converge head went out once").toBe(1);
+    expect(faderSends() - faderBefore, "the drag reached the unit during the stream").toBeGreaterThan(1);
+
+    // The next pending converge is held for the whole of its own hold, not the remainder of
+    // the one before. A hold needs a flush that converged in front of it, so one goes first.
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    const again = await streamBehindHead(plan, live, 0, 100);
+    expect(again!).toBeGreaterThan(CONVERGE_DEFER_MAX_MS);
+  });
+
+  it("starts a new session's hold from nothing", async () => {
+    const { plan, live } = await convergedSession();
+    // A hold under way when the session ends, cut short before it fired.
+    await streamBehindHead(plan, live, 0, 10);
+    live.end();
+    live.begin();
+    // The new session's first flush converges and leaves the next stream something to wait for.
+    setCh1CompEqType(plan, 1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(2000);
+    const at = await streamBehindHead(plan, live, 0, 100);
+    expect(at!).toBeGreaterThan(CONVERGE_DEFER_MAX_MS);
   });
 
   // BUS Type is the fourth of the structural selectors prepare.ts's SKIP list names as
