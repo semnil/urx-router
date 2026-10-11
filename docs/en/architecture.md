@@ -2590,7 +2590,7 @@ it read included; a reconcile reads the names of the nodes it covers and takes t
 | Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands, and an entry already recorded takes a nested `nodeParams` / `connParams` leaf only where its `before` AND its `after` both hold what the read measured from — both sides then take the read's value, and a whole field is never folded |
 | Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect, when the read authored at least one key (`followAuthored`) |
 | Side-effect refetch | `capture` from the read's clone for the nodes it read, their names excepted since the read carries none, then the same journal replay | `absorb` of the device-authored keys only |
-| Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel | untouched |
+| Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel, then the journal replay for the notifies stamped after the freeze — less an address a converge write the unit accepted has replaced since | untouched |
 
 #### The display update
 
