@@ -1543,12 +1543,19 @@ test("the FX strip's EFFECT face arms nothing, and a screen knob's assignment re
   await page.locator(".con-ifxpop .iopen").click();
   const box = screenBox(page);
   await expect(box).toBeVisible();
-  await box
-    .locator(".gt-knob")
-    .filter({ has: page.getByText("Rev.Time", { exact: true }) })
-    .locator(".midi-target")
-    .first()
-    .click();
+  const card = box.locator(".gt-knob").filter({ has: page.getByText("Rev.Time", { exact: true }) });
+  // The pointer over a knob card's face is learn's too. Read off whatever the pointer is
+  // over at the face's centre rather than off the face: the range under it used to sit on
+  // top and showed its own drag cursor there, while the face's computed style said `copy`.
+  expect(
+    await card.locator(".con-knob").evaluate((face) => {
+      const r = face.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)!;
+      return getComputedStyle(hit).cursor;
+    }),
+    "learn's pointer on a knob card",
+  ).toBe("copy");
+  await card.locator(".midi-target").first().click();
   await expect(win.locator(".mw-hint")).toContainText("FX 1 · FX EFFECT · Rev.Time");
   await box.locator(".consent-btn-secondary").click();
 });

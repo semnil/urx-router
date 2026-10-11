@@ -3511,7 +3511,6 @@ input[type="range"]:focus-visible,
 .gt-knob .con-knob {
   width: clamp(48px, 5vw, 56px);
   height: clamp(48px, 5vw, 56px);
-  cursor: default;
   position: relative;
   /* Seated on the card floor: the slack a taller card leaves goes above the knob, so a
      one-line label and a two-line one put their knobs on the same line. */
@@ -3525,10 +3524,11 @@ input[type="range"]:focus-visible,
   height: 34.375%;
   transform-origin: 50% 109%;
 }
-/* The control itself: the same range input every other row carries, laid over the face and
-   painted away. It keeps the value, the step, the keyboard, the wheel gate and the arming;
-   the knob is only the picture of it. Opacity rather than `visibility` or a clip, because
-   it still has to take the pointer. */
+/* The value itself: the same range input every other row carries, laid over the face and
+   painted away. It keeps the value, the step and the keyboard; the pointer goes to the face,
+   which turns it with the console knob's vertical drag (`knobCard` in src/ui/dyn-screen.ts),
+   so the range's own horizontal drag and its jump to the press never run. Opacity rather
+   than `visibility` or a clip, because it still has to take keyboard focus. */
 .gt-knob .con-knob input[type="range"] {
   position: absolute;
   inset: 0;
@@ -3536,7 +3536,7 @@ input[type="range"]:focus-visible,
   height: 100%;
   margin: 0;
   opacity: 0;
-  cursor: ns-resize;
+  pointer-events: none;
 }
 /* Keyboard focus only. `:focus-within` matched a mouse press too, so clicking a knob rang
    it — and the app's focus rule is that the ring answers the keyboard. */
@@ -3552,7 +3552,7 @@ input[type="range"]:focus-visible,
 .gt-knob.locked > .lblc > :not(.gt-knobtag) {
   opacity: var(--row-lock-dim);
 }
-.gt-knob.locked .con-knob input[type="range"] {
+.gt-knob.locked .con-knob {
   cursor: not-allowed;
 }
 /* The reason a card cannot be touched, beside the name it qualifies rather than under the

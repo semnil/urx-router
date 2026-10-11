@@ -193,10 +193,16 @@ export function wireDismiss(opts: {
 // the Device setup brightness row and the gate screen's parameter rows — every
 // range input in the app steps by the wheel-step preference, or none should.
 // `blocked` short-circuits the notch (the tuning screens pass MIDI learn, where a
-// stray scroll would move the value being assigned).
-export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | undefined): void {
+// stray scroll would move the value being assigned). `over` is the element the wheel is
+// read on, for a slider that takes no pointer input of its own (a knob card's range sits
+// under its face with `pointer-events: none`).
+export function wheelStep(
+  slider: HTMLInputElement,
+  blocked?: () => boolean | undefined,
+  over: HTMLElement = slider,
+): void {
   onWheelStep(
-    slider,
+    over,
     (dir) => {
       // A disabled slider takes no pointer input, but the wheel is delivered to it anyway
       // (measured in both engines) — and this is the app's own write path, not the
@@ -218,9 +224,10 @@ export function wheelStep(slider: HTMLInputElement, blocked?: () => boolean | un
 
 /**
  * End a native slider's drag when the window goes away, and keep it ended until the press
- * is over or the window comes back. Wired on every `<input type="range">` in the app, for
- * the same reason `wheelStep` is: they either all behave this way or the operator has to
- * remember which.
+ * is over or the window comes back. Wired on every `<input type="range">` in the app that
+ * takes the pointer itself, for the same reason `wheelStep` is: they either all behave this
+ * way or the operator has to remember which. A knob card's range takes none — its face runs
+ * the drag through `trackDrag`, which ends at the same blur.
  *
  * The engine owns a native drag, so unhooking a listener does nothing — measured on the
  * shipping WKWebView (2026-08-14), a row dragged with the button held went on writing
