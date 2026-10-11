@@ -40,6 +40,8 @@ import { isStereoChannel } from "../core/control/translate";
 import { setExclusiveConnection } from "../core/plan";
 import { setLang, t } from "../i18n";
 import { setDisplayedSide } from "../core/stereo-side";
+import { tipOf } from "./glyph";
+import { READ_AS_ELEMENT } from "./spoken-mark";
 
 /** Learn is on, nothing is armed or mapped: every armable control marks itself. */
 const learnHooks = (armed: string[]) => ({
@@ -151,7 +153,7 @@ describe("arming surfaces against the control catalog", () => {
     expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
   });
 
-  // A stereo channel's one φ and its input stage act on the side it shows, under the ids of
+  // A stereo channel's one Ф and its input stage act on the side it shows, under the ids of
   // that side; with R shown, every id it arms still binds.
   it.each(["URX22", "URX44", "URX44V"] as const)("CONSOLE arms the shown side's ids on %s", (modelId) => {
     const armed: string[] = [];
@@ -373,6 +375,80 @@ describe("arming surfaces against the control catalog", () => {
       // on is the reach of this — a bar item names a REGISTRY face, which the screen swaps
       // in whole, so a copy cannot take the hook off the one behind the bar.
       checkNode({ ...proc, controlId: undefined }, nodeIds[0], `${nodeIds[0]} / no controlId`);
+    },
+  );
+});
+
+// Every control mapped, learn off: the tooltip each one carries holds the address, whose CH
+// a screen reader reads as a word only in the spoken form, so it goes on a hidden zone over
+// the control. A zone over an element holding other controls takes the presses meant for
+// them — a split ON / OFF switch stopped switching that way — so each zone has to sit on a
+// control that holds none, and every mapped control has to keep the address all the same.
+describe("a mapped control's tooltip", () => {
+  const ADDR = "CH 1 CC 21";
+  const SAID = "C H 1 CC 21";
+  const mappedHooks = () => ({
+    learnActive: () => false,
+    armedId: () => null,
+    isMapped: () => true,
+    addrOf: () => ADDR,
+    arm: () => {},
+  });
+  // A zone whose host holds another control, or is a group of them, takes their presses.
+  const coveringZones = (root: HTMLElement): string[] =>
+    [...root.querySelectorAll<HTMLElement>(".tip-zone")]
+      .map((z) => z.parentElement!)
+      .filter((host) => host.querySelector(READ_AS_ELEMENT) !== null || host.matches('[role="group"]'))
+      .map((host) => host.dataset.ctl ?? host.className);
+
+  it.each(["URX22", "URX44", "URX44V"] as const)("sits on the control itself on the CONSOLE of %s", (modelId) => {
+    ch = consoleHost({ modelId, midi: mappedHooks() });
+    expect(ch.host.querySelectorAll(".tip-zone").length, "the premise: mapped controls carry a zone").toBeGreaterThan(
+      0,
+    );
+    expect(coveringZones(ch.host)).toEqual([]);
+  });
+
+  it.each(Object.keys(DYN_PROCESSORS) as Array<keyof typeof DYN_PROCESSORS>)(
+    "sits on each control of the %s tuning screen, and every control keeps the address",
+    (kind) => {
+      dh = dynHost({ midi: mappedHooks(), plotSize: { w: 300, h: 120 } });
+      const proc = DYN_PROCESSORS[kind];
+      const { model, plan } = dh;
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+      if (kind === "insfx")
+        plan.nodeParams.ch1 = {
+          ...plan.nodeParams.ch1,
+          insertFx: INSERT_FX_OPTIONS.find((o) => o.label === "Clean")!.value,
+        };
+      const ctxAt = (nodeId: string): DynCtx => ({ model, plan, nodeId, sel: 0, m: t() });
+      const nodeId = model.nodes.map((n) => n.id).find((id) => proc.bind(ctxAt(id)) !== null)!;
+      const host = dh;
+      const face = (where: string): void => {
+        expect(coveringZones(host.box), where).toEqual([]);
+        const rows = [...host.box.querySelectorAll<HTMLElement>(".midi-mapped-row")];
+        expect(rows.length, `${where}: the premise, a mapped row`).toBeGreaterThan(0);
+        for (const row of rows) {
+          // The control a row's mapping marks, by the shapes dyn-screen.ts arms.
+          const control = row.querySelector<HTMLElement>(".ctl, .prefs-toggle, .con-knob, .prefs-switch")!;
+          const label = `${where}: ${control.className}`;
+          expect(tipOf(control), label).toContain(ADDR);
+          const read =
+            control.matches(READ_AS_ELEMENT) && !control.matches('[role="group"]')
+              ? [control]
+              : [...control.querySelectorAll<HTMLElement>(READ_AS_ELEMENT)];
+          expect(read.length, label).toBeGreaterThan(0);
+          for (const c of read) expect(c.getAttribute("aria-description"), label).toContain(SAID);
+        }
+      };
+      const screen = new DynScreen(host.hooks);
+      screen.open(proc, nodeId);
+      face(kind);
+      for (const item of proc.bar?.(ctxAt(nodeId))?.items ?? []) {
+        host.box.querySelector<HTMLElement>(`#${item.id}`)?.click();
+        face(`${kind} / ${item.label}`);
+      }
+      screen.close();
     },
   );
 });

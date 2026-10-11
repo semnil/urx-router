@@ -42,9 +42,21 @@ function fixture(state: MidiUiState): { host: HTMLElement; sent: MidiUiIntent[] 
   return { host, sent };
 }
 
-/** The hint wording that is painted and read: the one the stack does not hide. */
-const shownHint = (host: HTMLElement): string | null | undefined =>
-  host.querySelector(".mw-hint > :not([aria-hidden])")?.textContent;
+/** The hint line the stack paints: the one it does not hide. */
+const hintLine = (host: HTMLElement): HTMLElement | null => host.querySelector(".mw-hint > :not([aria-hidden])");
+
+/** The hint wording that is painted — a line whose spoken form differs prints it in a part
+ *  hidden from assistive technology. */
+const shownHint = (host: HTMLElement): string | null | undefined => {
+  const line = hintLine(host);
+  return (line?.querySelector(":scope > [aria-hidden]") ?? line)?.textContent;
+};
+
+/** The hint wording that is read: the line's spoken form where it has one. */
+const heardHint = (host: HTMLElement): string | null | undefined => {
+  const line = hintLine(host);
+  return (line?.querySelector(":scope > .sr-only") ?? line)?.textContent;
+};
 
 const change = (node: Element, value: string): void => {
   (node as HTMLSelectElement).value = value;
@@ -73,11 +85,18 @@ describe("renderMidiWindow — shell", () => {
     expect(host.querySelector(".mw-status")!.textContent).toBe("second");
   });
 
+  // The line prints the message; the live region after it announces the message's spoken form.
   it("announces the status line to assistive tech", () => {
     const { host } = fixture(baseState({ status: "Assigned CC 7 to CH 1 · Level" }));
     const status = host.querySelector(".mw-status")!;
-    expect(status.getAttribute("role")).toBe("status");
+    const said = host.querySelector(".mw-said")!;
+    expect(status.getAttribute("aria-hidden")).toBe("true");
     expect(status.textContent).toBe("Assigned CC 7 to CH 1 · Level");
+    expect(said.getAttribute("role")).toBe("status");
+    expect(said.textContent).toBe("Assigned CC 7 to C H 1 dot Level");
+    expect(said.getAttribute("aria-label"), "the region is named by the text it holds").toBe(
+      "Assigned CC 7 to C H 1 dot Level",
+    );
   });
 });
 
@@ -145,13 +164,17 @@ describe("renderMidiWindow — across a repaint", () => {
     expect(host.querySelector(".mw-status")).toBe(status);
     expect(seen.takeRecords(), "an unchanged status is not written").toHaveLength(0);
 
+    const said = host.querySelector(".mw-said")!;
     paint(host, baseState({ status: "second" }));
     expect(host.querySelector(".mw-status")).toBe(status);
+    expect(host.querySelector(".mw-said"), "the live region is kept too").toBe(said);
     expect(status.isConnected).toBe(true);
-    expect(status.getAttribute("role")).toBe("status");
+    expect(said.getAttribute("role")).toBe("status");
     expect(status.textContent).toBe("second");
+    expect(said.textContent).toBe("second");
     expect(seen.takeRecords().length, "a changed status is written into the region").toBeGreaterThan(0);
-    expect(host.lastElementChild).toBe(status);
+    expect(status.nextElementSibling).toBe(said);
+    expect(host.lastElementChild).toBe(said);
     seen.disconnect();
   });
 });
@@ -229,9 +252,11 @@ describe("renderMidiWindow — learn", () => {
     for (const [over, stacked, shown] of cases) {
       const { host } = fixture(baseState(over));
       const lines = [...host.querySelector(".mw-hint")!.children];
-      expect(lines.map((l) => l.textContent)).toEqual(stacked);
+      // A line whose spoken form differs prints its wording in a part hidden from assistive technology.
+      const printed = (l: Element): string | null => (l.querySelector(":scope > [aria-hidden]") ?? l).textContent;
+      expect(lines.map(printed)).toEqual(stacked);
       const exposed = lines.filter((l) => !l.hasAttribute("aria-hidden"));
-      expect(exposed.map((l) => l.textContent)).toEqual([shown]);
+      expect(exposed.map(printed)).toEqual([shown]);
       expect(
         lines.filter((l) => l.hasAttribute("aria-hidden")).every((l) => l.getAttribute("aria-hidden") === "true"),
       ).toBe(true);
@@ -268,12 +293,16 @@ describe("renderMidiWindow — assignment list", () => {
     ]);
   });
 
+  // The address prints as itself and reads its spoken form, as the name cell does: its `CH` is
+  // the MIDI channel's and is spelled out the same way.
   it("keys each row by its control id and prints the address", () => {
-    const { host } = fixture(baseState({ rows: [row({ control: "ch2/pan@bus.mix1", addr: "CC 10 ch 1" })] }));
+    const { host } = fixture(baseState({ rows: [row({ control: "ch2/pan@bus.mix1", addr: "CH 1 CC 7/39 (14bit)" })] }));
     const tr = host.querySelector("tbody tr") as HTMLElement;
     expect(tr.dataset.control).toBe("ch2/pan@bus.mix1");
     expect(tr.className).toBe("");
-    expect(tr.querySelector(".mw-addr")!.textContent).toBe("CC 10 ch 1");
+    const addr = tr.querySelector(".mw-addr") as HTMLElement;
+    expect(addr.querySelector(":scope > [aria-hidden='true']")?.textContent).toBe("CH 1 CC 7/39 (14bit)");
+    expect(addr.querySelector(":scope > .sr-only")?.textContent).toBe("C H 1 CC 7 slash 39 (14bit)");
   });
 
   // A gang member has no address of its own: the cell says Linked and explains why.
@@ -327,7 +356,7 @@ describe("renderMidiWindow — assignment list", () => {
   it("names the assignment in every select's aria-label, not just the setting", () => {
     const { host } = fixture(baseState({ rows: [row({ label: "CH 3 · Level" })] }));
     const sel = host.querySelector(".mw-mode") as HTMLSelectElement;
-    expect(sel.getAttribute("aria-label")).toBe(`${t().midi.modeTitle} — CH 3 · Level`);
+    expect(sel.getAttribute("aria-label")).toBe(`${t().midi.modeTitle} — C H 3 dot Level`);
     expect(sel.title).toBe(t().midi.modeTitle);
   });
 
@@ -336,9 +365,55 @@ describe("renderMidiWindow — assignment list", () => {
     const btn = host.querySelector(".mw-del") as HTMLButtonElement;
     expect(btn.type).toBe("button");
     expect(btn.title).toBe(t().midi.remove);
-    expect(btn.getAttribute("aria-label")).toBe(`${t().midi.remove} — CH 4 · MUTE`);
+    expect(btn.getAttribute("aria-label")).toBe(`${t().midi.remove} — C H 4 dot MUTE`);
     btn.click();
     expect(sent).toEqual([{ type: "remove", control: "ch4/mute" }]);
+  });
+
+  // A symbol caption prints as itself and is announced by its word: the name cell reads the
+  // spoken form of `spoken` and every control on the row is named by it, while the printed text
+  // and tooltip keep `label`. The cell carries no `aria-label` — VoiceOver reads a cell's
+  // content and not that attribute — so the spoken form is text hidden from the eye.
+  it("names a row by its spoken form where it has one", () => {
+    const toggle = row({ control: "ch1/phase", label: "CH 1 · Ф", spoken: "CH 1 · Phase", option: "button" });
+    const { host } = fixture(baseState({ rows: [toggle] }));
+    const name = host.querySelector(".mw-ctl") as HTMLElement;
+    const shown = name.querySelector(":scope > [aria-hidden='true']") as HTMLElement;
+    expect(shown.textContent).toBe("CH 1 · Ф");
+    expect(name.querySelector(":scope > .sr-only")?.textContent).toBe("C H 1 dot Phase");
+    expect(name.hasAttribute("aria-label")).toBe(false);
+    // The tooltip sits on the printed part: on the cell VoiceOver reads it, in its printed form.
+    expect(shown.title).toBe("CH 1 · Ф");
+    expect(name.hasAttribute("title")).toBe(false);
+    expect(host.querySelector(".mw-btn")?.getAttribute("aria-label")).toBe(
+      `${t().midi.buttonModeTitle} — C H 1 dot Phase`,
+    );
+    expect(host.querySelector(".mw-del")?.getAttribute("aria-label")).toBe(`${t().midi.remove} — C H 1 dot Phase`);
+    const plain = fixture(baseState({ rows: [row()] })).host.querySelector(".mw-ctl") as HTMLElement;
+    expect(
+      plain.querySelector(":scope > .sr-only")?.textContent,
+      "a row with no caption reads its label's spoken form",
+    ).toBe("C H 1 dot Level");
+  });
+
+  // The status line and the armed hint name controls by their captions, so their symbols are
+  // announced by their words; a status the main window did not mark keeps its text as it is.
+  it("announces a caption symbol in the status line and the armed hint by its word", () => {
+    const { host } = fixture(
+      baseState({
+        learnOn: true,
+        armed: "CH 5/6 · ФR",
+        status: "Assigned CC 7 ch 1 to CH 5/6 · ФR",
+        statusCaptioned: true,
+      }),
+    );
+    expect(host.querySelector(".mw-status")!.textContent).toBe("Assigned CC 7 ch 1 to CH 5/6 · ФR");
+    expect(host.querySelector(".mw-said")!.textContent).toBe("Assigned CC 7 C H 1 to C H 5 slash 6 dot Phase R");
+    expect(shownHint(host)).toBe(t().midi.hintArmed("CH 5/6 · ФR"));
+    expect(heardHint(host)).toBe(t().midi.hintArmed("C H 5 slash 6 dot Phase R"));
+    expect(host.querySelector("[role='img']"), "no part carries a role of its own").toBeNull();
+    const port = fixture(baseState({ status: "MIDI input error: Ф port" })).host.querySelector(".mw-said")!;
+    expect(port.textContent, "an unmarked status keeps its symbol as printed").toBe("MIDI input error: Ф port");
   });
 
   it("renders one row per assignment, in the order given", () => {

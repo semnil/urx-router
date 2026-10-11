@@ -28,6 +28,7 @@ vi.mock("./core/storage", async (importOriginal) => {
 import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
 import { downloadText, exportSvgToPdf, exportSvgToPng, saveTextDocument } from "./core/storage";
 import { t } from "./i18n";
+import { spoken } from "./ui/glyph";
 import { $, APP_SETTLE, bootApp, installAppGlobals, restoreAppGlobals, statusText } from "./main.test-util";
 import { faceplate, press, wireHit } from "./ui/graph.test-util";
 
@@ -439,10 +440,16 @@ describe("the deep link", () => {
   // The bar is where a repair, a partial success and a cancellation are all reported, and it
   // is the only place several of them are said at all. Its sibling `#live-tally` is already a
   // live region; this one was not, so a screen reader was told none of it.
+  // The bar prints the message; the region beside it announces the message's spoken form.
   it("announces the status bar as a live region", async () => {
     await boot();
-    expect($("statusbar").getAttribute("role")).toBe("status");
-    expect($("statusbar").getAttribute("aria-live")).toBe("polite");
+    expect($("statusbar").getAttribute("aria-hidden")).toBe("true");
+    expect($("statusbar-said").getAttribute("role")).toBe("status");
+    expect($("statusbar-said").getAttribute("aria-live")).toBe("polite");
+    expect($("statusbar-said").textContent).toBe(spoken($("statusbar").textContent ?? ""));
+    expect($("statusbar-said").getAttribute("aria-label"), "the region is named by the text it holds").toBe(
+      $("statusbar-said").textContent,
+    );
   });
 
   it("reports a link that decodes into something that is not a plan, as a load error", async () => {
@@ -1432,7 +1439,7 @@ describe("the inspector's Hi-Z switch and the gain it caps", () => {
 describe("the panel after edits made on the CONSOLE", () => {
   const consoleChip = (stripLabel: string, chip: string): HTMLElement => {
     const strip = [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")].find(
-      (s) => s.getAttribute("aria-label") === stripLabel,
+      (s) => s.getAttribute("aria-label") === spoken(stripLabel),
     );
     expect(strip, `the CONSOLE draws a "${stripLabel}" strip`).toBeDefined();
     const found = [...strip!.querySelectorAll<HTMLElement>(".con-chip")].find((c) => c.textContent === chip);
@@ -1527,6 +1534,18 @@ describe("menu keyboard navigation", () => {
     $("btn-hide-off").click();
     expect($("view-menu").hidden).toBe(true);
     expect($("btn-hide-off").getAttribute("aria-checked")).toBe("true");
+  });
+
+  // A press on the labels toggle lands on its tooltip zone, which the toggle's own listener
+  // detaches when it relabels itself; the menu closes all the same.
+  it("closes the View menu when the chosen toggle relabels itself under the press", async () => {
+    await boot();
+    $("btn-view").click();
+    expect($("view-menu").hidden).toBe(false);
+    const zone = $("btn-labels").querySelector(".tip-zone")!;
+    zone.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(zone.isConnected).toBe(false);
+    expect($("view-menu").hidden).toBe(true);
   });
 
   // The trigger opens from the keyboard as well as from a press, and each of the three

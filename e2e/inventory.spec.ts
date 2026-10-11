@@ -159,10 +159,17 @@ const SURFACES: Record<SurfaceName, Surface> = {
     // The delete button is an icon with its meaning in the tooltip, and the Linked
     // marker explains itself the same way — both by design, in a table that has no
     // room for the sentence.
-    viaAttribute: ["midi.remove", "midi.linkedHint"],
+    // A symbol caption's word (Ф → Phase) is what the row and its controls are NAMED by,
+    // never what the row prints.
+    viaAttribute: ["midi.remove", "midi.linkedHint", "midi.paramSpoken"],
     // The control vocabularies are composed into one label per assignment
     // ("CH 1 · GATE · Threshold"), never printed alone.
-    composed: ["midi.param", "midi.scope", "midi.scopedParam"],
+    composed: [
+      "midi.param",
+      "midi.scope",
+      "midi.scopedParam",
+      { key: "midi.paramSpoken", sep: [" · ", " — ", " dot "] },
+    ],
     neverShown: {
       // ui/midi.ts routes all four through the MAIN window's status line.
       "midi.windowError": "the main window's status line",
@@ -243,6 +250,7 @@ const OUT_OF_SCOPE: Record<string, string> = {
     "the link ledger — a status-bar readout and its panel, covered field by field in linkstats.spec.ts, whose expectation tables are typed over the view's own key lists",
   confirm: "the shell's native confirm dialogs — outside the webview",
   filter: "EQ filter-type names — a value vocabulary, printed wherever a band is",
+  speech: "the words a mark is read as — inside a name a screen reader is handed, never printed",
   error: "error text — routed to the status line or a native dialog by its caller",
 };
 

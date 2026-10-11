@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { tipOf } from "./glyph";
 import { armOnActivate, markMidi, type MidiLearnHooks } from "./midi-learn";
 
 function installHooks() {
@@ -23,23 +24,28 @@ function installHooks() {
 beforeEach(() => document.body.replaceChildren());
 
 describe("markMidi", () => {
+  // The address joins an existing tooltip. It holds the MIDI channel's CH, so the control
+  // is described by the spoken form and the printed one moves off the control, where
+  // VoiceOver would read it as a hint.
   it("keeps the existing tooltip and marks active, armed mappings", () => {
     const { hooks, setActive, setArmed } = installHooks();
     const control = document.createElement("button");
     control.title = "Output level";
 
     markMidi(control, "gain", hooks);
-    expect(control.title).toBe("Output level\nCH 1 CC 21");
-    expect(control.className).toBe("");
+    expect(tipOf(control)).toBe("Output level\nCH 1 CC 21");
+    expect(control.hasAttribute("title")).toBe(false);
+    expect(control.getAttribute("aria-description")).toBe("Output level C H 1 CC 21");
+    expect(control.className).toBe("tip-host");
 
     setActive(true);
     setArmed("gain");
-    control.title = "";
-    markMidi(control, "gain", hooks);
-    expect(control.title).toBe("CH 1 CC 21");
-    expect(control.classList.contains("midi-target")).toBe(true);
-    expect(control.classList.contains("midi-armed")).toBe(true);
-    expect(control.classList.contains("midi-mapped")).toBe(true);
+    const armed = document.createElement("button");
+    markMidi(armed, "gain", hooks);
+    expect(tipOf(armed)).toBe("CH 1 CC 21");
+    expect(armed.classList.contains("midi-target")).toBe(true);
+    expect(armed.classList.contains("midi-armed")).toBe(true);
+    expect(armed.classList.contains("midi-mapped")).toBe(true);
   });
 
   it("does nothing without both a control id and hooks", () => {

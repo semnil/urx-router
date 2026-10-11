@@ -19,6 +19,9 @@ export interface MidiUiRow {
   control: string;
   /** Localized ("CH 1 · GATE · Threshold"). */
   label: string;
+  /** The form the row is announced by, where it differs from `label` — a symbol caption
+   *  replaced by the word it stands for ("CH 1 · Phase" for "CH 1 · Ф"). */
+  spoken?: string;
   /** Full address text, or absent for a gang member (it has no address of its own). */
   addr?: string;
   kind: ControlKind;
@@ -50,6 +53,9 @@ export interface MidiUiState {
   armed: string | null;
   /** The last thing worth saying — a binding, a port failure. */
   status: string;
+  /** `status` names controls by their captions, so a caption symbol in it is announced
+   *  by its word. Absent for a message that may carry a port or file name. */
+  statusCaptioned?: boolean;
   lang: Lang;
   theme: "dark" | "light";
 }

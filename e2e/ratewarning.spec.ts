@@ -172,7 +172,8 @@ test("the CONSOLE locks what the rate takes away, and only then", async ({ page 
   // …and each face says WHY where the operator would reach for it. The two ceilings are
   // different sentences and are not interchangeable.
   await expect(insFace).toHaveAttribute("title", /above 96 kHz/);
-  await expect(eqChip).toHaveAttribute("title", /176\.4 \/ 192 kHz/);
+  await expect(eqChip.locator(":scope > .tip-zone")).toHaveAttribute("title", /176\.4 \/ 192 kHz/);
+  await expect(eqChip).toHaveAttribute("aria-description", /176\.4 slash 192 kHz/);
   await expect(fx2.locator(".con-sl")).toHaveAttribute("title", /FX2 bus/);
   // The bus the sends point at is dimmed whole, the way the graph dims its node.
   await expect(page.locator(".con-strip[title*='FX2']")).toHaveClass(/\binactive\b/);

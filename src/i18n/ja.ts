@@ -222,9 +222,9 @@ export const ja: Messages = {
       compOn: "COMP",
       eqOn: "EQ",
       phantom: "+48",
-      phase: "φ",
-      phaseL: "φL",
-      phaseR: "φR",
+      phase: "Ф",
+      phaseL: "ФL",
+      phaseR: "ФR",
       hpf: "HPF",
       hiZ: "Hi-Z",
       duckerOn: "DUCKER",
@@ -249,6 +249,7 @@ export const ja: Messages = {
       sideChain: "Side Chain",
     },
     scopedParam: { gain: "Gain" } as Record<string, string>,
+    paramSpoken: { phase: "フェーズ", phaseL: "フェーズ L", phaseR: "フェーズ R" } as Record<string, string>,
     scope: {
       gate: "GATE",
       comp: "COMP",
@@ -326,7 +327,8 @@ export const ja: Messages = {
     hpf: "HPF",
     hpfFreq: "HPF Freq",
     phantom: "+48V",
-    phase: "Ø",
+    phase: "Ф",
+    phaseName: "フェーズ",
     clipSafe: "Clip Safe",
     hiZ: "Hi-Z",
     insertFx: "Insert FX",
@@ -986,6 +988,10 @@ export const ja: Messages = {
   dropzone: {
     plan: "計画ファイル (.json) をドロップして開く",
     planOrSettings: "計画ファイル (.json) または URX 設定ファイル (.urxf) をドロップ",
+  },
+  speech: {
+    slash: "スラッシュ",
+    dot: "てん",
   },
   filter: {
     plan: "URX Router 計画",

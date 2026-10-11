@@ -406,15 +406,20 @@ test("the MIDI window keeps keyboard focus and its status line across a state pu
 });
 
 // The armed ring is a picture: what it means — this control's keys now arm rather than
-// edit — is said on the main window's status line, which is a live region.
+// edit — is said on the main window's status line, whose live region announces it.
 test("learn on, the armed control and learn off are said on the main status line", async ({ page }) => {
   const win = await openMidiWindow(page);
   const status = page.locator("#statusbar");
-  await expect(status).toHaveAttribute("role", "status");
+  const said = page.locator("#statusbar-said");
+  await expect(said).toHaveAttribute("role", "status");
   await setLearn(page, win, true);
   await expect(status).toHaveText("Click a control on the console or a tuning screen to arm it for binding.");
   await strip(page, "CH 1").locator(".con-fader").click();
   await expect(status).toHaveText("Move a MIDI control to bind CH 1 · Level…");
+  await expect(said).toHaveText("Move a MIDI control to bind C H 1 dot Level…");
+  await expect(said, "the region is named by the text it holds").toHaveAccessibleName(
+    "Move a MIDI control to bind C H 1 dot Level…",
+  );
   await setLearn(page, win, false);
   await expect(status).toHaveText("Learn is off: the console and the tuning screens edit again.");
 });
@@ -436,11 +441,14 @@ for (const lang of ["en", "ja"] as const) {
     await win.setViewportSize({ width: 440, height: 620 });
     const hint = win.locator(".mw-hint");
     const below = win.locator(".mw-sec").nth(2);
-    // One wording is painted at a time, and it is the one the state calls for.
+    // One wording is painted at a time, and it is the one the state calls for. A wording whose
+    // spoken form differs prints in a part hidden from assistive technology.
     const painted = hint.locator(":scope > *").filter({ visible: true });
-    const read = async (wording: string | RegExp): Promise<{ hint: number; below: number }> => {
+    const printed = (): Promise<string | null> =>
+      painted.evaluate((l) => (l.querySelector(":scope > [aria-hidden='true']") ?? l).textContent);
+    const read = async (wording: string): Promise<{ hint: number; below: number }> => {
       await expect(painted).toHaveCount(1);
-      await expect(painted).toHaveText(wording);
+      await expect.poll(printed).toBe(wording);
       return { hint: (await hint.boundingBox())!.height, below: (await below.boundingBox())!.y };
     };
     const m = (lang === "ja" ? ja : en).midi;
@@ -449,6 +457,9 @@ for (const lang of ["en", "ja"] as const) {
     const learn = await read(m.hintLearn);
     await strip(page, "CH 1").locator(".con-fader").click();
     const armed = await read(m.hintArmed(`CH 1 · ${m.param.level}`));
+    await expect(painted.locator(":scope > .sr-only")).toHaveText(
+      m.hintArmed(`C H 1 ${lang === "ja" ? ja.speech.dot : en.speech.dot} ${m.param.level}`),
+    );
     await setLearn(page, win, false);
     const back = await read(m.hintIdle);
     expect({ learn, armed, back }).toEqual({ learn: idle, armed: idle, back: idle });
@@ -491,7 +502,17 @@ test("learn binds a CC to a fader and incoming CC moves it", async ({ page }) =>
   await expect(row).toContainText("CH 1 · Level");
   await expect(row).toContainText("CH 1 CC 7");
   // The name cell ellipsizes long labels; the title carries the full wording.
-  await expect(row.locator(".mw-ctl")).toHaveAttribute("title", "CH 1 · Level");
+  // It sits on the printed part, under the pointer — on the cell VoiceOver would read it too.
+  await expect(row.locator(".mw-ctl > [aria-hidden='true']")).toHaveAttribute("title", "CH 1 · Level");
+  await expect(row.locator(".mw-ctl")).not.toHaveAttribute("title");
+  const hovered = await row.locator(".mw-ctl > [aria-hidden='true']").evaluate((shown) => {
+    const r = shown.getBoundingClientRect();
+    return document
+      .elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+      ?.closest("[title]")
+      ?.getAttribute("title");
+  });
+  expect(hovered).toBe("CH 1 · Level");
   // Learn stays on for the next binding; the mapped control shows its dot.
   await expect(strip(page, "CH 1").locator(".con-fader")).toHaveClass(/midi-mapped/);
   await setLearn(page, win, false);
@@ -741,7 +762,7 @@ test("an incoming DUCKER toggle repaints the parent strip's chip in place", asyn
   await expect(duckRow).toContainText("CH 1 NOTE 62");
   // A hung ducker names its parent channel (not the bare "Ducker"), so the
   // assignment says which channel the ducker belongs to.
-  await expect(duckRow.locator(".mw-ctl")).toHaveText("CH 5/6 · DUCKER");
+  await expect(duckRow.locator(".mw-ctl > [aria-hidden='true']")).toHaveText("CH 5/6 · DUCKER");
   await setLearn(page, win, false);
 
   // Still in CONSOLE view (no view switch): the chip must flip in place.
@@ -825,19 +846,37 @@ test("the scribble power LED arms the node master (chOn) and a note toggles it",
   await expect(power()).toHaveAttribute("aria-pressed", "false"); // toggled off
 });
 
-// A stereo strip's one φ arms the id of the side it shows, and its name, which arms nothing,
+// A stereo strip's one Ф arms the id of the side it shows, and its name, which arms nothing,
 // still switches that side while learn is on.
-test("learn on a stereo strip's φ binds the side it shows", async ({ page }) => {
+test("learn on a stereo strip's Ф binds the side it shows", async ({ page }) => {
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
   const s = strip(page, "CH 5/6");
   await setLearn(page, win, true);
-  await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
-  await expect(s.getByRole("button", { name: "CH 5/6, showing CH 6 (R)", exact: true })).toBeVisible();
-  await s.getByRole("button", { name: "φ", exact: true }).click();
+  await s.getByRole("button", { name: "C H 5 slash 6, showing C H 5 (L)", exact: true }).click();
+  await expect(s.getByRole("button", { name: "C H 5 slash 6, showing C H 6 (R)", exact: true })).toBeVisible();
+  await s.getByRole("button", { name: "Phase", exact: true }).click();
+  // Both lines that name the armed control print its caption and announce the sentence's
+  // spoken form: the caption by its word, the pair as its halves around the slash's word.
+  const heard = "C H 5 slash 6 dot Phase R";
+  await expect(page.locator("#statusbar")).toContainText("CH 5/6 · ФR");
+  await expect(page.locator("#statusbar-said")).toContainText(heard);
+  await expect(win.locator(".mw-hint > :not([aria-hidden]) > .sr-only")).toContainText(heard);
+  // No part of a line is announced through a role of its own (Narrator names it after each part).
+  await expect(page.locator(".statusbar-row [role='img']")).toHaveCount(0);
   await sendMidi(page, [0x90, 64, 127]);
   await expect(mapRow(win, "ch_5_6/phaseR")).toBeVisible();
+  await expect(page.locator("#statusbar")).toContainText("CH 5/6 · ФR");
+  await expect(page.locator("#statusbar-said")).toContainText(heard);
+  await expect(win.locator(".mw-said")).toContainText(heard);
   await expect(mapRow(win, "ch_5_6/phaseL")).toHaveCount(0);
+  // The row prints the caption and reads the word it stands for — as the cell's content, since
+  // VoiceOver reads a table cell's content and not its aria-label.
+  await expect(mapRow(win, "ch_5_6/phaseR").locator(".mw-ctl > [aria-hidden='true']")).toHaveText("CH 5/6 · ФR");
+  await expect(mapRow(win, "ch_5_6/phaseR").locator(".mw-ctl")).not.toHaveAttribute("aria-label");
+  await expect(
+    mapRow(win, "ch_5_6/phaseR").getByRole("cell", { name: "C H 5 slash 6 dot Phase R", exact: true }),
+  ).toBeVisible();
 });
 
 test("learn mode ignores a wheel over a fader so a stray scroll never edits it", async ({ page }) => {
@@ -989,15 +1028,15 @@ test("every assignment row prints its control, address and behavior", async ({ p
   // The name is not ellipsized away: the window is where the operator reads what
   // is bound to what, so the whole control name is in the cell.
   const level = mapRow(win, "ch1/level");
-  await expect(level.locator(".mw-ctl")).toHaveText("CH 1 · Level");
-  await expect(level.locator(".mw-addr")).toHaveText("CH 1 CC 7");
+  await expect(level.locator(".mw-ctl > [aria-hidden='true']")).toHaveText("CH 1 · Level");
+  await expect(level.locator(".mw-addr > [aria-hidden='true']")).toHaveText("CH 1 CC 7");
   await expect(level.locator(".mw-mode")).toBeVisible(); // continuous → take-in mode
   const mute = mapRow(win, "ch1/mute");
-  await expect(mute.locator(".mw-addr")).toHaveText("CH 1 NOTE 60");
+  await expect(mute.locator(".mw-addr > [aria-hidden='true']")).toHaveText("CH 1 NOTE 60");
   await expect(mute.locator(".mw-btn")).toBeVisible(); // toggle → button behavior
   // The same select repeats down the column, so it announces its own row too.
-  await expect(level.locator(".mw-mode")).toHaveAttribute("aria-label", "Take-in mode — CH 1 · Level");
-  await expect(mute.locator(".mw-btn")).toHaveAttribute("aria-label", "Button behavior — CH 1 · MUTE");
+  await expect(level.locator(".mw-mode")).toHaveAttribute("aria-label", "Take-in mode — C H 1 dot Level");
+  await expect(mute.locator(".mw-btn")).toHaveAttribute("aria-label", "Button behavior — C H 1 dot MUTE");
 });
 
 test("the behavior column prints a key for the vocabularies the list uses", async ({ page }) => {
@@ -1429,7 +1468,9 @@ test("a tuning screen's controls arm under processor and band scopes", async ({ 
   await expect(win.locator(".mw-hint")).toContainText("CH 1 · GATE · Threshold");
   await sendMidi(page, [0xb0, 40, 100], [0xb0, 40, 101]);
   await expect(mapRow(win, "ch1/threshold@gate")).toBeVisible();
-  await expect(mapRow(win, "ch1/threshold@gate").locator(".mw-ctl")).toHaveText("CH 1 · GATE · Threshold");
+  await expect(mapRow(win, "ch1/threshold@gate").locator(".mw-ctl > [aria-hidden='true']")).toHaveText(
+    "CH 1 · GATE · Threshold",
+  );
 
   // An incoming value moves the screen's own slider, on the field table's grid.
   await setLearn(page, win, false);
@@ -1458,13 +1499,47 @@ test("the DUCKER screen's sliders arm under the ducker's own scope", async ({ pa
   await sendMidi(page, [0xb0, 45, 100], [0xb0, 45, 101]);
   const bound = mapRow(win, "out.ducker1/threshold@ducker");
   await expect(bound).toBeVisible();
-  await expect(bound.locator(".mw-ctl")).toHaveText("CH 5/6 · DUCKER · Threshold");
+  await expect(bound.locator(".mw-ctl > [aria-hidden='true']")).toHaveText("CH 5/6 · DUCKER · Threshold");
 
   // An incoming value moves the screen's own slider, on the field table's grid — the
   // ducker's threshold floor is -60 dB, where the GATE's is -72.
   await setLearn(page, win, false);
   await sendMidi(page, [0xb0, 45, 0], [0xb0, 45, 0]);
   await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-60.0 dB");
+  await box.locator(".consent-btn-secondary").click();
+});
+
+// A split ON / OFF switch on a tuning screen is a group of buttons. Once it is mapped its tooltip
+// carries the MIDI address, and the tooltip has to sit on each button rather than over the whole
+// group: a zone over the group takes the press and the switch stops switching.
+test("a mapped split switch on a tuning screen still switches, and carries the address on each button", async ({
+  page,
+}) => {
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await setLearn(page, win, true);
+  await strip(page, "CH 1").locator('.con-chip-open[aria-label="Comp screen"]').click();
+  const box = screenBox(page);
+  await expect(box).toBeVisible();
+  const section = box.locator(".prefs-section").filter({ has: page.locator("h3", { hasText: /^1-knob$/ }) });
+  const toggle = section.locator(".prefs-row").first().locator(".prefs-toggle");
+  await toggle.click();
+  await sendMidi(page, [0xb0, 46, 100], [0xb0, 46, 101]);
+  await expect(win.locator(".mw-ctl", { hasText: "1-knob" })).toBeVisible();
+  await setLearn(page, win, false);
+
+  const on = toggle.getByRole("button", { name: "ON" });
+  await expect(on).toHaveAttribute("aria-pressed", "false");
+  const r = (await on.boundingBox())!;
+  const at = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  await page.mouse.click(at.x, at.y);
+  await expect(toggle.getByRole("button", { name: "ON" })).toHaveAttribute("aria-pressed", "true");
+  const tip = await page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.closest("[title]")?.getAttribute("title"),
+    at,
+  );
+  expect(tip, "the address shows from the button the pointer rests on").toBe("CH 1 CC 46");
+  await expect(on).toHaveAttribute("aria-description", "C H 1 CC 46");
   await box.locator(".consent-btn-secondary").click();
 });
 
@@ -1489,7 +1564,9 @@ test("an EQ band binds to that band, not to the selected one", async ({ page }) 
   await row("Gain").locator(".ctl").click();
   await sendMidi(page, [0xb0, 41, 100], [0xb0, 41, 101]);
   await expect(mapRow(win, "ch1/gain@eq.low")).toBeVisible();
-  await expect(mapRow(win, "ch1/gain@eq.low").locator(".mw-ctl")).toHaveText("CH 1 · EQ LOW · Gain");
+  await expect(mapRow(win, "ch1/gain@eq.low").locator(".mw-ctl > [aria-hidden='true']")).toHaveText(
+    "CH 1 · EQ LOW · Gain",
+  );
 
   // HIGH MID is fixed peaking, which does read Q — the lock follows the type, not
   // the row. Its gain binds under its own scope, leaving LOW's binding alone.
@@ -1628,7 +1705,7 @@ test("the INS FX face arms, and its assignment names the strip and the insert", 
   await strip(page, "CH 1").locator(".con-ifxface").click();
   await expect(win.locator(".mw-hint")).toContainText("CH 1 · INS FX");
   await sendMidi(page, [0xb0, 42, 127]);
-  await expect(mapRow(win, "ch1/insertFxOn").locator(".mw-ctl")).toHaveText("CH 1 · INS FX");
+  await expect(mapRow(win, "ch1/insertFxOn").locator(".mw-ctl > [aria-hidden='true']")).toHaveText("CH 1 · INS FX");
 
   // …and it drives the value it names. A toggle takes the EDGE behaviour by default, so each
   // value at or above 64 FLIPS it and anything below is not a state to take but a release the

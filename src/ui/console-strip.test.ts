@@ -13,6 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chips, consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
 import type { ConsoleMidiHooks } from "./console";
+import { tipOf } from "./glyph";
 import { sendConnection, setExclusiveConnection } from "../core/plan";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { nodeParamContestPath } from "../core/plan-history";
@@ -29,6 +30,7 @@ import { fxEffectTypes } from "../core/control/fx-effect";
 import { insertFxDefaults, insertFxWritableSlots } from "../core/control/insert-fx-effect";
 import { defaultPlan } from "../models/initial-state";
 import { t } from "../i18n";
+import { spoken } from "./glyph";
 
 let h: ConsoleHost;
 
@@ -631,7 +633,7 @@ describe("the strip root", () => {
     for (const s of strips) {
       const name = s.querySelector(".con-scribble .name .txt")!.textContent;
       expect(s.getAttribute("role"), name ?? "").toBe("group");
-      expect(s.getAttribute("aria-label")).toBe(name);
+      expect(s.getAttribute("aria-label"), "named by the spoken form of its printed name").toBe(spoken(name ?? ""));
     }
     // The main fader carries the same name, which is the channel the group says.
     expect(h.strip("ch1").root.getAttribute("aria-label")).toBe(h.strip("ch1").fader!.getAttribute("aria-label"));
@@ -651,7 +653,7 @@ describe("a device-locked knob", () => {
     const knob = h.host.querySelector<HTMLElement>(".con-spop .pcol .con-knob")!;
     expect(knob.classList.contains("readonly")).toBe(true);
     expect(knob.getAttribute("aria-disabled")).toBe("true");
-    expect(knob.title).toBeTruthy();
+    expect(tipOf(knob)).toBeTruthy();
     expect(knob.tabIndex).toBe(-1);
     expect(knob.getAttribute("aria-valuenow")).toBeTruthy(); // painted, not blank
 
@@ -951,9 +953,9 @@ describe("the INS FX chip", () => {
   });
 
   // A stereo channel's name is the switch for the side the strip shows: the hidden side's
-  // number dims, +48 / A.GAIN / φ read the shown side, learn mode does not arm it, and the
+  // number dims, +48 / A.GAIN / Ф read the shown side, learn mode does not arm it, and the
   // power LED beside it stays the strip's on/off.
-  it("switches a stereo strip's side from its name, and its input stage and φ with it", () => {
+  it("switches a stereo strip's side from its name, and its input stage and Ф with it", () => {
     const plan = defaultPlan("URX44V");
     setExclusiveConnection(plan, "in.micline_1_2:out", "ch_5_6:in", "source");
     plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: 30, gainR: 12, phantomR: true };
@@ -962,19 +964,19 @@ describe("the INS FX chip", () => {
     const side = (): HTMLElement => root().querySelector<HTMLElement>(".con-side")!;
     const gain = (): HTMLElement => root().querySelector<HTMLElement>('.con-knob[aria-label="A.GAIN"]')!;
     expect(side().getAttribute("role")).toBe("button");
-    expect(side().getAttribute("aria-label")).toBe("CH 5/6, showing CH 5 (L)");
+    expect(side().getAttribute("aria-label")).toBe("C H 5 slash 6, showing C H 5 (L)");
     expect(side().textContent).toBe("CH 5/6");
     expect(side().querySelector(".dim")?.textContent).toBe("6");
     expect(gain().getAttribute("aria-valuenow")).toBe("30");
     expect(chips(root()).get("+48")!.getAttribute("aria-pressed")).toBe("false");
-    expect([...chips(root()).keys()].filter((k) => k.startsWith("φ"))).toEqual(["φ"]);
+    expect([...chips(root()).keys()].filter((k) => k.startsWith("Ф"))).toEqual(["Ф"]);
     side().click();
     expect(h.switches).toEqual([{ id: "ch_5_6", side: "R" }]);
-    expect(side().getAttribute("aria-label")).toBe("CH 5/6, showing CH 6 (R)");
+    expect(side().getAttribute("aria-label")).toBe("C H 5 slash 6, showing C H 6 (R)");
     expect(side().querySelector(".dim")?.textContent).toBe("5");
     expect(gain().getAttribute("aria-valuenow")).toBe("12");
     expect(chips(root()).get("+48")!.getAttribute("aria-pressed")).toBe("true");
-    chips(root()).get("φ")!.click();
+    chips(root()).get("Ф")!.click();
     expect(h.plan.nodeParams.ch_5_6?.phaseR).toBe(true);
     expect(h.plan.nodeParams.ch_5_6?.phaseL ?? false).toBe(false);
     expect(h.plan.nodeParams.ch_5_6?.on, "the name is not the power").not.toBe(false);
@@ -1002,7 +1004,9 @@ describe("the INS FX chip", () => {
   });
 
   // The gain knob names the other channels reading the same jack or source on its tooltip,
-  // and carries none when it reads it alone.
+  // and carries none when it reads it alone. The tooltip prints the names and the
+  // description reads their spoken form; the knob carries no title of its own, which
+  // VoiceOver would read as a hint in the printed form.
   it("names the other readers of the jack on the gain knob's tooltip", () => {
     const plan = defaultPlan("URX44V");
     setExclusiveConnection(plan, "in.micline_1_2:out", "ch3:in", "source");
@@ -1011,14 +1015,15 @@ describe("the INS FX chip", () => {
     h = consoleHost({ plan });
     const knob = (id: string): HTMLElement =>
       h.strip(id).root.querySelector<HTMLElement>('.con-knob[aria-label="A.GAIN"]')!;
-    expect(knob("ch1").title).toBe(t().console.gainShared("CH 3"));
-    expect(knob("ch1").getAttribute("aria-description")).toBe(t().console.gainShared("CH 3"));
-    expect(knob("ch3").title).toBe(t().console.gainShared("CH 1"));
-    expect(knob("ch2").title, "CH 2 alone on jack 4").toBe("");
+    expect(tipOf(knob("ch1"))).toBe(t().console.gainShared("CH 3"));
+    expect(knob("ch1").hasAttribute("title")).toBe(false);
+    expect(knob("ch1").getAttribute("aria-description")).toBe(t().console.gainShared("C H 3"));
+    expect(tipOf(knob("ch3"))).toBe(t().console.gainShared("CH 1"));
+    expect(tipOf(knob("ch2")), "CH 2 alone on jack 4").toBe("");
     expect(knob("ch2").hasAttribute("aria-description")).toBe(false);
   });
 
-  it("leaves a stereo strip's name out of MIDI learn, and arms the shown side's φ", () => {
+  it("leaves a stereo strip's name out of MIDI learn, and arms the shown side's Ф", () => {
     const armed: string[] = [];
     h = consoleHost({ midi: learnHooks(armed) });
     const root = (): HTMLElement => h.strip("ch_5_6").root;
@@ -1027,7 +1032,7 @@ describe("the INS FX chip", () => {
     side.click();
     expect(armed).toEqual([]);
     expect(h.switches).toEqual([{ id: "ch_5_6", side: "R" }]);
-    chips(root()).get("φ")!.click();
+    chips(root()).get("Ф")!.click();
     expect(armed).toEqual(["ch_5_6/phaseR"]);
   });
 
@@ -1359,7 +1364,11 @@ describe("where the focus goes after the INS FX popover closes", () => {
     expect(face.getAttribute("aria-pressed")).toBe("true");
     expect(face.getAttribute("aria-disabled")).toBe("true");
     expect(face.tabIndex, "out of the tab order").toBe(-1);
-    expect(face.title).toBe(t().console.effectHint);
+    // The explanation says on/off, so it reaches a screen reader as the description's spoken
+    // form rather than as the face's own title.
+    expect(tipOf(face)).toBe(t().console.effectHint);
+    expect(face.hasAttribute("title")).toBe(false);
+    expect(face.getAttribute("aria-description")).toContain("on slash off");
     const before = JSON.stringify(h.plan.nodeParams["bus.fx1"]);
     face.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     key(face, "Enter");

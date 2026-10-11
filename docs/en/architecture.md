@@ -207,7 +207,7 @@ carries a one-line map of the same directories and points here.
   does (`withSwitchNotes` in `main.ts`) — the full read device follow runs once a burst goes quiet lands
   there / `stereo-side.ts` the side each stereo channel shows (L until switched): which jack's input stage
   the CONSOLE strip, the Inspector and a bound MIDI control show and edit, and which side's polarity the one
-  φ / Ø inverts. UI state rather than plan state — not saved, not undoable, not in a `?plan=` link — reset on
+  Ф inverts. UI state rather than plan state — not saved, not undoable, not in a `?plan=` link — reset on
   a model switch, and DOM-free so `core/midi` reads it. Both views' switches reach it through one funnel in
   `main.ts` (`switchSide`)
   - `src/core/midi/` — external MIDI control (desktop only). `message.ts` decode/encode of CC/note/pitch
@@ -529,7 +529,9 @@ carries a one-line map of the same directories and points here.
   the graph; per-strip SENDS rack; a scribble power LED toggles each node master (CH_ON / bus master ON /
   osc.on) with the off-state dimmed via the shared `isNodeInactive`; live meters only during Live sync, ~10
   Hz) / `glyph.ts` wraps the `∞` glyph in a `.glyph-inf` span to compensate the reduced x-height of mono
-  fonts (shared by console readouts and inspector values) / `dropzone.ts` drag & drop onto the window (two
+  fonts (shared by console readouts and inspector values), and hands a screen reader the spoken form of a
+  name, a status line, a hint line or a tooltip / `spoken-mark.ts` which marks are announced by a reading
+  of their own, with no imports so the E2E fixture asks the app's own question / `dropzone.ts` drag & drop onto the window (two
   paths: the shell's `tauri://drag-*` events carrying real paths on desktop, taken only for the main window,
   DOM drag events carrying `File` objects in a browser; DOM handlers registered only outside Tauri so a drop
   is never handled twice) /
@@ -1002,7 +1004,7 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
   unauthored-write confirm name the channels reading the jack or source.
 - **One side at a time.** A stereo channel shows one side (`stereo-side.ts`, L until switched): its CONSOLE name
   and the switch at the top of its INPUT section pick it, and the input rows, the gain knob, +48 / Hi-Z and the
-  one φ / Ø show and edit that side's jack and polarity. The MIDI `gain` / `phantom` / `hiZ` ids act on the side
+  one Ф show and edit that side's jack and polarity. The MIDI `gain` / `phantom` / `hiZ` ids act on the side
   shown, while each side's polarity keeps its own id (`phaseL` / `phaseR`). The side is UI state rather than plan
   state — not saved, not undoable, not in a `?plan=` link — and goes back to L on a model switch.
 - **Load.** A document that carries the channel keys — every version before 5, or one written by hand — has them
@@ -1058,6 +1060,64 @@ in-house module `src/i18n/`:
 The language is switched from the Preferences modal (a dropdown of native names in the
 "Language & theme" section); `setLang()` notifies listeners, which re-render the static labels,
 the inspector, and the open modal itself.
+
+> **The polarity mark is Ф (U+0424), on every surface and in both languages.** It is the one code point
+> that draws as a circle with a vertical bar through it, above and below, in each font the `--mono` stack
+> resolves to — Menlo on macOS, Cascadia Code and Consolas on Windows; U+03C6 (Greek phi) is a looped letter in Menlo,
+> U+03D5 (the phi symbol) a looped one in Consolas, and U+00D8 a slashed letter. A screen reader would announce the
+> character itself as a Cyrillic letter, so every control it captions is named by its word instead —
+> `Phase` / `フェーズ`, the user guide's own name for the control: the CONSOLE chip carries it as its
+> name (`setNamedText`, `src/ui/glyph.ts`), the Inspector row names its pair by it with the printed Ф
+> hidden from assistive technology, and a MIDI assignment on it (`ФL` / `ФR` for a stereo channel's
+> sides) reads it from `midi.paramSpoken`, which the MIDI window's row and the controls on it are named
+> by. A sentence that names a control by its caption — the binding, the armed control and a refused
+> learn, on the app's status line and the MIDI window's, and the window's armed hint — is announced in
+> its spoken form with each caption symbol read as its word (`spoken` with its `captioned` flag). Only
+> those sentences are: the MIDI side marks them (`onStatus`'s `captioned`, `statusCaptioned` in the
+> window's state), since a port or file name holding the same character is not a caption.
+> `src/ui/glyph.test.ts` holds the captions to Ф and refuses the other marks in the sources and these
+> documents. On Windows 11 (WebView2 154), read through the DevTools protocol, the chip and the Inspector
+> row are drawn in the system's Cascadia Code (`CascadiaCodeRoman-SemiBold` on the chip), the bar
+> standing out of the ring above and below, and Narrator with its Japanese voice read the chip as
+> "フェーズ、切り替えボタン、オフ".
+
+> **A name's marks are read as words, and only by assistive technology.** The printed text keeps
+> `CH 5/6 · Source`; what a screen reader is handed spells `CH` as `C H`, reads an a/b pair as its two
+> halves with the slash's word between them, a slash on its own and the middle dot `·` by their words —
+> `slash` / `dot` in English, `スラッシュ` / `てん` in Japanese (`speech` in the message catalog). Read
+> as printed, Windows' Japanese voice took `CH` for a country, `5/6` for a fraction or a date and `·` for
+> its character name; VoiceOver took `5/6` in a sentence for a date and left `·` silent, as Windows'
+> English voices did.
+> `spoken` (`src/ui/glyph.ts`) builds the form, and it reaches a screen reader one of three ways, none of
+> them a part with a role of its own — Narrator names that role after every such part, so a sentence
+> whose marks were images read "グラフィック" after each. **A name** is the element's own `aria-label`:
+> a CONSOLE strip's group, its name area, its power LED and main fader, a graph node and its shelf chip,
+> a MIDI row's controls (`spoken`), and the Inspector's title, its side switch and a tuning screen's title
+> (`setNamedText`). **A status line** prints the message and announces it through a live region beside
+> it that holds the spoken form and is named by the same text (`setSaid`; `#statusbar-said`, the MIDI
+> window's `.mw-said`) — of the region shapes read with Windows' Narrator in the English UI, only one
+> named by its own text was read in the English voice alone. **The MIDI window's
+> hint**, a line no role can name, and **a MIDI row's name and address cells**, whose `aria-label`
+> VoiceOver does not use (it read the cell's content, `CH` as "chapter"), print their wording in a part
+> hidden from assistive technology next to a visually hidden part holding the spoken form
+> (`setSpokenText` / `setHeardText`). The name cell's tooltip sits on that printed part: VoiceOver reads
+> an element's `title` in its printed form, as a hint a moment after the name and inside the phrase a
+> table cell is entered with, and `aria-description` beside it does not stop that. **A tooltip** on a
+> control the reader reaches whose spoken form differs — a mapped control's MIDI address, the gain knob's
+> notes, a shelf chip's, the labels toggle's — moves to a zone hidden from assistive technology that
+> covers the control, and the control is described by the spoken form instead (`setTip`). A wrapper or a
+> group hands the tooltip to each control inside it, so no zone covers more than the one control it
+> belongs to — a zone laid over a split ON / OFF switch took every press meant for its buttons — and keeps
+> the title itself, which is not read, only for a control that cannot hold a zone (an input).
+> `src/ui/midi-arm.contract.test.ts` opens every tuning screen with every control mapped and fails on a
+> zone over an element holding other controls. Every ordinary E2E case
+> ends by checking the page for a name, a description or such a tooltip that still holds a mark in
+> its printed form (`e2e/fixtures.ts`). Read on both shipping engines, in both languages: VoiceOver reads a
+> MIDI row's cells and such a control in the spoken form alone — the description right after the name,
+> and no hint — and on WebView2, UI Automation names the cells in the spoken form with an empty HelpText,
+> and gives such a control an empty HelpText and its FullDescription in the spoken form, while a control
+> whose own title holds no mark keeps that title as its HelpText. `src/ui/glyph.test.ts` holds the
+> readings in both languages.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
 > `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **Those five apply to prose as much
@@ -1377,9 +1437,9 @@ MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off) — never the nod
 MIX 675), which is the scribble power LED. STEREO and the MONITOR buses have no → STEREO send, so they carry
 no MUTE chip; their master ON is the power LED alone. A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
-`MONITOR_MONO`, ships OFF) chips. Then +48 / φ /
+`MONITOR_MONO`, ships OFF) chips. Then +48 / Ф /
 HPF on a mono channel (+48 and Hi-Z are the jack's it reads: Hi-Z where that jack carries it, neither on a source
-or on no source) or one φ on a stereo channel, which inverts the side the strip shows (`phaseL` / `phaseR`,
+or on no source) or one Ф on a stereo channel, which inverts the side the strip shows (`phaseL` / `phaseR`,
 gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
 node hung under them). A mono channel in SSMCS mode carries **SSMCS** between GATE and COMP — the morphing

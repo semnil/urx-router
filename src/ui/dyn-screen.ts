@@ -50,7 +50,7 @@ import type { SettingsRowOptions } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import { armOnActivate, markMidi } from "./midi-learn";
 import type { MidiLearnHooks } from "./midi-learn";
-import { setLevelText } from "./glyph";
+import { setLevelText, spoken } from "./glyph";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 import {
@@ -1535,6 +1535,9 @@ export class DynScreen {
     const name = el("span", "");
     name.textContent = proc.title(m, this.ctx());
     title.append(ch, name);
+    // The title names the screen by the channel's spoken form (ui/glyph.ts, spoken).
+    if (spoken(ch.textContent) !== ch.textContent)
+      title.setAttribute("aria-label", `${spoken(ch.textContent)} ${name.textContent}`);
 
     const grid = el("div", "prefs-grid");
     // A bank of faces reserves one height for all of them. Its faces carry different row
@@ -2227,7 +2230,7 @@ export class DynScreen {
     input.step = String(range.step);
     input.value = String(dynToPos(f, value));
     input.dataset.dyn = f.key;
-    input.setAttribute("aria-label", label);
+    input.setAttribute("aria-label", spoken(label));
     const show = (v: number): void => {
       const text = this.valueText(f, v);
       setLevelText(val, text);
@@ -2305,7 +2308,7 @@ export class DynScreen {
     input.step = String(range.step);
     input.value = String(dynToPos(f, value));
     input.dataset.dyn = f.key;
-    input.setAttribute("aria-label", label);
+    input.setAttribute("aria-label", spoken(label));
     const val = el("span", "param-val gt-val");
     val.dataset.dynVal = f.key;
     if (f.key === this.capKey) {

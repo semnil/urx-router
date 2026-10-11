@@ -103,7 +103,9 @@ export interface MidiHooks {
   /** Learn mode / armed control / mappings changed: re-render the arming
    *  surfaces (the CONSOLE strips and an open tuning screen). */
   onLearnChanged: () => void;
-  onStatus: (msg: string) => void;
+  /** `captioned`: the message names controls by their captions, so a caption symbol in it
+   *  is announced by its word (ui/glyph.ts setSpokenText). */
+  onStatus: (msg: string, captioned?: boolean) => void;
 }
 
 // One localStorage entry: the chosen ports (hardware-global) and the mapping
@@ -201,6 +203,7 @@ export class MidiControl {
   /** The last thing worth saying, mirrored into the window (its own status line) as
    *  well as the app's — the window is where the operator is looking while binding. */
   private status = "";
+  private statusCaptioned = false;
   /** The assignment rows the last push carried, serialized — what `judgeGangs` compares
    *  against to tell whether a plan edit moved what the window's list shows. */
   private shownRows = "";
@@ -331,13 +334,15 @@ export class MidiControl {
 
   /** Status goes to the app's own line and to the window's, since the window is
    *  what the operator is watching while assigning. */
-  private say(message: string): void {
+  private say(message: string, captioned = false): void {
     // Anything said after the stall replaces it on screen, so the flag stops being
     // true of what the operator can see. Set by abandonOutput immediately after its
     // own say(), which is why this clears rather than guards.
     this.outputStalled = false;
     this.status = message;
-    this.hooks.onStatus(message);
+    this.statusCaptioned = captioned;
+    if (captioned) this.hooks.onStatus(message, true);
+    else this.hooks.onStatus(message);
     this.pushState();
   }
 
@@ -397,7 +402,7 @@ export class MidiControl {
     // Said on the main window's status line (a live region) as well as shown by the ring:
     // while armed, the control's keys arm rather than edit. The MIDI window's hint already
     // names it, so its own status line is left alone.
-    this.hooks.onStatus(t().midi.hintArmed(this.labelOf(id)));
+    this.hooks.onStatus(t().midi.hintArmed(this.labelOf(id)), true);
   }
 
   // ---- app integration ----
@@ -810,14 +815,14 @@ export class MidiControl {
     const refusal = this.learnRefusal(id, addr, all);
     if (refusal !== null) {
       this.hooks.onLearnChanged(); // the armed ring comes off
-      this.say(refusal);
+      this.say(refusal, true);
       return;
     }
     const next = all.filter((m) => m.control !== id);
     next.push({ control: id, addr, mode });
     this.applyMappings(next);
     this.hooks.onLearnChanged();
-    this.say(t().midi.bound(this.labelOf(id), addrLabel(addr)));
+    this.say(t().midi.bound(this.labelOf(id), addrLabel(addr)), true);
     // Deliberately NOT raised here. Measured on macOS (2026-08-01): raising takes
     // focus off the main window, and a click on a window that is not active does
     // not reach the webview (`accept_first_mouse` defaults to false), so every
@@ -933,8 +938,10 @@ export class MidiControl {
   /** Human-readable control label: node label (model-fixed) + scope + the surface's
    *  own wording for the control ("CH 1 → MIX 1 · Level", "CH 1 · GATE · Threshold").
    *  The two scope kinds print differently because they mean different things — a
-   *  send target is where the signal goes, a processor is a stage of this node. */
-  private labelOf(id: string): string {
+   *  send target is where the signal goes, a processor is a stage of this node.
+   *  `spoken` asks for the form a control is announced by: a symbol caption (Ф) is
+   *  replaced by the word it stands for. */
+  private labelOf(id: string, spoken = false): string {
     const parsed = parseControlId(id);
     if (!parsed) return id;
     const m = t().midi;
@@ -965,6 +972,7 @@ export class MidiControl {
     // Inside a processor scope a param is read on a tuning screen, which prints
     // sentence-case labels; the console's own captions stay as they are.
     const param =
+      (spoken ? m.paramSpoken[parsed.param] : undefined) ??
       (processor ? m.scopedParam[parsed.param] : undefined) ??
       // The insert effect is the one param with no caption of its own: it names itself
       // above, and reaches here only when its scope points at a family or slot this build
@@ -1072,6 +1080,7 @@ export class MidiControl {
       learnOn: this.learnOn,
       armed: this.armed ? this.labelOf(this.armed) : null,
       status: this.status,
+      ...(this.statusCaptioned ? { statusCaptioned: true } : {}),
       lang: getLang(),
       theme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
     };
@@ -1090,9 +1099,12 @@ export class MidiControl {
       const option = optionOf(kind, m, mixed.has(addrKey(m.addr)));
       const linked = this.engine.isLinkedMember(m);
       const inactive = bound ? undefined : this.inactiveReason(m.control);
+      const label = this.labelOf(m.control);
+      const spoken = this.labelOf(m.control, true);
       return {
         control: m.control,
-        label: this.labelOf(m.control),
+        label,
+        ...(spoken !== label ? { spoken } : {}),
         // A gang member shares the head's physical control, so it carries no
         // address of its own — the window prints its "Linked" marker instead.
         ...(linked ? {} : { addr: addrLabel(m.addr) }),

@@ -1,5 +1,5 @@
 // The side a stereo channel shows: one per channel, L until switched. It decides which jack's
-// input stage the channel's surfaces show and edit, and which side's polarity invert the one φ
+// input stage the channel's surfaces show and edit, and which side's polarity invert the one Ф
 // acts on. UI state, not plan state — not saved, not undoable, not in a `?plan=` link — and
 // reset when the model changes.
 

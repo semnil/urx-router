@@ -8,6 +8,8 @@
 // only "assigned", never to what — the address has to be readable from the control
 // itself, and a title costs no layout.
 
+import { setTip, tipOf } from "./glyph";
+
 export interface MidiLearnHooks {
   learnActive: () => boolean;
   armedId: () => string | null;
@@ -24,7 +26,7 @@ export interface MidiLearnHooks {
 export function markMidi(el: HTMLElement, id: string | undefined, midi: MidiLearnHooks | undefined): void {
   if (!id || !midi) return;
   const addr = midi.addrOf(id);
-  if (addr) el.title = el.title ? `${el.title}\n${addr}` : addr;
+  if (addr) setTip(el, tipOf(el) ? `${tipOf(el)}\n${addr}` : addr);
   if (!midi.learnActive()) return;
   el.classList.add("midi-target");
   if (midi.armedId() === id) el.classList.add("midi-armed");

@@ -3,7 +3,7 @@ import { chooseOption } from "./choose-option";
 import { LIVE_COMMANDS, heldReadsOf, notifyParam, setDeviceValue, setHeldReads, stubTauriDevice } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
 import { planParamZ } from "./plan-param";
-import { drag, port } from "./graph-helpers";
+import { drag, port, wire } from "./graph-helpers";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
 // "CH 11/12"). The console runs against the factory plan, so we do NOT seed
@@ -91,7 +91,7 @@ test("the console lays out the input channels and the master", async ({ page }) 
 // The controls a strip repeats are named only for what they are, so the strip is a group
 // named by its node: that is what puts the channel on a MUTE reached from a control list.
 test("each strip is a group named by its node", async ({ page }) => {
-  const ch1 = page.getByRole("group", { name: "CH 1", exact: true });
+  const ch1 = page.getByRole("group", { name: "C H 1", exact: true });
   await expect(ch1.getByRole("button", { name: "MUTE", exact: true })).toBeVisible();
   await expect(ch1.getByRole("slider", { name: "PAN", exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "STREAMING", exact: true })).toHaveClass(/meter-only/);
@@ -209,18 +209,20 @@ test("the MIX master BAL knob stays labeled BAL under Pan Link", async ({ page }
   await expect(strip(page, "MIX 1").locator(".con-knob[aria-label='PAN']")).toHaveCount(0);
 });
 
-test("DUCKER appears on stereo channels only, with one φ for the side the strip shows", async ({ page }) => {
+test("DUCKER appears on stereo channels only, with one Ф for the side the strip shows", async ({ page }) => {
   // `exact` because the tuning-screen opener beside it is labelled "Ducker screen",
   // which a substring match also picks up.
   const s = strip(page, "CH 5/6");
   await expect(s.getByRole("button", { name: "DUCKER", exact: true })).toBeVisible();
   await expect(strip(page, "CH 1").getByRole("button", { name: "DUCKER", exact: true })).toHaveCount(0);
-  const phi = s.getByRole("button", { name: "φ", exact: true });
+  // The chip prints Ф and is announced by the word it stands for.
+  const phi = s.getByRole("button", { name: "Phase", exact: true });
   await expect(phi).toHaveCount(1);
+  await expect(phi).toHaveText("Ф");
   await phi.click();
   await expect(phi).toHaveAttribute("aria-pressed", "true");
-  await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
-  await expect(s.getByRole("button", { name: "CH 5/6, showing CH 6 (R)", exact: true })).toBeFocused();
+  await s.getByRole("button", { name: "C H 5 slash 6, showing C H 5 (L)", exact: true }).click();
+  await expect(s.getByRole("button", { name: "C H 5 slash 6, showing C H 6 (R)", exact: true })).toBeFocused();
   await expect(phi, "R's polarity is its own").toHaveAttribute("aria-pressed", "false");
 });
 
@@ -230,16 +232,16 @@ test("a stereo channel's name and its Inspector switch show the same side", asyn
   const s = strip(page, "CH 5/6");
   const power = s.locator(".con-power");
   await expect(power).toHaveAttribute("aria-pressed", "true");
-  await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
+  await s.getByRole("button", { name: "C H 5 slash 6, showing C H 5 (L)", exact: true }).click();
   await expect(power).toHaveAttribute("aria-pressed", "true");
   await page.click("#btn-view-graph");
   await page.locator('g.node[data-id="ch_5_6"]').click();
   const bar = page.getByRole("group", { name: "Displayed side" });
-  await expect(bar.getByRole("button", { name: "CH 6 (R)", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await bar.getByRole("button", { name: "CH 5 (L)", exact: true }).click();
-  await expect(bar.getByRole("button", { name: "CH 5 (L)", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(bar.getByRole("button", { name: "C H 6 (R)", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await bar.getByRole("button", { name: "C H 5 (L)", exact: true }).click();
+  await expect(bar.getByRole("button", { name: "C H 5 (L)", exact: true })).toHaveAttribute("aria-pressed", "true");
   await page.click("#btn-view-console");
-  await expect(s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true })).toBeVisible();
+  await expect(s.getByRole("button", { name: "C H 5 slash 6, showing C H 5 (L)", exact: true })).toBeVisible();
 });
 
 // ---- SENDS rack ----
@@ -1188,13 +1190,23 @@ test("every strip's head holds its own contents, so --head-h is not hand-measure
 });
 
 // Two channels on one jack name each other on the gain knob's tooltip, from the moment the
-// second one is wired to it.
+// second one is wired to it. The names print on the tooltip, from a zone over the knob, and
+// reach a screen reader as the knob's description in their spoken form.
 test("the gain knob names the other channel on its jack after a rewire", async ({ page }) => {
   const gain = (name: string) => strip(page, name).locator(".con-knob[aria-label='A.GAIN']");
-  await expect(gain("CH 1")).not.toHaveAttribute("title", /Shared/);
+  const tip = (name: string) => gain(name).locator(":scope > .tip-zone");
+  await expect(gain("CH 1")).not.toHaveAttribute("aria-description", /Shared/);
+  await expect(tip("CH 1")).toHaveCount(0);
   await page.click("#btn-view-graph");
-  await drag(page, port(page, "in.micline_1_2:out"), port(page, "ch3:in"));
+  // The press waits for the jack to hold still under the pointer, and the wire it draws is the
+  // premise of the rest.
+  const from = port(page, "in.micline_1_2:out");
+  await from.hover();
+  await drag(page, from, port(page, "ch3:in"));
+  await expect(wire(page, "in.micline_1_2:out", "ch3:in")).toHaveCount(1);
   await page.click("#btn-view-console");
-  await expect(gain("CH 1")).toHaveAttribute("title", "Shared with CH 3");
-  await expect(gain("CH 3")).toHaveAttribute("title", "Shared with CH 1");
+  await expect(tip("CH 1")).toHaveAttribute("title", "Shared with CH 3");
+  await expect(tip("CH 3")).toHaveAttribute("title", "Shared with CH 1");
+  await expect(gain("CH 1")).toHaveAttribute("aria-description", "Shared with C H 3");
+  await expect(gain("CH 1")).not.toHaveAttribute("title");
 });

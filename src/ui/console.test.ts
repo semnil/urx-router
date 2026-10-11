@@ -143,12 +143,12 @@ describe("Console UI", () => {
       expect(document.activeElement).toBe(chip("Hi-Z"));
     });
 
-    it("keeps it on φ when the unit turns Hi-Z off under it", () => {
+    it("keeps it on Ф when the unit turns Hi-Z off under it", () => {
       h = consoleHost({ plan: withHiZ(true) });
-      chip("φ").focus();
+      chip("Ф").focus();
       h.plan.nodeParams[JACK] = { ...h.plan.nodeParams[JACK], hiZL: false };
       h.view.refresh();
-      expect(document.activeElement).toBe(chip("φ"));
+      expect(document.activeElement).toBe(chip("Ф"));
     });
 
     it("keeps it on A.GAIN when the unit turns Hi-Z on under it", () => {

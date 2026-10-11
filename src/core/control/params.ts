@@ -354,7 +354,7 @@ export const PARAMS = {
   // Analog mic-strip toggles (CH1-4 only). Confirmed by live scan.
   /** Input channel +48V phantom power. */
   PHANTOM: { id: 0, encoding: "bool" },
-  /** Input channel phase / polarity invert (Ø), mono mic channels. */
+  /** Input channel phase / polarity invert (Ф), mono mic channels. */
   PHASE: { id: 24, encoding: "bool" },
   // Stereo channels invert L/R independently, indexed by stereo position.
   /** Stereo channel L-side polarity invert. */

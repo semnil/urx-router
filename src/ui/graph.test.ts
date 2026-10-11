@@ -552,7 +552,7 @@ describe("keyboard", () => {
     expect(fx.svg.getAttribute("aria-label")).toBe(t().toolbar.viewGraphHint);
     const nodes = [...fx.host.querySelectorAll<SVGGElement>("g.node")];
     expect(nodes.every((g) => g.getAttribute("role") === "button")).toBe(true);
-    expect(nodeEl(fx.host, "ch1")!.getAttribute("aria-label")).toBe("CH 1");
+    expect(nodeEl(fx.host, "ch1")!.getAttribute("aria-label")).toBe("C H 1");
     expect(nodes.every((g) => g.getAttribute("aria-pressed") === "false")).toBe(true);
     expect(stops()).toEqual([nodes[0].dataset.id]);
   });
@@ -717,6 +717,13 @@ describe("focus on the shelf and the selection bar", () => {
     fx.host.querySelector<HTMLButtonElement>(`.hidden-shelf button.chip[data-node="${id}"]`);
   const active = (): Element | null => document.activeElement;
   const shelve = (plan: Plan): void => void (plan.hidden = ["ch1", "ch3"]);
+
+  // A chip prints its node's label and is named by the label's spoken form.
+  it("names a chip by its label's spoken form", () => {
+    fx = graphFixture({ seed: shelve });
+    expect(chip("ch1")!.textContent).toContain("CH 1");
+    expect(chip("ch1")!.getAttribute("aria-label")).toBe("C H 1");
+  });
 
   it("keeps focus on a chip through refresh, a theme switch and a relocalization", () => {
     fx = graphFixture({ seed: shelve });

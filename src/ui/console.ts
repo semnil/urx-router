@@ -107,7 +107,7 @@ import {
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
-import { setLevelText } from "./glyph";
+import { setLevelText, setNamedText, setTip, spoken, tipOf } from "./glyph";
 import {
   el,
   focusables,
@@ -264,7 +264,7 @@ function meterReadCell(): { cell: HTMLElement; value: HTMLElement } {
 // ("MUTE", "PAN", "FX 1") — is announced with the channel it belongs to.
 function nameStrip(strip: HTMLElement, m: { label: string }): void {
   strip.setAttribute("role", "group");
-  strip.setAttribute("aria-label", m.label);
+  strip.setAttribute("aria-label", spoken(m.label));
 }
 
 // Focus inside an open popover: the popover, the strip it belongs to, and the row as its
@@ -812,7 +812,7 @@ export class Console {
     const isStream = id === "bus.stream";
     const isMix = this.isMixBus(id);
     const isMon = isMonitorBus(id);
-    const isMono = /^ch\d+$/.test(id); // mono channels are ch1..ch4 (the only gain/gate/comp/φ-bearing strips)
+    const isMono = /^ch\d+$/.test(id); // mono channels are ch1..ch4 (the only gain/gate/comp/Ф-bearing strips)
     return {
       id,
       // The master reads "STEREO" here (the graph keeps the fuller "STEREO (MAIN)"):
@@ -1181,7 +1181,7 @@ export class Console {
     setLevelRange(fader, range);
     if (busFixed) {
       fader.setAttribute("aria-disabled", "true");
-      fader.title = rateOff ? t().inspector.fx2RateLocked : t().inspector.busFixedSend;
+      setTip(fader, rateOff ? t().inspector.fx2RateLocked : t().inspector.busFixedSend);
     } else {
       fader.tabIndex = 0;
     }
@@ -1666,7 +1666,7 @@ export class Console {
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-pressed", "true");
     chip.setAttribute("aria-disabled", "true");
-    chip.title = t().console.effectHint;
+    setTip(chip, t().console.effectHint);
     chip.tabIndex = -1;
     return chip;
   }
@@ -1921,7 +1921,7 @@ export class Console {
       txt.setAttribute("role", "button");
       const model = this.hooks.getModel();
       const which = shown === "L" ? t().inspector.sideL : t().inspector.sideR;
-      txt.setAttribute("aria-label", t().console.sideShowing(m.label, which(sideLabel(model, m.id, shown))));
+      txt.setAttribute("aria-label", spoken(t().console.sideShowing(m.label, which(sideLabel(model, m.id, shown)))));
       this.wireActivate(txt, undefined, () => this.hooks.onSwitchSide?.(m.id, shown === "L" ? "R" : "L"));
     } else {
       txt.textContent = m.label;
@@ -2014,7 +2014,7 @@ export class Console {
     power.dataset.ctl = spec.midiId;
     power.setAttribute("role", "button");
     power.setAttribute("aria-pressed", String(spec.on));
-    power.setAttribute("aria-label", `${m.label} ${t().console.power}`);
+    power.setAttribute("aria-label", spoken(`${m.label} ${t().console.power}`));
     this.wireActivate(power, spec.midiId, () => {
       this.commit(m.id, spec.toggle());
       this.render();
@@ -2032,7 +2032,14 @@ export class Console {
     mute: boolean,
     on: boolean,
     toggle: () => boolean,
-    opts?: { readonlyTitle?: string; midiId?: string; title?: string; rerender?: boolean; keys?: readonly string[] },
+    opts?: {
+      readonlyTitle?: string;
+      midiId?: string;
+      title?: string;
+      rerender?: boolean;
+      keys?: readonly string[];
+      spoken?: string;
+    },
   ): void {
     parent.append(this.buildChip(id, label, on, toggle, { ...opts, mute }));
   }
@@ -2154,24 +2161,27 @@ export class Console {
       rerender?: boolean;
       keys?: readonly string[];
       ctl?: string;
+      /** The word a symbol `label` is announced as (see setNamedText). */
+      spoken?: string;
     },
   ): HTMLElement {
-    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender, keys, ctl } = opts ?? {};
+    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender, keys, ctl, spoken } = opts ?? {};
     // Normalised before it reaches the DOM. The device write is `np.<flag> ? 1 : 0`
     // and the load funnel passes a finite numeric leaf through unchecked, so a plan
     // authored elsewhere reaches here carrying 1 — `String(1)` is "1", which is not
     // an ARIA boolean, and a screen reader is told nothing rather than "pressed".
     const state = Boolean(on);
     const chip = el("div", cls + (mute ? " mute" : "") + (state ? " on" : "") + (readonlyTitle ? " readonly" : ""));
-    chip.textContent = label;
+    if (spoken) setNamedText(chip, label, spoken);
+    else chip.textContent = label;
     chip.dataset.ctl = ctl ?? midiId ?? label;
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-pressed", String(state));
     // A hover tooltip spelling out a terse label (e.g. C.INT → Cue Interrupt).
-    if (title) chip.title = title;
+    if (title) setTip(chip, title);
     if (readonlyTitle) {
       chip.setAttribute("aria-disabled", "true");
-      chip.title = readonlyTitle;
+      setTip(chip, readonlyTitle);
       // Out of the tab order — there is nothing to operate — but still able to RECEIVE
       // focus, so it can be the place a closing popover leaves the operator. Without this
       // a chip the rate turned read-only is unfocusable, and the focus falls to <body>.
@@ -2687,7 +2697,14 @@ export class Console {
     // spacer chip so the last real chip never stretches to full width.
     type BoolKey = "gateOn" | "compOn" | "eqOn" | "phase" | "phaseL" | "phaseR" | "hpf" | "cueInterrupt" | "mono";
     const planOf = (): NodeParams => this.hooks.getPlan().nodeParams[m.id] ?? {};
-    const boolChip = (parent: HTMLElement, label: string, key: BoolKey, def: boolean, title?: string): void => {
+    const boolChip = (
+      parent: HTMLElement,
+      label: string,
+      key: BoolKey,
+      def: boolean,
+      title?: string,
+      spoken?: string,
+    ): void => {
       this.makeChip(
         m.id,
         parent,
@@ -2699,7 +2716,7 @@ export class Console {
           this.nodeParamsOf(m.id)[key] = next;
           return next;
         },
-        { midiId: controlId(m.id, key), title, keys: [key] },
+        { midiId: controlId(m.id, key), title, keys: [key], spoken },
       );
     };
 
@@ -2762,9 +2779,10 @@ export class Console {
     };
     // HA input toggles (+48 / polarity / HPF / Hi-Z). +48 and Hi-Z are the jack's.
     if (jack) inputChip("+48", "phantom");
-    // Polarity: one φ. A stereo channel's inverts the side it shows (phaseL / phaseR).
+    // Polarity: one Ф, announced by its word. A stereo channel's inverts the side it shows
+    // (phaseL / phaseR).
     const phase = cc?.phases.find((ph) => ph.side === "" || ph.side === displayedSide(m.id));
-    if (phase) boolChip(top, "φ", phase.key, false);
+    if (phase) boolChip(top, t().midi.param.phase, phase.key, false, undefined, t().midi.paramSpoken.phase);
     if (cc?.hasHpf) boolChip(top, "HPF", "hpf", false);
     if (jack?.hiZ) inputChip("Hi-Z", "hiZ");
     // MONITOR strips carry the device [CUE] (cue interrupt) and [MONO] buttons.
@@ -3046,10 +3064,7 @@ export class Console {
         knob.append(badge);
         notes.push(t().inspector.notReadFromDevice);
       }
-      if (notes.length) {
-        knob.title = [knob.title, ...notes].filter(Boolean).join("\n");
-        knob.setAttribute("aria-description", notes.join(" "));
-      }
+      if (notes.length) setTip(knob, [tipOf(knob), ...notes].filter(Boolean).join("\n"), true);
     }
     // PAN (mono) / BALANCE (stereo) = the source's → STEREO main-path pan,
     // L63 – C – R63. Per-send pan lives in the SENDS rack's SEND PAN popover.
@@ -3106,7 +3121,7 @@ export class Console {
 
     const fader = el("div", "con-fader");
     fader.setAttribute("role", "slider");
-    fader.setAttribute("aria-label", m.label);
+    fader.setAttribute("aria-label", spoken(m.label));
     fader.dataset.ctl = controlId(m.id, "level");
     setLevelRange(fader, m.range);
     fader.tabIndex = 0;
@@ -3798,7 +3813,7 @@ export class Console {
     const val = el("span", valCls);
     if (k.readonlyTitle) {
       knob.setAttribute("aria-disabled", "true");
-      knob.title = k.readonlyTitle;
+      setTip(knob, k.readonlyTitle);
     } else {
       knob.tabIndex = 0;
     }

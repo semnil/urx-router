@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
 import { sendConnection } from "../core/plan";
 import type { ConsoleMidiHooks } from "./console";
+import { tipOf } from "./glyph";
 import { BUS_TYPE_FIXED, PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { t } from "../i18n";
 import { defaultPlan } from "../models/initial-state";
@@ -650,7 +651,7 @@ describe("read-only columns", () => {
     h.view.refresh();
     const pre = preOf();
     expect(pre.classList.contains("readonly")).toBe(true);
-    expect(pre.title).toBe(t().inspector.busFixedSend);
+    expect(tipOf(pre)).toBe(t().inspector.busFixedSend);
     expect(pre.getAttribute("aria-pressed")).toBe("true");
     expect(h.sendCol("ch1", "bus.mix1").fader.getAttribute("aria-valuetext")).toMatch(/^PRE, /);
     pre.click();
@@ -662,7 +663,7 @@ describe("read-only columns", () => {
       (c) => c.querySelector(".cap")?.textContent === "MIX 1",
     )!;
     const knob = pcol.querySelector<HTMLElement>("[role='slider']")!;
-    expect(knob.title).toBe(t().inspector.busFixedSend);
+    expect(tipOf(knob)).toBe(t().inspector.busFixedSend);
     key(knob, "ArrowRight");
     expect(conn().params?.pan).toBe(-20);
   });
@@ -686,7 +687,7 @@ describe("read-only columns", () => {
       h.sendCol("ch1", target).fader.parentElement!.querySelector<HTMLElement>(".con-slp")!;
 
     const fx = preOf("bus.fx1");
-    expect(fx.title).toBe(t().inspector.prePostLcdOnly);
+    expect(tipOf(fx)).toBe(t().inspector.prePostLcdOnly);
     expect(fx.classList.contains("readonly")).toBe(true);
     expect(fx.classList.contains("midi-target")).toBe(false);
 

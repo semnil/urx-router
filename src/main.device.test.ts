@@ -56,6 +56,7 @@ import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
 import type { Field } from "./core/control/urxf.test-util";
 import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
+import { spoken } from "./ui/glyph";
 
 /** Long enough for a whole-device read (676 reads through the stub) plus a teardown. */
 const SLOW = { timeout: 30_000 };
@@ -9648,7 +9649,7 @@ describe("the inspector while the CONSOLE hides it", () => {
    *  that never arrived. */
   const consoleGain = (strip: string): string | null =>
     [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")]
-      .find((s) => s.getAttribute("aria-label") === strip)
+      .find((s) => s.getAttribute("aria-label") === spoken(strip))
       ?.querySelector<HTMLElement>('[aria-label="A.GAIN"]')
       ?.getAttribute("aria-valuenow") ?? null;
 
@@ -10749,7 +10750,7 @@ describe("the displayed side and the unit's LCD selection", () => {
   const LCD = `${PARAMS.LCD_SELECTION.id}/0/0`;
   const strip = (name: string): HTMLElement | undefined =>
     [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")].find(
-      (s) => s.getAttribute("aria-label") === name,
+      (s) => s.getAttribute("aria-label") === spoken(name),
     );
   const nameArea = (): HTMLElement => strip("CH 5/6")!.querySelector<HTMLElement>(".con-side")!;
   const showing = (): string => nameArea().getAttribute("aria-label") ?? "";
@@ -10773,13 +10774,13 @@ describe("the displayed side and the unit's LCD selection", () => {
     await goLive();
     const { addrs } = shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: number[][] };
     expect(addrs, "the session registers the LCD selection").toContainEqual([PARAMS.LCD_SELECTION.id, 0, 0]);
-    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
-    await vi.waitFor(() => expect(showing()).toBe("CH 5/6, showing CH 5 (L)"));
+    await vi.waitFor(() => expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)"));
     // A selection of anything but a stereo channel names no side.
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0000 }]);
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0300 }]);
-    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
     expect(lcdWrites(shell), "a side the unit chose is not written back").toEqual([]);
     await end(shell);
   });
@@ -10795,20 +10796,20 @@ describe("the displayed side and the unit's LCD selection", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       nameArea().click();
-      expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+      expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
       nameArea().click();
-      expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+      expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
       // Two switches, so two writes at most. Polled on a real timer rather than `vi.waitFor`,
       // which moves a faked clock forward by its interval on every poll.
       for (let i = 0; i < 1000 && lcdWrites(shell).length < 2; i++) await new Promise((r) => setTimeout(r, 10));
       expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
-      expect(showing(), "the late answer to the first write").toBe("CH 5/6, showing CH 5 (L)");
+      expect(showing(), "the late answer to the first write").toBe("C H 5 slash 6, showing C H 5 (L)");
       notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
-      expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+      expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
       // The positive control: a selection made on the unit itself still shows.
       notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
-      expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+      expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
     } finally {
       vi.useRealTimers();
     }
@@ -10823,14 +10824,14 @@ describe("the displayed side and the unit's LCD selection", () => {
     nameArea().click();
     nameArea().click();
     nameArea().click();
-    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
     // Past the write's return, where a queued one would go out.
     await drainShell(shell, () => false);
     expect(lcdWrites(shell)).toEqual([0x0101]);
     nameArea().click();
     nameArea().click();
     nameArea().click();
-    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
     await drainShell(shell, () => false);
     expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]);
     // The unit moving its own selection while a write is on the wire: the latest switch goes
@@ -10839,7 +10840,7 @@ describe("the displayed side and the unit's LCD selection", () => {
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0102 }]);
     nameArea().click();
     nameArea().click();
-    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
     await drainShell(shell, () => false);
     expect(lcdWrites(shell)).toEqual([0x0101, 0x0100, 0x0101, 0x0101]);
     await end(shell);
@@ -10926,9 +10927,11 @@ describe("the displayed side and the unit's LCD selection", () => {
     });
     nameArea().click();
     nameArea().click();
-    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0103 }]);
-    expect(strip("CH 7/8")!.querySelector(".con-side")!.getAttribute("aria-label")).toBe("CH 7/8, showing CH 8 (R)");
+    expect(strip("CH 7/8")!.querySelector(".con-side")!.getAttribute("aria-label")).toBe(
+      "C H 7 slash 8, showing C H 8 (R)",
+    );
     finish();
     await drainShell(shell, () => false);
     expect(lcdWrites(shell), "the queued switch is not sent").toEqual([0x0101]);
@@ -10955,7 +10958,7 @@ describe("the displayed side and the unit's LCD selection", () => {
     const shell = await bootDevice({}, true, { [LCD]: 0x0101 });
     $("btn-view-console").click();
     nameArea().click();
-    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
     expect(lcdWrites(shell)).toEqual([]);
     expect(shell.count("vd_connect")).toBe(0);
   });
@@ -10974,6 +10977,6 @@ describe("the displayed side and the unit's LCD selection", () => {
     nameArea().click();
     await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
     expect(errors(shell).some((m) => m.includes("write-refused"))).toBe(true);
-    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
   });
 });

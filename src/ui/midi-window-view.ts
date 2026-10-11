@@ -7,6 +7,7 @@
 // `send` callback it is handed.
 
 import { t } from "../i18n";
+import { setHeardText, setSaid, setSpokenText, spoken } from "./glyph";
 import { el, preserveFocus } from "./dom";
 import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
 import { BUTTON_MODES, TAKE_MODES } from "../core/midi/mapping";
@@ -123,10 +124,11 @@ export function mappingRow(row: MidiUiRow, m: MidiMessages, send: MidiUiSend): H
   const tr = el("tr", row.linked ? "linked" : "");
   tr.dataset.control = row.control;
   const name = el("td", "mw-ctl");
-  name.textContent = row.label;
-  name.title = row.label;
+  // The row's cell reads, and its controls are named by, the form the assignment is announced as.
+  const who = spoken(row.spoken ?? row.label);
+  setHeardText(name, row.label, who, true);
   const addr = el("td", row.addr ? "mw-addr" : "mw-linked");
-  addr.textContent = row.addr ?? m.linked;
+  setSpokenText(addr, row.addr ?? m.linked);
   if (!row.addr) addr.title = m.linkedHint;
   const opt = el("td", "mw-opt");
   // Which control the row offers is the main window's verdict (see MidiUiRow.option):
@@ -138,13 +140,13 @@ export function mappingRow(row: MidiUiRow, m: MidiMessages, send: MidiUiSend): H
     opt.append(tag);
   } else if (row.option === "mode") {
     opt.append(
-      choice("mw-mode", TAKE_MODES, row.mode, m.mode, m.modeTitle, row.label, (mode) =>
+      choice("mw-mode", TAKE_MODES, row.mode, m.mode, m.modeTitle, who, (mode) =>
         send({ type: "mode", control: row.control, mode }),
       ),
     );
   } else if (row.option === "button") {
     opt.append(
-      choice("mw-btn", BUTTON_MODES, row.button ?? "edge", m.buttonMode, m.buttonModeTitle, row.label, (button) =>
+      choice("mw-btn", BUTTON_MODES, row.button ?? "edge", m.buttonMode, m.buttonModeTitle, who, (button) =>
         send({ type: "button", control: row.control, button }),
       ),
     );
@@ -154,7 +156,7 @@ export function mappingRow(row: MidiUiRow, m: MidiMessages, send: MidiUiSend): H
   btn.type = "button";
   btn.textContent = "✕";
   btn.title = m.remove;
-  btn.setAttribute("aria-label", `${m.remove} — ${row.label}`);
+  btn.setAttribute("aria-label", `${m.remove} — ${who}`);
   btn.addEventListener("click", () => send({ type: "remove", control: row.control }));
   del.append(btn);
   tr.append(name, addr, opt, del);
@@ -192,10 +194,14 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
   document.documentElement.setAttribute("data-theme", state.theme);
   document.title = m.title;
   const restoreFocus = preserveFocus(host, focusKeyOf, (key) => focusTarget(host, key));
-  // The status line is the window's live region: kept for the window's life, so a message
-  // is a change to a region that is already there rather than the content of a new one.
-  const status = [...host.children].find((c): c is HTMLElement => c.classList.contains("mw-status")) ?? statusLine();
-  for (const node of [...host.childNodes]) if (node !== status) node.remove();
+  // The status line prints the message and the live region after it announces the message's
+  // spoken form. Both are kept for the window's life, so a message is a change to a region
+  // that is already there rather than the content of a new one.
+  const kept = (cls: string, make: () => HTMLElement): HTMLElement =>
+    [...host.children].find((c): c is HTMLElement => c.classList.contains(cls)) ?? make();
+  const status = kept("mw-status", statusLine);
+  const said = kept("mw-said", saidLine);
+  for (const node of [...host.childNodes]) if (node !== status && node !== said) node.remove();
 
   const head = el("div", "mw-head");
   const dot = el("span", state.learnOn ? "mw-dot on" : "mw-dot");
@@ -226,7 +232,8 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
   const shown = !state.learnOn ? m.hintIdle : state.armed ? m.hintArmed(state.armed) : m.hintLearn;
   for (const text of new Set([m.hintIdle, m.hintLearn, shown])) {
     const line = el("span", "");
-    line.textContent = text;
+    // The armed wording names the control by its caption.
+    setSpokenText(line, text, Boolean(state.armed) && text === shown);
     if (text !== shown) line.setAttribute("aria-hidden", "true");
     hint.append(line);
   }
@@ -259,13 +266,22 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
   body.append(ports, learn, list);
 
   if (status.parentNode === host) status.before(head, body);
-  else host.append(head, body, status);
-  if (status.textContent !== state.status) status.textContent = state.status;
+  else host.append(head, body, status, said);
+  if (status.textContent !== state.status) {
+    status.textContent = state.status;
+    setSaid(said, spoken(state.status, Boolean(state.statusCaptioned)));
+  }
   restoreFocus();
 }
 
 function statusLine(): HTMLElement {
   const status = el("div", "mw-status");
-  status.setAttribute("role", "status");
+  status.setAttribute("aria-hidden", "true");
   return status;
+}
+
+function saidLine(): HTMLElement {
+  const said = el("div", "mw-said sr-only");
+  said.setAttribute("role", "status");
+  return said;
 }
