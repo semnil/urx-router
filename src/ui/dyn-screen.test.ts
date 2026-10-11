@@ -1011,6 +1011,47 @@ describe("refresh", () => {
       expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
     });
 
+    // A mouse dragging the cap or the plot while a finger rests elsewhere on the screen, and
+    // whose release the page never heard (the native context menu takes a right press's): its
+    // move with no button held ends that mouse's drag at once — the finger still down holds
+    // the repaint, not the mouse's drag.
+    for (const control of ["#dyn-threshold-cap", "#dyn-curve"]) {
+      it(`ends a mouse's ${control} drag at its move with no button held while a finger stays down`, () => {
+        host = dynHost();
+        const screen = new DynScreen(host.hooks);
+        screen.open(GATE, "ch1");
+        host.frame();
+        const target = host.box.querySelector<HTMLElement>(control)!;
+        const slider = rowsByKey(host.box).get("threshold")!;
+        const at = (type: string, buttons: number, y: number): PointerEvent => {
+          const ev = new PointerEvent(type, {
+            bubbles: true,
+            clientY: y,
+            pointerId: 1,
+            pointerType: "mouse",
+            button: 2,
+            buttons,
+          });
+          Object.defineProperty(ev, "offsetX", { value: y * 3 });
+          return ev;
+        };
+        host.box.dispatchEvent(finger("pointerdown"));
+        target.dispatchEvent(at("pointerdown", 2, 40));
+        target.dispatchEvent(at("pointermove", 2, 80));
+        const dragged = threshold();
+        // The positive control: the mouse's drag is live.
+        expect(host.patches.length).toBeGreaterThan(0);
+        screen.refresh();
+        target.dispatchEvent(at("pointermove", 0, 150));
+        target.dispatchEvent(at("pointermove", 0, 160));
+        expect(threshold()).toBe(dragged);
+        expect(target.hasPointerCapture(1)).toBe(false);
+        expect(rowsByKey(host.box).get("threshold"), "the finger still holds the repaint").toBe(slider);
+        window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 2, pointerType: "touch" }));
+        expect(rowsByKey(host.box).get("threshold")).not.toBe(slider);
+      });
+    }
+
     // A release another application took is never delivered, so the window coming back is
     // what ends that press — or the next press here would wait on it for good.
     it("lands the repaint when the window comes back from a release it never heard", () => {
