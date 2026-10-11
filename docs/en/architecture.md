@@ -2116,7 +2116,9 @@ written at all:
   the selection while live: a Live-sync start and each 762 notify show the selected channel's side, and a
   switch made in the app writes 762 — which also moves the unit's selection frame to that channel. A notify
   carrying a value the app wrote moments earlier is the unit's answer to it and is consumed (`LcdEchoes`), so
-  two switches in a row do not bounce. No plan key moves either way.
+  two switches in a row do not bounce. One write is on the wire at a time: the switches made while it is go
+  out as one write of the latest side, and not at all when that is the side the write sent — the unit leaves
+  most of two writes 20 ms apart unannounced, so the answers cannot be counted. No plan key moves either way.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being

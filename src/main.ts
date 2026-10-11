@@ -1201,6 +1201,9 @@ const follow =
           // of a stereo channel shows that channel's side. Neither opens a reconcile.
           if (at(LCD_SELECTION_ADDR)) {
             if (lcdEchoes.take(p.value)) return true;
+            // The unit moved its selection itself, so what this app last wrote is no longer what
+            // the unit holds.
+            lcdLast = null;
             const sel = decodeLcdSelection(getModel(modelId), p.value);
             if (sel) switchSide(sel.channel, sel.side, "device");
             return true;
@@ -1498,8 +1501,11 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   midi?.liveEnded();
   follow?.end();
   live?.end();
-  // The sides the session left stay; what it wrote has no session left to answer it.
+  // The sides the session left stay; what it wrote has no session left to answer it, and a
+  // switch still waiting to be written has no session to go to.
   lcdEchoes.clear();
+  lcdNext = null;
+  lcdLast = null;
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
   liveAdopted = 0;
@@ -2135,6 +2141,29 @@ function refreshInspector(): void {
 
 // The LCD selections this app has written that the unit has not announced yet.
 const lcdEchoes = new LcdEchoes();
+// One LCD selection write at a time: a switch made while one is on the wire waits, and only the
+// latest of those goes out once it returns — and not at all when it is the value just written.
+let lcdWriting = false;
+let lcdNext: number | null = null;
+let lcdLast: number | null = null;
+
+function writeLcd(raw: number, guess: string | undefined): void {
+  if (lcdWriting) {
+    lcdNext = raw;
+    return;
+  }
+  lcdWriting = true;
+  lcdLast = raw;
+  lcdEchoes.note(raw);
+  writeLcdSelection(raw)
+    .catch((err: unknown) => stopLiveOnError(errorText(err) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : "")))
+    .finally(() => {
+      lcdWriting = false;
+      const next = lcdNext;
+      lcdNext = null;
+      if (next !== null && next !== lcdLast && liveSessionUp) writeLcd(next, guess);
+    });
+}
 
 /** Show `side` of a stereo channel: the one funnel both views' switches and the unit's own
  *  selection reach. UI state rather than a plan edit — no dirty flag, no undo entry — so each
@@ -2151,12 +2180,8 @@ function switchSide(channelId: string, side: JackSide, origin: "app" | "device")
   const model = getModel(modelId);
   const raw = encodeStereoSide(model, channelId, side);
   if (raw === null) return;
-  lcdEchoes.note(raw);
   const [id, , y] = LCD_SELECTION_ADDR;
-  const guess = unverifiedGuessAt(model, id, y);
-  writeLcdSelection(raw).catch((err: unknown) =>
-    stopLiveOnError(errorText(err) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : "")),
-  );
+  writeLcd(raw, unverifiedGuessAt(model, id, y));
 }
 
 /**

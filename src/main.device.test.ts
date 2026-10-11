@@ -10615,6 +10615,7 @@ describe("the displayed side and the unit's LCD selection", () => {
     expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
     nameArea().click();
     expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    // Inside the answer window, which the case is about: two switches, so two writes at most.
     await vi.waitFor(() => expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]));
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
     expect(showing(), "the late answer to the first write").toBe("CH 5/6, showing CH 5 (L)");
@@ -10623,6 +10624,36 @@ describe("the displayed side and the unit's LCD selection", () => {
     // The positive control: a selection made on the unit itself still shows.
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
     expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    await end(shell);
+  });
+
+  // Switches made while a write is on the wire go out as one write of the latest side, and
+  // not at all when the latest is the side that write sent.
+  it("writes the latest of the switches made while a write is on the wire", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
+    await goLive();
+    nameArea().click();
+    nameArea().click();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    // Past the write's return, where a queued one would go out.
+    await drainShell(shell, () => false);
+    expect(lcdWrites(shell)).toEqual([0x0101]);
+    nameArea().click();
+    nameArea().click();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
+    await drainShell(shell, () => false);
+    expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]);
+    // The unit moving its own selection while a write is on the wire: the latest switch goes
+    // out even when it is the value that write sent, since the unit no longer holds it.
+    nameArea().click();
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0102 }]);
+    nameArea().click();
+    nameArea().click();
+    expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
+    await drainShell(shell, () => false);
+    expect(lcdWrites(shell)).toEqual([0x0101, 0x0100, 0x0101, 0x0101]);
     await end(shell);
   });
 
