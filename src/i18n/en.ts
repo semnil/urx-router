@@ -653,10 +653,10 @@ export const en = {
       signals: tr("Connection types"),
       nodes: tr("Nodes"),
       source: tr("Source select"),
-      send: tr("Bus send"),
+      send: tr("Bus send (TO ST, OSC: on/off only)"),
       patch: tr("Output / Rec select"),
       pre: tr("Pre-fader send"),
-      recPoint: tr("Rec Point tap"),
+      recPoint: tr("Rec Point tap (channels only)"),
     },
   },
   // The channel tuning screens. A lane's CAPTION names the end of the processor it reads

@@ -781,6 +781,27 @@ describe("renderInspector — empty selection", () => {
     expect(rowLabels()).toEqual([]);
   });
 
+  // The legend's send row names the only sources an on/off send leaves from, and its Rec Point
+  // row says the tap is a channel's: every other recording leaves a bus's right edge.
+  it("names in the legend every source an on/off send leaves from, and every recording a tap does not carry", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), null, act);
+    expect(panel.textContent).toContain(t().inspector.legend.send);
+    expect(panel.textContent).toContain(t().inspector.legend.recPoint);
+    for (const id of MODEL_IDS) {
+      const model = getModel(id);
+      const kindOf = (r: string) => model.nodes.find((n) => n.id === r.slice(0, r.indexOf(":")))?.kind;
+      const switches = model.rules.filter((r) => r.kind === "sendSwitch");
+      expect(switches.length, `${id}: the premise, on/off sends exist`).toBeGreaterThan(0);
+      for (const r of switches) {
+        const from = r.from.slice(0, r.from.indexOf(":"));
+        const toSt = (from === "bus.mix1" || from === "bus.mix2") && r.to === "bus.stereo:in";
+        expect(toSt || from === "bus.osc", `${id}: ${r.from} -> ${r.to}`).toBe(true);
+      }
+      for (const r of model.rules.filter((r) => r.kind === "record"))
+        expect(["channel", "bus"], `${id}: ${r.from}`).toContain(kindOf(r.from));
+    }
+  });
+
   it("lists recent plans and opens the one that was clicked", () => {
     const recent = [
       { path: "/a/one.json", name: "one", modelId: "URX44V" as const },
