@@ -10897,10 +10897,17 @@ describe("the displayed side and the unit's LCD selection", () => {
     expect(lcdWrites(shell), "the queued switch is not sent").toEqual([0x0101]);
     // The app's own answer keeps the queue: a switch queued behind a write whose answer arrives
     // first is still sent.
+    // `Date.now()`, which the answer window runs on, is held still from the write to its
+    // answer, so the answer lands inside the window however long the two switches take.
     held = true;
-    nameArea().click();
-    nameArea().click();
-    notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      nameArea().click();
+      nameArea().click();
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+    } finally {
+      vi.useRealTimers();
+    }
     finish();
     await drainShell(shell, () => false);
     expect(lcdWrites(shell)).toEqual([0x0101, 0x0101, 0x0100]);
