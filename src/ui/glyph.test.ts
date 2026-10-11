@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { setSpokenText, setSymbolText, spoken } from "./glyph";
+import { setNamedText, setSpokenText, spoken } from "./glyph";
 import { setLang } from "../i18n";
 import { en } from "../i18n/en";
 import { ja } from "../i18n/ja";
@@ -14,16 +14,24 @@ const PHASE = "Ф";
 // of the fonts the UI resolves to, or is not a circle with a vertical bar at all.
 const RETIRED = ["φ", "ϕ", "Φ", "Ø", "⌀"];
 
-describe("setSymbolText", () => {
-  it("keeps the symbol visible and names it by its word", () => {
-    const el = document.createElement("div");
-    el.textContent = "old";
-    setSymbolText(el, PHASE, "Phase");
-    expect(el.textContent).toBe(PHASE);
-    const img = el.querySelector("[role='img']");
-    expect(img?.getAttribute("aria-label")).toBe("Phase");
-    expect(img?.textContent).toBe(PHASE);
-    expect(el.childNodes).toHaveLength(1);
+// No mark is announced through a part with a role of its own: a screen reader names that role
+// after each part (Windows' Narrator reads "グラフィック" after every image), so a name is an
+// attribute of the element that carries it and a sentence is a run of text.
+describe("setNamedText", () => {
+  it("keeps the text as printed and names the element by its spoken form", () => {
+    const el = document.createElement("button");
+    setNamedText(el, "CH 5/6");
+    expect(el.textContent).toBe("CH 5/6");
+    expect(el.getAttribute("aria-label")).toBe("C H 5 slash 6");
+    expect(el.children).toHaveLength(0);
+  });
+
+  it("names a symbol caption by its word, and leaves a name with no mark unnamed", () => {
+    const chip = document.createElement("div");
+    setNamedText(chip, PHASE, "Phase");
+    expect([chip.textContent, chip.getAttribute("aria-label")]).toEqual([PHASE, "Phase"]);
+    setNamedText(chip, "MUTE");
+    expect(chip.hasAttribute("aria-label"), "a name read as printed carries no second one").toBe(false);
   });
 });
 
@@ -38,6 +46,7 @@ describe("spoken", () => {
     ["en", "USB DAW 1/2", "USB DAW 1 slash 2"],
     ["en", "Output / Rec select", "Output slash Rec select"],
     ["ja", "MIC/LINE 1/2", "MIC スラッシュ LINE 1 スラッシュ 2"],
+    ["ja", "CH 5/6、CH 6 (R) を表示中", "C H 5 スラッシュ 6、C H 6 (R) を表示中"],
   ])("reads the marks of a name (%s): %s", (lang, text, read) => {
     setLang(lang as "en" | "ja");
     expect(spoken(text)).toBe(read);
@@ -56,26 +65,23 @@ describe("spoken", () => {
 });
 
 describe("setSpokenText", () => {
-  it("keeps the text as printed and announces each mark and caption by its reading", () => {
+  it("prints the text for the eye and its spoken form for assistive technology", () => {
     const el = document.createElement("p");
-    setSpokenText(el, `Assigned CC 7 to CH 5/6 · ${PHASE}R, then CH 1 · ${PHASE}`, true);
-    expect(el.textContent).toBe(`Assigned CC 7 to CH 5/6 · ${PHASE}R, then CH 1 · ${PHASE}`);
-    const imgs = [...el.querySelectorAll("[role='img']")].map((i) => [i.textContent, i.getAttribute("aria-label")]);
-    expect(imgs).toEqual([
-      ["CH", "C H"],
-      ["5/6", `5 ${en.speech.slash} 6`],
-      ["·", en.speech.dot],
-      [`${PHASE}R`, en.midi.paramSpoken.phaseR],
-      ["CH", "C H"],
-      ["·", en.speech.dot],
-      [PHASE, en.midi.paramSpoken.phase],
-    ]);
+    setSpokenText(el, `Assigned CC 7 to CH 5/6 · ${PHASE}R`, true);
+    const [shown, heard] = [...el.children] as HTMLElement[];
+    expect(el.children).toHaveLength(2);
+    expect(shown.getAttribute("aria-hidden")).toBe("true");
+    expect(shown.textContent).toBe(`Assigned CC 7 to CH 5/6 · ${PHASE}R`);
+    expect(heard.className).toBe("sr-only");
+    expect(heard.textContent).toBe("Assigned CC 7 to C H 5 slash 6 dot Phase R");
+    expect(el.querySelector("[role]"), "no part carries a role of its own").toBeNull();
   });
 
-  it("leaves a caption symbol as text where the sentence is not captioned", () => {
+  it("leaves a caption symbol as printed where the sentence is not captioned", () => {
     const el = document.createElement("p");
     setSpokenText(el, `MIDI input error: ${PHASE} port`);
-    expect(el.querySelector("[role='img']")).toBeNull();
+    expect(el.childNodes).toHaveLength(1);
+    expect(el.textContent).toBe(`MIDI input error: ${PHASE} port`);
   });
 
   it("writes a sentence with no mark as plain text", () => {

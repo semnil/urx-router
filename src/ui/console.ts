@@ -107,7 +107,7 @@ import {
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
-import { setLevelText, setSymbolText, spoken } from "./glyph";
+import { setLevelText, setNamedText, spoken } from "./glyph";
 import {
   el,
   focusables,
@@ -2161,7 +2161,7 @@ export class Console {
       rerender?: boolean;
       keys?: readonly string[];
       ctl?: string;
-      /** The word a symbol `label` is announced as (see setSymbolText). */
+      /** The word a symbol `label` is announced as (see setNamedText). */
       spoken?: string;
     },
   ): HTMLElement {
@@ -2172,7 +2172,7 @@ export class Console {
     // an ARIA boolean, and a screen reader is told nothing rather than "pressed".
     const state = Boolean(on);
     const chip = el("div", cls + (mute ? " mute" : "") + (state ? " on" : "") + (readonlyTitle ? " readonly" : ""));
-    if (spoken) setSymbolText(chip, label, spoken);
+    if (spoken) setNamedText(chip, label, spoken);
     else chip.textContent = label;
     chip.dataset.ctl = ctl ?? midiId ?? label;
     chip.setAttribute("role", "button");

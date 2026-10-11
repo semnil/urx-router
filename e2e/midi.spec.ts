@@ -1,4 +1,4 @@
-import { test, expect, colorToken, contrastRatio, type Locator, type Page } from "./fixtures";
+import { test, expect, colorToken, contrastRatio, type Page } from "./fixtures";
 import { planParamZ } from "./plan-param";
 import { LIVE_COMMANDS, answerTimingOf, installAnswerQueue, untilAnswered } from "./tauri-stub";
 import { pickBand, screenBox } from "./dyn-helpers";
@@ -406,15 +406,17 @@ test("the MIDI window keeps keyboard focus and its status line across a state pu
 });
 
 // The armed ring is a picture: what it means — this control's keys now arm rather than
-// edit — is said on the main window's status line, which is a live region.
+// edit — is said on the main window's status line, whose live region announces it.
 test("learn on, the armed control and learn off are said on the main status line", async ({ page }) => {
   const win = await openMidiWindow(page);
   const status = page.locator("#statusbar");
-  await expect(status).toHaveAttribute("role", "status");
+  const said = page.locator("#statusbar-said");
+  await expect(said).toHaveAttribute("role", "status");
   await setLearn(page, win, true);
   await expect(status).toHaveText("Click a control on the console or a tuning screen to arm it for binding.");
   await strip(page, "CH 1").locator(".con-fader").click();
   await expect(status).toHaveText("Move a MIDI control to bind CH 1 · Level…");
+  await expect(said).toHaveText("Move a MIDI control to bind C H 1 dot Level…");
   await setLearn(page, win, false);
   await expect(status).toHaveText("Learn is off: the console and the tuning screens edit again.");
 });
@@ -436,11 +438,14 @@ for (const lang of ["en", "ja"] as const) {
     await win.setViewportSize({ width: 440, height: 620 });
     const hint = win.locator(".mw-hint");
     const below = win.locator(".mw-sec").nth(2);
-    // One wording is painted at a time, and it is the one the state calls for.
+    // One wording is painted at a time, and it is the one the state calls for. A wording whose
+    // spoken form differs prints in a part hidden from assistive technology.
     const painted = hint.locator(":scope > *").filter({ visible: true });
-    const read = async (wording: string | RegExp): Promise<{ hint: number; below: number }> => {
+    const printed = (): Promise<string | null> =>
+      painted.evaluate((l) => (l.querySelector(":scope > [aria-hidden='true']") ?? l).textContent);
+    const read = async (wording: string): Promise<{ hint: number; below: number }> => {
       await expect(painted).toHaveCount(1);
-      await expect(painted).toHaveText(wording);
+      await expect.poll(printed).toBe(wording);
       return { hint: (await hint.boundingBox())!.height, below: (await below.boundingBox())!.y };
     };
     const m = (lang === "ja" ? ja : en).midi;
@@ -449,6 +454,9 @@ for (const lang of ["en", "ja"] as const) {
     const learn = await read(m.hintLearn);
     await strip(page, "CH 1").locator(".con-fader").click();
     const armed = await read(m.hintArmed(`CH 1 · ${m.param.level}`));
+    await expect(painted.locator(":scope > .sr-only")).toHaveText(
+      m.hintArmed(`C H 1 ${lang === "ja" ? ja.speech.dot : en.speech.dot} ${m.param.level}`),
+    );
     await setLearn(page, win, false);
     const back = await read(m.hintIdle);
     expect({ learn, armed, back }).toEqual({ learn: idle, armed: idle, back: idle });
@@ -835,18 +843,19 @@ test("learn on a stereo strip's Ф binds the side it shows", async ({ page }) =>
   await s.getByRole("button", { name: "C H 5 slash 6, showing C H 5 (L)", exact: true }).click();
   await expect(s.getByRole("button", { name: "C H 5 slash 6, showing C H 6 (R)", exact: true })).toBeVisible();
   await s.getByRole("button", { name: "Phase", exact: true }).click();
-  // Both lines that name the armed control announce its caption by its word.
-  const spoken = (scope: Locator) => scope.getByRole("img", { name: "Phase R", exact: true });
+  // Both lines that name the armed control print its caption and announce the sentence's
+  // spoken form: the caption by its word, the pair as its halves around the slash's word.
+  const heard = "C H 5 slash 6 dot Phase R";
   await expect(page.locator("#statusbar")).toContainText("CH 5/6 · ФR");
-  await expect(spoken(page.locator("#statusbar"))).toHaveText("ФR");
-  await expect(spoken(win.locator(".mw-hint > :not([aria-hidden])"))).toHaveText("ФR");
-  // …and its other marks by their readings: the pair as its halves around the slash's word.
-  await expect(page.locator("#statusbar").getByRole("img", { name: "5 slash 6", exact: true })).toHaveText("5/6");
+  await expect(page.locator("#statusbar-said")).toContainText(heard);
+  await expect(win.locator(".mw-hint > :not([aria-hidden]) > .sr-only")).toContainText(heard);
+  // No part of a line is announced through a role of its own (Narrator names it after each part).
+  await expect(page.locator(".statusbar-row [role='img']")).toHaveCount(0);
   await sendMidi(page, [0x90, 64, 127]);
   await expect(mapRow(win, "ch_5_6/phaseR")).toBeVisible();
   await expect(page.locator("#statusbar")).toContainText("CH 5/6 · ФR");
-  await expect(spoken(page.locator("#statusbar"))).toHaveText("ФR");
-  await expect(spoken(win.locator(".mw-status"))).toHaveText("ФR");
+  await expect(page.locator("#statusbar-said")).toContainText(heard);
+  await expect(win.locator(".mw-said")).toContainText(heard);
   await expect(mapRow(win, "ch_5_6/phaseL")).toHaveCount(0);
   // The row prints the caption and is announced by the word it stands for.
   await expect(mapRow(win, "ch_5_6/phaseR").locator(".mw-ctl")).toHaveText("CH 5/6 · ФR");

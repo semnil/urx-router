@@ -7,7 +7,7 @@
 // `send` callback it is handed.
 
 import { t } from "../i18n";
-import { setSpokenText, spoken } from "./glyph";
+import { setNamedText, setSpokenText, spoken } from "./glyph";
 import { el, preserveFocus } from "./dom";
 import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
 import { BUTTON_MODES, TAKE_MODES } from "../core/midi/mapping";
@@ -124,10 +124,10 @@ export function mappingRow(row: MidiUiRow, m: MidiMessages, send: MidiUiSend): H
   const tr = el("tr", row.linked ? "linked" : "");
   tr.dataset.control = row.control;
   const name = el("td", "mw-ctl");
-  setSpokenText(name, row.label, true);
-  name.title = row.label;
-  // The row's controls name the assignment they sit on, by the form it is announced as.
+  // The row's cell and its controls name the assignment by the form it is announced as.
   const who = spoken(row.spoken ?? row.label);
+  setNamedText(name, row.label, who);
+  name.title = row.label;
   const addr = el("td", row.addr ? "mw-addr" : "mw-linked");
   addr.textContent = row.addr ?? m.linked;
   if (!row.addr) addr.title = m.linkedHint;
@@ -195,10 +195,14 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
   document.documentElement.setAttribute("data-theme", state.theme);
   document.title = m.title;
   const restoreFocus = preserveFocus(host, focusKeyOf, (key) => focusTarget(host, key));
-  // The status line is the window's live region: kept for the window's life, so a message
-  // is a change to a region that is already there rather than the content of a new one.
-  const status = [...host.children].find((c): c is HTMLElement => c.classList.contains("mw-status")) ?? statusLine();
-  for (const node of [...host.childNodes]) if (node !== status) node.remove();
+  // The status line prints the message and the live region after it announces the message's
+  // spoken form. Both are kept for the window's life, so a message is a change to a region
+  // that is already there rather than the content of a new one.
+  const kept = (cls: string, make: () => HTMLElement): HTMLElement =>
+    [...host.children].find((c): c is HTMLElement => c.classList.contains(cls)) ?? make();
+  const status = kept("mw-status", statusLine);
+  const said = kept("mw-said", saidLine);
+  for (const node of [...host.childNodes]) if (node !== status && node !== said) node.remove();
 
   const head = el("div", "mw-head");
   const dot = el("span", state.learnOn ? "mw-dot on" : "mw-dot");
@@ -263,15 +267,22 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
   body.append(ports, learn, list);
 
   if (status.parentNode === host) status.before(head, body);
-  else host.append(head, body, status);
+  else host.append(head, body, status, said);
   if (status.textContent !== state.status) {
-    setSpokenText(status, state.status, Boolean(state.statusCaptioned));
+    status.textContent = state.status;
+    said.textContent = spoken(state.status, Boolean(state.statusCaptioned));
   }
   restoreFocus();
 }
 
 function statusLine(): HTMLElement {
   const status = el("div", "mw-status");
-  status.setAttribute("role", "status");
+  status.setAttribute("aria-hidden", "true");
   return status;
+}
+
+function saidLine(): HTMLElement {
+  const said = el("div", "mw-said sr-only");
+  said.setAttribute("role", "status");
+  return said;
 }

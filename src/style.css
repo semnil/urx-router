@@ -1491,6 +1491,21 @@ input[type="range"]:focus-visible,
   white-space: nowrap;
 }
 
+/* Text for assistive technology only: laid out at no size and clipped away, but read as
+   it stands — the spoken form of a line whose printed form a screen reader would misread
+   (ui/glyph.ts). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ---- link ledger (status bar readout, experimental) ---- */
 
 .linkbar {

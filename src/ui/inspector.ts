@@ -99,7 +99,7 @@ import { getSettings } from "../core/settings";
 import type { RecentEntry } from "../core/storage";
 import type { ConnectOrigin, Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
-import { setLevelText, setSpokenText, setSymbolText } from "./glyph";
+import { setLevelText, setNamedText } from "./glyph";
 import {
   holdInertOnBlur,
   isHoldingInert,
@@ -1251,7 +1251,7 @@ function nodeKindLabel(kind: NodeKind): string {
 
 function heading(text: string): HTMLElement {
   const h = document.createElement("h2");
-  setSpokenText(h, text);
+  setNamedText(h, text);
   return h;
 }
 
@@ -1706,7 +1706,7 @@ function sideSwitch(model: DeviceModel, id: string, actions: InspectorActions, m
   for (const side of ["L", "R"] as const) {
     const b = document.createElement("button");
     b.type = "button";
-    setSpokenText(b, (side === "L" ? m.inspector.sideL : m.inspector.sideR)(sideLabel(model, id, side)));
+    setNamedText(b, (side === "L" ? m.inspector.sideL : m.inspector.sideR)(sideLabel(model, id, side)));
     b.setAttribute("aria-pressed", String(side === shown));
     b.addEventListener("click", () => actions.onSwitchSide(id, side));
     bar.append(b);
@@ -1727,7 +1727,8 @@ function boolToggle(
   const state = Boolean(value);
   const { row, labelId: id } = paramBlock(label, "", spoken);
   if (lockedTitle !== undefined) row.title = lockedTitle;
-  const group = toggleGroup(id, name);
+  // A row whose label is a symbol names its pair by the word instead of by the label.
+  const group = spoken === undefined ? toggleGroup(id, name) : toggleGroup(undefined, spoken);
   const make = (on: boolean, text: string): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
@@ -1948,8 +1949,8 @@ function paramBlock(
     const head = document.createElement("div");
     head.className = "param-label";
     const label = document.createElement("span");
-    if (spoken) setSymbolText(label, labelText, spoken);
-    else label.textContent = labelText;
+    label.textContent = labelText;
+    if (spoken) label.setAttribute("aria-hidden", "true");
     id = labelId("insp-lbl");
     label.id = id;
     head.append(label, value);

@@ -1061,20 +1061,20 @@ the inspector, and the open modal itself.
 > resolves to — Menlo on macOS, Cascadia Code and Consolas on Windows; U+03C6 (Greek phi) is a looped letter in Menlo,
 > U+03D5 (the phi symbol) a looped one in Consolas, and U+00D8 a slashed letter. A screen reader would announce the
 > character itself as a Cyrillic letter, so every control it captions is named by its word instead —
-> `Phase` / `フェーズ`, the user guide's own name for the control: the CONSOLE chip and the Inspector row
-> through `setSymbolText` (`src/ui/glyph.ts`), and a MIDI assignment on it (`ФL` / `ФR` for a stereo
-> channel's sides) through `midi.paramSpoken`, which the MIDI window's row and the controls on it are
-> named by. A sentence that names a control by its caption — the binding, the armed control and a refused
-> learn, on the app's status line and the MIDI window's, and the window's armed hint — is written through
-> `setSpokenText` with its `captioned` flag, which leaves the text as it is and announces each caption symbol in it by its word.
-> Only those sentences are: the MIDI side marks them (`onStatus`'s `captioned`, `statusCaptioned` in the
-> window's state), since a port or file name holding the same character is not a caption. `src/ui/glyph.test.ts` holds the captions to Ф and refuses the other marks in the sources and
-> these documents. On Windows 11 (WebView2 154), read through the DevTools protocol, the chip and the
-> Inspector row are drawn in the system's Cascadia Code (`CascadiaCodeRoman-SemiBold` on the chip), the
-> bar standing out of the ring above and below; the accessibility tree names the chip and the row's group
-> `フェーズ` / `Phase` and holds a status line's `ФR` as an image named `フェーズ R`. Narrator with its
-> Japanese voice read the chip as "フェーズ、切り替えボタン、オフ" and the armed status line's caption as
-> "フェーズ、アール", and spelled out Ф as a letter nowhere.
+> `Phase` / `フェーズ`, the user guide's own name for the control: the CONSOLE chip carries it as its
+> name (`setNamedText`, `src/ui/glyph.ts`), the Inspector row names its pair by it with the printed Ф
+> hidden from assistive technology, and a MIDI assignment on it (`ФL` / `ФR` for a stereo channel's
+> sides) reads it from `midi.paramSpoken`, which the MIDI window's row and the controls on it are named
+> by. A sentence that names a control by its caption — the binding, the armed control and a refused
+> learn, on the app's status line and the MIDI window's, and the window's armed hint — is announced in
+> its spoken form with each caption symbol read as its word (`spoken` with its `captioned` flag). Only
+> those sentences are: the MIDI side marks them (`onStatus`'s `captioned`, `statusCaptioned` in the
+> window's state), since a port or file name holding the same character is not a caption.
+> `src/ui/glyph.test.ts` holds the captions to Ф and refuses the other marks in the sources and these
+> documents. On Windows 11 (WebView2 154), read through the DevTools protocol, the chip and the Inspector
+> row are drawn in the system's Cascadia Code (`CascadiaCodeRoman-SemiBold` on the chip), the bar
+> standing out of the ring above and below, and Narrator with its Japanese voice read the chip as
+> "フェーズ、切り替えボタン、オフ".
 
 > **A name's marks are read as words, and only by assistive technology.** The printed text keeps
 > `CH 5/6 · Source`; what a screen reader is handed spells `CH` as `C H`, reads an a/b pair as its two
@@ -1083,11 +1083,16 @@ the inspector, and the open modal itself.
 > as printed, Windows' Japanese voice took `CH` for a country, `5/6` for a fraction or a date and `·` for
 > its character name; VoiceOver took `5/6` in a sentence for a date and left `·` silent, as Windows'
 > English voices did.
-> `spoken` (`src/ui/glyph.ts`) builds the form for a name handed over as a string — a CONSOLE strip's
-> group, its name area, its power LED and main fader, a graph node, a MIDI row's controls — and
-> `setSpokenText` writes text that is announced as it stands with each mark as an image named by its
-> reading: both status lines, the MIDI window's hint and rows, the Inspector's title and side switch,
-> and a tuning screen's channel. `src/ui/glyph.test.ts` holds the readings in both languages.
+> `spoken` (`src/ui/glyph.ts`) builds the form, and it reaches a screen reader one of three ways, none of
+> them a part with a role of its own — Narrator names that role after every such part, so a sentence
+> whose marks were images read "グラフィック" after each. **A name** is the element's own `aria-label`:
+> a CONSOLE strip's group, its name area, its power LED and main fader, a graph node, a MIDI row's cell
+> and controls (`spoken`), and the Inspector's title, its side switch and a tuning screen's title
+> (`setNamedText`). **A status line** prints the message and announces it through a live region beside
+> it that holds the spoken form (`#statusbar-said`, the MIDI window's `.mw-said`). **The MIDI window's
+> hint**, a line no role can name, prints its wording in a part hidden from assistive technology next to
+> a visually hidden part holding the spoken form (`setSpokenText`). `src/ui/glyph.test.ts` holds the
+> readings in both languages.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
 > `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **Those five apply to prose as much

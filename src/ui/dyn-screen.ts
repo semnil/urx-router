@@ -50,7 +50,7 @@ import type { SettingsRowOptions } from "./dom";
 import { fineTag, optInFine } from "./fine";
 import { armOnActivate, markMidi } from "./midi-learn";
 import type { MidiLearnHooks } from "./midi-learn";
-import { setLevelText, setSpokenText } from "./glyph";
+import { setLevelText, spoken } from "./glyph";
 import { t } from "../i18n";
 import type { Messages } from "../i18n/en";
 import {
@@ -1531,10 +1531,13 @@ export class DynScreen {
     const title = el("h2", "");
     title.id = "dyn-screen-title";
     const ch = el("span", "gt-ch");
-    setSpokenText(ch, proc.nodeLabel?.(this.ctx()) ?? channelLabel(this.hooks.getModel(), this.nodeId));
+    ch.textContent = proc.nodeLabel?.(this.ctx()) ?? channelLabel(this.hooks.getModel(), this.nodeId);
     const name = el("span", "");
     name.textContent = proc.title(m, this.ctx());
     title.append(ch, name);
+    // The title names the screen by the channel's spoken form (ui/glyph.ts, spoken).
+    if (spoken(ch.textContent) !== ch.textContent)
+      title.setAttribute("aria-label", `${spoken(ch.textContent)} ${name.textContent}`);
 
     const grid = el("div", "prefs-grid");
     // A bank of faces reserves one height for all of them. Its faces carry different row

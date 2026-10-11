@@ -83,7 +83,7 @@ import { Graph } from "./ui/graph";
 import type { ConnectOrigin, LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
 import { copyText, focusables, preserveFocus } from "./ui/dom";
-import { setSpokenText } from "./ui/glyph";
+import { spoken } from "./ui/glyph";
 import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
 import { MidiControl } from "./ui/midi";
@@ -251,6 +251,7 @@ const graphHost = $<HTMLElement>("graph-host");
 const inspectorHost = $<HTMLElement>("inspector");
 const consoleHost = $<HTMLElement>("console-host");
 const statusbar = $<HTMLElement>("statusbar");
+const statusbarSaid = $<HTMLElement>("statusbar-said");
 
 // The device's SETUP > Follow USB state, as far as this session has seen it. Null
 // until a read of the unit succeeds, and back to null when the link it was read over
@@ -2031,10 +2032,12 @@ if (!isTauri()) {
   }
 }
 
-// The line's text is the message, with its marks announced by their readings (setSpokenText);
-// `captioned`: the message names controls by their captions, whose symbols are read as words.
+// The line prints the message; the live region beside it announces the message's spoken form
+// (ui/glyph.ts, spoken). `captioned`: the message names controls by their captions, whose
+// symbols are read as words.
 function setStatus(msg: string, captioned = false): void {
-  setSpokenText(statusbar, msg, captioned);
+  statusbar.textContent = msg;
+  statusbarSaid.textContent = spoken(msg, captioned);
 }
 
 // Surface an operation that did not complete as a modal, so it is not missed the

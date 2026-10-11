@@ -164,7 +164,12 @@ const SURFACES: Record<SurfaceName, Surface> = {
     viaAttribute: ["midi.remove", "midi.linkedHint", "midi.paramSpoken"],
     // The control vocabularies are composed into one label per assignment
     // ("CH 1 · GATE · Threshold"), never printed alone.
-    composed: ["midi.param", "midi.scope", "midi.scopedParam", "midi.paramSpoken"],
+    composed: [
+      "midi.param",
+      "midi.scope",
+      "midi.scopedParam",
+      { key: "midi.paramSpoken", sep: [" · ", " — ", " dot "] },
+    ],
     neverShown: {
       // ui/midi.ts routes all four through the MAIN window's status line.
       "midi.windowError": "the main window's status line",

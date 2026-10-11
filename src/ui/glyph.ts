@@ -23,14 +23,6 @@ export function setLevelText(el: HTMLElement, text: string): void {
   }
 }
 
-// A label written as a symbol a screen reader would otherwise spell out by its character
-// name (the polarity mark Ф is announced as a Cyrillic letter). The symbol stays the
-// visible text, and whatever takes its name from the element's content — a button, or a
-// control labelled by it — is announced by the word the symbol stands for.
-export function setSymbolText(el: HTMLElement, symbol: string, name: string): void {
-  el.replaceChildren(symbolSpan(symbol, name));
-}
-
 /** A caption symbol and the word it is announced as. */
 export interface CaptionSymbol {
   symbol: string;
@@ -87,34 +79,42 @@ function runsOf(text: string, captioned: boolean): Run[] {
 }
 
 /** The form `text` is announced in: each mark read by its reading, the words kept apart by
- *  single spaces and no space before the punctuation that follows. For a name a screen reader
- *  is handed as a string (an aria-label). */
+ *  single spaces and no space beside the punctuation around them. */
 export function spoken(text: string, captioned = false): string {
   return runsOf(text, captioned)
     .map((r) => (r.name === undefined ? r.text : ` ${r.name} `))
     .join("")
     .replace(/ {2,}/g, " ")
-    .replace(/ ([,.、。)\]])/g, "$1")
-    .replace(/([(\[]) /g, "$1")
+    .replace(/ ([,.:;!?、。)\]…])/g, "$1")
+    .replace(/([(\[、。]) /g, "$1")
     .trim();
 }
 
-// A name or sentence written as `text`, with every mark in it — and, when `captioned`, every
-// caption symbol — announced by its reading. `captioned` is only for a sentence whose symbols
-// are all captions (a MIDI assignment, an armed control): a file or port name holding the
-// same character is not one.
-export function setSpokenText(el: HTMLElement, text: string, captioned = false): void {
-  el.replaceChildren(
-    ...runsOf(text, captioned).map((r) =>
-      r.name === undefined ? document.createTextNode(r.text) : symbolSpan(r.text, r.name),
-    ),
-  );
+// An element a screen reader names — a button, a heading, a table cell — written as `text`
+// and named by `said` where that differs from it: by default the text's spoken form, or the
+// word a symbol caption stands for (Ф is announced as a Cyrillic letter otherwise).
+export function setNamedText(el: HTMLElement, text: string, said = spoken(text)): void {
+  el.textContent = text;
+  if (said !== text) el.setAttribute("aria-label", said);
+  else el.removeAttribute("aria-label");
 }
 
-function symbolSpan(symbol: string, name: string): HTMLElement {
-  const span = document.createElement("span");
-  span.setAttribute("role", "img");
-  span.setAttribute("aria-label", name);
-  span.textContent = symbol;
-  return span;
+// Text a screen reader reads as it stands — a line no role can name — written as `text` for
+// the eye and as its spoken form for assistive technology: the printed run is hidden from the
+// one and the spoken run from the other. `captioned` reads every caption symbol by its word
+// too, and is only for a sentence whose symbols are all captions (a MIDI assignment, an armed
+// control): a file or port name holding the same character is not one.
+export function setSpokenText(el: HTMLElement, text: string, captioned = false): void {
+  const said = spoken(text, captioned);
+  if (said === text) {
+    el.textContent = text;
+    return;
+  }
+  const shown = document.createElement("span");
+  shown.setAttribute("aria-hidden", "true");
+  shown.textContent = text;
+  const heard = document.createElement("span");
+  heard.className = "sr-only";
+  heard.textContent = said;
+  el.replaceChildren(shown, heard);
 }

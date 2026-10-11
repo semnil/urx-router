@@ -440,10 +440,13 @@ describe("the deep link", () => {
   // The bar is where a repair, a partial success and a cancellation are all reported, and it
   // is the only place several of them are said at all. Its sibling `#live-tally` is already a
   // live region; this one was not, so a screen reader was told none of it.
+  // The bar prints the message; the region beside it announces the message's spoken form.
   it("announces the status bar as a live region", async () => {
     await boot();
-    expect($("statusbar").getAttribute("role")).toBe("status");
-    expect($("statusbar").getAttribute("aria-live")).toBe("polite");
+    expect($("statusbar").getAttribute("aria-hidden")).toBe("true");
+    expect($("statusbar-said").getAttribute("role")).toBe("status");
+    expect($("statusbar-said").getAttribute("aria-live")).toBe("polite");
+    expect($("statusbar-said").textContent).toBe(spoken($("statusbar").textContent ?? ""));
   });
 
   it("reports a link that decodes into something that is not a plan, as a load error", async () => {

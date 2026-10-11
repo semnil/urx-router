@@ -131,9 +131,7 @@ test("the inspector's controls are reachable by their names", async ({ page }) =
   // The polarity row prints Ф and its pair is named by the word Ф stands for.
   const phase = page.getByRole("group", { name: "Phase", exact: true });
   await expect(phase.getByRole("button", { pressed: true })).toHaveCount(1);
-  await expect(
-    page.locator("#inspector .param-label").filter({ has: page.getByRole("img", { name: "Phase" }) }),
-  ).toContainText("Ф");
+  await expect(page.locator("#inspector .param-label > span[aria-hidden='true']", { hasText: "Ф" })).toBeVisible();
 });
 
 test("name and color round-trip through save and open", async ({ page }, testInfo) => {
