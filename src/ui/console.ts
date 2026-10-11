@@ -73,6 +73,7 @@ import {
   isStereoChannel,
 } from "../core/control/translate";
 import { displayedSide, shownStage } from "../core/stereo-side";
+import { inputShare } from "./input-share";
 import { nodeParamContestPath } from "../core/plan-history";
 import {
   alignLinkedSendPans,
@@ -3033,15 +3034,21 @@ export class Console {
         holder,
         controlId(m.id, "gain"),
       );
-      // A device read that could not read the jack or source leaves the plan's value here.
+      // The knob's notes, on its tooltip and its description: the other channels reading the
+      // same jack or source, and a device read that could not read it (the plan's value shows).
+      const notes: string[] = [];
+      const share = inputShare(model, this.hooks.getPlan(), m.id);
+      if (share) notes.push(t().console.gainShared(share.others));
       if (this.hooks.getPlan().unreadNodes?.has(holder)) {
         const badge = el("span", "con-unread");
         badge.textContent = "?";
         badge.setAttribute("aria-hidden", "true");
         knob.append(badge);
-        const note = t().inspector.notReadFromDevice;
-        knob.title = knob.title ? `${knob.title}\n${note}` : note;
-        knob.setAttribute("aria-description", note);
+        notes.push(t().inspector.notReadFromDevice);
+      }
+      if (notes.length) {
+        knob.title = [knob.title, ...notes].filter(Boolean).join("\n");
+        knob.setAttribute("aria-description", notes.join(" "));
       }
     }
     // PAN (mono) / BALANCE (stereo) = the source's → STEREO main-path pan,

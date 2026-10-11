@@ -1001,6 +1001,23 @@ describe("the INS FX chip", () => {
     expect(knob("ch_5_6").getAttribute("aria-valuenow")).toBe("32");
   });
 
+  // The gain knob names the other channels reading the same jack or source on its tooltip,
+  // and carries none when it reads it alone.
+  it("names the other readers of the jack on the gain knob's tooltip", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch3:in", "source");
+    setExclusiveConnection(plan, "in.micline_3_4:out", "ch2:in", "source");
+    setExclusiveConnection(plan, "in.aux:out", "ch4:in", "source");
+    h = consoleHost({ plan });
+    const knob = (id: string): HTMLElement =>
+      h.strip(id).root.querySelector<HTMLElement>('.con-knob[aria-label="A.GAIN"]')!;
+    expect(knob("ch1").title).toBe(t().console.gainShared("CH 3"));
+    expect(knob("ch1").getAttribute("aria-description")).toBe(t().console.gainShared("CH 3"));
+    expect(knob("ch3").title).toBe(t().console.gainShared("CH 1"));
+    expect(knob("ch2").title, "CH 2 alone on jack 4").toBe("");
+    expect(knob("ch2").hasAttribute("aria-description")).toBe(false);
+  });
+
   it("leaves a stereo strip's name out of MIDI learn, and arms the shown side's φ", () => {
     const armed: string[] = [];
     h = consoleHost({ midi: learnHooks(armed) });

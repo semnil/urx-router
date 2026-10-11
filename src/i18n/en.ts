@@ -99,6 +99,8 @@ export const en = {
     // Accessible name of a stereo channel's name area, which switches the side the strip
     // shows: "CH 5/6, showing CH 6 (R)".
     sideShowing: (pair: string, shown: string) => `${pair}, showing ${shown}`,
+    // The gain knob's tooltip when another channel reads the same jack or source.
+    gainShared: (others: string) => `Shared with ${others}`,
     eq: dev("EQ"),
     // The FX strip's processing chip. Named for what happens there rather than for the
     // strip — the scribble above it already reads FX 1 / FX 2 — and the unit's own
@@ -604,6 +606,11 @@ export const en = {
     sideGroup: tr("Displayed side"),
     sideL: (ch: string) => `${ch} (L)`,
     sideR: (ch: string) => `${ch} (R)`,
+    // Under a channel's panel, when another channel reads the same jack or source: those
+    // channels, and the jack or source they share.
+    shareJack: (others: string, jack: string) => `Shared with ${others}: every channel on ${jack} uses these values.`,
+    shareSource: (others: string, source: string) =>
+      `Shared with ${others}: every channel on ${source} uses this value.`,
     selectionOnly: tr("Selection only — no send parameters."),
     directOutTap: tr(
       "Direct out — tapped at the channel Rec Point, before the fader and Ducker. Route via a STEREO or MIX bus to include them.",

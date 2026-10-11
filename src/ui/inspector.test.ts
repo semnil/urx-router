@@ -893,6 +893,46 @@ describe("renderInspector — the input stage a channel reads", () => {
     expect(sectionByTitle(t().inspector.inputSection)!.textContent).not.toContain(t().inspector.notReadFromDevice);
   });
 
+  // The channels that read the same jack or source are named under the panel; a channel reading
+  // it alone says nothing.
+  describe("the share line", () => {
+    afterEach(() => resetDisplayedSides());
+    const hints = (): string[] => [...panel.querySelectorAll<HTMLElement>("p.hint")].map((p) => p.textContent ?? "");
+    const shareOf = (): string[] => hints().filter((h) => h.startsWith("Shared with"));
+
+    it("names the other channels on the jack, the stereo one by its side, after the last section", () => {
+      const plan = wired([
+        ["in.micline_1_2", "ch3"],
+        ["in.micline_1_2", "ch_5_6"],
+      ]);
+      renderInspector(panel, m, plan, nodeSel("ch1"), act);
+      expect(shareOf()).toEqual([t().inspector.shareJack("CH 3 and CH 5 (L)", "MIC/LINE 1")]);
+      const line = [...panel.querySelectorAll<HTMLElement>("p.hint")].find((p) => p.textContent === shareOf()[0])!;
+      const sections = [...panel.querySelectorAll("details.insp-section")];
+      expect(
+        sections.at(-1)!.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING,
+        "under the last section",
+      ).toBeTruthy();
+      renderInspector(panel, m, plan, nodeSel("ch_5_6"), act);
+      expect(shareOf()).toEqual([t().inspector.shareJack("CH 1 and CH 3", "MIC/LINE 1")]);
+      setDisplayedSide("ch_5_6", "R");
+      renderInspector(panel, m, plan, nodeSel("ch_5_6"), act);
+      expect(shareOf(), "R reads jack 2, which CH 2 reads").toEqual([t().inspector.shareJack("CH 2", "MIC/LINE 2")]);
+    });
+
+    it("names a source's other readers, and says nothing for a channel reading it alone", () => {
+      const plan = wired([
+        ["in.aux", "ch3"],
+        ["in.micline_3_4", "ch1"],
+        ["in.micline_3_4", "ch2"],
+      ]);
+      renderInspector(panel, m, plan, nodeSel("ch3"), act);
+      expect(shareOf()).toEqual([t().inspector.shareSource("CH 5/6", "AUX IN")]);
+      renderInspector(panel, m, plan, nodeSel("ch1"), act);
+      expect(shareOf(), "CH 1 alone on jack 3").toEqual([]);
+    });
+  });
+
   describe("a stereo channel's displayed side", () => {
     afterEach(() => resetDisplayedSides());
     const sideButtons = (): HTMLButtonElement[] => [

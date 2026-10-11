@@ -518,7 +518,9 @@ carries a one-line map of the same directories and points here.
   on every write), `send-fields.ts` which per-send controls a wire shows and what a wire with none of them
   says instead (decided entirely by the routing rules and the destination bus's params, ordered as the
   device's SEND TO screen reads it; no DOM, and the note comes back as a catalog key so the module stays
-  language-independent like `core/*`) and `insert-fx-model.ts` the insert-FX value model — which stored raw
+  language-independent like `core/*`), `input-share.ts` which other channels read the jack or source a
+  channel shows — the one answer the panel's share line and the CONSOLE gain knob's tooltip both print — and
+  `insert-fx-model.ts` the insert-FX value model — which stored raw
   an engine slot reads, how an edit re-keys it, and what has to happen to the outgoing effect's values
   before the selector names another family, which is the step a rendered-DOM assertion passes straight over
   (the bare slot key) / `console.ts` CONSOLE view (mixer-style level overview. Switched via the
@@ -991,8 +993,10 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
 - **Surfaces.** The Inspector's INPUT section and the CONSOLE head draw a channel's input rows from the jack or
   source it reads — a jack's +48V, A.Gain, HI-Z where the jack has it, and Clip Safe; a source's one D.Gain; none
   on no source — and write there. An edit shows on every strip reading the same jack or source, and on no strip
-  reading the other jack of the pair. A device read that could not read a jack or source marks the reading
-  channel's INPUT section and its gain knob (the board's "?"), and the graph marks the input node. A MIDI
+  reading the other jack of the pair. When another channel reads the same jack or source, the Inspector names
+  those channels under its last section ("Shared with CH 3: every channel on MIC/LINE 1 uses these values.") and
+  the CONSOLE gain knob names them on its tooltip; a channel reading it alone shows neither. A device read that
+  could not read a jack or source marks the reading channel's INPUT section and its gain knob (the board's "?"), and the graph marks the input node. A MIDI
   input-stage control keeps the channel's id and writes the jack or source; on a channel with no source it binds
   nothing, and the MIDI window says so in that assignment's row. The +48V / HI-Z rule, its refusals and the
   unauthored-write confirm name the channels reading the jack or source.

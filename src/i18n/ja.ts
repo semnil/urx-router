@@ -62,6 +62,7 @@ export const ja: Messages = {
     // スクリブル電源 LED (ノード master on/off) の読み上げ名サフィックス。
     power: "オン/オフ",
     sideShowing: (pair: string, shown: string) => `${pair}、${shown} を表示中`,
+    gainShared: (others: string) => `${others} と共有`,
     eq: "EQ",
     effect: "EFFECT",
     effectHint:
@@ -480,6 +481,10 @@ export const ja: Messages = {
     sideGroup: "表示する側",
     sideL: (ch: string) => `${ch} (L)`,
     sideR: (ch: string) => `${ch} (R)`,
+    shareJack: (others: string, jack: string) =>
+      `${others} と共有しています。${jack} に載るチャンネルはすべてこの値を使います。`,
+    shareSource: (others: string, source: string) =>
+      `${others} と共有しています。${source} に載るチャンネルはすべてこの値を使います。`,
     selectionOnly: "選択のみ — Send パラメータはありません。",
     directOutTap:
       "ダイレクト出力 — チャンネルの Rec Point でタップ (フェーダー・Ducker より前段)。含めるには STEREO / MIX Bus 経由で送ってください。",

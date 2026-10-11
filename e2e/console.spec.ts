@@ -3,6 +3,7 @@ import { chooseOption } from "./choose-option";
 import { LIVE_COMMANDS, heldReadsOf, notifyParam, setDeviceValue, setHeldReads, stubTauriDevice } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
 import { planParamZ } from "./plan-param";
+import { drag, port } from "./graph-helpers";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
 // "CH 11/12"). The console runs against the factory plan, so we do NOT seed
@@ -1184,4 +1185,16 @@ test("every strip's head holds its own contents, so --head-h is not hand-measure
   );
   expect(overflow.length).toBeGreaterThan(10);
   expect(overflow.filter((s) => s.over > 0)).toEqual([]);
+});
+
+// Two channels on one jack name each other on the gain knob's tooltip, from the moment the
+// second one is wired to it.
+test("the gain knob names the other channel on its jack after a rewire", async ({ page }) => {
+  const gain = (name: string) => strip(page, name).locator(".con-knob[aria-label='A.GAIN']");
+  await expect(gain("CH 1")).not.toHaveAttribute("title", /Shared/);
+  await page.click("#btn-view-graph");
+  await drag(page, port(page, "in.micline_1_2:out"), port(page, "ch3:in"));
+  await page.click("#btn-view-console");
+  await expect(gain("CH 1")).toHaveAttribute("title", "Shared with CH 3");
+  await expect(gain("CH 3")).toHaveAttribute("title", "Shared with CH 1");
 });

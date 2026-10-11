@@ -7,6 +7,7 @@ import { factoryNodeParams } from "../models/initial-state";
 import { fullLabel, parseRef } from "../models/types";
 import { sideLabel } from "../models";
 import { displayedSide, shownStage } from "../core/stereo-side";
+import { inputShare } from "./input-share";
 import type { ConnParams, FxEffectParams, JackSide, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
 import { clipNodeName, jackKey, LEVEL_MIN_DB, LEVEL_OFF_DB, processorOn, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
@@ -1122,6 +1123,14 @@ export function renderInspector(
         ifxSec.body.append(dynLauncher("insfx", node.id, actions, m));
       }
       host.append(ifxSec.el);
+    }
+
+    // A channel whose jack or source another channel reads says so under its last section.
+    const share = node.kind === "channel" ? inputShare(model, plan, node.id) : null;
+    if (share) {
+      host.append(
+        hint((share.kind === "jack" ? m.inspector.shareJack : m.inspector.shareSource)(share.others, share.holder)),
+      );
     }
 
     // Any node may be shelved; its wires are hidden along with it (see graph.ts).
