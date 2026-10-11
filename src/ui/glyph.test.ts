@@ -2,7 +2,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { setNamedText, setSaid, setSpokenText, setTip, spoken, tipOf } from "./glyph";
+import { setHeardText, setNamedText, setSaid, setSpokenText, setTip, spoken, tipOf } from "./glyph";
+import { holdsMark } from "./spoken-mark";
 import { setLang } from "../i18n";
 import { en } from "../i18n/en";
 import { ja } from "../i18n/ja";
@@ -78,6 +79,28 @@ describe("setSaid", () => {
   });
 });
 
+// The question the app and the E2E fixture both ask of a string: does it hold a mark that is
+// announced by a reading of its own. Asked twice of one string, the answer does not change.
+describe("holdsMark", () => {
+  it("finds CH, an a/b pair, a slash and the middle dot, and nothing else", () => {
+    for (const text of ["CH 1", "ch 5", "5/6", "on/off", "176.4 / 192 kHz", "KEY \u00b7 NONE"]) {
+      expect(holdsMark(text), text).toBe(true);
+      expect(holdsMark(text), `${text}, asked again`).toBe(true);
+    }
+    for (const text of ["MUTE", "ch1", "CHANNEL", "Pre-fader send"]) expect(holdsMark(text), text).toBe(false);
+  });
+});
+
+describe("setHeardText", () => {
+  it("puts the tooltip on the element itself where the two forms agree", () => {
+    const td = document.createElement("td");
+    setHeardText(td, "MAIN", "MAIN", true);
+    expect(td.textContent).toBe("MAIN");
+    expect(td.title).toBe("MAIN");
+    expect(td.children).toHaveLength(0);
+  });
+});
+
 describe("setSpokenText", () => {
   it("prints the text for the eye and its spoken form for assistive technology", () => {
     const el = document.createElement("p");
@@ -135,6 +158,18 @@ describe("setTip", () => {
     expect(b.hasAttribute("aria-description")).toBe(false);
     setTip(b, "Not read from the device", true);
     expect(b.getAttribute("aria-description"), "a description asked for is kept").toBe("Not read from the device");
+  });
+
+  it("clears a tooltip it is handed no text for, and the description it wrote", () => {
+    const b = document.createElement("button");
+    setTip(b, "Pre-fader send");
+    setTip(b, "");
+    expect(b.hasAttribute("title")).toBe(false);
+    setTip(b, "CH 1 CC 21");
+    setTip(b, "");
+    expect(b.querySelector(".tip-zone")).toBeNull();
+    expect(b.hasAttribute("title")).toBe(false);
+    expect(b.hasAttribute("aria-description")).toBe(false);
   });
 
   it("leaves a wrapper's tooltip where it is and describes the controls inside it", () => {
