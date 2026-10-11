@@ -209,8 +209,8 @@ A clean clause B is **not** "the emitted set is inside the registration". It can
 already in `planToCommands` but not yet flushed (that is invariant 2's subject), a window that has
 since closed, the string path (`vd_set_str` — channel names, Sweet Spot Data — which has neither a
 snapshot nor a registration entry), `planExternal` params, or anything at all with no session. The
-reverse difference is deliberately not judged: `FOLLOW_USB` (848) is appended to the registration by
-hand and is in no snapshot, which is the harmless direction.
+reverse difference is deliberately not judged: `FOLLOW_USB` (848) and the LCD selection (762) are appended
+to the registration by hand and are in no snapshot, which is the harmless direction.
 
 The `addrs` argument of `vd_params_subscribe` is the registration set, so all of this can be read
 mechanically.
