@@ -3928,49 +3928,96 @@ describe("the live session", () => {
     await endLive();
   });
 
-  // …and the read it was for CONSUMES it. What the announcement must not do is outlive
-  // that read: the next clearing is the operator's own, made by hand on the unit at a
-  // rate that runs the effect, and holding it against a rate the unit left long before
-  // overrides them. (Their clearing IS announced on the insert-FX addresses, but that
-  // announcement arrives BEFORE the read it escalates to, so it falls outside the window
-  // `announced` covers — the rate history is what decides it.)
+  // …and the read it was for CONSUMES it, whatever else is reading when it ends. What the
+  // announcement must not do is outlive that read: the next clearing is the operator's own,
+  // made by hand on the unit at a rate that runs the effect, and holding it against a rate
+  // the unit left long before overrides them. (Their clearing IS announced on the insert-FX
+  // addresses, but that announcement arrives BEFORE the read it escalates to, so it falls
+  // outside the window `announced` covers — the rate history is what decides it.) The read
+  // here ends while a side-effect refetch is still open: a follow read that establishes no
+  // rate of its own, so it consumes nothing either.
   it("adopts the operator's own clearing once the announcement has been consumed", SLOW, async () => {
     const shell = await bootDevice();
     await heldByExcursion(shell);
 
+    /** Holds the first read of one address made after `arm()` until `release()`. */
+    const gate = (paramId: number, y: number) => {
+      let armed = false;
+      let held = false;
+      let release!: () => void;
+      const open = new Promise<void>((r) => (release = r));
+      return {
+        arm: () => void (armed = true),
+        held: () => held,
+        release: () => release(),
+        take: (a: Record<string, unknown>): Promise<void> | null => {
+          if (!armed || a.paramId !== paramId || a.y !== y) return null;
+          armed = false;
+          held = true;
+          return open;
+        },
+      };
+    };
+    // A CH 4 address the whole-device read reaches and a STEREO refetch does not, and a STEREO
+    // address the refetch reads.
+    const fullRead = gate(PARAMS.HPF_ON.id, 3);
+    const refetch = gate(PARAMS.OSC_ASSIGN_STEREO.id, 0);
     let cleared = false;
+    const value = (a: Record<string, unknown>): number =>
+      a.paramId === PARAMS.SAMPLE_RATE.id
+        ? 48_000
+        : a.paramId === PARAMS.INSERT_FX.id && a.y === 0 && cleared
+          ? denormalizeInsertFx(INSERT_FX_NONE)
+          : a.paramId === PARAMS.INSERT_FX.id && a.y === 0
+            ? COMPANDER_H
+            : unwrittenRead(a);
     shell.answer("vd_get", (a: Record<string, unknown>) => {
-      const v =
-        a.paramId === PARAMS.SAMPLE_RATE.id
-          ? 48_000
-          : a.paramId === PARAMS.INSERT_FX.id && a.y === 0 && cleared
-            ? denormalizeInsertFx(INSERT_FX_NONE)
-            : a.paramId === PARAMS.INSERT_FX.id && a.y === 0
-              ? COMPANDER_H
-              : unwrittenRead(a);
-      return new Promise((r) => setTimeout(() => r(v), 1));
+      const wait = fullRead.take(a) ?? refetch.take(a);
+      return wait ? wait.then(() => value(a)) : value(a);
     });
     const at = shell.invokes.indexOf("vd_params_subscribe");
     const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
 
-    // The excursion, held and re-sent by the full read it escalates to.
+    // The excursion, held and re-sent by the full read it escalates to — parked part-way.
     cleared = true;
+    fullRead.arm();
     channel.onmessage([
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
     ]);
+    await vi.waitFor(() => expect(fullRead.held(), "the full read reached CH 4").toBe(true), { timeout: 25_000 });
+    // A STEREO EQ 1-knob switched on beside it, whose flush refetches STEREO — parked too.
+    refetch.arm();
+    selectNode("bus.stereo");
+    $("inspector").querySelector<HTMLButtonElement>("#btn-eq-screen")!.click();
+    $("dyn-screen-box")
+      .querySelector<HTMLElement>("#dyn-oneknob-level")!
+      .closest(".prefs-section")!
+      .querySelectorAll<HTMLButtonElement>(".prefs-toggle button")[0]
+      .click(); // ON
+    await vi.waitFor(() => expect(refetch.held(), "the refetch reached STEREO").toBe(true), { timeout: 25_000 });
+    // The full read ends with the refetch still open.
+    fullRead.release();
     await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
       timeout: 25_000,
     });
-    await quiet(shell);
 
-    // Now the operator clears it by hand, at a rate that runs it. The unit announces the
-    // selector, which settles into a scoped read of CH 1.
+    // Now the operator clears it by hand, at a rate that runs it, while the refetch is still
+    // open — so the follow read this announcement asks for is the next read of CH 1, held off
+    // until the flush carrying the refetch is done. Every line the status bar shows from here
+    // is kept, since a held line can be replaced before a poll reads it.
+    const lines: string[] = [];
+    const watch = new MutationObserver(() => lines.push(statusText()));
+    watch.observe($("statusbar"), { childList: true, characterData: true, subtree: true });
     channel.onmessage([{ param_id: PARAMS.INSERT_FX.id, x: 0, y: 0, value: denormalizeInsertFx(INSERT_FX_NONE) }]);
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
-      timeout: 25_000,
-    });
-    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
+    refetch.release();
+    $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions .consent-btn-secondary")!.click();
+    const followed = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveFollowed(n)));
+    const held = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveHeld(n, 2, 0)));
+    // Whichever the read that took the clearing says first.
+    await vi.waitFor(() => expect(lines.some((l) => followed(l) || held(l))).toBe(true), { timeout: 25_000 });
+    watch.disconnect();
+    expect(lines.filter(held)).toEqual([]);
     await endLive();
   });
 
