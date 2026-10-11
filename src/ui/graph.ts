@@ -3126,6 +3126,9 @@ export class Graph {
       chip.dataset.node = id;
       chip.style.setProperty("--rail", this.palette.rail[node.kind]);
       chip.title = m.shelf.restore(fullLabel(node));
+      // The chip is named by its label's spoken form, as the node it restores is.
+      const said = spoken(fullLabel(node));
+      if (said !== fullLabel(node)) chip.setAttribute("aria-label", said);
       const name = document.createElement("span");
       name.textContent = fullLabel(node);
       const go = document.createElement("span");

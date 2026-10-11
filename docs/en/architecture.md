@@ -1086,14 +1086,18 @@ the inspector, and the open modal itself.
 > `spoken` (`src/ui/glyph.ts`) builds the form, and it reaches a screen reader one of three ways, none of
 > them a part with a role of its own — Narrator names that role after every such part, so a sentence
 > whose marks were images read "グラフィック" after each. **A name** is the element's own `aria-label`:
-> a CONSOLE strip's group, its name area, its power LED and main fader, a graph node, a MIDI row's cell
-> and controls (`spoken`), and the Inspector's title, its side switch and a tuning screen's title
+> a CONSOLE strip's group, its name area, its power LED and main fader, a graph node and its shelf chip,
+> a MIDI row's controls (`spoken`), and the Inspector's title, its side switch and a tuning screen's title
 > (`setNamedText`). **A status line** prints the message and announces it through a live region beside
 > it that holds the spoken form and is named by the same text (`setSaid`; `#statusbar-said`, the MIDI
 > window's `.mw-said`) — of the region shapes read with Windows' Narrator in the English UI, only one
 > named by its own text was read in the English voice alone. **The MIDI window's
-> hint**, a line no role can name, prints its wording in a part hidden from assistive technology next to
-> a visually hidden part holding the spoken form (`setSpokenText`). `src/ui/glyph.test.ts` holds the
+> hint**, a line no role can name, and **a MIDI row's name and address cells**, whose `aria-label`
+> VoiceOver does not use (it read the cell's content, `CH` as "chapter"), print their wording in a part
+> hidden from assistive technology next to a visually hidden part holding the spoken form
+> (`setSpokenText` / `setHeardText`). The name cell's tooltip sits on that printed part: VoiceOver reads
+> an element's `title` in its printed form, as a hint a moment after the name and inside the phrase a
+> table cell is entered with, and `aria-description` beside it does not stop that. `src/ui/glyph.test.ts` holds the
 > readings in both languages.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,

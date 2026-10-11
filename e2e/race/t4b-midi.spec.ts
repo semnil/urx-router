@@ -621,8 +621,10 @@ test.describe("T4b midi", () => {
     // keys ("cc14:0:7" vs "cc:0:39"), so nothing in the list says that moving one
     // physical control drives both.
     await expect(win.locator(".mw-list tbody tr.linked")).toHaveCount(0);
-    await expect(midiRow(win, "ch1/level").locator(".mw-addr")).toHaveText("CH 1 CC 7/39 (14bit)");
-    await expect(midiRow(win, "ch2/level").locator(".mw-addr")).toHaveText("CH 1 CC 39");
+    await expect(midiRow(win, "ch1/level").locator(".mw-addr > [aria-hidden='true']")).toHaveText(
+      "CH 1 CC 7/39 (14bit)",
+    );
+    await expect(midiRow(win, "ch2/level").locator(".mw-addr > [aria-hidden='true']")).toHaveText("CH 1 CC 39");
   });
 
   test("a pitch bend and a 14-bit pair bound to toggles are accepted and permanently inert", async ({ page }) => {

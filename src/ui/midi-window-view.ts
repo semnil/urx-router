@@ -7,7 +7,7 @@
 // `send` callback it is handed.
 
 import { t } from "../i18n";
-import { setNamedText, setSaid, setSpokenText, spoken } from "./glyph";
+import { setHeardText, setSaid, setSpokenText, spoken } from "./glyph";
 import { el, preserveFocus } from "./dom";
 import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
 import { BUTTON_MODES, TAKE_MODES } from "../core/midi/mapping";
@@ -124,12 +124,11 @@ export function mappingRow(row: MidiUiRow, m: MidiMessages, send: MidiUiSend): H
   const tr = el("tr", row.linked ? "linked" : "");
   tr.dataset.control = row.control;
   const name = el("td", "mw-ctl");
-  // The row's cell and its controls name the assignment by the form it is announced as.
+  // The row's cell reads, and its controls are named by, the form the assignment is announced as.
   const who = spoken(row.spoken ?? row.label);
-  setNamedText(name, row.label, who);
-  name.title = row.label;
+  setHeardText(name, row.label, who, true);
   const addr = el("td", row.addr ? "mw-addr" : "mw-linked");
-  addr.textContent = row.addr ?? m.linked;
+  setSpokenText(addr, row.addr ?? m.linked);
   if (!row.addr) addr.title = m.linkedHint;
   const opt = el("td", "mw-opt");
   // Which control the row offers is the main window's verdict (see MidiUiRow.option):

@@ -293,12 +293,16 @@ describe("renderMidiWindow — assignment list", () => {
     ]);
   });
 
+  // The address prints as itself and reads its spoken form, as the name cell does: its `CH` is
+  // the MIDI channel's and is spelled out the same way.
   it("keys each row by its control id and prints the address", () => {
-    const { host } = fixture(baseState({ rows: [row({ control: "ch2/pan@bus.mix1", addr: "CC 10 ch 1" })] }));
+    const { host } = fixture(baseState({ rows: [row({ control: "ch2/pan@bus.mix1", addr: "CH 1 CC 7/39 (14bit)" })] }));
     const tr = host.querySelector("tbody tr") as HTMLElement;
     expect(tr.dataset.control).toBe("ch2/pan@bus.mix1");
     expect(tr.className).toBe("");
-    expect(tr.querySelector(".mw-addr")!.textContent).toBe("CC 10 ch 1");
+    const addr = tr.querySelector(".mw-addr") as HTMLElement;
+    expect(addr.querySelector(":scope > [aria-hidden='true']")?.textContent).toBe("CH 1 CC 7/39 (14bit)");
+    expect(addr.querySelector(":scope > .sr-only")?.textContent).toBe("C H 1 CC 7 slash 39 (14bit)");
   });
 
   // A gang member has no address of its own: the cell says Linked and explains why.
@@ -366,24 +370,30 @@ describe("renderMidiWindow — assignment list", () => {
     expect(sent).toEqual([{ type: "remove", control: "ch4/mute" }]);
   });
 
-  // A symbol caption prints as itself and is announced by its word: the name cell and every
-  // control on the row are named by the spoken form of `spoken`, while the visible text and
-  // tooltip keep `label`.
+  // A symbol caption prints as itself and is announced by its word: the name cell reads the
+  // spoken form of `spoken` and every control on the row is named by it, while the printed text
+  // and tooltip keep `label`. The cell carries no `aria-label` — VoiceOver reads a cell's
+  // content and not that attribute — so the spoken form is text hidden from the eye.
   it("names a row by its spoken form where it has one", () => {
     const toggle = row({ control: "ch1/phase", label: "CH 1 · Ф", spoken: "CH 1 · Phase", option: "button" });
     const { host } = fixture(baseState({ rows: [toggle] }));
     const name = host.querySelector(".mw-ctl") as HTMLElement;
-    expect(name.textContent).toBe("CH 1 · Ф");
-    expect(name.title).toBe("CH 1 · Ф");
-    expect(name.getAttribute("aria-label")).toBe("C H 1 dot Phase");
+    const shown = name.querySelector(":scope > [aria-hidden='true']") as HTMLElement;
+    expect(shown.textContent).toBe("CH 1 · Ф");
+    expect(name.querySelector(":scope > .sr-only")?.textContent).toBe("C H 1 dot Phase");
+    expect(name.hasAttribute("aria-label")).toBe(false);
+    // The tooltip sits on the printed part: on the cell VoiceOver reads it, in its printed form.
+    expect(shown.title).toBe("CH 1 · Ф");
+    expect(name.hasAttribute("title")).toBe(false);
     expect(host.querySelector(".mw-btn")?.getAttribute("aria-label")).toBe(
       `${t().midi.buttonModeTitle} — C H 1 dot Phase`,
     );
     expect(host.querySelector(".mw-del")?.getAttribute("aria-label")).toBe(`${t().midi.remove} — C H 1 dot Phase`);
     const plain = fixture(baseState({ rows: [row()] })).host.querySelector(".mw-ctl") as HTMLElement;
-    expect(plain.getAttribute("aria-label"), "a row with no caption is named by its label's spoken form").toBe(
-      "C H 1 dot Level",
-    );
+    expect(
+      plain.querySelector(":scope > .sr-only")?.textContent,
+      "a row with no caption reads its label's spoken form",
+    ).toBe("C H 1 dot Level");
   });
 
   // The status line and the armed hint name controls by their captions, so their symbols are

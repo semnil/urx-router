@@ -90,7 +90,7 @@ export function spoken(text: string, captioned = false): string {
     .trim();
 }
 
-// An element a screen reader names — a button, a heading, a table cell — written as `text`
+// An element a screen reader names — a button, a heading — written as `text`
 // and named by `said` where that differs from it: by default the text's spoken form, or the
 // word a symbol caption stands for (Ф is announced as a Cyrillic letter otherwise).
 export function setNamedText(el: HTMLElement, text: string, said = spoken(text)): void {
@@ -107,20 +107,29 @@ export function setSaid(region: HTMLElement, said: string): void {
   else region.removeAttribute("aria-label");
 }
 
-// Text a screen reader reads as it stands — a line no role can name — written as `text` for
-// the eye and as its spoken form for assistive technology: the printed run is hidden from the
-// one and the spoken run from the other. `captioned` reads every caption symbol by its word
-// too, and is only for a sentence whose symbols are all captions (a MIDI assignment, an armed
-// control): a file or port name holding the same character is not one.
+// Text a screen reader reads as it stands — a line no role can name, a table cell, whose
+// `aria-label` VoiceOver does not use — written as `text` for the eye and as its spoken form
+// for assistive technology: the printed run is hidden from the one and the spoken run from the
+// other. `captioned` reads every caption symbol by its word too, and is only for a sentence
+// whose symbols are all captions (a MIDI assignment, an armed control): a file or port name
+// holding the same character is not one.
 export function setSpokenText(el: HTMLElement, text: string, captioned = false): void {
-  const said = spoken(text, captioned);
+  setHeardText(el, text, spoken(text, captioned));
+}
+
+// The same pair with the spoken form given: `said` where that differs from `text`. `tooltip`
+// shows `text` on hover from the printed part, where a screen reader does not reach it — on
+// the element itself VoiceOver reads the title too, in its printed form.
+export function setHeardText(el: HTMLElement, text: string, said: string, tooltip = false): void {
   if (said === text) {
     el.textContent = text;
+    if (tooltip) el.title = text;
     return;
   }
   const shown = document.createElement("span");
   shown.setAttribute("aria-hidden", "true");
   shown.textContent = text;
+  if (tooltip) shown.title = text;
   const heard = document.createElement("span");
   heard.className = "sr-only";
   heard.textContent = said;

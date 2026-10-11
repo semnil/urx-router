@@ -718,6 +718,13 @@ describe("focus on the shelf and the selection bar", () => {
   const active = (): Element | null => document.activeElement;
   const shelve = (plan: Plan): void => void (plan.hidden = ["ch1", "ch3"]);
 
+  // A chip prints its node's label and is named by the label's spoken form.
+  it("names a chip by its label's spoken form", () => {
+    fx = graphFixture({ seed: shelve });
+    expect(chip("ch1")!.textContent).toContain("CH 1");
+    expect(chip("ch1")!.getAttribute("aria-label")).toBe("C H 1");
+  });
+
   it("keeps focus on a chip through refresh, a theme switch and a relocalization", () => {
     fx = graphFixture({ seed: shelve });
     chip("ch3")!.focus();

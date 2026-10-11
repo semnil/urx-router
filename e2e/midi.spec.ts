@@ -502,7 +502,17 @@ test("learn binds a CC to a fader and incoming CC moves it", async ({ page }) =>
   await expect(row).toContainText("CH 1 · Level");
   await expect(row).toContainText("CH 1 CC 7");
   // The name cell ellipsizes long labels; the title carries the full wording.
-  await expect(row.locator(".mw-ctl")).toHaveAttribute("title", "CH 1 · Level");
+  // It sits on the printed part, under the pointer — on the cell VoiceOver would read it too.
+  await expect(row.locator(".mw-ctl > [aria-hidden='true']")).toHaveAttribute("title", "CH 1 · Level");
+  await expect(row.locator(".mw-ctl")).not.toHaveAttribute("title");
+  const hovered = await row.locator(".mw-ctl > [aria-hidden='true']").evaluate((shown) => {
+    const r = shown.getBoundingClientRect();
+    return document
+      .elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+      ?.closest("[title]")
+      ?.getAttribute("title");
+  });
+  expect(hovered).toBe("CH 1 · Level");
   // Learn stays on for the next binding; the mapped control shows its dot.
   await expect(strip(page, "CH 1").locator(".con-fader")).toHaveClass(/midi-mapped/);
   await setLearn(page, win, false);
@@ -752,7 +762,7 @@ test("an incoming DUCKER toggle repaints the parent strip's chip in place", asyn
   await expect(duckRow).toContainText("CH 1 NOTE 62");
   // A hung ducker names its parent channel (not the bare "Ducker"), so the
   // assignment says which channel the ducker belongs to.
-  await expect(duckRow.locator(".mw-ctl")).toHaveText("CH 5/6 · DUCKER");
+  await expect(duckRow.locator(".mw-ctl > [aria-hidden='true']")).toHaveText("CH 5/6 · DUCKER");
   await setLearn(page, win, false);
 
   // Still in CONSOLE view (no view switch): the chip must flip in place.
@@ -860,8 +870,10 @@ test("learn on a stereo strip's Ф binds the side it shows", async ({ page }) =>
   await expect(page.locator("#statusbar-said")).toContainText(heard);
   await expect(win.locator(".mw-said")).toContainText(heard);
   await expect(mapRow(win, "ch_5_6/phaseL")).toHaveCount(0);
-  // The row prints the caption and is announced by the word it stands for.
-  await expect(mapRow(win, "ch_5_6/phaseR").locator(".mw-ctl")).toHaveText("CH 5/6 · ФR");
+  // The row prints the caption and reads the word it stands for — as the cell's content, since
+  // VoiceOver reads a table cell's content and not its aria-label.
+  await expect(mapRow(win, "ch_5_6/phaseR").locator(".mw-ctl > [aria-hidden='true']")).toHaveText("CH 5/6 · ФR");
+  await expect(mapRow(win, "ch_5_6/phaseR").locator(".mw-ctl")).not.toHaveAttribute("aria-label");
   await expect(
     mapRow(win, "ch_5_6/phaseR").getByRole("cell", { name: "C H 5 slash 6 dot Phase R", exact: true }),
   ).toBeVisible();
@@ -1016,11 +1028,11 @@ test("every assignment row prints its control, address and behavior", async ({ p
   // The name is not ellipsized away: the window is where the operator reads what
   // is bound to what, so the whole control name is in the cell.
   const level = mapRow(win, "ch1/level");
-  await expect(level.locator(".mw-ctl")).toHaveText("CH 1 · Level");
-  await expect(level.locator(".mw-addr")).toHaveText("CH 1 CC 7");
+  await expect(level.locator(".mw-ctl > [aria-hidden='true']")).toHaveText("CH 1 · Level");
+  await expect(level.locator(".mw-addr > [aria-hidden='true']")).toHaveText("CH 1 CC 7");
   await expect(level.locator(".mw-mode")).toBeVisible(); // continuous → take-in mode
   const mute = mapRow(win, "ch1/mute");
-  await expect(mute.locator(".mw-addr")).toHaveText("CH 1 NOTE 60");
+  await expect(mute.locator(".mw-addr > [aria-hidden='true']")).toHaveText("CH 1 NOTE 60");
   await expect(mute.locator(".mw-btn")).toBeVisible(); // toggle → button behavior
   // The same select repeats down the column, so it announces its own row too.
   await expect(level.locator(".mw-mode")).toHaveAttribute("aria-label", "Take-in mode — C H 1 dot Level");
@@ -1456,7 +1468,9 @@ test("a tuning screen's controls arm under processor and band scopes", async ({ 
   await expect(win.locator(".mw-hint")).toContainText("CH 1 · GATE · Threshold");
   await sendMidi(page, [0xb0, 40, 100], [0xb0, 40, 101]);
   await expect(mapRow(win, "ch1/threshold@gate")).toBeVisible();
-  await expect(mapRow(win, "ch1/threshold@gate").locator(".mw-ctl")).toHaveText("CH 1 · GATE · Threshold");
+  await expect(mapRow(win, "ch1/threshold@gate").locator(".mw-ctl > [aria-hidden='true']")).toHaveText(
+    "CH 1 · GATE · Threshold",
+  );
 
   // An incoming value moves the screen's own slider, on the field table's grid.
   await setLearn(page, win, false);
@@ -1485,7 +1499,7 @@ test("the DUCKER screen's sliders arm under the ducker's own scope", async ({ pa
   await sendMidi(page, [0xb0, 45, 100], [0xb0, 45, 101]);
   const bound = mapRow(win, "out.ducker1/threshold@ducker");
   await expect(bound).toBeVisible();
-  await expect(bound.locator(".mw-ctl")).toHaveText("CH 5/6 · DUCKER · Threshold");
+  await expect(bound.locator(".mw-ctl > [aria-hidden='true']")).toHaveText("CH 5/6 · DUCKER · Threshold");
 
   // An incoming value moves the screen's own slider, on the field table's grid — the
   // ducker's threshold floor is -60 dB, where the GATE's is -72.
@@ -1516,7 +1530,9 @@ test("an EQ band binds to that band, not to the selected one", async ({ page }) 
   await row("Gain").locator(".ctl").click();
   await sendMidi(page, [0xb0, 41, 100], [0xb0, 41, 101]);
   await expect(mapRow(win, "ch1/gain@eq.low")).toBeVisible();
-  await expect(mapRow(win, "ch1/gain@eq.low").locator(".mw-ctl")).toHaveText("CH 1 · EQ LOW · Gain");
+  await expect(mapRow(win, "ch1/gain@eq.low").locator(".mw-ctl > [aria-hidden='true']")).toHaveText(
+    "CH 1 · EQ LOW · Gain",
+  );
 
   // HIGH MID is fixed peaking, which does read Q — the lock follows the type, not
   // the row. Its gain binds under its own scope, leaving LOW's binding alone.
@@ -1622,7 +1638,7 @@ test("the INS FX face arms, and its assignment names the strip and the insert", 
   await strip(page, "CH 1").locator(".con-ifxface").click();
   await expect(win.locator(".mw-hint")).toContainText("CH 1 · INS FX");
   await sendMidi(page, [0xb0, 42, 127]);
-  await expect(mapRow(win, "ch1/insertFxOn").locator(".mw-ctl")).toHaveText("CH 1 · INS FX");
+  await expect(mapRow(win, "ch1/insertFxOn").locator(".mw-ctl > [aria-hidden='true']")).toHaveText("CH 1 · INS FX");
 
   // …and it drives the value it names. A toggle takes the EDGE behaviour by default, so each
   // value at or above 64 FLIPS it and anything below is not a state to take but a release the
