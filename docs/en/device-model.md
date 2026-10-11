@@ -143,6 +143,12 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 > no input stage at all. Two channels reading one jack or source show and set one value. How the app stores
 > and writes it: architecture.md, "The input stage: on the jack and the source".
 >
+> **One side of a stereo channel at a time**: the unit's screens show a stereo channel one side at a time — its
+> name area and `‹` `›` pick which — and its single [Φ] inverts the side shown, on a digital source as on
+> MIC/LINE (the two sides' polarity are separate parameters). The side stays as it is across a source change
+> and a scene recall. The LCD selection names the selected stereo channel's side, and a write of it moves both
+> the selection and the side.
+>
 > **All Input / All USB DAW are not sources**: the INPUT screen's `[All Input]` and `[All USB DAW]`
 > buttons are bulk-set actions that rewrite input sources from a fixed table (user guide, "Dedicated
 > channel screen > INPUT screen"). All USB DAW sets every channel: CHn/n+1 = USB DAW n/n+1. All Input

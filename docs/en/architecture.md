@@ -2106,6 +2106,14 @@ written at all:
   is adopted. The status line says how many values were kept, since the console is not reachable in an installed
   build.
 
+- **The unit keeps a UI state per element and announces it for one.** The side a stereo channel shows: the unit
+  keeps one per stereo channel, but its LCD selection (762) carries the side of the selected channel only, and
+  that is the only one it announces. The app keeps its own side per channel (`stereo-side.ts`) and links it to
+  the selection while live: a Live-sync start and each 762 notify show the selected channel's side, and a
+  switch made in the app writes 762 — which also moves the unit's selection frame to that channel. A notify
+  carrying a value the app wrote moments earlier is the unit's answer to it and is consumed (`LcdEchoes`), so
+  two switches in a row do not bounce. No plan key moves either way.
+
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being
 operated — before either behavior is implemented.
@@ -2188,6 +2196,8 @@ sequenceDiagram
   alt Follow USB, address 848
     F->>H: intercept updates the badge and consumes the notify
     Note over F: no settle window — the address has no owner node,<br/>so letting it through would escalate every change to a full re-read
+  else LCD selection, address 762
+    F->>H: intercept consumes the answer to our own write, or shows the selected stereo channel's side
   else the value equals the snapshot
     F->>F: an echo of our own write, dropped
   else a fresh device-side change

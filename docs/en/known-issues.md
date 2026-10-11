@@ -102,7 +102,9 @@ at the addresses the URX44V uses; which jack each address reaches, which URX22 j
 carries HI-Z (jack 2) and which source each D.Gain address feeds are registered as
 unverified mappings (`jack-axis`, `hiz-channel`, `dgain-source`). A read or write
 that fails at one of those addresses names the mapping, and the self-test says it
-cannot settle them and what would.
+cannot settle them and what would. The link between a stereo channel's displayed
+side and the unit's LCD selection uses the URX44V numbering on both models, registered
+as `lcd-side`.
 Offline planning, the plan JSON and image export are unaffected; this concerns
 only live sync on those two models.
 
@@ -188,6 +190,15 @@ D.Gain -24 … +24): the unit does not apply an A.Gain below -8 and refuses a va
 past its descriptor. HI-Z is written ahead of
 A.Gain, and whichever of +48V / HI-Z the plan holds off is written ahead of the
 other, so a write never has both on in between.
+
+## Only the selected stereo channel's side comes from the unit
+
+The unit keeps the side each stereo channel shows (L or R), but it reports the side of
+the channel its LCD has selected and of no other. So when Live sync starts, the app takes
+that one channel's side from the unit, and every other stereo channel keeps the side the
+app was showing, which can differ from what the unit shows for it. While live, selecting a
+stereo channel on the unit, or switching its side there, shows that side in the app, and
+switching a side in the app moves the unit's LCD selection to that channel and side.
 
 ## The AUTO (auto gain) trigger is not modeled
 

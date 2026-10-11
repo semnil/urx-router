@@ -266,6 +266,7 @@ single source of truth. This table states what each case measures.
 | `overtake-drag-flush-backpressure` | console | A realistic gesture on a realistic link, and the convergence latency an operator perceives |
 | `overtake-refetch-reads-before-the-write-settles` | tuning | The one window the fake had no state for: a write the unit accepted and cannot yet report. `t1c-refetch-stale.spec.ts` |
 | `overtake-held-repaint-vs-the-next-gesture` | inspector | A device change the inspector holds while a select keeps the focus, released by the operator's next click, Tab or tap: whether that gesture still lands — its write sent, its focus on a control the rebuild kept. `t1e-held-repaint.spec.ts` |
+| `overtake-side-link-echo-vs-panel-selection` | console | The side a stereo channel shows, linked to the unit's LCD selection outside the plan: a live start takes the selected channel's side, two switches inside the announce delay end where the operator left them, a selection on the unit shows its side and edits nothing, and a switch after the session writes nothing. `t1f-side-link.spec.ts` |
 
 ### T2 shape-change — params that reshape the writable address set
 
