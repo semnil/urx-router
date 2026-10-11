@@ -43,6 +43,10 @@ import type { PlanWriteWatch } from "../plan-history";
 // the URX44V default plan (782 commands) in both V8 and WebKit, so flushing per
 // window rather than per gesture is 0.2% of a core.
 export const DEBOUNCE_MS = 120;
+/** The longest an edit stream holds back a flush that would converge (see `schedule`). Past it
+ *  the window is left to fire: the converge then runs once in the middle of the stream, and the
+ *  stream's own edits go out behind it at the ordinary cadence. */
+export const CONVERGE_DEFER_MAX_MS = 500;
 
 // Params whose write makes the device move other values (the catalog flags these with
 // sideEffect), split by who owns what moved. CONVERGE = the device reset values the plan
@@ -358,6 +362,9 @@ export class LiveSync {
   // That alone does not decide anything: it only says the next schedule() should
   // ask the diff whether the same is about to happen again (convergePending).
   private lastFlushConverged = false;
+  // When the current window was first re-armed for a pending converge (`schedule`); null while
+  // no window is being held.
+  private deferredSince: number | null = null;
   // Identity of the owner set the last collapse report named (collisionKey), so a
   // standing collision is said once rather than once per flush — it is a structural
   // condition ("these two nodes share one engine"), not a per-edit event, and a drag
@@ -706,11 +713,18 @@ export class LiveSync {
       // per window. Asking the diff, not "did the last flush converge": that
       // latch alone would silence the first drag after any converge, whatever it
       // touched, which is the behaviour the throttle exists to remove.
+      //
+      // Held for CONVERGE_DEFER_MAX_MS at most: past it the armed window fires. The flush it
+      // starts sends the converge head, so the diff stops carrying one and the rest of the
+      // stream is throttled as usual — the converge runs once, not once per window.
       if (!this.lastFlushConverged || !this.convergePending()) return;
+      if (this.deferredSince !== null && Date.now() - this.deferredSince >= CONVERGE_DEFER_MAX_MS) return;
+      this.deferredSince ??= Date.now();
       clearTimeout(this.timer);
     }
     this.timer = setTimeout(() => {
       this.timer = null;
+      this.deferredSince = null;
       void this.flush();
     }, DEBOUNCE_MS);
   }
