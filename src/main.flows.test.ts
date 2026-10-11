@@ -447,6 +447,9 @@ describe("the deep link", () => {
     expect($("statusbar-said").getAttribute("role")).toBe("status");
     expect($("statusbar-said").getAttribute("aria-live")).toBe("polite");
     expect($("statusbar-said").textContent).toBe(spoken($("statusbar").textContent ?? ""));
+    expect($("statusbar-said").getAttribute("aria-label"), "the region is named by the text it holds").toBe(
+      $("statusbar-said").textContent,
+    );
   });
 
   it("reports a link that decodes into something that is not a plan, as a load error", async () => {

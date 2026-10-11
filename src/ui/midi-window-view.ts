@@ -7,7 +7,7 @@
 // `send` callback it is handed.
 
 import { t } from "../i18n";
-import { setNamedText, setSpokenText, spoken } from "./glyph";
+import { setNamedText, setSaid, setSpokenText, spoken } from "./glyph";
 import { el, preserveFocus } from "./dom";
 import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
 import { BUTTON_MODES, TAKE_MODES } from "../core/midi/mapping";
@@ -270,7 +270,7 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
   else host.append(head, body, status, said);
   if (status.textContent !== state.status) {
     status.textContent = state.status;
-    said.textContent = spoken(state.status, Boolean(state.statusCaptioned));
+    setSaid(said, spoken(state.status, Boolean(state.statusCaptioned)));
   }
   restoreFocus();
 }

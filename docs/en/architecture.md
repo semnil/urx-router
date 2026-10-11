@@ -1089,7 +1089,9 @@ the inspector, and the open modal itself.
 > a CONSOLE strip's group, its name area, its power LED and main fader, a graph node, a MIDI row's cell
 > and controls (`spoken`), and the Inspector's title, its side switch and a tuning screen's title
 > (`setNamedText`). **A status line** prints the message and announces it through a live region beside
-> it that holds the spoken form (`#statusbar-said`, the MIDI window's `.mw-said`). **The MIDI window's
+> it that holds the spoken form and is named by the same text (`setSaid`; `#statusbar-said`, the MIDI
+> window's `.mw-said`) — of the region shapes read with Windows' Narrator in the English UI, only one
+> named by its own text was read in the English voice alone. **The MIDI window's
 > hint**, a line no role can name, prints its wording in a part hidden from assistive technology next to
 > a visually hidden part holding the spoken form (`setSpokenText`). `src/ui/glyph.test.ts` holds the
 > readings in both languages.

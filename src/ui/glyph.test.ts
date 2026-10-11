@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { setNamedText, setSpokenText, spoken } from "./glyph";
+import { setNamedText, setSaid, setSpokenText, spoken } from "./glyph";
 import { setLang } from "../i18n";
 import { en } from "../i18n/en";
 import { ja } from "../i18n/ja";
@@ -61,6 +61,20 @@ describe("spoken", () => {
   it("reads a caption symbol by its word only where the sentence is captioned", () => {
     expect(spoken(`CH 1 · ${PHASE}`, true)).toBe("C H 1 dot Phase");
     expect(spoken(`CH 1 · ${PHASE}`)).toBe(`C H 1 dot ${PHASE}`);
+  });
+});
+
+describe("setSaid", () => {
+  it("names a live region by the spoken form it holds, and by nothing while it holds none", () => {
+    const region = document.createElement("span");
+    setSaid(region, "Assigned CC 7 to C H 1 dot Level");
+    expect([region.textContent, region.getAttribute("aria-label")]).toEqual([
+      "Assigned CC 7 to C H 1 dot Level",
+      "Assigned CC 7 to C H 1 dot Level",
+    ]);
+    setSaid(region, "");
+    expect(region.textContent).toBe("");
+    expect(region.hasAttribute("aria-label")).toBe(false);
   });
 });
 

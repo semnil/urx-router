@@ -83,7 +83,7 @@ import { Graph } from "./ui/graph";
 import type { ConnectOrigin, LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
 import { copyText, focusables, preserveFocus } from "./ui/dom";
-import { spoken } from "./ui/glyph";
+import { setSaid, spoken } from "./ui/glyph";
 import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
 import { MidiControl } from "./ui/midi";
@@ -2037,7 +2037,7 @@ if (!isTauri()) {
 // symbols are read as words.
 function setStatus(msg: string, captioned = false): void {
   statusbar.textContent = msg;
-  statusbarSaid.textContent = spoken(msg, captioned);
+  setSaid(statusbarSaid, spoken(msg, captioned));
 }
 
 // Surface an operation that did not complete as a modal, so it is not missed the

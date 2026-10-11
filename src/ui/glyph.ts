@@ -99,6 +99,14 @@ export function setNamedText(el: HTMLElement, text: string, said = spoken(text))
   else el.removeAttribute("aria-label");
 }
 
+// A status line's live region: it holds the message's spoken form and is named by the same
+// text, and carries no name while it holds none.
+export function setSaid(region: HTMLElement, said: string): void {
+  region.textContent = said;
+  if (said) region.setAttribute("aria-label", said);
+  else region.removeAttribute("aria-label");
+}
+
 // Text a screen reader reads as it stands — a line no role can name — written as `text` for
 // the eye and as its spoken form for assistive technology: the printed run is hidden from the
 // one and the spoken run from the other. `captioned` reads every caption symbol by its word

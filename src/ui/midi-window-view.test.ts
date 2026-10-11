@@ -94,6 +94,9 @@ describe("renderMidiWindow — shell", () => {
     expect(status.textContent).toBe("Assigned CC 7 to CH 1 · Level");
     expect(said.getAttribute("role")).toBe("status");
     expect(said.textContent).toBe("Assigned CC 7 to C H 1 dot Level");
+    expect(said.getAttribute("aria-label"), "the region is named by the text it holds").toBe(
+      "Assigned CC 7 to C H 1 dot Level",
+    );
   });
 });
 

@@ -417,6 +417,9 @@ test("learn on, the armed control and learn off are said on the main status line
   await strip(page, "CH 1").locator(".con-fader").click();
   await expect(status).toHaveText("Move a MIDI control to bind CH 1 · Level…");
   await expect(said).toHaveText("Move a MIDI control to bind C H 1 dot Level…");
+  await expect(said, "the region is named by the text it holds").toHaveAccessibleName(
+    "Move a MIDI control to bind C H 1 dot Level…",
+  );
   await setLearn(page, win, false);
   await expect(status).toHaveText("Learn is off: the console and the tuning screens edit again.");
 });
