@@ -487,17 +487,16 @@ export function inputStageOf(model: DeviceModel, plan: Plan, channelId: string, 
 }
 
 /** The input-stage holders some channel reads: the sides of each MIC/LINE node and the
- *  digital sources. A stereo channel on a MIC/LINE node reads its first jack, and its
- *  second too when `stereoBothSides` is set. */
+ *  digital sources. A stereo channel on a MIC/LINE node reads both of its jacks. */
 export interface InputReadSet {
   jacks: Map<string, Set<JackSide>>;
   sources: Set<string>;
 }
-export function inputStageReadSet(model: DeviceModel, plan: Plan, stereoBothSides = false): InputReadSet {
+export function inputStageReadSet(model: DeviceModel, plan: Plan): InputReadSet {
   const set: InputReadSet = { jacks: new Map(), sources: new Set() };
   for (const n of model.nodes) {
     if (n.kind !== "channel") continue;
-    const sides: JackSide[] = isStereoChannel(n.id) && stereoBothSides ? ["L", "R"] : ["L"];
+    const sides: JackSide[] = isStereoChannel(n.id) ? ["L", "R"] : ["L"];
     for (const side of sides) {
       const stage = inputStageOf(model, plan, n.id, side);
       if (stage.kind === "jack") {

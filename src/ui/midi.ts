@@ -57,7 +57,7 @@ import { insertFxControlLabel } from "./insert-fx-screen";
 import { fxControlLabel } from "./fx-effect-screen";
 import { parseRelay } from "./midi-protocol";
 import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
-import { inputStageOf } from "../core/control/translate";
+import { shownStage } from "../core/stereo-side";
 
 // The channel controls that drive the input stage of the jack or source the channel reads.
 const INPUT_STAGE_PARAMS: ReadonlySet<string> = new Set(["gain", "phantom", "hiZ"]);
@@ -1108,14 +1108,14 @@ export class MidiControl {
 
   /** Why an input-stage assignment this plan cannot bind is inactive: its channel reads no
    *  source, or the jack or source it reads carries no such switch (a source has no +48V or
-   *  Hi-Z, and only some jacks have Hi-Z). */
+   *  Hi-Z, and only some jacks have Hi-Z). A stereo channel answers for the side it shows. */
   private inactiveReason(id: string): string | undefined {
     const parsed = parseControlId(id);
     if (!parsed || parsed.scope !== undefined || !INPUT_STAGE_PARAMS.has(parsed.param)) return undefined;
     const model = this.hooks.getModel();
     const node = model.nodes.find((n) => n.id === parsed.node);
     if (node?.kind !== "channel") return undefined;
-    const stage = inputStageOf(model, this.hooks.getPlan(), node.id);
+    const stage = shownStage(model, this.hooks.getPlan(), node.id);
     if (stage.kind === "none") return t().midi.inactiveNoSource(node.label);
     const m = t().inspector;
     if (parsed.param === "phantom" && stage.kind === "digital") return t().midi.inactiveNoSwitch(node.label, m.phantom);

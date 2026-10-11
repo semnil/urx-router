@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { colorNames, compositionGate, inspectorNodes, renderInspector } from "./inspector";
 import type { InspectorActions } from "./inspector";
 import { resetSectionCache } from "./inspector-sections";
@@ -27,6 +27,7 @@ import { fxParams } from "../core/control/fx-effect";
 import { insertFxDefaults, insertFxWritableSlots } from "../core/control/insert-fx-effect";
 import type { DeviceModel } from "../models/types";
 import { setLang, t } from "../i18n";
+import { resetDisplayedSides, setDisplayedSide } from "../core/stereo-side";
 
 const DUCKER = "out.ducker1";
 const HOST = "ch_5_6"; // the stereo pair out.ducker1 hangs off (models/build.ts)
@@ -712,6 +713,7 @@ const actions = (): InspectorActions => ({
   onConnect: vi.fn(),
   wireDrawn: vi.fn(() => true),
   onSelectConnection: vi.fn(),
+  onSwitchSide: vi.fn(),
 });
 
 let panel: HTMLElement;
@@ -889,6 +891,52 @@ describe("renderInspector — the input stage a channel reads", () => {
     expect(sectionByTitle(t().inspector.inputSection)!.textContent).toContain(t().inspector.notReadFromDevice);
     renderInspector(panel, m, plan, nodeSel("ch3"), act);
     expect(sectionByTitle(t().inspector.inputSection)!.textContent).not.toContain(t().inspector.notReadFromDevice);
+  });
+
+  describe("a stereo channel's displayed side", () => {
+    afterEach(() => resetDisplayedSides());
+    const sideButtons = (): HTMLButtonElement[] => [
+      ...panel.querySelectorAll<HTMLButtonElement>(".side-switch button"),
+    ];
+
+    it.each([["in.micline_1_2"], ["in.usbmain_a"], [null]])(
+      "opens INPUT on a stereo channel on %s, and on no mono channel",
+      (source) => {
+        const plan = source ? wired([[source, "ch_5_6"]]) : wired([], ["ch_5_6:in"]);
+        renderInspector(panel, m, plan, nodeSel("ch_5_6"), act);
+        const bar = panel.querySelector<HTMLElement>(".side-switch")!;
+        expect(bar.getAttribute("aria-label")).toBe(t().inspector.sideGroup);
+        expect(bar.parentElement, "the switch opens the INPUT section").toBe(
+          sectionByTitle(t().inspector.inputSection)!.querySelector(".sec-body"),
+        );
+        expect(bar.parentElement!.firstElementChild).toBe(bar);
+        expect(sideButtons().map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([
+          ["CH 5 (L)", "true"],
+          ["CH 6 (R)", "false"],
+        ]);
+        renderInspector(panel, m, plan, nodeSel("ch1"), act);
+        expect(panel.querySelector(".side-switch")).toBeNull();
+      },
+    );
+
+    it("shows the R jack and inverts R once R is shown, and asks for the side a press names", () => {
+      const plan = wired([["in.micline_1_2", "ch_5_6"]]);
+      plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: 30, gainR: 12 };
+      renderInspector(panel, m, plan, nodeSel("ch_5_6"), act);
+      expect(rowValue(t().inspector.gainAnalog)).toContain("30");
+      sideButtons()[1].click();
+      expect(act.onSwitchSide).toHaveBeenCalledWith("ch_5_6", "R");
+      setDisplayedSide("ch_5_6", "R");
+      renderInspector(panel, m, plan, nodeSel("ch_5_6"), act);
+      expect(sideButtons().map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true"]);
+      expect(rowValue(t().inspector.gainAnalog)).toContain("12");
+      expect(inputRows().filter((r) => r === t().inspector.phase)).toHaveLength(1);
+      const phase = [...panel.querySelectorAll<HTMLElement>(".param")].find(
+        (r) => r.dataset.paramLabel === t().inspector.phase,
+      )!;
+      phase.querySelector<HTMLButtonElement>("button")!.click();
+      expect(act.onUpdateNodeParams).toHaveBeenCalledWith("ch_5_6", { phaseR: true });
+    });
   });
 });
 

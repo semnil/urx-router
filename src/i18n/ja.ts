@@ -61,6 +61,7 @@ export const ja: Messages = {
     mute: "MUTE",
     // スクリブル電源 LED (ノード master on/off) の読み上げ名サフィックス。
     power: "オン/オフ",
+    sideShowing: (pair: string, shown: string) => `${pair}、${shown} を表示中`,
     eq: "EQ",
     effect: "EFFECT",
     effectHint:
@@ -476,6 +477,9 @@ export const ja: Messages = {
     on: "ON",
     off: "OFF",
     notReadFromDevice: "デバイスから読み込まれていません — 計画の初期値を表示しています。",
+    sideGroup: "表示する側",
+    sideL: (ch: string) => `${ch} (L)`,
+    sideR: (ch: string) => `${ch} (R)`,
     selectionOnly: "選択のみ — Send パラメータはありません。",
     directOutTap:
       "ダイレクト出力 — チャンネルの Rec Point でタップ (フェーダー・Ducker より前段)。含めるには STEREO / MIX Bus 経由で送ってください。",

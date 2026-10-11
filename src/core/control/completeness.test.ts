@@ -322,6 +322,14 @@ describe("the input stage across routings", () => {
     expect(every.filter((a) => !union.has(a))).toEqual([]);
   });
 
+  // A stereo channel on a MIC/LINE pair reads both of its jacks, so the write round-trips both.
+  it("writes both jacks of a MIC/LINE pair a stereo channel reads, as a fixed point", async () => {
+    const [, wires] = ROUTINGS.find(([name]) => name.includes("stereo channel on MIC/LINE"))!;
+    const c1 = await readThenEmit(unitFor(wires));
+    expect(c1.filter((c) => c.name === "HA_GAIN").map((c) => c.y)).toEqual(expect.arrayContaining([0, 1]));
+    expect(c1.filter((c) => c.name === "PHANTOM").map((c) => c.y)).toEqual(expect.arrayContaining([0, 1]));
+  });
+
   // W2: a jack no channel reads is read into the plan and left out of the write.
   it("reads a jack no channel reads into the plan and leaves it out of the write", async () => {
     const wires: Array<[string, string]> = [

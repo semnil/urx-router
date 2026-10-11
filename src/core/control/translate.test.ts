@@ -1986,14 +1986,13 @@ describe("input stage resolver", () => {
     ensureFixedConnections(getModel("URX44V"), none);
     const empty = inputStageReadSet(getModel("URX44V"), none);
     expect(empty.jacks.size + empty.sources.size).toBe(0);
-    // A stereo channel on a MIC/LINE node adds its second jack only when both sides are read.
+    // A stereo channel on a MIC/LINE node reads both of its jacks.
     const st = wired("URX44V", [
       ["in.aux", "ch1"],
       ["in.aux", "ch2"],
       ["in.micline_1_2", "ch_5_6"],
     ]);
-    expect(sorted(inputStageReadSet(getModel("URX44V"), st).jacks)["in.micline_1_2"]).toEqual(["L"]);
-    expect(sorted(inputStageReadSet(getModel("URX44V"), st, true).jacks)["in.micline_1_2"]).toEqual(["L", "R"]);
+    expect(sorted(inputStageReadSet(getModel("URX44V"), st).jacks)["in.micline_1_2"]).toEqual(["L", "R"]);
   });
 
   it("names the channels reading one holder, with the side a stereo reader reads", () => {
@@ -2129,11 +2128,18 @@ describe("input stage emit", () => {
     expect(planToCommands(model, none).some((c) => c.name === "D_GAIN")).toBe(false);
   });
 
-  // A stereo channel on a MIC/LINE pair reads its L jack.
-  it("sends the L jack of a MIC/LINE pair a stereo channel reads, and not its R", () => {
+  // A stereo channel on a MIC/LINE pair reads both jacks, one per side.
+  it("sends both jacks of a MIC/LINE pair a stereo channel reads", () => {
     const p = plan([["in.micline_1_2", "ch_5_6"]]);
-    p.nodeParams["in.micline_1_2"] = { phantomL: true, phantomR: true };
-    expect(stage(planToCommands(model, p)).filter((a) => a.startsWith("PHANTOM"))).toEqual(["PHANTOM@0:0"]);
+    p.nodeParams["in.micline_1_2"] = { phantomL: true, phantomR: false };
+    expect(
+      planToCommands(model, p)
+        .filter((c) => c.name === "PHANTOM")
+        .map((c) => [c.node, c.y, c.planValue]),
+    ).toEqual([
+      ["in.micline_1_2", 0, 1],
+      ["in.micline_1_2", 1, 0],
+    ]);
   });
 
   it("sends URX22's HI-Z at its second jack", () => {

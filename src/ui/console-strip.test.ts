@@ -11,7 +11,7 @@
 // threshold" shape. A press on the cap is the other half, and writes nothing.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
+import { chips, consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
 import type { ConsoleMidiHooks } from "./console";
 import { sendConnection, setExclusiveConnection } from "../core/plan";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
@@ -948,6 +948,70 @@ describe("the INS FX chip", () => {
     power().click();
     expect(h.plan.nodeParams.ch1?.on).toBe(false);
     expect(power().getAttribute("aria-pressed")).toBe("false");
+  });
+
+  // A stereo channel's name is the switch for the side the strip shows: the hidden side's
+  // number dims, +48 / A.GAIN / φ read the shown side, learn mode does not arm it, and the
+  // power LED beside it stays the strip's on/off.
+  it("switches a stereo strip's side from its name, and its input stage and φ with it", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch_5_6:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: 30, gainR: 12, phantomR: true };
+    h = consoleHost({ plan });
+    const root = (): HTMLElement => h.strip("ch_5_6").root;
+    const side = (): HTMLElement => root().querySelector<HTMLElement>(".con-side")!;
+    const gain = (): HTMLElement => root().querySelector<HTMLElement>('.con-knob[aria-label="A.GAIN"]')!;
+    expect(side().getAttribute("role")).toBe("button");
+    expect(side().getAttribute("aria-label")).toBe("CH 5/6, showing CH 5 (L)");
+    expect(side().textContent).toBe("CH 5/6");
+    expect(side().querySelector(".dim")?.textContent).toBe("6");
+    expect(gain().getAttribute("aria-valuenow")).toBe("30");
+    expect(chips(root()).get("+48")!.getAttribute("aria-pressed")).toBe("false");
+    expect([...chips(root()).keys()].filter((k) => k.startsWith("φ"))).toEqual(["φ"]);
+    side().click();
+    expect(h.switches).toEqual([{ id: "ch_5_6", side: "R" }]);
+    expect(side().getAttribute("aria-label")).toBe("CH 5/6, showing CH 6 (R)");
+    expect(side().querySelector(".dim")?.textContent).toBe("5");
+    expect(gain().getAttribute("aria-valuenow")).toBe("12");
+    expect(chips(root()).get("+48")!.getAttribute("aria-pressed")).toBe("true");
+    chips(root()).get("φ")!.click();
+    expect(h.plan.nodeParams.ch_5_6?.phaseR).toBe(true);
+    expect(h.plan.nodeParams.ch_5_6?.phaseL ?? false).toBe(false);
+    expect(h.plan.nodeParams.ch_5_6?.on, "the name is not the power").not.toBe(false);
+    root().querySelector<HTMLElement>(".con-power")!.click();
+    expect(h.plan.nodeParams.ch_5_6?.on).toBe(false);
+    expect(h.switches, "the LED switches no side").toHaveLength(1);
+  });
+
+  // A gain edit on one jack moves every strip showing that jack, in place — a stereo strip
+  // showing the other jack of the same node is not one of them.
+  it("mirrors a jack's gain onto a stereo strip only while it shows that jack", () => {
+    const plan = defaultPlan("URX44V");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch_5_6:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: 30, gainR: 12 };
+    h = consoleHost({ plan });
+    const knob = (id: string): HTMLElement =>
+      h.strip(id).root.querySelector<HTMLElement>('.con-knob[aria-label="A.GAIN"]')!;
+    h.strip("ch_5_6").root.querySelector<HTMLElement>(".con-side")!.click();
+    key(knob("ch1"), "ArrowUp");
+    expect(h.plan.nodeParams["in.micline_1_2"]?.gainL, "the premise: CH 1 moved jack 1").toBe(31);
+    expect(knob("ch_5_6").getAttribute("aria-valuenow")).toBe("12");
+    h.strip("ch_5_6").root.querySelector<HTMLElement>(".con-side")!.click();
+    key(knob("ch1"), "ArrowUp");
+    expect(knob("ch_5_6").getAttribute("aria-valuenow")).toBe("32");
+  });
+
+  it("leaves a stereo strip's name out of MIDI learn, and arms the shown side's φ", () => {
+    const armed: string[] = [];
+    h = consoleHost({ midi: learnHooks(armed) });
+    const root = (): HTMLElement => h.strip("ch_5_6").root;
+    const side = root().querySelector<HTMLElement>(".con-side")!;
+    expect(side.classList.contains("midi-target")).toBe(false);
+    side.click();
+    expect(armed).toEqual([]);
+    expect(h.switches).toEqual([{ id: "ch_5_6", side: "R" }]);
+    chips(root()).get("φ")!.click();
+    expect(armed).toEqual(["ch_5_6/phaseR"]);
   });
 
   // The unit fills the engine with the type's defaults on the transition into it and not on a

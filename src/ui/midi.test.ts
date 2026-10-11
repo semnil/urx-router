@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INSERT_FX_OPTIONS, PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 
 const mocks = vi.hoisted(() => ({
@@ -57,6 +57,7 @@ import { defaultPlan } from "../models/initial-state";
 import type { MidiUiIntent, MidiUiState } from "./midi-protocol";
 import { MidiControl, type MidiHooks } from "./midi";
 import { t } from "../i18n";
+import { resetDisplayedSides, setDisplayedSide } from "../core/stereo-side";
 
 const MAPPING = {
   control: "ch1/level",
@@ -85,11 +86,11 @@ async function attached(): Promise<void> {
   await Promise.resolve();
 }
 
-function install() {
-  const model = getModel("URX44V");
+function install(modelId: "URX22" | "URX44V" = "URX44V") {
+  const model = getModel(modelId);
   // `let`, so a case can hand the hooks a different document mid-session the way a
   // cancelled Fetch does. Every other case keeps the object this returns.
-  let plan = defaultPlan("URX44V");
+  let plan = defaultPlan(modelId);
   ensureFixedConnections(model, plan);
   let blocked: string | null = null;
   const hooks: MidiHooks = {
@@ -1054,6 +1055,49 @@ describe("MidiControl against a control the plan has stopped carrying", () => {
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, insertFx: 256 };
     send(20);
     await vi.waitFor(() => expect(slot()).not.toBe(applied));
+  });
+});
+
+describe("MidiControl on a stereo channel's displayed side", () => {
+  afterEach(() => resetDisplayedSides());
+
+  // One id, the side the channel shows: a side switch is not a plan edit, so the feedback pass
+  // the app schedules for it is what brings the controller to the other jack's value.
+  it("reports the shown jack's gain, and the other jack's once that side is shown", async () => {
+    const GAIN = { control: "ch_5_6/gain", addr: { type: "cc", channel: 0, controller: 30 }, mode: "absolute" };
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX44V: [GAIN] } }));
+    const { control, plan } = install();
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch_5_6:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: -8, gainR: 70 };
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["Controller Out"]));
+    dispatch({ type: "port", dir: "out", name: "Controller Out" });
+    await vi.waitFor(() => expect(lastState().output).toBe("Controller Out"));
+    control.liveReadSettled();
+    const sent = (): number[][] => (mocks.midiSend.mock.calls as unknown as number[][][]).map(([bytes]) => bytes);
+    control.scheduleFeedback();
+    await vi.waitFor(() => expect(sent()).toContainEqual([0xb0, 30, 0]));
+    mocks.midiSend.mockClear();
+    setDisplayedSide("ch_5_6", "R");
+    control.scheduleFeedback();
+    await vi.waitFor(() => expect(sent()).toContainEqual([0xb0, 30, 127]));
+  });
+
+  // On a URX22 only the second jack carries Hi-Z, so a stereo channel on MIC/LINE 1/2 has the
+  // switch on one side and not the other.
+  it("says a Hi-Z assignment is inactive while the shown jack has none", async () => {
+    const HIZ = { control: "ch_3_4/hiZ", addr: { type: "cc", channel: 0, controller: 31 }, mode: "absolute" };
+    localStorage.setItem("urx-midi", JSON.stringify({ models: { URX22: [HIZ] } }));
+    const { control, plan } = install("URX22");
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch_3_4:in", "source");
+    await attached();
+    dispatch({ type: "ready" });
+    const inactive = (): string | undefined => lastState().rows.find((r) => r.control === HIZ.control)?.inactive;
+    await vi.waitFor(() => expect(inactive()).toBe(t().midi.inactiveNoSwitch("CH 3/4", t().inspector.hiZ)));
+    setDisplayedSide("ch_3_4", "R");
+    control.scheduleFeedback();
+    await vi.waitFor(() => expect(inactive()).toBeUndefined());
   });
 });
 

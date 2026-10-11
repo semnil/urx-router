@@ -39,6 +39,7 @@ import { getModel } from "../models";
 import { isStereoChannel } from "../core/control/translate";
 import { setExclusiveConnection } from "../core/plan";
 import { setLang, t } from "../i18n";
+import { setDisplayedSide } from "../core/stereo-side";
 
 /** Learn is on, nothing is armed or mapped: every armable control marks itself. */
 const learnHooks = (armed: string[]) => ({
@@ -146,6 +147,24 @@ describe("arming surfaces against the control catalog", () => {
     const { marked, ids } = armEverything(ch.host, armed);
     expect(ids, "the premise: a source's D.Gain is armable").toContain(`${mono[0]}/gain`);
     expect(ids, "and a channel on no source offers no gain").not.toContain(`${mono.at(-1)}/gain`);
+    expect(ids.length).toBe(marked);
+    expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
+  });
+
+  // A stereo channel's one φ and its input stage act on the side it shows, under the ids of
+  // that side; with R shown, every id it arms still binds.
+  it.each(["URX22", "URX44", "URX44V"] as const)("CONSOLE arms the shown side's ids on %s", (modelId) => {
+    const armed: string[] = [];
+    const plan = defaultPlan(modelId);
+    const stereo = getModel(modelId).nodes.find((n) => isStereoChannel(n.id))!.id;
+    setExclusiveConnection(plan, "in.micline_1_2:out", `${stereo}:in`, "source");
+    ch = consoleHost({ modelId, plan, midi: learnHooks(armed) });
+    setDisplayedSide(stereo, "R");
+    ch.view.refresh();
+    const { marked, ids } = armEverything(ch.host, armed);
+    expect(ids).toContain(`${stereo}/phaseR`);
+    expect(ids).not.toContain(`${stereo}/phaseL`);
+    expect(ids, "the premise: the shown jack's gain is armable").toContain(`${stereo}/gain`);
     expect(ids.length).toBe(marked);
     expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
   });

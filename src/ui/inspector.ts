@@ -5,7 +5,9 @@
 import type { DeviceModel, ModelId, NodeKind } from "../models/types";
 import { factoryNodeParams } from "../models/initial-state";
 import { fullLabel, parseRef } from "../models/types";
-import type { ConnParams, FxEffectParams, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
+import { sideLabel } from "../models";
+import { displayedSide, shownStage } from "../core/stereo-side";
+import type { ConnParams, FxEffectParams, JackSide, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
 import { clipNodeName, jackKey, LEVEL_MIN_DB, LEVEL_OFF_DB, processorOn, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
 import { hiZPatch, inputOnRefused, jackGainRange } from "../core/input-lock";
@@ -32,8 +34,8 @@ import {
   duckerControl,
   fxChannelIndex,
   inputEq,
-  inputStageOf,
   insertFxControl,
+  isStereoChannel,
   oscAssign,
   outputEq,
 } from "../core/control/translate";
@@ -139,6 +141,8 @@ export interface InspectorActions {
   onHideNode: (id: string) => void;
   /** Open the GATE tuning screen for a MONO IN channel. */
   onOpenDynScreen: (kind: DynKind, id: string) => void;
+  /** Show `side` of a stereo channel, as its CONSOLE name area does. */
+  onSwitchSide: (channelId: string, side: JackSide) => void;
   onClose: () => void;
   /** The node's jacks a wire can be drawn from, with where each can go: the keyboard's way
    *  to connect, offered in the Routing section. */
@@ -222,7 +226,7 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
   const listed = duckers.includes(selection.id) ? duckers : [selection.id, ...duckers];
   // A channel's INPUT rows are the jack's or the source's it reads, so a change there — a
   // direct A.Gain follow, a MIDI apply, another channel's edit — moves what this panel draws.
-  const stage = inputStageOf(model, plan, selection.id);
+  const stage = shownStage(model, plan, selection.id);
   const own = stage.kind === "none" ? listed : [...listed, stage.node];
   if (!canPatchFromMonitor(model, selection.id)) return own;
   const mono = outputMono(plan, selection.id);
@@ -664,7 +668,10 @@ export function renderInspector(
       // only on a jack that carries it. +48V and HI-Z are never turned on together: while one
       // is on, the other's toggle is read-only and says why (turning the lit one off stays
       // available).
-      const stage = inputStageOf(model, plan, node.id);
+      // A stereo channel shows one side's input stage and polarity, picked by the switch at
+      // the top.
+      if (isStereoChannel(node.id)) input.append(sideSwitch(model, node.id, actions, m));
+      const stage = shownStage(model, plan, node.id);
       if (stage.kind !== "none" && plan.unreadNodes?.has(stage.node)) {
         input.append(notReadBadge(m.inspector.notReadFromDevice));
       }
@@ -724,11 +731,13 @@ export function renderInspector(
           ),
         );
       }
-      // Polarity invert (Ø): one toggle on mono, two (L/R) on stereo channels.
-      for (const ph of cc?.phases ?? []) {
-        const label = ph.side ? `${m.inspector.phase} ${ph.side}` : m.inspector.phase;
+      // Polarity invert (Ø): one row. A stereo channel's inverts the side it shows.
+      const phase = cc?.phases.find((ph) => ph.side === "" || ph.side === displayedSide(node.id));
+      if (phase) {
         input.append(
-          boolToggle(label, np[ph.key] ?? false, (v) => actions.onUpdateNodeParams(node.id, { [ph.key]: v })),
+          boolToggle(m.inspector.phase, np[phase.key] ?? false, (v) =>
+            actions.onUpdateNodeParams(node.id, { [phase.key]: v }),
+          ),
         );
       }
       if (cc?.hasHpf) {
@@ -1671,6 +1680,25 @@ function toggleGroup(labelId: string | undefined, name?: string): HTMLElement {
 // `lockedTitle`, when set, renders the pair read-only: both buttons disabled (no
 // click handler) and the reason shown as a row tooltip — the value is still visible.
 // `name` names a pair that has no row label of its own (a section's bare toggle).
+/** The two-button switch at the top of a stereo channel's INPUT section: which side the
+ *  panel shows. A press on the side already shown changes nothing. */
+function sideSwitch(model: DeviceModel, id: string, actions: InspectorActions, m: Messages): HTMLElement {
+  const shown = displayedSide(id);
+  const bar = document.createElement("div");
+  bar.className = "side-switch";
+  bar.setAttribute("role", "group");
+  bar.setAttribute("aria-label", m.inspector.sideGroup);
+  for (const side of ["L", "R"] as const) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = (side === "L" ? m.inspector.sideL : m.inspector.sideR)(sideLabel(model, id, side));
+    b.setAttribute("aria-pressed", String(side === shown));
+    b.addEventListener("click", () => actions.onSwitchSide(id, side));
+    bar.append(b);
+  }
+  return bar;
+}
+
 function boolToggle(
   label: string,
   value: boolean,

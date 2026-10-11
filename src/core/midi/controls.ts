@@ -12,6 +12,7 @@ import { hiZPatch, inputOnRefused, jackGainRange } from "../input-lock";
 import type { InputSwitch, Jack } from "../input-lock";
 import { factoryNodeParams } from "../../models/initial-state";
 import { isMonitorBus } from "../constraints";
+import { shownStage } from "../stereo-side";
 import {
   jackKey,
   LEVEL_OFF_DB,
@@ -43,7 +44,6 @@ import {
   eqBandFields,
   eqBandHasType,
   hasEq,
-  inputStageOf,
   isSsmcsScKey,
   ssmcsEqBandFields,
   ssmcsEqBandHasQ,
@@ -1163,8 +1163,9 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
 
   const cc = channelControl(model, id);
   // A channel's input stage is the jack or source it reads: A.GAIN, +48V and HI-Z on a jack,
-  // D.GAIN on a digital source, none of them with no source. The ids stay the channel's.
-  const stage = isChannel ? inputStageOf(model, plan, id) : { kind: "none" as const };
+  // D.GAIN on a digital source, none of them with no source. The ids stay the channel's; a
+  // stereo channel's act on the side it shows.
+  const stage = isChannel ? shownStage(model, plan, id) : { kind: "none" as const };
   if (stage.kind !== "none") {
     const holder = stage.node;
     const path = stage.kind === "jack" ? jackKey("gain", stage.side) : "dGain";

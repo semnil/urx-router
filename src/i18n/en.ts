@@ -96,6 +96,9 @@ export const en = {
     // Accessible name suffix for the scribble power LED (the node master on/off):
     // "<strip> on/off". Announced with aria-pressed; not shown on screen.
     power: tr("on/off"),
+    // Accessible name of a stereo channel's name area, which switches the side the strip
+    // shows: "CH 5/6, showing CH 6 (R)".
+    sideShowing: (pair: string, shown: string) => `${pair}, showing ${shown}`,
     eq: dev("EQ"),
     // The FX strip's processing chip. Named for what happens there rather than for the
     // strip — the scribble above it already reads FX 1 / FX 2 — and the unit's own
@@ -596,6 +599,11 @@ export const en = {
     on: dev("ON"),
     off: dev("OFF"),
     notReadFromDevice: tr("Not read from the device — showing the plan default."),
+    // The switch at the top of a stereo channel's INPUT section: which side's input stage
+    // and polarity the panel shows and edits.
+    sideGroup: tr("Displayed side"),
+    sideL: (ch: string) => `${ch} (L)`,
+    sideR: (ch: string) => `${ch} (R)`,
     selectionOnly: tr("Selection only — no send parameters."),
     directOutTap: tr(
       "Direct out — tapped at the channel Rec Point, before the fader and Ducker. Route via a STEREO or MIX bus to include them.",

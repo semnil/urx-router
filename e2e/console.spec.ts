@@ -208,12 +208,37 @@ test("the MIX master BAL knob stays labeled BAL under Pan Link", async ({ page }
   await expect(strip(page, "MIX 1").locator(".con-knob[aria-label='PAN']")).toHaveCount(0);
 });
 
-test("DUCKER and φL/φR appear on stereo channels only", async ({ page }) => {
+test("DUCKER appears on stereo channels only, with one φ for the side the strip shows", async ({ page }) => {
   // `exact` because the tuning-screen opener beside it is labelled "Ducker screen",
   // which a substring match also picks up.
-  await expect(strip(page, "CH 5/6").getByRole("button", { name: "DUCKER", exact: true })).toBeVisible();
-  await expect(strip(page, "CH 5/6").getByRole("button", { name: "φL" })).toBeVisible();
+  const s = strip(page, "CH 5/6");
+  await expect(s.getByRole("button", { name: "DUCKER", exact: true })).toBeVisible();
   await expect(strip(page, "CH 1").getByRole("button", { name: "DUCKER", exact: true })).toHaveCount(0);
+  const phi = s.getByRole("button", { name: "φ", exact: true });
+  await expect(phi).toHaveCount(1);
+  await phi.click();
+  await expect(phi).toHaveAttribute("aria-pressed", "true");
+  await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
+  await expect(s.getByRole("button", { name: "CH 5/6, showing CH 6 (R)", exact: true })).toBeFocused();
+  await expect(phi, "R's polarity is its own").toHaveAttribute("aria-pressed", "false");
+});
+
+// The strip's name and the Inspector's switch are two faces of one state: either one moves the
+// other. The name is not the power: a press on it leaves the strip on.
+test("a stereo channel's name and its Inspector switch show the same side", async ({ page }) => {
+  const s = strip(page, "CH 5/6");
+  const power = s.locator(".con-power");
+  await expect(power).toHaveAttribute("aria-pressed", "true");
+  await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
+  await expect(power).toHaveAttribute("aria-pressed", "true");
+  await page.click("#btn-view-graph");
+  await page.locator('g.node[data-id="ch_5_6"]').click();
+  const bar = page.getByRole("group", { name: "Displayed side" });
+  await expect(bar.getByRole("button", { name: "CH 6 (R)", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await bar.getByRole("button", { name: "CH 5 (L)", exact: true }).click();
+  await expect(bar.getByRole("button", { name: "CH 5 (L)", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.click("#btn-view-console");
+  await expect(s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true })).toBeVisible();
 });
 
 // ---- SENDS rack ----

@@ -39,7 +39,8 @@ import {
   sceneExternalParamNames,
 } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
-import type { ConnParams, NodeParams, Plan, SerializeOptions } from "./core/plan";
+import type { ConnParams, JackSide, NodeParams, Plan, SerializeOptions } from "./core/plan";
+import { resetDisplayedSides, setDisplayedSide } from "./core/stereo-side";
 import {
   applyPatch,
   clonePlanState,
@@ -672,6 +673,7 @@ const consoleView = new Console(consoleHost, {
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
   onOpenDynScreen: (kind, id) => dynScreen.open(DYN_PROCESSORS[kind], id),
+  onSwitchSide: (channelId, side) => switchSide(channelId, side),
   // MIDI learn: while learn mode is on, console controls arm for binding instead
   // of editing.
   midi: midiLearnHooks,
@@ -1880,6 +1882,7 @@ const inspectorActions = {
   // Declared here but bound below: the dynamics screen's hooks reach back into
   // these actions, so it cannot be constructed until they exist.
   onOpenDynScreen: (kind: DynKind, id: string) => dynScreen.open(DYN_PROCESSORS[kind], id),
+  onSwitchSide: (channelId: string, side: JackSide) => switchSide(channelId, side),
   onClose: () => graph.clearSelection(),
   connectOrigins: (id: string) => graph.connectOrigins(id),
   onConnect: (origin: ConnectOrigin, other: string) => graph.connectTo(origin, other),
@@ -2112,6 +2115,17 @@ const inspectorComposition = compositionGate(inspectorHost, () => rebuildInspect
 function refreshInspector(): void {
   if (inspectorComposition.held()) return;
   rebuildInspector();
+}
+
+/** Show `side` of a stereo channel: the one funnel both views' switches reach. UI state
+ *  rather than a plan edit — no dirty flag, no live write, no undo entry — so each surface
+ *  that shows it is told here: both views, and the MIDI feedback, since a bound control on
+ *  that channel now reads the other side. */
+function switchSide(channelId: string, side: JackSide): void {
+  if (!setDisplayedSide(channelId, side)) return;
+  consoleView.refresh();
+  if (inspectorNodes(getModel(modelId), plan, selection).includes(channelId)) rebuildInspectorNow();
+  midi?.scheduleFeedback();
 }
 
 /**
@@ -2417,6 +2431,8 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
   const prevDirty = dirty;
   modelId = next.modelId;
   plan = next;
+  // The side each stereo channel shows belongs to the model's channels.
+  if (modelId !== prevModelId) resetDisplayedSides();
   ensureFixedConnections(getModel(modelId), plan);
   selection = null;
   try {

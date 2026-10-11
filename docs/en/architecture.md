@@ -205,7 +205,11 @@ carries a one-line map of the same directories and points here.
   the other one on that channel, to the follow read that announcement scheduled. A read's status line leads
   with the ONs it refused, and a later read's line keeps leading with them while the line it replaces still
   does (`withSwitchNotes` in `main.ts`) — the full read device follow runs once a burst goes quiet lands
-  there
+  there / `stereo-side.ts` the side each stereo channel shows (L until switched): which jack's input stage
+  the CONSOLE strip, the Inspector and a bound MIDI control show and edit, and which side's polarity the one
+  φ / Ø inverts. UI state rather than plan state — not saved, not undoable, not in a `?plan=` link — reset on
+  a model switch, and DOM-free so `core/midi` reads it. Both views' switches reach it through one funnel in
+  `main.ts` (`switchSide`)
   - `src/core/midi/` — external MIDI control (desktop only). `message.ts` decode/encode of CC/note/pitch
     bend / `mapping.ts` free-mapping model (address, takeover mode absolute/pickup) + persistence validation
     / `controls.ts` catalog of fixed control ids (`node/param[@scope]`) for every CONSOLE control **and

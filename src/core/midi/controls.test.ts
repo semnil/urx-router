@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { getModel } from "../../models";
 import { defaultPlan } from "../../models/initial-state";
 import type { Plan } from "../plan";
@@ -11,6 +11,7 @@ import {
   setExclusiveConnection,
 } from "../plan";
 import { ref } from "../../models/types";
+import { resetDisplayedSides, setDisplayedSide } from "../stereo-side";
 import {
   COMP_EQ_COMP_FIRST,
   COMP_EQ_SSMCS,
@@ -63,6 +64,7 @@ beforeEach(() => {
   plan = defaultPlan("URX44V");
   ensureFixedConnections(model, plan);
 });
+afterEach(() => resetDisplayedSides());
 
 const conn = (from: string, to: string) =>
   plan.connections.find((c) => c.from === ref(from, "out") && c.to === ref(to, "in"))!;
@@ -245,6 +247,22 @@ describe("normalized value access", () => {
     expect(jack()).toBe(70);
     c.set(0.5);
     expect(jack()).toBe(31);
+  });
+
+  it("acts on the jack a stereo channel shows, under the same ids", () => {
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch_5_6:in", "source");
+    const jacks = () => plan.nodeParams["in.micline_1_2"] ?? {};
+    bindControl(model, plan, "ch_5_6/gain")!.set(0);
+    expect(jacks().gainL).toBe(-8);
+    setDisplayedSide("ch_5_6", "R");
+    const gain = bindControl(model, plan, "ch_5_6/gain")!;
+    expect(gain.writes).toEqual({ kind: "node", node: "in.micline_1_2", path: "gainR" });
+    gain.set(1);
+    expect(jacks().gainR).toBe(70);
+    expect(jacks().gainL, "the L jack keeps its value").toBe(-8);
+    bindControl(model, plan, "ch_5_6/phantom")!.set(1);
+    expect(jacks().phantomR).toBe(true);
+    expect(jacks().phantomL ?? false).toBe(false);
   });
 
   it("maps pan L63 … R63 and phones 0.0 … 10.0 without float dust", () => {
