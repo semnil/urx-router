@@ -11,7 +11,7 @@
 // belong to `e2e/race/fake-device.ts`; a second, thinner imitation of it here would be
 // a fixture that agrees with nothing.
 
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
@@ -9689,6 +9689,13 @@ describe("+48V and Hi-Z on one channel", () => {
   // where the read lands: that ON goes back to the unit's OFF, the status line says why, and
   // no ON for it reaches the unit. The unit's own switch is never written.
   describe("against a device read in flight", () => {
+    // Every hold a case made is released here, ahead of the file's own teardown, which ends
+    // the session and then waits for the device link a held read keeps. A release behind
+    // `onTestFinished` would come too late: vitest runs it after every `afterEach`.
+    const holds: Array<() => void> = [];
+    afterEach(() => {
+      for (const release of holds.splice(0)) release();
+    });
     /** A unit whose reads of `paramId` on CH 3 wait until `release()`, each answering what
      *  the unit held when it was asked — a read that sampled the address before the press.
      *  `arm()` starts holding; `asked` counts the reads held so far. */
@@ -9714,9 +9721,9 @@ describe("+48V and Hi-Z on one channel", () => {
         hold.asked += 1;
         return new Promise((r) => waiting.push(() => r(held)));
       };
-      // A case that fails before its own release still lets the read finish, so the
-      // teardown's wait for the link is not a wait on this hold.
-      onTestFinished(hold.release);
+      // A case that ends — or fails — with a read still held lets it finish before the
+      // teardown waits for the link.
+      holds.push(hold.release);
       return { table, hold };
     };
     const planLink = async (ch3: Record<string, unknown>): Promise<string> => {
@@ -10270,6 +10277,9 @@ describe("+48V and Hi-Z on one channel", () => {
         phantom: [1],
         hiZ: [],
       });
+      // The announcement's own read is the one the hold above is for, and the case ends with
+      // it still held, so the teardown is what lets it finish.
+      await vi.waitFor(() => expect(hold.asked, "the announcement's read is held").toBe(2), { timeout: 10_000 });
     });
 
     // A converge re-sends what differs across the write scope. A Hi-Z the unit turned on at its
