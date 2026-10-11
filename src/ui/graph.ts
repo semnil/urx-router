@@ -36,7 +36,7 @@ import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale
 import { sendlessNote } from "./send-fields";
 import { isChord } from "./keys";
 import { mouseMovedUnpressed, preserveFocus } from "./dom";
-import { spoken } from "./glyph";
+import { setTip, spoken } from "./glyph";
 import { t } from "../i18n";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -3125,7 +3125,6 @@ export class Graph {
       chip.className = "chip";
       chip.dataset.node = id;
       chip.style.setProperty("--rail", this.palette.rail[node.kind]);
-      chip.title = m.shelf.restore(fullLabel(node));
       // The chip is named by its label's spoken form, as the node it restores is.
       const said = spoken(fullLabel(node));
       if (said !== fullLabel(node)) chip.setAttribute("aria-label", said);
@@ -3136,6 +3135,7 @@ export class Graph {
       go.setAttribute("aria-hidden", "true");
       go.textContent = "⤴";
       chip.append(name, go);
+      setTip(chip, m.shelf.restore(fullLabel(node)));
       chip.addEventListener("click", () => this.showNode(id));
       chips.append(chip);
     }

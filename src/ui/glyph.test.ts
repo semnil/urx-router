@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { setNamedText, setSaid, setSpokenText, spoken } from "./glyph";
+import { setNamedText, setSaid, setSpokenText, setTip, spoken, tipOf } from "./glyph";
 import { setLang } from "../i18n";
 import { en } from "../i18n/en";
 import { ja } from "../i18n/ja";
@@ -103,6 +103,48 @@ describe("setSpokenText", () => {
     setSpokenText(el, "Assigned CC 7 to MUTE");
     expect(el.childNodes).toHaveLength(1);
     expect(el.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+  });
+});
+
+// VoiceOver reads a control's own title as a hint in its printed form, and an aria-description
+// beside it does not stop that: a tooltip whose spoken form differs sits on a hidden zone and the
+// control is described by the spoken form.
+describe("setTip", () => {
+  it("moves a tooltip holding a mark off a control and describes the control by its spoken form", () => {
+    const b = document.createElement("button");
+    setTip(b, "Shared with CH 3\nCH 1 CC 21");
+    const zone = b.querySelector<HTMLElement>(":scope > .tip-zone")!;
+    expect(b.hasAttribute("title")).toBe(false);
+    expect(zone.title).toBe("Shared with CH 3\nCH 1 CC 21");
+    expect(zone.getAttribute("aria-hidden")).toBe("true");
+    expect(b.getAttribute("aria-description")).toBe("Shared with C H 3 C H 1 CC 21");
+    expect(tipOf(b)).toBe("Shared with CH 3\nCH 1 CC 21");
+    setTip(b, "Restore CH 5/6");
+    expect(b.querySelectorAll(".tip-zone"), "a second tooltip reuses the zone").toHaveLength(1);
+    expect(tipOf(b)).toBe("Restore CH 5/6");
+    expect(b.getAttribute("aria-description")).toBe("Restore C H 5 slash 6");
+  });
+
+  it("keeps a tooltip with no mark on the control itself", () => {
+    const b = document.createElement("div");
+    b.setAttribute("role", "slider");
+    setTip(b, "CH 1 CC 21");
+    setTip(b, "Pre-fader send");
+    expect(b.title).toBe("Pre-fader send");
+    expect(b.querySelector(".tip-zone")).toBeNull();
+    expect(b.hasAttribute("aria-description")).toBe(false);
+    setTip(b, "Not read from the device", true);
+    expect(b.getAttribute("aria-description"), "a description asked for is kept").toBe("Not read from the device");
+  });
+
+  it("leaves a wrapper's tooltip where it is and describes the controls inside it", () => {
+    const wrap = document.createElement("span");
+    const input = document.createElement("input");
+    wrap.append(input);
+    setTip(wrap, "CH 1 CC 21");
+    expect(wrap.title).toBe("CH 1 CC 21");
+    expect(wrap.querySelector(".tip-zone")).toBeNull();
+    expect(input.getAttribute("aria-description")).toBe("C H 1 CC 21");
   });
 });
 

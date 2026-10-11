@@ -1190,13 +1190,18 @@ test("every strip's head holds its own contents, so --head-h is not hand-measure
 });
 
 // Two channels on one jack name each other on the gain knob's tooltip, from the moment the
-// second one is wired to it.
+// second one is wired to it. The names print on the tooltip, from a zone over the knob, and
+// reach a screen reader as the knob's description in their spoken form.
 test("the gain knob names the other channel on its jack after a rewire", async ({ page }) => {
   const gain = (name: string) => strip(page, name).locator(".con-knob[aria-label='A.GAIN']");
-  await expect(gain("CH 1")).not.toHaveAttribute("title", /Shared/);
+  const tip = (name: string) => gain(name).locator(":scope > .tip-zone");
+  await expect(gain("CH 1")).not.toHaveAttribute("aria-description", /Shared/);
+  await expect(tip("CH 1")).toHaveCount(0);
   await page.click("#btn-view-graph");
   await drag(page, port(page, "in.micline_1_2:out"), port(page, "ch3:in"));
   await page.click("#btn-view-console");
-  await expect(gain("CH 1")).toHaveAttribute("title", "Shared with CH 3");
-  await expect(gain("CH 3")).toHaveAttribute("title", "Shared with CH 1");
+  await expect(tip("CH 1")).toHaveAttribute("title", "Shared with CH 3");
+  await expect(tip("CH 3")).toHaveAttribute("title", "Shared with CH 1");
+  await expect(gain("CH 1")).toHaveAttribute("aria-description", "Shared with C H 3");
+  await expect(gain("CH 1")).not.toHaveAttribute("title");
 });

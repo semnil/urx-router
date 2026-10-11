@@ -107,7 +107,7 @@ import {
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
-import { setLevelText, setNamedText, spoken } from "./glyph";
+import { setLevelText, setNamedText, setTip, spoken, tipOf } from "./glyph";
 import {
   el,
   focusables,
@@ -1181,7 +1181,7 @@ export class Console {
     setLevelRange(fader, range);
     if (busFixed) {
       fader.setAttribute("aria-disabled", "true");
-      fader.title = rateOff ? t().inspector.fx2RateLocked : t().inspector.busFixedSend;
+      setTip(fader, rateOff ? t().inspector.fx2RateLocked : t().inspector.busFixedSend);
     } else {
       fader.tabIndex = 0;
     }
@@ -1666,7 +1666,7 @@ export class Console {
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-pressed", "true");
     chip.setAttribute("aria-disabled", "true");
-    chip.title = t().console.effectHint;
+    setTip(chip, t().console.effectHint);
     chip.tabIndex = -1;
     return chip;
   }
@@ -2178,10 +2178,10 @@ export class Console {
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-pressed", String(state));
     // A hover tooltip spelling out a terse label (e.g. C.INT → Cue Interrupt).
-    if (title) chip.title = title;
+    if (title) setTip(chip, title);
     if (readonlyTitle) {
       chip.setAttribute("aria-disabled", "true");
-      chip.title = readonlyTitle;
+      setTip(chip, readonlyTitle);
       // Out of the tab order — there is nothing to operate — but still able to RECEIVE
       // focus, so it can be the place a closing popover leaves the operator. Without this
       // a chip the rate turned read-only is unfocusable, and the focus falls to <body>.
@@ -3064,10 +3064,7 @@ export class Console {
         knob.append(badge);
         notes.push(t().inspector.notReadFromDevice);
       }
-      if (notes.length) {
-        knob.title = [knob.title, ...notes].filter(Boolean).join("\n");
-        knob.setAttribute("aria-description", notes.join(" "));
-      }
+      if (notes.length) setTip(knob, [tipOf(knob), ...notes].filter(Boolean).join("\n"), true);
     }
     // PAN (mono) / BALANCE (stereo) = the source's → STEREO main-path pan,
     // L63 – C – R63. Per-send pan lives in the SENDS rack's SEND PAN popover.
@@ -3816,7 +3813,7 @@ export class Console {
     const val = el("span", valCls);
     if (k.readonlyTitle) {
       knob.setAttribute("aria-disabled", "true");
-      knob.title = k.readonlyTitle;
+      setTip(knob, k.readonlyTitle);
     } else {
       knob.tabIndex = 0;
     }

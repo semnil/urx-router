@@ -2230,7 +2230,7 @@ export class DynScreen {
     input.step = String(range.step);
     input.value = String(dynToPos(f, value));
     input.dataset.dyn = f.key;
-    input.setAttribute("aria-label", label);
+    input.setAttribute("aria-label", spoken(label));
     const show = (v: number): void => {
       const text = this.valueText(f, v);
       setLevelText(val, text);
@@ -2308,7 +2308,7 @@ export class DynScreen {
     input.step = String(range.step);
     input.value = String(dynToPos(f, value));
     input.dataset.dyn = f.key;
-    input.setAttribute("aria-label", label);
+    input.setAttribute("aria-label", spoken(label));
     const val = el("span", "param-val gt-val");
     val.dataset.dynVal = f.key;
     if (f.key === this.capKey) {

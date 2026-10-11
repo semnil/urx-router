@@ -529,7 +529,9 @@ carries a one-line map of the same directories and points here.
   the graph; per-strip SENDS rack; a scribble power LED toggles each node master (CH_ON / bus master ON /
   osc.on) with the off-state dimmed via the shared `isNodeInactive`; live meters only during Live sync, ~10
   Hz) / `glyph.ts` wraps the `∞` glyph in a `.glyph-inf` span to compensate the reduced x-height of mono
-  fonts (shared by console readouts and inspector values) / `dropzone.ts` drag & drop onto the window (two
+  fonts (shared by console readouts and inspector values), and hands a screen reader the spoken form of a
+  name, a status line, a hint line or a tooltip / `spoken-mark.ts` which marks are announced by a reading
+  of their own, with no imports so the E2E fixture asks the app's own question / `dropzone.ts` drag & drop onto the window (two
   paths: the shell's `tauri://drag-*` events carrying real paths on desktop, taken only for the main window,
   DOM drag events carrying `File` objects in a browser; DOM handlers registered only outside Tauri so a drop
   is never handled twice) /
@@ -1097,7 +1099,13 @@ the inspector, and the open modal itself.
 > hidden from assistive technology next to a visually hidden part holding the spoken form
 > (`setSpokenText` / `setHeardText`). The name cell's tooltip sits on that printed part: VoiceOver reads
 > an element's `title` in its printed form, as a hint a moment after the name and inside the phrase a
-> table cell is entered with, and `aria-description` beside it does not stop that. `src/ui/glyph.test.ts` holds the
+> table cell is entered with, and `aria-description` beside it does not stop that. **A tooltip** on a
+> control the reader reaches whose spoken form differs — a mapped control's MIDI address, the gain knob's
+> notes, a shelf chip's, the labels toggle's — moves to a zone hidden from assistive technology that
+> covers the control, and the control is described by the spoken form instead (`setTip`); a wrapper
+> keeps its title, which is not read, and describes the controls inside it. Every ordinary E2E case
+> ends by checking the page for a name, a description or such a tooltip that still holds a mark in
+> its printed form (`e2e/fixtures.ts`). `src/ui/glyph.test.ts` holds the
 > readings in both languages.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,

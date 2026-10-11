@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { READ_AS_ELEMENT, SPOKEN_MARK } from "./spoken-mark";
 
 // In the mono UI font the infinity glyph (U+221E) draws at x-height, so a bare
 // "-∞" reads markedly smaller and fainter than the digits it stands in for. Write
@@ -34,14 +35,6 @@ export function captionSymbols(): CaptionSymbol[] {
   const { param, paramSpoken } = t().midi;
   return (["phaseL", "phaseR", "phase"] as const).map((k) => ({ symbol: param[k], name: paramSpoken[k] }));
 }
-
-// The marks a screen reader reads as something other than what they are: "CH" as a word
-// (Japanese voices read it as a country), an a/b pair as a fraction or a date, a slash on its
-// own as nothing, and the middle dot as its character name or as nothing. Each is announced
-// by a reading of its own — "CH" spelled letter by letter, a pair as its two halves with the
-// slash's word between them, the slash and the dot by their words. A pair is one mark, so its
-// reading stays one run of words wherever it is announced.
-const SPOKEN_MARK = /(?<![A-Za-z0-9])ch(?![A-Za-z0-9])|([A-Za-z0-9.]+)\/([A-Za-z0-9.]+)|\/|\u00b7/gi;
 
 function markReading(mark: RegExpExecArray): string {
   const m = t();
@@ -134,4 +127,51 @@ export function setHeardText(el: HTMLElement, text: string, said: string, toolti
   heard.className = "sr-only";
   heard.textContent = said;
   el.replaceChildren(shown, heard);
+}
+
+// The elements `setTip` described, so a later tooltip with nothing to say clears only the
+// description it wrote and never one set for another reason.
+const tipDescribed = new WeakSet<HTMLElement>();
+
+/** The tooltip `el` carries, wherever `setTip` put it. */
+export function tipOf(el: HTMLElement): string {
+  return el.querySelector<HTMLElement>(":scope > .tip-zone")?.title ?? el.title;
+}
+
+// A tooltip on `el`, shown on hover as `text` and announced in its spoken form. VoiceOver
+// reads an element's own title as a hint in its printed form, and an aria-description beside
+// it does not stop that, so where the two forms differ the title moves to a hidden zone
+// covering the element and the element is described by the spoken form instead. A wrapper
+// keeps its title, which is not read, and describes the controls inside it. `describe`
+// describes by the text even where the two forms agree.
+export function setTip(el: HTMLElement, text: string, describe = false): void {
+  const same = spoken(text) === text;
+  const said = spoken(text).replace(/\s*\n\s*/g, " ");
+  const reached = el.matches(READ_AS_ELEMENT);
+  let zone = el.querySelector<HTMLElement>(":scope > .tip-zone");
+  if (!reached || same) {
+    zone?.remove();
+    el.classList.remove("tip-host");
+    if (text) el.title = text;
+    else el.removeAttribute("title");
+  } else {
+    el.removeAttribute("title");
+    if (!zone) {
+      zone = document.createElement("span");
+      zone.className = "tip-zone";
+      zone.setAttribute("aria-hidden", "true");
+      el.append(zone);
+    }
+    zone.title = text;
+    el.classList.add("tip-host");
+  }
+  for (const d of reached ? [el] : el.querySelectorAll<HTMLElement>(READ_AS_ELEMENT)) {
+    if (text && (describe || !same)) {
+      d.setAttribute("aria-description", said);
+      tipDescribed.add(d);
+    } else if (tipDescribed.has(d)) {
+      d.removeAttribute("aria-description");
+      tipDescribed.delete(d);
+    }
+  }
 }

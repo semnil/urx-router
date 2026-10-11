@@ -1,6 +1,6 @@
 // Tiny DOM builder shared by the UI modules.
 import { getSettings } from "../core/settings";
-import { setLevelText } from "./glyph";
+import { setLevelText, spoken } from "./glyph";
 import { t } from "../i18n";
 
 export function el(tag: string, cls: string): HTMLElement {
@@ -815,7 +815,7 @@ export function sliderRow(opts: {
   input.max = String(opts.max);
   input.step = String(opts.step);
   input.value = String(opts.value);
-  input.setAttribute("aria-label", opts.label);
+  input.setAttribute("aria-label", spoken(opts.label));
   const val = el("span", "param-val gt-val");
   const show = (v: number): void => {
     setLevelText(val, opts.format(v));

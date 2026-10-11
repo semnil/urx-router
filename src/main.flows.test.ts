@@ -1536,6 +1536,18 @@ describe("menu keyboard navigation", () => {
     expect($("btn-hide-off").getAttribute("aria-checked")).toBe("true");
   });
 
+  // A press on the labels toggle lands on its tooltip zone, which the toggle's own listener
+  // detaches when it relabels itself; the menu closes all the same.
+  it("closes the View menu when the chosen toggle relabels itself under the press", async () => {
+    await boot();
+    $("btn-view").click();
+    expect($("view-menu").hidden).toBe(false);
+    const zone = $("btn-labels").querySelector(".tip-zone")!;
+    zone.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(zone.isConnected).toBe(false);
+    expect($("view-menu").hidden).toBe(true);
+  });
+
   // The trigger opens from the keyboard as well as from a press, and each of the three
   // keys is its own arm — a version of this that only pressed Enter would leave the other
   // two able to scroll the page instead.

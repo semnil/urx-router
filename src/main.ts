@@ -83,7 +83,7 @@ import { Graph } from "./ui/graph";
 import type { ConnectOrigin, LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
 import { copyText, focusables, preserveFocus } from "./ui/dom";
-import { setSaid, spoken } from "./ui/glyph";
+import { setSaid, setTip, spoken } from "./ui/glyph";
 import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
 import { MidiControl } from "./ui/midi";
@@ -1981,7 +1981,7 @@ function applyStaticI18n(): void {
   // The two View toggles keep one label each, as Live sync does: checked is the state
   // the label names, carried by aria-checked and the pressed look.
   labelsBtn.textContent = m.toolbar.labelsDevice;
-  labelsBtn.title = m.toolbar.labelsHint;
+  setTip(labelsBtn, m.toolbar.labelsHint);
   labelsBtn.setAttribute("aria-checked", String(labelSource === "device"));
   hideOffBtn.textContent = m.toolbar.hideOffSends;
   hideOffBtn.title = m.toolbar.hideOffSendsHint;
@@ -1990,7 +1990,7 @@ function applyStaticI18n(): void {
   const desktopLbl = document.getElementById("lbl-desktop");
   const desktopLink = document.getElementById("btn-desktop");
   if (desktopLbl) desktopLbl.textContent = m.toolbar.desktopApp;
-  if (desktopLink) desktopLink.title = m.toolbar.desktopAppHint;
+  if (desktopLink) setTip(desktopLink, m.toolbar.desktopAppHint);
   // Demo-only share / download buttons (same reveal mechanism as the link above).
   const shareBtn = $("btn-share");
   shareBtn.textContent = m.toolbar.shareUrl;
@@ -4919,9 +4919,11 @@ function setupMenu(trigger: HTMLButtonElement, panel: HTMLElement): void {
   // covered too. An item's async action yields at its first await, so this runs, hides
   // the menu and focuses the trigger before any confirm dialog renders — and a modal
   // the action opens afterwards records the trigger, not the item this hides, as the
-  // place to return to on close.
+  // place to return to on close. The item is looked for on the path the click was
+  // dispatched along: an item's own listener may rewrite its contents first (a toggle
+  // relabels itself), which leaves a target inside it detached by the time this runs.
   panel.addEventListener("click", (e) => {
-    if (!(e.target as Element).closest(MENU_ITEM)) return;
+    if (!e.composedPath().some((n) => n instanceof Element && n.matches(MENU_ITEM))) return;
     setOpen(false);
     trigger.focus();
   });

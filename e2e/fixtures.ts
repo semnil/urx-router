@@ -1,5 +1,7 @@
 import { expect, test as base, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import coverageOptions from "./coverage-options";
+import { en } from "../src/i18n/en";
+import { holdsMark, READ_AS_ELEMENT } from "../src/ui/spoken-mark";
 
 interface CoverageHarness {
   start(page: Page): Promise<void>;
@@ -49,8 +51,41 @@ export const test = base.extend<{ e2eCoverage: CoverageHarness }>({
   page: async ({ e2eCoverage, page }, use) => {
     await e2eCoverage.start(page);
     await use(page);
+    if (!page.isClosed()) expect(await printedMarks(page), "read by a screen reader in printed form").toEqual([]);
   },
 });
+
+/**
+ * The names, descriptions and tooltips on the page that a screen reader would read with a
+ * mark in its printed form — the marks `holdsMark` names, and the polarity caption — where
+ * the app hands it the spoken form (src/ui/glyph.ts). Only what is rendered and not hidden
+ * from assistive technology counts, and a title only on an element the reader reaches:
+ * VoiceOver reads it as a hint, while a wrapper's title is not read. A file path is a path
+ * and not a name, so a title that is one is left as it is.
+ */
+async function printedMarks(page: Page): Promise<string[]> {
+  const read = await page.evaluate((reached) => {
+    const out: { where: string; attr: string; value: string }[] = [];
+    for (const e of document.querySelectorAll<HTMLElement>("[aria-label], [aria-description], [title]")) {
+      if (e.closest("[aria-hidden='true']") || !e.checkVisibility({ visibilityProperty: true })) continue;
+      const where = e.dataset.ctl || e.id || e.className || e.tagName;
+      for (const attr of ["aria-label", "aria-description"]) {
+        const value = e.getAttribute(attr);
+        if (value) out.push({ where, attr, value });
+      }
+      const title = e.getAttribute("title");
+      if (title && e.matches(reached)) out.push({ where, attr: "title", value: title });
+    }
+    return out;
+  }, READ_AS_ELEMENT);
+  const path = /^(\/|[A-Za-z]:\\)/;
+  return read
+    .filter(
+      ({ attr, value }) =>
+        (holdsMark(value) || value.includes(en.midi.param.phase)) && !(attr === "title" && path.test(value)),
+    )
+    .map(({ where, attr, value }) => `${where} ${attr}: ${value}`);
+}
 
 async function collectOpenPages(
   context: BrowserContext,

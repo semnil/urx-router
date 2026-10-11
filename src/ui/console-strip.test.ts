@@ -13,6 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chips, consoleHost, dragY, key, wheel, type ConsoleHost } from "./console.test-util";
 import type { ConsoleMidiHooks } from "./console";
+import { tipOf } from "./glyph";
 import { sendConnection, setExclusiveConnection } from "../core/plan";
 import { PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { nodeParamContestPath } from "../core/plan-history";
@@ -652,7 +653,7 @@ describe("a device-locked knob", () => {
     const knob = h.host.querySelector<HTMLElement>(".con-spop .pcol .con-knob")!;
     expect(knob.classList.contains("readonly")).toBe(true);
     expect(knob.getAttribute("aria-disabled")).toBe("true");
-    expect(knob.title).toBeTruthy();
+    expect(tipOf(knob)).toBeTruthy();
     expect(knob.tabIndex).toBe(-1);
     expect(knob.getAttribute("aria-valuenow")).toBeTruthy(); // painted, not blank
 
@@ -1003,7 +1004,9 @@ describe("the INS FX chip", () => {
   });
 
   // The gain knob names the other channels reading the same jack or source on its tooltip,
-  // and carries none when it reads it alone.
+  // and carries none when it reads it alone. The tooltip prints the names and the
+  // description reads their spoken form; the knob carries no title of its own, which
+  // VoiceOver would read as a hint in the printed form.
   it("names the other readers of the jack on the gain knob's tooltip", () => {
     const plan = defaultPlan("URX44V");
     setExclusiveConnection(plan, "in.micline_1_2:out", "ch3:in", "source");
@@ -1012,10 +1015,11 @@ describe("the INS FX chip", () => {
     h = consoleHost({ plan });
     const knob = (id: string): HTMLElement =>
       h.strip(id).root.querySelector<HTMLElement>('.con-knob[aria-label="A.GAIN"]')!;
-    expect(knob("ch1").title).toBe(t().console.gainShared("CH 3"));
-    expect(knob("ch1").getAttribute("aria-description")).toBe(t().console.gainShared("CH 3"));
-    expect(knob("ch3").title).toBe(t().console.gainShared("CH 1"));
-    expect(knob("ch2").title, "CH 2 alone on jack 4").toBe("");
+    expect(tipOf(knob("ch1"))).toBe(t().console.gainShared("CH 3"));
+    expect(knob("ch1").hasAttribute("title")).toBe(false);
+    expect(knob("ch1").getAttribute("aria-description")).toBe(t().console.gainShared("C H 3"));
+    expect(tipOf(knob("ch3"))).toBe(t().console.gainShared("CH 1"));
+    expect(tipOf(knob("ch2")), "CH 2 alone on jack 4").toBe("");
     expect(knob("ch2").hasAttribute("aria-description")).toBe(false);
   });
 
@@ -1360,7 +1364,11 @@ describe("where the focus goes after the INS FX popover closes", () => {
     expect(face.getAttribute("aria-pressed")).toBe("true");
     expect(face.getAttribute("aria-disabled")).toBe("true");
     expect(face.tabIndex, "out of the tab order").toBe(-1);
-    expect(face.title).toBe(t().console.effectHint);
+    // The explanation says on/off, so it reaches a screen reader as the description's spoken
+    // form rather than as the face's own title.
+    expect(tipOf(face)).toBe(t().console.effectHint);
+    expect(face.hasAttribute("title")).toBe(false);
+    expect(face.getAttribute("aria-description")).toContain("on slash off");
     const before = JSON.stringify(h.plan.nodeParams["bus.fx1"]);
     face.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     key(face, "Enter");

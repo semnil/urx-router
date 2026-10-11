@@ -1505,6 +1505,17 @@ input[type="range"]:focus-visible,
   white-space: nowrap;
   border: 0;
 }
+/* A tooltip's hover zone (setTip in src/ui/glyph.ts): it covers the control it belongs to and
+   is hidden from assistive technology, which is what keeps a screen reader from reading the
+   tooltip as a hint in its printed form. The host is positioned only where nothing else
+   positions it. */
+.tip-zone {
+  position: absolute;
+  inset: 0;
+}
+:where(.tip-host) {
+  position: relative;
+}
 
 /* ---- link ledger (status bar readout, experimental) ---- */
 

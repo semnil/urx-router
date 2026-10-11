@@ -94,7 +94,24 @@ test("the FX strip carries an EFFECT face and a disclosure", async ({ page }) =>
   await expect(face).toHaveClass(/\bon\b/);
   await expect(face).toHaveAttribute("aria-pressed", "true");
   await expect(face).toHaveAttribute("aria-disabled", "true");
-  await expect(face).toHaveAttribute("title", en.console.effectHint);
+  // The tooltip says on/off, so it shows from a zone over the whole face — under the pointer
+  // wherever it rests — and the face itself is described by the spoken form, since VoiceOver
+  // reads a control's own title as a hint in its printed form.
+  await expect(face).not.toHaveAttribute("title");
+  await expect(face).toHaveAttribute("aria-description", /on slash off/);
+  const box = (await face.boundingBox())!;
+  for (const [x, y] of [
+    [box.x + 2, box.y + 2],
+    [box.x + box.width / 2, box.y + box.height / 2],
+    [box.x + box.width - 2, box.y + box.height - 2],
+  ]) {
+    const tip = await page.evaluate(
+      ([px, py]) => document.elementFromPoint(px, py)?.closest("[title]")?.getAttribute("title"),
+      [x, y],
+    );
+    expect(tip).toBe(en.console.effectHint);
+  }
+  expect(await face.evaluate((n) => getComputedStyle(n.querySelector(".tip-zone")!).cursor)).toBe("not-allowed");
   expect(Number(await face.evaluate((n) => getComputedStyle(n).opacity))).toBe(1);
   expect(await face.evaluate((n) => getComputedStyle(n).cursor)).toBe("not-allowed");
   // A press changes nothing and opens nothing…
