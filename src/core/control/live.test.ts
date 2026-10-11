@@ -3925,3 +3925,98 @@ describe("LiveSync converge writes and their announcements", () => {
     expect(live.recentPending().written.has(cmdAddr(fader))).toBe(false);
   });
 });
+
+// A move made on the unit's panel while a converge runs, against the write the converge then
+// makes from its frozen copy. The unit holds whichever came last: a move the converge wrote
+// over is not the unit's value any more, and one made after the converge's write still is.
+describe("LiveSync converge over a move on the unit", () => {
+  for (const arrival of ["before its ack", "after its ack"] as const)
+    for (const after of [false, true])
+      it(`keeps the snapshot at what the unit holds (echo ${arrival}${after ? ", a move after the write" : ""})`, async () => {
+        const plan = basePlan();
+        const fader = planToCommands(model, plan).find((c) => c.name === "CH_FADER" && c.node === "ch1")!;
+        const k = cmdAddr(fader);
+        const table = new Map(planToCommands(model, plan).map((c) => [cmdAddr(c), c.vdValue]));
+        const live = liveFor(plan);
+        live.begin();
+        let deliver!: (p: ParamUpdate) => void;
+        vi.mocked(vdParamsSubscribe).mockImplementationOnce(async (_addrs, onUpdate) => {
+          deliver = onUpdate;
+          return () => {};
+        });
+        // The follow layer's own re-reads are left empty: what is asserted is what the session
+        // itself keeps, before anything reads the unit again.
+        const reread = vi.fn(async () => {});
+        const follow = new DeviceFollow({
+          addrs: () => live.followAddrs(),
+          isEcho: (p) => live.isEcho(p.paramId, p.x, p.y, p.value),
+          isSuperseded: (p) => live.hasUnannouncedWrite(p.paramId, p.x, p.y),
+          lookup: (id, x, y) => live.lookup(id, x, y),
+          applyDirect: (node, name, value, y) => applyDirect(plan, node, name, value, y),
+          noteDirect: (id, x, y, value) => live.noteDirect(id, x, y, value),
+          flushDirect: () => {},
+          reconcileNodes: reread,
+          reconcileAll: reread,
+          onFollow: () => {},
+          onError: (message) => {
+            throw new Error(message);
+          },
+          deferReconcile: () => live.isWriting(),
+        });
+        await follow.begin();
+        const move = (value: number): void => {
+          table.set(k, value);
+          deliver({ paramId: fader.paramId, x: fader.x, y: fader.y, value });
+        };
+        vi.mocked(vdSet).mockImplementation((id, x, y, value) => {
+          table.set(addrKey(id, x, y), value);
+          // The operator moves the fader in the app while the COMP/EQ type head is on the wire.
+          if (id === PARAMS.COMP_EQ_TYPE.id) {
+            setCh1Fader(plan, -6);
+            live.schedule();
+          }
+          if (addrKey(id, x, y) === k) {
+            const announce = (): void => deliver({ paramId: id, x, y, value });
+            if (arrival === "before its ack") announce();
+            else setTimeout(announce, 1);
+          }
+          return Promise.resolve();
+        });
+        // The converge's first read of the fader finds it moved on the unit; its read after the
+        // write finds the write, and — in the second form — the unit moved again just after it.
+        let reads = 0;
+        vi.mocked(vdGet).mockImplementation((id, x, y) => {
+          const at = addrKey(id, x, y);
+          const value = table.get(at) ?? 0;
+          if (at === k) {
+            reads++;
+            if (reads === 1) {
+              move(-1200);
+              return Promise.resolve(-1200);
+            }
+            if (reads === 2 && after) move(-1800);
+          }
+          return Promise.resolve(value);
+        });
+        setCh1CompEqType(plan, 1);
+        live.schedule();
+        await vi.advanceTimersByTimeAsync(120);
+        await vi.advanceTimersByTimeAsync(CONVERGE_TO_CAP_MS);
+        follow.end();
+
+        const sentToFader = vi
+          .mocked(vdSet)
+          .mock.calls.filter((c) => addrKey(c[0], c[1], c[2]) === k)
+          .map((c) => c[3]);
+        expect(sentToFader[0], "the premise: the converge wrote its frozen value over the unit's move").toBe(-600);
+        const planValue = planToCommands(model, plan).find((c) => cmdAddr(c) === k)!.vdValue;
+        const snap = live.snapshotEntries()[`${fader.paramId}:${fader.x}:${fader.y}`];
+        // The last move on the unit is what the plan shows, and it is what the unit ends up
+        // holding: put back by the next flush where the converge wrote over it, left alone where
+        // it came after the write.
+        expect(planValue).toBe(after ? -1800 : -1200);
+        expect(table.get(k)).toBe(planValue);
+        expect(snap).toBe(table.get(k));
+        expect(sentToFader.slice(1)).toEqual(after ? [] : [-1200]);
+      });
+});

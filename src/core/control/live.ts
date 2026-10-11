@@ -1360,6 +1360,10 @@ export class LiveSync {
             const echoed = this.echoedInFlight.delete(k);
             if (o.result !== "accepted") return;
             if (!echoed) this.notePending(this.pendingValues, k, o.command.vdValue);
+            // A move on the unit's panel the journal holds for this address is one this write
+            // has replaced, so the capture behind the converge does not restore it. One that
+            // arrives later is journaled again then.
+            this.directJournal.delete(k);
             this.recentWrites.set(k, { mark: marks.get(k)!, node: o.command.node, at: Date.now() });
           },
         }).finally(() => {
