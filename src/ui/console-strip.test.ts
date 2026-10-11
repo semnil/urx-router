@@ -951,9 +951,9 @@ describe("the INS FX chip", () => {
   });
 
   // A stereo channel's name is the switch for the side the strip shows: the hidden side's
-  // number dims, +48 / A.GAIN / φ read the shown side, learn mode does not arm it, and the
+  // number dims, +48 / A.GAIN / Ф read the shown side, learn mode does not arm it, and the
   // power LED beside it stays the strip's on/off.
-  it("switches a stereo strip's side from its name, and its input stage and φ with it", () => {
+  it("switches a stereo strip's side from its name, and its input stage and Ф with it", () => {
     const plan = defaultPlan("URX44V");
     setExclusiveConnection(plan, "in.micline_1_2:out", "ch_5_6:in", "source");
     plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: 30, gainR: 12, phantomR: true };
@@ -967,14 +967,14 @@ describe("the INS FX chip", () => {
     expect(side().querySelector(".dim")?.textContent).toBe("6");
     expect(gain().getAttribute("aria-valuenow")).toBe("30");
     expect(chips(root()).get("+48")!.getAttribute("aria-pressed")).toBe("false");
-    expect([...chips(root()).keys()].filter((k) => k.startsWith("φ"))).toEqual(["φ"]);
+    expect([...chips(root()).keys()].filter((k) => k.startsWith("Ф"))).toEqual(["Ф"]);
     side().click();
     expect(h.switches).toEqual([{ id: "ch_5_6", side: "R" }]);
     expect(side().getAttribute("aria-label")).toBe("CH 5/6, showing CH 6 (R)");
     expect(side().querySelector(".dim")?.textContent).toBe("5");
     expect(gain().getAttribute("aria-valuenow")).toBe("12");
     expect(chips(root()).get("+48")!.getAttribute("aria-pressed")).toBe("true");
-    chips(root()).get("φ")!.click();
+    chips(root()).get("Ф")!.click();
     expect(h.plan.nodeParams.ch_5_6?.phaseR).toBe(true);
     expect(h.plan.nodeParams.ch_5_6?.phaseL ?? false).toBe(false);
     expect(h.plan.nodeParams.ch_5_6?.on, "the name is not the power").not.toBe(false);
@@ -1018,7 +1018,7 @@ describe("the INS FX chip", () => {
     expect(knob("ch2").hasAttribute("aria-description")).toBe(false);
   });
 
-  it("leaves a stereo strip's name out of MIDI learn, and arms the shown side's φ", () => {
+  it("leaves a stereo strip's name out of MIDI learn, and arms the shown side's Ф", () => {
     const armed: string[] = [];
     h = consoleHost({ midi: learnHooks(armed) });
     const root = (): HTMLElement => h.strip("ch_5_6").root;
@@ -1027,7 +1027,7 @@ describe("the INS FX chip", () => {
     side.click();
     expect(armed).toEqual([]);
     expect(h.switches).toEqual([{ id: "ch_5_6", side: "R" }]);
-    chips(root()).get("φ")!.click();
+    chips(root()).get("Ф")!.click();
     expect(armed).toEqual(["ch_5_6/phaseR"]);
   });
 

@@ -49,7 +49,7 @@ flowchart LR
   end
 
   subgraph CH[Mixer channels]
-    MONO["Mono CH<br/>Φ→HPF→GATE→COMP→EQ→INS FX"]
+    MONO["Mono CH<br/>Ф→HPF→GATE→COMP→EQ→INS FX"]
     ST["Stereo CH<br/>EQ→DUCKER"]
   end
 
@@ -144,7 +144,7 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 > and writes it: architecture.md, "The input stage: on the jack and the source".
 >
 > **One side of a stereo channel at a time**: the unit's screens show a stereo channel one side at a time — its
-> name area and `‹` `›` pick which — and its single [Φ] inverts the side shown, on a digital source as on
+> name area and `‹` `›` pick which — and its single [Ф] inverts the side shown, on a digital source as on
 > MIC/LINE (the two sides' polarity are separate parameters). The side stays as it is across a source change
 > and a scene recall. The LCD selection names the selected stereo channel's side, and a write of it moves both
 > the selection and the side.
@@ -395,7 +395,7 @@ one (a file, a `?plan=` link) is refused at load.
 
 ## Fixed (non-wireable) elements
 
-- The channel-strip processing order (Φ → HPF → GATE → COMP → EQ → INS FX) is fixed.
+- The channel-strip processing order (Ф → HPF → GATE → COMP → EQ → INS FX) is fixed.
   The channel's **Rec Point** (recording / direct-out tap) selects a stage along this chain:
   MONO IN offers PRE GATE / PRE COMP / PRE EQ / PRE INS FX / PRE FADER; ST IN (EQ only) offers
   PRE EQ / PRE FADER. Default PRE FADER. Stored as a per-channel parameter, not a wire.

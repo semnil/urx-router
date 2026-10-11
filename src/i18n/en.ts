@@ -317,9 +317,9 @@ export const en = {
       compOn: dev("COMP"),
       eqOn: dev("EQ"),
       phantom: dev("+48"),
-      phase: dev("φ"),
-      phaseL: dev("φL"),
-      phaseR: dev("φR"),
+      phase: dev("Ф"),
+      phaseL: dev("ФL"),
+      phaseR: dev("ФR"),
       hpf: dev("HPF"),
       hiZ: dev("Hi-Z"),
       duckerOn: dev("DUCKER"),
@@ -351,6 +351,13 @@ export const en = {
     // console's own wording is deliberate and stays as it is; this is the same
     // parameter read on a different surface.
     scopedParam: { gain: tr("Gain") } as Record<string, Translatable>,
+    // The word a param's caption stands for, where the caption is a symbol a screen reader
+    // would spell out by its character name. Read wherever the caption names a control.
+    paramSpoken: {
+      phase: tr("Phase"),
+      phaseL: tr("Phase L"),
+      phaseR: tr("Phase R"),
+    } as Record<string, Translatable>,
     // The id's third component, printed between the node and the param. A send
     // target reads as a signal path ("→ MIX 1"); a processor or band is a stage of
     // this node, so it reads as one more step of its name.
@@ -444,7 +451,9 @@ export const en = {
     hpf: dev("HPF"),
     hpfFreq: dev("HPF Freq"),
     phantom: dev("+48V"),
-    phase: tr("Ø"),
+    phase: dev("Ф"),
+    // What the Ф row is announced as.
+    phaseName: tr("Phase"),
     clipSafe: dev("Clip Safe"),
     hiZ: dev("Hi-Z"),
     insertFx: dev("Insert FX"),

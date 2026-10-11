@@ -755,6 +755,23 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     );
   });
 
+  // A sentence that names a control by its caption is marked as such on both status lines, so
+  // a caption symbol in it is announced by its word; one that names no control is not marked.
+  it("marks the status lines that name a control by its caption", async () => {
+    const { control, hooks } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    const last = (): unknown[] => vi.mocked(hooks.onStatus).mock.calls.at(-1) ?? [];
+    await learnOnto(control, "ch1/phase", 21);
+    expect(control.isMapped("ch1/phase")).toBe(true);
+    expect(last()).toEqual([t().midi.bound("CH 1 · Ф", "CH 1 CC 21"), true]);
+    expect(lastState().statusCaptioned).toBe(true);
+    control.arm("ch1/level");
+    expect(last()).toEqual([t().midi.hintArmed("CH 1 · Level"), true]);
+    dispatch({ type: "learn", on: false });
+    expect(last()).toEqual([t().midi.learnOff]);
+  });
+
   // A member the current plan cannot resolve has no kind to compare, so the learn is refused
   // rather than guessed at.
   it("refuses learning onto an address whose binding the plan does not carry", async () => {

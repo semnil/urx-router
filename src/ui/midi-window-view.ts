@@ -7,6 +7,7 @@
 // `send` callback it is handed.
 
 import { t } from "../i18n";
+import { setCaptionedText } from "./glyph";
 import { el, preserveFocus } from "./dom";
 import type { MidiUiIntent, MidiUiRow, MidiUiState } from "./midi-protocol";
 import { BUTTON_MODES, TAKE_MODES } from "../core/midi/mapping";
@@ -123,8 +124,10 @@ export function mappingRow(row: MidiUiRow, m: MidiMessages, send: MidiUiSend): H
   const tr = el("tr", row.linked ? "linked" : "");
   tr.dataset.control = row.control;
   const name = el("td", "mw-ctl");
-  name.textContent = row.label;
+  setCaptionedText(name, row.label);
   name.title = row.label;
+  // The row's controls name the assignment they sit on, by the form it is announced as.
+  const who = row.spoken ?? row.label;
   const addr = el("td", row.addr ? "mw-addr" : "mw-linked");
   addr.textContent = row.addr ?? m.linked;
   if (!row.addr) addr.title = m.linkedHint;
@@ -138,13 +141,13 @@ export function mappingRow(row: MidiUiRow, m: MidiMessages, send: MidiUiSend): H
     opt.append(tag);
   } else if (row.option === "mode") {
     opt.append(
-      choice("mw-mode", TAKE_MODES, row.mode, m.mode, m.modeTitle, row.label, (mode) =>
+      choice("mw-mode", TAKE_MODES, row.mode, m.mode, m.modeTitle, who, (mode) =>
         send({ type: "mode", control: row.control, mode }),
       ),
     );
   } else if (row.option === "button") {
     opt.append(
-      choice("mw-btn", BUTTON_MODES, row.button ?? "edge", m.buttonMode, m.buttonModeTitle, row.label, (button) =>
+      choice("mw-btn", BUTTON_MODES, row.button ?? "edge", m.buttonMode, m.buttonModeTitle, who, (button) =>
         send({ type: "button", control: row.control, button }),
       ),
     );
@@ -154,7 +157,7 @@ export function mappingRow(row: MidiUiRow, m: MidiMessages, send: MidiUiSend): H
   btn.type = "button";
   btn.textContent = "✕";
   btn.title = m.remove;
-  btn.setAttribute("aria-label", `${m.remove} — ${row.label}`);
+  btn.setAttribute("aria-label", `${m.remove} — ${who}`);
   btn.addEventListener("click", () => send({ type: "remove", control: row.control }));
   del.append(btn);
   tr.append(name, addr, opt, del);
@@ -226,7 +229,9 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
   const shown = !state.learnOn ? m.hintIdle : state.armed ? m.hintArmed(state.armed) : m.hintLearn;
   for (const text of new Set([m.hintIdle, m.hintLearn, shown])) {
     const line = el("span", "");
-    line.textContent = text;
+    // The armed wording names the control by its caption.
+    if (state.armed && text === shown) setCaptionedText(line, text);
+    else line.textContent = text;
     if (text !== shown) line.setAttribute("aria-hidden", "true");
     hint.append(line);
   }
@@ -260,7 +265,10 @@ export function renderMidiWindow(host: HTMLElement, state: MidiUiState, send: Mi
 
   if (status.parentNode === host) status.before(head, body);
   else host.append(head, body, status);
-  if (status.textContent !== state.status) status.textContent = state.status;
+  if (status.textContent !== state.status) {
+    if (state.statusCaptioned) setCaptionedText(status, state.status);
+    else status.textContent = state.status;
+  }
   restoreFocus();
 }
 

@@ -1,4 +1,4 @@
-import { test, expect, colorToken, contrastRatio, type Page } from "./fixtures";
+import { test, expect, colorToken, contrastRatio, type Locator, type Page } from "./fixtures";
 import { planParamZ } from "./plan-param";
 import { LIVE_COMMANDS, answerTimingOf, installAnswerQueue, untilAnswered } from "./tauri-stub";
 import { pickBand, screenBox } from "./dyn-helpers";
@@ -825,19 +825,30 @@ test("the scribble power LED arms the node master (chOn) and a note toggles it",
   await expect(power()).toHaveAttribute("aria-pressed", "false"); // toggled off
 });
 
-// A stereo strip's one φ arms the id of the side it shows, and its name, which arms nothing,
+// A stereo strip's one Ф arms the id of the side it shows, and its name, which arms nothing,
 // still switches that side while learn is on.
-test("learn on a stereo strip's φ binds the side it shows", async ({ page }) => {
+test("learn on a stereo strip's Ф binds the side it shows", async ({ page }) => {
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
   const s = strip(page, "CH 5/6");
   await setLearn(page, win, true);
   await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();
   await expect(s.getByRole("button", { name: "CH 5/6, showing CH 6 (R)", exact: true })).toBeVisible();
-  await s.getByRole("button", { name: "φ", exact: true }).click();
+  await s.getByRole("button", { name: "Phase", exact: true }).click();
+  // Both lines that name the armed control announce its caption by its word.
+  const spoken = (scope: Locator) => scope.getByRole("img", { name: "Phase R", exact: true });
+  await expect(page.locator("#statusbar")).toContainText("CH 5/6 · ФR");
+  await expect(spoken(page.locator("#statusbar"))).toHaveText("ФR");
+  await expect(spoken(win.locator(".mw-hint > :not([aria-hidden])"))).toHaveText("ФR");
   await sendMidi(page, [0x90, 64, 127]);
   await expect(mapRow(win, "ch_5_6/phaseR")).toBeVisible();
+  await expect(page.locator("#statusbar")).toContainText("CH 5/6 · ФR");
+  await expect(spoken(page.locator("#statusbar"))).toHaveText("ФR");
+  await expect(spoken(win.locator(".mw-status"))).toHaveText("ФR");
   await expect(mapRow(win, "ch_5_6/phaseL")).toHaveCount(0);
+  // The row prints the caption and is announced by the word it stands for.
+  await expect(mapRow(win, "ch_5_6/phaseR").locator(".mw-ctl")).toHaveText("CH 5/6 · ФR");
+  await expect(mapRow(win, "ch_5_6/phaseR").getByRole("cell", { name: "CH 5/6 · Phase R", exact: true })).toBeVisible();
 });
 
 test("learn mode ignores a wheel over a fader so a stray scroll never edits it", async ({ page }) => {

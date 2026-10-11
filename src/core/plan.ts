@@ -318,7 +318,7 @@ export interface NodeParams {
   gateOn?: boolean;
   /** COMP_ON: compressor section on (MONO IN channels). Absent or false = off. */
   compOn?: boolean;
-  /** PHASE: polarity invert (Ø) on a mono mic channel. Absent or false = off. */
+  /** PHASE: polarity invert (Ф) on a mono mic channel. Absent or false = off. */
   phase?: boolean;
   /** PHASE_L / PHASE_R: independent polarity invert for a stereo channel's L/R sides. */
   phaseL?: boolean;

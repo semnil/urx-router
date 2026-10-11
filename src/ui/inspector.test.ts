@@ -845,7 +845,7 @@ describe("renderInspector — the input stage a channel reads", () => {
     return plan;
   };
 
-  it("draws no input-stage row for a channel on no source, Ø first", () => {
+  it("draws no input-stage row for a channel on no source, Ф first", () => {
     renderInspector(panel, m, wired([], ["ch1:in"]), nodeSel("ch1"), act);
     const rows = inputRows();
     expect(rows[0]).toBe(t().inspector.phase);

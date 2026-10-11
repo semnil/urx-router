@@ -159,10 +159,12 @@ const SURFACES: Record<SurfaceName, Surface> = {
     // The delete button is an icon with its meaning in the tooltip, and the Linked
     // marker explains itself the same way — both by design, in a table that has no
     // room for the sentence.
-    viaAttribute: ["midi.remove", "midi.linkedHint"],
+    // A symbol caption's word (Ф → Phase) is what the row and its controls are NAMED by,
+    // never what the row prints.
+    viaAttribute: ["midi.remove", "midi.linkedHint", "midi.paramSpoken"],
     // The control vocabularies are composed into one label per assignment
     // ("CH 1 · GATE · Threshold"), never printed alone.
-    composed: ["midi.param", "midi.scope", "midi.scopedParam"],
+    composed: ["midi.param", "midi.scope", "midi.scopedParam", "midi.paramSpoken"],
     neverShown: {
       // ui/midi.ts routes all four through the MAIN window's status line.
       "midi.windowError": "the main window's status line",

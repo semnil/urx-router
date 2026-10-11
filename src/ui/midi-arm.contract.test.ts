@@ -151,7 +151,7 @@ describe("arming surfaces against the control catalog", () => {
     expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
   });
 
-  // A stereo channel's one φ and its input stage act on the side it shows, under the ids of
+  // A stereo channel's one Ф and its input stage act on the side it shows, under the ids of
   // that side; with R shown, every id it arms still binds.
   it.each(["URX22", "URX44", "URX44V"] as const)("CONSOLE arms the shown side's ids on %s", (modelId) => {
     const armed: string[] = [];

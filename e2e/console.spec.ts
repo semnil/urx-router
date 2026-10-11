@@ -209,14 +209,16 @@ test("the MIX master BAL knob stays labeled BAL under Pan Link", async ({ page }
   await expect(strip(page, "MIX 1").locator(".con-knob[aria-label='PAN']")).toHaveCount(0);
 });
 
-test("DUCKER appears on stereo channels only, with one φ for the side the strip shows", async ({ page }) => {
+test("DUCKER appears on stereo channels only, with one Ф for the side the strip shows", async ({ page }) => {
   // `exact` because the tuning-screen opener beside it is labelled "Ducker screen",
   // which a substring match also picks up.
   const s = strip(page, "CH 5/6");
   await expect(s.getByRole("button", { name: "DUCKER", exact: true })).toBeVisible();
   await expect(strip(page, "CH 1").getByRole("button", { name: "DUCKER", exact: true })).toHaveCount(0);
-  const phi = s.getByRole("button", { name: "φ", exact: true });
+  // The chip prints Ф and is announced by the word it stands for.
+  const phi = s.getByRole("button", { name: "Phase", exact: true });
   await expect(phi).toHaveCount(1);
+  await expect(phi).toHaveText("Ф");
   await phi.click();
   await expect(phi).toHaveAttribute("aria-pressed", "true");
   await s.getByRole("button", { name: "CH 5/6, showing CH 5 (L)", exact: true }).click();

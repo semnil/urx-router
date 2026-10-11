@@ -47,7 +47,7 @@ flowchart LR
   end
 
   subgraph CH[ミキサーチャンネル]
-    MONO["モノ CH<br/>Φ→HPF→GATE→COMP→EQ→INS FX"]
+    MONO["モノ CH<br/>Ф→HPF→GATE→COMP→EQ→INS FX"]
     ST["ステレオ CH<br/>EQ→DUCKER"]
   end
 
@@ -139,7 +139,7 @@ MIC/LINE 1 入力に内部結線され、独立したソース選択肢として
 > 「入力段: ジャックとソースに置く」。
 >
 > **ステレオ CH は一度に片側**: 本体の画面はステレオ CH を片側ずつ表示し — 名前欄と `‹` `›` がどちらかを選ぶ —
-> 1 つの [Φ] は表示中の側を反転する。ソースがデジタルでも MIC/LINE と同じ (両側の極性は別々のパラメータ)。
+> 1 つの [Ф] は表示中の側を反転する。ソースがデジタルでも MIC/LINE と同じ (両側の極性は別々のパラメータ)。
 > 表示する側はソースの切り替えとシーンの呼び出しでは変わらない。LCD の選択は選択中のステレオ CH の側を示し、
 > それを書くと選択と側の両方が移る。
 >
@@ -377,7 +377,7 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
 
 ## 固定 (結線不可) の要素
 
-- チャンネルストリップの処理順 (Φ → HPF → GATE → COMP → EQ → INS FX) は固定。
+- チャンネルストリップの処理順 (Ф → HPF → GATE → COMP → EQ → INS FX) は固定。
   チャンネルの **Rec Point** (録音 / ダイレクトアウトのタップ) はこのチェーン上の段を選ぶ:
   MONO IN は PRE GATE / PRE COMP / PRE EQ / PRE INS FX / PRE FADER、ST IN (EQ のみ) は
   PRE EQ / PRE FADER。既定は PRE FADER。配線ではなくチャンネルごとのパラメータとして保持する。

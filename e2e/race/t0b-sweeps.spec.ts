@@ -527,7 +527,7 @@ test.describe("T0b baseline sweeps", () => {
       { label: "scribble power LED", run: () => ch1.locator(".con-power").click() },
       { label: "MUTE chip", run: () => chip(ch1, "MUTE").click() },
       { label: "+48 chip", run: () => chip(ch1, "+48").click() },
-      { label: "polarity chip", run: () => chip(ch1, "φ").click() },
+      { label: "polarity chip", run: () => chip(ch1, "Phase").click() },
       { label: "HPF chip", run: () => chip(ch1, "HPF").click() },
       // Hi-Z is a CH 3 / CH 4 input on this model, not CH 1.
       { label: "Hi-Z chip (CH 3)", run: () => chip(strip(page, "CH 3"), "Hi-Z").click() },
@@ -556,10 +556,10 @@ test.describe("T0b baseline sweeps", () => {
       },
       { label: "INS FX face (bypass)", run: () => ch1.locator(".con-ifxface").click() },
       { label: "DUCKER chip (stereo strip)", run: () => chip(st, "DUCKER").click() },
-      // The side a stereo strip shows is UI state: switching it writes nothing, and the one φ
+      // The side a stereo strip shows is UI state: switching it writes nothing, and the one Ф
       // then writes the shown side's polarity.
       { label: "stereo strip name (show R)", run: () => chip(st, "CH 5/6, showing CH 5 (L)").click(), silent: true },
-      { label: "polarity chip (stereo strip, R shown)", run: () => chip(st, "φ").click() },
+      { label: "polarity chip (stereo strip, R shown)", run: () => chip(st, "Phase").click() },
       { label: "C.INT chip (monitor)", run: () => chip(strip(page, "MONITOR 1"), "C.INT").click() },
       { label: "MONO chip (monitor)", run: () => chip(strip(page, "MONITOR 1"), "MONO").click() },
       { label: "A.GAIN knob drag", run: () => dragBy(page, knob(ch1, "A.GAIN"), 0, -20, 5) },

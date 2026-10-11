@@ -341,6 +341,45 @@ describe("renderMidiWindow — assignment list", () => {
     expect(sent).toEqual([{ type: "remove", control: "ch4/mute" }]);
   });
 
+  // A symbol caption prints as itself and is announced by its word: the name cell carries the
+  // symbol under its word, and every control on the row is named by `spoken`, while the
+  // visible text and tooltip keep `label`.
+  it("names a row by its spoken form where it has one", () => {
+    const toggle = row({ control: "ch1/phase", label: "CH 1 · Ф", spoken: "CH 1 · Phase", option: "button" });
+    const { host } = fixture(baseState({ rows: [toggle] }));
+    const name = host.querySelector(".mw-ctl") as HTMLElement;
+    expect(name.textContent).toBe("CH 1 · Ф");
+    expect(name.title).toBe("CH 1 · Ф");
+    expect(name.querySelector("[role='img']")?.getAttribute("aria-label")).toBe(t().midi.paramSpoken.phase);
+    expect(host.querySelector(".mw-btn")?.getAttribute("aria-label")).toBe(
+      `${t().midi.buttonModeTitle} — CH 1 · Phase`,
+    );
+    expect(host.querySelector(".mw-del")?.getAttribute("aria-label")).toBe(`${t().midi.remove} — CH 1 · Phase`);
+    const plain = fixture(baseState({ rows: [row()] })).host.querySelector(".mw-ctl") as HTMLElement;
+    expect(plain.querySelector("[role='img']"), "a row with no symbol is plain text").toBeNull();
+  });
+
+  // The status line and the armed hint name controls by their captions, so their symbols are
+  // announced by their words; a status the main window did not mark keeps its text as it is.
+  it("announces a caption symbol in the status line and the armed hint by its word", () => {
+    const { host } = fixture(
+      baseState({
+        learnOn: true,
+        armed: "CH 5/6 · ФR",
+        status: "Assigned CC 7 ch 1 to CH 5/6 · ФR",
+        statusCaptioned: true,
+      }),
+    );
+    const status = host.querySelector(".mw-status") as HTMLElement;
+    expect(status.textContent).toBe("Assigned CC 7 ch 1 to CH 5/6 · ФR");
+    expect(status.querySelector("[role='img']")?.getAttribute("aria-label")).toBe(t().midi.paramSpoken.phaseR);
+    expect(shownHint(host)).toBe(t().midi.hintArmed("CH 5/6 · ФR"));
+    const hint = host.querySelector(".mw-hint > :not([aria-hidden])") as HTMLElement;
+    expect(hint.querySelector("[role='img']")?.getAttribute("aria-label")).toBe(t().midi.paramSpoken.phaseR);
+    const port = fixture(baseState({ status: "MIDI input error: Ф port" })).host.querySelector(".mw-status")!;
+    expect(port.querySelector("[role='img']"), "an unmarked status is written as text").toBeNull();
+  });
+
   it("renders one row per assignment, in the order given", () => {
     const rows = [row({ control: "a" }), row({ control: "b" }), row({ control: "c" })];
     const { host } = fixture(baseState({ rows }));

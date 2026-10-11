@@ -207,7 +207,7 @@ carries a one-line map of the same directories and points here.
   does (`withSwitchNotes` in `main.ts`) — the full read device follow runs once a burst goes quiet lands
   there / `stereo-side.ts` the side each stereo channel shows (L until switched): which jack's input stage
   the CONSOLE strip, the Inspector and a bound MIDI control show and edit, and which side's polarity the one
-  φ / Ø inverts. UI state rather than plan state — not saved, not undoable, not in a `?plan=` link — reset on
+  Ф inverts. UI state rather than plan state — not saved, not undoable, not in a `?plan=` link — reset on
   a model switch, and DOM-free so `core/midi` reads it. Both views' switches reach it through one funnel in
   `main.ts` (`switchSide`)
   - `src/core/midi/` — external MIDI control (desktop only). `message.ts` decode/encode of CC/note/pitch
@@ -1002,7 +1002,7 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
   unauthored-write confirm name the channels reading the jack or source.
 - **One side at a time.** A stereo channel shows one side (`stereo-side.ts`, L until switched): its CONSOLE name
   and the switch at the top of its INPUT section pick it, and the input rows, the gain knob, +48 / Hi-Z and the
-  one φ / Ø show and edit that side's jack and polarity. The MIDI `gain` / `phantom` / `hiZ` ids act on the side
+  one Ф show and edit that side's jack and polarity. The MIDI `gain` / `phantom` / `hiZ` ids act on the side
   shown, while each side's polarity keeps its own id (`phaseL` / `phaseR`). The side is UI state rather than plan
   state — not saved, not undoable, not in a `?plan=` link — and goes back to L on a model switch.
 - **Load.** A document that carries the channel keys — every version before 5, or one written by hand — has them
@@ -1055,6 +1055,21 @@ in-house module `src/i18n/`:
 The language is switched from the Preferences modal (a dropdown of native names in the
 "Language & theme" section); `setLang()` notifies listeners, which re-render the static labels,
 the inspector, and the open modal itself.
+
+> **The polarity mark is Ф (U+0424), on every surface and in both languages.** It is the one code point
+> that draws as a circle with a vertical bar through it, above and below, in each font the `--mono` stack
+> resolves to — Menlo on macOS, Cascadia Code and Consolas on Windows; U+03C6 (Greek phi) is a looped letter in Menlo,
+> U+03D5 (the phi symbol) a looped one in Consolas, and U+00D8 a slashed letter. A screen reader would announce the
+> character itself as a Cyrillic letter, so every control it captions is named by its word instead —
+> `Phase` / `フェーズ`, the user guide's own name for the control: the CONSOLE chip and the Inspector row
+> through `setSymbolText` (`src/ui/glyph.ts`), and a MIDI assignment on it (`ФL` / `ФR` for a stereo
+> channel's sides) through `midi.paramSpoken`, which the MIDI window's row and the controls on it are
+> named by. A sentence that names a control by its caption — the binding, the armed control and a refused
+> learn, on the app's status line and the MIDI window's, and the window's armed hint — is written through
+> `setCaptionedText`, which leaves the text as it is and announces each caption symbol in it by its word.
+> Only those sentences are: the MIDI side marks them (`onStatus`'s `captioned`, `statusCaptioned` in the
+> window's state), since a port or file name holding the same character is not a caption. `src/ui/glyph.test.ts` holds the captions to Ф and refuses the other marks in the sources and
+> these documents.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
 > `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **Those five apply to prose as much
@@ -1374,9 +1389,9 @@ MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off) — never the nod
 MIX 675), which is the scribble power LED. STEREO and the MONITOR buses have no → STEREO send, so they carry
 no MUTE chip; their master ON is the power LED alone. A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
-`MONITOR_MONO`, ships OFF) chips. Then +48 / φ /
+`MONITOR_MONO`, ships OFF) chips. Then +48 / Ф /
 HPF on a mono channel (+48 and Hi-Z are the jack's it reads: Hi-Z where that jack carries it, neither on a source
-or on no source) or one φ on a stereo channel, which inverts the side the strip shows (`phaseL` / `phaseR`,
+or on no source) or one Ф on a stereo channel, which inverts the side the strip shows (`phaseL` / `phaseR`,
 gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
 node hung under them). A mono channel in SSMCS mode carries **SSMCS** between GATE and COMP — the morphing

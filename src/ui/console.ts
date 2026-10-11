@@ -107,7 +107,7 @@ import {
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // MIX/FX send targets are shared with the MIDI control catalog.
 import { controlId, MAIN_BUS, SEND_TARGETS, SSMCS_SC_SCOPE, type SendTarget } from "../core/midi/controls";
-import { setLevelText } from "./glyph";
+import { setLevelText, setSymbolText } from "./glyph";
 import {
   el,
   focusables,
@@ -812,7 +812,7 @@ export class Console {
     const isStream = id === "bus.stream";
     const isMix = this.isMixBus(id);
     const isMon = isMonitorBus(id);
-    const isMono = /^ch\d+$/.test(id); // mono channels are ch1..ch4 (the only gain/gate/comp/φ-bearing strips)
+    const isMono = /^ch\d+$/.test(id); // mono channels are ch1..ch4 (the only gain/gate/comp/Ф-bearing strips)
     return {
       id,
       // The master reads "STEREO" here (the graph keeps the fuller "STEREO (MAIN)"):
@@ -2032,7 +2032,14 @@ export class Console {
     mute: boolean,
     on: boolean,
     toggle: () => boolean,
-    opts?: { readonlyTitle?: string; midiId?: string; title?: string; rerender?: boolean; keys?: readonly string[] },
+    opts?: {
+      readonlyTitle?: string;
+      midiId?: string;
+      title?: string;
+      rerender?: boolean;
+      keys?: readonly string[];
+      spoken?: string;
+    },
   ): void {
     parent.append(this.buildChip(id, label, on, toggle, { ...opts, mute }));
   }
@@ -2154,16 +2161,19 @@ export class Console {
       rerender?: boolean;
       keys?: readonly string[];
       ctl?: string;
+      /** The word a symbol `label` is announced as (see setSymbolText). */
+      spoken?: string;
     },
   ): HTMLElement {
-    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender, keys, ctl } = opts ?? {};
+    const { cls = "con-chip", mute, readonlyTitle, midiId, title, after, rerender, keys, ctl, spoken } = opts ?? {};
     // Normalised before it reaches the DOM. The device write is `np.<flag> ? 1 : 0`
     // and the load funnel passes a finite numeric leaf through unchecked, so a plan
     // authored elsewhere reaches here carrying 1 — `String(1)` is "1", which is not
     // an ARIA boolean, and a screen reader is told nothing rather than "pressed".
     const state = Boolean(on);
     const chip = el("div", cls + (mute ? " mute" : "") + (state ? " on" : "") + (readonlyTitle ? " readonly" : ""));
-    chip.textContent = label;
+    if (spoken) setSymbolText(chip, label, spoken);
+    else chip.textContent = label;
     chip.dataset.ctl = ctl ?? midiId ?? label;
     chip.setAttribute("role", "button");
     chip.setAttribute("aria-pressed", String(state));
@@ -2687,7 +2697,14 @@ export class Console {
     // spacer chip so the last real chip never stretches to full width.
     type BoolKey = "gateOn" | "compOn" | "eqOn" | "phase" | "phaseL" | "phaseR" | "hpf" | "cueInterrupt" | "mono";
     const planOf = (): NodeParams => this.hooks.getPlan().nodeParams[m.id] ?? {};
-    const boolChip = (parent: HTMLElement, label: string, key: BoolKey, def: boolean, title?: string): void => {
+    const boolChip = (
+      parent: HTMLElement,
+      label: string,
+      key: BoolKey,
+      def: boolean,
+      title?: string,
+      spoken?: string,
+    ): void => {
       this.makeChip(
         m.id,
         parent,
@@ -2699,7 +2716,7 @@ export class Console {
           this.nodeParamsOf(m.id)[key] = next;
           return next;
         },
-        { midiId: controlId(m.id, key), title, keys: [key] },
+        { midiId: controlId(m.id, key), title, keys: [key], spoken },
       );
     };
 
@@ -2762,9 +2779,10 @@ export class Console {
     };
     // HA input toggles (+48 / polarity / HPF / Hi-Z). +48 and Hi-Z are the jack's.
     if (jack) inputChip("+48", "phantom");
-    // Polarity: one φ. A stereo channel's inverts the side it shows (phaseL / phaseR).
+    // Polarity: one Ф, announced by its word. A stereo channel's inverts the side it shows
+    // (phaseL / phaseR).
     const phase = cc?.phases.find((ph) => ph.side === "" || ph.side === displayedSide(m.id));
-    if (phase) boolChip(top, "φ", phase.key, false);
+    if (phase) boolChip(top, t().midi.param.phase, phase.key, false, undefined, t().midi.paramSpoken.phase);
     if (cc?.hasHpf) boolChip(top, "HPF", "hpf", false);
     if (jack?.hiZ) inputChip("Hi-Z", "hiZ");
     // MONITOR strips carry the device [CUE] (cue interrupt) and [MONO] buttons.

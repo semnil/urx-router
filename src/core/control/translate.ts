@@ -348,7 +348,7 @@ export function isStereoChannel(nodeId: string): boolean {
 }
 
 /**
- * One polarity-invert (Ø) toggle. Mono channels have a single one; a stereo
+ * One polarity-invert (Ф) toggle. Mono channels have a single one; a stereo
  * channel has two independent ones (its L and R sides).
  */
 export interface PhaseToggle {

@@ -99,7 +99,7 @@ import { getSettings } from "../core/settings";
 import type { RecentEntry } from "../core/storage";
 import type { ConnectOrigin, Selection } from "./graph";
 import { WIRE_GROUP } from "./graph";
-import { setLevelText } from "./glyph";
+import { setLevelText, setSymbolText } from "./glyph";
 import {
   holdInertOnBlur,
   isHoldingInert,
@@ -657,13 +657,13 @@ export function renderInspector(
       const cc = channelControl(model, node.id);
       const compEqType = np.compEqType ?? COMP_EQ_COMP_FIRST;
       const inSec = section(m.inspector.inputSection, { key: "input" });
-      // Flow the short INPUT toggles (+48V / Hi-Z / Clip Safe / Ø / HPF) into two
+      // Flow the short INPUT toggles (+48V / Hi-Z / Clip Safe / Ф / HPF) into two
       // columns; sliders and the select span full width (style.css :has rule).
       inSec.el.dataset.cols = "2";
       const input = inSec.body;
 
       // INPUT screen order (device top-left → bottom-right): +48V, A.Gain, HI-Z,
-      // Clip Safe, Ø, HPF, HPF Freq. +48V, A.Gain, HI-Z and Clip Safe are the jack's this
+      // Clip Safe, Ф, HPF, HPF Freq. +48V, A.Gain, HI-Z and Clip Safe are the jack's this
       // channel reads, and D.Gain the digital source's — written there, so every channel
       // reading it applies the value; a channel with no source shows none of them. HI-Z
       // only on a jack that carries it. +48V and HI-Z are never turned on together: while one
@@ -732,12 +732,18 @@ export function renderInspector(
           ),
         );
       }
-      // Polarity invert (Ø): one row. A stereo channel's inverts the side it shows.
+      // Polarity invert (Ф): one row, announced by its word. A stereo channel's inverts the
+      // side it shows.
       const phase = cc?.phases.find((ph) => ph.side === "" || ph.side === displayedSide(node.id));
       if (phase) {
         input.append(
-          boolToggle(m.inspector.phase, np[phase.key] ?? false, (v) =>
-            actions.onUpdateNodeParams(node.id, { [phase.key]: v }),
+          boolToggle(
+            m.inspector.phase,
+            np[phase.key] ?? false,
+            (v) => actions.onUpdateNodeParams(node.id, { [phase.key]: v }),
+            undefined,
+            undefined,
+            m.inspector.phaseName,
           ),
         );
       }
@@ -1714,11 +1720,12 @@ function boolToggle(
   onChange: (v: boolean) => void,
   lockedTitle?: string,
   name?: string,
+  spoken?: string,
 ): HTMLElement {
   // Read as truthiness, not `=== on`, so a value that reaches here as a number (1 / 0)
   // lights and presses the button the write would send.
   const state = Boolean(value);
-  const { row, labelId: id } = paramBlock(label, "");
+  const { row, labelId: id } = paramBlock(label, "", spoken);
   if (lockedTitle !== undefined) row.title = lockedTitle;
   const group = toggleGroup(id, name);
   const make = (on: boolean, text: string): HTMLButtonElement => {
@@ -1918,9 +1925,12 @@ function tapControl(conn: PlanConnection, onUpdate: UpdateParams, editable = tru
   return row;
 }
 
+// `spoken`, when set, is the word a symbol `labelText` is announced as — the row's control
+// is labelled by that word rather than by the symbol's character name.
 function paramBlock(
   labelText: string,
   valueText: string,
+  spoken?: string,
 ): { row: HTMLElement; value: HTMLElement; labelId: string | undefined } {
   const row = document.createElement("div");
   row.className = "param";
@@ -1938,7 +1948,8 @@ function paramBlock(
     const head = document.createElement("div");
     head.className = "param-label";
     const label = document.createElement("span");
-    label.textContent = labelText;
+    if (spoken) setSymbolText(label, labelText, spoken);
+    else label.textContent = labelText;
     id = labelId("insp-lbl");
     label.id = id;
     head.append(label, value);

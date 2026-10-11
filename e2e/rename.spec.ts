@@ -128,6 +128,12 @@ test("the inspector's controls are reachable by their names", async ({ page }) =
   const phantom = page.getByRole("group", { name: "+48V" });
   await expect(phantom.getByRole("button", { pressed: true })).toHaveCount(1);
   await expect(page.locator("#inspector").getByRole("slider", { name: "A.Gain" })).toBeVisible();
+  // The polarity row prints Ф and its pair is named by the word Ф stands for.
+  const phase = page.getByRole("group", { name: "Phase", exact: true });
+  await expect(phase.getByRole("button", { pressed: true })).toHaveCount(1);
+  await expect(
+    page.locator("#inspector .param-label").filter({ has: page.getByRole("img", { name: "Phase" }) }),
+  ).toContainText("Ф");
 });
 
 test("name and color round-trip through save and open", async ({ page }, testInfo) => {
