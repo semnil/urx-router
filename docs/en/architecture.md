@@ -472,8 +472,9 @@ carries a one-line map of the same directories and points here.
   consumed: committing under a device read would freeze that read's own writes into the entry, and the retry
   the refusal invites would push them back at the unit. Refused while a device read holds the plan — the
   operator's fetch / Live-sync start, and equally device follow's two reconciles and Live sync's 1-knob
-  refetch, and EVERY silent-address park a flush takes — the one in front of its head writes and the one in
-  front of its converge, each under its own condition, so a given flush has 0, 1 or 2 of them — which are
+  refetch, and EVERY silent-address park a flush takes — the one in front of its head writes, the one in
+  front of a D.Gain it has not sent and the one in front of its converge, each under its own condition, so a given
+  flush has 0 to 3 of them — which are
   tracked by membership in the in-flight set rather than by a flag because the families overlap; a converge
   ROUND is not one of them, since it reads the whole write scope but writes nothing back into the plan, which
   makes the parks the only part of a converging flush that refuses a press — or while a file flow does, while a *drag* (a press that has moved — a press
@@ -812,8 +813,9 @@ The constraint core (`core/routing.ts`):
   A ducker key source is the `key` kind, not `source`, so it never enters this mirroring — guaranteed by the
   kind rather than by the incidental fact that duckers are not in `channelPairs`.
 - `isStereoLinkedPair(model, plan, id)` / `mirrorLinkedPair(model, plan, id)` — when a MONO IN pair's Signal Type
-  is STEREO, an edit to one channel is mirrored onto the partner (the node params except the head amp — the
-  gain, Clip Safe, the polarity invert, +48V and Hi-Z are each member's own — plus each send's LEVEL /
+  is STEREO, an edit to one channel is mirrored onto the partner (the node params except the polarity invert,
+  which is each member's own — the input stage is on the jack or source each member reads, which the mirror does
+  not reach ([below](#the-input-stage-on-the-jack-and-the-source)) — plus each send's LEVEL /
   PRE-POST / ON; the Signal Type / PAN-BAL flags stay on the primary). `pairSharesNodeKey` answers which is which, and the
   mirror, the MIDI catalogue's mirror identity and each funnel's write witness all read it, so none of the
   three can claim a key the copy left with the partner. **The gate is Signal Type, not the
@@ -955,6 +957,49 @@ selection, matching the node highlighting.
 
 For the detailed routing rules, see [device-model.md](device-model.md) (derived from the official
 block diagram).
+
+### The input stage: on the jack and the source
+
+The unit keeps +48V, A.Gain, Clip Safe and HI-Z on each MIC/LINE jack, and D.Gain on each digital source, and a
+channel applies the input stage of the jack or source it reads. The plan keeps them in the same place:
+
+- **Where.** A MIC/LINE input node holds its two jacks' keys — `gainL` / `gainR`, `phantomL` / `phantomR`,
+  `clipSafeL` / `clipSafeR`, and `hiZL` / `hiZR` on a jack that carries HI-Z (jacks 3 and 4 on URX44 / URX44V,
+  jack 2 on URX22) — and each digital source node holds one `dGain`. No channel holds any of them. Which jack or
+  source a channel reads is its source wire (`inputStageOf` in `translate.ts`): a mono channel reads the jack its
+  input slot names, a stereo channel on a MIC/LINE pair reads the pair's L jack, and a channel on no source reads
+  none.
+- **Write.** A write carries the input stage of the jacks and sources some channel reads (`inputStageReadSet`),
+  after the source selects, so a write that rewires a channel and sets a value lands the value on a jack the channel
+  already reads. Each value is bounded to its own address's range — A.Gain -8..+70 dB (+40 while that jack's HI-Z is
+  on), D.Gain ±24 dB — and whichever of +48V / HI-Z the plan holds off goes out first. Compare with device asks
+  every jack and source the plan holds instead (`everyInputHolder`).
+- **Read.** A device read reads every jack and every source onto its own node, whether a channel reads it or not.
+  A jack no channel reads is registered for follow (`planToFollowOnlyAddrs`, `scoped`), so a panel move there takes
+  the MIC/LINE node's scoped read; a jack some channel reads follows A.Gain directly, by the instance the notify came
+  from. A source's D.Gain is announced by nothing, so the silent park reads the sources the channels read, and a
+  flush that routes a channel onto a source the session has not sent reads that D.Gain before sending it
+  ("A write is not readable when it is acked").
+- **Surfaces.** The Inspector's INPUT section and the CONSOLE head draw a channel's input rows from the jack or
+  source it reads — a jack's +48V, A.Gain, HI-Z where the jack has it, and Clip Safe; a source's one D.Gain; none
+  on no source — and write there. An edit shows on every strip reading the same jack or source, and on no strip
+  reading the other jack of the pair. A device read that could not read a jack or source marks the reading
+  channel's INPUT section and its gain knob (the board's "?"), and the graph marks the input node. A MIDI
+  input-stage control keeps the channel's id and writes the jack or source; on a channel with no source it binds
+  nothing, and the MIDI window says so in that assignment's row. The +48V / HI-Z rule, its refusals and the
+  unauthored-write confirm name the channels reading the jack or source.
+- **Load.** A document that carries the channel keys — every version before 5, or one written by hand — has them
+  moved by the address they were written at (`migrateInputStage` in `plan.ts`): CH n's to jack n, a stereo
+  channel's gain to the D.Gain of the source its model's legacy table names, the input node's own value winning.
+  An input-stage key that addresses nothing on the model is dropped. Version 5 is the first written with the
+  input stage on the input nodes, so a version-4 build refuses it ("Persistence format").
+- **URX22 / URX44.** The jack axis, the URX22 HI-Z jack and the D.Gain sources are registered unverified mappings
+  (`jack-axis`, `hiz-channel`, `dgain-source` in `UNVERIFIED_MAPPINGS`). A read or write that fails at one of
+  those addresses names the mapping, and the self-test prints for each that a round trip does not settle it and
+  what does.
+- **Diagnostics.** The self-test floors every jack's A.Gain and every source's D.Gain and turns +48V off. The
+  audit-prep writer routes the channels through every input in turn, so that every jack and source receives a
+  value, and then puts the captured routing back.
 
 ## Localization (i18n)
 
@@ -1311,19 +1356,21 @@ MIX 675), which is the scribble power LED. STEREO and the MONITOR buses have no 
 no MUTE chip; their master ON is the power LED alone. A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
 `MONITOR_MONO`, ships OFF) chips. Then +48 / φ /
-HPF on mono MIC channels (Hi-Z on CH3/4, CH2 on URX22) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
+HPF on a mono channel (+48 and Hi-Z are the jack's it reads: Hi-Z where that jack carries it, neither on a source
+or on no source) or φL / φR on stereo channels (gated by `channelControl`); (2) the processing
 chain GATE → COMP → EQ → INS FX, plus EQ + DUCKER on stereo channels (toggling the `duckerOn` of the ducker
 node hung under them). A mono channel in SSMCS mode carries **SSMCS** between GATE and COMP — the morphing
 strip's own master, and the one head chip whose value is a level down in the plan (`ssmcs.on`), so the strip
 writes it itself rather than through the flat-key chip writer. An odd group gets an invisible spacer so its last chip never stretches to
 full width. At the bottom (knobs bottom-aligned) are rotary knobs (`addKnob`/`wireKnob`, drag / arrow keys)
-— channel **Gain and PAN/BAL** (the CH→STEREO send's pan, L63–C–R63), the **master BALANCE** on the STEREO
+— channel **Gain** (A.GAIN of the jack, or D.GAIN of the source, the channel reads; none on no source) **and
+PAN/BAL** (the CH→STEREO send's pan, L63–C–R63), the **master BALANCE** on the STEREO
 master and MIX buses (the bus output's L/R balance, `nodeParams.pan` → STEREO 583 / MIX 676; it keeps the
 `BAL` label even under Pan Link), or the **PHONES level** (a 0–10 non-dB
 scale) on the monitor buses (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2, independent of the monitor fader, so no extra
 tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.angle`, left = -90° / right =
 +90°): PHONES 2.0/8.0, A.Gain +8/+55, D.Gain -14/+15, OSCILLATOR LEVEL -50/-8. Double-clicking a fader cap or
-a knob resets it to the **factory value** (from `defaultPlan`).
+a knob resets it to the **factory value** (from `defaultPlan`; a gain knob takes its jack's or source's).
 
 **Pressing the main fader** — a press that lands **on the cap grabs it where it is** and writes nothing; a
 press on the **bare track jumps** the cap centre to the pointer, which is what an `<input type="range">`
@@ -1572,7 +1619,7 @@ in the right place; the composition alone is destroyed. Through the composition 
 compositionstart, one compositionend, `日本語` intact**, 67 of 397 repaints deferred to the commit.
 
 Confirmed on the device path the synthetic repaint stands in for, with a URX attached and Live sync up: sweeping
-CH 1's A.Gain (`HA_GAIN`, a direct follow) with that channel selected repaints the panel **6 times**. With a
+the A.Gain of jack 1, which CH 1 reads (`HA_GAIN`, a direct follow), with that channel selected repaints the panel **6 times**. With a
 composition open, **all 6 are held and exactly one runs, at the commit** — one compositionstart, one
 compositionend, the name whole.
 
@@ -1696,7 +1743,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   signal goes, `CH 1 · EQ LOW · Gain` is a stage of this node.
 
   Values cross the boundary normalized (0..1) and are snapped on set to the same grids the surfaces use
-  (the level_gain grid in `levels.ts`, the channel's GAIN dB range — A.Gain's is -8..+40 while HI-Z is on —
+  (the level_gain grid in `levels.ts`, the GAIN dB range of the jack or source the channel reads — A.Gain's is
+  -8..+40 while that jack's HI-Z is on —
   PAN ±63, PHONES 0.1 steps). A tuning
   screen's parameter takes its grid from the same `DynField` table its slider is built from; which route
   each side takes to that grid, and what it does and does not put a MIDI value and a dragged slider on, is
@@ -1705,7 +1753,7 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   Makeup while 1-knob is on (the device computes them), COMP's 1-knob level while it is off, every EQ band
   value while EQ 1-knob is on, and the Q / gain a filter type does not read. The enum selectors (COMP knee,
   the EQ filter type and 1-knob type) carry no control at all. +48V and HI-Z refuse differently: turning one
-  on while the other is on for the channel is refused by the control itself (`refuses`) and reported on the
+  on while the other is on for the jack the channel reads is refused by the control itself (`refuses`) and reported on the
   status line rather than dropped, and the CONSOLE chip that rule locks stays a learn target
   (known-issues.md "The unit lets +48V and HI-Z be on together; the app does not").
 - **Engine (`engine.ts`)** — routes incoming events onto bound controls. A take-in mode belongs to the
@@ -2314,7 +2362,7 @@ back: a reconcile still running for an ended session does not make the next sess
 and a flush asked for in the next session while an ended session's write is still out is sent once that write is
 answered.
 
-**Four follow-only cases join for the same reason as the names**: an address the app only READS is in no
+**Follow-only cases join for the same reason as the names**: an address the app only READS is in no
 registration unless it is listed here, so the unit's announcement would reach nobody and the value would catch up
 only at the next full read. The first two were measured announcing a front-panel change on a URX44V
 (2026-08-11, System V1.3.1.0), which is what separates them from the addresses that genuinely stay silent — D.Gain
@@ -2328,6 +2376,7 @@ array address it wrote. So the silence is about the front panel, not about the a
 | CH → FX send tap (193 / 197 / 320 / 324) | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
 | microSD Rec Track Count (839) | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node 839 lands on, and the only address that read touches |
 | the FX delay time the unit computes (681 / 685, slot 6) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
+| a jack's +48V / A.Gain / Clip Safe / HI-Z (0 / 1 / 5 / 6) | no channel reads the jack, so the write leaves it out ([the input stage](#the-input-stage-on-the-jack-and-the-source)) | the **MIC/LINE node** — its scoped read re-reads both jacks, even for A.Gain, which a read jack follows directly |
 | STREAMING source select (705 / 706) | while the plan holds no STREAMING wire: its list on the unit has no None, so the emit sends nothing there rather than NONE (`leavesUnsourced`) | **`bus.stream`** — its scoped read takes the source back with the node's DELAY |
 
 The third is not a read-only ADDRESS at all, which is why the heading above says cases. Slot 6 is written like
@@ -2341,7 +2390,7 @@ The fourth has the third's shape: STREAMING's source is written whenever the pla
 this list only while it holds none, so it too takes the plan as well as the model. The unit announces a source
 picked on its own panel there, as it announces a write (see "A plan that names no STREAMING source").
 
-All four are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside the emit decision they mirror, so the
+All of them are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside the emit decision they mirror, so the
 registration and the write suppression cannot drift apart; `live.ts` consumes that list the same way it consumes
 `planToCommands`, **including its write scope**. That scope is not symmetry for its own sake: under *Scene only* a
 whole-device read puts the plan's scene-external values back after reading (`applyDeviceStateScoped` →
@@ -2387,8 +2436,17 @@ covers every writer: both EFFECT TYPE selectors, an undo of either, the insert-F
 plan load. The plan's own heads are left standing there (`keepHeads`) — the operator has already chosen the
 incoming type, and the values are filed under the keys the head the UNIT is on owns.
 
-**How many parks a flush takes is 0, 1 or 2**, the two conditions being independent: the converge's runs where
-the flush converges at all (`sideEffect`), this one where a head it is moving declares `ParamSpec.resets`. An
+**A flush takes a THIRD park, in front of a D.Gain this session has not sent.** A source's D.Gain is written only
+while a channel reads that source, and the unit announces nothing when its panel moves one, so the plan's copy of a
+source no channel read can be stale. A flush whose commands carry a D.Gain address the snapshot holds no entry for —
+a channel routed onto a source after the session started, or back onto one the snapshot dropped — reads that
+source's D.Gain first (`only`, the source's `dGain` family) and derives its commands again, so what goes out is
+what the unit holds ([the input stage](#the-input-stage-on-the-jack-and-the-source)). A jack needs no such read: its
+panel moves are announced, and a jack no channel reads is registered for follow.
+
+**How many parks a flush takes is 0 to 3**, the three conditions being independent: the converge's runs where
+the flush converges at all (`sideEffect`), the head-write one where a head it is moving declares `ParamSpec.resets`,
+and the re-entry one where its commands carry a D.Gain the snapshot does not hold. An
 ordinary edit takes neither. A converging head that resets no silent family takes the converge's alone — a
 COMP/EQ type, a bus type, a Signal Type and a PAN/BAL are the converging heads whose banks device follow already
 hears — and the head write is then already on the unit by the time that park runs, which is what decides what a
@@ -2547,11 +2605,11 @@ agreed with the plan at every key leaves both stacks as they were.
 | An edit made while a Fetch's or Live-sync start's read carries a model switch | on the board, before it writes anything (`planTakesEdits`); everywhere else `markChanged`, which puts the plan back to the state the read began from; both say so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
 | A gesture still in progress on the plan a switch replaces | the surface holding it, as the plan is replaced — the board (`Graph.setModel` handed another plan), the inspector (rebuilt past its gate, its actions answering only for the plan the panel was built for), a tuning screen (`refresh`) and the CONSOLE (`render`, which hands keyboard focus on only across a rebuild of the same plan) | the plan the gesture began on is gone, so a pointer or a key still held writes nothing into the one that replaced it |
 | A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
-| An undo / redo whose result would leave +48V and HI-Z both on for a channel | `patchBlocked` on the peeked entry, over the state the patch would create | the app never turns one of the two on while the other is on, and an undo turns one on as much as the gesture it reverses did |
+| An undo / redo whose result would leave +48V and HI-Z both on for a jack | `patchBlocked` on the peeked entry, over the state the patch would create | the app never turns one of the two on while the other is on, and an undo turns one on as much as the gesture it reverses did |
 | An undo / redo whose result would leave an input that takes one source with two, or STREAMING with none | `patchBlocked` on the peeked entry (`wireShapeBroken`), over the state the patch would create | the board never draws either — a drop onto an occupied input replaces its wire — and replaying an entry after a device read moved that input's source under it would |
-| An ON of +48V / HI-Z made while a device read was in flight, on a channel where that read finds the other one on | `readIntoPlan`, after the merge (`readRefusedSwitches`): the switch and the keys the witness saw the same edit write go back to the read's values, and the edit leaves the undo stack (`PlanHistory.retract`). In a live session, an ON its flush already sent is on the unit and is not refused (`SwitchSession.holdsOn`), and an ON the flush held back that the merge replaced with the read's value is reported and retracted the same way (`unsentRefusedSwitches`) | the surface asked the rule of a plan that had not heard what the unit holds; the unit's own switch is what the read found, and it stays |
+| An ON of +48V / HI-Z made while a device read was in flight, on a jack where that read finds the other one on | `readIntoPlan`, after the merge (`readRefusedSwitches`): the switch and the keys the witness saw the same edit write go back to the read's values, and the edit leaves the undo stack (`PlanHistory.retract`). In a live session, an ON its flush already sent is on the unit and is not refused (`SwitchSession.holdsOn`), and an ON the flush held back that the merge replaced with the read's value is reported and retracted the same way (`unsentRefusedSwitches`) | the surface asked the rule of a plan that had not heard what the unit holds; the unit's own switch is what the read found, and it stays |
 | A +48V / HI-Z ON the unit would receive while holding the other one on, and the +40 dB A.Gain a held HI-Z ON lowered | the live flush's send loop (`onExcludedBy` against the snapshot, what the unit announced since, which a follow read has not yet brought into the plan, and a read of the other switch taken just before the ON goes; `carrierOf` for the A.Gain) and each converge round (against the round's own read) | left in the plan, not dropped: a read that finds the other one on takes it back, and a later announcement or capture asks the flush again |
-| A live converge's write to a +48V / HI-Z the unit announced it turned on at its panel, and to the other switch on that channel | the live flush, before its converge (`exclude`, joined by an announcement that arrives while it runs, which each later read and round send of the converge asks again); the capture behind it keeps what the snapshot and the announcements held there | the switch is the unit's until the follow read the announcement scheduled brings it in, and the plan's older OFF would write it off |
+| A live converge's write to a +48V / HI-Z the unit announced it turned on at its panel, and to the other switch on that jack | the live flush, before its converge (`exclude`, joined by an announcement that arrives while it runs, which each later read and round send of the converge asks again); the capture behind it keeps what the snapshot and the announcements held there | the switch is the unit's until the follow read the announcement scheduled brings it in, and the plan's older OFF would write it off |
 | A MIDI message arriving under those same latches, or during a self-test / `--prepare-modified` run | the engine's gate, before any receive bookkeeping | a refusal must consume no pickup, timestamp or 14-bit pair state |
 | A device-authored key the app has moved since | `absorb`'s per-key context check | the plan holds the app's newer value, so the device is echoing the app's own write back on it |
 | A read's value for a key the app wrote while that read was in flight | `readIntoPlan`'s authorship filter, before the patch is applied | the operator authored it after the read sampled the address; comparing values instead would take an edit that returned to where it started for one that never happened |
@@ -2604,6 +2662,10 @@ a linked pair's two members mirror the selector both ways and point at a single 
 transition clears the effect on both. The census reads `stereoLink`, not PAN/BAL: the mirror was measured in
 both modes. Counting it as a collision would lock the pair's own menu against a selection the app itself
 authored (see the pair rules above).
+
+The **input stage** has one owner per address by construction: a jack's and a source's values are held on the
+input node, so several channels reading one jack or source send one command for each of its addresses, and no
+collision arises there ([the input stage](#the-input-stage-on-the-jack-and-the-source)).
 
 The collapse below is an invariant on the app's own emission rather than a repair of what a read reports:
 `Plan` is free to hold two owners for one address — nothing in its type prevents it, and a hand-edited file, a
@@ -2668,7 +2730,9 @@ device value and keeps every one (matched or not); `compareNames` does the same 
 device's actual name. Unlike a write it does not stop on the first read failure: the audit wants every parameter it
 can still read, with the unreadable ones listed as gaps that leave the comparison incomplete.
 
-**Its scope is exactly what the plan would write**, since it walks `planToCommands` (plus the names). Two kinds of
+**Its scope is what the plan would write**, since it walks `planToCommands` (plus the names) — with the input
+stage of every jack and source the plan holds, read by a channel or not (`everyInputHolder`), where a write
+carries only the ones some channel reads ([the input stage](#the-input-stage-on-the-jack-and-the-source)). Two kinds of
 parameter fall outside it: the ones the app reads and never emits — the microSD Rec Track Count (839) and the CH →
 FX send tap (193) — and the device-wide settings that are not in the plan at all (`planExternal`: Follow USB and the
 fourteen SETUP > GENERAL addresses, which the unit's own settings screen reads and, all but the knob bank,
@@ -2898,7 +2962,8 @@ listed here so they are not proposed as gaps:
    its neighbour does not have: the pair has one selector, so such a document describes no state the unit can
    hold and the converge alternates to its round limit. **That is the pair's rule and not the selector's**, so
    the linked block mirrors the primary's values onto the secondary through `mirrorLinkedPair` — the app's own
-   answer to what a pair shares, which leaves the head amp and, outside BAL, each member's pan alone. A capture
+   answer to what a pair shares, which leaves each member's polarity invert and, outside BAL, its pan alone — the
+   input stage sits on the jacks and sources, outside the pair's node params. A capture
    taken while the pair was UNLINKED is free to disagree about any of the rest, and that is exactly the capture
    this block has to be able to write. The capture carries the unit's own Signal Type and
    PAN/BAL and the restore writes them back, so a run that finishes ends where it started. A run that does
@@ -2961,7 +3026,7 @@ on, the URX slaves its clock to the USB host: a write to 766 is accepted, re-clo
 0.4 s later the host's rate is reasserted (measured on a URX44V). Writing straight through would report success
 for a change that did not last.
 
-Ahead of any of it, a plan holding +48V and HI-Z both on for a channel stops the write where it stands: whichever
+Ahead of any of it, a plan holding +48V and HI-Z both on for a jack stops the write where it stands: whichever
 of the two went out second would turn one on while the other is on, so no emit order makes it legal, and the
 refusal is taken before the link is opened rather than inside the send (known-issues.md "The unit lets +48V and
 HI-Z be on together; the app does not"). Every converge round then asks the same rule per command against what its
@@ -3909,7 +3974,7 @@ An undo is refused, with the reason on the status line and **without spending th
   between the edit that recorded it and this asks what the two switches end up at. Asked of the state
   rather than of the keys, because an undo turns a switch on as much as the gesture it reverses did,
   and which of the two the entry moved does not decide the answer. Held back the same way, and the
-  same press works once the channel holds one of the two. What the hook is handed is the patch that
+  same press works once the jack holds one of the two. What the hook is handed is the patch that
   would **land**: `peekUndo` answers with the entry's INVERSE, which is what `takeUndo` applies, so a
   caller reading one and applying the other cannot be looking at opposite values for the same keys.
 
@@ -4156,7 +4221,9 @@ error — and the status line says so; declining the discard confirm attempts no
 the entry. The `sampleRate`, `nodeNames`, `nodeColors`, `hidden`, `notes` and
 `noteCollapsed` fields are optional (a file without them gets their defaults on load). `version` is the format
 the file was written in (`PLAN_VERSION` in `src/core/plan.ts`): a newer one is refused (`planVersionUnsupported`),
-an absent or non-numeric one is read as the current format, and an older one is migrated forward on load. Loading (`deserialize`) is tolerant of
+an absent or non-numeric one is read as the current format, and an older one is migrated forward on load — a
+channel's input stage included, which moves onto the jack or source it was written at
+([the input stage](#the-input-stage-on-the-jack-and-the-source)). Loading (`deserialize`) is tolerant of
 corrupt input at two levels. A collection that is not the right container at all falls back to its
 empty default (`positions` included, symmetrically); within a collection each element is validated on
 its own and a non-conforming one is dropped rather than the document refused — a wire that is null,
@@ -4343,7 +4410,7 @@ and every reader below reads it as absent, and a truthy one is worse still, sinc
 that channel's factory defaults over whatever the unit holds. Both actions are reported (`plan-validate.ts`), in
 two sentences rather than one count. The same step drops a node-param value whose kind is not the factory
 value's at its path, bounds every node-param leaf the write bounds to the value the write sends, by the rule
-the write bounds it by (`nodeLeafRules` / `admitLeaf` in `translate.ts`), and bounds two keys of a channel whose
+the write bounds it by (`nodeLeafRules` / `admitLeaf` in `translate.ts`), and bounds two keys of a jack whose
 HI-Z is on — +48V to off and A.Gain to +40 dB (`input-lock.ts`) — counting each with the dropped or bounded FX
 values. The same step rewrites a document's names and notes (`documentTextProblems`), and says so: a **node
 name** is cut to **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping

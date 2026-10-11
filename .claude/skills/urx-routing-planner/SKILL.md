@@ -161,7 +161,8 @@ missing, they are outside the scene).
 
 **3. Map the request to wires.** For each thing the user wants routed, find the
 matching legal route and add a connection. Set parameters the user asked for
-(`level` in dB, `pan`, send `tap`, channel `on`, HA `gain`, HPF, etc.). Keep the
+(`level` in dB, `pan`, send `tap`, channel `on`, HPF, the input stage on the jack or source the
+channel reads — `gainL` on `in.micline_1_2` for CH 1's mic — etc.). Keep the
 plan minimal — omit `positions` (the app auto-arranges) and any parameter you are
 not deliberately setting. **Omitting a parameter does not leave the unit's value
 alone**: the app completes a loaded document from the model's factory values, and
@@ -202,8 +203,10 @@ like coming back). It prints those `WARNING:` lines to stderr — always read th
 app's loader would silently **drop** (an unknown `kind`, a mistyped `params` /
 node param — the plan loads, just without that piece), for a wire the loader
 **adds** (STREAMING's source, when the plan gives it none), for a value the loader
-**bounds** (an FX value outside its control's range; on a channel carrying HI-Z with
-`hiZ` on, `phantom` and a `gain` above +40 — `plan-schema.md` has both), for wrong-`kind` wires, for
+**bounds** (an FX value outside its control's range; on a jack carrying HI-Z with
+its `hiZL` / `hiZR` on, that jack's `phantom` and a gain above +40 — `plan-schema.md` has both), for
+**moves** (a channel's `gain` / `phantom` / `clipSafe` / `hiZ`, which the app moves onto the jack or source
+the channel's index addressed), for wrong-`kind` wires, for
 Ducker params placed on a non-ducker node (move them to the channel's `out.duckerN`
 id), and for the parameters that need care on hardware (see step 6).
 
@@ -356,7 +359,7 @@ it, send it to the main mix at -3 dB, and also feed FX1 for reverb."
 ```json
 {
   "format": "urx-router-plan",
-  "version": 4,
+  "version": 5,
   "modelId": "URX44V",
   "connections": [
     { "from": "in.micline_1_2:out", "to": "ch1:in", "kind": "source" },
@@ -364,14 +367,16 @@ it, send it to the main mix at -3 dB, and also feed FX1 for reverb."
     { "from": "ch1:out", "to": "bus.fx1:in", "kind": "send", "params": { "level": -6 } }
   ],
   "nodeParams": {
-    "ch1": { "on": true, "hpf": true, "gain": 24 }
+    "ch1": { "on": true, "hpf": true },
+    "in.micline_1_2": { "gainL": 24 }
   },
   "nodeNames": { "ch1": "Lead Vox" }
 }
 ```
 
 `ch1 → bus.stereo` and `ch1 → bus.fx1` are fixed sends; listing them with
-`params` sets their levels. Validate, then emit the link.
+`params` sets their levels. The mic's gain is set on the jack CH 1 reads — MIC/LINE 1, the
+`L` side of `in.micline_1_2` — not on the channel. Validate, then emit the link.
 
 ### Duck game audio under a mic (Ducker on)
 
@@ -382,7 +387,7 @@ and give my streaming app the ducked mix on USB MAIN A."
 ```json
 {
   "format": "urx-router-plan",
-  "version": 4,
+  "version": 5,
   "modelId": "URX44V",
   "connections": [
     { "from": "in.micline_1_2:out", "to": "ch1:in", "kind": "source" },

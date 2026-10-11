@@ -131,6 +131,13 @@ MIC/LINE 1 入力に内部結線され、独立したソース選択肢として
 > 片方の入力ソースを確定するともう片方も同じソースに確定する (例: CH1 で MIC/LINE 1/2 を選ぶと CH2 も
 > MIC/LINE 1/2 になる)。本ツールは同一ソースノードを両 CH へ結線して表現する (L/R は CH の位置で暗黙的に決まる)。
 >
+> **チャンネルがソースによって表示するもの**: 入力段 — +48V・A.Gain・Clip Safe・HI-Z — は実機では MIC/LINE の
+> ジャックごと、D.Gain はデジタルソースごとにあり、チャンネルは自分が読むものを適用する。MIC/LINE のモノ CH は
+> 位置が指すジャック (CH1 → ジャック 1、CH2 → ジャック 2)、MIC/LINE のステレオ CH はペアの L ジャック、デジタル
+> ソースの CH はそのソースの D.Gain を読み、ソースの無い CH (None) は入力段を一切表示しない。同じジャック・ソースを
+> 読む 2 つの CH は 1 つの値を表示し、設定する。アプリがどう保持し書き込むかは architecture.md
+> 「入力段: ジャックとソースに置く」。
+>
 > **All Input / All USB DAW はソースではない**: INPUT 画面の `[All Input]` / `[All USB DAW]` ボタンは
 > 固定テーブルに従って入力ソースを書き換える一括設定アクション (ユーザーガイド「Dedicated channel
 > screen > INPUT screen」)。All USB DAW は全チャンネルを書き換える: CHn/n+1 = USB DAW n/n+1。All Input
@@ -413,7 +420,7 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   (R63 = +63) にハードパン、BAL と STEREO 解除は両方中央 (C = 0) にし、Send pan はネイティブのステレオ ch
   同様 BALANCE 表示になる (GRAPH/CONSOLE 双方で同一表示)。
   **リンク済みペアはモードに関わらず 1 組の値を持つ**: 片 ch への編集はもう一方へ自動ミラーされる
-  (下記のヘッドアンプを除くノードパラメーター + 各 Send の LEVEL/PRE-POST/ON)。実機がそうするためである。PAN モードでの実測:
+  (下記の位相反転を除くノードパラメーター + 各 Send の LEVEL/PRE-POST/ON)。実機がそうするためである。PAN モードでの実測:
   片メンバーの Gate Threshold・Gate ON・Comp Threshold・HPF 周波数・CH フェーダー・CH ON・STEREO アサイン
   ON・MIX Send レベル・MIX Send ON・MIX Send PRE-POST を書くと、もう一方の同じ値も動いた。
   **モードが決めるのは pan である**。BAL では pan はペア共有のバランス 1 値なので両 ch で一致し
@@ -422,8 +429,9 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   フラグは primary のみ保持。**ヘッドアンプは各メンバー自身の値である — A.Gain・Clip Safe・位相反転・
   +48V・Hi-Z の 5 つ**: リンク中に片メンバーへ書いても BAL でも PAN でも相方の同じ値は動かず、未リンクの
   ペアを**リンクしたときも** secondary の入力段は primary からコピーされず両者が自分の値を保った
-  (2026-09-11 実測)。アプリのミラーもこの 5 キー (`gain` / `clipSafe` / `phase` / `phantom` / `hiZ`) を
-  相方の値のまま残し、リンク遷移でも書かない — 別々の音源を繋いだペアは 2 つのプリアンプを保つ。メーターも Signal Type に応答する — 実機のチャンネル調整画面は
+  (2026-09-11 実測)。位相反転はチャンネルのもので、アプリのミラーは相方の値のまま残す。残る 4 つは各メンバーが
+  読むジャックのもの (§1) でペアのノードパラメーターの外にあり、ミラーは届かず、リンク遷移でも書かない —
+  別々のジャックに繋いだペアは 2 つのプリアンプを保つ。メーターも Signal Type に応答する — 実機のチャンネル調整画面は
   どちらのモードでもこのペアを 1 チャンネルとして測る ([channel-tuning.md](channel-tuning.md))。
 - **STEREO のペアが Insert FX に持てるのは Compander だけ**。ユーザーガイドのエフェクトリストで
   STEREO のチャンネルペアへのインサートを認めているチャンネルエフェクトは COMPANDER-H /

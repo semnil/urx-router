@@ -64,6 +64,12 @@ The desktop app reflects a plan to a connected URX. Steps for the user:
    is an output patch (a bus to USB MAIN, say) does not reach the unit until the
    scope is *All supported*.
 
+A write carries the input stage (+48V, gain, Clip Safe, HI-Z) of the jacks and sources
+some channel of the plan reads; a jack or source no channel reads keeps what the unit
+holds. On URX22 and URX44 the jack and source addresses are the URX44V's and are not
+yet verified on those units, so have the user check the input gain on the unit's
+INPUT screen after a write there.
+
 Only parameters confirmed against the device are written. The raw-encoded advanced
 effects (SSMCS / FX / insert FX, see plan-schema.md) are written in the device's
 own internal units, and writing an effect **selector** resets that effect's
