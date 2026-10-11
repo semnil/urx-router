@@ -11,7 +11,7 @@
 // belong to `e2e/race/fake-device.ts`; a second, thinner imitation of it here would be
 // a fixture that agrees with nothing.
 
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { FAKE_LAUNCH_FLAGS_OFF } from "../e2e/race/fake-flags";
@@ -60,39 +60,70 @@ import { t } from "./i18n";
 /** Long enough for a whole-device read (676 reads through the stub) plus a teardown. */
 const SLOW = { timeout: 30_000 };
 
-beforeEach(installAppGlobals);
+/** Counts the cases started, so a teardown can tell when the page has passed to the next one. */
+let casesStarted = 0;
+/** The case whose teardown started and has not restored the page, or null. */
+let untornDown: string | null = null;
+// A case that starts on a page its predecessor's teardown never restored fails before it
+// boots, naming that case: the predecessor's app is still running, and every command it
+// sends from here lands in this case's device stub.
+beforeEach(() => {
+  casesStarted += 1;
+  if (untornDown !== null) {
+    throw new Error(
+      `the teardown of "${untornDown}" did not finish, so its app is still running on this page and would ` +
+        "send its commands to this case's device stub",
+    );
+  }
+  installAppGlobals();
+});
 // The app a case leaves behind. A case returns as soon as its own assertion holds, but the
 // flow it started runs on: a live session reads the whole unit before it comes up, and a
 // release waits out a follow read that is hundreds of round trips long. Once the next
 // `bootApp` installs a fresh table those calls land in it — where they read as that case's
 // own traffic, and where a teardown's `vd_disconnect` satisfies a wait for the disconnect
 // the case is actually about.
+//
+// A teardown that outlives its hook's timeout goes on running while the next case starts. From
+// then on it acts on nothing: the shell, the controls and the globals all belong to the next
+// case's app, so it stops at its next step instead of draining and restoring that app's page.
+// The page it leaves behind is then the next case's to refuse (the `beforeEach` above), and
+// the next case's own teardown is what restores it.
 afterEach(async () => {
+  untornDown = expect.getState().currentTestName ?? "";
+  const mine = casesStarted;
+  const handedOver = (): boolean => casesStarted !== mine;
+  const shell = currentShell();
   const rate = document.getElementById("rate-picker") as HTMLSelectElement | null;
   const btn = document.getElementById("btn-live");
   // The app's OWN signal, not a guess at how long things take: the rate picker is locked
   // for exactly as long as something holds the device link, whichever action holds it. A
   // session in the middle of starting holds it with the toggle still down, so the two are
   // waited on together — and the loop is what lets a start that completes here be ended.
-  for (let i = 0; rate && i < 5; i++) {
+  for (let i = 0; rate && i < 5 && !handedOver(); i++) {
     if (btn?.getAttribute("aria-checked") === "true") {
       btn.click();
-      await vi.waitFor(() => expect(btn.getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
+      await vi.waitFor(() => handedOver() || expect(btn.getAttribute("aria-checked")).toBe("false"), {
+        timeout: 25_000,
+      });
     }
     if (!rate.disabled) break;
-    await vi.waitFor(() => expect(!rate.disabled || btn?.getAttribute("aria-checked") === "true").toBe(true), {
-      timeout: 25_000,
-    });
+    await vi.waitFor(
+      () => handedOver() || expect(!rate.disabled || btn?.getAttribute("aria-checked") === "true").toBe(true),
+      { timeout: 25_000 },
+    );
   }
-  const shell = currentShell();
-  if (shell) await drainShell(shell);
+  if (handedOver()) return;
+  if (shell) await drainShell(shell, handedOver);
+  if (handedOver()) return;
   restoreAppGlobals();
+  untornDown = null;
 });
 
 /** Wait until the page stops invoking. Bounded, and it THROWS at the bound rather than
  *  returning: an app that never goes quiet is a case leaking into the next one, which is
  *  the thing this exists to stop, and swallowing it here would put that back silently. */
-async function drainShell(shell: TauriShell): Promise<void> {
+async function drainShell(shell: TauriShell, handedOver: () => boolean): Promise<void> {
   const deadline = Date.now() + 20_000;
   let seen = shell.invokes.length;
   // Several readings: one sample of "unchanged" is satisfied inside a pause between two
@@ -100,7 +131,7 @@ async function drainShell(shell: TauriShell): Promise<void> {
   // the app produces late — a live start that fails emits one well after its own teardown
   // has handed the link back — rather than a flow's round trips, which resolve as
   // microtasks with no timer between them.
-  for (let quiet = 0; quiet < 25;) {
+  for (let quiet = 0; quiet < 25 && !handedOver();) {
     if (Date.now() > deadline) throw new Error(`the page is still invoking (${shell.invokes.length})`);
     // The MIDI trace sink batches its writes, and that write is the last thing the app
     // does after a case — so a drain that only waited would be waiting out a timer rather
@@ -9689,6 +9720,13 @@ describe("+48V and Hi-Z on one channel", () => {
   // where the read lands: that ON goes back to the unit's OFF, the status line says why, and
   // no ON for it reaches the unit. The unit's own switch is never written.
   describe("against a device read in flight", () => {
+    // Every hold a case made is released here, ahead of the file's own teardown, which ends
+    // the session and then waits for the device link a held read keeps. A release behind
+    // `onTestFinished` would come too late: vitest runs it after every `afterEach`.
+    const holds: Array<() => void> = [];
+    afterEach(() => {
+      for (const release of holds.splice(0)) release();
+    });
     /** A unit whose reads of `paramId` on CH 3 wait until `release()`, each answering what
      *  the unit held when it was asked — a read that sampled the address before the press.
      *  `arm()` starts holding; `asked` counts the reads held so far. */
@@ -9714,9 +9752,9 @@ describe("+48V and Hi-Z on one channel", () => {
         hold.asked += 1;
         return new Promise((r) => waiting.push(() => r(held)));
       };
-      // A case that fails before its own release still lets the read finish, so the
-      // teardown's wait for the link is not a wait on this hold.
-      onTestFinished(hold.release);
+      // A case that ends — or fails — with a read still held lets it finish before the
+      // teardown waits for the link.
+      holds.push(hold.release);
       return { table, hold };
     };
     const planLink = async (ch3: Record<string, unknown>): Promise<string> => {
@@ -10270,6 +10308,9 @@ describe("+48V and Hi-Z on one channel", () => {
         phantom: [1],
         hiZ: [],
       });
+      // The announcement's own read is the one the hold above is for, and the case ends with
+      // it still held, so the teardown is what lets it finish.
+      await vi.waitFor(() => expect(hold.asked, "the announcement's read is held").toBe(2), { timeout: 10_000 });
     });
 
     // A converge re-sends what differs across the write scope. A Hi-Z the unit turned on at its
