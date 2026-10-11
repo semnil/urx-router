@@ -224,10 +224,9 @@ export function wheelStep(
 
 /**
  * End a native slider's drag when the window goes away, and keep it ended until the press
- * is over or the window comes back. Wired on every `<input type="range">` in the app that
- * takes the pointer itself, for the same reason `wheelStep` is: they either all behave this
- * way or the operator has to remember which. A knob card's range takes none — its face runs
- * the drag through `trackDrag`, which ends at the same blur.
+ * is over or the window comes back. Wired on every `<input type="range">` in the app, for
+ * the same reason `wheelStep` is: they either all behave this way or the operator has to
+ * remember which.
  *
  * The engine owns a native drag, so unhooking a listener does nothing — measured on the
  * shipping WKWebView (2026-08-14), a row dragged with the button held went on writing
@@ -261,12 +260,17 @@ export function wheelStep(
  * value the operator dragged to is either committed early or lost outright; the caller
  * commits it here instead, before anything is disabled, and `live` is resolved after that
  * in case the commit rebuilt the row.
+ *
+ * `pressOn` is the element whose press starts the hold, for a range that takes no pointer of
+ * its own: a knob card's range sits under its face with `pointer-events: none`, and the face
+ * runs the drag. The drag ends at the blur by itself (`trackDrag`); the hold is what keeps
+ * the range from taking a wheel notch while the window is away and the button still down.
  */
 export function holdInertOnBlur(
   input: HTMLInputElement,
-  opts: { live?: () => HTMLInputElement | null; beforeDisable?: () => void } = {},
+  opts: { live?: () => HTMLInputElement | null; beforeDisable?: () => void; pressOn?: HTMLElement } = {},
 ): void {
-  input.addEventListener("pointerdown", (e) => {
+  (opts.pressOn ?? input).addEventListener("pointerdown", (e) => {
     // The tracker is installed lazily, on the first press this helper sees — which is
     // this one, and by then its own capture-phase listener has already been passed over.
     // So this press registers itself; every later one arrives through the tracker.

@@ -1731,6 +1731,38 @@ describe("turning a knob card", () => {
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 2, pointerType: "touch" }));
   });
 
+  // The window taken away mid-press: macOS still delivers the scroll wheel to the window
+  // underneath, so the range has to be held inert from the blur until the press is over —
+  // the treatment a value row's own range gets, started from a press on the face.
+  const ends: Array<[string, () => void]> = [
+    ["its release", () => void window.dispatchEvent(ptr("pointerup", 40, 100, 0))],
+    ["its cancel", () => void window.dispatchEvent(ptr("pointercancel", 40, 100, 0))],
+    ["the window coming back", () => void window.dispatchEvent(new FocusEvent("focus"))],
+  ];
+  it.each(ends)("holds the value through a wheel while the window is away mid-press, until %s", (_, endPress) => {
+    const { knob, input } = volume();
+    const wheel = (): void => void knob.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, cancelable: true }));
+    // The positive control: an ordinary notch steps it.
+    const start = Number(input.value);
+    wheel();
+    const stepped = input.value;
+    expect(Number(stepped)).toBeGreaterThan(start);
+    const before = params();
+    const writes = h.patches.length;
+
+    knob.dispatchEvent(ptr("pointerdown", 40, 100));
+    window.dispatchEvent(new FocusEvent("blur"));
+    wheel();
+    expect(input.value).toBe(stepped);
+    expect(params()).toBe(before);
+    expect(h.patches.length).toBe(writes);
+
+    // …and the press ending gives the wheel back.
+    endPress();
+    wheel();
+    expect(Number(input.value)).toBeGreaterThan(Number(stepped));
+  });
+
   it("takes no press while the card is locked", () => {
     const { knob, input } = volume();
     input.disabled = true;

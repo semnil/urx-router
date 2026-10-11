@@ -2246,6 +2246,10 @@ export class DynScreen {
       this.markPlotDirty();
     });
     wheelStep(input, () => this.hooks.midi?.learnActive(), knob);
+    holdInertOnBlur(input, {
+      live: () => this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`),
+      pressOn: knob,
+    });
     knob.addEventListener("pointerdown", (e) => {
       // MIDI learn arms on this same press (`armable`), and a locked card takes none.
       if (input.disabled || this.hooks.midi?.learnActive()) return;

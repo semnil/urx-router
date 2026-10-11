@@ -1970,7 +1970,10 @@ shot enabled and disabled is byte-identical in both.
 
 **This is not the tuning screen's rule but the app's**: `holdInertOnBlur` in `ui/dom.ts` carries it, and
 every `<input type="range">` goes through it — the tuning rows, both of the inspector's slider builders,
-the shared `sliderRow`, and Device setup's brightness — for the same reason `wheelStep` is shared. What
+the shared `sliderRow`, and Device setup's brightness — for the same reason `wheelStep` is shared. A knob
+card's range goes through it too, with the hold started by a press on the face (`pressOn`), since the range
+takes no pointer of its own: its drag already ends at the blur, and the hold is what keeps a wheel notch
+from moving it while the window is away and the button still down. What
 this screen adds is where a deferred refresh lands. The blur ends the gestures this view runs itself but
 leaves `grabbed` set, because the press is still in flight and a rebuild under it would hand the
 still-held pointer a live control — the state the hold exists to prevent. So the deferral outlives the
