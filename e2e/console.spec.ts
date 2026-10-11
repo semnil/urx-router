@@ -3,7 +3,7 @@ import { chooseOption } from "./choose-option";
 import { LIVE_COMMANDS, heldReadsOf, notifyParam, setDeviceValue, setHeldReads, stubTauriDevice } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
 import { planParamZ } from "./plan-param";
-import { drag, port } from "./graph-helpers";
+import { drag, port, wire } from "./graph-helpers";
 
 // A strip located by its scribble's node name (exact, so "CH 1" never matches
 // "CH 11/12"). The console runs against the factory plan, so we do NOT seed
@@ -1198,7 +1198,12 @@ test("the gain knob names the other channel on its jack after a rewire", async (
   await expect(gain("CH 1")).not.toHaveAttribute("aria-description", /Shared/);
   await expect(tip("CH 1")).toHaveCount(0);
   await page.click("#btn-view-graph");
-  await drag(page, port(page, "in.micline_1_2:out"), port(page, "ch3:in"));
+  // The press waits for the jack to hold still under the pointer, and the wire it draws is the
+  // premise of the rest.
+  const from = port(page, "in.micline_1_2:out");
+  await from.hover();
+  await drag(page, from, port(page, "ch3:in"));
+  await expect(wire(page, "in.micline_1_2:out", "ch3:in")).toHaveCount(1);
   await page.click("#btn-view-console");
   await expect(tip("CH 1")).toHaveAttribute("title", "Shared with CH 3");
   await expect(tip("CH 3")).toHaveAttribute("title", "Shared with CH 1");
