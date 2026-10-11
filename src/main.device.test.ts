@@ -10754,15 +10754,17 @@ describe("the displayed side and the unit's LCD selection", () => {
     await goLive();
     // The answer window runs on `Date.now()`, held still from the first switch to the last
     // answer, so every answer below lands inside it however long the steps between take.
-    // Timers stay real: the shell's answers and `vi.waitFor` run on them.
+    // Timers stay real: the shell's answers run on them.
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       nameArea().click();
       expect(showing()).toBe("CH 5/6, showing CH 6 (R)");
       nameArea().click();
       expect(showing()).toBe("CH 5/6, showing CH 5 (L)");
-      // Two switches, so two writes at most.
-      await vi.waitFor(() => expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]));
+      // Two switches, so two writes at most. Polled on a real timer rather than `vi.waitFor`,
+      // which moves a faked clock forward by its interval on every poll.
+      for (let i = 0; i < 1000 && lcdWrites(shell).length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
       expect(showing(), "the late answer to the first write").toBe("CH 5/6, showing CH 5 (L)");
       notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
