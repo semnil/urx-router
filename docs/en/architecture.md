@@ -1069,7 +1069,12 @@ the inspector, and the open modal itself.
 > `setCaptionedText`, which leaves the text as it is and announces each caption symbol in it by its word.
 > Only those sentences are: the MIDI side marks them (`onStatus`'s `captioned`, `statusCaptioned` in the
 > window's state), since a port or file name holding the same character is not a caption. `src/ui/glyph.test.ts` holds the captions to Ф and refuses the other marks in the sources and
-> these documents.
+> these documents. On Windows 11 (WebView2 154), read through the DevTools protocol, the chip and the
+> Inspector row are drawn in the system's Cascadia Code (`CascadiaCodeRoman-SemiBold` on the chip), the
+> bar standing out of the ring above and below; the accessibility tree names the chip and the row's group
+> `フェーズ` / `Phase` and holds a status line's `ФR` as an image named `フェーズ R`. Narrator with its
+> Japanese voice read the chip as "フェーズ、切り替えボタン、オフ" and the armed status line's caption as
+> "フェーズ、アール", and spelled out Ф as a letter nowhere.
 
 > **Terminology.** Keep product / industry terms in English even in the Japanese UI: `Bus`,
 > `Ducker`, `Bus send`, `Bus send (ON/OFF switch)`, `Pre-fader send`. **Those five apply to prose as much
