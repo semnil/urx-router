@@ -185,8 +185,10 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 - MIX 1 / MIX 2 — LEVEL/PAN/**PRE/POST** + **ON/OFF (SEND_ON)**。初期は **-∞ (オフ) ・ON**。
 - FX 1 / FX 2 — LEVEL/**PRE/POST** + **ON/OFF (SEND_ON)** (FX Bus への Send はモノで **PAN を持たない**)。初期は **-∞ (オフ) ・ON**。
 
-全 Send が常時結線であるため (URX44V で約 48 本 = 8 CH × 4 + 2 FX × 3 + 8 CH→STEREO + 2 MIX→STEREO)、
-削除での整理はできない。代わりに **off (`params.on=false`) / レベル -∞ の Send は盤面で減光＋細い破線**で
+全 Send は常時結線である。本数は URX44 / URX44V で 48 本 (8 CH × 5 (STEREO・MIX 1/2・FX 1/2) + 2 FX × 3
+(STEREO・MIX 1/2) + 2 MIX→STEREO)、CH が 6 本の URX22 で 38 本。URX44V の本数は実機で確認し、URX22 / URX44 の
+本数は公式ブロックダイアグラムに基づく (実機では未確認)。そのため削除での整理はできず、代わりに
+**off (`params.on=false`) / レベル -∞ の Send は盤面で減光＋細い破線**で
 後退させ、有効な経路だけが浮かび上がるようにする。ツールバーの **「OFF send を隠す」** トグルでこれらを
 完全に隠せる (既定は表示)。MIX → STEREO の TO ST スイッチ (§3) も同じ off 減光の対象。
 
