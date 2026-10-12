@@ -244,8 +244,9 @@ export function grAddr(kind: GrKind, nodeId: string, modelId?: string): readonly
  *
  * With uncorrelated sides the offset is not a constant: -3.0 is a sine's figure, and a
  * key whose peak-to-RMS is larger (noise, programme material) engages the ducker at a
- * lower lane reading than the cap marks. No correction is applied for it — nothing
- * here knows the key's crest factor. `docs/en/channel-tuning.md`, "Four lanes in three
+ * higher lane reading than the cap marks — the lane can pass the cap with the ducker
+ * not yet engaged. No correction is applied for it — nothing here knows the key's
+ * crest factor. `docs/en/channel-tuning.md`, "Four lanes in three
  * slots", carries the case.
  */
 const DETECTOR_RMS_OFFSET_DB = -3.0;
