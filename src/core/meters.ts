@@ -242,10 +242,11 @@ export function grAddr(kind: GrKind, nodeId: string, modelId?: string): readonly
  * offset from `max(L,R)` spread 7 dB and is therefore unusable. The constant itself is
  * a sine's peak-to-RMS: these meters read peak and the ducker's detector reads RMS.
  *
- * NOT measured: uncorrelated sides. Adding two PEAK readings as if they were coherent
- * is exact for one source and for a correlated pair, and overestimates by up to 3 dB
- * when the sides are independent — the true peak of such a sum lies between the power
- * sum (+3.01) and coincident peaks (+6.02). See `device-tests/PLAN.md`.
+ * With uncorrelated sides the offset is not a constant: -3.0 is a sine's figure, and a
+ * key whose peak-to-RMS is larger (noise, programme material) engages the ducker at a
+ * lower lane reading than the cap marks. No correction is applied for it — nothing
+ * here knows the key's crest factor. `docs/en/channel-tuning.md`, "Four lanes in three
+ * slots", carries the case.
  */
 const DETECTOR_RMS_OFFSET_DB = -3.0;
 const lin = (db: number): number => Math.pow(10, db / 20);
