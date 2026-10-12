@@ -625,7 +625,9 @@ reading the key source node's own tap, with no side to fold in.
 **The cap is a guide, not a calibrated marker,** and the reason is that -3.0 is a sine's figure
 rather than a constant. Measured with a tone on one side and preamp noise on the other, the onset
 sat 8.5 dB below the summed display instead of 3.5 — because a noise-like key's peak-to-RMS is
-nearer 10 dB than 3. So programme material engages at a lower bar reading than the cap implies. No
+nearer 10 dB than 3. So programme material engages at a **higher** bar reading than the cap marks:
+the bar can pass the cap with the ducker not yet engaged. In that case the sides read -27 and -20, the
+lane -19.8 and the onset -25.3, so at the onset the bar stood 5.5 dB above the cap. No
 correction is applied for it: the app has no measurement of the key's crest factor to correct with,
 and -3.0 is simply the better of the two available constants (no correction at all puts the tone
 cases 3 dB out).

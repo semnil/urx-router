@@ -387,9 +387,12 @@ one (a file, a `?plan=` link) is refused at load.
 - **A stereo key is summed to mono before the detector — a sum, not an average and not a louder-side
   pick.** The block diagram puts a `MONO` block between the stereo sources (CH 5/6-11/12 OUT, STEREO
   OUT, MIX 1-2 OUT) and the Ducker Source select; measurement settles what it does with the two sides.
-  So the level the ducker compares against its threshold sits **6 dB above either side alone** for
-  correlated material, and 3 dB above for uncorrelated — a centred source triggers a ducker that the
-  same source hard-panned would not. Only the MONO IN channels bypass the block.
+  So for correlated material the level the ducker compares against its threshold sits **6 dB above
+  either side alone** — a centred source triggers a ducker that the same source hard-panned would not.
+  For uncorrelated sides there is **no fixed offset**: where the trigger lands relative to either
+  side's level depends on the material, not on a constant (the measured case is in
+  [channel-tuning.md](channel-tuning.md), "Four lanes in three slots"). Only the MONO IN channels
+  bypass the block.
 - Each ducker lives on one stereo channel, so Ducker 1–4 map in order to the model's stereo pairs: URX22 = CH 3/4, 5/6, 7/8, 9/10; URX44 / URX44V = CH 5/6, 7/8, 9/10, 11/12. The on-canvas node is labeled simply `Ducker` with the host pair in its sublabel (`CH 5/6 · Source`); the 1–4 ordinal is the block-diagram enumeration only — the hung position already names the channel, so it is not repeated on the node.
 - Because a ducker belongs to its host channel rather than being a standalone output, it is drawn as a dedicated `ducker`-kind node hung directly below the matching stereo channel (placement, movement and hide behavior in [architecture.md](architecture.md)).
 - When a ducker's on/off (`duckerOn`, factory OFF) is off, the node dims and gets an `OFF` tag like a muted channel (it marks bypass, so the tag is `OFF` rather than `MUTE`).
