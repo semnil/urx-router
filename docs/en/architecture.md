@@ -3892,8 +3892,7 @@ rather than against a literal.
 
 The row is scoped to MAIN / LINE because they are the only outputs whose lock a routing change can
 remove: a USB output cannot take a MONITOR source at all (`device-model.md` §6), so a standing note
-there would be a lock nothing can unlock — the same reason `duckerBypassWarnings` leaves microSD Rec
-alone.
+there would be a lock nothing can unlock.
 
 **There is deliberately no warning card**, which is where this parts company with the Ducker bypass it
 otherwise mirrors. That one fires on a contradiction inside the plan (`duckerOn` true *and* a pre-fader

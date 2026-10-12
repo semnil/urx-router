@@ -446,7 +446,7 @@ export function renderInspector(
       ),
     );
   // A live signal-flow caution (not rate-dependent): a channel with its Ducker on
-  // that is also tapped straight to a USB / SD direct out never carries the duck.
+  // that is also tapped straight to a USB direct out never carries the duck.
   const duckerBypass = getSettings().warnDucker ? duckerBypassWarnings(model, plan) : [];
   if (duckerBypass.length)
     host.append(

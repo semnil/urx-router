@@ -3402,7 +3402,7 @@ STREAMING からのパッチは持たない。
 
 行を MAIN / LINE に限るのは、配線変更でロックを外せる唯一の出力だからである。USB 出力は MONITOR を
 ソースに選べない (`device-model.md` §6) ため、そこに常設の注記を置くと外しようのないロックの表示に
-なる。`duckerBypassWarnings` が microSD Rec を対象外にしているのと同じ理由。
+なる。
 
 **警告カードは意図的に作っていない**。ここが、その他の点では対応関係にある Ducker バイパスとの
 分岐点になる。あちらは plan 内の矛盾 (`duckerOn` が ON かつライブ出力への pre-fader タップ) で

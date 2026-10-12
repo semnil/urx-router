@@ -3,8 +3,9 @@ import { drag, port, selectWire, tapJack, wire } from "./graph-helpers";
 
 // A channel wired straight to a USB / SD direct out is tapped at its Rec Point,
 // upstream of the fader and Ducker. The inspector explains that on the wire
-// (candidate B), and a top-of-panel warning fires when the same channel's Ducker
-// is on so the duck is silently dropped from the direct out (candidate A).
+// (candidate B). For a USB direct out, a top-of-panel warning fires when the same
+// channel's Ducker is on so the duck is silently dropped from that output
+// (candidate A); a microSD Rec tap never raises it.
 const CH_OUT = "ch_5_6:out";
 const USB_B_IN = "out.usbmain_b:in";
 const SD_T1_IN = "out.sdrec.t1:in";
@@ -54,14 +55,18 @@ test("turning the ducker on warns that the direct out drops the duck", async ({ 
 
   // No conflict yet: the ducker is bypassed on a fresh board.
   await selectWire(page, CH_OUT, USB_B_IN);
-  await expect(page.locator("#inspector .warning-title", { hasText: "Ducker not on direct out" })).toHaveCount(0);
+  await expect(page.locator("#inspector .warning-title", { hasText: "Ducker not on USB direct out" })).toHaveCount(0);
 
   await setDuckerOn(page, true);
 
   // The warning names the affected channel and is visible whatever is selected.
-  const warn = page.locator("#inspector .warning", { hasText: "Ducker not on direct out" });
+  const warn = page.locator("#inspector .warning", { hasText: "Ducker not on USB direct out" });
   await expect(warn).toHaveCount(1);
   await expect(warn).toContainText("CH 5/6");
+  // The text names what triggers it: a USB direct out. microSD Rec never raises
+  // this warning, so the text must not name SD.
+  await expect(warn).toContainText("USB direct out");
+  await expect(warn).not.toContainText("SD");
 });
 
 test("a microSD Rec tap gets a neutral note, not the bus-reroute advice", async ({ page }) => {
@@ -81,7 +86,7 @@ test("a ducked channel recording to microSD raises no warning", async ({ page })
 
   // microSD Rec is excluded from the ducker-bypass warning (dry record is a valid
   // workflow), so turning the ducker on must not raise it.
-  await expect(page.locator("#inspector .warning-title", { hasText: "Ducker not on direct out" })).toHaveCount(0);
+  await expect(page.locator("#inspector .warning-title", { hasText: "Ducker not on USB direct out" })).toHaveCount(0);
 });
 
 test("a channel-sourced ducker key explains it is a pre-fader tap", async ({ page }) => {
