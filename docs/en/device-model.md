@@ -191,8 +191,10 @@ main-fader level** (the CH → STEREO level). The STEREO send itself — being t
 - MIX 1 / MIX 2 — LEVEL/PAN/**PRE/POST** + **ON/OFF (SEND_ON)**. Seeded **ON at -∞ (off)**.
 - FX 1 / FX 2 — LEVEL/**PRE/POST** + **ON/OFF (SEND_ON)** (FX-bus sends are mono and carry **no PAN**). Seeded **ON at -∞ (off)**.
 
-Because every send is always wired (≈ 48 on URX44V: 8 CH × 4 + 2 FX × 3 + 8 CH→STEREO + 2 MIX→STEREO),
-deletion cannot thin the board. Instead **off (`params.on=false`) / -∞ sends are dimmed with a fine
+Every send is always wired: 48 on URX44 / URX44V (8 CH × 5 (STEREO, MIX 1/2, FX 1/2) + 2 FX × 3
+(STEREO, MIX 1/2) + 2 MIX→STEREO) and 38 on the URX22, which has 6 channels. The URX44V count is confirmed on
+the unit; the URX22 / URX44 counts follow the official block diagram (not confirmed on hardware). So deletion
+cannot thin the board. Instead **off (`params.on=false`) / -∞ sends are dimmed with a fine
 dotted line** so the live routing stands out, and a toolbar **"Hide off sends"** toggle can drop them entirely
 (shown by default). The MIX → STEREO TO ST switch (§3) is dimmed the same way when off.
 
