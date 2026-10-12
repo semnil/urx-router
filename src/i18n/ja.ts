@@ -647,9 +647,9 @@ export const ja: Messages = {
     insFx: "96 kHz 超では Insert FX (MONO IN ch・MIX・STEREO) を使用できません。",
     stereoEq: "176.4 / 192 kHz ではステレオ ch (CH 5/6–11/12) の EQ を使用できません。",
     fx2: "96 kHz 超では FX2 Bus を使用できません。",
-    duckerTitle: "Ducker がダイレクト出力に乗りません",
+    duckerTitle: "Ducker が USB ダイレクト出力に乗りません",
     duckerBypass: (label: string): string =>
-      `${label} — Ducker ON ですが USB / SD ダイレクト出力はその前段でタップします。含めるには STEREO / MIX Bus 経由で送ってください。`,
+      `${label} — Ducker ON ですが USB ダイレクト出力はその前段でタップします。含めるには STEREO / MIX Bus 経由で送ってください。`,
   },
   status: {
     loaded: (model: string): string => `${model} を読み込みました — ドラッグで配置・結線`,

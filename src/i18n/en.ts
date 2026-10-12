@@ -868,9 +868,9 @@ export const en = {
     insFx: tr("Insert FX (MONO IN channels, MIX, STEREO) unavailable above 96 kHz."),
     stereoEq: tr("Stereo channel (CH 5/6–11/12) EQ unavailable at 176.4 / 192 kHz."),
     fx2: tr("FX2 bus unavailable above 96 kHz."),
-    duckerTitle: tr("Ducker not on direct out"),
+    duckerTitle: tr("Ducker not on USB direct out"),
     duckerBypass: (label: string): string =>
-      `${label} — Ducker is on, but the USB / SD direct out taps before it. Route via a STEREO or MIX bus to include it.`,
+      `${label} — Ducker is on, but the USB direct out taps before it. Route via a STEREO or MIX bus to include it.`,
   },
   status: {
     loaded: (model: string): string => `Loaded ${model} — drag to place and connect`,
