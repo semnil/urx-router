@@ -663,6 +663,19 @@ export const PARAMS = {
    *  change only for the element it has selected. UI state rather than a setting, so never
    *  part of the plan; the live session reads and writes it directly (`lcd-selection.ts`). */
   LCD_SELECTION: { id: 762, encoding: "raw", sceneExternal: true, planExternal: true },
+  /** [CUE] of each strip, 0 / 1: mono CH (y = the channel's input index), stereo CH (y = its
+   *  stereo position), FX channel (FX1 y0 / FX2 y1), STEREO (y0 alone), MIX (MIX1 y0 / MIX2 y2;
+   *  the unit sets y1 / y3 with it) and STREAMING (y0; the unit sets y1 with it). The first three
+   *  are the INPUT group and the last three the OUTPUT group: a cue in one group clears every cue
+   *  of the other without announcing the cleared flags. A STEREO-linked mono pair shares one
+   *  flag between its members. Cleared at power-off and kept in no scene or settings file, so
+   *  never part of the plan; the live session reads and writes them directly (`cue.ts`). */
+  CUE_MONO: { id: 138, encoding: "bool", sceneExternal: true, planExternal: true },
+  CUE_STEREO_CH: { id: 265, encoding: "bool", sceneExternal: true, planExternal: true },
+  CUE_FX: { id: 336, encoding: "bool", sceneExternal: true, planExternal: true },
+  CUE_STEREO: { id: 580, encoding: "bool", sceneExternal: true, planExternal: true },
+  CUE_MIX: { id: 673, encoding: "bool", sceneExternal: true, planExternal: true },
+  CUE_STREAMING: { id: 709, encoding: "bool", sceneExternal: true, planExternal: true },
   /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
    *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
    *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.

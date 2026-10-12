@@ -82,7 +82,16 @@ const SETUP_SCENE_EXTERNAL = [
 // and which a scene recall leaves where it was.
 const UI_STATE_SCENE_EXTERNAL = ["LCD_SELECTION"];
 
-const SCENE_EXTERNAL_NAMES = [...AUDITED_SCENE_EXTERNAL, ...SETUP_SCENE_EXTERNAL, ...UI_STATE_SCENE_EXTERNAL].sort();
+// The [CUE] flags: the unit clears them at power-off and no scene or settings file carries
+// them, so a recall cannot move them back to a stored value.
+const CUE_SCENE_EXTERNAL = ["CUE_MONO", "CUE_STEREO_CH", "CUE_FX", "CUE_STEREO", "CUE_MIX", "CUE_STREAMING"];
+
+const SCENE_EXTERNAL_NAMES = [
+  ...AUDITED_SCENE_EXTERNAL,
+  ...SETUP_SCENE_EXTERNAL,
+  ...UI_STATE_SCENE_EXTERNAL,
+  ...CUE_SCENE_EXTERNAL,
+].sort();
 
 describe("scene boundary contract", () => {
   it("params.ts flags exactly the audited scene-external set", () => {
