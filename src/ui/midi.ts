@@ -31,7 +31,13 @@ import {
   openMidiWindow,
 } from "../core/platform";
 import { MidiEngine } from "../core/midi/engine";
-import { bindControl, parseControlId, type BoundControl, type ControlKind } from "../core/midi/controls";
+import {
+  bindControl,
+  parseControlId,
+  type BoundControl,
+  type ControlKind,
+  type CueAccess,
+} from "../core/midi/controls";
 import {
   addrKey,
   addrLabel,
@@ -90,6 +96,9 @@ function mirrorCarries(model: DeviceModel, plan: Plan, control: BoundControl): b
 export interface MidiHooks {
   getModel: () => DeviceModel;
   getPlan: () => Plan;
+  /** The [CUE] flags, which are outside the plan. A CUE control switches them through this, and
+   *  only while it answers enabled, and edits nothing in the plan. */
+  cue?: CueAccess;
   /** An incoming MIDI message edited the plan through `control` (`mirrored` =
    *  the linked partner was updated too): dirty + live sync + repaint. `keys` are the
    *  contest paths the apply and its mirrors ASSERTED — including ones whose value did not
@@ -234,6 +243,12 @@ export class MidiControl {
       declined: (_control, why) =>
         hooks.onStatus(why === "phantomUnderHiZ" ? t().inspector.phantomLockedByHiZ : t().inspector.hiZLockedByPhantom),
       applied: (control) => {
+        // A [CUE] is outside the plan: its own write has already reached the cue state and
+        // its repaint, so nothing below applies to it.
+        if (control.param === "cue") {
+          this.scheduleFeedback();
+          return;
+        }
         // Same funnel as a console edit, and BOTH of its mirrors. A linked pair holds one
         // insert effect — one effect, one device slot — so a write that skipped that mirror
         // splits the pair: the plan holds two answers and the next flush emits both, one per
@@ -365,7 +380,7 @@ export class MidiControl {
    * a negligible share of a core on it.
    */
   private resolve(id: string): BoundControl | null {
-    return bindControl(this.hooks.getModel(), this.hooks.getPlan(), id);
+    return bindControl(this.hooks.getModel(), this.hooks.getPlan(), id, this.hooks.cue);
   }
 
   // ---- console hooks ----

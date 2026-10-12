@@ -120,6 +120,12 @@ export const en = {
     cue: tr("C.INT"),
     // Full name of the C.INT chip (kept distinct from the device's plain CUE).
     cueFull: dev("Cue Interrupt"),
+    // A strip's own [CUE] chip, the unit's button of that name.
+    cueChip: dev("CUE"),
+    // The CUE chip's tooltip while Live sync is off, when a press on it does nothing.
+    cueOffline: tr("CUE switches the unit's CUE while Live sync is on."),
+    // The C.INT chip's tooltip while it is painted in the CUE colour.
+    cueTaking: tr("Cue Interrupt — this monitor plays the CUE bus in place of its source while something is cued"),
     mono: dev("MONO"),
     // Strip group separators (this one and the group* keys below). They are set in
     // vertical writing mode, where a full-width glyph changes the column's width, so
@@ -312,6 +318,7 @@ export const en = {
       phonesLevel: dev("PHONES"),
       oscOn: dev("ON"),
       cueInterrupt: dev("C.INT"),
+      cue: dev("CUE"),
       mono: dev("MONO"),
       gateOn: dev("GATE"),
       compOn: dev("COMP"),
@@ -1167,6 +1174,11 @@ export const en = {
   // open at 2 and read as churn. The churn itself is the registration-frames row,
   // which counts each address and so distinguishes a first registration (no unregist)
   // from a replacement.
+  // The status bar's readout of what is cued, and the button that clears it.
+  cueBar: {
+    label: (names: string): string => `CUE ${names}`,
+    clear: tr("Clear CUE"),
+  },
   linkStats: {
     title: tr("Device Center link"),
     row: {

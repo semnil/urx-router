@@ -161,8 +161,8 @@ describe("control catalog", () => {
     expect(ids).not.toContain("bus.stereo/mute");
     expect(ids).not.toContain("bus.mon1/mute");
     expect([...ids].some((i) => i.endsWith("/duckerOn"))).toBe(true);
-    // STREAMING is meter-only; Hi-Z exists on CH3/CH4 only
-    expect([...ids].some((i) => i.startsWith("bus.stream/"))).toBe(false);
+    // STREAMING is meter-only and carries its CUE alone; Hi-Z exists on CH3/CH4 only
+    expect([...ids].filter((i) => i.startsWith("bus.stream/"))).toEqual(["bus.stream/cue"]);
     expect(ids).not.toContain("ch1/hiZ");
     expect(ids).toContain("ch3/hiZ");
   });
@@ -1858,5 +1858,68 @@ describe("a mirrored pair bound to two different addresses", () => {
       [plan.nodeParams.ch1?.insertFxOn, plan.nodeParams.ch2?.insertFxOn],
       "the plain CC's binding acted, and the mirror carried it",
     ).toEqual([false, false]);
+  });
+});
+
+// A strip's [CUE] is outside the plan: the control reads and switches it through the access the
+// caller hands in, edits nothing in the plan, and declares no plan key.
+describe("cue controls", () => {
+  const model = getModel("URX44V");
+  const access = (
+    enabled = true,
+  ): { cued: Set<string>; has(n: string): boolean; set(n: string, on: boolean): void; enabled(): boolean } => {
+    const cued = new Set<string>();
+    return {
+      cued,
+      has: (n) => cued.has(n),
+      set: (n, on) => void (on ? cued.add(n) : cued.delete(n)),
+      enabled: () => enabled,
+    };
+  };
+
+  it("is offered on every cuable strip and on no other", () => {
+    const plan = defaultPlan("URX44V");
+    const cues = listControls(model, plan)
+      .filter((c) => c.param === "cue")
+      .map((c) => c.node);
+    const channels = model.nodes.filter((n) => n.kind === "channel").map((n) => n.id);
+    expect(cues.sort()).toEqual(
+      [...channels, "bus.fx1", "bus.fx2", "bus.mix1", "bus.mix2", "bus.stream", "bus.stereo"].sort(),
+    );
+    // STREAMING carries its CUE and nothing else.
+    expect(
+      listControls(model, plan)
+        .filter((c) => c.node === "bus.stream")
+        .map((c) => c.id),
+    ).toEqual([controlId("bus.stream", "cue")]);
+  });
+
+  it("switches the flag through the access and leaves the plan as it was", () => {
+    const plan = defaultPlan("URX44V");
+    const before = JSON.stringify(plan);
+    const a = access();
+    const c = bindControl(model, plan, controlId("ch1", "cue"), a)!;
+    expect(c.kind).toBe("toggle");
+    expect(c.writes).toBeUndefined();
+    expect(c.get()).toBe(0);
+    expect(c.set(1)).toBe(true);
+    expect([...a.cued]).toEqual(["ch1"]);
+    expect(c.get()).toBe(1);
+    expect(c.set(0)).toBe(true);
+    expect(a.cued.size).toBe(0);
+    expect(JSON.stringify(plan)).toBe(before);
+  });
+
+  it("refuses a write while no session is up, and switches nothing", () => {
+    const a = access(false);
+    const c = bindControl(model, defaultPlan("URX44V"), controlId("ch1", "cue"), a)!;
+    expect(c.set(1)).toBe(false);
+    expect(a.cued.size).toBe(0);
+  });
+
+  it("reads off and refuses a write with no access", () => {
+    const c = bindControl(model, defaultPlan("URX44V"), controlId("bus.stereo", "cue"))!;
+    expect(c.get()).toBe(0);
+    expect(c.set(1)).toBe(false);
   });
 });

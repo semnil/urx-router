@@ -137,6 +137,16 @@ describe("the wire palette's two layers", () => {
     }
   });
 
+  // What is cued is drawn on the board (frames, lines, the CUE badge) and on the page (a lit
+  // CUE chip, a MONITOR playing the CUE bus, the status bar's readout), in one colour.
+  it("draws the board's CUE marks in the stylesheet's --cue", () => {
+    for (const theme of Object.keys(PALETTES) as (keyof typeof PALETTES)[]) {
+      const tokens = tokensIn(THEME_SELECTOR[theme]);
+      expect(tokens["--cue"], `--cue in ${THEME_SELECTOR[theme]}`).toBe(PALETTES[theme].cue);
+      expect(tokens["--cue-ink"], `--cue-ink in ${THEME_SELECTOR[theme]}`).toBe(PALETTES[theme].cueInk);
+    }
+  });
+
   // The node rail colours the board's kind strip and every chip the page draws for a node,
   // and the page background is what an export under a fixed theme rasterizes behind the
   // board — the one pair whose drift shows nowhere on screen, only in the PNG / PDF of the
@@ -199,6 +209,9 @@ describe("the board's palette against its own grounds", () => {
       ["the possible-target ring against the canvas", ratio(p.possibleStroke, p.canvasBg), 3],
       ["the possible-target ring against the node", ratio(p.possibleStroke, p.nodeFill), 3],
       ["the possible-target ring against the jack", ratio(p.possibleStroke, p.portOuter), 3],
+      ["the CUE badge's ink on its face", ratio(p.cueInk, p.cue), 4.5],
+      ["a CUE frame or line against the canvas", ratio(p.cue, p.canvasBg), 3],
+      ["a CUE frame or line against the node", ratio(p.cue, p.nodeFill), 3],
     ];
     for (const [what, r, floor] of pairs) expect(r, `${what} (${r.toFixed(2)})`).toBeGreaterThanOrEqual(floor);
   });

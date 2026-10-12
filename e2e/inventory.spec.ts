@@ -248,6 +248,8 @@ const OUT_OF_SCOPE: Record<string, string> = {
   status: "the status line — one strip below every view, driven by most other specs",
   linkStats:
     "the link ledger — a status-bar readout and its panel, covered field by field in linkstats.spec.ts, whose expectation tables are typed over the view's own key lists",
+  cueBar:
+    "the status bar's CUE readout and its Clear CUE — a status-bar strip shown only while something is cued, covered by cue.spec.ts",
   confirm: "the shell's native confirm dialogs — outside the webview",
   filter: "EQ filter-type names — a value vocabulary, printed wherever a band is",
   speech: "the words a mark is read as — inside a name a screen reader is handed, never printed",
