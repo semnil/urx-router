@@ -389,6 +389,11 @@ carries a one-line map of the same directories and points here.
       encode / decode (2 × the stereo position, plus 1 for R) and `LcdEchoes`, which tells the unit's answer
       to the app's own write from a selection made on the panel. `main.ts` reads the selection at a Live-sync
       start, takes its notifies through the follow `intercept`, and writes it from `switchSide`
+    - `cue.ts` the unit's [CUE] flags, held outside the plan for the live session (see "CUE" under "What
+      the app models, and what it leaves to the unit"): `CueSet` applies the unit's rules to every change
+      from either side, `CueEchoes` tells the unit's answer to the app's own write from a press on the panel,
+      and `readCues` / `writeCueFlag` are the bare reads and writes. The address of each strip's flag is
+      `cueAddrs` in `translate.ts`, where the URX22 / URX44 guess is registered
     - `link-stats.ts` the link ledger (it owns its own session policy — the opening line, the per-minute
       interval, the warn-once latch — behind `begin`/`end`, as `LiveSync` and `DeviceFollow` do, so the
       timer's lifetime and `startedAt` cannot be kept in step by hand and drift) — what one session asked of
@@ -957,6 +962,20 @@ route-accurate, not per-node: a stereo input mirrors its source onto a channel p
 half of the pair leaves the muted channel off the path while its shared input stays lit through the
 still-live partner channel — the input is genuinely on the path until both halves are silenced.
 
+**CUE on the board**: while a strip is cued (the unit's [CUE], live-session state — see "CUE" under "What
+the app models, and what it leaves to the unit"), the board shows what the CUE bus carries and where it goes,
+without a node for the bus. The path is each cued channel's upstream closure (the path trace's `upstreamNodes`),
+each cued output (STEREO, a MIX bus, STREAMING) alone — its upstream would frame most of the board — and every
+drawn monitor whose Cue Interrupt is on, since such a monitor plays the CUE bus in place of its own source,
+whichever bus that source is, while anything is cued. Off the path, wires fade to 0.16 and nodes to 0.3 of their resting opacity, as
+under a trace; each node on it wears a 2 px frame in the CUE colour drawn outside its jacks; only a monitor carries
+the CUE badge; and a 2.5 px line in the CUE colour runs from each cued strip to each of those monitors, drawn over
+the nodes and wires, from the outer edge of one frame to the outer edge of the other and never into a frame. The wire
+feeding such a monitor — the feed the unit drops for the cue — is drawn faint and dashed. All of it lives in its
+own layer (`.cue-layer`) and in the wire and node attributes the repaint sets, and the path is taken again before
+every repaint (`recue`), so a rewire or a Cue Interrupt switched under a cue moves it. An image export carries
+none of it: the board is redrawn without the cue for the clone and with it straight after, in one task.
+
 **Uniform OFF display**: every state that silences a node — a muted channel / master / FX / MONITOR
 (`params.on`), a bypassed ducker (`duckerOn`), the oscillator off (`osc.on`) — funnels through the
 `isNodeInactive` predicate, dimming the node and tagging it (MUTE, or OFF for a ducker / the
@@ -1437,7 +1456,12 @@ MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off) — never the nod
 MIX 675), which is the scribble power LED. STEREO and the MONITOR buses have no → STEREO send, so they carry
 no MUTE chip; their master ON is the power LED alone. A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
-`MONITOR_MONO`, ships OFF) chips. Then +48 / Ф /
+`MONITOR_MONO`, ships OFF) chips. Every cuable strip (the channels, the FX channels, the MIX buses, STEREO and
+STREAMING, whose CUE takes the slot beside its DELAY) carries a **CUE** chip right of the MUTE — first in the row
+where there is no MUTE — lit in the CUE colour while the strip is cued. It switches the unit's [CUE] rather than
+the plan, so a press commits nothing; with no Live-sync session it is read-only and stays a MIDI-learn target.
+While anything is cued, a MONITOR strip whose Cue Interrupt is on is framed in the CUE colour and its CUE Int
+chip is painted in it. Then +48 / Ф /
 HPF on a mono channel (+48 and Hi-Z are the jack's it reads: Hi-Z where that jack carries it, neither on a source
 or on no source) or one Ф on a stereo channel, which inverts the side the strip shows (`phaseL` / `phaseR`,
 gated by `channelControl`); (2) the processing
@@ -2184,6 +2208,27 @@ written at all:
   most of two writes 20 ms apart unannounced, so the answers cannot be counted. A selection the unit makes itself
   drops the switches still waiting, and a session's release waits for its write on the wire before it disconnects,
   so that write's answer lands before another session can start. No plan key moves either way.
+
+- **CUE: the unit changes state it does not announce, outside the plan.** The [CUE] of a mono channel, a stereo
+  channel, an FX channel, STEREO, a MIX bus or STREAMING is cleared at power-off and kept in no scene and no
+  settings file, so the app holds it as state of the live session (`control/cue.ts`) and never in the plan: no
+  dirty flag, no undo entry, nothing saved. The six fall into an INPUT group (the channels and the FX channels)
+  and an OUTPUT group (STEREO, MIX, STREAMING). Cues within a group add up; a cue in the other group clears
+  every cue of the group in use; the output cues an input cue cleared come back, all of them, when the LAST input
+  cue goes off, and a new output cue in the meantime discards them; input cues never come back. A STEREO-linked
+  mono pair shares one flag. None of what the unit clears or puts back is announced on a write over the link, and
+  a press on its panel announces only part of it (a cleared input flag when an output cue is pressed, and the
+  0 of an output it was holding when its CLEAR CUE is pressed), so `CueSet` applies these rules to every change
+  from either side rather than waiting for a notify. A notify carrying a value the app has just written is its
+  answer (`CueEchoes`), and a mirror the unit sets beside a flag (MIX's second instance, STREAMING's) is
+  consumed. The flags are read at a Live-sync start, inside every whole-device follow read (a scene recall
+  reaches the app as one), and 300 ms after a press on the unit settles — the last because a cue cleared before
+  the session started can still be held by the unit and put back with no record of it in the app. The app's
+  writes go out one at a time, in order, and a read is taken only when no write is waiting and nothing changed
+  while it ran. **Clear CUE** turns the input cues off first and the output cues after, since turning the last
+  input cue off is what puts the held outputs back, and reads the flags afterwards. A session's end forgets every
+  cue, and with no session nothing switches one: the CONSOLE chips are read-only (and stay MIDI-learn targets) and a
+  MIDI control assigned to a CUE is refused.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being

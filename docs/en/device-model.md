@@ -491,8 +491,10 @@ one (a file, a `?plan=` link) is refused at load.
   carries the same signal as its MONITOR bus but has its own **PHONES Level** (a unit-less 0.0 …
   10.0 scale, independent of the monitor fader), edited on the MONITOR 1 / 2 nodes — PHONES 1 ↔
   MONITOR 1, PHONES 2 ↔ MONITOR 2.
-- The CUE bus (solo/monitor interrupt) is **not modeled**: its routing is cleared at power-off, so
-  it cannot hold a persistent assignment that a saved plan would represent.
+- The CUE bus (solo/monitor interrupt) is **not part of the plan**: its routing is cleared at power-off, so
+  it cannot hold a persistent assignment that a saved plan would represent. Which strips are cued is state of a
+  Live-sync session, held outside the plan (architecture.md, "CUE" under "What the app models, and what it leaves
+  to the unit"), and the board draws no node for the bus.
 
 ## Sample-rate-dependent constraints
 
