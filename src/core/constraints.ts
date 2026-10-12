@@ -274,8 +274,8 @@ export function channelDuckerOn(model: DeviceModel, plan: Plan, channelId: strin
 // diagram places ahead of the fader and Ducker, so the ducked signal never reaches
 // the USB output — a silent surprise on a live output worth flagging (route via a
 // STEREO / MIX bus instead). microSD Rec is deliberately excluded: recording the
-// dry (pre-Ducker) signal is a standard workflow, and the Rec Point control already
-// makes that tap an explicit choice, so a standing warning there would be noise.
+// dry (pre-Ducker) signal is a standard workflow, so a standing warning there would
+// be noise. A ducked recording takes a STEREO / MIX bus as the track source.
 // Returns the affected host-channel ids (the UI resolves them to labels).
 export function duckerBypassWarnings(model: DeviceModel, plan: Plan): string[] {
   return duckerBypassCandidates(model, plan)
@@ -308,8 +308,7 @@ export function duckerBypassCandidates(model: DeviceModel, plan: Plan): { ducker
 // device carries [MONO] on the MONITOR buses alone (device-model.md §4), and a
 // MONITOR can be patched to MAIN / LINE — while a USB output cannot take a
 // MONITOR source at all (§6), so a standing "no MONO here" note there would be a
-// lock nothing can unlock. Scoping this the same way duckerBypassWarnings leaves
-// microSD Rec alone: state the caveat only where acting on it is possible.
+// lock nothing can unlock. State the caveat only where acting on it is possible.
 // The monitor buses — the only nodes carrying the device's [MONO] switch, and the
 // single home for these two ids: the console, the inspector and the MIDI catalog
 // each used to spell them out again. Private: `isMonitorBus` is the question every
