@@ -493,6 +493,119 @@ describe("path trace", () => {
   const send = (plan: Plan, from: string, to: string): NonNullable<Plan["connections"][number]> =>
     plan.connections.find((c) => c.from === from && c.to === to)!;
 
+  const traced = (): string[] => [...(fx.graph as unknown as { pathNodes: Set<string> }).pathNodes].sort();
+  const wireOpacity = (from: string, to: string): string | null =>
+    [...fx.host.querySelectorAll(`path.wire-hit[data-from="${from}"][data-to="${to}"]`)]
+      .map((h) => h.parentElement!.querySelector("path:not(.wire-hit):last-of-type")!.getAttribute("opacity"))
+      .pop() ?? null;
+  const selectNode = (id: string): void =>
+    (fx.graph as unknown as { select: (s: { type: "node"; id: string }) => void }).select({ type: "node", id });
+  const chain = (plan: Plan): void => {
+    plan.connections = [
+      { from: "in.micline_1_2:out", to: "ch1:in", kind: "source" },
+      { from: "ch1:out", to: "bus.fx2:in", kind: "send", params: { level: 0 } },
+      { from: "bus.fx2:out", to: "bus.stereo:in", kind: "send", params: { level: 0 } },
+    ];
+  };
+
+  // FX2 is taken away above 96 kHz: the board dims it, and nothing flows through it.
+  it("does not trace through a node the sample rate has taken away", () => {
+    fx = graphFixture({ modelId: "URX44V", seed: chain });
+    trace("bus.stereo");
+    expect(traced()).toEqual(["bus.fx2", "bus.stereo", "ch1", "in.micline_1_2"]);
+    fx.restore();
+    fx = graphFixture({
+      modelId: "URX44V",
+      seed: (plan) => {
+        chain(plan);
+        plan.sampleRate = 192000;
+      },
+    });
+    trace("bus.stereo");
+    expect(traced()).toEqual([]);
+    trace("bus.fx2");
+    expect(traced()).toEqual([]);
+  });
+
+  // While a trace is active only the path lights: a wire that merely touches the traced
+  // node, from a node off the path, fades like every other off-path wire.
+  it("fades a wire that touches the traced node but is off its path", () => {
+    fx = graphFixture({
+      modelId: "URX44V",
+      seed: (plan) => {
+        for (const [from, to] of [
+          ["ch1:out", "bus.fx2:in"],
+          ["bus.fx2:out", "bus.stereo:in"],
+        ])
+          send(plan, from, to).params = { level: 0 };
+        plan.sampleRate = 192000;
+      },
+    });
+    fx.graph.setDisabledNodes(["bus.fx2"]);
+    expect(wireOpacity("bus.fx2:out", "bus.stereo:in")).not.toBeNull();
+    // A long press selects the node before the hold traces it.
+    selectNode("bus.stereo");
+    trace("bus.stereo");
+    expect(wireOpacity("bus.fx2:out", "bus.stereo:in")).toBe("0.16");
+    expect(wireOpacity("ch1:out", "bus.fx2:in")).toBe("0.16");
+    expect(wireOpacity("ch1:out", "bus.stereo:in")).toBe("1");
+  });
+
+  // A trace that finds nothing feeding the node lights and fades nothing: the status line
+  // says there is no path, so the selection's own wires must not read as one.
+  it("lights no wire for a trace with nothing feeding the node", () => {
+    fx = graphFixture({
+      modelId: "URX44V",
+      seed: (plan) => {
+        send(plan, "ch1:out", "bus.fx2:in").params = { level: 0 };
+        plan.sampleRate = 192000;
+      },
+    });
+    fx.graph.setDisabledNodes(["bus.fx2"]);
+    selectNode("bus.fx2");
+    expect(wireOpacity("ch1:out", "bus.fx2:in")).toBe("1");
+    trace("bus.fx2");
+    expect(wireOpacity("ch1:out", "bus.fx2:in")).toBe("0.85");
+    expect(wireOpacity("ch1:out", "bus.stereo:in")).toBe("0.85");
+    selectNode("bus.fx2");
+    expect(wireOpacity("ch1:out", "bus.fx2:in")).toBe("1");
+  });
+
+  // The Ducker is traced from its channel too: it ducks that channel's signal.
+  it("traces the channel an active ducker ducks, with its own source", () => {
+    fx = graphFixture({
+      modelId: "URX44V",
+      seed: (plan) => {
+        plan.connections = [
+          { from: "in.micline_1_2:out", to: "ch1:in", kind: "source" },
+          { from: "in.aux:out", to: "ch_5_6:in", kind: "source" },
+          { from: "ch1:out", to: "out.ducker1:in", kind: "key" },
+        ];
+        plan.nodeParams["out.ducker1"] = { ...plan.nodeParams["out.ducker1"], duckerOn: true };
+      },
+    });
+    trace("out.ducker1");
+    expect(traced()).toEqual(["ch1", "ch_5_6", "in.aux", "in.micline_1_2", "out.ducker1"]);
+  });
+
+  // The key shapes the channel's level though no wire runs from the ducker back to it.
+  it("traces a channel's active ducker and its key source", () => {
+    const keyed = (on: boolean) => (plan: Plan) => {
+      plan.connections = [
+        { from: "in.micline_1_2:out", to: "ch1:in", kind: "source" },
+        { from: "ch1:out", to: "out.ducker1:in", kind: "key" },
+      ];
+      plan.nodeParams["out.ducker1"] = { ...plan.nodeParams["out.ducker1"], duckerOn: on };
+    };
+    fx = graphFixture({ modelId: "URX44V", seed: keyed(true) });
+    trace("ch_5_6");
+    expect(traced()).toEqual(["ch1", "ch_5_6", "in.micline_1_2", "out.ducker1"]);
+    fx.restore();
+    fx = graphFixture({ modelId: "URX44V", seed: keyed(false) });
+    trace("ch_5_6");
+    expect(traced()).toEqual([]);
+  });
+
   // An undo or a device read that raises a send into the traced bus redraws through
   // refresh(); the channel it now carries is on the path and stops fading.
   it("takes the trace again when the wiring under it changes", () => {

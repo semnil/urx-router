@@ -31,7 +31,7 @@ import { getSettings } from "../core/settings";
 import type { ExportOptions, SaveResult } from "../core/storage";
 import { cueAddrOf, oscAssign } from "../core/control/translate";
 import { planColorHex, SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
-import { trackCountCeiling } from "../core/constraints";
+import { nodeRateDisabled, trackCountCeiling } from "../core/constraints";
 import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale, notePanelHeight } from "./graph-text";
 import { sendlessNote } from "./send-fields";
 import { isChord } from "./keys";
@@ -403,6 +403,9 @@ export class Graph {
   private cueMonitors: string[] = [];
   // True while an image export is being taken, which carries nothing of the cue.
   private cueHeld = false;
+  // A trace was taken and nothing feeds its node. The selection then lights nothing and
+  // fades nothing, as the status line says; any selection change ends it.
+  private pathEmpty = false;
 
   // transient interaction state. `link` is a STEREO-linked, visible partner that
   // moves with the dragged node (keeping its offset), plus the pair to redraw the
@@ -1832,11 +1835,14 @@ export class Graph {
     // rest so the selection's routing stands out in a dense diagram. Uses the whole
     // multi-selection, not just the anchor, so it matches the node highlighting.
     const hasNodeSel = this.selectedNodes.size > 0;
-    const incident = hasNodeSel && (this.selectedNodes.has(fromId) || this.selectedNodes.has(toId));
     // A traced signal path lights its wires the same way: both endpoints in the
     // upstream closure and the wire itself live (an off send between two closure
-    // nodes is a parallel silent route, not part of the flow being traced).
+    // nodes is a parallel silent route, not part of the flow being traced). While a
+    // trace is active it alone decides what lights, so a wire merely touching the
+    // selected node does not.
     const pathActive = this.pathNodes.size > 0;
+    const incident =
+      hasNodeSel && !pathActive && !this.pathEmpty && (this.selectedNodes.has(fromId) || this.selectedNodes.has(toId));
     const inPath = pathActive && !off && this.pathNodes.has(fromId) && this.pathNodes.has(toId);
     // While something is cued, the wires the CUE bus is fed through stay as they are and the
     // rest fade like an off-path wire. A wire into a monitor that plays the CUE bus is the feed
@@ -1845,7 +1851,7 @@ export class Graph {
     const cueCarried = cueActive && !off && this.cuePathNodes.has(fromId) && this.cuePathNodes.has(toId);
     const cueReplaced = cueActive && this.cueMonitors.includes(toId);
     const lit = selected || incident || inPath;
-    const faded = (hasNodeSel || pathActive || (cueActive && !cueCarried)) && !lit;
+    const faded = ((hasNodeSel && !this.pathEmpty) || pathActive || (cueActive && !cueCarried)) && !lit;
 
     // Invisible wide band along the wire so the thin curve is easy to click; it
     // carries the pointer handler while the painted wire below stays thin. The
@@ -2013,7 +2019,7 @@ export class Graph {
     if (hasPath) {
       this.pathNodes = closure;
       this.pathRoot = id;
-    }
+    } else this.pathEmpty = true;
     this.redrawWires();
     this.highlightSelectedNode();
     this.cb.onStatus(
@@ -2023,12 +2029,44 @@ export class Graph {
 
   /** The live signal closure feeding `id`, the node included. */
   private upstreamOf(id: string): Set<string> {
-    return upstreamNodes(this.plan, id, (c) => !this.isOffSend(c));
+    return upstreamNodes(
+      this.plan,
+      id,
+      (c) => this.isLiveWire(c),
+      (cur) => this.duckerFeeders(cur),
+    );
+  }
+
+  /** A wire the trace follows: not an off send, and neither end a node the sample rate
+   *  has taken away (FX2 above 96 kHz carries no signal whatever its sends hold). */
+  private isLiveWire(c: PlanConnection): boolean {
+    if (this.isOffSend(c)) return false;
+    const rate = this.plan.sampleRate;
+    return ![c.from, c.to].some((r) => nodeRateDisabled(parseRef(r).nodeId, rate));
+  }
+
+  /** A ducker that is on and keyed by a live wire. */
+  private isActiveDucker(id: string): boolean {
+    const node = this.nodeById.get(id);
+    return (
+      node?.kind === "ducker" &&
+      !this.isNodeInactive(node) &&
+      this.plan.connections.some((c) => parseRef(c.to).nodeId === id && this.isLiveWire(c))
+    );
+  }
+
+  /** What shapes a node's signal with no wire into it: the active duckers hung under a
+   *  channel (their key sets its level), and the channel an active ducker ducks. */
+  private duckerFeeders(id: string): string[] {
+    const parent = this.parentOf(id);
+    const own = parent !== undefined && this.isActiveDucker(id) ? [parent] : [];
+    return [...own, ...this.attachedDescendants(id).filter((d) => this.isActiveDucker(d))];
   }
 
   private clearTrace(): void {
     this.pathNodes.clear();
     this.pathRoot = null;
+    this.pathEmpty = false;
   }
 
   /** Take the trace again from its root against the plan as it stands. A root no longer on

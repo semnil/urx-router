@@ -57,6 +57,16 @@ test("long-pressing a node lights its path and fades the rest", async ({ page })
   await expect(node(page, "in.aux")).toHaveAttribute("opacity", "0.3");
 });
 
+test("a wire from the traced node to a node off its path fades", async ({ page }) => {
+  await connect(page, "in.micline_1_2:out", "ch1:in");
+  await connect(page, "in.aux:out", "ch_5_6:in");
+  await longPress(page, "ch_5_6");
+  // CH 1 touches nothing the trace follows from CH 5/6; its own fixed send to STEREO
+  // is off the path, and CH 5/6's send to STEREO leaves the traced node downstream.
+  await expect(wire(page, "ch_5_6:out", "bus.stereo:in")).toHaveAttribute("opacity", "0.16");
+  await expect(wire(page, "in.aux:out", "ch_5_6:in")).toHaveAttribute("opacity", "1");
+});
+
 test("a multi-hop chain reaches the input two hops behind the traced bus", async ({ page }) => {
   // input -> ch1 -> (fixed, unity) bus.stereo. Tracing the downstream STEREO bus
   // must reach back two hops to the input, not stop at the immediate channel.

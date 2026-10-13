@@ -532,15 +532,23 @@ export function possibleSources(model: DeviceModel, to: string): Set<string> {
  *  node that reaches it by walking connections backwards. `live` filters which
  *  connections to follow — pass a predicate that rejects silent (off / -∞) sends,
  *  otherwise the always-wired send mesh traces every node back to all inputs and
- *  the closure becomes the whole board. Cycle-safe via the visited closure. */
-export function upstreamNodes(plan: Plan, nodeId: string, live: (conn: PlanConnection) => boolean): Set<string> {
+ *  the closure becomes the whole board. `feeders` names nodes that shape a node's signal
+ *  without a wire into it (a ducker over its channel). Cycle-safe via the visited closure. */
+export function upstreamNodes(
+  plan: Plan,
+  nodeId: string,
+  live: (conn: PlanConnection) => boolean,
+  feeders: (nodeId: string) => readonly string[] = () => [],
+): Set<string> {
   const closure = new Set<string>([nodeId]);
   const stack = [nodeId];
   while (stack.length) {
     const cur = stack.pop()!;
+    const sources = [...feeders(cur)];
     for (const conn of plan.connections) {
-      if (parseRef(conn.to).nodeId !== cur || !live(conn)) continue;
-      const src = parseRef(conn.from).nodeId;
+      if (parseRef(conn.to).nodeId === cur && live(conn)) sources.push(parseRef(conn.from).nodeId);
+    }
+    for (const src of sources) {
       if (!closure.has(src)) {
         closure.add(src);
         stack.push(src);

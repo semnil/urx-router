@@ -809,6 +809,14 @@ describe("upstreamNodes", () => {
     expect([...got].sort()).toEqual(["bus", "ch1", "inA", "out"]);
   });
 
+  it("follows feeders that shape a node without a wire into it", () => {
+    const feeders = (n: string): string[] => (n === "out" ? ["duck"] : []);
+    const withKey: PlanConnection[] = [...chain, { from: ref("inA", "out"), to: ref("duck", "in"), kind: "key" }];
+    const got = upstreamNodes(planOf(withKey), "out", all, feeders);
+    expect([...got].sort()).toEqual(["bus", "ch1", "ch2", "duck", "inA", "inB", "out"]);
+    expect([...upstreamNodes(planOf(withKey), "out", all)]).not.toContain("duck");
+  });
+
   it("terminates on a cycle without revisiting", () => {
     const cyclic: PlanConnection[] = [
       { from: ref("a", "out"), to: ref("b", "in"), kind: "send" },
