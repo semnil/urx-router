@@ -2225,14 +2225,18 @@ written at all:
   answer (`CueEchoes`), and a mirror the unit sets beside a flag (MIX's second instance, STREAMING's) is
   consumed. The flags are read at a Live-sync start and again once the session is up (a press between the
   first read and the notify registration is announced to nobody), inside every whole-device follow read (a scene recall
-  reaches the app as one), and 300 ms after a press on the unit settles — the last because a cue cleared before
-  the session started can still be held by the unit and put back with no record of it in the app. The app's
+  reaches the app as one), 300 ms after a press on the unit settles, and behind every cue written from the app —
+  the last two because a cue cleared before the session started can still be held by the unit and put back with no
+  record of it in the app. The app's
   writes go out one at a time, in order, and each counts as done only once the unit has announced it (or the
   settle window has passed, for one that changed nothing): the unit acks a write before the flag is readable, a
   read in between answers the value the write replaced, and the flags the unit clears or puts back with the
   write become readable with that announcement (see "A write is not readable when it is acked"). A read is taken
-  only when no write is waiting and nothing changed while it ran. **Clear CUE** turns the input cues off first and the output cues after, since turning the last
-  input cue off is what puts the held outputs back, and reads the flags afterwards. A session's end forgets every
+  only when no write is waiting and nothing changed while it ran. **Clear CUE** turns the input cues off first, since turning the last input cue off is what puts
+  the held outputs back, reads the flags behind those writes, and then turns off every cue that read found —
+  outputs held from before the session included. A read is taken into the set it was started for: a session's end
+  or a model change replaces the set, and a read that lands after it is dropped. A session that fails to start
+  forgets the cues its starting read took. A session's end forgets every
   cue, and with no session nothing switches one: the CONSOLE chips are read-only (and stay MIDI-learn targets) and a
   MIDI control assigned to a CUE is refused.
 
