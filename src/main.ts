@@ -1370,6 +1370,7 @@ function setView(next: ViewName): void {
     // shelved, and that drop rebuilds the panel itself — which clears the flag, so this
     // is a no-op there and the gesture costs one rebuild rather than two.
     if (inspectorDeferred) rebuildInspector();
+    graph.shown();
   }
 }
 

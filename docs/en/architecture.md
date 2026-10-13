@@ -3693,7 +3693,10 @@ of them.
   layout clamps the zoom to its lower bound and leaves the nodes tiny and pushed off the top. It
   never shows in the browser (Chromium, inline CSS) and **reproduces every time on the desktop**
   (WKWebView, external CSS link). The fix is a `ResizeObserver` plus an `autoFit` flag: re-fit once
-  the real size lands and on window resize, and drop `autoFit` on a manual pan or zoom. **The
+  the real size lands and on window resize, and drop `autoFit` on a manual pan or zoom. Showing the
+  graph again (leaving the CONSOLE) re-fits it at once while `autoFit` holds, after the deferred
+  refresh has brought back what an undo there un-shelved: a fit taken while the host was hidden
+  used the fallback size, and would otherwise stand until the next resize callback. **The
   toolbar has the same desktop-only failure** — without `white-space:nowrap`, a flex child wraps CJK
   text at any character boundary, so buttons and labels grow to two lines at narrow widths. Any new
   width-sensitive control follows the same `nowrap` + `flex-shrink:0` pattern.

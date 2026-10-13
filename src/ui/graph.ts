@@ -697,6 +697,12 @@ export class Graph {
     return true;
   }
 
+  /** The host was just made visible: a board still auto-fitting is framed to its real size
+   *  now, rather than standing in a fit taken while it had none until the resize callback. */
+  shown(): void {
+    if (this.autoFit) this.fitView();
+  }
+
   /** Center and scale the diagram to fit the current viewport. */
   fitView(): void {
     const rect = this.svg.getBoundingClientRect();
