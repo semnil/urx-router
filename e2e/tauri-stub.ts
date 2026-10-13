@@ -247,7 +247,11 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         __urxHeld: Array<{ id: number; go: () => void }>;
         __urxWriteEffects: Array<{ at: string; value: number; set: Array<[string, number]> }>;
         __urxRefuseCommands: string[];
+        __urxHoldWrites: number[];
+        __urxHeldWrites: Array<() => void>;
       };
+      w.__urxHoldWrites = [];
+      w.__urxHeldWrites = [];
       w.__urxWriteEffects = [];
       w.__urxRefuseCommands = [];
       w.__urxRefuseReads = [];
@@ -312,12 +316,17 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
             return answer();
           }
           if (cmd === "vd_set") {
-            instance[slotKey(args)] = Number(args?.value);
-            writes.push([Number(args?.paramId), Number(args?.value)]);
-            for (const e of w.__urxWriteEffects)
-              if (e.at === slotKey(args) && e.value === Number(args?.value))
-                for (const [k, v] of e.set) instance[k] = v;
-            return Promise.resolve(null);
+            const land = (): null => {
+              instance[slotKey(args)] = Number(args?.value);
+              writes.push([Number(args?.paramId), Number(args?.value)]);
+              for (const e of w.__urxWriteEffects)
+                if (e.at === slotKey(args) && e.value === Number(args?.value))
+                  for (const [k, v] of e.set) instance[k] = v;
+              return null;
+            };
+            if (w.__urxHoldWrites.includes(Number(args?.paramId)))
+              return new Promise<void>((go) => w.__urxHeldWrites.push(go)).then(land);
+            return Promise.resolve(land());
           }
           if (cmd === "vd_get_str") {
             const s = o.strings?.[`${Number(args?.paramId)}:${Number(args?.y ?? 0)}`];
@@ -416,6 +425,29 @@ export const setDeviceValue = (page: Page, paramId: number, y: number, value: nu
     },
     [paramId, x, y, value],
   );
+
+/** Hold every write of these param ids from now on: the write is neither answered nor applied
+ *  (nor recorded by `writesOf`) until `releaseHeldWrite` lands the oldest one, or a later call
+ *  stops naming its id. Replaces the list set before, so `[]` lands every held write in the order
+ *  sent. `heldWritesOf` says how many wait. */
+export const setHeldWrites = (page: Page, paramIds: number[]): Promise<void> =>
+  page.evaluate((ids) => {
+    const w = window as unknown as { __urxHoldWrites: number[]; __urxHeldWrites: Array<() => void> };
+    w.__urxHoldWrites = ids;
+    if (!ids.length) for (const go of w.__urxHeldWrites.splice(0)) go();
+  }, paramIds);
+
+/** Land the oldest write `setHeldWrites` is holding. */
+export const releaseHeldWrite = (page: Page): Promise<void> =>
+  page.evaluate(() => {
+    const go = (window as unknown as { __urxHeldWrites: Array<() => void> }).__urxHeldWrites.shift();
+    if (!go) throw new Error("releaseHeldWrite: no write is held");
+    go();
+  });
+
+/** How many writes `setHeldWrites` is holding right now. */
+export const heldWritesOf = (page: Page): Promise<number> =>
+  page.evaluate(() => (window as unknown as { __urxHeldWrites: unknown[] }).__urxHeldWrites.length);
 
 /** From now on, when a write puts `value` at (paramId, y), the stubbed device also moves each of
  *  `set` ([paramId, y, value], x 0) with no notify — a write on the unit that switches other
