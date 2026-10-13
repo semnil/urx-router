@@ -2216,12 +2216,15 @@ written at all:
   and an OUTPUT group (STEREO, MIX, STREAMING). Cues within a group add up; a cue in the other group clears
   every cue of the group in use; the output cues an input cue cleared come back, all of them, when the LAST input
   cue goes off, and a new output cue in the meantime discards them; input cues never come back. A STEREO-linked
-  mono pair shares one flag. None of what the unit clears or puts back is announced on a write over the link, and
+  mono pair shares one flag, and linking a pair copies the primary's flag onto the partner (cued or not —
+  a cue on the partner alone is cleared) while unlinking keeps both; the unit announces the copied flag, so
+  the notify path takes it and the app models none of it. None of what the unit clears or puts back is announced on a write over the link, and
   a press on its panel announces only part of it (a cleared input flag when an output cue is pressed, and the
   0 of an output it was holding when its CLEAR CUE is pressed), so `CueSet` applies these rules to every change
   from either side rather than waiting for a notify. A notify carrying a value the app has just written is its
   answer (`CueEchoes`), and a mirror the unit sets beside a flag (MIX's second instance, STREAMING's) is
-  consumed. The flags are read at a Live-sync start, inside every whole-device follow read (a scene recall
+  consumed. The flags are read at a Live-sync start and again once the session is up (a press between the
+  first read and the notify registration is announced to nobody), inside every whole-device follow read (a scene recall
   reaches the app as one), and 300 ms after a press on the unit settles — the last because a cue cleared before
   the session started can still be held by the unit and put back with no record of it in the app. The app's
   writes go out one at a time, in order, and a read is taken only when no write is waiting and nothing changed
@@ -2314,6 +2317,8 @@ sequenceDiagram
     Note over F: no settle window — the address has no owner node,<br/>so letting it through would escalate every change to a full re-read
   else LCD selection, address 762
     F->>H: intercept consumes the answer to our own write, or shows the selected stereo channel's side
+  else a CUE flag, or an instance the unit sets beside one
+    F->>H: intercept consumes our own write's answer and a mirror, or applies a press on the unit to the cue set and re-reads the flags 300 ms later
   else the value equals the snapshot
     F->>F: an echo of our own write, dropped
   else a fresh device-side change

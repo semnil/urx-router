@@ -104,7 +104,7 @@ unverified mappings (`jack-axis`, `hiz-channel`, `dgain-source`). A read or writ
 that fails at one of those addresses names the mapping, and the self-test says it
 cannot settle them and what would. The link between a stereo channel's displayed
 side and the unit's LCD selection uses the URX44V numbering on both models, registered
-as `lcd-side`.
+as `lcd-side`, and so does the [CUE] flag of each strip, registered as `cue-flags`.
 Offline planning, the plan JSON and image export are unaffected; this concerns
 only live sync on those two models.
 
