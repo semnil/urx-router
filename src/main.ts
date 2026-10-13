@@ -2446,15 +2446,23 @@ function rebuildInspector(): void {
   // A device-follow reflect rebuilds this panel while the operator may be inside it,
   // and replaceChildren drops both the scroll offset and keyboard focus. Carry them
   // over (preserveFocus, the shared capture/restore the console rebuild uses too); a
-  // text surface also carries its caret, since the plan already holds every keystroke
-  // and the rebuilt field would otherwise jump to the end. Held on an object rather
-  // than in a plain local so the value the capture writes survives to the restore.
-  const carried: { caret: readonly [number | null, number | null] | null } = { caret: null };
+  // text surface also carries its caret, which the rebuilt field would otherwise move to
+  // the end, and its text: the plan holds the name normalized, without the trailing space
+  // the operator may be in the middle of typing. The text is carried only while the plan
+  // still holds what it normalizes to, so a name that changed underneath is shown as it
+  // now is. Held on an object rather than in a plain local so the values the capture
+  // writes survive to the restore.
+  const carried: { caret: readonly [number | null, number | null] | null; text: string | null } = {
+    caret: null,
+    text: null,
+  };
   const restoreFocus = preserveFocus(
     inspectorHost,
     (active) => {
-      if (ownsNativeUndo(active) && active instanceof HTMLInputElement)
+      if (ownsNativeUndo(active) && active instanceof HTMLInputElement) {
         carried.caret = [active.selectionStart, active.selectionEnd];
+        carried.text = active.value;
+      }
       return inspectorFocusKeys().get(active);
     },
     (key) => {
@@ -2473,8 +2481,11 @@ function rebuildInspector(): void {
     live?.isActive() ?? false,
   );
   const focused = restoreFocus();
-  if (carried.caret && focused instanceof HTMLInputElement)
-    focused.setSelectionRange(carried.caret[0], carried.caret[1]);
+  if (focused instanceof HTMLInputElement) {
+    if (carried.text !== null && normalizeNodeName(carried.text) === normalizeNodeName(focused.value))
+      focused.value = carried.text;
+    if (carried.caret) focused.setSelectionRange(carried.caret[0], carried.caret[1]);
+  }
 }
 
 // The panel's actions, answering only while the plan the panel was built for is the one on

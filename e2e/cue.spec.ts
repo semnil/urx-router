@@ -185,6 +185,18 @@ test("a cue arriving while a name is typed leaves the field as typed", async ({ 
   await expect(nameInput(page)).toBeFocused();
 });
 
+test("a session ending while a name is typed leaves the field as typed", async ({ page }) => {
+  await typeName(page);
+  // The read behind a press on the unit is refused, which ends the session.
+  await setRefusedReads(page, [CUE_MONO]);
+  await setDeviceValue(page, CUE_MONO, 1, 1);
+  await notifyParam(page, CUE_MONO, 1, 1);
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false", { timeout: 10_000 });
+  await expect(cueRow(page).getByRole("button", { name: "ON", exact: true })).toBeDisabled();
+  await expect(nameInput(page)).toHaveValue("Vocal ");
+  await expect(nameInput(page)).toBeFocused();
+});
+
 test("the CUE row follows the unit while a picker in the panel holds the focus", async ({ page }) => {
   await goLive(page);
   await page.locator(`#graph-host g.node[data-id="ch1"]`).click();

@@ -1742,7 +1742,9 @@ WKWebView** with the panel repainted at the 20 Hz a knob sweep produces (`ui/key
 harness): typing `nihonngo` produced **`nいhおnngお`**, with **eight compositionstarts for eight keystrokes**. The
 romaji buffer that spans keystrokes goes with the removed element, so a consonant that has no vowel yet lands as
 literal ASCII. Focus and caret are not the problem — they are carried across the rebuild and every character landed
-in the right place; the composition alone is destroyed. Through the composition gate, at the same repaint rate: **one
+in the right place; the composition alone is destroyed. The field's text is carried too, while the plan still holds
+what it normalizes to: the plan stores a name without its trailing space, so a rebuilt field would otherwise drop the
+space the operator has just typed. Through the composition gate, at the same repaint rate: **one
 compositionstart, one compositionend, `日本語` intact**, 67 of 397 repaints deferred to the commit.
 
 Confirmed on the device path the synthetic repaint stands in for, with a URX attached and Live sync up: sweeping
