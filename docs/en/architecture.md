@@ -986,7 +986,9 @@ own layer (`.cue-layer`) and in the wire and node attributes the repaint sets, a
 every repaint (`recue`), so a rewire or a Cue Interrupt switched under a cue moves it. An image export carries
 none of it: the board is redrawn without the cue for the clone and with it straight after, in one task.
 The board itself switches nothing: a selected node that has a [CUE] carries a **CUE** row (ON / OFF) in the inspector,
-which switches it the way the node's CONSOLE chip does.
+which switches it the way the node's CONSOLE chip does. A change of cue and a session starting repaint that row in
+place (`syncInspectorCue`) rather than rebuilding the panel, so a name being typed or a picker holding the focus is
+left as it is.
 
 **Uniform OFF display**: every state that silences a node — a muted channel / master / FX / MONITOR
 (`params.on`), a bypassed ducker (`duckerOn`), the oscillator off (`osc.on`) — funnels through the

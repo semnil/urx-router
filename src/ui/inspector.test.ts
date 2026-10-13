@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { colorNames, compositionGate, inspectorNodes, renderInspector } from "./inspector";
+import { colorNames, compositionGate, inspectorNodes, renderInspector, syncInspectorCue } from "./inspector";
 import type { InspectorActions } from "./inspector";
 import { resetSectionCache } from "./inspector-sections";
 import type { Selection } from "./graph";
@@ -1750,6 +1750,21 @@ describe("the CUE row", () => {
     expect(button(t().inspector.on).disabled).toBe(true);
     button(t().inspector.on).click();
     expect(act.onSetCue).not.toHaveBeenCalled();
+  });
+
+  // A session starting, or a cue changing, repaints the row on the panel already drawn: the
+  // row it repaints is the same element, and a press on it then switches the cue.
+  it("is repainted in place, and a row drawn read-only switches once a session is up", () => {
+    vi.mocked(act.cueOf).mockReturnValue({ on: false, enabled: false });
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    const row = cueRow()!;
+    syncInspectorCue(panel, () => ({ on: true, enabled: true }));
+    expect(cueRow()).toBe(row);
+    expect(row.hasAttribute("title")).toBe(false);
+    expect(button(t().inspector.on).getAttribute("aria-pressed")).toBe("true");
+    expect(button(t().inspector.off).getAttribute("aria-pressed")).toBe("false");
+    button(t().inspector.off).click();
+    expect(act.onSetCue).toHaveBeenCalledWith("ch1", false);
   });
 });
 

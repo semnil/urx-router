@@ -45,11 +45,12 @@ test("muting a channel dims the node and its outgoing send wire", async ({ page 
   await expect(stereoSend(page)).toHaveAttribute("stroke-dasharray", "1.5 4");
 });
 
-test("Channel ON leads the channel inspector", async ({ page }) => {
+test("Channel ON leads the channel inspector's plan toggles", async ({ page }) => {
   await chNode(page).click();
-  // The first parameter row that carries an ON/OFF toggle is Channel ON.
+  // The first parameter row that carries an ON/OFF toggle of the plan is Channel ON. The CUE
+  // row is the unit's live-session state rather than the plan's, so it is not one of them.
   const firstToggle = page
-    .locator("#inspector .param")
+    .locator("#inspector .param:not([data-cue-node])")
     .filter({ has: page.locator(".toggle") })
     .first();
   await expect(firstToggle).toContainText("Channel");

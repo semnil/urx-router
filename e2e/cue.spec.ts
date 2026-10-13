@@ -10,6 +10,7 @@ import {
   setDeviceValue,
   setHeldReads,
   setRefusedCommands,
+  setRefusedReads,
   setWriteEffect,
   stubTauriDevice,
   writesOf,
@@ -161,6 +162,38 @@ test("a node's CUE row in the inspector is read-only with no session and switche
   await notifyParam(page, CUE_MONO, 0, 0);
   await expect(cueRow(page).getByRole("button", { name: "OFF", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#cue-bar")).toBeHidden();
+});
+
+// The row is repainted in place, so what the operator is in the middle of in the panel stays as
+// it is: a name being typed keeps its trailing space (the plan holds it normalized), and a
+// picker holding the focus does not stop the row following the unit.
+const nameInput = (page: Page) => page.locator("#inspector input[type='text']");
+
+async function typeName(page: Page): Promise<void> {
+  await goLive(page);
+  await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
+  await nameInput(page).pressSequentially("Vocal ", { delay: 0 });
+  await expect(nameInput(page)).toHaveValue("Vocal ");
+}
+
+test("a cue arriving while a name is typed leaves the field as typed", async ({ page }) => {
+  await typeName(page);
+  await setDeviceValue(page, CUE_MONO, 1, 1);
+  await notifyParam(page, CUE_MONO, 1, 1);
+  await expect(readout(page)).toHaveText("CUE CH 2");
+  await expect(nameInput(page)).toHaveValue("Vocal ");
+  await expect(nameInput(page)).toBeFocused();
+});
+
+test("the CUE row follows the unit while a picker in the panel holds the focus", async ({ page }) => {
+  await goLive(page);
+  await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
+  const recPoint = page.locator('#inspector .param[data-param-label="Rec Point"] select');
+  await recPoint.focus();
+  await setDeviceValue(page, CUE_MONO, 0, 1);
+  await notifyParam(page, CUE_MONO, 0, 1);
+  await expect(cueRow(page).getByRole("button", { name: "ON", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(recPoint).toBeFocused();
 });
 
 test("a press on the unit's panel is followed, and the outputs it displaced come back", async ({ page }) => {

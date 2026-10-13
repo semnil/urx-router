@@ -82,7 +82,7 @@ import {
 } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { ConnectOrigin, LabelSource, Selection, ThemeName } from "./ui/graph";
-import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
+import { compositionGate, inspectorNodes, renderInspector, syncInspectorCue } from "./ui/inspector";
 import { copyText, focusables, preserveFocus } from "./ui/dom";
 import { setSaid, setSpokenText, setTip, spoken } from "./ui/glyph";
 import { ownsNativeUndo } from "./ui/keys";
@@ -787,10 +787,11 @@ function renderCues(): void {
   midi?.scheduleFeedback();
 }
 
-/** Rebuild the panel when it carries a [CUE] row: what is cued, or whether a press on the row
- *  switches anything, changed. */
+/** Repaint the panel's [CUE] row in place: what is cued, or whether a press on the row switches
+ *  anything, changed. Nothing else in the panel is rebuilt, so a field being typed in or a
+ *  picker held open keeps what it holds. */
 function refreshInspectorCue(): void {
-  if (selection?.type === "node" && cueAddrOf(getModel(modelId), selection.id)) refreshInspector();
+  syncInspectorCue(inspectorHost, inspectorActions.cueOf);
 }
 
 const graph = new Graph(graphHost, getModel(modelId), plan, {
