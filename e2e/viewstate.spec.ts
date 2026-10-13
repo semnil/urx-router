@@ -108,3 +108,37 @@ test("a model switched behind the CONSOLE is framed on the graph's first frame",
   await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
   expect(shown).toBe(await page.locator("#graph-host svg > g").first().getAttribute("transform"));
 });
+
+test("an undo behind the CONSOLE is framed on the graph's first frame", async ({ page }) => {
+  // The undo brings the shelved nodes back, so the board the graph is framed to on its
+  // first frame has to be the restored one rather than the one it was hidden with.
+  await page.click("#btn-view");
+  await page.click("#btn-hide-unused");
+  await expect(page.locator(".hidden-shelf")).toBeVisible();
+  await page.click("#btn-view-console");
+  await page.keyboard.press("ControlOrMeta+z");
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  const shown = await page.evaluate(() => {
+    document.getElementById("btn-view-graph")!.click();
+    return document.querySelector("#graph-host svg > g")!.getAttribute("transform");
+  });
+  await expect(page.locator(".hidden-shelf")).toBeHidden();
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  expect(shown).toBe(await page.locator("#graph-host svg > g").first().getAttribute("transform"));
+});
+
+test("a board zoomed by hand keeps its framing across a CONSOLE visit with a resize", async ({ page }) => {
+  const viewport = page.locator("#graph-host svg > g").first();
+  const box = (await page.locator("#graph-host").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const fitted = await viewport.getAttribute("transform");
+  await page.mouse.wheel(0, -100);
+  await expect.poll(() => viewport.getAttribute("transform")).not.toBe(fitted);
+  const zoomed = await viewport.getAttribute("transform");
+  await page.click("#btn-view-console");
+  const size = page.viewportSize()!;
+  await page.setViewportSize({ width: size.width - 200, height: size.height - 100 });
+  await page.click("#btn-view-graph");
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  expect(await viewport.getAttribute("transform")).toBe(zoomed);
+});
