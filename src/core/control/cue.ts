@@ -13,7 +13,8 @@
 
 import type { DeviceModel } from "../../models/types";
 import { vdGet, vdSet } from "../platform";
-import { cueAddrOf, cueAddrs, type CueAddr, type CueGroup } from "./translate";
+import { addrKey, cueAddrOf, cueAddrs, type CueAddr, type CueGroup } from "./translate";
+import { writeSettle } from "./settle";
 import { LcdEchoes } from "./lcd-selection";
 
 /** Which strips are cued, kept by the unit's rules. `version` moves on every change, so a read
@@ -156,7 +157,13 @@ export async function readCues(
   return out;
 }
 
-/** Write one strip's flag. The caller must have connected first. */
-export function writeCueFlag(addr: CueAddr, on: boolean): Promise<void> {
-  return vdSet(addr.param, 0, addr.y, on ? 1 : 0);
+/** Write one strip's flag, resolving once the unit has announced it — or once the settle window
+ *  has passed, for a write that changed nothing and so is announced by nothing. The unit acks a
+ *  write before the flag is readable, and the flags it clears or puts back with it become readable
+ *  with that announcement, so a read of the flags taken after this resolves answers what the write
+ *  left. The caller must have connected first. */
+export async function writeCueFlag(addr: CueAddr, on: boolean): Promise<void> {
+  const mark = writeSettle.mark();
+  await vdSet(addr.param, 0, addr.y, on ? 1 : 0);
+  await writeSettle.settle(new Map([[addrKey(addr.param, 0, addr.y), mark]]));
 }

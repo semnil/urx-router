@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn() }));
+
 import { getModel } from "../../models";
-import { CueEchoes, CueSet, readCues } from "./cue";
+import { vdSet } from "../platform";
+import { CueEchoes, CueSet, readCues, writeCueFlag } from "./cue";
 import { cueAddrOf, cueAddrs, cueAt, cueNotifyAddrs } from "./translate";
-import { SETTLE_TIMEOUT_MS } from "./settle";
+import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 
 const V = getModel("URX44V");
 
@@ -233,5 +237,52 @@ describe("readCues", () => {
         return 0;
       }),
     ).rejects.toThrow("boom");
+  });
+});
+
+// The unit acks a write before the flag is readable and announces it once it is; the flags it
+// clears or puts back with the write are readable by then too. A read behind the write must
+// therefore wait for that announcement, and the write's promise is what it waits on.
+describe("writeCueFlag", () => {
+  const stereo = cueAddrOf(V, "bus.stereo")!;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(vdSet).mockResolvedValue(undefined);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.mocked(vdSet).mockReset();
+  });
+
+  async function pending(p: Promise<void>): Promise<() => boolean> {
+    let done = false;
+    void p.then(() => (done = true));
+    await vi.advanceTimersByTimeAsync(0);
+    return () => done;
+  }
+
+  it("resolves once the unit announces the written flag, not when the write is acked", async () => {
+    const done = await pending(writeCueFlag(stereo, false));
+    expect(vdSet).toHaveBeenCalledWith(580, 0, 0, 0);
+    expect(done()).toBe(false);
+    writeSettle.note({ paramId: 580, x: 0, y: 0, value: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(done()).toBe(true);
+  });
+
+  it("is not ended by an announcement from before the write", async () => {
+    writeSettle.note({ paramId: 580, x: 0, y: 0, value: 0 });
+    const done = await pending(writeCueFlag(stereo, false));
+    expect(done()).toBe(false);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+    expect(done()).toBe(true);
+  });
+
+  it("resolves at the settle window when nothing is announced", async () => {
+    const done = await pending(writeCueFlag(stereo, true));
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS - 1);
+    expect(done()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done()).toBe(true);
   });
 });

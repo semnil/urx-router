@@ -392,7 +392,7 @@ carries a one-line map of the same directories and points here.
     - `cue.ts` the unit's [CUE] flags, held outside the plan for the live session (see "CUE" under "What
       the app models, and what it leaves to the unit"): `CueSet` applies the unit's rules to every change
       from either side, `CueEchoes` tells the unit's answer to the app's own write from a press on the panel,
-      and `readCues` / `writeCueFlag` are the bare reads and writes. The address of each strip's flag is
+      `readCues` reads every flag, and `writeCueFlag` writes one and resolves once the unit has announced it. The address of each strip's flag is
       `cueAddrs` in `translate.ts`, where the URX22 / URX44 guess is registered
     - `link-stats.ts` the link ledger (it owns its own session policy — the opening line, the per-minute
       interval, the warn-once latch — behind `begin`/`end`, as `LiveSync` and `DeviceFollow` do, so the
@@ -2227,8 +2227,11 @@ written at all:
   first read and the notify registration is announced to nobody), inside every whole-device follow read (a scene recall
   reaches the app as one), and 300 ms after a press on the unit settles — the last because a cue cleared before
   the session started can still be held by the unit and put back with no record of it in the app. The app's
-  writes go out one at a time, in order, and a read is taken only when no write is waiting and nothing changed
-  while it ran. **Clear CUE** turns the input cues off first and the output cues after, since turning the last
+  writes go out one at a time, in order, and each counts as done only once the unit has announced it (or the
+  settle window has passed, for one that changed nothing): the unit acks a write before the flag is readable, a
+  read in between answers the value the write replaced, and the flags the unit clears or puts back with the
+  write become readable with that announcement (see "A write is not readable when it is acked"). A read is taken
+  only when no write is waiting and nothing changed while it ran. **Clear CUE** turns the input cues off first and the output cues after, since turning the last
   input cue off is what puts the held outputs back, and reads the flags afterwards. A session's end forgets every
   cue, and with no session nothing switches one: the CONSOLE chips are read-only (and stay MIDI-learn targets) and a
   MIDI control assigned to a CUE is refused.
