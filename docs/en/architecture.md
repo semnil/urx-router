@@ -944,14 +944,16 @@ both ask). Every other input's last wire can be deleted.
 
 **Path trace**: long-pressing a node (`LONG_PRESS_MS`, ~450ms, held without moving past
 `LONG_PRESS_TOLERANCE`) highlights the signal path feeding it. `routing.ts`
-`upstreamNodes` walks connections backwards through live wiring only (`isLiveWire`: not an `isOffSend`) to gather
-the node's upstream closure (its inputs, channels, and buses) — OFF / -∞ sends are skipped, or the
-always-wired send mesh would trace every node back to all inputs and the closure would be the whole
-board. A wire to or from a node the sample rate has taken away (FX2 above 96 kHz) is skipped too, since
-the unit runs no signal through it. A channel's active ducker (on, with a live key wire) joins the
-closure of the channel it hangs under, and its key source with it, and tracing the ducker takes in that
-channel and its sources the same way: the key shapes the channel's level though no wire joins the two
-(`upstreamNodes`' `feeders`). Nodes in the closure wear an accent frame; live wires with both endpoints in it light up. While a trace is active only those light: a wire that merely touches the selected node from outside the closure fades like any other off-path wire. Both
+`upstreamNodes` walks connections backwards through live wiring only (`isLiveWire`: not an
+`isOffSend`) to gather the node's upstream closure (its inputs, channels, and buses) — OFF / -∞ sends
+are skipped, or the always-wired send mesh would trace every node back to all inputs and the closure
+would be the whole board. A wire to or from a node the sample rate has taken away (FX2 above 96 kHz)
+is skipped too, since the unit runs no signal through it. A channel's active ducker (on, with a live
+key wire) joins the closure of the channel it hangs under, and its key source with it, and tracing the
+ducker takes in that channel and its sources the same way: the key shapes the channel's level though
+no wire joins the two (`upstreamNodes`' `feeders`). Nodes in the closure wear an accent frame; live
+wires with both endpoints in it light up. While a trace is active only those light: a wire that merely
+touches the selected node from outside the closure fades like any other off-path wire. Both
 wires and nodes off the path fade (the same lit / faded split a multi-selection uses); a node fades
 by a factor of its resting opacity, derived from node state by `restingOpacity` (the same precedence
 `makeNode` dims it: rate-disabled > inactive > unread > plain), so a muted / unread node keeps its own
@@ -962,8 +964,7 @@ switch). It keeps the node it was taken for (`pathRoot`) and takes the closure a
 every wire and node repaint, so an edit, an undo, a MIDI move or a device read under the trace moves
 it with the wiring; a root shelved or left with nothing live feeding it ends the trace. A
 node with no upstream (an input) just reports it on the status bar and lights nothing: its own wires
-neither light nor fade until the selection changes. The closure is
-route-accurate, not per-node: a stereo input mirrors its source onto a channel pair, so muting one
+neither light nor fade until the selection changes. The closure is route-accurate, not per-node: a stereo input mirrors its source onto a channel pair, so muting one
 half of the pair leaves the muted channel off the path while its shared input stays lit through the
 still-live partner channel — the input is genuinely on the path until both halves are silenced.
 
