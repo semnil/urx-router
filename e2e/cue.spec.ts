@@ -10,6 +10,7 @@ import {
   setDeviceValue,
   setHeldReads,
   setRefusedCommands,
+  setRefusedReads,
   setWriteEffect,
   stubTauriDevice,
   writesOf,
@@ -83,6 +84,22 @@ test("a session starts from what the unit has cued, on both views and the status
   await expect(chip(page, "ch1")).toHaveAttribute("aria-pressed", "true");
   await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator(`#console-host [data-cue-monitor="bus.mon1"]`)).toHaveClass(/cue-take/);
+  // The frame is drawn on a layer over the strip's contents, so the readout's cell borders
+  // cannot cut it: a box covering the strip, stacked above every positioned box inside it.
+  const layer = await page.locator(`#console-host [data-cue-monitor="bus.mon1"]`).evaluate((strip) => {
+    const after = getComputedStyle(strip, "::after");
+    const inner = [...strip.querySelectorAll("*")]
+      .map((e) => getComputedStyle(e))
+      .filter((s) => s.position !== "static" && s.zIndex !== "auto")
+      .map((s) => Number(s.zIndex));
+    return {
+      position: after.position,
+      inset: [after.top, after.right, after.bottom, after.left],
+      framed: after.boxShadow.includes("inset"),
+      above: inner.every((z) => z < Number(after.zIndex)),
+    };
+  });
+  expect(layer).toEqual({ position: "absolute", inset: ["0px", "0px", "0px", "0px"], framed: true, above: true });
 });
 
 test("a cued output is framed alone, with its line to each monitor", async ({ page }) => {
@@ -120,6 +137,75 @@ test("a press in the app writes the flag and applies the group rule", async ({ p
       [CUE_STEREO_CH, 1],
       [CUE_STEREO, 1],
     ]);
+});
+
+// The graph view's way to the same switch: the selected node's CUE row in the inspector.
+const cueRow = (page: Page) => page.locator('#inspector .param[data-param-label="CUE"]');
+
+test("a node's CUE row in the inspector is read-only with no session and switches the flag with one", async ({
+  page,
+}) => {
+  await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
+  await expect(cueRow(page).getByRole("button", { name: "ON", exact: true })).toBeDisabled();
+  // A monitor carries no CUE of its own.
+  await page.locator(`#graph-host g.node[data-id="bus.mon1"]`).click();
+  await expect(cueRow(page)).toHaveCount(0);
+  await goLive(page);
+  await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
+  await cueRow(page).getByRole("button", { name: "ON", exact: true }).click();
+  await expect(readout(page)).toHaveText("CUE CH 1");
+  await expect(frame(page, "ch1")).toHaveCount(1);
+  await expect(cueRow(page).getByRole("button", { name: "ON", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => writesOf(page).then((w) => w.filter(([id]) => id === CUE_MONO))).toEqual([[CUE_MONO, 1]]);
+  // A press on the unit is followed onto the row.
+  await setDeviceValue(page, CUE_MONO, 0, 0);
+  await notifyParam(page, CUE_MONO, 0, 0);
+  await expect(cueRow(page).getByRole("button", { name: "OFF", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#cue-bar")).toBeHidden();
+});
+
+// The row is repainted in place, so what the operator is in the middle of in the panel stays as
+// it is: a name being typed keeps its trailing space (the plan holds it normalized), and a
+// picker holding the focus does not stop the row following the unit.
+const nameInput = (page: Page) => page.locator("#inspector input[type='text']");
+
+async function typeName(page: Page): Promise<void> {
+  await goLive(page);
+  await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
+  await nameInput(page).pressSequentially("Vocal ", { delay: 0 });
+  await expect(nameInput(page)).toHaveValue("Vocal ");
+}
+
+test("a cue arriving while a name is typed leaves the field as typed", async ({ page }) => {
+  await typeName(page);
+  await setDeviceValue(page, CUE_MONO, 1, 1);
+  await notifyParam(page, CUE_MONO, 1, 1);
+  await expect(readout(page)).toHaveText("CUE CH 2");
+  await expect(nameInput(page)).toHaveValue("Vocal ");
+  await expect(nameInput(page)).toBeFocused();
+});
+
+test("a session ending while a name is typed leaves the field as typed", async ({ page }) => {
+  await typeName(page);
+  // The read behind a press on the unit is refused, which ends the session.
+  await setRefusedReads(page, [CUE_MONO]);
+  await setDeviceValue(page, CUE_MONO, 1, 1);
+  await notifyParam(page, CUE_MONO, 1, 1);
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false", { timeout: 10_000 });
+  await expect(cueRow(page).getByRole("button", { name: "ON", exact: true })).toBeDisabled();
+  await expect(nameInput(page)).toHaveValue("Vocal ");
+  await expect(nameInput(page)).toBeFocused();
+});
+
+test("the CUE row follows the unit while a picker in the panel holds the focus", async ({ page }) => {
+  await goLive(page);
+  await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
+  const recPoint = page.locator('#inspector .param[data-param-label="Rec Point"] select');
+  await recPoint.focus();
+  await setDeviceValue(page, CUE_MONO, 0, 1);
+  await notifyParam(page, CUE_MONO, 0, 1);
+  await expect(cueRow(page).getByRole("button", { name: "ON", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(recPoint).toBeFocused();
 });
 
 test("a press on the unit's panel is followed, and the outputs it displaced come back", async ({ page }) => {

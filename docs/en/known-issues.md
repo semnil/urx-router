@@ -76,15 +76,16 @@ and both are released as soon as the mode goes back to Off.
 ## CUE is controlled during Live sync only, and never saved
 
 The **CUE** of each channel, FX channel, MIX bus, STEREO and STREAMING is switched
-from the CONSOLE (and from a MIDI control assigned to it) and followed from the unit
-while Live sync is on. It is **not part of the plan**: the unit clears it at
-power-off and keeps it in no scene and no settings file, so a saved plan, an undo
-and an image export carry none of it (see [device-model.md](device-model.md) and
-the CUE notes in [architecture.md](architecture.md)).
+from the CONSOLE, from the node's CUE row in the inspector (and from a MIDI control
+assigned to it) and followed from the unit while Live sync is on. It is **not part of
+the plan**: the unit clears it at power-off and keeps it in no scene and no settings
+file, so a saved plan, an undo and an image export carry none of it (see
+[device-model.md](device-model.md) and the CUE notes in [architecture.md](architecture.md)).
 
 With Live sync off nothing is cued in the app: the cues are forgotten when a session
-ends, and neither the CONSOLE's CUE chips nor a MIDI control assigned to a CUE switch
-one. A chip can still be armed for MIDI learn, so a control can be assigned to it.
+ends, and neither the CONSOLE's CUE chips, the inspector's CUE row nor a MIDI control
+assigned to a CUE switch one. A chip can still be armed for MIDI learn, so a control
+can be assigned to it.
 
 ## Live control is hardware-verified on the URX44V only
 

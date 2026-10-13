@@ -154,6 +154,11 @@ export interface InspectorActions {
   wireDrawn: (from: string, to: string) => boolean;
   /** Select a wire, as a press on it does: the keyboard's way to its panel and its Delete. */
   onSelectConnection: (from: string, to: string) => void;
+  /** The node's [CUE], which is outside the plan: null for a node that has none, else whether
+   *  it is cued and whether a press switches it (a Live-sync session is up). */
+  cueOf: (id: string) => CueRowState | null;
+  /** Switch the node's [CUE], as its CONSOLE chip does. */
+  onSetCue: (id: string, on: boolean) => void;
 }
 
 /** The nodes the panel's rendering is derived from — not the nodes the SELECTION names,
@@ -512,6 +517,11 @@ export function renderInspector(
     if (colorControl(model, node.id)) {
       host.append(colorSwatches(m.inspector.color, plan.nodeColors[node.id], (c) => actions.onRecolorNode(node.id, c)));
     }
+
+    // The unit's [CUE], as the node's CONSOLE chip switches it: live-session state rather than
+    // the plan's, so it switches only while a Live-sync session is up.
+    const cue = actions.cueOf(node.id);
+    if (cue) host.append(cueRow(node.id, cue, actions, m));
 
     // Rec Point (CH SETTING): the recording / direct-out tap stage. MONO IN
     // offers all five stages; ST IN only the two `stereo` options. Channels only.
@@ -1679,6 +1689,43 @@ function selectToggle(group: HTMLElement, button: HTMLButtonElement): void {
     x.classList.toggle("on", x === button);
     x.setAttribute("aria-pressed", String(x === button));
   });
+}
+
+/** A node's [CUE] row. Its buttons keep their handlers whatever the session, since what is
+ *  cued and whether a press switches it are repainted in place (syncInspectorCue) rather than
+ *  by rebuilding the panel around the controls the operator may be in. */
+function cueRow(id: string, state: CueRowState, actions: InspectorActions, m: Messages): HTMLElement {
+  const row = boolToggle(m.inspector.cue, state.on, (v) => actions.onSetCue(id, v));
+  row.dataset.cueNode = id;
+  paintCueRow(row, state, m);
+  return row;
+}
+
+type CueRowState = { on: boolean; enabled: boolean };
+
+/** Show `state` on a CUE row: the lit button, and read-only with the reason as its tooltip
+ *  while a press switches nothing. */
+function paintCueRow(row: HTMLElement, state: CueRowState, m: Messages): void {
+  const [on, off] = row.querySelectorAll<HTMLButtonElement>(".toggle button");
+  for (const [b, lit] of [
+    [on, state.on],
+    [off, !state.on],
+  ] as const) {
+    b.classList.toggle("on", lit);
+    b.setAttribute("aria-pressed", String(lit));
+    b.disabled = !state.enabled;
+  }
+  if (state.enabled) row.removeAttribute("title");
+  else row.title = m.inspector.cueOffline;
+}
+
+/** Repaint the CUE row of a panel already on screen, if it carries one, from `cueOf`. Nothing
+ *  else in the panel is touched. */
+export function syncInspectorCue(host: HTMLElement, cueOf: InspectorActions["cueOf"]): void {
+  for (const row of host.querySelectorAll<HTMLElement>("[data-cue-node]")) {
+    const state = cueOf(row.dataset.cueNode!);
+    if (state) paintCueRow(row, state, t());
+  }
 }
 
 /** A two-button group, named by its row's label or, for a section's bare toggle, by the

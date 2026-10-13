@@ -985,6 +985,10 @@ feeding such a monitor — the feed the unit drops for the cue — is drawn fain
 own layer (`.cue-layer`) and in the wire and node attributes the repaint sets, and the path is taken again before
 every repaint (`recue`), so a rewire or a Cue Interrupt switched under a cue moves it. An image export carries
 none of it: the board is redrawn without the cue for the clone and with it straight after, in one task.
+The board itself switches nothing: a selected node that has a [CUE] carries a **CUE** row (ON / OFF) in the inspector,
+which switches it the way the node's CONSOLE chip does. A change of cue and a session starting repaint that row in
+place (`syncInspectorCue`) rather than rebuilding the panel, so a name being typed or a picker holding the focus is
+left as it is.
 
 **Uniform OFF display**: every state that silences a node — a muted channel / master / FX / MONITOR
 (`params.on`), a bypassed ducker (`duckerOn`), the oscillator off (`osc.on`) — funnels through the
@@ -1476,7 +1480,8 @@ STREAMING, whose CUE takes the slot beside its DELAY) carries a **CUE** chip rig
 where there is no MUTE — lit in the CUE colour while the strip is cued. It switches the unit's [CUE] rather than
 the plan, so a press commits nothing; with no Live-sync session it is read-only and stays a MIDI-learn target.
 While anything is cued, a MONITOR strip whose Cue Interrupt is on is framed in the CUE colour and its CUE Int
-chip is painted in it. Then +48 / Ф /
+chip is painted in it. The frame is drawn on a layer over the strip's contents, so the readout's cell borders do
+not cut it, and gives way to the strip's own focus ring. Then +48 / Ф /
 HPF on a mono channel (+48 and Hi-Z are the jack's it reads: Hi-Z where that jack carries it, neither on a source
 or on no source) or one Ф on a stereo channel, which inverts the side the strip shows (`phaseL` / `phaseR`,
 gated by `channelControl`); (2) the processing
@@ -1737,7 +1742,9 @@ WKWebView** with the panel repainted at the 20 Hz a knob sweep produces (`ui/key
 harness): typing `nihonngo` produced **`nいhおnngお`**, with **eight compositionstarts for eight keystrokes**. The
 romaji buffer that spans keystrokes goes with the removed element, so a consonant that has no vowel yet lands as
 literal ASCII. Focus and caret are not the problem — they are carried across the rebuild and every character landed
-in the right place; the composition alone is destroyed. Through the composition gate, at the same repaint rate: **one
+in the right place; the composition alone is destroyed. The field's text is carried too, while the plan still holds
+what it normalizes to: the plan stores a name without its trailing space, so a rebuilt field would otherwise drop the
+space the operator has just typed. Through the composition gate, at the same repaint rate: **one
 compositionstart, one compositionend, `日本語` intact**, 67 of 397 repaints deferred to the commit.
 
 Confirmed on the device path the synthetic repaint stands in for, with a URX attached and Live sync up: sweeping
@@ -2252,7 +2259,8 @@ written at all:
   outputs held from before the session included. A read is taken into the set it was started for: a session's end
   or a model change replaces the set, and a read that lands after it is dropped. A session that fails to start
   forgets the cues its starting read took. A session's end forgets every
-  cue, and with no session nothing switches one: the CONSOLE chips are read-only (and stay MIDI-learn targets) and a
+  cue, and with no session nothing switches one: the CONSOLE chips (which stay MIDI-learn targets) and the inspector's
+  CUE row are read-only, and a
   MIDI control assigned to a CUE is refused.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the

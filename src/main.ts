@@ -82,7 +82,7 @@ import {
 } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { ConnectOrigin, LabelSource, Selection, ThemeName } from "./ui/graph";
-import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
+import { compositionGate, inspectorNodes, renderInspector, syncInspectorCue } from "./ui/inspector";
 import { copyText, focusables, preserveFocus } from "./ui/dom";
 import { setSaid, setSpokenText, setTip, spoken } from "./ui/glyph";
 import { ownsNativeUndo } from "./ui/keys";
@@ -782,8 +782,16 @@ function renderCueBar(): void {
 function renderCues(): void {
   graph.setCues(cues.nodes());
   consoleView.syncCues();
+  refreshInspectorCue();
   renderCueBar();
   midi?.scheduleFeedback();
+}
+
+/** Repaint the panel's [CUE] row in place: what is cued, or whether a press on the row switches
+ *  anything, changed. Nothing else in the panel is rebuilt, so a field being typed in or a
+ *  picker held open keeps what it holds. */
+function refreshInspectorCue(): void {
+  syncInspectorCue(inspectorHost, inspectorActions.cueOf);
 }
 
 const graph = new Graph(graphHost, getModel(modelId), plan, {
@@ -1681,6 +1689,8 @@ function setLiveUi(on: boolean): void {
   // through this function, so a new path cannot desync them by forgetting a call.
   consoleView.setLive(on);
   dynScreen.setLive(on);
+  // A selected node's CUE row switches only while a session is up.
+  refreshInspectorCue();
   // The sleep hold lives and dies with the session, so every way in and out of one
   // — the toggle, a write failure, a link loss — passes through here.
   void syncSleepHold(on && getSettings().preventSleep).then((failed) => {
@@ -2109,6 +2119,9 @@ const inspectorActions = {
   connectOrigins: (id: string) => graph.connectOrigins(id),
   onConnect: (origin: ConnectOrigin, other: string) => graph.connectTo(origin, other),
   wireDrawn: (from: string, to: string) => graph.wireDrawn(from, to),
+  // A node's [CUE] row: switchable while a session is up, as the CONSOLE chip is.
+  cueOf: (id: string) => (cueAddrOf(getModel(modelId), id) ? { on: cues.has(id), enabled: liveSessionUp } : null),
+  onSetCue: (id: string, on: boolean) => setCue(id, on, "app"),
   // The routing row that was pressed goes with the node's panel, so the wire's panel takes
   // the focus: its first control, the mobile close button aside.
   onSelectConnection: (from: string, to: string) => {
@@ -2433,15 +2446,23 @@ function rebuildInspector(): void {
   // A device-follow reflect rebuilds this panel while the operator may be inside it,
   // and replaceChildren drops both the scroll offset and keyboard focus. Carry them
   // over (preserveFocus, the shared capture/restore the console rebuild uses too); a
-  // text surface also carries its caret, since the plan already holds every keystroke
-  // and the rebuilt field would otherwise jump to the end. Held on an object rather
-  // than in a plain local so the value the capture writes survives to the restore.
-  const carried: { caret: readonly [number | null, number | null] | null } = { caret: null };
+  // text surface also carries its caret, which the rebuilt field would otherwise move to
+  // the end, and its text: the plan holds the name normalized, without the trailing space
+  // the operator may be in the middle of typing. The text is carried only while the plan
+  // still holds what it normalizes to, so a name that changed underneath is shown as it
+  // now is. Held on an object rather than in a plain local so the values the capture
+  // writes survive to the restore.
+  const carried: { caret: readonly [number | null, number | null] | null; text: string | null } = {
+    caret: null,
+    text: null,
+  };
   const restoreFocus = preserveFocus(
     inspectorHost,
     (active) => {
-      if (ownsNativeUndo(active) && active instanceof HTMLInputElement)
+      if (ownsNativeUndo(active) && active instanceof HTMLInputElement) {
         carried.caret = [active.selectionStart, active.selectionEnd];
+        carried.text = active.value;
+      }
       return inspectorFocusKeys().get(active);
     },
     (key) => {
@@ -2460,8 +2481,11 @@ function rebuildInspector(): void {
     live?.isActive() ?? false,
   );
   const focused = restoreFocus();
-  if (carried.caret && focused instanceof HTMLInputElement)
-    focused.setSelectionRange(carried.caret[0], carried.caret[1]);
+  if (focused instanceof HTMLInputElement) {
+    if (carried.text !== null && normalizeNodeName(carried.text) === normalizeNodeName(focused.value))
+      focused.value = carried.text;
+    if (carried.caret) focused.setSelectionRange(carried.caret[0], carried.caret[1]);
+  }
 }
 
 // The panel's actions, answering only while the plan the panel was built for is the one on
