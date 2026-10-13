@@ -1357,6 +1357,7 @@ function setView(next: ViewName): void {
     consoleView.show();
   } else {
     consoleView.hide();
+    graph.shown();
     // Reflect any console edits back onto the graph. If a device-follow reflect or an
     // undo landed while the graph was hidden, do the deferred full refresh instead.
     if (graphDirty) {
