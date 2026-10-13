@@ -8,6 +8,7 @@ import type { Plan, PlanConnection } from "../core/plan";
 import { hasConnection, LEVEL_MIN_DB, removeConnection } from "../core/plan";
 import {
   canConnect,
+  channelTapAheadOfMute,
   directOutTarget,
   isFixedConnection,
   isLastRequiredSource,
@@ -24,6 +25,7 @@ import {
   possibleTargets,
   ruleKind,
   sendIsPreFader,
+  tapAheadOfDucker,
   upstreamNodes,
 } from "../core/routing";
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
@@ -1258,7 +1260,9 @@ export class Graph {
   // both its L and R assigns are off — and a muted endpoint (incl. the oscillator
   // off, via isNodeInactive) recedes it too, the same uniform rule every node follows.
   // A wire to or from a node the sample rate has taken away (FX2 above 96 kHz) carries
-  // nothing whatever its params hold, so it recedes as well.
+  // nothing whatever its params hold, so it recedes as well. A channel's mute sits at its
+  // ON switch, after its Rec Point: a direct out or a channel key leaving a muted channel
+  // stays live, and so does the wire into it while it has such a live output.
   private isOffSend(conn: PlanConnection): boolean {
     if (conn.params?.on === false) return true;
     const fromId = parseRef(conn.from).nodeId;
@@ -1267,7 +1271,13 @@ export class Graph {
     if (nodeRateDisabled(fromId, rate) || nodeRateDisabled(toId, rate)) return true;
     const src = this.nodeById.get(fromId);
     const dst = this.nodeById.get(toId);
-    if ((src && this.isNodeInactive(src)) || (dst && this.isNodeInactive(dst))) return true;
+    const srcSilent =
+      src !== undefined &&
+      this.isNodeInactive(src) &&
+      !(src.kind === "channel" && channelTapAheadOfMute(this.model, conn.from, conn.to));
+    const dstSilent =
+      dst !== undefined && this.isNodeInactive(dst) && !(dst.kind === "channel" && this.hasLiveTapAheadOfMute(toId));
+    if (srcSilent || dstSilent) return true;
     // OSC → bus assign: silent when its L (and R, on a stereo bus) are off, even
     // while the oscillator runs. A mono FX bus uses L only (r === null).
     if (fromId === "bus.osc") {
@@ -1280,6 +1290,14 @@ export class Graph {
     // so -∞ there silences nothing; only the send's ON (checked above) can.
     if (mixSendLocks(this.plan, toId).busFixed) return false;
     return (conn.params?.level ?? 0) <= LEVEL_MIN_DB;
+  }
+
+  // Whether a channel has a live wire leaving it ahead of its mute (a direct out or a key).
+  private hasLiveTapAheadOfMute(channelId: string): boolean {
+    return this.plan.connections.some(
+      (c) =>
+        parseRef(c.from).nodeId === channelId && channelTapAheadOfMute(this.model, c.from, c.to) && !this.isOffSend(c),
+    );
   }
 
   // Whether a node reads as inactive and should be dimmed. Delegates to the shared
@@ -2032,12 +2050,12 @@ export class Graph {
   }
 
   /** The live signal closure feeding `id`, the node included. */
-  private upstreamOf(id: string, duckers = true): Set<string> {
+  private upstreamOf(id: string, ducked = true): Set<string> {
     return upstreamNodes(
       this.plan,
       id,
       (c) => !this.isOffSend(c),
-      duckers ? (cur) => this.duckerFeeders(cur) : undefined,
+      (cur, via) => this.duckerFeeders(cur, via ? !tapAheadOfDucker(this.model, this.plan, via) : cur !== id || ducked),
     );
   }
 
@@ -2051,12 +2069,13 @@ export class Graph {
     );
   }
 
-  /** What shapes a node's signal with no wire into it: the active duckers hung under a
-   *  channel (their key sets its level), and the channel an active ducker ducks. */
-  private duckerFeeders(id: string): string[] {
+  /** What shapes a node's signal with no wire into it: the channel an active ducker ducks,
+   *  and — where the channel is taken after its Ducker (`ducked`) — the active duckers hung
+   *  under it, whose key sets its level. */
+  private duckerFeeders(id: string, ducked: boolean): string[] {
     const parent = this.parentOf(id);
     const own = parent !== undefined && this.isActiveDucker(id) ? [parent] : [];
-    return [...own, ...this.attachedDescendants(id).filter((d) => this.isActiveDucker(d))];
+    return ducked ? [...own, ...this.attachedDescendants(id).filter((d) => this.isActiveDucker(d))] : own;
   }
 
   private clearTrace(): void {
