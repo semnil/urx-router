@@ -138,6 +138,31 @@ test("a press in the app writes the flag and applies the group rule", async ({ p
     ]);
 });
 
+// The graph view's way to the same switch: the selected node's CUE row in the inspector.
+const cueRow = (page: Page) => page.locator('#inspector .param[data-param-label="CUE"]');
+
+test("a node's CUE row in the inspector is read-only with no session and switches the flag with one", async ({
+  page,
+}) => {
+  await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
+  await expect(cueRow(page).getByRole("button", { name: "ON", exact: true })).toBeDisabled();
+  // A monitor carries no CUE of its own.
+  await page.locator(`#graph-host g.node[data-id="bus.mon1"]`).click();
+  await expect(cueRow(page)).toHaveCount(0);
+  await goLive(page);
+  await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
+  await cueRow(page).getByRole("button", { name: "ON", exact: true }).click();
+  await expect(readout(page)).toHaveText("CUE CH 1");
+  await expect(frame(page, "ch1")).toHaveCount(1);
+  await expect(cueRow(page).getByRole("button", { name: "ON", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => writesOf(page).then((w) => w.filter(([id]) => id === CUE_MONO))).toEqual([[CUE_MONO, 1]]);
+  // A press on the unit is followed onto the row.
+  await setDeviceValue(page, CUE_MONO, 0, 0);
+  await notifyParam(page, CUE_MONO, 0, 0);
+  await expect(cueRow(page).getByRole("button", { name: "OFF", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#cue-bar")).toBeHidden();
+});
+
 test("a press on the unit's panel is followed, and the outputs it displaced come back", async ({ page }) => {
   await setDeviceValue(page, CUE_STEREO, 0, 1);
   await goLive(page);

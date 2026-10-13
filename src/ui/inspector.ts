@@ -154,6 +154,11 @@ export interface InspectorActions {
   wireDrawn: (from: string, to: string) => boolean;
   /** Select a wire, as a press on it does: the keyboard's way to its panel and its Delete. */
   onSelectConnection: (from: string, to: string) => void;
+  /** The node's [CUE], which is outside the plan: null for a node that has none, else whether
+   *  it is cued and whether a press switches it (a Live-sync session is up). */
+  cueOf: (id: string) => { on: boolean; enabled: boolean } | null;
+  /** Switch the node's [CUE], as its CONSOLE chip does. */
+  onSetCue: (id: string, on: boolean) => void;
 }
 
 /** The nodes the panel's rendering is derived from — not the nodes the SELECTION names,
@@ -511,6 +516,20 @@ export function renderInspector(
     // color param, so they get no picker.
     if (colorControl(model, node.id)) {
       host.append(colorSwatches(m.inspector.color, plan.nodeColors[node.id], (c) => actions.onRecolorNode(node.id, c)));
+    }
+
+    // The unit's [CUE], as the node's CONSOLE chip switches it: live-session state rather than
+    // the plan's, so it switches only while a Live-sync session is up.
+    const cue = actions.cueOf(node.id);
+    if (cue) {
+      host.append(
+        boolToggle(
+          m.inspector.cue,
+          cue.on,
+          (v) => actions.onSetCue(node.id, v),
+          cue.enabled ? undefined : m.inspector.cueOffline,
+        ),
+      );
     }
 
     // Rec Point (CH SETTING): the recording / direct-out tap stage. MONO IN

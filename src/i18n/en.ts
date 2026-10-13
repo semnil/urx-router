@@ -612,6 +612,10 @@ export const en = {
     delayTime: dev("Delay Time"),
     monitorOn: dev("Monitor"),
     cueInterrupt: dev("CUE Interrupt"),
+    // A node's own [CUE], the unit's button of that name.
+    cue: dev("CUE"),
+    // The CUE row's tooltip while Live sync is off, when its buttons do nothing.
+    cueOffline: tr("CUE switches the unit's CUE while Live sync is on."),
     mono: dev("MONO"),
     phonesLevel: dev("PHONES Level"),
     on: dev("ON"),

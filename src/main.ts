@@ -782,8 +782,15 @@ function renderCueBar(): void {
 function renderCues(): void {
   graph.setCues(cues.nodes());
   consoleView.syncCues();
+  refreshInspectorCue();
   renderCueBar();
   midi?.scheduleFeedback();
+}
+
+/** Rebuild the panel when it carries a [CUE] row: what is cued, or whether a press on the row
+ *  switches anything, changed. */
+function refreshInspectorCue(): void {
+  if (selection?.type === "node" && cueAddrOf(getModel(modelId), selection.id)) refreshInspector();
 }
 
 const graph = new Graph(graphHost, getModel(modelId), plan, {
@@ -1681,6 +1688,8 @@ function setLiveUi(on: boolean): void {
   // through this function, so a new path cannot desync them by forgetting a call.
   consoleView.setLive(on);
   dynScreen.setLive(on);
+  // A selected node's CUE row switches only while a session is up.
+  refreshInspectorCue();
   // The sleep hold lives and dies with the session, so every way in and out of one
   // — the toggle, a write failure, a link loss — passes through here.
   void syncSleepHold(on && getSettings().preventSleep).then((failed) => {
@@ -2109,6 +2118,9 @@ const inspectorActions = {
   connectOrigins: (id: string) => graph.connectOrigins(id),
   onConnect: (origin: ConnectOrigin, other: string) => graph.connectTo(origin, other),
   wireDrawn: (from: string, to: string) => graph.wireDrawn(from, to),
+  // A node's [CUE] row: switchable while a session is up, as the CONSOLE chip is.
+  cueOf: (id: string) => (cueAddrOf(getModel(modelId), id) ? { on: cues.has(id), enabled: liveSessionUp } : null),
+  onSetCue: (id: string, on: boolean) => setCue(id, on, "app"),
   // The routing row that was pressed goes with the node's panel, so the wire's panel takes
   // the focus: its first control, the mobile close button aside.
   onSelectConnection: (from: string, to: string) => {

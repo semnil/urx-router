@@ -985,6 +985,8 @@ feeding such a monitor — the feed the unit drops for the cue — is drawn fain
 own layer (`.cue-layer`) and in the wire and node attributes the repaint sets, and the path is taken again before
 every repaint (`recue`), so a rewire or a Cue Interrupt switched under a cue moves it. An image export carries
 none of it: the board is redrawn without the cue for the clone and with it straight after, in one task.
+The board itself switches nothing: a selected node that has a [CUE] carries a **CUE** row (ON / OFF) in the inspector,
+which switches it the way the node's CONSOLE chip does.
 
 **Uniform OFF display**: every state that silences a node — a muted channel / master / FX / MONITOR
 (`params.on`), a bypassed ducker (`duckerOn`), the oscillator off (`osc.on`) — funnels through the
@@ -2253,7 +2255,8 @@ written at all:
   outputs held from before the session included. A read is taken into the set it was started for: a session's end
   or a model change replaces the set, and a read that lands after it is dropped. A session that fails to start
   forgets the cues its starting read took. A session's end forgets every
-  cue, and with no session nothing switches one: the CONSOLE chips are read-only (and stay MIDI-learn targets) and a
+  cue, and with no session nothing switches one: the CONSOLE chips (which stay MIDI-learn targets) and the inspector's
+  CUE row are read-only, and a
   MIDI control assigned to a CUE is refused.
 
 Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the

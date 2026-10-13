@@ -479,6 +479,8 @@ export const ja: Messages = {
     delayTime: "Delay Time",
     monitorOn: "Monitor",
     cueInterrupt: "CUE Interrupt",
+    cue: "CUE",
+    cueOffline: "CUE は Live 同期中に本体の CUE を切り替えます。",
     mono: "MONO",
     phonesLevel: "PHONES Level",
     on: "ON",
