@@ -191,13 +191,16 @@ test.describe("T4b midi", () => {
     await expect(faderReadout(page, "CH 1")).toHaveText("+5.0");
     await expect(sendFader(page, "CH 1", "MIX 1")).toHaveAttribute("aria-valuetext", "+5.0 dB");
 
-    // Switch MIX 1 to FIXED: the send LEVEL is device-locked from here on.
+    // Switch MIX 1 to FIXED: the send LEVEL is device-locked from here on, and the panel's
+    // BUS Type takes the unit's reset of the MIX's send bank, so the head's value is -∞ now.
     await page.click("#btn-view-graph");
     await graphNode(page, "bus.mix1").click();
     await chooseOption(param(page, "BUS Type").locator("select"), "1");
     await page.click("#btn-view-console");
     await expect(faderReadout(page, "CH 1")).toBeVisible();
     await page.waitForTimeout(600); // let any feedback the edit scheduled run + settle
+    const headAfterFixed = (await sendFader(page, "CH 1", "MIX 1").getAttribute("aria-valuetext")) ?? "";
+    expect(headAfterFixed, "the reset took the head's +5.0 dB").not.toBe("+5.0 dB");
     const sentBefore = (await midiSentOf(page)).length;
 
     await mark(page, "cc-fixed");
@@ -205,10 +208,10 @@ test.describe("T4b midi", () => {
     await expect(faderReadout(page, "CH 1")).toHaveText("-5.0");
     await expect(faderReadout(page, "CH 2")).toHaveText("-5.0");
     // The head itself refused the write ("drop locked"), silently.
-    await expect(sendFader(page, "CH 1", "MIX 1")).toHaveAttribute("aria-valuetext", "+5.0 dB");
+    await expect(sendFader(page, "CH 1", "MIX 1")).toHaveAttribute("aria-valuetext", headAfterFixed);
 
     // …and feedback is computed from the HEAD alone, so nothing goes out: the
-    // physical control keeps showing +5.0 dB while two mapped faders sit at -5.0.
+    // physical control keeps showing the head's value while two mapped faders sit at -5.0.
     await page.waitForTimeout(800); // FEEDBACK_DEBOUNCE 120 + FEEDBACK_SETTLE 350, twice over
     expect((await midiSentOf(page)).length).toBe(sentBefore);
     // The decisive part is that the head's value is now unreachable: the console
