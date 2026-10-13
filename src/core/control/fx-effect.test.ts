@@ -19,6 +19,7 @@ import {
   fxFamilyOf,
   fxParams,
   fxRawForDesc,
+  fxTypeDefaults,
   initDelayMs,
   migrateFxEffectParams,
   MONO_DELAY_KEY,
@@ -490,6 +491,24 @@ describe("fx-effect translate", () => {
 // storage slot: whatever the effect type is switched to reads what the previous type
 // left there. That is the intent for reverbTime (slot 7 in both reverb families, one
 // device parameter) and a defect for anything else.
+// What the unit does to the array on a type write, as the plan takes it: every key the incoming
+// type uses at that type's factory value, and a key only another type uses left as it was.
+describe("fxTypeDefaults", () => {
+  it("takes the incoming type's defaults and keeps a value only another type uses", () => {
+    const hall = fxParams(0);
+    const room = fxParams(1);
+    const tuned = Object.fromEntries(hall.map((d) => [d.key, d.def + 1]));
+    expect(
+      room.some((d) => d.def !== tuned[d.key]),
+      "the premise: the tuned values are not the defaults",
+    ).toBe(true);
+    const { params, keys } = fxTypeDefaults({ ...tuned, [MONO_DELAY_KEY]: 3000 }, 1);
+    for (const d of room) expect(params[d.key], d.key).toBe(d.def);
+    expect(params[MONO_DELAY_KEY], "a key Room does not use").toBe(3000);
+    expect(keys).toEqual(room.map((d) => d.key));
+  });
+});
+
 describe("fx-effect parameter keys", () => {
   it("never gives two families the same key at different slots", () => {
     // Walked out of the catalog rather than off a list of names — every EFFECT TYPE

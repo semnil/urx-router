@@ -77,6 +77,11 @@ const PAN_LINK = "589:0:0";
 const CH1_M1_LEVEL = ["146:0:0", "152:0:0"];
 const CH1_M1_PAN = ["147:0:0", "153:0:0"];
 const CH1_M1_ON = ["148:0:0", "154:0:0"];
+/** Every send LEVEL and send ON into MIX 1 — mono CH (146 / 152, 148 / 154), stereo CH
+ *  (273 / 279, 275 / 281) and FX channel (343 / 348, 345 / 350) — the bank a BUS Type write
+ *  resets (translate.ts sendControl). */
+const MIX1_SEND_LEVEL_IDS = new Set([146, 152, 273, 279, 343, 348]);
+const MIX1_SEND_ON_IDS = new Set([148, 154, 275, 281, 345, 350]);
 /** CH 1's own PAN (translate.ts channelControl: CH_PAN 141, y = channel index). */
 const CH1_PAN = "141:0:0";
 /** Every send pan param into MIX 1 (translate.ts sendControl): mono channels 147 / 153,
@@ -252,15 +257,33 @@ test.describe("T2e shape-change", () => {
     console.log(`ledger for the gesture (ui): ${uiKeys.join(", ")}`);
     console.log(`write set: ${write0.size} → ${write1.size} address(es), ${grew.length} added`);
 
-    // Exactly the bus's own two instances left, at the FIXED value. Nothing on ch1 —
-    // and it is the ch1 controls whose observable state the write just changed. What the
-    // converge round behind it then puts back is the bank the unit reset, which is the
-    // repair rather than the gesture.
-    expect(fixedWrites.map((s) => s.addr).sort()).toEqual([BUS_TYPE_L, BUS_TYPE_R]);
-    expect(new Set(fixedWrites.map((s) => s.value))).toEqual(new Set([1]));
-    // …and the plan agrees: the operator's gesture wrote one node's params, not four.
+    // The bus's own two instances at the FIXED value, and beside them only the MIX 1 send bank
+    // the unit resets with it — each send level at -∞ and each send ON off, as the plan took
+    // them from the Inspector. Nothing else on ch1: its pan, and its sends into any other bus.
+    const busTypeWrites = fixedWrites.filter((s) => s.addr === BUS_TYPE_L || s.addr === BUS_TYPE_R);
+    expect(busTypeWrites.map((s) => s.addr).sort()).toEqual([BUS_TYPE_L, BUS_TYPE_R]);
+    expect(new Set(busTypeWrites.map((s) => s.value))).toEqual(new Set([1]));
+    const idOf = (addr: string): number => Number(addr.split(":")[0]);
+    const bankWrites = fixedWrites.filter((s) => !busTypeWrites.includes(s));
+    for (const s of bankWrites) {
+      const id = idOf(s.addr!);
+      if (MIX1_SEND_LEVEL_IDS.has(id)) expect(s.value, s.addr).toBe(-32768);
+      else if (MIX1_SEND_ON_IDS.has(id)) expect(s.value, s.addr).toBe(0);
+      else throw new Error(`a write outside the MIX 1 send bank: ${s.addr}=${s.value}`);
+    }
+    // The positive control: the baseline burst left ch1's send level and ON up, so the reset
+    // has something to write there.
+    for (const a of [...CH1_M1_LEVEL, ...CH1_M1_ON])
+      expect(
+        bankWrites.some((s) => s.addr === a),
+        a,
+      ).toBe(true);
+    // …and the plan agrees: the gesture wrote the bus's params and the sends into it.
     // (A flush writes no plan key, so the ledger for this gesture is the funnel's own.)
-    expect(uiKeys).toEqual(["nodeParams[bus.mix1]"]);
+    expect(uiKeys).toContain("nodeParams[bus.mix1]");
+    for (const k of uiKeys)
+      if (k !== "nodeParams[bus.mix1]")
+        expect(k.startsWith("connParams[") && k.endsWith("\u0000bus.mix1:in]"), k).toBe(true);
     // No address entered the write set. A flush `set`s every key it sends, so a write
     // set that grew would be visible here at once — this is the falsifiable half of
     // "the lock is not an emit gate" (the other half is the registration below).
@@ -508,8 +531,8 @@ test.describe("T2e shape-change", () => {
   // pans follow the channel's PAN there (alignLinkedSendPans), which the MIDI control on the
   // send pan reports as feedback. Turned off on the unit or in the app's panel, Pan Link
   // leaves them at the channel's PAN, and so does the plan (sendPansToSources). A FIXED
-  // written by the app turns the unit's Pan Link off, and the plan, still holding it, writes
-  // it back on after the BUS Type.
+  // chosen in the app's panel turns Pan Link off in the plan as the unit turns its own off,
+  // so nothing writes it back on after the BUS Type.
   // ---------------------------------------------------------------------------
   test("a converge under Pan Link writes no send pan and leaves the channel PAN where it was set", async ({ page }) => {
     await installFake(page, {
@@ -657,9 +680,9 @@ test.describe("T2e shape-change", () => {
     for (const a of CH1_M1_PAN) expect(await memAt(a)).toBe(pan2);
     expect(await memAt(CH1_PAN)).toBe(pan2);
 
-    // Phase 5 — MIX 1 switched to FIXED in the app with Pan Link on. The unit turns Pan Link off
-    // when BUS Type goes to FIXED, unannounced; the plan keeps it on, so the converge the BUS
-    // Type write takes reads it back off and writes it on again, after the BUS Type.
+    // Phase 5 — MIX 1 switched to FIXED in the app's panel with Pan Link on. The unit turns Pan
+    // Link off when BUS Type goes to FIXED, unannounced, and the panel's BUS Type takes the same
+    // in the plan, so the converge the BUS Type write takes finds nothing to write it back on.
     await graphNode(page, "bus.mix1").click();
     await mark(page, "relink");
     await linkButton("ON").click();
@@ -681,9 +704,12 @@ test.describe("T2e shape-change", () => {
       }`,
     );
     expect(busTypeAt).toBeGreaterThanOrEqual(0);
-    expect(relinkAt).toBeGreaterThan(busTypeAt);
+    expect(relinkAt, "no Pan Link written on after the BUS Type").toBeLessThan(busTypeAt);
     expect(await memAt(BUS_TYPE_L)).toBe(1);
-    expect(await memAt(PAN_LINK)).toBe(1);
+    expect(await memAt(PAN_LINK)).toBe(0);
+    await expect(param(page, "Pan Link")).toHaveCount(0); // VARI-only; read below on VARI
+    await chooseOption(param(page, "BUS Type").locator("select"), "0");
+    await expect(linkButton("OFF")).toHaveAttribute("aria-pressed", "true");
   });
 
   // ---------------------------------------------------------------------------

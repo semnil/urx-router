@@ -1,6 +1,7 @@
 import { test, expect, heldThroughBlur, type Page } from "./fixtures";
 import { selectWire } from "./graph-helpers";
 import { chooseOption } from "./choose-option";
+import { levelToPos } from "../src/core/levels";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const param = (page: Page, label: string) => page.locator("#inspector .param", { hasText: label });
@@ -60,6 +61,38 @@ test("a PRE send into a FIXED bus loses its PRE tag on the board", async ({ page
   await expect(tag).toHaveCount(0);
   await chooseOption(busTypeSelect(page), "0"); // VARI
   await expect(tag).toHaveCount(1);
+});
+
+// The unit resets a MIX's sends on a BUS Type write — every level to -∞, every send ON off under
+// FIXED and on under VARI — and FIXED turns the bus's Pan Link off, which VARI leaves off. The
+// panel's control takes the same answer into the plan.
+test("a BUS Type change resets the sends into the bus, and FIXED turns Pan Link off", async ({ page }) => {
+  const sendOn = (on: boolean) =>
+    paramExact(page, "Send").getByRole("button", { name: on ? "ON" : "OFF", exact: true });
+  const levelText = () => paramExact(page, "Level").locator(".param-val");
+
+  await selectWire(page, "ch1:out", "bus.mix1:in");
+  await paramExact(page, "Level")
+    .locator("input[type=range]")
+    .fill(String(levelToPos(-20)));
+  await expect(levelText()).not.toHaveText("-∞ dB");
+  await expect(sendOn(true)).toHaveAttribute("aria-pressed", "true");
+  await node(page, "bus.mix1").click();
+  await param(page, "Pan Link").locator("button", { hasText: "ON" }).click();
+
+  await chooseOption(busTypeSelect(page), "1"); // FIXED
+  await selectWire(page, "ch1:out", "bus.mix1:in");
+  await expect(sendOn(false)).toHaveAttribute("aria-pressed", "true");
+
+  await node(page, "bus.mix1").click();
+  await chooseOption(busTypeSelect(page), "0"); // VARI
+  await expect(param(page, "Pan Link").getByRole("button", { name: "OFF", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await selectWire(page, "ch1:out", "bus.mix1:in");
+  await expect(sendOn(true)).toHaveAttribute("aria-pressed", "true");
+  await expect(levelText()).toHaveText("-∞ dB");
 });
 
 // A .param whose label is EXACTLY `label` (so "Pan" never matches "Pan Link").

@@ -2,6 +2,8 @@ import "./style.css";
 
 import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
+import { FX_CHANNEL_NODE_INDEX, FX_EFFECT_TYPE_PARAM, fxTypeDefaults } from "./core/control/fx-effect";
+import { takeFxReseeds } from "./app/fx-reseed";
 import type { ModelId } from "./models/types";
 import { parseRef, ref } from "./models/types";
 import {
@@ -14,6 +16,7 @@ import {
   pairSharesNodeKey,
   isStereoLinkedPair,
   partnerChannel,
+  resetMixSendBank,
   sendPansToSources,
   withLinkedPartner,
 } from "./core/routing";
@@ -74,6 +77,8 @@ import {
 } from "./core/storage";
 import type { RecentEntry } from "./core/storage";
 import {
+  BUS_TYPE_FIXED,
+  BUS_TYPE_VARI,
   COMP_EQ_SSMCS,
   INSERT_FX_ANNOUNCED,
   PARAMS,
@@ -358,6 +363,10 @@ ratePicker.value = String(plan.sampleRate);
 // instant it errors. deactivateLive guards on this so an error-path teardown
 // (where active is already false) still drops the connection and resets the UI.
 let liveSessionUp = false;
+/** FX channels whose EFFECT TYPE the Inspector set since the last write of it, with the type: the
+ *  plan holds that type's factory values for the keys it uses, which the park in front of the
+ *  type write must leave standing. */
+const fxReseeds = new Map<string, number>();
 // Generation of the connection the live session holds open, captured at connect.
 // deactivateLive disconnects with exactly this epoch, so a teardown that lands
 // late (the disconnect is fire-and-forget) cannot close a newer connection a
@@ -581,8 +590,13 @@ const live = DEMO
       // read that FAILS ends the session rather than letting the write behind it go out over
       // values it could not confirm.
       parkSilent: async (scope) => {
+        // The keys an Inspector EFFECT TYPE selection put at the incoming type's defaults, for
+        // the park in front of that type's write (app/fx-reseed.ts).
+        const keepFx = takeFxReseeds(fxReseeds, plan, scope, (id, type) =>
+          holdsSent(FX_EFFECT_TYPE_PARAM[FX_CHANNEL_NODE_INDEX[id]], 0, 0, type),
+        );
         const merged = await followRead("silent-address park", (into, signal) =>
-          applySilentState(getModel(modelId), into, signal, live?.recentPending(), holdsSent, scope),
+          applySilentState(getModel(modelId), into, signal, live?.recentPending(), holdsSent, { ...scope, keepFx }),
         ).catch((err: unknown) => {
           stopLiveOnError(errorText(err));
           return null;
@@ -843,6 +857,9 @@ const consoleView = new Console(consoleHost, {
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
   onChange: (written, defaults) => {
+    // A type chosen here keeps the plan's values, so a reseed the panel recorded is over.
+    for (const id of fxReseeds.keys())
+      if (written?.includes(nodeParamContestPath(id, "fxEffect.type"))) fxReseeds.delete(id);
     noteSeededDefaults(plan, seededDefaults, defaults ?? []);
     markChanged("ui", written);
     // The panel this view hides was drawn before the edit, and its locks and ranges are
@@ -1703,6 +1720,7 @@ function setLiveUi(on: boolean): void {
 function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   if (!liveSessionUp) return;
   liveSessionUp = false;
+  fxReseeds.clear();
   midi?.probeMark("live:off");
   // Nothing keeps the plan and the unit together from here, so the output side closes
   // until the next session's readback settles.
@@ -2007,7 +2025,15 @@ const inspectorActions = {
     // ducked-channel PRE-send note appears/clears with the tap.
     if (patch.oscL !== undefined || patch.oscR !== undefined || patch.tap !== undefined) refreshInspector();
   },
-  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[], defaults?: readonly string[]) => {
+  // `alsoWritten` is the contest keys a caller wrote outside this node's params before
+  // handing the patch over, so this edit names them with its own.
+  onUpdateNodeParams: (
+    id: string,
+    patch: NodeParams,
+    written?: readonly string[],
+    defaults?: readonly string[],
+    alsoWritten: readonly string[] = [],
+  ) => {
     const prev = plan.nodeParams[id];
     const partner = partnerChannel(getModel(modelId), id);
     plan.nodeParams[id] = { ...prev, ...patch };
@@ -2052,7 +2078,7 @@ const inspectorActions = {
     // moved. A caller with a field that can be written WITHOUT moving names it itself, as
     // a dotted path — that is what `written` carries, and it replaces this derivation.
     const names = written ?? Object.keys(patch).filter((key) => typeof patch[key as keyof NodeParams] !== "object");
-    const keys = [...names.map((name) => nodeParamContestPath(id, name)), ...transitionKeys];
+    const keys = [...names.map((name) => nodeParamContestPath(id, name)), ...transitionKeys, ...alsoWritten];
     // A mirror asserts the PARTNER's keys the same way, and it can assert one that already
     // holds the value it writes — the insert-FX mirror re-writes a bypass that was already
     // on. Each names only what IT wrote, and for the pair mirror that is THIS EDIT's keys
@@ -2086,6 +2112,28 @@ const inspectorActions = {
     if (mirrored || insFxMirrored) consoleView.refresh();
     if (lateWrite) traceProbe?.sample("ui");
     if (fx.refreshInspector) refreshInspector();
+  },
+  // The unit refills the slots the incoming type uses with that type's factory values; the plan
+  // takes them, and the park in front of the type write leaves them standing (fxReseeds).
+  onSetFxEffectType: (id: string, type: number) => {
+    const fx = plan.nodeParams[id]?.fxEffect ?? {};
+    const { params, keys } = fxTypeDefaults(fx.params, type);
+    const seeded = keys.map((key) => `fxEffect.params.${key}`);
+    fxReseeds.set(id, type);
+    inspectorActions.onUpdateNodeParams(
+      id,
+      { fxEffect: { ...fx, type, params } },
+      ["fxEffect.type", ...seeded],
+      seeded,
+    );
+  },
+  // The unit resets the bus's whole send bank on a BUS Type write, and FIXED turns its Pan
+  // Link off (VARI leaves it off); the plan takes both in the same edit.
+  onSetBusType: (id: string, busType: number) => {
+    const prev = plan.nodeParams[id]?.busType ?? BUS_TYPE_VARI;
+    const reset = busType !== prev ? resetMixSendBank(plan, id, busType) : [];
+    const patch: NodeParams = busType === BUS_TYPE_FIXED ? { busType, panLink: false } : { busType };
+    inspectorActions.onUpdateNodeParams(id, patch, undefined, undefined, reset);
   },
   // Rename mutates in place and repaints the node label without re-rendering the
   // inspector, so the text input keeps focus while typing. Empty clears the override.
@@ -4503,6 +4551,7 @@ if (!DEMO) {
         // exactly this one even when its disconnect lands after a later connect.
         liveEpoch = device.epoch;
         liveSessionUp = true;
+        fxReseeds.clear();
         setLiveUi(true);
         // The flags were read before the notify stream was registered; a press on the unit in
         // between announced itself to nobody.

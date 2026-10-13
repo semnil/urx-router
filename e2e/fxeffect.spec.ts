@@ -2,6 +2,7 @@ import { test, expect, colorToken, scrollsByWheel, type Page } from "./fixtures"
 import { chooseOption } from "./choose-option";
 import { planParamZ } from "./plan-param";
 import { getModel } from "../src/models";
+import { fxParams } from "../src/core/control/fx-effect";
 import { en } from "../src/i18n/en";
 
 // The FX EFFECT tuning screen and the two surfaces that reach it: the CONSOLE FX strip's
@@ -314,9 +315,12 @@ test("a delay face locks whichever row the unit owns", async ({ page }) => {
   await closeScreen(page);
 });
 
-test("switching family rebuilds the rows and keeps the other family's values", async ({ page }) => {
+test("switching family rebuilds the rows, and going back reloads the reverb's factory values", async ({ page }) => {
+  // A Hall HPF the factory does not hold, so going back has a value to lose.
+  const tuned = planWith("bus.fx1", { type: 0, params: { revxHpf: 20 } });
+  await page.goto(`/?plan=${planParamZ(tuned)}`);
   await openFromInspector(page, "bus.fx1");
-  const hpfHall = await readout(page, "HPF").innerText();
+  const hpfTuned = await readout(page, "HPF").innerText();
   await closeScreen(page);
 
   await chooseOption(typeSelect(page), { label: "Mono Delay" });
@@ -330,12 +334,14 @@ test("switching family rebuilds the rows and keeps the other family's values", a
   const hpfDelay = await readout(page, "HPF").innerText();
   await closeScreen(page);
 
-  // …and going back finds the reverb's own value where it was left.
+  // …and going back reloads Hall's own factory values, as the unit does on a type write.
   await chooseOption(typeSelect(page), { label: "Rev-X Hall" });
   await page.locator("#btn-fx-screen").click();
   await expect(screenBox(page)).toBeVisible();
-  await expect(readout(page, "HPF")).toHaveText(hpfHall);
-  expect(hpfDelay).not.toBe(hpfHall);
+  const hall = fxParams(0).find((d) => d.key === "revxHpf")!;
+  await expect(screenRow(page, "HPF").locator("input[type=range]")).toHaveValue(String(hall.def));
+  await expect(readout(page, "HPF")).not.toHaveText(hpfTuned);
+  expect(hpfDelay).not.toBe(hpfTuned);
   await closeScreen(page);
 });
 
@@ -431,23 +437,21 @@ test("switching EFFECT TYPE shows the new type's own factory values", async ({ p
   await closeScreen(page);
 });
 
-// REV-X puts three reverb types on one storage slot and scales the seconds per type, so a
-// type change moves the readout while the slider stays put. The plan CARRIES the value,
-// which is what holds the slider still; with the key absent the row follows the new type's
-// own factory default and the thumb does move, which is the case below.
-test("a REV-X type change moves the Rev.Time readout without moving its slider", async ({ page }) => {
+// REV-X puts three reverb types on one storage slot, and the unit refills that slot with the
+// incoming type's factory value on a type write — so a value the plan carries for Hall is
+// replaced by Plate's own default when the panel's selector changes the type.
+test("a REV-X type change in the panel puts Rev.Time at the new type's default", async ({ page }) => {
   const held = planWith("bus.fx1", { type: 0, params: { reverbTime: 69, roomSize: 0 } });
   await page.goto(`/?plan=${planParamZ(held)}`);
   await openFromInspector(page, "bus.fx1");
-  const slider = screenRow(page, "Rev.Time").locator("input[type=range]");
-  await expect(slider).toHaveValue("69");
-  const hallShown = await readout(page, "Rev.Time").textContent();
+  await expect(screenRow(page, "Rev.Time").locator("input[type=range]")).toHaveValue("69");
   await closeScreen(page);
 
   await chooseOption(typeSelect(page), { label: "Rev-X Plate" });
   await page.locator("#btn-fx-screen").click();
-  await expect(screenRow(page, "Rev.Time").locator("input[type=range]")).toHaveValue("69");
-  await expect(readout(page, "Rev.Time")).not.toHaveText(hallShown!);
+  const plate = fxParams(2).find((d) => d.key === "reverbTime")!;
+  expect(plate.def, "the premise: the default is not the value the plan held").not.toBe(69);
+  await expect(screenRow(page, "Rev.Time").locator("input[type=range]")).toHaveValue(String(plate.def));
   await closeScreen(page);
 });
 

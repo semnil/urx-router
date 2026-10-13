@@ -8,7 +8,7 @@ import { fullLabel, parseRef } from "../models/types";
 import { sideLabel } from "../models";
 import { displayedSide, shownStage } from "../core/stereo-side";
 import { inputShare } from "./input-share";
-import type { ConnParams, FxEffectParams, JackSide, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
+import type { ConnParams, JackSide, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
 import { clipNodeName, jackKey, LEVEL_MIN_DB, LEVEL_OFF_DB, processorOn, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
 import { hiZPatch, inputOnRefused, jackGainRange } from "../core/input-lock";
@@ -76,6 +76,8 @@ import {
   DELAY_TIME_MIN_MS,
   DELAY_TIME_MAX_MS,
   DELAY_TIME_GRID_MS,
+  delayTimeToVd,
+  vdToDelayTime,
   PHONES_LEVEL_MIN,
   PHONES_LEVEL_MAX,
   PHONES_LEVEL_DEFAULT,
@@ -136,6 +138,14 @@ export interface InspectorActions {
     written?: readonly string[],
     defaults?: readonly string[],
   ) => void;
+  /** Set a MIX bus's BUS Type. Separate from `onUpdateNodeParams` because the unit answers it
+   *  outside the bus's own params: it resets every send into the bus, and FIXED turns the
+   *  bus's Pan Link off. */
+  onSetBusType: (id: string, busType: number) => void;
+  /** Set an FX channel's EFFECT TYPE. Separate from `onUpdateNodeParams` because the unit refills
+   *  the slots the incoming type uses with that type's factory values, and the write path has to
+   *  know the plan took them. */
+  onSetFxEffectType: (id: string, type: number) => void;
   onRenameNode: (id: string, name: string) => void;
   onRecolorNode: (id: string, color: string | null) => void;
   onOpenRecent: (path: string) => void;
@@ -562,16 +572,12 @@ export function renderInspector(
     // BUS Type / Pan Link (CH SETTING): MIX 1 / MIX 2 only. FIXED makes every
     // send into the bus a fixed level; Pan Link ties each send pan to its source's
     // own PAN / BAL. Both gate the per-send controls (connection panel). The Pan Link
-    // switch is offered under VARI only, as on the unit's screen, and a FIXED bus
-    // keeps whatever it holds.
+    // switch is offered under VARI only, as on the unit's screen. Setting BUS Type here
+    // resets the bus's sends and, to FIXED, turns Pan Link off (onSetBusType).
     if (node.id === "bus.mix1" || node.id === "bus.mix2") {
       const bnp = plan.nodeParams[node.id] ?? {};
       const busType = bnp.busType ?? BUS_TYPE_VARI;
-      host.append(
-        enumSelect(m.inspector.busType, BUS_TYPE_OPTIONS, busType, (v) =>
-          actions.onUpdateNodeParams(node.id, { busType: v }),
-        ),
-      );
+      host.append(enumSelect(m.inspector.busType, BUS_TYPE_OPTIONS, busType, (v) => actions.onSetBusType(node.id, v)));
       if (busType === BUS_TYPE_VARI) {
         host.append(
           boolToggle(m.inspector.panLink, bnp.panLink ?? false, (v) =>
@@ -1003,13 +1009,16 @@ export function renderInspector(
     if (node.id === "bus.stream") {
       const delay = plan.nodeParams[node.id]?.delay ?? {};
       // Read the latest stored delay at edit time so a second field edit (the
-      // inspector is not re-rendered between edits) does not clobber the first.
-      const setDelay = (patch: Partial<typeof delay>): void =>
+      // inspector is not re-rendered between edits) does not clobber the first. The time
+      // the plan takes is the one the unit holds, on its 0.01 ms grid.
+      const setDelay = (patch: Partial<typeof delay>): void => {
+        if (patch.time !== undefined) patch = { ...patch, time: vdToDelayTime(delayTimeToVd(patch.time)) };
         actions.onUpdateNodeParams(
           node.id,
           { delay: { ...(plan.nodeParams[node.id]?.delay ?? {}), ...patch } },
           groupPaths("delay", patch),
         );
+      };
       const ps = section(m.inspector.delayTitle, { key: "delay" });
       ps.body.append(
         enumSelect(
@@ -1080,11 +1089,11 @@ export function renderInspector(
             disabled: e.lock !== null,
           })),
           String(ifxEff ?? INSERT_FX_NONE),
-          // Selecting an effect auto-engages it on the device, so mirror that in
-          // the plan; selecting No Effect leaves the dormant switch state alone.
+          // Selecting an effect engages it and selecting No Effect turns the switch off, as
+          // choosing them on the unit's own panel does, so the plan takes both.
           (v) => {
             const sel = Number(v);
-            const patch: NodeParams = sel === INSERT_FX_NONE ? { insertFx: sel } : { insertFx: sel, insertFxOn: true };
+            const patch: NodeParams = { insertFx: sel, insertFxOn: sel !== INSERT_FX_NONE };
             const parked = parkOutgoingInsertFxParams(plan.nodeParams[node.id]);
             // The plan takes the selected type's defaults for every slot it does not hold,
             // which is what the screen shows and what the unit fills the engine with.
@@ -1476,30 +1485,6 @@ function gainControl(label: string, min: number, max: number, cur: number, onCha
   return rangeSlider(label, min, max, 1, cur, formatGainDb, onChange);
 }
 
-// Merge a patch into a node's FX effect object / its raw params map, reading the
-// latest stored value at edit time so concurrent sibling edits aren't lost.
-function mergeFxEffect(actions: InspectorActions, plan: Plan, nodeId: string, patch: Partial<FxEffectParams>): void {
-  actions.onUpdateNodeParams(
-    nodeId,
-    { fxEffect: { ...(plan.nodeParams[nodeId]?.fxEffect ?? {}), ...patch } },
-    groupPaths("fxEffect", patch),
-  );
-}
-
-/**
- * Write an FX channel's EFFECT TYPE.
- *
- * The selector is the one command the writer emits that replaces slots nobody named — the
- * unit refills the engine array with the incoming type's factory values — and the writer
- * then puts the plan straight back over that. A value the operator tuned on the unit's own
- * panel is one the plan has never seen, because the effect arrays announce nothing. What
- * reads it first is the park at the WRITE boundary (`live.ts`), which is why this is an
- * ordinary plan edit: the read covers this row, the CONSOLE popover and an undo of either.
- */
-function setFxEffectType(actions: InspectorActions, plan: Plan, nodeId: string, type: number): void {
-  mergeFxEffect(actions, plan, nodeId, { type });
-}
-
 // FX-channel EFFECT section: the EFFECT TYPE selector and the launcher. The type's own
 // parameters are the tuning screen's, so nothing here reads a value that screen can move.
 // fxIndex = 0 (FX1) / 1 (FX2).
@@ -1517,7 +1502,7 @@ function fxEffectSection(
   const type = resolveFxEffectType(fxIndex, fx.type);
   const { el, body } = section(t.title, { key: "fxEffect" });
 
-  body.append(enumSelect(t.effectType, fxEffectTypes(fxIndex), type, (v) => setFxEffectType(actions, plan, nodeId, v)));
+  body.append(enumSelect(t.effectType, fxEffectTypes(fxIndex), type, (v) => actions.onSetFxEffectType(nodeId, v)));
   // The type's own parameters moved to the tuning screen, for the reason stated on
   // `dynLauncher`: they belong beside the meters either side of the effect, and a second
   // copy here would sit at the position it was drawn at — these sliders read a captured

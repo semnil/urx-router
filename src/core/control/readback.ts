@@ -568,8 +568,18 @@ export async function applySilentState(
    * still on the outgoing one, so the values are read under the UNIT's head and filed under
    * the keys that head owns, and the head itself stays the operator's. Adopting it there
    * would put the outgoing selection back and the write would never go out.
+   *
+   * `keepFx` names, per FX channel, the parameter keys whose plan value the read leaves standing:
+   * the keys an EFFECT TYPE selection put at the incoming type's factory values, which is what
+   * the unit holds there once the type write refills them. The outgoing effect's value for a key
+   * the two types share has no slot left to belong to on the unit.
    */
-  scope?: { exclude?: ReadonlySet<string>; only?: ReadonlySet<string>; keepHeads?: boolean },
+  scope?: {
+    exclude?: ReadonlySet<string>;
+    only?: ReadonlySet<string>;
+    keepHeads?: boolean;
+    keepFx?: ReadonlyMap<string, ReadonlySet<string>>;
+  },
 ): Promise<ReadbackResult> {
   const covers = (family: SilentFamily, nodeId: string): boolean => {
     const key = silentKey(family, nodeId);
@@ -666,7 +676,7 @@ export async function applySilentState(
     attempted.add(node.id);
     try {
       const got = await staged([FX_EFFECT_TYPE_PARAM[fxY], 0, 0], "EFFECT TYPE", (laidOut) =>
-        readFxEffectInto(source, node.id, fxY, scope?.keepHeads, laidOut),
+        readFxEffectInto(source, node.id, fxY, scope?.keepHeads, laidOut, scope?.keepFx?.get(node.id)),
       );
       got.apply(plan);
       applied++;
@@ -2103,6 +2113,7 @@ async function readFxEffectInto(
   fxIndex: number,
   keepHead = false,
   slots: ParamSource = source,
+  keep?: ReadonlySet<string>,
 ): Promise<FamilyRead> {
   const read = await readFxEffect(source, fxIndex, slots);
   return {
@@ -2111,9 +2122,12 @@ async function readFxEffectInto(
     apply: (plan) => {
       const was = plan.nodeParams[nodeId];
       const type = keepHead ? (was?.fxEffect?.type ?? read.type) : read.type;
+      const taken = keep
+        ? Object.fromEntries(Object.entries(read.params ?? {}).filter(([k]) => !keep.has(k)))
+        : read.params;
       plan.nodeParams[nodeId] = {
         ...was,
-        fxEffect: { ...read, type, params: { ...was?.fxEffect?.params, ...read.params } },
+        fxEffect: { ...read, type, params: { ...was?.fxEffect?.params, ...taken } },
       };
     },
   };

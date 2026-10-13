@@ -716,6 +716,8 @@ const actions = (): InspectorActions => ({
   onSwitchSide: vi.fn(),
   cueOf: vi.fn(() => null),
   onSetCue: vi.fn(),
+  onSetBusType: vi.fn(),
+  onSetFxEffectType: vi.fn(),
 });
 
 let panel: HTMLElement;
@@ -1065,6 +1067,16 @@ describe("renderInspector — the STREAMING Delay Time", () => {
     expect(planToCommands(getModel("URX44V"), plan).find((c) => c.paramId === 708)?.vdValue).toBe(4587);
   });
 
+  // The unit holds the time in 0.01 ms; a document can carry a finer one, which the write rounds
+  // and the plan would otherwise go on holding. An edit here leaves the plan on the unit's grid.
+  it("puts the time it writes on the unit's 0.01 ms grid", () => {
+    renderInspector(panel, getModel("URX44V"), withTime(45.873), nodeSel("bus.stream"), act);
+    slider().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    const [, patch, written] = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)!;
+    expect(patch.delay?.time).toBe(45.89);
+    expect(written).toEqual(["delay.time"]);
+  });
+
   it("steps an off-grid value by exactly 0.02 ms, and stops at the ends", () => {
     const sent = (): number | undefined => vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)?.[1].delay?.time;
     const press = (key: string): void => {
@@ -1090,6 +1102,23 @@ describe("renderInspector — the STREAMING Delay Time", () => {
     renderInspector(panel, getModel("URX44V"), withTime(1.01), nodeSel("bus.stream"), act);
     press("ArrowDown");
     expect(sent()).toBe(1);
+  });
+});
+
+// The selector hands an EFFECT TYPE to its own action, which is where the plan takes the
+// incoming type's defaults (main.ts onSetFxEffectType, fx-effect.ts fxTypeDefaults).
+describe("renderInspector — an FX channel's EFFECT TYPE", () => {
+  it("hands the chosen type to the EFFECT TYPE action, not to the node-param funnel", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0 } };
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("bus.fx1"), act);
+    const select = [...panel.querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.fxEffect.effectType)!
+      .querySelector<HTMLSelectElement>("select")!;
+    select.value = "1";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(act.onSetFxEffectType).toHaveBeenCalledWith("bus.fx1", 1);
+    expect(act.onUpdateNodeParams).not.toHaveBeenCalled();
   });
 });
 
@@ -1361,9 +1390,9 @@ describe("insert FX", () => {
     return { model, plan, id };
   };
 
-  // Selecting an effect auto-engages it on the device, so the plan mirrors that;
-  // selecting No Effect leaves the dormant switch state alone.
-  it("engages an effect on selection and leaves the switch alone for No Effect", () => {
+  // Selecting an effect engages it on the unit, and choosing No Effect on the unit's own panel
+  // turns the switch off; the plan takes both, and names the switch as written either way.
+  it("engages an effect on selection and turns the switch off for No Effect", () => {
     const { model, plan, id } = fxNode();
     renderInspector(panel, model, plan, nodeSel(id), act);
     const sel = [...panel.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
@@ -1381,9 +1410,10 @@ describe("insert FX", () => {
     vi.mocked(act.onUpdateNodeParams).mockClear();
     sel.value = String(INSERT_FX_NONE);
     sel.dispatchEvent(new Event("change", { bubbles: true }));
-    const none = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)![1];
+    const [, none, written] = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)!;
     expect(none.insertFx).toBe(INSERT_FX_NONE);
-    expect(none.insertFxOn).toBeUndefined();
+    expect(none.insertFxOn).toBe(false);
+    expect(written, "the patch's own keys, the switch among them").toBeUndefined();
   });
 
   // A plan can hold an insert-FX value the node's own control does not carry: a file, a

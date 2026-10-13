@@ -11,6 +11,8 @@ import {
   COMP_EQ_COMP_FIRST,
   D_GAIN_SOURCES,
   EQ_TYPE_PASS,
+  INSERT_FX_NONE,
+  OUTPUT_INSERT_FX_OPTIONS,
   PARAMS,
   paramNameForId,
   colorIndexToHex,
@@ -1812,6 +1814,38 @@ describe("addrKey packing", () => {
 // (see client.ts roundCommands). Nothing derives the group from the flag, so this pins
 // which heads carry one and — for the rest — why they do not, rather than leaving a new
 // emitter to be forgotten until a device run turns up a residual.
+// No Effect with the bypass OFF is what the panel's No Effect leaves in the plan. The unit
+// ignores a bypass write while its selector is No Effect and engages the bypass on the next
+// selection whatever it held, so the write sends the selector alone; with an effect selected the
+// OFF goes out after the selector, which re-engages it.
+describe("the insert-FX bypass beside No Effect", () => {
+  const model = getModel("URX44V");
+  const mix1 = (insertFx: number): VdCommand[] => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], insertFx, insertFxOn: false };
+    return planToCommands(model, plan).filter((c) => c.node === "bus.mix1");
+  };
+  const names = (cmds: VdCommand[]): string[] =>
+    cmds.filter((c) => c.name.includes("INSERT_FX")).map((c) => `${c.name}=${c.vdValue}`);
+
+  it("writes no bypass for No Effect", () => {
+    expect(names(mix1(INSERT_FX_NONE))).toEqual([
+      `INSERT_FX=${INSERT_FX_NONE >>> 0}`,
+      `INSERT_FX=${INSERT_FX_NONE >>> 0}`,
+    ]);
+  });
+
+  it("writes the OFF after the selector for an effect", () => {
+    const mbc = OUTPUT_INSERT_FX_OPTIONS.find((o) => o.label === "M.B.Comp")!.value;
+    const cmds = mix1(mbc);
+    const on = cmds.filter((c) => c.name === "INSERT_FX_ON");
+    expect(on.map((c) => c.vdValue)).toEqual([0, 0]);
+    const selector = cmds.findIndex((c) => c.name === "INSERT_FX");
+    expect(selector, "the selector is written").toBeGreaterThanOrEqual(0);
+    expect(cmds.indexOf(on[0])).toBeGreaterThan(selector);
+  });
+});
+
 describe("reset chains (sideEffect heads vs converge groups)", () => {
   // Measured on a URX44V: ON discards the type, a type write discards the level. Three
   // links, which a re-send of only what differs walks one round per link; the group lands all three in one.

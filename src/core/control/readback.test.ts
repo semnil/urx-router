@@ -1758,6 +1758,59 @@ describe("applySilentState", () => {
     expect(fx?.params?.[hpf.key], "and each slot read as the parameter the unit has there").toBe(44);
   });
 
+  // The park in front of an EFFECT TYPE write, after a selection that took the incoming type's
+  // defaults into the plan (the Inspector's selector does). Where the unit holds what this
+  // session last sent, the values it files are the plan's own, so the defaults the write and
+  // the converge behind it send are still the incoming type's.
+  it("keeps the incoming type's defaults a selection put in, where the unit holds what was sent", async () => {
+    const plan = defaultPlan("URX44V");
+    const fx = plan.nodeParams["bus.fx1"]!.fxEffect!;
+    fx.type = 0;
+    fx.params = Object.fromEntries(fxParams(0).map((d) => [d.key, d.def + 1]));
+    const table = deviceTableFor(plan);
+    const room = fxParams(1);
+    fx.type = 1;
+    for (const d of room) fx.params[d.key] = d.def;
+
+    mockVdGetFrom(table);
+    await applySilentState(model, plan, undefined, undefined, () => true, {
+      only: new Set([silentKey("fx", "bus.fx1")]),
+      keepHeads: true,
+    });
+
+    const after = plan.nodeParams["bus.fx1"]?.fxEffect;
+    expect(after?.type, "the selection the write is about to carry").toBe(1);
+    for (const d of room) expect(after?.params?.[d.key], d.key).toBe(d.def);
+  });
+
+  // Where the unit's panel moved the outgoing type's values, the read takes them — except for
+  // the keys `keepFx` names, which a selection put at the incoming type's defaults: the unit
+  // refills those with the type write, and the outgoing value has no slot left there.
+  it("leaves the keys keepFx names standing over values the unit's panel moved", async () => {
+    const plan = defaultPlan("URX44V");
+    const fx = plan.nodeParams["bus.fx1"]!.fxEffect!;
+    fx.type = 0;
+    fx.params = Object.fromEntries(fxParams(0).map((d) => [d.key, d.def + 1]));
+    const table = deviceTableFor(plan);
+    const room = fxParams(1);
+    fx.type = 1;
+    for (const d of room) fx.params[d.key] = d.def;
+
+    mockVdGetFrom(table);
+    const keep = new Set(room.slice(1).map((d) => d.key));
+    await applySilentState(model, plan, undefined, undefined, () => false, {
+      only: new Set([silentKey("fx", "bus.fx1")]),
+      keepHeads: true,
+      keepFx: new Map([["bus.fx1", keep]]),
+    });
+
+    const after = plan.nodeParams["bus.fx1"]?.fxEffect?.params;
+    for (const d of room.slice(1)) expect(after?.[d.key], d.key).toBe(d.def);
+    // The positive control: a key keepFx does not name takes the unit's value.
+    const outgoing = fxParams(0).find((d) => d.key === room[0].key)!;
+    expect(after?.[room[0].key], room[0].key).toBe(outgoing.def + 1);
+  });
+
   // The same head on the other family, where it decides which ENGINE the raws come from —
   // and where both halves of that show: read against the plan's unsent selector, a node's
   // values are taken off one engine and filed under another's namespace, and the guard
