@@ -68,7 +68,7 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
         with:
           toolchain: stable
