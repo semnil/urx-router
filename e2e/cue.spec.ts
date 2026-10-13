@@ -83,6 +83,22 @@ test("a session starts from what the unit has cued, on both views and the status
   await expect(chip(page, "ch1")).toHaveAttribute("aria-pressed", "true");
   await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator(`#console-host [data-cue-monitor="bus.mon1"]`)).toHaveClass(/cue-take/);
+  // The frame is drawn on a layer over the strip's contents, so the readout's cell borders
+  // cannot cut it: a box covering the strip, stacked above every positioned box inside it.
+  const layer = await page.locator(`#console-host [data-cue-monitor="bus.mon1"]`).evaluate((strip) => {
+    const after = getComputedStyle(strip, "::after");
+    const inner = [...strip.querySelectorAll("*")]
+      .map((e) => getComputedStyle(e))
+      .filter((s) => s.position !== "static" && s.zIndex !== "auto")
+      .map((s) => Number(s.zIndex));
+    return {
+      position: after.position,
+      inset: [after.top, after.right, after.bottom, after.left],
+      framed: after.boxShadow.includes("inset"),
+      above: inner.every((z) => z < Number(after.zIndex)),
+    };
+  });
+  expect(layer).toEqual({ position: "absolute", inset: ["0px", "0px", "0px", "0px"], framed: true, above: true });
 });
 
 test("a cued output is framed alone, with its line to each monitor", async ({ page }) => {

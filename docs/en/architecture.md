@@ -1476,7 +1476,8 @@ STREAMING, whose CUE takes the slot beside its DELAY) carries a **CUE** chip rig
 where there is no MUTE — lit in the CUE colour while the strip is cued. It switches the unit's [CUE] rather than
 the plan, so a press commits nothing; with no Live-sync session it is read-only and stays a MIDI-learn target.
 While anything is cued, a MONITOR strip whose Cue Interrupt is on is framed in the CUE colour and its CUE Int
-chip is painted in it. Then +48 / Ф /
+chip is painted in it. The frame is drawn on a layer over the strip's contents, so the readout's cell borders do
+not cut it, and gives way to the strip's own focus ring. Then +48 / Ф /
 HPF on a mono channel (+48 and Hi-Z are the jack's it reads: Hi-Z where that jack carries it, neither on a source
 or on no source) or one Ф on a stereo channel, which inverts the side the strip shows (`phaseL` / `phaseR`,
 gated by `channelControl`); (2) the processing
