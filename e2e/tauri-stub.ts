@@ -245,7 +245,11 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         __urxRefuseReads: number[];
         __urxHoldReads: number[];
         __urxHeld: Array<{ id: number; go: () => void }>;
+        __urxWriteEffects: Array<{ at: string; value: number; set: Array<[string, number]> }>;
+        __urxRefuseCommands: string[];
       };
+      w.__urxWriteEffects = [];
+      w.__urxRefuseCommands = [];
       w.__urxRefuseReads = [];
       w.__urxHoldReads = [];
       w.__urxHeld = [];
@@ -266,6 +270,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
           onmessage: (data: unknown) => void = () => {};
         },
         invoke: (cmd: string, args?: Record<string, unknown>) => {
+          if (w.__urxRefuseCommands.includes(cmd)) return Promise.reject(new Error(`stub: ${cmd} refused`));
           if (cmd === "plugin:dialog|message") {
             dialogs.push(String(args?.message ?? ""));
             return Promise.resolve(o.confirm ?? "Cancel");
@@ -309,6 +314,9 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
           if (cmd === "vd_set") {
             instance[slotKey(args)] = Number(args?.value);
             writes.push([Number(args?.paramId), Number(args?.value)]);
+            for (const e of w.__urxWriteEffects)
+              if (e.at === slotKey(args) && e.value === Number(args?.value))
+                for (const [k, v] of e.set) instance[k] = v;
             return Promise.resolve(null);
           }
           if (cmd === "vd_get_str") {
@@ -408,6 +416,34 @@ export const setDeviceValue = (page: Page, paramId: number, y: number, value: nu
     },
     [paramId, x, y, value],
   );
+
+/** From now on, when a write puts `value` at (paramId, y), the stubbed device also moves each of
+ *  `set` ([paramId, y, value], x 0) with no notify — a write on the unit that switches other
+ *  addresses silently, such as turning the last input CUE off putting back the output cues the
+ *  unit was holding. Adds to the effects set before. */
+export const setWriteEffect = (
+  page: Page,
+  paramId: number,
+  y: number,
+  value: number,
+  set: ReadonlyArray<readonly [number, number, number]>,
+): Promise<void> =>
+  page.evaluate(
+    ([at, v, list]) => {
+      const w = window as unknown as {
+        __urxWriteEffects: Array<{ at: string; value: number; set: Array<[string, number]> }>;
+      };
+      w.__urxWriteEffects.push({ at, value: v, set: list.map(([id, yy, vv]) => [`${id}:0:${yy}`, vv]) });
+    },
+    [`${paramId}:0:${y}`, value, set.map((e) => [...e])] as const,
+  );
+
+/** Refuse these commands from now on, ahead of every answer — a registration the shell turns
+ *  down. Replaces the list set before, so `[]` lifts the refusal. */
+export const setRefusedCommands = (page: Page, cmds: string[]): Promise<void> =>
+  page.evaluate((list) => {
+    (window as unknown as { __urxRefuseCommands: string[] }).__urxRefuseCommands = list;
+  }, cmds);
 
 /** Refuse every read of these param ids from now on, ahead of `values` and of anything
  *  written — one refused parameter on a link that otherwise answers. Replaces the list set
