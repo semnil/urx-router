@@ -2219,6 +2219,29 @@ written at all:
   is adopted. The status line says how many values were kept, since the console is not reachable in an installed
   build.
 
+- **An edit in the Inspector takes the state the unit's own panel leaves behind.** Four of the panel's controls
+  change more than the value they set, because the unit does. **BUS Type** resets the MIX's send bank — every
+  send level into it to -∞, every send ON off under FIXED and on under VARI, with the PRE/POST tap and the send
+  pan kept — and FIXED turns the MIX's Pan Link off, which VARI leaves off (`routing.ts` `resetMixSendBank`,
+  through the panel's own `onSetBusType` action; the reset and the BUS Type are one undo entry). An FX channel's
+  **EFFECT TYPE** puts each parameter the incoming type uses at that type's factory value and keeps a key only
+  another type uses, which is what the unit's refill does to the slots (`fx-effect.ts` `fxTypeDefaults`, through
+  the panel's own `onSetFxEffectType` action). The insert-FX selector's **No Effect** turns the bypass off. The
+  STREAMING **Delay Time** is kept on the unit's 0.01 ms grid. Each rule sits in the panel's own control, or in an
+  action only the panel calls, rather than in the node-param funnel they all reach, so the CONSOLE, MIDI and the
+  tuning screens, which reach that funnel too, keep the behaviour they had.
+  Under Live sync the write then carries what the unit already holds. A BUS Type write's converge reads back a
+  bank the plan now agrees with. The park in front of an EFFECT TYPE write reads the outgoing array as it does for
+  every writer, and leaves standing the keys the panel's selection put at the incoming type's defaults — named per
+  channel to the read as `keepFx`, from the `fxReseeds` record `onSetFxEffectType` makes and that park spends —
+  so a value moved on the unit's panel for the outgoing type is not filed under a key the two types share and does
+  not go out in place of the incoming type's default, while a key only the outgoing type uses is still parked
+  (`readback.test.ts`, "leaves the keys keepFx names standing"; `main.device.test.ts`, "leaves the defaults an
+  Inspector selection took standing"). A type chosen from the CONSOLE, or a session starting or ending, drops the
+  record, and a channel no longer on the recorded type — an undo of the selection — is read the ordinary way.
+  No Effect's OFF is not written: on a MIX output insert the unit ignores a bypass write once its selector is No
+  Effect and engages the bypass with the next selection whatever it held, so the write sends the selector alone (`translate.test.ts`, "the insert-FX bypass beside No Effect").
+
 - **The unit keeps a UI state per element and announces it for one.** The side a stereo channel shows: the unit
   keeps one per stereo channel, but its LCD selection (762) carries the side of the selected channel only, and
   that is the only one it announces. The app keeps its own side per channel (`stereo-side.ts`) and links it to

@@ -1676,11 +1676,14 @@ overwrites is the knob the operator is looking at. The selector alone replaces t
 slots nobody named, because the unit refills the engine array with the incoming type's factory values.
 Putting it on a face of knobs would make those two edits look alike.
 
-**What a type write actually costs is not what it looks like.** In the PLAN nothing is lost: an FX
-channel keeps every family's values side by side under keys that carry the family name (`revxHpf` /
-`revr3Hpf` / `delayHpf`), so the outgoing effect's settings stay where they are and selecting a type of
-that family back finds them. Within one family the three Rev-X types share those keys, so a swap
-between them shares the values too rather than parking one set and restoring it. A device read of that
+**What a type write actually costs is not what it looks like.** Changed from the CONSOLE's type list,
+nothing is lost in the PLAN: an FX channel keeps every family's values side by side under keys that carry
+the family name (`revxHpf` / `revr3Hpf` / `delayHpf`), so the outgoing effect's settings stay where they are
+and selecting a type of that family back finds them. Within one family the three Rev-X types share those
+keys, so a swap between them shares the values too rather than parking one set and restoring it. Changed
+from the Inspector's selector, every key the incoming type uses takes that type's factory value — what the
+unit's refill does to the slots — and a key only another type uses stays (architecture.md, "What the app
+models, and what it leaves to the unit"). A device read of that
 channel MERGES into the map rather than replacing it — a read answers for the family the type names, and
 replacing would take the dormant families out with it, so selecting one of them back would send the incoming
 type's factory values rather than what the operator had set (`readback.readFxEffectInto`, both the park and the
