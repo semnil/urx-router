@@ -136,6 +136,10 @@ export interface InspectorActions {
     written?: readonly string[],
     defaults?: readonly string[],
   ) => void;
+  /** Set a MIX bus's BUS Type. Separate from `onUpdateNodeParams` because the unit answers it
+   *  outside the bus's own params: it resets every send into the bus, and FIXED turns the
+   *  bus's Pan Link off. */
+  onSetBusType: (id: string, busType: number) => void;
   onRenameNode: (id: string, name: string) => void;
   onRecolorNode: (id: string, color: string | null) => void;
   onOpenRecent: (path: string) => void;
@@ -562,16 +566,12 @@ export function renderInspector(
     // BUS Type / Pan Link (CH SETTING): MIX 1 / MIX 2 only. FIXED makes every
     // send into the bus a fixed level; Pan Link ties each send pan to its source's
     // own PAN / BAL. Both gate the per-send controls (connection panel). The Pan Link
-    // switch is offered under VARI only, as on the unit's screen, and a FIXED bus
-    // keeps whatever it holds.
+    // switch is offered under VARI only, as on the unit's screen. Setting BUS Type here
+    // resets the bus's sends and, to FIXED, turns Pan Link off (onSetBusType).
     if (node.id === "bus.mix1" || node.id === "bus.mix2") {
       const bnp = plan.nodeParams[node.id] ?? {};
       const busType = bnp.busType ?? BUS_TYPE_VARI;
-      host.append(
-        enumSelect(m.inspector.busType, BUS_TYPE_OPTIONS, busType, (v) =>
-          actions.onUpdateNodeParams(node.id, { busType: v }),
-        ),
-      );
+      host.append(enumSelect(m.inspector.busType, BUS_TYPE_OPTIONS, busType, (v) => actions.onSetBusType(node.id, v)));
       if (busType === BUS_TYPE_VARI) {
         host.append(
           boolToggle(m.inspector.panLink, bnp.panLink ?? false, (v) =>

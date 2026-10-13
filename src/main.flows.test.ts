@@ -26,6 +26,7 @@ vi.mock("./core/storage", async (importOriginal) => {
 });
 
 import { COMP_EQ_SSMCS, REC_POINT_PRE_COMP, REC_POINT_PRE_EQ } from "./core/control/params";
+import { LEVEL_OFF_DB } from "./core/control/vd";
 import { downloadText, exportSvgToPdf, exportSvgToPng, saveTextDocument } from "./core/storage";
 import { t } from "./i18n";
 import { spoken } from "./ui/glyph";
@@ -877,6 +878,89 @@ describe("Pan Link in the panel", () => {
     await vi.waitFor(() => expect(status()).toBe(t().status.planLoaded), APP_SETTLE);
     expect(shownSendPan(0)).toBe("R40");
     expect(shownSendPan(1)).toBe("R40");
+  });
+});
+
+// The unit answers a BUS Type write by resetting the MIX's whole send bank — every level to -∞,
+// every send ON off under FIXED and on under VARI — and FIXED turns its Pan Link off, which VARI
+// does not turn back on. The plan takes the same answer from the panel's own control, in one
+// gesture, so the next write does not put the old sends back over the unit's reset.
+describe("BUS Type in the panel", () => {
+  type Doc = {
+    connections: { from: string; to: string; params?: { level?: number; on?: boolean; tap?: string; pan?: number } }[];
+    nodeParams: Record<string, { busType?: number; panLink?: boolean }>;
+  };
+  const doc = async (): Promise<string> => {
+    const { encodePlanParam, sendConnection } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const plan = defaultPlan("URX44V");
+    for (const [from, to] of [
+      ["ch1", "bus.mix1"],
+      ["ch_7_8", "bus.mix1"],
+      ["bus.fx1", "bus.mix1"],
+      ["ch1", "bus.mix2"],
+    ]) {
+      const c = sendConnection(plan, from, to)!;
+      c.params = { ...c.params, level: -10, on: to === "bus.mix1", tap: "pre" };
+    }
+    return `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`;
+  };
+  const saved = async (): Promise<Doc> => {
+    const saves = vi.mocked(saveTextDocument).mock.calls.length;
+    $("btn-save").click();
+    await vi.waitFor(() => expect(vi.mocked(saveTextDocument).mock.calls.length).toBe(saves + 1), APP_SETTLE);
+    return JSON.parse(vi.mocked(saveTextDocument).mock.calls.at(-1)![1]) as Doc;
+  };
+  const send = (d: Doc, from: string, to: string) =>
+    d.connections.find((c) => c.from === `${from}:out` && c.to === `${to}:in`)?.params;
+  const setBusType = (label: string): void => {
+    selectNode("bus.mix1");
+    const select = row(t().inspector.busType).querySelector<HTMLSelectElement>("select")!;
+    // The press that opens the list, which is the gesture an undo entry is bounded by.
+    select.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));
+    select.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+    select.value = [...select.options].find((o) => o.textContent === label)!.value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  it("resets the bus's sends and turns its Pan Link off, and one undo takes both back", async () => {
+    history.replaceState(null, "", await doc());
+    await boot();
+    await vi.waitFor(() => expect(status()).toBe(t().status.planLoaded), APP_SETTLE);
+    selectNode("bus.mix1");
+    [...row(t().inspector.panLink).querySelectorAll("button")].find((b) => b.textContent === t().inspector.on)!.click();
+
+    setBusType("FIXED");
+    const fixed = await saved();
+    for (const from of ["ch1", "ch_7_8", "bus.fx1"]) {
+      const p = send(fixed, from, "bus.mix1");
+      expect(p?.level, `${from} -> MIX 1 level`).toBe(LEVEL_OFF_DB);
+      expect(p?.on, `${from} -> MIX 1 ON under FIXED`).toBe(false);
+      expect(p?.tap, `${from} -> MIX 1 keeps its tap`).toBe("pre");
+    }
+    expect(send(fixed, "ch1", "bus.mix2"), "the other MIX's send is left alone").toMatchObject({
+      level: -10,
+      on: false,
+    });
+    expect(fixed.nodeParams["bus.mix1"]?.panLink).toBe(false);
+
+    setBusType("VARI");
+    const vari = await saved();
+    for (const from of ["ch1", "ch_7_8", "bus.fx1"]) {
+      const p = send(vari, from, "bus.mix1");
+      expect([p?.level, p?.on], `${from} -> MIX 1 under VARI`).toEqual([LEVEL_OFF_DB, true]);
+    }
+    expect(vari.nodeParams["bus.mix1"]?.panLink, "VARI does not turn Pan Link back on").toBe(false);
+
+    // Each BUS Type change is one entry, its send reset and its Pan Link included.
+    chord("z", { ctrlKey: true });
+    const undoVari = await saved();
+    expect(send(undoVari, "ch1", "bus.mix1")).toMatchObject({ level: LEVEL_OFF_DB, on: false });
+    expect(undoVari.nodeParams["bus.mix1"]).toMatchObject({ busType: 1, panLink: false });
+    chord("z", { ctrlKey: true });
+    const undoFixed = await saved();
+    expect(send(undoFixed, "ch1", "bus.mix1")).toMatchObject({ level: -10, on: true });
+    expect(undoFixed.nodeParams["bus.mix1"]).toMatchObject({ busType: 0, panLink: true });
   });
 });
 

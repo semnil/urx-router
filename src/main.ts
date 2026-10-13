@@ -14,6 +14,7 @@ import {
   pairSharesNodeKey,
   isStereoLinkedPair,
   partnerChannel,
+  resetMixSendBank,
   sendPansToSources,
   withLinkedPartner,
 } from "./core/routing";
@@ -74,6 +75,8 @@ import {
 } from "./core/storage";
 import type { RecentEntry } from "./core/storage";
 import {
+  BUS_TYPE_FIXED,
+  BUS_TYPE_VARI,
   COMP_EQ_SSMCS,
   INSERT_FX_ANNOUNCED,
   PARAMS,
@@ -2007,7 +2010,15 @@ const inspectorActions = {
     // ducked-channel PRE-send note appears/clears with the tap.
     if (patch.oscL !== undefined || patch.oscR !== undefined || patch.tap !== undefined) refreshInspector();
   },
-  onUpdateNodeParams: (id: string, patch: NodeParams, written?: readonly string[], defaults?: readonly string[]) => {
+  // `alsoWritten` is the contest keys a caller wrote outside this node's params before
+  // handing the patch over, so this edit names them with its own.
+  onUpdateNodeParams: (
+    id: string,
+    patch: NodeParams,
+    written?: readonly string[],
+    defaults?: readonly string[],
+    alsoWritten: readonly string[] = [],
+  ) => {
     const prev = plan.nodeParams[id];
     const partner = partnerChannel(getModel(modelId), id);
     plan.nodeParams[id] = { ...prev, ...patch };
@@ -2052,7 +2063,7 @@ const inspectorActions = {
     // moved. A caller with a field that can be written WITHOUT moving names it itself, as
     // a dotted path — that is what `written` carries, and it replaces this derivation.
     const names = written ?? Object.keys(patch).filter((key) => typeof patch[key as keyof NodeParams] !== "object");
-    const keys = [...names.map((name) => nodeParamContestPath(id, name)), ...transitionKeys];
+    const keys = [...names.map((name) => nodeParamContestPath(id, name)), ...transitionKeys, ...alsoWritten];
     // A mirror asserts the PARTNER's keys the same way, and it can assert one that already
     // holds the value it writes — the insert-FX mirror re-writes a bypass that was already
     // on. Each names only what IT wrote, and for the pair mirror that is THIS EDIT's keys
@@ -2086,6 +2097,14 @@ const inspectorActions = {
     if (mirrored || insFxMirrored) consoleView.refresh();
     if (lateWrite) traceProbe?.sample("ui");
     if (fx.refreshInspector) refreshInspector();
+  },
+  // The unit resets the bus's whole send bank on a BUS Type write, and FIXED turns its Pan
+  // Link off (VARI leaves it off); the plan takes both in the same edit.
+  onSetBusType: (id: string, busType: number) => {
+    const prev = plan.nodeParams[id]?.busType ?? BUS_TYPE_VARI;
+    const reset = busType !== prev ? resetMixSendBank(plan, id, busType) : [];
+    const patch: NodeParams = busType === BUS_TYPE_FIXED ? { busType, panLink: false } : { busType };
+    inspectorActions.onUpdateNodeParams(id, patch, undefined, undefined, reset);
   },
   // Rename mutates in place and repaints the node label without re-rendering the
   // inspector, so the text input keeps focus while typing. Empty clears the override.

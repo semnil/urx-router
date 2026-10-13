@@ -16,6 +16,7 @@ import {
   PAN_BAL_PAN,
   STEREO_PAN_DEFAULT,
 } from "./control/params";
+import { LEVEL_OFF_DB } from "./control/vd";
 
 // Language-agnostic failure codes. The UI maps these to localized messages so
 // core stays free of any i18n dependency.
@@ -129,6 +130,20 @@ export function withLinkedPartner(model: DeviceModel, plan: Plan, id: string): S
  *  there, so the plan's diff cannot name them. */
 export function sendPansToSources(plan: Plan, busId: string, read: ReadonlySet<string> = new Set()): string[] {
   return setSendPans(plan, busId, (source) => !read.has(source)).written;
+}
+
+/** What the unit does to a MIX bus's send bank when its BUS Type is set to `busType`: every
+ *  send level into it drops to -∞, and every send ON goes OFF under FIXED and ON under VARI.
+ *  The PRE/POST tap and the send pan stay as they are. Returns the contest keys it wrote;
+ *  each can land on the value already there, so the plan's diff cannot name them. */
+export function resetMixSendBank(plan: Plan, busId: string, busType: number): string[] {
+  const written: string[] = [];
+  for (const c of plan.connections) {
+    if (c.to !== ref(busId, "in") || c.kind !== "send") continue;
+    c.params = { ...c.params, level: LEVEL_OFF_DB, on: busType !== BUS_TYPE_FIXED };
+    written.push(connParamContestKey(c.from, c.to, "level"), connParamContestKey(c.from, c.to, "on"));
+  }
+  return written;
 }
 
 /** While a MIX bus's Pan Link is on, the unit carries every send pan into it along with its

@@ -236,7 +236,11 @@ or inside a group — is written `true` / `false`: a number there loads converte
   member of a linked pair its own — and says so; `plan_tool.py` warns about every one
   it sets. Write them at that value, or leave them out. The app writes `panLink` under
   either `busType`; the unit's own screen offers it under VARI only and turns it off
-  when the bus goes FIXED.
+  when the bus goes FIXED. Changing `busType` in the app's Inspector does what the
+  unit does: every send `level` into that MIX goes to -∞, every send `on` to false
+  under FIXED and true under VARI, and FIXED sets `panLink` false — so a plan that
+  needs FIXED or VARI with its own sends carries `busType` in the document rather
+  than having it changed in the panel after loading.
 - `osc` — `{ on, level (-96…0 dB), mode (0 Sine/1 Pink/2 Burst), freq (Hz),
   width, interval (s) }`.
 - `cueInterrupt`, `mono` (bool, monitor buses); `phonesLevel` (0.0–10.0).

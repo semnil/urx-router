@@ -716,6 +716,7 @@ const actions = (): InspectorActions => ({
   onSwitchSide: vi.fn(),
   cueOf: vi.fn(() => null),
   onSetCue: vi.fn(),
+  onSetBusType: vi.fn(),
 });
 
 let panel: HTMLElement;
