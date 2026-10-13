@@ -713,6 +713,22 @@ export function fxParams(type: number): FxParamDesc[] {
   return out;
 }
 
+/** An FX channel's parameters after its EFFECT TYPE is set to `type` the way the unit sets it:
+ *  every key the type uses at that type's factory value, and every other key as it was. Returns
+ *  the keys it set. */
+export function fxTypeDefaults(
+  params: Readonly<Record<string, number>> | undefined,
+  type: number,
+): { params: Record<string, number>; keys: string[] } {
+  const out = { ...params };
+  const keys: string[] = [];
+  for (const d of fxParams(type)) {
+    out[d.key] = d.def;
+    keys.push(d.key);
+  }
+  return { params: out, keys };
+}
+
 /** The raw this descriptor's own control admits, nearest to `raw`.
  *
  *  A window is only the SLIDER's answer. A toggle admits 0 and 1 and carries no bounds at all,

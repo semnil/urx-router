@@ -717,6 +717,7 @@ const actions = (): InspectorActions => ({
   cueOf: vi.fn(() => null),
   onSetCue: vi.fn(),
   onSetBusType: vi.fn(),
+  onSetFxEffectType: vi.fn(),
 });
 
 let panel: HTMLElement;
@@ -1091,6 +1092,23 @@ describe("renderInspector — the STREAMING Delay Time", () => {
     renderInspector(panel, getModel("URX44V"), withTime(1.01), nodeSel("bus.stream"), act);
     press("ArrowDown");
     expect(sent()).toBe(1);
+  });
+});
+
+// The selector hands an EFFECT TYPE to its own action, which is where the plan takes the
+// incoming type's defaults (main.ts onSetFxEffectType, fx-effect.ts fxTypeDefaults).
+describe("renderInspector — an FX channel's EFFECT TYPE", () => {
+  it("hands the chosen type to the EFFECT TYPE action, not to the node-param funnel", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.fx1"] = { fxEffect: { type: 0 } };
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("bus.fx1"), act);
+    const select = [...panel.querySelectorAll<HTMLElement>(".param")]
+      .find((r) => r.dataset.paramLabel === t().inspector.fxEffect.effectType)!
+      .querySelector<HTMLSelectElement>("select")!;
+    select.value = "1";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(act.onSetFxEffectType).toHaveBeenCalledWith("bus.fx1", 1);
+    expect(act.onUpdateNodeParams).not.toHaveBeenCalled();
   });
 });
 
