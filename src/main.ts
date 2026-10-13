@@ -660,7 +660,13 @@ function setCue(node: string, on: boolean, origin: "app" | "device"): void {
   // announces none of them.
   if (origin === "device") scheduleCueRead();
   if (!changed) return;
-  if (origin === "app" && liveSessionUp) writeCue(node, on);
+  if (origin === "app" && liveSessionUp) {
+    writeCue(node, on);
+    // Read back behind the write: turning the last input cue off puts back output cues the unit
+    // was holding from before this session, which the set has no record of, and the unit
+    // announces none of them.
+    rereadCues();
+  }
   renderCues();
 }
 
@@ -687,9 +693,12 @@ function rereadCues(): void {
       // taken ahead of it answers with the value it replaces.
       await live?.idle();
       if (!liveSessionUp) return;
-      const since = cues.version;
+      const set = cues;
+      const since = set.version;
       const got = await readCues(model);
-      if (cues.version === since && cues.replace(got)) renderCues();
+      // The set a session's end or a model change replaced starts again at version 0, so the
+      // set itself is compared as well as its version.
+      if (liveSessionUp && cues === set && set.version === since && set.replace(got)) renderCues();
     })
     .catch((err: unknown) => stopLiveOnError(errorText(err)));
 }
@@ -717,18 +726,29 @@ function writeCue(node: string, on: boolean): void {
 }
 
 /** Turn every cue off: the input cues first, which puts back any output cue the unit was
- *  holding, then the outputs. With a session up the flags are read back once the writes are
- *  done, since the unit announces none of what it put back. */
+ *  holding — including ones held from before this session, which the set has no record of — and,
+ *  once the flags have been read back behind those writes, every cue that read found. */
 function clearCues(): void {
-  for (let guard = 0; cues.size && guard < 4; guard++) for (const n of cues.nodes()) setCue(n, false, "app");
-  rereadCues();
+  if (!liveSessionUp) return;
+  const set = cues;
+  if (set.group() !== "input") {
+    for (const n of set.nodes()) setCue(n, false, "app");
+    return;
+  }
+  for (const n of set.nodes()) setCue(n, false, "app");
+  // Queued behind the writes and the read each of them queued, so it sees what the unit put back.
+  cueWrites = cueWrites.then(() => {
+    if (!liveSessionUp || cues !== set) return;
+    for (const n of set.nodes()) setCue(n, false, "app");
+  });
 }
 
-/** Take a read of the unit's flags, unless the flags changed since it started or a write the
- *  read may have answered ahead of is still waiting. */
-function adoptCueRead(nodes: readonly string[], since: number): void {
-  if (cues.version !== since || cueWritesPending > 0) return;
-  if (cues.replace(nodes)) renderCues();
+/** Take a read of the unit's flags into the set it was started for, unless that set was
+ *  replaced, its flags changed since the read started, or a write the read may have answered
+ *  ahead of is still waiting. */
+function adoptCueRead(nodes: readonly string[], set: CueSet, since: number): void {
+  if (cues !== set || set.version !== since || cueWritesPending > 0) return;
+  if (set.replace(nodes)) renderCues();
 }
 
 /** Forget every cue: the session that knew them ended, or the model changed. */
@@ -1486,7 +1506,8 @@ const follow =
           // The [CUE] flags are outside the plan, so the plan read does not carry them; they are
           // read inside the same follow read, which a session's release waits for. A
           // whole-device read follows a scene recall and stands in for any notify missed.
-          const cueSince = cues.version;
+          const cueSet = cues;
+          const cueSince = cueSet.version;
           let cueGot: string[] | null = null;
           const merged = await followRead("device-follow readback", async (into, signal) => {
             const result = await applyDeviceStateScoped(into, signal, pending);
@@ -1508,7 +1529,7 @@ const follow =
           followFull = true;
           requestReflect();
           reapplyHeld(merged);
-          if (cueGot) adoptCueRead(cueGot, cueSince);
+          if (cueGot) adoptCueRead(cueGot, cueSet, cueSince);
         },
         onFollow: () => setStatus(t().status.liveFollowing),
         onError: (message) => stopLiveOnError(errorText(message)),
@@ -4311,6 +4332,8 @@ if (!DEMO) {
         // both end()s no-op when nothing was started.
         follow?.end();
         live?.end();
+        // The cues the starting read took belong to the session that did not start.
+        resetCues();
         await releaseLive(device.epoch, "error");
         showError(message, supplied ?? "");
       };

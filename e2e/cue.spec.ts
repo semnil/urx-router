@@ -1,5 +1,17 @@
 import { test, expect, type Page } from "./fixtures";
-import { LIVE_COMMANDS, notifyParam, setDeviceValue, stubTauriDevice, writesOf } from "./tauri-stub";
+import {
+  heldReadsOf,
+  LIVE_COMMANDS,
+  notifyParam,
+  setDeviceValue,
+  setHeldReads,
+  setRefusedCommands,
+  setWriteEffect,
+  stubTauriDevice,
+  writesOf,
+  dialogsOf,
+  untilAnswered,
+} from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 import { PARAMS } from "../src/core/control/params";
 
@@ -80,6 +92,11 @@ test("a cued output is framed alone, with its line to each monitor", async ({ pa
 });
 
 test("a press in the app writes the flag and applies the group rule", async ({ page }) => {
+  // What the unit does with the STEREO write, which the app reads back behind it: the input cues go.
+  await setWriteEffect(page, CUE_STEREO, 0, 1, [
+    [CUE_MONO, 0, 0],
+    [CUE_STEREO_CH, 1, 0],
+  ]);
   await goLive(page);
   await page.click("#btn-view-console");
   await chip(page, "ch1").click();
@@ -174,3 +191,75 @@ test("the cue ends with the session", async ({ page }) => {
   await expect(page.locator("#cue-bar")).toBeHidden();
   await expect(frame(page, "ch1")).toHaveCount(0);
 });
+
+// An output cue the unit was holding from before the session: STEREO cued, then CH 1, then the
+// session started. The app's read sees CH 1 alone, and turning CH 1 off puts STEREO back on the
+// unit with no notify for it.
+async function goLiveWithHeldOutput(page: Page): Promise<void> {
+  await setDeviceValue(page, CUE_MONO, 0, 1);
+  await setWriteEffect(page, CUE_MONO, 0, 0, [[CUE_STEREO, 0, 1]]);
+  await goLive(page);
+  await expect(readout(page)).toHaveText("CUE CH 1");
+}
+
+test("turning the last input cue off in the app shows the output cue the unit put back", async ({ page }) => {
+  await goLiveWithHeldOutput(page);
+  await page.click("#btn-view-console");
+  await chip(page, "ch1").click();
+  await expect(chip(page, "bus.stereo")).toHaveAttribute("aria-pressed", "true");
+  await expect(chip(page, "ch1")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#cue-bar-names")).toHaveText("CUE STEREO (MAIN)");
+  expect((await writesOf(page)).filter(([id]) => id === CUE_STEREO)).toEqual([]);
+});
+
+test("Clear CUE also turns off an output cue the unit held from before the session", async ({ page }) => {
+  await goLiveWithHeldOutput(page);
+  await page.click("#cue-bar-clear");
+  await expect
+    .poll(() => writesOf(page).then((w) => w.filter(([id]) => id === CUE_MONO || id === CUE_STEREO)))
+    .toEqual([
+      [CUE_MONO, 0],
+      [CUE_STEREO, 0],
+    ]);
+  await expect(page.locator("#cue-bar")).toBeHidden();
+  await page.click("#btn-view-console");
+  await expect(chip(page, "bus.stereo")).toHaveAttribute("aria-pressed", "false");
+});
+
+test("a read of the flags that lands after the session ended shows nothing", async ({ page }) => {
+  await goLive(page);
+  // A press on the unit that changed nothing still schedules a read; it is held, and the session
+  // ends before it is answered.
+  await setHeldReads(page, [CUE_MONO]);
+  await notifyParam(page, CUE_MONO, 0, 0);
+  await expect.poll(() => heldReadsOf(page)).toBeGreaterThan(0);
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+  await setDeviceValue(page, CUE_MONO, 0, 1);
+  await setHeldReads(page, []);
+  await expect.poll(() => heldReadsOf(page)).toBe(0);
+  // A session's release disconnects only once the cue reads it waits for have landed.
+  await untilAnswered(page, "vd_disconnect");
+  await expect(page.locator("#cue-bar")).toBeHidden();
+  await page.click("#btn-view-console");
+  await expect(chip(page, "ch1")).toHaveAttribute("aria-pressed", "false");
+  // The next session reads the unit as it is.
+  await goLive(page);
+  await expect(readout(page)).toHaveText("CUE CH 1");
+});
+
+for (const cmd of ["vd_params_subscribe", "vd_watch_link"]) {
+  test(`a session whose ${cmd} is refused leaves nothing cued, and the next one reads the unit`, async ({ page }) => {
+    await setDeviceValue(page, CUE_MONO, 0, 1);
+    await setRefusedCommands(page, [cmd]);
+    await page.click("#btn-device");
+    await page.click("#btn-live");
+    await expect.poll(() => dialogsOf(page)).toContainEqual(expect.stringContaining(`${cmd} refused`));
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+    await expect(page.locator("#cue-bar")).toBeHidden();
+    await setRefusedCommands(page, []);
+    await goLive(page);
+    await expect(readout(page)).toHaveText("CUE CH 1");
+  });
+}
