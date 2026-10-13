@@ -1084,11 +1084,11 @@ export function renderInspector(
             disabled: e.lock !== null,
           })),
           String(ifxEff ?? INSERT_FX_NONE),
-          // Selecting an effect auto-engages it on the device, so mirror that in
-          // the plan; selecting No Effect leaves the dormant switch state alone.
+          // Selecting an effect engages it and selecting No Effect turns the switch off, as
+          // choosing them on the unit's own panel does, so the plan takes both.
           (v) => {
             const sel = Number(v);
-            const patch: NodeParams = sel === INSERT_FX_NONE ? { insertFx: sel } : { insertFx: sel, insertFxOn: true };
+            const patch: NodeParams = { insertFx: sel, insertFxOn: sel !== INSERT_FX_NONE };
             const parked = parkOutgoingInsertFxParams(plan.nodeParams[node.id]);
             // The plan takes the selected type's defaults for every slot it does not hold,
             // which is what the screen shows and what the unit fills the engine with.

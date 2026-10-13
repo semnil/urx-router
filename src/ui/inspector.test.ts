@@ -1380,9 +1380,9 @@ describe("insert FX", () => {
     return { model, plan, id };
   };
 
-  // Selecting an effect auto-engages it on the device, so the plan mirrors that;
-  // selecting No Effect leaves the dormant switch state alone.
-  it("engages an effect on selection and leaves the switch alone for No Effect", () => {
+  // Selecting an effect engages it on the unit, and choosing No Effect on the unit's own panel
+  // turns the switch off; the plan takes both, and names the switch as written either way.
+  it("engages an effect on selection and turns the switch off for No Effect", () => {
     const { model, plan, id } = fxNode();
     renderInspector(panel, model, plan, nodeSel(id), act);
     const sel = [...panel.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
@@ -1400,9 +1400,10 @@ describe("insert FX", () => {
     vi.mocked(act.onUpdateNodeParams).mockClear();
     sel.value = String(INSERT_FX_NONE);
     sel.dispatchEvent(new Event("change", { bubbles: true }));
-    const none = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)![1];
+    const [, none, written] = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)!;
     expect(none.insertFx).toBe(INSERT_FX_NONE);
-    expect(none.insertFxOn).toBeUndefined();
+    expect(none.insertFxOn).toBe(false);
+    expect(written, "the patch's own keys, the switch among them").toBeUndefined();
   });
 
   // A plan can hold an insert-FX value the node's own control does not carry: a file, a
