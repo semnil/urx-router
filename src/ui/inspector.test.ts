@@ -1067,6 +1067,16 @@ describe("renderInspector — the STREAMING Delay Time", () => {
     expect(planToCommands(getModel("URX44V"), plan).find((c) => c.paramId === 708)?.vdValue).toBe(4587);
   });
 
+  // The unit holds the time in 0.01 ms; a document can carry a finer one, which the write rounds
+  // and the plan would otherwise go on holding. An edit here leaves the plan on the unit's grid.
+  it("puts the time it writes on the unit's 0.01 ms grid", () => {
+    renderInspector(panel, getModel("URX44V"), withTime(45.873), nodeSel("bus.stream"), act);
+    slider().dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    const [, patch, written] = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)!;
+    expect(patch.delay?.time).toBe(45.89);
+    expect(written).toEqual(["delay.time"]);
+  });
+
   it("steps an off-grid value by exactly 0.02 ms, and stops at the ends", () => {
     const sent = (): number | undefined => vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)?.[1].delay?.time;
     const press = (key: string): void => {

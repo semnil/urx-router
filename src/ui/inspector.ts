@@ -76,6 +76,8 @@ import {
   DELAY_TIME_MIN_MS,
   DELAY_TIME_MAX_MS,
   DELAY_TIME_GRID_MS,
+  delayTimeToVd,
+  vdToDelayTime,
   PHONES_LEVEL_MIN,
   PHONES_LEVEL_MAX,
   PHONES_LEVEL_DEFAULT,
@@ -1007,13 +1009,16 @@ export function renderInspector(
     if (node.id === "bus.stream") {
       const delay = plan.nodeParams[node.id]?.delay ?? {};
       // Read the latest stored delay at edit time so a second field edit (the
-      // inspector is not re-rendered between edits) does not clobber the first.
-      const setDelay = (patch: Partial<typeof delay>): void =>
+      // inspector is not re-rendered between edits) does not clobber the first. The time
+      // the plan takes is the one the unit holds, on its 0.01 ms grid.
+      const setDelay = (patch: Partial<typeof delay>): void => {
+        if (patch.time !== undefined) patch = { ...patch, time: vdToDelayTime(delayTimeToVd(patch.time)) };
         actions.onUpdateNodeParams(
           node.id,
           { delay: { ...(plan.nodeParams[node.id]?.delay ?? {}), ...patch } },
           groupPaths("delay", patch),
         );
+      };
       const ps = section(m.inspector.delayTitle, { key: "delay" });
       ps.body.append(
         enumSelect(
