@@ -38,6 +38,7 @@ import {
   busBalance,
   channelControl,
   channelDynamics,
+  cueAddrOf,
   dynFromPos,
   dynPosRange,
   dynToPos,
@@ -145,6 +146,8 @@ export type ControlParam =
   | "phonesLevel"
   | "oscOn"
   | "cueInterrupt"
+  // A strip's [CUE]. Live-session state outside the plan, reached through `CueAccess`.
+  | "cue"
   | "mono"
   | "gateOn"
   | "compOn"
@@ -393,36 +396,54 @@ function dynCodec(f: DynField): { get(x: number): number; set(v: number): number
   };
 }
 
-export function listControls(model: DeviceModel, plan: Plan): ControlDesc[] {
-  return controlNodes(model).flatMap((id) => nodeControls(model, plan, id));
+/** The [CUE] flags a CUE control reads and switches. They are not in the plan, so a caller
+ *  that has them passes them in; without them, or while `enabled` answers false, a CUE control
+ *  refuses a write. */
+export interface CueAccess {
+  has(node: string): boolean;
+  set(node: string, on: boolean): void;
+  /** Whether a switch can land: a CUE exists only while a Live-sync session is up. */
+  enabled(): boolean;
+}
+
+export function listControls(model: DeviceModel, plan: Plan, cue?: CueAccess): ControlDesc[] {
+  return controlNodes(model).flatMap((id) => nodeControls(model, plan, id, cue));
 }
 
 /** Bind one control id against the current plan; null for an unknown id (e.g. a
  *  mapping saved for another model, or a node this model does not have). */
-export function bindControl(model: DeviceModel, plan: Plan, id: string): BoundControl | null {
+export function bindControl(model: DeviceModel, plan: Plan, id: string, cue?: CueAccess): BoundControl | null {
   const parsed = parseControlId(id);
   if (!parsed) return null;
   // Only console-catalog nodes carry controls. Without this, nodeControls' generic
   // fader/chOn branch would mint working level/chOn controls on any model node —
   // an input, output patch or SD rec the console never draws.
   if (!controlNodes(model).includes(parsed.node)) return null;
-  return nodeControls(model, plan, parsed.node).find((c) => c.id === id) ?? null;
+  return nodeControls(model, plan, parsed.node, cue).find((c) => c.id === id) ?? null;
 }
 
 // The nodes that carry console controls, in console strip order: input channels,
-// FX/MIX buses, monitors + OSC, the STEREO master — plus the duckers (their chip
-// lives on the parent strip but the flag is the ducker node's own).
+// FX/MIX buses, STREAMING (its [CUE] alone), monitors + OSC, the STEREO master — plus the
+// duckers (their chip lives on the parent strip but the flag is the ducker node's own).
 function controlNodes(model: DeviceModel): string[] {
   const ids = new Set(model.nodes.map((n) => n.id));
   const channels = model.nodes.filter((n) => n.kind === "channel").map((n) => n.id);
-  const buses = ["bus.fx1", "bus.fx2", "bus.mix1", "bus.mix2", "bus.mon1", "bus.mon2", "bus.osc", MAIN_BUS].filter(
-    (i) => ids.has(i),
-  );
+  const buses = [
+    "bus.fx1",
+    "bus.fx2",
+    "bus.mix1",
+    "bus.mix2",
+    "bus.stream",
+    "bus.mon1",
+    "bus.mon2",
+    "bus.osc",
+    MAIN_BUS,
+  ].filter((i) => ids.has(i));
   const duckers = model.nodes.filter((n) => n.kind === "ducker").map((n) => n.id);
   return [...channels, ...buses, ...duckers];
 }
 
-function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[] {
+function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAccess): BoundControl[] {
   const node = model.nodes.find((n) => n.id === id);
   if (!node) return [];
   const out: BoundControl[] = [];
@@ -896,6 +917,22 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
   const isMix = id === "bus.mix1" || id === "bus.mix2";
   const isMon = isMonitorBus(id);
 
+  // The strip's [CUE]: no plan key, so it declares no `writes`.
+  const cueControl = (): BoundControl => ({
+    id: controlId(id, "cue"),
+    node: id,
+    param: "cue",
+    kind: "toggle",
+    get: () => (cue?.has(id) ? 1 : 0),
+    set: (v) => {
+      if (!cue?.enabled()) return false;
+      cue.set(id, v >= 0.5);
+      return true;
+    },
+  });
+  // STREAMING carries no fader, ON or chip of its own on the CONSOLE: its [CUE] is all.
+  if (id === "bus.stream") return [cueControl()];
+
   if (id === "bus.osc") {
     // OSC drives its level via a knob and an ON button; no mute / sends.
     out.push({
@@ -1153,6 +1190,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string): BoundControl[
     // STEREO master / MONITOR buses: own fader; no → STEREO send, so no MUTE chip.
     out.push(nodeControl("level", levelCodec, 0));
   }
+  // [CUE] sits beside the MUTE on every strip that carries one.
+  if (cueAddrOf(model, id)) out.push(cueControl());
 
   // The scribble power LED = the node master ON, uniform across every strip that has
   // one (all but OSC / STREAMING). On CH / FX / MIX the send-less "mute" is the →

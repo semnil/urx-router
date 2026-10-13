@@ -66,6 +66,7 @@ import {
   busBalance,
   channelControl,
   channelDynamics,
+  cueAddrOf,
   effectiveInsertFx,
   hasEq,
   inputStageReaders,
@@ -412,7 +413,19 @@ export interface ConsoleHooks {
   onOpenDynScreen?: (kind: DynKind, id: string) => void;
   /** Show the other side of a stereo channel (its name area was pressed). */
   onSwitchSide?: (channelId: string, side: JackSide) => void;
+  /** The [CUE] flags, which are outside the plan: a CUE chip reads and switches them here
+   *  and commits nothing. */
+  cue?: ConsoleCueHooks;
   midi?: ConsoleMidiHooks;
+}
+
+export interface ConsoleCueHooks {
+  has: (node: string) => boolean;
+  /** Whether anything is cued. */
+  any: () => boolean;
+  set: (node: string, on: boolean) => void;
+  /** Whether a press on a CUE chip switches it (a Live-sync session is up). */
+  enabled: () => boolean;
 }
 
 // The bars animate every frame; the numeric readout text is refreshed only every
@@ -2201,8 +2214,61 @@ export class Console {
       after?.(next);
       const mirrored = this.commit(id, keys);
       if (mirrored || rerender) this.render();
+      // A C.INT press decides whether its MONITOR plays the CUE bus.
+      else this.syncCues();
     });
     return chip;
+  }
+
+  /**
+   * A strip's [CUE] chip, or null for a strip that has none. Lit while the strip is cued. It
+   * switches the unit's flag rather than the plan, so a press commits nothing; with no session
+   * up it is read-only, and a MIDI-learn target still, so a control can be assigned to it.
+   */
+  private cueChip(id: string): HTMLElement | null {
+    const cue = this.hooks.cue;
+    if (!cue || !cueAddrOf(this.hooks.getModel(), id)) return null;
+    const midiId = controlId(id, "cue");
+    const on = cue.has(id);
+    let chip: HTMLElement;
+    if (!cue.enabled()) {
+      chip = this.buildChip(id, t().console.cueChip, on, () => on, {
+        readonlyTitle: t().console.cueOffline,
+        midiId,
+      });
+    } else {
+      chip = el("div", "con-chip" + (on ? " on" : ""));
+      chip.textContent = t().console.cueChip;
+      chip.dataset.ctl = midiId;
+      chip.setAttribute("role", "button");
+      chip.setAttribute("aria-pressed", String(on));
+      this.wireActivate(chip, midiId, () => cue.set(id, !cue.has(id)));
+    }
+    chip.classList.add("con-cue");
+    chip.dataset.cue = id;
+    return chip;
+  }
+
+  /** Repaint what shows the cues without rebuilding a strip: each CUE chip's light, and the
+   *  frame and C.INT colour of a MONITOR whose Cue Interrupt makes it play the CUE bus. */
+  syncCues(): void {
+    const cue = this.hooks.cue;
+    if (!cue) return;
+    for (const chip of this.host.querySelectorAll<HTMLElement>(".con-cue[data-cue]")) {
+      const on = cue.has(chip.dataset.cue!);
+      chip.classList.toggle("on", on);
+      chip.setAttribute("aria-pressed", String(on));
+    }
+    const plan = this.hooks.getPlan();
+    for (const strip of this.host.querySelectorAll<HTMLElement>("[data-cue-monitor]")) {
+      const id = strip.dataset.cueMonitor!;
+      const taking = cue.any() && (plan.nodeParams[id]?.cueInterrupt ?? true);
+      strip.classList.toggle("cue-take", taking);
+      const cint = strip.querySelector<HTMLElement>(`[data-ctl="${controlId(id, "cueInterrupt")}"]`);
+      if (!cint) continue;
+      cint.classList.toggle("cue-int", taking);
+      setTip(cint, taking ? t().console.cueTaking : t().console.cueFull);
+    }
   }
 
   // Build one lane: its bar column (green→red LED bar + shade + peak marker) and its
@@ -2302,7 +2368,7 @@ export class Console {
         },
         { keys: ["delay.on"] },
       );
-      chips.append(el("div", "con-chip spacer"));
+      chips.append(this.cueChip(m.id) ?? el("div", "con-chip spacer"));
       head.append(chips);
       const factory = this.factoryPlan().nodeParams[m.id]?.delay?.time ?? DELAY_TIME_MIN_MS;
       this.addKnob(
@@ -2429,6 +2495,7 @@ export class Console {
       restoreFocus();
     }
     this.builtFor = plan;
+    this.syncCues();
     this.startMeters(); // rescope the meter subscription to the rebuilt strips
     this.redrawMeters();
   }
@@ -2679,6 +2746,8 @@ export class Console {
     strip.tabIndex = -1;
     if (rateOff) strip.title = t().inspector.fx2RateLocked;
     strip.style.setProperty("--rail", m.rail);
+    // A MONITOR strip is framed while it plays the CUE bus (syncCues).
+    if (m.hasPhones) strip.dataset.cueMonitor = m.id;
 
     // head: scribble (with the power LED) + chips + gain (always the MAIN control set —
     // sends live in the SENDS rack below, so the head no longer swaps per send target).
@@ -2744,6 +2813,8 @@ export class Console {
         { midiId: controlId(m.id, "mute") },
       );
     }
+    const cue = this.cueChip(m.id);
+    if (cue) top.append(cue);
     // +48V and HI-Z of the jack this channel reads are never turned on together: while one
     // is on, the other's chip is read-only and says why; turning the lit one off stays
     // available. The value is the jack's, so either toggle re-renders every strip — each

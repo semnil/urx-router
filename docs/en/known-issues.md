@@ -73,18 +73,18 @@ the mode is anything but Off: writing them would put the operator's pre-change m
 back over the erase the unit had just performed. The tuning screen locks the same two rows,
 and both are released as soon as the mode goes back to Off.
 
-## CUE (solo/monitor interrupt) assignment cannot be controlled
+## CUE is controlled during Live sync only, and never saved
 
-Each device channel has a **CUE** button that interrupts the monitor with that
-channel's signal over the CUE bus. The planner does **not model the CUE bus
-assignment (which channels are cued) and does not push it to the device**: CUE
-routing is a temporary bus that the device clears at power-off, so it cannot hold
-a persistent assignment that a saved plan would represent (see
-[device-model.md](device-model.md)).
+The **CUE** of each channel, FX channel, MIX bus, STEREO and STREAMING is switched
+from the CONSOLE (and from a MIDI control assigned to it) and followed from the unit
+while Live sync is on. It is **not part of the plan**: the unit clears it at
+power-off and keeps it in no scene and no settings file, so a saved plan, an undo
+and an image export carry none of it (see [device-model.md](device-model.md) and
+the CUE notes in [architecture.md](architecture.md)).
 
-The MONITOR bus **CUE Int** toggle (enable/disable the cue interrupt) is a
-confirmed parameter and is supported. What cannot be controlled is the
-per-channel CUE on/off (the assignment).
+With Live sync off nothing is cued in the app: the cues are forgotten when a session
+ends, and neither the CONSOLE's CUE chips nor a MIDI control assigned to a CUE switch
+one. A chip can still be armed for MIDI learn, so a control can be assigned to it.
 
 ## Live control is hardware-verified on the URX44V only
 
@@ -104,7 +104,7 @@ unverified mappings (`jack-axis`, `hiz-channel`, `dgain-source`). A read or writ
 that fails at one of those addresses names the mapping, and the self-test says it
 cannot settle them and what would. The link between a stereo channel's displayed
 side and the unit's LCD selection uses the URX44V numbering on both models, registered
-as `lcd-side`.
+as `lcd-side`, and so does the [CUE] flag of each strip, registered as `cue-flags`.
 Offline planning, the plan JSON and image export are unaffected; this concerns
 only live sync on those two models.
 

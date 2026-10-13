@@ -3084,6 +3084,78 @@ export function planToNameWrites(model: DeviceModel, plan: Plan): NameWrite[] {
   return out;
 }
 
+// --- [CUE] flags ------------------------------------------------------------
+// The address of each cuable strip's [CUE] flag. The flags themselves are live-session
+// state outside the plan; cue.ts holds them and applies the unit's rules.
+
+export type CueGroup = "input" | "output";
+
+/** One cuable strip's flag. `mirrors` are the instances the unit sets together with `y` —
+ *  read and announced beside it, never written. */
+export interface CueAddr {
+  node: string;
+  param: number;
+  y: number;
+  group: CueGroup;
+  mirrors: readonly number[];
+}
+
+const BUS_CUES: readonly CueAddr[] = [
+  { node: "bus.fx1", param: PARAMS.CUE_FX.id, y: 0, group: "input", mirrors: [] },
+  { node: "bus.fx2", param: PARAMS.CUE_FX.id, y: 1, group: "input", mirrors: [] },
+  { node: "bus.mix1", param: PARAMS.CUE_MIX.id, y: 0, group: "output", mirrors: [1] },
+  { node: "bus.mix2", param: PARAMS.CUE_MIX.id, y: 2, group: "output", mirrors: [3] },
+  { node: "bus.stream", param: PARAMS.CUE_STREAMING.id, y: 0, group: "output", mirrors: [1] },
+  { node: "bus.stereo", param: PARAMS.CUE_STEREO.id, y: 0, group: "output", mirrors: [] },
+];
+
+const cueAddrCache = new WeakMap<DeviceModel, readonly CueAddr[]>();
+
+/** Every cuable strip of the model, channels first in board order, then the FX channels and
+ *  the output group. */
+export function cueAddrs(model: DeviceModel): readonly CueAddr[] {
+  let list = cueAddrCache.get(model);
+  if (list) return list;
+  const ids = new Set(model.nodes.map((n) => n.id));
+  const out: CueAddr[] = [];
+  for (const n of model.nodes) {
+    if (n.kind !== "channel") continue;
+    const cc = channelControl(model, n.id);
+    if (!cc) continue;
+    const param = isStereoChannel(n.id) ? PARAMS.CUE_STEREO_CH.id : PARAMS.CUE_MONO.id;
+    out.push({ node: n.id, param, y: cc.y, group: "input", mirrors: [] });
+  }
+  for (const c of BUS_CUES) if (ids.has(c.node)) out.push(c);
+  list = out;
+  cueAddrCache.set(model, list);
+  return list;
+}
+
+export function cueAddrOf(model: DeviceModel, node: string): CueAddr | undefined {
+  return cueAddrs(model).find((a) => a.node === node);
+}
+
+/** The addresses a session registers for notifies: each flag and the instances it mirrors. */
+export function cueNotifyAddrs(model: DeviceModel): Array<[number, number, number]> {
+  return cueAddrs(model).flatMap((a) => [a.y, ...a.mirrors].map((y): [number, number, number] => [a.param, 0, y]));
+}
+
+/** The strip a notify address belongs to, and whether it is one of that flag's mirrors. */
+export function cueAt(
+  model: DeviceModel,
+  paramId: number,
+  x: number,
+  y: number,
+): { addr: CueAddr; mirror: boolean } | undefined {
+  if (x !== 0) return undefined;
+  for (const a of cueAddrs(model)) {
+    if (a.param !== paramId) continue;
+    if (a.y === y) return { addr: a, mirror: false };
+    if (a.mirrors.includes(y)) return { addr: a, mirror: true };
+  }
+  return undefined;
+}
+
 // --- Unverified-mapping registry -------------------------------------------
 // Device mappings confirmed only on URX44V (the captured unit) that remain
 // educated guesses on the other models, pending confirmation by an owner: through
@@ -3237,6 +3309,19 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     howToSettle:
       "switch the side of each stereo channel in the app while Live sync is on, and read which channel and side the unit's LCD shows",
     addresses: () => [[PARAMS.LCD_SELECTION.id, 0]],
+  },
+  {
+    // Which strip each [CUE] flag reaches on URX22 / URX44: the URX44V's addresses, with a
+    // channel's flag at the instance its fader takes. The unit keeps any value written there,
+    // so a round trip says nothing about which strip's [CUE] lit.
+    key: "cue-flags",
+    label: "[CUE] flag of each strip (mono CH 138 / stereo CH 265 / FX 336 / STEREO 580 / MIX 673 / STREAMING 709)",
+    models: ["URX22", "URX44"],
+    guessedIds: [],
+    roundTripSettles: false,
+    howToSettle:
+      "cue one strip at a time from the app while Live sync is on, and read which strip's [CUE] lights on the unit",
+    addresses: (model) => cueAddrs(model).map((a) => [a.param, a.y] as GuessAddress),
   },
 ];
 

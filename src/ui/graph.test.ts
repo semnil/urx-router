@@ -2418,3 +2418,90 @@ describe("a drop onto an input that holds a source", () => {
     expect(fx.cb.onChange).toHaveBeenCalledTimes(1);
   });
 });
+
+// What is cued: the unit's [CUE] flags, outside the plan. The board fades what the CUE bus does
+// not carry, frames the path, badges the monitors that play the CUE bus and draws a line from
+// each cued strip to each of them — and none of it reaches an image export.
+describe("cue", () => {
+  const paintOf = (from: string, to: string): Element =>
+    wireHit(fx.host, from, to)!.parentElement!.querySelector(".wire-paint")!;
+  const cueLayer = (): SVGGElement => fx.host.querySelector<SVGGElement>(".cue-layer")!;
+  const frames = (): string[] =>
+    [...cueLayer().querySelectorAll<SVGElement>("[data-cue-frame]")].map((e) => e.dataset.cueFrame!).sort();
+
+  it("frames the path, badges the monitors and draws a line to each", () => {
+    fx = graphFixture();
+    fx.graph.setCues(["ch1"]);
+    expect(frames()).toEqual(["bus.mon1", "bus.mon2", "ch1", "in.micline_1_2"]);
+    expect(cueLayer().querySelectorAll("[data-cue-badge]")).toHaveLength(2);
+    const lines = [...cueLayer().querySelectorAll<SVGElement>("[data-cue-line]")].map((e) => e.dataset.cueLine);
+    expect(lines).toEqual(["ch1 bus.mon1", "ch1 bus.mon2"]);
+    // Off the path, a node fades; on it, it keeps its own dim.
+    expect(restingDim(nodeEl(fx.host, "ch2")!)).toBe("0.3");
+    expect(restingDim(nodeEl(fx.host, "ch1")!)).toBe("1");
+    // The wire feeding the cued strip stays; one leaving it for STEREO fades; the feed a
+    // monitor drops for the CUE bus is faint and dashed.
+    expect(paintOf("in.micline_1_2:out", "ch1:in").getAttribute("opacity")).toBe("0.85");
+    expect(paintOf("ch1:out", "bus.stereo:in").getAttribute("opacity")).toBe("0.16");
+    expect(paintOf("bus.stereo:out", "bus.mon1:in").getAttribute("stroke-dasharray")).toBe("5 4");
+  });
+
+  it("starts and ends each line on the outer edges of the two frames", () => {
+    fx = graphFixture();
+    fx.graph.setCues(["ch1"]);
+    const rect = (id: string): { x: number; w: number } => {
+      const r = cueLayer().querySelector<SVGRectElement>(`[data-cue-frame="${id}"]`)!;
+      return { x: Number(r.getAttribute("x")), w: Number(r.getAttribute("width")) };
+    };
+    const stroke = Number(cueLayer().querySelector("[data-cue-frame]")!.getAttribute("stroke-width"));
+    const d = cueLayer().querySelector('[data-cue-line="ch1 bus.mon1"]')!.getAttribute("d")!;
+    const nums = d.match(/-?[\d.]+/g)!.map(Number);
+    const from = rect("ch1");
+    const to = rect("bus.mon1");
+    expect(nums[0]).toBe(from.x + from.w + stroke / 2);
+    expect(nums.at(-2)).toBe(to.x - stroke / 2);
+  });
+
+  it("frames a cued output alone, not what feeds it", () => {
+    fx = graphFixture();
+    fx.graph.setCues(["bus.stereo"]);
+    expect(frames()).toEqual(["bus.mon1", "bus.mon2", "bus.stereo"]);
+    expect(restingDim(nodeEl(fx.host, "ch1")!)).toBe("0.3");
+    expect(paintOf("ch1:out", "bus.stereo:in").getAttribute("opacity")).toBe("0.16");
+    const lines = [...cueLayer().querySelectorAll<SVGElement>("[data-cue-line]")].map((e) => e.dataset.cueLine);
+    expect(lines).toEqual(["bus.stereo bus.mon1", "bus.stereo bus.mon2"]);
+  });
+
+  it("leaves a monitor whose Cue Interrupt is off out of the path", () => {
+    fx = graphFixture({ seed: (plan) => (plan.nodeParams["bus.mon2"] = { cueInterrupt: false }) });
+    fx.graph.setCues(["ch1"]);
+    expect(frames()).toEqual(["bus.mon1", "ch1", "in.micline_1_2"]);
+    expect(paintOf("bus.stereo:out", "bus.mon2:in").getAttribute("stroke-dasharray")).toBeNull();
+  });
+
+  it("shows nothing once the cue is gone", () => {
+    fx = graphFixture();
+    fx.graph.setCues(["ch1"]);
+    fx.graph.setCues([]);
+    expect(cueLayer().childElementCount).toBe(0);
+    expect(restingDim(nodeEl(fx.host, "ch2")!)).toBe("1");
+    expect(paintOf("ch1:out", "bus.stereo:in").getAttribute("opacity")).toBe("0.85");
+  });
+
+  it("keeps the cue out of an image export, and on the screen", async () => {
+    fx = graphFixture();
+    fx.graph.setCues(["ch1"]);
+    await fx.graph.exportPng("board.png");
+    const svg = vi.mocked(exportSvgToPng).mock.calls[0][0];
+    expect(svg.querySelector(".cue-layer")!.childElementCount).toBe(0);
+    expect(restingDim(svg.querySelector<SVGGElement>('g.node[data-id="ch2"]')!)).toBe("1");
+    expect(
+      svg
+        .querySelector('[data-from="bus.stereo:out"][data-to="bus.mon1:in"]')!
+        .parentElement!.querySelector(".wire-paint")!
+        .getAttribute("stroke-dasharray"),
+    ).toBeNull();
+    expect(frames()).toHaveLength(4);
+    expect(restingDim(nodeEl(fx.host, "ch2")!)).toBe("0.3");
+  });
+});

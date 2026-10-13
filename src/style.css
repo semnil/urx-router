@@ -72,6 +72,12 @@
   /* Text printed on a --warn face (the "?" a value not read from the device carries). */
   --warn-ink: #14110d;
 
+  /* What is cued: a lit CUE chip, a MONITOR playing the CUE bus, the status bar's CUE readout,
+     and the board's frames and lines (PALETTES.cue). The dark value is the unit's own lit
+     [CUE]. --cue-ink is the text printed on a --cue face. */
+  --cue: #84e3ff;
+  --cue-ink: #0e0c08;
+
   --tally: #ff4d4d;
   --tally-bg: #2a1212;
   /* Solid MUTE fill: a deeper red than the glowing --tally LED so white text on it
@@ -165,6 +171,9 @@
   --warn: #a8461a;
   --warn-bg: #f9ece3;
   --warn-ink: #ffffff;
+
+  --cue: #0b7285;
+  --cue-ink: #ffffff;
 
   --tally: #b71c1c;
   --tally-bg: #fbe9e9;
@@ -1517,6 +1526,52 @@ input[type="range"]:focus-visible,
   position: relative;
 }
 
+/* ---- what is cued (status bar readout) ---- */
+
+/* Left of the link readout, and pushed right with it. The face is its own element, so the gap
+   to the message stays outside the colour. */
+.cuebar {
+  margin-left: auto;
+  padding-left: 16px;
+  flex-shrink: 0;
+}
+.cuebar-face {
+  display: flex;
+  align-items: center;
+  height: 20px;
+  padding-left: 10px;
+  border-radius: 6px;
+  background: var(--cue);
+  color: var(--cue-ink);
+  font-weight: 700;
+  overflow: hidden;
+}
+.cuebar:not([hidden]) + .linkbar {
+  margin-left: 12px;
+}
+.cuebar-names {
+  padding-right: 10px;
+  white-space: nowrap;
+}
+.cuebar-clear {
+  align-self: stretch;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--cue-ink) 25%, transparent);
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.cuebar-clear:hover {
+  background: color-mix(in srgb, var(--cue-ink) 12%, transparent);
+}
+.cuebar-clear:focus-visible {
+  outline: 2px solid var(--cue-ink);
+  outline-offset: -3px;
+}
+
 /* ---- link ledger (status bar readout, experimental) ---- */
 
 .linkbar {
@@ -2536,6 +2591,24 @@ input[type="range"]:focus-visible,
   background: var(--mute-on);
   color: #fff;
   border-color: transparent;
+}
+/* A cued strip's CUE chip, and the C.INT of a MONITOR that plays the CUE bus: the CUE
+   colour rather than the lamp, since a cue is the unit's monitoring state and not a plan
+   setting. */
+.con-chip.con-cue.on,
+.con-chip.cue-int.on {
+  background: var(--cue);
+  color: var(--cue-ink);
+  border-color: transparent;
+}
+.con-chip.con-cue.on:focus-visible,
+.con-chip.cue-int.on:focus-visible {
+  outline-color: var(--cue-ink);
+}
+/* A MONITOR strip playing the CUE bus in place of its source. Inset, as the rack clips
+   what is drawn outside a strip. */
+.con-strip.cue-take {
+  box-shadow: inset 0 0 0 2px var(--cue);
 }
 .con-gain {
   display: flex;

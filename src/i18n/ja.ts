@@ -73,6 +73,9 @@ export const ja: Messages = {
     preHint: "Pre-fader send",
     cue: "C.INT",
     cueFull: "Cue Interrupt",
+    cueChip: "CUE",
+    cueOffline: "CUE は Live 同期中に本体の CUE を切り替えます。",
+    cueTaking: "Cue Interrupt — 何かを CUE している間、このモニターは元の音の代わりに CUE バスを流します",
     mono: "MONO",
     // ストリップ群の区切りラベル (この master と下の group*) と読み値キャプション
     // (readFader / readMeter)。区切りは縦書きで組むため全角字が列幅そのものを変え、
@@ -217,6 +220,7 @@ export const ja: Messages = {
       phonesLevel: "PHONES",
       oscOn: "ON",
       cueInterrupt: "C.INT",
+      cue: "CUE",
       mono: "MONO",
       gateOn: "GATE",
       compOn: "COMP",
@@ -893,6 +897,10 @@ export const ja: Messages = {
     title: "デバイスとの照合",
     intro:
       "読み取り専用 — 書き込みは行っていません。ツールが往復する全 param をデバイスから読み、計画と照合しました。要約に件数を、全件ログに 1 件ずつ示すので、一致を鵜呑みにせず検証できます。取り込んだ設定ファイルを実機と照合する用途に使えます — ファイルの元となった個体を接続して照合してください。",
+  },
+  cueBar: {
+    label: (names: string): string => `CUE ${names}`,
+    clear: "Clear CUE",
   },
   linkStats: {
     title: "Device Center リンク",

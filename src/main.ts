@@ -12,6 +12,7 @@ import {
   mirrorLinkedInsertFx,
   mixSendLocks,
   pairSharesNodeKey,
+  isStereoLinkedPair,
   partnerChannel,
   sendPansToSources,
   withLinkedPartner,
@@ -83,7 +84,7 @@ import { Graph } from "./ui/graph";
 import type { ConnectOrigin, LabelSource, Selection, ThemeName } from "./ui/graph";
 import { compositionGate, inspectorNodes, renderInspector } from "./ui/inspector";
 import { copyText, focusables, preserveFocus } from "./ui/dom";
-import { setSaid, setTip, spoken } from "./ui/glyph";
+import { setSaid, setSpokenText, setTip, spoken } from "./ui/glyph";
 import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
 import { MidiControl } from "./ui/midi";
@@ -199,6 +200,9 @@ import { askRateChoice } from "./ui/rate-choice";
 import {
   cmdAddr,
   collisionOwners,
+  cueAddrOf,
+  cueAt,
+  cueNotifyAddrs,
   planToCommands,
   planToNameWrites,
   unnamedNodes,
@@ -206,6 +210,7 @@ import {
   unverifiedGuessNote,
 } from "./core/control/translate";
 import { decodeLcdSelection, encodeStereoSide, LcdEchoes } from "./core/control/lcd-selection";
+import { CueEchoes, CueSet, readCues, writeCueFlag } from "./core/control/cue";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
 import {
@@ -452,8 +457,10 @@ function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   const flush = live?.idle() ?? Promise.resolve();
   // …and the LCD selection write the session has on the wire, for the same reason.
   const lcd = lcdInFlight ?? Promise.resolve();
+  // …and the [CUE] writes it has queued.
+  const cue = cueWrites;
   return (
-    Promise.allSettled([ledger, reads, flush, lcd])
+    Promise.allSettled([ledger, reads, flush, lcd, cue])
       .then(() => vdDisconnect(epoch))
       // The holder goes back HERE and not in deactivateLive, because it is what stops
       // another action from connecting: an install replaces the worker, and the read still
@@ -623,6 +630,162 @@ const live = DEMO
       reregister: () => void follow?.refresh(),
     });
 
+// The unit's [CUE] flags (core/control/cue.ts): state of the live session, outside the plan, so
+// nothing here is saved, dirtied or undoable. While a session is up a change made in the app is
+// written to the unit and a change on the unit arrives as a notify; a session's start takes what
+// the unit holds and its end forgets every cue, so with no session nothing is cued and nothing
+// switches one.
+let cues = new CueSet(getModel(modelId));
+const cueEchoes = new CueEchoes();
+// One flag write at a time, in the order the changes were made; a session's release waits for
+// the tail before it disconnects.
+let cueWrites: Promise<void> = Promise.resolve();
+let cueWritesPending = 0;
+
+/** The other member of the STEREO-linked mono pair `node` belongs to, which shares its flag. */
+function cuePartner(node: string): string | undefined {
+  const model = getModel(modelId);
+  return isStereoLinkedPair(model, plan, node) ? partnerChannel(model, node) : undefined;
+}
+
+/** Turn one strip's [CUE] on or off: the one funnel the CONSOLE chip, the status bar's clear,
+ *  a MIDI control and a notify from the unit all reach. A change made in the app is refused with
+ *  no session up, and written to the unit with one. */
+function setCue(node: string, on: boolean, origin: "app" | "device"): void {
+  // A notify can arrive while a starting session registers, before it counts as up.
+  if (origin === "app" && !liveSessionUp) return;
+  const changed = cues.apply(node, on, cuePartner(node));
+  // A press on the unit is read back once the presses settle: it can put back output cues the
+  // unit was holding from before this session, which the set has no record of, and the unit
+  // announces none of them.
+  if (origin === "device") scheduleCueRead();
+  if (!changed) return;
+  if (origin === "app" && liveSessionUp) {
+    writeCue(node, on);
+    // Read back behind the write: turning the last input cue off puts back output cues the unit
+    // was holding from before this session, which the set has no record of, and the unit
+    // announces none of them.
+    rereadCues();
+  }
+  renderCues();
+}
+
+// The settle a read of the flags waits for after a press on the unit, as device follow's.
+const CUE_READ_SETTLE_MS = 300;
+let cueReadTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleCueRead(): void {
+  if (cueReadTimer !== null) clearTimeout(cueReadTimer);
+  cueReadTimer = setTimeout(() => {
+    cueReadTimer = null;
+    rereadCues();
+  }, CUE_READ_SETTLE_MS);
+}
+
+/** Read the flags back behind every write queued so far, and take what the unit holds unless
+ *  the flags changed while the read ran. */
+function rereadCues(): void {
+  if (!liveSessionUp) return;
+  const model = getModel(modelId);
+  cueWrites = cueWrites
+    .then(async () => {
+      // Behind the plan flush too: a write there can move a flag (a link copies one) that a read
+      // taken ahead of it answers with the value it replaces.
+      await live?.idle();
+      if (!liveSessionUp) return;
+      const set = cues;
+      const since = set.version;
+      const got = await readCues(model);
+      // The set a session's end or a model change replaced starts again at version 0, so the
+      // set itself is compared as well as its version. A read taken between two writes answers
+      // ahead of the later one, so it is taken only once no write is waiting; the read behind
+      // the last one takes the unit's answer.
+      if (liveSessionUp && cues === set && set.version === since && cueWritesPending === 0 && set.replace(got))
+        renderCues();
+    })
+    .catch((err: unknown) => stopLiveOnError(errorText(err)));
+}
+
+function writeCue(node: string, on: boolean): void {
+  const model = getModel(modelId);
+  const addr = cueAddrOf(model, node);
+  if (!addr) return;
+  const value = on ? 1 : 0;
+  cueWritesPending++;
+  cueWrites = cueWrites
+    .then(async () => {
+      // A session that ended while this waited has nothing to write to.
+      if (!liveSessionUp) return;
+      cueEchoes.note(addr.param, addr.y, value);
+      await writeCueFlag(addr, on);
+    })
+    .catch((err: unknown) => {
+      const guess = unverifiedGuessAt(model, addr.param, addr.y);
+      stopLiveOnError(errorText(err) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : ""));
+    })
+    .finally(() => {
+      cueWritesPending--;
+    });
+}
+
+/** Turn every cue off: the input cues first, which puts back any output cue the unit was
+ *  holding — including ones held from before this session, which the set has no record of — and,
+ *  once the flags have been read back behind those writes, every cue that read found. */
+function clearCues(): void {
+  if (!liveSessionUp) return;
+  const set = cues;
+  if (set.group() !== "input") {
+    for (const n of set.nodes()) setCue(n, false, "app");
+    return;
+  }
+  for (const n of set.nodes()) setCue(n, false, "app");
+  // Queued behind the writes and the read each of them queued, so it sees what the unit put back.
+  cueWrites = cueWrites.then(() => {
+    if (!liveSessionUp || cues !== set) return;
+    for (const n of set.nodes()) setCue(n, false, "app");
+  });
+}
+
+/** Take a read of the unit's flags into the set it was started for, unless that set was
+ *  replaced, its flags changed since the read started, or a write the read may have answered
+ *  ahead of is still waiting. */
+function adoptCueRead(nodes: readonly string[], set: CueSet, since: number): void {
+  if (cues !== set || set.version !== since || cueWritesPending > 0) return;
+  if (set.replace(nodes)) renderCues();
+}
+
+/** Forget every cue: the session that knew them ended, or the model changed. */
+function resetCues(): void {
+  cueEchoes.clear();
+  if (cueReadTimer !== null) clearTimeout(cueReadTimer);
+  cueReadTimer = null;
+  const model = getModel(modelId);
+  const stale = cues.size > 0;
+  cues = new CueSet(model);
+  if (stale) renderCues();
+  else renderCueBar();
+}
+
+const cueBar = $<HTMLElement>("cue-bar");
+const cueBarNames = $<HTMLElement>("cue-bar-names");
+const cueBarClear = $<HTMLButtonElement>("cue-bar-clear");
+cueBarClear.addEventListener("click", () => clearCues());
+
+function renderCueBar(): void {
+  const names = cues.nodes();
+  cueBar.hidden = names.length === 0;
+  setSpokenText(cueBarNames, t().cueBar.label(names.map((n) => graph.labelOf(n)).join(", ")));
+  cueBarClear.textContent = t().cueBar.clear;
+}
+
+/** Repaint everything that shows the cues: both views, the status bar and the MIDI feedback. */
+function renderCues(): void {
+  graph.setCues(cues.nodes());
+  consoleView.syncCues();
+  renderCueBar();
+  midi?.scheduleFeedback();
+}
+
 const graph = new Graph(graphHost, getModel(modelId), plan, {
   onSelect: (sel) => {
     selection = sel;
@@ -683,6 +846,13 @@ const consoleView = new Console(consoleHost, {
   onMeterError: (message) => stopLiveOnError(errorText(message)),
   onOpenDynScreen: (kind, id) => dynScreen.open(DYN_PROCESSORS[kind], id),
   onSwitchSide: (channelId, side) => switchSide(channelId, side, "app"),
+  // A strip's [CUE] chip: switchable while a session is up.
+  cue: {
+    has: (node) => cues.has(node),
+    any: () => cues.size > 0,
+    set: (node, on) => setCue(node, on, "app"),
+    enabled: () => liveSessionUp,
+  },
   // MIDI learn: while learn mode is on, console controls arm for binding instead
   // of editing.
   midi: midiLearnHooks,
@@ -1194,7 +1364,12 @@ const follow =
         // The plan's follow set plus Follow USB and the LCD selection, which the plan
         // deliberately does not carry (params.ts): the badge and the side a stereo channel
         // shows are kept in step with the device.
-        addrs: () => [...(live?.followAddrs() ?? []), FOLLOW_USB_ADDR, LCD_SELECTION_ADDR],
+        addrs: () => [
+          ...(live?.followAddrs() ?? []),
+          FOLLOW_USB_ADDR,
+          LCD_SELECTION_ADDR,
+          ...cueNotifyAddrs(getModel(modelId)),
+        ],
         // Held off while a flush is armed, running or queued: a read taken then answers an
         // edit the flush has not sent, or a write the unit has not announced, with the value
         // it replaces, and the merge takes that value over the operator's edit.
@@ -1211,6 +1386,14 @@ const follow =
             lcdNext = null;
             const sel = decodeLcdSelection(getModel(modelId), p.value);
             if (sel) switchSide(sel.channel, sel.side, "device");
+            return true;
+          }
+          // A [CUE] flag: the unit answering a write of this app's, a mirror it sets beside a
+          // flag, or a press on its panel. Only the last changes anything.
+          const cue = cueAt(getModel(modelId), p.paramId, p.x, p.y);
+          if (cue) {
+            if (!cue.mirror && !cueEchoes.take(cue.addr.param, cue.addr.y, p.value))
+              setCue(cue.addr.node, p.value !== 0, "device");
             return true;
           }
           if (!at(FOLLOW_USB_ADDR)) return false;
@@ -1323,9 +1506,17 @@ const follow =
           // Unscoped: a whole-device read covers every address, so every recent write is
           // one it must settle before reading (the scoped case above says why).
           const pending = live?.recentPending();
-          const merged = await followRead("device-follow readback", (into, signal) =>
-            applyDeviceStateScoped(into, signal, pending),
-          );
+          // The [CUE] flags are outside the plan, so the plan read does not carry them; they are
+          // read inside the same follow read, which a session's release waits for. A
+          // whole-device read follows a scene recall and stands in for any notify missed.
+          const cueSet = cues;
+          const cueSince = cueSet.version;
+          let cueGot: string[] | null = null;
+          const merged = await followRead("device-follow readback", async (into, signal) => {
+            const result = await applyDeviceStateScoped(into, signal, pending);
+            if (!result.errors.length) cueGot = await readCues(getModel(modelId));
+            return result;
+          });
           if (!merged) return;
           // Same as the scoped reconcile above: a link the whole-device read brought in gets
           // its partner snapped. This is the hook a scene or preset recall on the unit takes,
@@ -1341,6 +1532,7 @@ const follow =
           followFull = true;
           requestReflect();
           reapplyHeld(merged);
+          if (cueGot) adoptCueRead(cueGot, cueSet, cueSince);
         },
         onFollow: () => setStatus(t().status.liveFollowing),
         onError: (message) => stopLiveOnError(errorText(message)),
@@ -1512,6 +1704,8 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   lcdEchoes.clear();
   lcdNext = null;
   lcdLast = null;
+  // A cue is the unit's state, which nothing reads once the session is gone.
+  resetCues();
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
   liveAdopted = 0;
@@ -1939,6 +2133,7 @@ function applyStaticI18n(): void {
   // The badge's hint differs by state, so it cannot be relabelled from the
   // language alone — re-paint it from the state the session already holds.
   renderFollowUsbBadge();
+  renderCueBar();
   $("btn-new").textContent = m.toolbar.new;
   $("lbl-file").textContent = m.toolbar.file;
   $("btn-open").textContent = m.toolbar.open;
@@ -2517,7 +2712,10 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
     dirty = false;
     // A different model is plausibly a different unit, so what the badge read from the last
     // one is no longer a claim the app can make, whichever entry switched it.
-    if (modelId !== prevModelId) setFollowUsbBadge(null);
+    if (modelId !== prevModelId) {
+      setFollowUsbBadge(null);
+      resetCues();
+    }
   } catch (err) {
     // Put the previous document back on screen and report, rather than throwing: three
     // of the four callers pass an app-generated plan and do not catch, so a throw would
@@ -4138,6 +4336,8 @@ if (!DEMO) {
         // both end()s no-op when nothing was started.
         follow?.end();
         live?.end();
+        // The cues the starting read took belong to the session that did not start.
+        resetCues();
         await releaseLive(device.epoch, "error");
         showError(message, supplied ?? "");
       };
@@ -4176,6 +4376,7 @@ if (!DEMO) {
         // read beside Follow USB, for the same reason and with the same failure.
         let followUsb = false;
         let lcdSelection = 0;
+        let cueRead: string[] = [];
         let merged: MergedRead | null;
         try {
           merged = await readIntoPlan(
@@ -4183,6 +4384,9 @@ if (!DEMO) {
             async (into) => {
               followUsb = await readFollowUsb();
               lcdSelection = await readLcdSelection();
+              // On the device's model: a read that carries a switch reads for the plan it
+              // switches to.
+              cueRead = await readCues(getModel(switchTo ? switchTo.modelId : modelId));
               return applyDeviceStateScoped(into);
             },
             switchTo ? undefined : planWrites,
@@ -4238,6 +4442,10 @@ if (!DEMO) {
         // while the read ran — and every other stereo channel keeps the side the app shows.
         const lcd = decodeLcdSelection(getModel(modelId), lcdSelection);
         if (lcd) switchSide(lcd.channel, lcd.side, "device");
+        // What the unit has cued replaces whatever a MIDI control switched while no session
+        // was up.
+        resetCues();
+        if (cues.replace(cueRead)) renderCues();
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.
         liveAdopted = 0;
@@ -4272,6 +4480,9 @@ if (!DEMO) {
         liveEpoch = device.epoch;
         liveSessionUp = true;
         setLiveUi(true);
+        // The flags were read before the notify stream was registered; a press on the unit in
+        // between announced itself to nobody.
+        rereadCues();
         // An edit made while the starting read ran had no session to flush through, so the
         // plan differs from the snapshot the session just took with nothing else left to
         // schedule the send — whether the read held that key, lost it, or found the unit
@@ -4319,6 +4530,8 @@ if (!DEMO) {
   midi = new MidiControl({
     getModel: () => getModel(modelId),
     getPlan: () => plan,
+    // A CUE control switches the flag while a session is up, and is refused otherwise.
+    cue: { has: (node) => cues.has(node), set: (node, on) => setCue(node, on, "app"), enabled: () => liveSessionUp },
     onApplied: (control, mirrored, keys) => {
       markChanged("midi", [
         ...keys,

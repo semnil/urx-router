@@ -29,7 +29,7 @@ import {
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
 import { getSettings } from "../core/settings";
 import type { ExportOptions, SaveResult } from "../core/storage";
-import { oscAssign } from "../core/control/translate";
+import { cueAddrOf, oscAssign } from "../core/control/translate";
 import { planColorHex, SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
 import { trackCountCeiling } from "../core/constraints";
 import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale, notePanelHeight } from "./graph-text";
@@ -80,6 +80,11 @@ const WIRE_HIT_W = 14;
 // clear space rather than behind the node above.
 const TAP_CX = 62;
 const TAP_RISE = 14;
+// The frame around a node on the CUE bus's path: how far outside the faceplate it runs, which
+// clears the jacks on its edges and leaves a gap between the frames of two nodes a row apart,
+// and its stroke.
+const CUE_FRAME_PAD = 7;
+const CUE_FRAME_W = 2;
 // The tap's pointer target: a band sized to the jack itself, not to the row
 // gutter. Reaching further up would be free space only in the default layout —
 // nodes drag freely, so a tall band lands on whatever the user parked above and
@@ -191,6 +196,10 @@ interface Palette {
   /** In-frame note panel: recessed-well tint and ink. */
   noteWell: string;
   noteInk: string;
+  /** What is cued: the frames, the lines into a monitor and the CUE badge's face. */
+  cue: string;
+  /** Ink of the CUE badge printed on `cue`. */
+  cueInk: string;
 }
 
 // Exported for src/ui/palette.contract.test.ts, which is the only thing holding
@@ -223,6 +232,8 @@ export const PALETTES: Record<ThemeName, Palette> = {
     sublabelOpacity: 0.6,
     noteWell: "rgba(0,0,0,0.24)",
     noteInk: "#e9ddc3",
+    cue: "#84e3ff",
+    cueInk: "#0e0c08",
   },
   light: {
     canvasBg: "#e8e3d8",
@@ -254,6 +265,8 @@ export const PALETTES: Record<ThemeName, Palette> = {
     sublabelOpacity: 0.75,
     noteWell: "rgba(95,78,42,0.10)",
     noteInk: "#3c3320",
+    cue: "#0b7285",
+    cueInk: "#ffffff",
   },
 };
 
@@ -304,6 +317,8 @@ export class Graph {
   private wireLayer!: SVGGElement;
   private nodeLayer!: SVGGElement;
   private overlay!: SVGGElement;
+  // What is cued, drawn over everything else and kept out of an image export.
+  private cueLayer!: SVGGElement;
   private shelf!: HTMLDivElement;
   // Floating contextual bar shown while several nodes are multi-selected.
   private selbar!: HTMLDivElement;
@@ -380,6 +395,14 @@ export class Graph {
   // The node the trace was taken for. The closure is taken again from it before every
   // wire and node repaint, so an edit, an undo or a device read under the trace moves it.
   private pathRoot: string | null = null;
+  // The cued strips (setCues). While any is, the board fades what the CUE bus does not carry.
+  private cued: readonly string[] = [];
+  // The nodes the CUE bus's path runs through and the monitors that play it, taken again
+  // before every repaint (recue). Empty while nothing drawn is cued.
+  private cuePathNodes = new Set<string>();
+  private cueMonitors: string[] = [];
+  // True while an image export is being taken, which carries nothing of the cue.
+  private cueHeld = false;
 
   // transient interaction state. `link` is a STEREO-linked, visible partner that
   // moves with the dragged node (keeping its offset), plus the pair to redraw the
@@ -741,7 +764,10 @@ export class Graph {
     this.wireLayer = document.createElementNS(SVGNS, "g");
     this.nodeLayer = document.createElementNS(SVGNS, "g");
     this.overlay = document.createElementNS(SVGNS, "g");
-    this.viewport.append(this.wireLayer, this.nodeLayer, this.overlay);
+    this.cueLayer = document.createElementNS(SVGNS, "g");
+    this.cueLayer.classList.add("cue-layer");
+    this.cueLayer.style.pointerEvents = "none";
+    this.viewport.append(this.wireLayer, this.nodeLayer, this.overlay, this.cueLayer);
     this.svg.append(this.viewport);
     host.append(this.svg);
 
@@ -1763,6 +1789,7 @@ export class Graph {
 
   private redrawWires(): void {
     this.retrace();
+    this.recue();
     this.wireLayer.replaceChildren();
     // Partition the visible wires into off / on in one pass. Off / -∞ sends paint
     // first (behind) and the live (on) wires last (on top), so in the dense always-
@@ -1785,6 +1812,9 @@ export class Graph {
     // Jacks share the wires' off-state, so refresh them in lockstep: a wire-only
     // repaint (a send on/off, a node mute) must re-evaluate which ports stay lit.
     this.refreshPortStates();
+    // A rewire or a moved node moves the CUE bus's path and the lines drawn for it, and the
+    // node fades follow the path.
+    if (this.cuePathNodes.size || this.cueLayer.childElementCount) this.highlightSelectedNode();
   }
 
   private makeWire(conn: PlanConnection): SVGGElement {
@@ -1808,8 +1838,14 @@ export class Graph {
     // nodes is a parallel silent route, not part of the flow being traced).
     const pathActive = this.pathNodes.size > 0;
     const inPath = pathActive && !off && this.pathNodes.has(fromId) && this.pathNodes.has(toId);
+    // While something is cued, the wires the CUE bus is fed through stay as they are and the
+    // rest fade like an off-path wire. A wire into a monitor that plays the CUE bus is the feed
+    // the unit drops for as long as the cue lasts, so it is drawn faint and dashed.
+    const cueActive = this.cuePathNodes.size > 0;
+    const cueCarried = cueActive && !off && this.cuePathNodes.has(fromId) && this.cuePathNodes.has(toId);
+    const cueReplaced = cueActive && this.cueMonitors.includes(toId);
     const lit = selected || incident || inPath;
-    const faded = (hasNodeSel || pathActive) && !lit;
+    const faded = (hasNodeSel || pathActive || (cueActive && !cueCarried)) && !lit;
 
     // Invisible wide band along the wire so the thin curve is easy to click; it
     // carries the pointer handler while the painted wire below stays thin. The
@@ -1875,10 +1911,14 @@ export class Graph {
     path.setAttribute("stroke-linecap", "round");
     // Off sends sit well below the normal 0.85 so they recede behind live routing,
     // but a selected/incident one snaps to full so it stays editable.
-    path.setAttribute("opacity", faded ? (off ? "0.08" : "0.16") : lit ? "1" : off ? "0.3" : "0.85");
+    path.setAttribute(
+      "opacity",
+      cueReplaced && !lit ? "0.3" : faded ? (off ? "0.08" : "0.16") : lit ? "1" : off ? "0.3" : "0.85",
+    );
     // A fine dotted line marks an off send; PRE (a longer dash) wins when both, since
     // the amber PRE glyph already carries the off-ness for a pre-tapped silent send.
-    if (isPre) path.setAttribute("stroke-dasharray", "7 5");
+    if (cueReplaced) path.setAttribute("stroke-dasharray", "5 4");
+    else if (isPre) path.setAttribute("stroke-dasharray", "7 5");
     else if (off) path.setAttribute("stroke-dasharray", "1.5 4");
     path.style.pointerEvents = "none";
     g.append(path);
@@ -2001,6 +2041,120 @@ export class Graph {
     else this.clearTrace();
   }
 
+  /** Show what is cued (the unit's [CUE] flags, outside the plan). Empty shows nothing. */
+  setCues(nodes: readonly string[]): void {
+    this.cued = [...nodes];
+    this.redrawWires();
+    this.highlightSelectedNode();
+  }
+
+  /**
+   * Take the CUE bus's path again against the plan as it stands: each drawn cued channel with
+   * everything that feeds it, each drawn cued output (STEREO, a MIX bus, STREAMING) alone, and
+   * the drawn monitors whose Cue Interrupt (on unless the plan turns it off) makes them play the
+   * CUE bus in place of their own source. Nothing while nothing drawn is cued, or while an export
+   * is being taken.
+   */
+  private recue(): void {
+    this.cuePathNodes = new Set();
+    this.cueMonitors = [];
+    if (this.cueHeld) return;
+    for (const id of this.cued) {
+      if (!this.nodeById.has(id) || this.isHidden(id)) continue;
+      if (cueAddrOf(this.model, id)?.group === "output") this.cuePathNodes.add(id);
+      else for (const n of this.upstreamOf(id)) this.cuePathNodes.add(n);
+    }
+    if (!this.cuePathNodes.size) return;
+    this.cueMonitors = ["bus.mon1", "bus.mon2"].filter(
+      (id) => this.nodeById.has(id) && !this.isHidden(id) && (this.plan.nodeParams[id]?.cueInterrupt ?? true),
+    );
+    for (const id of this.cueMonitors) this.cuePathNodes.add(id);
+  }
+
+  /** The frame drawn around a node on the CUE bus's path, outside its jacks. */
+  private cueFrame(id: string): { x: number; y: number; w: number; h: number } {
+    const p = this.posOf(id);
+    return {
+      x: p.x - CUE_FRAME_PAD,
+      y: p.y - CUE_FRAME_PAD,
+      w: NODE_W + 2 * CUE_FRAME_PAD,
+      h: this.nodeHeight(id) + 2 * CUE_FRAME_PAD,
+    };
+  }
+
+  /**
+   * Draw what is cued over the board: a frame around every node on the CUE bus's path, a CUE
+   * badge on each monitor that plays it, and a line from each cued strip to each of those
+   * monitors. A line runs between the two frames' outer edges and never into a frame.
+   */
+  private drawCues(): void {
+    this.cueLayer.replaceChildren();
+    if (!this.cuePathNodes.size) return;
+    const p = this.palette;
+    const edge = CUE_FRAME_W / 2;
+    for (const id of this.cuePathNodes) {
+      const f = this.cueFrame(id);
+      const rect = document.createElementNS(SVGNS, "rect");
+      rect.setAttribute("x", String(f.x));
+      rect.setAttribute("y", String(f.y));
+      rect.setAttribute("width", String(f.w));
+      rect.setAttribute("height", String(f.h));
+      rect.setAttribute("rx", "8");
+      rect.setAttribute("fill", "none");
+      rect.setAttribute("stroke", p.cue);
+      rect.setAttribute("stroke-width", String(CUE_FRAME_W));
+      rect.dataset.cueFrame = id;
+      this.cueLayer.append(rect);
+    }
+    for (const mon of this.cueMonitors) {
+      const f = this.cueFrame(mon);
+      const badge = document.createElementNS(SVGNS, "g");
+      badge.dataset.cueBadge = mon;
+      // Astride the frame's top edge at its right end.
+      const w = 34;
+      const h = 14;
+      const bx = f.x + f.w - w + edge;
+      const by = f.y - h / 2;
+      const face = document.createElementNS(SVGNS, "rect");
+      face.setAttribute("x", String(bx));
+      face.setAttribute("y", String(by));
+      face.setAttribute("width", String(w));
+      face.setAttribute("height", String(h));
+      face.setAttribute("rx", "4");
+      face.setAttribute("fill", p.cue);
+      const label = document.createElementNS(SVGNS, "text");
+      label.setAttribute("x", String(bx + w / 2));
+      label.setAttribute("y", String(by + h / 2));
+      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("dominant-baseline", "central");
+      label.setAttribute("fill", p.cueInk);
+      label.setAttribute("font-family", LABEL_FONT);
+      label.setAttribute("font-size", "9.5");
+      label.setAttribute("font-weight", "700");
+      label.setAttribute("letter-spacing", "1");
+      label.textContent = "CUE";
+      badge.append(face, label);
+      this.cueLayer.append(badge);
+    }
+    for (const id of this.cued) {
+      if (!this.cuePathNodes.has(id)) continue;
+      const from = this.cueFrame(id);
+      const a = { x: from.x + from.w + edge, y: this.posOf(id).y + NODE_H / 2 };
+      for (const mon of this.cueMonitors) {
+        const to = this.cueFrame(mon);
+        const b = { x: to.x - edge, y: this.posOf(mon).y + NODE_H / 2 };
+        const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
+        const line = document.createElementNS(SVGNS, "path");
+        line.setAttribute("d", `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`);
+        line.setAttribute("fill", "none");
+        line.setAttribute("stroke", p.cue);
+        line.setAttribute("stroke-width", "2.5");
+        line.dataset.cueLine = `${id} ${mon}`;
+        this.cueLayer.append(line);
+      }
+    }
+  }
+
   /** Clear any selection (used by the canvas, the action bar, and Escape). */
   clearSelection(): void {
     if (!this.selection && !this.selectedNodes.size) return;
@@ -2023,7 +2177,8 @@ export class Graph {
       // Fade off-path nodes to a fraction of their resting opacity (so a muted /
       // unread node keeps its own dim), and restore the rest to that base.
       const base = this.restingOpacity(node);
-      const fadeOff = pathActive && !this.pathNodes.has(id);
+      const fadeOff =
+        (pathActive && !this.pathNodes.has(id)) || (this.cuePathNodes.size > 0 && !this.cuePathNodes.has(id));
       // A badged node carries its dim on its body, so the badge beside it keeps full
       // strength; the node itself then carries the path fade alone.
       const body = el.querySelector(":scope > .node-body");
@@ -2047,6 +2202,7 @@ export class Graph {
       else rect.removeAttribute("stroke-dasharray");
     }
     this.syncRovingNode();
+    this.drawCues();
     // Raise the anchor node so its note panel sits above any neighbor below it. Moving the
     // element takes keyboard focus off it, so a focused anchor is focused again.
     if (anchor) {
@@ -3248,7 +3404,20 @@ export class Graph {
   private cloneForExport(): { svg: SVGSVGElement; w: number; h: number } {
     const b = this.contentBounds();
     const pad = 28;
+    // An export carries nothing of the cue: the board is redrawn without it for the clone and
+    // with it again straight after, in one task, so the screen never paints the state between.
+    const cueShown = this.cuePathNodes.size > 0;
+    if (cueShown) {
+      this.cueHeld = true;
+      this.redrawWires();
+      this.highlightSelectedNode();
+    }
     const clone = this.svg.cloneNode(true) as SVGSVGElement;
+    if (cueShown) {
+      this.cueHeld = false;
+      this.redrawWires();
+      this.highlightSelectedNode();
+    }
     const vp = clone.querySelector("g") as SVGGElement;
     vp.removeAttribute("transform");
     clone.querySelectorAll(".overlay-temp").forEach((el) => el.remove());

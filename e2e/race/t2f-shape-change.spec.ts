@@ -18,6 +18,8 @@ import {
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, spans } from "./analyze";
 import { readoutOf } from "./ui";
+import { cueNotifyAddrs } from "../../src/core/control/translate";
+import { getModel } from "../../src/models";
 
 // T2f shape-change — the two addresses that are in the plan's world without being in
 // the plan (docs/{en,ja}/live-race-harness.md).
@@ -74,6 +76,11 @@ const SETUP_IDS = [758, 760, 761, 767, 768, 769, 770, 771, 772, 787, 788, 795, 8
  *  The knob strings ride vd_get_str and are counted separately. */
 const SETUP_NUMERIC_IDS = [758, 760, 761, 767, 768, 769, 787, 788, 795, 812, 831];
 const UDK_FUNCTION_ID = 770;
+/** The [CUE] flags main.ts registers after Follow USB and the LCD selection, each with the
+ *  instances the unit sets beside it. */
+const CUE_ADDRS = cueNotifyAddrs(getModel("URX44V"));
+/** The host-owned tail of the registration, in the order main.ts's addrs hook appends it. */
+const HOST_TAIL: Array<[number, number, number]> = [[848, 0, 0], [762, 0, 0], ...CUE_ADDRS];
 const UDK_SLOTS = 16;
 
 /** Whole-device reconciles that began after `at` (see RATE_ADDR). */
@@ -148,13 +155,10 @@ test.describe("T2f shape-change", () => {
     // …and it is in the set exactly once: a global scalar emitted by one unconditional
     // push, not one per node like everything else in the list.
     expect(reg.filter((a) => a[0] === 766)).toHaveLength(1);
-    // …and Follow USB and the LCD selection are appended past the end of it by main.ts's
-    // addrs hook: each is in the registration exactly once, at the tail, where nothing in
-    // the plan can put it.
-    expect(reg.slice(-2)).toEqual([
-      [848, 0, 0],
-      [762, 0, 0],
-    ]);
+    // …and Follow USB, the LCD selection and the [CUE] flags are appended past the end of it
+    // by main.ts's addrs hook: each is in the registration exactly once, at the tail, where
+    // nothing in the plan can put it.
+    expect(reg.slice(-HOST_TAIL.length)).toEqual(HOST_TAIL);
     expect(reg.filter((a) => a[0] === 848)).toHaveLength(1);
     expect(reg.filter((a) => a[0] === 762)).toHaveLength(1);
 
@@ -470,14 +474,11 @@ test.describe("T2f shape-change", () => {
         `, ${followUsbReads.length} on 848. Registered planExternal ids: [${registeredFlagged.join(", ")}]`,
     );
 
-    // The two exceptions are the ones with a hook, Follow USB and the LCD selection.
-    // Fourteen addresses catalogued beside them with the same flag, and not one of them is
-    // registered — so nothing routes their notifies anywhere.
+    // The exceptions are the ones with a hook: Follow USB, the LCD selection and the [CUE]
+    // flags. Fourteen SETUP addresses catalogued beside them with the same flag, and not one
+    // of them is registered — so nothing routes their notifies anywhere.
     expect(registeredFlagged).toEqual([848, 762]);
-    expect(reg.slice(-2)).toEqual([
-      [848, 0, 0],
-      [762, 0, 0],
-    ]);
+    expect(reg.slice(-HOST_TAIL.length)).toEqual(HOST_TAIL);
     // …and no readback group covers them either: a whole-device read of ~800 addresses
     // asks for none of the fourteen. 848 and 762 are read once each, by the reads the
     // session start makes beside the readback, which is the same asymmetry seen from the
