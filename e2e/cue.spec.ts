@@ -1,6 +1,10 @@
 import { test, expect, type Page } from "./fixtures";
 import {
+  deviceValueOf,
   heldReadsOf,
+  heldWritesOf,
+  releaseHeldWrite,
+  setHeldWrites,
   LIVE_COMMANDS,
   notifyParam,
   setDeviceValue,
@@ -263,3 +267,32 @@ for (const cmd of ["vd_params_subscribe", "vd_watch_link"]) {
     await expect(readout(page)).toHaveText("CUE CH 1");
   });
 }
+
+test("a read behind one write does not undo a cue still waiting to be written", async ({ page }) => {
+  await goLive(page);
+  await page.click("#btn-view-console");
+  await setHeldWrites(page, [CUE_MONO]);
+  await chip(page, "ch1").click();
+  await chip(page, "ch2").click();
+  await expect.poll(() => heldWritesOf(page)).toBe(1);
+  // CH 1's write lands; the read queued behind it runs before CH 2's write goes out, and CH 2's
+  // write is then held in its turn.
+  await releaseHeldWrite(page);
+  await expect.poll(() => writesOf(page)).toEqual([[CUE_MONO, 1]]);
+  await expect.poll(() => heldWritesOf(page)).toBe(1);
+  await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "true");
+  // The operator takes CH 2 back off before its first write has landed.
+  await chip(page, "ch2").click();
+  await setHeldWrites(page, []);
+  await expect
+    .poll(() => writesOf(page))
+    .toEqual([
+      [CUE_MONO, 1],
+      [CUE_MONO, 1],
+      [CUE_MONO, 0],
+    ]);
+  expect(await deviceValueOf(page, CUE_MONO, 1)).toBe(0);
+  await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "false");
+  await expect(chip(page, "ch1")).toHaveAttribute("aria-pressed", "true");
+  await expect(readout(page)).toHaveText("CUE CH 1");
+});

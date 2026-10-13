@@ -697,8 +697,11 @@ function rereadCues(): void {
       const since = set.version;
       const got = await readCues(model);
       // The set a session's end or a model change replaced starts again at version 0, so the
-      // set itself is compared as well as its version.
-      if (liveSessionUp && cues === set && set.version === since && set.replace(got)) renderCues();
+      // set itself is compared as well as its version. A read taken between two writes answers
+      // ahead of the later one, so it is taken only once no write is waiting; the read behind
+      // the last one takes the unit's answer.
+      if (liveSessionUp && cues === set && set.version === since && cueWritesPending === 0 && set.replace(got))
+        renderCues();
     })
     .catch((err: unknown) => stopLiveOnError(errorText(err)));
 }
