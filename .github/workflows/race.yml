@@ -312,7 +312,7 @@ jobs:
       # test-results/, so that is what a failing run has to upload. The name carries the
       # shard: from v4 on an artifact name can be uploaded once per run, so three shards
       # sharing one name fails the upload instead of merging into it.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: race-traces-${{ matrix.shard }}
@@ -365,7 +365,7 @@ jobs:
           browser: webkit
           with-deps: "false"
       - run: pnpm test:e2e:race:webkit
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: race-traces-webkit
