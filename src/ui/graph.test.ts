@@ -191,6 +191,32 @@ describe("appearance", () => {
     expect(dotted()).toBe(false);
   });
 
+  // Above 96 kHz the unit runs no FX2, so a live send into it and its return carry nothing
+  // and draw as OFF sends, while the same wires at 48 kHz stay live.
+  it("draws a wire to or from a rate-disabled node as OFF", () => {
+    const wires: [string, string][] = [
+      ["ch1:out", "bus.fx2:in"],
+      ["bus.fx2:out", "bus.stereo:in"],
+    ];
+    const seed =
+      (rate: number) =>
+      (plan: Plan): void => {
+        for (const [from, to] of wires) {
+          const c = plan.connections.find((w) => w.from === from && w.to === to)!;
+          c.params = { ...c.params, level: 0 };
+        }
+        plan.sampleRate = rate;
+      };
+    const dotted = (from: string, to: string): boolean =>
+      wireHit(fx.host, from, to)!.parentElement!.querySelector(".wire-paint")!.getAttribute("stroke-dasharray") ===
+      "1.5 4";
+    fx = graphFixture({ modelId: "URX44V", seed: seed(48000) });
+    for (const [from, to] of wires) expect(dotted(from, to)).toBe(false);
+    fx.restore();
+    fx = graphFixture({ modelId: "URX44V", seed: seed(192000) });
+    for (const [from, to] of wires) expect(dotted(from, to)).toBe(true);
+  });
+
   // The hover rule finds the painted wire by class: a lit wire puts its halo between the
   // hit band and the paint, where a next-sibling rule would thicken the halo instead.
   it("tags exactly one painted path per wire, after any halo", () => {
@@ -542,12 +568,15 @@ describe("path trace", () => {
       },
     });
     fx.graph.setDisabledNodes(["bus.fx2"]);
-    expect(wireOpacity("bus.fx2:out", "bus.stereo:in")).not.toBeNull();
+    const offPath: [string, string][] = [
+      ["bus.fx2:out", "bus.stereo:in"],
+      ["ch1:out", "bus.fx2:in"],
+    ];
+    const resting = offPath.map(([from, to]) => Number(wireOpacity(from, to)));
     // A long press selects the node before the hold traces it.
     selectNode("bus.stereo");
     trace("bus.stereo");
-    expect(wireOpacity("bus.fx2:out", "bus.stereo:in")).toBe("0.16");
-    expect(wireOpacity("ch1:out", "bus.fx2:in")).toBe("0.16");
+    offPath.forEach(([from, to], i) => expect(Number(wireOpacity(from, to))).toBeLessThan(resting[i]));
     expect(wireOpacity("ch1:out", "bus.stereo:in")).toBe("1");
   });
 
@@ -562,11 +591,11 @@ describe("path trace", () => {
       },
     });
     fx.graph.setDisabledNodes(["bus.fx2"]);
+    const resting = [wireOpacity("ch1:out", "bus.fx2:in"), wireOpacity("ch1:out", "bus.stereo:in")];
     selectNode("bus.fx2");
     expect(wireOpacity("ch1:out", "bus.fx2:in")).toBe("1");
     trace("bus.fx2");
-    expect(wireOpacity("ch1:out", "bus.fx2:in")).toBe("0.85");
-    expect(wireOpacity("ch1:out", "bus.stereo:in")).toBe("0.85");
+    expect([wireOpacity("ch1:out", "bus.fx2:in"), wireOpacity("ch1:out", "bus.stereo:in")]).toEqual(resting);
     selectNode("bus.fx2");
     expect(wireOpacity("ch1:out", "bus.fx2:in")).toBe("1");
   });

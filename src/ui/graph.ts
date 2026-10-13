@@ -1257,10 +1257,14 @@ export class Graph {
   // OSC → bus carries oscL/oscR (per-bus assign), so its wire also reads off when
   // both its L and R assigns are off — and a muted endpoint (incl. the oscillator
   // off, via isNodeInactive) recedes it too, the same uniform rule every node follows.
+  // A wire to or from a node the sample rate has taken away (FX2 above 96 kHz) carries
+  // nothing whatever its params hold, so it recedes as well.
   private isOffSend(conn: PlanConnection): boolean {
     if (conn.params?.on === false) return true;
     const fromId = parseRef(conn.from).nodeId;
     const toId = parseRef(conn.to).nodeId;
+    const rate = this.plan.sampleRate;
+    if (nodeRateDisabled(fromId, rate) || nodeRateDisabled(toId, rate)) return true;
     const src = this.nodeById.get(fromId);
     const dst = this.nodeById.get(toId);
     if ((src && this.isNodeInactive(src)) || (dst && this.isNodeInactive(dst))) return true;
@@ -2032,17 +2036,9 @@ export class Graph {
     return upstreamNodes(
       this.plan,
       id,
-      (c) => this.isLiveWire(c),
+      (c) => !this.isOffSend(c),
       duckers ? (cur) => this.duckerFeeders(cur) : undefined,
     );
-  }
-
-  /** A wire the trace follows: not an off send, and neither end a node the sample rate
-   *  has taken away (FX2 above 96 kHz carries no signal whatever its sends hold). */
-  private isLiveWire(c: PlanConnection): boolean {
-    if (this.isOffSend(c)) return false;
-    const rate = this.plan.sampleRate;
-    return ![c.from, c.to].some((r) => nodeRateDisabled(parseRef(r).nodeId, rate));
   }
 
   /** A ducker that is on and keyed by a live wire. */
@@ -2051,7 +2047,7 @@ export class Graph {
     return (
       node?.kind === "ducker" &&
       !this.isNodeInactive(node) &&
-      this.plan.connections.some((c) => parseRef(c.to).nodeId === id && this.isLiveWire(c))
+      this.plan.connections.some((c) => parseRef(c.to).nodeId === id && !this.isOffSend(c))
     );
   }
 

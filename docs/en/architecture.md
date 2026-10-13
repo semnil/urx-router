@@ -944,15 +944,14 @@ both ask). Every other input's last wire can be deleted.
 
 **Path trace**: long-pressing a node (`LONG_PRESS_MS`, ~450ms, held without moving past
 `LONG_PRESS_TOLERANCE`) highlights the signal path feeding it. `routing.ts`
-`upstreamNodes` walks connections backwards through live wiring only (`isLiveWire`: not an
-`isOffSend`) to gather the node's upstream closure (its inputs, channels, and buses) — OFF / -∞ sends
-are skipped, or the always-wired send mesh would trace every node back to all inputs and the closure
-would be the whole board. A wire to or from a node the sample rate has taken away (FX2 above 96 kHz)
-is skipped too, since the unit runs no signal through it. A channel's active ducker (on, with a live
-key wire) joins the closure of the channel it hangs under, and its key source with it, and tracing the
-ducker takes in that channel and its sources the same way: the key shapes the channel's level though
-no wire joins the two (`upstreamNodes`' `feeders`). Nodes in the closure wear an accent frame; live
-wires with both endpoints in it light up. While a trace is active only those light: a wire that merely
+`upstreamNodes` walks connections backwards through live wiring only (`isOffSend` false) to gather
+the node's upstream closure (its inputs, channels, and buses) — OFF / -∞ sends are skipped, or the
+always-wired send mesh would trace every node back to all inputs and the closure would be the whole
+board; so is a wire to or from a node the sample rate has taken away (see "Uniform OFF display"). A
+channel's active ducker (on, with a live key wire) joins the closure of the channel it hangs under,
+and its key source with it, and tracing the ducker takes in that channel and its sources the same way:
+the key shapes the channel's level though no wire joins the two (`upstreamNodes`' `feeders`). Nodes in
+the closure wear an accent frame; live wires with both endpoints in it light up. While a trace is active only those light: a wire that merely
 touches the selected node from outside the closure fades like any other off-path wire. Both
 wires and nodes off the path fade (the same lit / faded split a multi-selection uses); a node fades
 by a factor of its resting opacity, derived from node state by `restingOpacity` (the same precedence
@@ -989,7 +988,9 @@ none of it: the board is redrawn without the cue for the clone and with it strai
 oscillator). A node can be in several states at once, so only the highest-ranked one shows —
 **rate-disabled > muted > unread** — to keep the badges from colliding. A fixed send bound to a
 silenced node recedes through the `isOffSend` predicate (dimmed and finely dotted, behind the live
-wires; an OSC → bus wire also when both its L/R assigns are off), and its jacks stop glowing (port
+wires; an OSC → bus wire also when both its L/R assigns are off, and any wire to or from a node the
+sample rate has taken away — FX2 above 96 kHz — whatever its params hold, since the unit runs no
+signal through that node), and its jacks stop glowing (port
 lighting follows the wires' off-state). A multi-selection lights every wire incident to the whole
 selection, matching the node highlighting.
 
