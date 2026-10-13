@@ -947,7 +947,16 @@ both ask). Every other input's last wire can be deleted.
 `upstreamNodes` walks connections backwards through live wiring only (`isOffSend` false) to gather
 the node's upstream closure (its inputs, channels, and buses) — OFF / -∞ sends are skipped, or the
 always-wired send mesh would trace every node back to all inputs and the closure would be the whole
-board. Nodes in the closure wear an accent frame; live wires with both endpoints in it light up. Both
+board; so is a wire to or from a node the sample rate has taken away (see "Uniform OFF display"). A
+channel's active ducker (on, with a live key wire) shapes the channel's level though no wire joins the
+two (`upstreamNodes`' `feeders`), so it joins the closure, with its key source, wherever the walk takes
+the channel after its Ducker: the STEREO main path, a POST send, any send into a FIXED MIX bus, or the
+traced channel itself. A direct out, a PRE send and a channel key take the channel ahead of its
+Ducker (`tapAheadOfDucker`, which reads the block diagram's taps through `directOutTarget`,
+`duckerKeySource` and `sendIsPreFader`), and a walk through one of them leaves the Ducker out. Tracing
+the ducker takes in its channel and the channel's sources. Nodes in the closure wear an accent frame; live wires with both endpoints in it light up. While a trace is
+active only those light: a wire that merely touches the selected node from outside the closure fades
+like any other off-path wire. Both
 wires and nodes off the path fade (the same lit / faded split a multi-selection uses); a node fades
 by a factor of its resting opacity, derived from node state by `restingOpacity` (the same precedence
 `makeNode` dims it: rate-disabled > inactive > unread > plain), so a muted / unread node keeps its own
@@ -957,14 +966,15 @@ board being handed a plan (`setModel`: Fetch, the Live-sync read, a `.urxf` impo
 switch). It keeps the node it was taken for (`pathRoot`) and takes the closure again from it before
 every wire and node repaint, so an edit, an undo, a MIDI move or a device read under the trace moves
 it with the wiring; a root shelved or left with nothing live feeding it ends the trace. A
-node with no upstream (an input) just reports it on the status bar and lights nothing. The closure is
-route-accurate, not per-node: a stereo input mirrors its source onto a channel pair, so muting one
+node with no upstream (an input) just reports it on the status bar and lights nothing: its own wires
+neither light nor fade until the selection changes. The closure is route-accurate, not per-node: a stereo input mirrors its source onto a channel pair, so muting one
 half of the pair leaves the muted channel off the path while its shared input stays lit through the
 still-live partner channel — the input is genuinely on the path until both halves are silenced.
 
 **CUE on the board**: while a strip is cued (the unit's [CUE], live-session state — see "CUE" under "What
 the app models, and what it leaves to the unit"), the board shows what the CUE bus carries and where it goes,
-without a node for the bus. The path is each cued channel's upstream closure (the path trace's `upstreamNodes`),
+without a node for the bus. The path is each cued channel's upstream closure (the path trace's `upstreamNodes`, taken
+as the CUE bus takes the channel — ahead of its Ducker, so the Ducker and its key stay off it),
 each cued output (STEREO, a MIX bus, STREAMING) alone — its upstream would frame most of the board — and every
 drawn monitor whose Cue Interrupt is on, since such a monitor plays the CUE bus in place of its own source,
 whichever bus that source is, while anything is cued. Off the path, wires fade to 0.16 and nodes to 0.3 of their resting opacity, as
@@ -982,9 +992,14 @@ none of it: the board is redrawn without the cue for the clone and with it strai
 oscillator). A node can be in several states at once, so only the highest-ranked one shows —
 **rate-disabled > muted > unread** — to keep the badges from colliding. A fixed send bound to a
 silenced node recedes through the `isOffSend` predicate (dimmed and finely dotted, behind the live
-wires; an OSC → bus wire also when both its L/R assigns are off), and its jacks stop glowing (port
-lighting follows the wires' off-state). A multi-selection lights every wire incident to the whole
-selection, matching the node highlighting.
+wires; an OSC → bus wire also when both its L/R assigns are off, and any wire to or from a node the
+sample rate has taken away — FX2 above 96 kHz — whatever its params hold, since the unit runs no
+signal through that node), and its jacks stop glowing (port
+lighting follows the wires' off-state). A channel's mute sits at its ON switch, after the Rec Point its
+direct outs and its key leave from (`channelTapAheadOfMute`): a direct out or a channel key leaving a
+muted channel stays live, and the wire into a muted channel stays live while the channel has such a
+live output — and recedes, like any wire bound to a silenced node, while it has none. A
+multi-selection lights every wire incident to the whole selection, matching the node highlighting.
 
 For the detailed routing rules, see [device-model.md](device-model.md) (derived from the official
 block diagram).

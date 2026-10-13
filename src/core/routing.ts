@@ -217,6 +217,20 @@ export function duckerKeySource(model: DeviceModel, from: string, to: string): "
   return model.nodes.find((n) => n.id === parseRef(from).nodeId)?.kind === "channel" ? "channel" : "bus";
 }
 
+/** Whether a wire leaves a channel ahead of its mute (ON) and fader: a direct out or a channel
+ *  key, both the channel's CH OUT at its Rec Point. The channel's own mute and Ducker never
+ *  reach it. */
+export function channelTapAheadOfMute(model: DeviceModel, from: string, to: string): boolean {
+  return directOutTarget(model, from, to) !== null || duckerKeySource(model, from, to) === "channel";
+}
+
+/** Whether a wire takes its source channel ahead of the channel's Ducker: a tap ahead of the
+ *  mute, or a PRE send (sendIsPreFader). The STEREO main path and every POST send — a send
+ *  into a FIXED MIX bus among them — carry the ducked signal. */
+export function tapAheadOfDucker(model: DeviceModel, plan: Plan, conn: PlanConnection): boolean {
+  return channelTapAheadOfMute(model, conn.from, conn.to) || sendIsPreFader(model, plan, conn);
+}
+
 export function canConnect(model: DeviceModel, plan: Plan, from: string, to: string): ConnectResult {
   const rule = findRule(model, from, to);
   if (!rule) return { ok: false, reason: "noRule" };
@@ -532,19 +546,30 @@ export function possibleSources(model: DeviceModel, to: string): Set<string> {
  *  node that reaches it by walking connections backwards. `live` filters which
  *  connections to follow — pass a predicate that rejects silent (off / -∞) sends,
  *  otherwise the always-wired send mesh traces every node back to all inputs and
- *  the closure becomes the whole board. Cycle-safe via the visited closure. */
-export function upstreamNodes(plan: Plan, nodeId: string, live: (conn: PlanConnection) => boolean): Set<string> {
-  const closure = new Set<string>([nodeId]);
-  const stack = [nodeId];
+ *  the closure becomes the whole board. `feeders` names nodes that shape a node's signal
+ *  without a wire into it (a ducker over its channel), given the wire the walk reached
+ *  the node through — null for the node itself and for a node reached as a feeder — since
+ *  what shapes a node's signal can depend on where it is taken. A node is walked again
+ *  when reached with different feeders. Cycle-safe via the visited states. */
+export function upstreamNodes(
+  plan: Plan,
+  nodeId: string,
+  live: (conn: PlanConnection) => boolean,
+  feeders: (nodeId: string, via: PlanConnection | null) => readonly string[] = () => [],
+): Set<string> {
+  const closure = new Set<string>();
+  const seen = new Set<string>();
+  const stack: [string, PlanConnection | null][] = [[nodeId, null]];
   while (stack.length) {
-    const cur = stack.pop()!;
+    const [cur, via] = stack.pop()!;
+    const extra = feeders(cur, via);
+    const state = [cur, ...extra].join("\n");
+    if (seen.has(state)) continue;
+    seen.add(state);
+    closure.add(cur);
+    for (const id of extra) stack.push([id, null]);
     for (const conn of plan.connections) {
-      if (parseRef(conn.to).nodeId !== cur || !live(conn)) continue;
-      const src = parseRef(conn.from).nodeId;
-      if (!closure.has(src)) {
-        closure.add(src);
-        stack.push(src);
-      }
+      if (parseRef(conn.to).nodeId === cur && live(conn)) stack.push([parseRef(conn.from).nodeId, conn]);
     }
   }
   return closure;

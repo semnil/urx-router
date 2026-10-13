@@ -8,6 +8,7 @@ import type { Plan, PlanConnection } from "../core/plan";
 import { hasConnection, LEVEL_MIN_DB, removeConnection } from "../core/plan";
 import {
   canConnect,
+  channelTapAheadOfMute,
   directOutTarget,
   isFixedConnection,
   isLastRequiredSource,
@@ -24,6 +25,7 @@ import {
   possibleTargets,
   ruleKind,
   sendIsPreFader,
+  tapAheadOfDucker,
   upstreamNodes,
 } from "../core/routing";
 import { baseName, exportSvgToPdf, exportSvgToPng } from "../core/storage";
@@ -31,7 +33,7 @@ import { getSettings } from "../core/settings";
 import type { ExportOptions, SaveResult } from "../core/storage";
 import { cueAddrOf, oscAssign } from "../core/control/translate";
 import { planColorHex, SD_REC_TRACK_COUNT_DEFAULT } from "../core/control/params";
-import { trackCountCeiling } from "../core/constraints";
+import { nodeRateDisabled, trackCountCeiling } from "../core/constraints";
 import { NOTE_BOT_GAP, NOTE_LINE_H, NOTE_PAD_Y, NOTE_TOP_GAP, clipNote, fitScale, notePanelHeight } from "./graph-text";
 import { sendlessNote } from "./send-fields";
 import { isChord } from "./keys";
@@ -403,6 +405,9 @@ export class Graph {
   private cueMonitors: string[] = [];
   // True while an image export is being taken, which carries nothing of the cue.
   private cueHeld = false;
+  // A trace was taken and nothing feeds its node. The selection then lights nothing and
+  // fades nothing, as the status line says; any selection change ends it.
+  private pathEmpty = false;
 
   // transient interaction state. `link` is a STEREO-linked, visible partner that
   // moves with the dragged node (keeping its offset), plus the pair to redraw the
@@ -1254,13 +1259,25 @@ export class Graph {
   // OSC → bus carries oscL/oscR (per-bus assign), so its wire also reads off when
   // both its L and R assigns are off — and a muted endpoint (incl. the oscillator
   // off, via isNodeInactive) recedes it too, the same uniform rule every node follows.
+  // A wire to or from a node the sample rate has taken away (FX2 above 96 kHz) carries
+  // nothing whatever its params hold, so it recedes as well. A channel's mute sits at its
+  // ON switch, after its Rec Point: a direct out or a channel key leaving a muted channel
+  // stays live, and so does the wire into it while it has such a live output.
   private isOffSend(conn: PlanConnection): boolean {
     if (conn.params?.on === false) return true;
     const fromId = parseRef(conn.from).nodeId;
     const toId = parseRef(conn.to).nodeId;
+    const rate = this.plan.sampleRate;
+    if (nodeRateDisabled(fromId, rate) || nodeRateDisabled(toId, rate)) return true;
     const src = this.nodeById.get(fromId);
     const dst = this.nodeById.get(toId);
-    if ((src && this.isNodeInactive(src)) || (dst && this.isNodeInactive(dst))) return true;
+    const srcSilent =
+      src !== undefined &&
+      this.isNodeInactive(src) &&
+      !(src.kind === "channel" && channelTapAheadOfMute(this.model, conn.from, conn.to));
+    const dstSilent =
+      dst !== undefined && this.isNodeInactive(dst) && !(dst.kind === "channel" && this.hasLiveTapAheadOfMute(toId));
+    if (srcSilent || dstSilent) return true;
     // OSC → bus assign: silent when its L (and R, on a stereo bus) are off, even
     // while the oscillator runs. A mono FX bus uses L only (r === null).
     if (fromId === "bus.osc") {
@@ -1273,6 +1290,14 @@ export class Graph {
     // so -∞ there silences nothing; only the send's ON (checked above) can.
     if (mixSendLocks(this.plan, toId).busFixed) return false;
     return (conn.params?.level ?? 0) <= LEVEL_MIN_DB;
+  }
+
+  // Whether a channel has a live wire leaving it ahead of its mute (a direct out or a key).
+  private hasLiveTapAheadOfMute(channelId: string): boolean {
+    return this.plan.connections.some(
+      (c) =>
+        parseRef(c.from).nodeId === channelId && channelTapAheadOfMute(this.model, c.from, c.to) && !this.isOffSend(c),
+    );
   }
 
   // Whether a node reads as inactive and should be dimmed. Delegates to the shared
@@ -1832,11 +1857,14 @@ export class Graph {
     // rest so the selection's routing stands out in a dense diagram. Uses the whole
     // multi-selection, not just the anchor, so it matches the node highlighting.
     const hasNodeSel = this.selectedNodes.size > 0;
-    const incident = hasNodeSel && (this.selectedNodes.has(fromId) || this.selectedNodes.has(toId));
     // A traced signal path lights its wires the same way: both endpoints in the
     // upstream closure and the wire itself live (an off send between two closure
-    // nodes is a parallel silent route, not part of the flow being traced).
+    // nodes is a parallel silent route, not part of the flow being traced). While a
+    // trace is active it alone decides what lights, so a wire merely touching the
+    // selected node does not.
     const pathActive = this.pathNodes.size > 0;
+    const incident =
+      hasNodeSel && !pathActive && !this.pathEmpty && (this.selectedNodes.has(fromId) || this.selectedNodes.has(toId));
     const inPath = pathActive && !off && this.pathNodes.has(fromId) && this.pathNodes.has(toId);
     // While something is cued, the wires the CUE bus is fed through stay as they are and the
     // rest fade like an off-path wire. A wire into a monitor that plays the CUE bus is the feed
@@ -1845,7 +1873,7 @@ export class Graph {
     const cueCarried = cueActive && !off && this.cuePathNodes.has(fromId) && this.cuePathNodes.has(toId);
     const cueReplaced = cueActive && this.cueMonitors.includes(toId);
     const lit = selected || incident || inPath;
-    const faded = (hasNodeSel || pathActive || (cueActive && !cueCarried)) && !lit;
+    const faded = ((hasNodeSel && !this.pathEmpty) || pathActive || (cueActive && !cueCarried)) && !lit;
 
     // Invisible wide band along the wire so the thin curve is easy to click; it
     // carries the pointer handler while the painted wire below stays thin. The
@@ -2013,7 +2041,7 @@ export class Graph {
     if (hasPath) {
       this.pathNodes = closure;
       this.pathRoot = id;
-    }
+    } else this.pathEmpty = true;
     this.redrawWires();
     this.highlightSelectedNode();
     this.cb.onStatus(
@@ -2022,13 +2050,38 @@ export class Graph {
   }
 
   /** The live signal closure feeding `id`, the node included. */
-  private upstreamOf(id: string): Set<string> {
-    return upstreamNodes(this.plan, id, (c) => !this.isOffSend(c));
+  private upstreamOf(id: string, ducked = true): Set<string> {
+    return upstreamNodes(
+      this.plan,
+      id,
+      (c) => !this.isOffSend(c),
+      (cur, via) => this.duckerFeeders(cur, via ? !tapAheadOfDucker(this.model, this.plan, via) : cur !== id || ducked),
+    );
+  }
+
+  /** A ducker that is on and keyed by a live wire. */
+  private isActiveDucker(id: string): boolean {
+    const node = this.nodeById.get(id);
+    return (
+      node?.kind === "ducker" &&
+      !this.isNodeInactive(node) &&
+      this.plan.connections.some((c) => parseRef(c.to).nodeId === id && !this.isOffSend(c))
+    );
+  }
+
+  /** What shapes a node's signal with no wire into it: the channel an active ducker ducks,
+   *  and — where the channel is taken after its Ducker (`ducked`) — the active duckers hung
+   *  under it, whose key sets its level. */
+  private duckerFeeders(id: string, ducked: boolean): string[] {
+    const parent = this.parentOf(id);
+    const own = parent !== undefined && this.isActiveDucker(id) ? [parent] : [];
+    return ducked ? [...own, ...this.attachedDescendants(id).filter((d) => this.isActiveDucker(d))] : own;
   }
 
   private clearTrace(): void {
     this.pathNodes.clear();
     this.pathRoot = null;
+    this.pathEmpty = false;
   }
 
   /** Take the trace again from its root against the plan as it stands. A root no longer on
@@ -2062,7 +2115,8 @@ export class Graph {
     for (const id of this.cued) {
       if (!this.nodeById.has(id) || this.isHidden(id)) continue;
       if (cueAddrOf(this.model, id)?.group === "output") this.cuePathNodes.add(id);
-      else for (const n of this.upstreamOf(id)) this.cuePathNodes.add(n);
+      // The CUE bus takes a channel ahead of its ducker, so no ducker joins its path.
+      else for (const n of this.upstreamOf(id, false)) this.cuePathNodes.add(n);
     }
     if (!this.cuePathNodes.size) return;
     this.cueMonitors = ["bus.mon1", "bus.mon2"].filter(
