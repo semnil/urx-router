@@ -10980,3 +10980,30 @@ describe("the displayed side and the unit's LCD selection", () => {
     expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
   });
 });
+
+// A node's CUE row in the inspector: read-only with no session, and once one is up a press on
+// it writes the strip's flag, the way the CONSOLE chip does.
+describe("the inspector's CUE row", () => {
+  const cueWrites = (shell: TauriShell): number[] =>
+    shell.invokes.flatMap((cmd, i) => {
+      const a = shell.args[i];
+      return cmd === "vd_set" && a?.paramId === PARAMS.CUE_MONO.id && a?.y === 0 ? [a.value as number] : [];
+    });
+  const button = (text: string): HTMLButtonElement =>
+    [...paramRow(t().inspector.cue).querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === text)!;
+
+  it("writes the strip's flag once a session is up", SLOW, async () => {
+    const shell = await bootDevice();
+    selectNode("ch1");
+    expect(button(t().inspector.on).disabled, "the premise: read-only with no session").toBe(true);
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    // The session's starting read hands the board a plan, which clears the selection.
+    selectNode("ch1");
+    expect(button(t().inspector.on).disabled).toBe(false);
+    button(t().inspector.on).click();
+    await vi.waitFor(() => expect(cueWrites(shell)).toEqual([1]), { timeout: 25_000 });
+    expect(button(t().inspector.on).getAttribute("aria-pressed")).toBe("true");
+    expect(errors(shell)).toEqual([]);
+  });
+});
