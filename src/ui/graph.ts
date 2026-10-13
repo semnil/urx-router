@@ -2028,12 +2028,12 @@ export class Graph {
   }
 
   /** The live signal closure feeding `id`, the node included. */
-  private upstreamOf(id: string): Set<string> {
+  private upstreamOf(id: string, duckers = true): Set<string> {
     return upstreamNodes(
       this.plan,
       id,
       (c) => this.isLiveWire(c),
-      (cur) => this.duckerFeeders(cur),
+      duckers ? (cur) => this.duckerFeeders(cur) : undefined,
     );
   }
 
@@ -2100,7 +2100,8 @@ export class Graph {
     for (const id of this.cued) {
       if (!this.nodeById.has(id) || this.isHidden(id)) continue;
       if (cueAddrOf(this.model, id)?.group === "output") this.cuePathNodes.add(id);
-      else for (const n of this.upstreamOf(id)) this.cuePathNodes.add(n);
+      // The CUE bus takes a channel ahead of its ducker, so no ducker joins its path.
+      else for (const n of this.upstreamOf(id, false)) this.cuePathNodes.add(n);
     }
     if (!this.cuePathNodes.size) return;
     this.cueMonitors = ["bus.mon1", "bus.mon2"].filter(

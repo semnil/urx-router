@@ -970,7 +970,8 @@ still-live partner channel — the input is genuinely on the path until both hal
 
 **CUE on the board**: while a strip is cued (the unit's [CUE], live-session state — see "CUE" under "What
 the app models, and what it leaves to the unit"), the board shows what the CUE bus carries and where it goes,
-without a node for the bus. The path is each cued channel's upstream closure (the path trace's `upstreamNodes`),
+without a node for the bus. The path is each cued channel's upstream closure (the path trace's `upstreamNodes`, less
+the duckers the trace takes in, since the CUE bus takes a channel ahead of its ducker),
 each cued output (STEREO, a MIX bus, STREAMING) alone — its upstream would frame most of the board — and every
 drawn monitor whose Cue Interrupt is on, since such a monitor plays the CUE bus in place of its own source,
 whichever bus that source is, while anything is cued. Off the path, wires fade to 0.16 and nodes to 0.3 of their resting opacity, as

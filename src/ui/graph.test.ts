@@ -2559,6 +2559,24 @@ describe("cue", () => {
     expect(paintOf("bus.stereo:out", "bus.mon1:in").getAttribute("stroke-dasharray")).toBe("5 4");
   });
 
+  // The CUE bus takes a channel ahead of its ducker: an active ducker and its key source are
+  // on the channel's trace but not on its cue path.
+  it("leaves a cued channel's ducker and its key source off the path", () => {
+    fx = graphFixture({
+      modelId: "URX44V",
+      seed: (plan) => {
+        plan.connections = [
+          { from: "in.micline_1_2:out", to: "ch1:in", kind: "source" },
+          { from: "in.aux:out", to: "ch_5_6:in", kind: "source" },
+          { from: "ch1:out", to: "out.ducker1:in", kind: "key" },
+        ];
+        plan.nodeParams["out.ducker1"] = { ...plan.nodeParams["out.ducker1"], duckerOn: true };
+      },
+    });
+    fx.graph.setCues(["ch_5_6"]);
+    expect(frames()).toEqual(["bus.mon1", "bus.mon2", "ch_5_6", "in.aux"]);
+  });
+
   it("starts and ends each line on the outer edges of the two frames", () => {
     fx = graphFixture();
     fx.graph.setCues(["ch1"]);
