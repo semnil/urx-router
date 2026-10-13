@@ -6249,6 +6249,42 @@ describe("an EFFECT TYPE change while a session is live", () => {
     expect(shownHpf()).toBe(HPF.format!(roomHpf, {}));
   });
 
+  // Selections that coalesce back to the type the unit holds send no type write, so no refill
+  // follows and nothing is left for the record to protect: a later park — here the converge's,
+  // behind another channel's COMP/EQ Type — takes what the unit's panel moved.
+  it("keeps no reseed past selections that come back to the unit's type", SLOW, async () => {
+    const { table, move } = stubWithPanel();
+    const shell = (await bootApp({ tauri: table }))!;
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownType()).toBe(REVX_HALL);
+
+    pickType(REVX_ROOM);
+    pickType(REVX_HALL);
+    await quiet(shell);
+    const typeWrites = shell.invokes.flatMap((c, i) => (c === "vd_set" && at(shell.args[i]) === FX1_TYPE ? [i] : []));
+    expect(typeWrites, "the premise: the two selections sent no type").toEqual([]);
+
+    move(TUNED);
+    const gesture = shell.invokes.length;
+    pressNode("ch1");
+    const type = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = String(COMP_EQ_SSMCS);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(0), { timeout: 25_000 });
+    await settled(shell);
+
+    expect(
+      shell.invokes.some((c, i) => c === "vd_get" && at(shell.args[i]) === FX1_HPF && i >= gesture),
+      "the positive control: a later park read the moved slot",
+    ).toBe(true);
+    const sent = shell.invokes.flatMap((c, i) =>
+      c === "vd_set" && at(shell.args[i]) === FX1_HPF && i >= gesture ? [shell.args[i]?.value] : [],
+    );
+    expect(sent, "the plan's old default was not sent over the panel's value").not.toContain(HPF.def);
+    expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
+  });
+
   // A type chosen from the CONSOLE ends the Inspector's reseed: the channel is then on a
   // selection that keeps the plan's values, and the park in front of a later write of the same
   // type files what the unit's panel moved, the CONSOLE's ordinary way.

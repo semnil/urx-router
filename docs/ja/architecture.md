@@ -1827,8 +1827,10 @@ MIDI パネルの `midiErrorStatus` が同じ役回りで、`midi-port-not-found
   本体のパネルで動かしてあっても、その値が 2 つのタイプの共有するキーに置かれて入ってくるタイプの既定値の代わりに
   送られることはなく、出ていくタイプだけが使うキーは従来どおり退避される (`readback.test.ts` の
   "leaves the keys keepFx names standing"、`main.device.test.ts` の "leaves the defaults an Inspector selection
-  took standing")。CONSOLE からのタイプ選択とセッションの開始・終了で記録は消え、記録したタイプから外れた
-  チャンネル (選択をアンドゥした場合) は従来どおりに読む。No Effect の切は書かない。MIX の出力インサートでは、
+  took standing")。キーを渡すのはそのチャンネルのタイプ書込の手前の park だけで、タイプ書込が待っていない記録 —
+  チャンネルが記録したタイプから外れた (選択をアンドゥした) もの、本体へ最後に送ったのがそのタイプである
+  (選択が本体のタイプへ戻った) もの — は次に走る park が消す (`app/fx-reseed.ts` の `takeFxReseeds`)。そのため
+  後の収束はパネルで動かした値を読む。CONSOLE からのタイプ選択とセッションの開始・終了でも記録は消える。No Effect の切は書かない。MIX の出力インサートでは、
   セレクタが No Effect の間のバイパスの書込を本体が無視し、次にエフェクトを選んだときに直前の値にかかわらず
   バイパスを入にするので、書込はセレクタだけを送る (`translate.test.ts` の
   "the insert-FX bypass beside No Effect")。

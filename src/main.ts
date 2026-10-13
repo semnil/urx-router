@@ -2,7 +2,8 @@ import "./style.css";
 
 import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
-import { fxTypeDefaults } from "./core/control/fx-effect";
+import { FX_CHANNEL_NODE_INDEX, FX_EFFECT_TYPE_PARAM, fxTypeDefaults } from "./core/control/fx-effect";
+import { takeFxReseeds } from "./app/fx-reseed";
 import type { ModelId } from "./models/types";
 import { parseRef, ref } from "./models/types";
 import {
@@ -83,7 +84,6 @@ import {
   PARAMS,
   REC_POINT_PRE_COMP,
   REC_POINT_PRE_EQ,
-  silentKey,
 } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { ConnectOrigin, LabelSource, Selection, ThemeName } from "./ui/graph";
@@ -590,15 +590,11 @@ const live = DEMO
       // read that FAILS ends the session rather than letting the write behind it go out over
       // values it could not confirm.
       parkSilent: async (scope) => {
-        // The keys an Inspector EFFECT TYPE selection put at the incoming type's defaults stand
-        // over what the park reads, for a channel still on that type; the park in front of its
-        // head write is the one that spends them.
-        const keepFx = new Map<string, ReadonlySet<string>>();
-        for (const [id, type] of fxReseeds)
-          if (plan.nodeParams[id]?.fxEffect?.type === type)
-            keepFx.set(id, new Set(fxTypeDefaults(undefined, type).keys));
-        if (scope.keepHeads)
-          for (const id of fxReseeds.keys()) if (scope.only?.has(silentKey("fx", id))) fxReseeds.delete(id);
+        // The keys an Inspector EFFECT TYPE selection put at the incoming type's defaults, for
+        // the park in front of that type's write (app/fx-reseed.ts).
+        const keepFx = takeFxReseeds(fxReseeds, plan, scope, (id, type) =>
+          holdsSent(FX_EFFECT_TYPE_PARAM[FX_CHANNEL_NODE_INDEX[id]], 0, 0, type),
+        );
         const merged = await followRead("silent-address park", (into, signal) =>
           applySilentState(getModel(modelId), into, signal, live?.recentPending(), holdsSent, { ...scope, keepFx }),
         ).catch((err: unknown) => {

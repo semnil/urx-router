@@ -2237,8 +2237,11 @@ written at all:
   so a value moved on the unit's panel for the outgoing type is not filed under a key the two types share and does
   not go out in place of the incoming type's default, while a key only the outgoing type uses is still parked
   (`readback.test.ts`, "leaves the keys keepFx names standing"; `main.device.test.ts`, "leaves the defaults an
-  Inspector selection took standing"). A type chosen from the CONSOLE, or a session starting or ending, drops the
-  record, and a channel no longer on the recorded type — an undo of the selection — is read the ordinary way.
+  Inspector selection took standing"). Only the park in front of that channel's type write is handed the keys, and
+  a record no type write is pending for — the channel has left the type, as an undo of the selection leaves it, or
+  the unit was last sent it, as selections that come back to the unit's type leave it — is dropped by whichever
+  park runs next (`app/fx-reseed.ts` `takeFxReseeds`), so a later converge reads what the panel moved. A type
+  chosen from the CONSOLE, or a session starting or ending, drops the record too.
   No Effect's OFF is not written: on a MIX output insert the unit ignores a bypass write once its selector is No
   Effect and engages the bypass with the next selection whatever it held, so the write sends the selector alone (`translate.test.ts`, "the insert-FX bypass beside No Effect").
 
