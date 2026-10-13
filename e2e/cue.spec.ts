@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { LIVE_COMMANDS, notifyParam, setDeviceValue, stubTauriDevice, writesOf } from "./tauri-stub";
+import { chooseOption } from "./choose-option";
 import { PARAMS } from "../src/core/control/params";
 
 // The unit's [CUE]: live-session state outside the plan. A press in the app writes the
@@ -118,6 +119,33 @@ test("a press on the unit's panel is followed, and the outputs it displaced come
   await expect(chip(page, "bus.stereo")).toHaveAttribute("aria-pressed", "true");
   // Nothing of it went back to the unit.
   expect((await writesOf(page)).filter(([id]) => id === CUE_MONO || id === CUE_STEREO)).toEqual([]);
+});
+
+test("a pair linked on the unit takes its primary's cue, which clears a cue on the partner alone", async ({ page }) => {
+  await setDeviceValue(page, CUE_MONO, 1, 1);
+  await goLive(page);
+  await page.click("#btn-view-console");
+  await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "true");
+  // The unit links CH 1/2: it copies CH 1's flag (off) onto CH 2 and announces both changes.
+  for (const y of [0, 1]) await setDeviceValue(page, PARAMS.SIGNAL_TYPE.id, y, 1);
+  await setDeviceValue(page, CUE_MONO, 1, 0);
+  await notifyParam(page, PARAMS.SIGNAL_TYPE.id, 0, 1);
+  await notifyParam(page, CUE_MONO, 1, 0);
+  await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "false", { timeout: 10_000 });
+  await expect(page.locator("#cue-bar")).toBeHidden();
+});
+
+test("a pair linked in the app takes its primary's cue, which clears a cue on the partner alone", async ({ page }) => {
+  await setDeviceValue(page, CUE_MONO, 1, 1);
+  await goLive(page);
+  await page.locator(`#graph-host g.node[data-id="ch1"]`).click();
+  await chooseOption(page.locator("#inspector .param", { hasText: "Signal Type" }).locator("select"), "1");
+  // What the unit does with the link write: CH 1's flag (off) copied onto CH 2, and announced.
+  await setDeviceValue(page, CUE_MONO, 1, 0);
+  await notifyParam(page, CUE_MONO, 1, 0);
+  await page.click("#btn-view-console");
+  await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#cue-bar")).toBeHidden();
 });
 
 test("Clear CUE turns every cue off and the readout goes", async ({ page }) => {

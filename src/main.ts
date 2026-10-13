@@ -683,6 +683,9 @@ function rereadCues(): void {
   const model = getModel(modelId);
   cueWrites = cueWrites
     .then(async () => {
+      // Behind the plan flush too: a write there can move a flag (a link copies one) that a read
+      // taken ahead of it answers with the value it replaces.
+      await live?.idle();
       if (!liveSessionUp) return;
       const since = cues.version;
       const got = await readCues(model);
@@ -4450,6 +4453,9 @@ if (!DEMO) {
         liveEpoch = device.epoch;
         liveSessionUp = true;
         setLiveUi(true);
+        // The flags were read before the notify stream was registered; a press on the unit in
+        // between announced itself to nobody.
+        rereadCues();
         // An edit made while the starting read ran had no session to flush through, so the
         // plan differs from the snapshot the session just took with nothing else left to
         // schedule the send — whether the read held that key, lost it, or found the unit
