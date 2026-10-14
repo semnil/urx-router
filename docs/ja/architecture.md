@@ -4202,7 +4202,8 @@ macOS の署名・公証は任意で、署名 secret (`MACOS_SIGNING_CERT` / `MA
 変わらないようにする。Dependabot の `github-actions` エコシステム (`.github/dependabot.yml`) が
 SHA とコメントを一緒にバンプする。例外は `dtolnay/rust-toolchain` で、バージョンタグを持たず
 チャンネルブランチが force-push されるため、append-only な `master` コミットにピン留めし
-(チャンネルは `toolchain:` 入力で明示)、手動で更新する。
+(チャンネルは `toolchain:` 入力で明示)。コメントはバージョンでなくブランチ名 (`# master`) を指し、
+Dependabot がピンをそのブランチの先頭へ進める。
 
 ### ブラウザデモ (GitHub Pages)
 

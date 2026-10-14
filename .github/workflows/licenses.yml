@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # SHA pin drops the branch-name toolchain shorthand, so the channel is
-      # passed explicitly. No version tags; Dependabot leaves this pin alone.
+      # passed explicitly. No version tags; Dependabot moves the pin to master's tip.
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
         with:
