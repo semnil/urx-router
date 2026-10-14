@@ -257,22 +257,25 @@ Raising the rate is worth a thought about the recorder first.
 
 This applies to the URX44 / URX44V only (the URX22 has no microSD recording).
 
-## The unit's operation mode (Standard / Simple) cannot be detected
+## The app does not follow the unit's operation mode (Standard / Simple)
 
-The URX runs in one of two operation modes, chosen during its initial setup:
-**Standard** or **Simple**. Simple Mode visibly reduces what the unit offers — the
-channel and bus display is cut down and no longer scrolls.
+The URX runs in one of two operation modes, chosen during its initial setup or from
+SETUP > [Operation Mode]: **Standard** or **Simple**. Simple Mode visibly reduces
+what the unit offers — the channel and bus display is cut down and no longer scrolls.
 
-Software cannot see which one is active. A sweep of every parameter the broker
-publishes is identical between a unit in Standard Mode and the same unit in Simple
-Mode (verified on a real URX44V by comparing two factory resets that differed only
-in the mode and the display language). The app therefore presents the same
-controls either way, including for things Simple Mode has taken away on the unit
-itself.
+The unit does publish the mode: parameter `817:0:0` reads 0 in Standard Mode and
+moves to 1 when Simple Mode is entered and its preset applied, announcing each change
+with a notify. Switching back to Standard moves it back to 0, with no other parameter
+changing. This was verified on a real URX22 and URX44V (System 1.3.1.0) by entering
+Simple through SETUP > [Operation Mode] with the P02 preset; the Setup Assistant and
+Scene routes into Simple Mode and the other presets have not been measured. The app
+does not read it, so it presents the same controls either way, including for things
+Simple Mode has taken away on the unit itself.
 
-The loaded **preset** is readable, so the unit's `P02`-style indicator does have a
-software equivalent — the mode does not. What Simple Mode does to a write the app
-sends for a control it has removed has not been measured.
+The loaded **preset** is readable too (`781:0:0`, the unit's `P02`-style indicator),
+but it is not the mode: it keeps the Simple preset's value after the unit is switched
+back to Standard. What Simple Mode does to a write the app sends for a control it has
+removed has not been measured.
 
 ## The STREAMING pre-DELAY meter is not readable
 
