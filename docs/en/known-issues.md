@@ -87,27 +87,31 @@ ends, and neither the CONSOLE's CUE chips, the inspector's CUE row nor a MIDI co
 assigned to a CUE switch one. A chip can still be armed for MIDI learn, so a control
 can be assigned to it.
 
-## Live control is hardware-verified on the URX44V only
+## Live control is hardware-verified on the URX44V and the URX22
 
-Live device control was developed and verified against a real **URX44V**. The
-**URX44** reuses the URX44V control map verbatim (the only hardware difference
-is the HDMI input, which is not routed by default), so it is expected to match
-but has not been verified on hardware. On the **URX22**, the CONSOLE live-meter
-routing has been confirmed against real hardware by a URX22 owner (the stereo
-channels' meters are indexed by stereo-pair position, which shifts on the URX22
-because it has only two mono channels, so its first stereo channel is CH3/4). Its
-control (write) map and factory-initial plan, however, are a conjectured mirror
-of the URX44V and are unverified, so those values may not match the device exactly.
-On both models the input stage is written per MIC/LINE jack and per digital source,
-at the addresses the URX44V uses; which jack each address reaches, which URX22 jack
-carries HI-Z (jack 2) and which source each D.Gain address feeds are registered as
-unverified mappings (`jack-axis`, `hiz-channel`, `dgain-source`). A read or write
-that fails at one of those addresses names the mapping, and the self-test says it
-cannot settle them and what would. The link between a stereo channel's displayed
-side and the unit's LCD selection uses the URX44V numbering on both models, registered
-as `lcd-side`, and so does the [CUE] flag of each strip, registered as `cue-flags`.
-Offline planning, the plan JSON and image export are unaffected; this concerns
-only live sync on those two models.
+Live device control was developed against a real **URX44V** and checked on a real
+**URX22** as well. On the URX22 the control map was read back from the unit: the
+value of every input port, the address of every D.Gain, the jack each input-stage
+address reaches and the jack that carries HI-Z (jack 2), the stereo channel block,
+the channel slots the USB OUT and ducker key selectors take, the [CUE] flag of each
+strip, the link between a stereo channel's displayed side and the LCD selection, and
+every always-wired send. The settings inside an insert effect or an FX effect are the
+exception: the URX22 uses the values, encodings and ranges calibrated on the URX44V,
+and their meaning has not been measured on the URX22. The factory-initial plan
+matches the unit too: a new plan written to a factory-initialised URX22 leaves every
+address it writes at the value the unit already holds, the sample rate aside, which follows the USB host while
+Follow USB is on. The **URX44** reuses the URX44V control map verbatim (the only
+hardware difference is the HDMI input, which is not routed by default), so it is
+expected to match but has not been verified on hardware. On the URX44 the input
+stage is written per MIC/LINE jack and per digital source at the addresses the
+URX44V uses; which jack each address reaches and which source each D.Gain address
+feeds are registered as unverified mappings (`jack-axis`, `dgain-source`). A read or
+write that fails at one of those addresses names the mapping, and the self-test says
+it cannot settle them and what would. The link between a stereo channel's displayed
+side and the unit's LCD selection uses the URX44V numbering there, registered as
+`lcd-side`, and so does the [CUE] flag of each strip, registered as `cue-flags`.
+Offline planning, the plan JSON and image export are unaffected; this concerns only
+live sync on the URX44.
 
 **Verified environment.** Live control was confirmed against the following
 combination. Future firmware or Device Center updates may change the control
@@ -115,16 +119,16 @@ protocol, so newer versions are not guaranteed to behave identically.
 
 | Component | Verified version |
 | --- | --- |
-| Device | URX44V |
+| Device | URX44V, URX22 |
 | Firmware | V1.3.1.0 |
 | Device Center | 2.2.1 (2.2.1.1) |
 
 ## The unit lets +48V and HI-Z be on together; the app does not
 
 The user guide ("INPUT screen", the [+48V] button) says phantom power and HI-Z
-cannot be turned on at the same time. The URX44V (System 1.3.1.0) panel does let
-both be on for one jack: pressing [HI-Z] with [+48V] on, or [+48V] with [HI-Z] on,
-leaves both on, and neither switches the other off.
+cannot be turned on at the same time. The URX44V and URX22 (System 1.3.1.0) panels
+do let both be on for one jack: pressing [HI-Z] with [+48V] on, or [+48V] with
+[HI-Z] on, leaves both on, and neither switches the other off.
 
 Both switches belong to a MIC/LINE jack, and a channel shows those of the jack it
 reads, so the app names a jack by the channels reading it. The app never turns one

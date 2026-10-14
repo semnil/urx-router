@@ -161,7 +161,7 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 > from MIC/LINE (CH1/2 ← MIC/LINE 1/2, CH3/4 ← MIC/LINE 3/4), stereo channels CH5/6 = AUX, CH7/8 = USB MAIN A,
 > CH9/10 = USB MAIN B, CH11/12 = USB MAIN C (stereo sources read from param 209/210, confirmed on URX44V;
 > URX44 identical; URX22 is the same set shifted down one stereo pair — CH3/4 = AUX, CH5/6 = USB MAIN A,
-> CH7/8 = USB MAIN B, CH9/10 = USB MAIN C — inferred, not yet captured).
+> CH7/8 = USB MAIN B, CH9/10 = USB MAIN C — confirmed on a factory-initialised URX22).
 
 ### 2. Channel → bus send (`send`, many receivers)
 
@@ -192,8 +192,8 @@ main-fader level** (the CH → STEREO level). The STEREO send itself — being t
 - FX 1 / FX 2 — LEVEL/**PRE/POST** + **ON/OFF (SEND_ON)** (FX-bus sends are mono and carry **no PAN**). Seeded **ON at -∞ (off)**.
 
 Every send is always wired: 48 on URX44 / URX44V (8 CH × 5 (STEREO, MIX 1/2, FX 1/2) + 2 FX × 3
-(STEREO, MIX 1/2) + 2 MIX→STEREO) and 38 on the URX22, which has 6 channels. The URX44V count is confirmed on
-the unit; the URX22 / URX44 counts follow the official block diagram (not confirmed on hardware). So deletion
+(STEREO, MIX 1/2) + 2 MIX→STEREO) and 38 on the URX22, which has 6 channels. The URX44V and URX22 counts are
+confirmed on the unit; the URX44 count follows the official block diagram (not confirmed on hardware). So deletion
 cannot thin the board. Instead **off (`params.on=false`) / -∞ sends are dimmed with a fine
 dotted line** so the live routing stands out, and a toolbar **"Hide off sends"** toggle can drop them entirely
 (shown by default). The MIX → STEREO TO ST switch (§3) is dimmed the same way when off.

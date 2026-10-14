@@ -5,9 +5,9 @@
 //
 // Scope: the PARAMS entries (params.ts) that carry a plan's values; the
 // planExternal ones belong to device-setup.ts. Every address emitted for a URX44V
-// is a confirmed one. On the URX22 / URX44 the addresses that are still guesses
-// are registered in UNVERIFIED_MAPPINGS below, and a dry-run or write for those
-// models carries them.
+// or a URX22 is a confirmed one. On the URX44 the addresses that are still guesses
+// are registered in UNVERIFIED_MAPPINGS below, and a dry-run or write for that
+// model carries them.
 
 import type { ConnectionKind, DeviceModel, ModelId } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
@@ -3157,8 +3157,8 @@ export function cueAt(
 }
 
 // --- Unverified-mapping registry -------------------------------------------
-// Device mappings confirmed only on URX44V (the captured unit) that remain
-// educated guesses on the other models, pending confirmation by an owner: through
+// Device mappings confirmed on URX44V and URX22 that remain educated guesses on
+// URX44, pending confirmation by an owner: through
 // the device self-test where a round trip answers the guess's question, and by
 // reading the unit's own screen where it does not (`roundTripSettles`). Each entry
 // is self-contained: it resolves the device
@@ -3199,13 +3199,13 @@ export interface UnverifiedMapping {
 
 export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
   {
-    // The D.Gain address of each digital source on URX22 / URX44: the URX44V's table, by
-    // source. Their sources are a subset of the URX44V's, so the table invents no id; what is
-    // unverified is that each address reaches that source's gain on these units. A value
-    // stored and read back says the address keeps one, not which source it feeds.
+    // The D.Gain address of each digital source on URX44: the URX44V's table, by source. Its
+    // sources are a subset of the URX44V's, so the table invents no id; what is unverified is
+    // that each address reaches that source's gain on this unit. A value stored and read back
+    // says the address keeps one, not which source it feeds.
     key: "dgain-source",
     label: "D.Gain address of each digital input source (the URX44V table: AUX 9, USB MAIN A/B/C 13/14/15, …)",
-    models: ["URX22", "URX44"],
+    models: ["URX44"],
     guessedIds: [],
     roundTripSettles: false,
     howToSettle:
@@ -3220,30 +3220,18 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     },
   },
   {
-    // Which jack carries the Hi-Z switch on URX22: its second jack. A value that holds at the
-    // address says the address takes one, not that the jack has the switch.
-    key: "hiz-channel",
-    label: "URX22 Hi-Z (instrument) input jack (jack 2)",
-    models: ["URX22"],
-    guessedIds: [],
-    roundTripSettles: false,
-    howToSettle: "turn HI-Z on for jack 2 from the app and read on the unit's INPUT screen which input shows HI-Z on",
-    addresses: (model) => (HI_Z_JACKS[model.id] ?? []).map((j) => [PARAMS.HI_Z.id, j] as GuessAddress),
-  },
-  {
     // The analog input stage addressed by jack: +48V, A.Gain and Clip Safe at y = the jack's
-    // index, and HI-Z at its HI-Z jacks. Recorded on the URX44V alone. Off the factory wiring
-    // (CH n reads jack n) the jack and the channel number part, and a wrong axis puts a value
-    // on the other physical input.
+    // index, and HI-Z at its HI-Z jacks. Off the factory wiring (CH n reads jack n) the jack
+    // and the channel number part, and a wrong axis puts a value on the other physical input.
     key: "jack-axis",
     label: "MIC/LINE input stage addressed by jack (+48V / A.Gain / Clip Safe / HI-Z at y = jack index)",
-    models: ["URX22", "URX44"],
+    models: ["URX44"],
     guessedIds: [],
     roundTripSettles: false,
     howToSettle:
       "route a channel to a MIC/LINE jack other than its own number, write a distinct A.Gain to that jack, and read the value the unit's LCD shows for that channel",
     addresses: (model) => {
-      const hiZ = model.id === "URX22" ? [] : (HI_Z_JACKS[model.id] ?? []);
+      const hiZ = HI_Z_JACKS[model.id] ?? [];
       return model.nodes.flatMap((node) => {
         const base = MIC_LINE_JACK_BASE[node.id];
         if (base === undefined) return [];
@@ -3261,13 +3249,12 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     // invented ids take values at all, and WHICH stereo pair a `y` reaches. The y here
     // is stereoIndexMap's, the same map the ducker block rode, so a faithful device
     // answers CONFIRMED by writing y and reading y back whichever pair y points at.
-    // Pair 0 is `ch_5_6` on a URX44/URX44V and `ch_3_4` on a URX22, and only the
-    // URX44V has been read; the private ledger's D-1 carries the sentinel-write and
-    // LCD-read procedure that settles the other half, for both this and the ducker
-    // block it was written for.
+    // Pair 0 is `ch_5_6` on a URX44/URX44V and `ch_3_4` on a URX22; the private ledger's
+    // D-1 carries the sentinel-write and LCD-read procedure that settles the other half,
+    // for both this and the ducker block it was written for.
     key: "stereo-block",
     label: "Stereo channel fader/on/pan block (266/267/268)",
-    models: ["URX22", "URX44"],
+    models: ["URX44"],
     guessedIds: [STEREO_FADER, STEREO_ON, STEREO_PAN],
     roundTripSettles: false,
     howToSettle:
@@ -3285,7 +3272,7 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     // addresses.
     key: "input-ports",
     label: "Physical input source port map (param 22 values)",
-    models: ["URX22", "URX44"],
+    models: ["URX44"],
     guessedIds: [],
     roundTripSettles: false,
     howToSettle:
@@ -3298,12 +3285,12 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
       ),
   },
   {
-    // Which stereo channel and side each block-1 value of the LCD selection names on URX22 /
-    // URX44: 2 × the channel's stereo position, plus 1 for R, as on the URX44V. The unit keeps
-    // any value written there, so a round trip says nothing about where its LCD moved.
+    // Which stereo channel and side each block-1 value of the LCD selection names on URX44:
+    // 2 × the channel's stereo position, plus 1 for R, as on the URX44V and the URX22. The unit
+    // keeps any value written there, so a round trip says nothing about where its LCD moved.
     key: "lcd-side",
     label: "LCD side link: 762 index = 2 × stereo position, +1 for R",
-    models: ["URX22", "URX44"],
+    models: ["URX44"],
     guessedIds: [],
     roundTripSettles: false,
     howToSettle:
@@ -3311,12 +3298,12 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     addresses: () => [[PARAMS.LCD_SELECTION.id, 0]],
   },
   {
-    // Which strip each [CUE] flag reaches on URX22 / URX44: the URX44V's addresses, with a
-    // channel's flag at the instance its fader takes. The unit keeps any value written there,
-    // so a round trip says nothing about which strip's [CUE] lit.
+    // Which strip each [CUE] flag reaches on URX44: the URX44V's addresses, with a channel's
+    // flag at the instance its fader takes. The unit keeps any value written there, so a round
+    // trip says nothing about which strip's [CUE] lit.
     key: "cue-flags",
     label: "[CUE] flag of each strip (mono CH 138 / stereo CH 265 / FX 336 / STEREO 580 / MIX 673 / STREAMING 709)",
-    models: ["URX22", "URX44"],
+    models: ["URX44"],
     guessedIds: [],
     roundTripSettles: false,
     howToSettle:

@@ -155,7 +155,7 @@ MIC/LINE 1 入力に内部結線され、独立したソース選択肢として
 > モノ CH は MIC/LINE (CH1/2 ← MIC/LINE 1/2・CH3/4 ← MIC/LINE 3/4)、ステレオ CH は CH5/6 = AUX・
 > CH7/8 = USB MAIN A・CH9/10 = USB MAIN B・CH11/12 = USB MAIN C (ステレオソースは param 209/210 から読み取り・
 > URX44V 実機確認・URX44 同一)。URX22 はステレオ位置で 1 ペア下げた CH3/4 = AUX・CH5/6 = USB MAIN A・
-> CH7/8 = USB MAIN B・CH9/10 = USB MAIN C の推定 (実機キャプチャ未取得)。
+> CH7/8 = USB MAIN B・CH9/10 = USB MAIN C (工場出荷時に初期化した URX22 で確認)。
 
 ### 2. チャンネル → Bus send (`send`, 受け口 複数可)
 
@@ -186,7 +186,7 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 - FX 1 / FX 2 — LEVEL/**PRE/POST** + **ON/OFF (SEND_ON)** (FX Bus への Send はモノで **PAN を持たない**)。初期は **-∞ (オフ) ・ON**。
 
 全 Send は常時結線である。本数は URX44 / URX44V で 48 本 (8 CH × 5 (STEREO・MIX 1/2・FX 1/2) + 2 FX × 3
-(STEREO・MIX 1/2) + 2 MIX→STEREO)、CH が 6 本の URX22 で 38 本。URX44V の本数は実機で確認し、URX22 / URX44 の
+(STEREO・MIX 1/2) + 2 MIX→STEREO)、CH が 6 本の URX22 で 38 本。URX44V と URX22 の本数は実機で確認し、URX44 の
 本数は公式ブロックダイアグラムに基づく (実機では未確認)。そのため削除での整理はできず、代わりに
 **off (`params.on=false`) / レベル -∞ の Send は盤面で減光＋細い破線**で
 後退させ、有効な経路だけが浮かび上がるようにする。ツールバーの **「OFF send を隠す」** トグルでこれらを

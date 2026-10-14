@@ -265,12 +265,12 @@ describe("LiveSync sideEffect converge", () => {
   // A write that fails at an address an unverified mapping names hands the session's end that
   // mapping, so the line it ends on can say what the address rests on.
   it("names the guess a failed write rests on", async () => {
-    const m22 = getModel("URX22");
-    const plan = defaultPlan("URX22");
-    ensureFixedConnections(m22, plan);
+    const m44 = getModel("URX44");
+    const plan = defaultPlan("URX44");
+    ensureFixedConnections(m44, plan);
     const errors: Array<[string, string | undefined]> = [];
     const live = new LiveSync({
-      getModel: () => m22,
+      getModel: () => m44,
       getPlan: () => plan,
       onError: (message, guess) => void errors.push([message, guess]),
       onSent: () => {},

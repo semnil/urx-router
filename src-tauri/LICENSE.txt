@@ -9,15 +9,17 @@ DEVICE CONTROL SAFETY NOTICE
 URX Router can write mixer settings to a connected YAMAHA URX-series interface
 using a control protocol that was determined by independent analysis, not from
 official documentation. Every parameter the tool writes has been checked against
-a connected device, but sending data to hardware always carries some risk, and
+a connected URX44V and URX22, apart from the settings inside the URX22's insert and
+FX effects, but sending data to hardware always carries some risk, and
 the device's behavior under unexpected input cannot be fully guaranteed.
 
 Writing a plan to the device overwrites its current mixer settings. Back up any
 settings you want to keep (using the manufacturer's own software) before writing.
 
-The parameter mapping is verified on hardware only for the URX44V. URX44 is
-assumed to be identical, and URX22 is inferred from it; neither is verified on
-hardware yet.
+The parameter mapping is verified on hardware for the URX44V and the URX22, except
+the settings inside the URX22's insert and FX effects, which use the URX44V's
+calibration. The URX44 is assumed to be identical to the URX44V and is not verified
+on hardware yet.
 
 By installing and using URX Router you accept this risk. The software is provided
 "as is", without warranty of any kind, and the authors are not liable for any

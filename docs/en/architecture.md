@@ -393,7 +393,7 @@ carries a one-line map of the same directories and points here.
       the app models, and what it leaves to the unit"): `CueSet` applies the unit's rules to every change
       from either side, `CueEchoes` tells the unit's answer to the app's own write from a press on the panel,
       `readCues` reads every flag, and `writeCueFlag` writes one and resolves once the unit has announced it. The address of each strip's flag is
-      `cueAddrs` in `translate.ts`, where the URX22 / URX44 guess is registered
+      `cueAddrs` in `translate.ts`, where the URX44 guess is registered
     - `link-stats.ts` the link ledger (it owns its own session policy — the opening line, the per-minute
       interval, the warn-once latch — behind `begin`/`end`, as `LiveSync` and `DeviceFollow` do, so the
       timer's lifetime and `startedAt` cannot be kept in step by hand and drift) — what one session asked of
@@ -787,11 +787,12 @@ carries a one-line map of the same directories and points here.
   ([below](#undo--redo)). The transient `unreadNodes` provenance is excluded, being neither serialized
   nor reachable through an edit.
   A new plan comes from `defaultPlan(modelId)` in `models/initial-state.ts`, which seeds every model
-  with a factory initial state (node parameters + routing + CH SETTING colors and names). Only URX44V is captured from real
-  hardware; URX44 reuses that capture verbatim (it differs only by URX44V's HDMI input, which no
-  default routes), and URX22 is an inferred remap of it (`models/initial-urx22.ts`, unverified until
-  a real reset is captured — its INS FX values are the exception, adopted rather than held as an
-  estimate awaiting one). A device fetch instead starts from an empty plan (`emptyPlan` in
+  with a factory initial state (node parameters + routing + CH SETTING colors and names). URX44V and URX22 are
+  checked against a factory-initialised unit: every address a new plan writes already holds the plan's value there.
+  URX44 reuses the URX44V capture verbatim (it differs only by URX44V's HDMI input, which no default routes), and
+  URX22 is that capture remapped to its channel layout (`models/initial-urx22.ts`). The one address that differs on
+  a factory-initialised URX22 is the sample rate (`766`), which follows the USB host while Follow USB is on (the
+  factory setting). A device fetch instead starts from an empty plan (`emptyPlan` in
   `core/plan.ts`) and lets the readback (`core/control/`) fill in the live values.
   On startup the model selection is restored from the last choice (`localStorage("urx-model")`),
   falling back to URX44V when it is unset or invalid (the same "saved value → fallback" pattern as
@@ -1050,10 +1051,10 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
   channel's gain to the D.Gain of the source its model's legacy table names, the input node's own value winning.
   An input-stage key that addresses nothing on the model is dropped. Version 5 is the first written with the
   input stage on the input nodes, so a version-4 build refuses it ("Persistence format").
-- **URX22 / URX44.** The jack axis, the URX22 HI-Z jack and the D.Gain sources are registered unverified mappings
-  (`jack-axis`, `hiz-channel`, `dgain-source` in `UNVERIFIED_MAPPINGS`). A read or write that fails at one of
-  those addresses names the mapping, and the self-test prints for each that a round trip does not settle it and
-  what does.
+- **URX22 / URX44.** On the URX22 the jack axis, the HI-Z jack (jack 2) and the D.Gain sources are confirmed on
+  the unit. On the URX44 the jack axis and the D.Gain sources are registered unverified mappings (`jack-axis`,
+  `dgain-source` in `UNVERIFIED_MAPPINGS`). A read or write that fails at one of those addresses names the
+  mapping, and the self-test prints for each that a round trip does not settle it and what does.
 - **Diagnostics.** The self-test floors every jack's A.Gain and every source's D.Gain and turns +48V off. The
   audit-prep writer routes the channels through every input in turn, so that every jack and source receives a
   value, and then puts the captured routing back.
