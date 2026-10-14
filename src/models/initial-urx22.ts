@@ -1,5 +1,5 @@
-// Factory initial state for URX22, INFERRED from the captured URX44V defaults
-// (initial-urx44v.ts) — URX22 has no device capture yet. The mapping rule:
+// Factory initial state for URX22 in Standard mode, laid out as the URX44V
+// capture (initial-urx44v.ts) remapped to the URX22's channel layout:
 //   - URX22 has 2 mono channels (CH1/2) instead of 4, and its 4 stereo channels
 //     are CH3/4, 5/6, 7/8, 9/10 (build.ts shifts the stereo numbering with the
 //     mono count). Stereo defaults are copied by POSITION among the stereo group,
@@ -9,11 +9,11 @@
 //   - The input stage is kept per jack and per source. URX22 has one MIC/LINE pair, whose
 //     second jack carries Hi-Z (HI_Z_JACKS in params.ts), and the digital sources it has
 //     take the URX44V's factory D.Gain.
-// Values not affected by the model differences mirror URX44V verbatim, and most of
-// this file is an unverified factory-state estimate. The INS FX values are the one
-// exception: they are the adopted URX22 implementation values, not an estimate held
-// until a capture arrives. The values themselves live with the code that uses them
-// (insertFxControl in core/control/translate.ts, the anchors in core/control/params.ts).
+// Values not affected by the model differences are the URX44V's. A new plan written to a
+// factory-initialised URX22 leaves every address it writes at the value the unit already
+// holds, the sample rate aside: with Follow USB on, the unit runs at the USB host's rate.
+// The INS FX values live with the code that uses them (insertFxControl in
+// core/control/translate.ts, the anchors in core/control/params.ts).
 
 import type { NodeParams, PlanConnection } from "../core/plan";
 import { SSMCS_INITIAL } from "../core/plan";

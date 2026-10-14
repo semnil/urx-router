@@ -1,7 +1,7 @@
-// A new document starts from the device's factory initial state. Only URX44V is
-// captured from real hardware (Standard mode); URX44 reuses that capture for the nodes it
-// carries (the two differ only by URX44V's HDMI input, which no default routes), and
-// URX22 is an inferred remap of it (see initial-urx22.ts).
+// A new document starts from the device's factory initial state (Standard mode). URX44
+// reuses the URX44V state for the nodes it carries (the two differ only by URX44V's HDMI
+// input, which no default routes), and URX22 is the URX44V state remapped to its channel
+// layout (see initial-urx22.ts).
 
 import { emptyPlan, isPlainRecord, type NodeParams, type ParamSource, type Plan } from "../core/plan";
 import { nodeParamContestPath, walkParamLeaves } from "../core/plan-history";

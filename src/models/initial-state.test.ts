@@ -27,7 +27,7 @@ describe("defaultPlan", () => {
     expect(plan.connections).toEqual(URX44V_CONNECTIONS);
   });
 
-  it("seeds URX22 with its inferred factory node params and routing", () => {
+  it("seeds URX22 with its factory node params and routing", () => {
     const plan = defaultPlan("URX22");
     expect(plan.nodeParams).toEqual(URX22_NODE_PARAMS);
     expect(plan.connections).toEqual(URX22_CONNECTIONS);
@@ -64,11 +64,11 @@ describe("defaultPlan", () => {
     },
   );
 
-  // The URX22 seed is inferred, not captured: its header documents that stereo
-  // defaults are copied by POSITION from the URX44V capture (CH3/4 <- CH5/6,
-  // CH5/6 <- CH7/8, CH7/8 <- CH9/10, CH9/10 <- CH11/12). The stereo channel
+  // The URX22 seed's header documents that stereo defaults are copied by POSITION
+  // from the URX44V capture (CH3/4 <- CH5/6, CH5/6 <- CH7/8, CH7/8 <- CH9/10,
+  // CH9/10 <- CH11/12). The stereo channel
   // shape is identical across the two files today, so pin the whole object —
-  // this catches a URX44V capture correction that misses the URX22 mirror.
+  // this catches a URX44V capture correction that misses the URX22 copy.
   it("URX22 stereo channel seeds mirror the URX44V capture by position", () => {
     const pairs: [string, string][] = [
       ["ch_3_4", "ch_5_6"],
