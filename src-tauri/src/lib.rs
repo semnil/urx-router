@@ -1374,7 +1374,7 @@ pub fn run() {
     //
     // Measured before this existed, after one dev reload: the connect handshake still
     // succeeded (device list, sync_status, firmware) and then the broker answered NOT
-    // ONE parameter read — the app sent a `requestVD` GET every 3 s and received zero
+    // ONE parameter read — the app sent a parameter GET every 3 s and received zero
     // bytes back for as long as it was left running. The MIDI port restore failed the
     // same way, with "that port is no longer available".
     //

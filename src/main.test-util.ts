@@ -93,7 +93,6 @@ const BASE_COMMANDS: Record<string, unknown> = {
   self_test_requested: false,
   prepare_modified_requested: false,
   reset_storage_requested: false,
-  casket_requested: false,
   "plugin:updater|check": null,
   app_build_kind: "dev",
   set_edit_menu_labels: null,
