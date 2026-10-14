@@ -1263,19 +1263,19 @@ it("floorSilent turns every jack's +48V off", () => {
   expect(plan.nodeParams["in.micline_1_2"]).toEqual({ phantomL: false, phantomR: false });
 });
 
-describe("unverified-guess workflow (URX22)", () => {
-  const m22 = getModel("URX22");
+describe("unverified-guess workflow (URX44)", () => {
+  const m44 = getModel("URX44");
 
-  function seed22(): Plan {
-    const plan = emptyPlan("URX22");
-    ensureFixedConnections(m22, plan);
+  function seed44(): Plan {
+    const plan = emptyPlan("URX44");
+    ensureFixedConnections(m44, plan);
     return plan;
   }
 
-  function installMock22(seed: Plan): Map<string, number> {
+  function installMock44(seed: Plan): Map<string, number> {
     const table = new Map<string, number>();
-    for (const c of planToCommands(m22, seed)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
-    vi.mocked(vdConnect).mockResolvedValue({ model: "URX22", label: "URX22", firmware: "", epoch: 1 });
+    for (const c of planToCommands(m44, seed)) table.set(`${c.paramId}:${c.x}:${c.y}`, c.vdValue);
+    vi.mocked(vdConnect).mockResolvedValue({ model: "URX44", label: "URX44", firmware: "", epoch: 1 });
     vi.mocked(vdDisconnect).mockResolvedValue(undefined);
     vi.mocked(vdGet).mockImplementation((id, x, y) => {
       const k = `${id}:${x}:${y}`;
@@ -1286,28 +1286,28 @@ describe("unverified-guess workflow (URX22)", () => {
       return Promise.resolve();
     });
     // As in installMockDevice: without this the name read answers undefined and every
-    // URX22 case runs with a channel-name error per channel in its report.
+    // URX44 case runs with a channel-name error per channel in its report.
     vi.mocked(vdGetStr).mockResolvedValue("");
     return table;
   }
 
-  it("has no static collisions: the URX22 D.Gain addresses are the URX44V's source table, inventing none", () => {
-    expect(auditUnverified("URX22")).toEqual([]);
-    const sources = m22.nodes.filter((n) => D_GAIN_SOURCES[n.id]);
-    expect(sources.length, "the premise: URX22 has digital sources").toBeGreaterThan(0);
-    const guessed = [...unverifiedAddresses(m22)].filter(([, key]) => key === "dgain-source").map(([a]) => a);
+  it("has no static collisions: the URX44 D.Gain addresses are the URX44V's source table, inventing none", () => {
+    expect(auditUnverified("URX44")).toEqual([]);
+    const sources = m44.nodes.filter((n) => D_GAIN_SOURCES[n.id]);
+    expect(sources.length, "the premise: URX44 has digital sources").toBeGreaterThan(0);
+    const guessed = [...unverifiedAddresses(m44)].filter(([, key]) => key === "dgain-source").map(([a]) => a);
     expect(new Set(guessed)).toEqual(
       new Set(sources.flatMap((n) => D_GAIN_SOURCES[n.id].instances.map((y) => `${D_GAIN_SOURCES[n.id].id}:${y}`))),
     );
   });
 
-  it("suppressing dgain-source drops every URX22 D.Gain write but leaves other params", () => {
-    const original = seed22();
-    for (const n of m22.nodes) if (D_GAIN_SOURCES[n.id]) original.nodeParams[n.id] = { dGain: 6 };
+  it("suppressing dgain-source drops every URX44 D.Gain write but leaves other params", () => {
+    const original = seed44();
+    for (const n of m44.nodes) if (D_GAIN_SOURCES[n.id]) original.nodeParams[n.id] = { dGain: 6 };
     original.nodeParams["in.micline_1_2"] = { clipSafeL: true, clipSafeR: true };
-    const plan = perturbedPlan(m22, original, 0, new Set(["dgain-source"]));
+    const plan = perturbedPlan(m44, original, 0, new Set(["dgain-source"]));
     expect(Object.values(plan.nodeParams).some((np) => np.dGain !== undefined)).toBe(false);
-    const cmds = planToCommands(m22, plan);
+    const cmds = planToCommands(m44, plan);
     expect(cmds.some((c) => c.name === "D_GAIN")).toBe(false);
     expect(
       cmds.some((c) => c.name === "CLIP_SAFE"),
@@ -1316,16 +1316,16 @@ describe("unverified-guess workflow (URX22)", () => {
   });
 
   it("floors a source's D.Gain to its device minimum", () => {
-    const original = seed22();
+    const original = seed44();
     original.nodeParams["in.aux"] = { dGain: 12 };
-    const plan = perturbedPlan(m22, original, 0);
+    const plan = perturbedPlan(m44, original, 0);
     expect(plan.nodeParams["in.aux"]?.dGain).toBe(D_GAIN_MIN_DB);
   });
 
   it("sweeps input source across real ports (not just the captured selection)", () => {
-    const plan = perturbedPlan(m22, seed22(), 0);
+    const plan = perturbedPlan(m44, seed44(), 0);
     expect(plan.connections.some((c) => c.kind === "source")).toBe(true);
-    const cmds = planToCommands(m22, plan);
+    const cmds = planToCommands(m44, plan);
     expect(cmds.some((c) => c.name === "INPUT_SOURCE" && c.vdValue !== PORT_REF_NONE)).toBe(true);
   });
 
@@ -1335,14 +1335,14 @@ describe("unverified-guess workflow (URX22)", () => {
   // (diffPlan) and so out of the residual — which reads as "no mismatch" and confirmed
   // the guess without a single round trip having been checked.
   it("does not confirm a guess whose addresses it could not read", async () => {
-    const table = installMock22(seed22());
+    const table = installMock44(seed44());
     const realGet = vi.mocked(vdGet).getMockImplementation()!;
     // One address of the stereo-block guess, which every pass writes — a guess on the input
     // stage is written only in the passes whose routing reads it. Failing only once writing
     // has started keeps it in the captured plan (a read that fails during the capture leaves
     // the parameter out of the plan entirely, so nothing would diff it and the case would be
     // absent).
-    const stereo = [...unverifiedAddresses(m22)].find(([, key]) => key === "stereo-block");
+    const stereo = [...unverifiedAddresses(m44)].find(([, key]) => key === "stereo-block");
     expect(stereo).toBeDefined();
     const [addrKey] = stereo!;
     const paramId = Number(addrKey.split(":")[0]);
@@ -1356,7 +1356,7 @@ describe("unverified-guess workflow (URX22)", () => {
       writing && id === paramId ? Promise.reject(new Error("read timeout")) : realGet(id, x, y),
     );
 
-    const report = await runSelfTest(m22, 0);
+    const report = await runSelfTest(m44, 0);
 
     const unread = report.unverified.find((u) => u.key === "stereo-block")!;
     expect(unread.outcome).toBe("unread");
@@ -1404,21 +1404,21 @@ describe("unverified-guess workflow (URX22)", () => {
   // failed to read something else entirely. The evidence is per pass: a pass that read
   // every address and still watched one refuse to take the value has settled the guess.
   it("keeps a refutation a complete pass established when a later pass fails to read", async () => {
-    const table = installMock22(seed22());
+    const table = installMock44(seed44());
     const realGet = vi.mocked(vdGet).getMockImplementation()!;
     const addr = (c: { paramId: number; x: number; y: number }): string => `${c.paramId}:${c.x}:${c.y}`;
     // The guess that gets refuted, and the unrelated one that goes unreadable. Both ids
     // come from the mapping table, not from a literal: `stereo-block` addresses CH_FADER
     // at a block id of its own, which is the whole content of that guess.
     const inputSourceId = PARAMS.INPUT_SOURCE.id;
-    const stereo = [...unverifiedAddresses(m22)].find(([, key]) => key === "stereo-block");
+    const stereo = [...unverifiedAddresses(m44)].find(([, key]) => key === "stereo-block");
     expect(stereo).toBeDefined();
     const stereoId = Number(stereo![0].split(":")[0]);
     // Pass 1 is told apart from pass 0 by a command the sweep itself moves between them,
     // read out of `perturbedPlan` rather than hard-coded, so the marker cannot drift away
     // from the sweep it is marking.
-    const pass0 = new Map(planToCommands(m22, perturbedPlan(m22, seed22(), 0)).map((c) => [addr(c), c.vdValue]));
-    const marker = planToCommands(m22, perturbedPlan(m22, seed22(), 1)).find(
+    const pass0 = new Map(planToCommands(m44, perturbedPlan(m44, seed44(), 0)).map((c) => [addr(c), c.vdValue]));
+    const marker = planToCommands(m44, perturbedPlan(m44, seed44(), 1)).find(
       (c) =>
         pass0.has(addr(c)) && pass0.get(addr(c)) !== c.vdValue && c.paramId !== inputSourceId && c.paramId !== stereoId,
     );
@@ -1437,7 +1437,7 @@ describe("unverified-guess workflow (URX22)", () => {
       pastPass0 && id === stereoId ? Promise.reject(new Error("read timeout")) : realGet(id, x, y),
     );
 
-    const report = await runSelfTest(m22, 0);
+    const report = await runSelfTest(m44, 0);
 
     // The fixture's own premise, asserted rather than assumed: pass 0 read everything and
     // a later pass did not. Without this the case could pass while testing nothing.
@@ -1478,8 +1478,8 @@ describe("unverified-guess workflow (URX22)", () => {
   // as divergence refutes a guess on the strength of a write that never happened, which
   // is the one thing REFUTED must never mean.
   it("does not refute anything from a pass whose write the device refused", async () => {
-    const table = installMock22(seed22());
-    const stereo = [...unverifiedAddresses(m22)].find(([, key]) => key === "stereo-block");
+    const table = installMock44(seed44());
+    const stereo = [...unverifiedAddresses(m44)].find(([, key]) => key === "stereo-block");
     expect(stereo).toBeDefined();
     const stereoId = Number(stereo![0].split(":")[0]);
     // One address the device refuses outright. It never stores, so it is in every round's
@@ -1496,7 +1496,7 @@ describe("unverified-guess workflow (URX22)", () => {
       return Promise.resolve();
     });
 
-    const report = await runSelfTest(m22, 0);
+    const report = await runSelfTest(m44, 0);
 
     // The fixture's premise: there IS a residual and the write DID fail. Without both,
     // "nothing was refuted" would be true for the uninteresting reason.
@@ -1514,7 +1514,7 @@ describe("unverified-guess workflow (URX22)", () => {
     // verdict reading "it was never asked to hold the value" is false about exactly those,
     // the guesses with an address that went out before the refused one.
     const delivered = report.unverified.filter((u) =>
-      [...unverifiedAddresses(m22)].some(([addr, key]) => key === u.key && deliveredBeforeRefusal.has(addr)),
+      [...unverifiedAddresses(m44)].some(([addr, key]) => key === u.key && deliveredBeforeRefusal.has(addr)),
     );
     expect(delivered.length, "the premise: a guess's address went out before the refusal").toBeGreaterThan(0);
     for (const u of delivered) expect(u.outcome, u.key).toBe("incomplete");
@@ -1547,7 +1547,7 @@ describe("unverified-guess workflow (URX22)", () => {
   // values. A refused write is the opposite — the values never reached it — and the two
   // want different responses from whoever reads the report, so the run has to say which.
   it("says the restore's write was refused, not just that params differ", async () => {
-    const table = installMock22(seed22());
+    const table = installMock44(seed44());
     // Refused only for the value the RESTORE writes. The sweep floors every fader, so the
     // captured value is one the sweep never sends: rejecting it cannot fire during a pass,
     // which is what makes this a fixture about the restore rather than about the sweep.
@@ -1561,7 +1561,7 @@ describe("unverified-guess workflow (URX22)", () => {
       return Promise.resolve();
     });
 
-    const report = await runSelfTest(m22, 0);
+    const report = await runSelfTest(m44, 0);
 
     // Premise: the sweep itself ran clean, so everything below is the restore's.
     expect(report.errors.some((e) => e.startsWith("p"))).toBe(false);
@@ -1579,12 +1579,12 @@ describe("unverified-guess workflow (URX22)", () => {
   // the promotion to "verified on hardware" for a question the run never asked. The LCD side
   // link's address is one no pass writes, so the run leaves it unexercised.
   it("reports every unverified guess as round-tripped, not confirmed, on a faithful device", async () => {
-    installMock22(seed22());
-    const report = await runSelfTest(m22, 0);
-    expect(report.device).toBe("URX22");
+    installMock44(seed44());
+    const report = await runSelfTest(m44, 0);
+    expect(report.device).toBe("URX44");
     expect(report.collisions).toEqual([]);
     expect(report.unverified.map((u) => u.key).sort()).toEqual(
-      ["cue-flags", "dgain-source", "hiz-channel", "input-ports", "jack-axis", "lcd-side", "stereo-block"].sort(),
+      ["cue-flags", "dgain-source", "input-ports", "jack-axis", "lcd-side", "stereo-block"].sort(),
     );
     // Neither the LCD selection nor a [CUE] flag is in the plan, so no pass writes either.
     const unwritten = new Set(["lcd-side", "cue-flags"]);
@@ -1593,12 +1593,12 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.restored).toBe(true);
     // The exported report leads with the per-guess verdicts.
     const md = formatSelfTestReport(report);
-    expect(md).toContain("# URX self-test report — URX22");
+    expect(md).toContain("# URX self-test report — URX44");
     expect(md).toContain("ROUND-TRIPPED");
     expect(md).not.toContain("CONFIRMED");
-    expect(summarizeVerdicts(report.unverified)).toEqual({ confirmed: 0, roundTripped: 5, refuted: 0, untestable: 2 });
+    expect(summarizeVerdicts(report.unverified)).toEqual({ confirmed: 0, roundTripped: 4, refuted: 0, untestable: 2 });
     // …and says, per guess, that the run did not settle it and what would.
-    for (const m of UNVERIFIED_MAPPINGS.filter((x) => x.models.includes("URX22"))) {
+    for (const m of UNVERIFIED_MAPPINGS.filter((x) => x.models.includes("URX44"))) {
       expect(m.howToSettle, `${m.key} says what settles it`).toBeTruthy();
       expect(md, m.key).toContain(
         `NOT SETTLED BY THIS RUN — a round trip cannot answer it; to settle it, ${m.howToSettle}`,
@@ -1609,13 +1609,13 @@ describe("unverified-guess workflow (URX22)", () => {
   // …and CONFIRMED is still what a round trip earns where it does answer the question. The
   // positive control for the branch no entry takes today.
   it("confirms a guess a round trip settles", async () => {
-    installMock22(seed22());
+    installMock44(seed44());
     const entry = UNVERIFIED_MAPPINGS.find((m) => m.key === "stereo-block")!;
     entry.roundTripSettles = true;
     try {
-      const report = await runSelfTest(m22, 0);
+      const report = await runSelfTest(m44, 0);
       expect(report.unverified.find((u) => u.key === "stereo-block")!.outcome).toBe("confirmed");
-      expect(report.unverified.find((u) => u.key === "hiz-channel")!.outcome).toBe("roundTripped");
+      expect(report.unverified.find((u) => u.key === "jack-axis")!.outcome).toBe("roundTripped");
     } finally {
       entry.roundTripSettles = false;
     }
@@ -1626,9 +1626,11 @@ describe("unverified-guess workflow (URX22)", () => {
   // passes did write still are. Counted from the registry instead, the guess would read as
   // round-tripped on the strength of a write that never went out.
   it("does not credit a guess whose address no pass wrote", async () => {
-    installMock22(seed22());
+    installMock44(seed44());
     const realGet = vi.mocked(vdGet).getMockImplementation()!;
-    const hiZ = [...unverifiedAddresses(m22)].find(([, key]) => key === "hiz-channel")!;
+    const hiZ = [...unverifiedAddresses(m44)].find(
+      ([addr, key]) => key === "jack-axis" && Number(addr.split(":")[0]) === PARAMS.HI_Z.id,
+    )!;
     const [paramId, y] = hiZ[0].split(":").map(Number);
     let refused = false;
     vi.mocked(vdGet).mockImplementation((id, x, yy) => {
@@ -1639,7 +1641,7 @@ describe("unverified-guess workflow (URX22)", () => {
       return realGet(id, x, yy);
     });
 
-    const report = await runSelfTest(m22, 0);
+    const report = await runSelfTest(m44, 0);
 
     expect(refused, "the premise: the capture's read of it failed").toBe(true);
     expect(
@@ -1649,14 +1651,14 @@ describe("unverified-guess workflow (URX22)", () => {
     expect(report.refusal, "the premise: a jack holds no head, so the run goes ahead").toBeUndefined();
     const credited = (u: SelfTestReport["unverified"][number]): boolean =>
       u.outcome === "confirmed" || u.outcome === "roundTripped";
-    expect(credited(report.unverified.find((u) => u.key === "hiz-channel")!)).toBe(false);
+    expect(credited(report.unverified.find((u) => u.key === "jack-axis")!)).toBe(false);
     expect(credited(report.unverified.find((u) => u.key === "stereo-block")!), "the positive control").toBe(true);
   });
 
   // UNEXERCISED: no pass that completed wrote and read every address of the guess, and no pass left
   // one of them different or unread. Each case below reaches it a different way, and asserts it on
   // the guesses the run left no difference at, beside the premise that no pass completed.
-  const ch1Fader = (id: number, y: number): boolean => id === PARAMS.CH_FADER.id && y === channelControl(m22, "ch1")!.y;
+  const ch1Fader = (id: number, y: number): boolean => id === PARAMS.CH_FADER.id && y === channelControl(m44, "ch1")!.y;
   const untouchedGuesses = (report: SelfTestReport): SelfTestReport["unverified"] => {
     const differed = new Set(report.residual.map((r) => r.unverifiedKey));
     return report.unverified.filter((u) => !differed.has(u.key));
@@ -1665,7 +1667,7 @@ describe("unverified-guess workflow (URX22)", () => {
   // A read that fails once the sweep has started stops each pass, so nothing it wrote counts as
   // round-tripped; the failed read is CH 1's fader, which no guess holds, so no guess is unread.
   it("leaves a guess unexercised when a failed read stops every pass", async () => {
-    installMock22(seed22());
+    installMock44(seed44());
     const realGet = vi.mocked(vdGet).getMockImplementation()!;
     const realSet = vi.mocked(vdSet).getMockImplementation()!;
     let writing = false;
@@ -1677,13 +1679,13 @@ describe("unverified-guess workflow (URX22)", () => {
       writing && ch1Fader(id, y) ? Promise.reject(new Error("read timeout")) : realGet(id, x, y),
     );
     expect(
-      [...unverifiedAddresses(m22)].filter(([addr]) => ch1Fader(...(addr.split(":").map(Number) as [number, number]))),
+      [...unverifiedAddresses(m44)].filter(([addr]) => ch1Fader(...(addr.split(":").map(Number) as [number, number]))),
       "the premise: no guess holds the address",
     ).toEqual([]);
 
-    const report = await runSelfTest(m22, 0);
+    const report = await runSelfTest(m44, 0);
 
-    for (let pass = 0; pass < passesFor(m22); pass++) {
+    for (let pass = 0; pass < passesFor(m44); pass++) {
       expect(report.errors, `the premise: pass ${pass} stopped on the read`).toContain(
         `p${pass} read: CH_FADER: read timeout`,
       );
@@ -1697,7 +1699,7 @@ describe("unverified-guess workflow (URX22)", () => {
   // refuses the second, so each pass stops in its second round — after the guesses' addresses
   // took their values in the first, which leaves them out of the difference the stop reports.
   it("leaves a guess unexercised when a refused write stops every pass after it converged", async () => {
-    const table = installMock22(seed22());
+    const table = installMock44(seed44());
     let faderWrites = 0;
     vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
       if (ch1Fader(id, y)) {
@@ -1708,9 +1710,9 @@ describe("unverified-guess workflow (URX22)", () => {
       return Promise.resolve();
     });
 
-    const report = await runSelfTest(m22, 0);
+    const report = await runSelfTest(m44, 0);
 
-    for (let pass = 0; pass < passesFor(m22); pass++) {
+    for (let pass = 0; pass < passesFor(m44); pass++) {
       expect(
         report.errors.some((e) => e.startsWith(`p${pass} `) && e.endsWith("device busy")),
         `the premise: pass ${pass} stopped on the refusal`,
@@ -1723,7 +1725,7 @@ describe("unverified-guess workflow (URX22)", () => {
 
   // A cancel inside the first pass leaves no pass completed and nothing in the residual.
   it("leaves every guess unexercised when the run is cancelled inside the first pass", async () => {
-    installMock22(seed22());
+    installMock44(seed44());
     const controller = new AbortController();
     const realSet = vi.mocked(vdSet).getMockImplementation()!;
     vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
@@ -1731,19 +1733,19 @@ describe("unverified-guess workflow (URX22)", () => {
       return realSet(id, x, y, v);
     });
 
-    const report = await runSelfTest(m22, 0, controller.signal);
+    const report = await runSelfTest(m44, 0, controller.signal);
 
     expect(report.aborted, "the premise: the run was cancelled").toBe(true);
     expect(vi.mocked(vdSet), "the premise: the first pass had started writing").toHaveBeenCalled();
     expect(report.residual).toEqual([]);
     expect(report.unverified.map((u) => [u.key, u.outcome])).toEqual(
-      UNVERIFIED_MAPPINGS.filter((m) => m.models.includes("URX22")).map((m) => [m.key, "unexercised"]),
+      UNVERIFIED_MAPPINGS.filter((m) => m.models.includes("URX44")).map((m) => [m.key, "unexercised"]),
     );
   });
 
   // Param 22 carries the MONO IN channels' sources; a stereo channel's go out on 209 / 210.
   // Registered for every channel, the guess held slots no pass ever writes.
-  it.each(["URX22", "URX44"] as const)("%s: registers only input-ports slots a pass writes", (id) => {
+  it.each(["URX44"] as const)("%s: registers only input-ports slots a pass writes", (id) => {
     const m = getModel(id);
     const seed = emptyPlan(id);
     ensureFixedConnections(m, seed);

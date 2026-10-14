@@ -1388,14 +1388,14 @@ describe("the model the device turns out to be", () => {
   });
 
   // A write the unit refuses at an address an unverified mapping names ends the session on a
-  // line that says which: on URX22 a jack's A.Gain rests on the jack axis.
+  // line that says which: on URX44 a jack's A.Gain rests on the jack axis.
   it("names the guess a refused live write rests on", SLOW, async () => {
     const { serialize } = await import("./core/plan");
-    const url = `/?plan=${encodeURIComponent(Buffer.from(serialize(defaultPlan("URX22")), "utf8").toString("base64url"))}`;
+    const url = `/?plan=${encodeURIComponent(Buffer.from(serialize(defaultPlan("URX44")), "utf8").toString("base64url"))}`;
     const shell = (await bootApp({
       url,
       tauri: deviceCommands({
-        ...connectAs("URX22"),
+        ...connectAs("URX44"),
         "plugin:dialog|message": "Ok",
         vd_set: (a: Record<string, unknown>) => {
           if (a.paramId === PARAMS.HA_GAIN.id) throw new Error("device-busy");
@@ -1416,11 +1416,11 @@ describe("the model the device turns out to be", () => {
   // …and the write's own report names it beside the refused command.
   it("names the guess a refused write rests on in the write report", SLOW, async () => {
     const { serialize } = await import("./core/plan");
-    const url = `/?plan=${encodeURIComponent(Buffer.from(serialize(defaultPlan("URX22")), "utf8").toString("base64url"))}`;
+    const url = `/?plan=${encodeURIComponent(Buffer.from(serialize(defaultPlan("URX44")), "utf8").toString("base64url"))}`;
     const shell = (await bootApp({
       url,
       tauri: deviceCommands({
-        ...connectAs("URX22"),
+        ...connectAs("URX44"),
         ...SAVES,
         "plugin:dialog|message": byMessage((m) => !m.includes(RETRY_ASK)),
         vd_set: (a: Record<string, unknown>) => {

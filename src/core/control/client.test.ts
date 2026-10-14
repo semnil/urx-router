@@ -1200,12 +1200,12 @@ describe("sendPresetsFirst", () => {
 });
 
 // A read that fails at an address an unverified mapping names is reported against that
-// mapping — on URX22, jack 1's A.Gain rests on the jack axis — and one elsewhere carries no note.
+// mapping — on URX44, jack 1's A.Gain rests on the jack axis — and one elsewhere carries no note.
 describe("a failed read at a guessed address", () => {
-  const m22 = getModel("URX22");
-  const plan22 = (): Plan => {
-    const plan = defaultPlan("URX22");
-    ensureFixedConnections(m22, plan);
+  const m44 = getModel("URX44");
+  const plan44 = (): Plan => {
+    const plan = defaultPlan("URX44");
+    ensureFixedConnections(m44, plan);
     return plan;
   };
   const failAt = (paramId: number, y: number): void =>
@@ -1217,16 +1217,16 @@ describe("a failed read at a guessed address", () => {
 
   it("names the guess in diffPlan's error, and only there", async () => {
     failAt(PARAMS.HA_GAIN.id, 0);
-    const { errors } = await diffPlan(m22, plan22());
+    const { errors } = await diffPlan(m44, plan44());
     expect(errors).toEqual(["HA_GAIN (unverified mapping jack-axis): timeout"]);
     failAt(PARAMS.CH_ON.id, 0);
-    expect((await diffPlan(m22, plan22())).errors).toEqual(["CH_ON: timeout"]);
+    expect((await diffPlan(m44, plan44())).errors).toEqual(["CH_ON: timeout"]);
   });
 
   it("names the guess in comparePlan's error when given the model", async () => {
     failAt(PARAMS.HA_GAIN.id, 0);
-    const commands = planToCommands(m22, plan22());
-    expect((await comparePlan(commands, undefined, m22)).errors).toEqual([
+    const commands = planToCommands(m44, plan44());
+    expect((await comparePlan(commands, undefined, m44)).errors).toEqual([
       "HA_GAIN (unverified mapping jack-axis): timeout",
     ]);
   });

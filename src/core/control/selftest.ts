@@ -39,8 +39,8 @@
 // got there — so an interrupted run is a perturbed pair structure, not only perturbed
 // values.
 //
-// UNVERIFIED GUESSES: some device mappings are confirmed only on URX44V and remain
-// guesses on URX22/URX44 (see UNVERIFIED_MAPPINGS). A static audit first refutes any
+// UNVERIFIED GUESSES: some device mappings are confirmed on URX44V and URX22 and remain
+// guesses on URX44 (see UNVERIFIED_MAPPINGS). A static audit first refutes any
 // guessed id a confirmed param already owns — that outcome is `collision`, it settles
 // the guess before anything is written, and its writes are suppressed so the test never
 // misaddresses hardware. The rest are exercised, and each round-trip result is reported

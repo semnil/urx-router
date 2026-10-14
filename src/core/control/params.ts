@@ -1229,7 +1229,7 @@ export const SD_REC_TRACK_COUNT_OPTIONS = [2, 4, 6, 8, 10, 12, 14, 16].map((n) =
 // params 139/140/141. Encodings match (level_gain / onoff / ±63). The index is
 // the channel's position among the model's stereo channels (so it shifts with
 // the mono count — e.g. URX22's first stereo channel is index 0). HPF does not
-// exist on these channels. Confirmed on URX44V (research §12.9); URX44/URX22 inferred.
+// exist on these channels. Confirmed on URX44V and URX22; URX44 inferred.
 export const STEREO_FADER = 266;
 export const STEREO_ON = 267;
 export const STEREO_PAN = 268;
