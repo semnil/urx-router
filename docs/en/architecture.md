@@ -714,8 +714,8 @@ carries a one-line map of the same directories and points here.
   `append_link_log` appends one JSONL line to the app log directory and `append_midi_log` a batch of them
   to the MIDI trace beside it (dev binaries only — it refuses outright otherwise); `--experimental` gate:
   `experimental_enabled`/`self_test_requested` are self-test only) + **the session teardown** (one epilogue
-  every break lands on: unregister every address the session registered, then begin the orderly close the
-  transport calls for — a replaced connection, an explicit disconnect, a dropped channel, the pump's own error and the
+  every break lands on: unregister every address the session registered, then begin the orderly close (shutting
+  the socket's write half) — a replaced connection, an explicit disconnect, a dropped channel, the pump's own error and the
   app's quit all leave the same way, and the drain stops at the socket's first read timeout rather than
   spending the Quit on a quiet broker; the app is `build`+`run` rather than `run` so a `RunEvent::Exit`
   handler can call `vd::shutdown_blocking`, which WAITS, bounded, for those frames to reach the wire.
@@ -2046,9 +2046,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
 
 Every device action (fetch, write, live sync, self-test) opens a connection through `vdConnect`, which runs
 the Rust worker's `handshake`: it finds the unit, then confirms it is physically attached by reading
-`/vd/synchronize` — `sync_status` is `"online"` only while a URX is connected. Finding it is the one step the
-two transports do differently (below); confirming it is not. Device Center keeps listing a unit after it is
-unplugged, and answers cached parameter reads for it, so the listing alone cannot tell a present device from a
+`/vd/synchronize` — `sync_status` is `"online"` only while a URX is connected. Device Center keeps listing a
+unit after it is unplugged, and answers cached parameter reads for it, so the listing alone cannot tell a present device from a
 stale entry; the `sync_status` check is what distinguishes them. Measured on **both platforms** with the unit
 physically unplugged: the listing comes back unchanged, `/vd/synchronize` answers `"lost"`, and a parameter
 read still succeeds out of the broker's cache — so of the shapes `no-device` collapses (below), the empty
@@ -2071,22 +2070,15 @@ by comparison, `Some("")` means the unit answered with no System entry and legit
 `None` means the read itself did not land — the version is unknown rather than absent, so the operation stops
 instead of proceeding with the gate silently off ([Aborting on failure](#aborting-on-failure)).
 
-**Two transports, and only one of them is exclusive.** Device Center serves the casket socket to **one client
-at a time**: a second connection silences the first, with no error on either side — and **the silenced one
-never comes back**, not even when the second leaves; its socket stays open and delivery to it simply stops
-(measured). So any other tool touching the broker would take the device link away for good, and the app could
-not tell that from a quiet link. It also
-advertises a **per-session port** that it serves to concurrent clients, and that is the default route. Casket
-stays reachable under `--experimental --casket` and deliberately **not** as an automatic fallback — falling
-back on a discovery failure would hide a regression on the default route behind a working old one. The
-messages are the same on both; what differs is framing and addressing (an envelope naming the unit by GUID on
-every message, versus a socket already scoped to one unit and so naming nothing), which is why finding the
-unit is the step that changes and reading `/vd/synchronize` is not. `Link` holds whichever is open and hides
-the difference from everything above it. The port is looked up on every connection and never cached: it
-belongs to a Device Center session, not to a device. On casket one socket carries every listed unit, and every
-frame the broker sends names its unit in `params.dev_uid` (replies, parameter and meter notifies, and the
-`/vd/synchronize` push alike), so `read_frame` drops a frame naming another unit: another unit's reply never
-answers this session's read and its unplug never ends this session.
+**One transport, served to concurrent clients.** Device Center advertises a **per-session port** for each
+listed unit on `:51770` (`/vddp_srv/devices`), and the link (`Link` in `vd.rs`) is a plain socket to that port
+carrying newline-delimited JSON, one `vdp` message per line. The socket is scoped to one unit, so no message
+names the unit, and Device Center serves the port to every client at once — any other tool touching the broker
+leaves this app's link in place. The port is looked up on every connection and never cached: it belongs to a
+Device Center session, not to a device. Device Center's other endpoint, a WebSocket on `:51780` that wraps the
+same messages in an envelope naming the unit, is not used: it serves **one client at a time**, a second
+connection silences the first with no error on either side, and the silenced one never comes back — including
+Device Center's own UI, which is normally that client.
 
 **Concurrency is what makes a reply hard to recognise.** The broker sends every notify to every connected
 client, whether or not this session registered the address, so a notify for the address a command is waiting
@@ -2110,8 +2102,7 @@ installed rather than to the connection that opened them (`sender` takes no epoc
 therefore **takes the first one's link**: the original owner's next command silently rides the new
 connection, and the moment that owner disconnects — by its own epoch, correctly — the first one's next
 command fails as `not-connected`. `core/control/connection-race.test.ts` models exactly that contract, and
-the epoch guard it exercises is about a *stale teardown*, not about two links coexisting. Nothing here
-changes with the transport: it is a property of the shell's state, not of casket or the vdp port.
+the epoch guard it exercises is about a *stale teardown*, not about two links coexisting.
 
 For a destructive round-trip run the cost is not a failed action. The run perturbs the unit and then
 verifies it address by address, so being cut off mid-perturbation leaves the unit silent-but-modified with
@@ -3209,10 +3200,10 @@ listed here so they are not proposed as gaps:
    deliberately NOT applied to the readout beside it: the panel shows what the plan holds, which after a
    device read is what the unit holds, and the unit can hold a value this app's own range excludes. One
    readout cannot answer both "what is the unit at" and "what would the next write send".
-3. **`pump` discards an invalid binary frame.** The vd protocol is JSON text, TCP has already settled frame
-   integrity underneath it, and a stray frame on the idle drain is noise rather than a failed operation —
-   so discarding it *is* the salvage. A binary frame arriving while a command waits for its reply still fails
-   loudly, in `read_text` (`broker-bad-response: binary frame`).
+3. **`read_frame` drops a line that is not JSON.** The vd protocol is one JSON message per line, TCP has
+   already settled byte integrity underneath it, and a stray line is noise rather than a failed operation —
+   so dropping it *is* the salvage. On the idle drain it ends that pump as a drained socket does; a command
+   waiting for its reply reads past it, and a reply that never comes still fails loudly, as `broker-timeout`.
 4. **MIDI unplug is not detected at all.** midir has no hot-plug notification, and a virtual port (Stream Deck
    and its kind) outlives the hardware behind it, so polling cannot tell a live port from a dead one even in
    principle. The lists are re-enumerated on demand instead, and a port that fails to open reports it.
@@ -3392,12 +3383,11 @@ covers the device link, and this is not on it.
 ### Session teardown
 
 Every way out of the worker loop lands on one epilogue: it unregisters every address the session registered,
-then begins the orderly close. Over casket that means completing the WebSocket close handshake rather than
-dropping the socket with the Close frame still queued; over the plain socket of the default route there is no
-handshake to complete, so it shuts the write half and the drain below simply meets the peer's EOF.
+then begins the orderly close: it shuts the write half of the socket, and the drain below reads what the broker
+still has queued until it meets the peer's EOF.
 A replaced connection, an explicit disconnect, a dropped command channel and the app's own exit therefore all
-leave the same way, and so does the pump's own error break. The drain that finishes the handshake stops at the
-socket's first read timeout: an empty read means the peer has nothing queued, and counting those against a
+leave the same way, and so does the pump's own error break. The drain stops at the socket's first read
+timeout: an empty read means the peer has nothing queued, and counting those against a
 frame budget would spend seconds of the operator's Quit on a broker that has already gone quiet.
 
 On the app side the same is true of the connection: `releaseLive` in `main.ts` is the one release, so "read the
