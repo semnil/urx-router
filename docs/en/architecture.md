@@ -585,7 +585,10 @@ carries a one-line map of the same directories and points here.
   other windows overlap, which lands clicks in the wrong app. Published as `window.__urxKeyProbe` under
   `import.meta.env.DEV`, statically dropped from a production build (guarded in `ci.yml` beside
   `__urxConsole`), bindings pinned by `keyprobe.test.ts`; installed from `main.ts` **after** the app's own
-  keydown handler, which is what lets the chord log report whether the app claimed the chord / `dom.ts`
+  keydown handler, which is what lets the chord log report whether the app claimed the chord /
+  `param-watch.ts` the parameter watch, **dev builds only**: a wall-clock record of a few parameters the app
+  neither reads nor writes, kept while Live sync is up and published as `window.__urxParamWatch`
+  ([The parameter watch (dev builds)](#the-parameter-watch-dev-builds)) / `dom.ts`
   shared DOM helpers — the builder `el`, `onOff` / `sliderRow` (the ON/OFF pair and the labelled range row
   every settings surface prints, so a hand-built one cannot silently drop the wheel-step contract),
   `onWheelStep` (a wheel notch steps by the wheel-step preference's detent count; reused by the SENDS/main
@@ -708,11 +711,13 @@ carries a one-line map of the same directories and points here.
   the cargo-about notice bundled via `bundle.resources`, shown from File → "Third-party licenses") + device
   control commands (`vd_connect/vd_set/vd_get/vd_set_str/vd_get_str/vd_disconnect`; meter subscription
   `vd_meters_subscribe/vd_meters_unsubscribe`, device-side change subscription
-  `vd_params_subscribe/vd_params_unsubscribe`, and link-loss events `vd_watch_link` are delivered over Tauri
-  Channels; `vd_link_stats` reads the session ledger straight off atomics rather than queueing a `Cmd`, so a
+  `vd_params_subscribe/vd_params_unsubscribe`, the dev build's parameter watch `vd_probe_subscribe` (a second
+  parameter subscription beside that one; dev binaries only), and link-loss events `vd_watch_link` are
+  delivered over Tauri Channels; `vd_link_stats` reads the session ledger straight off atomics rather than queueing a `Cmd`, so a
   reading taken during an ~800 command sweep reports now instead of reporting the sweep's start;
   `append_link_log` appends one JSONL line to the app log directory and `append_midi_log` a batch of them
-  to the MIDI trace beside it (dev binaries only — it refuses outright otherwise); `--experimental` gate:
+  to the MIDI trace beside it and `append_watch_log` to the parameter watch's file (dev binaries only — both
+  refuse outright otherwise); `--experimental` gate:
   `experimental_enabled`/`self_test_requested` are self-test only) + **the session teardown** (one epilogue
   every break lands on: unregister every address the session registered, then begin the orderly close (shutting
   the socket's write half) — a replaced connection, an explicit disconnect, a dropped channel, the pump's own error and the
@@ -3426,6 +3431,56 @@ A third window inherits the right behaviour without anyone remembering to add it
 
 Whether an abandoned session is what leaves Device Center needing a force quit is **not established**. Closing
 it properly removes it from the candidates, which is a different claim — see `docs/en/known-issues.md`.
+
+### The parameter watch (dev builds)
+
+A dev build (`pnpm tauri dev`) records a handful of parameters the app neither reads nor writes for as long as
+Live sync is up, so that an intermittent change on the unit can be put beside what the operator was doing when
+it happened. The subject is `838:0:0`, an unnamed runtime parameter (0–2) that the unit sets to 1 when its
+microSD screen is opened; `817:0:0` (the operation mode) and the preset indices `781:0:0` and `863:0:0` are
+recorded beside it as context. The list is `WATCHED` in `src/ui/param-watch.ts`.
+
+- **A subscription of its own.** `vd_probe_subscribe` registers the addresses as a second parameter
+  subscription in the worker, beside the one the follow layer reads, so the live-sync set stays exactly what the
+  plan names and a notify on a watched address reaches the watch's channel only. Registration is per address,
+  never a namespace-wide post. An address both subscriptions hold is registered once and stays registered while
+  either holds it, across the live-sync set being replaced.
+- **A read once a second.** Each watched address is also read with a GET, one round of reads a second after the
+  previous round ended, so a change the unit does not announce still lands — registration and notify emission are decoupled on this protocol (above). The reads
+  queue on the session's link like any other command, behind a full readback when one is running, and show in
+  the ledger's `Sent` row.
+- **The clock as liveness.** The clock parameters `789`–`794` are registered too and counted rather than
+  recorded. That count is a liveness signal on the URX44V and URX44 only: the URX22's clock stays at
+  2020-01-01 00:00:00 and announces nothing, so its count is 0 every minute.
+- **Read-only.** Nothing it does writes to the unit; `src/ui/param-watch.test.ts` holds the shell functions it
+  imports to the read side.
+
+It starts once the session is declared up and stops in `releaseLive`, before the link is dropped. A page load
+ends the session natively (below) with no `releaseLive`, so a session closed that way has no `stop` record: the
+next `open` is what marks it. Records go to
+`param-watch.jsonl` beside the link ledger, one JSON object per record carrying `ms` (epoch) and `at` (local time
+with its UTC offset), batched 250 ms at a time and rotated at 2 MiB keeping one previous generation.
+
+| Record | When |
+| --- | --- |
+| `open` / `start` | The session's model and the watched list, then the first reading of every watched address |
+| `notify` | Every notify on a watched address, with the value it replaced — an announcement of an unchanged value included |
+| `poll` | A read that found a value other than the last one known, by notify or by read |
+| `bulk` | The broker's namespace-wide change push (a scene recall) |
+| `alive` | Once a minute: reads, failed reads, watched notifies and clock notifies since the previous line, and the current values |
+| `poll-error` / `poll-ok` | The first failure of a run of failed reads, and the read that ended it |
+| `subscribe-error` | The registration was refused; the reads carry on without it |
+| `stop` | The session ended (`off` / `error`), with the last values known |
+
+On a URX44V or URX44, an `alive` line with `clock: 0` is a minute in which the notify stream delivered nothing, so a change missing from
+that minute's `notify` records says nothing about whether the unit announced it; `pollErrors` above zero is a
+minute in which the read path failed. In the running app `window.__urxParamWatch` (`records()`, `report()`,
+`flush()`) prints this page's records from the Web Inspector, and `flush()` makes the file current before it is
+read from outside.
+
+It is a dev build's diagnostic on both sides: `import.meta.env.DEV` drops it from the bundle (`ci.yml` greps
+`dist` for `__urxParamWatch`), and `debug_assertions` makes `vd_probe_subscribe` and `append_watch_log` refuse,
+so an installed app neither registers the addresses nor writes the file.
 
 ## Device setup (the unit's SETUP > GENERAL)
 
