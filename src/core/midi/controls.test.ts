@@ -161,7 +161,8 @@ describe("control catalog", () => {
     expect(ids).not.toContain("bus.stereo/mute");
     expect(ids).not.toContain("bus.mon1/mute");
     expect([...ids].some((i) => i.endsWith("/duckerOn"))).toBe(true);
-    // STREAMING is meter-only and carries its CUE alone; Hi-Z exists on CH3/CH4 only
+    // STREAMING is meter-only and carries its CUE alone; Hi-Z only on a channel reading a jack
+    // that carries it (CH 3, not CH 1, on the factory plan)
     expect([...ids].filter((i) => i.startsWith("bus.stream/"))).toEqual(["bus.stream/cue"]);
     expect(ids).not.toContain("ch1/hiZ");
     expect(ids).toContain("ch3/hiZ");

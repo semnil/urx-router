@@ -2262,8 +2262,8 @@ input[type="range"]:focus-visible,
      mono channel (GATE / COMP / EQ each with their tuning-screen opener, then INS FX)
      is the tallest: measured at the old 252px, the head's inner box came to 254px (the
      height is content-box, so the padding pair and the bottom border add to it), a chip
-     row costs 24px, and the CH3/CH4 strips — which carry a Hi-Z chip the others do not —
-     had 0.9px of slack. Raising it takes 24px from the fader zone on every strip,
+     row costs 24px, and the strips reading a jack that carries Hi-Z (`HI_Z_JACKS`) — which carry a Hi-Z
+     chip the others do not — had 0.9px of slack. Raising it takes 24px from the fader zone on every strip,
      including the ones with no chips at all. It is no longer hand-checked: an E2E asserts
      no strip's head overflows its own contents (e2e/console.spec.ts). */
   --head-h: 276px;

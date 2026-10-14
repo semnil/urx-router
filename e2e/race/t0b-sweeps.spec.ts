@@ -529,7 +529,8 @@ test.describe("T0b baseline sweeps", () => {
       { label: "+48 chip", run: () => chip(ch1, "+48").click() },
       { label: "polarity chip", run: () => chip(ch1, "Phase").click() },
       { label: "HPF chip", run: () => chip(ch1, "HPF").click() },
-      // Hi-Z is a CH 3 / CH 4 input on this model, not CH 1.
+      // Hi-Z is the jack's: on the factory URX44V plan CH 3 reads jack 3, which carries it,
+      // and CH 1 reads jack 1, which does not.
       { label: "Hi-Z chip (CH 3)", run: () => chip(strip(page, "CH 3"), "Hi-Z").click() },
       { label: "GATE chip", run: () => chip(ch1, "GATE").click() },
       { label: "COMP chip", run: () => chip(ch1, "COMP").click() },
