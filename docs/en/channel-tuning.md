@@ -2102,8 +2102,8 @@ and knobs. Each pair fills one row of the two-per-row chip grid — head height 
 so the SENDS racks, faders and meters stay aligned.
 
 The EQ's opener takes a fourth chip row on a mono channel, which the head has to carry: measured at a
-252 px head, its inner height is 254 px, a chip row costs 24 px, and a strip with a Hi-Z chip (one reading jack
-3 or 4) has 0.9 px of slack there. **The height is not measured by hand**: E2E cases assert that no strip's head
+252 px head, its inner height is 254 px, a chip row costs 24 px, and a strip with a Hi-Z chip (one reading a jack that carries Hi-Z — jacks 3 and 4 on URX44 /
+URX44V, jack 2 on URX22) has 0.9 px of slack there. **The height is not measured by hand**: E2E cases assert that no strip's head
 overflows its own contents, on the factory wiring and on rewired boards (`e2e/console.spec.ts`). `--head-h` is 276 px, which takes 24 px from the fader zone on
 every strip, including those with no chips at all. The opener is not offered where the rate has the
 EQ forced off, since the toggle beside it is read-only there.

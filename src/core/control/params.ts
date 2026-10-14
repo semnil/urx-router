@@ -363,7 +363,7 @@ export const PARAMS = {
   PHASE_R: { id: 212, encoding: "bool" },
   /** Input channel Clip Safe (auto head-amp clip protection). */
   CLIP_SAFE: { id: 5, encoding: "bool" },
-  /** Input channel Hi-Z (high-impedance instrument input; CH3/CH4 only). */
+  /** Input jack Hi-Z (high-impedance instrument input; only the jacks `HI_Z_JACKS` names per model). */
   HI_Z: { id: 6, encoding: "bool" },
   /** Input channel head-amp (HA) gain (-8 … +70 dB). */
   HA_GAIN: { id: 1, encoding: "gain", follow: "direct" },
