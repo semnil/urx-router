@@ -26,13 +26,14 @@ on:
 permissions:
   contents: read
 
-# Seconds either way, so this buys little on its own; it is here so that every workflow
-# states what it does under a second push rather than leaving one to read as an oversight.
-# The key's shape is race.yml's, and `github.run_id` keeps push runs in a group of one for
-# the reason ci.yml gives.
+# Every run is a group of its own, so nothing here is ever cancelled. The `edited` type
+# above fires on a head another run may already be reporting on — a Dependabot rebase is a
+# force-push and a body edit at once — and a group keyed by pull request then cancels one of
+# the two runs, which can leave `docs-required` at `cancelled` on the head that gets merged.
+# The runs cost seconds, so letting both finish costs nothing. `pnpm check:gates` holds it.
 concurrency:
-  group: docs-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  group: docs-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   docs-required:

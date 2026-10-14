@@ -55,7 +55,7 @@ jobs:
           node-version: 24
           cache: pnpm
       # SHA pin drops the branch-name toolchain shorthand, so the channel is
-      # passed explicitly. No version tags; Dependabot leaves this pin alone.
+      # passed explicitly. No version tags; Dependabot moves the pin to master's tip.
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
         with:

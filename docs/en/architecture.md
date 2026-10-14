@@ -4835,7 +4835,8 @@ Across all workflows, third-party actions are pinned to full commit SHAs with a 
 in CI. Dependabot's `github-actions` ecosystem (`.github/dependabot.yml`) bumps the pin and the
 comment together. `dtolnay/rust-toolchain` is the exception: it has no version tags and its channel
 branches are force-pushed, so it is pinned to an append-only `master` commit with the channel passed
-as an explicit `toolchain:` input, updated manually.
+as an explicit `toolchain:` input. Its comment names the branch (`# master`) rather than a version, and
+Dependabot moves the pin to that branch's current tip.
 
 ### Browser demo (GitHub Pages)
 
