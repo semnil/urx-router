@@ -207,4 +207,44 @@ describe("bodies it is not about", () => {
       "a second untagged item after the sub-entry.",
     ]);
   });
+
+  // A result is often set off from its item by a blank line, and a second result from the
+  // first. The blank line ends the item's text, not its hold on what is indented under it.
+  it("reads a result as part of its item across blank lines", () => {
+    const text = body(
+      "- [x] Assumptions this PR rests on are listed here:\n" +
+        "  - [operator] The draft's signatures name the version its manifest announces.\n" +
+        "\n" +
+        "    - Result (after publish): both read the same version.\n" +
+        "\n" +
+        "    - Result (a week on): an installed copy took the update.\n" +
+        "\n" +
+        "  - an untagged item after the results.",
+    );
+    expect(untagged(text)).toEqual(["an untagged item after the results."]);
+    expect(run(text).status).toBe(1);
+  });
+
+  // A line wrapped back under the item's own dash, with no blank line before it, continues
+  // the item's text, so the tag on it is the item's.
+  it("reads a line wrapped left of the item's text as part of that item", () => {
+    const text = body(
+      "- [x] Assumptions this PR rests on are listed here:\n" +
+        "  - The installer version needs a look at the packaged build,\n" +
+        "  which only the other machine has [other-checkout].",
+    );
+    expect(untagged(text)).toEqual([]);
+  });
+
+  // CommonMark makes an entry a child only from the column the item's text starts at, so an
+  // entry one column deeper than its neighbour is still its sibling, and still an assumption.
+  it("refuses an untagged sibling indented a column deeper than the item before it", () => {
+    const text = body(
+      "- [x] Assumptions this PR rests on are listed here:\n" +
+        "  - [operator] The installer version needs visual confirmation.\n" +
+        "   - The timeout is still an unmeasured guess.",
+    );
+    expect(untagged(text)).toEqual(["The timeout is still an unmeasured guess."]);
+    expect(run(text).status).toBe(1);
+  });
 });

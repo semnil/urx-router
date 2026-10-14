@@ -54,38 +54,49 @@ export function assumptionItems(body) {
     block.push(l);
   }
 
-  // An item is an entry at the indentation of the field's first entry. An entry indented
-  // deeper belongs to the item above it — a result written under an item once it settles —
-  // and its text is not read for the item's tag, so a tag in a sub-entry does not vouch
-  // for an untagged item.
+  // Items are delimited the way CommonMark delimits list items: an entry belongs to the item
+  // above it only when it starts at or past the column where that item's text starts — a
+  // result written under an item once it settles, with or without a blank line before it.
+  // An entry indented less is an item of its own, however few columns separate the two.
+  // What follows an item's first sub-entry is not read for the item's tag, so a tag in a
+  // sub-entry does not vouch for an untagged item.
   const items = [];
   let current = null;
-  let itemIndent = null;
+  let contentCol = 0;
   let inSub = false;
+  let afterBlank = false;
+  const end = () => {
+    if (current !== null) items.push(current);
+    current = null;
+    inSub = false;
+  };
   for (const l of block) {
-    const nested = /^(\s+)[-*]\s+(.*)$/.exec(l);
-    if (nested) {
-      const indent = nested[1].length;
-      if (itemIndent === null) itemIndent = indent;
-      if (indent > itemIndent && current !== null) {
-        inSub = true;
-        continue;
-      }
-      if (current !== null) items.push(current);
-      current = nested[2];
-      inSub = false;
-    } else if (!l.trim()) {
-      // A blank line ends the item. Prose written under the field belongs to the field
+    if (!l.trim()) {
+      afterBlank = true;
+      continue;
+    }
+    const indent = /^\s*/.exec(l)[0].length;
+    const nested = /^(\s+)([-*]\s+)(.*)$/.exec(l);
+    const blank = afterBlank;
+    afterBlank = false;
+    if (current !== null && indent >= contentCol) {
+      // Inside the current item: a sub-entry, or a paragraph of the item's own.
+      if (nested) inSub = true;
+      else if (!inSub) current += ` ${l.trim()}`;
+    } else if (nested) {
+      end();
+      current = nested[3];
+      contentCol = nested[1].length + nested[2].length;
+    } else if (blank) {
+      // Prose after a blank line, written left of the item's text, belongs to the field
       // and not to its last entry — without this, a note after the list is read as part
       // of whatever item happened to come before it.
-      if (current !== null) items.push(current);
-      current = null;
-      inSub = false;
+      end();
     } else if (current !== null && !inSub) {
       current += ` ${l.trim()}`;
     }
   }
-  if (current !== null) items.push(current);
+  end();
 
   // An answer written on the label's own line, which a COLON separates from the label.
   // Taken from anything after the label instead, the template's own trailing wording read
