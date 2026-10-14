@@ -293,7 +293,7 @@ describe("command wrappers", () => {
         cmd: "write_text_file",
         args: { path: "/tmp/a", contents: "text" },
       },
-      { run: platform.vdConnect, cmd: "vd_connect", args: {} },
+      { run: () => platform.vdConnect("URX22"), cmd: "vd_connect", args: { model: "URX22" } },
       { run: () => platform.vdSet(1, 2, 3, 4), cmd: "vd_set", args: { paramId: 1, x: 2, y: 3, value: 4 } },
       { run: () => platform.vdGet(1, 2, 3), cmd: "vd_get", args: { paramId: 1, x: 2, y: 3 } },
       {

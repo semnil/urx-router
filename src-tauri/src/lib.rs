@@ -924,13 +924,14 @@ fn third_party_licenses(app: tauri::AppHandle) -> Result<String, String> {
 async fn vd_connect(
     webview: tauri::Webview,
     state: State<'_, vd::VdState>,
+    model: String,
 ) -> Result<vd::Connection, String> {
     // Taken BEFORE the handshake, which runs up to ~9 s. A page load inside that window
     // is a teardown for a page that no longer exists, and it cannot cancel this connect
     // — it finds nothing installed yet — so without the generation the session installed
     // under the same label afterwards, orphaned under the page that replaced it.
     let gen = state.page_gen(webview.label());
-    let (tx, device, counters) = tauri::async_runtime::spawn_blocking(vd::open)
+    let (tx, device, counters) = tauri::async_runtime::spawn_blocking(move || vd::open(model))
         .await
         .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())??;
     // The epoch identifies this connection: the frontend hands it back to

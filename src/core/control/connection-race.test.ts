@@ -58,10 +58,10 @@ describe("connection lifecycle race", () => {
     installBroker(broker);
 
     // activateLive captured this epoch (main.ts: liveEpoch = device.epoch).
-    const live = await vdConnect();
+    const live = await vdConnect("URX44V");
 
     // The write's withDevice connects, replacing the worker with a new generation.
-    const write = await vdConnect();
+    const write = await vdConnect("URX44V");
     expect(write.epoch).not.toBe(live.epoch);
 
     // The live teardown's disconnect lands now (deactivateLive fired it without
@@ -84,8 +84,8 @@ describe("connection lifecycle race", () => {
     const broker = makeBroker({ guardEpoch: false });
     installBroker(broker);
 
-    const live = await vdConnect();
-    await vdConnect(); // the write installs a newer generation
+    const live = await vdConnect("URX44V");
+    await vdConnect("URX44V"); // the write installs a newer generation
     await vdDisconnect(live.epoch); // blindly nulls the write's connection
 
     await expect(vdSet(140, 0, 0, 1)).rejects.toBe("not-connected");
@@ -97,7 +97,7 @@ describe("connection lifecycle race", () => {
     const broker = makeBroker({ guardEpoch: true });
     installBroker(broker);
 
-    const conn = await vdConnect();
+    const conn = await vdConnect("URX44V");
     await vdDisconnect(conn.epoch);
 
     expect(broker.calls.at(-1)).toEqual({ cmd: "vd_disconnect", args: { epoch: conn.epoch } });

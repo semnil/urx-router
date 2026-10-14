@@ -764,7 +764,7 @@ export async function runSelfTest(
   // confirmed param, not mislabeled as the suppressed guess.
   const addresses = unverifiedAddresses(model);
   for (const [addr, key] of addresses) if (suppress.has(key)) addresses.delete(addr);
-  const device = await vdConnect();
+  const device = await vdConnect(model.id);
   report.device = device.model;
   try {
     // 1. Capture the current device state (the connect prologue shared with prepare.ts).

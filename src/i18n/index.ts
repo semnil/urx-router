@@ -88,6 +88,7 @@ export function t(): Messages {
 export const SHELL_CODES: Record<string, keyof Messages["error"]["shell"]> = {
   "broker-unreachable": "brokerUnreachable",
   "no-device": "noDevice",
+  "multiple-devices": "multipleDevices",
   "control-worker-gone": "controlWorkerGone",
   "device-lost": "deviceLost",
   "broker-closed": "brokerClosed",

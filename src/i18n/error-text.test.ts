@@ -162,6 +162,7 @@ describe("errorText", () => {
     const messages = [
       "broker-unreachable",
       "no-device",
+      "multiple-devices: 2 online (URX22, URX22), 2 of them URX22",
       "control-worker-gone",
       "device-lost: sync_status offline",
       "broker-closed",

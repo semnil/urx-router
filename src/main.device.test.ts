@@ -8104,6 +8104,31 @@ describe("the device self-test", () => {
     }
   });
 
+  // More than one URX online with the selected model not singling one out: the shell
+  // refuses the connect, and what reaches the operator is the diagnosis rather than a
+  // self-test frame around it. The connect also has to have named the model the picker
+  // holds, since that is what the shell chooses among several units by.
+  it("asks the shell for the selected model and reports a connect it refuses as several units", SLOW, async () => {
+    const log = captureWarnings();
+    try {
+      const asked: unknown[] = [];
+      const shell = await bootExperimental({
+        vd_connect: (args: Record<string, unknown>) => {
+          asked.push(args?.model);
+          throw new Error("multiple-devices: 2 online (URX44V, URX44V), 2 of them URX44V");
+        },
+      });
+      const btn = await selfTestBtn();
+      btn.click();
+      await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 15_000 });
+      expect(errors(shell).at(-1)).toBe(t().error.shell.multipleDevices);
+      expect(asked).toEqual([$<HTMLSelectElement>("model-picker").value]);
+      expect(btn.textContent).toBe(t().toolbar.selfTest);
+    } finally {
+      log.restore();
+    }
+  });
+
   // The --self-test launch has nobody to answer either dialog: it must not ask before
   // starting, and its report goes to the log rather than to a save dialog — in chunks,
   // since one console line carrying the whole thing risks the dev server's forwarding

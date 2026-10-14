@@ -943,7 +943,7 @@ UI は英語を基本とし、日本語ローカライズに対応する。実�
 | 発生源                             | コード                                                                                                                                                                            |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src-tauri/src/lib.rs` (ファイル IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`, `file-no-temp`                                                                                                  |
-| `src-tauri/src/vd.rs` (broker)     | `broker-unreachable`, `no-device`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-rejected`, `broker-bad-response`, `broker-io` |
+| `src-tauri/src/vd.rs` (broker)     | `broker-unreachable`, `no-device`, `multiple-devices`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-no-vdpport`, `broker-timeout`, `broker-unresponsive`, `broker-rejected`, `broker-bad-response`, `broker-io` |
 | `src-tauri/src/midi.rs`            | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                         |
 | `src-tauri/src/keepawake.rs`       | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                     |
 | `core/storage.ts` (画像出力)       | `png-encode`, `canvas-unavailable`, `svg-rasterize`                                                                                                                               |
@@ -1662,6 +1662,14 @@ macOS ではアームしたコントロールをクリックした瞬間に**メ
 **2 プラットフォームとも実機を物理的に抜いて実測済み**: 列挙は抜く前と変わらず返り、`/vd/synchronize` は
 `"lost"` を返し、パラメーター読み出しは broker のキャッシュから成功する。したがって `no-device` に
 collapse する形 (後述) のうち、**空リストは一度も観測されていない**。
+
+**一覧に複数の実機があるときの選び方。** 一度接続した実機は一覧に残り続け、接続されていない実機のエントリが
+接続中の実機より先に並ぶことがある (URX44V を外してから URX22 を接続した場合)。そのため、選ぶ前に一覧の全実機へ
+`/vd/synchronize` を問い合わせる (`vd.rs` の `choose_online`)。online の実機が 0 台なら `no-device`、1 台なら機種を
+問わずその実機を使い、複数台ならアプリで選択中の Model (`vdConnect` が渡す引数) で 1 台を選ぶ。それでも 0 台または
+複数台が残るとき (同じ機種が 2 台、または選択中の機種が無い) は `multiple-devices` で接続を止める。セッションは
+1 台を相手にするもので、推測で選ぶと操作者の意図しない実機へ書き込むため。問い合わせに失敗した実機は飛ばさずに
+接続を失敗させる: その実機が online の実機である可能性があるため。
 `online` 確認後、`handshake` は `/vd/device` から実機の System ファームウェアバージョン (`firm_list` の "System" エントリ) も
 読み取り `DeviceSummary.firmware` に載せる。frontend はこれを確認済みの `SUPPORTED_SYSTEM_FIRMWARE` (`core/control/firmware.ts`)
 と照合し、異なる場合は取得・書込み・Live sync の開始時に警告する (続行/中断はユーザーが選択)。このフィールドは
@@ -1680,7 +1688,10 @@ collapse する形 (後述) のうち、**空リストは一度も観測され�
 フレーミングとアドレッシング (全メッセージで GUID により実機を名指すエンベロープか、既にソケットが 1 台に
 紐付いていて何も名指さないか) である。**見つける段だけが変わり `/vd/synchronize` の読みが変わらない**のはこのため。
 `Link` が開いている方を保持して上位からは差を隠す。ポートは接続のたびに引き直してキャッシュしない —
-これはデバイスではなく **Device Center のセッションに属する**番号だから。
+これはデバイスではなく **Device Center のセッションに属する**番号だから。casket は 1 本のソケットで一覧の全実機を運び、
+broker が送るフレームはどれも `params.dev_uid` で実機を名乗る (返信・パラメーターとメーターの notify・`/vd/synchronize` の push とも)。
+そこで `read_frame` は別の実機を名乗るフレームを捨てる: 別の実機の返信がこのセッションの読み出しの答えになることも、
+別の実機を抜いたことでこのセッションが終わることもない。
 
 **同時接続があると「応答」の見分けが難しくなる。** broker は notify を**接続中の全クライアント**へ送る
 (そのアドレスをこのセッションが登録したかどうかに関わらず)。つまりコマンドが待っているアドレスの notify は、
@@ -1747,12 +1758,13 @@ Follow USB だけは逆向きの例外で、ライブ**セッション**は自�
 UI 層の外で発生した失敗はすべて、生の英語文字列ではなく安定した機械可読コードで返す (仕組みは
 [エラーコード](#エラーコード) を参照)。broker リンクのコードは `broker-unreachable` (Device Center 未起動)、
 `no-device` (起動済みだが URX 未接続 — 空リスト・`sync_status != online`・リストタイムアウトの各形は、ユーザーの
-取るべき対処が同一 (実機を接続する) のため単一コードに集約)、`control-worker-gone` (Rust ワーカースレッドが
+取るべき対処が同一 (実機を接続する) のため単一コードに集約)、`multiple-devices` (URX が複数 online で、選択中の
+Model では 1 台に決まらない)、`control-worker-gone` (Rust ワーカースレッドが
 異常終了・無応答・パニック — ハンドシェイク・コマンド送信・応答待ち・タスク join の各失敗を 1 コードに集約)、
 `not-connected`、`device-lost`、`broker-closed`、`broker-timeout`、`broker-rejected`、`broker-bad-response`、
 `broker-io`。
 
-このうち先頭 3 つはユーザーが直接対処できる状態を指すため、`connectFailureStatus` は「<操作>に失敗しました: …」
+このうち先頭 4 つはユーザーが直接対処できる状態を指すため、`connectFailureStatus` は「<操作>に失敗しました: …」
 の枠を埋めるのではなく**枠ごと置き換える**。それ以外のコードは他の原因と同様に枠へローカライズして差し込む。
 MIDI パネルの `midiErrorStatus` が同じ役回りで、`midi-port-not-found` を同様に扱う。接続が事前チェックを
 兼ねるため、取得と Live sync は**破棄確認の前に**接続し、未接続状態は plan を乱す前に明示する。

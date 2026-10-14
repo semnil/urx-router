@@ -1234,7 +1234,7 @@ address, a broker URI. Both sides of the shell raise them:
 | Source                          | Codes                                                                                                                                                                                  |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src-tauri/src/lib.rs` (file IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`, `file-no-temp`                                                                                                       |
-| `src-tauri/src/vd.rs` (broker)  | `broker-unreachable`, `no-device`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-rejected`, `broker-bad-response`, `broker-io`      |
+| `src-tauri/src/vd.rs` (broker)  | `broker-unreachable`, `no-device`, `multiple-devices`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-no-vdpport`, `broker-timeout`, `broker-unresponsive`, `broker-rejected`, `broker-bad-response`, `broker-io` |
 | `src-tauri/src/midi.rs`         | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                              |
 | `src-tauri/src/keepawake.rs`    | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                          |
 | `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`, `svg-rasterize`                                                                                                                                    |
@@ -2052,7 +2052,16 @@ unplugged, and answers cached parameter reads for it, so the listing alone canno
 stale entry; the `sync_status` check is what distinguishes them. Measured on **both platforms** with the unit
 physically unplugged: the listing comes back unchanged, `/vd/synchronize` answers `"lost"`, and a parameter
 read still succeeds out of the broker's cache — so of the shapes `no-device` collapses (below), the empty
-list is the one that has never been observed to happen. Once online, the handshake also reads the
+list is the one that has never been observed to happen.
+
+**Which unit, when the list holds more than one.** A unit that was ever attached stays listed, and the entry
+that is not attached can be listed ahead of the one that is (a URX44V that was unplugged before a URX22 was
+connected). So every listed unit is asked for `/vd/synchronize` before one is chosen (`choose_online` in
+`vd.rs`): no unit online is `no-device`, one is taken whatever its model, and among several the model selected
+in the app — the argument `vdConnect` passes — picks the unit. When that still leaves zero or several (two
+units of one model, or none of the selected one), the connect stops with `multiple-devices`, since a session
+addresses one unit and a guess would write to a unit the operator did not mean. A unit that cannot be asked
+fails the connect rather than being skipped: it could be the online one. Once online, the handshake also reads the
 unit's System firmware version from
 `/vd/device` (the `firm_list` entry named "System") and carries it on `DeviceSummary.firmware`; the frontend
 compares it against the validated `SUPPORTED_SYSTEM_FIRMWARE` (`core/control/firmware.ts`) and warns at the
@@ -2074,7 +2083,10 @@ messages are the same on both; what differs is framing and addressing (an envelo
 every message, versus a socket already scoped to one unit and so naming nothing), which is why finding the
 unit is the step that changes and reading `/vd/synchronize` is not. `Link` holds whichever is open and hides
 the difference from everything above it. The port is looked up on every connection and never cached: it
-belongs to a Device Center session, not to a device.
+belongs to a Device Center session, not to a device. On casket one socket carries every listed unit, and every
+frame the broker sends names its unit in `params.dev_uid` (replies, parameter and meter notifies, and the
+`/vd/synchronize` push alike), so `read_frame` drops a frame naming another unit: another unit's reply never
+answers this session's read and its unplug never ends this session.
 
 **Concurrency is what makes a reply hard to recognise.** The broker sends every notify to every connected
 client, whether or not this session registered the address, so a notify for the address a command is waiting
@@ -2149,11 +2161,12 @@ Every failure raised outside the UI layer returns a stable, machine-readable cod
 string — see [Error codes](#error-codes) for the scheme. The broker link's are `broker-unreachable` (Device
 Center not running), `no-device` (running, but no URX attached — the empty-list, `sync_status != online`, and
 list-timeout shapes all collapse to this single code, since the user's remedy is the same),
+`multiple-devices` (more than one URX online and the selected model does not pick one of them),
 `control-worker-gone` (the Rust worker thread died, stopped responding, or panicked — handshake, command send,
 reply-wait, and task-join failures all collapse to this code), `not-connected`, `device-lost`, `broker-closed`,
 `broker-timeout`, `broker-rejected`, `broker-bad-response`, and `broker-io`.
 
-The first three name a state the user can act on directly, so `connectFailureStatus` lets them **replace** the
+The first four name a state the user can act on directly, so `connectFailureStatus` lets them **replace** the
 "<action> failed: …" frame instead of filling it; every other code fills the frame, localized like any other
 embedded cause. The MIDI panel's `midiErrorStatus` is its peer, treating `midi-port-not-found` the same way.
 Because the connect doubles as a pre-check, fetch and live sync connect *before* prompting to discard edits, so

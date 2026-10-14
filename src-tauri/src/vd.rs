@@ -29,7 +29,7 @@ use tauri::ipc::Channel;
 // by ": " and a technical detail (an address, a URI, an OS message). The frontend
 // localizes the code and shows the detail as-is (src/i18n error.shell) — a raw
 // message would reach a Japanese dialog in English. Codes: broker-unreachable,
-// no-device, control-worker-gone, not-connected, device-lost, broker-closed,
+// no-device, multiple-devices, control-worker-gone, not-connected, device-lost, broker-closed,
 // broker-timeout, broker-unresponsive, broker-rejected, broker-bad-response,
 // broker-io, broker-no-vdpport.
 //
@@ -328,16 +328,17 @@ impl VdState {
     }
 }
 
-/// Spawn the worker and perform the broker handshake (blocking). Returns the
-/// command channel plus the connected device; the caller installs the channel
-/// into VdState. Kept free of VdState so a Tauri command can run it on a
+/// Spawn the worker and perform the broker handshake (blocking) with the device the
+/// selected model `preferred` picks among the online ones (see `choose_online`).
+/// Returns the command channel plus the connected device; the caller installs the
+/// channel into VdState. Kept free of VdState so a Tauri command can run it on a
 /// blocking task — the handshake waits up to seconds and must not stall the UI.
-pub fn open() -> Result<(Sender<Cmd>, DeviceSummary, Arc<LinkCounters>), String> {
+pub fn open(preferred: String) -> Result<(Sender<Cmd>, DeviceSummary, Arc<LinkCounters>), String> {
     let (tx, rx) = mpsc::channel::<Cmd>();
     let (ready_tx, ready_rx) = mpsc::channel::<Result<DeviceSummary, String>>();
     let counters = Arc::new(LinkCounters::default());
     let worker_counters = Arc::clone(&counters);
-    std::thread::spawn(move || imp::worker(rx, ready_tx, worker_counters));
+    std::thread::spawn(move || imp::worker(rx, ready_tx, worker_counters, &preferred));
     let summary = ready_rx
         .recv()
         .map_err(|_| CONTROL_WORKER_GONE.to_string())??;
@@ -711,13 +712,14 @@ mod imp {
         rx: Receiver<Cmd>,
         ready: Sender<Result<DeviceSummary, String>>,
         counters: Arc<LinkCounters>,
+        preferred: &str,
     ) {
         // Open the endpoint the launch flags call for, and learn the port for this
         // Device Center session while doing it. Both are per-connection, so a
         // reconnect repeats the lookup rather than reusing a number that a Device
         // Center restart has already invalidated. Failures carry a stable code the
         // frontend localizes; the raw cause stays in the log.
-        let (mut link, mut summary) = match Link::open() {
+        let (mut link, mut summary) = match Link::open(preferred) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("vd: could not open the device link: {e}");
@@ -1028,10 +1030,10 @@ mod imp {
             .map_err(|e| format!("broker-io: could not disable Nagle: {e}"))
     }
 
-    /// The `:51770` lookup that names this session's `vdp` port. Its own short-lived
-    /// connection: it speaks a different envelope (`vddp`) and a different uri space
-    /// (`/vddp_srv*`) from everything else here.
-    fn discover_vdp_port() -> Result<(u16, String), String> {
+    /// The `:51770` lookup that names this session's `vdp` ports, one per listed
+    /// device. Its own short-lived connection: it speaks a different envelope (`vddp`)
+    /// and a different uri space (`/vddp_srv*`) from everything else here.
+    fn discover_vdp_targets() -> Result<Vec<(u16, String)>, String> {
         let mut sock = TcpStream::connect(("127.0.0.1", VDDP_SRV_PORT))
             .map_err(|e| format!("broker-unreachable: {e}"))?;
         arm_socket(&sock, DISCOVERY_TIMEOUT)?;
@@ -1048,37 +1050,73 @@ mod imp {
             let Some(data) = msg.get("vddp").and_then(|v| v.get("data")) else {
                 continue;
             };
-            return vdp_target(data);
+            return vdp_targets(data);
         }
         Err("broker-no-vdpport: the device list did not answer".into())
     }
 
-    /// What one `/vddp_srv/devices` answer names: the first device's `vdp` port and
-    /// its model. Separated from the socket loop above because every way this can go
-    /// wrong is a shape of the broker's JSON, and a live broker answers with the one
-    /// shape it is currently written to answer with — the out-of-range port below has
-    /// no way to reach the loop at all from a working Device Center.
-    fn vdp_target(data: &Value) -> Result<(u16, String), String> {
+    /// What one `/vddp_srv/devices` answer names: every listed device's `vdp` port and
+    /// model, in list order. Separated from the socket loop above because every way
+    /// this can go wrong is a shape of the broker's JSON, and a live broker answers
+    /// with the one shape it is currently written to answer with — the out-of-range
+    /// port below has no way to reach the loop at all from a working Device Center.
+    /// A malformed entry fails the whole list: the entry it hides could be the unit.
+    fn vdp_targets(data: &Value) -> Result<Vec<(u16, String)>, String> {
         // An empty list is Device Center up with no URX — the same state the
         // casket path reports from an empty getDeviceList.
-        let Some(dev) = data
+        let list = data
             .pointer("/list")
             .and_then(Value::as_array)
-            .and_then(|l| l.first())
-        else {
-            return Err("no-device".into());
-        };
-        let port = dev
-            .get("vdpport")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| "broker-no-vdpport: the device list carried no port".to_string())?;
-        // Checked, not truncated. A broker answer above 65535 (a bug or a schema
-        // change) used to cast down silently — 65537 becomes 1 — and the connect
-        // then failed naming a port the broker never advertised, which sends the
-        // next reader looking in the wrong place entirely.
-        let port = u16::try_from(port)
-            .map_err(|_| format!("broker-bad-response: vdpport {port} is out of range"))?;
-        Ok((port, str_or(dev, "model", "URX")))
+            .filter(|l| !l.is_empty())
+            .ok_or_else(|| "no-device".to_string())?;
+        list.iter()
+            .map(|dev| {
+                let port = dev.get("vdpport").and_then(Value::as_u64).ok_or_else(|| {
+                    "broker-no-vdpport: the device list carried no port".to_string()
+                })?;
+                // Checked, not truncated. A broker answer above 65535 (a bug or a schema
+                // change) used to cast down silently — 65537 becomes 1 — and the connect
+                // then failed naming a port the broker never advertised, which sends the
+                // next reader looking in the wrong place entirely.
+                let port = u16::try_from(port)
+                    .map_err(|_| format!("broker-bad-response: vdpport {port} is out of range"))?;
+                Ok((port, str_or(dev, "model", "URX")))
+            })
+            .collect()
+    }
+
+    /// Which of the devices whose link is online this session takes. Device Center
+    /// keeps an entry for every unit it has seen, attached or not, so the list is
+    /// narrowed to the online ones first; one online device is taken whatever its
+    /// model. With more than one, the model selected in the app picks the device, and
+    /// when that still leaves zero or several (two units of one model, or none of the
+    /// selected one), the connect stops with `multiple-devices`: a session addresses
+    /// one unit, and guessing which would write to a unit the operator did not mean.
+    fn choose_online<T>(online: Vec<(T, String)>, preferred: &str) -> Result<(T, String), String> {
+        if online.len() <= 1 {
+            return online
+                .into_iter()
+                .next()
+                .ok_or_else(|| "no-device".to_string());
+        }
+        let models: Vec<String> = online.iter().map(|(_, m)| m.clone()).collect();
+        let mut matching: Vec<(T, String)> =
+            online.into_iter().filter(|(_, m)| m == preferred).collect();
+        if matching.len() == 1 {
+            return Ok(matching.remove(0));
+        }
+        Err(format!(
+            "multiple-devices: {} online ({}), {} of them {preferred}",
+            models.len(),
+            models.join(", "),
+            matching.len()
+        ))
+    }
+
+    /// Whether the unit behind `link` is attached: `/vd/synchronize` answering
+    /// "online". A failed read is the caller's failure, not a "no".
+    fn is_online(link: &mut Link) -> Result<bool, String> {
+        Ok(sync_status(link)? == "online")
     }
 
     /// How long discovery waits for the device list, and how long its socket blocks
@@ -1174,11 +1212,16 @@ mod imp {
     const VDDP_SRV_PORT: u16 = 51770;
 
     impl Link {
-        /// Open the link the launch flags call for, and report what the endpoint says
-        /// the unit is. `firmware` is left `None`: the caller completes the handshake
-        /// (`/vd/synchronize`, then `/vd/device`) over whichever transport came back
-        /// and fills it in, and those two reads are identical on both.
-        fn open() -> Result<(Link, DeviceSummary), String> {
+        /// Open the link the launch flags call for, to the device `choose_online` picks
+        /// (`preferred` is the model selected in the app), and report what the endpoint
+        /// says the unit is. `firmware` is left `None`: the caller completes the
+        /// handshake (`/vd/synchronize`, then `/vd/device`) over whichever transport
+        /// came back and fills it in, and those two reads are identical on both.
+        ///
+        /// Every listed device is asked whether it is online before one is chosen, and
+        /// a device that cannot be asked fails the connect rather than being skipped:
+        /// it could be the online unit, and leaving it out could pick another one.
+        fn open(preferred: &str) -> Result<(Link, DeviceSummary), String> {
             if crate::experimental_enabled() && std::env::args().any(|a| a == "--casket") {
                 eprintln!("vd: --casket — using the one-client casket endpoint");
                 let (mut ws, _) = connect(CASKET_URL).map_err(|e| {
@@ -1188,19 +1231,51 @@ mod imp {
                 if let MaybeTlsStream::Plain(s) = ws.get_ref() {
                     arm_socket(s, READ_TIMEOUT)?;
                 }
-                let (dev_uid, device) = casket_device_list(&mut ws)?;
-                return Ok((Link::Casket { ws, dev_uid }, device));
+                let devices = casket_device_list(&mut ws)?;
+                // One socket serves every device on this endpoint; the GUID each
+                // message names is what addresses one, so asking each device is
+                // re-pointing the same link.
+                let mut link = Link::Casket {
+                    ws,
+                    dev_uid: String::new(),
+                };
+                let mut online = Vec::new();
+                for (uid, device) in devices {
+                    if let Link::Casket { dev_uid, .. } = &mut link {
+                        *dev_uid = uid.clone();
+                    }
+                    if is_online(&mut link)? {
+                        online.push(((uid, device.label), device.model));
+                    }
+                }
+                let ((uid, label), model) = choose_online(online, preferred)?;
+                if let Link::Casket { dev_uid, .. } = &mut link {
+                    *dev_uid = uid;
+                }
+                let device = DeviceSummary {
+                    model,
+                    label,
+                    firmware: None,
+                };
+                return Ok((link, device));
             }
 
-            let (port, model) = discover_vdp_port()?;
-            let sock = TcpStream::connect(("127.0.0.1", port))
-                .map_err(|e| format!("broker-unreachable: vdp port {port}: {e}"))?;
-            arm_socket(&sock, READ_TIMEOUT)?;
-            Ok((
-                Link::Vdp {
+            let mut online = Vec::new();
+            for (port, model) in discover_vdp_targets()? {
+                let sock = TcpStream::connect(("127.0.0.1", port))
+                    .map_err(|e| format!("broker-unreachable: vdp port {port}: {e}"))?;
+                arm_socket(&sock, READ_TIMEOUT)?;
+                let mut link = Link::Vdp {
                     sock,
                     reader: LineReader::new(),
-                },
+                };
+                if is_online(&mut link)? {
+                    online.push((link, model));
+                }
+            }
+            let (link, model) = choose_online(online, preferred)?;
+            Ok((
+                link,
                 DeviceSummary {
                     // The `vddp` device list carries no label, and the two were
                     // identical on every unit measured, so the model stands in for it.
@@ -1253,13 +1328,25 @@ mod imp {
         /// parseable JSON — callers treat both as "nothing yet" and loop, which is
         /// what the casket path did before this existed. A binary frame on casket is
         /// an error (`BINARY_FRAME`): the idle pump discards it, a reply loop fails on it.
+        ///
+        /// On casket one socket carries every listed device, and each frame names the
+        /// device it is about in `params.dev_uid` — replies, parameter and meter
+        /// notifies and the `/vd/synchronize` push alike. A frame naming another device
+        /// is "nothing yet" here, so another unit's reply never answers this session's
+        /// read and its unplug never ends this session.
         fn read_frame(&mut self) -> Result<Option<Value>, String> {
             match self {
-                Link::Casket { ws, .. } => {
+                Link::Casket { ws, dev_uid } => {
                     let Some(text) = read_text(ws)? else {
                         return Ok(None);
                     };
-                    Ok(serde_json::from_str::<Value>(&text).ok())
+                    let msg = serde_json::from_str::<Value>(&text).ok();
+                    let other = msg
+                        .as_ref()
+                        .and_then(|m| m.pointer("/params/dev_uid"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|uid| uid != dev_uid);
+                    Ok(if other { None } else { msg })
                 }
                 Link::Vdp { sock, reader } => reader.read_json(sock),
             }
@@ -1330,9 +1417,10 @@ mod imp {
     }
 
     /// Casket's device list: the GUID every message on that transport has to name,
-    /// plus what the broker calls the unit. Only the casket path needs this — the
-    /// `vdp` port is already scoped to one device, so it carries no GUID at all.
-    fn casket_device_list(ws: &mut Ws) -> Result<(String, DeviceSummary), String> {
+    /// plus what the broker calls the unit, for every listed device in list order.
+    /// Only the casket path needs this — the `vdp` port is already scoped to one
+    /// device, so it carries no GUID at all.
+    fn casket_device_list(ws: &mut Ws) -> Result<Vec<(String, DeviceSummary)>, String> {
         send_json(ws, json!({ "jsonrpc": "1.0", "method": "getDeviceList" }))?;
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
@@ -1343,29 +1431,38 @@ mod imp {
             if msg.get("method").and_then(Value::as_str) != Some("getDeviceList") {
                 continue;
             }
-            let list = msg.pointer("/params/list").and_then(Value::as_array);
-            let first = list.and_then(|l| l.first());
-            let Some(dev) = first else {
+            let list = msg
+                .pointer("/params/list")
+                .and_then(Value::as_array)
+                .filter(|l| !l.is_empty());
+            let Some(list) = list else {
                 // Broker is up but its device list is empty: Device Center is running
                 // with no URX attached. Stable code; the frontend localizes it.
                 return Err("no-device".into());
             };
-            let dev_uid = dev
-                .get("dev_uid")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            if dev_uid.is_empty() {
-                return Err("broker-bad-response: device list entry had no identifier".into());
-            }
-            return Ok((
-                dev_uid,
-                DeviceSummary {
-                    model: str_or(dev, "model", "URX"),
-                    label: str_or(dev, "label", "URX"),
-                    firmware: None,
-                },
-            ));
+            return list
+                .iter()
+                .map(|dev| {
+                    let dev_uid = dev
+                        .get("dev_uid")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    if dev_uid.is_empty() {
+                        return Err(
+                            "broker-bad-response: device list entry had no identifier".into()
+                        );
+                    }
+                    Ok((
+                        dev_uid,
+                        DeviceSummary {
+                            model: str_or(dev, "model", "URX"),
+                            label: str_or(dev, "label", "URX"),
+                            firmware: None,
+                        },
+                    ))
+                })
+                .collect();
         }
         // No device list within the deadline. The broker answered the WebSocket
         // handshake but never listed a unit, so treat it as no URX attached
@@ -2392,7 +2489,7 @@ mod imp {
         // cases are answers Device Center does not currently produce. Both take their
         // input from the test rather than from a socket, so each case is one shape of
         // bytes and nothing depends on a peer behaving on cue.
-        use super::{vdp_target, LineReader, MAX_PENDING};
+        use super::{choose_online, vdp_targets, LineReader, MAX_PENDING};
         use serde_json::json;
         use std::collections::VecDeque;
         use std::io::{Error, ErrorKind, Read};
@@ -2516,12 +2613,97 @@ mod imp {
             json!({ "list": [entry] })
         }
 
+        /// The single target a one-entry list names.
+        fn vdp_target(data: &serde_json::Value) -> Result<(u16, String), String> {
+            let mut all = vdp_targets(data)?;
+            assert_eq!(all.len(), 1, "one entry in, one target out");
+            Ok(all.remove(0))
+        }
+
         #[test]
         fn an_ordinary_device_list_names_its_port_and_model() {
             assert_eq!(
                 vdp_target(&devices(json!({ "vdpport": 51234, "model": "URX44V" }))),
                 Ok((51234, "URX44V".to_string()))
             );
+        }
+
+        // Device Center keeps an entry for a unit it has seen and that is no longer
+        // attached, listed ahead of the one that is: every entry has to come back, in
+        // order, or the unit that is attached is never asked about.
+        #[test]
+        fn every_listed_device_is_a_target_in_list_order() {
+            let list = json!({ "list": [
+                { "vdpport": 49444, "model": "URX44V" },
+                { "vdpport": 55999, "model": "URX22" },
+            ] });
+            assert_eq!(
+                vdp_targets(&list),
+                Ok(vec![
+                    (49444, "URX44V".to_string()),
+                    (55999, "URX22".to_string())
+                ])
+            );
+        }
+
+        // One malformed entry fails the list rather than dropping out of it: the entry
+        // it hides could be the attached unit.
+        #[test]
+        fn a_malformed_entry_anywhere_in_the_list_fails_it() {
+            let list = json!({ "list": [
+                { "vdpport": 49444, "model": "URX44V" },
+                { "model": "URX22" },
+            ] });
+            let err = vdp_targets(&list).unwrap_err();
+            assert!(err.starts_with("broker-no-vdpport:"), "{err}");
+        }
+
+        fn online(models: &[&str]) -> Vec<(usize, String)> {
+            models
+                .iter()
+                .enumerate()
+                .map(|(i, m)| (i, m.to_string()))
+                .collect()
+        }
+
+        #[test]
+        fn nothing_online_is_no_device() {
+            assert_eq!(choose_online(online(&[]), "URX22"), Err("no-device".into()));
+        }
+
+        // The one online unit is taken even when it is not the selected model: the
+        // frontend's own model check decides what happens next, as it did when the
+        // list held one entry.
+        #[test]
+        fn a_single_online_device_is_taken_whatever_its_model() {
+            assert_eq!(
+                choose_online(online(&["URX22"]), "URX44V"),
+                Ok((0, "URX22".to_string()))
+            );
+        }
+
+        #[test]
+        fn the_selected_model_picks_among_several_online_devices() {
+            assert_eq!(
+                choose_online(online(&["URX44V", "URX22"]), "URX22"),
+                Ok((1, "URX22".to_string()))
+            );
+            assert_eq!(
+                choose_online(online(&["URX44V", "URX22"]), "URX44V"),
+                Ok((0, "URX44V".to_string()))
+            );
+        }
+
+        #[test]
+        fn two_online_devices_of_the_selected_model_are_refused() {
+            let err = choose_online(online(&["URX22", "URX44V", "URX22"]), "URX22").unwrap_err();
+            assert!(err.starts_with("multiple-devices:"), "{err}");
+        }
+
+        #[test]
+        fn several_online_devices_none_of_the_selected_model_are_refused() {
+            let err = choose_online(online(&["URX22", "URX44"]), "URX44V").unwrap_err();
+            assert!(err.starts_with("multiple-devices:"), "{err}");
         }
 
         // The boundary the checked conversion is drawn at: the last port that exists is
@@ -2718,6 +2900,50 @@ mod imp {
                 do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
                 Err(BINARY_FRAME.to_string())
             );
+        }
+
+        /// A casket reply to GET `1:0:0`, about the device `uid` names.
+        fn casket_reply(uid: &str, value: i64) -> Value {
+            json!({ "jsonrpc": "1.0", "method": "requestVD", "params": { "dev_uid": uid, "vdp": {
+                "method": "get", "uri": "/vd/parameters/1:0:0", "data": { "current_value": value }
+            } } })
+        }
+
+        /// A casket `/vd/synchronize` push reporting `uid` as lost.
+        fn casket_lost(uid: &str) -> Value {
+            json!({ "jsonrpc": "1.0", "method": "onNotifyVD",
+                "params": { "dev_uid": uid, "vdp": synchronize("lost") } })
+        }
+
+        // casket carries every listed device on one socket. Another unit's reply to the
+        // same address is not this session's answer: the read waits past it for the
+        // selected unit's own.
+        #[test]
+        fn another_units_casket_reply_does_not_answer_the_read() {
+            let (mut link, mut peer) = casket_link();
+            peer.send(Message::Text(casket_reply("<other>", 9).to_string().into()))
+                .unwrap();
+            peer.send(Message::Text(casket_reply("<test>", 3).to_string().into()))
+                .unwrap();
+            assert_eq!(
+                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
+                Ok(json!(3))
+            );
+        }
+
+        // …and another unit being unplugged does not end this session, while this
+        // unit's own unplug still does.
+        #[test]
+        fn only_the_selected_units_casket_unplug_ends_the_session() {
+            let (mut link, mut peer) = casket_link();
+            peer.send(Message::Text(casket_lost("<other>").to_string().into()))
+                .unwrap();
+            assert_eq!(pump(&mut link, &mut Subs::new()), Ok(()));
+
+            peer.send(Message::Text(casket_lost("<test>").to_string().into()))
+                .unwrap();
+            let err = pump(&mut link, &mut Subs::new()).unwrap_err();
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
         }
 
         // What the idle pump hands the worker is the read's own error, not one code for

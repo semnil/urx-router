@@ -273,9 +273,12 @@ export interface Connection extends DeviceSummary {
   epoch: number;
 }
 
-/** Connect to the URX via the broker; resolves with the connected device + epoch. */
-export function vdConnect(): Promise<Connection> {
-  return invoke<Connection>("vd_connect");
+/** Connect to the URX via the broker; resolves with the connected device + epoch.
+ *  `model` is the model selected in the app: with more than one unit online it picks
+ *  the one to connect to, and a choice it cannot make rejects with
+ *  `multiple-devices`. */
+export function vdConnect(model: string): Promise<Connection> {
+  return invoke<Connection>("vd_connect", { model });
 }
 
 /** Set one parameter instance to an absolute broker value. */

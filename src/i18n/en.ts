@@ -1331,6 +1331,9 @@ export const en = {
     shell: {
       brokerUnreachable: tr("Device Center isn't running. Start it, connect the URX, then try again."),
       noDevice: tr("Device Center is running, but no URX is connected. Connect the unit, then try again."),
+      multipleDevices: tr(
+        "More than one URX is connected, and the selected Model does not pick one of them. Connecting to more than one unit is not supported — connect only one URX, then try again.",
+      ),
       controlWorkerGone: tr(
         "The control connection was interrupted. Reconnect, and restart the app if it keeps happening.",
       ),
