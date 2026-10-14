@@ -1122,7 +1122,7 @@ export const en = {
       tr(
         "URX Router can write settings to a connected YAMAHA URX-series interface, overwriting its current mixer settings. The control protocol was determined by independent analysis, not official documentation, so sending data to hardware always carries some risk.",
       ),
-      tr("Parameter mappings are verified on hardware only for the URX44V; URX44 and URX22 are not verified yet."),
+      tr("Parameter mappings are verified on hardware for the URX44V and the URX22; the URX44 is not verified yet."),
       tr(
         "The software is provided “as is”, without warranty of any kind, and the authors are not liable for any damage to hardware, loss of settings, or other loss arising from its use.",
       ),

@@ -44,11 +44,9 @@ builds can **read** the connected interface's current mixer settings into the pl
 (**Device → Fetch from device**) and **write** a plan back to it (**Device → Write to device**).
 **Live sync** starts by reading the interface's settings into the plan and then mirrors each edit
 as you make it, so a plan you have opened reaches the interface through Write to device, before
-Live sync is turned on. The parameter mapping is verified on
-hardware **only for URX44V**; **URX44** is assumed identical and **URX22** is inferred from it.
-The exception is the **URX22** console live-meter routing, which has been confirmed on real
-hardware; its control (write) map and factory-initial plan remain unverified. Writing overwrites
-the device's current settings; see the
+Live sync is turned on. The parameter mapping and the factory-initial plan are verified on
+hardware for the **URX44V** and the **URX22**; the **URX44** is assumed identical to the URX44V
+and is not verified on hardware. Writing overwrites the device's current settings; see the
 [Disclaimer](#disclaimer). External MIDI controllers can be mapped to the console controls
 (**Device → MIDI control**). The `--experimental` flag additionally unlocks a
 destructive-then-restored self-test diagnostic, importing a URX `.urxf` settings file, and a
@@ -135,7 +133,8 @@ pnpm tauri dev -- -- --reset-storage          # desktop: clears the webview's lo
 
 URX Router talks to the hardware using a control protocol determined by independent
 analysis, not from official documentation. Every parameter the tool writes has been checked
-against a connected device, but sending data to hardware always carries some risk. **Writing
+against a connected URX44V and URX22 (the URX44 is not verified on hardware), but sending data
+to hardware always carries some risk. **Writing
 a plan to the device overwrites its current mixer settings** — save anything you want to
 keep to a scene on the device first.
 
@@ -157,8 +156,8 @@ English documentation lives under [docs/en/](docs/en/); the Japanese translation
 ## Contributing
 
 Bug reports, feature requests, and pull requests are welcome — see
-[CONTRIBUTING.md](CONTRIBUTING.md). Verification on a URX22 or URX44 is especially valuable,
-since most parameters were confirmed on a URX44V. Security problems go through
+[CONTRIBUTING.md](CONTRIBUTING.md). Verification on a URX44 is especially valuable, since the
+parameters were confirmed on a URX44V and a URX22. Security problems go through
 [SECURITY.md](SECURITY.md), and participation follows the
 [code of conduct](CODE_OF_CONDUCT.md).
 

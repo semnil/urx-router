@@ -11,8 +11,8 @@ Security problems go through [SECURITY.md](SECURITY.md), not the issue tracker.
 ## Ways to help
 
 - **Verify behavior on a unit you own.** The URX22 meter mapping landed exactly this way
-  ([#173](https://github.com/semnil/urx-router/pull/173)). Reports from a URX22 or URX44 are
-  especially useful: most parameters were confirmed on a URX44V.
+  ([#173](https://github.com/semnil/urx-router/pull/173)). Reports from a URX44 are especially
+  useful: the parameters were confirmed on a URX44V and a URX22.
 - **File an issue** using the bug report or feature request template.
 - **Send a pull request.** For anything touching routing rules or device control, open an
   issue first — those changes need hardware evidence, and it is better to agree on the
