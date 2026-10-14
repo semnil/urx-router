@@ -2083,7 +2083,10 @@ messages are the same on both; what differs is framing and addressing (an envelo
 every message, versus a socket already scoped to one unit and so naming nothing), which is why finding the
 unit is the step that changes and reading `/vd/synchronize` is not. `Link` holds whichever is open and hides
 the difference from everything above it. The port is looked up on every connection and never cached: it
-belongs to a Device Center session, not to a device.
+belongs to a Device Center session, not to a device. On casket one socket carries every listed unit, and every
+frame the broker sends names its unit in `params.dev_uid` (replies, parameter and meter notifies, and the
+`/vd/synchronize` push alike), so `read_frame` drops a frame naming another unit: another unit's reply never
+answers this session's read and its unplug never ends this session.
 
 **Concurrency is what makes a reply hard to recognise.** The broker sends every notify to every connected
 client, whether or not this session registered the address, so a notify for the address a command is waiting

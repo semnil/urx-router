@@ -1328,13 +1328,25 @@ mod imp {
         /// parseable JSON — callers treat both as "nothing yet" and loop, which is
         /// what the casket path did before this existed. A binary frame on casket is
         /// an error (`BINARY_FRAME`): the idle pump discards it, a reply loop fails on it.
+        ///
+        /// On casket one socket carries every listed device, and each frame names the
+        /// device it is about in `params.dev_uid` — replies, parameter and meter
+        /// notifies and the `/vd/synchronize` push alike. A frame naming another device
+        /// is "nothing yet" here, so another unit's reply never answers this session's
+        /// read and its unplug never ends this session.
         fn read_frame(&mut self) -> Result<Option<Value>, String> {
             match self {
-                Link::Casket { ws, .. } => {
+                Link::Casket { ws, dev_uid } => {
                     let Some(text) = read_text(ws)? else {
                         return Ok(None);
                     };
-                    Ok(serde_json::from_str::<Value>(&text).ok())
+                    let msg = serde_json::from_str::<Value>(&text).ok();
+                    let other = msg
+                        .as_ref()
+                        .and_then(|m| m.pointer("/params/dev_uid"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|uid| uid != dev_uid);
+                    Ok(if other { None } else { msg })
                 }
                 Link::Vdp { sock, reader } => reader.read_json(sock),
             }
@@ -2888,6 +2900,50 @@ mod imp {
                 do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
                 Err(BINARY_FRAME.to_string())
             );
+        }
+
+        /// A casket reply to GET `1:0:0`, about the device `uid` names.
+        fn casket_reply(uid: &str, value: i64) -> Value {
+            json!({ "jsonrpc": "1.0", "method": "requestVD", "params": { "dev_uid": uid, "vdp": {
+                "method": "get", "uri": "/vd/parameters/1:0:0", "data": { "current_value": value }
+            } } })
+        }
+
+        /// A casket `/vd/synchronize` push reporting `uid` as lost.
+        fn casket_lost(uid: &str) -> Value {
+            json!({ "jsonrpc": "1.0", "method": "onNotifyVD",
+                "params": { "dev_uid": uid, "vdp": synchronize("lost") } })
+        }
+
+        // casket carries every listed device on one socket. Another unit's reply to the
+        // same address is not this session's answer: the read waits past it for the
+        // selected unit's own.
+        #[test]
+        fn another_units_casket_reply_does_not_answer_the_read() {
+            let (mut link, mut peer) = casket_link();
+            peer.send(Message::Text(casket_reply("<other>", 9).to_string().into()))
+                .unwrap();
+            peer.send(Message::Text(casket_reply("<test>", 3).to_string().into()))
+                .unwrap();
+            assert_eq!(
+                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
+                Ok(json!(3))
+            );
+        }
+
+        // …and another unit being unplugged does not end this session, while this
+        // unit's own unplug still does.
+        #[test]
+        fn only_the_selected_units_casket_unplug_ends_the_session() {
+            let (mut link, mut peer) = casket_link();
+            peer.send(Message::Text(casket_lost("<other>").to_string().into()))
+                .unwrap();
+            assert_eq!(pump(&mut link, &mut Subs::new()), Ok(()));
+
+            peer.send(Message::Text(casket_lost("<test>").to_string().into()))
+                .unwrap();
+            let err = pump(&mut link, &mut Subs::new()).unwrap_err();
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
         }
 
         // What the idle pump hands the worker is the read's own error, not one code for
