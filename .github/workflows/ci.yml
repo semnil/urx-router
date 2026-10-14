@@ -149,18 +149,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       - run: pnpm build
-      # Four handles are build-gated. Three are dev-only (import.meta.env.DEV): the meter
+      # Five handles are build-gated. Four are dev-only (import.meta.env.DEV): the meter
       # bench's console handle (src/ui/console.ts), the keyboard measurement harness
-      # (src/ui/keyprobe.ts, installed from src/main.ts) and the MIDI timing buffer
-      # (src/ui/midi-probe.ts, installed from src/ui/midi.ts). The fourth, the race
+      # (src/ui/keyprobe.ts, installed from src/main.ts), the MIDI timing buffer
+      # (src/ui/midi-probe.ts, installed from src/ui/midi.ts) and the parameter watch
+      # (src/ui/param-watch.ts, started from src/main.ts). The fifth, the race
       # harness's plan-ledger probe (src/ui/trace-probe.ts), rides its own build flag
       # (VITE_TRACE, .env.trace) so the instrumented E2E tier can be served a
-      # production-SHAPED bundle rather than a dev one. A plain build drops all four
+      # production-SHAPED bundle rather than a dev one. A plain build drops all five
       # statically; this is the guard that they stay dropped. Emitted code only — the
       # source map carries the original text of the dropped branch by design. The other
       # half of each contract — that the handle still carries what its driver uses — is
-      # pinned in src/ui/meter-bench.contract.test.ts, src/ui/keyprobe.test.ts and
-      # src/ui/midi-probe.test.ts.
+      # pinned in src/ui/meter-bench.contract.test.ts, src/ui/keyprobe.test.ts,
+      # src/ui/midi-probe.test.ts and src/ui/param-watch.test.ts.
       - name: Dev-only hooks stay out of the bundle
         # `! grep ...` per line does not work here: POSIX errexit is ignored for a
         # pipeline beginning with `!`, so under the default `bash -e` only the LAST
@@ -171,6 +172,7 @@ jobs:
           if grep -rl --include='*.js' --include='*.html' "__urxKeyProbe" dist; then echo "__urxKeyProbe leaked into the bundle"; exit 1; fi
           if grep -rl --include='*.js' --include='*.html' "__urxTrace" dist; then echo "__urxTrace leaked into the bundle"; exit 1; fi
           if grep -rl --include='*.js' --include='*.html' "__urxMidiProbe" dist; then echo "__urxMidiProbe leaked into the bundle"; exit 1; fi
+          if grep -rl --include='*.js' --include='*.html' "__urxParamWatch" dist; then echo "__urxParamWatch leaked into the bundle"; exit 1; fi
       - run: pnpm typecheck:e2e
       # The harness's permanent skips: each is registered with the test that keeps its
       # reason true, or with a statement that nothing does. It asks both runners what they

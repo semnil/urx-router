@@ -3120,6 +3120,45 @@ describe("a source replaced on the board while a device read was in flight", () 
 });
 
 describe("the live session", () => {
+  // The dev build's parameter watch (ui/param-watch.ts) rides the session: registered as a
+  // subscription of its own once the session is up, read once a second while it lasts, and
+  // silent from the moment it ends. The live-sync set it sits beside is the plan's and
+  // nothing else's.
+  it("runs the parameter watch for exactly as long as the session, beside the live-sync set", SLOW, async () => {
+    const { WATCHED, POLL_MS } = await import("./ui/param-watch");
+    const shell = await bootDevice({}, true, { "838/0/0": 1 });
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    await invoked(shell, "vd_probe_subscribe");
+    const probe = shell.args[shell.invokes.indexOf("vd_probe_subscribe")] as { addrs: number[][] };
+    expect(probe.addrs.slice(0, WATCHED.length)).toEqual(WATCHED);
+    const watched = new Set(WATCHED.map((a) => a.join(":")));
+    const liveSets = shell.invokes
+      .map((c, i) => (c === "vd_params_subscribe" ? (shell.args[i] as { addrs: number[][] }).addrs : null))
+      .filter((a) => a !== null);
+    expect(liveSets.length).toBeGreaterThan(0);
+    expect(liveSets.flat().filter((a) => watched.has(a.join(":")))).toEqual([]);
+
+    const reads838 = (): number =>
+      shell.invokes.filter((c, i) => c === "vd_get" && (shell.args[i] as { paramId: number }).paramId === 838).length;
+    await vi.waitFor(() => expect(reads838()).toBeGreaterThanOrEqual(2), { timeout: POLL_MS * 5 });
+    // The wall-clock file carries the session's first reading.
+    (window as unknown as { __urxParamWatch?: { flush(): void } }).__urxParamWatch?.flush();
+    await invoked(shell, "append_watch_log");
+    const lines = shell.invokes.flatMap((c, i) =>
+      c === "append_watch_log" ? (shell.args[i] as { lines: string[] }).lines : [],
+    );
+    expect(lines.map((l) => JSON.parse(l) as { k: string; values?: Record<string, unknown> })).toContainEqual(
+      expect.objectContaining({ k: "start", values: expect.objectContaining({ "838:0:0": 1 }) }),
+    );
+
+    live().click();
+    await invoked(shell, "vd_disconnect");
+    const after = reads838();
+    await new Promise((r) => setTimeout(r, POLL_MS * 2));
+    expect(reads838()).toBe(after);
+  });
+
   // A re-registration that fails while the session is still STARTING.
   //
   // `live.begin()` runs before `follow.begin()`, so a structural edit can flush inside the
