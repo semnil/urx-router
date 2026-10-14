@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-function check(guards, source) {
+function check(guards, source, { running = 0, weights = [running || guards.length] } = {}) {
   const parent = join(repo, ".claude");
   mkdirSync(parent, { recursive: true });
   const dir = mkdtempSync(join(parent, "skip-guards-"));
@@ -28,15 +28,18 @@ function check(guards, source) {
     put(
       "e2e/race/guards.spec.ts",
       'import { test } from "@playwright/test";\n' +
-        guards.map((_, i) => `test.skip("case ${i}", () => {});`).join("\n"),
+        [
+          ...guards.map((_, i) => `test.skip("case ${i}", () => {});`),
+          ...Array.from({ length: running }, (_, i) => `test("runs ${i}", () => {});`),
+        ].join("\n"),
     );
     put(
       "e2e/race/skip-ledger.json",
       JSON.stringify({
         collect: {
-          minCases: { "e2e/race/guards.spec.ts": guards.length },
-          minCasesWebkit: { "e2e/race/guards.spec.ts": guards.length },
-          shardWeights: [guards.length],
+          minCases: { "e2e/race/guards.spec.ts": guards.length + running },
+          minCasesWebkit: { "e2e/race/guards.spec.ts": guards.length + running },
+          shardWeights: weights,
         },
         skips: guards.map((title, i) => ({
           file: "e2e/race/guards.spec.ts",
@@ -80,6 +83,25 @@ function check(guards, source) {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+// Playwright sizes a shard by the cases that will run: a declared skip is placed beside its
+// neighbour and counted toward nothing, so the weights sum to the runnable cases rather than
+// to everything collected. A corpus with nothing runnable is counted whole, which is what the
+// fixtures above carry.
+describe("the split's case count", () => {
+  const PASSING = `import { it, expect } from "vitest"; it("guard", () => expect(1).toBe(1));`;
+
+  it("takes weights that sum to the cases that will run", () => {
+    const result = check(["guard"], PASSING, { running: 2 });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("refuses weights that count the declared skips as well", () => {
+    const result = check(["guard"], PASSING, { running: 2, weights: [3] });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("sums to 3 but --project=race runs 2 case(s)");
+  });
+});
 
 describe("the race skip guards", () => {
   it("runs the named guards without executing their siblings", () => {

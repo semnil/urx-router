@@ -14,8 +14,9 @@
 //
 // WHY there is an array at all, and what it buys, are in docs/{en,ja}/live-race-harness.md
 // ("How the shards are sized"). The mechanism this file needs: Playwright's own sharding
-// takes a CONTIGUOUS slice of the collected order and sizes it by case count, so this only
-// has to choose the N-1 cut points — which it does against measured durations, under a model
+// takes a CONTIGUOUS slice of the collected order and sizes it by the count of cases that
+// will RUN — a declared skip counts for nothing and travels with the shard holding the case
+// in front of it — so this only has to choose the N-1 cut points over those cases — which it does against measured durations, under a model
 // of how a shard actually spends its time (2 workers, next case to whichever is free, plus a
 // fixed worker startup). Those two constants describe the CI runner, not this repository's
 // config, so a runner with a different core count needs them re-measured.
@@ -194,11 +195,17 @@ const shards = Number(flag("--shards") ?? ledger.collect?.shardWeights?.length ?
 if (!Number.isInteger(shards) || shards < 1) die(`--shards must be a positive integer, not "${flag("--shards")}"`);
 
 const collected = playwright([], {});
-if (shards > collected.length) die(`--shards ${shards} is more shards than there are cases (${collected.length})`);
+// The cases a weight counts: Playwright sizes each shard by the cases that will run, and a
+// declared skip is placed beside its neighbour without being counted — unless nothing at all
+// will run, in which case it counts every collected case.
+const anyRuns = collected.some((c) => !c.skipped);
+const counted = (cases) => (anyRuns ? cases.filter((c) => !c.skipped) : cases);
+const runnable = counted(collected);
+if (shards > runnable.length) die(`--shards ${shards} is more shards than there are cases to run (${runnable.length})`);
 const log = logText();
 const measured = durations(log);
 const skippedThere = skippedInLog(log);
-const ms = collected.map((c) => measured.get(c.key) ?? 0);
+const ms = runnable.map((c) => measured.get(c.key) ?? 0);
 const seen = new Set([...measured.keys(), ...skippedThere]);
 const unused = [...seen].filter((k) => !collected.some((c) => c.key === k));
 const { timed, declaredSkips, runtimeSkips, unexplained } = logCoverage(collected, measured, skippedThere);
@@ -207,10 +214,11 @@ const list = (keys) => keys.slice(0, 12).join("\n    ");
 // `timed` rather than the whole map: the two stopped being the same number when a log may
 // carry cases this checkout no longer collects, and the count that means anything here is
 // the one over cases being weighted.
-console.log(`${collected.length} cases collected, ${timed.length} timed in the log`);
+console.log(`${collected.length} cases collected, ${runnable.length} to run, ${timed.length} timed in the log`);
 
 // A case with no duration belongs at 0 only when the log ACCOUNTS for it. A declared skip
-// does: it will not run next time either, so zero is its cost. A case the run itself skipped
+// does, and is not cut at all: it will not run next time either, and Playwright does not
+// count it toward a shard. A case the run itself skipped
 // does NOT — the log did not measure it, and zero is a guess that is near enough for a
 // serial ladder's tail and badly wrong for a file that never ran. Left as a silent zero it
 // has no ceiling: measured, a log with one timed case out of 170 derived `[1, 1, 168]` and
@@ -274,9 +282,8 @@ if (runtimeSkips.length && !acceptRunSkips) {
   );
 }
 console.log(
-  `  ${declaredSkips.length + runtimeSkips.length} case(s) carry no duration and count as 0: ` +
-    `${declaredSkips.length} declared skip(s)` +
-    (runtimeSkips.length ? `, ${runtimeSkips.length} the run itself skipped (--accept-run-skips)` : ""),
+  `  ${declaredSkips.length} declared skip(s) are left out of the cut` +
+    (runtimeSkips.length ? `; ${runtimeSkips.length} the run itself skipped count as 0 (--accept-run-skips)` : ""),
 );
 
 const sizes = split(ms, shards);
@@ -292,11 +299,13 @@ const walls = sizes.map((c, i) => wallOf(ms, bounds[i], bounds[i] + c));
 // once the sum is right, and it would not notice Playwright assigning a group whole (a
 // `test.describe.serial` block travels as one) or ordering the groups differently from this
 // walk — the two agree only while no race spec declares a file-level beforeAll/afterAll.
+// Both sides are the cases that will run: where a declared skip lands is Playwright's choice
+// and costs nothing either way.
 const env = { PWTEST_SHARD_WEIGHTS: sizes.join(":") };
 const off = planProblems(
   sizes,
-  collected.map((c) => c.key),
-  (k) => playwright([`--shard=${k}/${shards}`], env).map((c) => c.key),
+  runnable.map((c) => c.key),
+  (k) => counted(playwright([`--shard=${k}/${shards}`], env)).map((c) => c.key),
 );
 
 console.log(

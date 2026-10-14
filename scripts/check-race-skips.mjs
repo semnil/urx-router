@@ -271,26 +271,33 @@ const ledger = JSON.parse(readFileSync(join(repo, LEDGER), "utf8"));
 // — pure, so the arrangements this has to reject can be put in front of them by a test
 // rather than by hand — and what this file adds is the one reading they need: the number of
 // cases Playwright hands each shard under those weights. It is the reading that says whether
-// the variable is being read at all, and it costs one `--list` per shard.
+// the variable is being read at all, and it costs one `--list` per shard. A weight counts the
+// cases that will RUN: Playwright sizes a shard by those and places a declared skip beside
+// its neighbour without counting it, so both the sum and each shard's reading leave them out
+// — unless nothing at all will run, in which case Playwright counts every collected case.
 {
   const weights = ledger.collect?.shardWeights;
   const sum = Array.isArray(weights) ? weights.reduce((a, b) => a + b, 0) : null;
+  const anyRuns = collected.some((c) => !c.skipped);
+  const counted = (cases) => (anyRuns ? cases.filter((c) => !c.skipped) : cases).length;
+  const runnable = counted(collected);
   // Not taken when the sum is already wrong: every shard would then be off by the same
   // arithmetic, and the sum's own message is the one that says what to do about it.
   const shardCounts =
-    weightShapeProblem(weights) === null && sum === collected.length
-      ? weights.map(
-          (_, i) =>
+    weightShapeProblem(weights) === null && sum === runnable
+      ? weights.map((_, i) =>
+          counted(
             playwright("race", {
               args: [`--shard=${i + 1}/${weights.length}`],
               env: { PWTEST_SHARD_WEIGHTS: weights.join(":") },
               tag: `race-shard-${i + 1}`,
-            }).length,
+            }),
+          ),
         )
       : null;
   for (const p of inspectWeights({
     weights,
-    collectedCount: collected.length,
+    runnableCount: runnable,
     shardCounts,
     workflowText: readFileSync(join(repo, RACE_WORKFLOW), "utf8"),
   })) {
