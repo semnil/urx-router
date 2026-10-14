@@ -284,7 +284,7 @@ export function prepareBatches(model: DeviceModel, plan: Plan): VdCommand[][] {
  */
 export async function runPrepareModified(model: DeviceModel, signal?: AbortSignal): Promise<PrepareReport> {
   const report: PrepareReport = { device: "", applied: 0, written: 0, residual: 0, errors: [], aborted: false };
-  const device = await vdConnect();
+  const device = await vdConnect(model.id);
   report.device = device.model;
   try {
     // Connect prologue shared with the self-test: model check + device capture.

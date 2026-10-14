@@ -3523,15 +3523,20 @@ function linkFailureIn(errors: string[]): string | null {
   return null;
 }
 
-// Turn a connect-time failure into a clear, localized status. Three of the Rust vd
+// Turn a connect-time failure into a clear, localized status. Four of the Rust vd
 // worker's codes (vd.rs) name a state the user can act on directly — Device Center
-// not running, running with no URX attached, or the control worker dying / going
+// not running, running with no URX attached, more than one URX attached with the
+// selected model not singling one out, or the control worker dying / going
 // unresponsive — so they replace the "<action> failed: …" frame instead of filling
 // it. Anything else (a broker-side action failure, an unexpected error) goes into
 // onError, localized by errorText like every other embedded cause.
 function connectFailureStatus(err: unknown, onError: (message: string) => string): string {
   const code = errorCode(err);
-  const standalone = code === "broker-unreachable" || code === "no-device" || code === "control-worker-gone";
+  const standalone =
+    code === "broker-unreachable" ||
+    code === "no-device" ||
+    code === "multiple-devices" ||
+    code === "control-worker-gone";
   return standalone ? errorText(err) : onError(errorText(err));
 }
 
@@ -3558,7 +3563,7 @@ async function withDevice(
   if (!holdDeviceLink(holder)) return;
   setStatus(connecting);
   try {
-    const device = await vdConnect();
+    const device = await vdConnect(modelId);
     try {
       await action(device);
     } finally {
@@ -4381,7 +4386,7 @@ if (!DEMO) {
       setStatus(t().status.liveConnecting);
       let device: Connection;
       try {
-        device = await vdConnect();
+        device = await vdConnect(modelId);
       } catch (err) {
         showError(connectFailureStatus(err, t().status.liveError));
         return;

@@ -1029,6 +1029,8 @@ export const ja: Messages = {
     shell: {
       brokerUnreachable: "Device Center が起動していません。起動して URX を接続してから再度お試しください。",
       noDevice: "Device Center は起動していますが、URX が接続されていません。本体を接続してから再度お試しください。",
+      multipleDevices:
+        "URX が複数接続されていて、選択中の Model では接続先を 1 台に決められません。複数台の接続には対応していません。URX を 1 台だけ接続してから再度お試しください。",
       controlWorkerGone:
         "デバイス制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
       deviceLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
