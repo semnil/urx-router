@@ -708,8 +708,8 @@ export const PARAMS = {
    *  a real setting the unit holds; the floor the app writes is BRIGHTNESS_MIN in
    *  device-setup.ts. */
   BRIGHTNESS: { id: 758, encoding: "raw", sceneExternal: true, planExternal: true },
-  /** SETUP > Power Management > Auto Power Off [Enable] (global, y0). Factory ON;
-   *  the dump's default_value 0 is wrong (measured against a factory-init file). */
+  /** SETUP > Power Management > Auto Power Off [Enable] (global, y0). Factory ON on
+   *  the URX44V and OFF on the URX22; the dump's default_value is 0. */
   AUTO_POWER_OFF: { id: 760, encoding: "bool", sceneExternal: true, planExternal: true },
   /** Auto Power Off [Time] (global, y0): raw minutes, 2..20, default 20. The dump's
    *  max is 255, which the unit's own knob never reaches. */
