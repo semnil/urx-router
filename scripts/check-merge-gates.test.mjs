@@ -221,6 +221,50 @@ describe("the arrangement a merge condition needs", () => {
     expect(findingsOf(queued)).toEqual([]);
   });
 
+  // The pull-request half of the idiom is one run per commit only while every subscribed
+  // type is one a push raises. `edited` fires alongside a push on the same head (a
+  // Dependabot rebase does both), so the two runs share the group and one is dropped.
+  describe("a type beyond the defaults", () => {
+    const withGroup = (types, group, cancel = "true") =>
+      HEALTHY.replace("  pull_request:\n", `  pull_request:\n    types: [${types}]\n`).replace(
+        "jobs:\n",
+        `concurrency:\n  group: ${group}\n  cancel-in-progress: ${cancel}\njobs:\n`,
+      );
+    const PR_KEY = "gate-${{ github.event.pull_request.number || github.run_id }}";
+
+    it.each([
+      ["cancels", "true"],
+      ["replaces a pending run", "false"],
+    ])("rejects a pull-request key that %s once `edited` is subscribed", (_name, cancel) => {
+      const said = findingsOf(withGroup("opened, synchronize, reopened, edited", PR_KEY, cancel)).join("\n");
+      expect(said).toContain("is keyed per pull request");
+      expect(said).toContain("edited");
+    });
+
+    it("rejects the head-ref spelling of the same key", () => {
+      const said = findingsOf(
+        withGroup("opened, synchronize, reopened, labeled", "gate-${{ github.head_ref || github.run_id }}"),
+      ).join("\n");
+      expect(said).toContain("is keyed per pull request");
+    });
+
+    it("accepts the same key under the default types, and a run-id key under `edited`", () => {
+      expect(findingsOf(withGroup("opened, synchronize, reopened", PR_KEY))).toEqual([]);
+      expect(findingsOf(withGroup("opened, synchronize, reopened, edited", "gate-${{ github.run_id }}"))).toEqual([]);
+    });
+
+    it("accepts a pull-request key that drops nothing", () => {
+      expect(
+        findingsOf(
+          HEALTHY.replace(
+            "  pull_request:\n",
+            "  pull_request:\n    types: [opened, synchronize, reopened, edited]\n",
+          ).replace("jobs:\n", `concurrency:\n  group: ${PR_KEY}\n  cancel-in-progress: false\n  queue: max\njobs:\n`),
+        ),
+      ).toEqual([]);
+    });
+  });
+
   // Rule 7. The worst outcome: a required check that is green by construction.
   it("rejects a gate whose step cannot fail", () => {
     const text = HEALTHY.replace(

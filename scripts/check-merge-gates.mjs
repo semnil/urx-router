@@ -344,6 +344,17 @@ const PER_RUN = new RegExp(
     String.raw`)\s*\|\|\s*)?github\.run_id\s*\}\}`,
 );
 const perRunKey = (group) => PER_RUN.test(group);
+const RUN_ID_ONLY = /\$\{\{\s*github\.run_id\s*\}\}/;
+
+// The pull-request half of the house idiom keys a group by PULL REQUEST, which keeps one
+// run per commit only while every subscribed type is one a push raises. A type beyond the
+// defaults fires with no commit behind it, and alongside one: a Dependabot rebase is a
+// force-push and a body edit at the same moment, so `synchronize` and `edited` start two
+// runs on one head in one group, and whichever is dropped can be the check run the ruleset
+// reads last. Such a workflow needs a key with the run id on its own.
+const SAME_COMMIT_TYPES_OK = ["opened", "synchronize", "reopened"];
+const extraTypesOf = (workflow) =>
+  listOf(workflow.pullRequest?.children?.get("types")).filter((type) => !SAME_COMMIT_TYPES_OK.includes(type));
 
 // `concurrency.queue` takes `single` (the default) or `max`, and `max` cannot be combined
 // with cancelling — GitHub rejects the workflow. Checked on its own, before anything about
@@ -553,6 +564,16 @@ function checkJob(workflow, id, job, context) {
     // when the next arrives, so a shared group drops runs either way; `queue: max` is what
     // raises that to 100.
     const keepsPending = queue === "max";
+    const extraTypes = extraTypesOf(workflow);
+    if ((cancels || !keepsPending) && perRunKey(group) && extraTypes.length && !RUN_ID_ONLY.test(group)) {
+      finding(
+        where,
+        `\`${context}\` comes from a ${level} whose concurrency group \`${group}\` is keyed per pull request, while ` +
+          `\`on.pull_request.types\` adds ${extraTypes.join(", ")} — a type that fires on a head another run is already ` +
+          `reporting on, so the two share the group and the dropped one can leave the context at \`cancelled\`. Key ` +
+          `the group on \`github.run_id\` alone`,
+      );
+    }
     if ((cancels || !keepsPending) && !perRunKey(group)) {
       finding(
         where,
