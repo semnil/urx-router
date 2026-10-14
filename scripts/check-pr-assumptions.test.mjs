@@ -180,4 +180,31 @@ describe("bodies it is not about", () => {
     );
     expect(untagged(text)).toEqual([]);
   });
+
+  // A tagged item settled after the merge carries its result as an entry under it. Read as
+  // an item of its own, that result is an untagged assumption, and the edit that records
+  // the settlement turns the merged pull request's check red.
+  it("reads an entry indented under an item as part of that item", () => {
+    const text = body(
+      "- [x] Assumptions this PR rests on are listed here:\n" +
+        "  - [operator] The draft's signatures name the version its manifest announces.\n" +
+        "    - Result (after publish): both read the same version.\n" +
+        "  - [hardware] A second item at the field's own indentation.",
+    );
+    expect(untagged(text)).toEqual([]);
+    expect(run(text).status).toBe(0);
+  });
+
+  it("does not let a sub-entry's tag vouch for an untagged item", () => {
+    const text = body(
+      "- [x] Assumptions this PR rests on are listed here:\n" +
+        "  - the window is a guess nobody measured.\n" +
+        "    - [hardware] a note that names a tag.\n" +
+        "  - a second untagged item after the sub-entry.",
+    );
+    expect(untagged(text)).toEqual([
+      "the window is a guess nobody measured.",
+      "a second untagged item after the sub-entry.",
+    ]);
+  });
 });

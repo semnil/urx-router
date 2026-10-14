@@ -54,20 +54,34 @@ export function assumptionItems(body) {
     block.push(l);
   }
 
+  // An item is an entry at the indentation of the field's first entry. An entry indented
+  // deeper belongs to the item above it — a result written under an item once it settles —
+  // and its text is not read for the item's tag, so a tag in a sub-entry does not vouch
+  // for an untagged item.
   const items = [];
   let current = null;
+  let itemIndent = null;
+  let inSub = false;
   for (const l of block) {
-    const nested = /^\s+[-*]\s+(.*)$/.exec(l);
+    const nested = /^(\s+)[-*]\s+(.*)$/.exec(l);
     if (nested) {
+      const indent = nested[1].length;
+      if (itemIndent === null) itemIndent = indent;
+      if (indent > itemIndent && current !== null) {
+        inSub = true;
+        continue;
+      }
       if (current !== null) items.push(current);
-      current = nested[1];
+      current = nested[2];
+      inSub = false;
     } else if (!l.trim()) {
       // A blank line ends the item. Prose written under the field belongs to the field
       // and not to its last entry — without this, a note after the list is read as part
       // of whatever item happened to come before it.
       if (current !== null) items.push(current);
       current = null;
-    } else if (current !== null) {
+      inSub = false;
+    } else if (current !== null && !inSub) {
       current += ` ${l.trim()}`;
     }
   }
