@@ -95,9 +95,11 @@ value of every input port, the address of every D.Gain, the jack each input-stag
 address reaches and the jack that carries HI-Z (jack 2), the stereo channel block,
 the channel slots the USB OUT and ducker key selectors take, the [CUE] flag of each
 strip, the link between a stereo channel's displayed side and the LCD selection, and
-every always-wired send. The factory-initial plan matches the unit too: a new plan
-written to a factory-initialised URX22 leaves every address it writes at the value
-the unit already holds, the sample rate aside, which follows the USB host while
+every always-wired send. The settings inside an insert effect or an FX effect are the
+exception: the URX22 uses the values, encodings and ranges calibrated on the URX44V,
+and their meaning has not been measured on the URX22. The factory-initial plan
+matches the unit too: a new plan written to a factory-initialised URX22 leaves every
+address it writes at the value the unit already holds, the sample rate aside, which follows the USB host while
 Follow USB is on. The **URX44** reuses the URX44V control map verbatim (the only
 hardware difference is the HDMI input, which is not routed by default), so it is
 expected to match but has not been verified on hardware. On the URX44 the input
