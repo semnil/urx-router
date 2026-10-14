@@ -230,7 +230,7 @@ const PROSE_TOKENS = new Map([
   ["includes()", "JavaScript's own method, named as the check that was too loose"],
   ["test.describe.serial", "a Playwright declaration, named as itself"],
   ["(retry #1)", "the list reporter's retry suffix, quoted as the text a parser has to strip"],
-  ["floor(weight × collected ÷ sum)", "Playwright's own shard-size arithmetic, written out"],
+  ["floor(weight × runnable ÷ sum)", "Playwright's own shard-size arithmetic, written out"],
   // The recorded macOS platform version: Mach-O and linker vocabulary, the Xcode tool that
   // reads the field back, and the compiler flag whose output a guard fixture was recorded
   // from. None of them is a file in any tree.

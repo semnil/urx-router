@@ -39,7 +39,7 @@ const WEIGHTS = LEDGER.collect.shardWeights;
 const TOTAL = WEIGHTS.reduce((a, b) => a + b, 0);
 const good = (over = {}) => ({
   weights: WEIGHTS,
-  collectedCount: TOTAL,
+  runnableCount: TOTAL,
   shardCounts: WEIGHTS,
   workflowText: WORKFLOW,
   ...over,
@@ -438,7 +438,7 @@ describe("inspectWeights", () => {
   it("reports a sum that no longer matches the corpus, and says to re-derive", () => {
     const found = messages({ weights: oneOver, shardCounts: null });
     expect(found).toHaveLength(1);
-    expect(found[0]).toMatch(new RegExp(`sums to ${TOTAL + 1} but --project=race collects ${TOTAL}`));
+    expect(found[0]).toMatch(new RegExp(`sums to ${TOTAL + 1} but --project=race runs ${TOTAL}`));
     expect(found[0]).toMatch(/race-shard-weights\.mjs/);
   });
 
@@ -456,7 +456,7 @@ describe("inspectWeights", () => {
     expect(found).toHaveLength(differs.filter(Boolean).length);
     const k = differs.indexOf(true);
     expect(found[0]).toMatch(
-      new RegExp(`--shard=${k + 1}/${n} collects ${equal[k]} case\\(s\\).*not the ${WEIGHTS[k]}`, "s"),
+      new RegExp(`--shard=${k + 1}/${n} runs ${equal[k]} case\\(s\\).*not the ${WEIGHTS[k]}`, "s"),
     );
     expect(found.every((m) => /stopped reading PWTEST_SHARD_WEIGHTS/.test(m))).toBe(true);
   });

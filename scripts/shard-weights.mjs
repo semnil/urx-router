@@ -291,26 +291,28 @@ export function weightShapeProblem(weights) {
 }
 
 /**
- * What the readings mean. `shardCounts` is what Playwright collected for each
- * `--shard=k/N` under these weights, or null when it was not worth taking (the sum is
- * already wrong, so every shard would be off by the same arithmetic).
+ * What the readings mean. `runnableCount` is how many cases the race project collects that
+ * will run (a declared skip is not one), and `shardCounts` is how many of those Playwright
+ * hands each `--shard=k/N` under these weights, or null when it was not worth taking (the
+ * sum is already wrong, so every shard would be off by the same arithmetic).
  *
  * WHAT THIS DECIDES, and what it does not. Playwright sizes shard k as
- * `floor(weights[k] * collected / sum(weights))`, so once the sum matches the corpus the
- * counts are an identity — the per-shard reading can only come back wrong if the variable
- * was ignored, or if a cut fell inside a group Playwright assigns whole. So a stale array
- * is caught when the corpus CHANGED SIZE, which is how a stale array is normally produced;
- * a case swapped one-for-one, a file renamed into a different collection order, or a case
- * that simply got slower leaves every count intact and needs a re-derivation nobody here
- * can prompt. The documents say it that way too.
+ * `floor(weights[k] * runnable / sum(weights))`, counting only the cases that will run and
+ * placing each declared skip beside the case in front of it, so once the sum matches the
+ * cases that will run the counts are an identity — the per-shard reading can only come back
+ * wrong if the variable was ignored, or if a cut fell inside a group Playwright assigns whole.
+ * So a stale array is caught when the corpus CHANGED SIZE, which is how a stale array is
+ * normally produced; a case swapped one-for-one, a file renamed into a different collection
+ * order, or a case that simply got slower leaves every count intact and needs a
+ * re-derivation nobody here can prompt. The documents say it that way too.
  */
-export function inspectWeights({ weights, collectedCount, shardCounts, workflowText }) {
+export function inspectWeights({ weights, runnableCount, shardCounts, workflowText }) {
   const problems = [];
   const shape = weightShapeProblem(weights);
   if (shape) return [{ where: "ledger", message: shape }];
 
   const total = weights.reduce((a, b) => a + b, 0);
-  if (total !== collectedCount) {
+  if (total !== runnableCount) {
     // Reported on its own rather than left to the per-shard mismatch, because the two have
     // different answers: this one means re-derive, that one can also mean the variable was
     // ignored. Playwright's remainder handling still runs every case while this is red —
@@ -318,7 +320,7 @@ export function inspectWeights({ weights, collectedCount, shardCounts, workflowT
     problems.push({
       where: "ledger",
       message:
-        `collect.shardWeights sums to ${total} but --project=race collects ${collectedCount} case(s) — ` +
+        `collect.shardWeights sums to ${total} but --project=race runs ${runnableCount} case(s) — ` +
         "re-derive with `node scripts/race-shard-weights.mjs <run id>`",
     });
   } else if (shardCounts) {
@@ -328,7 +330,7 @@ export function inspectWeights({ weights, collectedCount, shardCounts, workflowT
       problems.push({
         where: "ledger",
         message:
-          `--shard=${i + 1}/${weights.length} collects ${got} case(s) under collect.shardWeights, not the ${want} ` +
+          `--shard=${i + 1}/${weights.length} runs ${got} case(s) under collect.shardWeights, not the ${want} ` +
           "the array claims — either the corpus moved (re-derive) or Playwright stopped reading PWTEST_SHARD_WEIGHTS",
       });
     }

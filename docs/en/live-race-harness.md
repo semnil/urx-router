@@ -738,7 +738,9 @@ how the tier is cut decides most of it.
 
 **How the shards are sized.** Playwright's own sharding takes a contiguous slice of the collected order
 and sizes it by case COUNT (`filterForShard` walks the groups in path order and cuts on a cumulative
-count). Equal counts are not equal times here: `t2-shape-change` through `t2f-shape-change` are six
+count). What it counts is the cases that will RUN: a declared skip counts for nothing and lands in the
+shard holding the case in front of it, so the weights below sum to the runnable cases, not to everything
+collected — unless nothing at all will run, in which case every collected case is counted. Equal counts are not equal times here: `t2-shape-change` through `t2f-shape-change` are six
 adjacent files in that order and are among the expensive ones, so one slice inherits them together — on
 the run this was derived from, shard 1 held `t2`, `t2b`, `t2c`, `t2d`, `t2e` and `t2f`. That run's three
 shards carried 12.3, 4.5 and 7.4 minutes of machine time over 57, 57 and 56 cases — a worst shard 53%
@@ -759,10 +761,10 @@ can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
 
-**The current array.** `[49, 61, 74]` is the array derived from the race run of the 184-case corpus
-(2026-10-04). That run timed 177 of its cases and left the 7 declared skips at zero. Measured against its
-durations, under the two-worker model, its three shards ran 265 / 266 / 270 s, against 260 s if the work
-divided evenly, and the runner reproduced the plan case for case.
+**The current array.** `[53, 59, 70]` is the array derived from the race run of the 189-case corpus
+(2026-10-14), whose 182 runnable cases it splits. That run timed all 182 and the 7 declared skips are left
+out of the cut. Measured against its durations, under the two-worker model, its three shards run 277 / 278
+/ 282 s, against 271 s if the work divided evenly, and the runner reproduced the plan case for case.
 
 A log assembled from two runs is the case none of that reaches on its own: where the halves overlap, a
 case timed twice with no retry between them gives it away, but halves that do not overlap cover the
