@@ -1475,7 +1475,7 @@ test("a tuning screen's controls arm under processor and band scopes", async ({ 
   // An incoming value moves the screen's own slider, on the field table's grid.
   await setLearn(page, win, false);
   await sendMidi(page, [0xb0, 40, 0], [0xb0, 40, 0]);
-  await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-72.0 dB");
+  await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-72 dB");
   await box.locator(".consent-btn-secondary").click();
 });
 
@@ -1505,7 +1505,7 @@ test("the DUCKER screen's sliders arm under the ducker's own scope", async ({ pa
   // ducker's threshold floor is -60 dB, where the GATE's is -72.
   await setLearn(page, win, false);
   await sendMidi(page, [0xb0, 45, 0], [0xb0, 45, 0]);
-  await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-60.0 dB");
+  await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-60 dB");
   await box.locator(".consent-btn-secondary").click();
 });
 

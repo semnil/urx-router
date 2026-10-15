@@ -318,6 +318,15 @@ Every stop prints as itself in its control's readout. Between 1 and 10 ms neighb
 stops are closer than one decimal (attack 1.008 and 1.039, hold 1.06 and 1.10), and that is where the
 readout spends its extra decimals.
 
+**A level and a frequency print the way the unit's screen prints them too** (`formatDyn`). A level on
+the 1 dB grid — GATE Threshold and Range, COMP Threshold, DUCKER Threshold and Range — prints in whole
+dB, and one held between grid steps prints its whole-dB part, toward zero (-45.5 reads -45). A finer
+level — COMP Gain, an EQ band's Gain, the SSMCS gains — prints to one decimal. Neither carries a sign
+on a positive value. A frequency — an EQ band's, an output EQ band's, an SSMCS band's or its sidechain's — prints to three
+significant figures (31.5 Hz, 125 Hz, 1.00 kHz, 10.0 kHz), and an SSMCS one prints the R40 grade its
+raw names (raw 4 = 20.0 Hz, one grade per raw), which the continuous `ssmcsFreqHz` the curves are
+drawn from lands near but not on (raw 49 prints 265 Hz).
+
 **The SSMCS strip's Attack and Release are the channel tables**: Attack raw 57 + i is the Attack stop i
 and Release raw 24 + i the Release stop i (`ssmcsAttackMs` / `ssmcsReleaseMs`), so the strip shows the
 values the channel COMP shows.

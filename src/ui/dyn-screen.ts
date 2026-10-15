@@ -1457,10 +1457,10 @@ export class DynScreen {
     if (this.cap) {
       this.cap.style.setProperty("--pos", ((1 - this.frac(db)) * 100).toFixed(2) + "%");
       this.cap.setAttribute("aria-valuenow", String(db));
-      this.cap.setAttribute("aria-valuetext", formatDyn(db, "db"));
+      this.cap.setAttribute("aria-valuetext", formatDyn(db, this.capField()?.unit ?? "db"));
     }
     if (this.capSlider && Number(this.capSlider.value) !== db) this.capSlider.value = String(db);
-    if (this.capVal) setLevelText(this.capVal, formatDyn(db, "db"));
+    if (this.capVal) setLevelText(this.capVal, formatDyn(db, this.capField()?.unit ?? "db"));
     this.markPlotDirty();
   }
 

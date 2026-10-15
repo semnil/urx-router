@@ -8,6 +8,7 @@ import {
   eqFreqToPos,
   eqPosToHz,
   fmtSsmcsAttack,
+  fmtSsmcsHz,
   fmtSsmcsQ,
   fmtSsmcsRatio,
   fmtSsmcsRelease,
@@ -18,7 +19,9 @@ import {
 import { LEVEL_MIN_DB } from "../core/plan";
 import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ } from "../core/control/vd";
 import { COMP_RATIO_INF } from "../core/control/comp-ratio";
-import { formatDyn, formatTime } from "../core/control/translate";
+import { DUCKER_FIELDS, channelDynamics, formatDyn, formatTime } from "../core/control/translate";
+import type { DynField } from "../core/control/translate";
+import { getModel } from "../models";
 import type { TimeReadout } from "../core/control/translate";
 import {
   DUCKER_DECAY_STOPS_MS,
@@ -210,6 +213,69 @@ describe("EQ band frequency mapping", () => {
       expect(Number.isInteger(hz)).toBe(true);
       expect(hz).toBeGreaterThanOrEqual(EQ_FREQ_MIN_HZ);
       expect(hz).toBeLessThanOrEqual(EQ_FREQ_MAX_HZ);
+    }
+  });
+});
+
+// A level on the unit's 1 dB grid prints in whole dB, a finer one to one decimal, and neither
+// carries a sign on a positive value. A value held between grid steps prints its whole-dB part,
+// toward zero.
+describe("the level readouts", () => {
+  it("prints the 1 dB-grid levels in whole dB, toward zero", () => {
+    const dyn = channelDynamics(getModel("URX44V"), "ch1", 0)!;
+    const field = (fs: readonly DynField[], key: string): DynField => fs.find((f) => f.key === key)!;
+    for (const f of [
+      field(dyn.gate, "threshold"),
+      field(dyn.gate, "range"),
+      field(dyn.comp!, "threshold"),
+      field(DUCKER_FIELDS, "threshold"),
+      field(DUCKER_FIELDS, "range"),
+    ]) {
+      expect(f.step, f.name).toBe(1);
+      expect(f.unit, f.name).toBe("dbWhole");
+    }
+    for (const [v, label] of [
+      [-45, "-45 dB"],
+      [-45.5, "-45 dB"],
+      [-23.5, "-23 dB"],
+      [-18.5, "-18 dB"],
+      [-40.5, "-40 dB"],
+    ] as const) {
+      expect(formatDyn(v, "dbWhole"), `${v}`).toBe(label);
+    }
+  });
+  it("prints a finer level to one decimal, with no sign", () => {
+    for (const [v, label] of [
+      [2, "2.0 dB"],
+      [1.5, "1.5 dB"],
+      [-2.5, "-2.5 dB"],
+      [0, "0.0 dB"],
+    ] as const) {
+      expect(formatDyn(v, "db"), `${v}`).toBe(label);
+    }
+  });
+});
+
+describe("the frequency readouts", () => {
+  it("prints an EQ band frequency to three significant figures", () => {
+    for (const [hz, label] of [
+      [31.5, "31.5 Hz"],
+      [125, "125 Hz"],
+      [1000, "1.00 kHz"],
+      [4000, "4.00 kHz"],
+      [10000, "10.0 kHz"],
+    ] as const) {
+      expect(formatDyn(hz, "hz"), `${hz}`).toBe(label);
+    }
+  });
+  it("prints an SSMCS band or sidechain frequency as the R40 grade its raw names", () => {
+    for (const [raw, label] of [
+      [6, "22.4 Hz"],
+      [49, "265 Hz"],
+      [116, "12.5 kHz"],
+      [78, "1.40 kHz"],
+    ] as const) {
+      expect(fmtSsmcsHz(raw), `raw ${raw}`).toBe(label);
     }
   });
 });

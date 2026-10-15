@@ -483,7 +483,7 @@ describe("the COMP face", () => {
     expect(text("ratio")).toBe("2.50:1");
     segment(SC_SEG);
     expect(text("scQ")).toBe("1.00");
-    expect(text("scFreq")).toBe("89 Hz");
+    expect(text("scFreq")).toBe("90.0 Hz");
     expect(text("scGain")).toBe("-4.7 dB");
   });
 });

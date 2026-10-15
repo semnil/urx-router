@@ -289,6 +289,13 @@ GATE の Decay は小数 1 桁。GATE の Hold は 10 ms 未満で小数 2 桁�
 Decay は小数 1 桁で、1 s 以上は秒。どの段もそのコントロールの書式でその値のまま表示される。1〜10 ms では隣り合う
 Attack と Hold の段の差が小数 1 桁より小さく (attack の 1.008 と 1.039、hold の 1.06 と 1.10)、多い桁はそこに使われる。
 
+**レベルと周波数も、本体の画面と同じ書式で表示する** (`formatDyn`)。1 dB 刻みのレベル (GATE の Threshold と Range、
+COMP の Threshold、DUCKER の Threshold と Range) は整数の dB で表示し、刻みの間の値は 0 に向けて切り捨てた整数になる
+(-45.5 は -45)。それより細かいレベル (COMP の Gain、EQ の各バンドの Gain、SSMCS の Gain) は小数 1 桁。どちらも正の値に
+符号を付けない。周波数 (EQ・出力 EQ・SSMCS の各バンドとサイドチェーン) は有効数字 3 桁 (31.5 Hz、125 Hz、1.00 kHz、10.0 kHz) で、
+SSMCS の周波数は raw が指す R40 の値 (raw 4 = 20.0 Hz、raw 1 つで 1 段) を表示する。曲線を描く連続値の `ssmcsFreqHz` はその近くに
+来るが一致はしない (raw 49 は 265 Hz と表示)。
+
 **SSMCS ストリップの Attack と Release はチャンネルの表を使う**: Attack の raw 57 + i は Attack の段 i、Release の
 raw 24 + i は Release の段 i (`ssmcsAttackMs` / `ssmcsReleaseMs`) なので、ストリップはチャンネルの COMP と同じ値を表示する。
 

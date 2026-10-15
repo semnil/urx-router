@@ -25,7 +25,7 @@ test("GATE range has a -∞ notch one step below the -72 dB floor", async ({ pag
   await slider.fill("-73");
   await expect(range.locator(".gt-val")).toHaveText("-∞ dB");
   await slider.fill("-72");
-  await expect(range.locator(".gt-val")).toHaveText("-72.0 dB"); // deepest finite step
+  await expect(range.locator(".gt-val")).toHaveText("-72 dB"); // deepest finite step
 });
 
 test("the inspector's GATE section keeps the toggle and the launcher only", async ({ page }) => {

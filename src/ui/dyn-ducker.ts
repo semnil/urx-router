@@ -231,7 +231,7 @@ export const DUCKER_DYN: DynPlotProcessor = {
     // The three values the ramps stand for, each against the segment it sets.
     c.fillStyle = tok["--gr"];
     c.textAlign = "left";
-    c.fillText(formatDyn(range, "db"), g.pad.l + 4, g.py(range) - 5);
+    c.fillText(formatDyn(range, "dbWhole"), g.pad.l + 4, g.py(range) - 5);
     c.fillStyle = tok["--led"];
     c.fillText(formatDyn(attack, "attack"), g.px(attack) + 5, g.pad.t + 11);
     c.textAlign = "right";

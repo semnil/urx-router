@@ -878,8 +878,9 @@ export interface DynField {
   /** How the number reads. `raw` = a broker integer whose display goes through a
    *  device curve, so the surface printing it supplies the text; `formatDyn` prints
    *  the integer itself, which is right for the one SSMCS value that has no unit. A
-   *  time names which of the unit's time readouts it takes (`TimeReadout`). */
-  unit: "db" | TimeReadout | "ratio" | "hz" | "q" | "raw";
+   *  time names which of the unit's time readouts it takes (`TimeReadout`). `dbWhole` is a
+   *  level on the 1 dB grid, printed in whole dB; `db` a finer one, printed to one decimal. */
+  unit: "db" | "dbWhole" | TimeReadout | "ratio" | "hz" | "q" | "raw";
   /** Slider positions for a value the device sweeps logarithmically (an EQ band
    *  frequency spans three decades, which a linear slider cannot resolve at the
    *  bottom). Absent = the slider carries the value itself. */
@@ -964,8 +965,8 @@ export function ssmcsPlanKey(key: string): string {
 // Every time value offers the stops the unit's own control stops on (dyn-time-stops.ts):
 // one attack table for GATE, COMP and DUCKER, and one for GATE decay and COMP release.
 const GATE_FIELDS: EmittedDynField[] = [
-  { key: "threshold", name: "GATE_THRESHOLD", min: -72, max: 0, step: 1, def: -50, unit: "db" },
-  { key: "range", name: "GATE_RANGE", min: GATE_RANGE_OFF_DB, max: 0, step: 1, def: -56, unit: "db" },
+  { key: "threshold", name: "GATE_THRESHOLD", min: -72, max: 0, step: 1, def: -50, unit: "dbWhole" },
+  { key: "range", name: "GATE_RANGE", min: GATE_RANGE_OFF_DB, max: 0, step: 1, def: -56, unit: "dbWhole" },
   {
     key: "attack",
     name: "GATE_ATTACK",
@@ -1000,7 +1001,7 @@ const GATE_FIELDS: EmittedDynField[] = [
 // The channel COMP's Ratio (`36`) offers the stops the unit's own control stops on, ending at
 // the one it writes INF:1 for. The finest spacing on the ladder is 0.05, below 4.00:1.
 const COMP_FIELDS: EmittedDynField[] = [
-  { key: "threshold", name: "COMP_THRESHOLD", min: -54, max: 0, step: 1, def: -18, unit: "db" },
+  { key: "threshold", name: "COMP_THRESHOLD", min: -54, max: 0, step: 1, def: -18, unit: "dbWhole" },
   {
     key: "ratio",
     name: "COMP_RATIO",
@@ -1163,7 +1164,7 @@ export function ssmcsEqBandFields(band: SsmcsEqBandName): DynField[] {
 // device DUCKER screen reads them (Range / Attack / Decay graph handles, then the
 // Threshold box); each field carries its own param name, so order is display-only.
 export const DUCKER_FIELDS: EmittedDynField[] = [
-  { key: "range", name: "DUCKER_RANGE", min: -70, max: 0, step: 1, def: -56, unit: "db" },
+  { key: "range", name: "DUCKER_RANGE", min: -70, max: 0, step: 1, def: -56, unit: "dbWhole" },
   {
     key: "attack",
     name: "DUCKER_ATTACK",
@@ -1184,7 +1185,7 @@ export const DUCKER_FIELDS: EmittedDynField[] = [
     unit: "duckerDecay",
     steps: DUCKER_DECAY_STOPS_MS,
   },
-  { key: "threshold", name: "DUCKER_THRESHOLD", min: -60, max: 0, step: 1, def: -40, unit: "db" },
+  { key: "threshold", name: "DUCKER_THRESHOLD", min: -60, max: 0, step: 1, def: -40, unit: "dbWhole" },
 ];
 
 /**
@@ -1225,7 +1226,10 @@ export function dynPosRange(f: DynField): { min: number; max: number; step: numb
  *  inspector, the gate screen and anything else that prints a DynField. */
 export function formatDyn(v: number, unit: DynField["unit"]): string {
   if (unit === "raw") return String(v);
-  if (unit === "db") return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
+  // A level prints with no sign on a positive value; one held between grid steps prints its
+  // whole-dB part, toward zero.
+  if (unit === "dbWhole") return `${Math.trunc(v)} dB`;
+  if (unit === "db") return `${v.toFixed(1)} dB`;
   if (unit === "ratio") return formatCompRatio(v, "comp");
   if (unit === "hz") return formatHz(v);
   if (unit === "q") return v.toFixed(2);
