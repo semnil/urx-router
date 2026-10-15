@@ -375,6 +375,29 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     expect(revR3TimeSec(57)).toBeCloseTo(10.0, 5);
     expect(revR3TimeSec(69)).toBeCloseTo(30.0, 5);
   });
+  it("Rev.R3 reverb time reads one decimal across its whole range", () => {
+    const rt = fxParams(768).find((d) => d.key === "reverbTime")!.format!;
+    for (const [raw, label] of [
+      [0, "0.3 s"],
+      [16, "1.9 s"],
+      [47, "5.0 s"],
+      [58, "11.0 s"],
+      [69, "30.0 s"],
+    ] as const) {
+      expect(rt(raw, {}), `raw ${raw}`).toBe(label);
+    }
+  });
+  it("Feedback prints a positive value without a sign, on Rev.R3 and on both delays", () => {
+    for (const [type, key] of [
+      [768, "revr3Feedback"],
+      [1024, "delayFeedback"],
+      [1025, "delayFeedback"],
+    ] as const) {
+      const fb = fxParams(type).find((d) => d.key === key)!.format!;
+      expect(fb(99, {}), `${type}`).toBe("99%");
+      expect(fb(-99, {}), `${type}`).toBe("-99%");
+    }
+  });
   it("REV-X reverb time is base × 3^(roomSize/31)", () => {
     expect(revxTimeSec(24, 0)).toBeCloseTo(0.927, 2);
     expect(revxTimeSec(24, 31)).toBeCloseTo(2.79, 1); // ×3.0

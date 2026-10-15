@@ -141,6 +141,44 @@ describe("insert-fx encodings (live calibration anchors)", () => {
     expect(out(96)).toBe("-4.9 dB"); // live anchor
     expect(out(127)).toBe("0.0 dB");
   });
+  // The unit prints the Compander threshold in whole dB, cutting a finer value toward zero,
+  // and its encoder moves it 1 dB at a time — so the readout says what the unit says, and the
+  // slider offers only what the unit lets a person enter.
+  it("Compander Threshold reads whole dB toward zero and steps 1 dB", () => {
+    const th = insertFxParams("compander", 1793).find((d) => d.slot === 6)!;
+    for (const [raw, label] of [
+      [-5400, "-54 dB"],
+      [-2340, "-23 dB"],
+      [-2350, "-23 dB"],
+      [-2360, "-23 dB"],
+      [-2250, "-22 dB"],
+      [0, "0 dB"],
+    ] as const) {
+      expect(th.format!(raw), `raw ${raw}`).toBe(label);
+    }
+    expect(th.rawStep).toBe(100);
+  });
+  it("Compander Release reads three significant figures, to no finer than 0.1 ms", () => {
+    const rel = insertFxParams("compander", 1794).find((d) => d.slot === 9)!.format!;
+    for (const [raw, label] of [
+      [50, "5.0 ms"],
+      [654, "65.4 ms"],
+      [9990, "999 ms"],
+      [12340, "1.23 s"],
+      [423000, "42.3 s"],
+    ] as const) {
+      expect(rel(raw), `raw ${raw}`).toBe(label);
+    }
+  });
+  it("Pitch Fix Coarse / Fine / Formant print the bare number, with no sign on a positive one", () => {
+    const row = (slot: number) => insertFxParams("pitch").find((d) => d.slot === slot)!.format!;
+    expect(row(6)(12)).toBe("12");
+    expect(row(6)(-12)).toBe("-12");
+    expect(row(7)(50)).toBe("50");
+    expect(row(7)(-50)).toBe("-50");
+    expect(row(8)(126)).toBe("62");
+    expect(row(8)(2)).toBe("-62");
+  });
   it("MIDI note name uses Yamaha numbering (C-2 = 0, C3 = 60)", () => {
     expect(midiNoteName(0)).toBe("C-2");
     expect(midiNoteName(60)).toBe("C3");

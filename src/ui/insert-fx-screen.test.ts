@@ -300,9 +300,9 @@ describe("the rendered screen", () => {
     h.plan.nodeParams.ch1!.insertFxParams = { [insertFxParamKey("compander", 6)]: -2000 };
     const screen = new DynScreen(h.hooks);
     screen.open(INSFX_DYN, "ch1");
-    // -2000 raw is -20.0 dB; the raw itself must not reach the screen.
+    // -2000 raw is -20 dB; the raw itself must not reach the screen.
     const shown = [...h.box.querySelectorAll<HTMLElement>(".gt-val")].map((e) => e.textContent);
-    expect(shown).toContain("-20.0 dB");
+    expect(shown).toContain("-20 dB");
     expect(shown).not.toContain("-2000");
     screen.close();
   });

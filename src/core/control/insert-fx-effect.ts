@@ -306,6 +306,14 @@ export interface InsertFxParamDesc {
   options?: { value: number; label: string }[];
 }
 
+/** Compander Release raw (ms×10) → the label the unit prints: three significant figures, to
+ *  no finer than the 0.1 ms the value holds (5.0 ms, 65.4 ms, 999 ms, 1.23 s, 42.3 s). */
+function companderReleaseLabel(raw: number): string {
+  const ms = raw / 10;
+  if (ms >= 1000) return `${(ms / 1000).toPrecision(3)} s`;
+  return `${ms < 100 ? ms.toFixed(1) : Math.round(ms)} ms`;
+}
+
 // Compander-H / Compander-S (engine 689 input / 693 output). Encodings match the
 // dedicated COMP path (centi-dB / ratio×100 / attack µs / release ms×10).
 const COMPANDER_PARAMS: InsertFxParamDesc[] = [
@@ -315,9 +323,12 @@ const COMPANDER_PARAMS: InsertFxParamDesc[] = [
     control: "slider",
     rawMin: -5400,
     rawMax: 0,
-    rawStep: 10,
+    // Whole dB, the step the unit's own encoder moves it by. A finer value written over the
+    // link is kept by the unit and printed as its whole-dB part, toward zero, which is what
+    // the readout below does with one.
+    rawStep: 100,
     def: -1000,
-    format: (r) => `${(r / 100).toFixed(1)} dB`,
+    format: (r) => `${Math.trunc(r / 100)} dB`,
   },
   {
     slot: 7,
@@ -351,7 +362,7 @@ const COMPANDER_PARAMS: InsertFxParamDesc[] = [
     // the device enforces.
     rawStep: 10,
     def: 2290,
-    format: (r) => (r >= 10000 ? `${(r / 10000).toFixed(2)} s` : `${Math.round(r / 10)} ms`),
+    format: companderReleaseLabel,
   },
   {
     slot: 10,
@@ -543,9 +554,8 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
     rawMax: 12,
     rawStep: 1,
     def: 0,
-    // Semitones. Coarse and Fine sit side by side and the guide names their units in prose
-    // alone, so without the suffix the two readouts are the same bare signed number.
-    format: (r) => `${r > 0 ? "+" : ""}${r} st`,
+    // Semitones, and Fine's cents below, print as the bare number the unit's screen shows.
+    format: (r) => String(r),
   },
   {
     slot: 7,
@@ -556,7 +566,7 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
     rawMax: 50,
     rawStep: 1,
     def: 0,
-    format: (r) => `${r > 0 ? "+" : ""}${r} ct`,
+    format: (r) => String(r),
   },
   {
     slot: 8,
@@ -567,7 +577,7 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
     rawMax: 126,
     rawStep: 1,
     def: 64,
-    format: (r) => `${r - 64 > 0 ? "+" : ""}${r - 64}`,
+    format: (r) => `${r - 64}`,
   },
   { slot: 13, label: "correction", control: "toggle", def: 1 },
   { slot: 14, label: "mix", control: "slider", rawMin: 0, rawMax: 126, rawStep: 1, def: 126, format: (r) => String(r) },

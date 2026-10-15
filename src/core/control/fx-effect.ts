@@ -211,8 +211,9 @@ export function formatFx1Hz(hz: number): string {
 export function formatFx2Hz(hz: number): string {
   return hz >= 1000 ? `${threeFigures(hz / 1000)} kHz` : `${threeFigures(hz)} Hz`;
 }
-function formatSec(s: number): string {
-  return `${s < 10 ? s.toFixed(2) : s.toFixed(1)} s`;
+/** Rev.R3 Reverb Time, to the one decimal the unit prints it with (0.3, 1.9, 30.0). */
+function formatRevR3Sec(s: number): string {
+  return `${s.toFixed(1)} s`;
 }
 /** REV-X Reverb Time, to the three significant figures the unit prints it with (0.927,
  *  2.79, 31.0) — a fixed decimal count drops a digit below 1 s and adds one above 10 s. */
@@ -399,7 +400,7 @@ export const REVR3_PARAMS: FxParamDesc[] = [
     rawMax: 69,
     rawStep: 1,
     def: 15,
-    format: (r) => formatSec(revR3TimeSec(r)),
+    format: (r) => formatRevR3Sec(revR3TimeSec(r)),
   },
   {
     key: "revr3InitialDelay",
@@ -454,7 +455,7 @@ export const REVR3_PARAMS: FxParamDesc[] = [
     rawMax: 99,
     rawStep: 1,
     def: 0,
-    format: (r) => `${r > 0 ? "+" : ""}${r}%`,
+    format: (r) => `${r}%`,
   },
   {
     key: "erRevDelay",
@@ -542,7 +543,7 @@ export const DELAY_PARAMS: FxParamDesc[] = [
     rawMax: 99,
     rawStep: 1,
     def: 20,
-    format: (r) => `${r > 0 ? "+" : ""}${r}%`,
+    format: (r) => `${r}%`,
   },
   {
     key: "delayHiRatio",
