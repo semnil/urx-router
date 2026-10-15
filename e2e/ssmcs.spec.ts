@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
-import { panelHeight, pickBand, pickPlot, screenBox } from "./dyn-helpers";
+import { panelHeight, pickBand, pickPlot, screenBox, steadySliderTracks } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
 
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
@@ -408,6 +408,26 @@ test.describe("the tuning screen's three faces", () => {
     await screenBox(page).locator(".consent-btn-secondary").click();
     await openFace(page, "ssmcsComp", /^COMP$/);
     await expect(screenBox(page).locator("#dyn-mode-sidechain")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  // The same track length the other tuning screens hold, on every face and every band.
+  test("every slider row keeps one track length through every reading", async ({ page }) => {
+    const widths = new Set<number>();
+    const sweep = async (where: string) => {
+      for (const w of await steadySliderTracks(page, where)) widths.add(w);
+    };
+    await openFace(page, "ssmcs", /^SSMCS$/);
+    await sweep("MAIN");
+    await screenBox(page).locator(".consent-btn-secondary").click();
+    await openFace(page, "ssmcsComp", /^COMP$/);
+    await sweep("COMP");
+    await screenBox(page).locator(".consent-btn-secondary").click();
+    await openFace(page, "ssmcsEq", /^EQ$/);
+    for (const [i, band] of (["low", "mid", "high"] as const).entries()) {
+      await pickBand(page, i);
+      await sweep(`EQ ${band}`);
+    }
+    expect([...widths]).toHaveLength(1);
   });
 
   test("the EQ face keeps four rows and one height on every band", async ({ page }) => {

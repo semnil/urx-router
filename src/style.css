@@ -4413,6 +4413,13 @@ button.consent-btn-primary {
   font-variant-numeric: tabular-nums;
   color: var(--text);
 }
+/* A tuning screen's slider row holds its readout at the width of the widest reading any of
+   those rows prints — eight characters ("20.17 ms", "1.00 kHz", "-18.0 dB"), plus the pixel a
+   glyph advance rounds past `8ch` — so every such track is one length whatever its value, and a
+   pointer resting on a track reads the same value after the readout beside it changes. */
+.dev-slider .param-val.gt-val {
+  min-width: calc(8ch + 1px);
+}
 /* User Defined Knobs: banks are a segmented switch (the unit switches banks the
    same way), then one row per knob over the guide's three columns. */
 /* Only what differs from the .view-tabs recipe it shares above: it sits inside a
@@ -5209,7 +5216,7 @@ button.consent-btn-primary {
   height: 4.65em;
   overflow: hidden;
 }
-/* The Device setup brightness row's slider recipe, widened for "-72.0 dB". */
+/* A knob card's value cell. A slider row's is `.dev-slider .param-val.gt-val`. */
 .gt-val {
   min-width: 76px;
 }

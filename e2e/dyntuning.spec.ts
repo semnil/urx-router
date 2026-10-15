@@ -1,6 +1,6 @@
 import { test, expect, colorToken, textContrast, type Page } from "./fixtures";
 import { drag, port, selectWire, wire } from "./graph-helpers";
-import { panelHeight, pickBand, pickPlot, screenBox } from "./dyn-helpers";
+import { panelHeight, pickBand, pickPlot, screenBox, steadySliderTracks } from "./dyn-helpers";
 import { chooseOption } from "./choose-option";
 import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
 import { answerTimingOf, installAnswerQueue } from "./tauri-stub";
@@ -394,6 +394,31 @@ test("the threshold cap moves with the value and shares its ruler", async ({ pag
 // covers this.
 // A time row stops on the unit's own table: a key moves to the neighbouring stop, Home and End
 // reach the table's ends, and the readout prints the stop it is on.
+// A track is one length whatever reading its row prints, and every row on these screens shares
+// it: a track whose length follows its readout puts a different value under a pointer that has
+// not moved, and a drag across a reading of another width reads two values in turn.
+test("every slider row keeps one track length through every reading", async ({ page }) => {
+  const widths = new Set<number>();
+  const sweep = async (where: string) => {
+    for (const w of await steadySliderTracks(page, where)) widths.add(w);
+  };
+  const close = () => page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+  for (const kind of ["gate", "comp"] as const) {
+    await openFromInspector(page, "ch1", kind);
+    await sweep(kind);
+    await close();
+  }
+  await openFromInspector(page, "ch1", "eq");
+  for (const [i, band] of ["low", "lowmid", "highmid", "high"].entries()) {
+    await pickBand(page, i);
+    await sweep(`eq ${band}`);
+  }
+  await close();
+  await openFromInspector(page, "out.ducker1", "ducker");
+  await sweep("ducker");
+  expect([...widths]).toHaveLength(1);
+});
+
 test("steps a time row on the unit's stops, both ends included", async ({ page }) => {
   await openFromInspector(page, "ch1");
   const box = screenBox(page);
