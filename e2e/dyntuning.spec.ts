@@ -379,21 +379,6 @@ test("the threshold cap moves with the value and shares its ruler", async ({ pag
   await expect(slider).toHaveValue("-35");
 });
 
-// A value row is a native range, so the ENGINE owns its drag: dropping a listener does
-// not end it, and measured on the packaged build (2026-08-14) a row dragged with the
-// button held went on writing while another application was frontmost. The app ends it by
-// disabling the row, and holds it that way until the press is over or the window comes
-// back; `holdInertOnBlur` carries the treatment and why the other candidates were dropped —
-// taking the element out of the document and putting it back is one of them, and it is the
-// one this case's own assertions below are shaped to tell apart.
-//
-// This is the tier that can hold it, and the split is deliberate: the DRAG here is real
-// (Playwright's mouse drives the engine's own slider), while the blur is dispatched,
-// because Playwright emulates focus and no tier can take the OS foreground away. The unit
-// suite is the opposite pair — a real blur listener, no engine drag — so neither alone
-// covers this.
-// A time row stops on the unit's own table: a key moves to the neighbouring stop, Home and End
-// reach the table's ends, and the readout prints the stop it is on.
 // A track is one length whatever reading its row prints, and every row on these screens shares
 // it: a track whose length follows its readout puts a different value under a pointer that has
 // not moved, and a drag across a reading of another width reads two values in turn.
@@ -419,6 +404,21 @@ test("every slider row keeps one track length through every reading", async ({ p
   expect([...widths]).toHaveLength(1);
 });
 
+// A value row is a native range, so the ENGINE owns its drag: dropping a listener does
+// not end it, and measured on the packaged build (2026-08-14) a row dragged with the
+// button held went on writing while another application was frontmost. The app ends it by
+// disabling the row, and holds it that way until the press is over or the window comes
+// back; `holdInertOnBlur` carries the treatment and why the other candidates were dropped —
+// taking the element out of the document and putting it back is one of them, and it is the
+// one this case's own assertions below are shaped to tell apart.
+//
+// This is the tier that can hold it, and the split is deliberate: the DRAG here is real
+// (Playwright's mouse drives the engine's own slider), while the blur is dispatched,
+// because Playwright emulates focus and no tier can take the OS foreground away. The unit
+// suite is the opposite pair — a real blur listener, no engine drag — so neither alone
+// covers this.
+// A time row stops on the unit's own table: a key moves to the neighbouring stop, Home and End
+// reach the table's ends, and the readout prints the stop it is on.
 test("steps a time row on the unit's stops, both ends included", async ({ page }) => {
   await openFromInspector(page, "ch1");
   const box = screenBox(page);

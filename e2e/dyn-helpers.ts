@@ -76,12 +76,16 @@ export const sweepSliderRows = (page: Page): Promise<SweptSliderRow[]> =>
       const readings = new Set<string>();
       const tracks = new Set<number>();
       const overflow = new Set<string>();
+      let p = parts(i);
+      // The row is laid out once per reading it has not printed before; the track's length is a
+      // function of the text beside it alone.
       const set = (v: string) => {
-        const p = parts(i);
+        if (!p.input.isConnected) p = parts(i);
         p.input.disabled = false;
         p.input.value = v;
         p.input.dispatchEvent(new Event("input", { bubbles: true }));
         const text = p.value.textContent ?? "";
+        if (readings.has(text)) return;
         readings.add(text);
         tracks.add(p.input.getBoundingClientRect().width);
         const ink = document.createRange();

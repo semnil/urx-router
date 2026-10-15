@@ -59,41 +59,43 @@ test.beforeEach(async ({ page }) => {
   await page.locator("#model-picker").waitFor();
 });
 
+// A slider row's track is one length whatever reading its row prints, the same on every
+// compander and on the multi-band compressor's 1-knob row: a track whose length follows its
+// readout puts a different value under a pointer that has not moved. Each effect is on a plan of
+// its own and opened on the node holding it; the 1-knob row's readings fit any cell, so it shares
+// a case with a compander, whose track it has to match.
+for (const effects of [
+  [["ch2", 1793, null]],
+  [
+    ["ch2", 1794, null],
+    ["bus.stereo", 1792, "main"],
+  ],
+] as const) {
+  const name = effects.map(([, insertFx]) => insertFx).join(" + ");
+  test(`every slider row keeps one track length through every reading (${name})`, async ({ page }) => {
+    const widths = new Set<number>();
+    for (const [id, insertFx, face] of effects) {
+      const plan = {
+        format: "urx-router-plan",
+        version: 1,
+        modelId: "URX44V",
+        connections: [],
+        nodeParams: { [id]: { insertFx, insertFxOn: true } },
+      };
+      await page.goto(`/?plan=${planParamZ(plan)}`);
+      await node(page, id).click();
+      await openScreen(page);
+      if (face) await page.click(`#dyn-face-insfx-${face}`);
+      for (const w of await steadySliderTracks(page, `${id} ${insertFx}`)) widths.add(w);
+    }
+    expect([...widths]).toHaveLength(1);
+  });
+}
+
 // A device follow can replace the effect a node holds while its screen is open, and the
 // screen re-lays itself in place. So every family reserves one height, and the controls
 // start at the same place whichever effect the screen shows — in Japanese too, where some
 // families' grids run taller than the stylesheet's own reserve.
-// A slider row's track is one length whatever reading its row prints, the same on every
-// compander and on the multi-band compressor's 1-knob row: a track whose length follows its
-// readout puts a different value under a pointer that has not moved.
-test("every slider row keeps one track length through every reading", async ({ page }) => {
-  const widths = new Set<number>();
-  const sweep = async (where: string) => {
-    for (const w of await steadySliderTracks(page, where)) widths.add(w);
-  };
-  // Each effect on a plan of its own, opened on the node holding it.
-  for (const [id, insertFx] of [
-    ["ch2", 1793],
-    ["ch2", 1794],
-    ["bus.stereo", 1792],
-  ] as const) {
-    const plan = {
-      format: "urx-router-plan",
-      version: 1,
-      modelId: "URX44V",
-      connections: [],
-      nodeParams: { [id]: { insertFx, insertFxOn: true } },
-    };
-    await page.goto(`/?plan=${planParamZ(plan)}`);
-    await node(page, id).click();
-    await openScreen(page);
-    if (insertFx === 1792) await page.click("#dyn-face-insfx-main");
-    await sweep(`${id} ${insertFx}`);
-    await closeScreen(page);
-  }
-  expect([...widths]).toHaveLength(1);
-});
-
 test("every INS FX family and face lays out at one height, in Japanese", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(() => localStorage.setItem("urx-lang", "ja"));
