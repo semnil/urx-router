@@ -15,11 +15,23 @@
 // the run would test HEAD while reporting on the working tree — the same
 // wrong-bundle failure this exists to prevent, one level up. Both halves are
 // carried: tracked modifications as a patch, untracked-but-not-ignored files as
-// copies. Ignored files (node_modules, dist, reference/) are deliberately left out;
-// node_modules is linked instead.
+// copies, an untracked symlink as a symlink with the same target. Ignored files
+// (node_modules, dist, reference/) are deliberately left out; node_modules is
+// linked instead.
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { copyFileSync, existsSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -79,6 +91,8 @@ console.log(`worktree ${wt}\nHEAD     ${head}\nports    ${port} / ${tracePort}`)
 git(["worktree", "add", "--detach", wt, "HEAD"]);
 
 let status = 1;
+// Every link this run creates inside the worktree, unlinked before the worktree is removed.
+const links = [];
 try {
   // Tracked modifications, staged and unstaged alike. --binary so an image or any
   // other non-text change applies rather than being dropped from the patch.
@@ -96,8 +110,24 @@ try {
   // -z: without it git quotes a path holding a non-ASCII byte, and the quoted form names no file.
   const untracked = git(["ls-files", "-z", "--others", "--exclude-standard"]).split("\0").filter(Boolean);
   for (const rel of untracked) {
-    mkdirSync(dirname(join(wt, rel)), { recursive: true });
-    copyFileSync(join(ROOT, rel), join(wt, rel));
+    const src = join(ROOT, rel);
+    const dst = join(wt, rel);
+    mkdirSync(dirname(dst), { recursive: true });
+    // git lists a symlink as one path whatever it points at. It is recreated with its target
+    // verbatim, so a relative one resolves inside the worktree as it does here; copying would
+    // follow it, and a link to a directory cannot be copied at all. Windows needs the kind up
+    // front: a directory becomes a junction, which needs no privilege, and a file link that
+    // the machine refuses (no Developer Mode) stops the run rather than being carried as a copy.
+    if (lstatSync(src).isSymbolicLink()) {
+      let isDir = false;
+      try {
+        isDir = statSync(src).isDirectory();
+      } catch {
+        // A dangling link: recreated as it is.
+      }
+      symlinkSync(readlinkSync(src), dst, isDir ? "junction" : "file");
+      links.push(dst);
+    } else copyFileSync(src, dst);
   }
   if (untracked.length) console.log(`carried   ${untracked.length} untracked file(s)`);
 
@@ -126,6 +156,15 @@ try {
   // with it. unlinkSync removes the link itself, never its target.
   const link = join(wt, "node_modules");
   if (existsSync(link)) unlinkSync(link);
+  // The carried links likewise: Git for Windows deletes through a junction, which would
+  // empty the directory a carried link points at.
+  for (const l of links) {
+    try {
+      unlinkSync(l);
+    } catch (e) {
+      if (e.code !== "ENOENT") throw e;
+    }
+  }
   if (KEEP) console.log(`\nkept ${wt} — remove with: git worktree remove --force ${wt}`);
   else {
     git(["worktree", "remove", "--force", wt], ROOT, true);

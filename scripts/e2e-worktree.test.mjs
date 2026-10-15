@@ -3,6 +3,10 @@
 // CLI where the linked install would put the real one; the stub runs inside the worktree, records
 // what it finds there, and exits 0. The worktree is gone by the time the program returns, so the
 // stub's record is the only reading of it.
+//
+// The symlink cases are separate tests from the plain-file one, and each is skipped by name where
+// this machine cannot make that kind of link (a file symlink on Windows without Developer Mode),
+// so the others still run.
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   copyFileSync,
@@ -12,14 +16,35 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const PROGRAM = resolve(dirname(fileURLToPath(import.meta.url)), "e2e-worktree.mjs");
+
+/** Whether this machine can make a link of `type`. Windows refuses a file symlink without
+ *  Developer Mode or the create-symbolic-link privilege, while a junction needs neither; the
+ *  type is ignored elsewhere. This repository is worked from both. */
+function canLink(type) {
+  const tmp = mkdtempSync(join(tmpdir(), "e2e-worktree-symlink-probe-"));
+  try {
+    mkdirSync(join(tmp, "dir"));
+    writeFileSync(join(tmp, "file"), "");
+    symlinkSync(join(tmp, type === "junction" ? "dir" : "file"), join(tmp, "link"), type);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+const dirLinks = canLink("junction");
+const fileLinks = canLink("file");
+const skipNote = (ok) => (ok ? "" : " — SKIPPED, this machine cannot create one");
 
 // Records, for each path it is handed, what the worktree holds there.
 const STUB = `
@@ -94,5 +119,43 @@ describe("e2e-worktree carries the working tree", () => {
     expect(r.code).toBe(0);
     expect(r.seen.out["ä.txt"]).toMatchObject({ link: false, content: "umlaut\n" });
     expect(r.wtLeft).toBe(false);
+  });
+
+  it.skipIf(!dirLinks)(`carries an untracked link to a directory as a link${skipNote(dirLinks)}`, () => {
+    const f = fixture();
+    const outside = join(f.root, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "inside.txt"), "outside\n");
+    mkdirSync(join(f.repo, "work"));
+    symlinkSync(outside, join(f.repo, "work", "vd"), "junction");
+    const r = run(f, ["work/vd"], "inside.txt");
+    expect(r.stderr).not.toMatch(/Error/);
+    expect(r.code).toBe(0);
+    expect(r.seen.out["work/vd"]).toEqual({ link: true, target: outside, real: outside, content: "outside\n" });
+    // Removing the worktree removed the link and left what it pointed at.
+    expect(r.wtLeft).toBe(false);
+    expect(readFileSync(join(outside, "inside.txt"), "utf8")).toBe("outside\n");
+  });
+
+  it.skipIf(!fileLinks)(`carries an untracked link to a file as a link, not a copy${skipNote(fileLinks)}`, () => {
+    const f = fixture();
+    const outside = join(f.root, "outside.txt");
+    writeFileSync(outside, "outside\n");
+    symlinkSync(outside, join(f.repo, "abs.txt"), "file");
+    // A relative target resolves against the link's own place, which is inside the worktree.
+    symlinkSync("tracked.txt", join(f.repo, "rel.txt"), "file");
+    const r = run(f, ["abs.txt", "rel.txt"]);
+    expect(r.stderr).not.toMatch(/Error/);
+    expect(r.code).toBe(0);
+    expect(r.seen.out["abs.txt"]).toEqual({ link: true, target: outside, real: outside, content: "outside\n" });
+    expect(r.seen.out["rel.txt"]).toEqual({
+      link: true,
+      target: "tracked.txt",
+      real: join(r.seen.cwd, "tracked.txt"),
+      content: "tracked\n",
+    });
+    expect(r.seen.cwd.startsWith(f.root + sep)).toBe(true);
+    expect(r.wtLeft).toBe(false);
+    expect(readFileSync(outside, "utf8")).toBe("outside\n");
   });
 });
