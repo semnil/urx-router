@@ -22,6 +22,7 @@ import {
   settingsSection,
   settingsSelect,
   sliderRow,
+  turnStep,
   wheelStep,
   wireDismiss,
 } from "./dom";
@@ -217,6 +218,60 @@ describe("wheel helpers", () => {
     expect(range.value).toBe("1");
     expect(input).toHaveBeenCalledOnce();
     expect(scrubFloat(2.7000000000000002)).toBe(2.7);
+  });
+});
+
+// A value held to a finer grid than one turn of it: the slider steps by its grid, a turn
+// adds whole turns to whatever it holds, and the finer part is never snapped away.
+describe("turnStep", () => {
+  const turning = (): { range: HTMLInputElement; edits: string[] } => {
+    const range = document.createElement("input");
+    range.type = "range";
+    range.min = "-5400";
+    range.max = "0";
+    range.step = "10";
+    range.value = "-2350";
+    const edits: string[] = [];
+    range.addEventListener("input", () => edits.push(range.value));
+    turnStep(range, 100);
+    wheelStep(range);
+    return { range, edits };
+  };
+  const key = (range: HTMLInputElement, k: string, init: KeyboardEventInit = {}): KeyboardEvent => {
+    const e = new KeyboardEvent("keydown", { key: k, cancelable: true, ...init });
+    range.dispatchEvent(e);
+    return e;
+  };
+
+  it("moves a turn per Arrow key and ten per Page key, keeping the tenths", () => {
+    const { range, edits } = turning();
+    for (const k of ["ArrowUp", "ArrowRight", "ArrowDown", "ArrowLeft", "PageUp", "PageDown"]) {
+      expect(key(range, k).defaultPrevented, k).toBe(true);
+    }
+    expect(edits).toEqual(["-2250", "-2150", "-2250", "-2350", "-1350", "-2350"]);
+  });
+
+  it("turns a wheel notch by a turn rather than by the slider's grid", () => {
+    const { range, edits } = turning();
+    range.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, cancelable: true }));
+    expect(edits).toEqual(["-2250"]);
+  });
+
+  it("stops at the ends without reporting an edit that moved nothing", () => {
+    const { range, edits } = turning();
+    range.value = "-50";
+    key(range, "ArrowUp");
+    key(range, "ArrowUp");
+    expect(edits).toEqual(["0"]);
+  });
+
+  it("leaves a chord, another key and a disabled slider to the engine", () => {
+    const { range, edits } = turning();
+    expect(key(range, "ArrowUp", { metaKey: true }).defaultPrevented).toBe(false);
+    expect(key(range, "Home").defaultPrevented).toBe(false);
+    range.disabled = true;
+    expect(key(range, "ArrowUp").defaultPrevented).toBe(false);
+    expect(edits).toEqual([]);
   });
 });
 
