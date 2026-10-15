@@ -288,6 +288,24 @@ order kept is the one that can be checked against something: the unit's screen.
 `lead` and `tail` are there for a row the unit's screen really does put at either end — the
 1-knob sections are built with `sections` instead, being a stage rather than a row.
 
+### A slider's track is one length whatever it reads
+
+**A slider row's readout cell is as wide as the widest reading the tuning screens print** — eight
+characters, such as `20.17 ms`, `1.00 kHz` and `-18.0 dB` (`.dev-slider .param-val.gt-val` in
+`src/style.css`). The row's control is one fixed width, so a cell sized to its own text left the track
+whatever the text did not take, and the track's length moved with the value. A range turns a pointer
+position into a value through the track's length, so a drag across a reading of another width read two
+values at one pointer position, in turn: on DUCKER Decay the value alternated between `1.0 s` and
+`510.0 ms` at each move of a pointer inside a band about 16 px wide, the compander's Threshold did the
+same between `-9 dB` and `-11 dB`, and an EQ band's Freq between `100 Hz` and `94.0 Hz`, in Chromium and
+in WebKit alike (Playwright, the pointer moved 0.25 px at a time, 2026-10-16). With the one cell width a
+screen has one track length, and a pointer position reads one value.
+
+`e2e/dyntuning.spec.ts`, `e2e/ssmcs.spec.ts` and `e2e/insertfx.spec.ts` drive each slider row through
+each of its positions (`sweepSliderRows` in `e2e/dyn-helpers.ts`) and hold one track width across the
+screens they open and no reading wider than its cell, so a reading wider than eight characters fails
+there rather than bringing the moving track back.
+
 ### Time values stop where the unit's controls stop
 
 The unit's time controls are tables of stops rather than ranges with one step. Attack is 227 stops from
