@@ -300,7 +300,8 @@ function headOf(dir) {
 const describeHead = (head) =>
   head === null ? "it is on no branch" : `it is on ${head.ref} at ${head.sha.slice(0, 7)}`;
 
-const lines = (r) => r.out.split("\n").filter(Boolean);
+// -z output: a path holding a non-ASCII byte arrives as itself rather than quoted, and only that form is a pathspec.
+const paths = (r) => r.out.split("\0").filter(Boolean);
 
 /**
  * Take back what the sync wrote into a worktree that is no longer on the branch it wrote for.
@@ -325,9 +326,9 @@ const lines = (r) => r.out.split("\n").filter(Boolean);
  * — so the source is not what separates the two; the selection is.
  */
 function putBack(cwd, dir, local, ahead) {
-  const touched = lines(git(["diff", "--name-only", local, ahead], cwd, true));
+  const touched = paths(git(["diff", "--name-only", "-z", local, ahead], cwd, true));
   if (touched.length === 0) return { back: true, held: [] };
-  const named = (args) => new Set(lines(git(["diff", "--name-only", ...args, "--", ...touched], dir, true)));
+  const named = (args) => new Set(paths(git(["diff", "--name-only", "-z", ...args, "--", ...touched], dir, true)));
   const scan = () => {
     const idxOffHead = named(["--cached", "HEAD"]);
     const wtOffIdx = named([]);

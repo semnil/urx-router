@@ -982,6 +982,30 @@ describe("sync-merged, when a second session changes something after the plan wa
     expect(existsSync(tree)).toBe(true);
   });
 
+  it.skipIf(!gitCanBeShimmed)("takes back a path whose name git would quote", () => {
+    // The same switch as above, with the sync bringing in a file whose name holds a non-ASCII
+    // byte. git quotes such a name unless asked for -z, and a quoted name is no pathspec, so the
+    // take-back would read the path as untouched and leave it staged on their branch.
+    const { down, origin } = fixture();
+    writeFileSync(join(origin, "ä.txt"), "umlaut\n");
+    git(origin, "add", "ä.txt");
+    git(origin, "commit", "-qm", "three");
+    const tree = join(down, "..", "wt");
+    git(down, "worktree", "add", tree, "feat");
+    const was = at(down, "main");
+    git(down, "branch", "ongoing", was);
+    const onto = `${JSON.stringify(REAL_GIT)} -C ${JSON.stringify(down)} switch -q ongoing`;
+
+    const r = raced(down, { at: "read-tree -m -u", action: onto }, "--apply");
+    expect(r.fired).toBe(true);
+    expect(r.code).toBe(1);
+    expect(at(down, "main")).toBe(at(down, "origin/main"));
+    expect(at(down, "ongoing")).toBe(was);
+    expect(git(down, "status", "--porcelain=v1")).toBe("");
+    expect(existsSync(join(down, "ä.txt"))).toBe(false);
+    expect(r.text).toContain("back to what that branch holds");
+  });
+
   it.skipIf(!gitCanBeShimmed)("says what it holds when the switched-to tree cannot be put back", () => {
     // The remainder: a switch AND an edit of their own, both inside the same gap. The index then
     // holds this sync's changes and cannot be taken back without discarding their edit, so it is
