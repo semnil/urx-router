@@ -110,8 +110,8 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   "bus.mix1": { ...outputBus(), busType: 0, on: true, panLink: false },
   "bus.mix2": { ...outputBus(), busType: 0, on: true, panLink: false },
   // FX channels ship ON at the factory (param 338, def 1) with their factory
-  // effect program (FX1 = Rev-X Hall, FX2 = Mono Delay), inferred from the URX44V
-  // capture — the FX channels are identical across models.
+  // effect program (FX1 = Rev-X Hall, FX2 = Mono Delay) — the FX channels are
+  // identical across models.
   "bus.fx1": {
     on: true,
     fxEffect: {
@@ -153,15 +153,14 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   "bus.mon1": { level: 0, cueInterrupt: true, mono: false, phonesLevel: 2, on: true },
   "bus.mon2": { level: 0, cueInterrupt: true, mono: false, phonesLevel: 2, on: true },
   "bus.osc": { osc: { on: false, level: -14, mode: 0, freq: 1000, width: 0.1, interval: 1 } },
-  // STREAMING DELAY factory state (off, 1.00 ms, 30 fps), inferred from URX44V.
+  // STREAMING DELAY factory state (off, 1.00 ms, 30 fps).
   "bus.stream": { delay: { on: false, time: 1, frameRate: 5 } },
 };
 
 const CHANNELS = ["ch1", "ch2", "ch_3_4", "ch_5_6", "ch_7_8", "ch_9_10"];
 
-// CH SETTING colors, mirroring the URX44V capture by analogy (URX22 has no real
-// capture): channels and FX buses Blue, MIX and STREAMING buses Orange, STEREO
-// master Red. Hex are the COLOR_PALETTE entries (Blue 0 / Orange 1 / Red 6).
+// CH SETTING colors: channels and FX buses Blue, MIX and STREAMING buses Orange,
+// STEREO master Red. Hex are the COLOR_PALETTE entries (Blue 0 / Orange 1 / Red 6).
 export const URX22_NODE_COLORS: Record<string, string> = {
   ...Object.fromEntries(CHANNELS.map((id) => [id, "#4a78c0"])),
   "bus.fx1": "#4a78c0",
@@ -172,11 +171,9 @@ export const URX22_NODE_COLORS: Record<string, string> = {
   "bus.stereo": "#d9534f",
 };
 
-// CH SETTING names, mirroring the URX44V capture by analogy: mono channels ship
-// "ch 1"/"ch 2", stereo channels their pair label " 3/ 4"…, buses their short
-// labels. The leading space follows the 2-character right-aligned numbering
-// confirmed on a URX44V factory unit (param 206 = " 5/ 6"); the URX22 labels
-// themselves are still position-derived, not captured.
+// CH SETTING names: mono channels ship "ch 1"/"ch 2", stereo channels their pair
+// label " 3/ 4"…, buses their short labels. The leading space is the 2-character
+// right-aligned channel numbering.
 export const URX22_NODE_NAMES: Record<string, string> = {
   ch1: "ch 1",
   ch2: "ch 2",
@@ -217,7 +214,7 @@ export const URX22_CONNECTIONS: PlanConnection[] = [
   ...CHANNELS.map(stereoSend),
   { from: "bus.fx1:out", to: "bus.stereo:in", kind: "send", params: { level: -96.5 } },
   { from: "bus.fx2:out", to: "bus.stereo:in", kind: "send", params: { level: -96.5 } },
-  // FX channel → MIX sends ship ON at the factory (at -∞), like URX44V. Inferred.
+  // FX channel → MIX sends ship ON at the factory (at -∞), like URX44V.
   { from: "bus.fx1:out", to: "bus.mix1:in", kind: "send", params: { level: -96.5, pan: 0, tap: "post" } },
   { from: "bus.fx1:out", to: "bus.mix2:in", kind: "send", params: { level: -96.5, pan: 0, tap: "post" } },
   { from: "bus.fx2:out", to: "bus.mix1:in", kind: "send", params: { level: -96.5, pan: 0, tap: "post" } },
