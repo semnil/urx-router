@@ -31,11 +31,16 @@ import {
 } from "../core/control/dyn-time-stops";
 
 describe("formatDb", () => {
-  it("prints one decimal and a leading + above zero", () => {
-    expect(formatDb(0)).toBe("0.0 dB");
-    expect(formatDb(-20)).toBe("-20.0 dB");
-    expect(formatDb(10)).toBe("+10.0 dB");
-    expect(formatDb(-0.5)).toBe("-0.5 dB");
+  // The unit's send level knob: 10.00 / 5.00 / 0.40 / 0.00 / -8.80 above -10 dB, -10.0 /
+  // -25.6 / -96.0 from there down, and no + on a positive value.
+  it("prints two decimals above -10 dB, one from -10 dB down, and no sign", () => {
+    expect(formatDb(10)).toBe("10.00 dB");
+    expect(formatDb(0.4)).toBe("0.40 dB");
+    expect(formatDb(0)).toBe("0.00 dB");
+    expect(formatDb(-0.5)).toBe("-0.50 dB");
+    expect(formatDb(-8.8)).toBe("-8.80 dB");
+    expect(formatDb(-10)).toBe("-10.0 dB");
+    expect(formatDb(-25.6)).toBe("-25.6 dB");
   });
 
   // The lowest real value the grid holds is LEVEL_MIN_DB; anything under it is the

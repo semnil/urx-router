@@ -180,11 +180,11 @@ test.describe("console view", () => {
   test("the main fader keeps its detent grid under Shift", async ({ page }) => {
     const s = strip(page, "CH 1");
     const readout = s.locator(".con-readout .rd:not(.mtr) .rv");
-    await expect(readout).toHaveText("0.0");
+    await expect(readout).toHaveText("0.00");
     await page.keyboard.down("Shift");
     await wheelOver(page, s.locator(".con-fader"), -100);
     await page.keyboard.up("Shift");
-    await expect(readout).toHaveText("+0.4"); // one level_gain detent — no fine grid on faders
+    await expect(readout).toHaveText("0.40"); // one level_gain detent — no fine grid on faders
   });
 });
 

@@ -1509,11 +1509,11 @@ test.describe("T0b baseline sweeps", () => {
     //    local — no device, no MIDI — which is what makes this the case that says the
     //    rule belongs to Console.render() rather than to the link.
     expect(afterRebuild).toHaveLength(0);
-    expect(shown).not.toBe("0.0"); // and the drag really did move it off the factory value
+    expect(shown).not.toBe("0.00"); // and the drag really did move it off the factory value
     expect(shown).toBe(deviceLevelText(held));
     // 2. A direct notify that arrives while the CONSOLE is off screen reaches the plan
     //    (the ledger names follow-direct as the writer) and the deferred refresh is
-    //    paid when the view comes back: the strip shows level_gain 40 = "+0.4". And
+    //    paid when the view comes back: the strip shows level_gain 40 = "0.40". And
     //    nothing was written back to the unit for it — a followed value that bounced
     //    straight out again would be the app arguing with the operator's hardware.
     //
@@ -1523,7 +1523,7 @@ test.describe("T0b baseline sweeps", () => {
     //    one back. The verdict was a property of the fake, which is why the device is
     //    made to hold the value before the notify is sent.
     expect(deviceWrites.length).toBeGreaterThan(0);
-    expect(ch2Shown).toBe("+0.4");
+    expect(ch2Shown).toBe("0.40");
     // 3. The tuning screen's slider keeps moving across the theme flip — the deferred
     //    refresh does not steal the drag.
     expect(afterFlip).not.toBe(midDrag);

@@ -1792,10 +1792,10 @@ fixed or withdrawn.
 - The macOS native menu itself, real drag-and-drop path resolution and the OS-refusal semantics of the
   sleep hold stay outside automation
 - The codebase has no test-id vocabulary, so every case depends on the current DOM ids and class names
-- **`deviceLevelText` in `e2e/race/ui.ts` restates the console's level formatting.** `src/ui/console.ts`
-  is a DOM module and a spec runs in Node, so the formatting is written out there; the off sentinel and
-  the centi-dB decode underneath it are `src/core/control/vd.ts`'s own. A case imports from `src/core/`
-  freely otherwise: the one import cycle there — `plan`, `constraints`, `control/translate`,
+- **`deviceLevelText` in `e2e/race/ui.ts` prints a level with the console's own number format.**
+  `src/ui/console.ts` is a DOM module and a spec runs in Node, so the format lives beside the off
+  sentinel and the centi-dB decode in `src/core/control/vd.ts` (`formatLevelNumber`), and both read it
+  there. A case imports from `src/core/` freely: the one import cycle there — `plan`, `constraints`, `control/translate`,
   `plan-history`, `routing`, `scene-scope` — evaluates alike whichever member a spec enters first
   (`src/core/module-order.contract.test.ts` holds that), so `tzb-tail.spec.ts` derives `FLUSH_TAIL_MS`
   from `live.ts`'s own `DEBOUNCE_MS`, and the harness imports `core/levels` and `core/plan-history`

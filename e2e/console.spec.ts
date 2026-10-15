@@ -135,15 +135,15 @@ test("the stereo-channel EQ chip locks read-only and off at 192 kHz", async ({ p
 test("a fader edits its level via the keyboard", async ({ page }) => {
   const s = strip(page, "CH 1");
   const readout = s.locator(".con-readout .rd:not(.mtr) .rv");
-  await expect(readout).toHaveText("0.0");
+  await expect(readout).toHaveText("0.00");
   await s.locator(".con-fader").focus();
   // ArrowUp walks one detent of the device's level_gain grid (0.0 -> +0.4 dB).
   await page.keyboard.press("ArrowUp");
-  await expect(readout).toHaveText("+0.4");
+  await expect(readout).toHaveText("0.40");
   // The slider says the same: the readout with its unit, against the level range rather
   // than the slider role's default 0..100.
   const fader = s.locator(".con-fader");
-  await expect(fader).toHaveAttribute("aria-valuetext", "+0.4 dB");
+  await expect(fader).toHaveAttribute("aria-valuetext", "0.40 dB");
   await expect(fader).toHaveAttribute("aria-valuemin", "-96");
   await expect(fader).toHaveAttribute("aria-valuemax", "10");
   await page.keyboard.press("End");
@@ -361,7 +361,7 @@ test("every send reading fits the rack header, in both tap states", async ({ pag
       // Home is the top of travel and End the bottom, so the two ends of the value
       // vocabulary get measured: the five-character +10.0 and the two-character -∞.
       for (const [key, value] of [
-        ["Home", "+10.0"],
+        ["Home", "10.00"],
         ["End", "-∞"],
       ]) {
         await c.locator(".con-vfad").focus();
@@ -1116,7 +1116,7 @@ test("the readout cells carry FADER / METER captions", async ({ page }) => {
   const readout = strip(page, "CH 1").locator(".con-readout");
   await expect(readout.locator(".rd:not(.mtr) .cap2")).toHaveText("FADER");
   await expect(readout.locator(".rd.mtr .cap2")).toHaveText("METER");
-  await expect(readout.locator(".rd:not(.mtr) .rv")).toHaveText("0.0");
+  await expect(readout.locator(".rd:not(.mtr) .rv")).toHaveText("0.00");
 });
 
 test("the meter-point badge shows a meter glyph, distinct from the send-tap PRE button", async ({ page }) => {

@@ -1662,9 +1662,9 @@ Tab とタップが落ち、押下の保留だけを外すと WebKit で click �
 - macOS のネイティブメニュー本体、実パスのドラッグ & ドロップ、スリープ抑止の OS 拒否は
   自動化の外に残る
 - コードベースにテスト用 id の語彙が無く、全ケースが現行の DOM id とクラス名に依存している
-- **`e2e/race/ui.ts` の `deviceLevelText` はコンソールのレベル表記を書き直している。**
-  `src/ui/console.ts` は DOM モジュールでスペックは Node で走るため表記はそこに書き出しており、その下の
-  off センチネルと centi-dB の復号は `src/core/control/vd.ts` 自身のものを使う。それ以外ではケースは
+- **`e2e/race/ui.ts` の `deviceLevelText` はコンソール自身の数値の形でレベルを表記する。**
+  `src/ui/console.ts` は DOM モジュールでスペックは Node で走るため、その形は off センチネルと centi-dB の
+  復号と並べて `src/core/control/vd.ts` (`formatLevelNumber`) に置き、両方がそこから読む。ケースは
   `src/core/` から自由に import できる: そこにある唯一の import 循環 — `plan`・`constraints`・
   `control/translate`・`plan-history`・`routing`・`scene-scope` — はスペックがどのメンバーから入っても
   同じように評価され (`src/core/module-order.contract.test.ts` がそれを保持する)、`tzb-tail.spec.ts` は

@@ -289,7 +289,7 @@ describe("the header readout", () => {
     // laid out and whether the reading is drawn belongs to the E2E case's own measurement.
     expect(sh.classList.contains("readout")).toBe(true);
     const text = sh.querySelector(".rdout")!.textContent;
-    expect(text).toBe("MIX 1 -3.2");
+    expect(text).toBe("MIX 1 -3.20");
     expect(text).not.toContain(t().console.pre);
   });
 
@@ -304,7 +304,7 @@ describe("the header readout", () => {
     expect(preBtn.classList.contains("on")).toBe(false);
 
     h.sendCol("ch1", "bus.mix1").fader.dispatchEvent(new PointerEvent("pointerenter"));
-    expect(header("ch1").querySelector(".rdout")!.textContent).toBe("MIX 1 -3.2");
+    expect(header("ch1").querySelector(".rdout")!.textContent).toBe("MIX 1 -3.20");
   });
 
   // aria-valuetext is the accessible half of the same fact. It marks one of the two taps:

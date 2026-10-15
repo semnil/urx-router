@@ -99,6 +99,7 @@ import {
   DELAY_TIME_GRID_MS,
   DELAY_TIME_MAX_MS,
   DELAY_TIME_MIN_MS,
+  formatLevelNumber,
   PAN_MAX,
   PAN_MIN,
   PHONES_LEVEL_DEFAULT,
@@ -195,7 +196,7 @@ function fmtDb(db: number, r: LevelRange): { text: string; off: boolean } {
   // A non-finite level (corrupt plan that slipped past validation) reads as off
   // rather than throwing on .toFixed below.
   if (!Number.isFinite(db) || db < r.min) return { text: "-∞", off: true };
-  return { text: (db > 0 ? "+" : "") + db.toFixed(1), off: false };
+  return { text: formatLevelNumber(db), off: false };
 }
 
 // A level fader's accessible value: the readout's text with its unit, or "off (-∞)" below
@@ -2337,7 +2338,7 @@ export class Console {
           min: -96,
           max: 0,
           step: 1,
-          format: (v) => v.toFixed(1),
+          format: formatLevelNumber,
           reset: factory,
           angle: (v) =>
             v <= -50 ? -135 + ((v + 96) / 46) * 45 : v >= -8 ? 90 + ((v + 8) / 8) * 45 : -90 + ((v + 50) / 42) * 180,

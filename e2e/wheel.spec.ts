@@ -29,11 +29,11 @@ test.describe("console view", () => {
     const s = strip(page, "CH 1");
     const readout = s.locator(".con-readout .rd:not(.mtr) .rv");
     const fader = s.locator(".con-fader");
-    await expect(readout).toHaveText("0.0");
+    await expect(readout).toHaveText("0.00");
     await wheelOver(page, fader, -100); // up one detent (0.0 -> +0.4, matching ArrowUp)
-    await expect(readout).toHaveText("+0.4");
+    await expect(readout).toHaveText("0.40");
     await wheelOver(page, fader, 100); // down one detent, back to 0.0
-    await expect(readout).toHaveText("0.0");
+    await expect(readout).toHaveText("0.00");
   });
 
   test("a rotary knob steps by its unit per wheel notch", async ({ page }) => {

@@ -11,6 +11,7 @@ import { formatCompRatio } from "../core/control/comp-ratio";
 import {
   EQ_FREQ_MAX_HZ,
   EQ_FREQ_MIN_HZ,
+  formatLevelNumber,
   SSMCS_FREQ_RAW_MIN,
   ssmcsAttackMs,
   ssmcsGainDb,
@@ -23,7 +24,7 @@ export const LEVEL_MIN = LEVEL_MIN_DB;
 
 export function formatDb(v: number): string {
   if (v < LEVEL_MIN) return "-∞ dB";
-  return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
+  return `${formatLevelNumber(v)} dB`;
 }
 
 export function formatPan(v: number): string {

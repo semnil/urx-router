@@ -499,13 +499,13 @@ test("BAL mode links a fader edit across both channels in the CONSOLE", async ({
   await page.click("#btn-view-console");
   const ch1 = cstrip(page, "CH 1").locator(".con-readout .rd:not(.mtr) .rv");
   const ch2 = cstrip(page, "CH 2").locator(".con-readout .rd:not(.mtr) .rv");
-  await expect(ch1).toHaveText("0.0");
-  await expect(ch2).toHaveText("0.0");
+  await expect(ch1).toHaveText("0.00");
+  await expect(ch2).toHaveText("0.00");
 
   await cstrip(page, "CH 1").locator(".con-fader").focus();
   await page.keyboard.press("ArrowUp"); // one detent up the level_gain grid: +0.4 dB
-  await expect(ch1).toHaveText("+0.4");
-  await expect(ch2).toHaveText("+0.4"); // the partner follows in BAL
+  await expect(ch1).toHaveText("0.40");
+  await expect(ch2).toHaveText("0.40"); // the partner follows in BAL
 });
 
 test("BAL mode links a MUTE toggle across both channels in the CONSOLE", async ({ page }) => {
@@ -560,8 +560,8 @@ test("a linked pair leaves each channel its own A.GAIN in the CONSOLE", async ({
   const rv = (name: string) => cstrip(page, name).locator(".con-readout .rd:not(.mtr) .rv");
   await cstrip(page, "CH 1").locator(".con-fader").focus();
   await page.keyboard.press("ArrowUp");
-  await expect(rv("CH 1")).toHaveText("+0.4");
-  await expect(rv("CH 2")).toHaveText("+0.4");
+  await expect(rv("CH 1")).toHaveText("0.40");
+  await expect(rv("CH 2")).toHaveText("0.40");
 });
 
 // …while a pair reading one source shares its D.Gain, which the source holds once.
@@ -636,8 +636,8 @@ test("PAN mode links the faders and leaves each channel its own pan in the CONSO
   const ch2 = cstrip(page, "CH 2").locator(".con-readout .rd:not(.mtr) .rv");
   await cstrip(page, "CH 1").locator(".con-fader").focus();
   await page.keyboard.press("ArrowUp"); // one detent up the level_gain grid: +0.4 dB
-  await expect(ch1).toHaveText("+0.4");
-  await expect(ch2).toHaveText("+0.4"); // the partner follows in PAN too
+  await expect(ch1).toHaveText("0.40");
+  await expect(ch2).toHaveText("0.40"); // the partner follows in PAN too
 
   const pan = (name: string) =>
     cstrip(page, name)
