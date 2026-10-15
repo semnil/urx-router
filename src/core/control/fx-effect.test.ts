@@ -322,23 +322,85 @@ describe("fx-effect encodings (live calibration anchors)", () => {
       expect([d.rawMin, d.rawMax]).toEqual(want);
     }
   });
-  it("REV-X reverb time carries the selected type's own scale", () => {
-    const at = (type: number, raw: number, roomSize: number): number => revxTimeSec(raw, roomSize, type);
-    // Room Size 0, raw 69: the LCD reads 10.3 / 15.2 / 17.6 s on Hall / Room / Plate.
-    expect(at(0, 69, 0)).toBeCloseTo(10.3, 1);
-    expect(at(1, 69, 0)).toBeCloseTo(15.2, 1);
-    expect(at(2, 69, 0)).toBeCloseTo(17.6, 1);
-    // The Room Size scale is exactly 3 and type-independent, so each ceiling is its own
-    // rs0 reading times three. The guide's published ceilings are 31.0 / 45.3 / 52.0 and
-    // the products are 30.9 / 45.6 / 52.8 — near them, and NOT asserted against them:
-    // those are nominal figures, and widening the tolerance until they pass would be
-    // fitting the measurement to the rounding.
-    for (const t of [0, 1, 2]) expect(at(t, 69, 31)).toBeCloseTo(at(t, 69, 0) * 3, 5);
-    expect(at(0, 69, 31)).toBeCloseTo(30.9, 1);
-    expect(at(1, 69, 31)).toBeCloseTo(45.6, 1);
-    expect(at(2, 69, 31)).toBeCloseTo(52.8, 1);
-    // An unknown type reads as Hall rather than throwing.
-    expect(at(99, 69, 0)).toBeCloseTo(at(0, 69, 0), 5);
+  describe("REV-X reverb time prints what the unit's LCD prints", () => {
+    // The LCD's Rev.Time, as strings, for (type, Reverb Time raw, Room Size raw).
+    const shown = (type: number, raw: number, roomSize: number): string =>
+      fxParams(type).find((d) => d.key === "reverbTime")!.format!(raw, { roomSize }).replace(/ s$/, "");
+    const AT_TOP: Record<number, string> = {
+      0: "10.3 10.7 11.1 11.5 11.9 12.3 12.8 13.2 13.7 14.2 14.7 15.2 15.8 16.4 17.0 17.6 18.2 18.9 19.6 20.3 21.0 21.8 22.6 23.4 24.2 25.1 26.0 27.0 27.9 29.0 30.0 31.0",
+      1: "15.2 15.8 16.4 17.0 17.6 18.2 18.9 19.6 20.3 21.0 21.8 22.6 23.4 24.2 25.1 26.0 27.0 27.9 29.0 30.0 31.0 32.1 33.3 34.4 35.6 36.9 38.2 39.5 40.9 42.3 43.8 45.3",
+      2: "17.6 18.2 18.9 19.6 20.3 21.0 21.8 22.6 23.4 24.2 25.1 26.0 27.0 27.9 29.0 30.0 31.0 32.1 33.3 34.4 35.6 36.9 38.2 39.5 40.9 42.3 43.8 45.3 46.9 48.6 50.3 52.0",
+    };
+    const HALL_RS0 =
+      "0.103 0.137 0.172 0.206 0.240 0.275 0.309 0.343 0.378 0.412 0.446 0.481 0.515 0.549 0.584 0.618 0.652 0.687 0.721 0.756 0.790 0.824 0.859 0.893 0.927 0.962 0.996 1.03 1.07 1.10 1.13 1.17 1.20 1.24 1.27 1.30 1.34 1.37 1.41 1.44 1.48 1.51 1.54 1.58 1.61 1.65 1.68 1.72 1.89 2.06 2.23 2.40 2.58 2.75 2.92 3.09 3.26 3.43 3.78 4.12 4.46 4.81 5.15 5.49 5.84 6.18 6.53 6.87 8.59 10.3";
+    const HALL_RAW0 =
+      "0.103 0.107 0.111 0.115 0.119 0.123 0.128 0.132 0.137 0.142 0.147 0.152 0.158 0.164 0.170 0.176 0.182 0.189 0.196 0.203 0.210 0.218 0.226 0.234 0.242 0.251 0.260 0.270 0.279 0.289 0.300 0.310";
+    // [type, Reverb Time raw, Room Size raw, LCD]
+    const POINTS: [number, number, number, string][] = [
+      [0, 24, 31, "2.79"],
+      [0, 62, 8, "6.85"],
+      [1, 0, 0, "0.152"],
+      [1, 57, 0, "5.08"],
+      [1, 68, 31, "37.8"],
+      [2, 62, 31, "26.0"],
+      [2, 57, 31, "17.3"],
+      [2, 0, 31, "0.520"],
+      [2, 62, 9, "12.1"],
+      [2, 3, 31, "1.04"],
+      [2, 17, 31, "3.47"],
+      [2, 33, 31, "6.24"],
+      [2, 50, 31, "11.3"],
+      [2, 63, 31, "27.7"],
+      [2, 57, 3, "6.52"],
+      [2, 57, 9, "8.07"],
+      [2, 57, 15, "10.0"],
+      [2, 57, 21, "12.3"],
+      [2, 57, 27, "15.1"],
+      [2, 47, 1, "3.04"],
+      [2, 47, 7, "3.76"],
+      [2, 47, 13, "4.66"],
+      [2, 47, 19, "5.74"],
+      [2, 47, 25, "7.05"],
+      [0, 8, 23, "0.857"],
+      [0, 25, 23, "2.18"],
+      [0, 42, 23, "3.51"],
+      [0, 55, 23, "7.01"],
+      [0, 66, 23, "14.8"],
+      [0, 57, 5, "4.10"],
+      [0, 57, 11, "5.08"],
+      [0, 57, 17, "6.29"],
+      [0, 57, 23, "7.79"],
+      [0, 57, 29, "9.65"],
+      [0, 47, 2, "1.84"],
+      [0, 47, 8, "2.28"],
+      [0, 47, 14, "2.83"],
+      [0, 47, 20, "3.50"],
+      [0, 47, 26, "4.34"],
+    ];
+    it("at the top raw, every type and every Room Size", () => {
+      for (const t of [0, 1, 2]) {
+        const got = Array.from({ length: 32 }, (_, rs) => shown(t, 69, rs)).join(" ");
+        expect(got).toBe(AT_TOP[t]);
+      }
+    });
+    it("Hall at Room Size 0, every raw", () => {
+      expect(Array.from({ length: 70 }, (_, raw) => shown(0, raw, 0)).join(" ")).toBe(HALL_RS0);
+    });
+    it("Hall at raw 0, every Room Size", () => {
+      expect(Array.from({ length: 32 }, (_, rs) => shown(0, 0, rs)).join(" ")).toBe(HALL_RAW0);
+    });
+    it("the points between", () => {
+      for (const [t, raw, rs, lcd] of POINTS) expect([t, raw, rs, shown(t, raw, rs)]).toEqual([t, raw, rs, lcd]);
+    });
+    it("a type's Room Size n is the shared step n + 11 (Room) / + 15 (Plate)", () => {
+      for (let rs = 0; rs + 11 <= 31; rs++) expect(revxTimeSec(40, rs, 1)).toBe(revxTimeSec(40, rs + 11, 0));
+      for (let rs = 0; rs + 4 <= 31; rs++) expect(revxTimeSec(40, rs, 2)).toBe(revxTimeSec(40, rs + 4, 1));
+    });
+    it("an unknown type reads as Hall, and out-of-window raws clamp", () => {
+      expect(revxTimeSec(69, 0, 99)).toBe(revxTimeSec(69, 0, 0));
+      expect(revxTimeSec(80, 40, 0)).toBe(revxTimeSec(69, 31, 0));
+      expect(revxTimeSec(-3, -1, 0)).toBe(revxTimeSec(0, 0, 0));
+    });
   });
   it("every EFFECT TYPE carries its own factory defaults", () => {
     // The device keeps these per type; a family-wide table would write one type's
@@ -393,11 +455,6 @@ describe("fx-effect encodings (live calibration anchors)", () => {
       expect(fb(99, {}), `${type}`).toBe("99%");
       expect(fb(-99, {}), `${type}`).toBe("-99%");
     }
-  });
-  it("REV-X reverb time is base × 3^(roomSize/31)", () => {
-    expect(revxTimeSec(24, 0)).toBeCloseTo(0.927, 2);
-    expect(revxTimeSec(24, 31)).toBeCloseTo(2.79, 1); // ×3.0
-    expect(revxTimeSec(69, 0)).toBeCloseTo(10.3, 1);
   });
   it("family of each effect type value", () => {
     expect(fxFamilyOf(0)).toBe("revx");

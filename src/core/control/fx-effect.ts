@@ -136,29 +136,46 @@ export function revR3TimeSec(raw: number): number {
   return 30.0;
 }
 
-// REV-X Reverb Time is 2-D: seconds = base(raw) × 3^(RoomSize/31). base(raw) is a
-// piecewise multiple of the unit u = 0.103/3 (the rs0 seconds), with the step
-// growing 1× → 5× → 10× → 50× of the unit across the range.
-const REVX_TIME_UNIT = 0.103 / 3;
+// REV-X Reverb Time is a product of two tables: the seconds the top Reverb-Time raw (69)
+// reads at each Room Size STEP, and each raw's share of raw 69. The three types index one
+// shared step table — a type's Room Size n is step n + its offset — so Hall's Room Size 0
+// is step 0 and Plate's Room Size 31 is step 46.
+const REVX_TIME_AT_TOP = [
+  10.3023, 10.7, 11.0701, 11.5, 11.9, 12.3, 12.8, 13.2, 13.7, 14.2, 14.7, 15.2286, 15.8, 16.4, 17, 17.6, 18.2133,
+  18.8881, 19.5782, 20.3, 21, 21.8, 22.5915, 23.389, 24.2003, 25.1, 26.0143, 27, 27.9345, 28.97, 30, 31, 32.1, 33.3,
+  34.4152, 35.6, 36.9, 38.2, 39.5, 40.9, 42.3, 43.8, 45.3012, 46.9, 48.6, 50.3, 52,
+];
+const REVX_STEP_OFFSET: Record<number, number> = { 0: 0, 1: 11, 2: 15 };
+/** A raw's share of raw 69 in 1/300ths: the step grows 1 → 5 → 10 → 50 across the range. */
 function revxTimeBaseUnits(raw: number): number {
   if (raw <= 47) return raw + 3;
   if (raw <= 57) return 50 + 5 * (raw - 47);
   if (raw <= 67) return 100 + 10 * (raw - 57);
   return 200 + 50 * (raw - 67); // raw 68, 69
 }
-/** How much longer than Hall a REV-X type runs at the same Reverb-Time raw. The unit's
- *  own maxima are the ratio: at Room Size 0 and raw 69 the LCD reads 10.3 s on Hall,
- *  15.2 s on Room and 17.6 s on Plate. Multiplying each by the Room Size scale of 3 gives
- *  30.9 / 45.6 / 52.8 s, near the guide's nominal per-type ceilings (31.0 / 45.3 / 52.0 s)
- *  and not fitted to them. The Room Size scale itself is type-independent. */
-const REVX_TYPE_SCALE: Record<number, number> = { 0: 1, 1: 15.2 / 10.3, 2: 17.6 / 10.3 };
+/** The raws whose share differs from `revxTimeBaseUnits(raw) / 300`, as the factor on it. */
+const REVX_SHARE_TRIM: Record<number, number> = {
+  0: 0.999239,
+  8: 0.999866,
+  19: 1.00003,
+  28: 1.00059,
+  35: 0.999882,
+  42: 0.999651,
+  47: 0.999883,
+  55: 0.999731,
+  57: 0.999805,
+  66: 1.00007,
+  68: 1.00003,
+};
 
 /** REV-X Reverb Time seconds for a Reverb-Time raw, the channel's Room Size raw and the
- *  selected type. Without the type this reads Hall's seconds for all three, which is
- *  short by a factor of 1.7 on Plate. */
+ *  selected type. Without the type this reads Hall's seconds for all three; an unknown
+ *  type reads as Hall too. Both raws are clamped to their windows (0..69, 0..31). */
 export function revxTimeSec(raw: number, roomSizeRaw: number, type = 0): number {
-  const scale = REVX_TYPE_SCALE[type] ?? 1;
-  return REVX_TIME_UNIT * scale * revxTimeBaseUnits(raw) * Math.pow(3, roomSizeRaw / 31);
+  const r = Math.min(69, Math.max(0, Math.round(raw)));
+  const rs = Math.min(31, Math.max(0, Math.round(roomSizeRaw)));
+  const step = rs + (REVX_STEP_OFFSET[type] ?? 0);
+  return REVX_TIME_AT_TOP[step] * (revxTimeBaseUnits(r) / 300) * (REVX_SHARE_TRIM[r] ?? 1);
 }
 
 // Tempo-sync Note values (raw 0..14, short → long; 0 = off). Standard Yamaha list.
