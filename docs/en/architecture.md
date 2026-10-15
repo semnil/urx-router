@@ -588,7 +588,10 @@ carries a one-line map of the same directories and points here.
   keydown handler, which is what lets the chord log report whether the app claimed the chord /
   `param-watch.ts` the parameter watch, **dev builds only**: a wall-clock record of a few parameters the app
   neither reads nor writes, kept while Live sync is up and published as `window.__urxParamWatch`
-  ([The parameter watch (dev builds)](#the-parameter-watch-dev-builds)) / `dom.ts`
+  ([The parameter watch (dev builds)](#the-parameter-watch-dev-builds)) / `trace-sink.ts` the JSONL trace file
+  `midi-probe.ts` and the parameter watch both write through: records batched behind a timer, flushed on
+  `pagehide`, and the file given up for good — the queue cleared — on the first batch the shell refuses, which
+  each instrument's `report()` prints / `dom.ts`
   shared DOM helpers — the builder `el`, `onOff` / `sliderRow` (the ON/OFF pair and the labelled range row
   every settings surface prints, so a hand-built one cannot silently drop the wheel-step contract),
   `onWheelStep` (a wheel notch steps by the wheel-step preference's detent count; reused by the SENDS/main

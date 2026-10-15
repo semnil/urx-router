@@ -259,8 +259,7 @@ describe("the trace file", () => {
     await Promise.resolve();
     expect(shell.batches).toHaveLength(1);
 
-    // Nothing more is queued or sent. `pending` is cleared on the give-up and `toSink`
-    // returns early afterwards, so a later record reaches neither.
+    // Nothing more is queued or sent: the sink drops every record pushed after it gives up.
     p.rx([0xbf, 80, 95]);
     handle().flush();
     expect(shell.batches).toHaveLength(1);
