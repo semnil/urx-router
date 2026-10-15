@@ -31,6 +31,7 @@
 import { addrLabel } from "../core/midi/mapping";
 import { decodeMessage } from "../core/midi/message";
 import { appendMidiLog, isTauri } from "../core/platform";
+import { createTraceSink } from "./trace-sink";
 
 export type MidiProbeKind = "tx" | "rx" | "note" | "mark";
 
@@ -75,7 +76,7 @@ function push(kind: MidiProbeKind, text: string, bytes?: number[]): void {
   if (log.length >= CAPACITY) log.shift();
   const entry: MidiProbeEntry = { t: performance.now(), kind, text, ...(bytes ? { bytes: [...bytes] } : {}) };
   log.push(entry);
-  toSink(entry);
+  sink.push(traceRecord(entry));
 }
 
 /**
@@ -83,18 +84,14 @@ function push(kind: MidiProbeKind, text: string, bytes?: number[]): void {
  * loads can be ordered by; `t` is kept beside it because `ms` is rounded to whole
  * milliseconds, so on an engine whose clock resolves finer than that — jsdom and Chromium
  * do, the macOS webview does not — `t` is the only field that keeps the difference.
- *
- * `JSON.stringify` is what keeps a detail's own newline or control character from
- * reaching the file as one: the shell refuses the WHOLE batch over a control character
- * (`log_line_ok`), so an unescaped one would cost the surrounding records too.
  */
-function traceLine(e: MidiProbeEntry): string {
-  return JSON.stringify({
+function traceRecord(e: MidiProbeEntry): object {
+  return {
     ms: Math.round(performance.timeOrigin + e.t),
     t: Number(e.t.toFixed(3)),
     k: e.kind,
     d: e.text,
-  });
+  };
 }
 
 // Long enough that a controller sweep — dozens of messages a second — batches rather
@@ -103,49 +100,12 @@ function traceLine(e: MidiProbeEntry): string {
 // `page:open` record the NEXT page writes, which does not depend on this landing.
 const FLUSH_MS = 250;
 
-const pending: string[] = [];
-let flushTimer = 0;
-let started = false;
-/** Where the records are going, once a batch has landed and the shell has said. */
-let tracePath: string | null = null;
-/** When the sink gave up, and on what. Non-null means nothing more is being written. */
-let traceStopped: { t: number; reason: string } | null = null;
-
-// The sink's own status is held here rather than pushed into the ring as entries. The
-// ring is the record of what crossed the MIDI bridge, and `report()` tallies it by kind;
-// two rows describing the INSTRUMENT would be counted among the messages it measures.
-// `report()`'s trailer prints both instead, which is where it already states derived
-// facts rather than rows.
-function toSink(entry: MidiProbeEntry): void {
-  if (!started || traceStopped) return;
-  pending.push(traceLine(entry));
-  if (flushTimer) return;
-  flushTimer = window.setTimeout(flush, FLUSH_MS);
-}
-
-/**
- * Hand the queued records to the shell.
- *
- * A batch that is refused gives the sink up rather than retrying it: `pending` is the
- * only thing holding those lines, and re-queueing a failing write grows it for as long
- * as the app runs. The give-up is timestamped and printed by `report()`, so a file that
- * stopped mid-run is distinguishable from one that simply ends.
- */
-function flush(): void {
-  window.clearTimeout(flushTimer);
-  flushTimer = 0;
-  if (!pending.length || traceStopped) return;
-  const batch = pending.splice(0, pending.length);
-  void appendMidiLog(batch).then(
-    (path) => {
-      tracePath = path;
-    },
-    (err: unknown) => {
-      pending.length = 0;
-      traceStopped = { t: performance.now(), reason: err instanceof Error ? err.message : String(err) };
-    },
-  );
-}
+// The sink's own status is held by the sink rather than pushed into the ring as entries.
+// The ring is the record of what crossed the MIDI bridge, and `report()` tallies it by
+// kind; rows describing the INSTRUMENT would be counted among the messages it measures.
+// `report()`'s trailer prints the status instead, which is where it already states
+// derived facts rather than rows.
+const sink = /* @__PURE__ */ createTraceSink(appendMidiLog, FLUSH_MS);
 
 /**
  * Begin writing the ring to the trace file, and mark this page's first record.
@@ -155,20 +115,17 @@ function flush(): void {
  * that merely reads the probe's types would perform IPC by loading it. The bridge is
  * also the only thing that feeds the ring, so nothing is recorded before this runs.
  *
- * The `pagehide` flush is best-effort and deliberately not what the page boundary rests
- * on: a dying page's IPC is not guaranteed to leave before the webview is torn down,
- * which is the same reason the shell's own session teardown is native (lib.rs
- * `on_page_load`). What bounds a reload's lost tail is FLUSH_MS; what marks the boundary
- * is the `page:open` record the next page writes.
+ * The page boundary does not rest on the sink's `pagehide` flush, for the reason the
+ * shell's own session teardown is native (lib.rs `on_page_load`): what marks it is the
+ * `page:open` record the next page writes.
  */
 function start(): void {
   // The browser dev server is also `import.meta.env.DEV` and has no shell to write
   // through; asking here rather than letting the first flush fail keeps that session
   // from opening with a give-up about a file it was never going to have.
-  if (started || !isTauri()) return;
-  started = true;
+  if (sink.status().state !== "closed" || !isTauri()) return;
+  sink.open();
   recorder.mark("page:open");
-  window.addEventListener("pagehide", flush);
 }
 
 /** One line per message, through the app's own decoder and the assignment list's own
@@ -251,10 +208,10 @@ function report(): string {
   // Where the file is, and whether it is still being written. A run whose sink gave up
   // holds fewer records than the ring does, and without this the file simply ends —
   // which is indistinguishable from the app having stopped there.
-  if (traceStopped)
-    trailer.push(`  trace file: STOPPED at ${fmt(traceStopped.t - t0).trim()} ms — ${traceStopped.reason}`);
-  else if (tracePath) trailer.push(`  trace file: ${tracePath}`);
-  else if (started) trailer.push("  trace file: no batch has landed yet");
+  const file = sink.status();
+  if (file.state === "stopped") trailer.push(`  trace file: STOPPED at ${fmt(file.t - t0).trim()} ms — ${file.reason}`);
+  else if (file.state === "writing") trailer.push(`  trace file: ${file.path}`);
+  else if (file.state === "waiting") trailer.push("  trace file: no batch has landed yet");
   return [`    t(ms)    Δ(ms)  kind       detail`, ...rows, "", `-- ${summary} --`, ...trailer].join("\n");
 }
 
@@ -266,7 +223,7 @@ if (import.meta.env.DEV) {
     mark: (label) => recorder.mark(String(label)),
     entries: () => log.map((e) => ({ ...e })),
     report,
-    flush,
+    flush: sink.flush,
   };
   (window as unknown as { __urxMidiProbe?: MidiProbeHandle }).__urxMidiProbe = handle;
 }

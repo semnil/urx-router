@@ -26,6 +26,7 @@
 // commands in a release binary.
 
 import { appendWatchLog, isTauri, vdGet, vdProbeSubscribe, type ParamUpdate } from "../core/platform";
+import { createTraceSink } from "./trace-sink";
 
 /** The addresses recorded, `[paramId, x, y]`. 838 is the subject; 817 (operation mode)
  *  and 781 / 863 (the preset indices) are the context it is read against. */
@@ -90,39 +91,14 @@ function localStamp(ms: number): string {
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 const ring: Array<Record<string, unknown>> = [];
-const pending: string[] = [];
-let flushTimer = 0;
-let tracePath: string | null = null;
-/** Non-null once the file write was refused; nothing more is written after it. */
-let traceStopped: string | null = null;
-let listening = false;
+const sink = /* @__PURE__ */ createTraceSink(appendWatchLog, FLUSH_MS);
 
 function record(kind: string, fields: Record<string, unknown> = {}): void {
   const ms = Date.now();
   const entry = { ms, at: localStamp(ms), k: kind, ...fields };
   if (ring.length >= CAPACITY) ring.shift();
   ring.push(entry);
-  if (traceStopped) return;
-  // JSON.stringify escapes a control character inside an error message, which the shell
-  // would otherwise refuse the whole batch over.
-  pending.push(JSON.stringify(entry));
-  if (!flushTimer) flushTimer = window.setTimeout(flush, FLUSH_MS);
-}
-
-function flush(): void {
-  window.clearTimeout(flushTimer);
-  flushTimer = 0;
-  if (!pending.length || traceStopped) return;
-  const batch = pending.splice(0, pending.length);
-  void appendWatchLog(batch).then(
-    (path) => {
-      tracePath = path;
-    },
-    (err: unknown) => {
-      pending.length = 0;
-      traceStopped = errorText(err);
-    },
-  );
+  sink.push(entry);
 }
 
 /** One session's state. Replaced on every start, so a late answer from an earlier
@@ -240,10 +216,7 @@ async function begin(s: Session, model: string): Promise<void> {
 function start(model: string, onReadError?: (err: unknown) => void): void {
   if (!isTauri()) return;
   if (session) stop("restart");
-  if (!listening) {
-    listening = true;
-    window.addEventListener("pagehide", flush);
-  }
+  sink.open();
   const s: Session = {
     last: new Map(),
     notified: new Map(),
@@ -267,7 +240,7 @@ function stop(reason: string): void {
   window.clearTimeout(s.pollTimer);
   window.clearInterval(s.aliveTimer);
   record("stop", { reason, values: snapshot(s) });
-  flush();
+  sink.flush();
 }
 
 /** The records as one line each, then where the file is and whether it is still written. */
@@ -277,11 +250,13 @@ function report(): string {
     delete rest.ms;
     return `${String(at)}  ${String(k).padEnd(15)} ${JSON.stringify(rest)}`;
   });
-  const trailer = traceStopped
-    ? `trace file: STOPPED — ${traceStopped}`
-    : tracePath
-      ? `trace file: ${tracePath}`
-      : "trace file: no batch has landed yet";
+  const file = sink.status();
+  const trailer =
+    file.state === "stopped"
+      ? `trace file: STOPPED — ${file.reason}`
+      : file.state === "writing"
+        ? `trace file: ${file.path}`
+        : "trace file: no batch has landed yet";
   return [...rows, "", trailer].join("\n");
 }
 
@@ -295,7 +270,7 @@ if (import.meta.env.DEV) {
   const handle: ParamWatchHandle = {
     records: () => ring.map((r) => ({ ...r })),
     report,
-    flush,
+    flush: sink.flush,
   };
   (window as unknown as { __urxParamWatch?: ParamWatchHandle }).__urxParamWatch = handle;
 }
