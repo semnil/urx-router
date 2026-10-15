@@ -104,14 +104,37 @@ describe("insert-fx encodings (live calibration anchors)", () => {
     expect(mbcXoverLabel(MBC_XOVER_MH_RANGE.min)).toBe("42.5 Hz");
     expect(mbcXoverLabel(MBC_XOVER_MH_RANGE.max)).toBe("8.00 kHz");
   });
-  it("MBC band Gain taper anchors (raw 0 = -∞, 1/-60, 20/-17, 39/+2, 47/+10, 55/+18)", () => {
+  it("MBC band Gain prints what the unit prints (3 dB steps to raw 13, then raw − 37)", () => {
     const g = MBC_BAND_PARAM.gain.format;
-    expect(g(0)).toBe("-∞ dB");
-    expect(g(1)).toBe("-60 dB");
-    expect(g(20)).toBe("-17 dB");
-    expect(g(39)).toBe("2 dB");
-    expect(g(47)).toBe("10 dB");
-    expect(g(55)).toBe("18 dB");
+    // The unit's own Gain readout for each raw: every raw of the 3 dB region, the corner at
+    // raw 13 where the two laws meet, and the 1 dB region up to the top of the range.
+    const lcd: Array<[number, string]> = [
+      [0, "-∞"],
+      [1, "-60"],
+      [2, "-57"],
+      [3, "-54"],
+      [4, "-51"],
+      [5, "-48"],
+      [6, "-45"],
+      [7, "-42"],
+      [8, "-39"],
+      [9, "-36"],
+      [10, "-33"],
+      [11, "-30"],
+      [12, "-27"],
+      [13, "-24"],
+      [14, "-23"],
+      [15, "-22"],
+      [16, "-21"],
+      [17, "-20"],
+      [18, "-19"],
+      [19, "-18"],
+      [20, "-17"],
+      [39, "2"],
+      [47, "10"],
+      [55, "18"],
+    ];
+    for (const [raw, shown] of lcd) expect(g(raw), `raw ${raw}`).toBe(`${shown} dB`);
   });
   it("MBC band Threshold = raw − 127 (raw 73..121 → -54..-6 dB)", () => {
     const th = MBC_BAND_PARAM.threshold.format;

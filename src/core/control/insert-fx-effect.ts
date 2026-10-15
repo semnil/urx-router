@@ -108,14 +108,12 @@ export function insertFxEngine(family: InsertFxFamily, isOutput: boolean): numbe
 const tenthDisplay = (raw: number): string => (raw / 10).toFixed(1);
 /** MBC band Threshold: raw = dB + 127 (range -54..-6 dB → raw 73..121). */
 const mbcThresholdDb = (raw: number): number => raw - 127;
-// MBC band Gain taper (live-read): raw 0 = -∞ (LCD-confirmed), raw 1 = -60 dB,
-// then a steep segment up to raw 20 = -17 dB, above which it is linear
-// dB = raw - 37 (confirmed raw 20/-17, 39/+2, 47/+10, 55/+18). raw 1..19 is the
-// deep-attenuation region (sparse anchors → linear approximation).
+// MBC band Gain: raw 0 = -∞, then 3 dB per step from raw 1 = -60 dB to raw 13 = -24 dB,
+// and 1 dB per step above it (dB = raw - 37, raw 55 = +18 dB). The two laws meet at raw 13.
 function mbcGainDb(raw: number): number {
   if (raw <= 0) return -Infinity;
-  if (raw >= 20) return raw - 37;
-  return -60 + ((raw - 1) * (-17 - -60)) / (20 - 1);
+  if (raw >= 13) return raw - 37;
+  return 3 * raw - 63;
 }
 /** MBC band Gain display ("-∞ dB" / "+2 dB"). */
 function mbcGainLabel(raw: number): string {
