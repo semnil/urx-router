@@ -243,6 +243,20 @@ describe("the trace file", () => {
     expect(records(batch).map((r) => r.d)).toContain("apply ch1/level\nforged: true");
   });
 
+  it("marks the page once however often it is started", async () => {
+    const { start } = await load();
+    start();
+    start();
+    handle().flush();
+    expect(records(shell.batches[0]).filter((r) => r.d === "page:open")).toHaveLength(1);
+  });
+
+  it("says no batch has landed while the first one is still in flight", async () => {
+    const { start } = await load();
+    start();
+    expect(handle().report()).toContain("trace file: no batch has landed yet");
+  });
+
   it("names the file in the report once a batch has landed", async () => {
     const { start } = await load();
     start();

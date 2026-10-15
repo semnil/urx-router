@@ -9,7 +9,7 @@ import { recordWindowListeners } from "./listener-scope.test-util";
 const WINDOW_MS = 250;
 
 /** The shell: each call recorded, each answered when the case settles it. */
-let calls: Array<{ lines: string[]; resolve: (path: string) => void; reject: (err: Error) => void }>;
+let calls: Array<{ lines: string[]; resolve: (path: string) => void; reject: (err: unknown) => void }>;
 const append = (lines: string[]): Promise<string> =>
   new Promise((resolve, reject) => calls.push({ lines, resolve, reject }));
 
@@ -72,6 +72,15 @@ describe("trace sink", () => {
     sink.flush();
     await vi.advanceTimersByTimeAsync(WINDOW_MS);
     expect(calls).toHaveLength(1);
+  });
+
+  it("keeps a refusal that is not an Error as its text", async () => {
+    sink.open();
+    sink.push({ k: "a" });
+    sink.flush();
+    calls[0].reject("not-connected");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sink.status()).toMatchObject({ state: "stopped", reason: "not-connected" });
   });
 
   it("stays stopped after a later batch would have landed", async () => {
