@@ -108,14 +108,12 @@ export function insertFxEngine(family: InsertFxFamily, isOutput: boolean): numbe
 const tenthDisplay = (raw: number): string => (raw / 10).toFixed(1);
 /** MBC band Threshold: raw = dB + 127 (range -54..-6 dB → raw 73..121). */
 const mbcThresholdDb = (raw: number): number => raw - 127;
-// MBC band Gain taper (live-read): raw 0 = -∞ (LCD-confirmed), raw 1 = -60 dB,
-// then a steep segment up to raw 20 = -17 dB, above which it is linear
-// dB = raw - 37 (confirmed raw 20/-17, 39/+2, 47/+10, 55/+18). raw 1..19 is the
-// deep-attenuation region (sparse anchors → linear approximation).
+// MBC band Gain: raw 0 = -∞, then 3 dB per step from raw 1 = -60 dB to raw 13 = -24 dB,
+// and 1 dB per step above it (dB = raw - 37, raw 55 = +18 dB). The two laws meet at raw 13.
 function mbcGainDb(raw: number): number {
   if (raw <= 0) return -Infinity;
-  if (raw >= 20) return raw - 37;
-  return -60 + ((raw - 1) * (-17 - -60)) / (20 - 1);
+  if (raw >= 13) return raw - 37;
+  return 3 * raw - 63;
 }
 /** MBC band Gain display ("-∞ dB" / "+2 dB"). */
 function mbcGainLabel(raw: number): string {
@@ -146,24 +144,12 @@ export function mbcXoverLabel(raw: number): string {
 export const MBC_XOVER_LM_RANGE = { min: 6, max: 97 } as const;
 export const MBC_XOVER_MH_RANGE = { min: 18, max: 109 } as const;
 
-// Guitar Amp Output level (slot 14, 128-step taper, raw 0 = -∞ … raw 127 = 0 dB).
-// Live-read anchors; piecewise-linear between them (the device taper is smooth).
-const GUITAR_OUTPUT_ANCHORS: ReadonlyArray<readonly [number, number]> = [
-  [8, -48.0],
-  [20, -32.1],
-  [40, -20.1],
-  [64, -11.9],
-  [96, -4.9],
-  [127, 0],
-];
+// Guitar Amp Output level (slot 14, raw 0..127): a square-law gain, (raw/127)², so
+// dB = 40·log10(raw/127) — raw 0 = -∞, raw 127 = 0 dB. The unit prints it rounded to 0.1.
 /** Guitar Amp Output raw → dB (-∞ at raw 0). */
 function guitarOutputDb(raw: number): number {
   if (raw <= 0) return -Infinity;
-  const a = GUITAR_OUTPUT_ANCHORS;
-  const seg = (x0: number, y0: number, x1: number, y1: number) => y0 + ((y1 - y0) / (x1 - x0)) * (raw - x0);
-  if (raw <= a[0][0]) return seg(a[0][0], a[0][1], a[1][0], a[1][1]); // extrapolate below the lowest anchor
-  for (let i = 1; i < a.length; i++) if (raw <= a[i][0]) return seg(a[i - 1][0], a[i - 1][1], a[i][0], a[i][1]);
-  return a[a.length - 1][1];
+  return 40 * Math.log10(raw / 127);
 }
 /** Guitar Amp Output display ("-∞ dB" / "-4.9 dB"). */
 function guitarOutputLabel(raw: number): string {
