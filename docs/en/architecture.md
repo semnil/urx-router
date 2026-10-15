@@ -3446,7 +3446,9 @@ recorded beside it as context. The list is `WATCHED` in `src/ui/param-watch.ts`.
   never a namespace-wide post. An address both subscriptions hold is registered once and stays registered while
   either holds it, across the live-sync set being replaced.
 - **A read once a second.** Each watched address is also read with a GET, one round of reads a second after the
-  previous round ended, so a change the unit does not announce still lands — registration and notify emission are decoupled on this protocol (above). The reads
+  previous round ended, so a change the unit does not announce still lands — registration and notify emission
+  are decoupled on this protocol (above). A value read is applied only when no notify for that address landed
+  while the read was in flight, so a notify is never overwritten by a read that started before it. The reads
   queue on the session's link like any other command, behind a full readback when one is running, and show in
   the ledger's `Sent` row.
 - **The clock as liveness.** The clock parameters `789`–`794` are registered too and counted rather than
@@ -3455,7 +3457,11 @@ recorded beside it as context. The list is `WATCHED` in `src/ui/param-watch.ts`.
 - **Read-only.** Nothing it does writes to the unit; `src/ui/param-watch.test.ts` holds the shell functions it
   imports to the read side.
 
-It starts once the session is declared up and stops in `releaseLive`, before the link is dropped. A page load
+It starts once the session is declared up and stops in `releaseLive`, before the link is dropped. Every failed
+read is handed to `main.ts`, which ends the session through `stopLiveOnError` when the failure is one the shell
+latches (`device-lost`, `broker-unresponsive`, `broker-closed`, `control-worker-gone`): a device-lost push is
+consumed by whichever command is reading when it lands, and the shell sends no link event then, so the watch's
+read can be the command that finds the link dead. A page load
 ends the session natively (below) with no `releaseLive`, so a session closed that way has no `stop` record: the
 next `open` is what marks it. Records go to
 `param-watch.jsonl` beside the link ledger, one JSON object per record carrying `ms` (epoch) and `at` (local time

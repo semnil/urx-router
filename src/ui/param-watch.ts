@@ -129,6 +129,9 @@ function flush(): void {
  *  session compares unequal and is dropped. */
 interface Session {
   last: Map<string, number | string>;
+  /** Notifies applied per address. A read that saw this move while it was in flight
+   *  started before the notify landed, so its value is dropped rather than applied. */
+  notified: Map<string, number>;
   onReadError?: (err: unknown) => void;
   pollTimer: number;
   aliveTimer: number;
@@ -158,47 +161,49 @@ function onNotify(s: Session, p: ParamUpdate): void {
   }
   if (!watchedKeys.has(k)) return;
   s.notifies++;
+  s.notified.set(k, (s.notified.get(k) ?? 0) + 1);
   const to = p.valueStr ?? p.value;
   record("notify", { addr: k, from: s.last.get(k) ?? "unknown", to });
   s.last.set(k, to);
 }
 
-/** Read every watched address once. Returns the values read, keyed, with a failed
- *  read as its error text; false when the session ended under it. */
-async function readAll(s: Session): Promise<Map<string, number | string> | false> {
-  const out = new Map<string, number | string>();
+/**
+ * Read every watched address once, handing each value to `apply` as soon as it arrives.
+ * A value whose address took a notify while the read was in flight is dropped: the
+ * notify is the newer of the two. Returns false when the session ended under it.
+ */
+async function readAll(s: Session, apply: (k: string, v: number) => void): Promise<boolean> {
   for (const [id, x, y] of WATCHED) {
-    let v: number | string;
-    let failed = false;
+    const k = key(id, x, y);
+    const before = s.notified.get(k) ?? 0;
+    let v: number;
     try {
       v = await vdGet(id, x, y);
     } catch (err) {
-      v = errorText(err);
-      failed = true;
       if (session !== s) return false;
       s.pollErrors++;
-      if (!s.failing) record("poll-error", { addr: key(id, x, y), error: v });
+      if (!s.failing) record("poll-error", { addr: k, error: errorText(err) });
       s.failing = true;
       s.onReadError?.(err);
+      if (session !== s) return false;
+      continue;
     }
     if (session !== s) return false;
-    if (failed) continue;
-    if (s.failing) record("poll-ok", { addr: key(id, x, y) });
+    if (s.failing) record("poll-ok", { addr: k });
     s.failing = false;
-    out.set(key(id, x, y), v);
+    if ((s.notified.get(k) ?? 0) === before) apply(k, v);
   }
-  return out;
+  return true;
 }
 
 async function poll(s: Session): Promise<void> {
-  const read = await readAll(s);
-  if (read === false) return;
-  s.polls++;
-  for (const [k, v] of read) {
+  const read = await readAll(s, (k, v) => {
     const from = s.last.get(k);
     if (from !== v) record("poll", { addr: k, from: from ?? "unknown", to: v });
     s.last.set(k, v);
-  }
+  });
+  if (!read) return;
+  s.polls++;
   s.pollTimer = window.setTimeout(() => void poll(s), POLL_MS);
 }
 
@@ -225,9 +230,8 @@ async function begin(s: Session, model: string): Promise<void> {
     if (session !== s) return;
     record("subscribe-error", { error: errorText(err) });
   }
-  const read = await readAll(s);
-  if (read === false) return;
-  for (const [k, v] of read) s.last.set(k, v);
+  if (session !== s) return;
+  if (!(await readAll(s, (k, v) => s.last.set(k, v)))) return;
   record("start", { values: snapshot(s) });
   s.aliveTimer = window.setInterval(() => alive(s), ALIVE_MS);
   s.pollTimer = window.setTimeout(() => void poll(s), POLL_MS);
@@ -242,6 +246,7 @@ function start(model: string, onReadError?: (err: unknown) => void): void {
   }
   const s: Session = {
     last: new Map(),
+    notified: new Map(),
     onReadError,
     pollTimer: 0,
     aliveTimer: 0,

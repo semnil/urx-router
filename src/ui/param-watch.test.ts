@@ -12,9 +12,15 @@ import type { ParamWatch, ParamWatchHandle } from "./param-watch";
 
 /** The stubbed shell: a value per address, the watch's notify channel, and the file. */
 const shell = {
+  tauri: true,
   values: new Map<string, number>(),
   readFails: null as Error | null,
+  /** Holds the read of one address open until the case releases it. */
+  held: null as { addr: string; release: (v: number) => void } | null,
+  holdAddr: null as string | null,
   subscribeFails: null as Error | null,
+  subscribeHeld: false,
+  releaseSubscribe: null as (() => void) | null,
   appendFails: null as Error | null,
   gets: [] as string[],
   subscribed: [] as Array<Array<[number, number, number]>>,
@@ -22,15 +28,21 @@ const shell = {
   batches: [] as string[][],
 };
 vi.mock("../core/platform", () => ({
-  isTauri: () => true,
+  isTauri: () => shell.tauri,
   vdGet: (id: number, x: number, y: number) => {
     shell.gets.push(`${id}:${x}:${y}`);
     if (shell.readFails) return Promise.reject(shell.readFails);
+    if (shell.holdAddr === `${id}:${x}:${y}`) {
+      const addr = shell.holdAddr;
+      shell.holdAddr = null;
+      return new Promise<number>((release) => (shell.held = { addr, release }));
+    }
     return Promise.resolve(shell.values.get(`${id}:${x}:${y}`) ?? 0);
   },
   vdProbeSubscribe: (addrs: Array<[number, number, number]>, onUpdate: (p: ParamUpdate) => void) => {
     shell.subscribed.push(addrs);
     shell.notify = onUpdate;
+    if (shell.subscribeHeld) return new Promise<void>((release) => (shell.releaseSubscribe = release));
     return shell.subscribeFails ? Promise.reject(shell.subscribeFails) : Promise.resolve();
   },
   appendWatchLog: (lines: string[]) => {
@@ -62,6 +74,7 @@ beforeEach(async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date(2026, 9, 14, 23, 51, 26, 123));
   Object.assign(shell, {
+    tauri: true,
     values: new Map([
       ["838:0:0", 1],
       ["817:0:0", 0],
@@ -69,7 +82,11 @@ beforeEach(async () => {
       ["863:0:0", 0x8000],
     ]),
     readFails: null,
+    held: null,
+    holdAddr: null,
     subscribeFails: null,
+    subscribeHeld: false,
+    releaseSubscribe: null,
     appendFails: null,
     gets: [],
     subscribed: [],
@@ -247,6 +264,62 @@ describe("param watch", () => {
     ).toContain("notify");
   });
 
+  it("keeps a notify that lands while a later address is being read, rather than reverting it", async () => {
+    watch.start("URX44V");
+    await settle();
+    // The round reads 838 (still 1), then waits on 817 while the unit announces 838 = 2.
+    shell.holdAddr = "817:0:0";
+    await vi.advanceTimersByTimeAsync(mod.POLL_MS);
+    expect(shell.held?.addr).toBe("817:0:0");
+    shell.values.set("838:0:0", 2);
+    notify(838, 2);
+    shell.held?.release(0);
+    await settle();
+    await vi.advanceTimersByTimeAsync(mod.POLL_MS * 2);
+    handle().flush();
+    expect(ofKind("notify").map(({ from, to }) => ({ from, to }))).toEqual([{ from: 1, to: 2 }]);
+    expect(ofKind("poll")).toEqual([]);
+  });
+
+  it("drops a read of an address that took a notify while that read was in flight", async () => {
+    watch.start("URX44V");
+    await settle();
+    shell.holdAddr = "838:0:0";
+    await vi.advanceTimersByTimeAsync(mod.POLL_MS);
+    expect(shell.held?.addr).toBe("838:0:0");
+    shell.values.set("838:0:0", 2);
+    notify(838, 2);
+    shell.held?.release(1);
+    await settle();
+    expect(ofKind("poll")).toEqual([]);
+    // The next round reads the value the notify carried, so nothing more is recorded.
+    await vi.advanceTimersByTimeAsync(mod.POLL_MS);
+    handle().flush();
+    expect(ofKind("poll")).toEqual([]);
+  });
+
+  it("starts from a notify that landed during the first reading, not from the reading before it", async () => {
+    shell.holdAddr = "817:0:0";
+    watch.start("URX44V");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shell.held?.addr).toBe("817:0:0");
+    shell.values.set("838:0:0", 2);
+    notify(838, 2);
+    shell.held?.release(0);
+    await settle();
+    expect(ofKind("start")[0].values).toMatchObject({ "838:0:0": 2 });
+  });
+
+  it("reads nothing when stopped while the registration is still on the wire", async () => {
+    shell.subscribeHeld = true;
+    watch.start("URX44V");
+    await vi.advanceTimersByTimeAsync(0);
+    watch.stop("off");
+    shell.releaseSubscribe?.();
+    await vi.advanceTimersByTimeAsync(mod.POLL_MS * 3);
+    expect(shell.gets).toEqual([]);
+  });
+
   it("hands every failed read to the session's owner", async () => {
     const seen: unknown[] = [];
     watch.start("URX44V", (err) => seen.push(err));
@@ -255,6 +328,38 @@ describe("param watch", () => {
     await vi.advanceTimersByTimeAsync(mod.POLL_MS);
     expect(seen).toHaveLength(mod.WATCHED.length);
     expect(seen[0]).toBe(shell.readFails);
+  });
+
+  it("does nothing outside the desktop shell", async () => {
+    shell.tauri = false;
+    watch.start("URX44V");
+    await vi.advanceTimersByTimeAsync(mod.POLL_MS * 2);
+    handle().flush();
+    expect(shell.subscribed).toEqual([]);
+    expect(shell.gets).toEqual([]);
+    expect(shell.batches).toEqual([]);
+  });
+
+  it("records nothing more once stopped in the middle of a round of reads", async () => {
+    watch.start("URX44V");
+    await settle();
+    shell.holdAddr = "817:0:0";
+    await vi.advanceTimersByTimeAsync(mod.POLL_MS);
+    watch.stop("off");
+    shell.values.set("838:0:0", 2);
+    shell.held?.release(5);
+    await vi.advanceTimersByTimeAsync(mod.POLL_MS * 2);
+    handle().flush();
+    expect(written().map((r) => r.k)).toEqual(["open", "start", "stop"]);
+    expect(shell.gets.filter((a) => a === "817:0:0")).toHaveLength(2);
+  });
+
+  it("names where the file is in the report, or that nothing has landed yet", async () => {
+    expect(handle().report()).toContain("trace file: no batch has landed yet");
+    watch.start("URX44V");
+    await settle();
+    expect(handle().report()).toContain("trace file: /logs/param-watch.jsonl");
+    expect(handle().report()).toMatch(/^\d{4}-\d\d-\d\d .* open +\{"model":"URX44V"/);
   });
 
   it("imports nothing from the shell that writes to the unit or touches the live-sync set", () => {
