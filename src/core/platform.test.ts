@@ -209,6 +209,14 @@ describe("streaming channel adapters", () => {
       { param_id: 13, x: 5, y: 6, value: 0, value_str: "Vocal" },
     ]);
 
+    const watched: platform.ParamUpdate[] = [];
+    await platform.vdProbeSubscribe([[838, 0, 0]], (update) => watched.push(update));
+    channelFrom<Array<{ param_id: number; x: number; y: number; value: number }>>(
+      harness,
+      "vd_probe_subscribe",
+    ).onmessage([{ param_id: 838, x: 0, y: 0, value: 2 }]);
+    expect(watched).toEqual([{ paramId: 838, x: 0, y: 0, value: 2, valueStr: undefined }]);
+
     await platform.vdWatchLink((reason) => drops.push(reason));
     channelFrom<{ reason: string }>(harness, "vd_watch_link").onmessage({ reason: "deadline" });
 
@@ -305,6 +313,7 @@ describe("command wrappers", () => {
       { run: () => platform.vdDisconnect(9), cmd: "vd_disconnect", args: { epoch: 9 } },
       { run: () => platform.appendLinkLog("line"), cmd: "append_link_log", args: { line: "line" } },
       { run: () => platform.appendMidiLog(["a", "b"]), cmd: "append_midi_log", args: { lines: ["a", "b"] } },
+      { run: () => platform.appendWatchLog(["a"]), cmd: "append_watch_log", args: { lines: ["a"] } },
       { run: platform.appBuildKind, cmd: "app_build_kind", args: {} },
       { run: () => platform.openMidiWindow("MIDI"), cmd: "open_midi_window", args: { title: "MIDI" } },
       { run: platform.closeMidiWindow, cmd: "close_midi_window", args: {} },

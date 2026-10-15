@@ -386,6 +386,12 @@ const MIDI_TRACE: LogSpec = LogSpec {
     stem: "midi-trace",
     max: 2 * 1024 * 1024,
 };
+/// The parameter watch's records are a change or a minute's liveness line each, so the
+/// same cap holds weeks of an unattended session.
+const PARAM_WATCH: LogSpec = LogSpec {
+    stem: "param-watch",
+    max: 2 * 1024 * 1024,
+};
 
 /// Move a ledger aside when it has grown past `max`, replacing the previous
 /// generation. Returns whether it rotated (for the test — nothing else asks).
@@ -497,6 +503,16 @@ async fn append_midi_log(app: tauri::AppHandle, lines: Vec<String>) -> Result<St
         return Err("not-available: the MIDI trace is a dev build's diagnostic".into());
     }
     append_log(&app, &MIDI_TRACE, lines).await
+}
+
+/// Append a batch of parameter-watch records (`ui/param-watch.ts`). Dev builds only,
+/// gated on the binary for the reason `append_midi_log` is.
+#[tauri::command]
+async fn append_watch_log(app: tauri::AppHandle, lines: Vec<String>) -> Result<String, String> {
+    if !dev_build() {
+        return Err("not-available: the parameter watch is a dev build's diagnostic".into());
+    }
+    append_log(&app, &PARAM_WATCH, lines).await
 }
 
 // True when the app was launched with the --experimental flag. Device writes and
@@ -1056,6 +1072,25 @@ fn vd_params_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
     vd::params_unsubscribe(tx)
 }
 
+/// Register the dev build's parameter watch (`ui/param-watch.ts`) on the held-open
+/// connection: a subscription of its own beside the live-sync one, so the addresses it
+/// watches never enter the set the follow layer reads. Refused in a release binary,
+/// the same `dev_build` gate the MIDI trace has.
+#[tauri::command]
+async fn vd_probe_subscribe(
+    state: State<'_, vd::VdState>,
+    addrs: Vec<(u32, i64, i64)>,
+    channel: tauri::ipc::Channel<Vec<vd::ParamUpdate>>,
+) -> Result<(), String> {
+    if !dev_build() {
+        return Err("not-available: the parameter watch is a dev build's diagnostic".into());
+    }
+    let tx = vd::sender(&state)?;
+    tauri::async_runtime::spawn_blocking(move || vd::probe_subscribe(tx, addrs, channel))
+        .await
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
+}
+
 // Watch the held-open live connection: the worker pushes a single LinkEvent
 // through the channel if the broker link drops while idle, so the UI can drop a
 // live session instead of silently freezing. Fire-and-forget; the channel dies
@@ -1462,12 +1497,14 @@ pub fn run() {
             vd_meters_unsubscribe,
             vd_params_subscribe,
             vd_params_unsubscribe,
+            vd_probe_subscribe,
             vd_watch_link,
             vd_disconnect,
             prepare_for_exit,
             vd_link_stats,
             append_link_log,
             append_midi_log,
+            append_watch_log,
             app_build_kind,
             midi_list_inputs,
             midi_list_outputs,

@@ -249,6 +249,17 @@ pub enum Cmd {
     },
     /// Drop the current parameter subscription (unregisters each address).
     ParamsUnsubscribe,
+    /// The dev build's parameter watch: a second, independent parameter subscription
+    /// beside the live-sync one, so a watch can register addresses the plan never
+    /// names without entering the set the follow layer reads. Replaces any prior
+    /// watch; its notifies go through `channel` only, never through the live-sync
+    /// channel. Same reply contract as ParamsSubscribe. The command that sends it
+    /// refuses in a release binary (lib.rs `vd_probe_subscribe`).
+    ProbeSubscribe {
+        addrs: Vec<(u32, i64, i64)>,
+        channel: Channel<Vec<ParamUpdate>>,
+        reply: Sender<Result<(), String>>,
+    },
     /// Register a channel to receive the link-lost event (see LinkEvent). Replaces
     /// any prior watch. Fire-and-forget; the worker pushes one event if the broker
     /// link fails while idle, and latches the session as lost.
@@ -522,6 +533,24 @@ pub fn params_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
         .map_err(|_| CONTROL_WORKER_GONE.to_string())
 }
 
+/// Start the dev build's parameter watch (see Cmd::ProbeSubscribe). Blocks until the
+/// worker has sent every registration, like params_subscribe. There is no matching
+/// unsubscribe: the watch lasts until the session's own teardown unregisters it.
+pub fn probe_subscribe(
+    tx: Sender<Cmd>,
+    addrs: Vec<(u32, i64, i64)>,
+    channel: Channel<Vec<ParamUpdate>>,
+) -> Result<(), String> {
+    let (reply, rx) = mpsc::channel();
+    tx.send(Cmd::ProbeSubscribe {
+        addrs,
+        channel,
+        reply,
+    })
+    .map_err(|_| CONTROL_WORKER_GONE.to_string())?;
+    rx.recv().map_err(|_| CONTROL_WORKER_GONE.to_string())?
+}
+
 /// Register a channel to receive the link-lost event. Replaces any prior watch.
 pub fn watch_link(tx: Sender<Cmd>, channel: Channel<LinkEvent>) -> Result<(), String> {
     tx.send(Cmd::WatchLink { channel })
@@ -629,6 +658,14 @@ mod imp {
         param_addrs: HashSet<(u32, i64, i64)>,
         meters: Vec<MeterUpdate>,
         params: Vec<ParamUpdate>,
+        /// The dev build's parameter watch (Cmd::ProbeSubscribe): its own channel, its
+        /// own registered set and its own batch, so a notify on a watched address
+        /// reaches the live-sync channel only when that subscription registered the
+        /// address too. An address in both sets is registered with the broker while
+        /// either holds it (see unregister_params / unregister_probe).
+        probe_ch: Option<Channel<Vec<ParamUpdate>>>,
+        probe_addrs: HashSet<(u32, i64, i64)>,
+        probe: Vec<ParamUpdate>,
         last_flush: Instant,
     }
 
@@ -641,13 +678,16 @@ mod imp {
                 param_addrs: HashSet::new(),
                 meters: Vec::new(),
                 params: Vec::new(),
+                probe_ch: None,
+                probe_addrs: HashSet::new(),
+                probe: Vec::new(),
                 last_flush: Instant::now(),
             }
         }
 
         /// Whether any subscription is streaming (drives the worker's poll cadence).
         fn active(&self) -> bool {
-            self.meter_ch.is_some() || self.param_ch.is_some()
+            self.meter_ch.is_some() || self.param_ch.is_some() || self.probe_ch.is_some()
         }
 
         /// Collect a subscribed meter / parameter notify into its pending batch,
@@ -666,10 +706,20 @@ mod imp {
                     return true;
                 }
             }
-            if self.param_ch.is_some() {
+            if self.param_ch.is_some() || self.probe_ch.is_some() {
                 if let Some(p) = parse_param(msg) {
-                    if p == BULK_CHANGE || self.param_addrs.contains(&(p.param_id, p.x, p.y)) {
+                    let addr = (p.param_id, p.x, p.y);
+                    let bulk = p == BULK_CHANGE;
+                    let mut kept = false;
+                    if self.probe_ch.is_some() && (bulk || self.probe_addrs.contains(&addr)) {
+                        self.probe.push(p.clone());
+                        kept = true;
+                    }
+                    if self.param_ch.is_some() && (bulk || self.param_addrs.contains(&addr)) {
                         self.params.push(p);
+                        kept = true;
+                    }
+                    if kept {
                         self.flush_due();
                     }
                     return true;
@@ -692,6 +742,9 @@ mod imp {
             }
             if let (Some(ch), false) = (self.param_ch.as_ref(), self.params.is_empty()) {
                 let _ = ch.send(std::mem::take(&mut self.params));
+            }
+            if let (Some(ch), false) = (self.probe_ch.as_ref(), self.probe.is_empty()) {
+                let _ = ch.send(std::mem::take(&mut self.probe));
             }
             self.last_flush = Instant::now();
         }
@@ -858,6 +911,11 @@ mod imp {
                     unregister_params(&mut link, &mut subs, &counters);
                     let mut first = Ok(());
                     for &(id, x, y) in &addrs {
+                        // Already registered by the dev build's parameter watch; the
+                        // probe set is empty in a release binary.
+                        if subs.probe_addrs.contains(&(id, x, y)) {
+                            continue;
+                        }
                         let r = health.guard(|| {
                             LinkCounters::bump(&counters.regist_frames);
                             reg_param(&mut link, id, x, y, "regist")
@@ -875,6 +933,33 @@ mod imp {
                     unregister_params(&mut link, &mut subs, &counters);
                     subs.params.clear();
                     subs.param_ch = None;
+                }
+                Ok(Cmd::ProbeSubscribe {
+                    addrs,
+                    channel,
+                    reply,
+                }) => {
+                    // The same per-address registration as ParamsSubscribe, into the
+                    // watch's own set. An address the live-sync set already holds is
+                    // not registered a second time.
+                    unregister_probe(&mut link, &mut subs, &counters);
+                    let mut first = Ok(());
+                    for &(id, x, y) in &addrs {
+                        if subs.param_addrs.contains(&(id, x, y)) {
+                            continue;
+                        }
+                        let r = health.guard(|| {
+                            LinkCounters::bump(&counters.regist_frames);
+                            reg_param(&mut link, id, x, y, "regist")
+                        });
+                        if first.is_ok() {
+                            first = r;
+                        }
+                    }
+                    subs.probe_addrs = addrs.into_iter().collect();
+                    subs.probe.clear();
+                    subs.probe_ch = Some(channel);
+                    let _ = reply.send(first);
                 }
                 Ok(Cmd::WatchLink { channel }) => {
                     link_ch = Some(channel);
@@ -948,13 +1033,31 @@ mod imp {
         subs.meter_addrs.clear();
     }
 
-    /// The parameter half of the above.
+    /// The parameter half of the above. An address the dev build's parameter watch
+    /// also holds stays registered: the broker keeps one registration per address and
+    /// client, so unregistering it here would silence the watch.
     fn unregister_params(link: &mut Link, subs: &mut Subs, counters: &LinkCounters) {
         for &(id, x, y) in &subs.param_addrs {
+            if subs.probe_addrs.contains(&(id, x, y)) {
+                continue;
+            }
             LinkCounters::bump(&counters.unregist_frames);
             let _ = reg_param(link, id, x, y, "unregist");
         }
         subs.param_addrs.clear();
+    }
+
+    /// The parameter watch's half: every address it registered, except one the
+    /// live-sync subscription holds as well.
+    fn unregister_probe(link: &mut Link, subs: &mut Subs, counters: &LinkCounters) {
+        for &(id, x, y) in &subs.probe_addrs {
+            if subs.param_addrs.contains(&(id, x, y)) {
+                continue;
+            }
+            LinkCounters::bump(&counters.unregist_frames);
+            let _ = reg_param(link, id, x, y, "unregist");
+        }
+        subs.probe_addrs.clear();
     }
 
     /// Everything this session registered, on the way out. The registration reply is
@@ -964,6 +1067,7 @@ mod imp {
     fn unregister_all(link: &mut Link, subs: &mut Subs, counters: &LinkCounters) {
         unregister_meters(link, subs, counters);
         unregister_params(link, subs, counters);
+        unregister_probe(link, subs, counters);
     }
 
     /// The session's connection to one unit: a plain TCP socket carrying
@@ -2091,6 +2195,62 @@ mod imp {
             );
         }
 
+        #[test]
+        fn absorb_routes_the_parameter_watch_apart_from_the_live_sync_channel() {
+            // Live sync holds 142:0:0; the watch holds 838:0:0 and 142:0:0. A watched
+            // address reaches the live-sync channel only when that subscription
+            // registered it too, and the bulk-change push reaches both.
+            let mut subs = subs_with(&[], &[(142, 0, 0)]);
+            subs.probe_addrs = [(838, 0, 0), (142, 0, 0)].into_iter().collect();
+            let (param_ch, params_seen) = capture();
+            let (probe_ch, probe_seen) = capture();
+            subs.param_ch = Some(param_ch);
+            subs.probe_ch = Some(probe_ch);
+
+            subs.last_flush = Instant::now();
+            assert!(subs.absorb(&notify("/vd/parameters/838:0:0".into(), 2)));
+            assert!(subs.absorb(&notify("/vd/parameters/142:0:0".into(), 1)));
+            assert!(subs.absorb(&notify("/vd/parameters/789:0:0".into(), 5)));
+            assert!(subs.absorb(&json!({ "vdp": { "method": "notify", "uri": "/vd/parameters" } })));
+
+            subs.flush();
+            assert_eq!(
+                *params_seen.lock().unwrap(),
+                vec![json!([
+                    { "param_id": 142, "x": 0, "y": 0, "value": 1 },
+                    { "param_id": 0, "x": -1, "y": -1, "value": 0 }
+                ])]
+            );
+            assert_eq!(
+                *probe_seen.lock().unwrap(),
+                vec![json!([
+                    { "param_id": 838, "x": 0, "y": 0, "value": 2 },
+                    { "param_id": 142, "x": 0, "y": 0, "value": 1 },
+                    { "param_id": 0, "x": -1, "y": -1, "value": 0 }
+                ])]
+            );
+        }
+
+        #[test]
+        fn absorb_feeds_the_parameter_watch_with_no_live_sync_subscription() {
+            let mut subs = subs_with(&[], &[]);
+            subs.probe_addrs = [(838, 0, 0)].into_iter().collect();
+            let (probe_ch, probe_seen) = capture();
+            subs.probe_ch = Some(probe_ch);
+            assert!(
+                subs.active(),
+                "the watch alone keeps the pump on its streaming cadence"
+            );
+
+            subs.last_flush = Instant::now();
+            assert!(subs.absorb(&notify("/vd/parameters/838:0:0".into(), 1)));
+            subs.flush();
+            assert_eq!(
+                *probe_seen.lock().unwrap(),
+                vec![json!([{ "param_id": 838, "x": 0, "y": 0, "value": 1 }])]
+            );
+        }
+
         // A broker reply, as the link reads it. `data`
         // is the measured shape for each verb (probe-regist-shape / probe-timeline):
         // a get answers with the value plus its bounds, a post with a bare ack.
@@ -2766,6 +2926,68 @@ mod imp {
             tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
             closed.recv_timeout(Duration::from_secs(10)).unwrap();
             worker.join().unwrap();
+        }
+
+        // The dev build's parameter watch and the live-sync subscription share the
+        // broker's one registration per address: an address both hold is registered once,
+        // stays registered while either holds it — across the live-sync set being
+        // replaced, which follows every structural edit — and is unregistered once when
+        // the session closes. Driven in the order a session takes: live sync first, the
+        // watch once the session is up.
+        #[test]
+        fn the_parameter_watch_and_live_sync_register_a_shared_address_once() {
+            use std::collections::HashSet;
+            use std::io::Read;
+            let (link, mut peer) = vdp_link();
+            let (tx, rx) = mpsc::channel();
+            let worker =
+                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
+            let params = |addrs: Vec<(u32, i64, i64)>| {
+                move |reply| Cmd::ParamsSubscribe {
+                    addrs,
+                    channel: Channel::new(|_| Ok(())),
+                    reply,
+                }
+            };
+
+            ask(&tx, params(vec![(1, 0, 0), (2, 0, 0)])).unwrap();
+            ask(&tx, |reply| Cmd::ProbeSubscribe {
+                addrs: vec![(838, 0, 0), (1, 0, 0)],
+                channel: Channel::new(|_| Ok(())),
+                reply,
+            })
+            .unwrap();
+            ask(&tx, params(vec![(1, 0, 0), (3, 0, 0)])).unwrap();
+            tx.send(Cmd::ParamsUnsubscribe).unwrap();
+            let (done, closed) = mpsc::channel();
+            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            closed.recv_timeout(Duration::from_secs(10)).unwrap();
+            worker.join().unwrap();
+
+            peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut sent = String::new();
+            peer.read_to_string(&mut sent).unwrap();
+            let posts: Vec<String> = sent
+                .lines()
+                .map(|l| serde_json::from_str::<Value>(l).unwrap())
+                .filter_map(|v| v["vdp"]["uri"].as_str().map(str::to_string))
+                .map(|u| u.trim_start_matches("/vd/parameters/").to_string())
+                .collect();
+            let set = |s: &[String]| s.iter().cloned().collect::<HashSet<_>>();
+            let want = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<HashSet<_>>();
+            assert_eq!(posts.len(), 8, "{posts:?}");
+            assert_eq!(
+                set(&posts[0..2]),
+                want(&["1:0:0?operation=regist", "2:0:0?operation=regist"])
+            );
+            assert_eq!(posts[2], "838:0:0?operation=regist");
+            assert_eq!(posts[3], "2:0:0?operation=unregist");
+            assert_eq!(posts[4], "3:0:0?operation=regist");
+            assert_eq!(posts[5], "3:0:0?operation=unregist");
+            assert_eq!(
+                set(&posts[6..8]),
+                want(&["838:0:0?operation=unregist", "1:0:0?operation=unregist"])
+            );
         }
 
         // Device Center quitting is the vdp socket's end of stream. The cause the later

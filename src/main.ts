@@ -99,6 +99,7 @@ import { initFineMode } from "./ui/fine";
 import { installEditMenu } from "./ui/edit-menu";
 import { PlanHistory } from "./ui/history";
 import { installKeyProbe } from "./ui/keyprobe";
+import { paramWatch } from "./ui/param-watch";
 import { closeLoadReport, showLoadReport } from "./ui/load-report";
 import { showErrorBox } from "./ui/error-box";
 import { showLicenses } from "./ui/licenses";
@@ -448,6 +449,7 @@ function beginLinkLedger(device: string): void {
  *  safe. */
 function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   linkStatsView?.setSession(false);
+  paramWatch?.stop(reason);
   const ledger = linkLedger?.active ? linkLedger.end(reason) : Promise.resolve();
   // A follow read already in flight goes on reading over this connection: a session that
   // merely ends lets its read finish rather than abandoning it (abandonFollowWork says
@@ -4556,6 +4558,13 @@ if (!DEMO) {
         // exactly this one even when its disconnect lands after a later connect.
         liveEpoch = device.epoch;
         liveSessionUp = true;
+        // A read the watch makes can be the one that finds the link dead (a device-lost push
+        // is consumed by whichever command is reading), and the shell latches without a link
+        // event then, so a latched cause there ends the session the way any other does.
+        paramWatch?.start(device.model, (err) => {
+          const cause = linkFailureIn([err instanceof Error ? err.message : String(err)]);
+          if (cause) stopLiveOnError(cause);
+        });
         fxReseeds.clear();
         setLiveUi(true);
         // The flags were read before the notify stream was registered; a press on the unit in

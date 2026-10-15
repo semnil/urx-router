@@ -108,6 +108,9 @@ const BASE_COMMANDS: Record<string, unknown> = {
   // has done anything. Left untaught it would reject, and the sink's own give-up would
   // absorb the refusal this stub raises unknown commands to surface.
   append_midi_log: "",
+  // The parameter watch (ui/param-watch.ts) writes its file from the moment a Live
+  // session comes up, so a suite that turns Live on reaches it.
+  append_watch_log: "",
 };
 
 /** One parameter instance's address, as the key of the store below. */
@@ -215,6 +218,7 @@ export function deviceCommands(
     vd_meters_subscribe: () => live(() => null),
     vd_meters_unsubscribe: () => live(() => null),
     vd_watch_link: () => live(() => null),
+    vd_probe_subscribe: () => live(() => null),
     vd_link_stats: {
       sets: 0,
       gets: 0,
@@ -267,6 +271,7 @@ const DEVICE_TRAFFIC = [
   "vd_meters_subscribe",
   "vd_meters_unsubscribe",
   "vd_watch_link",
+  "vd_probe_subscribe",
 ];
 
 /** Where a device table keeps its connection guard for the shell it is installed in. */

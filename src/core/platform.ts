@@ -374,16 +374,33 @@ export async function vdParamsSubscribe(
   onUpdate: (p: ParamUpdate) => void,
 ): Promise<() => void> {
   if (!isTauri()) return () => {};
-  // Batched per pump cycle on the Rust side (a device-side sweep arrives as one
-  // message), so fan the batch back out into per-notify callbacks here.
-  const channel = newChannel<RawParamUpdate[]>((batch) => {
-    for (const d of batch) onUpdate({ paramId: d.param_id, x: d.x, y: d.y, value: d.value, valueStr: d.value_str });
-  });
+  const channel = paramChannel(onUpdate);
   // Awaited, not fire-and-forget: a failed registration leaves the app blind to
   // device-side edits, and the next converge would then write the plan's stale
   // values back over them. The caller stops rather than running half-deaf.
   await invoke<void>("vd_params_subscribe", { addrs, channel });
   return () => void invoke<void>("vd_params_unsubscribe").catch(() => {});
+}
+
+// Batched per pump cycle on the Rust side (a device-side sweep arrives as one
+// message), so fan the batch back out into per-notify callbacks here.
+function paramChannel(onUpdate: (p: ParamUpdate) => void) {
+  return newChannel<RawParamUpdate[]>((batch) => {
+    for (const d of batch) onUpdate({ paramId: d.param_id, x: d.x, y: d.y, value: d.value, valueStr: d.value_str });
+  });
+}
+
+/**
+ * Register the dev build's parameter watch (`ui/param-watch.ts`) on the held-open
+ * connection: a subscription of its own beside `vdParamsSubscribe`'s, so the addresses
+ * it names never reach the follow layer. Lasts until the connection closes — there is
+ * no unsubscribe. Rejects in a release binary, which refuses the command.
+ */
+export async function vdProbeSubscribe(
+  addrs: Array<[number, number, number]>,
+  onUpdate: (p: ParamUpdate) => void,
+): Promise<void> {
+  await invoke<void>("vd_probe_subscribe", { addrs, channel: paramChannel(onUpdate) });
 }
 
 // The Rust side streams LinkEvent with snake_case fields (serde default).
@@ -477,6 +494,15 @@ export function appendLinkLog(line: string): Promise<string> {
  */
 export function appendMidiLog(lines: string[]): Promise<string> {
   return invoke<string>("append_midi_log", { lines });
+}
+
+/**
+ * Append a batch of parameter-watch records to the dev build's `param-watch.jsonl`;
+ * resolves with the file's path. Rejects outside Tauri and in a release binary, like
+ * `appendMidiLog`.
+ */
+export function appendWatchLog(lines: string[]): Promise<string> {
+  return invoke<string>("append_watch_log", { lines });
 }
 
 /** Which build is running, for a record that outlives it. `tauri dev` and the
