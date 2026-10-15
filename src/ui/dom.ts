@@ -1,6 +1,7 @@
 // Tiny DOM builder shared by the UI modules.
 import { getSettings } from "../core/settings";
 import { setLevelText, spoken } from "./glyph";
+import { isChord } from "./keys";
 import { t } from "../i18n";
 
 export function el(tag: string, cls: string): HTMLElement {
@@ -210,16 +211,43 @@ export function wheelStep(
       // a row held inert: macOS delivers scroll to an unfocused window, so a notch over
       // the background app would write the value the app just declared out of reach.
       if (slider.disabled) return;
-      const step = Number(slider.step) || 1;
-      const lo = Number(slider.min);
-      const hi = Number(slider.max);
-      const next = Math.min(hi, Math.max(lo, scrubFloat(Number(slider.value) + dir * step)));
-      if (next === Number(slider.value)) return;
-      slider.value = String(next);
-      slider.dispatchEvent(new Event("input"));
+      nudge(slider, dir, Number(slider.dataset.turnStep) || Number(slider.step) || 1);
     },
     blocked,
   );
+}
+
+/** Move a slider by `by` from the value it holds, clamped, and report it as an edit. */
+function nudge(slider: HTMLInputElement, dir: number, by: number): void {
+  const lo = Number(slider.min);
+  const hi = Number(slider.max);
+  const next = Math.min(hi, Math.max(lo, scrubFloat(Number(slider.value) + dir * by)));
+  if (next === Number(slider.value)) return;
+  slider.value = String(next);
+  slider.dispatchEvent(new Event("input"));
+}
+
+/** Turn a slider by `turn` rather than by its `step` — the unit's encoder click on a value
+ *  held to a finer grid. An Arrow key moves one turn, PageUp / PageDown ten, and a wheel
+ *  notch (through `wheelStep`) one; each adds to the value the slider holds, so the finer
+ *  part of it is kept. Home / End and a drag stay the slider's own. */
+export function turnStep(slider: HTMLInputElement, turn: number): void {
+  slider.dataset.turnStep = String(turn);
+  slider.addEventListener("keydown", (e) => {
+    const dir =
+      e.key === "ArrowUp" || e.key === "ArrowRight"
+        ? 1
+        : e.key === "ArrowDown" || e.key === "ArrowLeft"
+          ? -1
+          : e.key === "PageUp"
+            ? 10
+            : e.key === "PageDown"
+              ? -10
+              : 0;
+    if (dir === 0 || isChord(e) || slider.disabled) return;
+    e.preventDefault();
+    nudge(slider, dir, turn);
+  });
 }
 
 /**

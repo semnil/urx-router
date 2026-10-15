@@ -8,6 +8,7 @@ import {
   eqFreqToPos,
   eqPosToHz,
   fmtSsmcsAttack,
+  fmtSsmcsHz,
   fmtSsmcsQ,
   fmtSsmcsRatio,
   fmtSsmcsRelease,
@@ -18,7 +19,9 @@ import {
 import { LEVEL_MIN_DB } from "../core/plan";
 import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ } from "../core/control/vd";
 import { COMP_RATIO_INF } from "../core/control/comp-ratio";
-import { formatDyn, formatTime } from "../core/control/translate";
+import { DUCKER_FIELDS, channelDynamics, formatDyn, formatTime } from "../core/control/translate";
+import type { DynField } from "../core/control/translate";
+import { getModel } from "../models";
 import type { TimeReadout } from "../core/control/translate";
 import {
   DUCKER_DECAY_STOPS_MS,
@@ -28,11 +31,16 @@ import {
 } from "../core/control/dyn-time-stops";
 
 describe("formatDb", () => {
-  it("prints one decimal and a leading + above zero", () => {
-    expect(formatDb(0)).toBe("0.0 dB");
-    expect(formatDb(-20)).toBe("-20.0 dB");
-    expect(formatDb(10)).toBe("+10.0 dB");
-    expect(formatDb(-0.5)).toBe("-0.5 dB");
+  // The unit's send level knob: 10.00 / 5.00 / 0.40 / 0.00 / -8.80 above -10 dB, -10.0 /
+  // -25.6 / -96.0 from there down, and no + on a positive value.
+  it("prints two decimals above -10 dB, one from -10 dB down, and no sign", () => {
+    expect(formatDb(10)).toBe("10.00 dB");
+    expect(formatDb(0.4)).toBe("0.40 dB");
+    expect(formatDb(0)).toBe("0.00 dB");
+    expect(formatDb(-0.5)).toBe("-0.50 dB");
+    expect(formatDb(-8.8)).toBe("-8.80 dB");
+    expect(formatDb(-10)).toBe("-10.0 dB");
+    expect(formatDb(-25.6)).toBe("-25.6 dB");
   });
 
   // The lowest real value the grid holds is LEVEL_MIN_DB; anything under it is the
@@ -210,6 +218,69 @@ describe("EQ band frequency mapping", () => {
       expect(Number.isInteger(hz)).toBe(true);
       expect(hz).toBeGreaterThanOrEqual(EQ_FREQ_MIN_HZ);
       expect(hz).toBeLessThanOrEqual(EQ_FREQ_MAX_HZ);
+    }
+  });
+});
+
+// A level on the unit's 1 dB grid prints in whole dB, a finer one to one decimal, and neither
+// carries a sign on a positive value. A value held between grid steps prints its whole-dB part,
+// toward zero.
+describe("the level readouts", () => {
+  it("prints the 1 dB-grid levels in whole dB, toward zero", () => {
+    const dyn = channelDynamics(getModel("URX44V"), "ch1", 0)!;
+    const field = (fs: readonly DynField[], key: string): DynField => fs.find((f) => f.key === key)!;
+    for (const f of [
+      field(dyn.gate, "threshold"),
+      field(dyn.gate, "range"),
+      field(dyn.comp!, "threshold"),
+      field(DUCKER_FIELDS, "threshold"),
+      field(DUCKER_FIELDS, "range"),
+    ]) {
+      expect(f.step, f.name).toBe(1);
+      expect(f.unit, f.name).toBe("dbWhole");
+    }
+    for (const [v, label] of [
+      [-45, "-45 dB"],
+      [-45.5, "-45 dB"],
+      [-23.5, "-23 dB"],
+      [-18.5, "-18 dB"],
+      [-40.5, "-40 dB"],
+    ] as const) {
+      expect(formatDyn(v, "dbWhole"), `${v}`).toBe(label);
+    }
+  });
+  it("prints a finer level to one decimal, with no sign", () => {
+    for (const [v, label] of [
+      [2, "2.0 dB"],
+      [1.5, "1.5 dB"],
+      [-2.5, "-2.5 dB"],
+      [0, "0.0 dB"],
+    ] as const) {
+      expect(formatDyn(v, "db"), `${v}`).toBe(label);
+    }
+  });
+});
+
+describe("the frequency readouts", () => {
+  it("prints an EQ band frequency to three significant figures", () => {
+    for (const [hz, label] of [
+      [31.5, "31.5 Hz"],
+      [125, "125 Hz"],
+      [1000, "1.00 kHz"],
+      [4000, "4.00 kHz"],
+      [10000, "10.0 kHz"],
+    ] as const) {
+      expect(formatDyn(hz, "hz"), `${hz}`).toBe(label);
+    }
+  });
+  it("prints an SSMCS band or sidechain frequency as the R40 grade its raw names", () => {
+    for (const [raw, label] of [
+      [6, "22.4 Hz"],
+      [49, "265 Hz"],
+      [116, "12.5 kHz"],
+      [78, "1.40 kHz"],
+    ] as const) {
+      expect(fmtSsmcsHz(raw), `raw ${raw}`).toBe(label);
     }
   });
 });

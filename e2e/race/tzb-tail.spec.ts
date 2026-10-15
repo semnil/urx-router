@@ -590,12 +590,12 @@ test.describe("Tzb tail", () => {
     // FIXED (invariant 14). The CC lands in the plan on screen — a full-scale message,
     // so it lands at the top of the grid rather than at some other mid-travel step.
     expect(afterOrphanCc).not.toBe(restored);
-    expect(afterOrphanCc).toBe("+10.0");
+    expect(afterOrphanCc).toBe("10.00");
     // The same rule through the other replacement path, which goes via loadPlan: one
     // check in resolve() now covers both, so neither depends on its call site
     // remembering to notify the MIDI layer.
     expect(afterNewCc).not.toBe(fresh);
-    expect(afterNewCc).toBe("+10.0");
+    expect(afterNewCc).toBe("10.00");
   });
 
   // ------------------------------------------------------------ T6 teardown ----

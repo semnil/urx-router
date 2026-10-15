@@ -3,6 +3,7 @@ import { planParamZ } from "./plan-param";
 import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
+import { wheelOver } from "./graph-helpers";
 
 // Insert-FX effect editing: selecting an insert effect (guitar amp / pitch fix /
 // compander / multi-band comp) reveals its parameter editor, and the values
@@ -317,6 +318,34 @@ test("a compander keeps horizontal sliders and gains its transfer curve", async 
   });
   expect(inked, "the transfer curve must actually be drawn").toBeGreaterThan(1000);
   await closeScreen(page);
+});
+
+// The unit keeps a compander threshold's tenths and its encoder moves a whole dB from there.
+// The engine's own range input snaps a value off its step grid, so this is asked of the
+// shipped slider rather than of a stand-in.
+test("a compander threshold turns a whole dB and keeps its tenths", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch1: { insertFx: 1794, insertFxOn: true, insertFxParams: { "compander:6": -2350 } } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await node(page, "ch1").click();
+  await openScreen(page);
+  const threshold = screenRow(page, "Threshold").locator("input[type=range]");
+  await expect(threshold).toHaveValue("-2350");
+  await expect(threshold).toHaveAttribute("aria-valuetext", "-23 dB");
+  await threshold.focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(threshold).toHaveValue("-2250");
+  await expect(threshold).toHaveAttribute("aria-valuetext", "-22 dB");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(threshold).toHaveValue("-2450");
+  await wheelOver(page, threshold, -100);
+  await expect(threshold).toHaveValue("-2350");
 });
 
 test("switching guitar amp type swaps the type-specific control", async ({ page }) => {

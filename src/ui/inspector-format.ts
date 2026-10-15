@@ -5,13 +5,15 @@
 
 import { LEVEL_MIN_DB } from "../core/plan";
 import { formatHz } from "../core/control/fx-effect";
+import { preferredNumber, R40 } from "../core/control/preferred-numbers";
 import { formatDyn, formatTime } from "../core/control/translate";
 import { formatCompRatio } from "../core/control/comp-ratio";
 import {
   EQ_FREQ_MAX_HZ,
   EQ_FREQ_MIN_HZ,
+  formatLevelNumber,
+  SSMCS_FREQ_RAW_MIN,
   ssmcsAttackMs,
-  ssmcsFreqHz,
   ssmcsGainDb,
   ssmcsQ,
   ssmcsReleaseMs,
@@ -22,7 +24,7 @@ export const LEVEL_MIN = LEVEL_MIN_DB;
 
 export function formatDb(v: number): string {
   if (v < LEVEL_MIN) return "-∞ dB";
-  return `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
+  return `${formatLevelNumber(v)} dB`;
 }
 
 export function formatPan(v: number): string {
@@ -42,7 +44,10 @@ export const fmtSsmcsRelease = (raw: number): string => formatTime(ssmcsReleaseM
 export function fmtSsmcsRatio(r: number): string {
   return formatCompRatio(r, "ssmcs");
 }
-export const fmtSsmcsHz = (raw: number): string => formatHz(ssmcsFreqHz(raw));
+/** An SSMCS band frequency prints as the R40 grade the raw names (raw 4 = 20.0 Hz, one grade per
+ *  raw: 22.4 Hz, 265 Hz, 12.5 kHz), which the continuous `ssmcsFreqHz` the response curves are
+ *  drawn from lands near but not on. */
+export const fmtSsmcsHz = (raw: number): string => formatHz(preferredNumber(R40, raw - SSMCS_FREQ_RAW_MIN + 52));
 export const fmtSsmcsGain = (raw: number): string => formatDyn(ssmcsGainDb(raw), "db");
 export const fmtSsmcsQ = (raw: number): string => ssmcsQ(raw).toFixed(2);
 

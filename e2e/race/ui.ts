@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { insertFxSection, openInsertFxSection } from "../insert-fx-section";
-import { VD_LEVEL_OFF, vdToLevel } from "../../src/core/control/vd";
+import { formatLevelNumber, VD_LEVEL_OFF, vdToLevel } from "../../src/core/control/vd";
 
 export { insertFxSection, openInsertFxSection };
 
@@ -123,13 +123,12 @@ export const CH1_HPF_ADDR = CH1_HPF_FREQ.join(":");
 
 /** The fake's stored raw value rendered the way the console renders the plan's
  *  (src/ui/console.ts fmtDb over src/core/control/vd.ts vdToLevel), so "the screen shows
- *  what the device holds" is one string comparison. The sentinel and the decode are vd.ts's
- *  own; the formatting is restated, since console.ts is a DOM module. */
+ *  what the device holds" is one string comparison. The sentinel, the decode and the number
+ *  format are vd.ts's own. */
 export function deviceLevelText(raw: number | undefined): string {
   const v = raw ?? 0;
   if (v <= VD_LEVEL_OFF) return "-∞";
-  const db = vdToLevel(v);
-  return (db > 0 ? "+" : "") + db.toFixed(1);
+  return formatLevelNumber(vdToLevel(v));
 }
 
 /** What `settleValue` observed. Times are ms from the call, `-1` when it never happened. */

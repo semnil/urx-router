@@ -116,7 +116,7 @@ export const GATE_DYN: DynPlotProcessor = {
     c.fillStyle = tok["--gr"];
     const right = g.px(thr) > g.w - 94;
     c.textAlign = right ? "right" : "left";
-    const shown = closed ? "-∞" : formatDyn(rangeDb, "db");
+    const shown = closed ? "-∞" : formatDyn(rangeDb, "dbWhole");
     // The label is clamped where the line is not: it names the range, so it has to stay
     // readable even when the shelf it belongs to has left the frame.
     c.fillText(
@@ -135,6 +135,6 @@ export const GATE_DYN: DynPlotProcessor = {
     c.globalAlpha = 1;
     c.fillStyle = tok["--led"];
     c.textAlign = "left";
-    c.fillText(formatDyn(thr, "db"), Math.min(g.px(thr) + 5, g.w - 74), g.pad.t + 11);
+    c.fillText(formatDyn(thr, "dbWhole"), Math.min(g.px(thr) + 5, g.w - 74), g.pad.t + 11);
   },
 };

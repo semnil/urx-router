@@ -29,29 +29,29 @@ test("a rack send-fader edit is read back on the graph's CH -> MIX wire", async 
   await fader.focus();
   await page.keyboard.press("Home");
   // The header readout reflects the edited send.
-  await expect(strip(page, "CH 1").locator(".con-sh .rdout")).toContainText("MIX 1 +10.0");
+  await expect(strip(page, "CH 1").locator(".con-sh .rdout")).toContainText("MIX 1 10.00");
 
   // The same send level reads back on the graph's CH 1 -> MIX 1 wire.
   await page.click("#btn-view-graph");
   await selectWire(page, "ch1:out", "bus.mix1:in");
-  await expect(page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val")).toHaveText("+10.0 dB");
+  await expect(page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val")).toHaveText("10.00 dB");
 });
 
 test("a console fader edit is read back on the graph's CH -> STEREO wire", async ({ page }) => {
   await page.click("#btn-view-console");
   const readout = strip(page, "CH 1").locator(".con-readout .rd:not(.mtr) .rv");
-  await expect(readout).toHaveText("0.0");
+  await expect(readout).toHaveText("0.00");
   await strip(page, "CH 1").locator(".con-fader").focus();
   // Two detents up the level_gain grid: 0.0 -> +0.4 -> +1.2 dB.
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
-  await expect(readout).toHaveText("+1.2");
+  await expect(readout).toHaveText("1.20");
 
   // The CH 1 main fader IS the CH1 -> STEREO send level; selecting that wire on
   // the graph must show the same +1.2 dB the console just set.
   await page.click("#btn-view-graph");
   await selectWire(page, "ch1:out", "bus.stereo:in");
-  await expect(page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val")).toHaveText("+1.2 dB");
+  await expect(page.locator("#inspector .param", { hasText: "Level" }).locator(".param-val")).toHaveText("1.20 dB");
 });
 
 test("a graph-side channel mute dims the console strip and unlights its power LED", async ({ page }) => {

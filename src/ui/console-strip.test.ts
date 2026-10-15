@@ -61,8 +61,9 @@ describe("the main fader", () => {
     const r = h.strip("ch1");
     const before = main("ch1")!;
     key(r.fader!, "ArrowUp");
-    expect(main("ch1")).toBeGreaterThan(before);
-    expect(r.readDb!.textContent).toBe(main("ch1")! > 0 ? "+" + main("ch1")!.toFixed(1) : main("ch1")!.toFixed(1));
+    expect(before).toBe(0);
+    expect(main("ch1")).toBe(0.4);
+    expect(r.readDb!.textContent).toBe("0.40");
     expect(r.fader!.getAttribute("aria-valuenow")).toBe(String(Math.round(main("ch1")!)));
   });
 
@@ -602,7 +603,7 @@ describe("what each slider exposes", () => {
       key(h.strip("ch1").fader!, "ArrowUp");
       seen.push(text());
     }
-    expect(seen).toEqual(["-0.4 dB", "0.0 dB", "+0.4 dB"]);
+    expect(seen).toEqual(["-0.40 dB", "0.00 dB", "0.40 dB"]);
     expect(text(), "the readout's own text, with its unit").toBe(h.strip("ch1").readDb!.textContent + " dB");
   });
 

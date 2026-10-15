@@ -132,16 +132,16 @@ test.describe("T4b midi", () => {
       { control: "ch2/level", addr: CC7, mode: "absolute" },
     ]);
     await expect(sendFader(page, "CH 3", "MIX 1")).toBeVisible();
-    expect(await faderReadout(page, "CH 1").textContent()).toBe("0.0");
+    expect(await faderReadout(page, "CH 1").textContent()).toBe("0.00");
     expect(await sendFader(page, "CH 3", "MIX 1").getAttribute("aria-valuetext")).toBe("off (-∞)");
 
     await mark(page, "cc");
     await pushMidi(page, [cc7(114)]); // 114/127 × 40 → pos 36 → +5.0 dB
 
     // All three land, from one message, on three different wires.
-    await expect(faderReadout(page, "CH 1")).toHaveText("+5.0");
-    await expect(faderReadout(page, "CH 2")).toHaveText("+5.0");
-    await expect(sendFader(page, "CH 3", "MIX 1")).toHaveAttribute("aria-valuetext", "+5.0 dB");
+    await expect(faderReadout(page, "CH 1")).toHaveText("5.00");
+    await expect(faderReadout(page, "CH 2")).toHaveText("5.00");
+    await expect(sendFader(page, "CH 3", "MIX 1")).toHaveAttribute("aria-valuetext", "5.00 dB");
 
     const ledger = await ledgerOf(page);
     const fanout = ledger.filter((l) => l.source === "midi");
@@ -188,8 +188,8 @@ test.describe("T4b midi", () => {
 
     await mark(page, "cc-vari");
     await pushMidi(page, [cc7(114)]); // +5.0 dB on all three
-    await expect(faderReadout(page, "CH 1")).toHaveText("+5.0");
-    await expect(sendFader(page, "CH 1", "MIX 1")).toHaveAttribute("aria-valuetext", "+5.0 dB");
+    await expect(faderReadout(page, "CH 1")).toHaveText("5.00");
+    await expect(sendFader(page, "CH 1", "MIX 1")).toHaveAttribute("aria-valuetext", "5.00 dB");
 
     // Switch MIX 1 to FIXED: the send LEVEL is device-locked from here on, and the panel's
     // BUS Type takes the unit's reset of the MIX's send bank, so the head's value is -∞ now.
@@ -200,13 +200,13 @@ test.describe("T4b midi", () => {
     await expect(faderReadout(page, "CH 1")).toBeVisible();
     await page.waitForTimeout(600); // let any feedback the edit scheduled run + settle
     const headAfterFixed = (await sendFader(page, "CH 1", "MIX 1").getAttribute("aria-valuetext")) ?? "";
-    expect(headAfterFixed, "the reset took the head's +5.0 dB").not.toBe("+5.0 dB");
+    expect(headAfterFixed, "the reset took the head's +5.0 dB").not.toBe("5.00 dB");
     const sentBefore = (await midiSentOf(page)).length;
 
     await mark(page, "cc-fixed");
     await pushMidi(page, [cc7(76)]); // 76/127 × 40 → pos 24 → -5.0 dB
-    await expect(faderReadout(page, "CH 1")).toHaveText("-5.0");
-    await expect(faderReadout(page, "CH 2")).toHaveText("-5.0");
+    await expect(faderReadout(page, "CH 1")).toHaveText("-5.00");
+    await expect(faderReadout(page, "CH 2")).toHaveText("-5.00");
     // The head itself refused the write ("drop locked"), silently.
     await expect(sendFader(page, "CH 1", "MIX 1")).toHaveAttribute("aria-valuetext", headAfterFixed);
 
@@ -225,7 +225,7 @@ test.describe("T4b midi", () => {
     await mark(page, "ui-member");
     await faderOf(page, "CH 1").focus();
     await page.keyboard.press("ArrowUp");
-    await expect(faderReadout(page, "CH 1")).toHaveText("-4.0");
+    await expect(faderReadout(page, "CH 1")).toHaveText("-4.00");
     await page.waitForTimeout(800);
     expect((await midiSentOf(page)).length).toBe(sentBefore);
 
@@ -241,7 +241,7 @@ test.describe("T4b midi", () => {
       { control: "ch1/level", addr: CC7, mode: "absolute" },
       { control: "ch2/level", addr: CC7, mode: "pickup" },
     ]);
-    expect(await faderReadout(page, "CH 2").textContent()).toBe("0.0");
+    expect(await faderReadout(page, "CH 2").textContent()).toBe("0.00");
 
     await mark(page, "sweep");
     // A sweep that starts below the plan value, crosses it, and ends above it —
@@ -250,7 +250,7 @@ test.describe("T4b midi", () => {
       await pushMidi(page, [cc7(v)]);
       await page.waitForTimeout(30);
     }
-    await expect(faderReadout(page, "CH 1")).toHaveText("+10.0");
+    await expect(faderReadout(page, "CH 1")).toHaveText("10.00");
 
     await dump(page, "gang pickup inheritance", "sweep", { ledger: await ledgerOf(page) });
     const ch1 = await faderReadout(page, "CH 1").textContent();
@@ -261,7 +261,7 @@ test.describe("T4b midi", () => {
     // 0.75) and it still never took over. The gang is one physical control, so the
     // operator has no way to engage it — the mode is a per-mapping setting whose
     // state is not.
-    expect(await faderReadout(page, "CH 2").textContent()).toBe("0.0");
+    expect(await faderReadout(page, "CH 2").textContent()).toBe("0.00");
     const level = writersOf(await ledgerOf(page), "connParams", WIRE("ch2:out", "bus.stereo:in"), "level");
     expect(level).toHaveLength(0); // not "written back to the same value" — never written
   });
@@ -306,7 +306,7 @@ test.describe("T4b midi", () => {
     await expect(faderReadout(page, "CH 1")).toBeVisible();
     await mark(page, "cc");
     await pushMidi(page, [cc7(114)]); // ch1/level → +5.0 dB
-    await expect(faderReadout(page, "CH 1")).toHaveText("+5.0");
+    await expect(faderReadout(page, "CH 1")).toHaveText("5.00");
     await settleAfter(page, "cc");
 
     const trace = await traceOf(page);
@@ -333,7 +333,7 @@ test.describe("T4b midi", () => {
     expect((await memOf(page))[CH2_GATE_THRESHOLD]).toBe(ch1Threshold);
     // The partner's fader moved too, which is the mirror working as designed — it
     // is the same copy, and the same copy carries everything else with it.
-    await expect(faderReadout(page, "CH 2")).toHaveText("+5.0");
+    await expect(faderReadout(page, "CH 2")).toHaveText("5.00");
     expect((await memOf(page))[CH2_FADER]).toBe(500);
   });
 
@@ -371,7 +371,7 @@ test.describe("T4b midi", () => {
     await expect(faderReadout(page, "CH 1")).toBeVisible();
     await mark(page, "cc");
     await pushMidi(page, [cc7(114)]);
-    await expect(faderReadout(page, "CH 1")).toHaveText("+5.0");
+    await expect(faderReadout(page, "CH 1")).toHaveText("5.00");
     await settleAfter(page, "cc");
 
     const trace = await traceOf(page);
@@ -565,15 +565,15 @@ test.describe("T4b midi", () => {
     // Fresh pair state: MSB 100, LSB 0 → 12800/16383 → pos 31 → +0.4 dB.
     await mark(page, "msb-only");
     await pushMidi(page, [cc7(100)]);
-    await expect(faderReadout(page, "CH 1")).toHaveText("+0.4");
+    await expect(faderReadout(page, "CH 1")).toHaveText("0.40");
 
     // The LSB half alone re-combines and moves the fader by itself: 12927 → pos 32.
     await pushMidi(page, [cc(39, 127)]);
-    await expect(faderReadout(page, "CH 1")).toHaveText("+1.2");
+    await expect(faderReadout(page, "CH 1")).toHaveText("1.20");
 
     // A coarse MSB-only sweep now carries that sub-detent tail on every step.
     await pushMidi(page, [cc7(110)]); // (110<<7)|127 = 14207 → pos 35 → +4.0
-    await expect(faderReadout(page, "CH 1")).toHaveText("+4.0");
+    await expect(faderReadout(page, "CH 1")).toHaveText("4.00");
 
     // Close and reopen the input port from the MIDI window — the operator unplugging
     // and replugging a controller.
@@ -592,7 +592,7 @@ test.describe("T4b midi", () => {
     // Pinned behaviour: identical physical message, different plan value — the LSB
     // from before the port change is still attached, so the coarse sweep writes
     // values with sub-detent garbage in them and a reconnect does not clear it.
-    await expect(faderReadout(page, "CH 1")).toHaveText("+1.2");
+    await expect(faderReadout(page, "CH 1")).toHaveText("1.20");
   });
 
   test("one CC 39 fires both a plain binding and a 14-bit binding, and the panel calls them unrelated", async ({
@@ -602,8 +602,8 @@ test.describe("T4b midi", () => {
       { control: "ch1/level", addr: CC14_7, mode: "absolute" }, // MSB 7 / LSB 39
       { control: "ch2/level", addr: CC39, mode: "absolute" }, // plain CC 39
     ]);
-    expect(await faderReadout(page, "CH 1").textContent()).toBe("0.0");
-    expect(await faderReadout(page, "CH 2").textContent()).toBe("0.0");
+    expect(await faderReadout(page, "CH 1").textContent()).toBe("0.00");
+    expect(await faderReadout(page, "CH 2").textContent()).toBe("0.00");
 
     await mark(page, "cc39");
     await pushMidi(page, [cc(39, 127)]);
@@ -611,8 +611,8 @@ test.describe("T4b midi", () => {
     // full scale, CH 1 reads it as the LSB half of a 14-bit pair whose MSB has not
     // arrived, which edits nothing. Both readouts are read after CH 2's has moved, so
     // CH 1's is taken once the message has been applied.
-    await expect(faderReadout(page, "CH 2")).toHaveText("+10.0");
-    await expect(faderReadout(page, "CH 1")).toHaveText("0.0");
+    await expect(faderReadout(page, "CH 2")).toHaveText("10.00");
+    await expect(faderReadout(page, "CH 1")).toHaveText("0.00");
 
     const win = await openMidiWindow(page);
     const rows = win.locator(".mw-list tbody tr");

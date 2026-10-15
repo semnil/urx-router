@@ -162,7 +162,7 @@ test.describe("send-level fader snaps to the device grid", () => {
     // The index-based grid maps 0 = off (-inf) .. LEVEL_STEPS_DB.length = +10 dB.
     await expect(slider).toHaveAttribute("min", "0");
     await expect(slider).toHaveAttribute("max", "40");
-    await expect(levelRow.locator(".param-val")).toHaveText("0.0 dB");
+    await expect(levelRow.locator(".param-val")).toHaveText("0.00 dB");
 
     // Step well past the bottom detent: the value floors at -inf and the readout
     // renders the infinity glyph wrapped in a .glyph-inf span (glyph.ts), not a
@@ -176,6 +176,6 @@ test.describe("send-level fader snaps to the device grid", () => {
     // Step well past the top detent: the value ceils at +10 dB.
     for (let i = 0; i < 60; i++) await page.keyboard.press("ArrowUp");
     await expect(slider).toHaveValue("40");
-    await expect(levelRow.locator(".param-val")).toHaveText("+10.0 dB");
+    await expect(levelRow.locator(".param-val")).toHaveText("10.00 dB");
   });
 });

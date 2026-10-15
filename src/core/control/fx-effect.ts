@@ -182,15 +182,17 @@ const FX_NOTE_OPTIONS = [
 
 // ---- shared display formatters ----
 
-/** Hz value → "560 Hz" / "3.55 kHz". Shared with the inspector's SSMCS readouts and the
- *  channel EQ, so it is the app's own default rather than any one control's rule. */
+/** Three significant figures, trailing zeros kept (50.0, 8.00, 16.0). */
+const threeFigures = (v: number): string => v.toPrecision(3);
+/** Hz value → the label the unit prints for a frequency: three significant figures in both
+ *  bands (31.5 Hz, 125 Hz, 1.00 kHz, 10.0 kHz). The channel and output EQ, the SSMCS bands
+ *  and the FX2 filters print this way; the REV-X filters drop the decimal below 1 kHz. */
 export function formatHz(hz: number): string {
-  if (hz >= 1000) return `${(hz / 1000).toFixed(2)} kHz`;
-  return `${Math.round(hz)} Hz`;
+  return hz >= 1000 ? `${threeFigures(hz / 1000)} kHz` : `${threeFigures(hz)} Hz`;
 }
 
-/* The two FX filter families are printed to DIFFERENT precisions, and the app follows each
- * rather than the default above, because these rows name a setting the unit also displays.
+/* The two FX filter families are printed to DIFFERENT precisions: FX2 takes the default above,
+ * and FX1 departs from it in the Hz band.
  *
  *  band        FX1 (REV-X, R20)     FX2 (Rev.R3 / delay, R40)
  *  < 1 kHz     integer  22, 250     3 significant figures  21.2, 50.0, 315
@@ -202,17 +204,17 @@ export function formatHz(hz: number): string {
  *
  * `toPrecision(3)` is the three-figure half: it keeps the trailing zeros the unit shows
  * (50.0, 8.00k, 16.0k) that a fixed decimal count cannot give across bands. */
-const threeFigures = (v: number): string => v.toPrecision(3);
 /** REV-X filter frequency → the label the unit prints for it. */
 export function formatFx1Hz(hz: number): string {
   return hz >= 1000 ? `${threeFigures(hz / 1000)} kHz` : `${Math.round(hz)} Hz`;
 }
 /** Rev.R3 / delay filter frequency → the label the unit prints for it. */
 export function formatFx2Hz(hz: number): string {
-  return hz >= 1000 ? `${threeFigures(hz / 1000)} kHz` : `${threeFigures(hz)} Hz`;
+  return formatHz(hz);
 }
-function formatSec(s: number): string {
-  return `${s < 10 ? s.toFixed(2) : s.toFixed(1)} s`;
+/** Rev.R3 Reverb Time, to the one decimal the unit prints it with (0.3, 1.9, 30.0). */
+function formatRevR3Sec(s: number): string {
+  return `${s.toFixed(1)} s`;
 }
 /** REV-X Reverb Time, to the three significant figures the unit prints it with (0.927,
  *  2.79, 31.0) — a fixed decimal count drops a digit below 1 s and adds one above 10 s. */
@@ -399,7 +401,7 @@ export const REVR3_PARAMS: FxParamDesc[] = [
     rawMax: 69,
     rawStep: 1,
     def: 15,
-    format: (r) => formatSec(revR3TimeSec(r)),
+    format: (r) => formatRevR3Sec(revR3TimeSec(r)),
   },
   {
     key: "revr3InitialDelay",
@@ -454,7 +456,7 @@ export const REVR3_PARAMS: FxParamDesc[] = [
     rawMax: 99,
     rawStep: 1,
     def: 0,
-    format: (r) => `${r > 0 ? "+" : ""}${r}%`,
+    format: (r) => `${r}%`,
   },
   {
     key: "erRevDelay",
@@ -542,7 +544,7 @@ export const DELAY_PARAMS: FxParamDesc[] = [
     rawMax: 99,
     rawStep: 1,
     def: 20,
-    format: (r) => `${r > 0 ? "+" : ""}${r}%`,
+    format: (r) => `${r}%`,
   },
   {
     key: "delayHiRatio",

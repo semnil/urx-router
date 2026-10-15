@@ -75,7 +75,7 @@ describe("fx-effect encodings (live calibration anchors)", () => {
   // DIFFERENT precisions and only the Hz band differs: FX1 drops the decimal FX2 keeps. That is
   // the shape of the two tables — R20's grades stay distinct as integers (20/22/25/28/32/36)
   // while R40's would not (10.6 and 11.2 both read 11) — so a single formatter cannot serve
-  // both, and the app's shared `formatHz` serves neither.
+  // both. FX2's is the app's shared `formatHz`, the form the EQ and SSMCS bands print in too.
   //
   // The app writes a space before the unit and the LCD does not; that is house typography,
   // applied to every frequency row in the app, and the VALUE is what the panel and the unit
@@ -130,10 +130,10 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     expect(formatFx1Hz(22.4)).not.toBe(formatFx2Hz(22.4));
   });
 
-  // …and the rows themselves take it. Pinning the formatters alone leaves a descriptor free to
-  // go on calling the app's shared `formatHz`, which is a row that reads 3.55 kHz as "3.55 kHz"
-  // and 22.4 Hz as "22 Hz" — right by luck in one band and wrong in the other. Measured raws,
-  // through the descriptor the panel actually renders.
+  // …and the rows themselves take it. Pinning the formatters alone leaves a REV-X descriptor
+  // free to call the shared `formatHz` (FX2's form), which reads 3.55 kHz as "3.55 kHz" and
+  // 22.4 Hz as "22.4 Hz" — right in one band and wrong in the other. Measured raws, through the
+  // descriptor the panel actually renders.
   it("renders each filter row through its own family's formatter", () => {
     const row = (type: number, key: string): FxParamDesc => fxParams(type).find((d) => d.key === key)!;
     for (const [type, key, raw, label] of [
@@ -143,15 +143,11 @@ describe("fx-effect encodings (live calibration anchors)", () => {
       [0, "lowFreq", 1, "22 Hz"],
       [0, "revxLpf", 44, "3.15 kHz"],
       [0, "revxLpf", 45, "3.55 kHz"],
-      // The top of each REV-X window, which is the band where the app's shared formatHz and
-      // this one part company (it writes two decimals in kHz, so 18.0 would read 18.00).
-      // Without a point here the row can go on calling the shared one and every other
-      // assertion still passes. Two swaps here are behaviour-preserving over the DECLARED
-      // window and stay green correctly: `revxHpf` to the shared `formatHz` (its window,
-      // raw 0-52 = 20 Hz to 8 kHz, ends below the 10 kHz band where the two diverge), and
-      // `revxLpf` to `formatFx2Hz` (its window, raw 34-60, is entirely at or above 1 kHz,
-      // where the two families print alike). Both are equivalences of the window, not of the
-      // functions — `format` does not clamp, so either is separable at an out-of-window raw.
+      // The top of each REV-X window: three figures in kHz, trailing zero kept. One swap stays
+      // green correctly: `revxLpf` to `formatHz` / `formatFx2Hz` (its window, raw 34-60, is
+      // entirely at or above 1 kHz, where the two families print alike). That is an
+      // equivalence of the window, not of the functions — `format` does not clamp, so the two
+      // are separable at an out-of-window raw.
       [0, "lowFreq", 59, "18.0 kHz"],
       [0, "revxLpf", 60, "20.0 kHz"],
       // Mono Delay: one click above THRU, and both ends of the LPF's window.
@@ -374,6 +370,29 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     expect(revR3TimeSec(16)).toBeCloseTo(1.9, 5);
     expect(revR3TimeSec(57)).toBeCloseTo(10.0, 5);
     expect(revR3TimeSec(69)).toBeCloseTo(30.0, 5);
+  });
+  it("Rev.R3 reverb time reads one decimal across its whole range", () => {
+    const rt = fxParams(768).find((d) => d.key === "reverbTime")!.format!;
+    for (const [raw, label] of [
+      [0, "0.3 s"],
+      [16, "1.9 s"],
+      [47, "5.0 s"],
+      [58, "11.0 s"],
+      [69, "30.0 s"],
+    ] as const) {
+      expect(rt(raw, {}), `raw ${raw}`).toBe(label);
+    }
+  });
+  it("Feedback prints a positive value without a sign, on Rev.R3 and on both delays", () => {
+    for (const [type, key] of [
+      [768, "revr3Feedback"],
+      [1024, "delayFeedback"],
+      [1025, "delayFeedback"],
+    ] as const) {
+      const fb = fxParams(type).find((d) => d.key === key)!.format!;
+      expect(fb(99, {}), `${type}`).toBe("99%");
+      expect(fb(-99, {}), `${type}`).toBe("-99%");
+    }
   });
   it("REV-X reverb time is base × 3^(roomSize/31)", () => {
     expect(revxTimeSec(24, 0)).toBeCloseTo(0.927, 2);

@@ -233,7 +233,7 @@ test.describe("T4 midi", () => {
       await page.waitForTimeout(d);
       await mark(page, "midi");
       await pushMidi(page, [cc7(114)]); // CH 1 → +5.0 dB, a node the wheel never touched
-      await expect(faderReadout(page, "CH 1")).toHaveText("+5.0");
+      await expect(faderReadout(page, "CH 1")).toHaveText("5.00");
 
       await page.waitForTimeout(Math.max(0, 3000 - d));
       await mark(page, "undo");
@@ -334,7 +334,7 @@ test.describe("T4 midi", () => {
     // No second writer: the CH 1 fader never moved, and the same undo takes the wheel
     // edit back on its own.
     expect((await memOf(page))[CH1_FADER]).toBeUndefined();
-    expect(await faderReadout(page, "CH 1").textContent()).not.toBe("+5.0");
+    expect(await faderReadout(page, "CH 1").textContent()).not.toBe("5.00");
     expect(undoStatus).toBe("Undone");
     expect(ch2AfterUndo).toBe(ch2Before);
     expect((await memOf(page))[CH2_FADER]).toBe(0);
@@ -454,21 +454,21 @@ test.describe("T4 midi", () => {
     await page.click("#btn-view-console");
     await mark(page, "boot");
     const readout = faderReadout(page, "CH 1");
-    await expect(readout).toHaveText("0.0"); // factory CH 1 → STEREO level
+    await expect(readout).toHaveText("0.00"); // factory CH 1 → STEREO level
 
     // Seed lastIn below the plan value, then cross above it. Two messages at the same
     // 40% (as the catalog words it) cannot cross — the product (lastIn − cur)(in − cur)
     // is positive — so the pair has to straddle for pickup to engage at all.
     await pushMidi(page, [cc7(40)]); // 0.315 vs plan 0.75: swallowed, lastIn seeded
     await page.waitForTimeout(120);
-    expect(await readout.textContent()).toBe("0.0");
+    expect(await readout.textContent()).toBe("0.00");
     await pushMidi(page, [cc7(120)]); // crosses → engaged → 0.945 → pos 38 → +7.2
-    await expect(readout).toHaveText("+7.2");
+    await expect(readout).toHaveText("7.20");
 
     // The operator now moves the same fader in the UI, five detents down.
     await faderOf(page, "CH 1").focus();
     for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowDown");
-    await expect(readout).toHaveText("+2.0");
+    await expect(readout).toHaveText("2.00");
     // The address received input moments ago, so the pass defers behind RECENT_MS and
     // lands on the 350 ms settle retry.
     await page.waitForTimeout(700);
@@ -477,27 +477,27 @@ test.describe("T4 midi", () => {
     await pushMidi(page, [cc7(122)]); // 0.961: neither near nor crossing the plan's 0.825
     await page.waitForTimeout(200);
     // Swallowed, exactly as CC 40 was: the pass with no port un-engaged the binding.
-    expect(await readout.textContent()).toBe("+2.0");
+    expect(await readout.textContent()).toBe("2.00");
     // …and the binding still takes over where the physical control crosses the plan value.
     await pushMidi(page, [cc7(100)]); // 0.787: crosses 0.825 from above → engaged → pos 31
-    await expect(readout).toHaveText("+0.4");
+    await expect(readout).toHaveText("0.40");
     await pushMidi(page, [cc7(120)]); // tracks → pos 38
-    await expect(readout).toHaveText("+7.2");
+    await expect(readout).toHaveText("7.20");
 
     // Second cycle, same session and same binding. The reflects above replaced the strip,
     // so the fader has to be focused again.
     await faderOf(page, "CH 1").focus();
     for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowDown");
-    await expect(readout).toHaveText("+3.2"); // pos 34
+    await expect(readout).toHaveText("3.20"); // pos 34
     await page.waitForTimeout(700); // the debounce, then the settle retry behind RECENT_MS
     await mark(page, "twitch-no-output-2");
     await pushMidi(page, [cc7(118)]); // 0.929: again neither near nor crossing 0.85
     await page.waitForTimeout(200);
-    expect(await readout.textContent()).toBe("+3.2"); // swallowed a second time
+    expect(await readout.textContent()).toBe("3.20"); // swallowed a second time
     await pushMidi(page, [cc7(100)]); // 0.787: crosses 0.85 from above → engaged → pos 31
-    await expect(readout).toHaveText("+0.4");
+    await expect(readout).toHaveText("0.40");
     await pushMidi(page, [cc7(118)]); // tracks → pos 37
-    await expect(readout).toHaveText("+6.0");
+    await expect(readout).toHaveText("6.00");
 
     // Open the output port. Nothing goes on the wire — the output side stays shut until
     // a live readback establishes the plan — and the pass runs as it did without one.
@@ -514,18 +514,18 @@ test.describe("T4 midi", () => {
     await mark(page, "edit-with-output");
     await faderOf(page, "CH 1").focus();
     for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");
-    await expect(readout).toHaveText("+3.2"); // pos 34, three detents down from +6.0
+    await expect(readout).toHaveText("3.20"); // pos 34, three detents down from +6.0
     await page.waitForTimeout(700); // the debounce, then the settle retry behind RECENT_MS
 
     await mark(page, "twitch-with-output");
     await pushMidi(page, [cc7(60)]); // 0.472 vs plan 0.85: swallowed now
     await page.waitForTimeout(200);
-    expect(await readout.textContent()).toBe("+3.2");
+    expect(await readout.textContent()).toBe("3.20");
     await pushMidi(page, [cc7(100)]); // 0.787: same side as 0.472 — still swallowed
     await page.waitForTimeout(200);
-    expect(await readout.textContent()).toBe("+3.2");
+    expect(await readout.textContent()).toBe("3.20");
     await pushMidi(page, [cc7(127)]); // crosses 0.85 → re-engages → +10.0
-    await expect(readout).toHaveText("+10.0");
+    await expect(readout).toHaveText("10.00");
 
     const trace = await traceOf(page);
     console.log(timeline(trace, { from: markTime(trace, "boot")! - 50 }));

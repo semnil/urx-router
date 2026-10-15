@@ -274,6 +274,13 @@ export function vdToLevel(value: number): number {
   return clamp(value / 100, LEVEL_MIN_DB, LEVEL_MAX_DB);
 }
 
+/** A level as the unit's own screen prints it: two decimals above -10 dB, one at -10 dB and
+ *  below, and no sign on a positive value (`10.00`, `0.40`, `-8.80`, `-10.0`, `-96.0`). Below
+ *  the floor is the caller's `-∞`. */
+export function formatLevelNumber(db: number): string {
+  return db <= -10 ? db.toFixed(1) : db.toFixed(2);
+}
+
 /** Plan pan (±63, L63 – C – R63) → broker ±63 — a 1:1 mapping, clamped. */
 export function panToVd(pan: number): number {
   return clamp(Math.round(pan), -VD_PAN_MAX, VD_PAN_MAX);

@@ -124,7 +124,10 @@ still claims is given back — and that is the state an operator most needs to r
   Double-click = factory reset. Scroll wheel = 1 detent per notch (mirrors Arrow; the main fader,
   the head knob, and the inspector sliders share the same `onWheelStep` wiring in `src/ui/dom.ts`).
 - No numeric column. While a column is hovered / dragged / focused, the rack header swaps its
-  `SENDS` label for a value readout — `MIX 1 -3.2` (destination and level). The header has a fixed
+  `SENDS` label for a value readout — `MIX 1 -3.20` (destination and level). A level prints the way
+  the unit's own send level knob prints it — two decimals above -10 dB, one from -10 dB down, and no
+  sign on a positive value (`10.00`, `0.40`, `-8.80`, `-10.0`, `-96.0`) — here, on the strip's fader
+  readout and in the Inspector's Level row, which adds the unit. The header has a fixed
   height so the swap never reflows the rack, and the readout gets what the collapse arrow and the
   flex gap leave of the header — itself the strip less its border and the rack's padding — which the
   longest reading has to fit: it neither wraps nor ellipsises, so an over-wide one is clipped into a

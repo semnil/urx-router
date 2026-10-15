@@ -48,11 +48,11 @@ test.describe("tuning-screen sliders", () => {
     const readout = row.locator(".param-val");
     await expect(slider).toHaveAttribute("step", "0.5");
     await wheelOver(page, slider, -100);
-    await expect(readout).toHaveText("+0.5 dB");
+    await expect(readout).toHaveText("0.5 dB");
     await page.keyboard.down("Shift");
     await expect(slider).toHaveAttribute("step", "0.1");
     await wheelOver(page, slider, -100);
-    await expect(readout).toHaveText("+0.6 dB");
+    await expect(readout).toHaveText("0.6 dB");
     await page.keyboard.up("Shift");
     await expect(slider).toHaveAttribute("step", "0.5");
   });
@@ -89,8 +89,8 @@ test.describe("tuning-screen sliders", () => {
     await expect(tag).toHaveCSS("opacity", DIM);
     // Label-pinned: a readout width change must not move the legend.
     const before = await tag.boundingBox();
-    await wheelOver(page, row.locator("input[type=range]"), -100); // "0 dB" → "+0.5 dB"
-    await expect(row.locator(".param-val")).toHaveText("+0.5 dB");
+    await wheelOver(page, row.locator("input[type=range]"), -100); // "0.0 dB" → "0.5 dB"
+    await expect(row.locator(".param-val")).toHaveText("0.5 dB");
     expect(await tag.boundingBox()).toEqual(before);
   });
 
@@ -180,11 +180,11 @@ test.describe("console view", () => {
   test("the main fader keeps its detent grid under Shift", async ({ page }) => {
     const s = strip(page, "CH 1");
     const readout = s.locator(".con-readout .rd:not(.mtr) .rv");
-    await expect(readout).toHaveText("0.0");
+    await expect(readout).toHaveText("0.00");
     await page.keyboard.down("Shift");
     await wheelOver(page, s.locator(".con-fader"), -100);
     await page.keyboard.up("Shift");
-    await expect(readout).toHaveText("+0.4"); // one level_gain detent — no fine grid on faders
+    await expect(readout).toHaveText("0.40"); // one level_gain detent — no fine grid on faders
   });
 });
 

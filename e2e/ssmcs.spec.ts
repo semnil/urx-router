@@ -442,7 +442,7 @@ test.describe("the tuning screen's three faces", () => {
       const before = await image();
       await gain.fill(String(Number(await gain.inputValue()) + 60)); // +6.0 dB
       await gain.dispatchEvent("input");
-      await expect(readout, band).toHaveText(/\+6\.0\s*dB/);
+      await expect(readout, band).toHaveText(/^6\.0\s*dB$/);
       await expect.poll(image, { message: `${band}: the curve is redrawn` }).not.toBe(before);
     }
   });

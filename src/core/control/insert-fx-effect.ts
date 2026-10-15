@@ -284,12 +284,24 @@ export interface InsertFxParamDesc {
   rawMin?: number;
   rawMax?: number;
   rawStep?: number;
+  /** How far one arrow press or wheel notch moves the value, where the unit's own encoder
+   *  moves it further than the `rawStep` the value is held to. The finer part of a value
+   *  the operator turns is kept. Absent = the turn is one `rawStep`. */
+  rawTurnStep?: number;
   /** Factory default raw — the inspector's absent-value fallback for display. */
   def: number;
   /** Display formatter for a raw value (slider/select). */
   format?: (raw: number) => string;
   /** Option list for a select control (value = raw). */
   options?: { value: number; label: string }[];
+}
+
+/** Compander Release raw (ms×10) → the label the unit prints: three significant figures, to
+ *  no finer than the 0.1 ms the value holds (5.0 ms, 65.4 ms, 999 ms, 1.23 s, 42.3 s). */
+function companderReleaseLabel(raw: number): string {
+  const ms = raw / 10;
+  if (ms >= 1000) return `${(ms / 1000).toPrecision(3)} s`;
+  return `${ms < 100 ? ms.toFixed(1) : Math.round(ms)} ms`;
 }
 
 // Compander-H / Compander-S (engine 689 input / 693 output). Encodings match the
@@ -301,9 +313,13 @@ const COMPANDER_PARAMS: InsertFxParamDesc[] = [
     control: "slider",
     rawMin: -5400,
     rawMax: 0,
+    // Held to 0.1 dB, the finest value the link writes and the unit keeps; a turn moves it a
+    // whole dB, the unit's encoder click, keeping the tenths. The unit prints the whole-dB
+    // part, toward zero, which is what the readout below does.
     rawStep: 10,
+    rawTurnStep: 100,
     def: -1000,
-    format: (r) => `${(r / 100).toFixed(1)} dB`,
+    format: (r) => `${Math.trunc(r / 100)} dB`,
   },
   {
     slot: 7,
@@ -337,7 +353,7 @@ const COMPANDER_PARAMS: InsertFxParamDesc[] = [
     // the device enforces.
     rawStep: 10,
     def: 2290,
-    format: (r) => (r >= 10000 ? `${(r / 10000).toFixed(2)} s` : `${Math.round(r / 10)} ms`),
+    format: companderReleaseLabel,
   },
   {
     slot: 10,
@@ -529,9 +545,8 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
     rawMax: 12,
     rawStep: 1,
     def: 0,
-    // Semitones. Coarse and Fine sit side by side and the guide names their units in prose
-    // alone, so without the suffix the two readouts are the same bare signed number.
-    format: (r) => `${r > 0 ? "+" : ""}${r} st`,
+    // Semitones, and Fine's cents below, print as the bare number the unit's screen shows.
+    format: (r) => String(r),
   },
   {
     slot: 7,
@@ -542,7 +557,7 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
     rawMax: 50,
     rawStep: 1,
     def: 0,
-    format: (r) => `${r > 0 ? "+" : ""}${r} ct`,
+    format: (r) => String(r),
   },
   {
     slot: 8,
@@ -553,7 +568,7 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
     rawMax: 126,
     rawStep: 1,
     def: 64,
-    format: (r) => `${r - 64 > 0 ? "+" : ""}${r - 64}`,
+    format: (r) => `${r - 64}`,
   },
   { slot: 13, label: "correction", control: "toggle", def: 1 },
   { slot: 14, label: "mix", control: "slider", rawMin: 0, rawMax: 126, rawStep: 1, def: 126, format: (r) => String(r) },

@@ -518,7 +518,7 @@ test("learn binds a CC to a fader and incoming CC moves it", async ({ page }) =>
   await setLearn(page, win, false);
 
   await sendMidi(page, [0xb0, 7, 127]);
-  await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
+  await expect(readLevel(page, "CH 1")).toHaveText("10.00");
   await sendMidi(page, [0xb0, 7, 0]);
   await expect(readLevel(page, "CH 1")).toHaveText("-∞");
 });
@@ -543,7 +543,7 @@ test("a running self-test freezes incoming MIDI, and releases it when the run en
   );
   await setLearn(page, win, false);
   await sendMidi(page, [0xb0, 7, 127]);
-  await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
+  await expect(readLevel(page, "CH 1")).toHaveText("10.00");
 
   // Start a run and hold it at its connect (see the vd_connect case in the stub).
   await page.evaluate(() => localStorage.setItem("urx-test-vd-hold", "1"));
@@ -555,7 +555,7 @@ test("a running self-test freezes incoming MIDI, and releases it when the run en
   // its first sample, taken before the message had been decoded at all.
   await sendMidi(page, [0xb0, 7, 0]);
   await expect(page.locator("#statusbar")).toContainText("incoming MIDI is ignored");
-  await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
+  await expect(readLevel(page, "CH 1")).toHaveText("10.00");
 
   // Everything that would take the connection away is locked for the same window —
   // the shell has one slot, so a second connect does not run beside the run, it
@@ -656,8 +656,8 @@ test("one physical control can gang several console controls", async ({ page }) 
 
   // One incoming CC moves both faders together.
   await sendMidi(page, [0xb0, 7, 127]);
-  await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
-  await expect(readLevel(page, "CH 2")).toHaveText("+10.0");
+  await expect(readLevel(page, "CH 1")).toHaveText("10.00");
+  await expect(readLevel(page, "CH 2")).toHaveText("10.00");
   await sendMidi(page, [0xb0, 7, 0]);
   await expect(readLevel(page, "CH 1")).toHaveText("-∞");
   await expect(readLevel(page, "CH 2")).toHaveText("-∞");
@@ -888,12 +888,12 @@ test("learn mode ignores a wheel over a fader so a stray scroll never edits it",
   await expect(page.locator("#console-host")).toHaveClass(/midi-learn/);
 
   const fader = strip(page, "CH 1").locator(".con-fader");
-  await expect(readLevel(page, "CH 1")).toHaveText("0.0");
+  await expect(readLevel(page, "CH 1")).toHaveText("0.00");
   const box = await fader.boundingBox();
   if (!box) throw new Error("fader has no bounding box");
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.wheel(0, -100); // a wheel notch up — would be +0.4 dB outside learn
-  await expect(readLevel(page, "CH 1")).toHaveText("0.0"); // unchanged: learn swallowed it
+  await expect(readLevel(page, "CH 1")).toHaveText("0.00"); // unchanged: learn swallowed it
 
   // The control is still armable by click, proving the wheel did not consume learn.
   await fader.click();
@@ -1208,7 +1208,7 @@ test("a device fetch does not open the output port; the live session does", asyn
 
   await page.click("#btn-device");
   await page.click("#btn-fetch");
-  await expect(readLevel(page, "CH 1")).toHaveText("0.0"); // the fetch landed
+  await expect(readLevel(page, "CH 1")).toHaveText("0.00"); // the fetch landed
   // The fetch has released the link and that answer has reached the app. The output side
   // opens only with a pass that re-sends every binding at once, so a fetch that opened it
   // has sent by now.
@@ -1249,7 +1249,7 @@ test("Live sync start pushes every assignment to the controller, not just what c
   await expect(page.locator("#live-tally")).toBeVisible(); // the session is up
   // Nothing in the plan moved — the stub answers CH 1's level with 0, which the plan
   // already holds — and the binding is sent anyway.
-  await expect(readLevel(page, "CH 1")).toHaveText("0.0");
+  await expect(readLevel(page, "CH 1")).toHaveText("0.00");
   await expect
     .poll(() => page.evaluate(() => window.__midiTest.sent.filter((b) => b[0] === 0xb0 && b[1] === 7).length))
     .toBeGreaterThan(0);
@@ -1279,7 +1279,7 @@ test("assignments and the port choice survive a reload", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe("Stub In");
   await page.click("#btn-view-console");
   await sendMidi(page, [0xb0, 7, 127]);
-  await expect(readLevel(page, "CH 1")).toHaveText("+10.0");
+  await expect(readLevel(page, "CH 1")).toHaveText("10.00");
   const reopened = await openMidiWindow(page);
   await expect(mapRow(reopened, "ch1/level")).toBeVisible();
 });
@@ -1475,7 +1475,7 @@ test("a tuning screen's controls arm under processor and band scopes", async ({ 
   // An incoming value moves the screen's own slider, on the field table's grid.
   await setLearn(page, win, false);
   await sendMidi(page, [0xb0, 40, 0], [0xb0, 40, 0]);
-  await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-72.0 dB");
+  await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-72 dB");
   await box.locator(".consent-btn-secondary").click();
 });
 
@@ -1505,7 +1505,7 @@ test("the DUCKER screen's sliders arm under the ducker's own scope", async ({ pa
   // ducker's threshold floor is -60 dB, where the GATE's is -72.
   await setLearn(page, win, false);
   await sendMidi(page, [0xb0, 45, 0], [0xb0, 45, 0]);
-  await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-60.0 dB");
+  await expect(screenRow(page, "Threshold").locator(".gt-val")).toHaveText("-60 dB");
   await box.locator(".consent-btn-secondary").click();
 });
 
