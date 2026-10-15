@@ -178,6 +178,8 @@ export class WriteSettle {
   // one is still in flight.
   private readonly seen = new Map<number, { value: number | string; at: number }>();
   private readonly waiters = new Set<Waiter>();
+  // `announcement` waits: one address, released only by a notify carrying one value.
+  private readonly valueWaiters = new Set<{ k: number; value: number; done: () => void }>();
   // Every write still owed an announcement, oldest first per address. A write superseded
   // by a later write to the same address BEFORE its announcement went out gets none of its
   // own: the unit announces the value it ENDED UP holding and says nothing about what it
@@ -243,6 +245,7 @@ export class WriteSettle {
     const said = p.valueStr ?? p.value;
     this.seen.set(k, { value: said, at: ++this.seq });
     this.discharge(k, said, this.seq);
+    for (const w of this.valueWaiters) if (w.k === k && w.value === said) w.done();
     for (const w of this.waiters) {
       // The LAST announcement wins, unconditionally. A second notify for one address
       // inside one window is the unit correcting itself (a quantise arriving after the
@@ -297,6 +300,28 @@ export class WriteSettle {
       });
     }
     return announced.size ? announced : NOTHING_ANNOUNCED;
+  }
+
+  /**
+   * Wait until the unit has announced `value` at `addr` after `mark`, or for `timeoutMs`.
+   * Unlike `settle`, a notify carrying any other value does not end it: a write still
+   * unannounced behind an earlier one at the same address is answered only by its own value.
+   */
+  async announcement(
+    addr: number,
+    mark: number,
+    value: number,
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const { timeoutMs = SETTLE_TIMEOUT_MS, signal } = opts;
+    signal?.throwIfAborted();
+    const s = this.seen.get(addr);
+    if (s !== undefined && s.at > mark && s.value === value) return;
+    await this.wait(timeoutMs, signal, (done) => {
+      const waiter = { k: addr, value, done };
+      this.valueWaiters.add(waiter);
+      return () => this.valueWaiters.delete(waiter);
+    });
   }
 
   // A write the unit was obliged to announce and did not, judged at the bound rather

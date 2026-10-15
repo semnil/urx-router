@@ -45,6 +45,7 @@ import { FX_EFFECT_TYPE_DEFAULT, fxParams } from "./fx-effect";
 import { NODE_NAME_MAX_CHARS, PARAMS, PORT_REF_PARAM_IDS as PORT_REF_PARAMS } from "./params";
 import type { ParamSpec } from "./params";
 import { PORT_REF_NONE } from "./vd";
+import { writeSettle } from "./settle";
 
 const model = getModel("URX44V");
 
@@ -222,6 +223,36 @@ describe("sendCommands", () => {
     expect(outcomes.slice(1).every((o) => !o.ok && o.skipped === true)).toBe(true);
     // Only the failing command reached the transport.
     expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Clip Safe OFF landing together with an A.Gain write puts that A.Gain back, so the OFF is
+// held until the unit has announced the A.Gain sent ahead of it.
+describe("sendCommands: Clip Safe OFF behind an A.Gain", () => {
+  const gain: VdCommand = { name: "HA_GAIN", paramId: PARAMS.HA_GAIN.id, x: 0, y: 0, vdValue: -500 } as VdCommand;
+  const clip = (on: boolean): VdCommand =>
+    ({ name: "CLIP_SAFE", paramId: PARAMS.CLIP_SAFE.id, x: 0, y: 0, vdValue: on ? 1 : 0 }) as VdCommand;
+  const sentIds = (): number[] => vi.mocked(vdSet).mock.calls.map((c) => c[0]);
+  const ticks = async (): Promise<void> => {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  };
+
+  it("holds the OFF until the A.Gain is announced", async () => {
+    vi.mocked(vdSet).mockResolvedValue(undefined);
+    const done = sendCommands([gain, clip(false)], undefined, undefined, undefined, 60_000);
+    await ticks();
+    expect(sentIds(), "only the A.Gain has gone out").toEqual([PARAMS.HA_GAIN.id]);
+    writeSettle.note({ paramId: PARAMS.HA_GAIN.id, x: 0, y: 0, value: -500 });
+    const outcomes = await done;
+    expect(sentIds()).toEqual([PARAMS.HA_GAIN.id, PARAMS.CLIP_SAFE.id]);
+    expect(outcomes.every((o) => o.ok)).toBe(true);
+  });
+
+  it("does not hold an ON, nor an OFF with no A.Gain ahead of it", async () => {
+    vi.mocked(vdSet).mockResolvedValue(undefined);
+    await sendCommands([gain, clip(true)], undefined, undefined, undefined, 60_000);
+    await sendCommands([clip(false)], undefined, undefined, undefined, 60_000);
+    expect(sentIds()).toEqual([PARAMS.HA_GAIN.id, PARAMS.CLIP_SAFE.id, PARAMS.CLIP_SAFE.id]);
   });
 });
 

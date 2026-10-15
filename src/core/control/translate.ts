@@ -2726,8 +2726,6 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       if (hiZOffFirst) out.push(command("HI_Z", j, 0));
       const phantom = np[`phantom${side}`];
       if (phantom !== undefined) out.push(command("PHANTOM", j, phantom ? 1 : 0));
-      const clipSafe = np[`clipSafe${side}`];
-      if (clipSafe !== undefined) out.push(command("CLIP_SAFE", j, clipSafe ? 1 : 0));
       if (hasHiZ && !hiZOffFirst) {
         const on = np[`hiZ${side}`];
         if (on !== undefined) out.push(command("HI_Z", j, on ? 1 : 0));
@@ -2735,6 +2733,11 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       const gain = np[`gain${side}`];
       if (gain !== undefined)
         out.push(rawCommand("HA_GAIN", PARAMS.HA_GAIN.id, "gain", j, clamp(gain, A_GAIN_MIN_DB, A_GAIN_MAX_DB)));
+      // Clip Safe goes out after A.Gain: an OFF landing together with an A.Gain write puts the
+      // A.Gain back to its earlier value, so the senders hold the OFF until the unit has
+      // announced the A.Gain ahead of it (input-lock.ts, `clipSafeOffAwaits`).
+      const clipSafe = np[`clipSafe${side}`];
+      if (clipSafe !== undefined) out.push(command("CLIP_SAFE", j, clipSafe ? 1 : 0));
     }
     own(node.id);
   }

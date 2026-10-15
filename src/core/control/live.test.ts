@@ -82,6 +82,145 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+// Clip Safe OFF landing together with an A.Gain write puts that A.Gain back, so a flush
+// carrying both sends the A.Gain and holds the OFF until the unit has announced it.
+describe("LiveSync: Clip Safe OFF behind an A.Gain", () => {
+  it("holds the OFF until the A.Gain is announced", async () => {
+    const plan = basePlan();
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { gainL: -8, clipSafeL: true };
+    const live = liveFor(plan);
+    live.begin();
+    plan.nodeParams["in.micline_1_2"] = { gainL: -5, clipSafeL: false };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    const sent = (): string[] => vi.mocked(vdSet).mock.calls.map((c) => `${c[0]}:${c[1]}:${c[2]}=${c[3]}`);
+    expect(sent(), "only the A.Gain has gone out").toEqual([`${PARAMS.HA_GAIN.id}:0:0=-500`]);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS / 2);
+    expect(sent(), "the OFF still waits").toHaveLength(1);
+    writeSettle.note({ paramId: PARAMS.HA_GAIN.id, x: 0, y: 0, value: -500 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent()).toEqual([`${PARAMS.HA_GAIN.id}:0:0=-500`, `${PARAMS.CLIP_SAFE.id}:0:0=0`]);
+    live.end();
+  });
+
+  const session = (): { plan: Plan; live: LiveSync; offs: () => number } => {
+    const plan = basePlan();
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { gainL: -8, clipSafeL: true };
+    const live = liveFor(plan);
+    live.begin();
+    const offs = (): number =>
+      vi.mocked(vdSet).mock.calls.filter((c) => c[0] === PARAMS.CLIP_SAFE.id && c[3] === 0).length;
+    return { plan, live, offs };
+  };
+
+  it("holds an OFF in a later flush behind the A.Gain an earlier flush sent", async () => {
+    const { plan, live, offs } = session();
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: -5 };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], clipSafeL: false };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(offs(), "the OFF waits for the A.Gain the earlier flush sent").toBe(0);
+    writeSettle.note({ paramId: PARAMS.HA_GAIN.id, x: 0, y: 0, value: -500 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(offs()).toBe(1);
+    live.end();
+  });
+
+  // The flush that a request made during a slow one starts at once, so the A.Gain closing the
+  // first and the OFF opening the second would otherwise go out back to back.
+  it("holds an OFF opening the flush queued behind a slow one that closed on an A.Gain", async () => {
+    const { plan, live, offs } = session();
+    let release!: () => void;
+    vi.mocked(vdSet).mockImplementationOnce(() => new Promise<void>((r) => (release = r)));
+    const out = plan.connections.find((c) => c.from === "ch1:out")!;
+    out.params = { ...out.params, level: -6 };
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: -5 };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(vi.mocked(vdSet).mock.calls[0][0], "the premise: the first write is not the A.Gain").not.toBe(
+      PARAMS.HA_GAIN.id,
+    );
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], clipSafeL: false };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(vdSet).mock.calls.filter((c) => c[0] === PARAMS.HA_GAIN.id)).toHaveLength(1);
+    expect(offs(), "the OFF waits for that A.Gain").toBe(0);
+    writeSettle.note({ paramId: PARAMS.HA_GAIN.id, x: 0, y: 0, value: -500 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(offs()).toBe(1);
+    live.end();
+  });
+
+  it("is not released by the announcement of an earlier A.Gain on the same jack", async () => {
+    const { plan, live, offs } = session();
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: -5 };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    plan.nodeParams["in.micline_1_2"] = { gainL: -6, clipSafeL: false };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    writeSettle.note({ paramId: PARAMS.HA_GAIN.id, x: 0, y: 0, value: -500 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(offs(), "the -5 dB announcement does not answer the -6 dB write").toBe(0);
+    writeSettle.note({ paramId: PARAMS.HA_GAIN.id, x: 0, y: 0, value: -600 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(offs()).toBe(1);
+    live.end();
+  });
+
+  it("sends nothing more once the session ends while an OFF waits", async () => {
+    const errors: string[] = [];
+    const plan = basePlan();
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { gainL: -8, clipSafeL: true };
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError: (e) => errors.push(e),
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    live.begin();
+    plan.nodeParams["in.micline_1_2"] = { gainL: -5, clipSafeL: false };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(vi.mocked(vdSet), "the premise: the A.Gain went out and the OFF waits").toHaveBeenCalledTimes(1);
+    live.end();
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+    expect(errors).toEqual([]);
+  });
+
+  it("holds nothing across a session boundary, and gives up at the bound", async () => {
+    const { plan, live, offs } = session();
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], gainL: -5 };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    live.end();
+    live.begin();
+    plan.nodeParams["in.micline_1_2"] = { ...plan.nodeParams["in.micline_1_2"], clipSafeL: false };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(offs(), "a new session waits for nothing the last one sent").toBe(1);
+    plan.nodeParams["in.micline_1_2"] = { gainL: -7, clipSafeL: true };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    plan.nodeParams["in.micline_1_2"] = { gainL: -7, clipSafeL: false };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(offs(), "the second OFF still waits").toBe(1);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS);
+    expect(offs(), "an A.Gain the unit never announces holds the OFF no longer than the bound").toBe(2);
+    live.end();
+  });
+});
+
 describe("LiveSync flush cadence", () => {
   it("sends one write per settled change (the baseline)", async () => {
     const plan = basePlan();

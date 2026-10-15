@@ -171,6 +171,43 @@ describe("WriteSettle waiting", () => {
 // flush writes a fader on some other node beside the 1-knob that made it refetch: the
 // read touches only the 1-knob's node, so that is the boundary it holds for, and the
 // fader is answered only if the unit got round to announcing it anyway.
+// The wait a Clip Safe OFF takes behind an A.Gain: released by that A.Gain's own value only.
+describe("WriteSettle announcement", () => {
+  it("returns at once when the value was announced after the mark", async () => {
+    const { settle } = armed();
+    const at = settle.mark();
+    settle.note({ ...NOTIFY, value: 5 });
+    let done = false;
+    void settle.announcement(ADDR, at, 5, { timeoutMs: SETTLE_TIMEOUT_MS }).then(() => (done = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(done).toBe(true);
+  });
+
+  it("is ended by its own value and not by another one, nor by one from before the mark", async () => {
+    const { settle } = armed();
+    settle.note({ ...NOTIFY, value: 6 });
+    const at = settle.mark();
+    let done = false;
+    void settle.announcement(ADDR, at, 6, { timeoutMs: SETTLE_TIMEOUT_MS }).then(() => (done = true));
+    settle.note({ ...NOTIFY, value: 5 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(done, "neither the earlier 6 nor a later 5 answers it").toBe(false);
+    settle.note({ ...NOTIFY, value: 6 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(done).toBe(true);
+  });
+
+  it("ends at the bound when nothing announces the value", async () => {
+    const { settle } = armed();
+    let done = false;
+    void settle.announcement(ADDR, settle.mark(), 6, { timeoutMs: SETTLE_TIMEOUT_MS }).then(() => (done = true));
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS - 1);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done).toBe(true);
+  });
+});
+
 describe("WriteSettle boundary marks", () => {
   // A write whose VALUE must not be overlaid, but whose timing still bounds the read: the
   // flush's string writes (the SSMCS preset). They cannot go in `written` — that map is what

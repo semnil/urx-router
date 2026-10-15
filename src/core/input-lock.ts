@@ -258,6 +258,18 @@ export function otherSwitchId(c: Pick<VdCommand, "name">): number | null {
 }
 
 /**
+ * For a command that sends Clip Safe OFF, the address (`addrKey`) of the A.Gain on the same
+ * jack; null for an ON and for every other command. The unit puts that A.Gain back to its
+ * earlier value when an A.Gain write and the OFF land together, so a sender that has written
+ * the A.Gain ahead of the OFF holds the OFF until the unit has announced that A.Gain write
+ * (or the settle bound has passed).
+ */
+export function clipSafeOffAwaits(c: Pick<VdCommand, "name" | "x" | "y">, value: number): number | null {
+  if (c.name !== "CLIP_SAFE" || value) return null;
+  return addrKey(PARAMS.HA_GAIN.id, c.x, c.y);
+}
+
+/**
  * The jacks a change would leave with +48V and HI-Z both on and that do not hold both on
  * already, in model order.
  *
