@@ -134,12 +134,32 @@ describe("insert-fx encodings (live calibration anchors)", () => {
     expect(MBC_RELEASE_MS[0]).toBe(10);
     expect(MBC_RELEASE_MS[MBC_RELEASE_MS.length - 1]).toBe(3000);
   });
-  it("Guitar Amp Output taper anchors (raw 0 = -∞ … raw 127 = 0 dB)", () => {
+  it("Guitar Amp Output prints what the unit prints (raw 0 = -∞, otherwise 40·log10(raw/127))", () => {
     const out = insertFxParams("guitar-clean").find((d) => d.slot === 14)!.format!;
-    expect(out(0)).toBe("-∞ dB");
-    expect(out(8)).toBe("-48.0 dB"); // lowest live anchor
-    expect(out(96)).toBe("-4.9 dB"); // live anchor
-    expect(out(127)).toBe("0.0 dB");
+    // The unit's own Output readout for each raw. Raws 1 / 7 / 26 / 51 / 75 sit within a few
+    // thousandths of a dB of a rounding boundary, so a near-miss law prints a different last digit.
+    const lcd: Array<[number, string]> = [
+      [0, "-∞"],
+      [1, "-84.2"],
+      [4, "-60.1"],
+      [7, "-50.3"],
+      [8, "-48.0"],
+      [20, "-32.1"],
+      [26, "-27.6"],
+      [40, "-20.1"],
+      [42, "-19.2"],
+      [43, "-18.8"],
+      [47, "-17.3"],
+      [51, "-15.8"],
+      [64, "-11.9"],
+      [75, "-9.1"],
+      [82, "-7.6"],
+      [96, "-4.9"],
+      [109, "-2.7"],
+      [126, "-0.1"],
+      [127, "0.0"],
+    ];
+    for (const [raw, shown] of lcd) expect(out(raw), `raw ${raw}`).toBe(`${shown} dB`);
   });
   it("MIDI note name uses Yamaha numbering (C-2 = 0, C3 = 60)", () => {
     expect(midiNoteName(0)).toBe("C-2");
