@@ -1061,11 +1061,11 @@ export class DynScreen {
   /**
    * Rewrite every row's READOUT from the current values, leaving the controls alone.
    *
-   * One field's number can be a function of another's: the REV-X Reverb Time prints
-   * `base(raw) x 3^(RoomSize/31)`, so turning Room Size changes the seconds on the Reverb
-   * Time card and nothing on its own. A handler that writes only its own card leaves the
-   * other one showing what it was, and the panel then disagrees with the plan until
-   * something else rebuilds it.
+   * One field's number can be a function of another's: the REV-X Reverb Time's seconds
+   * are read off the Room Size step as well as its own raw, so turning Room Size changes
+   * the seconds on the Reverb Time card and nothing on its own. A handler that writes
+   * only its own card leaves the other one showing what it was, and the panel then
+   * disagrees with the plan until something else rebuilds it.
    *
    * A RULE rather than a declared dependency per field: a table saying which readouts a
    * field moves lives apart from the formatter that decides it, and goes quietly stale the
