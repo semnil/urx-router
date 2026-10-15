@@ -93,7 +93,8 @@ try {
 
   // Untracked but not ignored: a new spec or fixture that has not been added yet is
   // part of what is under test, and omitting it would run the suite without it.
-  const untracked = git(["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean);
+  // -z: without it git quotes a path holding a non-ASCII byte, and the quoted form names no file.
+  const untracked = git(["ls-files", "-z", "--others", "--exclude-standard"]).split("\0").filter(Boolean);
   for (const rel of untracked) {
     mkdirSync(dirname(join(wt, rel)), { recursive: true });
     copyFileSync(join(ROOT, rel), join(wt, rel));
