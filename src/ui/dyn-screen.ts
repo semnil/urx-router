@@ -42,6 +42,7 @@ import {
   settingsSection,
   sliderRow,
   trackDrag,
+  turnStep,
   wheelStep,
   wireDismiss,
   KNOB_TRAVEL_PX,
@@ -2249,6 +2250,7 @@ export class DynScreen {
       this.markPlotDirty();
     });
     wheelStep(input, () => this.hooks.midi?.learnActive(), knob);
+    if (f.turnStep !== undefined) turnStep(input, f.turnStep);
     holdInertOnBlur(input, {
       live: () => this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`),
       pressOn: knob,
@@ -2336,6 +2338,7 @@ export class DynScreen {
     // A wheel notch over an armed control would move the value the operator is
     // about to bind, so the same gate the console's faders carry applies here.
     wheelStep(input, () => this.hooks.midi?.learnActive());
+    if (f.turnStep !== undefined) turnStep(input, f.turnStep);
     // Every native range in the app ends its drag at a window blur and stays inert until
     // the press is over or the window comes back; `holdInertOnBlur` carries the treatment
     // and the measurements. This screen's own half is the row named below: the blur leaves

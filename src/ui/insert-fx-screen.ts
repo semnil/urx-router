@@ -758,6 +758,7 @@ function insFxFace(): DynProcessor {
           min: d.rawMin ?? 0,
           max: d.rawMax ?? 0,
           step: d.rawStep ?? 1,
+          ...(d.rawTurnStep !== undefined ? { turnStep: d.rawTurnStep } : {}),
           def: d.def,
           // Raw broker integers throughout: the catalogue's formatter is what turns one
           // into the device's own reading, supplied through `fieldText`.

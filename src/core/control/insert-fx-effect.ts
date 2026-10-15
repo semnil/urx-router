@@ -298,6 +298,10 @@ export interface InsertFxParamDesc {
   rawMin?: number;
   rawMax?: number;
   rawStep?: number;
+  /** How far one arrow press or wheel notch moves the value, where the unit's own encoder
+   *  moves it further than the `rawStep` the value is held to. The finer part of a value
+   *  the operator turns is kept. Absent = the turn is one `rawStep`. */
+  rawTurnStep?: number;
   /** Factory default raw — the inspector's absent-value fallback for display. */
   def: number;
   /** Display formatter for a raw value (slider/select). */
@@ -323,10 +327,11 @@ const COMPANDER_PARAMS: InsertFxParamDesc[] = [
     control: "slider",
     rawMin: -5400,
     rawMax: 0,
-    // Whole dB, the step the unit's own encoder moves it by. A finer value written over the
-    // link is kept by the unit and printed as its whole-dB part, toward zero, which is what
-    // the readout below does with one.
-    rawStep: 100,
+    // Held to 0.1 dB, the finest value the link writes and the unit keeps; a turn moves it a
+    // whole dB, the unit's encoder click, keeping the tenths. The unit prints the whole-dB
+    // part, toward zero, which is what the readout below does.
+    rawStep: 10,
+    rawTurnStep: 100,
     def: -1000,
     format: (r) => `${Math.trunc(r / 100)} dB`,
   },

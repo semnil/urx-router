@@ -896,6 +896,10 @@ export interface DynField {
    *  every other GATE/COMP/DUCKER value is a measured negative, so this is not a
    *  class rule and must not be inferred from the unit. */
   fineStep?: number;
+  /** How far one arrow press or wheel notch moves the value, where that is further than
+   *  `step` — the unit's encoder click on a value held to a finer grid. The finer part is
+   *  kept. Absent = the turn is one `step`. */
+  turnStep?: number;
 }
 
 /** A field `pushDynCommands` can emit. The writer reads `name`, so requiring it here

@@ -142,9 +142,9 @@ describe("insert-fx encodings (live calibration anchors)", () => {
     expect(out(127)).toBe("0.0 dB");
   });
   // The unit prints the Compander threshold in whole dB, cutting a finer value toward zero,
-  // and its encoder moves it 1 dB at a time — so the readout says what the unit says, and the
-  // slider offers only what the unit lets a person enter.
-  it("Compander Threshold reads whole dB toward zero and steps 1 dB", () => {
+  // keeps the tenths a value holds, and its encoder moves it 1 dB at a time — so the readout
+  // says what the unit says, the value is held to a tenth, and a turn is a whole dB.
+  it("Compander Threshold reads whole dB toward zero, holds tenths and turns 1 dB", () => {
     const th = insertFxParams("compander", 1793).find((d) => d.slot === 6)!;
     for (const [raw, label] of [
       [-5400, "-54 dB"],
@@ -156,7 +156,8 @@ describe("insert-fx encodings (live calibration anchors)", () => {
     ] as const) {
       expect(th.format!(raw), `raw ${raw}`).toBe(label);
     }
-    expect(th.rawStep).toBe(100);
+    expect(th.rawStep).toBe(10);
+    expect(th.rawTurnStep).toBe(100);
   });
   it("Compander Release reads three significant figures, to no finer than 0.1 ms", () => {
     const rel = insertFxParams("compander", 1794).find((d) => d.slot === 9)!.format!;

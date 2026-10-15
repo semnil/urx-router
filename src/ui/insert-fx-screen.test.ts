@@ -307,6 +307,45 @@ describe("the rendered screen", () => {
     screen.close();
   });
 
+  // The unit keeps a compander threshold's tenths and its encoder moves it a whole dB from
+  // there (-23.50 -> -22.50). A slider stepping on the whole-dB grid snaps -23.50 the moment
+  // it holds it, and every turn after that writes a value the unit was never given.
+  it.each([
+    ["ch1", "Compander-S"],
+    ["bus.mix1", "Compander-H"],
+  ])("turns a %s compander threshold a whole dB and keeps its tenths", (nodeId, label) => {
+    holding(nodeId, label);
+    const key = insertFxParamKey("compander", 6);
+    h.plan.nodeParams[nodeId]!.insertFxParams = { [key]: -2350 };
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, nodeId);
+    const slider = h.box.querySelector<HTMLInputElement>('input[data-dyn="ifx:compander:6"]')!;
+    const held = (): unknown => h.plan.nodeParams[nodeId]!.insertFxParams![key];
+    const shown = (): string | null => slider.getAttribute("aria-valuetext");
+    // Opening reads; it writes nothing and moves nothing.
+    expect(held()).toBe(-2350);
+    expect(slider.value).toBe("-2350");
+    expect(shown()).toBe("-23 dB");
+    const key1 = (k: string): void =>
+      void slider.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+    key1("ArrowUp");
+    expect(held()).toBe(-2250);
+    expect(shown()).toBe("-22 dB");
+    key1("ArrowDown");
+    key1("ArrowLeft");
+    expect(held()).toBe(-2450);
+    slider.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
+    expect(held()).toBe(-2350);
+    key1("PageDown");
+    expect(held()).toBe(-3350);
+    // What goes out to the unit is the value the turns left.
+    const sent = planToCommands(h.model, h.plan).filter(
+      (c) => c.node === nodeId && c.name === "INSERT_FX_EFFECT" && c.y === 6,
+    );
+    expect(sent.map((c) => c.vdValue)).toEqual([-3350]);
+    screen.close();
+  });
+
   // What `labelsOn` above cannot see, and what shipped broken because of it: a discrete
   // control is not a FIELD, so a face can have the right fields in the right order and
   // still put its selectors somewhere else. These read the panel the operator sees.

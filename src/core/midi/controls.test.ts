@@ -1129,6 +1129,20 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     expect(readBack(COMPANDER_H)).toBe(defOf(COMPANDER_H));
   });
 
+  // The threshold is held to 0.1 dB while the screen prints whole dB and turns a whole dB.
+  // A mapping reads and writes the held value, so a tenth the unit keeps is one it gives
+  // back unchanged.
+  it("gives a compander threshold back to the tenth it holds", () => {
+    const key = insertFxParamKey("compander", 6);
+    const cid = controlId("bus.stereo", "insfx", "insfx.compander.6");
+    for (const raw of [-2350, -2340, -10]) {
+      plan.nodeParams["bus.stereo"] = { insertFx: COMPANDER_S, insertFxParams: { [key]: raw } };
+      const c = bindControl(model, plan, cid)!;
+      c.set(c.get());
+      expect(plan.nodeParams["bus.stereo"].insertFxParams![key], `raw ${raw}`).toBe(raw);
+    }
+  });
+
   // A TOGGLE reaches the plan too, and by a branch of its own: the slot descriptors split
   // into a switch and a slider before either is bound, so a lock proved on the sliders says
   // nothing about the other half. The guitar amp's gate is the switch a mapping can hold.
