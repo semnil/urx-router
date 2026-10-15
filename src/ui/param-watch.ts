@@ -52,8 +52,10 @@ const FLUSH_MS = 250;
 const CAPACITY = 2000;
 
 export interface ParamWatch {
-  /** Begin watching on the connection Live sync has just brought up. */
-  start(model: string): void;
+  /** Begin watching on the connection Live sync has just brought up. `onReadError` is
+   *  handed every failed read, so the session's owner can end a session whose link a
+   *  read found dead; the watch itself carries on reading until `stop`. */
+  start(model: string, onReadError?: (err: unknown) => void): void;
   /** Stop polling and ignore what the subscription still delivers. The registration
    *  itself ends with the connection. */
   stop(reason: string): void;
@@ -127,6 +129,7 @@ function flush(): void {
  *  session compares unequal and is dropped. */
 interface Session {
   last: Map<string, number | string>;
+  onReadError?: (err: unknown) => void;
   pollTimer: number;
   aliveTimer: number;
   polls: number;
@@ -172,14 +175,14 @@ async function readAll(s: Session): Promise<Map<string, number | string> | false
     } catch (err) {
       v = errorText(err);
       failed = true;
-    }
-    if (session !== s) return false;
-    if (failed) {
+      if (session !== s) return false;
       s.pollErrors++;
       if (!s.failing) record("poll-error", { addr: key(id, x, y), error: v });
       s.failing = true;
-      continue;
+      s.onReadError?.(err);
     }
+    if (session !== s) return false;
+    if (failed) continue;
     if (s.failing) record("poll-ok", { addr: key(id, x, y) });
     s.failing = false;
     out.set(key(id, x, y), v);
@@ -230,7 +233,7 @@ async function begin(s: Session, model: string): Promise<void> {
   s.pollTimer = window.setTimeout(() => void poll(s), POLL_MS);
 }
 
-function start(model: string): void {
+function start(model: string, onReadError?: (err: unknown) => void): void {
   if (!isTauri()) return;
   if (session) stop("restart");
   if (!listening) {
@@ -239,6 +242,7 @@ function start(model: string): void {
   }
   const s: Session = {
     last: new Map(),
+    onReadError,
     pollTimer: 0,
     aliveTimer: 0,
     polls: 0,

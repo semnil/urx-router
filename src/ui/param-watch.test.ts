@@ -247,6 +247,16 @@ describe("param watch", () => {
     ).toContain("notify");
   });
 
+  it("hands every failed read to the session's owner", async () => {
+    const seen: unknown[] = [];
+    watch.start("URX44V", (err) => seen.push(err));
+    await settle();
+    shell.readFails = new Error("device-lost: sync_status offline");
+    await vi.advanceTimersByTimeAsync(mod.POLL_MS);
+    expect(seen).toHaveLength(mod.WATCHED.length);
+    expect(seen[0]).toBe(shell.readFails);
+  });
+
   it("imports nothing from the shell that writes to the unit or touches the live-sync set", () => {
     // The watch's whole contract with the unit is read-only, and what makes that true is
     // which shell functions it can reach at all.

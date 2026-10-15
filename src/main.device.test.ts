@@ -3124,6 +3124,36 @@ describe("the live session", () => {
   // subscription of its own once the session is up, read once a second while it lasts, and
   // silent from the moment it ends. The live-sync set it sits beside is the plan's and
   // nothing else's.
+  // A device-lost push is consumed by whichever command is reading when it lands, and the
+  // shell latches on it without a link event. When that command is the watch's read, the
+  // session ends there, as it does for a link event; a new session runs the watch again.
+  it("ends the session when a parameter-watch read finds the link dead, and watches the next one", SLOW, async () => {
+    const lost = { on: false };
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        if (lost.on && a.paramId === 838) throw new Error("device-lost: sync_status offline");
+        return unwrittenRead(a);
+      },
+    });
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    await invoked(shell, "vd_probe_subscribe");
+    expect(errors(shell), "the premise: the session started cleanly").toEqual([]);
+
+    lost.on = true;
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell)).toEqual([t().status.liveError(t().error.shell.deviceLost)]);
+    const reads = shell.count("vd_get");
+    await new Promise((r) => setTimeout(r, 2_000));
+    expect(shell.count("vd_get"), "the watch stopped with the session").toBe(reads);
+
+    lost.on = false;
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    await invoked(shell, "vd_probe_subscribe", 2);
+  });
+
   it("runs the parameter watch for exactly as long as the session, beside the live-sync set", SLOW, async () => {
     const { WATCHED, POLL_MS } = await import("./ui/param-watch");
     const shell = await bootDevice({}, true, { "838/0/0": 1 });

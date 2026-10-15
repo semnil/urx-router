@@ -4558,7 +4558,13 @@ if (!DEMO) {
         // exactly this one even when its disconnect lands after a later connect.
         liveEpoch = device.epoch;
         liveSessionUp = true;
-        paramWatch?.start(device.model);
+        // A read the watch makes can be the one that finds the link dead (a device-lost push
+        // is consumed by whichever command is reading), and the shell latches without a link
+        // event then, so a latched cause there ends the session the way any other does.
+        paramWatch?.start(device.model, (err) => {
+          const cause = linkFailureIn([err instanceof Error ? err.message : String(err)]);
+          if (cause) stopLiveOnError(cause);
+        });
         fxReseeds.clear();
         setLiveUi(true);
         // The flags were read before the notify stream was registered; a press on the unit in
