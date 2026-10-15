@@ -207,6 +207,20 @@ describe("planToCommands", () => {
     expect(cmds.filter((c) => ["PHANTOM", "PHASE", "CLIP_SAFE"].includes(c.name))).toHaveLength(3);
   });
 
+  // Clip Safe OFF landing together with an A.Gain write puts that A.Gain back, so the
+  // switch goes out after the gain and the senders hold it for the gain's announcement.
+  it("emits a jack's Clip Safe after its A.Gain", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { gainL: -5, clipSafeL: false };
+    const jack = planToCommands(model, plan).filter((c) => c.node === "in.micline_1_2" && c.y === 0);
+    const gain = jack.findIndex((c) => c.name === "HA_GAIN");
+    const clip = jack.findIndex((c) => c.name === "CLIP_SAFE");
+    expect(gain, "the A.Gain is emitted").toBeGreaterThanOrEqual(0);
+    expect(clip, "the Clip Safe is emitted").toBeGreaterThan(gain);
+  });
+
   it("emits independent L/R phase on a stereo channel (211/212)", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);

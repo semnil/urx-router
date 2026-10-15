@@ -25,7 +25,7 @@ import {
   unverifiedGuessAt,
 } from "./translate";
 import type { SharedOwners, NameWrite, VdCommand, WriteScope } from "./translate";
-import { confirmedAddrs, reachedAndFailed, sendConverging } from "./client";
+import { ClipSafeHold, confirmedAddrs, reachedAndFailed, sendConverging } from "./client";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
 import { carrierOf, onExcludedBy, otherSwitchId } from "../input-lock";
@@ -1110,6 +1110,7 @@ export class LiveSync {
       let fresh: Map<number, number> | null = null;
       // The frozen list's values by address, built the first time a command asks for another's.
       let frozen: Map<number, number> | null = null;
+      const hold = new ClipSafeHold({ signal });
       for (const c of commands) {
         const k = cmdAddr(c);
         if (this.snapshotEpoch !== valuesAt) {
@@ -1159,12 +1160,17 @@ export class LiveSync {
           this.onHeld = true;
           continue;
         }
+        // A Clip Safe OFF behind an A.Gain write this flush sent to the same jack waits for
+        // the unit to announce that A.Gain.
+        await hold.before(c, value);
+        if (this.sessionGen !== gen) return;
         // Taken before the send, not after it: a notify that lands while this very
         // vdSet is in flight cannot be placed on either side of it, and the safe
         // reading is that it is the answer to this write. Such a notify is also one
         // `hasUnannouncedWrite` answers for, so the follow layer re-reads its node
         // rather than putting its value into the plan (settle.ts).
         const mark = writeSettle.mark();
+        hold.sending(c, mark);
         this.inFlight.set(k, value);
         try {
           await vdSet(c.paramId, c.x, c.y, value);

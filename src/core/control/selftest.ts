@@ -71,9 +71,17 @@ import {
   recPointOptionsFor,
 } from "./params";
 import type { ParamSpec } from "./params";
-import { diffNames, diffPlan, reachedAndFailed, sendConverging, sendNames, sendPresetsAndReconverge } from "./client";
+import {
+  ClipSafeHold,
+  diffNames,
+  diffPlan,
+  reachedAndFailed,
+  sendConverging,
+  sendNames,
+  sendPresetsAndReconverge,
+} from "./client";
 import type { NameOutcome, SendOutcome } from "./client";
-import { SETTLE_TIMEOUT_MS } from "./settle";
+import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import { A_GAIN_MIN_DB, D_GAIN_MIN_DB } from "./vd";
 import type { ConvergeRound } from "./client";
 import { applyDeviceState } from "./readback";
@@ -1225,11 +1233,16 @@ async function restoreUnsent(
 ): Promise<number> {
   if (!before.size) return 0;
   if (writeBack) {
+    // A Clip Safe OFF written back behind the same jack's A.Gain waits for that A.Gain's
+    // announcement, as every other sender's does.
+    const hold = new ClipSafeHold({ timeoutMs: settleMs, signal });
     for (const [addr, c] of unrestorable) {
       const want = before.get(addr);
       if (want === undefined) continue;
       signal?.throwIfAborted();
       try {
+        await hold.before(c, want);
+        hold.sending(c, writeSettle.mark());
         await vdSet(c.paramId, c.x, c.y, want);
       } catch (e) {
         report.errors.push(`restore ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);

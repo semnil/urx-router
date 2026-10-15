@@ -12,7 +12,7 @@ import { addrKey, cmdAddr, planToCommands, planToNameWrites, unverifiedGuessNote
 import type { EmitOptions, NameWrite, VdCommand, WriteScope } from "./translate";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
-import { onExcludedBy } from "../input-lock";
+import { clipSafeOffAwaits, onExcludedBy } from "../input-lock";
 
 /** The device's clock state: whether it slaves to the USB host, and the rate it
  *  is running at right now. Read together as the pre-check a write needs. */
@@ -240,6 +240,27 @@ const outcomeOf = (command: VdCommand, result: SendResult, error?: string): Send
 });
 
 /**
+ * The Clip Safe OFF hold of one batch of writes (`clipSafeOffAwaits`): `before` waits, ahead of
+ * a write, until the unit has announced an A.Gain write this batch sent to the same jack, or for
+ * `timeoutMs` where nothing announces it; `sending` records an A.Gain write by the settle mark
+ * taken immediately before it goes out.
+ */
+export class ClipSafeHold {
+  private readonly gainMarks = new Map<number, number>();
+  constructor(private readonly opts: { timeoutMs?: number; signal?: AbortSignal } = {}) {}
+
+  async before(c: Pick<VdCommand, "name" | "x" | "y">, value: number): Promise<void> {
+    const awaits = clipSafeOffAwaits(c, value);
+    const at = awaits === null ? undefined : this.gainMarks.get(awaits);
+    if (awaits !== null && at !== undefined) await writeSettle.settle(new Map([[awaits, at]]), this.opts);
+  }
+
+  sending(c: Pick<VdCommand, "name" | "paramId" | "x" | "y">, mark: number): void {
+    if (c.name === "HA_GAIN") this.gainMarks.set(addrKey(c.paramId, c.x, c.y), mark);
+  }
+}
+
+/**
  * Send commands to the connected device, in order, stopping at the first
  * failure. Order matters — a type selector precedes the parameter array it
  * binds (FX type before its array, insert-FX selector before the engine
@@ -264,10 +285,16 @@ export async function sendCommands(
   /** Told about each command immediately before it goes on the wire — the moment its
    *  announcement can start to arrive, which can be ahead of its ack. */
   onSending?: (command: VdCommand) => void,
+  /** The bound on the wait a Clip Safe OFF takes behind an A.Gain write sent earlier in
+   *  this call (`ClipSafeHold`); 0 skips it. */
+  settleMs: number = SETTLE_TIMEOUT_MS,
 ): Promise<SendOutcome[]> {
   const outcomes: SendOutcome[] = [];
+  const hold = new ClipSafeHold({ timeoutMs: settleMs, signal });
   for (const command of commands) {
     signal?.throwIfAborted();
+    await hold.before(command, command.vdValue);
+    hold.sending(command, writeSettle.mark());
     onSending?.(command);
     let outcome: SendOutcome;
     try {
@@ -761,6 +788,7 @@ export async function sendConverging(
         onSent?.(o);
       },
       onSending,
+      settleMs,
     );
     outcomes.push(...sent);
     rounds++;

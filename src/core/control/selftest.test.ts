@@ -40,6 +40,7 @@ import {
   recPointOptionsFor,
 } from "./params";
 import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
+import { writeSettle } from "./settle";
 import {
   cancelledBeforeWriting,
   floorSilent,
@@ -280,6 +281,39 @@ describe("runSelfTest with STREAMING's source not captured", () => {
 // source on a selector, unity on a fader, -inf on a send — and the restore converges the unit
 // onto it. So those addresses are read again before the sweep and the unit's own value is
 // written back after the restore; one that cannot be read then is a run that does not start.
+// Clip Safe OFF landing together with an A.Gain write puts that A.Gain back. With no channel
+// reading the jacks, the restore writes both back itself, after the converging write, and the
+// OFF has to wait for the A.Gain's announcement there as everywhere else.
+describe("runSelfTest writing back a jack no channel reads", () => {
+  it("writes each Clip Safe OFF only once the same jack's A.Gain is announced", async () => {
+    const seed = defaultPlan("URX44V");
+    seed.connections = seed.connections.filter((c) => !c.from.startsWith("in.micline"));
+    installMockDevice(seed);
+    const store = vi.mocked(vdSet).getMockImplementation()!;
+    // Each write is announced 5 ms after it is acked; a Clip Safe OFF records whether the
+    // A.Gain it follows on its jack had been announced by then.
+    const announced = new Set<number>();
+    const offs: Array<{ y: number; gainAnnounced: boolean }> = [];
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      if (id === PARAMS.HA_GAIN.id) announced.delete(y);
+      if (id === PARAMS.CLIP_SAFE.id && v === 0) offs.push({ y, gainAnnounced: announced.has(y) });
+      await store(id, x, y, v);
+      setTimeout(() => {
+        if (id === PARAMS.HA_GAIN.id) announced.add(y);
+        writeSettle.note({ paramId: id, x, y, value: v });
+      }, 5);
+    });
+
+    const report = await runSelfTest(model, 50);
+
+    expect(report.diag.unrestorable, "the premise: the restore writes the jacks back itself").toEqual(
+      expect.arrayContaining(["HA_GAIN 1:0:0", "CLIP_SAFE 5:0:0"]),
+    );
+    expect(offs.length, "the premise: Clip Safe OFF was written").toBeGreaterThan(0);
+    expect(offs.filter((o) => !o.gainAnnounced)).toEqual([]);
+  }, 60_000);
+});
+
 describe("runSelfTest after a partial capture", () => {
   /** A unit answering `seed`, whose read of each address in `once` fails the first time. */
   function failingOnce(seed: Plan, once: readonly string[]): Map<string, number> {

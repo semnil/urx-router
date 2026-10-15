@@ -1022,8 +1022,15 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
 - **Write.** A write carries the input stage of the jacks and sources some channel reads (`inputStageReadSet`),
   after the source selects, so a write that rewires a channel and sets a value lands the value on a jack the channel
   already reads. Each value is bounded to its own address's range — A.Gain -8..+70 dB (+40 while that jack's HI-Z is
-  on), D.Gain ±24 dB — and whichever of +48V / HI-Z the plan holds off goes out first. Compare with device asks
-  every jack and source the plan holds instead (`everyInputHolder`).
+  on), D.Gain ±24 dB — and whichever of +48V / HI-Z the plan holds off goes out first. Clip Safe goes out after
+  the jack's A.Gain, and a Clip Safe OFF behind an A.Gain write to the same jack in the same flush, converge round
+  or self-test write-back waits until the unit announces that A.Gain, or for the settle bound where nothing
+  announces it (a write outside a live session): when an A.Gain write and a Clip Safe OFF land together, the unit
+  puts the A.Gain back to the value it held before (`clipSafeOffAwaits` in `input-lock.ts`, applied by
+  `ClipSafeHold` in `client.ts`). Measured on URX22 and URX44V, System 1.3.1.0: sent back to back the A.Gain was put
+  back in 21 of 21 rounds with the A.Gain first and 6 of 6 with Clip Safe first; A.Gain first and 50 ms apart it
+  still was in 6 of 11; held for the announcement it stayed in 12 of 12. Compare with device asks every jack and
+  source the plan holds instead (`everyInputHolder`).
 - **Read.** A device read reads every jack and every source onto its own node, whether a channel reads it or not.
   A jack no channel reads is registered for follow (`planToFollowOnlyAddrs`, `scoped`), so a panel move there takes
   the MIC/LINE node's scoped read; a jack some channel reads follows A.Gain directly, by the instance the notify came

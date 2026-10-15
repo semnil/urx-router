@@ -82,6 +82,29 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+// Clip Safe OFF landing together with an A.Gain write puts that A.Gain back, so a flush
+// carrying both sends the A.Gain and holds the OFF until the unit has announced it.
+describe("LiveSync: Clip Safe OFF behind an A.Gain", () => {
+  it("holds the OFF until the A.Gain is announced", async () => {
+    const plan = basePlan();
+    setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+    plan.nodeParams["in.micline_1_2"] = { gainL: -8, clipSafeL: true };
+    const live = liveFor(plan);
+    live.begin();
+    plan.nodeParams["in.micline_1_2"] = { gainL: -5, clipSafeL: false };
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    const sent = (): string[] => vi.mocked(vdSet).mock.calls.map((c) => `${c[0]}:${c[1]}:${c[2]}=${c[3]}`);
+    expect(sent(), "only the A.Gain has gone out").toEqual([`${PARAMS.HA_GAIN.id}:0:0=-500`]);
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS / 2);
+    expect(sent(), "the OFF still waits").toHaveLength(1);
+    writeSettle.note({ paramId: PARAMS.HA_GAIN.id, x: 0, y: 0, value: -500 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent()).toEqual([`${PARAMS.HA_GAIN.id}:0:0=-500`, `${PARAMS.CLIP_SAFE.id}:0:0=0`]);
+    live.end();
+  });
+});
+
 describe("LiveSync flush cadence", () => {
   it("sends one write per settled change (the baseline)", async () => {
     const plan = basePlan();
