@@ -1235,14 +1235,14 @@ async function restoreUnsent(
   if (writeBack) {
     // A Clip Safe OFF written back behind the same jack's A.Gain waits for that A.Gain's
     // announcement, as every other sender's does.
-    const hold = new ClipSafeHold({ timeoutMs: settleMs, signal });
+    const hold = new ClipSafeHold(settleMs);
     for (const [addr, c] of unrestorable) {
       const want = before.get(addr);
       if (want === undefined) continue;
       signal?.throwIfAborted();
       try {
-        await hold.before(c, want);
-        hold.sending(c, writeSettle.mark());
+        await hold.before(c, want, signal);
+        hold.sending(c, want, writeSettle.mark());
         await vdSet(c.paramId, c.x, c.y, want);
       } catch (e) {
         report.errors.push(`restore ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);

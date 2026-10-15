@@ -1023,11 +1023,13 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
   after the source selects, so a write that rewires a channel and sets a value lands the value on a jack the channel
   already reads. Each value is bounded to its own address's range — A.Gain -8..+70 dB (+40 while that jack's HI-Z is
   on), D.Gain ±24 dB — and whichever of +48V / HI-Z the plan holds off goes out first. Clip Safe goes out after
-  the jack's A.Gain, and a Clip Safe OFF behind an A.Gain write to the same jack in the same flush, converge round
-  or self-test write-back waits until the unit announces that A.Gain, or for the settle bound where nothing
-  announces it (a write outside a live session): when an A.Gain write and a Clip Safe OFF land together, the unit
-  puts the A.Gain back to the value it held before (`clipSafeOffAwaits` in `input-lock.ts`, applied by
-  `ClipSafeHold` in `client.ts`). Measured on URX22 and URX44V, System 1.3.1.0: sent back to back the A.Gain was put
+  the jack's A.Gain, and a Clip Safe OFF waits until the unit has announced the value of the last A.Gain written to
+  the same jack — an announcement of an earlier value does not end it — or for the settle bound counted from that
+  A.Gain's send, which is the whole wait where nothing announces it (a write outside a live session). The A.Gain
+  writes it waits behind are a converge round's or a self-test write-back's own, and a live session's across its
+  flushes, so an OFF opening the flush queued behind one that closed on an A.Gain waits too; a session's end
+  drops them. When an A.Gain write and a Clip Safe OFF land together, the unit puts the A.Gain back to the value it
+  held before (`clipSafeOffAwaits` in `input-lock.ts`, applied by `ClipSafeHold` in `client.ts`). Measured on URX22 and URX44V, System 1.3.1.0: sent back to back the A.Gain was put
   back in 21 of 21 rounds with the A.Gain first and 6 of 6 with Clip Safe first; A.Gain first and 50 ms apart it
   still was in 6 of 11; held for the announcement it stayed in 12 of 12. Compare with device asks every jack and
   source the plan holds instead (`everyInputHolder`).

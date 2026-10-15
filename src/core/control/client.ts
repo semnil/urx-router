@@ -240,23 +240,27 @@ const outcomeOf = (command: VdCommand, result: SendResult, error?: string): Send
 });
 
 /**
- * The Clip Safe OFF hold of one batch of writes (`clipSafeOffAwaits`): `before` waits, ahead of
- * a write, until the unit has announced an A.Gain write this batch sent to the same jack, or for
- * `timeoutMs` where nothing announces it; `sending` records an A.Gain write by the settle mark
- * taken immediately before it goes out.
+ * The Clip Safe OFF hold (`clipSafeOffAwaits`): `before` waits, ahead of a write, until the unit
+ * has announced the last A.Gain value sent to the same jack through this hold, for at most
+ * `timeoutMs` counted from that A.Gain's send; `sending` records an A.Gain write by its value and
+ * the settle mark taken immediately before it goes out. A sender that writes in one batch holds
+ * one per batch; live sync holds one for the session, so an OFF in a later flush waits for an
+ * A.Gain an earlier flush sent.
  */
 export class ClipSafeHold {
-  private readonly gainMarks = new Map<number, number>();
-  constructor(private readonly opts: { timeoutMs?: number; signal?: AbortSignal } = {}) {}
+  private readonly gains = new Map<number, { mark: number; value: number; at: number }>();
+  constructor(private readonly timeoutMs: number = SETTLE_TIMEOUT_MS) {}
 
-  async before(c: Pick<VdCommand, "name" | "x" | "y">, value: number): Promise<void> {
+  async before(c: Pick<VdCommand, "name" | "x" | "y">, value: number, signal?: AbortSignal): Promise<void> {
     const awaits = clipSafeOffAwaits(c, value);
-    const at = awaits === null ? undefined : this.gainMarks.get(awaits);
-    if (awaits !== null && at !== undefined) await writeSettle.settle(new Map([[awaits, at]]), this.opts);
+    const gain = awaits === null ? undefined : this.gains.get(awaits);
+    if (awaits === null || gain === undefined) return;
+    const left = this.timeoutMs - (Date.now() - gain.at);
+    if (left > 0) await writeSettle.announcement(awaits, gain.mark, gain.value, { timeoutMs: left, signal });
   }
 
-  sending(c: Pick<VdCommand, "name" | "paramId" | "x" | "y">, mark: number): void {
-    if (c.name === "HA_GAIN") this.gainMarks.set(addrKey(c.paramId, c.x, c.y), mark);
+  sending(c: Pick<VdCommand, "name" | "paramId" | "x" | "y">, value: number, mark: number): void {
+    if (c.name === "HA_GAIN") this.gains.set(addrKey(c.paramId, c.x, c.y), { mark, value, at: Date.now() });
   }
 }
 
@@ -290,11 +294,11 @@ export async function sendCommands(
   settleMs: number = SETTLE_TIMEOUT_MS,
 ): Promise<SendOutcome[]> {
   const outcomes: SendOutcome[] = [];
-  const hold = new ClipSafeHold({ timeoutMs: settleMs, signal });
+  const hold = new ClipSafeHold(settleMs);
   for (const command of commands) {
     signal?.throwIfAborted();
-    await hold.before(command, command.vdValue);
-    hold.sending(command, writeSettle.mark());
+    await hold.before(command, command.vdValue, signal);
+    hold.sending(command, command.vdValue, writeSettle.mark());
     onSending?.(command);
     let outcome: SendOutcome;
     try {

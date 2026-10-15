@@ -269,6 +269,9 @@ export class LiveSync {
   // switch the unit turned on at its own panel and the other switch on the same channel
   // (`ownOns`). An announcement arriving while it runs can add to both (`isEcho`).
   private converge: { ownOns: Set<number>; exclude: Set<number> } | null = null;
+  // The A.Gain writes a Clip Safe OFF waits behind, for the session: an OFF in one flush waits
+  // for an A.Gain another flush sent (`ClipSafeHold`). Replaced by end().
+  private clipSafeHold = new ClipSafeHold();
   // A switch ON the exclusion held back is still waiting in the plan, and the A.Gain it
   // lowered with it (`carrierOf`). Whatever can move the view it was held against — an
   // announcement, a capture — schedules a flush to ask again, since no edit will. A read that
@@ -414,6 +417,7 @@ export class LiveSync {
    *  is enshrined as a value the device was already given. Omit it only where the plan
    *  itself is device truth (no read spanned an await). */
   begin(deviceView?: Plan): void {
+    this.clipSafeHold = new ClipSafeHold();
     this.directJournal.clear();
     this.directSeq = 0;
     this.announced.clear();
@@ -683,6 +687,7 @@ export class LiveSync {
   /** Stop syncing and cancel any pending flush. Does not touch the connection. */
   end(): void {
     this.active = false;
+    this.clipSafeHold = new ClipSafeHold();
     this.sessionGen++;
     this.sessionAbort.abort();
     this.announced.clear();
@@ -1110,7 +1115,6 @@ export class LiveSync {
       let fresh: Map<number, number> | null = null;
       // The frozen list's values by address, built the first time a command asks for another's.
       let frozen: Map<number, number> | null = null;
-      const hold = new ClipSafeHold({ signal });
       for (const c of commands) {
         const k = cmdAddr(c);
         if (this.snapshotEpoch !== valuesAt) {
@@ -1160,9 +1164,9 @@ export class LiveSync {
           this.onHeld = true;
           continue;
         }
-        // A Clip Safe OFF behind an A.Gain write this flush sent to the same jack waits for
+        // A Clip Safe OFF behind an A.Gain write this session sent to the same jack waits for
         // the unit to announce that A.Gain.
-        await hold.before(c, value);
+        await this.clipSafeHold.before(c, value, signal);
         if (this.sessionGen !== gen) return;
         // Taken before the send, not after it: a notify that lands while this very
         // vdSet is in flight cannot be placed on either side of it, and the safe
@@ -1170,7 +1174,7 @@ export class LiveSync {
         // `hasUnannouncedWrite` answers for, so the follow layer re-reads its node
         // rather than putting its value into the plan (settle.ts).
         const mark = writeSettle.mark();
-        hold.sending(c, mark);
+        this.clipSafeHold.sending(c, value, mark);
         this.inFlight.set(k, value);
         try {
           await vdSet(c.paramId, c.x, c.y, value);
