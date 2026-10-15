@@ -265,7 +265,7 @@ describe("planToCommands", () => {
     expect(mix.every((c) => c.vdValue === 1792)).toBe(true);
   });
 
-  it("uses the adopted URX22 INS FX selector/ON instances", () => {
+  it("uses the URX22 INS FX selector/ON instances", () => {
     const u22 = getModel("URX22");
     expect(insertFxControl(u22, "ch1")).toMatchObject({ param: 135, onParam: 134, isOutput: false, instances: [0] });
     expect(insertFxControl(u22, "ch2")).toMatchObject({ param: 135, onParam: 134, isOutput: false, instances: [1] });
