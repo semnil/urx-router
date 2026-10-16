@@ -4,7 +4,7 @@
 // way main.ts builds it — the DOM contract asserted below is the same one the
 // Playwright specs address, so a rename that breaks them breaks these first.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 vi.mock("../core/storage", async (importOriginal) => {
   const real = await importOriginal<typeof import("../core/storage")>();
@@ -63,6 +63,16 @@ beforeEach(() => {
 });
 
 pinSettingsReset();
+
+// The board times a double press on performance.now(). A case that presses twice holds that
+// clock for the rest of the case and moves it only by the returned step, so the gap between
+// two presses is the one the case names however long the machine takes between them.
+function holdClock(): (ms: number) => void {
+  let t = 1000;
+  const spy = vi.spyOn(performance, "now").mockImplementation(() => t);
+  onTestFinished(() => spy.mockRestore());
+  return (ms) => void (t += ms);
+}
 
 afterEach(() => {
   fx?.restore();
@@ -1926,14 +1936,18 @@ describe("node drag", () => {
   // collapsed note that also un-collapsed it and marked the plan changed.
   it("does not open the note editor when a just-dragged node is grabbed again", () => {
     fx = graphFixture();
+    const advance = holdClock();
     const rect = faceplate(fx.host, "ch1")!;
     drag(rect, { x: 260, y: 180 });
     // The second grab, well inside the 350 ms double-press window.
+    advance(50);
     press(rect);
     expect(fx.host.querySelector("textarea")).toBeNull();
 
     // …and a genuine double press, with no drag between, still opens it.
+    advance(500);
     press(rect);
+    advance(100);
     press(rect);
     expect(fx.host.querySelector("textarea")).not.toBeNull();
   });
@@ -2026,7 +2040,9 @@ describe("an edit the host refuses", () => {
         plan.noteCollapsed = ["ch1"];
       },
       act: () => {
+        const advance = holdClock();
         press(faceplate(fx.host, "ch1")!);
+        advance(100);
         press(faceplate(fx.host, "ch1")!);
       },
     },
