@@ -222,6 +222,18 @@ describe("the plan as the glass's transport", () => {
   it("refuses a press the session refuses", async () => {
     const { hooks } = session([]);
     await expect(transport({ ...hooks, setUnitCue: () => false }).write("ch.ch1.cue", true)).rejects.toThrow("refused");
+    // …a release as well: the input cue turned off with the outputs the unit holds back on.
+    const held = session(
+      [],
+      [
+        ["bus.stereo", true],
+        ["ch1", true],
+      ],
+    );
+    const t = transport({ ...held.hooks, setUnitCue: () => false });
+    await expect(Promise.all([t.write("ch.ch1.cue", false), t.write("ch.bus.stereo.cue", true)])).rejects.toThrow(
+      "refused",
+    );
   });
 
   it("shows the unit's own values over the simulator's, and hands an edit of one to the unit", async () => {

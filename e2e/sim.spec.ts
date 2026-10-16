@@ -1,9 +1,11 @@
 import { test, expect, type Page } from "./fixtures";
 import {
   LIVE_COMMANDS,
+  heldWritesOf,
   notifyParam,
   savedFilesOf,
   setDeviceValue,
+  setHeldWrites,
   stubTauriBoot,
   stubTauriDevice,
   writesOf,
@@ -196,6 +198,30 @@ test("takes Follow USB on the LCD's Sampling Frequency screen as the toolbar's F
   await expect
     .poll(async () => (await writesOf(page)).filter(([id]) => id === PARAMS.FOLLOW_USB.id))
     .toEqual([[PARAMS.FOLLOW_USB.id, 0]]);
+});
+
+// With no session a SETUP setting changed on the LCD is written over a connection of its own; the
+// edits made while that write runs go out after it as one, carrying the last value.
+test("writes the last of several SETUP edits made on the LCD with no session", async ({ page }) => {
+  const BRIGHTNESS: number = PARAMS.BRIGHTNESS.id;
+  await stubTauriDevice(page, { values: { [BRIGHTNESS]: 5 }, commands: { experimental_enabled: true } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Brightness", exact: true }), "setup.brightness");
+  const brightnessWrites = async (): Promise<number[]> =>
+    (await writesOf(page)).flatMap(([id, v]) => (id === BRIGHTNESS ? [v] : []));
+  await setHeldWrites(page, [BRIGHTNESS]);
+  await onScreen(page, "setup.brightness").getByRole("spinbutton").focus();
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(() => heldWritesOf(page), "the first edit is being written").toBe(1);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await setHeldWrites(page, []);
+  await expect.poll(brightnessWrites).toHaveLength(2);
+  const [first, last] = await brightnessWrites();
+  expect(last, "the second and third edits went out as one, at the last value").toBe(first! - 2);
 });
 
 // A change the unit makes beside the one asked for — a BUS Type resetting its bank, an EFFECT TYPE
