@@ -20,6 +20,10 @@ export default defineConfig({
     // percentage. `check-merge-gates` is the one with a test today, and it is the guard
     // over the checks a merge waits for.
     include: ["src/**/*.test.ts", "scripts/**/*.test.mjs"],
+    // With URX_VITEST_WORKER_LOG set, each worker appends its pid and its test file to that file when the
+    // file starts and when it ends, so a worker that exits mid-file is named by its file and its pid
+    // (scripts/vitest-worker-log-setup.mjs). Unset, nothing is added.
+    setupFiles: process.env.URX_VITEST_WORKER_LOG ? ["scripts/vitest-worker-log-setup.mjs"] : [],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
