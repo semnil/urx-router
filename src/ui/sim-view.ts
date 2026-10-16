@@ -141,6 +141,13 @@ class PlanTransport implements DeviceTransport {
     if (!this.hooks.apply(edit)) return Promise.reject(new Error("refused"));
     const taken = binding.read(this.hooks.getPlan()) ?? value;
     this.held.set(path, taken);
+    // A value the plan took differently — kept as it was, or brought to its step — goes back
+    // to the glass as the answer to this write, once the write has gone out.
+    if (taken !== value)
+      queueMicrotask(() => {
+        if (this.closed) return;
+        for (const listener of this.listeners) listener({ path, value: taken, echo: true });
+      });
     return Promise.resolve(taken);
   }
 

@@ -460,26 +460,48 @@ test("SSMCS on a linked pair leaves the same plan from the LCD as from the Inspe
 
 // While 1-knob EQ is on the unit drives the bands, and the plan keeps the gains it held — the
 // ones it sends once 1-knob is off again — as every other surface leaves them.
-test("turning 1-knob EQ's level on the LCD leaves the plan's band gains as they were", async ({ page }) => {
+test("turning 1-knob EQ's level on the LCD leaves the plan's band gains, and the LCD shows them", async ({ page }) => {
   const link = planLink("URX44V", (plan) => {
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, eqOneKnob: { on: true, type: 0, level: 50 } };
     plan.nodeParams.ch1.eqBands![0].gain = 6;
   });
   await openSimSaving(page, { path: link });
-  const bands = (p: SavedPlan) => p.nodeParams.ch1?.eqBands;
-  const before = bands(await save(page));
-  await tapInto(page, lcd(page).getByRole("button", { name: "C H 1 settings", exact: true }), "channel-view");
-  await openBlock(page, /^EQ/, "ch.eq");
+  const lowGain = (p: SavedPlan) => (p.nodeParams.ch1?.eqBands as { gain: number }[] | undefined)?.[0]?.gain;
+  const oneKnob = (p: SavedPlan) => p.nodeParams.ch1?.eqOneKnob as { on?: boolean; level?: number } | undefined;
+  const openEq = async (): Promise<void> => {
+    await tapInto(page, lcd(page).getByRole("button", { name: "C H 1 settings", exact: true }), "channel-view");
+    await openBlock(page, /^EQ/, "ch.eq");
+  };
+  const shown = () => lcd(page).getByRole("slider", { name: "LOW Gain", exact: true });
+  await openEq();
   const level = lcd(page).locator(".oneknob-level");
   await level.focus();
   await page.keyboard.press("ArrowDown");
-  await expect.poll(async () => ((await save(page)).nodeParams.ch1?.eqOneKnob as { level?: number })?.level).toBe(49);
-  expect(bands(await save(page)), "a level away from 50").toEqual(before);
+  await expect.poll(async () => oneKnob(await save(page))?.level).toBe(49);
+  expect(lowGain(await save(page)), "a level away from 50").toBe(6);
   await level.focus();
   await page.keyboard.press("ArrowUp");
-  await expect.poll(async () => ((await save(page)).nodeParams.ch1?.eqOneKnob as { level?: number })?.level).toBe(50);
-  expect(bands(await save(page)), "the level back at 50").toEqual(before);
-  expect((before as { gain: number }[])[0].gain).toBe(6);
+  await expect.poll(async () => oneKnob(await save(page))?.level).toBe(50);
+  expect(lowGain(await save(page)), "the level back at 50").toBe(6);
+
+  // 1-knob off: the band the LCD now offers is the one the plan holds and sends.
+  await lcd(page).locator("button.oneknob").click();
+  await expect.poll(async () => oneKnob(await save(page))?.on).toBe(false);
+  await expect(shown()).toHaveAttribute("aria-valuenow", "6");
+  expect(lowGain(await save(page))).toBe(6);
+
+  // Undone, 1-knob is on again over the same gain.
+  await page.locator("#sim-host").click({ position: { x: 4, y: 4 } });
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect.poll(async () => oneKnob(await save(page))?.on).toBe(true);
+  expect(lowGain(await save(page))).toBe(6);
+
+  // The plan opened again shows the gain it holds once 1-knob is off.
+  await page.goto(link);
+  await page.click("#btn-view-sim");
+  await openEq();
+  await lcd(page).locator("button.oneknob").click();
+  await expect(shown()).toHaveAttribute("aria-valuenow", "6");
 });
 
 // HOME's [Sends] destination is the unit's UI state, outside the plan: a session reads it, a
