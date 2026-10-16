@@ -108,12 +108,25 @@ try {
   // Untracked but not ignored: a new spec or fixture that has not been added yet is
   // part of what is under test, and omitting it would run the suite without it.
   // -z: without it git quotes a path holding a non-ASCII byte, and the quoted form names no file.
-  const untracked = git(["ls-files", "-z", "--others", "--exclude-standard"]).split("\0").filter(Boolean);
+  // Git for Windows lists an untracked junction as the files inside it rather than as one
+  // path, so a path under a link is folded into the link and carried once as that link. A
+  // junction to an empty directory is listed by nothing there and is not carried.
+  const linkOf = (rel) => {
+    const parts = rel.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const at = parts.slice(0, i).join("/");
+      if (lstatSync(join(ROOT, at)).isSymbolicLink()) return at;
+    }
+    return rel;
+  };
+  const untracked = [
+    ...new Set(git(["ls-files", "-z", "--others", "--exclude-standard"]).split("\0").filter(Boolean).map(linkOf)),
+  ];
   for (const rel of untracked) {
     const src = join(ROOT, rel);
     const dst = join(wt, rel);
     mkdirSync(dirname(dst), { recursive: true });
-    // git lists a symlink as one path whatever it points at. It is recreated with its target
+    // A symlink is recreated with its target
     // verbatim, so a relative one resolves inside the worktree as it does here; copying would
     // follow it, and a link to a directory cannot be copied at all. Windows needs the kind up
     // front: a directory becomes a junction, which needs no privilege, and a file link that
