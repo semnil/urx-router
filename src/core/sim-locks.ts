@@ -91,9 +91,11 @@ export function simLocks(
   if (state.linked) out.push({ target: { kind: "screen", id: "setup.rate" }, reason: reasons.rateLinked });
   const fx2Out = model.nodes.some((n) => n.id === "bus.fx2") && nodeRateDisabled("bus.fx2", plan.sampleRate);
   for (const path of paths) {
-    // A channel's send into an FX bus: PRE / POST is the unit's own, and FX 2 leaves with the rate.
+    // A channel's send into an FX bus: while Live sync is up PRE / POST is the unit's own, as on the
+    // CONSOLE and in the Inspector, and FX 2 leaves with the rate.
     const send = /\.send\.(fx1|fx2)\.(on|level|pre|balance)$/.exec(path);
-    if (send && send[2] === "pre") out.push({ target: { kind: "path", path }, reason: reasons.notAccepted });
+    if (send && send[2] === "pre" && state.live)
+      out.push({ target: { kind: "path", path }, reason: reasons.notAccepted });
     else if (send && send[1] === "fx2" && fx2Out) out.push({ target: { kind: "path", path }, reason: reasons.fx2Rate });
     if (path === "sd.trackCount" && state.live)
       out.push({ target: { kind: "path", path }, reason: reasons.trackCountLive });

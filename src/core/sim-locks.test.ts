@@ -39,8 +39,10 @@ describe("the controls the SIM view holds shut", () => {
     expect(reasonFor(all, { kind: "screen", id: "setup.patch" }), "Output Patch is the plan's").toBeNull();
   });
 
-  it("holds a channel's PRE into an FX bus, which the unit does not take, and nothing else of the send", () => {
-    const all = locks();
+  it("holds a channel's PRE into an FX bus while Live sync is up, which the unit does not take, and nothing else of the send", () => {
+    expect(reasonFor(locks(), path("ch.ch1.send.fx1.pre")), "offline the tap is the plan's").toBeNull();
+    expect(reasonFor(locks({ linked: true, live: false }), path("ch.ch1.send.fx1.pre"))).toBeNull();
+    const all = locks({ linked: true, live: true });
     expect(paths).toContain("ch.ch1.send.fx1.pre");
     expect(reasonFor(all, path("ch.ch1.send.fx1.pre"))).toBe("notAccepted");
     expect(reasonFor(all, path("ch.ch1.send.fx2.pre"))).toBe("notAccepted");
