@@ -1874,7 +1874,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   gain down while the unit announces it (`864`). A session registers those addresses and reads SETUP again once
   an announcement at one settles. A SETUP setting changed on the LCD is written to the unit — behind every unit
   write queued so far while Live sync is up, and otherwise over a connection of its own that reads SETUP first, as
-  the Device setup screen does. Follow USB pressed on the LCD is a press of the toolbar's FOLLOW USB, its confirm
+  the Device setup screen does. Edits made while such a write runs are merged and written after it, so the last value
+  of each setting reaches the unit; a failed write is reported once and refuses the edits waiting behind it too. Follow USB pressed on the LCD is a press of the toolbar's FOLLOW USB, its confirm
   included. The User Defined Knobs bank is read and never written, so the bank the LCD shows is its own once
   chosen there.
 - **What it shows** follows every writer: each place that schedules MIDI feedback (`markChanged`,

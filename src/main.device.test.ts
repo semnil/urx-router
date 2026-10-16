@@ -11468,6 +11468,36 @@ describe("the SIM view over a live session", () => {
     expect((await transport().snapshot()).get("setup.brightness")).toBe(3);
   });
 
+  // A drag or a wheel on the glass makes several edits while the first is still being written over
+  // its own connection: each waits for the one before it and the last value reaches the unit.
+  it("writes the last of several SETUP edits made with no session while the first is written", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    const first = transport().write("setup.brightness", 3);
+    const second = transport().write("setup.brightness", 4);
+    await expect(Promise.all([first, second])).resolves.toEqual([3, 4]);
+    expect(setsOf(shell, PARAMS.BRIGHTNESS.id).at(-1), "the last value reached the unit").toEqual([0, 4]);
+    expect(statusText()).not.toBe(t().status.deviceLinkBusy);
+    expect(shell.count("vd_disconnect"), "every connection is let go").toBe(shell.count("vd_connect"));
+    expect((await transport().snapshot()).get("setup.brightness")).toBe(4);
+  });
+
+  it("refuses the SETUP edits waiting behind one the unit refuses with no session", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    shell.failOnce("vd_set", new Error("setup write refused"));
+    const first = transport().write("setup.brightness", 3);
+    const second = transport().write("setup.brightness", 4);
+    await expect(first).rejects.toThrow("refused");
+    await expect(second).rejects.toThrow("refused");
+    expect(errors(shell).filter((e) => e.includes("setup write refused"))).toHaveLength(1);
+    expect(
+      setsOf(shell, PARAMS.BRIGHTNESS.id).some(([, v]) => v === 4),
+      "nothing written past the failure",
+    ).toBe(false);
+    expect(shell.count("vd_disconnect"), "the connection is let go").toBe(shell.count("vd_connect"));
+  });
+
   it("shows the unit's operation mode, and an engaged Clip Safe while the unit announces one", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.OPERATION_MODE.id}/0/0`]: 1 });
     await openSim();

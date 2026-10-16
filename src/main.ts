@@ -940,25 +940,77 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
     return Promise.resolve(shown());
   }
   if (liveSessionUp) return Promise.reject(new Error("refused"));
-  return (async () => {
-    let done = false;
-    await withCheckedDevice(
-      "device-setup",
-      t().status.deviceSetupApplying,
-      (message) => t().error.deviceSetupWrite(message),
-      async () => {
-        const base = await readDeviceSetup(model);
-        const writes = writesOver(base);
-        await sendDeviceSetup(writes);
-        unitSetup = withSetupWrites(base, writes);
-        done = true;
-        setStatus(t().status.deviceSetupApplied(1));
-      },
-    );
-    simView?.unitStateChanged();
-    if (!done) throw new Error("refused");
-    return shown();
-  })();
+  return new Promise<SimValue>((resolve, reject) => {
+    const waiter = { resolve: () => resolve(shown()), reject: () => reject(new Error("refused")) };
+    if (offlineSetup) {
+      offlineSetup.edit = mergeSetupEdits(offlineSetup.edit, edit);
+      offlineSetup.waiters.push(waiter);
+    } else offlineSetup = { model, edit, waiters: [waiter] };
+    void runOfflineSetup();
+  });
+}
+
+// The glass's SETUP edits waiting for a connection of their own, merged into one: an edit made
+// while one is being written goes with the next write, which carries the latest value of each.
+let offlineSetup: {
+  model: DeviceModel;
+  edit: Partial<DeviceSetup>;
+  waiters: { resolve: () => void; reject: () => void }[];
+} | null = null;
+let offlineSetupRunning = false;
+
+/** The waiters of the glass SETUP edits still queued, which the queue then forgets. */
+function takeOfflineSetupWaiters(): { resolve: () => void; reject: () => void }[] {
+  const waiters = offlineSetup?.waiters ?? [];
+  offlineSetup = null;
+  return waiters;
+}
+
+/** Two glass edits of the unit's settings as one, the later winning where both name a field. */
+function mergeSetupEdits(a: Partial<DeviceSetup>, b: Partial<DeviceSetup>): Partial<DeviceSetup> {
+  const merged: Partial<DeviceSetup> = { ...a, ...b };
+  if (a.knobs || b.knobs) {
+    const knobs: DeviceSetup["knobs"] = [];
+    for (const list of [a.knobs, b.knobs]) list?.forEach((k, i) => (knobs[i] = k));
+    merged.knobs = knobs;
+  }
+  return merged;
+}
+
+/** Write the waiting glass SETUP edits over a connection of their own, one write at a time, until
+ *  none waits. A write that fails reports itself and refuses every edit still waiting. */
+async function runOfflineSetup(): Promise<void> {
+  if (offlineSetupRunning) return;
+  offlineSetupRunning = true;
+  try {
+    while (offlineSetup) {
+      const { model, edit, waiters } = offlineSetup;
+      offlineSetup = null;
+      let done = false;
+      await withCheckedDevice(
+        "device-setup",
+        t().status.deviceSetupApplying,
+        (message) => t().error.deviceSetupWrite(message),
+        async () => {
+          const base = await readDeviceSetup(model);
+          const writes = diffDeviceSetup(model, base, withSetupEdit(base, edit));
+          await sendDeviceSetup(writes);
+          unitSetup = withSetupWrites(base, writes);
+          done = true;
+          setStatus(t().status.deviceSetupApplied(1));
+        },
+      );
+      simView?.unitStateChanged();
+      if (done) {
+        for (const w of waiters) w.resolve();
+        continue;
+      }
+      // Edits made while this one was being written wait behind it, and go with it.
+      for (const w of [...waiters, ...takeOfflineSetupWaiters()]) w.reject();
+    }
+  } finally {
+    offlineSetupRunning = false;
+  }
 }
 
 // The settle a re-read of the unit's settings waits for after the unit announces one, as a
