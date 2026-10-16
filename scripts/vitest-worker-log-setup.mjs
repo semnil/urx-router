@@ -4,7 +4,8 @@
 // whichever comes first, whether the file's tests ran or were all skipped. The SIGTERM is raised again once
 // the line is written. A worker that dies any other way (a crash, a SIGKILL) writes no `end`, so a file with a
 // `start` line and no `end` line is one whose worker died while running it, and the pid on that line is the
-// one an OS crash report for that worker carries.
+// one an OS crash report for that worker carries. macOS and Linux only: vitest.config.ts refuses the variable on
+// Windows.
 import fs from "node:fs";
 import { expect } from "vitest";
 
