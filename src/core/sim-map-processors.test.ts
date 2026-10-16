@@ -176,13 +176,27 @@ describe("an FX channel's effect, whose rows follow the selected type", () => {
     expect(refusal(fx(2, "delay"), pingPong, 2700)).toBe("value");
   });
 
-  it("takes Sync as 1 / 0, and refuses the delay time while Sync is on", () => {
+  it("takes Sync as 1 / 0, and a delay time turned by hand while Sync is on as a write of the unit's own", () => {
     const plan = withFx("bus.fx2", { type: 1024, params: { sync: 0 } });
     expect(fx(2, "sync").read(plan)).toBe(false);
     expect(patchOf(fx(2, "sync"), plan, true)).toMatchObject({ fxEffect: { params: { sync: 1 } } });
+    expect(fx(2, "delay").write!(plan, 250), "with Sync off the plan's writer sends it").toMatchObject({
+      kind: "node",
+    });
     const synced = withFx("bus.fx2", { type: 1024, params: { sync: 1 } });
     expect(fx(2, "sync").read(synced)).toBe(true);
-    expect(refusal(fx(2, "delay"), synced, 250)).toBe("computed");
+    expect(refusal(fx(2, "delay"), synced, 250)).toBeNull();
+    // FX 2's effect array, at the delay time's slot, at the raw the unit shows as 250.0 ms.
+    expect(fx(2, "delay").write!(synced, 250)).toEqual({
+      kind: "steps",
+      steps: [
+        expect.objectContaining({
+          kind: "node",
+          patch: { fxEffect: expect.objectContaining({ params: expect.objectContaining({ delay: 2500 }) }) },
+        }),
+        { kind: "deviceWrite", param: 685, y: 6, value: 2500 },
+      ],
+    });
   });
 
   it("names the note values in the simulator's spelling", () => {

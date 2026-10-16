@@ -160,6 +160,7 @@ import {
   thirdPartyLicenses,
   vdConnect,
   vdDisconnect,
+  vdSet,
   vdWatchLink,
   type Connection,
   type DeviceSummary,
@@ -3410,6 +3411,9 @@ function applySimEdit(edit: SimEdit): boolean {
       if (deviceLinkHolder !== null) return false;
       chooseSampleRate(edit.rate);
       break;
+    case "deviceWrite":
+      writeHeldDeviceValue(edit.param, edit.y, edit.value);
+      break;
     case "none":
       break;
     // One choice on the LCD that takes more than one gesture on the board.
@@ -3418,6 +3422,18 @@ function applySimEdit(edit: SimEdit): boolean {
       break;
   }
   return true;
+}
+
+/** Write one value the plan's writer leaves out to the unit, behind the plan flush and every unit
+ *  write queued so far, while a session is up. With no session there is no unit to write it to. */
+function writeHeldDeviceValue(param: number, y: number, value: number): void {
+  if (!liveSessionUp) return;
+  cueWrites = cueWrites
+    .then(async () => {
+      await live?.idle();
+      if (liveSessionUp) await vdSet(param, 0, y, value);
+    })
+    .catch((err: unknown) => stopLiveOnError(errorText(err)));
 }
 
 function chooseSampleRate(rate: number): void {

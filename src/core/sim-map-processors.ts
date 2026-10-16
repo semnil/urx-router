@@ -48,6 +48,8 @@ import {
 } from "./control/vd";
 import {
   FX_CHANNEL_NODE_INDEX,
+  FX_EFFECT_ARRAY_PARAM,
+  fxDescRawToSend,
   fxEffectTypes,
   fxFamilyOf,
   fxParams,
@@ -723,14 +725,21 @@ function fxEffectValue(id: string, fxIndex: number, key: string, families: reado
       const row = rowOf(plan);
       if (!row) return refused("type");
       const fx: FxEffectParams = np(plan, id).fxEffect ?? {};
-      if (fxRowOwners(row.type, fx.params).get(row.desc.key) === "computed") return refused("computed");
       const raw = row.codec.take(v, fx.params?.[row.desc.key] ?? row.desc.def);
       if (typeof raw !== "number") return refused("value");
-      return {
+      const edit: SimEdit = {
         kind: "node",
         id,
         patch: { fxEffect: { ...fx, params: { ...fx.params, [row.desc.key]: raw } } },
         written: [`fxEffect.params.${row.desc.key}`],
+      };
+      // A value the unit drives — the delay time under tempo Sync — turned by hand, as the unit's
+      // own panel turns it: the unit takes it and keeps Sync on, and the plan's writer leaves it out.
+      if (fxRowOwners(row.type, fx.params).get(row.desc.key) !== "computed") return edit;
+      const value = fxDescRawToSend(row.desc, raw);
+      return {
+        kind: "steps",
+        steps: [edit, { kind: "deviceWrite", param: FX_EFFECT_ARRAY_PARAM[fxIndex]!, y: row.desc.slot, value }],
       };
     },
   };
