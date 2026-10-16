@@ -11,6 +11,11 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       strictPort: true,
     },
+    // The dev server serves urx-lcd-sim from its own source rather than pre-bundling it: the
+    // simulator imports its LICENSE with `?raw`, which the dependency pre-bundle cannot load.
+    optimizeDeps: {
+      exclude: ["urx-lcd-sim"],
+    },
     build: {
       target: "es2022",
       sourcemap: true,

@@ -58,6 +58,20 @@ import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
 import { spoken } from "./ui/glyph";
 
+// The glass's refused-action hook, as the SIM view hands it to the simulator: no control on the
+// glass reaches it while every unit operation is held shut, so a case calls it directly.
+const simRefused = vi.hoisted(() => ({ hook: null as ((op: { kind: string }) => void) | null }));
+vi.mock("urx-lcd-sim/embed", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("urx-lcd-sim/embed")>();
+  return {
+    ...actual,
+    refusedActions: (hook: (op: { kind: string }) => void) => {
+      simRefused.hook = hook;
+      return actual.refusedActions(hook);
+    },
+  };
+});
+
 /** Long enough for a whole-device read (676 reads through the stub) plus a teardown. */
 const SLOW = { timeout: 30_000 };
 
@@ -11298,6 +11312,43 @@ describe("the SIM view over a live session", () => {
     await invoked(shell, "vd_disconnect");
   });
 
+  it("ends the session when its meter subscription is refused", SLOW, async () => {
+    const shell = await bootDevice({
+      experimental_enabled: true,
+      vd_meters_subscribe: () => {
+        throw new Error("meters refused");
+      },
+    });
+    await openSim();
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the refused subscription is what ended it").toContain("meters refused");
+    expect(live().getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("draws the glass again for the model a switch lands on", SLOW, async () => {
+    await bootDevice({ experimental_enabled: true });
+    await openSim();
+    const before = glass()?.querySelector(".lcd");
+    expect(before?.getAttribute("aria-label")).toBe("URX44V LCD");
+    const picker = $<HTMLSelectElement>("model-picker");
+    picker.value = "URX22";
+    picker.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(glass()?.querySelector(".lcd")?.getAttribute("aria-label")).toBe("URX22 LCD"), {
+      timeout: 20_000,
+    });
+    expect(before?.isConnected, "the glass the first model drew is gone").toBe(false);
+  });
+
+  it("names a unit operation the glass refuses on the status line", SLOW, async () => {
+    await bootDevice({ experimental_enabled: true });
+    simRefused.hook = null;
+    await openSim();
+    expect(simRefused.hook, "the premise: the mount handed the simulator a refused-action hook").not.toBeNull();
+    simRefused.hook!({ kind: "scene.recall" });
+    expect(statusText()).toBe(t().status.simUnitAction);
+  });
+
   it("ends the session when the unit refuses a [Sends] destination chosen on the LCD", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.SENDS_TARGET.id}/0/0`]: 0 });
     await openSim();
@@ -11331,8 +11382,21 @@ describe("HOME's [Sends] destination", () => {
   const rateNotify = (shell: TauriShell, hz: number): void =>
     notifyChannel(shell).onmessage([{ param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: hz }]);
 
-  it("is read at live start and registered for its notify", SLOW, async () => {
+  // The SIM view shows it, so an experimental launch reads it and no other launch does.
+  it("is neither read nor registered without an experimental launch", SLOW, async () => {
     const shell = await bootDevice({}, true, { [SENDS]: 17 });
+    await goLive();
+    const { addrs } = shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: number[][] };
+    expect(addrs).not.toContainEqual([PARAMS.SENDS_TARGET.id, 0, 0]);
+    rateNotify(shell, 192000);
+    await drainShell(shell, () => false);
+    expect(sendsReads(shell)).toBe(0);
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+  });
+
+  it("is read at live start and registered for its notify on an experimental launch", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [SENDS]: 17 });
     await goLive();
     const { addrs } = shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: number[][] };
     expect(addrs, "the session registers the destination").toContainEqual([PARAMS.SENDS_TARGET.id, 0, 0]);
@@ -11344,7 +11408,7 @@ describe("HOME's [Sends] destination", () => {
   // The unit moves FX 2 to FX 1 above 96 kHz and announces nothing, so an announced rate above
   // 96 kHz is followed by a read of the destination; one at or below it is not.
   it("is read again after the unit announces a rate above 96 kHz, and not after one at 96 kHz", SLOW, async () => {
-    const shell = await bootDevice({}, true, { [SENDS]: 17 });
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [SENDS]: 17 });
     await goLive();
     await drainShell(shell, () => false);
     // The positive control, which also times how long the read takes to follow the notify.
@@ -11369,6 +11433,7 @@ describe("HOME's [Sends] destination", () => {
     // Every other address answers what the unit holds, so the read of 763 is the one that fails.
     let refuse = false;
     const shell = await bootDevice({
+      experimental_enabled: true,
       vd_get: (a: Record<string, unknown>) => {
         if (a.paramId !== PARAMS.SENDS_TARGET.id) return unwrittenRead(a);
         if (refuse) throw new Error("timeout");
