@@ -16,7 +16,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { untagged } from "./check-pr-assumptions.mjs";
+import { unsettled, untagged } from "./check-pr-assumptions.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./check-pr-assumptions.mjs", import.meta.url));
 
@@ -92,9 +92,10 @@ describe("what it refuses", () => {
     expect(untagged(body(deferred))).toHaveLength(1);
   });
 
-  it("exits non-zero on it, and zero on the same item tagged", () => {
+  it("exits non-zero on it, and zero on the same item tagged and settled", () => {
     expect(run(body(deferred)).status).toBe(1);
-    expect(run(body(deferred.replace("  - **The", "  - **[hardware]** The"))).status).toBe(0);
+    const tagged = deferred.replace("  - **The", "  - **[hardware]** The");
+    expect(run(body(`${tagged}\n    - Result: the drain reported a 40 ms gap.`)).status).toBe(0);
   });
 
   it("reports every untagged item, not only the first", () => {
@@ -121,6 +122,46 @@ describe("what it refuses", () => {
   it("refuses an answer written inline rather than as a list", () => {
     const text = body("- [x] Assumptions this PR rests on are listed here: the window is a guess for now.");
     expect(untagged(text)).toHaveLength(1);
+  });
+});
+
+// A tagged item names what its observation needs; it is settled with the operator before the
+// pull request is opened all the same, and the entry under it says so. A tag alone describes
+// a deferral rather than ending one.
+describe("how a tagged item was settled", () => {
+  const tagged =
+    "- [x] Assumptions this PR rests on are listed here:\n" +
+    "  - [hardware] whether the unit announces the recorder's own change.";
+
+  it("refuses a tagged item with nothing under it", () => {
+    expect(unsettled(body(tagged))).toEqual(["[hardware] whether the unit announces the recorder's own change."]);
+    const said = run(body(tagged));
+    expect(said.status).toBe(1);
+    expect(said.stderr).toContain("unsettled assumption");
+  });
+
+  it("passes the same item with a Result entry under it", () => {
+    const text = body(`${tagged}\n    - **Result** (URX44V, System 1.3.1.0): it does, one notify per move.`);
+    expect(unsettled(text)).toEqual([]);
+    expect(run(text).status).toBe(0);
+  });
+
+  it("passes the same item left open on the operator's quoted instruction", () => {
+    const text = body(`${tagged}\n    - Left open by the operator: "open it with this unmeasured".`);
+    expect(unsettled(text)).toEqual([]);
+    expect(run(text).status).toBe(0);
+  });
+
+  // A result written as a sentence of the item's own text, or under a sibling, settles
+  // nothing about this item: what is asked for is an entry under it.
+  it("does not read a result from the item's own text or from a sibling", () => {
+    expect(unsettled(body(`${tagged} Result: it does.`))).toHaveLength(1);
+    const sibling = body(`${tagged}\n` + "  - [operator] a second item.\n" + "    - Result: settled.");
+    expect(unsettled(sibling)).toEqual(["[hardware] whether the unit announces the recorder's own change."]);
+  });
+
+  it("does not take some other entry under the item for a result", () => {
+    expect(unsettled(body(`${tagged}\n    - What would settle it: a front-panel move.`))).toHaveLength(1);
   });
 });
 
@@ -189,7 +230,8 @@ describe("bodies it is not about", () => {
       "- [x] Assumptions this PR rests on are listed here:\n" +
         "  - [operator] The draft's signatures name the version its manifest announces.\n" +
         "    - Result (after publish): both read the same version.\n" +
-        "  - [hardware] A second item at the field's own indentation.",
+        "  - [hardware] A second item at the field's own indentation.\n" +
+        "    - Result: settled as well.",
     );
     expect(untagged(text)).toEqual([]);
     expect(run(text).status).toBe(0);

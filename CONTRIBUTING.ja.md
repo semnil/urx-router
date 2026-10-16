@@ -36,7 +36,7 @@ pnpm tauri dev     # デスクトップアプリ
 | `pnpm format` | TypeScript ソースへの Prettier 適用 |
 | `pnpm check:md` | Markdown テーブルの整合性チェック |
 | `pnpm check:skips` | `e2e/race` の恒久 skip が、その理由を保つものと結び付けて登録されているか |
-| `pnpm check:pr-assumptions -- --file <body.md>` | そのファイルにある本文の assumptions 欄が、各観測に何が要るかを名乗っているか。提出しようとしている本文に対して実行する。プルリクエスト上では workflow が本文自体を渡すので指定は不要で、どちらも与えられなかった実行は「何も読まずに成功」ではなく拒否になる |
+| `pnpm check:pr-assumptions -- --file <body.md>` | そのファイルにある本文の assumptions 欄が、各観測に何が要るかを名乗り、タグ付きの各項目が何で決着したかを書いているか。提出しようとしている本文に対して実行する。プルリクエスト上では workflow が本文自体を渡すので指定は不要で、どちらも与えられなかった実行は「何も読まずに成功」ではなく拒否になる |
 | `pnpm build:demo` | ブラウザデモ版のビルド（保存ダイアログと画像出力を除く） |
 
 ## 規約
@@ -126,8 +126,11 @@ UPDATE_SKILL=1 pnpm test skill-export
   ならない — 本文はマージと同時に見えなくなり、その項目は誰の一覧にも残らないため。よって各項目は
   観測が要する外部依存で始める — `[hardware]` 実機からの読み取り、`[operator]` 人の手や目、
   `[other-checkout]` このマシンではない環境 — であり、どれも要らない観測には**書くタグが無い**:
-  取ってその行を消すか、"none" と答える。`pnpm check:pr-assumptions` はタグの無い項目を拒否し、
-  横のチェックボックスが付いているかどうかに関わらず、書かれた内容を読む。
+  取ってその行を消すか、"none" と答える。タグの付いた項目もプルリクエストを開く前に決着させ、
+  何で決着したかを項目の下に `Result` の項目として書く (メンテナーが項目を残したまま開くよう求めた
+  ときは、その言葉を引用した `Left open by the operator` の項目を書く)。`pnpm check:pr-assumptions`
+  はタグの無い項目と、どちらの項目も持たないタグ付きの項目を拒否し、横のチェックボックスが付いて
+  いるかどうかに関わらず、書かれた内容を読む。
 - マージは `ci-required` / `docs-required` / `format` / `race-required` の 4 つを待つ。いずれもすべての
   プルリクエストで結果を返すため、対象外としてスキップされた変更でも「永久に来ないチェック」
   ではなく緑のチェックが付く。これを保つのが `pnpm check:gates` で、`.github/workflows/`

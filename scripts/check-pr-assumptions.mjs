@@ -14,6 +14,12 @@
 // silence. Whether a tag is TRUE is a judgement, the same way the message catalog's
 // dev/fixed/tr markers are: this asks that one was made.
 //
+// A tagged item is settled with the operator before the pull request is opened, so each one
+// carries what settled it as an entry under it: a `Result` entry, or — where the operator
+// told the author to open the pull request with the item still open — a `Left open by the
+// operator` entry quoting that instruction. A tagged item with neither is a deferral the tag
+// only describes.
+//
 // Narrow on purpose. What it reads is what someone WROTE — the items under the field, and
 // an answer separated from the label by a colon — and not the tick beside it, which is
 // independent of them. "none" is the answer the template already offers, an untouched
@@ -34,6 +40,9 @@ const LABEL = /^- \[[ xX]\]\s*Assumptions this PR rests on/;
 /** An answer that claims nothing. */
 const EMPTY = /^(none|none\.|無し|なし)$/i;
 
+/** The sub-entry that says how a tagged item was settled, read from its start. */
+const SETTLED = /^(result|left open by the operator)\b/i;
+
 /**
  * The assumption items a body lists, or null when the field is absent altogether. An item
  * is a nested list entry under the field; a field answered on its own line carries that
@@ -41,6 +50,12 @@ const EMPTY = /^(none|none\.|無し|なし)$/i;
  * template's own line ends without one, so an untouched template lists nothing.
  */
 export function assumptionItems(body) {
+  const entries = assumptionEntries(body);
+  return entries === null ? null : entries.map((e) => e.text);
+}
+
+/** The same items, each with the first line of every sub-entry written under it. */
+export function assumptionEntries(body) {
   const lines = body.split(/\r?\n/);
   const at = lines.findIndex((l) => LABEL.test(l));
   if (at < 0) return null;
@@ -65,9 +80,11 @@ export function assumptionItems(body) {
   let contentCol = 0;
   let inSub = false;
   let afterBlank = false;
+  let subs = [];
   const end = () => {
-    if (current !== null) items.push(current);
+    if (current !== null) items.push({ text: current, subs });
     current = null;
+    subs = [];
     inSub = false;
   };
   for (const l of block) {
@@ -81,8 +98,10 @@ export function assumptionItems(body) {
     afterBlank = false;
     if (current !== null && indent >= contentCol) {
       // Inside the current item: a sub-entry, or a paragraph of the item's own.
-      if (nested) inSub = true;
-      else if (!inSub) current += ` ${l.trim()}`;
+      if (nested) {
+        inSub = true;
+        subs.push(nested[3]);
+      } else if (!inSub) current += ` ${l.trim()}`;
     } else if (nested) {
       end();
       current = nested[3];
@@ -103,8 +122,22 @@ export function assumptionItems(body) {
   // as an answer and an untouched template was a finding.
   const colon = lines[at].indexOf(":");
   const inline = colon < 0 ? "" : lines[at].slice(colon + 1).trim();
-  if (inline) items.unshift(inline);
+  if (inline) items.unshift({ text: inline, subs: [] });
   return items;
+}
+
+/** Markup a writer may put around a word, removed before the word is compared. */
+const bareText = (s) => s.replace(/[*_~`]/g, "").trim();
+
+const isTagged = (item) => TAGS.some((t) => item.toLowerCase().includes(t));
+
+/** Every tagged assumption with no entry under it saying how it was settled, in order. */
+export function unsettled(body) {
+  const entries = assumptionEntries(body);
+  if (entries === null) return [];
+  return entries
+    .filter((e) => isTagged(e.text) && !e.subs.some((sub) => SETTLED.test(bareText(sub))))
+    .map((e) => e.text);
 }
 
 /** Every listed assumption that names none of the three, in the order they appear. */
@@ -119,7 +152,7 @@ export function untagged(body) {
   return items.filter((item) => {
     const bare = item.replace(/[*_~`]/g, "").trim();
     if (EMPTY.test(bare)) return false;
-    return !TAGS.some((t) => item.toLowerCase().includes(t));
+    return !isTagged(item);
   });
 }
 
@@ -151,16 +184,25 @@ function main() {
     return;
   }
   const bad = untagged(body);
-  if (!bad.length) {
-    console.log("OK: every listed assumption names what its observation needs");
+  const open = unsettled(body);
+  if (!bad.length && !open.length) {
+    console.log("OK: every listed assumption names what its observation needs and how it was settled");
     return;
   }
   for (const item of bad) console.error(`untagged assumption: ${item.slice(0, 160)}`);
-  console.error(
-    `\n${bad.length} assumption(s) name none of ${TAGS.join(" / ")}.\n` +
-      "An observation needing none of those is one to take before opening the pull request:\n" +
-      "take it and drop the line, or tag the dependency that stops you.",
-  );
+  if (bad.length)
+    console.error(
+      `\n${bad.length} assumption(s) name none of ${TAGS.join(" / ")}.\n` +
+        "An observation needing none of those is one to take before opening the pull request:\n" +
+        "take it and drop the line, or tag the dependency that stops you.",
+    );
+  for (const item of open) console.error(`unsettled assumption: ${item.slice(0, 160)}`);
+  if (open.length)
+    console.error(
+      `\n${open.length} tagged assumption(s) carry no "Result" or "Left open by the operator" entry.\n` +
+        "Settle each with the operator before opening the pull request and write the result under it,\n" +
+        "or quote the operator's instruction to open it with the item still open.",
+    );
   process.exitCode = 1;
 }
 

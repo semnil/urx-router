@@ -64,7 +64,8 @@ jobs:
       # The assumptions field, held to what it is for. An item naming none of the three
       # external dependencies is an observation this side could take, and the body stops
       # being visible the moment it merges — so the field has to be answered rather than
-      # used to defer. Only on a pull request, since a push carries no body, and the body
+      # used to defer; a tagged item carries an entry under it saying how it was settled.
+      # Only on a pull request, since a push carries no body, and the body
       # reaches the script through the environment rather than the command line: it is
       # text a contributor wrote, and a `run:` interpolating it would run it.
       - if: github.event_name == 'pull_request'
