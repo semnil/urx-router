@@ -98,6 +98,28 @@ describe.each(["URX22", "URX44", "URX44V"] as ModelId[])("an edit on the SIM of 
     expect(written, "a real share of the table was written").toBeGreaterThan(100);
   });
 
+  it("leaves the plan's EQ bands as they are while 1-knob EQ drives them, and takes them once it is off", () => {
+    const band = [...bindings.entries()].filter(
+      // The middle bands' shape is fixed: it takes its one value and nothing else.
+      ([p]) => /^ch\.ch1\.eq\.(low|lowMid|highMid|high)\.(freq|gain|q|on|shape)$/.test(p) && !/Mid\.shape$/.test(p),
+    );
+    expect(band.length, "every band field of CH 1").toBe(4 * 4 + 2);
+    for (const on of [true, false]) {
+      const moved: string[] = [];
+      for (const [path, binding] of band) {
+        const plan = defaultPlan(modelId);
+        plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, eqOneKnob: { on, type: 0, level: 50 } };
+        const before = binding.read(plan);
+        if (before === undefined) continue;
+        const edit = binding.write!(plan, another(path, binding, before));
+        if (isRefusal(edit)) continue;
+        apply(model, plan, edit);
+        if (binding.read(plan) !== before) moved.push(path);
+      }
+      expect(moved, on ? "1-knob on" : "1-knob off").toEqual(on ? [] : band.map(([p]) => p));
+    }
+  });
+
   it("carries no EQ on an FX channel or on STREAMING, which have none", () => {
     const eq = [...bindings.keys()].filter((p) => /^ch\.(fx1|fx2|bus\.stream)\.eq\./.test(p));
     expect(eq).toEqual([]);

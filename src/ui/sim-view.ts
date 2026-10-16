@@ -42,6 +42,10 @@ export interface SimViewHooks {
 /** The glass's path for HOME's [Sends] destination, which the unit holds outside the plan. */
 export const SENDS_TARGET_PATH = "ui.sendsTarget";
 
+/** Whether a linked pair's compressors each hear their own channel: the simulator's own state,
+ *  which an edit of the pair's link or COMP / EQ type writes beside the plan's values. */
+const glassOwn = (path: string): boolean => /^pair\.[^.]+\.compSplit$/.test(path);
+
 /** The urx-router meter tap a simulator meter id reads, by the simulator's tap name. */
 const TAP_KEYS: Record<string, string> = {
   input: "input",
@@ -79,6 +83,8 @@ class PlanTransport implements DeviceTransport {
   readonly kind = "bridge" as const;
   private readonly listeners = new Set<(n: Notify) => void>();
   private held = new Map<string, SimValue>();
+  /** The simulator's own values (`glassOwn`), kept here rather than in the plan. */
+  private own = new Map<string, SimValue>();
   private closed = false;
 
   constructor(
@@ -99,6 +105,7 @@ class PlanTransport implements DeviceTransport {
     for (const [path, value] of readSim(this.bindings, this.hooks.getPlan())) out.set(path, value);
     const sends = this.hooks.unitSendsTarget();
     if (sends !== null) out.set(SENDS_TARGET_PATH, sends);
+    for (const [path, value] of this.own) out.set(path, value);
     return out;
   }
 
@@ -110,6 +117,7 @@ class PlanTransport implements DeviceTransport {
 
   writable(path: ParamPath): boolean {
     if (path === SENDS_TARGET_PATH) return this.hooks.unitSendsTarget() !== null;
+    if (glassOwn(path)) return true;
     return this.bindings.get(path)?.write !== undefined;
   }
 
@@ -118,6 +126,11 @@ class PlanTransport implements DeviceTransport {
     onSent?.();
     if (path === SENDS_TARGET_PATH) {
       if (!this.hooks.setUnitSendsTarget(String(value))) return Promise.reject(new Error("refused"));
+      this.held.set(path, value);
+      return Promise.resolve(value);
+    }
+    if (glassOwn(path)) {
+      this.own.set(path, value);
       this.held.set(path, value);
       return Promise.resolve(value);
     }

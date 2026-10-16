@@ -9,6 +9,10 @@ import {
   writesOf,
 } from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
+import { defaultPlan } from "../src/models/initial-state";
+import { serialize, type Plan } from "../src/core/plan";
+import type { ModelId } from "../src/models/types";
+import { planParamZ } from "./plan-param";
 import { chooseOption } from "./choose-option";
 import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
 import { en } from "../src/i18n/en";
@@ -179,10 +183,10 @@ interface SavedPlan {
   connections: { from: string; to: string; params?: Record<string, unknown> }[];
 }
 
-/** Open the SIM view on a shell that answers a save. */
-async function openSimSaving(page: Page): Promise<void> {
-  await stubTauriDevice(page, { commands: { experimental_enabled: true, ...SAVE } });
-  await page.goto("/");
+/** Open the SIM view on a shell that answers a save, on `path` (a `?plan=` link, say). */
+async function openSimSaving(page: Page, opts: { model?: ModelId; path?: string } = {}): Promise<void> {
+  await stubTauriDevice(page, { model: opts.model, commands: { experimental_enabled: true, ...SAVE } });
+  await page.goto(opts.path ?? "/");
   await page.click("#btn-view-sim");
   await expect(lcd(page)).toBeVisible();
 }
@@ -210,9 +214,9 @@ async function openBlock(page: Page, name: string | RegExp, id: string): Promise
   await expect(onScreen(page, id)).toHaveCount(1);
 }
 
-/** A fresh page on the GRAPH with `id` selected in the Inspector. */
-async function inspect(page: Page, id: string): Promise<void> {
-  await page.goto("/");
+/** A fresh page on the GRAPH with `id` selected in the Inspector, on `path`. */
+async function inspect(page: Page, id: string, path = "/"): Promise<void> {
+  await page.goto(path);
   await page.click("#btn-view-graph");
   await page.locator(`#graph-host g.node[data-id="${id}"]`).click();
 }
@@ -374,6 +378,108 @@ test("an insert effect chosen again on the LCD keeps the values the plan holds f
   await chooseOption(select, { label: "Clean" });
   await chooseOption(select, { label: "Compander-S" });
   expect((await save(page)).nodeParams.ch1?.insertFxParams).toMatchObject({ "compander:6": tuned });
+});
+
+/** A `?plan=` link to `model`'s new plan with `edit` applied to it. */
+function planLink(model: ModelId, edit: (plan: Plan) => void): string {
+  const plan = defaultPlan(model);
+  edit(plan);
+  return `/?plan=${planParamZ(JSON.parse(serialize(plan)))}`;
+}
+
+/** CH 1's and CH 2's settings and the wires into and out of them, as a saved plan holds them. */
+const firstPair = (p: SavedPlan) => ({
+  ch1: p.nodeParams.ch1,
+  ch2: p.nodeParams.ch2,
+  wires: p.connections
+    .filter((c) => /^ch[12]:/.test(c.from) || /^ch[12]:/.test(c.to))
+    .sort((a, b) => `${a.from}${a.to}`.localeCompare(`${b.from}${b.to}`)),
+});
+
+// Linking a pair, and taking a linked pair into SSMCS, also writes which channel each of its
+// compressors hears: the simulator's own record, which the plan does not hold.
+for (const model of ["URX22", "URX44", "URX44V"] as const) {
+  test(`Signal Type STEREO and back on ${model}'s CH 1/2 leaves the same plan from the LCD as from the Inspector`, async ({
+    page,
+  }) => {
+    await openSimSaving(page, { model });
+    await tapInto(page, lcd(page).getByRole("button", { name: "C H 1 settings", exact: true }), "channel-view");
+    await tapInto(
+      page,
+      lcd(page)
+        .getByRole("button", { name: /^CH 1 / })
+        .first(),
+      "ch.setting",
+    );
+    const pick = async (type: string): Promise<void> => {
+      await lcd(page)
+        .getByRole("button", { name: /Signal Type/ })
+        .click();
+      await sim(page).getByRole("option", { name: type, exact: true }).click();
+    };
+    await pick("STEREO");
+    const linked = firstPair(await save(page));
+    expect(linked.ch1?.stereoLink, "the LCD's link reached the plan").toBe(true);
+    await pick("MONO x 2");
+    const unlinked = firstPair(await save(page));
+    expect(unlinked.ch1?.stereoLink, "the LCD's unlink reached the plan").not.toBe(true);
+
+    await inspect(page, "ch1");
+    const select = page.locator("#inspector .param", { hasText: "Signal Type" }).locator("select");
+    await chooseOption(select, "1");
+    expect(linked).toEqual(firstPair(await save(page)));
+    await chooseOption(select, "0");
+    expect(unlinked).toEqual(firstPair(await save(page)));
+  });
+}
+
+test("SSMCS on a linked pair leaves the same plan from the LCD as from the Inspector", async ({ page }) => {
+  const link = planLink("URX44V", (plan) => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: 1 };
+  });
+  await openSimSaving(page, { path: link });
+  await tapInto(page, lcd(page).getByRole("button", { name: "C H 1 settings", exact: true }), "channel-view");
+  await tapInto(
+    page,
+    lcd(page)
+      .getByRole("button", { name: /^CH 1 / })
+      .first(),
+    "ch.setting",
+  );
+  await lcd(page)
+    .getByRole("button", { name: /COMP slash EQ/ })
+    .click();
+  await sim(page).getByRole("option", { name: "SSMCS", exact: true }).click();
+  const fromLcd = firstPair(await save(page));
+  expect(fromLcd.ch1?.compEqType, "the LCD's SSMCS reached the plan").toBe(1);
+
+  await inspect(page, "ch1", link);
+  await chooseOption(page.locator("#inspector .param", { hasText: "COMP/EQ Type" }).locator("select"), "1");
+  expect(fromLcd).toEqual(firstPair(await save(page)));
+});
+
+// While 1-knob EQ is on the unit drives the bands, and the plan keeps the gains it held — the
+// ones it sends once 1-knob is off again — as every other surface leaves them.
+test("turning 1-knob EQ's level on the LCD leaves the plan's band gains as they were", async ({ page }) => {
+  const link = planLink("URX44V", (plan) => {
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, eqOneKnob: { on: true, type: 0, level: 50 } };
+    plan.nodeParams.ch1.eqBands![0].gain = 6;
+  });
+  await openSimSaving(page, { path: link });
+  const bands = (p: SavedPlan) => p.nodeParams.ch1?.eqBands;
+  const before = bands(await save(page));
+  await tapInto(page, lcd(page).getByRole("button", { name: "C H 1 settings", exact: true }), "channel-view");
+  await openBlock(page, /^EQ/, "ch.eq");
+  const level = lcd(page).locator(".oneknob-level");
+  await level.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(async () => ((await save(page)).nodeParams.ch1?.eqOneKnob as { level?: number })?.level).toBe(49);
+  expect(bands(await save(page)), "a level away from 50").toEqual(before);
+  await level.focus();
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(async () => ((await save(page)).nodeParams.ch1?.eqOneKnob as { level?: number })?.level).toBe(50);
+  expect(bands(await save(page)), "the level back at 50").toEqual(before);
+  expect((before as { gain: number }[])[0].gain).toBe(6);
 });
 
 // HOME's [Sends] destination is the unit's UI state, outside the plan: a session reads it, a

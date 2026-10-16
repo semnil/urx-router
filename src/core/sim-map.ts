@@ -46,11 +46,15 @@ const LOW_SHAPES = ["Bell", "L.Shelf", "HPF"] as const;
 const HIGH_SHAPES = ["Bell", "H.Shelf", "LPF"] as const;
 const KNEES = ["Soft", "Medium", "Hard"] as const;
 
+/** Whether the unit drives the node's EQ bands from its 1-knob EQ, which leaves the plan's bands as they are. */
+const oneKnobDrives = (plan: Plan, id: string): boolean => np(plan, id).eqOneKnob?.on === true;
+
 /** An EQ band's field. */
 function bandValue(id: string, index: number, field: "freq" | "gain" | "q" | "on"): SimBinding {
   return {
     read: (plan) => np(plan, id).eqBands?.[index]?.[field],
     write: (plan, v) => {
+      if (oneKnobDrives(plan, id)) return UNCHANGED;
       const value = field === "on" ? bool(v) : num(v);
       const bands = np(plan, id).eqBands;
       if (value === null || !bands?.[index]) return refused("value");
@@ -69,6 +73,7 @@ function bandShape(id: string, index: number): SimBinding {
       return type === undefined ? undefined : shapes[type];
     },
     write: (plan, v) => {
+      if (oneKnobDrives(plan, id)) return UNCHANGED;
       const type = typeof v === "string" ? shapes.indexOf(v) : -1;
       const bands = np(plan, id).eqBands;
       if (type < 0 || !bands?.[index]) return refused("value");
