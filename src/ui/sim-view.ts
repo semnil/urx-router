@@ -37,10 +37,15 @@ export interface SimViewHooks {
   unitSendsTarget: () => string | null;
   /** Hand a [Sends] destination chosen on the glass to the unit. False when it was refused. */
   setUnitSendsTarget: (target: string) => boolean;
+  /** Whether the unit's Follow USB is on, as the app last read it: off where it is not known. */
+  unitFollowUsb: () => boolean;
 }
 
 /** The glass's path for HOME's [Sends] destination, which the unit holds outside the plan. */
 export const SENDS_TARGET_PATH = "ui.sendsTarget";
+
+/** The glass's path for SETUP's Follow USB, which the unit holds outside the plan. */
+export const FOLLOW_USB_PATH = "setup.followUsb";
 
 /** The simulator's own state, kept by the view rather than the plan: which channel a linked pair's
  *  compressors hear (written with the pair's link or COMP / EQ type), the recorder's playback (which
@@ -101,7 +106,10 @@ export class PlanTransport implements DeviceTransport {
   constructor(
     private readonly bindings: ReadonlyMap<string, SimBinding>,
     private readonly shipped: ReadonlyMap<ParamPath, ParamValue>,
-    private readonly hooks: Pick<SimViewHooks, "getPlan" | "apply" | "unitSendsTarget" | "setUnitSendsTarget">,
+    private readonly hooks: Pick<
+      SimViewHooks,
+      "getPlan" | "apply" | "unitSendsTarget" | "setUnitSendsTarget" | "unitFollowUsb"
+    >,
   ) {}
 
   /** The paths the table binds. */
@@ -110,12 +118,13 @@ export class PlanTransport implements DeviceTransport {
   }
 
   /** What the glass shows: the plan where the table answers, the [Sends] destination the session
-   *  holds, and the unit as it ships elsewhere. */
+   *  holds, the Follow USB the app holds, and the unit as it ships elsewhere. */
   private current(): Map<string, SimValue> {
     const out = new Map<string, SimValue>(this.shipped);
     for (const [path, value] of readSim(this.bindings, this.hooks.getPlan())) out.set(path, value);
     const sends = this.hooks.unitSendsTarget();
     if (sends !== null) out.set(SENDS_TARGET_PATH, sends);
+    out.set(FOLLOW_USB_PATH, this.hooks.unitFollowUsb());
     for (const [path, value] of this.own) out.set(path, value);
     return out;
   }
@@ -236,7 +245,7 @@ export class SimView {
     });
   }
 
-  /** The unit's [Sends] destination changed, or the session that held it started or ended. */
+  /** The unit's [Sends] destination or Follow USB changed, or the session that held it started or ended. */
   unitStateChanged(): void {
     this.planChanged();
   }

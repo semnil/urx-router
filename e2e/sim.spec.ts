@@ -640,3 +640,32 @@ test("the LCD's [Sends] destination is the unit's while Live sync is up, and the
   await page.click("#btn-view-console");
   await expect(page.locator("#sim-host")).toBeHidden();
 });
+
+// Follow USB is the unit's setting, outside the plan: the LCD shows what the app last read from the
+// unit, and off where it has read nothing, so the rate on the LCD is the plan's until the unit says
+// it follows USB.
+test("the LCD's Follow USB is the unit's while Live sync is up, and off while it is not known", async ({ page }) => {
+  const FOLLOW: number = PARAMS.FOLLOW_USB.id;
+  await stubTauriDevice(page, { values: { [FOLLOW]: 1 }, commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Sampling Frequency" }), "setup.rate");
+  const follow = lcd(page).getByRole("button", { name: "Follow USB", exact: true });
+  const rate = lcd(page).getByRole("button", { name: "96kHz", exact: true });
+
+  await expect(follow, "nothing read yet").toHaveAttribute("aria-pressed", "false");
+  await expect(rate).not.toHaveAttribute("aria-disabled");
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(follow, "the session shows what the unit holds").toHaveAttribute("aria-pressed", "true");
+  await expect(rate, "a unit following USB takes no rate").toHaveAttribute("aria-disabled", "true");
+
+  await setDeviceValue(page, FOLLOW, 0, 0);
+  await notifyParam(page, FOLLOW, 0, 0);
+  await expect(follow).toHaveAttribute("aria-pressed", "false");
+  await expect(rate).not.toHaveAttribute("aria-disabled");
+});

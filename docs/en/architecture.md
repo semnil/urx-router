@@ -1849,6 +1849,10 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   sync is up the LCD shows the destination the unit holds and follows a choice made on the unit's panel, and a
   destination chosen on the LCD is written to the unit — FX 2 is refused above 96 kHz. With no session the LCD
   keeps a destination of its own, which reaches nothing.
+- **Follow USB** on the LCD's Sampling Frequency screen is the unit's setting rather than the plan's, and the LCD
+  holds it shut. It shows what the app last read from the unit — the toolbar's FOLLOW USB — and off where that is
+  not known, so the rate on the LCD is the plan's until the unit is read as following USB; then, as on the unit,
+  the LCD takes no rate.
 - **What it shows** follows every writer: each place that schedules MIDI feedback (`markChanged`,
   `planValuesChanged`, a load, an undo's repaint) also tells the view, which pushes the values that moved.
 - **What it refuses** are the unit's own operations — a scene recall or store, the card, the recorder, playback.

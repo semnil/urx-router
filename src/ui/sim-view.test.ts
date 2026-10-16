@@ -3,7 +3,7 @@ import { tapFor, tapsFor } from "../core/meters";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { simBindings } from "../core/sim-map";
-import { PlanTransport, SENDS_TARGET_PATH, type SimViewHooks } from "./sim-view";
+import { FOLLOW_USB_PATH, PlanTransport, SENDS_TARGET_PATH, type SimViewHooks } from "./sim-view";
 import { simMeterTap } from "./sim-view";
 
 describe("the SIM's meters", () => {
@@ -44,13 +44,14 @@ describe("the plan as the glass's transport", () => {
   const model = getModel("URX44V");
   const plan = defaultPlan("URX44V");
   const transport = (
-    hooks: Partial<Pick<SimViewHooks, "apply" | "unitSendsTarget" | "setUnitSendsTarget">> = {},
+    hooks: Partial<Pick<SimViewHooks, "apply" | "unitSendsTarget" | "setUnitSendsTarget" | "unitFollowUsb">> = {},
   ): PlanTransport =>
     new PlanTransport(simBindings(model), new Map([["ui.bank", "CH 1 - 4"]]), {
       getPlan: () => plan,
       apply: hooks.apply ?? (() => true),
       unitSendsTarget: hooks.unitSendsTarget ?? (() => null),
       setUnitSendsTarget: hooks.setUnitSendsTarget ?? (() => false),
+      unitFollowUsb: hooks.unitFollowUsb ?? (() => false),
     });
   const flush = () => new Promise<void>((r) => queueMicrotask(r));
 
@@ -99,6 +100,19 @@ describe("the plan as the glass's transport", () => {
     await expect(transport({ unitSendsTarget: () => "MIX1" }).write(SENDS_TARGET_PATH, "FX2")).rejects.toThrow(
       "refused",
     );
+  });
+
+  it("shows the Follow USB the app holds, tells the glass when it moves, and takes no write of it", async () => {
+    let on = true;
+    const t = transport({ unitFollowUsb: () => on });
+    expect((await t.snapshot()).get(FOLLOW_USB_PATH)).toBe(true);
+    const heard = vi.fn();
+    t.onNotify(heard);
+    on = false;
+    t.push();
+    expect(heard).toHaveBeenCalledWith({ path: FOLLOW_USB_PATH, value: false, echo: false });
+    expect(t.writable(FOLLOW_USB_PATH)).toBe(false);
+    await expect(t.write(FOLLOW_USB_PATH, true)).rejects.toThrow("not the plan's");
   });
 
   it("takes nothing and tells nothing once closed", async () => {

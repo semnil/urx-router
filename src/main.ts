@@ -311,6 +311,7 @@ function renderFollowUsbBadge(): void {
 function setFollowUsbBadge(state: boolean | null): void {
   followUsbState = state;
   renderFollowUsbBadge();
+  simView?.unitStateChanged();
 }
 
 // Theme mode (ThemeMode, ui/prefs.ts): auto follows the OS color scheme. A
@@ -1014,6 +1015,7 @@ const buildSimView = (): SimView =>
       onMeterError: (message) => stopLiveOnError(errorText(message)),
       unitSendsTarget: () => (liveSessionUp ? sendsTarget : null),
       setUnitSendsTarget: (target) => planTakesEdits() && chooseSendsTarget(target),
+      unitFollowUsb: () => followUsbState === true,
     },
     detectSimScale(),
   );
