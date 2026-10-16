@@ -63,7 +63,12 @@ import { spoken } from "./ui/glyph";
 const simRefused = vi.hoisted(() => ({ hook: null as ((op: { kind: string }) => void) | null }));
 // …and the unit the view mounts the glass over, so a case can drive the transport and read the
 // levels the simulator asks for without reaching a control on the glass.
-const simMounted = vi.hoisted(() => ({ unit: null as import("urx-lcd-sim/embed").Unit | null }));
+const simMounted = vi.hoisted(() => ({
+  unit: null as import("urx-lcd-sim/embed").Unit | null,
+  // Every glass a case mounted: its meter and clock timers run until it is disposed, and one
+  // left running fires after the test environment is gone.
+  glasses: [] as import("urx-lcd-sim/embed").EmbeddedSim[],
+}));
 vi.mock("urx-lcd-sim/embed", async (importOriginal) => {
   const actual = await importOriginal<typeof import("urx-lcd-sim/embed")>();
   return {
@@ -72,9 +77,11 @@ vi.mock("urx-lcd-sim/embed", async (importOriginal) => {
       simRefused.hook = hook;
       return actual.refusedActions(hook);
     },
-    mountSim: (host: HTMLElement, options: import("urx-lcd-sim/embed").EmbedOptions) => {
+    mountSim: async (host: HTMLElement, options: import("urx-lcd-sim/embed").EmbedOptions) => {
       simMounted.unit = options.unit ?? null;
-      return actual.mountSim(host, options);
+      const glass = await actual.mountSim(host, options);
+      simMounted.glasses.push(glass);
+      return glass;
     },
   };
 });
@@ -109,6 +116,11 @@ beforeEach(() => {
 // A teardown that outlives its hook's timeout goes on running while the next case starts. From
 // then on it acts on nothing: the shell, the controls and the globals all belong to the next
 // case's app, so it stops at its next step instead of draining and restoring that app's page.
+// Every glass a case mounted is disposed, which stops its meter and clock timers.
+afterEach(() => {
+  for (const glass of simMounted.glasses.splice(0)) glass.dispose();
+});
+
 // The page it leaves behind is then the next case's to refuse (the `beforeEach` above), and
 // the next case's own teardown is what restores it.
 afterEach(async () => {
