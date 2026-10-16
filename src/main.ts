@@ -215,6 +215,7 @@ import {
   cmdAddr,
   collisionOwners,
   cueAddrOf,
+  cueAddrs,
   cueAt,
   cueNotifyAddrs,
   planToCommands,
@@ -897,6 +898,7 @@ function renderCues(): void {
   refreshInspectorCue();
   renderCueBar();
   midi?.scheduleFeedback();
+  simView?.unitStateChanged();
 }
 
 /** Repaint the panel's [CUE] row in place: what is cued, or whether a press on the row switches
@@ -1015,6 +1017,18 @@ const buildSimView = (): SimView =>
       onMeterError: (message) => stopLiveOnError(errorText(message)),
       unitSendsTarget: () => (liveSessionUp ? sendsTarget : null),
       setUnitSendsTarget: (target) => planTakesEdits() && chooseSendsTarget(target),
+      unitCues: () =>
+        liveSessionUp ? new Map(cueAddrs(getModel(modelId)).map((a) => [a.node, cues.has(a.node)])) : null,
+      setUnitCue: (node, on) => {
+        if (!liveSessionUp) return false;
+        setCue(node, on, "app");
+        return true;
+      },
+      clearUnitCues: () => {
+        if (!liveSessionUp) return false;
+        clearCues();
+        return true;
+      },
     },
     detectSimScale(),
   );

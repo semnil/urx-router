@@ -640,3 +640,47 @@ test("the LCD's [Sends] destination is the unit's while Live sync is up, and the
   await page.click("#btn-view-console");
   await expect(page.locator("#sim-host")).toBeHidden();
 });
+
+// The unit's [CUE] is live-session state outside the plan: while Live sync is up the LCD shows
+// the flags the unit holds and a press on the glass switches them on the unit, the way the
+// CONSOLE chip does; with no session a press reaches nothing.
+test("the LCD's CUE switches the unit's flag while Live sync is up, and reaches nothing without", async ({ page }) => {
+  const CUE_MONO: number = PARAMS.CUE_MONO.id;
+  await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  // CH 2 is cued on the unit.
+  await setDeviceValue(page, CUE_MONO, 1, 1);
+  await page.click("#btn-view-sim");
+  await expect(sim(page).locator(".lcd")).toBeVisible();
+  const cue = (i: number) => sim(page).locator(".btn-cue").nth(i);
+  const cueWrites = async (): Promise<number[]> =>
+    (await writesOf(page)).flatMap(([id, v]) => (id === CUE_MONO ? [v] : []));
+
+  // No session: the press is taken back and nothing is written.
+  await cue(0).click();
+  await expect(cue(0)).toHaveAttribute("aria-pressed", "false");
+  expect(await cueWrites()).toEqual([]);
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(cue(1), "the session shows what the unit has cued").toHaveAttribute("aria-pressed", "true");
+  await expect(cue(0)).toHaveAttribute("aria-pressed", "false");
+
+  // A press on the glass goes to the unit, and the app's own surfaces show it.
+  await cue(0).click();
+  await expect.poll(cueWrites).toEqual([1]);
+  await expect(cue(0)).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('#cue-bar-names > [aria-hidden="true"]')).toHaveText("CUE CH 1, CH 2");
+
+  // A press on the unit's panel reaches the glass.
+  await setDeviceValue(page, CUE_MONO, 0, 0);
+  await notifyParam(page, CUE_MONO, 0, 0);
+  await expect(cue(0)).toHaveAttribute("aria-pressed", "false");
+
+  // Off again from the glass.
+  await cue(1).click();
+  await expect.poll(cueWrites).toEqual([1, 0]);
+  await expect(cue(1)).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#cue-bar")).toBeHidden();
+});

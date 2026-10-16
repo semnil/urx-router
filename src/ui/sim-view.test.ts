@@ -3,6 +3,8 @@ import { tapFor, tapsFor } from "../core/meters";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { simBindings } from "../core/sim-map";
+import { CueSet } from "../core/control/cue";
+import { cueAddrs } from "../core/control/translate";
 import { PlanTransport, SENDS_TARGET_PATH, type SimViewHooks } from "./sim-view";
 import { simMeterTap } from "./sim-view";
 
@@ -44,13 +46,26 @@ describe("the plan as the glass's transport", () => {
   const model = getModel("URX44V");
   const plan = defaultPlan("URX44V");
   const transport = (
-    hooks: Partial<Pick<SimViewHooks, "apply" | "unitSendsTarget" | "setUnitSendsTarget">> = {},
+    hooks: Partial<
+      Pick<
+        SimViewHooks,
+        | "apply"
+        | "unitSendsTarget"
+        | "setUnitSendsTarget"
+        | "unitCues"
+        | "setUnitCue"
+        | "clearUnitCues"
+      >
+    > = {},
   ): PlanTransport =>
     new PlanTransport(simBindings(model), new Map([["ui.bank", "CH 1 - 4"]]), {
       getPlan: () => plan,
       apply: hooks.apply ?? (() => true),
       unitSendsTarget: hooks.unitSendsTarget ?? (() => null),
       setUnitSendsTarget: hooks.setUnitSendsTarget ?? (() => false),
+      unitCues: hooks.unitCues ?? (() => null),
+      setUnitCue: hooks.setUnitCue ?? (() => false),
+      clearUnitCues: hooks.clearUnitCues ?? (() => false),
     });
   const flush = () => new Promise<void>((r) => queueMicrotask(r));
 
@@ -99,6 +114,75 @@ describe("the plan as the glass's transport", () => {
     await expect(transport({ unitSendsTarget: () => "MIX1" }).write(SENDS_TARGET_PATH, "FX2")).rejects.toThrow(
       "refused",
     );
+  });
+
+  // A session's [CUE] flags kept by the unit's own rules, recording what the glass hands it.
+  const session = (cued: string[]) => {
+    const set = new CueSet(model);
+    set.replace(cued);
+    const calls: (string | [string, boolean])[] = [];
+    const hooks = {
+      unitCues: () => new Map(cueAddrs(model).map((a) => [a.node, set.has(a.node)])),
+      setUnitCue: (node: string, on: boolean) => {
+        calls.push([node, on]);
+        set.apply(node, on);
+        return true;
+      },
+      clearUnitCues: () => {
+        calls.push("clear");
+        set.clear();
+        return true;
+      },
+    };
+    return { set, calls, hooks };
+  };
+
+  it("shows the session's [CUE] flags, and takes a press only while a session holds them", async () => {
+    expect(transport().writable("ch.ch1.cue")).toBe(false);
+    await expect(transport().write("ch.ch1.cue", true)).rejects.toThrow("not the plan's");
+    const { set, calls, hooks } = session(["ch2", "bus.fx1"]);
+    const t = transport(hooks);
+    expect(t.writable("ch.ch1.cue")).toBe(true);
+    expect(t.writable("ch.fx1.cue")).toBe(true);
+    const shown = await t.snapshot();
+    expect([shown.get("ch.ch1.cue"), shown.get("ch.ch2.cue"), shown.get("ch.fx1.cue")]).toEqual([false, true, true]);
+    await expect(t.write("ch.ch1.cue", true)).resolves.toBe(true);
+    expect(calls).toEqual([["ch1", true]]);
+    expect(set.nodes()).toEqual(["ch1", "ch2", "bus.fx1"]);
+  });
+
+  it("hands on the press an input cue is, not the output cues its rule turned off", async () => {
+    const { set, calls, hooks } = session(["bus.stereo"]);
+    const t = transport(hooks);
+    // As the glass sends one press: the output its rule took out, then the strip pressed.
+    const writes = [t.write("ch.bus.stereo.cue", false), t.write("ch.ch1.cue", true)];
+    await expect(Promise.all(writes)).resolves.toEqual([false, true]);
+    expect(calls).toEqual([["ch1", true]]);
+    expect(set.nodes()).toEqual(["ch1"]);
+  });
+
+  it("hands on the press an output cue is, not the input cues its rule turned off", async () => {
+    const { set, calls, hooks } = session(["ch1", "ch2"]);
+    const t = transport(hooks);
+    await Promise.all([t.write("ch.ch1.cue", false), t.write("ch.ch2.cue", false), t.write("ch.bus.stereo.cue", true)]);
+    expect(calls).toEqual([["bus.stereo", true]]);
+    expect(set.nodes()).toEqual(["bus.stereo"]);
+  });
+
+  it("hands on the glass's CLEAR CUE as the session's, and a cue turned off alone as itself", async () => {
+    const all = session(["ch1", "ch2"]);
+    const t = transport(all.hooks);
+    await Promise.all([t.write("ch.ch1.cue", false), t.write("ch.ch2.cue", false)]);
+    expect(all.calls).toEqual(["clear"]);
+    const one = session(["ch1", "ch2"]);
+    await transport(one.hooks).write("ch.ch1.cue", false);
+    expect(one.calls).toEqual([["ch1", false]]);
+    expect(one.set.nodes()).toEqual(["ch2"]);
+  });
+
+  it("refuses a press the session refuses", async () => {
+    const { hooks } = session([]);
+    await expect(transport({ ...hooks, setUnitCue: () => false }).write("ch.ch1.cue", true)).rejects.toThrow("refused");
   });
 
   it("takes nothing and tells nothing once closed", async () => {
