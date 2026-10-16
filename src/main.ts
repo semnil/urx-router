@@ -95,6 +95,7 @@ import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
 import { SimView } from "./ui/sim-view";
 import type { SimEdit, SimValue } from "./core/sim-map";
+import { fxHeldWrites } from "./core/sim-map-processors";
 import { simLocks } from "./core/sim-locks";
 import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
@@ -2092,6 +2093,7 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   resetCues();
   resetSendsTarget();
   resetUnitSessionState();
+  heldDeviceWrites.clear();
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
   liveAdopted = 0;
@@ -2969,6 +2971,17 @@ function reflectHistory(touch: PatchTouch): void {
   // make a restored value indistinguishable from a fresh edit.
   traceProbe?.sample("undo");
   repaintPatched(touch);
+  // A value the unit drives that was turned by hand this session goes back to the unit when an
+  // undo or a redo moves it: the plan's writer leaves it out. Only one written by hand, and only
+  // when it moved, so an entry on another row of the channel does not overwrite what the unit
+  // derived.
+  if (liveSessionUp)
+    for (const node of touch.nodes)
+      for (const w of fxHeldWrites(plan, node)) {
+        const key = `${w.param}/${w.y}`;
+        if (heldDeviceWrites.has(key) && heldDeviceWrites.get(key) !== w.value)
+          writeHeldDeviceValue(w.param, w.y, w.value);
+      }
   // Last, so the live diff measures the settled plan. This is also what carries the
   // change to the device: live.ts diffs its snapshot, so only the undone keys go
   // out. resync() must NOT be called — it would re-base the snapshot to the plan
@@ -3611,10 +3624,14 @@ function applySimEdit(edit: SimEdit): boolean {
   return true;
 }
 
+// The values written by hand this session to a row the unit drives, by address (param/y).
+const heldDeviceWrites = new Map<string, number>();
+
 /** Write one value the plan's writer leaves out to the unit, behind the plan flush and every unit
  *  write queued so far, while a session is up. With no session there is no unit to write it to. */
 function writeHeldDeviceValue(param: number, y: number, value: number): void {
   if (!liveSessionUp) return;
+  heldDeviceWrites.set(`${param}/${y}`, value);
   cueWrites = cueWrites
     .then(async () => {
       await live?.idle();

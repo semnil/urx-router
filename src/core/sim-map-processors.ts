@@ -745,6 +745,24 @@ function fxEffectValue(id: string, fxIndex: number, key: string, families: reado
   };
 }
 
+/** The values the plan holds for FX channel `id`'s rows the unit drives under its current settings
+ *  (the delay time under tempo Sync), as the writes that would put them on the unit. The plan's
+ *  writer leaves these out. */
+export function fxHeldWrites(plan: Plan, id: string): { param: number; y: number; value: number }[] {
+  const fxIndex = FX_CHANNEL_NODE_INDEX[id];
+  if (fxIndex === undefined) return [];
+  const fx: FxEffectParams = np(plan, id).fxEffect ?? {};
+  const type = resolveFxEffectType(fxIndex, fx.type);
+  const owners = fxRowOwners(type, fx.params);
+  return fxParams(type)
+    .filter((d) => owners.get(d.key) === "computed")
+    .map((d) => ({
+      param: FX_EFFECT_ARRAY_PARAM[fxIndex]!,
+      y: d.slot,
+      value: fxDescRawToSend(d, fx.params?.[d.key] ?? d.def),
+    }));
+}
+
 /** An FX channel's EFFECT TYPE and the rows of its effect. */
 function fxEffectBindings(id: string, fxIndex: number, out: Map<string, SimBinding>): void {
   const base = `ch.${simStripId(id)}.effect`;

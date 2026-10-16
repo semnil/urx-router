@@ -11388,6 +11388,66 @@ describe("the SIM view over a live session", () => {
     ).toBe(false);
   });
 
+  // Undo and redo move the hand-turned delay time back and forth on the unit too, while an undo of
+  // another row of the channel leaves the delay the unit derived alone.
+  it.each([
+    ["fx1", 679, 681],
+    ["fx2", 683, 685],
+  ])(
+    "writes a %s delay time turned under tempo Sync back to the unit on undo and redo",
+    SLOW,
+    async (fx, typeParam, param) => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, {
+        [`${typeParam}/0/0`]: 1024,
+        [`${param}/0/4`]: 1,
+        [`${param}/0/6`]: 5000,
+      });
+      await openSim();
+      await goLive();
+      await transport().write(`ch.${fx}.effect.delay`, 250);
+      await vi.waitFor(() => expect(setsOf(shell, param)).toEqual([[6, 2500]]), { timeout: 10_000 });
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      await vi.waitFor(
+        () =>
+          expect(setsOf(shell, param)).toEqual([
+            [6, 2500],
+            [6, 5000],
+          ]),
+        { timeout: 10_000 },
+      );
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_REDO_ID)).toBe(1);
+      await vi.waitFor(
+        () =>
+          expect(setsOf(shell, param)).toEqual([
+            [6, 2500],
+            [6, 5000],
+            [6, 2500],
+          ]),
+        {
+          timeout: 10_000,
+        },
+      );
+      // Another row of the same channel, made and undone: the delay is not written again.
+      await transport().write(`ch.${fx}.effect.feedback`, 30);
+      await vi.waitFor(() => expect(setsOf(shell, param).length).toBeGreaterThan(3), { timeout: 10_000 });
+      const before = setsOf(shell, param).length;
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      await vi.waitFor(() => expect(setsOf(shell, param).length).toBeGreaterThan(before), { timeout: 10_000 });
+      expect(
+        setsOf(shell, param).filter(([y]) => y === 6),
+        "the delay is written only by its own edits",
+      ).toEqual([
+        [6, 2500],
+        [6, 5000],
+        [6, 2500],
+      ]);
+      expect(
+        setsOf(shell, param).some(([y]) => y === 4),
+        "Sync is left as it is",
+      ).toBe(false);
+    },
+  );
+
   it("writes a SETUP setting changed on the glass to the unit while Live sync is up", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.BRIGHTNESS.id}/0/0`]: 6 });
     await openSim();

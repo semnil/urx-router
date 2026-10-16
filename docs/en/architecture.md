@@ -1843,7 +1843,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   screen, which offers no band while it is on, leaves them. A delay time the unit drives while a delay's tempo Sync
   is on is turned by hand on the LCD as on the unit's own panel: the unit takes the value and keeps Sync on, so the
   plan takes it and, while Live sync is up, it is written to the unit once (the `deviceWrite` edit), since the plan's
-  writer leaves that slot out (`fxRowOwners`). The FX tuning screen and MIDI still hold it shut. The simulator's own state that the LCD writes beside an
+  writer leaves that slot out (`fxRowOwners`). An undo or redo that moves a value written that way during the session
+  writes the restored value to the unit the same way. The FX tuning screen and MIDI still hold it shut. The simulator's own state that the LCD writes beside an
   edit or keeps for a screen is held by the view rather than the plan: which channel a linked pair's compressors hear
   (written as the pair is linked or taken into SSMCS), the recorder's playback (which a rate change stops), the output
   patch's and the Peripheral screen's tab, the scene list's bank and row, the microSD folder and file a screen has
