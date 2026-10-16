@@ -11331,8 +11331,21 @@ describe("HOME's [Sends] destination", () => {
   const rateNotify = (shell: TauriShell, hz: number): void =>
     notifyChannel(shell).onmessage([{ param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: hz }]);
 
-  it("is read at live start and registered for its notify", SLOW, async () => {
+  // The SIM view shows it, so an experimental launch reads it and no other launch does.
+  it("is neither read nor registered without an experimental launch", SLOW, async () => {
     const shell = await bootDevice({}, true, { [SENDS]: 17 });
+    await goLive();
+    const { addrs } = shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: number[][] };
+    expect(addrs).not.toContainEqual([PARAMS.SENDS_TARGET.id, 0, 0]);
+    rateNotify(shell, 192000);
+    await drainShell(shell, () => false);
+    expect(sendsReads(shell)).toBe(0);
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+  });
+
+  it("is read at live start and registered for its notify on an experimental launch", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [SENDS]: 17 });
     await goLive();
     const { addrs } = shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: number[][] };
     expect(addrs, "the session registers the destination").toContainEqual([PARAMS.SENDS_TARGET.id, 0, 0]);
@@ -11344,7 +11357,7 @@ describe("HOME's [Sends] destination", () => {
   // The unit moves FX 2 to FX 1 above 96 kHz and announces nothing, so an announced rate above
   // 96 kHz is followed by a read of the destination; one at or below it is not.
   it("is read again after the unit announces a rate above 96 kHz, and not after one at 96 kHz", SLOW, async () => {
-    const shell = await bootDevice({}, true, { [SENDS]: 17 });
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [SENDS]: 17 });
     await goLive();
     await drainShell(shell, () => false);
     // The positive control, which also times how long the read takes to follow the notify.
@@ -11369,6 +11382,7 @@ describe("HOME's [Sends] destination", () => {
     // Every other address answers what the unit holds, so the read of 763 is the one that fails.
     let refuse = false;
     const shell = await bootDevice({
+      experimental_enabled: true,
       vd_get: (a: Record<string, unknown>) => {
         if (a.paramId !== PARAMS.SENDS_TARGET.id) return unwrittenRead(a);
         if (refuse) throw new Error("timeout");

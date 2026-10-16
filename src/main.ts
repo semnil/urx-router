@@ -407,8 +407,8 @@ let experimentalOn = false;
 // A remembered SIM view still waiting for the experimental gate; any view chosen before
 // the gate resolves takes its place.
 let simViewPending = false;
-// The SIM view, built once the CONSOLE it borrows meters from exists. Every hook below asks
-// through `?.`, since a funnel can run before then.
+// The SIM view, built once the experimental gate resolves on (an experimental launch only).
+// Every hook below asks through `?.`, since a funnel runs without one.
 let simView: SimView | null = null;
 // Name the collapse the way the canvas names a node, and count the rest. Several
 // surfaces print this (the live status line, the write confirm, the "no changes"
@@ -805,9 +805,10 @@ function resetCues(): void {
 }
 
 // HOME's [Sends] destination (core/control/sends-target.ts): UI state of the unit outside the
-// plan, shown on the SIM view's glass. A session's start reads it, a change on the unit arrives
-// as a notify, and a destination chosen on the glass is written to the unit. With no session
-// the glass keeps a destination of its own, which reaches nothing.
+// plan, shown on the SIM view's glass, so an experimental launch's alone. There a session's start
+// reads it, a change on the unit arrives as a notify, and a destination chosen on the glass is
+// written to the unit. With no session the glass keeps a destination of its own, which reaches
+// nothing.
 let sendsTarget: SendsTarget | null = null;
 const sendsEchoes = new LcdEchoes();
 // How long after an announced rate above 96 kHz 763 is read again. The unit moves FX 2 to FX 1
@@ -842,9 +843,9 @@ function chooseSendsTarget(target: string): boolean {
 }
 
 /** Read 763 behind every write queued so far, the plan flush and the follow reads running, and
- *  take what the unit holds. */
+ *  take what the unit holds. An experimental launch only, where the SIM view shows it. */
 function rereadSendsTarget(): void {
-  if (!liveSessionUp) return;
+  if (!liveSessionUp || !experimentalOn) return;
   cueWrites = cueWrites
     .then(async () => {
       await live?.idle();
@@ -858,7 +859,7 @@ function rereadSendsTarget(): void {
 
 /** A rate change the unit announced: above 96 kHz the unit may have moved the destination. */
 function onAnnouncedRate(hz: number): void {
-  if (!(hz > 96000)) return;
+  if (!experimentalOn || !(hz > 96000)) return;
   if (sendsRereadTimer !== null) clearTimeout(sendsRereadTimer);
   sendsRereadTimer = setTimeout(() => {
     sendsRereadTimer = null;
@@ -980,41 +981,42 @@ const consoleView = new Console(consoleHost, {
 });
 
 // The SIM view: the unit's LCD as a third surface over the same plan (experimental launch
-// only). Its edits go to the funnels the Inspector uses; every other change to the plan
-// reaches it through simView?.planChanged() beside the MIDI feedback.
-simView = new SimView(
-  $<HTMLElement>("sim-host"),
-  {
-    getModel: () => getModel(modelId),
-    getPlan: () => plan,
-    apply: (edit) => planTakesEdits() && applySimEdit(edit),
-    onRefusedAction: () => setStatus(t().status.simUnitAction),
-    isLive: () => liveSessionUp,
-    locks: (paths) =>
-      simLocks(
-        getModel(modelId),
-        plan,
-        paths,
-        { linked: deviceLinkHolder !== null, live: liveSessionUp },
-        {
-          deviceSetup: t().sim.lockDeviceSetup,
-          notAccepted: t().inspector.prePostLcdOnly,
-          unitOp: t().sim.lockUnitOp,
-          rateLinked: t().sim.lockRateLinked,
-          followUsb: t().sim.lockFollowUsb,
-          trackCountLive: t().inspector.sdRecTrackCountLive,
-          fx2Rate: t().inspector.fx2RateLocked,
-          deviceDriven: t().dynTuning.insfx.deviceOnlyTag,
-        },
-      ),
-    releaseMeters: () => consoleView.releaseMeters(),
-    regainMeters: () => consoleView.regainMeters(),
-    onMeterError: (message) => stopLiveOnError(errorText(message)),
-    unitSendsTarget: () => (liveSessionUp ? sendsTarget : null),
-    setUnitSendsTarget: (target) => planTakesEdits() && chooseSendsTarget(target),
-  },
-  detectSimScale(),
-);
+// only — the gate below builds it). Its edits go to the funnels the Inspector uses; every
+// other change to the plan reaches it through simView?.planChanged() beside the MIDI feedback.
+const buildSimView = (): SimView =>
+  new SimView(
+    $<HTMLElement>("sim-host"),
+    {
+      getModel: () => getModel(modelId),
+      getPlan: () => plan,
+      apply: (edit) => planTakesEdits() && applySimEdit(edit),
+      onRefusedAction: () => setStatus(t().status.simUnitAction),
+      isLive: () => liveSessionUp,
+      locks: (paths) =>
+        simLocks(
+          getModel(modelId),
+          plan,
+          paths,
+          { linked: deviceLinkHolder !== null, live: liveSessionUp },
+          {
+            deviceSetup: t().sim.lockDeviceSetup,
+            notAccepted: t().inspector.prePostLcdOnly,
+            unitOp: t().sim.lockUnitOp,
+            rateLinked: t().sim.lockRateLinked,
+            followUsb: t().sim.lockFollowUsb,
+            trackCountLive: t().inspector.sdRecTrackCountLive,
+            fx2Rate: t().inspector.fx2RateLocked,
+            deviceDriven: t().dynTuning.insfx.deviceOnlyTag,
+          },
+        ),
+      releaseMeters: () => consoleView.releaseMeters(),
+      regainMeters: () => consoleView.regainMeters(),
+      onMeterError: (message) => stopLiveOnError(errorText(message)),
+      unitSendsTarget: () => (liveSessionUp ? sendsTarget : null),
+      setUnitSendsTarget: (target) => planTakesEdits() && chooseSendsTarget(target),
+    },
+    detectSimScale(),
+  );
 
 // Device follow: the reverse of live sync. While live, parameter
 // changes made on the device itself (LCD / physical controls) are pulled back
@@ -1526,7 +1528,7 @@ const follow =
           ...(live?.followAddrs() ?? []),
           FOLLOW_USB_ADDR,
           LCD_SELECTION_ADDR,
-          SENDS_TARGET_ADDR,
+          ...(experimentalOn ? [SENDS_TARGET_ADDR] : []),
           ...cueNotifyAddrs(getModel(modelId)),
         ],
         // Held off while a flush is armed, running or queued: a read taken then answers an
@@ -4703,7 +4705,7 @@ if (!DEMO) {
         // read beside Follow USB, for the same reason and with the same failure.
         let followUsb = false;
         let lcdSelection = 0;
-        let sendsRead = 0;
+        let sendsRead: number | null = null;
         let cueRead: string[] = [];
         let merged: MergedRead | null;
         try {
@@ -4712,7 +4714,7 @@ if (!DEMO) {
             async (into) => {
               followUsb = await readFollowUsb();
               lcdSelection = await readLcdSelection();
-              sendsRead = await readSendsTarget();
+              if (experimentalOn) sendsRead = await readSendsTarget();
               // On the device's model: a read that carries a switch reads for the plan it
               // switches to.
               cueRead = await readCues(getModel(switchTo ? switchTo.modelId : modelId));
@@ -4776,7 +4778,7 @@ if (!DEMO) {
         resetCues();
         if (cues.replace(cueRead)) renderCues();
         resetSendsTarget();
-        sendsTarget = decodeSendsTarget(getModel(modelId), sendsRead);
+        sendsTarget = sendsRead === null ? null : decodeSendsTarget(getModel(modelId), sendsRead);
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.
         liveAdopted = 0;
@@ -5098,6 +5100,7 @@ if (!DEMO) {
     experimentalOn = true;
     prefs.refresh();
     for (const el of document.querySelectorAll<HTMLElement>("[data-experimental-only]")) el.hidden = false;
+    simView = buildSimView();
     if (simViewPending) setView("sim");
 
     // The link ledger's readout. The counters and the log run in every desktop build;

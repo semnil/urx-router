@@ -392,10 +392,10 @@ carries a one-line map of the same directories and points here.
     - `sends-target.ts` HOME's [Sends] destination (763), the destination the unit's side menu shows: the
       packed encode / decode (STEREO 0, FX 1 16, FX 2 17, MIX 1 32, MIX 2 34) and its read and write.
       `encodeSendsTarget` answers nothing for FX 2 above 96 kHz, a value the unit takes over the link
-      although its own list does not offer it there. `main.ts` reads it at a Live-sync start, takes its
-      notifies through the follow `intercept`, reads it again 1 s after the unit announces a rate above
-      96 kHz — the unit moves FX 2 to FX 1 then and announces nothing — and writes the destination the SIM
-      view's LCD chooses
+      although its own list does not offer it there. On an experimental launch, where the SIM view shows
+      it, `main.ts` reads it at a Live-sync start, takes its notifies through the follow `intercept`, reads
+      it again 1 s after the unit announces a rate above 96 kHz — the unit moves FX 2 to FX 1 then and
+      announces nothing — and writes the destination the SIM view's LCD chooses
     - `cue.ts` the unit's [CUE] flags, held outside the plan for the live session (see "CUE" under "What
       the app models, and what it leaves to the unit"): `CueSet` applies the unit's rules to every change
       from either side, `CueEchoes` tells the unit's answer to the app's own write from a press on the panel,
@@ -1844,7 +1844,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   unwired send, a delay time Sync derives, an FX 2 send at a rate that takes FX 2 out, the recorder's Track Count
   while Live sync is up) is refused. A path the table does not carry — the SETUP > GENERAL settings, CUE, the scenes and the card, the
   simulator's own screen state — shows the simulator's value and takes no edit: the simulator puts it back.
-- **HOME's [Sends] destination** is the unit's UI state rather than the plan's (`sends-target.ts`). While Live
+- **HOME's [Sends] destination** is the unit's UI state rather than the plan's (`sends-target.ts`). The SIM view is
+  built once the experimental gate resolves on, so no other launch builds it or reads the destination. While Live
   sync is up the LCD shows the destination the unit holds and follows a choice made on the unit's panel, and a
   destination chosen on the LCD is written to the unit — FX 2 is refused above 96 kHz. With no session the LCD
   keeps a destination of its own, which reaches nothing.
