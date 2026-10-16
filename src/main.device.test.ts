@@ -328,6 +328,9 @@ const chooseRate = (rate: number): void => {
 
 const TRACK_COUNT_SEED = "839/0/0";
 const TRACK_COUNT_ADDR = "839:0:0";
+const PLAYBACK_SEED = "836/0/0";
+const PLAYBACK_ADDR = "836:0:0";
+const FOLLOW_USB_SEED = "848/0/0";
 
 /** The messages of the dialogs that REPORTED a failure, in order. */
 const errors = (shell: TauriShell): string[] =>
@@ -4435,6 +4438,69 @@ describe("Write to device", () => {
 
     expect(confirms(shell)).toEqual([]);
     expect(shell.count("vd_set")).toBe(0);
+  });
+
+  // The unit keeps its own rate control out of reach while the recorder holds a file, and a
+  // rate written over the link then ends the playback. Playing (1) and paused (2) both hold
+  // one; the reclock confirm above, with nothing held, is what shows this flow reaches it.
+  it.each([1, 2])(
+    "writes nothing, and asks nothing, while the recorder holds a file (state %i)",
+    SLOW,
+    async (state) => {
+      const shell = await bootDevice({}, true, { [PLAYBACK_SEED]: state });
+      chooseRate(96_000);
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect");
+      await vi.waitFor(
+        () =>
+          expect(errors(shell)).toEqual([
+            t().status.writeError(t().error.rateDuringPlayback(formatRate(0), formatRate(96_000))),
+          ]),
+        { timeout: 10_000 },
+      );
+      expect(confirms(shell)).toEqual([]);
+      expect(shell.count("vd_set")).toBe(0);
+    },
+  );
+
+  it("writes nothing when whether the recorder is playing cannot be read", SLOW, async () => {
+    const shell = await bootDevice(
+      {
+        vd_get: (a: Record<string, unknown>) => {
+          if (`${a.paramId}:${a.x}:${a.y}` === PLAYBACK_ADDR) throw new Error("timeout");
+          return 0;
+        },
+      },
+      true,
+    );
+    chooseRate(96_000);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(
+      () => expect(errors(shell)).toEqual([t().status.writeError(t().error.playbackUnread("timeout"))]),
+      { timeout: 10_000 },
+    );
+    expect(confirms(shell)).toEqual([]);
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
+  // With Follow USB on, the operator picks: adopting the device's rate writes no rate and
+  // stays open while a file is held, releasing to the plan's would write one and stops.
+  it("lets a held file adopt the device's rate but not release to the plan's", SLOW, async () => {
+    const release = await bootDevice({}, true, { [PLAYBACK_SEED]: 1, [FOLLOW_USB_SEED]: 1 });
+    chooseRate(96_000);
+    $("btn-write").click();
+    await vi.waitFor(() => expect($("rate-choice").hidden).toBe(false), { timeout: 10_000 });
+    $("rate-choice-release").click();
+    await invoked(release, "vd_disconnect");
+    await vi.waitFor(
+      () =>
+        expect(errors(release)).toEqual([
+          t().status.writeError(t().error.rateDuringPlayback(formatRate(0), formatRate(96_000))),
+        ]),
+      { timeout: 10_000 },
+    );
+    expect(release.count("vd_set")).toBe(0);
   });
 
   // The read is worth nothing until something redraws. The plan taking the unit's value
@@ -11177,6 +11243,148 @@ describe("the displayed side and the unit's LCD selection", () => {
 
 // A node's CUE row in the inspector: read-only with no session, and once one is up a press on
 // it writes the strip's flag, the way the CONSOLE chip does.
+// The SIM view mounts urx-lcd-sim's LCD, which asks the page for a media query and a resize
+// observer; jsdom carries neither, so each case here stands one in that answers nothing.
+describe("the SIM view over a live session", () => {
+  const restore: Array<() => void> = [];
+  beforeEach(() => {
+    const g = globalThis as Record<string, unknown>;
+    const media = window.matchMedia;
+    const resize = g.ResizeObserver;
+    window.matchMedia = ((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+    g.ResizeObserver = class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    };
+    restore.push(() => {
+      window.matchMedia = media;
+      g.ResizeObserver = resize;
+    });
+  });
+  afterEach(() => {
+    for (const r of restore.splice(0)) r();
+  });
+  const glass = (): ShadowRoot | null | undefined => document.querySelector("#sim-host .urx-lcd-sim")?.shadowRoot;
+  const openSim = async (): Promise<void> => {
+    $("btn-view-sim").click();
+    await vi.waitFor(() => expect(glass()?.querySelector(".lcd")).toBeTruthy(), { timeout: 20_000 });
+  };
+  const goLive = async (): Promise<void> => {
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+  };
+  const meterCalls = (shell: TauriShell): string[] => shell.invokes.filter((c) => c.startsWith("vd_meters"));
+
+  it("takes the session's one meter subscription while it is shown, and the CONSOLE takes it back", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    await vi.waitFor(() => expect(meterCalls(shell)).toEqual(["vd_meters_subscribe"]));
+    $("btn-view-console").click();
+    await vi.waitFor(() =>
+      expect(meterCalls(shell)).toEqual(["vd_meters_subscribe", "vd_meters_unsubscribe", "vd_meters_subscribe"]),
+    );
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+  });
+
+  it("ends the session when the unit refuses a [Sends] destination chosen on the LCD", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.SENDS_TARGET.id}/0/0`]: 0 });
+    await openSim();
+    await goLive();
+    await drainShell(shell, () => false);
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      if (a.paramId === PARAMS.SENDS_TARGET.id) throw new Error("refused");
+    });
+    glass()!.querySelector(".sends-target")!.closest("button")!.click();
+    await vi.waitFor(() =>
+      expect(glass()?.querySelector('.lcd[data-screen="sends-select"]:not([inert])')).toBeTruthy(),
+    );
+    const mix2 = [...glass()!.querySelectorAll<HTMLButtonElement>('.lcd[data-screen="sends-select"] button')].find(
+      (b) => b.textContent?.trim() === "MIX 2",
+    )!;
+    mix2.click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
+    expect(errors(shell).join(" "), "the refused write is what ended it").toContain("refused");
+    await invoked(shell, "vd_disconnect");
+  });
+});
+
+describe("HOME's [Sends] destination", () => {
+  const SENDS = `${PARAMS.SENDS_TARGET.id}/0/0`;
+  const sendsReads = (shell: TauriShell): number =>
+    shell.invokes.filter((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === PARAMS.SENDS_TARGET.id).length;
+  const goLive = async (): Promise<void> => {
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+  };
+  const rateNotify = (shell: TauriShell, hz: number): void =>
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: hz }]);
+
+  it("is read at live start and registered for its notify", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [SENDS]: 17 });
+    await goLive();
+    const { addrs } = shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: number[][] };
+    expect(addrs, "the session registers the destination").toContainEqual([PARAMS.SENDS_TARGET.id, 0, 0]);
+    expect(sendsReads(shell)).toBeGreaterThan(0);
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+  });
+
+  // The unit moves FX 2 to FX 1 above 96 kHz and announces nothing, so an announced rate above
+  // 96 kHz is followed by a read of the destination; one at or below it is not.
+  it("is read again after the unit announces a rate above 96 kHz, and not after one at 96 kHz", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [SENDS]: 17 });
+    await goLive();
+    await drainShell(shell, () => false);
+    // The positive control, which also times how long the read takes to follow the notify.
+    const before = sendsReads(shell);
+    const sent = Date.now();
+    rateNotify(shell, 192000);
+    await vi.waitFor(() => expect(sendsReads(shell)).toBe(before + 1), { timeout: 10_000 });
+    const took = Date.now() - sent;
+    await drainShell(shell, () => false);
+    // A rate at 96 kHz, given three times as long as the read above took to arrive.
+    const after = sendsReads(shell);
+    rateNotify(shell, 96000);
+    await new Promise((r) => setTimeout(r, took * 3));
+    await drainShell(shell, () => false);
+    expect(sendsReads(shell), "no read for a rate at 96 kHz").toBe(after);
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+  });
+
+  // A read that fails ends the session, as every other failed read on the device link does.
+  it("ends the session when the read after a rate above 96 kHz fails", SLOW, async () => {
+    // Every other address answers what the unit holds, so the read of 763 is the one that fails.
+    let refuse = false;
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId !== PARAMS.SENDS_TARGET.id) return unwrittenRead(a);
+        if (refuse) throw new Error("timeout");
+        return 17;
+      },
+    });
+    await goLive();
+    await drainShell(shell, () => false);
+    refuse = true;
+    rateNotify(shell, 192000);
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
+    expect(errors(shell).join(" "), "the failed read is what ended it").toContain("timeout");
+    await invoked(shell, "vd_disconnect");
+  });
+});
+
 describe("the inspector's CUE row", () => {
   const cueWrites = (shell: TauriShell): number[] =>
     shell.invokes.flatMap((cmd, i) => {

@@ -17,12 +17,29 @@ export const test = base.extend<{ e2eCoverage: CoverageHarness }>({
     async ({ browserName, context }, use) => {
       const enabled = requested && browserName === "chromium";
       const started = new Map<Page, Promise<void>>();
+      // What each page ran before a navigation the test asked for. The collector loses a
+      // document's counts once a navigation replaces it, `resetOnNavigation: false` or not, so
+      // they are taken before every goto, reload and history step, and the collector started again.
+      const readings: Awaited<ReturnType<Page["coverage"]["stopJSCoverage"]>>[] = [];
       const start = (page: Page): Promise<void> => {
         if (!enabled || page.isClosed()) return Promise.resolve();
         const existing = started.get(page);
         if (existing) return existing;
         const pending = page.coverage.startJSCoverage({ resetOnNavigation: false });
         started.set(page, pending);
+        for (const name of ["goto", "reload", "goBack", "goForward"] as const) {
+          const navigate = page[name].bind(page) as (...args: unknown[]) => Promise<unknown>;
+          (page as unknown as Record<string, unknown>)[name] = async (...args: unknown[]) => {
+            if (!page.isClosed()) {
+              await started.get(page);
+              readings.push(await page.coverage.stopJSCoverage());
+              const again = page.coverage.startJSCoverage({ resetOnNavigation: false });
+              started.set(page, again);
+              await again;
+            }
+            return navigate(...args);
+          };
+        }
         return pending;
       };
       const onPage = (page: Page): void => void start(page);
@@ -33,7 +50,7 @@ export const test = base.extend<{ e2eCoverage: CoverageHarness }>({
       } finally {
         if (enabled) {
           context.off("page", onPage);
-          const readings = await collectOpenPages(context, started);
+          readings.push(...(await collectOpenPages(context, started)));
           if (readings.length) {
             // Keep the report converter out of ordinary workers entirely. This
             // import is reached only by the explicit coverage run.
@@ -66,7 +83,14 @@ export const test = base.extend<{ e2eCoverage: CoverageHarness }>({
 async function printedMarks(page: Page): Promise<string[]> {
   const read = await page.evaluate((reached) => {
     const out: { where: string; attr: string; value: string }[] = [];
-    for (const e of document.querySelectorAll<HTMLElement>("[aria-label], [aria-description], [title]")) {
+    // The SIM view's LCD is drawn in a shadow tree, which a query of the document does not enter.
+    const trees: ParentNode[] = [document];
+    for (let i = 0; i < trees.length; i++)
+      for (const host of trees[i]!.querySelectorAll("*")) if (host.shadowRoot) trees.push(host.shadowRoot);
+    const marked = trees.flatMap((tree) => [
+      ...tree.querySelectorAll<HTMLElement>("[aria-label], [aria-description], [title]"),
+    ]);
+    for (const e of marked) {
       if (e.closest("[aria-hidden='true']") || !e.checkVisibility({ visibilityProperty: true })) continue;
       const where = e.dataset.ctl || e.id || e.className || e.tagName;
       for (const attr of ["aria-label", "aria-description"]) {

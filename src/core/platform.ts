@@ -198,7 +198,7 @@ export type EventScope = "any" | "window";
 /**
  * Subscribe to a Tauri webview event (the drag & drop events; commands use
  * Channels instead). Driving the event plugin directly keeps the frontend free of
- * npm runtime dependencies, like the dialog and updater calls above. No-op outside
+ * third-party npm runtime dependencies, like the dialog and updater calls above. No-op outside
  * Tauri, where the webview delivers DOM drag & drop events instead. A `"window"`
  * subscription in a page whose window label is missing is refused rather than
  * widened to every window.
@@ -661,7 +661,7 @@ export function setKeepAwake(on: boolean): Promise<void> {
 
 // Auto-update (desktop only, via the updater/process plugins). These mirror the
 // official @tauri-apps/plugin-updater bindings but call invoke directly so the
-// frontend keeps zero npm runtime dependencies, like the dialog calls above.
+// frontend keeps zero third-party npm runtime dependencies, like the dialog calls above.
 
 export interface UpdateInfo {
   /** Resource id of the pending update, passed back to download_and_install. */

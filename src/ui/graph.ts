@@ -5,20 +5,20 @@
 import type { ConnectionKind, DeviceModel, DeviceNode, NodeKind, PortDirection } from "../models/types";
 import { fullLabel, hangsUnderHeader, isSingleInput, parseRef, ref } from "../models/types";
 import type { Plan, PlanConnection } from "../core/plan";
-import { hasConnection, LEVEL_MIN_DB, removeConnection } from "../core/plan";
+import { hasConnection, LEVEL_MIN_DB } from "../core/plan";
 import {
   canConnect,
   channelTapAheadOfMute,
+  completesLinkedPatch,
   directOutTarget,
+  dropWire,
   isFixedConnection,
   isLastRequiredSource,
   isNodeInactive,
-  isStereoLinkedPair,
   legalSources,
   legalTargets,
   mixSendLocks,
   monoPairOf,
-  monoPairsInto,
   pairPrimary,
   partnerChannel,
   possibleSources,
@@ -2889,23 +2889,15 @@ export class Graph {
       this.cb.onStatus(tapUsed ? t().error.recPointTargets : t().error.recPointRequired);
       return;
     }
-    const result = canConnect(this.model, this.plan, out, into);
-    const replaces = this.replacesWire(out, into);
-    if (!result.ok && !replaces && !this.completesLinkedPair(out, into)) {
-      this.cb.onStatus(result.reason ? t().error[result.reason] : t().error.cannotConnect);
+    const drop = dropWire(this.model, this.plan, out, into, (id) => !this.isHidden(id));
+    if (!drop.ok) {
+      this.cb.onStatus(drop.reason ? t().error[drop.reason] : t().error.cannotConnect);
       return;
     }
     // The wire a replacing drop takes the place of goes in the same change, so one undo puts
     // it back. A selection on it goes with it, as a deleted wire's does.
-    const dropsSelected = replaces && this.selection?.type === "conn" && this.selection.to === into;
-    if (replaces) this.plan.connections = this.plan.connections.filter((c) => c.to !== into);
-    // canConnect rejects a route with no rule, so reaching here means kind is set.
-    if (result.ok || replaces) this.plan.connections.push({ from: out, to: into, kind: kind! });
-    if (kind === "source") this.mirrorPairSource(out, into);
-    if (kind === "patch") {
-      const partner = this.linkedPairPartner(out, into);
-      if (partner) this.plan.connections.push({ from: partner, to: into, kind: "patch" });
-    }
+    const dropsSelected = drop.replaces && this.selection?.type === "conn" && this.selection.to === into;
+    this.plan.connections = drop.connections;
     // redrawWires ends with refreshPortStates, so the port glow is restored there (select
     // redraws them too).
     if (dropsSelected) this.select(null);
@@ -2914,30 +2906,10 @@ export class Graph {
     this.cb.onStatus(t().status.connected);
   }
 
-  /** The partner channel's out ref that joins `out` on the USB output `into`: set when
-   *  `out` is a channel of a STEREO-linked pair the output takes, the partner is on the
-   *  board and its wire is legal there now; null otherwise. Drawing either channel of a
-   *  linked pair puts the pair on the output; an unlinked channel goes alone, and so does
-   *  one whose partner is on the shelf, since a wire to a shelved node is not drawn. */
-  private linkedPairPartner(out: string, into: string): string | null {
-    const node = parseRef(out).nodeId;
-    if (!isStereoLinkedPair(this.model, this.plan, node)) return null;
-    const pair = monoPairsInto(this.model, into).find(([a, b]) => a === node || b === node);
-    if (!pair) return null;
-    const partnerNode = pair[0] === node ? pair[1] : pair[0];
-    if (this.isHidden(partnerNode)) return null;
-    const partner = ref(partnerNode, "out");
-    return canConnect(this.model, this.plan, partner, into).ok ? partner : null;
-  }
-
   /** A drop of `out` onto `into` that the output already holds, which completes a linked
    *  pair there: the one refused wire the board still takes, adding the partner instead. */
   private completesLinkedPair(out: string, into: string): boolean {
-    return (
-      ruleKind(this.model, out, into) === "patch" &&
-      canConnect(this.model, this.plan, out, into).reason === "duplicate" &&
-      this.linkedPairPartner(out, into) !== null
-    );
+    return completesLinkedPatch(this.model, this.plan, out, into, (id) => !this.isHidden(id));
   }
 
   /** A drop of `out` onto an input that takes one source and holds another: the board takes
@@ -2964,18 +2936,6 @@ export class Graph {
     );
     const wire = wires.length === 1 ? wires[0] : pair ? wires.find((c) => c.from === ref(pair[0], "out")) : undefined;
     if (wire) this.select({ type: "conn", from: wire.from, to: wire.to });
-  }
-
-  // Mono channels are paired: assigning a source to one fixes its partner too.
-  // Mirror the same source onto the partner, replacing whatever it held.
-  private mirrorPairSource(from: string, to: string): void {
-    const { nodeId, portId } = parseRef(to);
-    const partner = partnerChannel(this.model, nodeId);
-    if (!partner) return;
-    const mirrorTo = ref(partner, portId);
-    for (const c of this.plan.connections.filter((c) => c.to === mirrorTo && isSingleInput(c.kind)))
-      removeConnection(this.plan, c.from, c.to);
-    if (!hasConnection(this.plan, from, mirrorTo)) this.plan.connections.push({ from, to: mirrorTo, kind: "source" });
   }
 
   private clearPortHighlights(): void {

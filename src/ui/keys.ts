@@ -11,6 +11,9 @@
  *  make Ctrl+Z quietly do nothing. */
 const NATIVE_UNDO_TYPES = new Set(["text", "search", "url", "tel", "email", "password", "number"]);
 
+/** The element the SIM view's LCD (urx-lcd-sim) is drawn under, in a shadow tree of its own. */
+export const SIM_ROOT = ".urx-lcd-sim";
+
 /** Whether the target owns its own undo, so an undo command belongs to it — the
  *  keyboard leaves the chord alone and the menu hands it `document.execCommand`.
  *  Measured on macOS: the page receives Cmd+Z even with a native Edit menu installed,
@@ -19,6 +22,10 @@ const NATIVE_UNDO_TYPES = new Set(["text", "search", "url", "tel", "email", "pas
 export function ownsNativeUndo(target: unknown): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.tagName === "TEXTAREA") return true;
+  // The SIM view's title entry: a text field of the LCD's own, with no undo stack. A chord
+  // there edits nothing of the plan, as one typed into any other field does not. The LCD
+  // is drawn in a shadow tree, so a key and the focus inside it read as its host here.
+  if (target.matches(SIM_ROOT)) return target.shadowRoot?.activeElement?.closest('[role="textbox"]') != null;
   // isContentEditable is the browser's own answer (inherited state included); the
   // attribute walk beside it is what makes this testable under jsdom, which does not
   // implement the property.

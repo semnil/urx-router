@@ -188,6 +188,7 @@ const SURFACES: Record<SurfaceName, Surface> = {
     viaAttribute: [
       "toolbar.viewGraphHint",
       "toolbar.viewConsoleHint",
+      "toolbar.viewSimHint",
       "toolbar.viewHint",
       "toolbar.hideOffSendsHint",
       "toolbar.labelsHint",
@@ -241,6 +242,7 @@ const OUT_OF_SCOPE: Record<string, string> = {
   appMenu: "the macOS application menu — native chrome, outside the webview",
   console: "the CONSOLE view — a view, not a dialog (its two popovers are claimed above)",
   inspector: "the inspector — an always-on panel, not a dialog",
+  sim: "the SIM view's lock reasons — tooltips the LCD draws on a held control, a view and not a dialog, covered by sim.spec.ts",
   shelf: "the graph's hidden-node shelf — canvas chrome, not a dialog",
   selbar: "the graph's multi-selection bar — canvas chrome, not a dialog",
   tooltip: "canvas tooltips — hover affordances on the graph",

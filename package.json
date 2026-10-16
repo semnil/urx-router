@@ -62,5 +62,8 @@
   },
   "prettier": {
     "printWidth": 120
+  },
+  "dependencies": {
+    "urx-lcd-sim": "github:semnil/urx-lcd-sim#dcd470cba1f8aa3bea9677fcbb1922dc8edca97d"
   }
 }

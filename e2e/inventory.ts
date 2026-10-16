@@ -45,7 +45,7 @@ const fill = (fn: (...args: string[]) => string): string => fn(...(Array(fn.leng
 /** Segments of an interpolated message that no argument can change. Short ones
  *  ("…", " to ") are dropped — they match anything and would assert nothing.
  *
- *  A message that BRANCHES on its argument (a plural, "1 crate" vs "3 crates")
+ *  A message that BRANCHES on its argument (a plural, "1 component" vs "3 components")
  *  yields the branch a non-numeric sentinel selects, i.e. the plural one — so the
  *  surface has to be driven into that branch for the check to mean anything. The
  *  singular wording of such a message is not covered here. */

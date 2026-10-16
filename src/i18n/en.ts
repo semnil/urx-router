@@ -50,6 +50,10 @@ export const en = {
     viewConsole: tr("Console"),
     viewGraphHint: tr("Node-graph routing view"),
     viewConsoleHint: tr("Mixer-style level overview"),
+    // The tab's name is the simulator's, in every language.
+    viewSim: fixed("SIM"),
+    viewSimHint: tr("The unit's LCD screen, showing and editing the same plan"),
+    simScale: (percent: number): string => `SIM Scale ${percent}%`,
     view: tr("View"),
     viewHint: tr("Layout and display options"),
     arrange: tr("Arrange"),
@@ -432,7 +436,7 @@ export const en = {
     pan: dev("Pan"),
     balance: dev("Balance"),
     prePost: tr("Pre/Post"),
-    prePostLcdOnly: tr("CH → FX send Pre/Post is set on the device only (not writable from software)."),
+    prePostLcdOnly: tr("Cannot be changed (the device does not accept it)"),
     eqRateLocked: tr("Stereo channel EQ is disabled at 176.4 / 192 kHz — forced off."),
     insFxRateLocked: tr("Insert FX is unavailable above 96 kHz — forced off."),
     // The effect the node HOLDS, named with its own ceiling: the ceilings differ per
@@ -858,6 +862,13 @@ export const en = {
       deviceOnlyTag: tr("Set on the device"),
     },
   },
+  // Why a control on the SIM view's LCD is held shut — its tooltip.
+  sim: {
+    lockDeviceSetup: tr("Change it in Device setup"),
+    lockUnitOp: tr("Operate it on the device"),
+    lockRateLinked: tr("Cannot be changed while connected to the device"),
+    lockFollowUsb: tr("Change it with FOLLOW USB on the toolbar"),
+  },
   shelf: {
     title: tr("Hidden"),
     showAll: tr("Show all"),
@@ -933,6 +944,7 @@ export const en = {
     arranged: tr("Arranged to the default layout"),
     busyDeviceRead: tr("Reading from the device — try that again when it finishes"),
     busyFileFlow: tr("A file is being opened or saved — try that again when it finishes"),
+    simUnitAction: tr("This operation is the unit's own and the plan does not hold it, so SIM does not carry it out"),
     busySwitchRead: tr(
       "This plan is being replaced by one for the device's model — try that again when the read finishes",
     ),
@@ -1219,8 +1231,8 @@ export const en = {
     title: tr("Third-party licenses"),
     close: tr("Close"),
     error: (message: string): string => `Could not load the license notice: ${message}`,
-    familyMeta: (crates: number, texts: number): string =>
-      `${crates} ${crates === 1 ? "crate" : "crates"} · ${texts} ${texts === 1 ? "text" : "texts"}`,
+    familyMeta: (components: number, texts: number): string =>
+      `${components} ${components === 1 ? "component" : "components"} · ${texts} ${texts === 1 ? "text" : "texts"}`,
   },
   prefs: {
     title: tr("Preferences"),
@@ -1381,6 +1393,10 @@ export const en = {
       `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
     clockUnread: (message: string): string =>
       `The device's sample rate and Follow USB state could not be read (${message}), so the plan's rate was not checked against the unit. Nothing was written.`,
+    playbackUnread: (message: string): string =>
+      `Whether the microSD recorder is playing could not be read (${message}), and a rate change ends a playback. Nothing was written.`,
+    rateDuringPlayback: (deviceRate: string, planRate: string): string =>
+      `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is playing or paused. Stop the playback on the device, then write again. Nothing was written.`,
     trackCountUnread: (message: string): string =>
       `The microSD recorder's Track Count could not be read (${message}), and a rate change can lower it for good. Nothing was written.`,
     followUsbWrite: (message: string, on = false): string =>

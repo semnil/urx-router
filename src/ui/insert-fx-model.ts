@@ -4,12 +4,10 @@
 // rendered-DOM assertion passes over exactly the step that matters — the bare
 // slot key — without checking it.
 
-import type { NodeParams, Plan } from "../core/plan";
+import type { Plan } from "../core/plan";
 import {
-  insertFxFamilyOf,
   insertFxSlotVal,
   insertFxSwitchOn,
-  qualifyInsertFxParams,
   PITCH_KEY_SLOT,
   PITCH_MIDI_ENABLE_SLOT,
   PITCH_MIDI_REALTIME_SLOT,
@@ -31,18 +29,7 @@ export function insertFxVal(plan: Plan, nodeId: string, fam: InsertFxFamily, slo
 // family, and the bare number a readback writes is the device's own shape. So does the seed a
 // selection takes, which the load applies too. Both are re-exported here so the editor's
 // modules take the whole value model from one import.
-export { reKeyInsertFxParams, seedInsertFxParams } from "../core/control/insert-fx-effect";
-
-/** Park the outgoing effect's engine values under its own family before the
- *  selector names another one: a bare slot number left behind would be read as the
- *  new family's, whose slot means a different parameter under a different law, and
- *  emitted as absolute state on the next flush. Null when the node carries no
- *  engine values to park. */
-export function parkOutgoingInsertFxParams(prev: NodeParams | undefined): Record<string, number> | null {
-  if (!prev?.insertFxParams) return null;
-  const prevFam = prev.insertFx === undefined ? null : insertFxFamilyOf(prev.insertFx);
-  return qualifyInsertFxParams(prev.insertFxParams, prevFam);
-}
+export { parkOutgoingInsertFxParams, reKeyInsertFxParams, seedInsertFxParams } from "../core/control/insert-fx-effect";
 
 /**
  * The engine patch a Pitch Fix scale selection writes: the scale slot, and the twelve

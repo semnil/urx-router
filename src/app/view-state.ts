@@ -16,7 +16,11 @@ import { isPlainRecord } from "../core/plan";
 import type { LabelSource, ThemeName } from "../ui/graph";
 import type { ThemeMode } from "../ui/prefs";
 
-export type ViewName = "graph" | "console";
+export type ViewName = "graph" | "console" | "sim";
+
+/** The scales the SIM view draws the LCD at, in percent of its own size. */
+export const SIM_SCALES = [50, 75, 100, 150, 200] as const;
+export type SimScale = (typeof SIM_SCALES)[number];
 
 const THEME_KEY = "urx-theme";
 const SEED_KEY = "urx-seed";
@@ -26,6 +30,7 @@ const RATE_KEY = "urx-rate";
 const VIEW_KEY = "urx-view";
 const LABELS_KEY = "urx-labels";
 const HIDE_OFF_KEY = "urx-hide-off";
+const SIM_SCALE_KEY = "urx-sim-scale";
 
 /** Every write here is best-effort: storage may be unavailable, in which case the
  *  choice simply does not carry across reloads. */
@@ -132,13 +137,25 @@ export function rememberRate(rate: number): void {
   remember(RATE_KEY, String(rate));
 }
 
-/** The last GRAPH / CONSOLE view, falling back to the graph (the HTML default). */
+/** The last GRAPH / CONSOLE / SIM view, falling back to the graph (the HTML default). SIM
+ *  is offered only by an experimental launch, which the caller resolves. */
 export function detectView(): ViewName {
-  return read(VIEW_KEY) === "console" ? "console" : "graph";
+  const saved = read(VIEW_KEY);
+  return saved === "console" || saved === "sim" ? saved : "graph";
 }
 
 export function rememberView(view: ViewName): void {
   remember(VIEW_KEY, view);
+}
+
+/** The last SIM scale, falling back to the LCD's own size. */
+export function detectSimScale(): SimScale {
+  const saved = Number(read(SIM_SCALE_KEY));
+  return (SIM_SCALES as readonly number[]).includes(saved) ? (saved as SimScale) : 100;
+}
+
+export function rememberSimScale(scale: SimScale): void {
+  remember(SIM_SCALE_KEY, String(scale));
 }
 
 export function detectLabelSource(): LabelSource {

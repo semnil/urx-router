@@ -26,6 +26,33 @@ describe("ownsNativeUndo", () => {
     expect(ownsNativeUndo(inner)).toBe(true);
   });
 
+  it("claims the SIM's title entry, and no other part of the SIM", () => {
+    // The LCD is drawn in a shadow tree: a key and the focus inside it read as its host.
+    const root = el("div");
+    root.className = "urx-lcd-sim";
+    document.body.append(root);
+    const tree = root.attachShadow({ mode: "open" });
+    const entry = el("div");
+    entry.setAttribute("role", "textbox");
+    entry.tabIndex = 0;
+    const key = el("button");
+    entry.append(key);
+    const button = el("button");
+    tree.append(entry, button);
+    entry.focus();
+    expect(ownsNativeUndo(root), "the entry holding the focus").toBe(true);
+    key.focus();
+    expect(ownsNativeUndo(root), "a key of the entry is where a click lands").toBe(true);
+    button.focus();
+    expect(ownsNativeUndo(root), "any other control of the SIM").toBe(false);
+    button.blur();
+    expect(ownsNativeUndo(root), "nothing of the SIM focused").toBe(false);
+    const elsewhere = el("div");
+    elsewhere.setAttribute("role", "textbox");
+    expect(ownsNativeUndo(elsewhere), "a textbox outside the SIM is not this").toBe(false);
+    root.remove();
+  });
+
   it("does not claim an explicitly non-editable region", () => {
     const off = el("div");
     off.setAttribute("contenteditable", "false");

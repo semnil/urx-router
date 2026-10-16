@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      urx-lcd-sim:
+        specifier: github:semnil/urx-lcd-sim#dcd470cba1f8aa3bea9677fcbb1922dc8edca97d
+        version: https://codeload.github.com/semnil/urx-lcd-sim/tar.gz/dcd470cba1f8aa3bea9677fcbb1922dc8edca97d
     devDependencies:
       '@playwright/test':
         specifier: ^1.64.0
@@ -1020,6 +1024,10 @@ packages:
     resolution: {integrity: sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==}
     engines: {node: '>=22.19.0'}
 
+  urx-lcd-sim@https://codeload.github.com/semnil/urx-lcd-sim/tar.gz/dcd470cba1f8aa3bea9677fcbb1922dc8edca97d:
+    resolution: {tarball: https://codeload.github.com/semnil/urx-lcd-sim/tar.gz/dcd470cba1f8aa3bea9677fcbb1922dc8edca97d}
+    version: 0.6.6
+
   vite@8.3.2:
     resolution: {integrity: sha512-SQr1x6W5vVSbROg7vsyXIaxK9b0G7zsT68acdWWRmnBUsgDieLCRG+Rep9WdZgcposvv/GSnr4GUUBqB3vXq6w==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -1901,6 +1909,8 @@ snapshots:
   undici-types@7.24.6: {}
 
   undici@8.11.2: {}
+
+  urx-lcd-sim@https://codeload.github.com/semnil/urx-lcd-sim/tar.gz/dcd470cba1f8aa3bea9677fcbb1922dc8edca97d: {}
 
   vite@8.3.2(@types/node@24.19.2)(esbuild@0.28.2):
     dependencies:

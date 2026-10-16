@@ -92,6 +92,9 @@ import { copyText, focusables, preserveFocus } from "./ui/dom";
 import { setSaid, setSpokenText, setTip, spoken } from "./ui/glyph";
 import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
+import { SimView } from "./ui/sim-view";
+import type { SimEdit } from "./core/sim-map";
+import { simLocks } from "./core/sim-locks";
 import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
 import { initDropzone } from "./ui/dropzone";
@@ -118,6 +121,7 @@ import {
   detectLabelSource,
   detectModel,
   detectRate,
+  detectSimScale,
   detectThemeMode,
   detectView,
   loadHidden,
@@ -126,13 +130,15 @@ import {
   rememberLabelSource,
   rememberModel,
   rememberRate,
+  rememberSimScale,
   rememberThemeMode,
   resetStorageFromUrl,
   rememberView,
   resolveTheme,
   seedEmptyRequested,
+  SIM_SCALES,
 } from "./app/view-state";
-import type { ViewName } from "./app/view-state";
+import type { SimScale, ViewName } from "./app/view-state";
 import { errorCode, errorText, getLang, LANG_NAMES, onLangChange, t } from "./i18n";
 import { DEMO, TRACE } from "./core/env";
 import { installTraceProbe } from "./ui/trace-probe";
@@ -188,6 +194,7 @@ import {
   reachedAndFailed,
   rateAction,
   readClockState,
+  readSdPlaybackHeld,
   readFollowUsb,
   readLcdSelection,
   readTrackCount,
@@ -216,6 +223,14 @@ import {
   unverifiedGuessNote,
 } from "./core/control/translate";
 import { decodeLcdSelection, encodeStereoSide, LcdEchoes } from "./core/control/lcd-selection";
+import {
+  decodeSendsTarget,
+  encodeSendsTarget,
+  readSendsTarget,
+  SENDS_TARGET_ADDR,
+  writeSendsTarget,
+  type SendsTarget,
+} from "./core/control/sends-target";
 import { CueEchoes, CueSet, readCues, writeCueFlag } from "./core/control/cue";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
@@ -389,6 +404,12 @@ let compareAbort: AbortController | null = null;
 // Preferences device-scope note names the diagnostics' coverage only when the
 // diagnostics themselves are reachable.
 let experimentalOn = false;
+// A remembered SIM view still waiting for the experimental gate; any view chosen before
+// the gate resolves takes its place.
+let simViewPending = false;
+// The SIM view, built once the CONSOLE it borrows meters from exists. Every hook below asks
+// through `?.`, since a funnel can run before then.
+let simView: SimView | null = null;
 // Name the collapse the way the canvas names a node, and count the rest. Several
 // surfaces print this (the live status line, the write confirm, the "no changes"
 // status), so the label/count rule lives here once. The first group's first
@@ -468,7 +489,7 @@ function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   const flush = live?.idle() ?? Promise.resolve();
   // …and the LCD selection write the session has on the wire, for the same reason.
   const lcd = lcdInFlight ?? Promise.resolve();
-  // …and the [CUE] writes it has queued.
+  // …and the [CUE] writes it has queued, with the [Sends] destination's queued behind them.
   const cue = cueWrites;
   return (
     Promise.allSettled([ledger, reads, flush, lcd, cue])
@@ -653,8 +674,9 @@ const live = DEMO
 // switches one.
 let cues = new CueSet(getModel(modelId));
 const cueEchoes = new CueEchoes();
-// One flag write at a time, in the order the changes were made; a session's release waits for
-// the tail before it disconnects.
+// One flag write at a time, in the order the changes were made, with the reads and writes of
+// HOME's [Sends] destination in the same line; a session's release waits for the tail before it
+// disconnects.
 let cueWrites: Promise<void> = Promise.resolve();
 let cueWritesPending = 0;
 
@@ -782,6 +804,78 @@ function resetCues(): void {
   else renderCueBar();
 }
 
+// HOME's [Sends] destination (core/control/sends-target.ts): UI state of the unit outside the
+// plan, shown on the SIM view's glass. A session's start reads it, a change on the unit arrives
+// as a notify, and a destination chosen on the glass is written to the unit. With no session
+// the glass keeps a destination of its own, which reaches nothing.
+let sendsTarget: SendsTarget | null = null;
+const sendsEchoes = new LcdEchoes();
+// How long after an announced rate above 96 kHz 763 is read again. The unit moves FX 2 to FX 1
+// at that rate and announces nothing, and has moved it by this long after the rate write.
+const SENDS_REREAD_AFTER_RATE_MS = 1000;
+let sendsRereadTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Take a 763 value the unit holds. */
+function takeSendsTarget(raw: number): void {
+  const next = decodeSendsTarget(getModel(modelId), raw);
+  if (next === sendsTarget) return;
+  sendsTarget = next;
+  simView?.unitStateChanged();
+}
+
+/** A destination chosen on the glass: written to the unit while a session is up. False when it
+ *  is refused — with no session, for a destination the model has no bus for, and for FX 2 at a
+ *  rate that takes FX 2 out. */
+function chooseSendsTarget(target: string): boolean {
+  if (!liveSessionUp) return false;
+  const raw = encodeSendsTarget(getModel(modelId), target, plan.sampleRate);
+  if (raw === null) return false;
+  sendsTarget = decodeSendsTarget(getModel(modelId), raw);
+  cueWrites = cueWrites
+    .then(async () => {
+      if (!liveSessionUp) return;
+      sendsEchoes.note(raw);
+      await writeSendsTarget(raw);
+    })
+    .catch((err: unknown) => stopLiveOnError(errorText(err)));
+  return true;
+}
+
+/** Read 763 behind every write queued so far, the plan flush and the follow reads running, and
+ *  take what the unit holds. */
+function rereadSendsTarget(): void {
+  if (!liveSessionUp) return;
+  cueWrites = cueWrites
+    .then(async () => {
+      await live?.idle();
+      await Promise.all([...followReads].map((r) => r.done));
+      if (!liveSessionUp) return;
+      const raw = await readSendsTarget();
+      if (liveSessionUp) takeSendsTarget(raw);
+    })
+    .catch((err: unknown) => stopLiveOnError(errorText(err)));
+}
+
+/** A rate change the unit announced: above 96 kHz the unit may have moved the destination. */
+function onAnnouncedRate(hz: number): void {
+  if (!(hz > 96000)) return;
+  if (sendsRereadTimer !== null) clearTimeout(sendsRereadTimer);
+  sendsRereadTimer = setTimeout(() => {
+    sendsRereadTimer = null;
+    rereadSendsTarget();
+  }, SENDS_REREAD_AFTER_RATE_MS);
+}
+
+/** Forget the unit's destination: the session that knew it ended, or the model changed. */
+function resetSendsTarget(): void {
+  sendsEchoes.clear();
+  if (sendsRereadTimer !== null) clearTimeout(sendsRereadTimer);
+  sendsRereadTimer = null;
+  if (sendsTarget === null) return;
+  sendsTarget = null;
+  simView?.unitStateChanged();
+}
+
 const cueBar = $<HTMLElement>("cue-bar");
 const cueBarNames = $<HTMLElement>("cue-bar-names");
 const cueBarClear = $<HTMLButtonElement>("cue-bar-clear");
@@ -884,6 +978,43 @@ const consoleView = new Console(consoleHost, {
   // of editing.
   midi: midiLearnHooks,
 });
+
+// The SIM view: the unit's LCD as a third surface over the same plan (experimental launch
+// only). Its edits go to the funnels the Inspector uses; every other change to the plan
+// reaches it through simView?.planChanged() beside the MIDI feedback.
+simView = new SimView(
+  $<HTMLElement>("sim-host"),
+  {
+    getModel: () => getModel(modelId),
+    getPlan: () => plan,
+    apply: (edit) => planTakesEdits() && applySimEdit(edit),
+    onRefusedAction: () => setStatus(t().status.simUnitAction),
+    isLive: () => liveSessionUp,
+    locks: (paths) =>
+      simLocks(
+        getModel(modelId),
+        plan,
+        paths,
+        { linked: deviceLinkHolder !== null, live: liveSessionUp },
+        {
+          deviceSetup: t().sim.lockDeviceSetup,
+          notAccepted: t().inspector.prePostLcdOnly,
+          unitOp: t().sim.lockUnitOp,
+          rateLinked: t().sim.lockRateLinked,
+          followUsb: t().sim.lockFollowUsb,
+          trackCountLive: t().inspector.sdRecTrackCountLive,
+          fx2Rate: t().inspector.fx2RateLocked,
+          deviceDriven: t().dynTuning.insfx.deviceOnlyTag,
+        },
+      ),
+    releaseMeters: () => consoleView.releaseMeters(),
+    regainMeters: () => consoleView.regainMeters(),
+    onMeterError: (message) => stopLiveOnError(errorText(message)),
+    unitSendsTarget: () => (liveSessionUp ? sendsTarget : null),
+    setUnitSendsTarget: (target) => planTakesEdits() && chooseSendsTarget(target),
+  },
+  detectSimScale(),
+);
 
 // Device follow: the reverse of live sync. While live, parameter
 // changes made on the device itself (LCD / physical controls) are pulled back
@@ -1395,6 +1526,7 @@ const follow =
           ...(live?.followAddrs() ?? []),
           FOLLOW_USB_ADDR,
           LCD_SELECTION_ADDR,
+          SENDS_TARGET_ADDR,
           ...cueNotifyAddrs(getModel(modelId)),
         ],
         // Held off while a flush is armed, running or queued: a read taken then answers an
@@ -1413,6 +1545,12 @@ const follow =
             lcdNext = null;
             const sel = decodeLcdSelection(getModel(modelId), p.value);
             if (sel) switchSide(sel.channel, sel.side, "device");
+            return true;
+          }
+          // HOME's [Sends] destination: the unit answering a write of this app's, or a choice on
+          // its panel. Neither opens a reconcile.
+          if (at(SENDS_TARGET_ADDR)) {
+            if (!sendsEchoes.take(p.value)) takeSendsTarget(p.value);
             return true;
           }
           // A [CUE] flag: the unit answering a write of this app's, a mirror it sets beside a
@@ -1447,7 +1585,10 @@ const follow =
         // names the pair's primary, and the transition it reports clears BOTH members,
         // so the partner is recorded with it.
         onDeviceParam: (p) => {
-          if (p.paramId === PARAMS.SAMPLE_RATE.id) announcedRates.push({ seq: ++rateSeq, hz: p.value });
+          if (p.paramId === PARAMS.SAMPLE_RATE.id) {
+            announcedRates.push({ seq: ++rateSeq, hz: p.value });
+            onAnnouncedRate(p.value);
+          }
           const addr = live?.lookup(p.paramId, p.x, p.y);
           if (!addr?.node || !INSERT_FX_ANNOUNCED.has(addr.name)) return;
           announcedInsertFx.push(addr.node);
@@ -1565,16 +1706,40 @@ const follow =
         onError: (message) => stopLiveOnError(errorText(message)),
       });
 
-function setView(next: ViewName): void {
+// `persist` false applies a view without remembering it: the startup's stand-in for a
+// remembered SIM view, which only an experimental launch shows.
+/** The View menu's SIM Scale choices. */
+function simScaleItems(): HTMLButtonElement[] {
+  return [...document.querySelectorAll<HTMLButtonElement>(".sim-scale")];
+}
+
+function syncSimScaleItems(scale: SimScale): void {
+  for (const item of simScaleItems())
+    item.setAttribute("aria-checked", String(Number(item.dataset.simScale) === scale));
+}
+
+function setView(next: ViewName, persist = true): void {
   const isConsole = next === "console";
-  rememberView(next);
-  graphHost.hidden = isConsole;
-  inspectorHost.hidden = isConsole;
-  $("btn-view-graph").setAttribute("aria-pressed", String(!isConsole));
+  const isSim = next === "sim";
+  if (persist) {
+    rememberView(next);
+    simViewPending = false;
+  }
+  // The view on screen, as one attribute a rule or a query can switch on.
+  document.documentElement.dataset.view = next;
+  graphHost.hidden = next !== "graph";
+  inspectorHost.hidden = next !== "graph";
+  $("btn-view-graph").setAttribute("aria-pressed", String(next === "graph"));
   $("btn-view-console").setAttribute("aria-pressed", String(isConsole));
+  $("btn-view-sim").setAttribute("aria-pressed", String(isSim));
   if (isConsole) {
+    simView?.hide();
     consoleView.show();
+  } else if (isSim) {
+    consoleView.hide();
+    simView?.show();
   } else {
+    simView?.hide();
     consoleView.hide();
     // Reflect any console edits back onto the graph. If a device-follow reflect or an
     // undo landed while the graph was hidden, do the deferred full refresh instead.
@@ -1710,6 +1875,7 @@ function setLiveUi(on: boolean): void {
   dynScreen.setLive(on);
   // A selected node's CUE row switches only while a session is up.
   refreshInspectorCue();
+  simView?.setLive();
   // The sleep hold lives and dies with the session, so every way in and out of one
   // — the toggle, a write failure, a link loss — passes through here.
   void syncSleepHold(on && getSettings().preventSleep).then((failed) => {
@@ -1734,8 +1900,10 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   lcdEchoes.clear();
   lcdNext = null;
   lcdLast = null;
-  // A cue is the unit's state, which nothing reads once the session is gone.
+  // A cue is the unit's state, which nothing reads once the session is gone, and so is the
+  // [Sends] destination.
   resetCues();
+  resetSendsTarget();
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
   liveAdopted = 0;
@@ -1880,6 +2048,7 @@ function markChanged(source: WriteSource = "ui", written?: Iterable<string>): vo
   planWrites.note(written);
   live?.schedule();
   midi?.scheduleFeedback();
+  simView?.planChanged();
   planHistory?.note();
 }
 
@@ -1891,6 +2060,7 @@ function markChanged(source: WriteSource = "ui", written?: Iterable<string>): vo
 function planValuesChanged(): void {
   traceProbe?.sample("device-action");
   midi?.scheduleFeedback();
+  simView?.planChanged();
 }
 
 /** Whether the model has the microSD recorder at all. URX22 does not, so nothing about
@@ -2211,6 +2381,10 @@ function applyStaticI18n(): void {
   const viewConsoleBtn = $("btn-view-console");
   viewConsoleBtn.textContent = m.toolbar.viewConsole;
   viewConsoleBtn.title = m.toolbar.viewConsoleHint;
+  const viewSimBtn = $("btn-view-sim");
+  viewSimBtn.textContent = m.toolbar.viewSim;
+  viewSimBtn.title = m.toolbar.viewSimHint;
+  for (const item of simScaleItems()) item.textContent = m.toolbar.simScale(Number(item.dataset.simScale));
   $("btn-auto").textContent = m.toolbar.arrange;
   $("btn-hide-unused").textContent = m.toolbar.hideUnused;
   $("lbl-device").textContent = m.toolbar.device;
@@ -2635,6 +2809,7 @@ function repaintPatched(touch: PatchTouch): void {
     rebuildInspector();
     consoleView.refresh();
   }
+  simView?.planChanged();
 }
 
 // Read the whole device into the plan, honoring the Preferences device scope:
@@ -2766,6 +2941,9 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
     // sat showing the plan that was just replaced. Refresh re-resolves the binding too, so
     // a screen whose node or processor the new plan does not have closes itself.
     dynScreen.refresh();
+    // A new plan object, and on a model switch another LCD.
+    if (modelId !== prevModelId) simView?.reload();
+    else simView?.planChanged();
   };
   const prevModelId = modelId;
   const prevPlan = plan;
@@ -2789,6 +2967,7 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
     if (modelId !== prevModelId) {
       setFollowUsbBadge(null);
       resetCues();
+      resetSendsTarget();
     }
   } catch (err) {
     // Put the previous document back on screen and report, rather than throwing: three
@@ -3191,16 +3370,66 @@ picker.addEventListener("change", async () => {
   if (!switched) picker.value = modelId;
 });
 
-ratePicker.addEventListener("change", () => {
+/** Take a sampling frequency chosen on the toolbar or on the SIM into the plan. */
+/** Apply one edit the SIM view made, through the funnels the board and the Inspector use.
+ *  False where the plan does not take it. */
+function applySimEdit(edit: SimEdit): boolean {
+  switch (edit.kind) {
+    case "node":
+      // The Inspector holds the recorder's Track Count while live (the link cannot carry it),
+      // and so does this.
+      if (liveSessionUp && edit.patch.sdRecTrackCount !== undefined) return false;
+      inspectorActions.onUpdateNodeParams(edit.id, edit.patch, edit.written, edit.defaults);
+      break;
+    case "send": {
+      // The funnel addresses a send by its ports, and takes no edit of one the plan does not wire.
+      const from = ref(edit.from, "out");
+      const to = ref(edit.to, "in");
+      if (!plan.connections.some((c) => c.from === from && c.to === to)) return false;
+      inspectorActions.onUpdateParams(from, to, edit.patch);
+      break;
+    }
+    case "name":
+      inspectorActions.onRenameNode(edit.id, edit.name);
+      break;
+    case "color":
+      inspectorActions.onRecolorNode(edit.id, edit.color);
+      break;
+    // A wire goes through the board's own connect and delete, which keep their rules
+    // (a source replaced rather than doubled, a pair's mirrored source, a fixed wire kept).
+    case "connect":
+      graph.connectTo({ ref: edit.from, dir: "out", tap: edit.tap ?? false, targets: [] }, edit.to);
+      break;
+    case "disconnect":
+      graph.deleteConnection(edit.from, edit.to);
+      break;
+    // The toolbar's rate picker is locked while the device link is held, and so is this.
+    case "rate":
+      if (deviceLinkHolder !== null) return false;
+      chooseSampleRate(edit.rate);
+      break;
+    case "none":
+      break;
+    // One choice on the LCD that takes more than one gesture on the board.
+    case "steps":
+      for (const step of edit.steps) if (!applySimEdit(step)) return false;
+      break;
+  }
+  return true;
+}
+
+function chooseSampleRate(rate: number): void {
   // The recorder's Track Count goes with the rate, one way: see setPlanSampleRate.
-  setPlanSampleRate(plan, Number(ratePicker.value));
+  setPlanSampleRate(plan, rate);
   // Same change funnel as every other edit: dirty + (in Live sync) push the new
   // rate to the device. Re-clocking glitches audio, but that is inherent to a
   // deliberate rate change and keeps Live sync from deferring it onto a later edit.
   markChanged();
-  syncRateUi(); // the picker assignment is a no-op here — it is the source
+  syncRateUi();
   setStatus(t().status.sampleRate(formatRate(plan.sampleRate)));
-});
+}
+
+ratePicker.addEventListener("change", () => chooseSampleRate(Number(ratePicker.value)));
 
 $("btn-new").addEventListener(
   "click",
@@ -3939,7 +4168,21 @@ if (!DEMO) {
       showError(t().status.writeError(t().error.trackCountUnread(errorText(err))));
       return false;
     }
+    // A file held by the microSD recorder (playing or paused) is when the unit keeps its own
+    // rate control out of reach, and a rate written then ends the playback. Both arms that
+    // write the plan's rate stop here; adopting the device's rate writes none and stays open.
+    let playbackHeld;
+    try {
+      playbackHeld = hasRecorder(modelId) ? await readSdPlaybackHeld() : false;
+    } catch (err) {
+      showError(t().status.writeError(t().error.playbackUnread(errorText(err))));
+      return false;
+    }
     if (action === "confirmReclock") {
+      if (playbackHeld) {
+        showError(t().status.writeError(t().error.rateDuringPlayback(deviceRate, planRate)));
+        return false;
+      }
       // The device will take the rate and hold it. Re-clocking interrupts audio and
       // renegotiates the USB stream, so it is worth stating outright — but it is a
       // plain yes/no: the plan's rate is the one that sticks.
@@ -3978,6 +4221,10 @@ if (!DEMO) {
       markChanged();
       syncRateUi(); // persists the adopted rate as the last known one
       return true;
+    }
+    if (playbackHeld) {
+      showError(t().status.writeError(t().error.rateDuringPlayback(deviceRate, planRate)));
+      return false;
     }
     try {
       await setFollowUsb(false);
@@ -4417,6 +4664,7 @@ if (!DEMO) {
         live?.end();
         // The cues the starting read took belong to the session that did not start.
         resetCues();
+        resetSendsTarget();
         await releaseLive(device.epoch, "error");
         showError(message, supplied ?? "");
       };
@@ -4455,6 +4703,7 @@ if (!DEMO) {
         // read beside Follow USB, for the same reason and with the same failure.
         let followUsb = false;
         let lcdSelection = 0;
+        let sendsRead = 0;
         let cueRead: string[] = [];
         let merged: MergedRead | null;
         try {
@@ -4463,6 +4712,7 @@ if (!DEMO) {
             async (into) => {
               followUsb = await readFollowUsb();
               lcdSelection = await readLcdSelection();
+              sendsRead = await readSendsTarget();
               // On the device's model: a read that carries a switch reads for the plan it
               // switches to.
               cueRead = await readCues(getModel(switchTo ? switchTo.modelId : modelId));
@@ -4525,6 +4775,8 @@ if (!DEMO) {
         // was up.
         resetCues();
         if (cues.replace(cueRead)) renderCues();
+        resetSendsTarget();
+        sendsTarget = decodeSendsTarget(getModel(modelId), sendsRead);
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.
         liveAdopted = 0;
@@ -4570,6 +4822,9 @@ if (!DEMO) {
         // The flags were read before the notify stream was registered; a press on the unit in
         // between announced itself to nobody.
         rereadCues();
+        // The destination too, and the glass takes it now the session counts as up.
+        rereadSendsTarget();
+        simView?.unitStateChanged();
         // An edit made while the starting read ran had no session to flush through, so the
         // plan differs from the snapshot the session just took with nothing else left to
         // schedule the send — whether the read held that key, lost it, or found the unit
@@ -4843,6 +5098,7 @@ if (!DEMO) {
     experimentalOn = true;
     prefs.refresh();
     for (const el of document.querySelectorAll<HTMLElement>("[data-experimental-only]")) el.hidden = false;
+    if (simViewPending) setView("sim");
 
     // The link ledger's readout. The counters and the log run in every desktop build;
     // this is the only part that is a diagnostic, so it is the only part gated. Built
@@ -5091,8 +5347,12 @@ if (!DEMO) {
 
 $("btn-view-graph").addEventListener("click", () => setView("graph"));
 $("btn-view-console").addEventListener("click", () => setView("console"));
-// Restore the last selected view now that the console is wired up.
-setView(detectView());
+$("btn-view-sim").addEventListener("click", () => setView("sim"));
+// Restore the last selected view now that the console is wired up. A remembered SIM view
+// waits for the experimental gate; the graph stands in for it until then.
+const restoredView = detectView();
+setView(restoredView === "sim" ? "graph" : restoredView, restoredView !== "sim");
+simViewPending = restoredView === "sim";
 
 // Re-resolve the active theme from the current mode and repaint what reads it:
 // the SVG graph, the console's scribble ink, and an open tuning screen's plot.
@@ -5143,8 +5403,20 @@ hideOffBtn.addEventListener("click", () => {
   setStatus(next ? t().toolbar.hideOffSends : t().toolbar.showOffSends);
 });
 
-/** An entry of a toolbar menu: an action, or a toggle that carries aria-checked. */
-const MENU_ITEM = ':is([role="menuitem"], [role="menuitemcheckbox"])';
+// The View menu's SIM Scale choices: the scale the SIM view draws the LCD at.
+for (const item of simScaleItems()) {
+  item.addEventListener("click", () => {
+    const scale = Number(item.dataset.simScale) as SimScale;
+    if (!(SIM_SCALES as readonly number[]).includes(scale)) return;
+    simView?.setScale(scale);
+    rememberSimScale(scale);
+    syncSimScaleItems(scale);
+  });
+}
+syncSimScaleItems(detectSimScale());
+
+/** An entry of a toolbar menu: an action, a toggle or a choice that carries aria-checked. */
+const MENU_ITEM = ':is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"])';
 
 // Wire the File dropdown: open/close, click-outside, and roving keyboard focus
 // across its menu items. The panel is positioned fixed (toolbar clips overflow),

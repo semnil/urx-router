@@ -240,6 +240,40 @@ describe("gesture boundaries", () => {
     expect(undoDepth(h)).toBe(3);
   });
 
+  /** A drag over the SIM's LCD, whose every step draws the control again and moves the
+   *  focus from the old one, here sent from inside the shadow tree the LCD is drawn in, or
+   *  from an element of the same shape outside the SIM. */
+  const dragWithRedraws = (h: Harness, insideSim: boolean): void => {
+    const root = document.createElement("div");
+    if (insideSim) root.className = "urx-lcd-sim";
+    document.body.append(root);
+    const tree = root.attachShadow({ mode: "open" });
+    press("pointerdown");
+    press("pointermove");
+    for (let i = 1; i <= 3; i++) {
+      const control = document.createElement("div");
+      control.tabIndex = 0;
+      tree.append(control);
+      h.edit((p) => (p.nodeParams.ch1 = { hpfFreq: i }));
+      control.dispatchEvent(new FocusEvent("focusout", { bubbles: true, composed: true }));
+    }
+    press("pointerup");
+    settle();
+    root.remove();
+  };
+
+  it("takes no focusout from the SIM's LCD as the end of an edit: its drag is one entry", () => {
+    const h = harness();
+    dragWithRedraws(h, true);
+    expect(undoDepth(h)).toBe(1);
+  });
+
+  it("still takes a focusout from anywhere else as the end of an edit", () => {
+    const h = harness();
+    dragWithRedraws(h, false);
+    expect(undoDepth(h)).toBe(3);
+  });
+
   it("does not let the idle backstop split a slowly typed name", () => {
     const h = harness();
     const field = focused("text");

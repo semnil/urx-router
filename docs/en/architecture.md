@@ -389,6 +389,13 @@ carries a one-line map of the same directories and points here.
       encode / decode (2 × the stereo position, plus 1 for R) and `LcdEchoes`, which tells the unit's answer
       to the app's own write from a selection made on the panel. `main.ts` reads the selection at a Live-sync
       start, takes its notifies through the follow `intercept`, and writes it from `switchSide`
+    - `sends-target.ts` HOME's [Sends] destination (763), the destination the unit's side menu shows: the
+      packed encode / decode (STEREO 0, FX 1 16, FX 2 17, MIX 1 32, MIX 2 34) and its read and write.
+      `encodeSendsTarget` answers nothing for FX 2 above 96 kHz, a value the unit takes over the link
+      although its own list does not offer it there. `main.ts` reads it at a Live-sync start, takes its
+      notifies through the follow `intercept`, reads it again 1 s after the unit announces a rate above
+      96 kHz — the unit moves FX 2 to FX 1 then and announces nothing — and writes the destination the SIM
+      view's LCD chooses
     - `cue.ts` the unit's [CUE] flags, held outside the plan for the live session (see "CUE" under "What
       the app models, and what it leaves to the unit"): `CueSet` applies the unit's rules to every change
       from either side, `CueEchoes` tells the unit's answer to the app's own write from a press on the panel,
@@ -672,6 +679,10 @@ carries a one-line map of the same directories and points here.
   and `setStatus` writes the span (a `statusbar.textContent =` would take the readout down on the next
   message). Introduces no colour: the only cell that may change is the no-answer one, since a broker that
   stopped answering is the only state on the row that asks for something to be done
+- `src/core/sim-map.ts` + `src/ui/sim-view.ts` — the SIM view: the table from the LCD simulator's paths to the
+  plan, and the view that mounts the simulator over it (see "SIM view (the unit's LCD)"). The table is assembled
+  from `sim-map-processors.ts` (the processors) and `sim-map-routing.ts` (routing and setup), on the shapes and
+  helpers in `sim-map-base.ts`. `sim-locks.ts` names the controls the view holds shut and the reason each gives.
 - `src/app/` — the parts of the app entry that are not wiring, lifted out of `main.ts` so each can be
   driven without booting the whole application. `view-state.ts` the UI state that persists per browser
   profile rather than per plan (the model and rate the app reopens on, the view, the label source, the
@@ -1794,6 +1805,75 @@ zero, and the panel would stop updating with it. A press on a
 the three gestures against a device change held behind a focused select
 ([live-race-harness.md](live-race-harness.md)).
 
+## SIM view (the unit's LCD)
+
+An experimental launch adds a third view beside the GRAPH and the CONSOLE: the unit's 4.3-inch LCD, drawn by
+urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime dependency, pinned by commit hash in
+`package.json`) and mounted in the page with its `mountSim()`. The tab and the View menu's SIM Scale are
+`data-experimental-only`; a SIM view remembered by a launch that was not experimental opens on the GRAPH.
+
+- **What it edits** is the plan, through the funnels the Inspector and the tuning screens use
+  (`onUpdateNodeParams`, `onUpdateParams`, `onRenameNode`). An edit on the LCD is therefore an undo entry like any
+  other, Live sync writes it, and a device read arbitrates it as the app's. The undo history's gesture boundaries
+  observe the window, so a press, a drag, a key or a wheel on the LCD closes one entry as it does anywhere else
+  — except the focus the LCD moves as it draws itself again, which is no boundary ("Undo / redo"). A title typed
+  on the LCD owns ⌘Z while it has the focus (`ownsNativeUndo`), so a chord there undoes nothing of the plan.
+  `src/core/sim-map.ts` assembles the table from the simulator's paths to the plan. It carries a strip's name, ON,
+  fader and pan or balance; a channel's sends into MIX 1/2 and FX 1/2 (level, PRE, and pan into a MIX); the EQ of
+  every strip that has one; and on a mono channel HPF, Ф, GATE, COMP and the input stage of the jack it reads
+  (A.Gain, +48V, HI-Z, Clip Safe — +48V and HI-Z refused together, as everywhere else). `sim-map-processors.ts`
+  adds SSMCS, the 1-knob EQ and COMP, the ducker (its key a wire), an FX channel's effect, the insert FX (the patch
+  and defaults the Inspector's selector builds, and every value of each effect a node's insert offers, read under
+  the effect it holds; the simulator is mounted with `insertValuesFromPage`, so choosing an effect on the LCD keeps
+  the values the plan holds for it, as the Inspector does), BUS Type and the COMP / EQ order. `sim-map-routing.ts` adds the
+  routing — a channel's source, the monitors' and STREAMING's source, the output patches and the recorder's
+  tracks, each a wire drawn or deleted through the board's own connect and delete (`dropWire` in
+  `src/core/routing.ts` is what both take) — and the sends' switches, a strip's colour, Signal Type, PAN/BAL and
+  Pan Link, the monitors and phones, the oscillator, D.Gain, STREAMING's delay and name, and the sampling
+  frequency, refused while the device link is held as the toolbar's picker is. A choice the unit takes in one
+  step and the board in several — a USB output's mono pair or single channel, one side of the oscillator into a
+  stereo bus, which the unit's screen has separate L and R buttons for — is applied as those board edits in order,
+  inside one undo entry. A value the plan already holds is taken and changes nothing (the plan is not marked
+  changed), and so is the gain the 1-knob EQ keeps for each band, which the plan does not carry. While 1-knob EQ is on
+  the unit drives the bands, so the band values the LCD writes then leave the plan's as they are — as the EQ tuning
+  screen, which offers no band while it is on, leaves them. The simulator's own state that the LCD writes beside an
+  edit or keeps for a screen is held by the view rather than the plan: which channel a linked pair's compressors hear
+  (written as the pair is linked or taken into SSMCS), the recorder's playback (which a rate change stops), the output
+  patch's Analog / USB tab, the scene list's bank and row, and the microSD folder and file a screen has picked.
+  Refused like a path the table does not carry, one of these would take the whole edit back with it. A value the plan holds but the edit cannot take in its present state (PAN/BAL on an unlinked pair, an
+  unwired send, a delay time Sync derives, an FX 2 send at a rate that takes FX 2 out, the recorder's Track Count
+  while Live sync is up) is refused. A path the table does not carry — the SETUP > GENERAL settings, CUE, the scenes and the card, the
+  simulator's own screen state — shows the simulator's value and takes no edit: the simulator puts it back.
+- **HOME's [Sends] destination** is the unit's UI state rather than the plan's (`sends-target.ts`). While Live
+  sync is up the LCD shows the destination the unit holds and follows a choice made on the unit's panel, and a
+  destination chosen on the LCD is written to the unit — FX 2 is refused above 96 kHz. With no session the LCD
+  keeps a destination of its own, which reaches nothing.
+- **What it shows** follows every writer: each place that schedules MIDI feedback (`markChanged`,
+  `planValuesChanged`, a load, an undo's repaint) also tells the view, which pushes the values that moved.
+- **What it refuses** are the unit's own operations — a scene recall or store, the card, the recorder, playback.
+  The plan holds none of them, so the LCD carries none out, and the status line says so.
+- **What it holds shut** is drawn on the LCD before it is pressed (`sim-locks.ts`, handed to the simulator's
+  `setLocks()` at mount, on every plan change and when the device link is taken or let go): a held control keeps its
+  place with a padlock at its top right and the reason as its tooltip, and takes no touch, key or drag. Held are the
+  SETUP > GENERAL screens Device setup edits ("Change it in Device setup"), the unit's own operations and USB Storage
+  Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus (the Inspector's and the CONSOLE's
+  wording), the sampling frequency while the device link is held, Follow USB on the same screen ("Change it with FOLLOW USB on
+  the toolbar"), the recorder's Track Count while Live sync is up and
+  the sends into FX 2 at a rate that takes FX 2 out (each the wording the Inspector already gives), and an insert
+  effect's value its own screen holds shut for the effect's current values, such as M.B.Comp's bands while its 1-knob
+  is on (that screen's wording).
+- **Meters**: while Live sync is on and the view is up, it borrows the session's one meter subscription from the
+  CONSOLE, as a tuning screen does, and gives it back when it is hidden. The simulator's meter ids are mapped onto
+  the CONSOLE's taps (`simMeterTap`). Without Live sync the LCD's meters read nothing.
+- **Look**: the LCD keeps the unit's colours, so the ground around it (`--sim-ground`) and its scroll bars are the
+  same in both themes; the toolbar, the menus and the status bar follow the theme. SIM Scale (50–200 %, 100 % by
+  default) sets the size the LCD is drawn at and is remembered. The LCD is drawn in the shadow tree of `.urx-lcd-sim`,
+  so the app's rules do not reach inside it and its rules do not reach the app's, and a key pressed with nothing
+  focused stays the app's. Seen from the app, the focus and a key inside the LCD stand on that element, which is
+  why `ownsNativeUndo` asks its shadow tree which control holds the focus.
+- **Names**: `html[data-view]` names the view on screen (`graph` / `console` / `sim`), for a rule or a query that
+  switches on it; the SIM's own elements and classes start with `sim-`.
+
 ## External MIDI control
 
 The CONSOLE view's controls (faders / send levels / MUTE / PAN-BAL / GAIN / PHONES / the toggles) and every
@@ -2395,6 +2475,8 @@ sequenceDiagram
     Note over F: no settle window — the address has no owner node,<br/>so letting it through would escalate every change to a full re-read
   else LCD selection, address 762
     F->>H: intercept consumes the answer to our own write, or shows the selected stereo channel's side
+  else HOME's Sends destination, address 763
+    F->>H: intercept consumes the answer to our own write, or shows the destination chosen on the unit on the SIM view
   else a CUE flag, or an instance the unit sets beside one
     F->>H: intercept consumes our own write's answer and a mirror, or applies a press on the unit to the cue set and re-reads the flags 300 ms later
   else the value equals the snapshot
@@ -3304,6 +3386,16 @@ send as it RESOLVES — everything but an explicit refusal, since the shell send
 answer never came may have landed and taken the count down with it — rather than from the outcomes the call
 returns, which a cancel between two sends throws away.
 
+**A rate is not written while the microSD recorder holds a file.** Param 836 reads 0 when the recorder is stopped, 1
+while it plays and 2 while it is paused, and while it is not 0 the unit keeps its own SETUP > GENERAL [Sampling
+Frequency] out of reach. A 766 written over the link then is still accepted: the unit shows its Loading screen, the
+RECORDER screen comes back with no file names, and the playback stops. So the rate settle reads 836
+(`readSdPlaybackHeld` in `client.ts`, a model with a recorder only) once it knows a rate would change, and both arms
+that write the plan's rate — the re-clock confirm and the three-way's RELEASE arm — stop the write with nothing sent;
+ADOPT writes no rate and stays open. A read that fails stops the write, as the Track Count read does. While Live sync
+or any other link is up the rate picker, the SIM view's rate and an undo that would move the rate are already locked,
+so the write is the one path that reaches 766 during a playback.
+
 The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen
 with no device attached, so there is nothing to compare against until a connection exists.
 
@@ -4151,7 +4243,7 @@ one is an edit that silently cannot be undone.
 | --- | --- | --- |
 | `pointerup` / `pointercancel` / window `blur` / a mouse `pointermove` with no button held | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — measured 2026-08-14 on Chromium (over its own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so without this boundary the CONSOLE fader on the unit-facing build would go on following the pointer, and writing, while another application is frontmost. The drags in `console.ts` / `dyn-screen.ts` end at that same event, confirmed in WKWebView (the same gesture leaves the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely. Each press is tracked by its pointer id and ends at that pointer's own release, so a second pointer pressed and lifted while the first drags — the mouse clicking while a finger drags — ends nothing and commits nothing: the gesture ends, and its commit is scheduled, when the last press does, and only a pressed pointer's own move makes its press a drag. A `blur` ends every press. The buttonless move ends that mouse's own press whose release never reached the page — the native context menu takes a right press's — so a hover leaves an entry an edit with no gesture of its own left open; the rule and its reading are under [Responsive layout (mobile)](#responsive-layout-mobile). A wheel turned with no button held ends every standing mouse press the same way, but commits nothing: the wheel's own edit and the notches after it are one entry, which the idle backstop closes. A touch or pen press is ended by neither — the `buttons` of a mouse move or a wheel does not show its contact, so a finger still dragging reads the same as one lifted — and stands until its own `pointerup`, `pointercancel` or `blur` |
 | `keyup` of an Arrow / Page / Home / End / Enter / Space key, outside a text field | Keyboard stepping on a fader or knob, which autorepeats one edit per repeat with no other terminator | At once. Nothing is dispatched after a keyup on the gesture's behalf, and the next press is a new gesture — deferring would let an autorepeat outrun the macrotask and merge two presses |
-| `focusout` | The node-name field and the in-frame note editor, which edit the plan on every keystroke | At once |
+| `focusout` | The node-name field and the in-frame note editor, which edit the plan on every keystroke. Not one from inside the SIM view's LCD, which draws itself again on every step of a value and moves the focus onto the control drawn in its place: its gestures end at their pointer and key boundaries | At once |
 | 300 ms idle, re-arming | A wheel-notch burst and an incoming MIDI sweep, which produce no DOM gesture at all | Only armed for edits with no boundary of their own: suppressed while a pointer is down, and while a text field has focus (its `focusout` is the boundary, so a name typed with a pause between letters must not cost an entry per letter) |
 
 The 300 ms matches `RECENT_MS` in `core/midi/engine.ts`, the repo's existing definition of "messages
@@ -4993,7 +5085,9 @@ accepted — they reach the device layer with nothing on screen to press, so the
 
 ## Third-party licenses
 
-The web layer ships with zero runtime dependencies, but a distributed desktop build statically links
+The web layer ships with no third-party runtime dependency — its one runtime dependency is semnil's own
+urx-lcd-sim, whose typeface (IBM Plex Sans, SIL Open Font License 1.1) is listed by a fixed entry in
+`src-tauri/about.hbs` — but a distributed desktop build statically links
 the Tauri runtime and its Rust crates, which carry their own open-source licenses. None are
 GPL/AGPL/LGPL — the set is permissive plus file-scoped weak-copyleft (MPL-2.0), all satisfied by
 bundling their notices.
