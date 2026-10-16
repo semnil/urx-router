@@ -346,6 +346,58 @@ describe("the rendered screen", () => {
     screen.close();
   });
 
+  // The unit's knob walks a compander Release through 160 fixed stops, so the slider's
+  // positions are those stops: one position per stop, from 5.0 ms to 42.3 s. A value the plan
+  // holds between two stops is shown and kept as it is until the slider moves.
+  it.each([
+    ["ch1", "Compander-S"],
+    ["bus.mix1", "Compander-H"],
+  ])("moves a %s compander release through the unit's knob stops", (nodeId, label) => {
+    holding(nodeId, label);
+    const key = insertFxParamKey("compander", 9);
+    h.plan.nodeParams[nodeId]!.insertFxParams = { [key]: 1650 };
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, nodeId);
+    const slider = h.box.querySelector<HTMLInputElement>('input[data-dyn="ifx:compander:9"]')!;
+    const held = (): unknown => h.plan.nodeParams[nodeId]!.insertFxParams![key];
+    expect([slider.min, slider.max, slider.step]).toEqual(["0", "159", "1"]);
+    expect(slider.value).toBe("30");
+    const to = (pos: number): void => {
+      slider.value = String(pos);
+      slider.dispatchEvent(new Event("input"));
+    };
+    to(31);
+    expect(held()).toBe(1710);
+    expect(slider.getAttribute("aria-valuetext")).toBe("171 ms");
+    to(0);
+    expect(held()).toBe(50);
+    to(159);
+    expect(held()).toBe(423000);
+    expect(slider.getAttribute("aria-valuetext")).toBe("42.3 s");
+    screen.close();
+
+    // Opening on a value between two stops reads it as it is and writes nothing.
+    h.plan.nodeParams[nodeId]!.insertFxParams = { [key]: 654 };
+    screen.open(INSFX_DYN, nodeId);
+    const again = h.box.querySelector<HTMLInputElement>('input[data-dyn="ifx:compander:9"]')!;
+    expect(held()).toBe(654);
+    expect(again.getAttribute("aria-valuetext")).toBe("65.4 ms");
+    // One click from there lands on the stop on the side it turns toward — 640 down, not the
+    // 590 one position below the nearest stop.
+    const press = (s: HTMLInputElement, k: string): void =>
+      void s.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    press(again, "ArrowDown");
+    expect(held()).toBe(640);
+    screen.close();
+
+    // ...and 690 up from 680, not the 750 one position above the nearest stop.
+    h.plan.nodeParams[nodeId]!.insertFxParams = { [key]: 680 };
+    screen.open(INSFX_DYN, nodeId);
+    press(h.box.querySelector<HTMLInputElement>('input[data-dyn="ifx:compander:9"]')!, "ArrowUp");
+    expect(held()).toBe(690);
+    screen.close();
+  });
+
   // What `labelsOn` above cannot see, and what shipped broken because of it: a discrete
   // control is not a FIELD, so a face can have the right fields in the right order and
   // still put its selectors somewhere else. These read the panel the operator sees.

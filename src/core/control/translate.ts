@@ -891,6 +891,10 @@ export interface DynField {
    *  index into this table, and `step` (the table's narrowest spacing) does not reach
    *  the control. */
   steps?: readonly number[];
+  /** The plan can hold this field's value between two of `steps`, so an arrow press or a
+   *  wheel notch turns from the held value rather than from the position the slider shows
+   *  (`stopStep`). */
+  heldOffStops?: true;
   /** Step the device's push-and-turn fine mode uses for this value, when it has
    *  one. Confirmed for exactly one dynamics parameter (see the COMP gain row);
    *  every other GATE/COMP/DUCKER value is a measured negative, so this is not a

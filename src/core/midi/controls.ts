@@ -1057,7 +1057,18 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
       const lo = d.rawMin ?? 0;
       const hi = d.rawMax ?? 1;
       const step = d.rawStep ?? 1;
-      const codec = linearCodec(lo, hi, step);
+      // A slot with a knob-stop table moves through it, as the tuning screen's slider does.
+      const codec = d.rawStops
+        ? dynCodec({
+            key: `ifx:${insFxFamily}:${d.slot}`,
+            min: lo,
+            max: hi,
+            step,
+            def: d.def,
+            unit: "raw",
+            steps: d.rawStops,
+          })
+        : linearCodec(lo, hi, step);
       out.push({
         id: controlId(id, "insfx", scope),
         node: id,

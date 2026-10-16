@@ -22,6 +22,7 @@ import {
   settingsSection,
   settingsSelect,
   sliderRow,
+  stopStep,
   turnStep,
   wheelStep,
   wireDismiss,
@@ -272,6 +273,67 @@ describe("turnStep", () => {
     range.disabled = true;
     expect(key(range, "ArrowUp").defaultPrevented).toBe(false);
     expect(edits).toEqual([]);
+  });
+});
+
+// A slider whose positions index a stop table, holding a value the plan may keep between two
+// stops. The unit's knob moves a value on a stop one stop per click, and one between two stops
+// to the stop on the side it is turned toward.
+describe("stopStep", () => {
+  const STOPS = [590, 640, 690, 750, 800] as const;
+  const turning = (held: number): { range: HTMLInputElement; edits: number[] } => {
+    const range = document.createElement("input");
+    range.type = "range";
+    range.min = "0";
+    range.max = String(STOPS.length - 1);
+    range.step = "1";
+    // The position a native range shows for a held value: the nearest stop.
+    let near = 0;
+    STOPS.forEach((s, i) => {
+      if (Math.abs(s - held) < Math.abs(STOPS[near]! - held)) near = i;
+    });
+    range.value = String(near);
+    const edits: number[] = [];
+    range.addEventListener("input", () => {
+      held = STOPS[Number(range.value)]!;
+      edits.push(held);
+    });
+    stopStep(range, STOPS, () => held);
+    wheelStep(range);
+    return { range, edits };
+  };
+  const key = (range: HTMLInputElement, k: string): boolean => {
+    const e = new KeyboardEvent("keydown", { key: k, cancelable: true });
+    range.dispatchEvent(e);
+    return e.defaultPrevented;
+  };
+
+  it.each([
+    [654, "ArrowDown", 640],
+    [654, "ArrowUp", 690],
+    [680, "ArrowDown", 640],
+    [680, "ArrowUp", 690],
+    [640, "ArrowDown", 590],
+    [640, "ArrowUp", 690],
+  ])("turns %i one click (%s) to %i", (held, k, to) => {
+    const { range, edits } = turning(held);
+    expect(key(range, k)).toBe(true);
+    expect(edits).toEqual([to]);
+  });
+
+  it("turns a wheel notch the way an Arrow key turns", () => {
+    const { range, edits } = turning(680);
+    range.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, cancelable: true }));
+    range.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, cancelable: true }));
+    expect(edits).toEqual([640, 690]);
+  });
+
+  it("moves ten stops per Page key and stops at the ends", () => {
+    const { range, edits } = turning(654);
+    key(range, "PageUp");
+    key(range, "PageDown");
+    key(range, "ArrowDown");
+    expect(edits).toEqual([800, 590]);
   });
 });
 

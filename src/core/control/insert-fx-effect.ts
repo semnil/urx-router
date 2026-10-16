@@ -288,6 +288,11 @@ export interface InsertFxParamDesc {
    *  moves it further than the `rawStep` the value is held to. The finer part of a value
    *  the operator turns is kept. Absent = the turn is one `rawStep`. */
   rawTurnStep?: number;
+  /** The values the unit's own knob stops on, ascending, where they are neither `rawStep`'s
+   *  grid nor a fixed turn. The slider and a MIDI mapping move through this table, a position
+   *  being an index into it; `rawStep` is then the grid a value written into the plan is held
+   *  to. Absent = the slider carries the value itself. */
+  rawStops?: readonly number[];
   /** Factory default raw — the inspector's absent-value fallback for display. */
   def: number;
   /** Display formatter for a raw value (slider/select). */
@@ -303,6 +308,21 @@ function companderReleaseLabel(raw: number): string {
   if (ms >= 1000) return `${(ms / 1000).toPrecision(3)} s`;
   return `${ms < 100 ? ms.toFixed(1) : Math.round(ms)} ms`;
 }
+
+// The stops a Compander Release (slot 9, ms×10) turns through on the unit's own knob, one per
+// click: 5.33 ms apart for the first 32, then twice as far apart every 16 stops after that.
+const COMPANDER_RELEASE_STOPS: readonly number[] = [
+  50, 110, 160, 210, 270, 320, 370, 430, 480, 530, 590, 640, 690, 750, 800, 850, 910, 960, 1010, 1070, 1120, 1170, 1230,
+  1280, 1330, 1390, 1440, 1490, 1550, 1600, 1650, 1710, 1760, 1870, 1970, 2080, 2190, 2290, 2400, 2510, 2610, 2720,
+  2830, 2930, 3040, 3150, 3250, 3360, 3470, 3680, 3890, 4110, 4320, 4530, 4750, 4960, 5170, 5390, 5600, 5810, 6030,
+  6240, 6450, 6670, 6880, 7300, 7730, 8160, 8580, 9010, 9440, 9860, 10300, 10700, 11100, 11600, 12000, 12400, 12900,
+  13300, 13700, 14600, 15400, 16300, 17100, 18000, 18800, 19700, 20500, 21400, 22200, 23100, 23900, 24800, 25700, 26500,
+  27400, 29100, 30800, 32500, 34200, 35900, 37600, 39300, 41000, 42700, 44400, 46100, 47800, 49500, 51200, 53000, 54700,
+  58100, 61500, 64900, 68300, 71700, 75100, 78500, 82000, 85400, 88800, 92200, 95600, 99000, 102000, 106000, 109000,
+  116000, 123000, 130000, 137000, 143000, 150000, 157000, 164000, 171000, 178000, 184000, 191000, 198000, 205000,
+  212000, 218000, 232000, 246000, 259000, 273000, 287000, 300000, 314000, 328000, 341000, 355000, 369000, 382000,
+  396000, 410000, 423000,
+];
 
 // Compander-H / Compander-S (engine 689 input / 693 output). Encodings match the
 // dedicated COMP path (centi-dB / ratio×100 / attack µs / release ms×10).
@@ -347,11 +367,11 @@ const COMPANDER_PARAMS: InsertFxParamDesc[] = [
     control: "slider",
     rawMin: 50,
     rawMax: 423000,
-    // 1 ms. The unit quantises this value at no step of its own — a written raw comes back
-    // unchanged anywhere in the range — so the increment is this app's choice about how
-    // fine a slider is worth being, and the range is a bound this app keeps rather than one
-    // the device enforces.
+    // The slider and a MIDI mapping move through the unit's knob stops. A written raw comes
+    // back unchanged anywhere in the range, so a value the plan holds between two stops stays
+    // as it is until the control moves it; 1 ms is the grid a written value is held to.
     rawStep: 10,
+    rawStops: COMPANDER_RELEASE_STOPS,
     def: 2290,
     format: companderReleaseLabel,
   },
