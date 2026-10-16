@@ -390,6 +390,18 @@ describe("the rendered screen", () => {
     expect(held()).toBe(640);
     screen.close();
 
+    // Home and End reach the end stops from a value whose nearest position is already that end.
+    for (const [from, k, to] of [
+      [60, "Home", 50],
+      [422000, "End", 423000],
+    ] as const) {
+      h.plan.nodeParams[nodeId]!.insertFxParams = { [key]: from };
+      screen.open(INSFX_DYN, nodeId);
+      press(h.box.querySelector<HTMLInputElement>('input[data-dyn="ifx:compander:9"]')!, k);
+      expect(held(), `${from} ${k}`).toBe(to);
+      screen.close();
+    }
+
     // ...and 690 up from 680, not the 750 one position above the nearest stop.
     h.plan.nodeParams[nodeId]!.insertFxParams = { [key]: 680 };
     screen.open(INSFX_DYN, nodeId);

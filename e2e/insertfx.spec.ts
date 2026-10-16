@@ -429,6 +429,26 @@ test("a compander release between two stops turns to the stop on that side", asy
   await expect(release).toHaveAttribute("aria-valuetext", "64.0 ms");
 });
 
+// A value between the last two stops already shows at the end position, so End has to take
+// the held value to the end stop rather than leave the slider where it is.
+test("a compander release between the last two stops reaches the end on End", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch1: { insertFx: 1794, insertFxOn: true, insertFxParams: { "compander:9": 422000 } } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await node(page, "ch1").click();
+  await openScreen(page);
+  const release = screenRow(page, "Release").locator("input[type=range]");
+  await expect(release).toHaveAttribute("aria-valuetext", "42.2 s");
+  await release.focus();
+  await page.keyboard.press("End");
+  await expect(release).toHaveAttribute("aria-valuetext", "42.3 s");
+});
+
 test("switching guitar amp type swaps the type-specific control", async ({ page }) => {
   await node(page, "ch1").click();
   await chooseOption(await insertSelect(page), { label: "Clean" });

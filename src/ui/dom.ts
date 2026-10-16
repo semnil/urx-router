@@ -242,10 +242,17 @@ function moveTo(slider: HTMLInputElement, to: number, moved?: (pos: number) => b
 }
 
 /** Turn a slider by `turn.to(dir)`: an Arrow key is one click, PageUp / PageDown ten, and a
- *  wheel notch (through `wheelStep`) one. Home / End and a drag stay the slider's own. */
+ *  wheel notch (through `wheelStep`) one. A drag stays the slider's own, and so do Home / End
+ *  unless `turn.moved` says a position can stand for another value, where they go to the ends
+ *  through the same check. */
 function turnKeys(slider: HTMLInputElement, turn: Turner): void {
   turners.set(slider, turn);
   slider.addEventListener("keydown", (e) => {
+    if (turn.moved && (e.key === "Home" || e.key === "End") && !isChord(e) && !slider.disabled) {
+      e.preventDefault();
+      moveTo(slider, Number(e.key === "Home" ? slider.min : slider.max), turn.moved);
+      return;
+    }
     const dir =
       e.key === "ArrowUp" || e.key === "ArrowRight"
         ? 1

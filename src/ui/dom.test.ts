@@ -328,6 +328,17 @@ describe("stopStep", () => {
     expect(edits).toEqual([640, 690]);
   });
 
+  // A value between the last two stops sits at the end position already, so a native End
+  // would not move the slider and the held value would stay off the end.
+  it.each([
+    [610, "Home", 590],
+    [790, "End", 800],
+  ])("takes %i to the end stop on %s", (held, k, to) => {
+    const { range, edits } = turning(held);
+    expect(key(range, k)).toBe(true);
+    expect(edits).toEqual([to]);
+  });
+
   it("moves ten stops per Page key and stops at the ends", () => {
     const { range, edits } = turning(654);
     key(range, "PageUp");
