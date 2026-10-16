@@ -2,14 +2,13 @@ import { describe, expect, it } from "vitest";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { simBindings } from "./sim-map";
-import { DEVICE_SETUP_SCREENS, simLocks, UNIT_OPS, type SimLockSpec, type SimLockState } from "./sim-locks";
+import { UNIT_ONLY_SCREENS, simLocks, UNIT_OPS, type SimLockSpec, type SimLockState } from "./sim-locks";
 
 const REASONS = {
-  deviceSetup: "deviceSetup",
+  unitOnly: "unitOnly",
   notAccepted: "notAccepted",
   unitOp: "unitOp",
   rateLinked: "rateLinked",
-  followUsb: "followUsb",
   trackCountLive: "trackCountLive",
   fx2Rate: "fx2Rate",
   deviceDriven: "deviceDriven",
@@ -30,17 +29,28 @@ function reasonFor(all: SimLockSpec[], target: SimLockSpec["target"]): string | 
 const path = (p: string) => ({ kind: "path", path: p }) as const;
 
 describe("the controls the SIM view holds shut", () => {
-  it("holds the SETUP > GENERAL settings and every operation of the unit's own, at any time", () => {
+  it("holds the SETUP > GENERAL settings the app does not write and every operation of the unit's own, at any time", () => {
     const all = locks();
-    for (const id of DEVICE_SETUP_SCREENS) expect(reasonFor(all, { kind: "screen", id })).toBe("deviceSetup");
+    for (const id of UNIT_ONLY_SCREENS) expect(reasonFor(all, { kind: "screen", id })).toBe("unitOnly");
+    for (const id of [
+      "setup.language",
+      "setup.brightness",
+      "setup.udk",
+      "setup.peripheral",
+      "setup.power",
+      "setup.datetime",
+    ])
+      expect(reasonFor(all, { kind: "screen", id }), `${id} is written to the unit`).toBeNull();
     for (const op of UNIT_OPS) expect(reasonFor(all, { kind: "op", op })).toBe("unitOp");
     expect(reasonFor(all, path("sd.usbStorage"))).toBe("unitOp");
-    expect(reasonFor(all, path("setup.followUsb")), "the toolbar's FOLLOW USB is where it changes").toBe("followUsb");
+    expect(reasonFor(all, path("setup.followUsb")), "a press is the toolbar's FOLLOW USB").toBeNull();
     expect(reasonFor(all, { kind: "screen", id: "setup.patch" }), "Output Patch is the plan's").toBeNull();
   });
 
-  it("holds a channel's PRE into an FX bus, which the unit does not take, and nothing else of the send", () => {
-    const all = locks();
+  it("holds a channel's PRE into an FX bus while Live sync is up, which the unit does not take, and nothing else of the send", () => {
+    expect(reasonFor(locks(), path("ch.ch1.send.fx1.pre")), "offline the tap is the plan's").toBeNull();
+    expect(reasonFor(locks({ linked: true, live: false }), path("ch.ch1.send.fx1.pre"))).toBeNull();
+    const all = locks({ linked: true, live: true });
     expect(paths).toContain("ch.ch1.send.fx1.pre");
     expect(reasonFor(all, path("ch.ch1.send.fx1.pre"))).toBe("notAccepted");
     expect(reasonFor(all, path("ch.ch1.send.fx2.pre"))).toBe("notAccepted");

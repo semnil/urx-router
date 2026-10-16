@@ -764,6 +764,13 @@ export const PARAMS = {
    *  (global, y0): 0 = None, 1 = 2 Channels (limits a generic-driver host such as
    *  an iPad to 2 in / 2 out). */
   USB_SUPPRESSION: { id: 812, encoding: "enum", sceneExternal: true, planExternal: true },
+  /** SETUP > [Operation Mode] (global, y0): 0 = Standard, 1 = Simple. The unit announces a
+   *  change. Read for the SIM view; never written. */
+  OPERATION_MODE: { id: 817, encoding: "raw", planExternal: true, readOnly: true },
+  /** Whether a MIC/LINE jack's Clip Safe is holding its gain down (y = jack 0..), the state its
+   *  [Clip Safe] is lit orange for. The unit announces it while Clip Safe is on. Read for the SIM
+   *  view; never written. */
+  CLIP_SAFE_ENGAGED: { id: 864, encoding: "bool", planExternal: true, readOnly: true },
 } as const satisfies Record<string, ParamSpec>;
 
 export type ParamName = keyof typeof PARAMS;

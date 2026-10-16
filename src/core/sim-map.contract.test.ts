@@ -5,6 +5,7 @@ import {
   INPUT_INSERT_EFFECTS,
   OUTPUT_INSERT_EFFECTS,
 } from "../../node_modules/urx-lcd-sim/src/model/effects";
+import { digitalGainPath, digitalGainShipped } from "../../node_modules/urx-lcd-sim/src/model/source-gain";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { ModelId } from "../models/types";
@@ -12,10 +13,26 @@ import { isRefusal, readSim, simBindings } from "./sim-map";
 
 const MODELS: ModelId[] = ["URX22", "URX44", "URX44V"];
 
+// The digital sources the simulator's INPUT screen lists, by the names it keeps them under. The
+// simulator ships a D.Gain only for the sources that leave the factory below 0 dB, and reads every
+// other source's at its own default.
+const DIGITAL_SOURCES = [
+  "AUX IN",
+  "USB MAIN A",
+  "USB MAIN B",
+  "USB MAIN C",
+  "USB SUB",
+  ...[1, 3, 5, 7, 9, 11].map((n) => `USB DAW ${n}/${n + 1}`),
+  "microSD Playback",
+  "HDMI",
+];
+
 describe.each(MODELS)("the SIM's view of a %s plan", (modelId) => {
   const model = getModel(modelId);
   const bindings = simBindings(model);
-  const shipped = shippedValues(modelId);
+  const shipped = new Map(shippedValues(modelId));
+  for (const source of DIGITAL_SOURCES)
+    if (!shipped.has(digitalGainPath(source))) shipped.set(digitalGainPath(source), digitalGainShipped(source));
 
   it("names only paths the simulator reads", () => {
     // An FX channel's effect row is read under the family selected, and the simulator ships the

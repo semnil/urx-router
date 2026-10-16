@@ -48,6 +48,8 @@ import {
 } from "./control/vd";
 import {
   FX_CHANNEL_NODE_INDEX,
+  FX_EFFECT_ARRAY_PARAM,
+  fxDescRawToSend,
   fxEffectTypes,
   fxFamilyOf,
   fxParams,
@@ -723,17 +725,42 @@ function fxEffectValue(id: string, fxIndex: number, key: string, families: reado
       const row = rowOf(plan);
       if (!row) return refused("type");
       const fx: FxEffectParams = np(plan, id).fxEffect ?? {};
-      if (fxRowOwners(row.type, fx.params).get(row.desc.key) === "computed") return refused("computed");
       const raw = row.codec.take(v, fx.params?.[row.desc.key] ?? row.desc.def);
       if (typeof raw !== "number") return refused("value");
-      return {
+      const edit: SimEdit = {
         kind: "node",
         id,
         patch: { fxEffect: { ...fx, params: { ...fx.params, [row.desc.key]: raw } } },
         written: [`fxEffect.params.${row.desc.key}`],
       };
+      // A value the unit drives — the delay time under tempo Sync — turned by hand, as the unit's
+      // own panel turns it: the unit takes it and keeps Sync on, and the plan's writer leaves it out.
+      if (fxRowOwners(row.type, fx.params).get(row.desc.key) !== "computed") return edit;
+      const value = fxDescRawToSend(row.desc, raw);
+      return {
+        kind: "steps",
+        steps: [edit, { kind: "deviceWrite", param: FX_EFFECT_ARRAY_PARAM[fxIndex]!, y: row.desc.slot, value }],
+      };
     },
   };
+}
+
+/** The values the plan holds for FX channel `id`'s rows the unit drives under its current settings
+ *  (the delay time under tempo Sync), as the writes that would put them on the unit. The plan's
+ *  writer leaves these out. */
+export function fxHeldWrites(plan: Plan, id: string): { param: number; y: number; value: number }[] {
+  const fxIndex = FX_CHANNEL_NODE_INDEX[id];
+  if (fxIndex === undefined) return [];
+  const fx: FxEffectParams = np(plan, id).fxEffect ?? {};
+  const type = resolveFxEffectType(fxIndex, fx.type);
+  const owners = fxRowOwners(type, fx.params);
+  return fxParams(type)
+    .filter((d) => owners.get(d.key) === "computed")
+    .map((d) => ({
+      param: FX_EFFECT_ARRAY_PARAM[fxIndex]!,
+      y: d.slot,
+      value: fxDescRawToSend(d, fx.params?.[d.key] ?? d.def),
+    }));
 }
 
 /** An FX channel's EFFECT TYPE and the rows of its effect. */

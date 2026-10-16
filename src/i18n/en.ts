@@ -864,10 +864,9 @@ export const en = {
   },
   // Why a control on the SIM view's LCD is held shut — its tooltip.
   sim: {
-    lockDeviceSetup: tr("Change it in Device setup"),
+    lockUnitOnly: tr("Change it on the device"),
     lockUnitOp: tr("Operate it on the device"),
     lockRateLinked: tr("Cannot be changed while connected to the device"),
-    lockFollowUsb: tr("Change it with FOLLOW USB on the toolbar"),
   },
   shelf: {
     title: tr("Hidden"),

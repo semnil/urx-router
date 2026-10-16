@@ -15,16 +15,14 @@ export interface SimLockSpec {
 
 /** The reasons a lock gives, in the language on screen. */
 export interface SimLockReasons {
-  /** A SETUP > GENERAL setting, which the Device setup screen edits. */
-  deviceSetup: string;
+  /** A SETUP > GENERAL setting the unit takes from its own panel alone. */
+  unitOnly: string;
   /** A value the unit does not take from the link. */
   notAccepted: string;
   /** The unit's own operations: scenes, the card, the recorder and playback. */
   unitOp: string;
   /** The sampling frequency while the device link is held. */
   rateLinked: string;
-  /** Follow USB, which the toolbar's FOLLOW USB changes. */
-  followUsb: string;
   /** The recorder's Track Count while Live sync is up. */
   trackCountLive: string;
   /** An FX 2 send at a rate that takes FX 2 out. */
@@ -39,17 +37,9 @@ export interface SimLockState {
   live: boolean;
 }
 
-/** The SETUP > GENERAL screens whose settings the Device setup screen edits. */
-export const DEVICE_SETUP_SCREENS = [
-  "setup.mode",
-  "setup.language",
-  "setup.brightness",
-  "setup.udk",
-  "setup.peripheral",
-  "setup.power",
-  "setup.datetime",
-  "setup.integration",
-] as const;
+/** The SETUP > GENERAL screens of settings the app neither reads nor writes: the operation mode,
+ *  Software Integration and the unit's clock. */
+export const UNIT_ONLY_SCREENS = ["setup.mode", "setup.integration", "setup.datetime.set"] as const;
 
 /** Every operation of the unit's own the simulator can ask for. */
 export const UNIT_OPS = [
@@ -84,16 +74,17 @@ export function simLocks(
   reasons: SimLockReasons,
 ): SimLockSpec[] {
   const out: SimLockSpec[] = [];
-  for (const id of DEVICE_SETUP_SCREENS) out.push({ target: { kind: "screen", id }, reason: reasons.deviceSetup });
+  for (const id of UNIT_ONLY_SCREENS) out.push({ target: { kind: "screen", id }, reason: reasons.unitOnly });
   for (const op of UNIT_OPS) out.push({ target: { kind: "op", op }, reason: reasons.unitOp });
   out.push({ target: { kind: "path", path: "sd.usbStorage" }, reason: reasons.unitOp });
-  out.push({ target: { kind: "path", path: "setup.followUsb" }, reason: reasons.followUsb });
   if (state.linked) out.push({ target: { kind: "screen", id: "setup.rate" }, reason: reasons.rateLinked });
   const fx2Out = model.nodes.some((n) => n.id === "bus.fx2") && nodeRateDisabled("bus.fx2", plan.sampleRate);
   for (const path of paths) {
-    // A channel's send into an FX bus: PRE / POST is the unit's own, and FX 2 leaves with the rate.
+    // A channel's send into an FX bus: while Live sync is up PRE / POST is the unit's own, as on the
+    // CONSOLE and in the Inspector, and FX 2 leaves with the rate.
     const send = /\.send\.(fx1|fx2)\.(on|level|pre|balance)$/.exec(path);
-    if (send && send[2] === "pre") out.push({ target: { kind: "path", path }, reason: reasons.notAccepted });
+    if (send && send[2] === "pre" && state.live)
+      out.push({ target: { kind: "path", path }, reason: reasons.notAccepted });
     else if (send && send[1] === "fx2" && fx2Out) out.push({ target: { kind: "path", path }, reason: reasons.fx2Rate });
     if (path === "sd.trackCount" && state.live)
       out.push({ target: { kind: "path", path }, reason: reasons.trackCountLive });

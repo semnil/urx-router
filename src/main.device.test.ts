@@ -61,6 +61,14 @@ import { spoken } from "./ui/glyph";
 // The glass's refused-action hook, as the SIM view hands it to the simulator: no control on the
 // glass reaches it while every unit operation is held shut, so a case calls it directly.
 const simRefused = vi.hoisted(() => ({ hook: null as ((op: { kind: string }) => void) | null }));
+// …and the unit the view mounts the glass over, so a case can drive the transport and read the
+// levels the simulator asks for without reaching a control on the glass.
+const simMounted = vi.hoisted(() => ({
+  unit: null as import("urx-lcd-sim/embed").Unit | null,
+  // Every glass a case mounted: its meter and clock timers run until it is disposed, and one
+  // left running fires after the test environment is gone.
+  glasses: [] as import("urx-lcd-sim/embed").EmbeddedSim[],
+}));
 vi.mock("urx-lcd-sim/embed", async (importOriginal) => {
   const actual = await importOriginal<typeof import("urx-lcd-sim/embed")>();
   return {
@@ -68,6 +76,12 @@ vi.mock("urx-lcd-sim/embed", async (importOriginal) => {
     refusedActions: (hook: (op: { kind: string }) => void) => {
       simRefused.hook = hook;
       return actual.refusedActions(hook);
+    },
+    mountSim: async (host: HTMLElement, options: import("urx-lcd-sim/embed").EmbedOptions) => {
+      simMounted.unit = options.unit ?? null;
+      const glass = await actual.mountSim(host, options);
+      simMounted.glasses.push(glass);
+      return glass;
     },
   };
 });
@@ -102,6 +116,11 @@ beforeEach(() => {
 // A teardown that outlives its hook's timeout goes on running while the next case starts. From
 // then on it acts on nothing: the shell, the controls and the globals all belong to the next
 // case's app, so it stops at its next step instead of draining and restoring that app's page.
+// Every glass a case mounted is disposed, which stops its meter and clock timers.
+afterEach(() => {
+  for (const glass of simMounted.glasses.splice(0)) glass.dispose();
+});
+
 // The page it leaves behind is then the next case's to refuse (the `beforeEach` above), and
 // the next case's own teardown is what restores it.
 afterEach(async () => {
@@ -11338,6 +11357,261 @@ describe("the SIM view over a live session", () => {
       timeout: 20_000,
     });
     expect(before?.isConnected, "the glass the first model drew is gone").toBe(false);
+  });
+
+  // The values a case writes to the unit, in order.
+  const setsOf = (shell: TauriShell, paramId: number): [number, number][] =>
+    shell.invokes.flatMap((cmd, i) => {
+      const a = shell.args[i] as Record<string, number>;
+      return cmd === "vd_set" && a.paramId === paramId ? [[a.y, a.value] as [number, number]] : [];
+    });
+  const transport = () => {
+    const params = simMounted.unit?.params;
+    if (!params) throw new Error("the glass is not mounted");
+    return params;
+  };
+
+  it("writes a delay time turned by hand under tempo Sync to the unit, which keeps Sync on", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, {
+      [`${PARAMS.FX_EFFECT_TYPE.id}/0/0`]: 1024,
+      [`681/0/4`]: 1,
+      [`681/0/6`]: 5000,
+    });
+    await openSim();
+    await goLive();
+    expect((await transport().snapshot()).get("ch.fx1.effect.delay"), "the premise: the unit's delay time").toBe(500);
+    await transport().write("ch.fx1.effect.delay", 250);
+    await vi.waitFor(() => expect(setsOf(shell, 681)).toEqual([[6, 2500]]), { timeout: 10_000 });
+    expect(
+      setsOf(shell, 681).some(([y]) => y === 4),
+      "Sync is left as it is",
+    ).toBe(false);
+  });
+
+  // Undo and redo move the hand-turned delay time back and forth on the unit too, while an undo of
+  // another row of the channel leaves the delay the unit derived alone.
+  it.each([
+    ["fx1", 679, 681],
+    ["fx2", 683, 685],
+  ])(
+    "writes a %s delay time turned under tempo Sync back to the unit on undo and redo",
+    SLOW,
+    async (fx, typeParam, param) => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, {
+        [`${typeParam}/0/0`]: 1024,
+        [`${param}/0/4`]: 1,
+        [`${param}/0/6`]: 5000,
+      });
+      await openSim();
+      await goLive();
+      await transport().write(`ch.${fx}.effect.delay`, 250);
+      await vi.waitFor(() => expect(setsOf(shell, param)).toEqual([[6, 2500]]), { timeout: 10_000 });
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      await vi.waitFor(
+        () =>
+          expect(setsOf(shell, param)).toEqual([
+            [6, 2500],
+            [6, 5000],
+          ]),
+        { timeout: 10_000 },
+      );
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_REDO_ID)).toBe(1);
+      await vi.waitFor(
+        () =>
+          expect(setsOf(shell, param)).toEqual([
+            [6, 2500],
+            [6, 5000],
+            [6, 2500],
+          ]),
+        {
+          timeout: 10_000,
+        },
+      );
+      // Another row of the same channel, made and undone: the delay is not written again.
+      await transport().write(`ch.${fx}.effect.feedback`, 30);
+      await vi.waitFor(() => expect(setsOf(shell, param).length).toBeGreaterThan(3), { timeout: 10_000 });
+      const before = setsOf(shell, param).length;
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+      await vi.waitFor(() => expect(setsOf(shell, param).length).toBeGreaterThan(before), { timeout: 10_000 });
+      expect(
+        setsOf(shell, param).filter(([y]) => y === 6),
+        "the delay is written only by its own edits",
+      ).toEqual([
+        [6, 2500],
+        [6, 5000],
+        [6, 2500],
+      ]);
+      expect(
+        setsOf(shell, param).some(([y]) => y === 4),
+        "Sync is left as it is",
+      ).toBe(false);
+    },
+  );
+
+  it("writes a SETUP setting changed on the glass to the unit while Live sync is up", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.BRIGHTNESS.id}/0/0`]: 6 });
+    await openSim();
+    await goLive();
+    expect((await transport().snapshot()).get("setup.brightness"), "the session shows the unit's").toBe(6);
+    expect(transport().writable?.("setup.peripheral.usbSuppression")).toBe(true);
+    await expect(transport().write("setup.peripheral.usbSuppression", "2 Channels")).resolves.toBe("2 Channels");
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.USB_SUPPRESSION.id)).toEqual([[0, 1]]), { timeout: 10_000 });
+    await expect(transport().write("setup.language", "Klingon")).rejects.toThrow("refused");
+  });
+
+  it("writes a SETUP setting changed on the glass with no session over a connection of its own", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await expect(transport().write("setup.brightness", 3)).resolves.toBe(3);
+    expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]);
+    expect(shell.count("vd_disconnect"), "the connection is let go").toBe(shell.count("vd_connect"));
+    expect((await transport().snapshot()).get("setup.brightness")).toBe(3);
+  });
+
+  // A drag or a wheel on the glass makes several edits while the first is still being written over
+  // its own connection: the ones made meanwhile wait behind it as one write, which carries the last
+  // value of each setting, so a value passed through on the way is never written.
+  it("writes the last of several SETUP edits made with no session while the first is written", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    const first = transport().write("setup.brightness", 3);
+    const second = transport().write("setup.brightness", 4);
+    const third = transport().write("setup.brightness", 5);
+    await expect(Promise.all([first, second, third])).resolves.toEqual([3, 5, 5]);
+    expect(setsOf(shell, PARAMS.BRIGHTNESS.id), "the first value, then the last").toEqual([
+      [0, 3],
+      [0, 5],
+    ]);
+    expect(statusText()).not.toBe(t().status.deviceLinkBusy);
+    expect(shell.count("vd_disconnect"), "every connection is let go").toBe(shell.count("vd_connect"));
+    expect((await transport().snapshot()).get("setup.brightness")).toBe(5);
+  });
+
+  // Two knobs assigned while a write runs go out together, each on its own knob.
+  it("writes every knob assigned with no session while a SETUP write runs", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    const first = transport().write("setup.brightness", 3);
+    const knobA = transport().write("setup.udk.1.A", "Monitor 2 Level");
+    const knobB = transport().write("setup.udk.1.B", "Monitor 2 Level");
+    await Promise.all([first, knobA, knobB]);
+    const knobs = await transport().snapshot();
+    expect([knobs.get("setup.udk.1.A"), knobs.get("setup.udk.1.B")]).toEqual(["Monitor 2 Level", "Monitor 2 Level"]);
+    const fnWrites = shell.invokes.flatMap((cmd, i) =>
+      cmd === "vd_set_str" && shell.args[i]!.paramId === PARAMS.UDK_FUNCTION.id ? [shell.args[i]!.y] : [],
+    );
+    expect(fnWrites, "knob A and knob B, in one write").toEqual([0, 1]);
+  });
+
+  it("refuses the SETUP edits waiting behind one the unit refuses with no session", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    shell.failOnce("vd_set", new Error("setup write refused"));
+    const first = transport().write("setup.brightness", 3);
+    const second = transport().write("setup.brightness", 4);
+    await expect(first).rejects.toThrow("refused");
+    await expect(second).rejects.toThrow("refused");
+    expect(errors(shell).filter((e) => e.includes("setup write refused"))).toHaveLength(1);
+    expect(
+      setsOf(shell, PARAMS.BRIGHTNESS.id).some(([, v]) => v === 4),
+      "nothing written past the failure",
+    ).toBe(false);
+    expect(shell.count("vd_disconnect"), "the connection is let go").toBe(shell.count("vd_connect"));
+  });
+
+  it("shows the unit's operation mode, and an engaged Clip Safe while the unit announces one", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.OPERATION_MODE.id}/0/0`]: 1 });
+    await openSim();
+    await goLive();
+    expect((await transport().snapshot()).get("setup.operationMode")).toBe("Simple");
+    const levels = simMounted.unit?.levels;
+    if (levels?.kind !== "device") throw new Error("the glass reads no unit levels");
+    expect(levels.clipSafe(1)).toBe(false);
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 1 }]);
+    expect(levels.clipSafe(1), "connector 1 is jack 0").toBe(true);
+    expect(levels.clipSafe(2)).toBe(false);
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 0 }]);
+    expect(levels.clipSafe(1)).toBe(false);
+  });
+
+  // The reads a case's session made of one address.
+  const readsOf = (shell: TauriShell, paramId: number): number =>
+    shell.invokes.filter((cmd, i) => cmd === "vd_get" && (shell.args[i] as Record<string, number>).paramId === paramId)
+      .length;
+
+  it(
+    "reads SETUP again when the unit announces a setting changed on its panel, and follows its operation mode",
+    SLOW,
+    async () => {
+      const shell = await bootDevice({ experimental_enabled: true });
+      await openSim();
+      await goLive();
+      const before = readsOf(shell, PARAMS.BRIGHTNESS.id);
+      expect(before, "the premise: the session read SETUP once").toBeGreaterThan(0);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.BRIGHTNESS.id, x: 0, y: 0, value: 4 }]);
+      await vi.waitFor(() => expect(readsOf(shell, PARAMS.BRIGHTNESS.id)).toBeGreaterThan(before), { timeout: 10_000 });
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.OPERATION_MODE.id, x: 0, y: 0, value: 1 }]);
+      await vi.waitFor(async () => expect((await transport().snapshot()).get("setup.operationMode")).toBe("Simple"));
+      $("btn-live").click();
+      await invoked(shell, "vd_disconnect");
+    },
+  );
+
+  it("ends the session when the re-read after an announced SETUP change fails", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    shell.failOnce("vd_get", new Error("setup read lost"));
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.BRIGHTNESS.id, x: 0, y: 0, value: 4 }]);
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the failed re-read is what ended it").toContain("setup read lost");
+  });
+
+  it("ends the session when a SETUP setting written from the glass during Live sync is refused", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    shell.failOnce("vd_set", new Error("setup write refused"));
+    await transport().write("setup.brightness", 2);
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the refused write is what ended it").toContain("setup write refused");
+  });
+
+  it("reports a SETUP setting the unit refuses with no session, and leaves the glass's value", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    shell.failOnce("vd_set", new Error("setup write refused"));
+    await expect(transport().write("setup.brightness", 2)).rejects.toThrow("refused");
+    expect(errors(shell).join(" ")).toContain(t().error.deviceSetupWrite("setup write refused"));
+    expect(shell.count("vd_disconnect"), "the connection is let go").toBe(shell.count("vd_connect"));
+  });
+
+  it("ends the session when a delay time turned under tempo Sync is refused", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, {
+      [`${PARAMS.FX_EFFECT_TYPE.id}/0/0`]: 1024,
+      [`681/0/4`]: 1,
+      [`681/0/6`]: 5000,
+    });
+    await openSim();
+    await goLive();
+    shell.failOnce("vd_set", new Error("delay write refused"));
+    await transport().write("ch.fx1.effect.delay", 250);
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the refused write is what ended it").toContain("delay write refused");
+  });
+
+  it("takes a Follow USB press on the glass as a press of the toolbar's FOLLOW USB", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.FOLLOW_USB.id}/0/0`]: 1 });
+    await openSim();
+    const badge = $("follow-usb");
+    expect(badge.dataset.state).toBe("unknown");
+    await transport().write("setup.followUsb", false);
+    await vi.waitFor(() => expect(badge.dataset.state, "unknown: the press reads the unit").toBe("on"));
+    expect(setsOf(shell, PARAMS.FOLLOW_USB.id)).toEqual([]);
+    await vi.waitFor(async () => expect((await transport().snapshot()).get("setup.followUsb")).toBe(true));
+    await transport().write("setup.followUsb", false);
+    await vi.waitFor(() => expect(badge.dataset.state).toBe("off"));
+    expect(setsOf(shell, PARAMS.FOLLOW_USB.id)).toEqual([[0, 0]]);
   });
 
   it("names a unit operation the glass refuses on the status line", SLOW, async () => {

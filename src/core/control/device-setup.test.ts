@@ -21,6 +21,7 @@ import {
   sendDeviceSetup,
   setupSupport,
   udkSlot,
+  withSetupWrites,
 } from "./device-setup";
 import type { DeviceSetup, SetupWrite } from "./device-setup";
 import { PARAMS } from "./params";
@@ -432,5 +433,30 @@ describe("sendDeviceSetup", () => {
     await sendDeviceSetup([]);
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();
+  });
+});
+
+describe("withSetupWrites", () => {
+  it("is the setting a diff's writes leave, field by field", () => {
+    const model = getModel("URX44V");
+    const from = defaultDeviceSetup();
+    const to: DeviceSetup = {
+      ...from,
+      brightness: 3,
+      autoPowerOff: false,
+      autoPowerOffTime: 7,
+      hdcp: false,
+      hdmiChannels: 1,
+      dateFormat: 2,
+      timeFormat: 1,
+      timeZone: 140,
+      language: 1,
+      usbSuppression: 1,
+      knobs: from.knobs.map((k, y) => (y === 5 ? { fn: "Phones", p1: "Phones 2", p2: "Level" } : k)),
+    };
+    const writes = diffDeviceSetup(model, from, to);
+    expect(writes.length).toBeGreaterThan(10);
+    expect(withSetupWrites(from, writes)).toEqual(to);
+    expect(withSetupWrites(from, []), "nothing written leaves it as it was").toEqual(from);
   });
 });

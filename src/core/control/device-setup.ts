@@ -314,3 +314,51 @@ export async function sendDeviceSetup(writes: SetupWrite[]): Promise<void> {
     else await vdSetStr(id, 0, w.y, w.value);
   }
 }
+
+/** `setup` as the unit holds it once `writes` have landed. */
+export function withSetupWrites(setup: DeviceSetup, writes: readonly SetupWrite[]): DeviceSetup {
+  const next: DeviceSetup = { ...setup, knobs: setup.knobs.map((k) => ({ ...k })) };
+  for (const w of writes) {
+    if (w.kind === "str") {
+      const knob = next.knobs[w.y];
+      if (!knob) continue;
+      if (w.name === "UDK_FUNCTION") knob.fn = w.value;
+      else if (w.name === "UDK_PARAM1") knob.p1 = w.value;
+      else if (w.name === "UDK_PARAM2") knob.p2 = w.value;
+      continue;
+    }
+    switch (w.name) {
+      case "BRIGHTNESS":
+        next.brightness = w.value;
+        break;
+      case "AUTO_POWER_OFF":
+        next.autoPowerOff = w.value !== 0;
+        break;
+      case "AUTO_POWER_OFF_TIME":
+        next.autoPowerOffTime = w.value;
+        break;
+      case "DEVICE_LANGUAGE":
+        next.language = w.value;
+        break;
+      case "USB_SUPPRESSION":
+        next.usbSuppression = w.value;
+        break;
+      case "HDMI_HDCP":
+        next.hdcp = w.value !== 0;
+        break;
+      case "HDMI_INPUT_CHANNELS":
+        next.hdmiChannels = w.value;
+        break;
+      case "DATE_FORMAT":
+        next.dateFormat = w.value;
+        break;
+      case "TIME_FORMAT":
+        next.timeFormat = w.value;
+        break;
+      case "TIME_ZONE":
+        next.timeZone = w.value;
+        break;
+    }
+  }
+  return next;
+}

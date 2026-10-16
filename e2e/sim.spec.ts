@@ -1,9 +1,11 @@
 import { test, expect, type Page } from "./fixtures";
 import {
   LIVE_COMMANDS,
+  heldWritesOf,
   notifyParam,
   savedFilesOf,
   setDeviceValue,
+  setHeldWrites,
   stubTauriBoot,
   stubTauriDevice,
   writesOf,
@@ -150,38 +152,76 @@ test("draws the ground around the LCD the same in both themes", async ({ page })
   expect(dark).toContain("dark");
 });
 
-test("holds the unit's own settings shut on the LCD, with the reason as its tooltip", async ({ page }) => {
+test("holds the settings only the unit changes shut on the LCD, with the reason as its tooltip", async ({ page }) => {
   await openSim(page);
   const lcd = sim(page).locator(".lcd[data-screen]:not([inert])");
   await lcd.getByRole("button", { name: "SETUP", exact: true }).click();
   await expect(sim(page).locator('.lcd[data-screen="setup"]:not([inert])')).toHaveCount(1);
+  const integration = lcd.getByRole("button", { name: /Software\s*Integration/ });
+  await expect(integration).toHaveAttribute("aria-disabled", "true");
+  await expect(integration).toHaveAttribute("title", en.sim.lockUnitOnly);
+  await expect(integration.locator(".lock-mark")).toHaveCount(1);
   const language = lcd.getByRole("button", { name: "Language", exact: true });
-  await expect(language).toHaveAttribute("aria-disabled", "true");
-  await expect(language).toHaveAttribute("title", en.sim.lockDeviceSetup);
-  await expect(language.locator(".lock-mark")).toHaveCount(1);
-  const version = lcd.getByRole("button", { name: "Version", exact: true });
-  await expect(version, "a screen the plan does not hold is not held either").not.toHaveAttribute("aria-disabled");
+  await expect(language, "a setting the app writes to the unit is not held").not.toHaveAttribute("aria-disabled");
 
-  // Pressed where it stands (Playwright declines to click a control marked out of reach), then Version:
-  // the LCD reaching Version's screen says the press on Language was answered and opened nothing.
-  const at = (await language.boundingBox())!;
+  // Pressed where it stands (Playwright declines to click a control marked out of reach), then
+  // Language: the LCD reaching Language's screen says the press on Software Integration was
+  // answered and opened nothing.
+  const at = (await integration.boundingBox())!;
   await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
-  await version.click();
-  await expect(sim(page).locator('.lcd[data-screen="setup.version"]:not([inert])')).toHaveCount(1);
+  await language.click();
+  await expect(sim(page).locator('.lcd[data-screen="setup.language"]:not([inert])')).toHaveCount(1);
 });
 
-test("holds Follow USB on the LCD's Sampling Frequency screen, naming the toolbar's FOLLOW USB", async ({ page }) => {
-  await openSim(page);
+test("takes Follow USB on the LCD's Sampling Frequency screen as the toolbar's FOLLOW USB", async ({ page }) => {
+  await stubTauriDevice(page, {
+    values: { [PARAMS.FOLLOW_USB.id]: 1 },
+    commands: { experimental_enabled: true },
+  });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
   await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
   await tapInto(page, lcd(page).getByRole("button", { name: "Sampling Frequency" }), "setup.rate");
   const follow = lcd(page).getByRole("button", { name: "Follow USB", exact: true });
-  await expect(follow).toHaveAttribute("aria-disabled", "true");
-  await expect(follow).toHaveAttribute("title", en.sim.lockFollowUsb);
-  await expect(follow.locator(".lock-mark")).toHaveCount(1);
-  await expect(
-    lcd(page).getByRole("button", { name: "96kHz", exact: true }),
-    "the rate itself is the plan's",
-  ).not.toHaveAttribute("aria-disabled");
+  const badge = page.locator("#follow-usb");
+  await expect(follow).not.toHaveAttribute("aria-disabled");
+  await expect(badge).toHaveAttribute("data-state", "unknown");
+  // Unknown: the press reads the unit, as the toolbar's does, and both show what it holds.
+  await follow.click();
+  await expect(badge).toHaveAttribute("data-state", "on");
+  await expect(follow).toHaveAttribute("aria-pressed", "true");
+  // Known: the press switches it on the unit.
+  await follow.click();
+  await expect(badge).toHaveAttribute("data-state", "off");
+  await expect(follow).toHaveAttribute("aria-pressed", "false");
+  await expect
+    .poll(async () => (await writesOf(page)).filter(([id]) => id === PARAMS.FOLLOW_USB.id))
+    .toEqual([[PARAMS.FOLLOW_USB.id, 0]]);
+});
+
+// With no session a SETUP setting changed on the LCD is written over a connection of its own; the
+// edits made while that write runs go out after it as one, carrying the last value.
+test("writes the last of several SETUP edits made on the LCD with no session", async ({ page }) => {
+  const BRIGHTNESS: number = PARAMS.BRIGHTNESS.id;
+  await stubTauriDevice(page, { values: { [BRIGHTNESS]: 5 }, commands: { experimental_enabled: true } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Brightness", exact: true }), "setup.brightness");
+  const brightnessWrites = async (): Promise<number[]> =>
+    (await writesOf(page)).flatMap(([id, v]) => (id === BRIGHTNESS ? [v] : []));
+  await setHeldWrites(page, [BRIGHTNESS]);
+  await onScreen(page, "setup.brightness").getByRole("spinbutton").focus();
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(() => heldWritesOf(page), "the first edit is being written").toBe(1);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await setHeldWrites(page, []);
+  await expect.poll(brightnessWrites).toHaveLength(2);
+  const [first, last] = await brightnessWrites();
+  expect(last, "the second and third edits went out as one, at the last value").toBe(first! - 2);
 });
 
 // A change the unit makes beside the one asked for — a BUS Type resetting its bank, an EFFECT TYPE
@@ -639,4 +679,48 @@ test("the LCD's [Sends] destination is the unit's while Live sync is up, and the
   // Leaving the SIM view gives the session's meters back to the CONSOLE.
   await page.click("#btn-view-console");
   await expect(page.locator("#sim-host")).toBeHidden();
+});
+
+// The unit's [CUE] is live-session state outside the plan: while Live sync is up the LCD shows
+// the flags the unit holds and a press on the glass switches them on the unit, the way the
+// CONSOLE chip does; with no session a press reaches nothing.
+test("the LCD's CUE switches the unit's flag while Live sync is up, and reaches nothing without", async ({ page }) => {
+  const CUE_MONO: number = PARAMS.CUE_MONO.id;
+  await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  // CH 2 is cued on the unit.
+  await setDeviceValue(page, CUE_MONO, 1, 1);
+  await page.click("#btn-view-sim");
+  await expect(sim(page).locator(".lcd")).toBeVisible();
+  const cue = (i: number) => sim(page).locator(".btn-cue").nth(i);
+  const cueWrites = async (): Promise<number[]> =>
+    (await writesOf(page)).flatMap(([id, v]) => (id === CUE_MONO ? [v] : []));
+
+  // No session: the press is taken back and nothing is written.
+  await cue(0).click();
+  await expect(cue(0)).toHaveAttribute("aria-pressed", "false");
+  expect(await cueWrites()).toEqual([]);
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(cue(1), "the session shows what the unit has cued").toHaveAttribute("aria-pressed", "true");
+  await expect(cue(0)).toHaveAttribute("aria-pressed", "false");
+
+  // A press on the glass goes to the unit, and the app's own surfaces show it.
+  await cue(0).click();
+  await expect.poll(cueWrites).toEqual([1]);
+  await expect(cue(0)).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('#cue-bar-names > [aria-hidden="true"]')).toHaveText("CUE CH 1, CH 2");
+
+  // A press on the unit's panel reaches the glass.
+  await setDeviceValue(page, CUE_MONO, 0, 0);
+  await notifyParam(page, CUE_MONO, 0, 0);
+  await expect(cue(0)).toHaveAttribute("aria-pressed", "false");
+
+  // Off again from the glass.
+  await cue(1).click();
+  await expect.poll(cueWrites).toEqual([1, 0]);
+  await expect(cue(1)).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#cue-bar")).toBeHidden();
 });
