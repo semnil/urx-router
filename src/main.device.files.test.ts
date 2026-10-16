@@ -13,8 +13,9 @@ import { channelControl, sendControl } from "./core/control/translate";
 import { getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { Plan } from "./core/plan";
-import { buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
+import { CURRENT_FIELDS, buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
 import type { Field } from "./core/control/urxf.test-util";
+import { formatRate } from "./core/constraints";
 import { t } from "./i18n";
 import {
   SLOW,
@@ -358,41 +359,57 @@ describe("importing a settings file", () => {
     expect(errors(shell)).toEqual([t().status.settingsError(t().error.urxf.noCurrent)]);
   });
 
-  // Replacing every value at once is what Live sync cannot follow, so the import is closed
-  // for a session's duration — the same rule fetch and write follow.
-  //
-  // The menu entry is closed by being DISABLED, which is what this case reads. That is not
-  // the whole guard: a drop reaches the same flow without passing the button, so the flow
-  // states the refusal a second time in code, and the case below drives that half.
-  it("closes the import while a live session is up", SLOW, async () => {
+  // During a session the import is an edit: the menu entry stays open, and what the file
+  // carries goes to the unit through the session's own flush.
+  it("keeps the import open while a live session is up", SLOW, async () => {
     await bootImport(sampleUrxf());
     expect($<HTMLButtonElement>("btn-open-settings").disabled).toBe(false);
 
     $("btn-live").click();
     await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
-    expect($<HTMLButtonElement>("btn-open-settings").disabled).toBe(true);
+    expect($<HTMLButtonElement>("btn-open-settings").disabled).toBe(false);
   });
 
-  // The other half of that refusal, and the one a disabled button cannot cover: on desktop
-  // a drop is intercepted by the shell and arrives as an event, so it reaches the import
-  // flow without going near the menu entry. The registration itself is inside the
-  // experimental gate, which is why this can only be driven with the import armed.
-  it("refuses a settings file DROPPED onto the window while a live session is up", SLOW, async () => {
-    const shell = await bootImport(sampleUrxf());
+  // A drop reaches the import flow without going near the menu entry (the shell intercepts
+  // it and hands it on as an event), so this is the path that has to carry the session's
+  // rule on its own. The file's sampling frequency is not taken: the rate is locked while
+  // Live sync is on, and the session would re-clock the unit on its next flush.
+  it("writes a settings file DROPPED during a live session to the unit, keeping the rate", SLOW, async () => {
+    const file = buildUrxf([
+      {
+        chunk: "CURRENT",
+        block: "CSF_BACKUP",
+        label: "",
+        fields: [...CURRENT_FIELDS, { id: PARAMS.SAMPLE_RATE.id, typecode: 2, elemSize: 4, values: [96_000] }],
+      },
+    ]);
+    const shell = await bootImport(file);
     $("btn-live").click();
     await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
-    const reads = shell.count("read_binary_file");
+    const sets = shell.count("vd_set");
+    const rate = $<HTMLSelectElement>("rate-picker").value;
 
-    // One handler, not zero: an event nobody listens for would make every assertion below
-    // pass by describing an app that was never asked to do anything.
     expect(shell.emit("tauri://drag-drop", { paths: [PATH] })).toBe(1);
-
-    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 10_000 });
-    expect(errors(shell).at(-1)).toBe(t().error.notWhileLive);
-    // Refused before the file was even read, and the session it would have disrupted is
-    // still up.
-    expect(shell.count("read_binary_file")).toBe(reads);
-    expect(live().getAttribute("aria-checked")).toBe("true");
+    await vi.waitFor(() => expect(statusText()).toContain(t().status.settingsRateKept(formatRate(Number(rate)))), {
+      timeout: 15_000,
+    });
+    expect(confirms(shell), "the confirm says the import goes to the unit").toContain(
+      t().confirm.importSettingsLive("backup.urxf", "URX44V"),
+    );
+    await vi.waitFor(
+      () => expect(shell.count("vd_set"), "the session wrote what the file changed").toBeGreaterThan(sets),
+      {
+        timeout: 15_000,
+      },
+    );
+    expect($<HTMLSelectElement>("rate-picker").value, "the file's 96 kHz was not taken").toBe(rate);
+    expect(
+      shell.invokes.some(
+        (cmd, i) => cmd === "vd_set" && (shell.args[i] as Record<string, number>).paramId === PARAMS.SAMPLE_RATE.id,
+      ),
+      "no rate is written mid-session",
+    ).toBe(false);
+    expect(live().getAttribute("aria-checked"), "the session is still up").toBe("true");
   });
 });
 

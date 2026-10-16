@@ -2162,9 +2162,9 @@ let liveReleased: Promise<void> = Promise.resolve();
 const deviceScopeHeld = (): boolean => deviceLinkHolder === "live" && !liveSessionUp;
 
 // Each device entry and the holder it belongs to. While the link is held, every
-// entry greys except its holder's own. The `.urxf` import owns no holder because it
-// opens no connection, so it greys for every one of them: it replaces the plan
-// wholesale, which is what a read in flight cannot survive.
+// entry greys except its holder's own. The `.urxf` import opens no connection: it
+// greys for every holder but a session, since it replaces the plan wholesale, which is
+// what a read in flight cannot survive, while a session takes its values as an edit.
 const DEVICE_ENTRIES: ReadonlyArray<[string, LinkHolder | null]> = [
   ["btn-fetch", "fetch"],
   ["btn-write", "write"],
@@ -2172,7 +2172,7 @@ const DEVICE_ENTRIES: ReadonlyArray<[string, LinkHolder | null]> = [
   ["btn-device-setup", "device-setup"],
   ["btn-live", "live"],
   ["btn-selftest", "run"],
-  ["btn-open-settings", null],
+  ["btn-open-settings", "live"],
 ];
 
 /** Take the device link, or report that something else has it and refuse. */
@@ -5626,17 +5626,13 @@ if (!DEMO) {
     await fileFlow(() => importSettingsFlow(load));
   }
 
+  // Whether the link is held by anything but a session that is up: an import made during a
+  // session is an edit the session writes to the unit, while any other holder — a Live sync
+  // still connecting among them — is mid-flow on the plan the import would replace.
+  const importBlocked = (): boolean => deviceLinkHolder !== null && !(deviceLinkHolder === "live" && liveSessionUp);
+
   async function importSettingsFlow(load: () => Promise<{ bytes: Uint8Array; name: string } | null>): Promise<void> {
-    // Replacing every value at once is what Live sync cannot follow, so the import
-    // is refused while a session is up — the same rule fetch and write follow, which
-    // setLiveUi enforces on the menu entry. The drop target needs it stated here, and it
-    // greys for every link holder, so the drop is refused for every one of them too: a
-    // Live sync that is still connecting holds the link with no session up yet.
-    if (liveSessionUp) {
-      showError(t().error.notWhileLive);
-      return;
-    }
-    if (deviceLinkHolder !== null) {
+    if (importBlocked()) {
       setStatus(t().status.deviceLinkBusy);
       return;
     }
@@ -5655,7 +5651,11 @@ if (!DEMO) {
       return;
     }
     if (!(await confirmDiscard())) return;
-    if (!(await confirmDialog(t().confirm.importSettings(name, modelId)))) {
+    if (
+      !(await confirmDialog(
+        (liveSessionUp ? t().confirm.importSettingsLive : t().confirm.importSettings)(name, modelId),
+      ))
+    ) {
       setStatus(t().status.canceled);
       return;
     }
@@ -5664,28 +5664,32 @@ if (!DEMO) {
     // place — so it has no share of that backstop, and the entry check is separated
     // from the mutation by two confirm dialogs. Those leave the window running, so a
     // device action can take the link behind them — a write converging the plan object
-    // this is about to overwrite key by key, a read merging into it, a session that would
-    // take every imported value, the sample rate included, on its next flush with no
-    // confirm.
-    if (liveSessionUp) {
-      showError(t().error.notWhileLive);
-      return;
-    }
+    // this is about to overwrite key by key, or a read merging into it. A session that
+    // came up behind the confirms would take every imported value with no confirm of its
+    // own, so the import goes ahead only in the state the confirm asked about.
     if (flow.deviceReadInFlight) {
       setStatus(t().status.busyDeviceRead);
       return;
     }
-    if (deviceLinkHolder !== null) {
+    const live = liveSessionUp;
+    if (importBlocked() || live !== (deviceLinkHolder === "live")) {
       setStatus(t().status.deviceLinkBusy);
       return;
     }
     let result: ReadbackResult;
+    let rateKept = false;
     try {
       // A settings FILE, not the connected unit: its values are the same kind of thing a plan
       // document supplies, so they are recorded as such. Calling them the unit's would claim
       // the connected device holds them, which a file written by another unit does not.
       const beforeImport = clonePlanState(plan);
       result = await applySourceState(getModel(modelId), plan, paramSourceOf(current));
+      // During a session the sampling frequency stays the unit's: the rate is locked while
+      // Live sync is on, and the session would re-clock the unit on its next flush.
+      if (live && plan.sampleRate !== beforeImport.sampleRate) {
+        setPlanSampleRate(plan, beforeImport.sampleRate);
+        rateKept = true;
+      }
       markSource(plan, patchContestNames(diffPlans(beforeImport, plan)), "load");
     } catch (err) {
       showError(t().status.settingsError(errorText(err)));
@@ -5697,14 +5701,17 @@ if (!DEMO) {
     plan.unreadNodes = result.unreadNodes;
     rerenderPlan();
     dirty = true;
-    planReadFromDevice();
+    // During a session the import is an edit: the session writes it to the unit and it is
+    // one undo step. Otherwise it settled the plan the way a read does.
+    if (live && liveSessionUp) markChanged("ui");
+    else planReadFromDevice();
     const unread = result.unreadNodes.size;
     setStatus(
       withSwitchNotes(
         result.errors.length
           ? t().status.settingsPartial(result.applied, result.errors.length, unread)
           : t().status.settingsImported(name, result.applied),
-      ),
+      ) + (rateKept ? t().status.settingsRateKept(formatRate(plan.sampleRate)) : ""),
     );
     await offerErrorReport(
       result.errors.length

@@ -733,6 +733,7 @@ export const ja: Messages = {
     settingsPartial: (n: number, failed: number, unread: number): string =>
       `${n} 件取り込み、${failed} 件失敗` + (unread ? `、${unread} ノード未取得` : ""),
     settingsError: (message: string): string => `設定ファイルを取り込めませんでした: ${message}`,
+    settingsRateKept: (rate: string): string => ` — Live 同期中のため、サンプリング周波数は ${rate} のままです`,
     dropUnsupported: (name: string): string => `${name} は開けません — 計画ファイル (.json) をドロップしてください`,
     dropUnsupportedSettings: (name: string): string =>
       `${name} は開けません — 計画ファイル (.json) か設定ファイル (.urxf) をドロップしてください`,
@@ -866,6 +867,8 @@ export const ja: Messages = {
       "一部の実機の値は適用されませんでした (読み取り中にこちらで編集されたためです)。一覧を記載したレポートを保存しますか?",
     importSettings: (name: string, model: string): string =>
       `${name} を現在の ${model} 計画に取り込みますか? 設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます (ファイルに編集状態は含まれません)。`,
+    importSettingsLive: (name: string, model: string): string =>
+      `${name} を現在の ${model} 計画に取り込み、本体に書き込みますか? Live 同期中のため、取り込んだ設定はすべて本体に送られます (サンプリング周波数は今のままです)。設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます。`,
     reclock: (deviceRate: string, planRate: string): string =>
       `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。コンピューター側はデバイスの新しいレートに追従します。続行しますか?`,
     followUsbOn:

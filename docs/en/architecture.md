@@ -384,7 +384,7 @@ carries a one-line map of the same directories and points here.
       only by its own F table, and an x axis stored flattened onto consecutive ids. It exposes a chunk as a
       `ParamSource`, so `readback.ts` runs its existing device→plan inverse against a file
       (`applySourceState`) instead of a second inverse — the source travels as a parameter, so a file import
-      and a device follow reconcile cannot cross. An import is refused while Live sync is up. **Read-only**
+      and a device follow reconcile cannot cross. During Live sync an import is an edit the session writes to the unit. **Read-only**
       (writing back is untested against the unit's scene memory) and gated behind `--experimental`
     - `device-setup.ts` the unit's SETUP > GENERAL settings (brightness / auto power off / date-time formats
       + time zone / language / HDMI + USB Main / the 16 User Defined Knobs assignments) — catalogued in
@@ -4975,10 +4975,13 @@ parses the file and exposes one chunk as a `ParamSource`, and `readback.ts` runs
 `applyDeviceState` logic against that source instead of the live device (`applySourceState`). The
 source travels as a parameter: the pass and each reading helper bind their own `vdGet` / `vdGetStr`
 from it, so a device follow reconcile and a file import cannot read each other's source and need no
-guard against overlapping. Because an import replaces every value at once — which Live sync cannot
-follow — it is refused while a session is up, the same rule fetch and write already follow. It is refused
-while any other device action holds the link as well (a Live sync still connecting holds it with no session up
-yet), and the import asks again once its confirms are answered, since the window keeps running behind them.
+guard against overlapping. While a session is up an import is an edit like any other: its confirm says the
+imported settings go to the unit, the values land in the plan through `markChanged`, the session's next flush
+writes them, and the import is one undo step. The sampling frequency is the exception — the rate is locked while
+Live sync is on, so the file's rate is not taken and the status line says the rate stayed. The import is refused
+while any other device action holds the link (a Live sync still connecting holds it with no session up yet), and
+asks again once its confirms are answered, going ahead only in the state the confirm asked about, since the
+window keeps running behind them.
 
 Format notes that shape the reader (full spec: the private reference repository):
 

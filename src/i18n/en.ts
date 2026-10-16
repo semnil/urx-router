@@ -971,6 +971,9 @@ export const en = {
     settingsPartial: (n: number, failed: number, unread: number): string =>
       `Imported ${n}, ${failed} failed` + (unread ? `, ${unread} node${unread === 1 ? "" : "s"} not read` : ""),
     settingsError: (message: string): string => `Settings file could not be imported: ${message}`,
+    // Appended to an import's status while Live sync is up, when the file's sampling frequency
+    // was not taken: the rate stays locked during a session.
+    settingsRateKept: (rate: string): string => ` — the sampling frequency stays at ${rate} while Live sync is on`,
     dropUnsupported: (name: string): string => `${name} cannot be opened here — drop a plan (.json)`,
     dropUnsupportedSettings: (name: string): string =>
       `${name} cannot be opened here — drop a plan (.json) or a settings file (.urxf)`,
@@ -1125,6 +1128,9 @@ export const en = {
     ),
     importSettings: (name: string, model: string): string =>
       `Import ${name} onto the current ${model} plan? A settings file does not say which unit it came from, so check that ${model} is the right model. Layout, hidden nodes, and notes are kept — the file carries no editing state.`,
+    // The same question while Live sync is up, where the imported settings go to the unit.
+    importSettingsLive: (name: string, model: string): string =>
+      `Import ${name} onto the current ${model} plan and write it to the unit? Live sync is on, so every imported setting is sent to the unit; the sampling frequency stays as it is. A settings file does not say which unit it came from, so check that ${model} is the right model. Layout, hidden nodes, and notes are kept.`,
     reclock: (deviceRate: string, planRate: string): string =>
       `The device is running at ${deviceRate} and the plan is set to ${planRate}. Writing re-clocks the device and renegotiates the USB stream, interrupting audio for a moment. The computer follows the device's new rate. Continue?`,
     followUsbOn: tr(
