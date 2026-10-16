@@ -68,3 +68,41 @@ export async function wheelOver(page: Page, target: Locator, deltaY: number): Pr
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.wheel(0, deltaY);
 }
+
+/** Double-click a node so the graph reads its two presses as one double press however
+ *  long the renderer takes between them. The graph opens the note editor on a second
+ *  press within a window of `performance.now()`; at the second press, its first reading
+ *  of that clock answers the time the first press arrived, and every other reading —
+ *  before, during and after — is the real clock. */
+export async function doublePress(target: Locator): Promise<void> {
+  await target.evaluate((el) => {
+    const w = window as unknown as { __urxDoublePressEnd?: () => void };
+    const real = performance.now.bind(performance);
+    let first: number | null = null;
+    const end = (): void => {
+      window.removeEventListener("pointerdown", onDown, true);
+      delete (performance as { now?: unknown }).now;
+      delete w.__urxDoublePressEnd;
+    };
+    const onDown = (e: Event): void => {
+      if (!el.contains(e.target as Node)) return;
+      if (first === null) {
+        first = real();
+        return;
+      }
+      const held = first;
+      let read = false;
+      performance.now = () => (read ? real() : ((read = true), held));
+      window.addEventListener("pointerdown", end, { once: true });
+    };
+    w.__urxDoublePressEnd = end;
+    window.addEventListener("pointerdown", onDown, true);
+  });
+  try {
+    await target.dblclick();
+  } finally {
+    await target
+      .page()
+      .evaluate(() => (window as unknown as { __urxDoublePressEnd?: () => void }).__urxDoublePressEnd?.());
+  }
+}

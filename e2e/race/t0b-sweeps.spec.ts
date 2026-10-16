@@ -14,7 +14,7 @@ import {
   statusAfter,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf } from "./analyze";
-import { drag, port, tapJack, faceplate } from "../graph-helpers";
+import { doublePress, drag, port, tapJack, faceplate } from "../graph-helpers";
 import { pickBand, pickPlot } from "../dyn-helpers";
 import {
   CH1_FADER,
@@ -283,7 +283,7 @@ test.describe("T0b baseline sweeps", () => {
       {
         label: "double-press a node with a collapsed note",
         run: async () => {
-          await graphNode(page, "ch2").dblclick();
+          await doublePress(graphNode(page, "ch2"));
           await expect(overlay).toBeVisible();
         },
       },

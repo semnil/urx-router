@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
-import { drag, faceplate, port, selectWire } from "./graph-helpers";
+import { doublePress, drag, faceplate, port, selectWire } from "./graph-helpers";
 import { chooseOption } from "./choose-option";
 import { en } from "../src/i18n/en";
 import { ja } from "../src/i18n/ja";
@@ -160,7 +160,7 @@ test("un-collapsing a note by opening its editor is undoable", async ({ page }) 
 
   // Opening the editor un-collapses the panel — a plan write that used to reach no
   // change funnel at all, so it had no entry and no unsaved flag either.
-  await node(page, "ch1").dblclick();
+  await doublePress(node(page, "ch1"));
   await expect(overlay(page)).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(overlay(page)).toHaveCount(0);
