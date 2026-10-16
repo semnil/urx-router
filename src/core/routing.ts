@@ -342,6 +342,78 @@ export function monoPairOf(model: DeviceModel, to: string, froms: readonly strin
   return monoPairsInto(model, to).find(([a, b]) => (x === a && y === b) || (x === b && y === a)) ?? null;
 }
 
+/** The partner a patch of `out` onto the USB output `into` takes along: the other channel of
+ *  a STEREO-linked mono pair, when that output accepts it and `shown` says it is on the board.
+ *  Null for anything else. */
+export function linkedPatchPartner(
+  model: DeviceModel,
+  plan: Plan,
+  out: string,
+  into: string,
+  shown: (nodeId: string) => boolean = () => true,
+): string | null {
+  const node = parseRef(out).nodeId;
+  if (!isStereoLinkedPair(model, plan, node)) return null;
+  const pair = monoPairsInto(model, into).find(([a, b]) => a === node || b === node);
+  if (!pair) return null;
+  const partnerNode = pair[0] === node ? pair[1] : pair[0];
+  if (!shown(partnerNode)) return null;
+  const partner = ref(partnerNode, "out");
+  return canConnect(model, plan, partner, into).ok ? partner : null;
+}
+
+/** A patch of `out` onto `into` that the output already holds, which completes a linked pair
+ *  there: the one refused wire a drop still takes, adding the partner instead. */
+export function completesLinkedPatch(
+  model: DeviceModel,
+  plan: Plan,
+  out: string,
+  into: string,
+  shown: (nodeId: string) => boolean = () => true,
+): boolean {
+  return (
+    ruleKind(model, out, into) === "patch" &&
+    canConnect(model, plan, out, into).reason === "duplicate" &&
+    linkedPatchPartner(model, plan, out, into, shown) !== null
+  );
+}
+
+/** What a drop of `out` onto `into` leaves wired, as the board takes it: a wire into an input
+ *  that takes one source replaces the one there (`replaces`), a channel's source is mirrored
+ *  onto its pair partner, and a STEREO-linked pair goes onto a USB output together. A drop
+ *  the board refuses gives the reason, when the rules name one. */
+export function dropWire(
+  model: DeviceModel,
+  plan: Plan,
+  out: string,
+  into: string,
+  shown: (nodeId: string) => boolean = () => true,
+): { ok: true; connections: PlanConnection[]; replaces: boolean } | { ok: false; reason?: ConnectError } {
+  const kind = ruleKind(model, out, into);
+  const result = canConnect(model, plan, out, into);
+  const replaces = result.reason === "singleInput" || result.reason === "monoPairOnly";
+  if (!result.ok && !replaces && !completesLinkedPatch(model, plan, out, into, shown))
+    return { ok: false, reason: result.reason };
+  let connections = replaces ? plan.connections.filter((c) => c.to !== into) : [...plan.connections];
+  // canConnect rejects a route with no rule, so reaching here means kind is set.
+  if (result.ok || replaces) connections.push({ from: out, to: into, kind: kind! });
+  if (kind === "source") {
+    const { nodeId, portId } = parseRef(into);
+    const partner = partnerChannel(model, nodeId);
+    if (partner) {
+      const mirrorTo = ref(partner, portId);
+      connections = connections.filter((c) => !(c.to === mirrorTo && isSingleInput(c.kind)));
+      if (!connections.some((c) => c.from === out && c.to === mirrorTo))
+        connections.push({ from: out, to: mirrorTo, kind: "source" });
+    }
+  }
+  if (kind === "patch") {
+    const partner = linkedPatchPartner(model, { ...plan, connections }, out, into, shown);
+    if (partner) connections.push({ from: partner, to: into, kind: "patch" });
+  }
+  return { ok: true, connections, replaces };
+}
+
 /** True when `id` belongs to a MONO IN pair whose Signal Type is STEREO, whatever its
  *  PAN/BAL mode (the flag lives on the primary, so it is read there). This is the gate for
  *  everything the pair holds in common — its tuning, its mixer state and the one insert

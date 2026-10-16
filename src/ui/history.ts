@@ -17,7 +17,7 @@ import type { Plan } from "../core/plan";
 import type { PatchTouch, PlanPatch } from "../core/plan-history";
 import { applyPatch, patchTouch, PlanHistoryStack, patchContestNames } from "../core/plan-history";
 import { mouseMovedUnpressed } from "./dom";
-import { ownsNativeUndo } from "./keys";
+import { ownsNativeUndo, SIM_ROOT } from "./keys";
 
 /** How long after the last edit an entry closes when no pointer or focus boundary
  *  ends it — a wheel notch burst, or an incoming MIDI sweep, which produce no DOM
@@ -196,7 +196,17 @@ export class PlanHistory {
     );
     // The only end of edit for the node-name field and the in-frame note editor.
     // Nothing edits the plan on the way out either, so this commits at once too.
-    window.addEventListener("focusout", () => this.commit(), true);
+    // The SIM view's LCD is the exception: it draws itself again on every step of a value
+    // and moves the focus onto the control drawn in its place, so its focus leaving is no
+    // end of an edit. Its gestures end at their own pointer and key boundaries.
+    window.addEventListener(
+      "focusout",
+      (e) => {
+        if (e.target instanceof Element && e.target.closest(SIM_ROOT)) return;
+        this.commit();
+      },
+      true,
+    );
   }
 
   /** An edit changed the plan (called from the one change funnel). */

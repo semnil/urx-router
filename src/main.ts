@@ -92,6 +92,9 @@ import { copyText, focusables, preserveFocus } from "./ui/dom";
 import { setSaid, setSpokenText, setTip, spoken } from "./ui/glyph";
 import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
+import { SimView } from "./ui/sim-view";
+import type { SimEdit } from "./core/sim-map";
+import { simLocks } from "./core/sim-locks";
 import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
 import { initDropzone } from "./ui/dropzone";
@@ -118,6 +121,7 @@ import {
   detectLabelSource,
   detectModel,
   detectRate,
+  detectSimScale,
   detectThemeMode,
   detectView,
   loadHidden,
@@ -126,13 +130,15 @@ import {
   rememberLabelSource,
   rememberModel,
   rememberRate,
+  rememberSimScale,
   rememberThemeMode,
   resetStorageFromUrl,
   rememberView,
   resolveTheme,
   seedEmptyRequested,
+  SIM_SCALES,
 } from "./app/view-state";
-import type { ViewName } from "./app/view-state";
+import type { SimScale, ViewName } from "./app/view-state";
 import { errorCode, errorText, getLang, LANG_NAMES, onLangChange, t } from "./i18n";
 import { DEMO, TRACE } from "./core/env";
 import { installTraceProbe } from "./ui/trace-probe";
@@ -389,6 +395,12 @@ let compareAbort: AbortController | null = null;
 // Preferences device-scope note names the diagnostics' coverage only when the
 // diagnostics themselves are reachable.
 let experimentalOn = false;
+// A remembered SIM view still waiting for the experimental gate; any view chosen before
+// the gate resolves takes its place.
+let simViewPending = false;
+// The SIM view, built once the CONSOLE it borrows meters from exists. Every hook below asks
+// through `?.`, since a funnel can run before then.
+let simView: SimView | null = null;
 // Name the collapse the way the canvas names a node, and count the rest. Several
 // surfaces print this (the live status line, the write confirm, the "no changes"
 // status), so the label/count rule lives here once. The first group's first
@@ -884,6 +896,40 @@ const consoleView = new Console(consoleHost, {
   // of editing.
   midi: midiLearnHooks,
 });
+
+// The SIM view: the unit's LCD as a third surface over the same plan (experimental launch
+// only). Its edits go to the funnels the Inspector uses; every other change to the plan
+// reaches it through simView?.planChanged() beside the MIDI feedback.
+simView = new SimView(
+  $<HTMLElement>("sim-host"),
+  {
+    getModel: () => getModel(modelId),
+    getPlan: () => plan,
+    apply: (edit) => planTakesEdits() && applySimEdit(edit),
+    onRefusedAction: () => setStatus(t().status.simUnitAction),
+    isLive: () => liveSessionUp,
+    locks: (paths) =>
+      simLocks(
+        getModel(modelId),
+        plan,
+        paths,
+        { linked: deviceLinkHolder !== null, live: liveSessionUp },
+        {
+          deviceSetup: t().sim.lockDeviceSetup,
+          notAccepted: t().inspector.prePostLcdOnly,
+          unitOp: t().sim.lockUnitOp,
+          rateLinked: t().sim.lockRateLinked,
+          trackCountLive: t().inspector.sdRecTrackCountLive,
+          fx2Rate: t().inspector.fx2RateLocked,
+          deviceDriven: t().dynTuning.insfx.deviceOnlyTag,
+        },
+      ),
+    releaseMeters: () => consoleView.releaseMeters(),
+    regainMeters: () => consoleView.regainMeters(),
+    onMeterError: (message) => stopLiveOnError(errorText(message)),
+  },
+  detectSimScale(),
+);
 
 // Device follow: the reverse of live sync. While live, parameter
 // changes made on the device itself (LCD / physical controls) are pulled back
@@ -1565,16 +1611,40 @@ const follow =
         onError: (message) => stopLiveOnError(errorText(message)),
       });
 
-function setView(next: ViewName): void {
+// `persist` false applies a view without remembering it: the startup's stand-in for a
+// remembered SIM view, which only an experimental launch shows.
+/** The View menu's SIM Scale choices. */
+function simScaleItems(): HTMLButtonElement[] {
+  return [...document.querySelectorAll<HTMLButtonElement>(".sim-scale")];
+}
+
+function syncSimScaleItems(scale: SimScale): void {
+  for (const item of simScaleItems())
+    item.setAttribute("aria-checked", String(Number(item.dataset.simScale) === scale));
+}
+
+function setView(next: ViewName, persist = true): void {
   const isConsole = next === "console";
-  rememberView(next);
-  graphHost.hidden = isConsole;
-  inspectorHost.hidden = isConsole;
-  $("btn-view-graph").setAttribute("aria-pressed", String(!isConsole));
+  const isSim = next === "sim";
+  if (persist) {
+    rememberView(next);
+    simViewPending = false;
+  }
+  // The view on screen, as one attribute a rule or a query can switch on.
+  document.documentElement.dataset.view = next;
+  graphHost.hidden = next !== "graph";
+  inspectorHost.hidden = next !== "graph";
+  $("btn-view-graph").setAttribute("aria-pressed", String(next === "graph"));
   $("btn-view-console").setAttribute("aria-pressed", String(isConsole));
+  $("btn-view-sim").setAttribute("aria-pressed", String(isSim));
   if (isConsole) {
+    simView?.hide();
     consoleView.show();
+  } else if (isSim) {
+    consoleView.hide();
+    simView?.show();
   } else {
+    simView?.hide();
     consoleView.hide();
     // Reflect any console edits back onto the graph. If a device-follow reflect or an
     // undo landed while the graph was hidden, do the deferred full refresh instead.
@@ -1710,6 +1780,7 @@ function setLiveUi(on: boolean): void {
   dynScreen.setLive(on);
   // A selected node's CUE row switches only while a session is up.
   refreshInspectorCue();
+  simView?.setLive();
   // The sleep hold lives and dies with the session, so every way in and out of one
   // — the toggle, a write failure, a link loss — passes through here.
   void syncSleepHold(on && getSettings().preventSleep).then((failed) => {
@@ -1880,6 +1951,7 @@ function markChanged(source: WriteSource = "ui", written?: Iterable<string>): vo
   planWrites.note(written);
   live?.schedule();
   midi?.scheduleFeedback();
+  simView?.planChanged();
   planHistory?.note();
 }
 
@@ -1891,6 +1963,7 @@ function markChanged(source: WriteSource = "ui", written?: Iterable<string>): vo
 function planValuesChanged(): void {
   traceProbe?.sample("device-action");
   midi?.scheduleFeedback();
+  simView?.planChanged();
 }
 
 /** Whether the model has the microSD recorder at all. URX22 does not, so nothing about
@@ -2211,6 +2284,10 @@ function applyStaticI18n(): void {
   const viewConsoleBtn = $("btn-view-console");
   viewConsoleBtn.textContent = m.toolbar.viewConsole;
   viewConsoleBtn.title = m.toolbar.viewConsoleHint;
+  const viewSimBtn = $("btn-view-sim");
+  viewSimBtn.textContent = m.toolbar.viewSim;
+  viewSimBtn.title = m.toolbar.viewSimHint;
+  for (const item of simScaleItems()) item.textContent = m.toolbar.simScale(Number(item.dataset.simScale));
   $("btn-auto").textContent = m.toolbar.arrange;
   $("btn-hide-unused").textContent = m.toolbar.hideUnused;
   $("lbl-device").textContent = m.toolbar.device;
@@ -2635,6 +2712,7 @@ function repaintPatched(touch: PatchTouch): void {
     rebuildInspector();
     consoleView.refresh();
   }
+  simView?.planChanged();
 }
 
 // Read the whole device into the plan, honoring the Preferences device scope:
@@ -2766,6 +2844,9 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
     // sat showing the plan that was just replaced. Refresh re-resolves the binding too, so
     // a screen whose node or processor the new plan does not have closes itself.
     dynScreen.refresh();
+    // A new plan object, and on a model switch another LCD.
+    if (modelId !== prevModelId) simView?.reload();
+    else simView?.planChanged();
   };
   const prevModelId = modelId;
   const prevPlan = plan;
@@ -3191,16 +3272,66 @@ picker.addEventListener("change", async () => {
   if (!switched) picker.value = modelId;
 });
 
-ratePicker.addEventListener("change", () => {
+/** Take a sampling frequency chosen on the toolbar or on the SIM into the plan. */
+/** Apply one edit the SIM view made, through the funnels the board and the Inspector use.
+ *  False where the plan does not take it. */
+function applySimEdit(edit: SimEdit): boolean {
+  switch (edit.kind) {
+    case "node":
+      // The Inspector holds the recorder's Track Count while live (the link cannot carry it),
+      // and so does this.
+      if (liveSessionUp && edit.patch.sdRecTrackCount !== undefined) return false;
+      inspectorActions.onUpdateNodeParams(edit.id, edit.patch, edit.written, edit.defaults);
+      break;
+    case "send": {
+      // The funnel addresses a send by its ports, and takes no edit of one the plan does not wire.
+      const from = ref(edit.from, "out");
+      const to = ref(edit.to, "in");
+      if (!plan.connections.some((c) => c.from === from && c.to === to)) return false;
+      inspectorActions.onUpdateParams(from, to, edit.patch);
+      break;
+    }
+    case "name":
+      inspectorActions.onRenameNode(edit.id, edit.name);
+      break;
+    case "color":
+      inspectorActions.onRecolorNode(edit.id, edit.color);
+      break;
+    // A wire goes through the board's own connect and delete, which keep their rules
+    // (a source replaced rather than doubled, a pair's mirrored source, a fixed wire kept).
+    case "connect":
+      graph.connectTo({ ref: edit.from, dir: "out", tap: edit.tap ?? false, targets: [] }, edit.to);
+      break;
+    case "disconnect":
+      graph.deleteConnection(edit.from, edit.to);
+      break;
+    // The toolbar's rate picker is locked while the device link is held, and so is this.
+    case "rate":
+      if (deviceLinkHolder !== null) return false;
+      chooseSampleRate(edit.rate);
+      break;
+    case "none":
+      break;
+    // One choice on the LCD that takes more than one gesture on the board.
+    case "steps":
+      for (const step of edit.steps) if (!applySimEdit(step)) return false;
+      break;
+  }
+  return true;
+}
+
+function chooseSampleRate(rate: number): void {
   // The recorder's Track Count goes with the rate, one way: see setPlanSampleRate.
-  setPlanSampleRate(plan, Number(ratePicker.value));
+  setPlanSampleRate(plan, rate);
   // Same change funnel as every other edit: dirty + (in Live sync) push the new
   // rate to the device. Re-clocking glitches audio, but that is inherent to a
   // deliberate rate change and keeps Live sync from deferring it onto a later edit.
   markChanged();
-  syncRateUi(); // the picker assignment is a no-op here — it is the source
+  syncRateUi();
   setStatus(t().status.sampleRate(formatRate(plan.sampleRate)));
-});
+}
+
+ratePicker.addEventListener("change", () => chooseSampleRate(Number(ratePicker.value)));
 
 $("btn-new").addEventListener(
   "click",
@@ -4843,6 +4974,7 @@ if (!DEMO) {
     experimentalOn = true;
     prefs.refresh();
     for (const el of document.querySelectorAll<HTMLElement>("[data-experimental-only]")) el.hidden = false;
+    if (simViewPending) setView("sim");
 
     // The link ledger's readout. The counters and the log run in every desktop build;
     // this is the only part that is a diagnostic, so it is the only part gated. Built
@@ -5091,8 +5223,12 @@ if (!DEMO) {
 
 $("btn-view-graph").addEventListener("click", () => setView("graph"));
 $("btn-view-console").addEventListener("click", () => setView("console"));
-// Restore the last selected view now that the console is wired up.
-setView(detectView());
+$("btn-view-sim").addEventListener("click", () => setView("sim"));
+// Restore the last selected view now that the console is wired up. A remembered SIM view
+// waits for the experimental gate; the graph stands in for it until then.
+const restoredView = detectView();
+setView(restoredView === "sim" ? "graph" : restoredView, restoredView !== "sim");
+simViewPending = restoredView === "sim";
 
 // Re-resolve the active theme from the current mode and repaint what reads it:
 // the SVG graph, the console's scribble ink, and an open tuning screen's plot.
@@ -5143,8 +5279,20 @@ hideOffBtn.addEventListener("click", () => {
   setStatus(next ? t().toolbar.hideOffSends : t().toolbar.showOffSends);
 });
 
-/** An entry of a toolbar menu: an action, or a toggle that carries aria-checked. */
-const MENU_ITEM = ':is([role="menuitem"], [role="menuitemcheckbox"])';
+// The View menu's SIM Scale choices: the scale the SIM view draws the LCD at.
+for (const item of simScaleItems()) {
+  item.addEventListener("click", () => {
+    const scale = Number(item.dataset.simScale) as SimScale;
+    if (!(SIM_SCALES as readonly number[]).includes(scale)) return;
+    simView?.setScale(scale);
+    rememberSimScale(scale);
+    syncSimScaleItems(scale);
+  });
+}
+syncSimScaleItems(detectSimScale());
+
+/** An entry of a toolbar menu: an action, a toggle or a choice that carries aria-checked. */
+const MENU_ITEM = ':is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"])';
 
 // Wire the File dropdown: open/close, click-outside, and roving keyboard focus
 // across its menu items. The panel is positioned fixed (toolbar clips overflow),

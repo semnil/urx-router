@@ -1230,6 +1230,19 @@ export function mergeReadInsertFxParams(
   return out;
 }
 
+/** Park the outgoing effect's engine values under its own family before the
+ *  selector names another one: a bare slot number left behind would be read as the
+ *  new family's, whose slot means a different parameter under a different law, and
+ *  emitted as absolute state on the next flush. Null when the node carries no
+ *  engine values to park. */
+export function parkOutgoingInsertFxParams(
+  prev: { insertFx?: number; insertFxParams?: Record<string, number> } | undefined,
+): Record<string, number> | null {
+  if (!prev?.insertFxParams) return null;
+  const prevFam = prev.insertFx === undefined ? null : insertFxFamilyOf(prev.insertFx);
+  return qualifyInsertFxParams(prev.insertFxParams, prevFam);
+}
+
 export function qualifyInsertFxParams(
   params: Record<string, number>,
   family: InsertFxFamily | null,

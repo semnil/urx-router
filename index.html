@@ -75,6 +75,7 @@
         <div class="view-tabs" id="view-tabs" role="group" aria-label="View">
           <button id="btn-view-graph" type="button" aria-pressed="true">Graph</button>
           <button id="btn-view-console" type="button" aria-pressed="false">Console</button>
+          <button id="btn-view-sim" type="button" aria-pressed="false" data-experimental-only hidden>SIM</button>
         </div>
         <span class="spacer"></span>
         <span id="live-tally" class="live-tally" role="status" aria-live="polite" hidden></span>
@@ -208,6 +209,62 @@
                 role="menuitemcheckbox"
                 aria-checked="false"
               ></button>
+              <span class="menu-sep" role="separator" data-experimental-only hidden></span>
+              <button
+                class="menu-item sim-scale"
+                type="button"
+                role="menuitemradio"
+                aria-checked="false"
+                data-sim-scale="50"
+                data-experimental-only
+                hidden
+              >
+                SIM Scale 50%
+              </button>
+              <button
+                class="menu-item sim-scale"
+                type="button"
+                role="menuitemradio"
+                aria-checked="false"
+                data-sim-scale="75"
+                data-experimental-only
+                hidden
+              >
+                SIM Scale 75%
+              </button>
+              <button
+                class="menu-item sim-scale"
+                type="button"
+                role="menuitemradio"
+                aria-checked="true"
+                data-sim-scale="100"
+                data-experimental-only
+                hidden
+              >
+                SIM Scale 100%
+              </button>
+              <button
+                class="menu-item sim-scale"
+                type="button"
+                role="menuitemradio"
+                aria-checked="false"
+                data-sim-scale="150"
+                data-experimental-only
+                hidden
+              >
+                SIM Scale 150%
+              </button>
+              <button
+                class="menu-item sim-scale"
+                type="button"
+                role="menuitemradio"
+                aria-checked="false"
+                data-sim-scale="200"
+                data-experimental-only
+                hidden
+              >
+                SIM Scale 200%
+              </button>
             </div>
           </div>
           <span class="tool-sep"></span>
@@ -249,6 +306,7 @@
         <div id="graph-host"></div>
         <aside id="inspector"></aside>
         <section id="console-host" hidden></section>
+        <section id="sim-host" hidden></section>
       </main>
       <footer class="statusbar-row">
         <span id="statusbar" aria-hidden="true"></span>

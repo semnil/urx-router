@@ -66,7 +66,14 @@ export const test = base.extend<{ e2eCoverage: CoverageHarness }>({
 async function printedMarks(page: Page): Promise<string[]> {
   const read = await page.evaluate((reached) => {
     const out: { where: string; attr: string; value: string }[] = [];
-    for (const e of document.querySelectorAll<HTMLElement>("[aria-label], [aria-description], [title]")) {
+    // The SIM view's LCD is drawn in a shadow tree, which a query of the document does not enter.
+    const trees: ParentNode[] = [document];
+    for (let i = 0; i < trees.length; i++)
+      for (const host of trees[i]!.querySelectorAll("*")) if (host.shadowRoot) trees.push(host.shadowRoot);
+    const marked = trees.flatMap((tree) => [
+      ...tree.querySelectorAll<HTMLElement>("[aria-label], [aria-description], [title]"),
+    ]);
+    for (const e of marked) {
       if (e.closest("[aria-hidden='true']") || !e.checkVisibility({ visibilityProperty: true })) continue;
       const where = e.dataset.ctl || e.id || e.className || e.tagName;
       for (const attr of ["aria-label", "aria-description"]) {

@@ -6,6 +6,12 @@
   --mono: "SF Mono", "SFMono-Regular", "Menlo", "Cascadia Code", "Consolas", monospace;
 
   --canvas-bg: #14110d;
+  /* The SIM view's ground. Defined once and redefined by no theme: the unit's LCD draws in
+     its own colours, so the board around it stays the same in both. */
+  --sim-ground:
+    radial-gradient(130% 80% at 50% -8%, rgba(255, 180, 80, 0.05), transparent 60%),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 3px),
+    radial-gradient(circle, rgba(255, 224, 160, 0.05) 1px, transparent 1px) 0 0 / 26px 26px, #14110d;
   --graph-bg:
     radial-gradient(130% 80% at 50% -8%, rgba(255, 180, 80, 0.05), transparent 60%),
     repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 3px),
@@ -829,6 +835,22 @@ input[type="range"]:focus-visible,
   display: flex;
   flex: 1;
   min-height: 0;
+}
+
+/* The SIM view: the LCD centred on a ground that does not follow the theme, scrolling where
+   a scale draws it larger than the stage. */
+#sim-host {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  display: flex;
+  align-items: safe center;
+  justify-content: safe center;
+  background: var(--sim-ground);
+  color-scheme: dark;
+}
+#sim-host[hidden] {
+  display: none;
 }
 
 #graph-host {

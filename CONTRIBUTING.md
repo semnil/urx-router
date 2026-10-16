@@ -46,8 +46,8 @@ pnpm tauri dev     # desktop app
 - Identifiers and comments in English. Comments describe behavior, not history.
 - Keep diffs minimal and match the surrounding style. Formatting-only changes are not accepted
   on their own.
-- **Zero runtime external dependencies** — no npm packages or CDNs in the shipped app. Dev
-  dependencies are fine.
+- **Zero runtime external dependencies** — no npm packages or CDNs from outside github.com/semnil in
+  the shipped app (the LCD simulator `urx-lcd-sim` is semnil's own). Dev dependencies are fine.
 - Run `pnpm format` (and `cargo fmt` for Rust changes) before committing. `format.yml` runs
   both and fails on the diff; it does not write anything back to your branch.
 - Keep the theme palettes in `src/style.css` and `PALETTES` in `src/ui/graph.ts` in sync.

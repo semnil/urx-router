@@ -37,7 +37,7 @@ test("the notice renders as a collapsed family index that unfolds per header", a
   await expect(page.locator(".lic-sec")).toHaveCount(2);
   const apache = page.locator(".lic-sec").first();
   await expect(apache.locator(".lic-toggle")).toHaveText("▸Apache License 2.0");
-  await expect(apache.locator(".lic-count")).toHaveText("3 crates · 2 texts");
+  await expect(apache.locator(".lic-count")).toHaveText("3 components · 2 texts");
   await expect(apache.locator(".lic-detail")).toBeHidden();
   // The header unfolds its text variants with their own used-by mapping...
   await apache.locator(".lic-toggle").click();
