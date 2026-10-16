@@ -20,6 +20,7 @@ import {
   COLOR_OFF,
   COLOR_PALETTE,
   COMP_EQ_SSMCS,
+  D_GAIN_SOURCES,
   DELAY_FRAME_RATE_OPTIONS,
   OSC_MODE_OPTIONS,
   PAN_BAL_OPTIONS,
@@ -473,14 +474,17 @@ export function routingBindings(model: DeviceModel, out: Map<string, SimBinding>
   }
   for (const fx of ["bus.fx1", "bus.fx2"]) if (has(fx)) out.set(`osc.assign.${simStripId(fx)}`, oscAssign(fx, null));
 
-  // D.Gain of the sources the simulator names from the start.
-  for (const [path, id] of [
-    ["usb-main-a", "in.usbmain_a"],
-    ["usb-main-b", "in.usbmain_b"],
-    ["usb-main-c", "in.usbmain_c"],
-    ["usb-sub", "in.usbsub"],
-  ] as const)
-    if (has(id)) out.set(`source.${path}.digitalGain`, plainValue(id, "dGain"));
+  // D.Gain of every digital source, at the path the simulator keeps a source's gain under: its name
+  // in lower case, with each run of other characters a hyphen.
+  for (const id of Object.keys(D_GAIN_SOURCES)) {
+    const label = has(id) ? inputLabel(id) : null;
+    if (!label) continue;
+    const key = label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    out.set(`source.${key}.digitalGain`, plainValue(id, "dGain"));
+  }
 
   // The output patches.
   const analogChoices: Choice[] = [
