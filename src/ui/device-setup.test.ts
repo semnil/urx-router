@@ -43,7 +43,7 @@ beforeEach(() => {
 describe("DeviceSetupPanel", () => {
   it("opens on the reading as reported and locks settings absent from the model", () => {
     const { panel } = install("URX22");
-    const setup: DeviceSetup = { ...defaultDeviceSetup(), brightness: 999, timeZone: 999 };
+    const setup: DeviceSetup = { ...defaultDeviceSetup(getModel("URX22")), brightness: 999, timeZone: 999 };
 
     panel.open(setup);
 
@@ -70,7 +70,7 @@ describe("DeviceSetupPanel", () => {
   // shown as that entry, nothing was pending for it and choosing that entry wrote nothing.
   it("shows a time zone off the catalog as unknown, and writes the entry picked for it", async () => {
     const { panel, hooks } = install();
-    panel.open({ ...defaultDeviceSetup(), timeZone: 200 });
+    panel.open({ ...defaultDeviceSetup(getModel("URX44V")), timeZone: 200 });
 
     const zone = document.querySelector("#device-setup-timezone") as HTMLSelectElement;
     expect(zone.value).toBe("200");
@@ -94,7 +94,7 @@ describe("DeviceSetupPanel", () => {
 
   it("writes nothing for a value off the catalog when another row is edited", async () => {
     const { panel, hooks } = install();
-    panel.open({ ...defaultDeviceSetup(), timeZone: 200, autoPowerOffTime: 30 });
+    panel.open({ ...defaultDeviceSetup(getModel("URX44V")), timeZone: 200, autoPowerOffTime: 30 });
     expect(
       (document.querySelector("#device-setup-apo-time") as HTMLSelectElement).selectedOptions[0]?.textContent,
     ).toBe(t().deviceSetup.unknownValue(30));
@@ -109,7 +109,7 @@ describe("DeviceSetupPanel", () => {
   // there, and picking Monitor 1 sent nothing.
   it("shows a Parameter 1 off the catalog as unknown, and writes the one picked for it", async () => {
     const { panel, hooks } = install();
-    const setup = defaultDeviceSetup();
+    const setup = defaultDeviceSetup(getModel("URX44V"));
     setup.knobs[0] = { fn: "Monitor", p1: "Monitor 3", p2: "Level" };
     panel.open(setup);
 
@@ -138,7 +138,7 @@ describe("DeviceSetupPanel", () => {
 
   it("shows a knob function off the catalog as unknown, and clears it with three writes", async () => {
     const { panel, hooks } = install();
-    const setup = defaultDeviceSetup();
+    const setup = defaultDeviceSetup(getModel("URX44V"));
     setup.knobs[0] = { fn: "Warp Drive", p1: "", p2: "" };
     panel.open(setup);
 
@@ -169,7 +169,7 @@ describe("DeviceSetupPanel", () => {
     localStorage.setItem("urx-settings", JSON.stringify({ wheelSteps: 4 }));
     resetSettingsCache();
     const { panel } = install();
-    panel.open({ ...defaultDeviceSetup(), brightness: 4 });
+    panel.open({ ...defaultDeviceSetup(getModel("URX44V")), brightness: 4 });
 
     const slider = document.querySelector("#device-setup-brightness") as HTMLInputElement;
     slider.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
@@ -189,7 +189,7 @@ describe("DeviceSetupPanel", () => {
     localStorage.clear(); // the case above leaves a wheel-steps preference behind
     resetSettingsCache();
     const { panel } = install();
-    panel.open({ ...defaultDeviceSetup(), brightness: 4 });
+    panel.open({ ...defaultDeviceSetup(getModel("URX44V")), brightness: 4 });
 
     const slider = document.querySelector("#device-setup-brightness") as HTMLInputElement;
     slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
@@ -211,7 +211,7 @@ describe("DeviceSetupPanel", () => {
     const flight = deferred<boolean>();
     const { panel, hooks } = install();
     vi.mocked(hooks.apply).mockReturnValueOnce(flight.promise);
-    panel.open(defaultDeviceSetup());
+    panel.open(defaultDeviceSetup(getModel("URX44V")));
 
     const slider = document.querySelector("#device-setup-brightness") as HTMLInputElement;
     slider.value = "4";
@@ -249,7 +249,7 @@ describe("DeviceSetupPanel", () => {
     const flight = deferred<boolean>();
     const { panel, hooks } = install();
     vi.mocked(hooks.apply).mockReturnValueOnce(flight.promise);
-    panel.open(defaultDeviceSetup());
+    panel.open(defaultDeviceSetup(getModel("URX44V")));
 
     change(document.querySelector("#device-setup-language") as HTMLSelectElement, "1");
     (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
@@ -275,7 +275,7 @@ describe("DeviceSetupPanel", () => {
     const flight = deferred<boolean>();
     const { panel, hooks } = install();
     vi.mocked(hooks.apply).mockReturnValueOnce(flight.promise);
-    panel.open(defaultDeviceSetup());
+    panel.open(defaultDeviceSetup(getModel("URX44V")));
 
     change(document.querySelector("#device-setup-language") as HTMLSelectElement, "1");
     (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
@@ -299,7 +299,7 @@ describe("DeviceSetupPanel", () => {
   it("keeps a failed apply pending so the same writes can be retried", async () => {
     const { panel, hooks } = install();
     vi.mocked(hooks.apply).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    panel.open(defaultDeviceSetup());
+    panel.open(defaultDeviceSetup(getModel("URX44V")));
 
     change(document.querySelector("#device-setup-language") as HTMLSelectElement, "1");
     (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
@@ -320,7 +320,7 @@ describe("DeviceSetupPanel", () => {
     const answer = deferred<boolean>();
     const { panel, hooks } = install();
     vi.mocked(hooks.confirmDiscard).mockReturnValueOnce(answer.promise).mockResolvedValueOnce(true);
-    panel.open(defaultDeviceSetup());
+    panel.open(defaultDeviceSetup(getModel("URX44V")));
     change(document.querySelector("#device-setup-language") as HTMLSelectElement, "1");
 
     const closing = panel.requestClose();
@@ -344,7 +344,7 @@ describe("DeviceSetupPanel", () => {
   // the control the operator used nor the offset they scrolled to may go with it.
   it("keeps the focused control and the grid's scroll offset across a rebuild", () => {
     const { panel } = install();
-    panel.open(defaultDeviceSetup());
+    panel.open(defaultDeviceSetup(getModel("URX44V")));
     const grid = (): HTMLElement => document.querySelector("#device-setup-box .prefs-grid") as HTMLElement;
     const first = grid();
     first.scrollTop = 400;
@@ -387,7 +387,7 @@ describe("DeviceSetupPanel", () => {
         b.getAttribute("aria-pressed") === "true" ? [i] : [],
       );
     const { panel, hooks } = install();
-    panel.open({ ...defaultDeviceSetup(), knobBank: 2 });
+    panel.open({ ...defaultDeviceSetup(getModel("URX44V")), knobBank: 2 });
     expect(pressed()).toEqual([2]);
     change(document.querySelector<HTMLSelectElement>(".udk-row select")!, "Oscillator");
     (document.querySelector("#device-setup-apply") as HTMLButtonElement).click();
@@ -401,17 +401,17 @@ describe("DeviceSetupPanel", () => {
     panel.close();
 
     for (const knobBank of [7, -1, 1.5, NaN]) {
-      panel.open({ ...defaultDeviceSetup(), knobBank });
+      panel.open({ ...defaultDeviceSetup(getModel("URX44V")), knobBank });
       expect(pressed(), String(knobBank)).toEqual([0]);
       panel.close();
     }
-    panel.open({ ...defaultDeviceSetup(), knobBank: 3 });
+    panel.open({ ...defaultDeviceSetup(getModel("URX44V")), knobBank: 3 });
     expect(pressed()).toEqual([3]);
   });
 
   it("edits the selected user-defined-knob bank as one three-column write", async () => {
     const { panel, hooks } = install();
-    panel.open(defaultDeviceSetup());
+    panel.open(defaultDeviceSetup(getModel("URX44V")));
 
     const banks = document.querySelectorAll<HTMLButtonElement>("#device-setup-banks button");
     banks[1].click();

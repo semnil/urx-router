@@ -84,7 +84,7 @@ export function setupGlassValues(model: DeviceModel, setup: DeviceSetup): Map<st
 /** Every path of the unit's settings an edit on the glass changes on `model`: the paths the glass
  *  shows for the factory settings, less the knob bank. */
 export function setupGlassPaths(model: DeviceModel): string[] {
-  return [...setupGlassValues(model, defaultDeviceSetup()).keys()].filter((path) => isSetupGlassPath(model, path));
+  return [...setupGlassValues(model, defaultDeviceSetup(model)).keys()].filter((path) => isSetupGlassPath(model, path));
 }
 
 /** Whether `path` is one of the unit's settings an edit on the glass changes on `model`. */

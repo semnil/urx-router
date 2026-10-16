@@ -24,12 +24,14 @@ describe.each(MODELS)("the SIM's SETUP > GENERAL on a %s", (modelId) => {
     for (const [path, value] of taken) {
       const edit = setupGlassEdit(model, path, value);
       expect(edit, path).not.toBe("refused");
-      expect(setupGlassValues(model, withSetupEdit(defaultDeviceSetup(), edit as object)).get(path), path).toBe(value);
+      expect(setupGlassValues(model, withSetupEdit(defaultDeviceSetup(model), edit as object)).get(path), path).toBe(
+        value,
+      );
     }
   });
 
   it("names only paths the simulator reads, and takes back what it shows", () => {
-    const shown = setupGlassValues(model, defaultDeviceSetup());
+    const shown = setupGlassValues(model, defaultDeviceSetup(model));
     expect(shown.size).toBeGreaterThan(5);
     for (const [path, value] of shown) {
       expect(shipped.has(path), path).toBe(true);
@@ -37,7 +39,9 @@ describe.each(MODELS)("the SIM's SETUP > GENERAL on a %s", (modelId) => {
       expect(isSetupGlassPath(model, path), path).toBe(true);
       const edit = setupGlassEdit(model, path, value);
       expect(edit, path).not.toBe("refused");
-      expect(setupGlassValues(model, withSetupEdit(defaultDeviceSetup(), edit as object)).get(path), path).toBe(value);
+      expect(setupGlassValues(model, withSetupEdit(defaultDeviceSetup(model), edit as object)).get(path), path).toBe(
+        value,
+      );
     }
   });
 
@@ -47,19 +51,34 @@ describe.each(MODELS)("the SIM's SETUP > GENERAL on a %s", (modelId) => {
     expect(setupGlassEdit(model, "setup.language", "Japanese")).toEqual({ language: 1 });
     expect(setupGlassEdit(model, "setup.language", "Klingon")).toBe("refused");
     const knob = setupGlassEdit(model, "setup.udk.2.C", "Monitor 2 Level");
-    const after = withSetupEdit(defaultDeviceSetup(), knob as object);
+    const after = withSetupEdit(defaultDeviceSetup(model), knob as object);
     expect(after.knobs[udkSlot(1, 2)]).toEqual({ fn: "Monitor", p1: "Monitor 2", p2: "Level" });
-    expect(after.knobs.filter((k) => k.fn !== "No Assign")).toHaveLength(1);
+    expect(
+      after.knobs.filter((k, y) => y !== udkSlot(1, 2)),
+      "the other knobs stay as they were",
+    ).toEqual(defaultDeviceSetup(model).knobs.filter((k, y) => y !== udkSlot(1, 2)));
     expect(setupGlassEdit(model, "setup.udk.bank", 2), "the unit's bank is read and never written").toBeNull();
     expect(setupGlassEdit(model, "setup.operationMode", "Simple")).toBeNull();
     expect(setupGlassEdit(model, "setup.followUsb", true)).toBeNull();
     expect(setupGlassEdit(model, "setup.udk.9.A", "Monitor 2 Level"), "a bank the unit does not have").toBeNull();
   });
 
+  // The simulator ships the knob assignments a unit leaves the factory with, so a reading the
+  // app has not taken yet shows the same knobs on both.
+  it("starts from the knob assignments the simulator ships", () => {
+    const shown = [...setupGlassValues(model, defaultDeviceSetup(model))].filter(([path]) =>
+      /^setup\.udk\.\d\.[A-D]$/.test(path),
+    );
+    expect(shown.length, "every knob is shown").toBe(16);
+    for (const [path, value] of shown) expect(value, path).toBe(shipped.get(path));
+  });
+
   it("shows no name for a setting read past the list the unit offers", () => {
-    const shown = setupGlassValues(model, { ...defaultDeviceSetup(), language: 99 });
+    const shown = setupGlassValues(model, { ...defaultDeviceSetup(model), language: 99 });
     expect(shown.has("setup.language")).toBe(false);
-    expect(shown.get("setup.brightness"), "the other settings are still shown").toBe(defaultDeviceSetup().brightness);
+    expect(shown.get("setup.brightness"), "the other settings are still shown").toBe(
+      defaultDeviceSetup(model).brightness,
+    );
   });
 
   it("offers the HDMI and Date/Time settings only on a model that has them", () => {
