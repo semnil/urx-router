@@ -639,6 +639,7 @@ export const ja: Messages = {
     lockDeviceSetup: "本体設定で変更してください",
     lockUnitOp: "本体で操作してください",
     lockRateLinked: "デバイスとの接続中は変更できません",
+    lockFollowUsb: "ツールバーの FOLLOW USB で変更してください",
   },
   shelf: {
     title: "非表示",

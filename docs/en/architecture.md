@@ -1857,7 +1857,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   place with a padlock at its top right and the reason as its tooltip, and takes no touch, key or drag. Held are the
   SETUP > GENERAL screens Device setup edits ("Change it in Device setup"), the unit's own operations and USB Storage
   Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus (the Inspector's and the CONSOLE's
-  wording), the sampling frequency while the device link is held, the recorder's Track Count while Live sync is up and
+  wording), the sampling frequency while the device link is held, Follow USB on the same screen ("Change it with FOLLOW USB on
+  the toolbar"), the recorder's Track Count while Live sync is up and
   the sends into FX 2 at a rate that takes FX 2 out (each the wording the Inspector already gives), and an insert
   effect's value its own screen holds shut for the effect's current values, such as M.B.Comp's bands while its 1-knob
   is on (that screen's wording).

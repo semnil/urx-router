@@ -23,6 +23,8 @@ export interface SimLockReasons {
   unitOp: string;
   /** The sampling frequency while the device link is held. */
   rateLinked: string;
+  /** Follow USB, which the toolbar's FOLLOW USB changes. */
+  followUsb: string;
   /** The recorder's Track Count while Live sync is up. */
   trackCountLive: string;
   /** An FX 2 send at a rate that takes FX 2 out. */
@@ -85,6 +87,7 @@ export function simLocks(
   for (const id of DEVICE_SETUP_SCREENS) out.push({ target: { kind: "screen", id }, reason: reasons.deviceSetup });
   for (const op of UNIT_OPS) out.push({ target: { kind: "op", op }, reason: reasons.unitOp });
   out.push({ target: { kind: "path", path: "sd.usbStorage" }, reason: reasons.unitOp });
+  out.push({ target: { kind: "path", path: "setup.followUsb" }, reason: reasons.followUsb });
   if (state.linked) out.push({ target: { kind: "screen", id: "setup.rate" }, reason: reasons.rateLinked });
   const fx2Out = model.nodes.some((n) => n.id === "bus.fx2") && nodeRateDisabled("bus.fx2", plan.sampleRate);
   for (const path of paths) {

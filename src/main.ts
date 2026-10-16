@@ -1001,6 +1001,7 @@ simView = new SimView(
           notAccepted: t().inspector.prePostLcdOnly,
           unitOp: t().sim.lockUnitOp,
           rateLinked: t().sim.lockRateLinked,
+          followUsb: t().sim.lockFollowUsb,
           trackCountLive: t().inspector.sdRecTrackCountLive,
           fx2Rate: t().inspector.fx2RateLocked,
           deviceDriven: t().dynTuning.insfx.deviceOnlyTag,

@@ -170,6 +170,20 @@ test("holds the unit's own settings shut on the LCD, with the reason as its tool
   await expect(sim(page).locator('.lcd[data-screen="setup.version"]:not([inert])')).toHaveCount(1);
 });
 
+test("holds Follow USB on the LCD's Sampling Frequency screen, naming the toolbar's FOLLOW USB", async ({ page }) => {
+  await openSim(page);
+  await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Sampling Frequency" }), "setup.rate");
+  const follow = lcd(page).getByRole("button", { name: "Follow USB", exact: true });
+  await expect(follow).toHaveAttribute("aria-disabled", "true");
+  await expect(follow).toHaveAttribute("title", en.sim.lockFollowUsb);
+  await expect(follow.locator(".lock-mark")).toHaveCount(1);
+  await expect(
+    lcd(page).getByRole("button", { name: "96kHz", exact: true }),
+    "the rate itself is the plan's",
+  ).not.toHaveAttribute("aria-disabled");
+});
+
 // A change the unit makes beside the one asked for — a BUS Type resetting its bank, an EFFECT TYPE
 // refilling its effect — reaches the plan the same from the LCD as from the Inspector.
 

@@ -9,6 +9,7 @@ const REASONS = {
   notAccepted: "notAccepted",
   unitOp: "unitOp",
   rateLinked: "rateLinked",
+  followUsb: "followUsb",
   trackCountLive: "trackCountLive",
   fx2Rate: "fx2Rate",
   deviceDriven: "deviceDriven",
@@ -34,6 +35,7 @@ describe("the controls the SIM view holds shut", () => {
     for (const id of DEVICE_SETUP_SCREENS) expect(reasonFor(all, { kind: "screen", id })).toBe("deviceSetup");
     for (const op of UNIT_OPS) expect(reasonFor(all, { kind: "op", op })).toBe("unitOp");
     expect(reasonFor(all, path("sd.usbStorage"))).toBe("unitOp");
+    expect(reasonFor(all, path("setup.followUsb")), "the toolbar's FOLLOW USB is where it changes").toBe("followUsb");
     expect(reasonFor(all, { kind: "screen", id: "setup.patch" }), "Output Patch is the plan's").toBeNull();
   });
 
