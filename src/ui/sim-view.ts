@@ -118,8 +118,9 @@ const CUE_PATH = /^ch\.(.+)\.cue$/;
  * writes every flag it moved, so one press arrives as several writes; the press is what is handed
  * on, and the unit and the session apply the rule to it. The glass is shown the outputs the unit
  * puts back (`unitCueMemory`), so turning the last input cue off arrives as that cue off with
- * those outputs back on: it is handed on as the cue turned off, and the unit puts them back. Any
- * other flag turned on is the press — the flags its rule turned off are already off once it
+ * exactly those outputs back on: it is handed on as the cue turned off, and the unit puts them
+ * back. An output among them pressed alone is a press of that output. Any other flag turned on
+ * is the press — the flags its rule turned off are already off once it
  * lands — and a press that only turns flags off is the glass's CLEAR CUE when it leaves nothing
  * cued.
  */
@@ -129,7 +130,8 @@ export function applyGlassCues(changes: readonly { node: string; on: boolean }[]
   const ons = changes.filter((c) => c.on && cued(c.node) === false);
   const offs = changes.filter((c) => !c.on && cued(c.node) === true);
   const memory = hooks.unitCueMemory() ?? [];
-  if (ons.length && offs.length && ons.every((c) => memory.includes(c.node))) {
+  const restores = ons.length === memory.length && ons.every((c) => memory.includes(c.node));
+  if (ons.length && offs.length && restores) {
     for (const c of offs) if (cued(c.node) === true && !hooks.setUnitCue(c.node, false)) return false;
     return true;
   }

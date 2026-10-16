@@ -200,6 +200,44 @@ describe("the plan as the glass's transport", () => {
     expect(clear.set.nodes(), "CLEAR CUE puts nothing back").toEqual([]);
   });
 
+  // STEREO and MIX 1 cued, then CH 1: the unit holds both outputs to put back. Turning CH 1 off
+  // puts both back, pressing STEREO alone cues STEREO alone, and CLEAR CUE puts neither back.
+  it("tells a release of two held outputs from a press of one of them", async () => {
+    const held = (): ReturnType<typeof session> =>
+      session(
+        [],
+        [
+          ["bus.stereo", true],
+          ["bus.mix1", true],
+          ["ch1", true],
+        ],
+      );
+    const release = held();
+    expect([...release.hooks.unitCueMemory()].sort(), "the premise: both outputs are held").toEqual([
+      "bus.mix1",
+      "bus.stereo",
+    ]);
+    const r = transport(release.hooks);
+    await Promise.all([
+      r.write("ch.ch1.cue", false),
+      r.write("ch.bus.stereo.cue", true),
+      r.write("ch.bus.mix1.cue", true),
+    ]);
+    expect(release.calls).toEqual([["ch1", false]]);
+    expect([...release.set.nodes()].sort(), "both outputs back").toEqual(["bus.mix1", "bus.stereo"]);
+
+    const pick = held();
+    const p = transport(pick.hooks);
+    await Promise.all([p.write("ch.ch1.cue", false), p.write("ch.bus.stereo.cue", true)]);
+    expect(pick.calls).toEqual([["bus.stereo", true]]);
+    expect(pick.set.nodes(), "STEREO alone").toEqual(["bus.stereo"]);
+
+    const clear = held();
+    await transport(clear.hooks).write("ch.ch1.cue", false);
+    expect(clear.calls).toEqual(["clear"]);
+    expect(clear.set.nodes(), "CLEAR CUE puts neither back").toEqual([]);
+  });
+
   it("hands on the press an output cue is, not the input cues its rule turned off", async () => {
     const { set, calls, hooks } = session(["ch1", "ch2"]);
     const t = transport(hooks);
