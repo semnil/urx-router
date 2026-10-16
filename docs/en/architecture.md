@@ -1988,7 +1988,7 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   assembles to the position that was sent rather than against a stale half. That covers the values a plan
   holds off the codec's grid — the factory capture and a value read from the unit (1000 Hz between two of an
   EQ band's log positions), a 0.1 dB fine-mode gain, a setting
-  finer than the wire (the Mono Delay time, the companders' Release) — which the echo would otherwise move
+  finer than the wire (the Mono Delay time), a compander Release between two of the unit's knob stops — which the echo would otherwise move
   and, while live, write to the unit (`core/midi/controls.test.ts` drives it through the engine on the continuous
   controls the factory plan lists, the morphing bank's, and those of each insert effect and each FX type). Only a pass that actually sends records the
   pair: one that delivers nothing tells the controller nothing. At 7 bits the codecs alone would not hold

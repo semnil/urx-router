@@ -1143,6 +1143,33 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     }
   });
 
+  // A compander Release moves through the unit's 160 knob stops, the same table the tuning
+  // screen's slider stands on: one normalized position per stop, the ends at the table's ends,
+  // and a stop it reads is one it writes back unchanged.
+  it("moves a compander release through the unit's knob stops", () => {
+    const key = insertFxParamKey("compander", 9);
+    const cid = controlId("bus.stereo", "insfx", "insfx.compander.9");
+    const stops = insertFxParams("compander", COMPANDER_S).find((d) => d.slot === 9)!.rawStops!;
+    const held = (): unknown => plan.nodeParams["bus.stereo"].insertFxParams![key];
+    plan.nodeParams["bus.stereo"] = { insertFx: COMPANDER_S, insertFxParams: { [key]: 1650 } };
+    const c = bindControl(model, plan, cid)!;
+    expect(c.get()).toBeCloseTo(30 / 159);
+    for (const [v, raw] of [
+      [0, 50],
+      [1, 423000],
+      [31 / 159, 1710],
+      [30 / 159, 1650],
+    ] as const) {
+      c.set(v);
+      expect(held(), `v ${v}`).toBe(raw);
+    }
+    for (const raw of stops) {
+      plan.nodeParams["bus.stereo"].insertFxParams![key] = raw;
+      c.set(c.get());
+      expect(held(), `raw ${raw}`).toBe(raw);
+    }
+  });
+
   // A TOGGLE reaches the plan too, and by a branch of its own: the slot descriptors split
   // into a switch and a slider before either is bound, so a lock proved on the sliders says
   // nothing about the other half. The guitar amp's gate is the switch a mapping can hold.

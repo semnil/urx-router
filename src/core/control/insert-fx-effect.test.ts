@@ -214,6 +214,30 @@ describe("insert-fx encodings (live calibration anchors)", () => {
       expect(rel(raw), `raw ${raw}`).toBe(label);
     }
   });
+  // The unit's knob walks 160 fixed stops from 5.0 ms to 42.3 s, and both types' factory
+  // values are stops. The slider stands on that table, so every stop has to be a value the
+  // plan's 1 ms grid holds and the table's ends have to be the slider's.
+  it.each([
+    [1793, 2290],
+    [1794, 1650],
+  ])("Compander Release (%i) turns through the unit's 160 knob stops", (type, def) => {
+    const d = insertFxParams("compander", type).find((p) => p.slot === 9)!;
+    const stops = d.rawStops!;
+    expect(stops).toHaveLength(160);
+    expect(stops.every((s, i) => i === 0 || s > stops[i - 1]!)).toBe(true);
+    expect([stops[0], stops[stops.length - 1]]).toEqual([d.rawMin, d.rawMax]);
+    expect(stops.filter((s) => s % d.rawStep! !== 0)).toEqual([]);
+    expect(d.def).toBe(def);
+    expect(stops).toContain(def);
+    // The run the unit's knob takes one click at a time: 5.33 ms apart for 32 stops, then
+    // twice as far apart every 16, each run's mean within a unit of its last figure.
+    const mean = (a: number, b: number): number => (stops[b]! - stops[a]!) / (b - a);
+    expect(mean(0, 32)).toBeCloseTo(160 / 3, -1);
+    for (let k = 0, a = 32; a < 159; k++, a += 16) {
+      const b = Math.min(a + 16, 159);
+      expect(Math.abs(mean(a, b) / ((160 / 3) * 2 ** (k + 1)) - 1), `stops ${a}-${b}`).toBeLessThan(0.01);
+    }
+  });
   it("Pitch Fix Coarse / Fine / Formant print the bare number, with no sign on a positive one", () => {
     const row = (slot: number) => insertFxParams("pitch").find((d) => d.slot === slot)!.format!;
     expect(row(6)(12)).toBe("12");

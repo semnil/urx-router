@@ -211,29 +211,48 @@ export function wheelStep(
       // a row held inert: macOS delivers scroll to an unfocused window, so a notch over
       // the background app would write the value the app just declared out of reach.
       if (slider.disabled) return;
-      nudge(slider, dir, Number(slider.dataset.turnStep) || Number(slider.step) || 1);
+      const turn = turners.get(slider);
+      if (turn) moveTo(slider, turn.to(dir), turn.moved);
+      else moveTo(slider, Number(slider.value) + dir * (Number(slider.step) || 1));
     },
     blocked,
   );
 }
 
-/** Move a slider by `by` from the value it holds, clamped, and report it as an edit. */
-function nudge(slider: HTMLInputElement, dir: number, by: number): void {
+/** Where `dir` clicks take a slider that `turnStep` or `stopStep` turns, read by `wheelStep`
+ *  so a wheel notch and an Arrow key land on the same value. */
+const turners = new WeakMap<HTMLInputElement, Turner>();
+
+interface Turner {
+  /** The position `dir` clicks land on. */
+  to: (dir: number) => number;
+  /** Whether landing on `pos` changes the value, for a slider whose shown position can
+   *  stand for a value other than its own. Absent = only a change of position does. */
+  moved?: (pos: number) => boolean;
+}
+
+/** Move a slider to `to`, clamped, and report it as an edit. */
+function moveTo(slider: HTMLInputElement, to: number, moved?: (pos: number) => boolean): void {
   const lo = Number(slider.min);
   const hi = Number(slider.max);
-  const next = Math.min(hi, Math.max(lo, scrubFloat(Number(slider.value) + dir * by)));
-  if (next === Number(slider.value)) return;
+  const next = Math.min(hi, Math.max(lo, scrubFloat(to)));
+  if (next === Number(slider.value) && !moved?.(next)) return;
   slider.value = String(next);
   slider.dispatchEvent(new Event("input"));
 }
 
-/** Turn a slider by `turn` rather than by its `step` — the unit's encoder click on a value
- *  held to a finer grid. An Arrow key moves one turn, PageUp / PageDown ten, and a wheel
- *  notch (through `wheelStep`) one; each adds to the value the slider holds, so the finer
- *  part of it is kept. Home / End and a drag stay the slider's own. */
-export function turnStep(slider: HTMLInputElement, turn: number): void {
-  slider.dataset.turnStep = String(turn);
+/** Turn a slider by `turn.to(dir)`: an Arrow key is one click, PageUp / PageDown ten, and a
+ *  wheel notch (through `wheelStep`) one. A drag stays the slider's own, and so do Home / End
+ *  unless `turn.moved` says a position can stand for another value, where they go to the ends
+ *  through the same check. */
+function turnKeys(slider: HTMLInputElement, turn: Turner): void {
+  turners.set(slider, turn);
   slider.addEventListener("keydown", (e) => {
+    if (turn.moved && (e.key === "Home" || e.key === "End") && !isChord(e) && !slider.disabled) {
+      e.preventDefault();
+      moveTo(slider, Number(e.key === "Home" ? slider.min : slider.max), turn.moved);
+      return;
+    }
     const dir =
       e.key === "ArrowUp" || e.key === "ArrowRight"
         ? 1
@@ -246,8 +265,38 @@ export function turnStep(slider: HTMLInputElement, turn: number): void {
               : 0;
     if (dir === 0 || isChord(e) || slider.disabled) return;
     e.preventDefault();
-    nudge(slider, dir, turn);
+    moveTo(slider, turn.to(dir), turn.moved);
   });
+}
+
+/** Turn a slider by `turn` rather than by its `step` — the unit's encoder click on a value
+ *  held to a finer grid. Each click adds to the value the slider holds, so the finer part
+ *  of it is kept. */
+export function turnStep(slider: HTMLInputElement, turn: number): void {
+  turnKeys(slider, { to: (dir) => Number(slider.value) + dir * turn });
+}
+
+/** Turn a slider whose positions index `stops` (ascending) from the value `held` answers
+ *  rather than from the position the slider shows: a held value on a stop moves one stop
+ *  per click, and one between two stops moves to the stop on the side it is turned toward
+ *  with its first click — the unit's own knob. */
+export function stopStep(slider: HTMLInputElement, stops: readonly number[], held: () => number): void {
+  const to = (dir: number): number => {
+    const v = held();
+    if (dir > 0) {
+      const above = stops.findIndex((s) => s > v);
+      return above < 0 ? stops.length - 1 : above + dir - 1;
+    }
+    let below = -1;
+    for (let i = stops.length - 1; i >= 0; i--) {
+      if (stops[i]! < v) {
+        below = i;
+        break;
+      }
+    }
+    return below < 0 ? 0 : below + dir + 1;
+  };
+  turnKeys(slider, { to, moved: (pos) => stops[pos] !== held() });
 }
 
 /**

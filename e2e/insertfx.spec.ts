@@ -382,6 +382,73 @@ test("a compander threshold turns a whole dB and keeps its tenths", async ({ pag
   await expect(threshold).toHaveValue("-2350");
 });
 
+// The unit's knob walks a compander Release through 160 fixed stops, and the slider's
+// positions are those stops, so an arrow press and a wheel notch move one stop each.
+test("a compander release turns one of the unit's knob stops at a time", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch1: { insertFx: 1794, insertFxOn: true, insertFxParams: { "compander:9": 1650 } } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await node(page, "ch1").click();
+  await openScreen(page);
+  const release = screenRow(page, "Release").locator("input[type=range]");
+  await expect(release).toHaveAttribute("aria-valuetext", "165 ms");
+  await release.focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(release).toHaveAttribute("aria-valuetext", "171 ms");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(release).toHaveAttribute("aria-valuetext", "160 ms");
+  await wheelOver(page, release, -100);
+  await expect(release).toHaveAttribute("aria-valuetext", "165 ms");
+  await page.keyboard.press("End");
+  await expect(release).toHaveAttribute("aria-valuetext", "42.3 s");
+});
+
+// A value between two stops turns to the stop on the side the click goes, as the unit's knob
+// does: 65.4 ms down is 64.0 ms, where the slider's own nearest position would give 59.0 ms.
+test("a compander release between two stops turns to the stop on that side", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch1: { insertFx: 1794, insertFxOn: true, insertFxParams: { "compander:9": 654 } } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await node(page, "ch1").click();
+  await openScreen(page);
+  const release = screenRow(page, "Release").locator("input[type=range]");
+  await expect(release).toHaveAttribute("aria-valuetext", "65.4 ms");
+  await release.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(release).toHaveAttribute("aria-valuetext", "64.0 ms");
+});
+
+// A value between the last two stops already shows at the end position, so End has to take
+// the held value to the end stop rather than leave the slider where it is.
+test("a compander release between the last two stops reaches the end on End", async ({ page }) => {
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { ch1: { insertFx: 1794, insertFxOn: true, insertFxParams: { "compander:9": 422000 } } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await node(page, "ch1").click();
+  await openScreen(page);
+  const release = screenRow(page, "Release").locator("input[type=range]");
+  await expect(release).toHaveAttribute("aria-valuetext", "42.2 s");
+  await release.focus();
+  await page.keyboard.press("End");
+  await expect(release).toHaveAttribute("aria-valuetext", "42.3 s");
+});
+
 test("switching guitar amp type swaps the type-specific control", async ({ page }) => {
   await node(page, "ch1").click();
   await chooseOption(await insertSelect(page), { label: "Clean" });

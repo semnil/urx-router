@@ -1056,6 +1056,20 @@ a slot rather than what is in it.
 - **The compander's rows are grouped by what shapes the response** — Threshold, Ratio, Width, then the
   makeup, then Attack and Release — rather than in the device's read order, which is what the catalogue
   carries for the emit path.
+- **The compander's Release moves through the unit's own knob stops.** The unit's [TOUCH AND TURN] knob
+  turns it through 160 fixed stops, 5.0 ms to 42.3 s — 5.33 ms apart for the first 32, then twice as far
+  apart every 16 — the same on the URX44V at 48 kHz and the URX22 at 44.1 and 96 kHz, and on the URX22's
+  output compander as on its input one. The catalogue carries the table (`rawStops`), and the slider and the
+  MIDI mapping take it as a stop table: a position is a stop, so an arrow press, a wheel notch, a drag
+  and a controller move one stop at a time. A written value is kept anywhere in the range — the unit
+  shows 65.4 ms for a raw 654, which is between two stops — so a plan holding a value between stops
+  opens unchanged and keeps it until the control moves. One click from such a value lands on the stop on
+  the side it turns toward (65.4 ms down is 64.0 ms and up is 69.0 ms, 1.21 s down is 1.20 s), as the
+  unit's knob does, so an arrow press and a wheel notch turn from the held value (`stopStep` in
+  `src/ui/dom.ts`) rather than from the nearest position the slider shows for it, and Home / End take
+  it to the end stops even where that nearest position is already the end. The
+  Threshold is the other shape: held to 0.1 dB, it turns a whole dB (`rawTurnStep`), the unit's encoder
+  click, and keeps the tenths.
 - **Every continuous row and every switch carries a MIDI id, scoped by FAMILY and SLOT.** A mapping
   names the value it was made on rather than "whatever this node's insert effect calls its sixth
   slot", so one made on a guitar amp does not bind while the node holds Pitch Fix. An ENUM row
