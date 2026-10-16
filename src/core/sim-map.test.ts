@@ -120,6 +120,39 @@ describe.each(["URX22", "URX44", "URX44V"] as ModelId[])("an edit on the SIM of 
     }
   });
 
+  it("takes no value of another kind at any path it writes, by refusing it or changing nothing", () => {
+    const took: string[] = [];
+    let tried = 0;
+    for (const [path, binding] of bindings) {
+      if (!binding.write) continue;
+      const plan = defaultPlan(modelId);
+      const held = binding.read(plan);
+      const others: SimValue[] =
+        typeof held === "number"
+          ? ["x", true]
+          : typeof held === "boolean"
+            ? ["x", 3]
+            : typeof held === "string"
+              ? [3, true]
+              : [3, true, "x"];
+      for (const value of others) {
+        tried++;
+        const edit = binding.write(plan, value);
+        if (!isRefusal(edit) && edit.kind !== "none") took.push(`${path} took ${JSON.stringify(value)}`);
+      }
+    }
+    expect(took).toEqual([]);
+    expect(tried, "a real share of the table was tried").toBeGreaterThan(200);
+  });
+
+  it("reads a plan that names no parameter as each path's default, or nothing", () => {
+    const empty = defaultPlan(modelId);
+    for (const id of Object.keys(empty.nodeParams)) empty.nodeParams[id] = {};
+    const kinds = new Set([...readSim(bindings, empty).values()].map((v) => typeof v));
+    expect([...kinds].every((k) => ["number", "boolean", "string"].includes(k))).toBe(true);
+    expect(readSim(bindings, empty).size, "most paths still read a value").toBeGreaterThan(100);
+  });
+
   it("carries no EQ on an FX channel or on STREAMING, which have none", () => {
     const eq = [...bindings.keys()].filter((p) => /^ch\.(fx1|fx2|bus\.stream)\.eq\./.test(p));
     expect(eq).toEqual([]);

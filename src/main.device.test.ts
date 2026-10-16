@@ -11243,6 +11243,83 @@ describe("the displayed side and the unit's LCD selection", () => {
 
 // A node's CUE row in the inspector: read-only with no session, and once one is up a press on
 // it writes the strip's flag, the way the CONSOLE chip does.
+// The SIM view mounts urx-lcd-sim's LCD, which asks the page for a media query and a resize
+// observer; jsdom carries neither, so each case here stands one in that answers nothing.
+describe("the SIM view over a live session", () => {
+  const restore: Array<() => void> = [];
+  beforeEach(() => {
+    const g = globalThis as Record<string, unknown>;
+    const media = window.matchMedia;
+    const resize = g.ResizeObserver;
+    window.matchMedia = ((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+    g.ResizeObserver = class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    };
+    restore.push(() => {
+      window.matchMedia = media;
+      g.ResizeObserver = resize;
+    });
+  });
+  afterEach(() => {
+    for (const r of restore.splice(0)) r();
+  });
+  const glass = (): ShadowRoot | null | undefined => document.querySelector("#sim-host .urx-lcd-sim")?.shadowRoot;
+  const openSim = async (): Promise<void> => {
+    $("btn-view-sim").click();
+    await vi.waitFor(() => expect(glass()?.querySelector(".lcd")).toBeTruthy(), { timeout: 20_000 });
+  };
+  const goLive = async (): Promise<void> => {
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+  };
+  const meterCalls = (shell: TauriShell): string[] => shell.invokes.filter((c) => c.startsWith("vd_meters"));
+
+  it("takes the session's one meter subscription while it is shown, and the CONSOLE takes it back", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    await vi.waitFor(() => expect(meterCalls(shell)).toEqual(["vd_meters_subscribe"]));
+    $("btn-view-console").click();
+    await vi.waitFor(() =>
+      expect(meterCalls(shell)).toEqual(["vd_meters_subscribe", "vd_meters_unsubscribe", "vd_meters_subscribe"]),
+    );
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+  });
+
+  it("ends the session when the unit refuses a [Sends] destination chosen on the LCD", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.SENDS_TARGET.id}/0/0`]: 0 });
+    await openSim();
+    await goLive();
+    await drainShell(shell, () => false);
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      if (a.paramId === PARAMS.SENDS_TARGET.id) throw new Error("refused");
+    });
+    glass()!.querySelector(".sends-target")!.closest("button")!.click();
+    await vi.waitFor(() =>
+      expect(glass()?.querySelector('.lcd[data-screen="sends-select"]:not([inert])')).toBeTruthy(),
+    );
+    const mix2 = [...glass()!.querySelectorAll<HTMLButtonElement>('.lcd[data-screen="sends-select"] button')].find(
+      (b) => b.textContent?.trim() === "MIX 2",
+    )!;
+    mix2.click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
+    expect(errors(shell).join(" "), "the refused write is what ended it").toContain("refused");
+    await invoked(shell, "vd_disconnect");
+  });
+});
+
 describe("HOME's [Sends] destination", () => {
   const SENDS = `${PARAMS.SENDS_TARGET.id}/0/0`;
   const sendsReads = (shell: TauriShell): number =>
