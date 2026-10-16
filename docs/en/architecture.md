@@ -1863,6 +1863,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   same funnel as the CONSOLE chip. The LCD applies the CUE group rule itself and writes every flag it moved, so one
   press arrives as several writes; the view hands on the press alone — a flag turned on when there is one, a CLEAR
   CUE when the press leaves nothing cued, and each flag turned off otherwise — and the session applies the rule to it.
+  The LCD is shown the output cues the unit holds to put back, so turning the last input cue off arrives as that cue
+  off with those outputs back on; it is handed on as the cue turned off, and the unit puts the outputs back.
   With no session a press is refused and the simulator puts it back.
 - **The unit's own settings and states** are shown in place of the simulator's where the app knows them
   (`core/sim-map-setup.ts`): SETUP > GENERAL as the last reading of it — a session's start on an experimental launch,

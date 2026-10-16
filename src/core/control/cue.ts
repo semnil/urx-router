@@ -47,6 +47,13 @@ export class CueSet {
       .map((a) => a.node);
   }
 
+  /** The output strips the unit puts back once the last input cue is turned off, in board order. */
+  restorable(): string[] {
+    return cueAddrs(this.model)
+      .filter((a) => this.displaced?.has(a.node))
+      .map((a) => a.node);
+  }
+
   /** The group the cued strips belong to, or null when nothing is cued. */
   group(): CueGroup | null {
     for (const a of cueAddrs(this.model)) if (this.cued.has(a.node)) return a.group;

@@ -55,6 +55,7 @@ describe("the plan as the glass's transport", () => {
         | "unitCues"
         | "setUnitCue"
         | "clearUnitCues"
+        | "unitCueMemory"
         | "unitValues"
         | "isUnitPath"
         | "writeUnitValue"
@@ -69,6 +70,7 @@ describe("the plan as the glass's transport", () => {
       unitCues: hooks.unitCues ?? (() => null),
       setUnitCue: hooks.setUnitCue ?? (() => false),
       clearUnitCues: hooks.clearUnitCues ?? (() => false),
+      unitCueMemory: hooks.unitCueMemory ?? (() => null),
       unitValues: hooks.unitValues ?? (() => new Map()),
       isUnitPath: hooks.isUnitPath ?? (() => false),
       writeUnitValue: hooks.writeUnitValue ?? (() => Promise.reject(new Error("refused"))),
@@ -123,12 +125,14 @@ describe("the plan as the glass's transport", () => {
   });
 
   // A session's [CUE] flags kept by the unit's own rules, recording what the glass hands it.
-  const session = (cued: string[]) => {
+  const session = (cued: string[], presses: [string, boolean][] = []) => {
     const set = new CueSet(model);
     set.replace(cued);
+    for (const [node, on] of presses) set.apply(node, on);
     const calls: (string | [string, boolean])[] = [];
     const hooks = {
       unitCues: () => new Map(cueAddrs(model).map((a) => [a.node, set.has(a.node)])),
+      unitCueMemory: () => set.restorable(),
       setUnitCue: (node: string, on: boolean) => {
         calls.push([node, on]);
         set.apply(node, on);
@@ -165,6 +169,35 @@ describe("the plan as the glass's transport", () => {
     await expect(Promise.all(writes)).resolves.toEqual([false, true]);
     expect(calls).toEqual([["ch1", true]]);
     expect(set.nodes()).toEqual(["ch1"]);
+  });
+
+  // STEREO cued elsewhere, then CH 1: the unit holds STEREO to put back. The glass is shown that,
+  // so turning CH 1 off on it arrives as CH 1 off with STEREO back on — a release, which the unit
+  // answers by putting STEREO back — while its CLEAR CUE arrives as CH 1 off alone.
+  it("hands on turning the last input cue off as a release, and its CLEAR CUE as one", async () => {
+    const release = session(
+      [],
+      [
+        ["bus.stereo", true],
+        ["ch1", true],
+      ],
+    );
+    const t = transport(release.hooks);
+    expect((await t.snapshot()).get("ui.cueOutputMemory"), "the glass is shown what the unit puts back").not.toBe("");
+    await Promise.all([t.write("ch.ch1.cue", false), t.write("ch.bus.stereo.cue", true)]);
+    expect(release.calls).toEqual([["ch1", false]]);
+    expect(release.set.nodes(), "the unit put STEREO back").toEqual(["bus.stereo"]);
+
+    const clear = session(
+      [],
+      [
+        ["bus.stereo", true],
+        ["ch1", true],
+      ],
+    );
+    await transport(clear.hooks).write("ch.ch1.cue", false);
+    expect(clear.calls).toEqual(["clear"]);
+    expect(clear.set.nodes(), "CLEAR CUE puts nothing back").toEqual([]);
   });
 
   it("hands on the press an output cue is, not the input cues its rule turned off", async () => {
@@ -223,6 +256,7 @@ describe("the plan as the glass's transport", () => {
 describe("one press's [CUE] writes handed to the unit", () => {
   const hooks = (cued: Map<string, boolean> | null, setOk = true) => ({
     unitCues: () => cued,
+    unitCueMemory: () => null,
     setUnitCue: vi.fn(() => setOk),
     clearUnitCues: vi.fn(() => true),
   });

@@ -44,6 +44,9 @@ export interface SimViewHooks {
   setUnitCue: (node: string, on: boolean) => boolean;
   /** Turn every [CUE] off on the unit, as the status bar's Clear CUE does. False when it was refused. */
   clearUnitCues: () => boolean;
+  /** The output strips the unit puts back once the last input cue is turned off, by node id, or
+   *  null with no session. */
+  unitCueMemory: () => readonly string[] | null;
   /** The values the unit holds outside the plan that the app knows — its SETUP > GENERAL settings,
    *  Follow USB, the operation mode — by the glass's path. */
   unitValues: () => ReadonlyMap<string, SimValue>;
@@ -57,7 +60,10 @@ export interface SimViewHooks {
   clipSafeEngaged: (jack: number) => boolean;
 }
 
-type CueHooks = Pick<SimViewHooks, "unitCues" | "setUnitCue" | "clearUnitCues">;
+type CueHooks = Pick<SimViewHooks, "unitCues" | "setUnitCue" | "clearUnitCues" | "unitCueMemory">;
+
+/** The glass's path for the outputs it puts back once the last input cue is turned off. */
+const CUE_OUTPUT_MEMORY = "ui.cueOutputMemory";
 type TransportHooks = Pick<
   SimViewHooks,
   "getPlan" | "apply" | "unitSendsTarget" | "setUnitSendsTarget" | "unitValues" | "isUnitPath" | "writeUnitValue"
@@ -80,7 +86,7 @@ const GLASS_OWN = new Set([
   "scene.selected",
   "sd.path",
   "sd.selectedFile",
-  "ui.cueOutputMemory",
+  CUE_OUTPUT_MEMORY,
   "setup.udk.bank",
   "setup.peripheral.tab",
 ]);
@@ -110,15 +116,23 @@ const CUE_PATH = /^ch\.(.+)\.cue$/;
 /**
  * Hand one press's [CUE] writes to the unit. The glass applies the unit's group rule itself and
  * writes every flag it moved, so one press arrives as several writes; the press is what is handed
- * on, and the unit and the session apply the rule to it. A flag turned on is the press when there
- * is one — the flags its rule turned off are already off once it lands — and a press that only
- * turns flags off is the glass's CLEAR CUE when it leaves nothing cued.
+ * on, and the unit and the session apply the rule to it. The glass is shown the outputs the unit
+ * puts back (`unitCueMemory`), so turning the last input cue off arrives as that cue off with
+ * those outputs back on: it is handed on as the cue turned off, and the unit puts them back. Any
+ * other flag turned on is the press — the flags its rule turned off are already off once it
+ * lands — and a press that only turns flags off is the glass's CLEAR CUE when it leaves nothing
+ * cued.
  */
 export function applyGlassCues(changes: readonly { node: string; on: boolean }[], hooks: CueHooks): boolean {
   if (!hooks.unitCues()) return false;
   const cued = (node: string): boolean | undefined => hooks.unitCues()?.get(node);
   const ons = changes.filter((c) => c.on && cued(c.node) === false);
   const offs = changes.filter((c) => !c.on && cued(c.node) === true);
+  const memory = hooks.unitCueMemory() ?? [];
+  if (ons.length && offs.length && ons.every((c) => memory.includes(c.node))) {
+    for (const c of offs) if (cued(c.node) === true && !hooks.setUnitCue(c.node, false)) return false;
+    return true;
+  }
   for (const c of ons) if (cued(c.node) === false && !hooks.setUnitCue(c.node, true)) return false;
   if (!ons.length && offs.length) {
     const left = [...(hooks.unitCues() ?? [])].filter(([node, on]) => on && !offs.some((c) => c.node === node));
@@ -176,6 +190,8 @@ export class PlanTransport implements DeviceTransport {
     for (const [node, on] of this.hooks.unitCues() ?? []) out.set(cuePath(node), on);
     for (const [path, value] of this.hooks.unitValues()) out.set(path, value);
     for (const [path, value] of this.own) out.set(path, value);
+    const memory = this.hooks.unitCueMemory();
+    if (memory) out.set(CUE_OUTPUT_MEMORY, memory.map(simStripId).join(","));
     return out;
   }
 

@@ -1190,6 +1190,7 @@ const buildSimView = (): SimView =>
         clearCues();
         return true;
       },
+      unitCueMemory: () => (liveSessionUp ? cues.restorable() : null),
       unitValues: unitGlassValues,
       isUnitPath: (path) => path === "setup.followUsb" || isSetupGlassPath(getModel(modelId), path),
       writeUnitValue: writeUnitGlassValue,
