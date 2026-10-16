@@ -1,5 +1,16 @@
 import { defineConfig } from "vitest/config";
 
+/** The setup file the worker log adds, while URX_VITEST_WORKER_LOG names a file. On Windows the variable is
+ *  refused: there vitest's SIGTERM ends a worker without running the handler that writes its end line, so a
+ *  file that finished could not be told from one whose worker died. */
+function workerLogSetupFiles(): string[] {
+  if (!process.env.URX_VITEST_WORKER_LOG) return [];
+  if (process.platform === "win32") {
+    throw new Error("URX_VITEST_WORKER_LOG is not supported on Windows: unset it to run the suite there");
+  }
+  return ["scripts/vitest-worker-log-setup.mjs"];
+}
+
 // Core and models are DOM-free (see docs/*/architecture.md), so the node
 // environment is enough; UI-layer tests would opt into jsdom per file.
 export default defineConfig({
@@ -20,6 +31,10 @@ export default defineConfig({
     // percentage. `check-merge-gates` is the one with a test today, and it is the guard
     // over the checks a merge waits for.
     include: ["src/**/*.test.ts", "scripts/**/*.test.mjs"],
+    // With URX_VITEST_WORKER_LOG set, each worker appends its pid and its test file to that file when the
+    // file starts and when it ends, so a worker that exits mid-file is named by its file and its pid
+    // (scripts/vitest-worker-log-setup.mjs). Unset, nothing is added.
+    setupFiles: workerLogSetupFiles(),
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
