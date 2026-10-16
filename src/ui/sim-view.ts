@@ -44,10 +44,25 @@ export interface SimViewHooks {
   setUnitCue: (node: string, on: boolean) => boolean;
   /** Turn every [CUE] off on the unit, as the status bar's Clear CUE does. False when it was refused. */
   clearUnitCues: () => boolean;
+  /** The values the unit holds outside the plan that the app knows — its SETUP > GENERAL settings,
+   *  Follow USB, the operation mode — by the glass's path. */
+  unitValues: () => ReadonlyMap<string, SimValue>;
+  /** Whether an edit of `path` goes to the unit rather than to the plan. */
+  isUnitPath: (path: string) => boolean;
+  /** Hand an edit of one of the unit's values to the unit. Resolves with the value the glass shows
+   *  for it once the edit is taken, and rejects when it is refused. */
+  writeUnitValue: (path: string, value: SimValue) => Promise<SimValue>;
+  /** Whether the Clip Safe of MIC/LINE jack `jack` (0 = the first) is holding its gain down, as the
+   *  unit last announced it. */
+  clipSafeEngaged: (jack: number) => boolean;
 }
 
 type CueHooks = Pick<SimViewHooks, "unitCues" | "setUnitCue" | "clearUnitCues">;
-type TransportHooks = Pick<SimViewHooks, "getPlan" | "apply" | "unitSendsTarget" | "setUnitSendsTarget"> & CueHooks;
+type TransportHooks = Pick<
+  SimViewHooks,
+  "getPlan" | "apply" | "unitSendsTarget" | "setUnitSendsTarget" | "unitValues" | "isUnitPath" | "writeUnitValue"
+> &
+  CueHooks;
 
 /** The glass's path for HOME's [Sends] destination, which the unit holds outside the plan. */
 export const SENDS_TARGET_PATH = "ui.sendsTarget";
@@ -55,8 +70,8 @@ export const SENDS_TARGET_PATH = "ui.sendsTarget";
 /** The simulator's own state, kept by the view rather than the plan: which channel a linked pair's
  *  compressors hear (written with the pair's link or COMP / EQ type), the recorder's playback (which
  *  a rate change stops), the output cues its CUE rule remembers to put back, and what a screen has
- *  open or picked — the output patch's tab, the scene list's bank and row, the microSD folder and
- *  file. */
+ *  open or picked — the output patch's and the Peripheral screen's tab, the scene list's bank and row,
+ *  the microSD folder and file, the User Defined Knobs bank on show. */
 const GLASS_OWN = new Set([
   "sd.playing",
   "sd.playingFile",
@@ -66,6 +81,8 @@ const GLASS_OWN = new Set([
   "sd.path",
   "sd.selectedFile",
   "ui.cueOutputMemory",
+  "setup.udk.bank",
+  "setup.peripheral.tab",
 ]);
 const glassOwn = (path: string): boolean => GLASS_OWN.has(path) || /^pair\.[^.]+\.compSplit$/.test(path);
 
@@ -157,6 +174,7 @@ export class PlanTransport implements DeviceTransport {
     const sends = this.hooks.unitSendsTarget();
     if (sends !== null) out.set(SENDS_TARGET_PATH, sends);
     for (const [node, on] of this.hooks.unitCues() ?? []) out.set(cuePath(node), on);
+    for (const [path, value] of this.hooks.unitValues()) out.set(path, value);
     for (const [path, value] of this.own) out.set(path, value);
     return out;
   }
@@ -171,6 +189,7 @@ export class PlanTransport implements DeviceTransport {
     if (path === SENDS_TARGET_PATH) return this.hooks.unitSendsTarget() !== null;
     const cue = CUE_PATH.exec(path);
     if (cue) return this.hooks.unitCues()?.has(nodeOf(cue[1]!)) ?? false;
+    if (this.hooks.isUnitPath(path)) return true;
     if (glassOwn(path)) return true;
     return this.bindings.get(path)?.write !== undefined;
   }
@@ -185,6 +204,11 @@ export class PlanTransport implements DeviceTransport {
     }
     const cue = CUE_PATH.exec(path);
     if (cue && this.hooks.unitCues()?.has(nodeOf(cue[1]!))) return this.writeCue(path, nodeOf(cue[1]!), value === true);
+    if (this.hooks.isUnitPath(path))
+      return this.hooks.writeUnitValue(path, value).then((taken) => {
+        if (!this.closed) this.held.set(path, taken);
+        return taken;
+      });
     if (glassOwn(path)) {
       this.own.set(path, value);
       this.held.set(path, value);
@@ -337,7 +361,7 @@ export class SimView {
         levels: {
           kind: "device",
           read: (id, channels) => this.readLevels(id, channels),
-          clipSafe: () => false,
+          clipSafe: (connector) => this.hooks.clipSafeEngaged(connector - 1),
         },
         clock: embed.computerClock,
         actions: embed.refusedActions(this.hooks.onRefusedAction),

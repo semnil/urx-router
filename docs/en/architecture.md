@@ -682,7 +682,9 @@ carries a one-line map of the same directories and points here.
 - `src/core/sim-map.ts` + `src/ui/sim-view.ts` — the SIM view: the table from the LCD simulator's paths to the
   plan, and the view that mounts the simulator over it (see "SIM view (the unit's LCD)"). The table is assembled
   from `sim-map-processors.ts` (the processors) and `sim-map-routing.ts` (routing and setup), on the shapes and
-  helpers in `sim-map-base.ts`. `sim-locks.ts` names the controls the view holds shut and the reason each gives.
+  helpers in `sim-map-base.ts`. `sim-map-setup.ts` maps the simulator's SETUP > GENERAL paths onto the unit's own
+  settings, which the unit holds outside the plan. `sim-locks.ts` names the controls the view holds shut and the
+  reason each gives.
 - `src/app/` — the parts of the app entry that are not wiring, lifted out of `main.ts` so each can be
   driven without booting the whole application. `view-state.ts` the UI state that persists per browser
   profile rather than per plan (the model and rate the app reopens on, the view, the label source, the
@@ -1829,26 +1831,49 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   routing — a channel's source, the monitors' and STREAMING's source, the output patches and the recorder's
   tracks, each a wire drawn or deleted through the board's own connect and delete (`dropWire` in
   `src/core/routing.ts` is what both take) — and the sends' switches, a strip's colour, Signal Type, PAN/BAL and
-  Pan Link, the monitors and phones, the oscillator, D.Gain, STREAMING's delay and name, and the sampling
+  Pan Link, the monitors and phones, the oscillator, the D.Gain of every digital source (at the path the simulator
+  keeps a source's gain under: its name in lower case, each run of other characters a hyphen), STREAMING's delay and
+  name, and the sampling
   frequency, refused while the device link is held as the toolbar's picker is. A choice the unit takes in one
   step and the board in several — a USB output's mono pair or single channel, one side of the oscillator into a
   stereo bus, which the unit's screen has separate L and R buttons for — is applied as those board edits in order,
   inside one undo entry. A value the plan already holds is taken and changes nothing (the plan is not marked
   changed), and so is the gain the 1-knob EQ keeps for each band, which the plan does not carry. While 1-knob EQ is on
   the unit drives the bands, so the band values the LCD writes then leave the plan's as they are — as the EQ tuning
-  screen, which offers no band while it is on, leaves them. The simulator's own state that the LCD writes beside an
+  screen, which offers no band while it is on, leaves them. A delay time the unit drives while a delay's tempo Sync
+  is on is turned by hand on the LCD as on the unit's own panel: the unit takes the value and keeps Sync on, so the
+  plan takes it and, while Live sync is up, it is written to the unit once (the `deviceWrite` edit), since the plan's
+  writer leaves that slot out (`fxRowOwners`). The FX tuning screen and MIDI still hold it shut. The simulator's own state that the LCD writes beside an
   edit or keeps for a screen is held by the view rather than the plan: which channel a linked pair's compressors hear
   (written as the pair is linked or taken into SSMCS), the recorder's playback (which a rate change stops), the output
-  patch's Analog / USB tab, the scene list's bank and row, and the microSD folder and file a screen has picked.
+  patch's and the Peripheral screen's tab, the scene list's bank and row, the microSD folder and file a screen has
+  picked, the User Defined Knobs bank on show, and the output cues the LCD's own CUE rule remembers to put back.
   Refused like a path the table does not carry, one of these would take the whole edit back with it. A value the plan holds but the edit cannot take in its present state (PAN/BAL on an unlinked pair, an
-  unwired send, a delay time Sync derives, an FX 2 send at a rate that takes FX 2 out, the recorder's Track Count
-  while Live sync is up) is refused. A path the table does not carry — the SETUP > GENERAL settings, CUE, the scenes and the card, the
-  simulator's own screen state — shows the simulator's value and takes no edit: the simulator puts it back.
+  unwired send, an FX 2 send at a rate that takes FX 2 out, the recorder's Track Count
+  while Live sync is up) is refused. A path neither the table nor the unit's values below carry — the scenes and
+  the card, Software Integration — shows the simulator's value and takes no edit: the simulator puts it back.
 - **HOME's [Sends] destination** is the unit's UI state rather than the plan's (`sends-target.ts`). The SIM view is
   built once the experimental gate resolves on, so no other launch builds it or reads the destination. While Live
   sync is up the LCD shows the destination the unit holds and follows a choice made on the unit's panel, and a
   destination chosen on the LCD is written to the unit — FX 2 is refused above 96 kHz. With no session the LCD
   keeps a destination of its own, which reaches nothing.
+- **The [CUE] flags** are live-session state rather than the plan's (`cue.ts`; see "CUE" under "What the app models,
+  and what it leaves to the unit"). While Live sync is up the LCD shows every strip's flag as the session holds it
+  and follows every change of it, from any surface or the unit's panel, and a [CUE] press on the LCD reaches the
+  same funnel as the CONSOLE chip. The LCD applies the CUE group rule itself and writes every flag it moved, so one
+  press arrives as several writes; the view hands on the press alone — a flag turned on when there is one, a CLEAR
+  CUE when the press leaves nothing cued, and each flag turned off otherwise — and the session applies the rule to it.
+  With no session a press is refused and the simulator puts it back.
+- **The unit's own settings and states** are shown in place of the simulator's where the app knows them
+  (`core/sim-map-setup.ts`): SETUP > GENERAL as the last reading of it — a session's start on an experimental launch,
+  the Device setup screen, a SETUP edit on the LCD — kept until the model changes, Follow USB as the toolbar's
+  badge holds it, the operation mode (`817`) as a session read it, and each MIC/LINE jack's Clip Safe as holding its
+  gain down while the unit announces it (`864`). A session registers those addresses and reads SETUP again once
+  an announcement at one settles. A SETUP setting changed on the LCD is written to the unit — behind every unit
+  write queued so far while Live sync is up, and otherwise over a connection of its own that reads SETUP first, as
+  the Device setup screen does. Follow USB pressed on the LCD is a press of the toolbar's FOLLOW USB, its confirm
+  included. The User Defined Knobs bank is read and never written, so the bank the LCD shows is its own once
+  chosen there.
 - **What it shows** follows every writer: each place that schedules MIDI feedback (`markChanged`,
   `planValuesChanged`, a load, an undo's repaint) also tells the view, which pushes the values that moved.
 - **What it refuses** are the unit's own operations — a scene recall or store, the card, the recorder, playback.
@@ -1856,10 +1881,11 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
 - **What it holds shut** is drawn on the LCD before it is pressed (`sim-locks.ts`, handed to the simulator's
   `setLocks()` at mount, on every plan change and when the device link is taken or let go): a held control keeps its
   place with a padlock at its top right and the reason as its tooltip, and takes no touch, key or drag. Held are the
-  SETUP > GENERAL screens Device setup edits ("Change it in Device setup"), the unit's own operations and USB Storage
-  Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus (the Inspector's and the CONSOLE's
-  wording), the sampling frequency while the device link is held, Follow USB on the same screen ("Change it with FOLLOW USB on
-  the toolbar"), the recorder's Track Count while Live sync is up and
+  SETUP > GENERAL screens of what the app neither reads nor writes — the operation mode, Software Integration and the
+  unit's clock ("Change it on the device"), the unit's own operations and USB Storage
+  Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus while Live sync is up, as on the CONSOLE
+  and in the Inspector (their wording), the sampling frequency while the device link is held, the recorder's
+  Track Count while Live sync is up and
   the sends into FX 2 at a rate that takes FX 2 out (each the wording the Inspector already gives), and an insert
   effect's value its own screen holds shut for the effect's current values, such as M.B.Comp's bands while its 1-knob
   is on (that screen's wording).

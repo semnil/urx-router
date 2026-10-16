@@ -150,38 +150,52 @@ test("draws the ground around the LCD the same in both themes", async ({ page })
   expect(dark).toContain("dark");
 });
 
-test("holds the unit's own settings shut on the LCD, with the reason as its tooltip", async ({ page }) => {
+test("holds the settings only the unit changes shut on the LCD, with the reason as its tooltip", async ({ page }) => {
   await openSim(page);
   const lcd = sim(page).locator(".lcd[data-screen]:not([inert])");
   await lcd.getByRole("button", { name: "SETUP", exact: true }).click();
   await expect(sim(page).locator('.lcd[data-screen="setup"]:not([inert])')).toHaveCount(1);
+  const integration = lcd.getByRole("button", { name: /Software\s*Integration/ });
+  await expect(integration).toHaveAttribute("aria-disabled", "true");
+  await expect(integration).toHaveAttribute("title", en.sim.lockUnitOnly);
+  await expect(integration.locator(".lock-mark")).toHaveCount(1);
   const language = lcd.getByRole("button", { name: "Language", exact: true });
-  await expect(language).toHaveAttribute("aria-disabled", "true");
-  await expect(language).toHaveAttribute("title", en.sim.lockDeviceSetup);
-  await expect(language.locator(".lock-mark")).toHaveCount(1);
-  const version = lcd.getByRole("button", { name: "Version", exact: true });
-  await expect(version, "a screen the plan does not hold is not held either").not.toHaveAttribute("aria-disabled");
+  await expect(language, "a setting the app writes to the unit is not held").not.toHaveAttribute("aria-disabled");
 
-  // Pressed where it stands (Playwright declines to click a control marked out of reach), then Version:
-  // the LCD reaching Version's screen says the press on Language was answered and opened nothing.
-  const at = (await language.boundingBox())!;
+  // Pressed where it stands (Playwright declines to click a control marked out of reach), then
+  // Language: the LCD reaching Language's screen says the press on Software Integration was
+  // answered and opened nothing.
+  const at = (await integration.boundingBox())!;
   await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
-  await version.click();
-  await expect(sim(page).locator('.lcd[data-screen="setup.version"]:not([inert])')).toHaveCount(1);
+  await language.click();
+  await expect(sim(page).locator('.lcd[data-screen="setup.language"]:not([inert])')).toHaveCount(1);
 });
 
-test("holds Follow USB on the LCD's Sampling Frequency screen, naming the toolbar's FOLLOW USB", async ({ page }) => {
-  await openSim(page);
+test("takes Follow USB on the LCD's Sampling Frequency screen as the toolbar's FOLLOW USB", async ({ page }) => {
+  await stubTauriDevice(page, {
+    values: { [PARAMS.FOLLOW_USB.id]: 1 },
+    commands: { experimental_enabled: true },
+  });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
   await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
   await tapInto(page, lcd(page).getByRole("button", { name: "Sampling Frequency" }), "setup.rate");
   const follow = lcd(page).getByRole("button", { name: "Follow USB", exact: true });
-  await expect(follow).toHaveAttribute("aria-disabled", "true");
-  await expect(follow).toHaveAttribute("title", en.sim.lockFollowUsb);
-  await expect(follow.locator(".lock-mark")).toHaveCount(1);
-  await expect(
-    lcd(page).getByRole("button", { name: "96kHz", exact: true }),
-    "the rate itself is the plan's",
-  ).not.toHaveAttribute("aria-disabled");
+  const badge = page.locator("#follow-usb");
+  await expect(follow).not.toHaveAttribute("aria-disabled");
+  await expect(badge).toHaveAttribute("data-state", "unknown");
+  // Unknown: the press reads the unit, as the toolbar's does, and both show what it holds.
+  await follow.click();
+  await expect(badge).toHaveAttribute("data-state", "on");
+  await expect(follow).toHaveAttribute("aria-pressed", "true");
+  // Known: the press switches it on the unit.
+  await follow.click();
+  await expect(badge).toHaveAttribute("data-state", "off");
+  await expect(follow).toHaveAttribute("aria-pressed", "false");
+  await expect
+    .poll(async () => (await writesOf(page)).filter(([id]) => id === PARAMS.FOLLOW_USB.id))
+    .toEqual([[PARAMS.FOLLOW_USB.id, 0]]);
 });
 
 // A change the unit makes beside the one asked for — a BUS Type resetting its bank, an EFFECT TYPE

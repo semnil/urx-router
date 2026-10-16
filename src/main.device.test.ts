@@ -61,6 +61,9 @@ import { spoken } from "./ui/glyph";
 // The glass's refused-action hook, as the SIM view hands it to the simulator: no control on the
 // glass reaches it while every unit operation is held shut, so a case calls it directly.
 const simRefused = vi.hoisted(() => ({ hook: null as ((op: { kind: string }) => void) | null }));
+// …and the unit the view mounts the glass over, so a case can drive the transport and read the
+// levels the simulator asks for without reaching a control on the glass.
+const simMounted = vi.hoisted(() => ({ unit: null as import("urx-lcd-sim/embed").Unit | null }));
 vi.mock("urx-lcd-sim/embed", async (importOriginal) => {
   const actual = await importOriginal<typeof import("urx-lcd-sim/embed")>();
   return {
@@ -68,6 +71,10 @@ vi.mock("urx-lcd-sim/embed", async (importOriginal) => {
     refusedActions: (hook: (op: { kind: string }) => void) => {
       simRefused.hook = hook;
       return actual.refusedActions(hook);
+    },
+    mountSim: (host: HTMLElement, options: import("urx-lcd-sim/embed").EmbedOptions) => {
+      simMounted.unit = options.unit ?? null;
+      return actual.mountSim(host, options);
     },
   };
 });
@@ -11338,6 +11345,84 @@ describe("the SIM view over a live session", () => {
       timeout: 20_000,
     });
     expect(before?.isConnected, "the glass the first model drew is gone").toBe(false);
+  });
+
+  // The values a case writes to the unit, in order.
+  const setsOf = (shell: TauriShell, paramId: number): [number, number][] =>
+    shell.invokes.flatMap((cmd, i) => {
+      const a = shell.args[i] as Record<string, number>;
+      return cmd === "vd_set" && a.paramId === paramId ? [[a.y, a.value] as [number, number]] : [];
+    });
+  const transport = () => {
+    const params = simMounted.unit?.params;
+    if (!params) throw new Error("the glass is not mounted");
+    return params;
+  };
+
+  it("writes a delay time turned by hand under tempo Sync to the unit, which keeps Sync on", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, {
+      [`${PARAMS.FX_EFFECT_TYPE.id}/0/0`]: 1024,
+      [`681/0/4`]: 1,
+      [`681/0/6`]: 5000,
+    });
+    await openSim();
+    await goLive();
+    expect((await transport().snapshot()).get("ch.fx1.effect.delay"), "the premise: the unit's delay time").toBe(500);
+    await transport().write("ch.fx1.effect.delay", 250);
+    await vi.waitFor(() => expect(setsOf(shell, 681)).toEqual([[6, 2500]]), { timeout: 10_000 });
+    expect(
+      setsOf(shell, 681).some(([y]) => y === 4),
+      "Sync is left as it is",
+    ).toBe(false);
+  });
+
+  it("writes a SETUP setting changed on the glass to the unit while Live sync is up", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.BRIGHTNESS.id}/0/0`]: 6 });
+    await openSim();
+    await goLive();
+    expect((await transport().snapshot()).get("setup.brightness"), "the session shows the unit's").toBe(6);
+    expect(transport().writable?.("setup.peripheral.usbSuppression")).toBe(true);
+    await expect(transport().write("setup.peripheral.usbSuppression", "2 Channels")).resolves.toBe("2 Channels");
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.USB_SUPPRESSION.id)).toEqual([[0, 1]]), { timeout: 10_000 });
+    await expect(transport().write("setup.language", "Klingon")).rejects.toThrow("refused");
+  });
+
+  it("writes a SETUP setting changed on the glass with no session over a connection of its own", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await expect(transport().write("setup.brightness", 3)).resolves.toBe(3);
+    expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]);
+    expect(shell.count("vd_disconnect"), "the connection is let go").toBe(shell.count("vd_connect"));
+    expect((await transport().snapshot()).get("setup.brightness")).toBe(3);
+  });
+
+  it("shows the unit's operation mode, and an engaged Clip Safe while the unit announces one", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.OPERATION_MODE.id}/0/0`]: 1 });
+    await openSim();
+    await goLive();
+    expect((await transport().snapshot()).get("setup.operationMode")).toBe("Simple");
+    const levels = simMounted.unit?.levels;
+    if (levels?.kind !== "device") throw new Error("the glass reads no unit levels");
+    expect(levels.clipSafe(1)).toBe(false);
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 1 }]);
+    expect(levels.clipSafe(1), "connector 1 is jack 0").toBe(true);
+    expect(levels.clipSafe(2)).toBe(false);
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 0 }]);
+    expect(levels.clipSafe(1)).toBe(false);
+  });
+
+  it("takes a Follow USB press on the glass as a press of the toolbar's FOLLOW USB", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.FOLLOW_USB.id}/0/0`]: 1 });
+    await openSim();
+    const badge = $("follow-usb");
+    expect(badge.dataset.state).toBe("unknown");
+    await transport().write("setup.followUsb", false);
+    await vi.waitFor(() => expect(badge.dataset.state, "unknown: the press reads the unit").toBe("on"));
+    expect(setsOf(shell, PARAMS.FOLLOW_USB.id)).toEqual([]);
+    await vi.waitFor(async () => expect((await transport().snapshot()).get("setup.followUsb")).toBe(true));
+    await transport().write("setup.followUsb", false);
+    await vi.waitFor(() => expect(badge.dataset.state).toBe("off"));
+    expect(setsOf(shell, PARAMS.FOLLOW_USB.id)).toEqual([[0, 0]]);
   });
 
   it("names a unit operation the glass refuses on the status line", SLOW, async () => {

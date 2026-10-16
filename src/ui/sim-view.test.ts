@@ -55,6 +55,9 @@ describe("the plan as the glass's transport", () => {
         | "unitCues"
         | "setUnitCue"
         | "clearUnitCues"
+        | "unitValues"
+        | "isUnitPath"
+        | "writeUnitValue"
       >
     > = {},
   ): PlanTransport =>
@@ -66,6 +69,9 @@ describe("the plan as the glass's transport", () => {
       unitCues: hooks.unitCues ?? (() => null),
       setUnitCue: hooks.setUnitCue ?? (() => false),
       clearUnitCues: hooks.clearUnitCues ?? (() => false),
+      unitValues: hooks.unitValues ?? (() => new Map()),
+      isUnitPath: hooks.isUnitPath ?? (() => false),
+      writeUnitValue: hooks.writeUnitValue ?? (() => Promise.reject(new Error("refused"))),
     });
   const flush = () => new Promise<void>((r) => queueMicrotask(r));
 
@@ -183,6 +189,21 @@ describe("the plan as the glass's transport", () => {
   it("refuses a press the session refuses", async () => {
     const { hooks } = session([]);
     await expect(transport({ ...hooks, setUnitCue: () => false }).write("ch.ch1.cue", true)).rejects.toThrow("refused");
+  });
+
+  it("shows the unit's own values over the simulator's, and hands an edit of one to the unit", async () => {
+    const write = vi.fn((_path: string, value: unknown) => Promise.resolve(value === 4 ? 4 : 9));
+    const t = transport({
+      unitValues: () => new Map([["setup.brightness", 7]]),
+      isUnitPath: (p) => p === "setup.brightness",
+      writeUnitValue: write as SimViewHooks["writeUnitValue"],
+    });
+    expect((await t.snapshot()).get("setup.brightness")).toBe(7);
+    expect(t.writable("setup.brightness")).toBe(true);
+    expect(t.writable("setup.language"), "a path the unit hook does not take").toBe(false);
+    await expect(t.write("setup.brightness", 4)).resolves.toBe(4);
+    expect(write).toHaveBeenCalledWith("setup.brightness", 4);
+    await expect(transport({ isUnitPath: () => true }).write("setup.brightness", 4)).rejects.toThrow("refused");
   });
 
   it("takes nothing and tells nothing once closed", async () => {

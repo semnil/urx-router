@@ -4,7 +4,7 @@ import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import { FX_CHANNEL_NODE_INDEX, FX_EFFECT_TYPE_PARAM, fxTypeDefaults } from "./core/control/fx-effect";
 import { takeFxReseeds } from "./app/fx-reseed";
-import type { ModelId } from "./models/types";
+import type { DeviceModel, ModelId } from "./models/types";
 import { parseRef, ref } from "./models/types";
 import {
   alignLinkedSendPans,
@@ -81,6 +81,7 @@ import {
   BUS_TYPE_VARI,
   COMP_EQ_SSMCS,
   INSERT_FX_ANNOUNCED,
+  MIC_LINE_JACK_BASE,
   PARAMS,
   REC_POINT_PRE_COMP,
   REC_POINT_PRE_EQ,
@@ -93,7 +94,7 @@ import { setSaid, setSpokenText, setTip, spoken } from "./ui/glyph";
 import { ownsNativeUndo } from "./ui/keys";
 import { Console } from "./ui/console";
 import { SimView } from "./ui/sim-view";
-import type { SimEdit } from "./core/sim-map";
+import type { SimEdit, SimValue } from "./core/sim-map";
 import { simLocks } from "./core/sim-locks";
 import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
@@ -160,6 +161,7 @@ import {
   thirdPartyLicenses,
   vdConnect,
   vdDisconnect,
+  vdGet,
   vdSet,
   vdWatchLink,
   type Connection,
@@ -253,7 +255,14 @@ import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firm
 import { cancelledBeforeWriting, formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
 import { runPrepareModified } from "./core/control/prepare";
 import { DeviceSetupPanel } from "./ui/device-setup";
-import { readDeviceSetup, sendDeviceSetup } from "./core/control/device-setup";
+import {
+  diffDeviceSetup,
+  readDeviceSetup,
+  sendDeviceSetup,
+  UDK_SLOTS,
+  withSetupWrites,
+} from "./core/control/device-setup";
+import { isSetupGlassPath, setupGlassEdit, setupGlassValues, withSetupEdit } from "./core/sim-map-setup";
 import type { DeviceSetup } from "./core/control/device-setup";
 
 // Clear persisted UI state (theme / model / meter points / consent gate / recent
@@ -313,6 +322,7 @@ function renderFollowUsbBadge(): void {
 function setFollowUsbBadge(state: boolean | null): void {
   followUsbState = state;
   renderFollowUsbBadge();
+  simView?.unitStateChanged();
 }
 
 // Theme mode (ThemeMode, ui/prefs.ts): auto follows the OS color scheme. A
@@ -879,6 +889,158 @@ function resetSendsTarget(): void {
   simView?.unitStateChanged();
 }
 
+// The unit's own settings and states the SIM view shows beside the plan: SETUP > GENERAL
+// (core/control/device-setup.ts), the operation mode and each MIC/LINE jack's engaged Clip Safe.
+// SETUP is known from the last reading of it — a session's start, the Device setup screen, a SETUP
+// edit on the glass — and kept until the model changes, as Follow USB is. The operation mode is a
+// session's reading, and the engaged Clip Safe what the unit announced during one.
+let unitSetup: DeviceSetup | null = null;
+let unitOperationMode: number | null = null;
+const clipSafeEngaged = new Set<number>();
+// A Follow USB press on the glass, handled as a press of the toolbar's FOLLOW USB; set where that
+// button is wired.
+let pressFollowUsb: (() => void) | null = null;
+
+const OPERATION_MODES = ["Standard", "Simple"];
+
+/** The unit's values the glass shows in place of its own, by the glass's path. */
+function unitGlassValues(): Map<string, SimValue> {
+  const model = getModel(modelId);
+  const out = unitSetup ? setupGlassValues(model, unitSetup) : new Map<string, SimValue>();
+  if (followUsbState !== null) out.set("setup.followUsb", followUsbState);
+  const mode = unitOperationMode === null ? undefined : OPERATION_MODES[unitOperationMode];
+  if (mode !== undefined) out.set("setup.operationMode", mode);
+  return out;
+}
+
+/** An edit of one of the unit's values on the glass. Follow USB is the toolbar's press. A SETUP
+ *  setting is written while a session is up behind every unit write queued so far, and otherwise
+ *  over a connection of its own that reads the settings first, as the Device setup screen does. */
+function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
+  const shown = (): SimValue => unitGlassValues().get(path) ?? value;
+  if (path === "setup.followUsb") {
+    if (value !== followUsbState) pressFollowUsb?.();
+    return Promise.resolve(followUsbState ?? !value);
+  }
+  const model = getModel(modelId);
+  const edit = setupGlassEdit(model, path, value);
+  if (edit === null || edit === "refused") return Promise.reject(new Error("refused"));
+  const writesOver = (base: DeviceSetup) => diffDeviceSetup(model, base, withSetupEdit(base, edit));
+  if (liveSessionUp && unitSetup) {
+    const writes = writesOver(unitSetup);
+    unitSetup = withSetupWrites(unitSetup, writes);
+    cueWrites = cueWrites
+      .then(async () => {
+        if (!liveSessionUp) return;
+        await live?.idle();
+        if (liveSessionUp) await sendDeviceSetup(writes);
+      })
+      .catch((err: unknown) => stopLiveOnError(errorText(err)));
+    return Promise.resolve(shown());
+  }
+  if (liveSessionUp) return Promise.reject(new Error("refused"));
+  return (async () => {
+    let done = false;
+    await withCheckedDevice(
+      "device-setup",
+      t().status.deviceSetupApplying,
+      (message) => t().error.deviceSetupWrite(message),
+      async () => {
+        const base = await readDeviceSetup(model);
+        const writes = writesOver(base);
+        await sendDeviceSetup(writes);
+        unitSetup = withSetupWrites(base, writes);
+        done = true;
+        setStatus(t().status.deviceSetupApplied(1));
+      },
+    );
+    simView?.unitStateChanged();
+    if (!done) throw new Error("refused");
+    return shown();
+  })();
+}
+
+// The settle a re-read of the unit's settings waits for after the unit announces one, as a
+// [CUE] re-read's.
+let unitSetupReadTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Read the unit's settings again behind every unit write queued so far, once announcements
+ *  settle. */
+function scheduleUnitSetupRead(): void {
+  if (unitSetupReadTimer !== null) clearTimeout(unitSetupReadTimer);
+  unitSetupReadTimer = setTimeout(() => {
+    unitSetupReadTimer = null;
+    if (!liveSessionUp || !experimentalOn) return;
+    const model = getModel(modelId);
+    cueWrites = cueWrites
+      .then(async () => {
+        await live?.idle();
+        if (!liveSessionUp) return;
+        const read = await readDeviceSetup(model);
+        if (liveSessionUp && getModel(modelId) === model) {
+          unitSetup = read;
+          simView?.unitStateChanged();
+        }
+      })
+      .catch((err: unknown) => stopLiveOnError(errorText(err)));
+  }, CUE_READ_SETTLE_MS);
+}
+
+/** The addresses the unit announces its settings, its operation mode and its engaged Clip Safe
+ *  at, which a session on an experimental launch registers. */
+function unitStateNotifyAddrs(model: DeviceModel): [number, number, number][] {
+  const setup = [
+    PARAMS.BRIGHTNESS,
+    PARAMS.AUTO_POWER_OFF,
+    PARAMS.AUTO_POWER_OFF_TIME,
+    PARAMS.DEVICE_LANGUAGE,
+    PARAMS.USB_SUPPRESSION,
+    PARAMS.UDK_BANK,
+    ...(model.hasHDMI ? [PARAMS.HDMI_HDCP, PARAMS.HDMI_INPUT_CHANNELS] : []),
+    ...(model.hasSD ? [PARAMS.DATE_FORMAT, PARAMS.TIME_FORMAT, PARAMS.TIME_ZONE] : []),
+  ].map((p): [number, number, number] => [p.id, 0, 0]);
+  const knobs = [PARAMS.UDK_FUNCTION, PARAMS.UDK_PARAM1, PARAMS.UDK_PARAM2].flatMap((p) =>
+    Array.from({ length: UDK_SLOTS }, (_, y): [number, number, number] => [p.id, 0, y]),
+  );
+  const jacks = micLineJacks(model).map((j): [number, number, number] => [PARAMS.CLIP_SAFE_ENGAGED.id, 0, j]);
+  return [...setup, ...knobs, [PARAMS.OPERATION_MODE.id, 0, 0], ...jacks];
+}
+
+/** The MIC/LINE jacks `model` carries, 0 = the first. */
+function micLineJacks(model: DeviceModel): number[] {
+  return model.nodes.flatMap((n) => {
+    const base = MIC_LINE_JACK_BASE[n.id];
+    return base === undefined ? [] : [base, base + 1];
+  });
+}
+
+/** Take a notify at one of `unitStateNotifyAddrs`. False for any other address. */
+function takeUnitStateNotify(paramId: number, y: number, value: number): boolean {
+  if (paramId === PARAMS.CLIP_SAFE_ENGAGED.id) {
+    if (value !== 0) clipSafeEngaged.add(y);
+    else clipSafeEngaged.delete(y);
+    return true;
+  }
+  if (paramId === PARAMS.OPERATION_MODE.id) {
+    unitOperationMode = value;
+    simView?.unitStateChanged();
+    return true;
+  }
+  if (!unitStateNotifyAddrs(getModel(modelId)).some(([id, , at]) => id === paramId && at === y)) return false;
+  scheduleUnitSetupRead();
+  return true;
+}
+
+/** Forget what a session read of the unit's states: it ended. The settings stay, as Follow USB
+ *  does. */
+function resetUnitSessionState(): void {
+  if (unitSetupReadTimer !== null) clearTimeout(unitSetupReadTimer);
+  unitSetupReadTimer = null;
+  unitOperationMode = null;
+  clipSafeEngaged.clear();
+  simView?.unitStateChanged();
+}
+
 const cueBar = $<HTMLElement>("cue-bar");
 const cueBarNames = $<HTMLElement>("cue-bar-names");
 const cueBarClear = $<HTMLButtonElement>("cue-bar-clear");
@@ -1002,11 +1164,10 @@ const buildSimView = (): SimView =>
           paths,
           { linked: deviceLinkHolder !== null, live: liveSessionUp },
           {
-            deviceSetup: t().sim.lockDeviceSetup,
+            unitOnly: t().sim.lockUnitOnly,
             notAccepted: t().inspector.prePostLcdOnly,
             unitOp: t().sim.lockUnitOp,
             rateLinked: t().sim.lockRateLinked,
-            followUsb: t().sim.lockFollowUsb,
             trackCountLive: t().inspector.sdRecTrackCountLive,
             fx2Rate: t().inspector.fx2RateLocked,
             deviceDriven: t().dynTuning.insfx.deviceOnlyTag,
@@ -1029,6 +1190,10 @@ const buildSimView = (): SimView =>
         clearCues();
         return true;
       },
+      unitValues: unitGlassValues,
+      isUnitPath: (path) => path === "setup.followUsb" || isSetupGlassPath(getModel(modelId), path),
+      writeUnitValue: writeUnitGlassValue,
+      clipSafeEngaged: (jack) => liveSessionUp && clipSafeEngaged.has(jack),
     },
     detectSimScale(),
   );
@@ -1545,6 +1710,7 @@ const follow =
           LCD_SELECTION_ADDR,
           ...(experimentalOn ? [SENDS_TARGET_ADDR] : []),
           ...cueNotifyAddrs(getModel(modelId)),
+          ...(experimentalOn ? unitStateNotifyAddrs(getModel(modelId)) : []),
         ],
         // Held off while a flush is armed, running or queued: a read taken then answers an
         // edit the flush has not sent, or a write the unit has not announced, with the value
@@ -1570,6 +1736,9 @@ const follow =
             if (!sendsEchoes.take(p.value)) takeSendsTarget(p.value);
             return true;
           }
+          // The unit's settings, its operation mode and an engaged Clip Safe, which the SIM view
+          // shows. None opens a reconcile.
+          if (experimentalOn && p.x === 0 && takeUnitStateNotify(p.paramId, p.y, p.value)) return true;
           // A [CUE] flag: the unit answering a write of this app's, a mirror it sets beside a
           // flag, or a press on its panel. Only the last changes anything.
           const cue = cueAt(getModel(modelId), p.paramId, p.x, p.y);
@@ -1921,6 +2090,7 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   // [Sends] destination.
   resetCues();
   resetSendsTarget();
+  resetUnitSessionState();
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
   liveAdopted = 0;
@@ -2985,6 +3155,8 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
       setFollowUsbBadge(null);
       resetCues();
       resetSendsTarget();
+      unitSetup = null;
+      resetUnitSessionState();
     }
   } catch (err) {
     // Put the previous document back on screen and report, rather than throwing: three
@@ -3903,6 +4075,8 @@ if (!DEMO) {
   // already agree nothing happens at all, which is why it is a confirm rather than a
   // refusal. Turning it OFF changes nothing immediately; it only makes the rate
   // picker authoritative again.
+  // A Follow USB press on the SIM view's glass is a press of this button.
+  pressFollowUsb = () => followUsbBadge.click();
   followUsbBadge.addEventListener(
     "click",
     guarded(async () => {
@@ -4736,6 +4910,8 @@ if (!DEMO) {
         let followUsb = false;
         let lcdSelection = 0;
         let sendsRead: number | null = null;
+        let setupRead: DeviceSetup | null = null;
+        let modeRead: number | null = null;
         let cueRead: string[] = [];
         let merged: MergedRead | null;
         try {
@@ -4744,7 +4920,11 @@ if (!DEMO) {
             async (into) => {
               followUsb = await readFollowUsb();
               lcdSelection = await readLcdSelection();
-              if (experimentalOn) sendsRead = await readSendsTarget();
+              if (experimentalOn) {
+                sendsRead = await readSendsTarget();
+                setupRead = await readDeviceSetup(getModel(switchTo ? switchTo.modelId : modelId));
+                modeRead = await vdGet(PARAMS.OPERATION_MODE.id, 0, 0);
+              }
               // On the device's model: a read that carries a switch reads for the plan it
               // switches to.
               cueRead = await readCues(getModel(switchTo ? switchTo.modelId : modelId));
@@ -4809,6 +4989,9 @@ if (!DEMO) {
         if (cues.replace(cueRead)) renderCues();
         resetSendsTarget();
         sendsTarget = sendsRead === null ? null : decodeSendsTarget(getModel(modelId), sendsRead);
+        resetUnitSessionState();
+        if (setupRead) unitSetup = setupRead;
+        unitOperationMode = modeRead;
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.
         liveAdopted = 0;
@@ -4985,9 +5168,11 @@ if (!DEMO) {
         async () => {
           await sendDeviceSetup(writes);
           applied = true;
+          if (unitSetup) unitSetup = withSetupWrites(unitSetup, writes);
           setStatus(t().status.deviceSetupApplied(changed));
         },
       );
+      simView?.unitStateChanged();
       return applied;
     },
   });
@@ -5010,8 +5195,10 @@ if (!DEMO) {
       (message) => t().error.deviceSetupRead(message),
       async () => {
         setup = await readDeviceSetup(getModel(modelId));
+        unitSetup = setup;
       },
     );
+    simView?.unitStateChanged();
     if (setup) {
       setStatus(t().status.deviceSetupRead);
       deviceSetup?.open(setup);
