@@ -5,7 +5,7 @@ import { defaultPlan } from "../models/initial-state";
 import { simBindings } from "../core/sim-map";
 import { CueSet } from "../core/control/cue";
 import { cueAddrs } from "../core/control/translate";
-import { PlanTransport, SENDS_TARGET_PATH, type SimViewHooks } from "./sim-view";
+import { PlanTransport, SENDS_TARGET_PATH, applyGlassCues, type SimViewHooks } from "./sim-view";
 import { simMeterTap } from "./sim-view";
 
 describe("the SIM's meters", () => {
@@ -217,5 +217,32 @@ describe("the plan as the glass's transport", () => {
     expect(heard).not.toHaveBeenCalled();
     await expect(t.snapshot()).rejects.toThrow("closed");
     await expect(t.write("ch.ch1.level", -12)).rejects.toThrow("closed");
+  });
+});
+
+describe("one press's [CUE] writes handed to the unit", () => {
+  const hooks = (cued: Map<string, boolean> | null, setOk = true) => ({
+    unitCues: () => cued,
+    setUnitCue: vi.fn(() => setOk),
+    clearUnitCues: vi.fn(() => true),
+  });
+
+  it("takes nothing while no session holds the unit's CUE", () => {
+    const h = hooks(null);
+    expect(applyGlassCues([{ node: "ch1", on: true }], h)).toBe(false);
+    expect(h.setUnitCue).not.toHaveBeenCalled();
+  });
+
+  it("reports a flag turned off that the unit refuses", () => {
+    const h = hooks(
+      new Map([
+        ["ch1", true],
+        ["ch2", true],
+      ]),
+      false,
+    );
+    expect(applyGlassCues([{ node: "ch1", on: false }], h)).toBe(false);
+    expect(h.setUnitCue).toHaveBeenCalledWith("ch1", false);
+    expect(h.clearUnitCues, "another flag is still cued, so this is no CLEAR CUE").not.toHaveBeenCalled();
   });
 });

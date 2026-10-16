@@ -46,6 +46,13 @@ describe.each(MODELS)("the SIM's SETUP > GENERAL on a %s", (modelId) => {
     expect(setupGlassEdit(model, "setup.udk.bank", 2), "the unit's bank is read and never written").toBeNull();
     expect(setupGlassEdit(model, "setup.operationMode", "Simple")).toBeNull();
     expect(setupGlassEdit(model, "setup.followUsb", true)).toBeNull();
+    expect(setupGlassEdit(model, "setup.udk.9.A", "Monitor 2 Level"), "a bank the unit does not have").toBeNull();
+  });
+
+  it("shows no name for a setting read past the list the unit offers", () => {
+    const shown = setupGlassValues(model, { ...defaultDeviceSetup(), language: 99 });
+    expect(shown.has("setup.language")).toBe(false);
+    expect(shown.get("setup.brightness"), "the other settings are still shown").toBe(defaultDeviceSetup().brightness);
   });
 
   it("offers the HDMI and Date/Time settings only on a model that has them", () => {

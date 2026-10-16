@@ -11411,6 +11411,72 @@ describe("the SIM view over a live session", () => {
     expect(levels.clipSafe(1)).toBe(false);
   });
 
+  // The reads a case's session made of one address.
+  const readsOf = (shell: TauriShell, paramId: number): number =>
+    shell.invokes.filter((cmd, i) => cmd === "vd_get" && (shell.args[i] as Record<string, number>).paramId === paramId)
+      .length;
+
+  it(
+    "reads SETUP again when the unit announces a setting changed on its panel, and follows its operation mode",
+    SLOW,
+    async () => {
+      const shell = await bootDevice({ experimental_enabled: true });
+      await openSim();
+      await goLive();
+      const before = readsOf(shell, PARAMS.BRIGHTNESS.id);
+      expect(before, "the premise: the session read SETUP once").toBeGreaterThan(0);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.BRIGHTNESS.id, x: 0, y: 0, value: 4 }]);
+      await vi.waitFor(() => expect(readsOf(shell, PARAMS.BRIGHTNESS.id)).toBeGreaterThan(before), { timeout: 10_000 });
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.OPERATION_MODE.id, x: 0, y: 0, value: 1 }]);
+      await vi.waitFor(async () => expect((await transport().snapshot()).get("setup.operationMode")).toBe("Simple"));
+      $("btn-live").click();
+      await invoked(shell, "vd_disconnect");
+    },
+  );
+
+  it("ends the session when the re-read after an announced SETUP change fails", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    shell.failOnce("vd_get", new Error("setup read lost"));
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.BRIGHTNESS.id, x: 0, y: 0, value: 4 }]);
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the failed re-read is what ended it").toContain("setup read lost");
+  });
+
+  it("ends the session when a SETUP setting written from the glass during Live sync is refused", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    shell.failOnce("vd_set", new Error("setup write refused"));
+    await transport().write("setup.brightness", 2);
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the refused write is what ended it").toContain("setup write refused");
+  });
+
+  it("reports a SETUP setting the unit refuses with no session, and leaves the glass's value", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    shell.failOnce("vd_set", new Error("setup write refused"));
+    await expect(transport().write("setup.brightness", 2)).rejects.toThrow("refused");
+    expect(errors(shell).join(" ")).toContain(t().error.deviceSetupWrite("setup write refused"));
+    expect(shell.count("vd_disconnect"), "the connection is let go").toBe(shell.count("vd_connect"));
+  });
+
+  it("ends the session when a delay time turned under tempo Sync is refused", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, {
+      [`${PARAMS.FX_EFFECT_TYPE.id}/0/0`]: 1024,
+      [`681/0/4`]: 1,
+      [`681/0/6`]: 5000,
+    });
+    await openSim();
+    await goLive();
+    shell.failOnce("vd_set", new Error("delay write refused"));
+    await transport().write("ch.fx1.effect.delay", 250);
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the refused write is what ended it").toContain("delay write refused");
+  });
+
   it("takes a Follow USB press on the glass as a press of the toolbar's FOLLOW USB", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.FOLLOW_USB.id}/0/0`]: 1 });
     await openSim();
