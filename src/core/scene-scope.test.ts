@@ -78,9 +78,9 @@ const SETUP_SCENE_EXTERNAL = [
   "USB_SUPPRESSION",
 ].sort();
 
-// The unit's LCD selection: UI state the factory settings file carries outside every scene,
-// and which a scene recall leaves where it was.
-const UI_STATE_SCENE_EXTERNAL = ["LCD_SELECTION"];
+// The unit's LCD selection and HOME's [Sends] destination: UI state the settings file carries
+// outside every scene, and which a scene recall leaves where it was.
+const UI_STATE_SCENE_EXTERNAL = ["LCD_SELECTION", "SENDS_TARGET"];
 
 // The [CUE] flags: the unit clears them at power-off and no scene or settings file carries
 // them, so a recall cannot move them back to a stored value.

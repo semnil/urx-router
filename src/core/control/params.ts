@@ -663,6 +663,13 @@ export const PARAMS = {
    *  change only for the element it has selected. UI state rather than a setting, so never
    *  part of the plan; the live session reads and writes it directly (`lcd-selection.ts`). */
   LCD_SELECTION: { id: 762, encoding: "raw", sceneExternal: true, planExternal: true },
+  /** The destination HOME's [Sends] tab shows (global, y0), packed `(kind << 4) | position` —
+   *  kind 0 STEREO, 1 FX (FX 1 = 16, FX 2 = 17), 2 MIX (MIX 1 = 32, MIX 2 = 34). Readable and
+   *  writable, announced on every change made on the panel or over the link. Above 96 kHz the
+   *  unit moves FX 2 to FX 1 without announcing it, and takes a write of FX 2 that its own list
+   *  does not offer. UI state rather than a setting, so never part of the plan; the live session
+   *  reads and writes it directly (`sends-target.ts`). */
+  SENDS_TARGET: { id: 763, encoding: "raw", sceneExternal: true, planExternal: true },
   /** [CUE] of each strip, 0 / 1: mono CH (y = the channel's input index), stereo CH (y = its
    *  stereo position), FX channel (FX1 y0 / FX2 y1), STEREO (y0 alone), MIX (MIX1 y0 / MIX2 y2;
    *  the unit sets y1 / y3 with it) and STREAMING (y0; the unit sets y1 with it). The first three

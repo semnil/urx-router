@@ -76,11 +76,11 @@ const SETUP_IDS = [758, 760, 761, 767, 768, 769, 770, 771, 772, 787, 788, 795, 8
  *  The knob strings ride vd_get_str and are counted separately. */
 const SETUP_NUMERIC_IDS = [758, 760, 761, 767, 768, 769, 787, 788, 795, 812, 831];
 const UDK_FUNCTION_ID = 770;
-/** The [CUE] flags main.ts registers after Follow USB and the LCD selection, each with the
- *  instances the unit sets beside it. */
+/** The [CUE] flags main.ts registers after Follow USB, the LCD selection and HOME's [Sends]
+ *  destination, each with the instances the unit sets beside it. */
 const CUE_ADDRS = cueNotifyAddrs(getModel("URX44V"));
 /** The host-owned tail of the registration, in the order main.ts's addrs hook appends it. */
-const HOST_TAIL: Array<[number, number, number]> = [[848, 0, 0], [762, 0, 0], ...CUE_ADDRS];
+const HOST_TAIL: Array<[number, number, number]> = [[848, 0, 0], [762, 0, 0], [763, 0, 0], ...CUE_ADDRS];
 const UDK_SLOTS = 16;
 
 /** Whole-device reconciles that began after `at` (see RATE_ADDR). */
@@ -155,12 +155,14 @@ test.describe("T2f shape-change", () => {
     // …and it is in the set exactly once: a global scalar emitted by one unconditional
     // push, not one per node like everything else in the list.
     expect(reg.filter((a) => a[0] === 766)).toHaveLength(1);
-    // …and Follow USB, the LCD selection and the [CUE] flags are appended past the end of it
+    // …and Follow USB, the LCD selection, HOME's [Sends] destination and the [CUE] flags are
+    // appended past the end of it
     // by main.ts's addrs hook: each is in the registration exactly once, at the tail, where
     // nothing in the plan can put it.
     expect(reg.slice(-HOST_TAIL.length)).toEqual(HOST_TAIL);
     expect(reg.filter((a) => a[0] === 848)).toHaveLength(1);
     expect(reg.filter((a) => a[0] === 762)).toHaveLength(1);
+    expect(reg.filter((a) => a[0] === 763)).toHaveLength(1);
 
     // The device's rate reached the plan — the picker read 48000 a moment ago and the
     // only thing that has touched it since is the starting readback's read of 766 —

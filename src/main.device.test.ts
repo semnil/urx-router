@@ -11243,6 +11243,51 @@ describe("the displayed side and the unit's LCD selection", () => {
 
 // A node's CUE row in the inspector: read-only with no session, and once one is up a press on
 // it writes the strip's flag, the way the CONSOLE chip does.
+describe("HOME's [Sends] destination", () => {
+  const SENDS = `${PARAMS.SENDS_TARGET.id}/0/0`;
+  const sendsReads = (shell: TauriShell): number =>
+    shell.invokes.filter((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === PARAMS.SENDS_TARGET.id).length;
+  const goLive = async (): Promise<void> => {
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+  };
+  const rateNotify = (shell: TauriShell, hz: number): void =>
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: hz }]);
+
+  it("is read at live start and registered for its notify", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [SENDS]: 17 });
+    await goLive();
+    const { addrs } = shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: number[][] };
+    expect(addrs, "the session registers the destination").toContainEqual([PARAMS.SENDS_TARGET.id, 0, 0]);
+    expect(sendsReads(shell)).toBeGreaterThan(0);
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+  });
+
+  // The unit moves FX 2 to FX 1 above 96 kHz and announces nothing, so an announced rate above
+  // 96 kHz is followed by a read of the destination; one at or below it is not.
+  it("is read again after the unit announces a rate above 96 kHz, and not after one at 96 kHz", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [SENDS]: 17 });
+    await goLive();
+    await drainShell(shell, () => false);
+    // The positive control, which also times how long the read takes to follow the notify.
+    const before = sendsReads(shell);
+    const sent = Date.now();
+    rateNotify(shell, 192000);
+    await vi.waitFor(() => expect(sendsReads(shell)).toBe(before + 1), { timeout: 10_000 });
+    const took = Date.now() - sent;
+    await drainShell(shell, () => false);
+    // A rate at 96 kHz, given three times as long as the read above took to arrive.
+    const after = sendsReads(shell);
+    rateNotify(shell, 96000);
+    await new Promise((r) => setTimeout(r, took * 3));
+    await drainShell(shell, () => false);
+    expect(sendsReads(shell), "no read for a rate at 96 kHz").toBe(after);
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+  });
+});
+
 describe("the inspector's CUE row", () => {
   const cueWrites = (shell: TauriShell): number[] =>
     shell.invokes.flatMap((cmd, i) => {

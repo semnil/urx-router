@@ -33,7 +33,14 @@ export interface SimViewHooks {
   releaseMeters: () => void;
   regainMeters: () => void;
   onMeterError: (message: string) => void;
+  /** The unit's [Sends] destination while a session holds it, or null with none. */
+  unitSendsTarget: () => string | null;
+  /** Hand a [Sends] destination chosen on the glass to the unit. False when it was refused. */
+  setUnitSendsTarget: (target: string) => boolean;
 }
+
+/** The glass's path for HOME's [Sends] destination, which the unit holds outside the plan. */
+export const SENDS_TARGET_PATH = "ui.sendsTarget";
 
 /** The urx-router meter tap a simulator meter id reads, by the simulator's tap name. */
 const TAP_KEYS: Record<string, string> = {
@@ -77,7 +84,7 @@ class PlanTransport implements DeviceTransport {
   constructor(
     private readonly bindings: ReadonlyMap<string, SimBinding>,
     private readonly shipped: ReadonlyMap<ParamPath, ParamValue>,
-    private readonly hooks: Pick<SimViewHooks, "getPlan" | "apply">,
+    private readonly hooks: Pick<SimViewHooks, "getPlan" | "apply" | "unitSendsTarget" | "setUnitSendsTarget">,
   ) {}
 
   /** The paths the table binds. */
@@ -85,10 +92,13 @@ class PlanTransport implements DeviceTransport {
     return this.bindings.keys();
   }
 
-  /** What the glass shows: the plan where the table answers, the unit as it ships elsewhere. */
+  /** What the glass shows: the plan where the table answers, the [Sends] destination the session
+   *  holds, and the unit as it ships elsewhere. */
   private current(): Map<string, SimValue> {
     const out = new Map<string, SimValue>(this.shipped);
     for (const [path, value] of readSim(this.bindings, this.hooks.getPlan())) out.set(path, value);
+    const sends = this.hooks.unitSendsTarget();
+    if (sends !== null) out.set(SENDS_TARGET_PATH, sends);
     return out;
   }
 
@@ -99,12 +109,18 @@ class PlanTransport implements DeviceTransport {
   }
 
   writable(path: ParamPath): boolean {
+    if (path === SENDS_TARGET_PATH) return this.hooks.unitSendsTarget() !== null;
     return this.bindings.get(path)?.write !== undefined;
   }
 
   write(path: ParamPath, value: ParamValue, onSent?: () => void): Promise<ParamValue> {
     if (this.closed) return Promise.reject(new Error("closed"));
     onSent?.();
+    if (path === SENDS_TARGET_PATH) {
+      if (!this.hooks.setUnitSendsTarget(String(value))) return Promise.reject(new Error("refused"));
+      this.held.set(path, value);
+      return Promise.resolve(value);
+    }
     const binding = this.bindings.get(path);
     if (!binding?.write) return Promise.reject(new Error(`${path} is not the plan's`));
     const edit = binding.write(this.hooks.getPlan(), value);
@@ -187,6 +203,11 @@ export class SimView {
       this.transport?.push();
       if (this.transport) this.sim?.setLocks(this.hooks.locks(this.transport.paths()));
     });
+  }
+
+  /** The unit's [Sends] destination changed, or the session that held it started or ended. */
+  unitStateChanged(): void {
+    this.planChanged();
   }
 
   /** A new plan or another model: the glass starts again on it. */

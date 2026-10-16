@@ -223,6 +223,14 @@ import {
   unverifiedGuessNote,
 } from "./core/control/translate";
 import { decodeLcdSelection, encodeStereoSide, LcdEchoes } from "./core/control/lcd-selection";
+import {
+  decodeSendsTarget,
+  encodeSendsTarget,
+  readSendsTarget,
+  SENDS_TARGET_ADDR,
+  writeSendsTarget,
+  type SendsTarget,
+} from "./core/control/sends-target";
 import { CueEchoes, CueSet, readCues, writeCueFlag } from "./core/control/cue";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
@@ -481,7 +489,7 @@ function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   const flush = live?.idle() ?? Promise.resolve();
   // …and the LCD selection write the session has on the wire, for the same reason.
   const lcd = lcdInFlight ?? Promise.resolve();
-  // …and the [CUE] writes it has queued.
+  // …and the [CUE] writes it has queued, with the [Sends] destination's queued behind them.
   const cue = cueWrites;
   return (
     Promise.allSettled([ledger, reads, flush, lcd, cue])
@@ -666,8 +674,9 @@ const live = DEMO
 // switches one.
 let cues = new CueSet(getModel(modelId));
 const cueEchoes = new CueEchoes();
-// One flag write at a time, in the order the changes were made; a session's release waits for
-// the tail before it disconnects.
+// One flag write at a time, in the order the changes were made, with the reads and writes of
+// HOME's [Sends] destination in the same line; a session's release waits for the tail before it
+// disconnects.
 let cueWrites: Promise<void> = Promise.resolve();
 let cueWritesPending = 0;
 
@@ -793,6 +802,78 @@ function resetCues(): void {
   cues = new CueSet(model);
   if (stale) renderCues();
   else renderCueBar();
+}
+
+// HOME's [Sends] destination (core/control/sends-target.ts): UI state of the unit outside the
+// plan, shown on the SIM view's glass. A session's start reads it, a change on the unit arrives
+// as a notify, and a destination chosen on the glass is written to the unit. With no session
+// the glass keeps a destination of its own, which reaches nothing.
+let sendsTarget: SendsTarget | null = null;
+const sendsEchoes = new LcdEchoes();
+// How long after an announced rate above 96 kHz 763 is read again. The unit moves FX 2 to FX 1
+// at that rate and announces nothing, and has moved it by this long after the rate write.
+const SENDS_REREAD_AFTER_RATE_MS = 1000;
+let sendsRereadTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Take a 763 value the unit holds. */
+function takeSendsTarget(raw: number): void {
+  const next = decodeSendsTarget(getModel(modelId), raw);
+  if (next === sendsTarget) return;
+  sendsTarget = next;
+  simView?.unitStateChanged();
+}
+
+/** A destination chosen on the glass: written to the unit while a session is up. False when it
+ *  is refused — with no session, for a destination the model has no bus for, and for FX 2 at a
+ *  rate that takes FX 2 out. */
+function chooseSendsTarget(target: string): boolean {
+  if (!liveSessionUp) return false;
+  const raw = encodeSendsTarget(getModel(modelId), target, plan.sampleRate);
+  if (raw === null) return false;
+  sendsTarget = decodeSendsTarget(getModel(modelId), raw);
+  cueWrites = cueWrites
+    .then(async () => {
+      if (!liveSessionUp) return;
+      sendsEchoes.note(raw);
+      await writeSendsTarget(raw);
+    })
+    .catch((err: unknown) => stopLiveOnError(errorText(err)));
+  return true;
+}
+
+/** Read 763 behind every write queued so far, the plan flush and the follow reads running, and
+ *  take what the unit holds. */
+function rereadSendsTarget(): void {
+  if (!liveSessionUp) return;
+  cueWrites = cueWrites
+    .then(async () => {
+      await live?.idle();
+      await Promise.all([...followReads].map((r) => r.done));
+      if (!liveSessionUp) return;
+      const raw = await readSendsTarget();
+      if (liveSessionUp) takeSendsTarget(raw);
+    })
+    .catch((err: unknown) => stopLiveOnError(errorText(err)));
+}
+
+/** A rate change the unit announced: above 96 kHz the unit may have moved the destination. */
+function onAnnouncedRate(hz: number): void {
+  if (!(hz > 96000)) return;
+  if (sendsRereadTimer !== null) clearTimeout(sendsRereadTimer);
+  sendsRereadTimer = setTimeout(() => {
+    sendsRereadTimer = null;
+    rereadSendsTarget();
+  }, SENDS_REREAD_AFTER_RATE_MS);
+}
+
+/** Forget the unit's destination: the session that knew it ended, or the model changed. */
+function resetSendsTarget(): void {
+  sendsEchoes.clear();
+  if (sendsRereadTimer !== null) clearTimeout(sendsRereadTimer);
+  sendsRereadTimer = null;
+  if (sendsTarget === null) return;
+  sendsTarget = null;
+  simView?.unitStateChanged();
 }
 
 const cueBar = $<HTMLElement>("cue-bar");
@@ -928,6 +1009,8 @@ simView = new SimView(
     releaseMeters: () => consoleView.releaseMeters(),
     regainMeters: () => consoleView.regainMeters(),
     onMeterError: (message) => stopLiveOnError(errorText(message)),
+    unitSendsTarget: () => (liveSessionUp ? sendsTarget : null),
+    setUnitSendsTarget: (target) => planTakesEdits() && chooseSendsTarget(target),
   },
   detectSimScale(),
 );
@@ -1442,6 +1525,7 @@ const follow =
           ...(live?.followAddrs() ?? []),
           FOLLOW_USB_ADDR,
           LCD_SELECTION_ADDR,
+          SENDS_TARGET_ADDR,
           ...cueNotifyAddrs(getModel(modelId)),
         ],
         // Held off while a flush is armed, running or queued: a read taken then answers an
@@ -1460,6 +1544,12 @@ const follow =
             lcdNext = null;
             const sel = decodeLcdSelection(getModel(modelId), p.value);
             if (sel) switchSide(sel.channel, sel.side, "device");
+            return true;
+          }
+          // HOME's [Sends] destination: the unit answering a write of this app's, or a choice on
+          // its panel. Neither opens a reconcile.
+          if (at(SENDS_TARGET_ADDR)) {
+            if (!sendsEchoes.take(p.value)) takeSendsTarget(p.value);
             return true;
           }
           // A [CUE] flag: the unit answering a write of this app's, a mirror it sets beside a
@@ -1494,7 +1584,10 @@ const follow =
         // names the pair's primary, and the transition it reports clears BOTH members,
         // so the partner is recorded with it.
         onDeviceParam: (p) => {
-          if (p.paramId === PARAMS.SAMPLE_RATE.id) announcedRates.push({ seq: ++rateSeq, hz: p.value });
+          if (p.paramId === PARAMS.SAMPLE_RATE.id) {
+            announcedRates.push({ seq: ++rateSeq, hz: p.value });
+            onAnnouncedRate(p.value);
+          }
           const addr = live?.lookup(p.paramId, p.x, p.y);
           if (!addr?.node || !INSERT_FX_ANNOUNCED.has(addr.name)) return;
           announcedInsertFx.push(addr.node);
@@ -1806,8 +1899,10 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   lcdEchoes.clear();
   lcdNext = null;
   lcdLast = null;
-  // A cue is the unit's state, which nothing reads once the session is gone.
+  // A cue is the unit's state, which nothing reads once the session is gone, and so is the
+  // [Sends] destination.
   resetCues();
+  resetSendsTarget();
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
   liveAdopted = 0;
@@ -2871,6 +2966,7 @@ function loadPlan(next: Plan, { readHoldsLatch = false }: { readHoldsLatch?: boo
     if (modelId !== prevModelId) {
       setFollowUsbBadge(null);
       resetCues();
+      resetSendsTarget();
     }
   } catch (err) {
     // Put the previous document back on screen and report, rather than throwing: three
@@ -4567,6 +4663,7 @@ if (!DEMO) {
         live?.end();
         // The cues the starting read took belong to the session that did not start.
         resetCues();
+        resetSendsTarget();
         await releaseLive(device.epoch, "error");
         showError(message, supplied ?? "");
       };
@@ -4605,6 +4702,7 @@ if (!DEMO) {
         // read beside Follow USB, for the same reason and with the same failure.
         let followUsb = false;
         let lcdSelection = 0;
+        let sendsRead = 0;
         let cueRead: string[] = [];
         let merged: MergedRead | null;
         try {
@@ -4613,6 +4711,7 @@ if (!DEMO) {
             async (into) => {
               followUsb = await readFollowUsb();
               lcdSelection = await readLcdSelection();
+              sendsRead = await readSendsTarget();
               // On the device's model: a read that carries a switch reads for the plan it
               // switches to.
               cueRead = await readCues(getModel(switchTo ? switchTo.modelId : modelId));
@@ -4675,6 +4774,8 @@ if (!DEMO) {
         // was up.
         resetCues();
         if (cues.replace(cueRead)) renderCues();
+        resetSendsTarget();
+        sendsTarget = decodeSendsTarget(getModel(modelId), sendsRead);
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.
         liveAdopted = 0;
@@ -4720,6 +4821,9 @@ if (!DEMO) {
         // The flags were read before the notify stream was registered; a press on the unit in
         // between announced itself to nobody.
         rereadCues();
+        // The destination too, and the glass takes it now the session counts as up.
+        rereadSendsTarget();
+        simView?.unitStateChanged();
         // An edit made while the starting read ran had no session to flush through, so the
         // plan differs from the snapshot the session just took with nothing else left to
         // schedule the send — whether the read held that key, lost it, or found the unit

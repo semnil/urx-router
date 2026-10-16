@@ -1,5 +1,14 @@
 import { test, expect, type Page } from "./fixtures";
-import { savedFilesOf, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+import {
+  LIVE_COMMANDS,
+  notifyParam,
+  savedFilesOf,
+  setDeviceValue,
+  stubTauriBoot,
+  stubTauriDevice,
+  writesOf,
+} from "./tauri-stub";
+import { PARAMS } from "../src/core/control/params";
 import { chooseOption } from "./choose-option";
 import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
 import { en } from "../src/i18n/en";
@@ -365,4 +374,43 @@ test("an insert effect chosen again on the LCD keeps the values the plan holds f
   await chooseOption(select, { label: "Clean" });
   await chooseOption(select, { label: "Compander-S" });
   expect((await save(page)).nodeParams.ch1?.insertFxParams).toMatchObject({ "compander:6": tuned });
+});
+
+// HOME's [Sends] destination is the unit's UI state, outside the plan: a session reads it, a
+// choice on the unit's panel arrives as a notify, and a choice on the glass is written to it.
+test("the LCD's [Sends] destination is the unit's while Live sync is up, and the glass's own without", async ({
+  page,
+}) => {
+  const SENDS: number = PARAMS.SENDS_TARGET.id;
+  await stubTauriDevice(page, { values: { [SENDS]: 32 }, commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  const tab = lcd(page).locator(".sends-target");
+  const pick = async (name: string): Promise<void> => {
+    await tab.click();
+    await lcd(page).getByRole("button", { name, exact: true }).click();
+    await expect(tab).toHaveText(name);
+  };
+  const sendsWrites = async (): Promise<number[]> =>
+    (await writesOf(page)).flatMap(([id, v]) => (id === SENDS ? [v] : []));
+
+  // No session: the choice is the glass's and reaches nothing.
+  await pick("FX 1");
+  expect(await sendsWrites()).toEqual([]);
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(tab, "the session shows what the unit holds").toHaveText("MIX 1");
+
+  // A choice on the unit's panel.
+  await setDeviceValue(page, SENDS, 0, 16);
+  await notifyParam(page, SENDS, 0, 16);
+  await expect(tab).toHaveText("FX 1");
+  expect(await sendsWrites(), "the unit's own choice is not written back").toEqual([]);
+
+  // A choice on the glass goes to the unit.
+  await pick("MIX 2");
+  await expect.poll(sendsWrites).toEqual([34]);
 });
