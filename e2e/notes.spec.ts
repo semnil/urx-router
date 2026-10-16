@@ -1,5 +1,5 @@
 import { test, expect, colorToken, contrastRatio, type Page } from "./fixtures";
-import { faceplate } from "./graph-helpers";
+import { doublePress, faceplate } from "./graph-helpers";
 
 // A node is a g.node carrying its id; the note controls live inside it.
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
@@ -31,7 +31,7 @@ test.beforeEach(async ({ page }) => {
 test("the note editor's placeholder clears AA in the light theme", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
   await page.reload();
-  await node(page, "ch1").dblclick();
+  await doublePress(node(page, "ch1"));
   await expect(overlay(page)).toBeVisible();
   const { ink, opacity } = await overlay(page).evaluate((el) => {
     const s = getComputedStyle(el, "::placeholder");
@@ -43,7 +43,7 @@ test("the note editor's placeholder clears AA in the light theme", async ({ page
 test("double-clicking a node opens its note editor", async ({ page }) => {
   // A quick double-press is the note-edit shortcut; a sustained long-press traces
   // the signal path instead, so the two stay distinct.
-  await node(page, "ch1").dblclick();
+  await doublePress(node(page, "ch1"));
   await expect(overlay(page)).toBeVisible();
   await overlay(page).fill("Quick note");
   await page.keyboard.press("Escape");

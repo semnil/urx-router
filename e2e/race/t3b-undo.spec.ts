@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { doublePress } from "../graph-helpers";
 import {
   installFake,
   goLive,
@@ -412,7 +413,7 @@ test.describe("T3b undo", () => {
 
     // (a) Re-open the editor: the un-collapse alone reports a change.
     await mark(page, "reopen-note");
-    await graphNode(page, "ch1").dblclick();
+    await doublePress(graphNode(page, "ch1"));
     await expect(noteOverlay(page)).toBeVisible();
     const uncollapse = (await ledgerOf(page)).slice(ledgerBefore);
     await settleHistory(page);
