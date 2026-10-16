@@ -1058,8 +1058,8 @@ a slot rather than what is in it.
   carries for the emit path.
 - **The compander's Release moves through the unit's own knob stops.** The unit's [TOUCH AND TURN] knob
   turns it through 160 fixed stops, 5.0 ms to 42.3 s — 5.33 ms apart for the first 32, then twice as far
-  apart every 16 — the same on the URX44V at 48 kHz and the URX22 at 44.1 kHz, and on the URX22's output
-  compander as on its input one. The catalogue carries the table (`rawStops`), and the slider and the
+  apart every 16 — the same on the URX44V at 48 kHz and the URX22 at 44.1 and 96 kHz, and on the URX22's
+  output compander as on its input one. The catalogue carries the table (`rawStops`), and the slider and the
   MIDI mapping take it as a stop table: a position is a stop, so an arrow press, a wheel notch, a drag
   and a controller move one stop at a time. A written value is kept anywhere in the range — the unit
   shows 65.4 ms for a raw 654, which is between two stops — so a plan holding a value between stops
