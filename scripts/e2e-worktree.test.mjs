@@ -11,6 +11,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -66,6 +67,7 @@ for (const rel of JSON.parse(process.env.STUB_PROBE)) {
   }
 }
 writeFileSync(process.env.STUB_OUT, JSON.stringify({ cwd: realpathSync(process.cwd()), out }));
+process.exit(Number(process.env.STUB_EXIT || 0));
 `;
 
 const roots = [];
@@ -98,16 +100,23 @@ function fixture() {
 }
 
 /** Runs the program over `repo` and returns its exit code plus the stub's record. */
-function run({ root, repo }, probe, inside = "") {
+function run({ root, repo }, probe, inside = "", { keep = false, exit = 0 } = {}) {
   const wt = join(root, "wt");
   const out = join(root, "stub.json");
-  const r = spawnSync(process.execPath, [join(repo, "scripts", "e2e-worktree.mjs"), "--path", wt, "--port", "4398"], {
+  const args = [join(repo, "scripts", "e2e-worktree.mjs"), "--path", wt, "--port", "4398", ...(keep ? ["--keep"] : [])];
+  const r = spawnSync(process.execPath, args, {
     cwd: repo,
     encoding: "utf8",
-    env: { ...process.env, STUB_OUT: out, STUB_PROBE: JSON.stringify(probe), STUB_INSIDE: inside },
+    env: {
+      ...process.env,
+      STUB_OUT: out,
+      STUB_PROBE: JSON.stringify(probe),
+      STUB_INSIDE: inside,
+      STUB_EXIT: String(exit),
+    },
   });
   const seen = existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) : null;
-  return { code: r.status, stderr: r.stderr, seen, wt, wtLeft: existsSync(wt) };
+  return { code: r.status, stdout: r.stdout, stderr: r.stderr, seen, wt, wtLeft: existsSync(wt) };
 }
 
 describe("e2e-worktree carries the working tree", () => {
@@ -136,6 +145,29 @@ describe("e2e-worktree carries the working tree", () => {
     expect(r.wtLeft).toBe(false);
     expect(readFileSync(join(outside, "inside.txt"), "utf8")).toBe("outside\n");
   });
+
+  for (const exit of [0, 1]) {
+    it.skipIf(!dirLinks)(
+      `--keep leaves a carried link in the kept worktree after a run that exits ${exit}${skipNote(dirLinks)}`,
+      () => {
+        const f = fixture();
+        const outside = join(f.root, "outside");
+        mkdirSync(outside);
+        writeFileSync(join(outside, "inside.txt"), "outside\n");
+        mkdirSync(join(f.repo, "work"));
+        symlinkSync(outside, join(f.repo, "work", "vd"), "junction");
+        const r = run(f, ["work/vd"], "inside.txt", { keep: true, exit });
+        expect(r.stderr).not.toMatch(/Error/);
+        expect(r.code).toBe(exit);
+        expect(r.wtLeft).toBe(true);
+        const kept = join(r.wt, "work", "vd");
+        expect(lstatSync(kept).isSymbolicLink()).toBe(true);
+        expect(readFileSync(join(kept, "inside.txt"), "utf8")).toBe("outside\n");
+        // The removal it prints unlinks the carried link before the worktree goes.
+        expect(r.stdout).toContain(kept);
+      },
+    );
+  }
 
   it.skipIf(!fileLinks)(`carries an untracked link to a file as a link, not a copy${skipNote(fileLinks)}`, () => {
     const f = fixture();

@@ -156,17 +156,24 @@ try {
   // with it. unlinkSync removes the link itself, never its target.
   const link = join(wt, "node_modules");
   if (existsSync(link)) unlinkSync(link);
-  // The carried links likewise: Git for Windows deletes through a junction, which would
-  // empty the directory a carried link points at.
-  for (const l of links) {
-    try {
-      unlinkSync(l);
-    } catch (e) {
-      if (e.code !== "ENOENT") throw e;
+  // A kept worktree keeps the carried links, since they are part of the state the run
+  // tested. Before any removal they are unlinked: Git for Windows deletes through a
+  // junction, which would empty the directory a carried link points at.
+  if (KEEP) {
+    console.log(`\nkept ${wt}`);
+    if (links.length) {
+      console.log("unlink the carried links before removing it — Git for Windows deletes through a junction:");
+      for (const l of links) console.log(`  ${l}`);
     }
-  }
-  if (KEEP) console.log(`\nkept ${wt} — remove with: git worktree remove --force ${wt}`);
-  else {
+    console.log(`remove with: git worktree remove --force ${wt}`);
+  } else {
+    for (const l of links) {
+      try {
+        unlinkSync(l);
+      } catch (e) {
+        if (e.code !== "ENOENT") throw e;
+      }
+    }
     git(["worktree", "remove", "--force", wt], ROOT, true);
     rmSync(wt, { recursive: true, force: true });
   }
