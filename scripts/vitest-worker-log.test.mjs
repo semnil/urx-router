@@ -7,6 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+// Loaded here, on the real platform, so the native bindings it pulls in (Vite, Rolldown) are this machine's
+// before a case below reads vitest.config.ts with process.platform shown as another OS.
+import "vitest/config";
 
 const ENV = "URX_VITEST_WORKER_LOG";
 const SETUP = "scripts/vitest-worker-log-setup.mjs";
