@@ -399,6 +399,40 @@ test.describe("toolbar", () => {
     await expect(page.locator("#btn-fetch")).toBeVisible(); // the menu is open
   }
 
+  // The rack is spaced by its gaps alone: no rule stands between the menus, the menus and the gear sit 6px
+  // apart, the rest 10px, and the right group — the LIVE tally and the menus — stands at the rack's right end.
+  test("spaces the rack by its gaps alone, the right group at its right end", async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await stubTauriBoot(page, { experimental_enabled: true });
+    await page.goto("/");
+    await expect(page.locator("#btn-view-sim")).toBeVisible();
+    await page.evaluate(() => {
+      const tally = document.getElementById("live-tally")!;
+      tally.hidden = false;
+      tally.textContent = "LIVE";
+    });
+    const rect = (l: Locator) => l.evaluate((e) => e.getBoundingClientRect().toJSON() as DOMRect);
+    const bar = await rect(page.locator("#toolbar"));
+    const controls = await page
+      .locator("#toolbar .tools > :not([hidden])")
+      .evaluateAll((els) =>
+        els
+          .filter((e) => getComputedStyle(e).display !== "none")
+          .map((e) => e.getBoundingClientRect().toJSON() as DOMRect),
+      );
+    expect(controls.length, "File, Device, View and the gear, with no rule between them").toBe(4);
+    for (let i = 1; i < controls.length; i++) expect(controls[i].left - controls[i - 1].right).toBeCloseTo(6, 0);
+    const tally = await rect(page.locator("#live-tally"));
+    const tools = await rect(page.locator("#toolbar .tools"));
+    const tabs = await rect(page.locator("#view-tabs"));
+    expect(tools.left - tally.right).toBeCloseTo(10, 0);
+    expect(bar.right - tools.right, "the right group ends at the rack's padding").toBeCloseTo(16, 0);
+    expect(tally.left - tabs.right, "the room left over falls between the two groups").toBeGreaterThan(10);
+    const picker = await rect(page.locator("#rate-picker"));
+    const follow = await rect(page.locator("#follow-usb"));
+    expect(follow.left - picker.right).toBeCloseTo(10, 0);
+  });
+
   test("the device menu groups live sync, transfers, MIDI, and the experimental self-test", async ({ page }) => {
     await gotoWithDeviceMenu(page, true);
     await expect(page.locator("#btn-midi")).toBeVisible();
