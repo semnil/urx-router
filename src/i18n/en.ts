@@ -1392,6 +1392,8 @@ export const en = {
       `${n} setting${n === 1 ? "" : "s"} could not be read back after a change on the device, so the plan no longer matches it. Fetch again to resync.`,
     clockUnread: (message: string): string =>
       `The device's sample rate and Follow USB state could not be read (${message}), so the plan's rate was not checked against the unit. Nothing was written.`,
+    playbackUnread: (message: string): string =>
+      `Whether the microSD recorder is playing could not be read (${message}), and a rate change ends a playback. Nothing was written.`,
     rateDuringPlayback: (deviceRate: string, planRate: string): string =>
       `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is playing or paused. Stop the playback on the device, then write again. Nothing was written.`,
     trackCountUnread: (message: string): string =>

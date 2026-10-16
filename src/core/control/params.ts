@@ -692,6 +692,11 @@ export const PARAMS = {
    *  write could only ever lower the unit to two tracks and could not raise it
    *  again — the front panel would have to. */
   SD_REC_TRACK_COUNT: { id: 839, encoding: "raw", sceneExternal: true },
+  /** microSD playback state (y = 0): 0 stopped, 1 playing, 2 paused, announced on every change.
+   *  Read only — the app never writes it. While it is not 0 the unit's SETUP > GENERAL keeps
+   *  [Sampling Frequency] out of reach, and a 766 written then still re-clocks and ends the
+   *  playback, so a rate write first asks this. */
+  SD_PLAYBACK: { id: 836, encoding: "raw", planExternal: true },
 
   // ---- SETUP > GENERAL: device-wide utility settings -----------------------
   // These are catalogued here because PARAMS is the one place an address may be

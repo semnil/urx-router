@@ -194,6 +194,7 @@ import {
   reachedAndFailed,
   rateAction,
   readClockState,
+  readSdPlaybackHeld,
   readFollowUsb,
   readLcdSelection,
   readTrackCount,
@@ -4070,7 +4071,21 @@ if (!DEMO) {
       showError(t().status.writeError(t().error.trackCountUnread(errorText(err))));
       return false;
     }
+    // A file held by the microSD recorder (playing or paused) is when the unit keeps its own
+    // rate control out of reach, and a rate written then ends the playback. Both arms that
+    // write the plan's rate stop here; adopting the device's rate writes none and stays open.
+    let playbackHeld;
+    try {
+      playbackHeld = hasRecorder(modelId) ? await readSdPlaybackHeld() : false;
+    } catch (err) {
+      showError(t().status.writeError(t().error.playbackUnread(errorText(err))));
+      return false;
+    }
     if (action === "confirmReclock") {
+      if (playbackHeld) {
+        showError(t().status.writeError(t().error.rateDuringPlayback(deviceRate, planRate)));
+        return false;
+      }
       // The device will take the rate and hold it. Re-clocking interrupts audio and
       // renegotiates the USB stream, so it is worth stating outright — but it is a
       // plain yes/no: the plan's rate is the one that sticks.
@@ -4109,6 +4124,10 @@ if (!DEMO) {
       markChanged();
       syncRateUi(); // persists the adopted rate as the last known one
       return true;
+    }
+    if (playbackHeld) {
+      showError(t().status.writeError(t().error.rateDuringPlayback(deviceRate, planRate)));
+      return false;
     }
     try {
       await setFollowUsb(false);

@@ -47,6 +47,15 @@ export async function readTrackCount(): Promise<number> {
   return (await vdGet(PARAMS.SD_REC_TRACK_COUNT.id, 0, 0)) * 2;
 }
 
+/**
+ * Whether the microSD recorder holds a file (playing or paused), which is when the unit keeps
+ * its own rate control out of reach. Only a model with a recorder has the state. Rejects when
+ * the read fails, and the write that asked for it then stops before anything is sent.
+ */
+export async function readSdPlaybackHeld(): Promise<boolean> {
+  return (await vdGet(PARAMS.SD_PLAYBACK.id, 0, 0)) !== 0;
+}
+
 /** Read just the Follow USB policy. Separate from readClockState because the badge
  *  read accompanies a full readback, which brings the rate back itself — reading it
  *  there as well would be a round-trip for a value the readback obtains. */

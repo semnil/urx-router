@@ -3366,6 +3366,16 @@ send as it RESOLVES — everything but an explicit refusal, since the shell send
 answer never came may have landed and taken the count down with it — rather than from the outcomes the call
 returns, which a cancel between two sends throws away.
 
+**A rate is not written while the microSD recorder holds a file.** Param 836 reads 0 when the recorder is stopped, 1
+while it plays and 2 while it is paused, and while it is not 0 the unit keeps its own SETUP > GENERAL [Sampling
+Frequency] out of reach. A 766 written over the link then is still accepted: the unit shows its Loading screen, the
+RECORDER screen comes back with no file names, and the playback stops. So the rate settle reads 836
+(`readSdPlaybackHeld` in `client.ts`, a model with a recorder only) once it knows a rate would change, and both arms
+that write the plan's rate — the re-clock confirm and the three-way's RELEASE arm — stop the write with nothing sent;
+ADOPT writes no rate and stays open. A read that fails stops the write, as the Track Count read does. While Live sync
+or any other link is up the rate picker, the SIM view's rate and an undo that would move the rate are already locked,
+so the write is the one path that reaches 766 during a playback.
+
 The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen
 with no device attached, so there is nothing to compare against until a connection exists.
 

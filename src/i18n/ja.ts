@@ -1082,6 +1082,8 @@ export const ja: Messages = {
       `デバイス側の変更後、${n} 件の設定を読み戻せず、プランが実機と一致しなくなりました。取得し直して同期してください。`,
     clockUnread: (message: string): string =>
       `デバイスのサンプルレートと Follow USB の状態を読み取れませんでした (${message})。計画のレートを実機と照合していないため、何も書き込んでいません。`,
+    playbackUnread: (message: string): string =>
+      `microSD レコーダーが再生中かどうかを読み取れませんでした (${message})。レート変更は再生を止めてしまうため、何も書き込んでいません。`,
     rateDuringPlayback: (deviceRate: string, planRate: string): string =>
       `microSD レコーダーの再生中・一時停止中は、本体のサンプリング周波数を ${deviceRate} から ${planRate} に変更できません。本体で再生を停止してから、もう一度書き込んでください。何も書き込んでいません。`,
     trackCountUnread: (message: string): string =>

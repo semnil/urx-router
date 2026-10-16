@@ -328,6 +328,9 @@ const chooseRate = (rate: number): void => {
 
 const TRACK_COUNT_SEED = "839/0/0";
 const TRACK_COUNT_ADDR = "839:0:0";
+const PLAYBACK_SEED = "836/0/0";
+const PLAYBACK_ADDR = "836:0:0";
+const FOLLOW_USB_SEED = "848/0/0";
 
 /** The messages of the dialogs that REPORTED a failure, in order. */
 const errors = (shell: TauriShell): string[] =>
@@ -4435,6 +4438,69 @@ describe("Write to device", () => {
 
     expect(confirms(shell)).toEqual([]);
     expect(shell.count("vd_set")).toBe(0);
+  });
+
+  // The unit keeps its own rate control out of reach while the recorder holds a file, and a
+  // rate written over the link then ends the playback. Playing (1) and paused (2) both hold
+  // one; the reclock confirm above, with nothing held, is what shows this flow reaches it.
+  it.each([1, 2])(
+    "writes nothing, and asks nothing, while the recorder holds a file (state %i)",
+    SLOW,
+    async (state) => {
+      const shell = await bootDevice({}, true, { [PLAYBACK_SEED]: state });
+      chooseRate(96_000);
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect");
+      await vi.waitFor(
+        () =>
+          expect(errors(shell)).toEqual([
+            t().status.writeError(t().error.rateDuringPlayback(formatRate(0), formatRate(96_000))),
+          ]),
+        { timeout: 10_000 },
+      );
+      expect(confirms(shell)).toEqual([]);
+      expect(shell.count("vd_set")).toBe(0);
+    },
+  );
+
+  it("writes nothing when whether the recorder is playing cannot be read", SLOW, async () => {
+    const shell = await bootDevice(
+      {
+        vd_get: (a: Record<string, unknown>) => {
+          if (`${a.paramId}:${a.x}:${a.y}` === PLAYBACK_ADDR) throw new Error("timeout");
+          return 0;
+        },
+      },
+      true,
+    );
+    chooseRate(96_000);
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(
+      () => expect(errors(shell)).toEqual([t().status.writeError(t().error.playbackUnread("timeout"))]),
+      { timeout: 10_000 },
+    );
+    expect(confirms(shell)).toEqual([]);
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
+  // With Follow USB on, the operator picks: adopting the device's rate writes no rate and
+  // stays open while a file is held, releasing to the plan's would write one and stops.
+  it("lets a held file adopt the device's rate but not release to the plan's", SLOW, async () => {
+    const release = await bootDevice({}, true, { [PLAYBACK_SEED]: 1, [FOLLOW_USB_SEED]: 1 });
+    chooseRate(96_000);
+    $("btn-write").click();
+    await vi.waitFor(() => expect($("rate-choice").hidden).toBe(false), { timeout: 10_000 });
+    $("rate-choice-release").click();
+    await invoked(release, "vd_disconnect");
+    await vi.waitFor(
+      () =>
+        expect(errors(release)).toEqual([
+          t().status.writeError(t().error.rateDuringPlayback(formatRate(0), formatRate(96_000))),
+        ]),
+      { timeout: 10_000 },
+    );
+    expect(release.count("vd_set")).toBe(0);
   });
 
   // The read is worth nothing until something redraws. The plan taking the unit's value
