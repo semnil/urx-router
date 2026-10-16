@@ -25,6 +25,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readlinkSync,
   rmSync,
   statSync,
@@ -108,26 +109,33 @@ try {
   // Untracked but not ignored: a new spec or fixture that has not been added yet is
   // part of what is under test, and omitting it would run the suite without it.
   // -z: without it git quotes a path holding a non-ASCII byte, and the quoted form names no file.
-  // Git for Windows lists an untracked junction as the files inside it rather than as one
-  // path, so a path under a link is folded into the link and carried once as that link. A
-  // junction to an empty directory is listed by nothing there and is not carried.
-  const linkOf = (rel) => {
-    const parts = rel.split("/");
-    for (let i = 1; i < parts.length; i++) {
-      const at = parts.slice(0, i).join("/");
-      if (lstatSync(join(ROOT, at)).isSymbolicLink()) return at;
+  // --directory: Git for Windows lists an untracked junction as the files inside it, and one to
+  // an empty directory not at all, while this listing names each untracked directory once with
+  // a trailing slash, a junction included. A directory entry that is a link is carried as the
+  // link; a real one is opened a level at a time, its entries asked about by literal path so the
+  // ignore rules still decide what is carried, until only files and links remain.
+  const listed = (pathspecs) =>
+    git(["ls-files", "-z", "--others", "--exclude-standard", "--directory", "--", ...pathspecs])
+      .split("\0")
+      .filter(Boolean);
+  const untracked = [];
+  for (let level = listed([]); level.length;) {
+    const opened = [];
+    for (const entry of level) {
+      const rel = entry.replace(/\/$/, "");
+      if (rel === entry || lstatSync(join(ROOT, rel)).isSymbolicLink()) untracked.push(rel);
+      else opened.push(...readdirSync(join(ROOT, rel)).map((name) => `:(literal)${rel}/${name}`));
     }
-    return rel;
-  };
-  const untracked = [
-    ...new Set(git(["ls-files", "-z", "--others", "--exclude-standard"]).split("\0").filter(Boolean).map(linkOf)),
-  ];
+    level = [];
+    // Batched so one command line stays well inside Windows' 32767-character limit.
+    for (let i = 0; i < opened.length; i += 200) level.push(...listed(opened.slice(i, i + 200)));
+  }
   for (const rel of untracked) {
     const src = join(ROOT, rel);
     const dst = join(wt, rel);
     mkdirSync(dirname(dst), { recursive: true });
-    // A symlink is recreated with its target
-    // verbatim, so a relative one resolves inside the worktree as it does here; copying would
+    // A symlink is recreated with its target verbatim, so a relative one resolves inside the
+    // worktree as it does here; copying would
     // follow it, and a link to a directory cannot be copied at all. Windows needs the kind up
     // front: a directory becomes a junction, which needs no privilege, and a file link that
     // the machine refuses (no Developer Mode) stops the run rather than being carried as a copy.

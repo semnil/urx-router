@@ -49,18 +49,20 @@ const skipNote = (ok) => (ok ? "" : " — SKIPPED, this machine cannot create on
 
 // Records, for each path it is handed, what the worktree holds there.
 const STUB = `
-const { lstatSync, readFileSync, readlinkSync, realpathSync, writeFileSync } = require("node:fs");
+const { lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, writeFileSync } = require("node:fs");
 const { join } = require("node:path");
 const out = {};
 for (const rel of JSON.parse(process.env.STUB_PROBE)) {
   const at = join(process.cwd(), rel);
   try {
     const link = lstatSync(at).isSymbolicLink();
+    const read = link && process.env.STUB_INSIDE ? join(at, process.env.STUB_INSIDE) : at;
     out[rel] = {
       link,
       target: link ? readlinkSync(at) : null,
       real: realpathSync(at),
-      content: readFileSync(link && process.env.STUB_INSIDE ? join(at, process.env.STUB_INSIDE) : at, "utf8"),
+      // A directory is recorded by the names it holds.
+      content: statSync(read).isDirectory() ? readdirSync(read) : readFileSync(read, "utf8"),
     };
   } catch (e) {
     out[rel] = { error: e.code };
@@ -144,6 +146,30 @@ describe("e2e-worktree carries the working tree", () => {
     // Removing the worktree removed the link and left what it pointed at.
     expect(r.wtLeft).toBe(false);
     expect(readFileSync(join(outside, "inside.txt"), "utf8")).toBe("outside\n");
+  });
+
+  // Git for Windows lists a junction to an empty directory nowhere in a plain listing, at the top
+  // of the tree or inside an untracked directory; the ignored directory beside it has to stay out.
+  it.skipIf(!dirLinks)(`carries an untracked link to an empty directory as a link${skipNote(dirLinks)}`, () => {
+    const f = fixture();
+    const empty = join(f.root, "empty");
+    mkdirSync(empty);
+    symlinkSync(empty, join(f.repo, "top"), "junction");
+    mkdirSync(join(f.repo, "fresh", "deep"), { recursive: true });
+    symlinkSync(empty, join(f.repo, "fresh", "deep", "link"), "junction");
+    writeFileSync(join(f.repo, "fresh", "note.txt"), "note\n");
+    mkdirSync(join(f.repo, "fresh", "node_modules"));
+    writeFileSync(join(f.repo, "fresh", "node_modules", "dep.txt"), "dep\n");
+    const r = run(f, ["top", "fresh/deep/link", "fresh/note.txt", "fresh/node_modules"]);
+    expect(r.stderr).not.toMatch(/Error/);
+    expect(r.code).toBe(0);
+    const asLink = { link: true, target: empty, real: empty, content: [] };
+    expect(r.seen.out["top"]).toEqual(asLink);
+    expect(r.seen.out["fresh/deep/link"]).toEqual(asLink);
+    expect(r.seen.out["fresh/note.txt"]).toMatchObject({ link: false, content: "note\n" });
+    expect(r.seen.out["fresh/node_modules"]).toEqual({ error: "ENOENT" });
+    expect(r.wtLeft).toBe(false);
+    expect(existsSync(empty)).toBe(true);
   });
 
   for (const exit of [0, 1]) {
