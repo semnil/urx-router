@@ -783,6 +783,7 @@ export const ja: Messages = {
     liveConnecting: "ライブ同期のため接続中…",
     liveOn: (model: string, n: number): string => `ライブ同期 オン · ${model} · ${n} 件読込`,
     liveOff: "ライブ同期 オフ",
+    liveRescoped: "デバイスの範囲が変わったため、新しい範囲でライブ同期を始め直します",
     liveSynced: (n: number): string => `→ デバイス (${n})`,
     liveFollowing: "← デバイス…",
     liveFollowed: (n: number): string => `← デバイス (${n})`,

@@ -632,8 +632,7 @@ test.describe("T2 shape-change", () => {
     context,
   }) => {
     // Run A: scene scope, seeded into `urx-settings` — the same one validated record
-    // the Preferences modal writes (core/settings.ts), which the row below is locked
-    // out of while live.
+    // the Preferences modal writes (core/settings.ts).
     await installFake(page, { storage: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) } });
     await page.reload();
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
@@ -693,9 +692,9 @@ test.describe("T2 shape-change", () => {
     console.log(
       report(
         "scene scope",
-        // The scope is chosen BEFORE the session (the row locks while live), so the
-        // registration and the emitted set were built from one planToCommands filter at
-        // begin() and clause B has nothing to report: a scope is a shrink, never a grow.
+        // The session was started for the scope it runs at, so the registration and the
+        // emitted set were built from one planToCommands filter at begin() and clause B
+        // has nothing to report: a scope is a shrink, never a grow.
         analyze(sceneTrace, {
           registration: [...(await paramAddrsOf(page))],
           snapshot: await snapshotOf(page),
@@ -746,12 +745,25 @@ test.describe("T2 shape-change", () => {
     expect(sceneCost2).toBe(0);
     expect(getsOf(sceneTrace2).filter((g) => g.start > sceneAt2)).toEqual([]);
 
-    // The scope row is locked while live — the snapshot, the diff and the registration
-    // are all part of the held session.
+    // The scope row stays open while live. The snapshot, the diff and the registration are
+    // all part of the held session, so choosing the other scope starts the session again,
+    // and the start registers what the new scope covers: here, every address the full-scope
+    // session registered.
     await page.click("#btn-prefs");
     const scopeRow = page.locator("#prefs-device-scope");
     await expect(scopeRow).toBeVisible();
-    await expect(scopeRow.locator("button").first()).toBeDisabled();
+    const all = scopeRow.locator("button").first();
+    await expect(all).toBeEnabled();
+    await all.click();
+    await expect
+      .poll(
+        async () => {
+          const now = regKeys(await paramAddrsOf(page));
+          return [...fullReg].filter((a) => !now.has(a)).length + [...now].filter((a) => !fullReg.has(a)).length;
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(0);
     await full.close();
   });
 

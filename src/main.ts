@@ -2147,6 +2147,10 @@ function setView(next: ViewName, persist = true): void {
 // its own way out (its Cancel; for a session, its stop) and must stay usable.
 type LinkHolder = "fetch" | "write" | "compare" | "device-setup" | "follow-usb" | "live" | "run" | "update";
 let deviceLinkHolder: LinkHolder | null = null;
+// Ends a session and starts it again for the device scope now chosen (desktop only).
+let restartLiveForScope: (() => void) | null = null;
+// Settles once the last session to end has given the device link back.
+let liveReleased: Promise<void> = Promise.resolve();
 
 // Each device entry and the holder it belongs to. While the link is held, every
 // entry greys except its holder's own. The `.urxf` import owns no holder because it
@@ -2233,8 +2237,8 @@ function setLiveUi(on: boolean): void {
   // The lock itself is the link holder's (see syncDeviceActionUi); a session is one
   // holder among several, and this call is what repaints the group when it changes.
   syncDeviceActionUi();
-  // The Preferences device-scope control locks while the session is up; re-render
-  // the modal if it is open (a link loss can end the session behind the scrim).
+  // Re-render the Preferences modal if it is open (a link loss can end the session
+  // behind the scrim).
   prefs.refresh();
   // The surfaces that stream meters. Ordering is load-bearing and lives here for
   // that reason: the console subscribes, then the gate screen (if open) takes the
@@ -2278,7 +2282,7 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
   liveAdopted = 0;
-  void releaseLive(liveEpoch, end);
+  liveReleased = releaseLive(liveEpoch, end);
   setLiveUi(false);
   // A CH → FX tap shown read-only while live becomes editable again off-line.
   refreshInspector();
@@ -4082,7 +4086,9 @@ function sceneSaveOpts(): SerializeOptions {
 // Preferences modal (the toolbar gear): available in every build; rows that need
 // the desktop shell render locked with a tag instead (see ui/prefs.ts).
 const prefs = new PrefsPanel({
-  isLive: () => liveSessionUp,
+  // A session is built for one scope: its snapshot and its notify registration. A change
+  // during one ends it and starts it again, which reads the unit for the new scope.
+  onDeviceScopeChanged: () => restartLiveForScope?.(),
   onRecentChanged: (list) => {
     recent = list;
     refreshInspector();
@@ -5397,6 +5403,13 @@ if (!DEMO) {
     // synchronous and stays outside the latch, so an active session always
     // turns off immediately.
     const startLive = guarded(() => activateLive());
+    restartLiveForScope = () => {
+      if (!live?.isActive()) return;
+      deactivateLive(t().status.liveRescoped);
+      // The link goes back once the session's last round trip is answered; a start before
+      // then is refused as a link another action holds.
+      void liveReleased.then(() => startLive());
+    };
     liveBtn.addEventListener("click", () => {
       if (live?.isActive()) deactivateLive(t().status.liveOff);
       else startLive();

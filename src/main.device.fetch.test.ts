@@ -1533,6 +1533,26 @@ describe("a scoped read under the Scene only device scope", () => {
     return shell;
   };
 
+  // A session is built for one scope. Changing the scope while it is up starts it again, and
+  // the start reads the unit for the new scope: the oscillator's assign the scene scope left
+  // as the plan's is now read from the unit.
+  it("starts the session again for a device scope changed while it is up", SLOW, async () => {
+    const shell = await sceneSession();
+    const connects = shell.count("vd_connect");
+    $("btn-prefs").click();
+    document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button")[0].click();
+    await vi.waitFor(() => expect(shell.count("vd_connect"), "a new session connected").toBeGreaterThan(connects), {
+      timeout: 15_000,
+    });
+    await liveUp();
+    await vi.waitFor(() => expect(oscDrawn(), "the unit's assign, read for the whole scope").toEqual(["bus.fx1:in"]), {
+      timeout: 15_000,
+    });
+    $("prefs-modal").querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
+    live().click();
+    await invoked(shell, "vd_disconnect");
+  });
+
   it("keeps the plan's assigns through a follow read of an FX channel", SLOW, async () => {
     const shell = await sceneSession();
     const send = planToCommands(model(), defaultPlan("URX44V")).find(

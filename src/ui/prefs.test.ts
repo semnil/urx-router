@@ -41,9 +41,8 @@ function row(label: string): HTMLElement {
 }
 
 function install() {
-  let live = false;
   const hooks: PrefsHooks = {
-    isLive: () => live,
+    onDeviceScopeChanged: vi.fn(),
     onRecentChanged: vi.fn(),
     onWarningsChanged: vi.fn(),
     onFineChanged: vi.fn(),
@@ -54,7 +53,7 @@ function install() {
     onThemeMode: vi.fn(),
   };
   const panel = new PrefsPanel(hooks);
-  return { panel, hooks, setLive: (next: boolean) => void (live = next) };
+  return { panel, hooks };
 }
 
 beforeEach(() => {
@@ -96,7 +95,7 @@ describe("PrefsPanel", () => {
   });
 
   it("applies immediate settings and notifies each owning surface", () => {
-    const { panel, hooks, setLive } = install();
+    const { panel, hooks } = install();
     panel.open();
 
     change(document.querySelector("#prefs-theme") as HTMLSelectElement, "dark");
@@ -168,19 +167,25 @@ describe("PrefsPanel", () => {
     expect(localStorage.getItem("urx-lang")).toBe("ja");
 
     setLang("en");
-    setLive(true);
-    panel.refresh();
+    // The device scope is not locked while Live sync is up: a change hands the shell the
+    // session to build again, and choosing the scope already in force hands it nothing.
     const scope = row(t().prefs.scope);
-    expect(scope.classList.contains("locked")).toBe(true);
-    expect(scope.querySelector(".prefs-lock")).toBeNull();
+    expect(scope.classList.contains("locked")).toBe(false);
+    const sceneOnly = (): HTMLButtonElement =>
+      document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button")[1];
+    sceneOnly().click();
+    expect(getSettings().deviceScope).toBe("scene");
+    expect(hooks.onDeviceScopeChanged).toHaveBeenCalledTimes(1);
+    sceneOnly().click();
+    expect(hooks.onDeviceScopeChanged).toHaveBeenCalledTimes(1);
   });
 
-  // Every committed change rebuilds the box, and so does a Live sync start or end while it
-  // is open. The grid the rebuild replaces is the box's scrolling region, so neither the
+  // Every committed change rebuilds the box, and so does the shell's refresh while it is
+  // open (a language switch, a Live sync start or end). The grid the rebuild replaces is the box's scrolling region, so neither the
   // control the operator used nor the offset they scrolled to may go with it: focus left
   // on <body> sends the next Tab back to the top of the modal.
   it("keeps the focused control and the grid's scroll offset across a rebuild", () => {
-    const { panel, setLive } = install();
+    const { panel } = install();
     panel.open();
     const grid = (): HTMLElement => document.querySelector(".prefs-grid") as HTMLElement;
     const first = grid();
@@ -205,13 +210,11 @@ describe("PrefsPanel", () => {
     expect(document.activeElement).not.toBe(changed);
     expect(grid().scrollTop).toBe(300);
 
-    // A rebuild with no input at all: Live sync coming up while the modal is open.
+    // A rebuild with no input at all: the shell's refresh while the modal is open.
     const save = (): HTMLButtonElement => document.querySelectorAll<HTMLButtonElement>("#prefs-save-scope button")[0];
     const held = save();
     held.focus();
-    setLive(true);
     panel.refresh();
-    expect(row(t().prefs.scope).classList.contains("locked")).toBe(true);
     expect(document.activeElement).toBe(save());
     expect(document.activeElement).not.toBe(held);
     expect(grid().scrollTop).toBe(300);
@@ -282,7 +285,7 @@ describe("PrefsPanel", () => {
 
   it("disables the grid while a check is in flight and renders what changed meanwhile at the settle", async () => {
     const flight = deferred<UpdateCheckOutcome>();
-    const { panel, hooks, setLive } = install();
+    const { panel, hooks } = install();
     vi.mocked(hooks.checkUpdates).mockReturnValueOnce(flight.promise);
     panel.open();
     const controls = () => [
@@ -293,9 +296,9 @@ describe("PrefsPanel", () => {
     (document.querySelector("#prefs-update-now") as HTMLButtonElement).click();
     expect(controls().filter((c) => !c.disabled)).toEqual([]);
 
-    // What the shell does on a language switch and on a live-sync change while open.
+    // What the shell does on a language switch while open, and a setting changed elsewhere.
     setLang("ja");
-    setLive(true);
+    updateSettings({ deviceScope: "scene" });
     panel.refresh();
     expect(document.querySelector("#prefs-title")?.textContent).toBe(en.prefs.title);
 
@@ -304,40 +307,34 @@ describe("PrefsPanel", () => {
     expect(document.querySelector("#prefs-title")?.textContent).toBe(ja.prefs.title);
     expect((document.querySelector("#prefs-lang") as HTMLSelectElement).disabled).toBe(false);
     expect((document.querySelector("#prefs-update-now") as HTMLButtonElement).disabled).toBe(false);
-    expect(
-      [...document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button")].every((b) => b.disabled),
-    ).toBe(true);
+    const scopeButtons = [...document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button")];
+    expect(scopeButtons.every((b) => !b.disabled)).toBe(true);
+    expect(scopeButtons[1].getAttribute("aria-pressed"), "the scope changed meanwhile is drawn").toBe("true");
     expect((document.querySelector(".consent-btn-secondary") as HTMLButtonElement).disabled).toBe(false);
   });
 
   // A control the flight disables has to look disabled, whatever kind it is: a toggle or a
   // select left at its live face reads as usable while it refuses the press. Asked of the
   // controls the flight actually disables, so a kind added to the grid is covered the day
-  // it is added. A locked row already dims as a whole, so the in-flight dim must not reach
-  // its controls as well.
-  it("gives every control the flight disables a stylesheet dim, and none in a locked row", () => {
+  // it is added.
+  it("gives every control the flight disables a stylesheet dim", () => {
     const flight = deferred<UpdateCheckOutcome>();
-    const { panel, hooks, setLive } = install();
-    setLive(true);
+    const { panel, hooks } = install();
     vi.mocked(hooks.checkUpdates).mockReturnValueOnce(flight.promise);
     panel.open();
     (document.querySelector("#prefs-update-now") as HTMLButtonElement).click();
     const dims = RULES.filter((r) => decl(r.body, "cursor") === "not-allowed" && decl(r.body, "opacity") !== undefined);
     const dimmed = (c: Element): boolean => dims.some((r) => r.selector.split(",").some((s) => c.matches(s.trim())));
-    const all = [...document.querySelectorAll<HTMLElement>(".prefs-grid button, .prefs-grid select")];
-    const locked = all.filter((c) => c.closest(".prefs-row.locked"));
-    const flown = all.filter((c) => !c.closest(".prefs-row.locked"));
-    // The premise: every kind of control the grid carries is in flight, and a row is locked.
+    const flown = [...document.querySelectorAll<HTMLElement>(".prefs-grid button, .prefs-grid select")];
+    // The premise: every kind of control the grid carries is in flight.
     expect(flown.every((c) => (c as HTMLButtonElement).disabled)).toBe(true);
     for (const kind of [".prefs-btn", ".prefs-toggle button", ".prefs-select"])
       expect(
         flown.some((c) => c.matches(kind)),
         kind,
       ).toBe(true);
-    expect(locked.length).toBeGreaterThan(0);
 
     expect(flown.filter((c) => !dimmed(c)).map((c) => c.outerHTML)).toEqual([]);
-    expect(locked.filter(dimmed).map((c) => c.outerHTML)).toEqual([]);
   });
 });
 
