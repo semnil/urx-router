@@ -42,9 +42,20 @@ export interface SimViewHooks {
 /** The glass's path for HOME's [Sends] destination, which the unit holds outside the plan. */
 export const SENDS_TARGET_PATH = "ui.sendsTarget";
 
-/** Whether a linked pair's compressors each hear their own channel: the simulator's own state,
- *  which an edit of the pair's link or COMP / EQ type writes beside the plan's values. */
-const glassOwn = (path: string): boolean => /^pair\.[^.]+\.compSplit$/.test(path);
+/** The simulator's own state, kept by the view rather than the plan: which channel a linked pair's
+ *  compressors hear (written with the pair's link or COMP / EQ type), the recorder's playback (which
+ *  a rate change stops), and what a screen has open or picked — the output patch's tab, the scene
+ *  list's bank and row, the microSD folder and file. */
+const GLASS_OWN = new Set([
+  "sd.playing",
+  "sd.playingFile",
+  "setup.outputPatch.tab",
+  "scene.bank",
+  "scene.selected",
+  "sd.path",
+  "sd.selectedFile",
+]);
+const glassOwn = (path: string): boolean => GLASS_OWN.has(path) || /^pair\.[^.]+\.compSplit$/.test(path);
 
 /** The urx-router meter tap a simulator meter id reads, by the simulator's tap name. */
 const TAP_KEYS: Record<string, string> = {
@@ -79,7 +90,7 @@ export function simMeterTap(id: string, modelId: string): MeterTap | null {
 }
 
 /** The plan as the glass's transport: values read off the plan, edits handed to the funnels. */
-class PlanTransport implements DeviceTransport {
+export class PlanTransport implements DeviceTransport {
   readonly kind = "bridge" as const;
   private readonly listeners = new Set<(n: Notify) => void>();
   private held = new Map<string, SimValue>();

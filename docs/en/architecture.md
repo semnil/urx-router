@@ -1836,9 +1836,11 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   inside one undo entry. A value the plan already holds is taken and changes nothing (the plan is not marked
   changed), and so is the gain the 1-knob EQ keeps for each band, which the plan does not carry. While 1-knob EQ is on
   the unit drives the bands, so the band values the LCD writes then leave the plan's as they are — as the EQ tuning
-  screen, which offers no band while it is on, leaves them. Which channel a linked pair's compressors hear, which the
-  LCD writes as the pair is linked or taken into SSMCS, is the simulator's own and is kept by the view rather than the
-  plan. A value the plan holds but the edit cannot take in its present state (PAN/BAL on an unlinked pair, an
+  screen, which offers no band while it is on, leaves them. The simulator's own state that the LCD writes beside an
+  edit or keeps for a screen is held by the view rather than the plan: which channel a linked pair's compressors hear
+  (written as the pair is linked or taken into SSMCS), the recorder's playback (which a rate change stops), the output
+  patch's Analog / USB tab, the scene list's bank and row, and the microSD folder and file a screen has picked.
+  Refused like a path the table does not carry, one of these would take the whole edit back with it. A value the plan holds but the edit cannot take in its present state (PAN/BAL on an unlinked pair, an
   unwired send, a delay time Sync derives, an FX 2 send at a rate that takes FX 2 out, the recorder's Track Count
   while Live sync is up) is refused. A path the table does not carry — the SETUP > GENERAL settings, CUE, the scenes and the card, the
   simulator's own screen state — shows the simulator's value and takes no edit: the simulator puts it back.

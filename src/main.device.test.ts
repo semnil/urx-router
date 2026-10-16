@@ -11286,6 +11286,26 @@ describe("HOME's [Sends] destination", () => {
     $("btn-live").click();
     await invoked(shell, "vd_disconnect");
   });
+
+  // A read that fails ends the session, as every other failed read on the device link does.
+  it("ends the session when the read after a rate above 96 kHz fails", SLOW, async () => {
+    // Every other address answers what the unit holds, so the read of 763 is the one that fails.
+    let refuse = false;
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId !== PARAMS.SENDS_TARGET.id) return unwrittenRead(a);
+        if (refuse) throw new Error("timeout");
+        return 17;
+      },
+    });
+    await goLive();
+    await drainShell(shell, () => false);
+    refuse = true;
+    rateNotify(shell, 192000);
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
+    expect(errors(shell).join(" "), "the failed read is what ended it").toContain("timeout");
+    await invoked(shell, "vd_disconnect");
+  });
 });
 
 describe("the inspector's CUE row", () => {

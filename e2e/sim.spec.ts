@@ -8,7 +8,7 @@ import {
   stubTauriDevice,
   writesOf,
 } from "./tauri-stub";
-import { PARAMS } from "../src/core/control/params";
+import { COLOR_PALETTE, PARAMS } from "../src/core/control/params";
 import { defaultPlan } from "../src/models/initial-state";
 import { serialize, type Plan } from "../src/core/plan";
 import type { ModelId } from "../src/models/types";
@@ -179,6 +179,9 @@ const lcd = (page: Page) => sim(page).locator(".lcd[data-screen]:not([inert])");
 const onScreen = (page: Page, id: string) => sim(page).locator(`.lcd[data-screen="${id}"]:not([inert])`);
 
 interface SavedPlan {
+  sampleRate?: number;
+  nodeNames?: Record<string, string>;
+  nodeColors?: Record<string, string>;
   nodeParams: Record<string, Record<string, unknown>>;
   connections: { from: string; to: string; params?: Record<string, unknown> }[];
 }
@@ -504,6 +507,72 @@ test("turning 1-knob EQ's level on the LCD leaves the plan's band gains, and the
   await expect(shown()).toHaveAttribute("aria-valuenow", "6");
 });
 
+// The LCD's edits that are not a node's parameters: a channel's name and colour, an output's
+// source — a wire drawn or deleted — and the sampling frequency.
+test("a name, a colour, an output's source and the rate set on the LCD reach the plan", async ({ page }) => {
+  await openSimSaving(page);
+  await tapInto(page, lcd(page).getByRole("button", { name: "C H 1 settings", exact: true }), "channel-view");
+  await tapInto(
+    page,
+    lcd(page)
+      .getByRole("button", { name: /^CH 1 / })
+      .first(),
+    "ch.setting",
+  );
+  const name = lcd(page).getByRole("textbox", { name: "Channel name" });
+  await name.fill("Vox");
+  await name.press("Enter");
+  await lcd(page)
+    .getByRole("button", { name: /^Color:/ })
+    .click();
+  await lcd(page).getByRole("button", { name: "Red", exact: true }).click();
+  await expect.poll(async () => (await save(page)).nodeNames?.ch1).toBe("Vox");
+  expect((await save(page)).nodeColors?.ch1).toBe(COLOR_PALETTE.find((c) => c.name === "Red")!.hex);
+
+  await tapInto(page, lcd(page).getByRole("button", { name: "HOME", exact: true }), "home");
+  await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Output Patch" }), "setup.patch");
+  const mainOut = (p: SavedPlan) => p.connections.filter((c) => c.to === "out.main:in").map((c) => c.from);
+  const pickMainOut = async (source: string): Promise<void> => {
+    await lcd(page)
+      .getByRole("button", { name: /^MAIN OUT:/ })
+      .click();
+    await lcd(page).getByRole("button", { name: source, exact: true }).click();
+  };
+  await pickMainOut("MIX 1");
+  await expect.poll(async () => mainOut(await save(page))).toEqual(["bus.mix1:out"]);
+  await pickMainOut("None");
+  await expect.poll(async () => mainOut(await save(page))).toEqual([]);
+
+  await tapInto(page, lcd(page).getByRole("button", { name: "Back", exact: true }), "setup");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Sampling Frequency" }), "setup.rate");
+  const rate = lcd(page).getByRole("button", { name: "96kHz", exact: true });
+  await rate.click();
+  await expect(rate).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(async () => (await save(page)).sampleRate).toBe(96000);
+});
+
+// A choice the unit takes in one step and the board in several: a USB output on a mono pair takes
+// the pair's two channels in place of the source it had.
+test("a mono pair chosen for a USB output on the LCD wires both of its channels there", async ({ page }) => {
+  await openSimSaving(page);
+  await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Output Patch" }), "setup.patch");
+  const usb = lcd(page).getByRole("button", { name: "USB", exact: true });
+  await usb.click();
+  await expect(usb, "the tab the screen has open is the glass's own").toHaveAttribute("aria-pressed", "true");
+  await lcd(page)
+    .getByRole("button", { name: /^USB MAIN A:/ })
+    .click();
+  await lcd(page).getByRole("button", { name: "CH 1/2", exact: true }).click();
+  const sources = (p: SavedPlan) =>
+    p.connections
+      .filter((c) => c.to === "out.usbmain_a:in")
+      .map((c) => c.from)
+      .sort();
+  await expect.poll(async () => sources(await save(page))).toEqual(["ch1:out", "ch2:out"]);
+});
+
 // HOME's [Sends] destination is the unit's UI state, outside the plan: a session reads it, a
 // choice on the unit's panel arrives as a notify, and a choice on the glass is written to it.
 test("the LCD's [Sends] destination is the unit's while Live sync is up, and the glass's own without", async ({
@@ -541,4 +610,19 @@ test("the LCD's [Sends] destination is the unit's while Live sync is up, and the
   // A choice on the glass goes to the unit.
   await pick("MIX 2");
   await expect.poll(sendsWrites).toEqual([34]);
+
+  // Above 96 kHz the unit moves FX 2 to FX 1 and announces nothing; the rate it announces is
+  // followed by a read of the destination.
+  await pick("FX 2");
+  await expect.poll(sendsWrites).toEqual([34, 17]);
+  const RATE: number = PARAMS.SAMPLE_RATE.id;
+  await setDeviceValue(page, SENDS, 0, 16);
+  await setDeviceValue(page, RATE, 0, 192000);
+  await notifyParam(page, RATE, 0, 192000);
+  await expect(tab).toHaveText("FX 1");
+  expect(await sendsWrites(), "what the unit moved is not written back").toEqual([34, 17]);
+
+  // Leaving the SIM view gives the session's meters back to the CONSOLE.
+  await page.click("#btn-view-console");
+  await expect(page.locator("#sim-host")).toBeHidden();
 });
