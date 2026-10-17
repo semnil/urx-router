@@ -101,13 +101,16 @@ describe("the controls the SIM view holds shut", () => {
     expect(reasonFor(live, path("sd.trackCount"))).toBe("trackCountLive");
   });
 
-  // The unit holds an insert's driven rows still and hides FX 2's sends at the rates that take FX 2
-  // out, and the simulator draws both as the unit does: no lock of the app's own reaches them.
-  it("draws no lock on an insert's values or on a send's level and ON, in any state", () => {
+  // The unit holds a COMP's computed values and an insert's driven rows still, and hides FX 2's
+  // sends at the rates that take FX 2 out, and the simulator draws them as the unit does: no lock of
+  // the app's own reaches them.
+  it("draws no lock on a COMP's or an insert's values or on a send's level and ON, in any state", () => {
     const held = [OFFLINE, LINKED, LIVE].flatMap((state) => locks(state));
     const reached = held.filter(
-      (l) => l.target.kind === "path" && /\.insFx\.|\.send\.\w+\.(on|level)$/.test(l.target.path),
+      (l) => l.target.kind === "path" && /\.comp\.|\.insFx\.|\.send\.\w+\.(on|level)$/.test(l.target.path),
     );
+    for (const key of ["threshold", "ratio", "gain", "knee", "attack", "release"])
+      expect(paths, key).toContain(`ch.ch1.comp.${key}`);
     expect(paths.some((p) => p.includes(".insFx."))).toBe(true);
     expect(paths).toContain("ch.ch1.send.fx2.level");
     expect(reached).toEqual([]);
