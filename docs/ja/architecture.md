@@ -1531,9 +1531,7 @@ CONSOLE のフェーダーとインスペクタの Level スライダー (バス
   Live 同期中の FX バスへのチャンネルの PRE / POST (CONSOLE と Inspector と同じく。同じ文言)、実機との接続中のサンプリング
   周波数 (Live 同期中は Follow USB がオンの間だけ。「Live 同期中に変えるには Follow USB をオフにしてください」)、Live 同期中のレコーダーの Track Count、FX 2 を外すレートでの FX 2 への送り
   (いずれも Inspector が出している文言)、INS FX のエフェクトの値のうち、そのエフェクトの今の値に応じて INS FX の
-  調整画面が止めているもの (1-knob が入の間の M.B.Comp の各帯など。その画面と同じ文言)、COMP の値のうちその時の
-  スイッチで本体が決めているもの (1-knob が入の間の threshold / ratio / gain / knee / attack / release、Auto Makeup が
-  入の間の gain。COMP 調整画面と同じ「本体が制御中」)。
+  調整画面が止めているもの (1-knob が入の間の M.B.Comp の各帯など。その画面と同じ文言)。
 - **メーター**: Live 同期中にビューを表示している間は、調整画面と同じく CONSOLE からセッションに 1 つのメーター購読を
   借り、隠すと返す。シミュレーターのメーター id は CONSOLE のタップへ対応させる (`simMeterTap`)。Live 同期が無いときは
   LCD のメーターは何も読まない。

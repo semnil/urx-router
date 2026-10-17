@@ -1916,8 +1916,7 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   Track Count while Live sync is up and
   the sends into FX 2 at a rate that takes FX 2 out (each the wording the Inspector already gives), and an insert
   effect's value its own screen holds shut for the effect's current values, such as M.B.Comp's bands while its 1-knob
-  is on (that screen's wording), and a COMP value the unit sets for the group's switches — threshold / ratio / gain /
-  knee / attack / release while its 1-knob is on, the gain while Auto Makeup is on (the COMP screen's "Device-driven").
+  is on (that screen's wording).
 - **Meters**: while Live sync is on and the view is up, it borrows the session's one meter subscription from the
   CONSOLE, as a tuning screen does, and gives it back when it is hidden. The simulator's meter ids are mapped onto
   the CONSOLE's taps (`simMeterTap`). Without Live sync the LCD's meters read nothing.

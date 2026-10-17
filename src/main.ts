@@ -1332,7 +1332,6 @@ const buildSimView = (): SimView =>
             trackCountLive: t().inspector.sdRecTrackCountLive,
             fx2Rate: t().inspector.fx2RateLocked,
             deviceDriven: t().dynTuning.insfx.deviceOnlyTag,
-            compDriven: t().dynTuning.driven,
             integrationOff: t().sim.lockIntegrationOff,
           },
         ),

@@ -12,7 +12,6 @@ const REASONS = {
   trackCountLive: "trackCountLive",
   fx2Rate: "fx2Rate",
   deviceDriven: "deviceDriven",
-  compDriven: "compDriven",
   integrationOff: "integrationOff",
   rateFollowUsb: "rateFollowUsb",
 };
@@ -158,20 +157,17 @@ describe("the controls the SIM view holds shut", () => {
     expect(reasonFor(knobOn, path("ch.bus.mix1.insFx.outGain"))).toBeNull();
   });
 
-  it("holds the COMP values the unit computes, and only while it computes them", () => {
+  // The unit holds these still while its 1-knob or Auto Makeup is on and shows nothing for it, so
+  // the LCD, which simulates the unit, draws them as the unit does: no padlock and no dimming.
+  it("draws no lock on a COMP value the unit holds still without showing it", () => {
     const plan = defaultPlan("URX44V");
-    const comp = (key: string): ReturnType<typeof path> => path(`ch.ch1.comp.${key}`);
     const computed = ["threshold", "ratio", "gain", "knee", "attack", "release"];
-    const off = simLocks(model, plan, paths, OFFLINE, REASONS);
-    for (const key of computed) expect(reasonFor(off, comp(key)), key).toBeNull();
-    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { ...plan.nodeParams.ch1?.comp, autoMakeup: true } };
-    const makeup = simLocks(model, plan, paths, OFFLINE, REASONS);
-    expect(reasonFor(makeup, comp("gain")), "Auto Makeup sets the gain").toBe("compDriven");
-    expect(reasonFor(makeup, comp("threshold"))).toBeNull();
-    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { ...plan.nodeParams.ch1?.comp, oneKnob: true } };
-    const knob = simLocks(model, plan, paths, OFFLINE, REASONS);
-    for (const key of computed) expect(reasonFor(knob, comp(key)), key).toBe("compDriven");
-    expect(reasonFor(knob, path("ch.ch2.comp.attack")), "another channel's knob is off").toBeNull();
     for (const key of computed) expect(paths, key).toContain(`ch.ch1.comp.${key}`);
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      comp: { ...plan.nodeParams.ch1?.comp, oneKnob: true, autoMakeup: true },
+    };
+    const held = simLocks(model, plan, paths, OFFLINE, REASONS);
+    for (const key of computed) expect(reasonFor(held, path(`ch.ch1.comp.${key}`)), key).toBeNull();
   });
 });

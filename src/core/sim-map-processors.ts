@@ -11,12 +11,10 @@ import { parseRef, ref } from "../models/types";
 import { incomingConnection, type FxEffectParams, type NodeParams, type Plan } from "./plan";
 import { canConnect } from "./routing";
 import { insertFxMenu, insertFxRateLock } from "./constraints";
-import { channelDynamics, effectiveInsertFx, insertFxControl } from "./control/translate";
+import { effectiveInsertFx, insertFxControl } from "./control/translate";
 import {
   BUS_TYPE_OPTIONS,
-  COMP_EQ_COMP_FIRST,
   COMP_EQ_OPTIONS,
-  compDeviceDriven,
   compOneKnobPatch,
   EQ_ONE_KNOB_TYPE_OPTIONS,
   INSERT_FX_NONE,
@@ -592,20 +590,6 @@ export function insertDrivenPaths(model: DeviceModel, plan: Plan): string[] {
       if (slots && Object.keys(slots).some((slot) => locked.has(Number(slot))))
         out.push(`ch.${simStripId(id)}.insFx.${key}`);
     }
-  }
-  return out;
-}
-
-/** The paths of each mono channel's COMP values the unit computes for the group's current switches
- *  (`compDeviceDriven`): the values the COMP screen locks and the writer leaves out. */
-export function compDrivenPaths(model: DeviceModel, plan: Plan): string[] {
-  const out: string[] = [];
-  for (const node of model.nodes) {
-    const id = node.id;
-    if (!isMonoChannel(id)) continue;
-    const params = np(plan, id);
-    if (!channelDynamics(model, id, params.compEqType ?? COMP_EQ_COMP_FIRST)?.comp) continue;
-    for (const key of compDeviceDriven(params.comp)) out.push(`ch.${simStripId(id)}.comp.${key}`);
   }
   return out;
 }
