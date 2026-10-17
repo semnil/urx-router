@@ -908,8 +908,10 @@ function resetSendsTarget(): void {
 // session's reading, and the engaged Clip Safe what the unit announced during one.
 let unitSetup: DeviceSetup | null = null;
 let unitOperationMode: number | null = null;
-// SETUP > Software Integration, as a session read it and the unit announced it since.
+// SETUP > Software Integration, as a session read it and the unit announced it since, and a count
+// of the changes made to it, which a read taken while one lands does not override.
 let unitIntegration: DawIntegration | null = null;
+let integrationVersion = 0;
 const clipSafeEngaged = new Set<number>();
 // A Follow USB press on the glass, handled as a press of the toolbar's FOLLOW USB; set where that
 // button is wired.
@@ -944,11 +946,16 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
     const raw = encodeIntegrationSend(String(value));
     if (!liveSessionUp || !unitIntegration?.active || raw === null) return Promise.reject(new Error("refused"));
     unitIntegration = { ...unitIntegration, [slot]: decodeIntegrationSend(raw) };
+    integrationVersion++;
     cueWrites = cueWrites
       .then(async () => {
         if (!liveSessionUp) return;
         await live?.idle();
-        if (liveSessionUp) await writeIntegrationSend(slot, raw);
+        if (!liveSessionUp) return;
+        // A DAW that let go of the unit while this waited takes it with it: the send is not
+        // written, and the glass is shown what the unit holds.
+        if (unitIntegration?.active) await writeIntegrationSend(slot, raw);
+        else rereadDawIntegration();
       })
       .catch((err: unknown) => stopLiveOnError(errorText(err)));
     return Promise.resolve(shown());
@@ -1111,12 +1118,30 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
   }
   if (dawIntegrationNotifyAddrs().some(([id]) => id === paramId)) {
     if (unitIntegration) unitIntegration = withIntegrationNotify(unitIntegration, paramId, value) ?? unitIntegration;
+    integrationVersion++;
     simView?.unitStateChanged();
     return true;
   }
   if (!unitStateNotifyAddrs(getModel(modelId)).some(([id, , at]) => id === paramId && at === y)) return false;
   scheduleUnitSetupRead();
   return true;
+}
+
+/** Read SETUP > Software Integration again behind every unit write queued so far, and take what the
+ *  unit holds unless it changed while the read ran. */
+function rereadDawIntegration(): void {
+  if (!liveSessionUp || !experimentalOn) return;
+  cueWrites = cueWrites
+    .then(async () => {
+      await live?.idle();
+      if (!liveSessionUp) return;
+      const since = integrationVersion;
+      const read = await readDawIntegration();
+      if (!liveSessionUp || integrationVersion !== since) return;
+      unitIntegration = read;
+      simView?.unitStateChanged();
+    })
+    .catch((err: unknown) => stopLiveOnError(errorText(err)));
 }
 
 /** Forget what a session read of the unit's states: it ended. The settings stay, as Follow USB
@@ -5154,6 +5179,8 @@ if (!DEMO) {
         rereadCues();
         // The destination too, and the glass takes it now the session counts as up.
         rereadSendsTarget();
+        // …and Software Integration, which a DAW taking or letting go of the unit can have moved.
+        rereadDawIntegration();
         simView?.unitStateChanged();
         // An edit made while the starting read ran had no session to flush through, so the
         // plan differs from the snapshot the session just took with nothing else left to

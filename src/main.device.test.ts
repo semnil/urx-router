@@ -11624,6 +11624,98 @@ describe("the SIM view over a live session", () => {
     expect(errors(shell).join(" "), "the refused write is what ended it").toContain("setup write refused");
   });
 
+  // A DAW that takes or lets go of the unit between the session's starting read and its notify
+  // registration announces itself to nobody, so the session reads Software Integration again once
+  // it is registered. The unit's table is moved at the registration itself.
+  it.each([
+    [0, 2, true],
+    [2, 0, false],
+  ])("takes 816 moving from %i to %i before the session registers its notifies", SLOW, async (from, to, active) => {
+    const DAW = PARAMS.DAW_INTEGRATION.id;
+    const FX2 = PARAMS.POST_FADER_SEND_FX2.id;
+    const cmds = deviceCommands(
+      { "plugin:dialog|message": "Ok", experimental_enabled: true },
+      { [`${DAW}/0/0`]: from },
+    );
+    const set = cmds.vd_set as (a: Record<string, unknown>) => unknown;
+    const subscribe = cmds.vd_params_subscribe as (a: Record<string, unknown>) => unknown;
+    let moved = false;
+    cmds.vd_params_subscribe = (a: Record<string, unknown>) => {
+      if (!moved) {
+        moved = true;
+        set({ paramId: DAW, x: 0, y: 0, value: to });
+        set({ paramId: FX2, x: 0, y: 0, value: 290 });
+      }
+      return subscribe(a);
+    };
+    await bootApp({ tauri: cmds });
+    await openSim();
+    await goLive();
+    expect(moved, "the premise: the table moved at the registration").toBe(true);
+    await vi.waitFor(
+      async () => expect((await transport().snapshot()).get("setup.integration.fx2Send")).toBe("MIX 2"),
+      { timeout: 10_000 },
+    );
+    const write = transport().write("setup.integration.fx1Send", "MIX 2");
+    if (active) await expect(write).resolves.toBe("MIX 2");
+    else await expect(write).rejects.toThrow("refused");
+  });
+
+  // The read the session takes after registering answers what the unit held when it was asked; a
+  // DAW that takes the unit while that read is out announces itself, and the announcement stands.
+  it("keeps a DAW announced while the session's second read of Software Integration is out", SLOW, async () => {
+    const DAW = PARAMS.DAW_INTEGRATION.id;
+    const cmds = deviceCommands({ "plugin:dialog|message": "Ok", experimental_enabled: true });
+    const get = cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    let reads = 0;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    cmds.vd_get = (a: Record<string, unknown>) => {
+      if (a.paramId !== DAW) return get(a);
+      reads++;
+      const answer = get(a);
+      return reads === 2 ? held.then(() => answer) : answer;
+    };
+    const shell = (await bootApp({ tauri: cmds }))!;
+    await openSim();
+    await goLive();
+    await vi.waitFor(() => expect(reads, "the premise: the second read is out").toBe(2), { timeout: 10_000 });
+    notifyChannel(shell).onmessage([{ param_id: DAW, x: 0, y: 0, value: 2 }]);
+    release();
+    // A SETUP write queues behind the read, so its arrival says the read has been taken or dropped.
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
+    await expect(transport().write("setup.integration.fx1Send", "MIX 2")).resolves.toBe("MIX 2");
+  });
+
+  // A send queued behind another is written only if a DAW still holds the unit when its turn comes.
+  it("drops a Software Integration send queued before the DAW lets go of the unit", SLOW, async () => {
+    const FX1 = PARAMS.POST_FADER_SEND_FX1.id;
+    const FX2 = PARAMS.POST_FADER_SEND_FX2.id;
+    const cmds = deviceCommands(
+      { "plugin:dialog|message": "Ok", experimental_enabled: true },
+      { [`${PARAMS.DAW_INTEGRATION.id}/0/0`]: 2 },
+    );
+    const set = cmds.vd_set as (a: Record<string, unknown>) => unknown;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    cmds.vd_set = (a: Record<string, unknown>) => (a.paramId === FX1 ? held.then(() => set(a)) : set(a));
+    const shell = (await bootApp({ tauri: cmds }))!;
+    await openSim();
+    await goLive();
+    await expect(transport().write("setup.integration.fx1Send", "MIX 2")).resolves.toBe("MIX 2");
+    await vi.waitFor(() => expect(setsOf(shell, FX1)).toEqual([[0, 290]]), { timeout: 10_000 });
+    await expect(transport().write("setup.integration.fx2Send", "MIX 2")).resolves.toBe("MIX 2");
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.DAW_INTEGRATION.id, x: 0, y: 0, value: 0 }]);
+    release();
+    // The queue has drained once the glass shows the send the unit still holds.
+    await vi.waitFor(
+      async () => expect((await transport().snapshot()).get("setup.integration.fx2Send")).toBe("MIX 1"),
+      { timeout: 10_000 },
+    );
+    expect(setsOf(shell, FX2), "nothing written once the DAW let go").toEqual([]);
+  });
+
   it("ends the session when a Software Integration send written from the glass is refused", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.DAW_INTEGRATION.id}/0/0`]: 2 });
     await openSim();
