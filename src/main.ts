@@ -237,6 +237,17 @@ import {
   type SendsTarget,
 } from "./core/control/sends-target";
 import { CueEchoes, CueSet, readCues, writeCueFlag } from "./core/control/cue";
+import {
+  dawIntegrationNotifyAddrs,
+  decodeIntegrationSend,
+  encodeIntegrationSend,
+  integrationGlassValues,
+  integrationSlotAt,
+  readDawIntegration,
+  withIntegrationNotify,
+  writeIntegrationSend,
+  type DawIntegration,
+} from "./core/control/daw-integration";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
 import {
@@ -897,6 +908,8 @@ function resetSendsTarget(): void {
 // session's reading, and the engaged Clip Safe what the unit announced during one.
 let unitSetup: DeviceSetup | null = null;
 let unitOperationMode: number | null = null;
+// SETUP > Software Integration, as a session read it and the unit announced it since.
+let unitIntegration: DawIntegration | null = null;
 const clipSafeEngaged = new Set<number>();
 // A Follow USB press on the glass, handled as a press of the toolbar's FOLLOW USB; set where that
 // button is wired.
@@ -911,6 +924,7 @@ function unitGlassValues(): Map<string, SimValue> {
   if (followUsbState !== null) out.set("setup.followUsb", followUsbState);
   const mode = unitOperationMode === null ? undefined : OPERATION_MODES[unitOperationMode];
   if (mode !== undefined) out.set("setup.operationMode", mode);
+  if (unitIntegration) for (const [path, send] of integrationGlassValues(unitIntegration)) out.set(path, send);
   return out;
 }
 
@@ -922,6 +936,22 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
   if (path === "setup.followUsb") {
     if (value !== followUsbState) pressFollowUsb?.();
     return Promise.resolve(followUsbState ?? !value);
+  }
+  // A Software Integration setting is the session's, and the unit takes one only while a
+  // compatible DAW holds it.
+  const slot = integrationSlotAt(path);
+  if (slot) {
+    const raw = encodeIntegrationSend(String(value));
+    if (!liveSessionUp || !unitIntegration?.active || raw === null) return Promise.reject(new Error("refused"));
+    unitIntegration = { ...unitIntegration, [slot]: decodeIntegrationSend(raw) };
+    cueWrites = cueWrites
+      .then(async () => {
+        if (!liveSessionUp) return;
+        await live?.idle();
+        if (liveSessionUp) await writeIntegrationSend(slot, raw);
+      })
+      .catch((err: unknown) => stopLiveOnError(errorText(err)));
+    return Promise.resolve(shown());
   }
   const model = getModel(modelId);
   const edit = setupGlassEdit(model, path, value);
@@ -1039,8 +1069,8 @@ function scheduleUnitSetupRead(): void {
   }, CUE_READ_SETTLE_MS);
 }
 
-/** The addresses the unit announces its settings, its operation mode and its engaged Clip Safe
- *  at, which a session on an experimental launch registers. */
+/** The addresses the unit announces its settings, its operation mode, Software Integration and
+ *  its engaged Clip Safe at, which a session on an experimental launch registers. */
 function unitStateNotifyAddrs(model: DeviceModel): [number, number, number][] {
   const setup = [
     PARAMS.BRIGHTNESS,
@@ -1056,7 +1086,7 @@ function unitStateNotifyAddrs(model: DeviceModel): [number, number, number][] {
     Array.from({ length: UDK_SLOTS }, (_, y): [number, number, number] => [p.id, 0, y]),
   );
   const jacks = micLineJacks(model).map((j): [number, number, number] => [PARAMS.CLIP_SAFE_ENGAGED.id, 0, j]);
-  return [...setup, ...knobs, [PARAMS.OPERATION_MODE.id, 0, 0], ...jacks];
+  return [...setup, ...knobs, [PARAMS.OPERATION_MODE.id, 0, 0], ...dawIntegrationNotifyAddrs(), ...jacks];
 }
 
 /** The MIC/LINE jacks `model` carries, 0 = the first. */
@@ -1079,6 +1109,11 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
     simView?.unitStateChanged();
     return true;
   }
+  if (dawIntegrationNotifyAddrs().some(([id]) => id === paramId)) {
+    if (unitIntegration) unitIntegration = withIntegrationNotify(unitIntegration, paramId, value) ?? unitIntegration;
+    simView?.unitStateChanged();
+    return true;
+  }
   if (!unitStateNotifyAddrs(getModel(modelId)).some(([id, , at]) => id === paramId && at === y)) return false;
   scheduleUnitSetupRead();
   return true;
@@ -1090,6 +1125,7 @@ function resetUnitSessionState(): void {
   if (unitSetupReadTimer !== null) clearTimeout(unitSetupReadTimer);
   unitSetupReadTimer = null;
   unitOperationMode = null;
+  unitIntegration = null;
   clipSafeEngaged.clear();
   simView?.unitStateChanged();
 }
@@ -1215,7 +1251,11 @@ const buildSimView = (): SimView =>
           getModel(modelId),
           plan,
           paths,
-          { linked: deviceLinkHolder !== null, live: liveSessionUp },
+          {
+            linked: deviceLinkHolder !== null,
+            live: liveSessionUp,
+            dawIntegration: liveSessionUp && (unitIntegration?.active ?? false),
+          },
           {
             unitOnly: t().sim.lockUnitOnly,
             notAccepted: t().inspector.prePostLcdOnly,
@@ -1224,6 +1264,7 @@ const buildSimView = (): SimView =>
             trackCountLive: t().inspector.sdRecTrackCountLive,
             fx2Rate: t().inspector.fx2RateLocked,
             deviceDriven: t().dynTuning.insfx.deviceOnlyTag,
+            integrationOff: t().sim.lockIntegrationOff,
           },
         ),
       releaseMeters: () => consoleView.releaseMeters(),
@@ -1245,7 +1286,8 @@ const buildSimView = (): SimView =>
       },
       unitCueMemory: () => (liveSessionUp ? cues.restorable() : null),
       unitValues: unitGlassValues,
-      isUnitPath: (path) => path === "setup.followUsb" || isSetupGlassPath(getModel(modelId), path),
+      isUnitPath: (path) =>
+        path === "setup.followUsb" || integrationSlotAt(path) !== null || isSetupGlassPath(getModel(modelId), path),
       writeUnitValue: writeUnitGlassValue,
       clipSafeEngaged: (jack) => liveSessionUp && clipSafeEngaged.has(jack),
     },
@@ -4982,6 +5024,7 @@ if (!DEMO) {
         let sendsRead: number | null = null;
         let setupRead: DeviceSetup | null = null;
         let modeRead: number | null = null;
+        let integrationRead: DawIntegration | null = null;
         let cueRead: string[] = [];
         let merged: MergedRead | null;
         try {
@@ -4994,6 +5037,7 @@ if (!DEMO) {
                 sendsRead = await readSendsTarget();
                 setupRead = await readDeviceSetup(getModel(switchTo ? switchTo.modelId : modelId));
                 modeRead = await vdGet(PARAMS.OPERATION_MODE.id, 0, 0);
+                integrationRead = await readDawIntegration();
               }
               // On the device's model: a read that carries a switch reads for the plan it
               // switches to.
@@ -5062,6 +5106,7 @@ if (!DEMO) {
         resetUnitSessionState();
         if (setupRead) unitSetup = setupRead;
         unitOperationMode = modeRead;
+        unitIntegration = integrationRead;
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.
         liveAdopted = 0;

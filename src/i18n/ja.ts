@@ -639,6 +639,7 @@ export const ja: Messages = {
     lockUnitOnly: "本体で変更してください",
     lockUnitOp: "本体で操作してください",
     lockRateLinked: "デバイスとの接続中は変更できません",
+    lockIntegrationOff: "Live 同期中、Cubase・Nuendo・MixKey が本体とつながっている間に使えます",
   },
   shelf: {
     title: "非表示",

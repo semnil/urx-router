@@ -4,6 +4,7 @@ import type { DeviceModel } from "../models/types";
 import type { Plan } from "./plan";
 import { nodeRateDisabled } from "./constraints";
 import { insertDrivenPaths } from "./sim-map-processors";
+import { INTEGRATION_GLASS_PATHS } from "./control/daw-integration";
 
 export type SimLockTarget =
   { kind: "path"; path: string } | { kind: "screen"; id: string } | { kind: "op"; op: (typeof UNIT_OPS)[number] };
@@ -29,17 +30,21 @@ export interface SimLockReasons {
   fx2Rate: string;
   /** An insert effect's value the insert screen holds shut for the effect's current values. */
   deviceDriven: string;
+  /** SETUP > Software Integration while no session holds a unit a compatible DAW holds. */
+  integrationOff: string;
 }
 
-/** Whether the device link is held, and whether Live sync is up. */
+/** Whether the device link is held, whether Live sync is up, and whether the unit it holds is held
+ *  by a compatible DAW. */
 export interface SimLockState {
   linked: boolean;
   live: boolean;
+  dawIntegration: boolean;
 }
 
-/** The SETUP > GENERAL screens of settings the app neither reads nor writes: the operation mode,
- *  Software Integration and the unit's clock. */
-export const UNIT_ONLY_SCREENS = ["setup.mode", "setup.integration", "setup.datetime.set"] as const;
+/** The SETUP > GENERAL screens of settings the app neither reads nor writes: the operation mode and
+ *  the unit's clock. */
+export const UNIT_ONLY_SCREENS = ["setup.mode", "setup.datetime.set"] as const;
 
 /** Every operation of the unit's own the simulator can ask for. */
 export const UNIT_OPS = [
@@ -75,6 +80,14 @@ export function simLocks(
 ): SimLockSpec[] {
   const out: SimLockSpec[] = [];
   for (const id of UNIT_ONLY_SCREENS) out.push({ target: { kind: "screen", id }, reason: reasons.unitOnly });
+  // Software Integration is usable on the unit only while a compatible DAW holds it, and its values
+  // are the session's: the screen and, for a screen already open, its two sends.
+  if (!(state.live && state.dawIntegration))
+    for (const target of [
+      { kind: "screen", id: "setup.integration" } as const,
+      ...INTEGRATION_GLASS_PATHS.map((path) => ({ kind: "path", path }) as const),
+    ])
+      out.push({ target, reason: reasons.integrationOff });
   for (const op of UNIT_OPS) out.push({ target: { kind: "op", op }, reason: reasons.unitOp });
   out.push({ target: { kind: "path", path: "sd.usbStorage" }, reason: reasons.unitOp });
   if (state.linked) out.push({ target: { kind: "screen", id: "setup.rate" }, reason: reasons.rateLinked });

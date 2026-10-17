@@ -867,6 +867,7 @@ export const en = {
     lockUnitOnly: tr("Change it on the device"),
     lockUnitOp: tr("Operate it on the device"),
     lockRateLinked: tr("Cannot be changed while connected to the device"),
+    lockIntegrationOff: tr("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"),
   },
   shelf: {
     title: tr("Hidden"),

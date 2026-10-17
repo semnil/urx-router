@@ -11534,6 +11534,53 @@ describe("the SIM view over a live session", () => {
     expect(levels.clipSafe(1)).toBe(false);
   });
 
+  it(
+    "shows Software Integration's sends and writes one chosen on the glass while a DAW holds the unit",
+    SLOW,
+    async () => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, {
+        [`${PARAMS.DAW_INTEGRATION.id}/0/0`]: 2,
+        [`${PARAMS.POST_FADER_SEND_FX1.id}/0/0`]: 290,
+        [`${PARAMS.POST_FADER_SEND_FX2.id}/0/0`]: 288,
+      });
+      await openSim();
+      await goLive();
+      const shown = await transport().snapshot();
+      expect([shown.get("setup.integration.fx1Send"), shown.get("setup.integration.fx2Send")]).toEqual([
+        "MIX 2",
+        "MIX 1",
+      ]);
+      expect(transport().writable?.("setup.integration.fx2Send")).toBe(true);
+      await expect(transport().write("setup.integration.fx2Send", "MIX 2")).resolves.toBe("MIX 2");
+      await vi.waitFor(() => expect(setsOf(shell, PARAMS.POST_FADER_SEND_FX2.id)).toEqual([[0, 290]]), {
+        timeout: 10_000,
+      });
+      expect(setsOf(shell, PARAMS.POST_FADER_SEND_FX1.id), "the other send is left as it is").toEqual([]);
+      await expect(transport().write("setup.integration.fx1Send", "MIX 3")).rejects.toThrow("refused");
+    },
+  );
+
+  it("refuses a Software Integration send until the unit announces a DAW holding it", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    await expect(transport().write("setup.integration.fx1Send", "MIX 2")).rejects.toThrow("refused");
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.DAW_INTEGRATION.id, x: 0, y: 0, value: 2 }]);
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.POST_FADER_SEND_FX2.id, x: 0, y: 0, value: 290 }]);
+    await vi.waitFor(async () =>
+      expect((await transport().snapshot()).get("setup.integration.fx2Send"), "the unit's announced send").toBe(
+        "MIX 2",
+      ),
+    );
+    await expect(transport().write("setup.integration.fx1Send", "MIX 2")).resolves.toBe("MIX 2");
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.POST_FADER_SEND_FX1.id)).toEqual([[0, 290]]), {
+      timeout: 10_000,
+    });
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.DAW_INTEGRATION.id, x: 0, y: 0, value: 0 }]);
+    await expect(transport().write("setup.integration.fx1Send", "MIX 1")).rejects.toThrow("refused");
+    expect(setsOf(shell, PARAMS.POST_FADER_SEND_FX1.id), "nothing written once the DAW let go").toEqual([[0, 290]]);
+  });
+
   // The reads a case's session made of one address.
   const readsOf = (shell: TauriShell, paramId: number): number =>
     shell.invokes.filter((cmd, i) => cmd === "vd_get" && (shell.args[i] as Record<string, number>).paramId === paramId)
@@ -11575,6 +11622,16 @@ describe("the SIM view over a live session", () => {
     await transport().write("setup.brightness", 2);
     await invoked(shell, "vd_disconnect");
     expect(errors(shell).join(" "), "the refused write is what ended it").toContain("setup write refused");
+  });
+
+  it("ends the session when a Software Integration send written from the glass is refused", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.DAW_INTEGRATION.id}/0/0`]: 2 });
+    await openSim();
+    await goLive();
+    shell.failOnce("vd_set", new Error("send write refused"));
+    await transport().write("setup.integration.fx1Send", "MIX 2");
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the refused write is what ended it").toContain("send write refused");
   });
 
   it("reports a SETUP setting the unit refuses with no session, and leaves the glass's value", SLOW, async () => {

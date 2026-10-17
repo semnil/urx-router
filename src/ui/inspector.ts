@@ -894,8 +894,8 @@ export function renderInspector(
 
     // FX bus (FX 1 / FX 2): the FX channel's own ON / mute (param 338, per FX),
     // distinct from the per-channel FX sends feeding it. (Post Fader Send for FX
-    // is a DAW-Integration-only feature with no device control address, so it is
-    // not modeled here.)
+    // is a DAW-Integration-only setting outside the plan, shown on the SIM view, so
+    // it is not modeled here.)
     const fxY = fxChannelIndex(node.id);
     if (fxY !== null) {
       const ps = section(m.inspector.parameters, { key: "params" });

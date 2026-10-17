@@ -76,6 +76,8 @@ const SETUP_SCENE_EXTERNAL = [
   "TIME_ZONE",
   "DEVICE_LANGUAGE",
   "USB_SUPPRESSION",
+  "POST_FADER_SEND_FX1",
+  "POST_FADER_SEND_FX2",
 ].sort();
 
 // The unit's LCD selection and HOME's [Sends] destination: UI state the settings file carries
