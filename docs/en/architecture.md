@@ -1867,8 +1867,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   it only while a compatible DAW (Cubase, Nuendo, MixKey) holds it, which `816` reads as anything but 0, and the LCD
   opens it only then and only while Live sync is up. A session reads `816` and the two Post Fader Send for FX values
   (`879` for FX 1, `880` for FX 2), registers all three, reads them again once registered — a DAW that took or let
-  go of the unit in between announced itself to nobody — and follows their announcements, an announcement made while
-  that read is out standing over its answer. The LCD shows the sends the session holds, and a send picked on it is
+  go of the unit in between announced itself to nobody — and follows their announcements, an announcement or a pick made
+  while that read is out standing over its answer for that one value, the read's answer taken for the others. The LCD shows the sends the session holds, and a send picked on it is
   written to the unit behind every unit write queued so far, unless no DAW holds the unit by its turn: it is then
   dropped and the sends are read again.
 - **The [CUE] flags** are live-session state rather than the plan's (`cue.ts`; see "CUE" under "What the app models,
