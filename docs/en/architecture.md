@@ -1902,17 +1902,19 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   The plan holds none of them, so the LCD carries none out, and the status line says so.
 - **What it holds shut** is drawn on the LCD before it is pressed (`sim-locks.ts`, handed to the simulator's
   `setLocks()` at mount, on every plan change and when the device link is taken or let go): a held control keeps its
-  place with a padlock at its top right and the reason as its tooltip, and takes no touch, key or drag. Held are the
+  place with a padlock at its top right and the reason as its tooltip, and takes no touch, key or drag. **Only what the
+  app cannot do is held this way** — a value it does not write, a function it does not carry, a state it cannot read.
+  The LCD simulates the unit, so a control the unit itself holds still or hides, showing nothing for it, is drawn as the
+  unit draws it, by the simulator: a COMP or M.B.Comp value its 1-knob drives, Pitch Fix's notes under MIDI Control,
+  FX 2's sends at a rate that takes FX 2 out, the rates while Follow USB is on. Held are the
   SETUP > GENERAL screens of what the app neither reads nor writes — the operation mode and the
   unit's clock ("Change it on the device"), Software Integration and its two sends — held in place on a screen already
-  open — except while Live sync is up on a unit a compatible DAW holds ("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"), the unit's own operations and USB Storage
+  open — while Live sync is down, since whether a compatible DAW holds the unit is read only during a session ("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"), the unit's own operations and USB Storage
   Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus while Live sync is up, as on the CONSOLE
-  and in the Inspector (their wording), the sampling frequency while the device link is held — during Live sync
-  only while Follow USB is on ("Turn Follow USB off to change it during Live sync") — the recorder's
-  Track Count while Live sync is up and
-  the sends into FX 2 at a rate that takes FX 2 out (each the wording the Inspector already gives), and an insert
-  effect's value its own screen holds shut for the effect's current values, such as M.B.Comp's bands while its 1-knob
-  is on (that screen's wording).
+  and in the Inspector (their wording), the sampling frequency while the device link is held and the unit is not known
+  to have Follow USB on — during Live sync only while the session carries no rate (Scene only), and while Follow USB
+  is not yet read ("Turn Follow USB off to change it during Live sync") — and the recorder's
+  Track Count while Live sync is up (the wording the Inspector already gives).
 - **Meters**: while Live sync is on and the view is up, it borrows the session's one meter subscription from the
   CONSOLE, as a tuning screen does, and gives it back when it is hidden. The simulator's meter ids are mapped onto
   the CONSOLE's taps (`simMeterTap`). Without Live sync the LCD's meters read nothing.

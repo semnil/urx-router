@@ -1313,15 +1313,13 @@ const buildSimView = (): SimView =>
       isLive: () => liveSessionUp,
       locks: (paths) =>
         simLocks(
-          getModel(modelId),
-          plan,
           paths,
           {
             linked: deviceLinkHolder !== null,
             live: liveSessionUp,
-            dawIntegration: liveSessionUp && (unitIntegration?.active ?? false),
             rateOpen: liveRateOpen(),
             rateFollowUsb: liveSessionUp && getSettings().deviceScope === "all" && followUsbState !== false,
+            followUsbOn: followUsbState === true,
           },
           {
             unitOnly: t().sim.lockUnitOnly,
@@ -1330,8 +1328,6 @@ const buildSimView = (): SimView =>
             rateLinked: t().sim.lockRateLinked,
             rateFollowUsb: t().sim.lockRateFollowUsb,
             trackCountLive: t().inspector.sdRecTrackCountLive,
-            fx2Rate: t().inspector.fx2RateLocked,
-            deviceDriven: t().dynTuning.insfx.deviceOnlyTag,
             integrationOff: t().sim.lockIntegrationOff,
           },
         ),
