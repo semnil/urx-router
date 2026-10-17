@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../models";
-import { defaultPlan } from "../models/initial-state";
 import { simBindings } from "./sim-map";
 import { UNIT_ONLY_SCREENS, simLocks, UNIT_OPS, type SimLockSpec, type SimLockState } from "./sim-locks";
 
@@ -10,8 +9,6 @@ const REASONS = {
   unitOp: "unitOp",
   rateLinked: "rateLinked",
   trackCountLive: "trackCountLive",
-  fx2Rate: "fx2Rate",
-  deviceDriven: "deviceDriven",
   integrationOff: "integrationOff",
   rateFollowUsb: "rateFollowUsb",
 };
@@ -20,15 +17,15 @@ const paths = [...simBindings(model).keys()];
 const OFFLINE: SimLockState = {
   linked: false,
   live: false,
-  dawIntegration: false,
   rateOpen: false,
   rateFollowUsb: false,
+  followUsbOn: false,
 };
+const LINKED: SimLockState = { ...OFFLINE, linked: true };
+const LIVE: SimLockState = { ...LINKED, live: true };
 
-function locks(state = OFFLINE, rate = 48_000): SimLockSpec[] {
-  const plan = defaultPlan("URX44V");
-  plan.sampleRate = rate;
-  return simLocks(model, plan, paths, state, REASONS);
+function locks(state = OFFLINE): SimLockSpec[] {
+  return simLocks(paths, state, REASONS);
 }
 /** The reason `target` is held for, or null where it is not. */
 function reasonFor(all: SimLockSpec[], target: SimLockSpec["target"]): string | null {
@@ -55,7 +52,9 @@ describe("the controls the SIM view holds shut", () => {
     expect(reasonFor(all, { kind: "screen", id: "setup.patch" }), "Output Patch is the plan's").toBeNull();
   });
 
-  it("opens Software Integration and its sends only while Live sync is up on a unit a compatible DAW holds", () => {
+  // Whether a compatible DAW holds the unit is read only while Live sync is up, so the screen is held
+  // offline and on a link without a session. During Live sync it is the simulator's to draw.
+  it("holds Software Integration and its sends while Live sync is down, and opens them while it is up", () => {
     const targets = [
       { kind: "screen", id: "setup.integration" } as const,
       path("setup.integration.fx1Send"),
@@ -64,39 +63,15 @@ describe("the controls the SIM view holds shut", () => {
     for (const target of targets) {
       const name = JSON.stringify(target);
       expect(reasonFor(locks(), target), name).toBe("integrationOff");
-      expect(
-        reasonFor(
-          locks({ linked: true, live: true, dawIntegration: false, rateOpen: false, rateFollowUsb: false }),
-          target,
-        ),
-        name,
-      ).toBe("integrationOff");
-      expect(
-        reasonFor(
-          locks({ linked: true, live: false, dawIntegration: true, rateOpen: false, rateFollowUsb: false }),
-          target,
-        ),
-        `${name} no session`,
-      ).toBe("integrationOff");
-      expect(
-        reasonFor(
-          locks({ linked: true, live: true, dawIntegration: true, rateOpen: false, rateFollowUsb: false }),
-          target,
-        ),
-        name,
-      ).toBeNull();
+      expect(reasonFor(locks(LINKED), target), `${name} no session`).toBe("integrationOff");
+      expect(reasonFor(locks(LIVE), target), name).toBeNull();
     }
   });
 
   it("holds a channel's PRE into an FX bus while Live sync is up, which the unit does not take, and nothing else of the send", () => {
     expect(reasonFor(locks(), path("ch.ch1.send.fx1.pre")), "offline the tap is the plan's").toBeNull();
-    expect(
-      reasonFor(
-        locks({ linked: true, live: false, dawIntegration: false, rateOpen: false, rateFollowUsb: false }),
-        path("ch.ch1.send.fx1.pre"),
-      ),
-    ).toBeNull();
-    const all = locks({ linked: true, live: true, dawIntegration: false, rateOpen: false, rateFollowUsb: false });
+    expect(reasonFor(locks(LINKED), path("ch.ch1.send.fx1.pre"))).toBeNull();
+    const all = locks(LIVE);
     expect(paths).toContain("ch.ch1.send.fx1.pre");
     expect(reasonFor(all, path("ch.ch1.send.fx1.pre"))).toBe("notAccepted");
     expect(reasonFor(all, path("ch.ch1.send.fx2.pre"))).toBe("notAccepted");
@@ -104,56 +79,37 @@ describe("the controls the SIM view holds shut", () => {
     expect(reasonFor(all, path("ch.ch1.send.mix1.pre")), "a MIX send's PRE is the plan's").toBeNull();
   });
 
-  it("holds the sends into FX 2 at a rate that takes FX 2 out, and only then", () => {
-    expect(reasonFor(locks(), path("ch.ch1.send.fx2.level"))).toBeNull();
-    const high = locks(OFFLINE, 192_000);
-    for (const field of ["on", "level"]) expect(reasonFor(high, path(`ch.ch1.send.fx2.${field}`))).toBe("fx2Rate");
-    expect(reasonFor(high, path("ch.ch1.send.fx1.level"))).toBeNull();
-  });
-
-  it("opens the rate during Live sync while Follow USB is off, and names Follow USB while it is on", () => {
-    const held = { linked: true, live: true, dawIntegration: false, rateOpen: false, rateFollowUsb: true };
-    expect(reasonFor(locks(held), { kind: "screen", id: "setup.rate" }), "Follow USB on").toBe("rateFollowUsb");
-    expect(
-      reasonFor(locks({ ...held, rateFollowUsb: false }), { kind: "screen", id: "setup.rate" }),
-      "a Scene-only session carries no rate",
-    ).toBe("rateLinked");
+  // While Follow USB is on the unit takes no rate from its own screen either, and the simulator
+  // shows that from the Follow USB it is given, so nothing of the app's own is drawn there.
+  it("opens the rate during Live sync while Follow USB is off, and leaves it to the unit while Follow USB is on", () => {
     const screen = { kind: "screen", id: "setup.rate" } as const;
-    expect(
-      reasonFor(
-        locks({ linked: true, live: true, dawIntegration: false, rateOpen: true, rateFollowUsb: false }),
-        screen,
-      ),
-    ).toBeNull();
-    expect(
-      reasonFor(
-        locks({ linked: true, live: false, dawIntegration: false, rateOpen: false, rateFollowUsb: false }),
-        screen,
-      ),
-    ).toBe("rateLinked");
+    expect(reasonFor(locks({ ...LIVE, rateFollowUsb: true, followUsbOn: true }), screen), "Follow USB on").toBeNull();
+    expect(reasonFor(locks({ ...LINKED, followUsbOn: true }), screen), "Follow USB on, no session").toBeNull();
+    expect(reasonFor(locks({ ...LIVE, rateFollowUsb: true }), screen), "Follow USB not yet read").toBe("rateFollowUsb");
+    expect(reasonFor(locks(LIVE), screen), "a Scene-only session carries no rate").toBe("rateLinked");
+    expect(reasonFor(locks({ ...LIVE, rateOpen: true }), screen)).toBeNull();
+    expect(reasonFor(locks(LINKED), screen)).toBe("rateLinked");
   });
 
   it("holds the rate while the device link is held, and the Track Count while Live sync is up", () => {
     expect(reasonFor(locks(), { kind: "screen", id: "setup.rate" })).toBeNull();
     expect(reasonFor(locks(), path("sd.trackCount"))).toBeNull();
-    const linked = locks({ linked: true, live: false, dawIntegration: false, rateOpen: false, rateFollowUsb: false });
+    const linked = locks(LINKED);
     expect(reasonFor(linked, { kind: "screen", id: "setup.rate" })).toBe("rateLinked");
     expect(reasonFor(linked, path("sd.trackCount"))).toBeNull();
-    const live = locks({ linked: true, live: true, dawIntegration: false, rateOpen: false, rateFollowUsb: false });
+    const live = locks(LIVE);
     expect(reasonFor(live, path("sd.trackCount"))).toBe("trackCountLive");
   });
 
-  it("holds an insert's rows the unit drives, and only while it drives them", () => {
-    const plan = defaultPlan("URX44V");
-    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], insertFx: 1792, insertFxOn: true };
-    const knobOff = simLocks(model, plan, paths, OFFLINE, REASONS);
-    expect(reasonFor(knobOff, path("ch.bus.mix1.insFx.oneKnobLevel")), "the level waits for the knob").toBe(
-      "deviceDriven",
+  // The unit holds an insert's driven rows still and hides FX 2's sends at the rates that take FX 2
+  // out, and the simulator draws both as the unit does: no lock of the app's own reaches them.
+  it("draws no lock on an insert's values or on a send's level and ON, in any state", () => {
+    const held = [OFFLINE, LINKED, LIVE].flatMap((state) => locks(state));
+    const reached = held.filter(
+      (l) => l.target.kind === "path" && /\.insFx\.|\.send\.\w+\.(on|level)$/.test(l.target.path),
     );
-    expect(reasonFor(knobOff, path("ch.bus.mix1.insFx.lowThreshold"))).toBeNull();
-    plan.nodeParams["bus.mix1"].insertFxParams = { "mbc:6": 1 };
-    const knobOn = simLocks(model, plan, paths, OFFLINE, REASONS);
-    expect(reasonFor(knobOn, path("ch.bus.mix1.insFx.lowThreshold")), "the knob sets the bands").toBe("deviceDriven");
-    expect(reasonFor(knobOn, path("ch.bus.mix1.insFx.outGain"))).toBeNull();
+    expect(paths.some((p) => p.includes(".insFx."))).toBe(true);
+    expect(paths).toContain("ch.ch1.send.fx2.level");
+    expect(reached).toEqual([]);
   });
 });
