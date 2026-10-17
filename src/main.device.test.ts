@@ -9256,6 +9256,28 @@ describe("the sample rate during Live sync", () => {
     expect(picker().value).toBe("48000");
   });
 
+  // Armed once the session is up, so the reads its start takes answer from the table.
+  it.each([
+    [PLAYBACK_ADDR, (e: string) => t().error.playbackUnread(e)],
+    [TRACK_COUNT_ADDR, (e: string) => t().error.trackCountUnread(e)],
+  ])("writes nothing, and asks nothing, when %s cannot be read", SLOW, async (failing, message) => {
+    const armed = { on: false };
+    const tauri = deviceCommands({ "plugin:dialog|message": "Ok" }, SEED);
+    const read = tauri.vd_get as (a: Record<string, unknown>) => unknown;
+    tauri.vd_get = (a: Record<string, unknown>) => {
+      if (armed.on && `${a.paramId}:${a.x}:${a.y}` === failing) throw new Error("timeout");
+      return read(a);
+    };
+    const shell = (await bootApp({ tauri }))!;
+    await goLive();
+    armed.on = true;
+    chooseRate(44_100);
+    await vi.waitFor(() => expect(errors(shell)).toEqual([message("timeout")]), { timeout: 10_000 });
+    expect(confirms(shell), "nothing asked").toEqual([]);
+    expect(rateWrites(shell)).toEqual([]);
+    expect(picker().value).toBe("48000");
+  });
+
   // A Scene-only session leaves the rate out of what it writes, so a rate chosen then would show in
   // the app and never reach the unit.
   it("keeps the rate locked for a session whose scope leaves the rate out", SLOW, async () => {
@@ -11936,6 +11958,21 @@ describe("the SIM view over a live session", () => {
     await transport().write("setup.followUsb", false);
     await vi.waitFor(() => expect(badge.dataset.state).toBe("off"));
     expect(setsOf(shell, PARAMS.FOLLOW_USB.id)).toEqual([[0, 0]]);
+  });
+
+  // The glass keeps the plan's rate until the operator answers, so the write itself is refused.
+  it("asks before a rate chosen on the glass during Live sync, and writes it once agreed", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, {
+      [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000,
+      [FOLLOW_USB_SEED]: 0,
+      [TRACK_COUNT_SEED]: 8,
+    });
+    await openSim();
+    await goLive();
+    await expect(transport().write("setup.samplingFrequency", 96_000)).rejects.toThrow("refused");
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.SAMPLE_RATE.id)).toEqual([[0, 96_000]]), { timeout: 10_000 });
+    expect(confirms(shell)).toHaveLength(1);
+    expect($<HTMLSelectElement>("rate-picker").value).toBe("96000");
   });
 
   it("names a unit operation the glass refuses on the status line", SLOW, async () => {
