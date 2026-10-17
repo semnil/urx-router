@@ -1,11 +1,13 @@
 import { test, expect, type Page } from "./fixtures";
 import {
   LIVE_COMMANDS,
+  deviceValueOf,
   heldWritesOf,
   notifyParam,
   savedFilesOf,
   setDeviceValue,
   setHeldWrites,
+  setWriteEffect,
   stubTauriBoot,
   stubTauriDevice,
   writesOf,
@@ -723,4 +725,86 @@ test("the LCD's CUE switches the unit's flag while Live sync is up, and reaches 
   await expect.poll(cueWrites).toEqual([1, 0]);
   await expect(cue(1)).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator("#cue-bar")).toBeHidden();
+});
+
+// STEREO and MIX 1 cued on the unit, then CH 1 pressed on the LCD during Live sync: the unit turns
+// the outputs off and holds them to put back. The stub plays the unit's rules — CH 1 on takes the
+// outputs off, CH 1 off puts them back, an output cue takes CH 1 off — with no notify for what it
+// moves. Turning CH 1 off puts both outputs back, pressing STEREO alone cues STEREO alone, and
+// CLEAR CUE puts neither back.
+test.describe("an output cue the unit holds behind CH 1 on the LCD", () => {
+  const CUE_MONO: number = PARAMS.CUE_MONO.id;
+  const CUE_STEREO: number = PARAMS.CUE_STEREO.id;
+  const CUE_MIX: number = PARAMS.CUE_MIX.id;
+  /** A strip on the LCD's HOME by its spoken name ("C H 1", "STEREO", "MIX 1"). */
+  const strip = (page: Page, name: string) =>
+    sim(page).locator(".strip", { has: page.getByRole("button", { name: `${name} settings`, exact: true }) });
+  const cueOf = (page: Page, name: string) => strip(page, name).locator(".btn-cue");
+  const outputs = (page: Page) =>
+    Promise.all([
+      deviceValueOf(page, CUE_STEREO, 0),
+      deviceValueOf(page, CUE_MIX, 0),
+      deviceValueOf(page, CUE_MONO, 0),
+    ]);
+  const outputBank = async (page: Page): Promise<void> => {
+    await lcd(page)
+      .getByRole("button", { name: /channel bank/ })
+      .click();
+    await lcd(page).getByRole("button", { name: "MIX, ST STREAMING", exact: true }).click();
+  };
+
+  test.beforeEach(async ({ page }) => {
+    await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+    await page.goto("/");
+    await setDeviceValue(page, CUE_STEREO, 0, 1);
+    await setDeviceValue(page, CUE_MIX, 0, 1);
+    await setDeviceValue(page, CUE_MIX, 1, 1);
+    await setWriteEffect(page, CUE_MONO, 0, 1, [
+      [CUE_STEREO, 0, 0],
+      [CUE_MIX, 0, 0],
+      [CUE_MIX, 1, 0],
+    ]);
+    await setWriteEffect(page, CUE_MONO, 0, 0, [
+      [CUE_STEREO, 0, 1],
+      [CUE_MIX, 0, 1],
+      [CUE_MIX, 1, 1],
+    ]);
+    await setWriteEffect(page, CUE_STEREO, 0, 1, [[CUE_MONO, 0, 0]]);
+    await page.click("#btn-device");
+    await page.click("#btn-live");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+    await page.click("#btn-view-sim");
+    await expect(lcd(page)).toBeVisible();
+    await cueOf(page, "C H 1").click();
+    await expect.poll(() => outputs(page), "the premise: CH 1 took the outputs off").toEqual([0, 0, 1]);
+    await expect(cueOf(page, "C H 1")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("turning CH 1 off puts both outputs back", async ({ page }) => {
+    const before = (await writesOf(page)).length;
+    await cueOf(page, "C H 1").click();
+    await expect.poll(() => outputs(page)).toEqual([1, 1, 0]);
+    expect((await writesOf(page)).slice(before), "the release alone is written").toEqual([[CUE_MONO, 0]]);
+    await outputBank(page);
+    await expect(cueOf(page, "STEREO")).toHaveAttribute("aria-pressed", "true");
+    await expect(cueOf(page, "MIX 1")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("pressing STEREO alone cues STEREO alone", async ({ page }) => {
+    await outputBank(page);
+    const before = (await writesOf(page)).length;
+    await cueOf(page, "STEREO").click();
+    await expect.poll(() => outputs(page)).toEqual([1, 0, 0]);
+    expect((await writesOf(page)).slice(before), "the press of STEREO is written").toEqual([[CUE_STEREO, 1]]);
+    await expect(cueOf(page, "STEREO")).toHaveAttribute("aria-pressed", "true");
+    await expect(cueOf(page, "MIX 1")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  test("CLEAR CUE puts neither output back", async ({ page }) => {
+    await lcd(page).getByRole("button", { name: "Clear cue", exact: true }).click();
+    await expect.poll(() => outputs(page)).toEqual([0, 0, 0]);
+    await outputBank(page);
+    await expect(cueOf(page, "STEREO")).toHaveAttribute("aria-pressed", "false");
+    await expect(cueOf(page, "MIX 1")).toHaveAttribute("aria-pressed", "false");
+  });
 });
