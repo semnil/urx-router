@@ -255,8 +255,9 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
 
 > **Post Fader Send for FX (DAW Integration menu, V1.2+).** Each FX bus can additionally be fed by a
 > MIX bus **post-fader** (FX 1 ← MIX n, FX 2 ← MIX n). This appears only when compatible DAW software
-> is connected — a DAW-Integration-only feature with no standalone device control address, so the tool
-> does **not** model it.
+> is connected — a DAW-Integration-only setting (`879` for FX 1, `880` for FX 2), so the plan does **not**
+> model it; the SIM view shows and writes it during Live sync while DAW Integration is on (architecture.md,
+> "SETUP > Software Integration").
 
 ### 4. Streaming / monitor source (`source`, one receiver)
 
