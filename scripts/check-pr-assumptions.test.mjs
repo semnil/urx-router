@@ -16,7 +16,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { untagged } from "./check-pr-assumptions.mjs";
+import { unsettled, untagged } from "./check-pr-assumptions.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./check-pr-assumptions.mjs", import.meta.url));
 
@@ -35,6 +35,14 @@ ${field}
 
 - [ ] E2E coverage added for new behavior
 `;
+
+/** The same run, handed the body as a file — the way it is run by hand. */
+const runFile = (text) => {
+  const path = join(mkdtempSync(join(tmpdir(), "pr-body-")), "body.md");
+  writeFileSync(path, text);
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "PR_BODY"));
+  return spawnSync(process.execPath, [SCRIPT, "--file", path], { encoding: "utf8", env });
+};
 
 const run = (text) =>
   spawnSync(process.execPath, [SCRIPT], { encoding: "utf8", env: { ...process.env, PR_BODY: text } });
@@ -92,9 +100,10 @@ describe("what it refuses", () => {
     expect(untagged(body(deferred))).toHaveLength(1);
   });
 
-  it("exits non-zero on it, and zero on the same item tagged", () => {
+  it("exits non-zero on it, and zero on the same item tagged and settled", () => {
     expect(run(body(deferred)).status).toBe(1);
-    expect(run(body(deferred.replace("  - **The", "  - **[hardware]** The"))).status).toBe(0);
+    const tagged = deferred.replace("  - **The", "  - **[hardware]** The");
+    expect(run(body(`${tagged}\n    - Result: the drain reported a 40 ms gap.`)).status).toBe(0);
   });
 
   it("reports every untagged item, not only the first", () => {
@@ -121,6 +130,96 @@ describe("what it refuses", () => {
   it("refuses an answer written inline rather than as a list", () => {
     const text = body("- [x] Assumptions this PR rests on are listed here: the window is a guess for now.");
     expect(untagged(text)).toHaveLength(1);
+  });
+});
+
+// A tagged item names what its observation needs; it is settled with the operator before the
+// pull request is opened all the same, and the entry under it says so. A tag alone describes
+// a deferral rather than ending one.
+describe("how a tagged item was settled", () => {
+  const tagged =
+    "- [x] Assumptions this PR rests on are listed here:\n" +
+    "  - [hardware] whether the unit announces the recorder's own change.";
+
+  it("refuses a tagged item with nothing under it", () => {
+    expect(unsettled(body(tagged))).toEqual(["[hardware] whether the unit announces the recorder's own change."]);
+    const said = run(body(tagged));
+    expect(said.status).toBe(1);
+    expect(said.stderr).toContain("unsettled assumption");
+  });
+
+  it("passes the same item with a Result entry under it", () => {
+    const text = body(`${tagged}\n    - **Result** (URX44V, System 1.3.1.0): it does, one notify per move.`);
+    expect(unsettled(text)).toEqual([]);
+    expect(run(text).status).toBe(0);
+  });
+
+  it("passes the same item left open on the operator's quoted instruction", () => {
+    const text = body(`${tagged}\n    - Left open by the operator: "open it with this unmeasured".`);
+    expect(unsettled(text)).toEqual([]);
+    expect(run(text).status).toBe(0);
+  });
+
+  // A result written as a sentence of the item's own text, or under a sibling, settles
+  // nothing about this item: what is asked for is an entry under it.
+  it("does not read a result from the item's own text or from a sibling", () => {
+    expect(unsettled(body(`${tagged} Result: it does.`))).toHaveLength(1);
+    const sibling = body(`${tagged}\n` + "  - [operator] a second item.\n" + "    - Result: settled.");
+    expect(unsettled(sibling)).toEqual(["[hardware] whether the unit announces the recorder's own change."]);
+  });
+
+  // A label with nothing after it is the template of an answer, not an answer: what settled
+  // the item, or the operator's words, has to be written there.
+  it("refuses a Result or an operator entry with nothing written after its label", () => {
+    for (const label of ["Result:", "**Result**:", "Left open by the operator:", "Result (after publish):"]) {
+      const text = body(`${tagged}\n    - ${label}`);
+      expect(unsettled(text)).toHaveLength(1);
+      expect(run(text).status).toBe(1);
+    }
+  });
+
+  it("reads a value wrapped onto the line after the label as that entry's", () => {
+    const text = body(`${tagged}\n    - Result:\n      one notify per move, on URX44V.`);
+    expect(unsettled(text)).toEqual([]);
+    expect(run(text).status).toBe(0);
+  });
+
+  // After a blank line, a paragraph left of the entry's own text belongs to the item above the
+  // entry, not to the entry: it does not fill in a label left empty. One at the entry's text
+  // column does.
+  it("does not fill an empty label with the item's own paragraph after a blank line", () => {
+    for (const label of ["Result:", "Left open by the operator:"]) {
+      const text = body(`${tagged}\n    - ${label}\n\n    A note about the item itself.`);
+      expect(unsettled(text)).toHaveLength(1);
+      expect(run(text).status).toBe(1);
+    }
+    for (const label of ["Result:", "Left open by the operator:"]) {
+      const wrapped = body(
+        `${tagged}\n    - ${label}\n\n    A note about the item itself,\n    continued onto a second line.`,
+      );
+      expect(unsettled(wrapped)).toHaveLength(1);
+      expect(run(wrapped).status).toBe(1);
+      expect(runFile(wrapped).status).toBe(1);
+    }
+    const own = body(`${tagged}\n    - Result:\n\n      one notify per move, on URX44V.`);
+    expect(unsettled(own)).toEqual([]);
+    expect(run(own).status).toBe(0);
+  });
+
+  // A numbered list is a list: the same result written as `1.` is the same entry as `-`.
+  it("reads a numbered entry under the item the way it reads a bulleted one", () => {
+    for (const marker of ["1.", "1)", "-", "*"]) {
+      const text = body(`${tagged}\n    ${marker} Result: one notify per move.`);
+      expect(unsettled(text)).toEqual([]);
+      expect(run(text).status).toBe(0);
+    }
+    const sibling = body(`${tagged}\n  - [operator] a second item.\n    1. Result: settled.`);
+    expect(unsettled(sibling)).toEqual(["[hardware] whether the unit announces the recorder's own change."]);
+    expect(run(sibling).status).toBe(1);
+  });
+
+  it("does not take some other entry under the item for a result", () => {
+    expect(unsettled(body(`${tagged}\n    - What would settle it: a front-panel move.`))).toHaveLength(1);
   });
 });
 
@@ -189,7 +288,8 @@ describe("bodies it is not about", () => {
       "- [x] Assumptions this PR rests on are listed here:\n" +
         "  - [operator] The draft's signatures name the version its manifest announces.\n" +
         "    - Result (after publish): both read the same version.\n" +
-        "  - [hardware] A second item at the field's own indentation.",
+        "  - [hardware] A second item at the field's own indentation.\n" +
+        "    - Result: settled as well.",
     );
     expect(untagged(text)).toEqual([]);
     expect(run(text).status).toBe(0);

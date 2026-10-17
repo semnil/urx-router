@@ -20,7 +20,10 @@
      nested list item opening with the external thing its observation needs — [hardware] a
      reading off the unit, [operator] their own hands, eyes or cursor, [other-checkout] the
      machine this one is not — or answer "none". An observation needing none of the three
-     is one to take before opening this, so it has no tag to write. check:pr-assumptions
+     is one to take before opening this, so it has no tag to write. A tagged item is settled
+     with the operator before this is opened too: write what settled it as a "Result" entry
+     under the item, or — where the operator told you to open it with the item still open —
+     a "Left open by the operator" entry quoting that instruction. check:pr-assumptions
      reads what is written here whether or not the box beside it is ticked. -->
 
 - [ ] Verified on hardware — model and System firmware:
