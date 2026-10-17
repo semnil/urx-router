@@ -3461,7 +3461,8 @@ hardware that may not even be attached. For the same reason it goes back to unkn
 to another model, whichever entry switched it — the model picker, File > Open, a drop, a recent row, or the
 switch a Fetch or a Live-sync start offers. During Live sync the Rate picker locks while Follow USB is on: the unit
 accepts a rate written then and takes the computer's rate back about a third of a second later, so the rate would
-show and vanish. With Follow USB off it opens, and a rate chosen on the picker, on the SIM view or by an undo / redo
+show and vanish. It stays locked as well for a session whose device scope is Scene only, which writes no rate.
+With Follow USB off and the whole device in scope it opens, and a rate chosen on the picker, on the SIM view or by an undo / redo
 goes through `confirmLiveRate` before the flush writes it — refused while the microSD recorder holds a file, and
 otherwise confirmed with the re-clock and what it costs the recorder's Track Count, the questions the write's settle
 asks. The held connection survives the re-clock: a connection written 766 over kept answering reads, online, on a
