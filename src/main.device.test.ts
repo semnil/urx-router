@@ -6351,6 +6351,42 @@ describe("an EFFECT TYPE change while a session is live", () => {
   // decodes as a delay: every value lands under a delay's key, the Rev-X keys go with it,
   // and the emit behind the second selection has the incoming type's factory values to send
   // in their place.
+  // Picking the type a channel already holds is no change: the unit refills nothing for it, so a
+  // tuned effect stays as it is — and the CONSOLE's list still opens the screen, which is what a
+  // press there is for. A different type from the same list is the positive control.
+  it("leaves a tuned effect alone when the CONSOLE's list picks the type the channel holds", SLOW, async () => {
+    const shell = await bootDevice({}, true, { ...unitOnRevxHall(), [`681/0/${HPF.slot}`]: TUNED });
+    $("btn-live").click();
+    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
+    expect(shownHpf(), "the premise: the unit's tuned HPF").toBe(HPF.format!(TUNED, {}));
+    const fromConsole = (type: number): void => {
+      $("btn-view-console").click();
+      const face = [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")].find((st) =>
+        st.querySelector(".con-head")?.textContent?.includes("FX 1"),
+      )!;
+      face.querySelector<HTMLElement>(".con-fxopen")!.click();
+      document.querySelector<HTMLElement>(`[data-ctl="fx:${type}"]`)!.click();
+      expect($("dyn-screen-modal").hidden, "the screen opens on the pick").toBe(false);
+      $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions button")!.click();
+      $("btn-view-graph").click();
+    };
+    const arrayWrites = (from: number): number =>
+      shell.invokes.filter(
+        (cmd, i) => cmd === "vd_set" && i >= from && [679, 681].includes(Number(shell.args[i]?.paramId)),
+      ).length;
+
+    const gesture = shell.invokes.length;
+    fromConsole(REVX_HALL);
+    await settled(shell);
+    expect(arrayWrites(gesture), "nothing sent for the type it already holds").toBe(0);
+    expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
+
+    const other = shell.invokes.length;
+    fromConsole(REVX_ROOM);
+    await vi.waitFor(() => expect(arrayWrites(other)).toBeGreaterThan(0), { timeout: 20_000 });
+    expect(shownType()).toBe(REVX_ROOM);
+  });
+
   it("reads the array against the type the unit holds, not the one the plan is waiting to send", SLOW, async () => {
     const PING_PONG = fxEffectTypes(0).filter((o) => o.family === "delay")[1]!.value;
     const REFILLED = 55;

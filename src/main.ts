@@ -2,7 +2,12 @@ import "./style.css";
 
 import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
-import { FX_CHANNEL_NODE_INDEX, FX_EFFECT_TYPE_PARAM, fxTypeDefaults } from "./core/control/fx-effect";
+import {
+  FX_CHANNEL_NODE_INDEX,
+  FX_EFFECT_TYPE_PARAM,
+  fxTypeDefaults,
+  resolveFxEffectType,
+} from "./core/control/fx-effect";
 import { takeFxReseeds } from "./app/fx-reseed";
 import type { DeviceModel, ModelId } from "./models/types";
 import { parseRef, ref } from "./models/types";
@@ -2623,6 +2628,9 @@ const inspectorActions = {
   // takes them, and the park in front of the type write leaves them standing (fxReseeds).
   onSetFxEffectType: (id: string, type: number) => {
     const fx = plan.nodeParams[id]?.fxEffect ?? {};
+    // The type the channel already holds is not a change: the unit refills nothing for it, so the
+    // plan keeps the values it was tuned to.
+    if (type === resolveFxEffectType(FX_CHANNEL_NODE_INDEX[id], fx.type)) return;
     const { params, keys } = fxTypeDefaults(fx.params, type);
     const seeded = keys.map((key) => `fxEffect.params.${key}`);
     fxReseeds.set(id, type);
