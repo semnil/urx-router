@@ -923,6 +923,11 @@ export const en = {
       `${count} on/off ${count === 1 ? "value written as a number was" : "values written as numbers were"} converted to on/off`,
     linkedSendPansAligned: (count: number): string =>
       `${count} ${count === 1 ? "send pan into a MIX bus with Pan Link on now follows its source's" : "send pans into MIX buses with Pan Link on now follow their sources'"} own PAN / BAL`,
+    // One sentence and no count: a plan holds the M.B.Comp on one output at most, the device-wide
+    // output dynamics slot being one.
+    mbcOneKnobAligned: tr(
+      "The M.B.Comp's 1-knob is on, so its Attacks, Bypasses, Release, crossovers and Out Gain now read as the unit holds them there",
+    ),
     compOneKnobsAligned: (count: number): string =>
       `${count} ${count === 1 ? "channel's COMP 1-knob is" : "channels' COMP 1-knobs are"} on, so attack, release and Auto Makeup now read as the unit holds them there`,
     streamingSourceUnlisted: tr(

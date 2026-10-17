@@ -48,7 +48,17 @@ import {
   nodeLeafRules,
   sendControl,
 } from "./control/translate";
-import { seedInsertFxParams } from "./control/insert-fx-effect";
+import {
+  insertFxDefaults,
+  insertFxDriverOn,
+  insertFxFamilyOf,
+  insertFxSlotRaw,
+  insertFxWritableSlots,
+  MBC_ONE_KNOB,
+  MBC_ONE_KNOB_FIXED,
+  reKeyInsertFxParams,
+  seedInsertFxParams,
+} from "./control/insert-fx-effect";
 import { hiZOn } from "./input-lock";
 import {
   INSERT_FX_PAIR_KEYS,
@@ -706,6 +716,58 @@ export function applyCompOneKnobs(plan: Plan, problems: CompOneKnobProblem[]): v
   }
 }
 
+/** An M.B.Comp whose 1-knob is on, holding a value other than the type's own in a slot the knob
+ *  sets when it is switched on and holds while it stays on (`MBC_ONE_KNOB_FIXED`: each band's
+ *  Attack and Bypass, the Release, both crossovers and the Out Gain). The write sends none of them
+ *  while the knob is on, so the values a document carries are ones the unit never holds there —
+ *  while the tuning screen, the MIDI feedback and the next save all read them. The loader sets
+ *  them to the type's own values and says so.
+ *
+ *  Counted the way the write would send it: a value is held to its slot's window first, as the
+ *  range check bounds it, and a slot the document leaves out is the type's own value the load
+ *  completes it with. Like every check in this file it does NOT run on a device readback or the
+ *  `.urxf` import: there the unit's own values arrive. */
+export interface MbcOneKnobProblem {
+  reason: "mbcOneKnob";
+  node: string;
+  /** Each fixed slot off the type's own value, with what the document carries there (under the
+   *  family's key or the bare slot) and the value the loader writes. */
+  slots: { slot: number; stored: unknown; value: number }[];
+}
+
+/** Every M.B.Comp whose 1-knob is on and whose fixed slots are off the type's own values, in model
+ *  order. */
+export function mbcOneKnobProblems(model: DeviceModel, plan: Plan): MbcOneKnobProblem[] {
+  const out: MbcOneKnobProblem[] = [];
+  for (const node of model.nodes) {
+    if (!insertFxControl(model, node.id)) continue;
+    const sel = effectiveInsertFx(model, plan, node.id);
+    if (sel === undefined || insertFxFamilyOf(sel) !== "mbc") continue;
+    const params = plan.nodeParams[node.id]?.insertFxParams as Record<string, unknown> | undefined;
+    if (!insertFxDriverOn(params as Record<string, number> | undefined, "mbc", MBC_ONE_KNOB.on.slot)) continue;
+    const windows = new Map(insertFxWritableSlots("mbc").map((w) => [w.slot, w]));
+    const defs = insertFxDefaults("mbc", sel);
+    const slots: MbcOneKnobProblem["slots"] = [];
+    for (const slot of MBC_ONE_KNOB_FIXED) {
+      const stored = params?.[`mbc:${slot}`] ?? params?.[String(slot)];
+      const sent = insertFxSlotRaw(stored, windows.get(slot)!) ?? defs[slot];
+      if (sent !== defs[slot]) slots.push({ slot, stored, value: defs[slot] });
+    }
+    if (slots.length > 0) out.push({ reason: "mbcOneKnob", node: node.id, slots });
+  }
+  return out;
+}
+
+/** Set each reported M.B.Comp's fixed slots to the type's own values, under the family's key.
+ *  Separate from finding them for the reason `applyParamRange` is. */
+export function applyMbcOneKnobs(plan: Plan, problems: MbcOneKnobProblem[]): void {
+  for (const { node, slots } of problems) {
+    const np = plan.nodeParams[node] ?? {};
+    const patch = Object.fromEntries(slots.map(({ slot, value }) => [slot, value]));
+    plan.nodeParams[node] = { ...np, insertFxParams: reKeyInsertFxParams(np.insertFxParams ?? {}, "mbc", patch) };
+  }
+}
+
 /** A node colour that is no plan colour (`isPlanColor`) — not one of the unit's ten palette
  *  hexes, nor `COLOR_OFF`. The write sends nothing for one while every surface would paint
  *  whatever the string says, so the loader drops it — the fill then gives a colourable node its
@@ -826,7 +888,8 @@ export function applyBooleanParams(plan: Plan, problems: BooleanParamProblem[]):
  *  then reported), a linked pair whose members disagree (the primary copied onto the
  *  secondary, then reported), a linked send pan off its source's value (set to it, then
  *  reported), a COMP 1-knob that is on beside an attack, release or Auto Makeup it never runs
- *  with (set to the knob's, then reported), an on/off written as a number (converted, then reported), a colour that is no
+ *  with (set to the knob's, then reported), an M.B.Comp 1-knob that is on beside a fixed value
+ *  other than the type's own (set to it, then reported), an on/off written as a number (converted, then reported), a colour that is no
  *  plan colour (dropped, then reported), or a name or note in a form the app does not keep
  *  (rewritten, then reported). */
 export type LoadProblem =
@@ -839,6 +902,7 @@ export type LoadProblem =
   | LinkedPairProblem
   | LinkedSendPanProblem
   | CompOneKnobProblem
+  | MbcOneKnobProblem
   | BooleanParamProblem
   | NodeColorProblem
   | DocumentTextProblem;
@@ -871,6 +935,7 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
     ...pairs,
     ...linkedSendPanProblems(model, paired),
     ...compOneKnobProblems(model, paired),
+    ...mbcOneKnobProblems(model, paired),
     ...nodeColorProblems(read),
     ...documentTextProblems(read),
   ];
@@ -889,6 +954,7 @@ export function isRefusal(problem: LoadProblem): boolean {
     problem.reason !== "linkedPair" &&
     problem.reason !== "linkedSendPan" &&
     problem.reason !== "compOneKnob" &&
+    problem.reason !== "mbcOneKnob" &&
     problem.reason !== "booleanParam" &&
     problem.reason !== "nodeColor" &&
     problem.reason !== "documentText"
@@ -897,8 +963,8 @@ export function isRefusal(problem: LoadProblem): boolean {
 
 /** Whether a problem stops the load until the operator answers. A refusal does not — there
  *  is nothing to answer — and neither a normalized range, a completed source, a linked send
- *  pan set to its source's value, a COMP 1-knob's held values set to the knob's nor a converted
- *  on/off does: each is
+ *  pan set to its source's value, a COMP or M.B.Comp 1-knob's held values set to the knob's nor a
+ *  converted on/off does: each is
  *  repaired before the document opens and reported on the status line, which is where
  *  architecture.md puts a partial success. Only the slot collision leaves a document the app
  *  can open and the unit cannot run, which is a decision and nobody else's. */
@@ -915,6 +981,7 @@ export interface LoadRepairs {
   linkedPairs: LinkedPairProblem[];
   linkedPans: LinkedSendPanProblem[];
   oneKnobs: CompOneKnobProblem[];
+  mbcKnobs: MbcOneKnobProblem[];
   colors: NodeColorProblem[];
   texts: DocumentTextProblem[];
 }
@@ -925,7 +992,8 @@ export interface LoadRepairs {
  *  carries, a send listed without a level gets the one the write sends, a linked pair's
  *  secondary takes its primary's shared values, a send into a MIX whose Pan Link is on
  *  takes its source's own pan / balance, a COMP group whose 1-knob is on takes the knob's attack,
- *  release and Auto Makeup, a colour that is no plan colour is dropped, and a name
+ *  release and Auto Makeup, an M.B.Comp whose 1-knob is on takes the type's own fixed values, a
+ *  colour that is no plan colour is dropped, and a name
  *  or a note is rewritten to the form the app keeps.
  *  Refusals and decisions are the caller's; the reasons they carry are not repaired here. */
 export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
@@ -943,11 +1011,13 @@ export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadP
   applyLinkedSendPans(model, plan, linkedPans);
   const oneKnobs = problems.filter((p) => p.reason === "compOneKnob");
   applyCompOneKnobs(plan, oneKnobs);
+  const mbcKnobs = problems.filter((p) => p.reason === "mbcOneKnob");
+  applyMbcOneKnobs(plan, mbcKnobs);
   const colors = problems.filter((p) => p.reason === "nodeColor");
   applyNodeColors(plan, colors);
   const texts = problems.filter((p) => p.reason === "documentText");
   applyDocumentText(plan, texts);
-  return { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, oneKnobs, colors, texts };
+  return { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, oneKnobs, mbcKnobs, colors, texts };
 }
 
 /** Give each node's selected insert effect every engine slot it leaves out, at that type's own
