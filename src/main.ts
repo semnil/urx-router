@@ -2,7 +2,12 @@ import "./style.css";
 
 import { MODEL_IDS, getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
-import { FX_CHANNEL_NODE_INDEX, FX_EFFECT_TYPE_PARAM, fxTypeDefaults } from "./core/control/fx-effect";
+import {
+  FX_CHANNEL_NODE_INDEX,
+  FX_EFFECT_TYPE_PARAM,
+  fxTypeDefaults,
+  resolveFxEffectType,
+} from "./core/control/fx-effect";
 import { takeFxReseeds } from "./app/fx-reseed";
 import type { DeviceModel, ModelId } from "./models/types";
 import { parseRef, ref } from "./models/types";
@@ -60,7 +65,14 @@ import {
   type PlanPatch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
-import { applyParamRange, isRefusal, needsDecision, planProblems, prepareLoadedPlan } from "./core/plan-validate";
+import {
+  applyParamRange,
+  isRefusal,
+  needsDecision,
+  paramRangeProblems,
+  planProblems,
+  prepareLoadedPlan,
+} from "./core/plan-validate";
 import { jackName, phantomHiZBothOn, switchAddr, switchOfKey } from "./core/input-lock";
 import type { InputSwitch, SwitchSession } from "./core/input-lock";
 import type { LoadProblem } from "./core/plan-validate";
@@ -252,7 +264,7 @@ import {
   type DawIntegration,
   type IntegrationField,
 } from "./core/control/daw-integration";
-import { confirmedAdoptions } from "./app/adopt-writes";
+import { boundByRead, confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
 import {
   markAuthored,
@@ -566,9 +578,7 @@ const live = DEMO
         liveAdopted = 0;
         const notes = flushReadNotes;
         flushReadNotes = [];
-        setStatus(
-          [...notes, t().status.liveSynced(n) + (taken ? ` — ${t().status.paramsBounded(taken)}` : "")].join(" — "),
-        );
+        setStatus([...notes, t().status.liveSynced(n) + takeBoundedNote(taken)].join(" — "));
       },
       onConfirmed: (confirmed, sent) => {
         liveAdopted += adoptConfirmedWrites(confirmed, sent);
@@ -688,7 +698,7 @@ const live = DEMO
         // to it — a reverb tuned on the panel appearing in the app. The park the converge
         // takes is not that gesture, and the flush reports what it sends on the same line, so
         // saying it there would announce one repair twice.
-        if (scope.only) setStatus(withSwitchNotes(t().status.liveFollowed(merged.applied), merged));
+        if (scope.only) setStatus(withSwitchNotes(t().status.liveFollowed(merged.applied) + takeBoundedNote(), merged));
         // Past the gate, because this arrives inside the operator's OWN gesture: a park runs
         // in front of a head write, and the head is a selector they have just chosen in — so
         // the control the gate would hold the rebuild for is the one showing the stale value,
@@ -1248,9 +1258,6 @@ const consoleView = new Console(consoleHost, {
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
   onChange: (written, defaults) => {
-    // A type chosen here keeps the plan's values, so a reseed the panel recorded is over.
-    for (const id of fxReseeds.keys())
-      if (written?.includes(nodeParamContestPath(id, "fxEffect.type"))) fxReseeds.delete(id);
     noteSeededDefaults(plan, seededDefaults, defaults ?? []);
     markChanged("ui", written);
     // The panel this view hides was drawn before the edit, and its locks and ranges are
@@ -1261,6 +1268,7 @@ const consoleView = new Console(consoleHost, {
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
   onOpenDynScreen: (kind, id) => dynScreen.open(DYN_PROCESSORS[kind], id),
+  onSetFxEffectType: (id, type) => inspectorActions.onSetFxEffectType(id, type),
   onSwitchSide: (channelId, side) => switchSide(channelId, side, "app"),
   // A strip's [CUE] chip: switchable while a session is up.
   cue: {
@@ -1454,6 +1462,16 @@ function adoptConfirmedWrites(confirmed: ReadonlySet<number>, sent: Plan = plan)
 }
 // What the live flush's converge took back, waiting for the line `onSent` writes.
 let liveAdopted = 0;
+// What a follow read took back — a value the plan held outside what this app can write, read
+// from the unit as the nearest value it can send — waiting for the next line that reports a
+// read or a flush.
+let followBounded = 0;
+/** The bounded values waiting to be reported, as the tail of a status line, and spent. */
+function takeBoundedNote(extra = 0): string {
+  const n = followBounded + extra;
+  followBounded = 0;
+  return n ? ` — ${t().status.paramsBounded(n)}` : "";
+}
 let followFull = false;
 // How many keys the follow reads behind the pending reflect actually authored. A COUNT
 // rather than a flag because the reflect is coalesced at ~20 Hz, so several reads can
@@ -1627,7 +1645,7 @@ function supplyUnsourced(merged: MergedRead): string | null {
 // them.
 function reapplyHeld(merged: MergedRead): void {
   if (!merged.held.length) {
-    setStatus(withSwitchNotes(t().status.liveFollowed(merged.applied), merged));
+    setStatus(withSwitchNotes(t().status.liveFollowed(merged.applied) + takeBoundedNote(), merged));
     return;
   }
   // A follow read outlives a session that merely ended (`abandonFollowWork` is not called
@@ -1636,7 +1654,9 @@ function reapplyHeld(merged: MergedRead): void {
   if (live?.isActive()) {
     live.schedule();
     const held = heldByHold(merged.held);
-    setStatus(withSwitchNotes(t().status.liveHeld(merged.applied, held.unrunnable, held.source), merged));
+    setStatus(
+      withSwitchNotes(t().status.liveHeld(merged.applied, held.unrunnable, held.source) + takeBoundedNote(), merged),
+    );
     return;
   }
   // Nothing left to send them through: the values stay in the plan, and the status line
@@ -1771,6 +1791,9 @@ async function followRead(
   // to this one.
   const rateMark = rateSeq;
   let establishedRate = false;
+  // What the plan holds outside what this app can write, which the read may answer with the
+  // nearest value it can send.
+  const unwritable = paramRangeProblems(plan);
   try {
     const merged = await readIntoPlan(
       () => plan,
@@ -1798,6 +1821,7 @@ async function followRead(
     else {
       notePatchFromDevice(merged.devicePatch);
       takeRefusedEdits(merged);
+      followBounded += boundByRead(unwritable, plan);
     }
     return merged;
   } finally {
@@ -2613,6 +2637,9 @@ const inspectorActions = {
   // takes them, and the park in front of the type write leaves them standing (fxReseeds).
   onSetFxEffectType: (id: string, type: number) => {
     const fx = plan.nodeParams[id]?.fxEffect ?? {};
+    // The type the channel already holds is not a change: the unit refills nothing for it, so the
+    // plan keeps the values it was tuned to.
+    if (type === resolveFxEffectType(FX_CHANNEL_NODE_INDEX[id], fx.type)) return;
     const { params, keys } = fxTypeDefaults(fx.params, type);
     const seeded = keys.map((key) => `fxEffect.params.${key}`);
     fxReseeds.set(id, type);
@@ -3739,6 +3766,9 @@ function applySimEdit(edit: SimEdit): boolean {
       break;
     case "disconnect":
       graph.deleteConnection(edit.from, edit.to);
+      break;
+    case "fxType":
+      inspectorActions.onSetFxEffectType(edit.id, edit.type);
       break;
     // The toolbar's rate picker is locked while the device link is held, and so is this.
     case "rate":

@@ -25,6 +25,8 @@ export type SimEdit =
   /** A value the unit takes over the link that the plan's writer leaves out, written to the unit
    *  once while a session is up — the delay time a delay's tempo Sync drives. */
   | { kind: "deviceWrite"; param: number; y: number; value: number }
+  /** An FX channel's EFFECT TYPE, chosen the way the Inspector chooses one. */
+  | { kind: "fxType"; id: string; type: number }
   /** The value written is the one the plan already holds: taken, and nothing changes. */
   | { kind: "none" }
   /** Several edits applied in order as one change, where one choice on the LCD takes more

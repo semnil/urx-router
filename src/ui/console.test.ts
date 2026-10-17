@@ -8,6 +8,11 @@ import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
 import { setExclusiveConnection, type Plan } from "../core/plan";
 import { t } from "../i18n";
 
+/** The EFFECT TYPE action of a host whose cases choose none. */
+const noTypeChoice = (): never => {
+  throw new Error("no EFFECT TYPE is chosen here");
+};
+
 describe("Console UI", () => {
   it("threads modelId URX22 correctly to resolve meters (e.g. ch_3_4 input tap)", () => {
     const host = document.createElement("div");
@@ -20,6 +25,7 @@ describe("Console UI", () => {
       getModel: () => model,
       getPlan: () => plan,
       onChange: () => {},
+      onSetFxEffectType: noTypeChoice,
     };
 
     const consoleInstance = new Console(host, hooks);
@@ -59,7 +65,12 @@ describe("Console UI", () => {
     document.body.appendChild(host);
     const model = getModel("URX44V");
     const plan = defaultPlan("URX44V");
-    const consoleInstance = new Console(host, { getModel: () => model, getPlan: () => plan, onChange: () => {} });
+    const consoleInstance = new Console(host, {
+      getModel: () => model,
+      getPlan: () => plan,
+      onChange: () => {},
+      onSetFxEffectType: noTypeChoice,
+    });
     const priv = consoleInstance as any;
     consoleInstance.show();
     consoleInstance.setLive(true);
@@ -96,7 +107,12 @@ describe("Console UI", () => {
     document.body.appendChild(host);
     const model = getModel("URX44V");
     const plan = defaultPlan("URX44V");
-    const consoleInstance = new Console(host, { getModel: () => model, getPlan: () => plan, onChange: () => {} });
+    const consoleInstance = new Console(host, {
+      getModel: () => model,
+      getPlan: () => plan,
+      onChange: () => {},
+      onSetFxEffectType: noTypeChoice,
+    });
     consoleInstance.show();
 
     const faderOf = (): HTMLElement => host.querySelector<HTMLElement>('.con-strip [role="slider"]')!;
@@ -240,7 +256,12 @@ describe("Console UI", () => {
       document.body.appendChild(host);
       const model = getModel("URX44V");
       let plan = defaultPlan("URX44V");
-      const consoleInstance = new Console(host, { getModel: () => model, getPlan: () => plan, onChange: () => {} });
+      const consoleInstance = new Console(host, {
+        getModel: () => model,
+        getPlan: () => plan,
+        onChange: () => {},
+        onSetFxEffectType: noTypeChoice,
+      });
       consoleInstance.show();
 
       focusIn(host);
@@ -264,7 +285,12 @@ describe("Console UI", () => {
     document.body.appendChild(host);
     const model = getModel("URX44V");
     const plan = defaultPlan("URX44V");
-    const consoleInstance = new Console(host, { getModel: () => model, getPlan: () => plan, onChange: () => {} });
+    const consoleInstance = new Console(host, {
+      getModel: () => model,
+      getPlan: () => plan,
+      onChange: () => {},
+      onSetFxEffectType: noTypeChoice,
+    });
 
     const face = (): HTMLElement | null => host.querySelector<HTMLElement>(".con-ifxface");
     const rows = (): HTMLElement[] => [...host.querySelectorAll<HTMLElement>(".con-ifxpop .irow")];

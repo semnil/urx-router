@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { confirmedAdoptions } from "./adopt-writes";
+import { boundByRead, confirmedAdoptions } from "./adopt-writes";
+import { paramRangeProblems } from "../core/plan-validate";
 import { emptyPlan, setExclusiveConnection, type Plan } from "../core/plan";
 import { getModel } from "../models";
 import { cmdAddr, planToCommands } from "../core/control/translate";
@@ -156,5 +157,23 @@ describe("confirmedAdoptions — node-param leaves", () => {
     expect(taken(jack(-12))).toEqual([["gainL", -8]]);
     expect(taken(jack(80))).toEqual([["gainL", 70]]);
     expect(taken(jack(20))).toEqual([]);
+  });
+});
+
+describe("boundByRead", () => {
+  const before = paramRangeProblems(fx2(1024, { delayLpf: lpf.rawMin! - 1 }));
+
+  it("counts a value a read replaced with the nearest one this app can send", () => {
+    expect(
+      before.map((p) => p.key),
+      "the premise: the plan held a value it cannot write",
+    ).toEqual(["delayLpf"]);
+    expect(boundByRead(before, fx2(1024, { delayLpf: lpf.rawMin! }))).toBe(1);
+  });
+
+  it("counts nothing for a value the read left standing or moved anywhere else", () => {
+    expect(boundByRead(before, fx2(1024, { delayLpf: lpf.rawMin! - 1 })), "the unit's own value, read again").toBe(0);
+    expect(boundByRead(before, fx2(1024, { delayLpf: lpf.rawMin! + 5 })), "moved on the panel").toBe(0);
+    expect(boundByRead([], fx2(1024, { delayLpf: lpf.rawMin! })), "nothing was outside the range").toBe(0);
   });
 });

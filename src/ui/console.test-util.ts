@@ -22,6 +22,7 @@ import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { DeviceModel } from "../models/types";
 import type { JackSide, Plan } from "../core/plan";
+import { fxTypeDefaults } from "../core/control/fx-effect";
 import { resetDisplayedSides, setDisplayedSide } from "../core/stereo-side";
 
 /** The private strip record the view keeps, narrowed to what a test addresses. */
@@ -190,6 +191,16 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
     },
     onMeterError: (message) => void meterErrors.push(message),
     onOpenDynScreen: (kind, id) => void opened.push({ kind, id }),
+    // The host's EFFECT TYPE action, as far as the plan's values go: the incoming type's
+    // factory values replace the slots it uses.
+    onSetFxEffectType: (id, type) => {
+      const fx = plan.nodeParams[id]?.fxEffect ?? {};
+      plan.nodeParams[id] = {
+        ...plan.nodeParams[id],
+        fxEffect: { ...fx, type, params: fxTypeDefaults(fx.params, type).params },
+      };
+      changes++;
+    },
     onSwitchSide: (id, side) => {
       switches.push({ id, side });
       if (setDisplayedSide(id, side)) view.refresh();

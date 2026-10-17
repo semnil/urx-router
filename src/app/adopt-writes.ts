@@ -29,6 +29,15 @@ function storedNow(plan: Plan, p: ParamRangeProblem): unknown {
 }
 
 /**
+ * How many of the values a plan held outside what this app can write (`before`, the plan's
+ * range problems ahead of a device read) the read has replaced with the nearest value it can
+ * send: `after` holds that bound where the plan held the value.
+ */
+export function boundByRead(before: readonly ParamRangeProblem[], after: Plan): number {
+  return before.filter((p) => p.action === "bound" && storedNow(after, p) === p.bound).length;
+}
+
+/**
  * The node-param bounds among `leaves` that the device's confirmation covers.
  *
  * A leaf's addresses are the ones whose command took its value from that leaf

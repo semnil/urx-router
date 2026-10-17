@@ -2378,8 +2378,10 @@ written at all:
   another type uses, which is what the unit's refill does to the slots (`fx-effect.ts` `fxTypeDefaults`, through
   the panel's own `onSetFxEffectType` action). The insert-FX selector's **No Effect** turns the bypass off. The
   STREAMING **Delay Time** is kept on the unit's 0.01 ms grid. Each rule sits in the panel's own control, or in an
-  action only the panel calls, rather than in the node-param funnel they all reach, so the CONSOLE, MIDI and the
-  tuning screens, which reach that funnel too, keep the behaviour they had.
+  action rather than in the node-param funnel every surface reaches. The EFFECT TYPE action is also the one the
+  CONSOLE's type list and the SIM view's EFFECT TYPE reach, so a type chosen on any of the three puts the same
+  defaults in, and the type a channel already holds, picked again, changes nothing; the other rules stay the panel's, so MIDI and the tuning screens, which reach the funnel, keep the
+  behaviour they had.
   Under Live sync the write then carries what the unit already holds. A BUS Type write's converge reads back a
   bank the plan now agrees with. The park in front of an EFFECT TYPE write reads the outgoing array as it does for
   every writer, and leaves standing the keys the panel's selection put at the incoming type's defaults — named per
@@ -4834,6 +4836,12 @@ taken back only where holding the bound sends what was sent at those addresses, 
 to a narrower window than its encoder does (a gain, the oscillator level, the HPF frequency) meets only where
 the encoder's clamp lands on the bound; elsewhere the unit holds the value the write let through
 (`app/adopt-writes.ts`).
+
+A device **read** brings the plan onto the bound the same way where the plan held an unwritable raw and the
+unit answers with the bound — an undo that put the raw back, whose write sent the normalised value and whose
+follow read it back. `followRead` takes the plan's range problems ahead of the read and counts those the read
+answered with the bound (`boundByRead`); the count rides on the next line that reports a read or a flush, in the
+sentence the converge's adoption uses.
 
 A value is **rewritten** rather than dropped in the loader, after validation, whose repairs are listed under `plan-validate.ts` in "Source layout". Among
 them, an FX value outside what the app can write is bounded, and one there is nothing to bound is dropped: a

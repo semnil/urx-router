@@ -220,14 +220,9 @@ describe("an FX channel's effect, whose rows follow the selected type", () => {
     expect(refusal(fx(1, "lowRatio"), delayOnFx1, 1)).toBe("type");
   });
 
-  it("writes the EFFECT TYPE as the Inspector does, keeping every stored row", () => {
+  it("writes the EFFECT TYPE as the Inspector does, through the Inspector's own choice", () => {
     const plan = withFx("bus.fx2", { type: 1024, params: { delay: 3000 } });
-    expect(edit(fx(2, "type"), plan, "Ping Pong")).toEqual({
-      kind: "node",
-      id: "bus.fx2",
-      patch: { fxEffect: { type: 1025, params: { delay: 3000 } } },
-      written: ["fxEffect.type"],
-    });
+    expect(edit(fx(2, "type"), plan, "Ping Pong")).toEqual({ kind: "fxType", id: "bus.fx2", type: 1025 });
     expect(fx(2, "type").read(withFx("bus.fx2", { type: 5 })), "an off-menu type reads the factory one").toBe(
       "Mono Delay",
     );
