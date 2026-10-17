@@ -776,12 +776,7 @@ function fxEffectBindings(id: string, fxIndex: number, out: Map<string, SimBindi
         const type = resolveFxEffectType(fxIndex, np(plan, id).fxEffect?.type);
         return types.findIndex((t) => t.value === type);
       },
-      (plan, i): SimEdit | SimRefusal => ({
-        kind: "node",
-        id,
-        patch: { fxEffect: { ...np(plan, id).fxEffect, type: types[i].value } },
-        written: ["fxEffect.type"],
-      }),
+      (_plan, i): SimEdit | SimRefusal => ({ kind: "fxType", id, type: types[i].value }),
     ),
     moves: keys.map((k) => `${base}.${k}`),
   });

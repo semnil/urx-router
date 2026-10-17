@@ -1244,9 +1244,6 @@ const consoleView = new Console(consoleHost, {
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
   onChange: (written, defaults) => {
-    // A type chosen here keeps the plan's values, so a reseed the panel recorded is over.
-    for (const id of fxReseeds.keys())
-      if (written?.includes(nodeParamContestPath(id, "fxEffect.type"))) fxReseeds.delete(id);
     noteSeededDefaults(plan, seededDefaults, defaults ?? []);
     markChanged("ui", written);
     // The panel this view hides was drawn before the edit, and its locks and ranges are
@@ -1257,6 +1254,7 @@ const consoleView = new Console(consoleHost, {
   // so end the session rather than let the operator trust a dead display.
   onMeterError: (message) => stopLiveOnError(errorText(message)),
   onOpenDynScreen: (kind, id) => dynScreen.open(DYN_PROCESSORS[kind], id),
+  onSetFxEffectType: (id, type) => inspectorActions.onSetFxEffectType(id, type),
   onSwitchSide: (channelId, side) => switchSide(channelId, side, "app"),
   // A strip's [CUE] chip: switchable while a session is up.
   cue: {
@@ -3751,6 +3749,9 @@ function applySimEdit(edit: SimEdit): boolean {
       break;
     case "disconnect":
       graph.deleteConnection(edit.from, edit.to);
+      break;
+    case "fxType":
+      inspectorActions.onSetFxEffectType(edit.id, edit.type);
       break;
     // The toolbar's rate picker is locked while the device link is held, and so is this.
     case "rate":

@@ -17,7 +17,14 @@ const mount = (): { view: Console; host: HTMLElement } => {
   document.body.appendChild(host);
   const model = getModel("URX44V");
   const plan = defaultPlan("URX44V");
-  const view = new Console(host, { getModel: () => model, getPlan: () => plan, onChange: () => {} });
+  const view = new Console(host, {
+    getModel: () => model,
+    getPlan: () => plan,
+    onChange: () => {},
+    onSetFxEffectType: () => {
+      throw new Error("no EFFECT TYPE is chosen here");
+    },
+  });
   view.show();
   return { view, host };
 };

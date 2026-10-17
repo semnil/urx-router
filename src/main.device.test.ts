@@ -567,18 +567,21 @@ const streamingDrawn = (): string[] =>
     (w) => (w as SVGElement).dataset.from ?? "",
   );
 
-/** An FX channel's EFFECT TYPE chosen from the CONSOLE's type list, which leaves the plan's
- *  parameter values where they are. The Inspector's selector puts the incoming type's factory
- *  values in, so a case about which values a read or a converge takes needs this selection,
- *  which carries none of its own. */
-const consoleFxType = (strip: string, value: number): void => {
-  $("btn-view-console").click();
-  const face = [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")].find((s) =>
-    s.querySelector(".con-head")?.textContent?.includes(strip),
-  )!;
-  face.querySelector<HTMLElement>(".con-fxopen")!.click();
-  document.querySelector<HTMLElement>(`[data-ctl="fx:${value}"]`)!.click();
-  $("btn-view-graph").click();
+/** An FX channel's EFFECT TYPE chosen in the Inspector, which puts the incoming type's factory
+ *  values in the plan, as every surface that chooses a type does. */
+const pickFxType = (id: string, value: number): void => {
+  pressNode(id);
+  const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+  sel.focus();
+  sel.value = String(value);
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+  sel.blur();
+};
+
+/** Undo the last edit through the app's Edit menu. */
+const undoEdit = (shell: TauriShell): void => {
+  (document.activeElement as HTMLElement | null)?.blur();
+  expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID), "the undo was taken").toBe(1);
 };
 
 /** Wait until the shell stops being asked anything, so what happens next is the only
@@ -6068,16 +6071,22 @@ describe("a value the unit holds and the app cannot write", () => {
     // A session on its own sends nothing, and NOT because the snapshot carries the unwritable
     // raw: `capture` fills it from `planToCommands`, so it holds the NORMALISED value while the
     // unit holds the raw. Nothing is sent because plan-normalised equals snapshot-normalised.
-    // What sends this address is an edit that rewrites the array, and the EFFECT TYPE menu is
-    // the one that does: it carries every slot of the new type out, the LPF among them, and the
-    // LPF is a key both delay types share. The CONSOLE's menu, which keeps the plan's copy of it.
+    // What sends the plan's own copy of this address is the undo of an edit to it: the LPF moved
+    // to a value the app can write and sent, then the undo puts the raw it read back, and that
+    // flush carries it.
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
-    consoleFxType("FX 2", 1025);
+    withFxScreen("bus.fx2", (box) => {
+      const row = box.querySelector<HTMLInputElement>('input[data-dyn="fx:delayLpf"]')!;
+      row.value = row.max;
+      row.dispatchEvent(new Event("input", { bubbles: true }));
+      row.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(shownLpf()).toBe(lpf.format!(lpf.rawMax!, {})), { timeout: 10_000 });
+    await quiet(shell);
+    undoEdit(shell);
 
     await vi.waitFor(() => expect(shownLpf()).toBe(lpf.format!(lpf.rawMin!, {})), { timeout: 20_000 });
-    // …and the operator is told. The converge that takes the value runs INSIDE the flush, so a
-    // line written there is overwritten by the flush's own a moment later — the count has to
-    // ride on that line rather than write one of its own.
+    // …and the operator is told, on the line that reports the read which took the value back.
     expect(statusText()).toContain(t().status.paramsBounded(1));
   });
 
@@ -6109,17 +6118,19 @@ describe("a value the unit holds and the app cannot write", () => {
   // count is held for the line the flush writes once it has sent, and that line never comes;
   // the next session's first flush must not print it as its own.
   it("leaves a failed session's taken-back count behind with that session", SLOW, async () => {
-    // The FX 2 type selector is accepted and not kept twice — by the flush's head write and by
-    // the converge's first round — and refused on the third, which is the converge's second
-    // round: the LPF is confirmed by the first round's re-read, then the loop fails.
+    // Once the undo is armed, the FX 2 type selector is accepted and not kept twice — by the
+    // flush's head write and by the converge's first round — and refused on the third, which is
+    // the converge's second round: the LPF is confirmed by the first round's re-read, then the
+    // loop fails.
     let typeWrites = 0;
+    let armed = false;
     const base = deviceCommands({ "plugin:dialog|message": "Ok" }, unitHoldingLowLpf());
     const set = base.vd_set as (a: Record<string, unknown>) => void;
     const shell = (await bootApp({
       tauri: {
         ...base,
         vd_set: (a: Record<string, unknown>) => {
-          if (a.paramId !== 683) return set(a);
+          if (a.paramId !== 683 || !armed) return set(a);
           if (++typeWrites > 2) throw new Error(`broker-rejected: ${a.paramId}:${a.x}:${a.y}`);
           return null;
         },
@@ -6128,7 +6139,10 @@ describe("a value the unit holds and the app cannot write", () => {
     $("btn-live").click();
     await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
-    consoleFxType("FX 2", 1025);
+    pickFxType("bus.fx2", 1025);
+    await quiet(shell);
+    armed = true;
+    undoEdit(shell);
     // The session ended on the refusal, and the converge had taken the value back first.
     await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 20_000 });
     expect(typeWrites).toBe(3);
@@ -6262,15 +6276,19 @@ describe("an EFFECT TYPE change while a session is live", () => {
     return Number(paramRow(t().inspector.fxEffect.effectType).querySelector<HTMLSelectElement>("select")!.value);
   };
 
-  const pickType = (value: number): void => {
-    pressNode("bus.fx1");
-    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
-    sel.value = String(value);
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
-  };
+  const pickType = (value: number): void => pickFxType("bus.fx1", value);
 
-  /** The same selection from the CONSOLE's type list (`consoleFxType`). */
-  const pickTypeFromConsole = (value: number): void => consoleFxType("FX 1", value);
+  /** Choose each of `types` for FX 1 in turn, each left to land, so the undos that follow walk
+   *  back through them to Rev-X Hall. An undo re-types the channel from the plan's own copy of
+   *  its parameters, which no choice does: every surface puts the incoming type's factory
+   *  values in. */
+  const armUndos = async (shell: TauriShell, ...types: number[]): Promise<void> => {
+    for (const type of types) {
+      pickType(type);
+      await vi.waitFor(() => expect(shownType()).toBe(type), { timeout: 25_000 });
+      await settled(shell);
+    }
+  };
 
   /** The HPF as the FX EFFECT screen prints it — read off the surface, and reopened per
    *  reading so each one is a fresh draw of the plan as it stands. */
@@ -6298,9 +6316,10 @@ describe("an EFFECT TYPE change while a session is live", () => {
 
     // The hand on the unit, after that readback: the app has no way to hear this — the
     // effect arrays announce nothing when the front panel moves them.
+    await armUndos(shell, REVX_ROOM);
     move(TUNED);
     const gesture = shell.invokes.length;
-    pickTypeFromConsole(REVX_ROOM);
+    undoEdit(shell);
 
     // Waited on the WRITE, not on the readout: the read lands a flush window ahead of the
     // selector, so a wait that ends at the plan returns with nothing having gone out yet.
@@ -6315,7 +6334,7 @@ describe("an EFFECT TYPE change while a session is live", () => {
     // The positive control: the type really went out, so what is asserted about the order
     // is asserted about a write that happened.
     expect(typeAt, "the type write went out").toBeGreaterThan(-1);
-    expect(shell.args[typeAt]?.value).toBe(REVX_ROOM);
+    expect(shell.args[typeAt]?.value).toBe(REVX_HALL);
     // …and the read is IN FRONT of it, which is the claim: afterwards the unit's array
     // holds the incoming type's factory values and there is nothing left to read.
     const parkAt = shell.invokes.findIndex(
@@ -6333,6 +6352,7 @@ describe("an EFFECT TYPE change while a session is live", () => {
   // and the emit behind the second selection has the incoming type's factory values to send
   // in their place.
   it("reads the array against the type the unit holds, not the one the plan is waiting to send", SLOW, async () => {
+    const PING_PONG = fxEffectTypes(0).filter((o) => o.family === "delay")[1]!.value;
     const REFILLED = 55;
     expect(REFILLED, "distinguishable from both the plan's copy and the unit's").not.toBe(TUNED);
     const { table, move } = stubWithPanel({ refillsOnType: REFILLED });
@@ -6351,11 +6371,11 @@ describe("an EFFECT TYPE change while a session is live", () => {
     expect(shownHpf()).toBe(HPF.format!(HPF.def, {}));
 
     // The hand on the unit, which announces nothing — then the first selection, held at its
-    // own first read.
+    // own first read, and the second made while that read waits.
     move(TUNED);
     const gesture = shell.invokes.length;
     gate = new Promise<void>((r) => (open = r));
-    pickTypeFromConsole(MONO_DELAY);
+    pickType(MONO_DELAY);
     await vi.waitFor(
       () =>
         expect(shell.invokes.some((cmd, i) => cmd === "vd_get" && at(shell.args[i]) === FX1_TYPE && i >= gesture)).toBe(
@@ -6363,28 +6383,26 @@ describe("an EFFECT TYPE change while a session is live", () => {
         ),
       { timeout: 20_000 },
     );
-    // Taken while that read is still waiting, so it queues behind the park rather than
-    // behind whatever the first write arms.
-    pickTypeFromConsole(REVX_ROOM);
+    pickType(PING_PONG);
     gate = null;
     open!();
+    await vi.waitFor(() => expect(shownType()).toBe(PING_PONG), { timeout: 25_000 });
+    await settled(shell);
 
     const sentTo = (addr: string): unknown[] =>
       shell.invokes.flatMap((cmd, i) =>
         cmd === "vd_set" && at(shell.args[i]) === addr && i >= gesture ? [shell.args[i]?.value] : [],
       );
-    // The array goes out with the selector in the same flush, and the converge behind it
-    // sends whatever the refill did not leave standing.
-    await vi.waitFor(() => expect(sentTo(FX1_HPF).length).toBeGreaterThan(0), { timeout: 25_000 });
     // The premise, asserted rather than assumed: the window coalesced the two selections, so
-    // the array the second park read was the one the operator tuned. Had the first type
-    // reached the unit it would have refilled that array, and this case would be measuring a
-    // different gesture.
-    expect(sentTo(FX1_TYPE), "only the last selection went out").toEqual([REVX_ROOM]);
-    // The unit's own value is what went back to it. Read against the plan's unsent type the
-    // array decodes as a delay, and what this address carries is the incoming type's factory
-    // value instead.
-    expect([...new Set(sentTo(FX1_HPF))], "no value but the unit's own went out").toEqual([TUNED]);
+    // every park read the Rev-X array the operator tuned, while the plan held a delay.
+    expect(sentTo(FX1_TYPE), "only the last selection went out").toEqual([PING_PONG]);
+    // Read against the unit's Rev-X, the panel's value went under the Rev-X HPF; read against
+    // the plan's unsent delay it would have gone under a delay's key, leaving the plan's own
+    // copy standing. Back on Rev-X Hall — the two selections are one entry, made with no
+    // boundary between them — the plan shows which.
+    undoEdit(shell);
+    await vi.waitFor(() => expect(shownType()).toBe(REVX_HALL), { timeout: 25_000 });
+    await settled(shell);
     expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
   });
 
@@ -6451,30 +6469,6 @@ describe("an EFFECT TYPE change while a session is live", () => {
     );
     expect(sent, "the plan's old default was not sent over the panel's value").not.toContain(HPF.def);
     expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
-  });
-
-  // A type chosen from the CONSOLE ends the Inspector's reseed: the channel is then on a
-  // selection that keeps the plan's values, and the park in front of a later write of the same
-  // type files what the unit's panel moved, the CONSOLE's ordinary way.
-  it("files the panel's value again once the CONSOLE has chosen a type", SLOW, async () => {
-    const { table, move } = stubWithPanel();
-    const shell = (await bootApp({ tauri: table }))!;
-    $("btn-live").click();
-    await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
-
-    // The Inspector's Room and the CONSOLE's Hall inside one flush window, so no type goes out
-    // and nothing spends the Inspector's record.
-    pickType(REVX_ROOM);
-    pickTypeFromConsole(REVX_HALL);
-    await quiet(shell);
-    const gesture = shell.invokes.length;
-    move(TUNED);
-    pickTypeFromConsole(REVX_ROOM);
-    const sent = (): unknown[] =>
-      shell.invokes.flatMap((c, i) =>
-        c === "vd_set" && at(shell.args[i]) === FX1_HPF && i >= gesture ? [shell.args[i]?.value] : [],
-      );
-    await vi.waitFor(() => expect(sent()).toContain(TUNED), { timeout: 25_000 });
   });
 
   /** Wait for the link to stop carrying traffic — a converge is hundreds of reads through
@@ -6545,9 +6539,10 @@ describe("an EFFECT TYPE change while a session is live", () => {
     $("btn-live").click();
     await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
 
+    await armUndos(shell, REVX_ROOM);
     move(TUNED);
     const gesture = shell.invokes.length;
-    pickTypeFromConsole(REVX_ROOM);
+    undoEdit(shell);
     await vi.waitFor(
       () =>
         expect(shell.invokes.some((cmd, i) => cmd === "vd_set" && at(shell.args[i]) === FX1_TYPE && i >= gesture)).toBe(
@@ -6748,18 +6743,16 @@ describe("an EFFECT TYPE change while a session is live", () => {
     $("btn-live").click();
     await vi.waitFor(() => expect(shell.count("vd_params_subscribe")).toBe(1), { timeout: 20_000 });
 
-    // A type change first, so there is something to undo — and the unit's value at that
-    // moment reaches the plan the way the case above reads.
-    move(TUNED);
-    pickTypeFromConsole(REVX_ROOM);
-    await vi.waitFor(() => expect(shownHpf()).toBe(HPF.format!(TUNED, {})), { timeout: 25_000 });
+    // A type change first, so there is something to undo.
+    pickType(REVX_ROOM);
+    await vi.waitFor(() => expect(shownType()).toBe(REVX_ROOM), { timeout: 25_000 });
     await settled(shell);
 
     // The hand on the unit again, and then the undo, which re-types the channel.
     const AGAIN = TUNED + 7;
     move(AGAIN);
     const gesture = shell.invokes.length;
-    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID), "the undo was taken").toBe(1);
+    undoEdit(shell);
     await vi.waitFor(() => expect(shownType()).toBe(REVX_HALL), { timeout: 25_000 });
     await vi.waitFor(
       () =>

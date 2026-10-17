@@ -13,6 +13,7 @@ import {
   writesOf,
 } from "./tauri-stub";
 import { COLOR_PALETTE, PARAMS } from "../src/core/control/params";
+import { fxParams } from "../src/core/control/fx-effect";
 import { defaultPlan } from "../src/models/initial-state";
 import { serialize, type Plan } from "../src/core/plan";
 import type { ModelId } from "../src/models/types";
@@ -309,6 +310,59 @@ test("BUS Type FIXED leaves the same plan from the LCD as from the Inspector", a
   await chooseOption(page.locator("#inspector .param", { hasText: "BUS Type" }).locator("select"), "1");
   expect(fromLcd).toEqual(mix(await save(page)));
 });
+
+// While Live sync is up, an EFFECT TYPE chosen on any surface leaves the incoming type's factory
+// value on the unit — what the unit's own refill puts there — and does not carry over a value the
+// unit's panel moved for the outgoing type into a key the two types share.
+for (const surface of ["inspector", "console", "lcd"] as const) {
+  test(`an EFFECT TYPE chosen from the ${surface} during Live sync leaves the incoming type's default on the unit`, async ({
+    page,
+  }) => {
+    const HPF = fxParams(0).find((d) => d.key === "revxHpf")!;
+    const roomHpf = fxParams(1).find((d) => d.key === "revxHpf")!.def;
+    const tuned = roomHpf === 10 ? 20 : 10;
+    await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+    await page.goto("/");
+    await page.click("#btn-device");
+    await page.click("#btn-live");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+    // The unit's panel moves the HPF, which announces nothing, and a type write refills the array.
+    await setDeviceValue(page, 681, HPF.slot, tuned);
+    await setWriteEffect(page, 679, 0, 1, [[681, HPF.slot, roomHpf]]);
+    const before = (await writesOf(page)).length;
+    if (surface === "inspector") {
+      await page.click("#btn-view-graph");
+      await page.locator('#graph-host g.node[data-id="bus.fx1"]').click();
+      await chooseOption(page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select"), "1");
+    } else if (surface === "console") {
+      await page.click("#btn-view-console");
+      await page
+        .locator(".con-strip")
+        .filter({ has: page.locator(".con-head", { hasText: "FX 1" }) })
+        .locator(".con-fxopen")
+        .click();
+      await page.locator('[data-ctl="fx:1"]').click();
+    } else {
+      await page.click("#btn-view-sim");
+      await expect(lcd(page)).toBeVisible();
+      await lcd(page)
+        .getByRole("button", { name: /channel bank/ })
+        .click();
+      await lcd(page).getByRole("button", { name: "FX 1 - 2", exact: true }).click();
+      await tapInto(page, lcd(page).getByRole("button", { name: "FX1 settings", exact: true }), "channel-view");
+      await openBlock(page, /FX1 effect/, "ch.effect");
+      await lcd(page).getByRole("button", { name: "Select the inserted effect" }).click();
+      await sim(page).getByRole("button", { name: "Rev-X Room", exact: true }).click();
+    }
+    // The array goes out behind the type; what the unit holds after it is the verdict.
+    const writes = async (): Promise<number[]> => (await writesOf(page)).slice(before).map(([id]) => id);
+    await expect.poll(async () => (await writes()).indexOf(679), { timeout: 20_000 }).toBeGreaterThan(-1);
+    await expect
+      .poll(async () => (await writes()).lastIndexOf(681) > (await writes()).indexOf(679), { timeout: 20_000 })
+      .toBe(true);
+    await expect.poll(() => deviceValueOf(page, 681, HPF.slot)).toBe(roomHpf);
+  });
+}
 
 for (const effect of ["Rev-X Room", "Mono Delay"]) {
   test(`FX 1's EFFECT TYPE ${effect} leaves the same plan from the LCD as from the Inspector`, async ({ page }) => {

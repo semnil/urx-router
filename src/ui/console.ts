@@ -99,12 +99,14 @@ import {
   DELAY_TIME_GRID_MS,
   DELAY_TIME_MAX_MS,
   DELAY_TIME_MIN_MS,
+  delayTimeToVd,
   formatLevelNumber,
   PAN_MAX,
   PAN_MIN,
   PHONES_LEVEL_DEFAULT,
   PHONES_LEVEL_MAX,
   PHONES_LEVEL_MIN,
+  vdToDelayTime,
 } from "../core/control/vd";
 // MAIN_BUS (the STEREO master, every channel's fixed main send) and the
 // MIX/FX send targets are shared with the MIDI control catalog.
@@ -412,6 +414,9 @@ export interface ConsoleHooks {
   onMeterError?: (message: string) => void;
   /** Open the GATE tuning screen for a MONO IN channel. */
   onOpenDynScreen?: (kind: DynKind, id: string) => void;
+  /** Choose an FX channel's EFFECT TYPE: the plan takes the incoming type's factory values, as
+   *  it does from the Inspector. */
+  onSetFxEffectType: (id: string, type: number) => void;
   /** Show the other side of a stereo channel (its name area was pressed). */
   onSwitchSide?: (channelId: string, side: JackSide) => void;
   /** The [CUE] flags, which are outside the plan: a CUE chip reads and switches them here
@@ -1781,9 +1786,7 @@ export class Console {
    */
   private setFxType(id: string, value: number): void {
     this.closeTypePop();
-    const np = this.nodeParamsOf(id);
-    np.fxEffect = { ...np.fxEffect, type: value };
-    this.commit(id, ["fxEffect.type"]);
+    this.hooks.onSetFxEffectType(id, value);
     this.render();
     // …and the screen opens on it, which is what the INS FX popover does after a selection.
     // The two are the app's only Type axis and they are reached the same way, so a press that
@@ -2377,9 +2380,10 @@ export class Console {
         "TIME",
         {
           get: () => this.hooks.getPlan().nodeParams[m.id]?.delay?.time ?? DELAY_TIME_MIN_MS,
+          // The time the plan takes is the one the unit holds, on its 0.01 ms grid.
           set: (v) => {
             const np = this.nodeParamsOf(m.id);
-            np.delay = { ...np.delay, time: v };
+            np.delay = { ...np.delay, time: vdToDelayTime(delayTimeToVd(v)) };
           },
           keys: ["delay.time"],
           min: DELAY_TIME_MIN_MS,

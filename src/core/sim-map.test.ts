@@ -3,6 +3,7 @@ import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { DeviceModel, ModelId } from "../models/types";
 import { setPlanSampleRate, sendConnection, type Plan } from "./plan";
+import { fxTypeDefaults } from "./control/fx-effect";
 import { canConnect, ruleKind } from "./routing";
 import { isRefusal, readSim, simBindings, type SimBinding, type SimEdit, type SimValue } from "./sim-map";
 
@@ -41,6 +42,12 @@ function apply(model: DeviceModel, plan: Plan, edit: SimEdit): void {
     case "rate":
       setPlanSampleRate(plan, edit.rate);
       break;
+    case "fxType": {
+      const fx = plan.nodeParams[edit.id]?.fxEffect ?? {};
+      const { params } = fxTypeDefaults(fx.params, edit.type);
+      plan.nodeParams[edit.id] = { ...plan.nodeParams[edit.id], fxEffect: { ...fx, type: edit.type, params } };
+      break;
+    }
     case "none":
       break;
     case "steps":
