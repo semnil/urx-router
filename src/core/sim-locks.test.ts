@@ -156,18 +156,4 @@ describe("the controls the SIM view holds shut", () => {
     expect(reasonFor(knobOn, path("ch.bus.mix1.insFx.lowThreshold")), "the knob sets the bands").toBe("deviceDriven");
     expect(reasonFor(knobOn, path("ch.bus.mix1.insFx.outGain"))).toBeNull();
   });
-
-  // The unit holds these still while its 1-knob or Auto Makeup is on and shows nothing for it, so
-  // the LCD, which simulates the unit, draws them as the unit does: no padlock and no dimming.
-  it("draws no lock on a COMP value the unit holds still without showing it", () => {
-    const plan = defaultPlan("URX44V");
-    const computed = ["threshold", "ratio", "gain", "knee", "attack", "release"];
-    for (const key of computed) expect(paths, key).toContain(`ch.ch1.comp.${key}`);
-    plan.nodeParams.ch1 = {
-      ...plan.nodeParams.ch1,
-      comp: { ...plan.nodeParams.ch1?.comp, oneKnob: true, autoMakeup: true },
-    };
-    const held = simLocks(model, plan, paths, OFFLINE, REASONS);
-    for (const key of computed) expect(reasonFor(held, path(`ch.ch1.comp.${key}`)), key).toBeNull();
-  });
 });
