@@ -11,10 +11,13 @@ import { parseRef, ref } from "../models/types";
 import { incomingConnection, type FxEffectParams, type NodeParams, type Plan } from "./plan";
 import { canConnect } from "./routing";
 import { insertFxMenu, insertFxRateLock } from "./constraints";
-import { effectiveInsertFx, insertFxControl } from "./control/translate";
+import { channelDynamics, effectiveInsertFx, insertFxControl } from "./control/translate";
 import {
   BUS_TYPE_OPTIONS,
+  COMP_EQ_COMP_FIRST,
   COMP_EQ_OPTIONS,
+  compDeviceDriven,
+  compOneKnobPatch,
   EQ_ONE_KNOB_TYPE_OPTIONS,
   INSERT_FX_NONE,
   insertFxEngaged,
@@ -593,6 +596,20 @@ export function insertDrivenPaths(model: DeviceModel, plan: Plan): string[] {
   return out;
 }
 
+/** The paths of each mono channel's COMP values the unit computes for the group's current switches
+ *  (`compDeviceDriven`): the values the COMP screen locks and the writer leaves out. */
+export function compDrivenPaths(model: DeviceModel, plan: Plan): string[] {
+  const out: string[] = [];
+  for (const node of model.nodes) {
+    const id = node.id;
+    if (!isMonoChannel(id)) continue;
+    const params = np(plan, id);
+    if (!channelDynamics(model, id, params.compEqType ?? COMP_EQ_COMP_FIRST)?.comp) continue;
+    for (const key of compDeviceDriven(params.comp)) out.push(`ch.${simStripId(id)}.comp.${key}`);
+  }
+  return out;
+}
+
 /** The 1-knob EQ's kept band gain: the plan holds none, so it reads nothing and a write of it changes nothing. */
 const EQ_ONE_KNOB_BASE: SimBinding = { read: () => undefined, write: () => UNCHANGED };
 
@@ -783,6 +800,29 @@ function fxEffectBindings(id: string, fxIndex: number, out: Map<string, SimBindi
   for (const key of keys) out.set(`${base}.${key}`, fxEffectValue(id, fxIndex, key, families));
 }
 
+/** A mono channel's COMP 1-knob switch. Switched on, it also takes the group's attack, release,
+ *  Auto Makeup and level to the values the unit gives them (`compOneKnobPatch`), so those paths
+ *  move with it. */
+function compOneKnobOn(id: string, moves: readonly string[]): SimBinding {
+  const read = groupValue(id, "comp", "oneKnob", "boolean").read;
+  return {
+    read,
+    write: (plan, v) => {
+      const on = bool(v);
+      if (on === null) return refused("value");
+      const held = np(plan, id).comp ?? {};
+      const patch = compOneKnobPatch(held, on);
+      return {
+        kind: "node",
+        id,
+        patch: { comp: { ...held, ...patch } },
+        written: Object.keys(patch).map((k) => `comp.${k}`),
+      };
+    },
+    moves,
+  };
+}
+
 /** Add the processor paths the plan of `model` answers to `out`. */
 export function processorBindings(model: DeviceModel, out: Map<string, SimBinding>): void {
   for (const node of model.nodes) {
@@ -800,7 +840,15 @@ export function processorBindings(model: DeviceModel, out: Map<string, SimBindin
     }
 
     if (isMonoChannel(id)) {
-      out.set(`${ch}.comp.oneKnob.on`, groupValue(id, "comp", "oneKnob", "boolean"));
+      out.set(
+        `${ch}.comp.oneKnob.on`,
+        compOneKnobOn(id, [
+          `${ch}.comp.oneKnob.level`,
+          `${ch}.comp.attack`,
+          `${ch}.comp.release`,
+          `${ch}.comp.autoMakeup`,
+        ]),
+      );
       out.set(`${ch}.comp.oneKnob.level`, groupValue(id, "comp", "oneKnobLevel", "number"));
       out.set(`${ch}.compEqOrder`, optionValue(id, "compEqType", COMP_EQ_OPTIONS, COMP_EQ_OPTIONS[0].value));
       ssmcsBindings(id, ch, out);

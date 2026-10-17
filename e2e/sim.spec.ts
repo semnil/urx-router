@@ -460,6 +460,29 @@ test("1-knob EQ switched on from the LCD is on in the plan", async ({ page }) =>
   await expect.poll(async () => (await save(page)).nodeParams.ch1?.eqOneKnob).toMatchObject({ on: true });
 });
 
+// The unit's COMP 1-knob, switched on, sets attack, release, Auto Makeup and the level, and on its
+// own COMP screen neither attack nor release turns while it stays on. The LCD's switch is that
+// switch: the plan takes the same values, and the LCD holds those values shut.
+test("COMP 1-knob switched on from the LCD sets the knob's values in the plan and holds them shut", async ({
+  page,
+}) => {
+  await openSimSaving(page);
+  await tapInto(page, lcd(page).getByRole("button", { name: "C H 1 settings", exact: true }), "channel-view");
+  await openBlock(page, /^COMP/, "ch.comp");
+  const attack = lcd(page).getByRole("spinbutton", { name: "Attack", exact: true });
+  await expect(attack).toBeVisible();
+  await expect(attack.locator(".lock-mark")).toHaveCount(0);
+  await lcd(page)
+    .getByRole("button", { name: /1-knob/ })
+    .first()
+    .click();
+  await expect
+    .poll(async () => (await save(page)).nodeParams.ch1?.comp)
+    .toMatchObject({ oneKnob: true, attack: 24.87, release: 295.5, autoMakeup: false, oneKnobLevel: 0 });
+  await expect(attack).toHaveAttribute("title", en.dynTuning.driven);
+  await expect(attack.locator(".lock-mark")).toHaveCount(1);
+});
+
 test("an insert effect chosen again on the LCD keeps the values the plan holds for it, as the Inspector does", async ({
   page,
 }) => {

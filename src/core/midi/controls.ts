@@ -61,6 +61,7 @@ import {
   COMP_EQ_COMP_FIRST,
   COMP_ONE_KNOB_DRIVEN,
   compDeviceDriven,
+  compOneKnobPatch,
   EQ_TYPE_PASS,
   EQ_TYPE_PEAKING,
   EQ_TYPE_SHELVING,
@@ -772,8 +773,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
       // COMP is absent in SSMCS mode (the morphing strip replaces it), which is
       // also how the tuning screen learns to refuse to open.
       if (dyn.comp) {
-        // A value the unit computes — threshold / ratio / gain / knee while 1-knob is on,
-        // the gain while Auto Makeup is on — is refused, the set the writer stops sending
+        // A value the unit computes — threshold / ratio / gain / knee / attack / release while
+        // 1-knob is on, the gain while Auto Makeup is on — is refused, the set the writer stops sending
         // and the screen locks (`compDeviceDriven`). Auto Makeup cannot be operated while
         // 1-knob is on either, and the level does nothing while it is off.
         const comp = (): Record<string, unknown> => (plan.nodeParams[id]?.comp ?? {}) as Record<string, unknown>;
@@ -790,7 +791,16 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
             ),
           );
         out.push(subFlag("comp", COMP_SCOPE, "autoMakeup", "autoMakeup", false, oneOn, compKnob));
-        out.push(subFlag("comp", COMP_SCOPE, "oneKnob", "oneKnob", false, undefined, undefined, compKnob));
+        out.push({
+          ...subFlag("comp", COMP_SCOPE, "oneKnob", "oneKnob", false, undefined, undefined, compKnob),
+          // Switched on, the knob also takes attack, release, Auto Makeup and the level to the
+          // values the unit gives them (`compOneKnobPatch`).
+          set: (v) => {
+            const p = np();
+            p.comp = { ...comp(), ...compOneKnobPatch(comp(), v >= 0.5) };
+            return true;
+          },
+        });
         out.push(
           oneKnobLevel(
             COMP_SCOPE,

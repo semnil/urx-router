@@ -3,7 +3,7 @@
 import type { DeviceModel } from "../models/types";
 import type { Plan } from "./plan";
 import { nodeRateDisabled } from "./constraints";
-import { insertDrivenPaths } from "./sim-map-processors";
+import { compDrivenPaths, insertDrivenPaths } from "./sim-map-processors";
 import { INTEGRATION_GLASS_PATHS } from "./control/daw-integration";
 
 export type SimLockTarget =
@@ -32,6 +32,8 @@ export interface SimLockReasons {
   fx2Rate: string;
   /** An insert effect's value the insert screen holds shut for the effect's current values. */
   deviceDriven: string;
+  /** A COMP value the unit computes while the group's 1-knob or Auto Makeup is on. */
+  compDriven: string;
   /** SETUP > Software Integration while no session holds a unit a compatible DAW holds. */
   integrationOff: string;
 }
@@ -115,5 +117,7 @@ export function simLocks(
   }
   for (const path of insertDrivenPaths(model, plan))
     out.push({ target: { kind: "path", path }, reason: reasons.deviceDriven });
+  for (const path of compDrivenPaths(model, plan))
+    out.push({ target: { kind: "path", path }, reason: reasons.compDriven });
   return out;
 }

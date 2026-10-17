@@ -19,7 +19,13 @@
 
 import { onOff, settingsChoice, settingsRow, settingsSection } from "./dom";
 import type { SettingsRowOptions } from "./dom";
-import { COMP_EQ_COMP_FIRST, COMP_KNEE_DEFAULT, COMP_KNEE_OPTIONS, compDeviceDriven } from "../core/control/params";
+import {
+  COMP_EQ_COMP_FIRST,
+  COMP_KNEE_DEFAULT,
+  COMP_KNEE_OPTIONS,
+  compDeviceDriven,
+  compOneKnobPatch,
+} from "../core/control/params";
 import { channelDynamics } from "../core/control/translate";
 import { COMP_SCOPE, controlId } from "../core/midi/controls";
 import type { ControlParam } from "../core/midi/controls";
@@ -137,9 +143,9 @@ export const COMP_DYN: DynPlotProcessor = {
   // that answers null neither rings nor arms.
   controlId: (ctx, key) => (key === "knee" ? null : controlId(ctx.nodeId, key as ControlParam, COMP_SCOPE)),
 
-  // The device drives threshold / ratio / gain / knee while 1-knob / Auto Makeup are on,
-  // and announces each recomputation per address — so those rows keep updating on screen,
-  // read-only, rather than being hidden or recomputed here.
+  // The device drives threshold / ratio / gain / knee / attack / release while 1-knob is on
+  // and the gain while Auto Makeup is on, and announces each recomputation per address — so
+  // those rows keep updating on screen, read-only, rather than being hidden or recomputed here.
   //
   // 1-knob also decides which of the two rows around it applies: Auto Makeup cannot be
   // operated while it is on (user guide), and the level does nothing while it is off. That
@@ -170,7 +176,7 @@ export const COMP_DYN: DynPlotProcessor = {
       midi(
         settingsRow(
           m.inspector.on,
-          onOff(vals.oneKnob === true, (on) => set({ oneKnob: on })),
+          onOff(vals.oneKnob === true, (on) => set(compOneKnobPatch(vals, on))),
         ),
         "oneKnob",
       ),
