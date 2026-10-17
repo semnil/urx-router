@@ -160,6 +160,34 @@ describe("how a tagged item was settled", () => {
     expect(unsettled(sibling)).toEqual(["[hardware] whether the unit announces the recorder's own change."]);
   });
 
+  // A label with nothing after it is the template of an answer, not an answer: what settled
+  // the item, or the operator's words, has to be written there.
+  it("refuses a Result or an operator entry with nothing written after its label", () => {
+    for (const label of ["Result:", "**Result**:", "Left open by the operator:", "Result (after publish):"]) {
+      const text = body(`${tagged}\n    - ${label}`);
+      expect(unsettled(text)).toHaveLength(1);
+      expect(run(text).status).toBe(1);
+    }
+  });
+
+  it("reads a value wrapped onto the line after the label as that entry's", () => {
+    const text = body(`${tagged}\n    - Result:\n      one notify per move, on URX44V.`);
+    expect(unsettled(text)).toEqual([]);
+    expect(run(text).status).toBe(0);
+  });
+
+  // A numbered list is a list: the same result written as `1.` is the same entry as `-`.
+  it("reads a numbered entry under the item the way it reads a bulleted one", () => {
+    for (const marker of ["1.", "1)", "-", "*"]) {
+      const text = body(`${tagged}\n    ${marker} Result: one notify per move.`);
+      expect(unsettled(text)).toEqual([]);
+      expect(run(text).status).toBe(0);
+    }
+    const sibling = body(`${tagged}\n  - [operator] a second item.\n    1. Result: settled.`);
+    expect(unsettled(sibling)).toEqual(["[hardware] whether the unit announces the recorder's own change."]);
+    expect(run(sibling).status).toBe(1);
+  });
+
   it("does not take some other entry under the item for a result", () => {
     expect(unsettled(body(`${tagged}\n    - What would settle it: a front-panel move.`))).toHaveLength(1);
   });

@@ -93,7 +93,7 @@ export function assumptionEntries(body) {
       continue;
     }
     const indent = /^\s*/.exec(l)[0].length;
-    const nested = /^(\s+)([-*]\s+)(.*)$/.exec(l);
+    const nested = /^(\s+)([-*+]\s+|\d{1,9}[.)]\s+)(.*)$/.exec(l);
     const blank = afterBlank;
     afterBlank = false;
     if (current !== null && indent >= contentCol) {
@@ -102,6 +102,7 @@ export function assumptionEntries(body) {
         inSub = true;
         subs.push(nested[3]);
       } else if (!inSub) current += ` ${l.trim()}`;
+      else subs[subs.length - 1] += ` ${l.trim()}`;
     } else if (nested) {
       end();
       current = nested[3];
@@ -131,13 +132,19 @@ const bareText = (s) => s.replace(/[*_~`]/g, "").trim();
 
 const isTagged = (item) => TAGS.some((t) => item.toLowerCase().includes(t));
 
+/** Whether a sub-entry is a settlement label with something written after it. The label, a
+ *  parenthesised qualifier and the colon are the template of an answer, not the answer. */
+const settles = (sub) => {
+  const bare = bareText(sub);
+  if (!SETTLED.test(bare)) return false;
+  return bare.replace(SETTLED, "").replace(/^\s*(\([^)]*\))?\s*:?\s*/, "") !== "";
+};
+
 /** Every tagged assumption with no entry under it saying how it was settled, in order. */
 export function unsettled(body) {
   const entries = assumptionEntries(body);
   if (entries === null) return [];
-  return entries
-    .filter((e) => isTagged(e.text) && !e.subs.some((sub) => SETTLED.test(bareText(sub))))
-    .map((e) => e.text);
+  return entries.filter((e) => isTagged(e.text) && !e.subs.some(settles)).map((e) => e.text);
 }
 
 /** Every listed assumption that names none of the three, in the order they appear. */
