@@ -5,6 +5,7 @@ import {
   encodeIntegrationSend,
   integrationGlassValues,
   integrationSlotAt,
+  mergeIntegrationRead,
   withIntegrationNotify,
   type DawIntegration,
 } from "./daw-integration";
@@ -36,6 +37,15 @@ describe("SETUP > Software Integration (816 / 879 / 880)", () => {
       [879, 0, 0],
       [880, 0, 0],
     ]);
+  });
+
+  it("takes a read value by value, keeping each value that changed while the read was out", () => {
+    const held: DawIntegration = { active: true, fx1Send: "MIX 1", fx2Send: "MIX 2" };
+    const read: DawIntegration = { active: false, fx1Send: "MIX 2", fx2Send: "MIX 1" };
+    expect(mergeIntegrationRead(held, read, new Set())).toEqual(read);
+    expect(mergeIntegrationRead(held, read, new Set(["fx2Send"]))).toEqual({ ...read, fx2Send: "MIX 2" });
+    expect(mergeIntegrationRead(held, read, new Set(["active"]))).toEqual({ ...read, active: true });
+    expect(mergeIntegrationRead(null, read, new Set(["active"])), "nothing held to keep").toEqual(read);
   });
 
   it("names each send by the glass's path, and shows none it could not decode", () => {

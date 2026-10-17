@@ -241,12 +241,16 @@ import {
   dawIntegrationNotifyAddrs,
   decodeIntegrationSend,
   encodeIntegrationSend,
+  INTEGRATION_FIELDS,
+  integrationFieldOf,
   integrationGlassValues,
   integrationSlotAt,
+  mergeIntegrationRead,
   readDawIntegration,
   withIntegrationNotify,
   writeIntegrationSend,
   type DawIntegration,
+  type IntegrationField,
 } from "./core/control/daw-integration";
 import { confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
@@ -909,9 +913,9 @@ function resetSendsTarget(): void {
 let unitSetup: DeviceSetup | null = null;
 let unitOperationMode: number | null = null;
 // SETUP > Software Integration, as a session read it and the unit announced it since, and a count
-// of the changes made to it, which a read taken while one lands does not override.
+// of the changes made to each of its values, which a read taken while one lands does not override.
 let unitIntegration: DawIntegration | null = null;
-let integrationVersion = 0;
+const integrationVersions: Record<IntegrationField, number> = { active: 0, fx1Send: 0, fx2Send: 0 };
 const clipSafeEngaged = new Set<number>();
 // A Follow USB press on the glass, handled as a press of the toolbar's FOLLOW USB; set where that
 // button is wired.
@@ -946,7 +950,7 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
     const raw = encodeIntegrationSend(String(value));
     if (!liveSessionUp || !unitIntegration?.active || raw === null) return Promise.reject(new Error("refused"));
     unitIntegration = { ...unitIntegration, [slot]: decodeIntegrationSend(raw) };
-    integrationVersion++;
+    integrationVersions[slot]++;
     cueWrites = cueWrites
       .then(async () => {
         if (!liveSessionUp) return;
@@ -1116,9 +1120,10 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
     simView?.unitStateChanged();
     return true;
   }
-  if (dawIntegrationNotifyAddrs().some(([id]) => id === paramId)) {
+  const field = integrationFieldOf(paramId);
+  if (field !== null) {
     if (unitIntegration) unitIntegration = withIntegrationNotify(unitIntegration, paramId, value) ?? unitIntegration;
-    integrationVersion++;
+    integrationVersions[field]++;
     simView?.unitStateChanged();
     return true;
   }
@@ -1127,18 +1132,19 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
   return true;
 }
 
-/** Read SETUP > Software Integration again behind every unit write queued so far, and take what the
- *  unit holds unless it changed while the read ran. */
+/** Read SETUP > Software Integration again behind every unit write queued so far, and take each
+ *  value the unit holds unless that value changed while the read ran. */
 function rereadDawIntegration(): void {
   if (!liveSessionUp || !experimentalOn) return;
   cueWrites = cueWrites
     .then(async () => {
       await live?.idle();
       if (!liveSessionUp) return;
-      const since = integrationVersion;
+      const since = { ...integrationVersions };
       const read = await readDawIntegration();
-      if (!liveSessionUp || integrationVersion !== since) return;
-      unitIntegration = read;
+      if (!liveSessionUp) return;
+      const moved = new Set(INTEGRATION_FIELDS.filter((f) => integrationVersions[f] !== since[f]));
+      unitIntegration = mergeIntegrationRead(unitIntegration, read, moved);
       simView?.unitStateChanged();
     })
     .catch((err: unknown) => stopLiveOnError(errorText(err)));

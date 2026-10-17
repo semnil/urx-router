@@ -36,11 +36,34 @@ const glassPath = (slot: IntegrationSlot): string => `setup.integration.${slot}`
 /** The glass's paths of both slots. */
 export const INTEGRATION_GLASS_PATHS: readonly string[] = INTEGRATION_SLOTS.map(glassPath);
 
+/** One value of SETUP > Software Integration the session holds. */
+export type IntegrationField = keyof DawIntegration;
+const FIELD_PARAM: Record<IntegrationField, number> = { active: PARAMS.DAW_INTEGRATION.id, ...SLOT_PARAM };
+export const INTEGRATION_FIELDS = Object.keys(FIELD_PARAM) as IntegrationField[];
+
+/** The value an 816 / 879 / 880 address carries, or null for any other param. */
+export function integrationFieldOf(paramId: number): IntegrationField | null {
+  return INTEGRATION_FIELDS.find((f) => FIELD_PARAM[f] === paramId) ?? null;
+}
+
+/** `read` taken over `held` value by value, keeping each value `moved` names: it changed while the
+ *  read was out, and the change is newer than the read's answer. */
+export function mergeIntegrationRead(
+  held: DawIntegration | null,
+  read: DawIntegration,
+  moved: ReadonlySet<IntegrationField>,
+): DawIntegration {
+  if (!held) return read;
+  return {
+    active: moved.has("active") ? held.active : read.active,
+    fx1Send: moved.has("fx1Send") ? held.fx1Send : read.fx1Send,
+    fx2Send: moved.has("fx2Send") ? held.fx2Send : read.fx2Send,
+  };
+}
+
 /** The notify addresses of SETUP > Software Integration, which a session registers. */
 export function dawIntegrationNotifyAddrs(): [number, number, number][] {
-  return [PARAMS.DAW_INTEGRATION.id, ...INTEGRATION_SLOTS.map((s) => SLOT_PARAM[s])].map(
-    (id): [number, number, number] => [id, 0, 0],
-  );
+  return INTEGRATION_FIELDS.map((f): [number, number, number] => [FIELD_PARAM[f], 0, 0]);
 }
 
 /** The bus an 879 / 880 value names, or null for a value that names neither. */
@@ -55,9 +78,9 @@ export function encodeIntegrationSend(send: string): number | null {
 
 /** `state` with one notify of SETUP > Software Integration taken in, or null for any other param. */
 export function withIntegrationNotify(state: DawIntegration, paramId: number, value: number): DawIntegration | null {
-  if (paramId === PARAMS.DAW_INTEGRATION.id) return { ...state, active: value !== 0 };
-  const slot = INTEGRATION_SLOTS.find((s) => SLOT_PARAM[s] === paramId);
-  return slot ? { ...state, [slot]: decodeIntegrationSend(value) } : null;
+  const field = integrationFieldOf(paramId);
+  if (field === null) return null;
+  return field === "active" ? { ...state, active: value !== 0 } : { ...state, [field]: decodeIntegrationSend(value) };
 }
 
 /** Read 816, 879 and 880. The caller must have connected first. */

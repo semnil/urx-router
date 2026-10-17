@@ -11688,6 +11688,89 @@ describe("the SIM view over a live session", () => {
     await expect(transport().write("setup.integration.fx1Send", "MIX 2")).resolves.toBe("MIX 2");
   });
 
+  // The second read answers all three values, and each is taken unless that one value changed while
+  // the read was out: a change to one does not throw away what the read found for the others.
+  const bootHeldReread = async (seed: Record<string, number>, atRegistration: Record<string, number>) => {
+    const DAW = PARAMS.DAW_INTEGRATION.id;
+    const cmds = deviceCommands({ "plugin:dialog|message": "Ok", experimental_enabled: true }, seed);
+    const set = cmds.vd_set as (a: Record<string, unknown>) => unknown;
+    const get = cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    const subscribe = cmds.vd_params_subscribe as (a: Record<string, unknown>) => unknown;
+    let moved = false;
+    cmds.vd_params_subscribe = (a: Record<string, unknown>) => {
+      if (!moved) {
+        moved = true;
+        for (const [key, value] of Object.entries(atRegistration)) {
+          const [paramId, x, y] = key.split("/").map(Number);
+          set({ paramId, x, y, value });
+        }
+      }
+      return subscribe(a);
+    };
+    let reads = 0;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    cmds.vd_get = (a: Record<string, unknown>) => {
+      if (a.paramId !== DAW) return get(a);
+      reads++;
+      const answer = get(a);
+      return reads === 2 ? held.then(() => answer) : answer;
+    };
+    const shell = (await bootApp({ tauri: cmds }))!;
+    await openSim();
+    await goLive();
+    await vi.waitFor(() => expect(reads, "the premise: the second read is out").toBe(2), { timeout: 10_000 });
+    /** Let the read answer, and return once it has been taken: a SETUP write queues behind it. */
+    const answer = async (): Promise<void> => {
+      release();
+      await transport().write("setup.brightness", 3);
+      await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
+    };
+    return { shell, answer };
+  };
+  const shownSends = async (): Promise<unknown[]> => {
+    const shown = await transport().snapshot();
+    return [shown.get("setup.integration.fx1Send"), shown.get("setup.integration.fx2Send")];
+  };
+
+  it("takes the second read's DAW and sends when another send is announced while it is out", SLOW, async () => {
+    const FX1 = PARAMS.POST_FADER_SEND_FX1.id;
+    const FX2 = PARAMS.POST_FADER_SEND_FX2.id;
+    const { shell, answer } = await bootHeldReread(
+      { [`${PARAMS.DAW_INTEGRATION.id}/0/0`]: 0 },
+      { [`${PARAMS.DAW_INTEGRATION.id}/0/0`]: 2, [`${FX2}/0/0`]: 290 },
+    );
+    notifyChannel(shell).onmessage([{ param_id: FX1, x: 0, y: 0, value: 290 }]);
+    await answer();
+    expect(await shownSends(), "FX 1 as announced, FX 2 as read").toEqual(["MIX 2", "MIX 2"]);
+    await expect(transport().write("setup.integration.fx2Send", "MIX 1"), "the DAW the read found").resolves.toBe(
+      "MIX 1",
+    );
+  });
+
+  it(
+    "takes the second read's DAW and other send when a send is picked on the glass while it is out",
+    SLOW,
+    async () => {
+      const FX1 = PARAMS.POST_FADER_SEND_FX1.id;
+      const FX2 = PARAMS.POST_FADER_SEND_FX2.id;
+      const { shell, answer } = await bootHeldReread(
+        { [`${PARAMS.DAW_INTEGRATION.id}/0/0`]: 2 },
+        { [`${PARAMS.DAW_INTEGRATION.id}/0/0`]: 0, [`${FX1}/0/0`]: 290 },
+      );
+      await expect(transport().write("setup.integration.fx2Send", "MIX 2")).resolves.toBe("MIX 2");
+      await answer();
+      expect((await shownSends())[0], "FX 1 as read").toBe("MIX 2");
+      await expect(
+        transport().write("setup.integration.fx1Send", "MIX 1"),
+        "the DAW the read found gone",
+      ).rejects.toThrow("refused");
+      // The pick waited behind the read, and its turn came with no DAW on the unit.
+      await vi.waitFor(async () => expect((await shownSends())[1]).toBe("MIX 1"), { timeout: 10_000 });
+      expect(setsOf(shell, FX2), "nothing written to a unit no DAW holds").toEqual([]);
+    },
+  );
+
   // A send queued behind another is written only if a DAW still holds the unit when its turn comes.
   it("drops a Software Integration send queued before the DAW lets go of the unit", SLOW, async () => {
     const FX1 = PARAMS.POST_FADER_SEND_FX1.id;
