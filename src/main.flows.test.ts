@@ -881,6 +881,54 @@ describe("Pan Link in the panel", () => {
   });
 });
 
+// The unit's COMP 1-knob, switched on, sets attack, release and Auto Makeup, and nothing on the
+// unit moves them while it stays on. A document from anywhere else can carry other values beside a
+// knob that is on; the load sets the knob's, says how many channels on the status line, and names
+// each value in the report a held load shows.
+describe("a COMP 1-knob that is on in a loaded plan", () => {
+  const doc = async (extra: Record<string, Record<string, unknown>> = {}): Promise<string> => {
+    const { encodePlanParam } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const plan = defaultPlan("URX44V");
+    const comp = (id: string, values: Record<string, unknown>): void => {
+      plan.nodeParams[id] = { ...plan.nodeParams[id], comp: { ...plan.nodeParams[id]?.comp, ...values } };
+    };
+    comp("ch1", { oneKnob: true, attack: 10.12, release: 100.1, autoMakeup: true });
+    comp("ch3", { oneKnob: true, attack: 24.87, release: 295.5, autoMakeup: false });
+    comp("ch4", { oneKnob: false, attack: 10.12 });
+    for (const [id, np] of Object.entries(extra)) plan.nodeParams[id] = { ...plan.nodeParams[id], ...np };
+    return `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`;
+  };
+
+  it("opens with the knob's attack, release and Auto Makeup, and says how many channels", async () => {
+    history.replaceState(null, "", await doc());
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.planLoaded), APP_SETTLE);
+    expect(status()).toBe([t().status.compOneKnobsAligned(1), t().status.planLoaded].join(" — "));
+    expect($("load-report").hidden).toBe(true);
+    // The singular branch reads differently from the plural one, with the digit masked.
+    expect(t().status.compOneKnobsAligned(1).replace("1", "N")).not.toBe(
+      t().status.compOneKnobsAligned(2).replace("2", "N"),
+    );
+  });
+
+  it("names each value in the report a held load shows", async () => {
+    history.replaceState(null, "", await doc({ ch1: { insertFx: 256 }, ch2: { insertFx: 257 } }));
+    await boot();
+
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), APP_SETTLE);
+    const body = $("load-report-body").textContent ?? "";
+    expect(body).toContain(
+      "[compOneKnob] ch1.comp: attack 10.12 -> 24.87, release 100.1 -> 295.5, autoMakeup true -> false",
+    );
+    expect(body).not.toContain("[compOneKnob] ch3");
+    expect(body).not.toContain("[compOneKnob] ch4");
+    $("load-report-proceed").click();
+    await vi.waitFor(() => expect(status()).toContain(t().status.compOneKnobsAligned(1)), APP_SETTLE);
+  });
+});
+
 // The unit answers a BUS Type write by resetting the MIX's whole send bank — every level to -∞,
 // every send ON off under FIXED and on under VARI — and FIXED turns its Pan Link off, which VARI
 // does not turn back on. The plan takes the same answer from the panel's own control, in one

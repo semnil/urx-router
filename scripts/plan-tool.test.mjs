@@ -2422,6 +2422,84 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     expect(set.no).toBeGreaterThan(0);
   });
 
+  // Switching a COMP's 1-knob on sets its attack, release and Auto Makeup on the unit, and the
+  // app's load sets a document's to those values wherever its 1-knob is on. The keys the load
+  // CHANGES are read off the app twice — the document loaded as written, and loaded again with
+  // every 1-knob off, which the repair leaves alone — so the app's answer is what the knob alone
+  // moved, value included, and is compared with the keys the tool says it sets: keys the document
+  // writes, keys it leaves to the factory fill, a value of the wrong kind, a knob and an Auto
+  // Makeup written as numbers, a bank whose type is written as a boolean, and a STEREO-linked
+  // secondary the pair copy fills, beside the documents nothing may be said about — the knob
+  // off, the knob's values already there, and an SSMCS bank. Every model.
+  it("agrees with the app about the COMP values a 1-knob that is on sets on load", async () => {
+    const HELD = ["attack", "release", "autoMakeup"];
+    const comp = (values, extra = {}) => ({ ...extra, comp: values });
+    const corpus = [
+      ["values the document writes", { ch1: comp({ oneKnob: true, attack: 10.12, release: 100.1, autoMakeup: true }) }],
+      ["values left to the fill", { ch1: comp({ oneKnob: true }) }],
+      ["a value of the wrong kind", { ch1: comp({ oneKnob: true, attack: "fast", release: 295.5 }) }],
+      ["a knob written as a number", { ch1: comp({ oneKnob: 1, attack: 10.12 }) }],
+      [
+        "an Auto Makeup written as a number",
+        { ch1: comp({ oneKnob: true, attack: 24.87, release: 295.5, autoMakeup: 1 }) },
+      ],
+      ["a bank type written as a boolean", { ch1: comp({ oneKnob: true, attack: 10.12 }, { compEqType: true }) }],
+      ["a STEREO-linked pair", { ch1: comp({ oneKnob: true, attack: 10.12 }, { stereoLink: true }) }],
+      // …and the documents nothing may be said about.
+      ["the knob off", { ch1: comp({ oneKnob: false, attack: 10.12, autoMakeup: true }) }],
+      [
+        "the knob's values already there",
+        { ch1: comp({ oneKnob: true, attack: 24.87, release: 295.5, autoMakeup: false }) },
+      ],
+      ["an SSMCS bank", { ch1: comp({ oneKnob: true, attack: 10.12 }, { compEqType: 1 }) }],
+    ];
+    const knobOff = (nodeParams) =>
+      Object.fromEntries(
+        Object.entries(nodeParams).map(([id, np]) => [
+          id,
+          np.comp ? { ...np, comp: { ...np.comp, oneKnob: false } } : np,
+        ]),
+      );
+    const set = { yes: 0, no: 0 };
+    for (const modelId of MODEL_IDS) {
+      for (const [name, nodeParams] of corpus) {
+        const doc = (params) => ({
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          connections: [],
+          nodeParams: params,
+        });
+        const plan = doc(nodeParams);
+        const on = await appLoad(plan, true);
+        const off = await appLoad(doc(knobOff(nodeParams)), true);
+        const app = [];
+        for (const [id, np] of Object.entries(on.nodeParams))
+          for (const key of HELD)
+            if (np.comp && np.comp[key] !== off.nodeParams[id]?.comp?.[key])
+              app.push(`${id}.${key} = ${JSON.stringify(np.comp[key])}`);
+        app.sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = runTool("validate", file);
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) => /^WARNING: node param (\S+)\.comp\.(\S+): the app sets this to (\S+) on load/.exec(l))
+          .filter((m) => m !== null)
+          .map((m) => `${m[1]}.${m[2]} = ${m[3]}`)
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        set[app.length > 0 ? "yes" : "no"]++;
+      }
+    }
+    // Both answers are real populations: documents whose COMP the load sets, and documents it
+    // leaves as written.
+    expect(set.yes).toBeGreaterThan(0);
+    expect(set.no).toBeGreaterThan(0);
+  });
+
   // An on/off written as a number is converted on load to on, or to off for 0, wherever the
   // model's factory values hold an on/off. The leaves the conversion CHANGES from a number to a
   // boolean are compared with the ones the tool says it converts, value included: every on/off

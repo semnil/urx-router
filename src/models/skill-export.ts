@@ -12,7 +12,10 @@ import type { ConnectionKind, DeviceModel, NodeKind } from "./types";
 import {
   COLOR_OFF,
   COLOR_PALETTE,
+  COMP_EQ_COMP_FIRST,
   COMP_EQ_SSMCS,
+  COMP_ONE_KNOB_HELD,
+  COMP_ONE_KNOB_ON,
   D_GAIN_SOURCES,
   INSERT_FX_OPTIONS,
   LEGACY_HI_Z_CHANNELS,
@@ -33,7 +36,14 @@ import {
 import { factoryNodeColors, factoryNodeNames, factoryNodeParams } from "./initial-state";
 import { INSERT_FX_PAIR_KEYS, monoPairsInto, PAIR_OWN_NODE_KEYS } from "../core/routing";
 import { isRackSend } from "../core/plan-validate";
-import { channelControl, colorControl, nameControl, nodeLeafRules, type LeafRule } from "../core/control/translate";
+import {
+  channelControl,
+  channelDynamics,
+  colorControl,
+  nameControl,
+  nodeLeafRules,
+  type LeafRule,
+} from "../core/control/translate";
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
 import {
   FX_CHANNEL_NODE_INDEX,
@@ -182,6 +192,15 @@ export interface SkillModel {
     sendSeeds: Record<string, ConnParams>;
     unnamedSendLevel: number;
   };
+  /** What the load's COMP 1-knob repair reads (`compOneKnobProblems`): the nodes that carry a
+   *  COMP, which they lose while their `compEqType` is `ssmcs`, and the values `held` the unit
+   *  gives a COMP group's keys when its 1-knob is switched on and keeps there while it stays on.
+   *  The load sets a group whose `oneKnob` is on to them. */
+  compOneKnob: {
+    nodes: string[];
+    ssmcs: number;
+    held: Record<string, number | boolean>;
+  };
 }
 
 function skillModel(model: DeviceModel): SkillModel {
@@ -249,6 +268,11 @@ function skillModel(model: DeviceModel): SkillModel {
           .map((r) => [`${r.from} -> ${r.to}`, fixedConnection(model, r).params ?? {}]),
       ),
       unnamedSendLevel: SEND_LEVEL_UNNAMED_DB,
+    },
+    compOneKnob: {
+      nodes: model.nodes.filter((n) => channelDynamics(model, n.id, COMP_EQ_COMP_FIRST)?.comp).map((n) => n.id),
+      ssmcs: COMP_EQ_SSMCS,
+      held: Object.fromEntries(COMP_ONE_KNOB_HELD.map((k) => [k, COMP_ONE_KNOB_ON[k]])),
     },
   };
 }

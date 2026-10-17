@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   applyBooleanParams,
+  applyCompOneKnobs,
   applyLinkedSendPans,
   applyLoadRepairs,
   applyParamRange,
   applyRequiredSources,
   booleanParamProblems,
+  compOneKnobProblems,
   insertFxPairProblems,
   insertFxSlotProblems,
   isRefusal,
@@ -38,6 +40,8 @@ import { ref } from "../models/types";
 import { connParamContestKey, nodeColorContestKey, nodeNameContestKey, nodeParamContestPath } from "./plan-history";
 import {
   BUS_TYPE_FIXED,
+  COMP_EQ_SSMCS,
+  COMP_ONE_KNOB_ON,
   INSERT_FX_NONE,
   INSERT_FX_OPTIONS,
   OUTPUT_INSERT_FX_OPTIONS,
@@ -1522,6 +1526,86 @@ describe("linkedSendPanProblems", () => {
 
 // A number written where the factory values hold an on/off is sent as on unless it is 0, and the
 // load converts it to that on/off so every reader of the plan holds a boolean there.
+describe("compOneKnobProblems", () => {
+  const u44v = getModel("URX44V");
+  const doc = (nodeParams: Plan["nodeParams"]): Plan => ({ ...emptyPlan("URX44V"), nodeParams });
+  const factory = defaultPlan("URX44V").nodeParams.ch1!.comp as Record<string, unknown>;
+  const found = (plan: Plan) =>
+    compOneKnobProblems(u44v, plan).map(
+      (p) => `${p.node} ${p.keys.map((k) => `${k.key}:${String(k.stored)}->${k.value}`).join(" ")}`,
+    );
+
+  it("sets attack, release and Auto Makeup to the knob's values on a channel whose 1-knob is on", () => {
+    const plan = doc({
+      ch1: { comp: { oneKnob: true, attack: 10, release: 100, autoMakeup: true, oneKnobLevel: 60 } },
+      ch3: { comp: { oneKnob: true, attack: COMP_ONE_KNOB_ON.attack, release: COMP_ONE_KNOB_ON.release } },
+    });
+    const problems = compOneKnobProblems(u44v, plan);
+    expect(problems).toEqual([
+      {
+        reason: "compOneKnob",
+        node: "ch1",
+        keys: [
+          { key: "attack", stored: 10, value: COMP_ONE_KNOB_ON.attack },
+          { key: "release", stored: 100, value: COMP_ONE_KNOB_ON.release },
+          { key: "autoMakeup", stored: true, value: false },
+        ],
+      },
+    ]);
+    expect(planProblems(u44v, plan).filter((p) => p.reason === "compOneKnob")).toEqual(problems);
+    expect(isRefusal(problems[0]) || needsDecision(problems[0])).toBe(false);
+    applyCompOneKnobs(plan, problems);
+    // The level is the operator's to move once the knob is on, and stays.
+    expect(plan.nodeParams.ch1!.comp).toEqual({
+      oneKnob: true,
+      attack: COMP_ONE_KNOB_ON.attack,
+      release: COMP_ONE_KNOB_ON.release,
+      autoMakeup: false,
+      oneKnobLevel: 60,
+    });
+    expect(compOneKnobProblems(u44v, plan)).toEqual([]);
+  });
+
+  // A key the document leaves out, or carries in a form the range check drops, is the factory
+  // value the fill gives it, which is off the knob's attack and release and on its Auto Makeup.
+  it("reads an absent or unreadable key as the factory value", () => {
+    expect(factory.attack).not.toBe(COMP_ONE_KNOB_ON.attack);
+    expect(factory.autoMakeup).toBe(false);
+    expect(found(doc({ ch1: { comp: { oneKnob: true } } }))).toEqual([
+      "ch1 attack:undefined->24.87 release:undefined->295.5",
+    ]);
+    expect(
+      found(doc({ ch1: { comp: { oneKnob: true, attack: "fast", release: 295.5, autoMakeup: 1 } } as never })),
+    ).toEqual(["ch1 attack:fast->24.87"]);
+  });
+
+  it("finds nothing while the knob is off, not written as true, or on a channel with no COMP", () => {
+    const comp = { attack: 10, release: 100, autoMakeup: true };
+    expect(found(doc({ ch1: { comp: { ...comp, oneKnob: false } } }))).toEqual([]);
+    expect(found(doc({ ch1: { comp: { ...comp } } }))).toEqual([]);
+    expect(found(doc({ ch1: { comp: { ...comp, oneKnob: "on" as unknown as boolean } } }))).toEqual([]);
+    expect(found(doc({ ch1: { compEqType: COMP_EQ_SSMCS, comp: { ...comp, oneKnob: true } } }))).toEqual([]);
+    expect(found(doc({ ch_5_6: { comp: { ...comp, oneKnob: true } } }))).toEqual([]);
+  });
+
+  // The check reads the plan as the on/off conversion and the linked-pair copy leave it, which
+  // is the order the load applies them in.
+  it("reads a 1-knob written as a number, and a STEREO-linked secondary the pair copy fills", () => {
+    const plan = doc({ ch1: { stereoLink: true, comp: { oneKnob: 1 as unknown as boolean, attack: 10 } } });
+    const problems = planProblems(u44v, plan).filter((p) => p.reason === "compOneKnob");
+    expect(problems.map((p) => (p as { node: string }).node)).toEqual(["ch1", "ch2"]);
+    const loaded = structuredClone(plan);
+    prepareLoadedPlan(u44v, loaded, planProblems(u44v, loaded));
+    for (const id of ["ch1", "ch2"])
+      expect(loaded.nodeParams[id]!.comp, id).toMatchObject({
+        oneKnob: true,
+        attack: COMP_ONE_KNOB_ON.attack,
+        release: COMP_ONE_KNOB_ON.release,
+        autoMakeup: false,
+      });
+  });
+});
+
 describe("booleanParamProblems", () => {
   /** Every on/off leaf of `value`, dotted, an array element by its index. */
   const booleanLeaves = (value: unknown, path: string[] = [], out: string[] = []): string[] => {

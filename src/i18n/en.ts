@@ -923,6 +923,8 @@ export const en = {
       `${count} on/off ${count === 1 ? "value written as a number was" : "values written as numbers were"} converted to on/off`,
     linkedSendPansAligned: (count: number): string =>
       `${count} ${count === 1 ? "send pan into a MIX bus with Pan Link on now follows its source's" : "send pans into MIX buses with Pan Link on now follow their sources'"} own PAN / BAL`,
+    compOneKnobsAligned: (count: number): string =>
+      `${count} ${count === 1 ? "channel's COMP 1-knob is" : "channels' COMP 1-knobs are"} on, so attack, release and Auto Makeup now read as the unit holds them there`,
     streamingSourceUnlisted: tr(
       "The unit's STREAMING was on a state its source list does not offer, so the plan takes STEREO",
     ),
