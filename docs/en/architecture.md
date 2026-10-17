@@ -1527,7 +1527,9 @@ node hung under them). A mono channel in SSMCS mode carries **SSMCS** between GA
 strip's own master, and the one head chip whose value is a level down in the plan (`ssmcs.on`), so the strip
 writes it itself rather than through the flat-key chip writer. An odd group gets an invisible spacer so its last chip never stretches to
 full width. At the bottom (knobs bottom-aligned) are rotary knobs (`addKnob`/`wireKnob`, drag / arrow keys)
-— channel **Gain** (A.GAIN of the jack, or D.GAIN of the source, the channel reads; none on no source) **and
+— channel **Gain** (A.GAIN of the jack, or D.GAIN of the source, the channel reads; none on no source — while the
+jack's Clip Safe is holding the gain down, as the unit announces at `864`, the A.GAIN label reads SAFE and the value
+and the knob's rim take the warn colour, which the Inspector's Clip Safe ON takes too) **and
 PAN/BAL** (the CH→STEREO send's pan, L63–C–R63), the **master BALANCE** on the STEREO
 master and MIX buses (the bus output's L/R balance, `nodeParams.pan` → STEREO 583 / MIX 676; it keeps the
 `BAL` label even under Pan Link), or the **PHONES level** (a 0–10 non-dB
@@ -1886,7 +1888,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   (`core/sim-map-setup.ts`): SETUP > GENERAL as the last reading of it — a session's start on an experimental launch,
   the Device setup screen, a SETUP edit on the LCD — kept until the model changes, Follow USB as the toolbar's
   badge holds it, the operation mode (`817`) as a session read it, and each MIC/LINE jack's Clip Safe as holding its
-  gain down while the unit announces it (`864`). A session registers those addresses and reads SETUP again once
+  gain down while the unit announces it (`864`, which every session registers, since the CONSOLE and the Inspector
+  show it too). A session on an experimental launch registers the others and reads SETUP again once
   an announcement at one settles. A SETUP setting changed on the LCD is written to the unit — behind every unit
   write queued so far while Live sync is up, and otherwise over a connection of its own that reads SETUP first, as
   the Device setup screen does. Edits made while such a write runs are merged and written after it, so the last value

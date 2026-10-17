@@ -11,7 +11,7 @@ import { inputShare } from "./input-share";
 import type { ConnParams, JackSide, NodeParams, Plan, PlanConnection, SsmcsParams } from "../core/plan";
 import { clipNodeName, jackKey, LEVEL_MIN_DB, LEVEL_OFF_DB, processorOn, SSMCS_INITIAL } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
-import { hiZPatch, inputOnRefused, jackGainRange } from "../core/input-lock";
+import { hiZPatch, inputOnRefused, jackGainRange, jackIndex } from "../core/input-lock";
 import { formatHz, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 
 import {
@@ -167,6 +167,9 @@ export interface InspectorActions {
   /** The node's [CUE], which is outside the plan: null for a node that has none, else whether
    *  it is cued and whether a press switches it (a Live-sync session is up). */
   cueOf: (id: string) => CueRowState | null;
+  /** Whether MIC/LINE jack `jack` (0 = the first) has its Clip Safe holding the gain down, as the
+   *  unit last announced it. */
+  clipSafeEngaged?: (jack: number) => boolean;
   /** Switch the node's [CUE], as its CONSOLE chip does. */
   onSetCue: (id: string, on: boolean) => void;
 }
@@ -730,11 +733,15 @@ export function renderInspector(
             ),
           );
         }
-        input.append(
-          boolToggle(m.inspector.clipSafe, flag("clipSafe"), (v) =>
-            actions.onUpdateNodeParams(holder, { [key("clipSafe")]: v }),
-          ),
+        const clipSafe = boolToggle(m.inspector.clipSafe, flag("clipSafe"), (v) =>
+          actions.onUpdateNodeParams(holder, { [key("clipSafe")]: v }),
         );
+        const jack = jackIndex(stage);
+        if (jack !== null) {
+          clipSafe.dataset.clipSafeJack = String(jack);
+          paintClipSafeRow(clipSafe, actions.clipSafeEngaged?.(jack) ?? false);
+        }
+        input.append(clipSafe);
       } else if (stage.kind === "digital") {
         // D.Gain: -24..+24, one value per source.
         const held = plan.nodeParams[stage.node]?.dGain;
@@ -1710,6 +1717,28 @@ export function syncInspectorCue(host: HTMLElement, cueOf: InspectorActions["cue
   for (const row of host.querySelectorAll<HTMLElement>("[data-cue-node]")) {
     const state = cueOf(row.dataset.cueNode!);
     if (state) paintCueRow(row, state, t());
+  }
+}
+
+/** Repaint the Clip Safe row of a panel already on screen, if it carries one, for whether its jack's
+ *  Clip Safe is holding the gain down. Nothing else in the panel is touched. */
+export function markClipSafe(host: HTMLElement, engaged: (jack: number) => boolean): void {
+  for (const row of host.querySelectorAll<HTMLElement>("[data-clip-safe-jack]"))
+    paintClipSafeRow(row, engaged(Number(row.dataset.clipSafeJack)));
+}
+
+/** While its jack's Clip Safe holds the gain down, the row's ON takes the Clip Safe colour and says
+ *  so to a reader and on hover. */
+function paintClipSafeRow(row: HTMLElement, engaged: boolean): void {
+  const on = row.querySelector<HTMLButtonElement>(".toggle button");
+  if (!on) return;
+  on.classList.toggle("clip-safe", engaged);
+  if (engaged) {
+    on.setAttribute("aria-description", t().inspector.clipSafeEngaged);
+    on.title = t().inspector.clipSafeEngaged;
+  } else {
+    on.removeAttribute("aria-description");
+    on.removeAttribute("title");
   }
 }
 

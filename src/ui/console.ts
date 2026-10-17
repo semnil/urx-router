@@ -28,7 +28,7 @@ import {
   type SsmcsParams,
 } from "../core/plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
-import { hiZPatch, inputOnRefused, jackGainRange } from "../core/input-lock";
+import { hiZPatch, inputOnRefused, jackGainRange, jackIndex } from "../core/input-lock";
 import type { InputSwitch } from "../core/input-lock";
 import {
   defaultTapKey,
@@ -400,6 +400,9 @@ export type ConsoleMidiHooks = MidiLearnHooks;
 export interface ConsoleHooks {
   getModel: () => DeviceModel;
   getPlan: () => Plan;
+  /** Whether MIC/LINE jack `jack` (0 = the first) has its Clip Safe holding the gain down, as the
+   *  unit last announced it. */
+  clipSafeEngaged?: (jack: number) => boolean;
   /** An edit changed the plan (mute / fader / EQ): flag dirty + schedule live sync.
    *  `written` names the contest keys the edit ASSERTED — its own and the ones a pair
    *  mirror carried — not only the ones whose value moved. A device read in flight
@@ -3141,6 +3144,13 @@ export class Console {
         notes.push(t().inspector.notReadFromDevice);
       }
       if (notes.length) setTip(knob, [tipOf(knob), ...notes].filter(Boolean).join("\n"), true);
+      // The jack's Clip Safe holding the gain down, shown on the gain it holds.
+      const jack = analog ? jackIndex(stage) : null;
+      const box = knob.parentElement;
+      if (jack !== null && box) {
+        box.dataset.clipSafeJack = String(jack);
+        this.paintClipSafe(box);
+      }
     }
     // PAN (mono) / BALANCE (stereo) = the source's → STEREO main-path pan,
     // L63 – C – R63. Per-send pan lives in the SENDS rack's SEND PAN popover.
@@ -3841,6 +3851,31 @@ export class Console {
     // built, and a chip that is read-only for one reason today may be built another way
     // tomorrow. If it did not take it, the strip root did.
     if (document.activeElement !== anchor) root.focus();
+  }
+
+  /** Repaint every A.GAIN for whether its jack's Clip Safe is holding the gain down. */
+  clipSafeChanged(): void {
+    for (const box of this.host.querySelectorAll<HTMLElement>(".con-gain[data-clip-safe-jack]"))
+      this.paintClipSafe(box);
+  }
+
+  /** One A.GAIN box: while its jack's Clip Safe holds the gain down the label reads SAFE and the
+   *  value and the knob take the Clip Safe colour. */
+  private paintClipSafe(box: HTMLElement): void {
+    const engaged = this.hooks.clipSafeEngaged?.(Number(box.dataset.clipSafeJack)) ?? false;
+    box.classList.toggle("clip-safe", engaged);
+    const lbl = box.querySelector<HTMLElement>(".lbl");
+    if (lbl) {
+      lbl.dataset.label ??= lbl.textContent ?? "";
+      lbl.textContent = engaged ? t().console.clipSafeLabel : lbl.dataset.label;
+    }
+    const knob = box.querySelector<HTMLElement>(".con-knob");
+    if (knob) {
+      knob.dataset.description ??= knob.getAttribute("aria-description") ?? "";
+      const said = [knob.dataset.description, engaged ? t().inspector.clipSafeEngaged : ""].filter(Boolean).join(" ");
+      if (said) knob.setAttribute("aria-description", said);
+      else knob.removeAttribute("aria-description");
+    }
   }
 
   // Build a labelled rotary knob (label / value / knob) in the strip head and

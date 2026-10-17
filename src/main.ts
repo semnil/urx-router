@@ -100,7 +100,7 @@ import {
 } from "./core/control/params";
 import { Graph } from "./ui/graph";
 import type { ConnectOrigin, LabelSource, Selection, ThemeName } from "./ui/graph";
-import { compositionGate, inspectorNodes, renderInspector, syncInspectorCue } from "./ui/inspector";
+import { compositionGate, inspectorNodes, markClipSafe, renderInspector, syncInspectorCue } from "./ui/inspector";
 import { copyText, focusables, preserveFocus } from "./ui/dom";
 import { setSaid, setSpokenText, setTip, spoken } from "./ui/glyph";
 import { ownsNativeUndo } from "./ui/keys";
@@ -1099,8 +1099,8 @@ function scheduleUnitSetupRead(): void {
   }, CUE_READ_SETTLE_MS);
 }
 
-/** The addresses the unit announces its settings, its operation mode, Software Integration and
- *  its engaged Clip Safe at, which a session on an experimental launch registers. */
+/** The addresses the unit announces its settings, its operation mode and Software Integration at,
+ *  which a session on an experimental launch registers. */
 function unitStateNotifyAddrs(model: DeviceModel): [number, number, number][] {
   const setup = [
     PARAMS.BRIGHTNESS,
@@ -1115,8 +1115,28 @@ function unitStateNotifyAddrs(model: DeviceModel): [number, number, number][] {
   const knobs = [PARAMS.UDK_FUNCTION, PARAMS.UDK_PARAM1, PARAMS.UDK_PARAM2].flatMap((p) =>
     Array.from({ length: UDK_SLOTS }, (_, y): [number, number, number] => [p.id, 0, y]),
   );
-  const jacks = micLineJacks(model).map((j): [number, number, number] => [PARAMS.CLIP_SAFE_ENGAGED.id, 0, j]);
-  return [...setup, ...knobs, [PARAMS.OPERATION_MODE.id, 0, 0], ...dawIntegrationNotifyAddrs(), ...jacks];
+  return [...setup, ...knobs, [PARAMS.OPERATION_MODE.id, 0, 0], ...dawIntegrationNotifyAddrs()];
+}
+
+/** The addresses the unit announces each MIC/LINE jack's engaged Clip Safe at, which every session
+ *  registers: the CONSOLE and the Inspector show it. */
+function clipSafeNotifyAddrs(model: DeviceModel): [number, number, number][] {
+  return micLineJacks(model).map((j): [number, number, number] => [PARAMS.CLIP_SAFE_ENGAGED.id, 0, j]);
+}
+
+/** Take an engaged-Clip-Safe notify. False for any other address. */
+function takeClipSafeNotify(paramId: number, y: number, value: number): boolean {
+  if (paramId !== PARAMS.CLIP_SAFE_ENGAGED.id) return false;
+  if (value !== 0) clipSafeEngaged.add(y);
+  else clipSafeEngaged.delete(y);
+  paintClipSafe();
+  return true;
+}
+
+/** Show each jack's engaged Clip Safe on the surfaces that carry it. */
+function paintClipSafe(): void {
+  consoleView.clipSafeChanged();
+  markClipSafe(inspectorHost, (jack) => liveSessionUp && clipSafeEngaged.has(jack));
 }
 
 /** The MIC/LINE jacks `model` carries, 0 = the first. */
@@ -1129,11 +1149,6 @@ function micLineJacks(model: DeviceModel): number[] {
 
 /** Take a notify at one of `unitStateNotifyAddrs`. False for any other address. */
 function takeUnitStateNotify(paramId: number, y: number, value: number): boolean {
-  if (paramId === PARAMS.CLIP_SAFE_ENGAGED.id) {
-    if (value !== 0) clipSafeEngaged.add(y);
-    else clipSafeEngaged.delete(y);
-    return true;
-  }
   if (paramId === PARAMS.OPERATION_MODE.id) {
     unitOperationMode = value;
     simView?.unitStateChanged();
@@ -1177,6 +1192,7 @@ function resetUnitSessionState(): void {
   unitOperationMode = null;
   unitIntegration = null;
   clipSafeEngaged.clear();
+  paintClipSafe();
   simView?.unitStateChanged();
 }
 
@@ -1254,6 +1270,7 @@ let deviceSetup: DeviceSetupPanel | null = null;
 const consoleView = new Console(consoleHost, {
   getModel: () => getModel(modelId),
   getPlan: () => plan,
+  clipSafeEngaged: (jack) => liveSessionUp && clipSafeEngaged.has(jack),
   // A console edit changed the plan: flag dirty + schedule live sync. The console
   // re-renders the edited strip itself, so don't rebuild it here (that would
   // disrupt an in-progress fader drag).
@@ -1874,6 +1891,7 @@ const follow =
           ...(experimentalOn ? [SENDS_TARGET_ADDR] : []),
           ...cueNotifyAddrs(getModel(modelId)),
           ...(experimentalOn ? unitStateNotifyAddrs(getModel(modelId)) : []),
+          ...clipSafeNotifyAddrs(getModel(modelId)),
         ],
         // Held off while a flush is armed, running or queued: a read taken then answers an
         // edit the flush has not sent, or a write the unit has not announced, with the value
@@ -1901,6 +1919,7 @@ const follow =
           }
           // The unit's settings, its operation mode and an engaged Clip Safe, which the SIM view
           // shows. None opens a reconcile.
+          if (p.x === 0 && takeClipSafeNotify(p.paramId, p.y, p.value)) return true;
           if (experimentalOn && p.x === 0 && takeUnitStateNotify(p.paramId, p.y, p.value)) return true;
           // A [CUE] flag: the unit answering a write of this app's, a mirror it sets beside a
           // flag, or a press on its panel. Only the last changes anything.
@@ -2692,6 +2711,7 @@ const inspectorActions = {
   wireDrawn: (from: string, to: string) => graph.wireDrawn(from, to),
   // A node's [CUE] row: switchable while a session is up, as the CONSOLE chip is.
   cueOf: (id: string) => (cueAddrOf(getModel(modelId), id) ? { on: cues.has(id), enabled: liveSessionUp } : null),
+  clipSafeEngaged: (jack: number) => liveSessionUp && clipSafeEngaged.has(jack),
   onSetCue: (id: string, on: boolean) => setCue(id, on, "app"),
   // The routing row that was pressed goes with the node's panel, so the wire's panel takes
   // the focus: its first control, the mobile close button aside.
@@ -5273,6 +5293,8 @@ if (!DEMO) {
         // exactly this one even when its disconnect lands after a later connect.
         liveEpoch = device.epoch;
         liveSessionUp = true;
+        // A Clip Safe the unit announced while the session was starting shows from here.
+        paintClipSafe();
         // A read the watch makes can be the one that finds the link dead (a device-lost push
         // is consumed by whichever command is reading), and the shell latches without a link
         // event then, so a latched cause there ends the session the way any other does.
