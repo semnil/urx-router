@@ -901,6 +901,55 @@ describe("Fetch from device", () => {
     expect(insertFxOnFace()).toBe("ON");
   });
 
+  // A COMP 1-knob switched on writes attack, release, Auto Makeup and the level beside the switch.
+  // After an ON and an OFF each of them already holds the value the next ON writes, so the plan's
+  // diff cannot tell them from keys nobody touched — and a read in flight carrying the unit's
+  // older values would take them back. The read here answers attack 10 ms, release 100 ms, Auto
+  // Makeup on and level 50; the press made inside it has to keep the knob's values, on the
+  // member pressed and, on a linked pair, on its partner too.
+  it.each([
+    ["a channel", false],
+    ["a STEREO-linked pair", true],
+  ])("keeps the values a COMP 1-knob switched on writes through a read in flight, on %s", SLOW, async (_l, linked) => {
+    const shell = await bootDevice(SAVES);
+    selectNode("ch1");
+    if (linked) pickSignalType(1);
+    $("btn-comp-screen").click();
+    const knob = (text: string): HTMLButtonElement =>
+      [
+        ...[...$("dyn-screen-box").querySelectorAll<HTMLElement>(".prefs-section")]
+          .find((sec) => sec.querySelector("h3")?.textContent === t().inspector.oneKnob)!
+          .querySelectorAll<HTMLButtonElement>(".prefs-row button"),
+      ].find((b) => b.textContent === text)!;
+    knob(t().inspector.on).click();
+    knob(t().inspector.off).click();
+
+    const stale: Record<number, number> = {
+      [PARAMS.COMP_ATTACK.id]: 10120,
+      [PARAMS.COMP_RELEASE.id]: 1001,
+      [PARAMS.COMP_AUTO_MAKEUP.id]: 1,
+      [PARAMS.COMP_ONE_KNOB_LEVEL.id]: 50,
+    };
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) => setTimeout(() => r(stale[a.paramId as number] ?? unwrittenRead(a)), 1)),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+    knob(t().inspector.on).click();
+    await invoked(shell, "vd_disconnect");
+
+    const before = shell.count("write_text_file");
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
+    const saved = shell.args[shell.invokes.lastIndexOf("write_text_file")];
+    const doc = JSON.parse(String((saved as { contents: string }).contents));
+    const held = { oneKnob: true, attack: 24.87, release: 295.5, autoMakeup: false, oneKnobLevel: 0 };
+    expect(doc.nodeParams.ch1.comp, "CH 1").toMatchObject(held);
+    if (linked) expect(doc.nodeParams.ch2.comp, "CH 2").toMatchObject(held);
+  });
+
   it("connects, reads the whole unit, and drops the link when it is done", SLOW, async () => {
     const shell = await bootDevice();
     $("btn-fetch").click();

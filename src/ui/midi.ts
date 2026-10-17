@@ -272,9 +272,14 @@ export class MidiControl {
         ];
         if (insFxMirrored && partner) for (const k of INSERT_FX_PAIR_KEYS) keys.push(nodeParamContestPath(partner, k));
         // A HI-Z write that lowered A.Gain to the HI-Z ceiling asserted the gain as well, on the
-        // jack the write landed on.
+        // jack the write landed on; a COMP 1-knob switched on asserted the values it set, on the
+        // channel and, where the pair mirror carries them, on its partner.
         const wroteOn = control.writes?.kind === "node" ? (control.writes.node ?? control.node) : control.node;
-        for (const path of control.alsoWrote?.() ?? []) keys.push(nodeParamContestPath(wroteOn, path));
+        for (const path of control.alsoWrote?.() ?? []) {
+          keys.push(nodeParamContestPath(wroteOn, path));
+          if (pairMirrored && partner && wroteOn === control.node && pairSharesNodeKey(path))
+            keys.push(nodeParamContestPath(partner, path));
+        }
         hooks.onApplied(control, pairMirrored || insFxMirrored, keys);
         this.scheduleFeedback();
       },

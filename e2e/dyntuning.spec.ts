@@ -949,6 +949,13 @@ test.describe("comp", () => {
     for (const label of ["Threshold", "Ratio", "Gain"]) {
       await expect(paramRow(page, label).locator("input[type=range]")).toBeDisabled();
     }
+    // The switch also sets attack and release, to the one pair the knob runs at, and the unit's
+    // own COMP screen offers neither while it stays on.
+    await expect(paramRow(page, "Attack")).toContainText("24.87 ms");
+    await expect(paramRow(page, "Release")).toContainText("295.5 ms");
+    for (const label of ["Attack", "Release"]) {
+      await expect(paramRow(page, label).locator("input[type=range]")).toBeDisabled();
+    }
     // The threshold's cap is a custom slider, so it says the same thing the native row does
     // itself: out of the tab order, and disabled to a reader.
     await expect(cap).toHaveAttribute("tabindex", "-1");
@@ -959,6 +966,9 @@ test.describe("comp", () => {
 
     await oneKnobSwitch(page).locator("button", { hasText: "OFF" }).click();
     await expect(paramRow(page, "Threshold").locator("input[type=range]")).toBeEnabled();
+    // Switched off, the knob leaves attack where it put it, and hands it back.
+    await expect(paramRow(page, "Attack").locator("input[type=range]")).toBeEnabled();
+    await expect(paramRow(page, "Attack")).toContainText("24.87 ms");
 
     // Auto Makeup drives the makeup gain alone.
     await paramRow(page, "Auto Makeup").locator("button", { hasText: "On" }).click();

@@ -127,6 +127,39 @@ describe.each(["URX22", "URX44", "URX44V"] as ModelId[])("an edit on the SIM of 
     }
   });
 
+  // The unit's 1-knob switch sets attack, release, Auto Makeup and the level, so the SIM's does too,
+  // and names each key it wrote; a switch to off writes the switch alone.
+  it("takes COMP attack, release, Auto Makeup and the level to the knob's values as 1-knob comes on", () => {
+    const knob = bindings.get("ch.ch1.comp.oneKnob.on")!;
+    const plan = defaultPlan(modelId);
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      comp: {
+        ...plan.nodeParams.ch1?.comp,
+        oneKnob: false,
+        attack: 10,
+        release: 100,
+        autoMakeup: true,
+        oneKnobLevel: 60,
+      },
+    };
+    const on = knob.write!(plan, true);
+    if (isRefusal(on) || on.kind !== "node") throw new Error("the switch was refused");
+    expect(on.written).toEqual(["comp.attack", "comp.release", "comp.autoMakeup", "comp.oneKnobLevel", "comp.oneKnob"]);
+    apply(model, plan, on);
+    const read = (key: string): SimValue | undefined => bindings.get(`ch.ch1.comp.${key}`)!.read(plan);
+    expect([read("oneKnob.on"), read("attack"), read("release"), read("autoMakeup"), read("oneKnob.level")]).toEqual([
+      true,
+      24.87,
+      295.5,
+      false,
+      0,
+    ]);
+    const off = knob.write!(plan, false);
+    if (isRefusal(off) || off.kind !== "node") throw new Error("the switch was refused");
+    expect(off.written).toEqual(["comp.oneKnob"]);
+  });
+
   it("takes no value of another kind at any path it writes, by refusing it or changing nothing", () => {
     const took: string[] = [];
     let tried = 0;

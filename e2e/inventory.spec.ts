@@ -79,6 +79,7 @@ const LOAD_STATUS = [
   "status.sendLevelsSupplied",
   "status.linkedPairsAligned",
   "status.linkedSendPansAligned",
+  "status.compOneKnobsAligned",
   "status.colorsDropped",
   "status.textsRewritten",
   "status.planLoaded",
@@ -396,7 +397,9 @@ test("the load report shows all three framings and both Copy faces", async ({ pa
 // One document the load repairs every way it can: two on/off values written as numbers, two FX
 // values bounded and two dropped, no STREAMING source, sends listed without a level, two
 // STEREO-linked pairs whose members disagree, two send pans into a MIX whose Pan Link is on, two
-// node colours that are not the unit's, and two names the load rewrites — two or more of each,
+// COMP 1-knobs that are on beside an attack they never run with (the pair copy carries CH 1's
+// onto CH 2), two node colours that are not the unit's, and two names the load rewrites — two or
+// more of each,
 // since a counted note is read in its plural wording. The Pan Link is one of
 // the numbers, so the send pans are set only because the conversion ran first.
 test("the status line after a load names every repair the load made", async ({ page }) => {
@@ -416,7 +419,7 @@ test("the status line after a load names every repair the load made", async ({ p
       "bus.fx1": { fxEffect: { type: 0, params: { revxLpf: revxLpf.rawMin! - 1, revxHpf: false } } },
       "bus.fx2": { fxEffect: { type: 1024, params: { delayLpf: delayLpf.rawMin! - 1, delayHiRatio: false } } },
       "bus.mix1": { panLink: 1 },
-      ch1: { stereoLink: true, panBal: 0 },
+      ch1: { stereoLink: true, panBal: 0, comp: { oneKnob: true, attack: 10 } },
       ch2: { hpf: true },
       ch3: { hpf: 0, stereoLink: true, panBal: 0 },
       ch4: { hpf: true },
