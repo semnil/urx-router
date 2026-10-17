@@ -149,3 +149,45 @@ test("a live side switch writes the unit's selection, and the unit's selection s
   await notifyParam(page, PARAMS.LCD_SELECTION.id, 0, 0x0000);
   await expect(side("CH 5 (L)")).toBeVisible();
 });
+
+// The unit announces at 864, per jack, while a jack's Clip Safe is holding its gain down. During
+// Live sync the CONSOLE's A.GAIN reads SAFE and the Inspector's Clip Safe ON takes the warn colour
+// for as long as it lasts, on the jack it names and no other.
+test("an engaged Clip Safe shows on the A.GAIN and the Clip Safe ON of the jack the unit names", async ({ page }) => {
+  test.setTimeout(120_000);
+  await stubTauriDevice(page, {
+    commands: LIVE_COMMANDS,
+    values: { [PARAMS.CLIP_SAFE.id]: 1, 766: 48000, 848: 0 },
+  });
+  await open(page, [
+    ["in.micline_1_2", "ch1"],
+    ["in.micline_1_2", "ch2"],
+  ]);
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  const gain = (name: string) => strip(page, name).locator(".con-gain[data-clip-safe-jack]");
+  const clipSafeOn = () => row(page, "Clip Safe").getByRole("button", { name: "ON", exact: true });
+  await page.click("#btn-view-console");
+  await expect(gain("CH 1").locator(".lbl")).toHaveText("A.GAIN");
+
+  // Jack 1 (y 0) engages: CH 1 reads it, CH 2 reads jack 2.
+  await notifyParam(page, PARAMS.CLIP_SAFE_ENGAGED.id, 0, 1);
+  await expect(gain("CH 1").locator(".lbl")).toHaveText("SAFE");
+  await expect(gain("CH 1")).toHaveClass(/\bclip-safe\b/);
+  await expect(knob(page, "CH 1", "A.GAIN")).toHaveAttribute("aria-description", /Clip Safe is holding the gain down/);
+  await expect(gain("CH 2").locator(".lbl"), "jack 2 is not the one named").toHaveText("A.GAIN");
+  await page.click("#btn-view-graph");
+  await node(page, "ch1").click();
+  await expect(clipSafeOn()).toHaveClass(/\bclip-safe\b/);
+  await node(page, "ch2").click();
+  await expect(clipSafeOn()).not.toHaveClass(/\bclip-safe\b/);
+
+  // The unit lets go: both go back.
+  await notifyParam(page, PARAMS.CLIP_SAFE_ENGAGED.id, 0, 0);
+  await node(page, "ch1").click();
+  await expect(clipSafeOn()).not.toHaveClass(/\bclip-safe\b/);
+  await page.click("#btn-view-console");
+  await expect(gain("CH 1").locator(".lbl")).toHaveText("A.GAIN");
+  await expect(gain("CH 1")).not.toHaveClass(/\bclip-safe\b/);
+});
