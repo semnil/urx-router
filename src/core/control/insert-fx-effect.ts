@@ -477,12 +477,13 @@ const MBC_GLOBAL_PARAM: Record<
 /**
  * The 1-knob pair — an operator control, like the COMP and EQ knobs it is the third of.
  *
- * Switching it on refills every other writable slot of this effect with the type's own
- * values: the three bands' Threshold, Ratio, Gain, Attack and Bypass, the Release, both
- * crossovers and the Out Gain. Every Level change afterwards reasserts all but the last of
- * those — nine recomputed from the Level, nine pinned back to fixed values — so Out Gain is
- * the one the operator keeps. The app therefore writes the knob and stops emitting the
- * eighteen (`mbcDeviceDriven`).
+ * Switching it on sets the Level to 0, recomputes the three bands' Threshold, Ratio and Gain
+ * from it, and sets the Attacks, the Bypasses, the Release, both crossovers and the Out Gain to
+ * the type's own values (`MBC_ONE_KNOB_FIXED`). Every Level change afterwards recomputes the
+ * first nine again and pins all but the Out Gain back to theirs; the unit's own
+ * screen turns none of them, nor the Out Gain, while the knob is on. The app therefore writes
+ * the knob, takes the fixed values into the plan at the switch (`mbcOneKnobSwitch`), and stops
+ * emitting every slot the knob holds (`mbcDeviceDriven`).
  *
  * The readings behind this are in docs/{en,ja}/channel-tuning.md.
  */
@@ -925,10 +926,11 @@ export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[
 }
 
 /**
- * The MBC slots the unit itself drives while 1-knob is on: the three bands' Threshold,
- * Ratio and Gain, which a Level change recomputes, plus the three Attacks, the Release and
- * the two crossovers, which the same change pins back to fixed values whatever was written
- * over them. Out Gain is the only writable slot the knob leaves alone.
+ * The MBC slots the unit itself holds while 1-knob is on: the three bands' Threshold,
+ * Ratio and Gain, which a Level change recomputes, the three Attacks and Bypasses, the
+ * Release and the two crossovers, which the same change pins back to fixed values whatever
+ * was written over them, and the Out Gain the switch set, which the unit's own screen turns
+ * no more while the knob is on.
  *
  * One list for two consumers, so the writer and the screen cannot disagree about who owns
  * a row: `translate` stops emitting these — re-sending the plan's copy of a value the unit
@@ -1064,16 +1066,41 @@ export function insertFxDeviceDriven(
 }
 
 export function mbcDeviceDriven(params: Record<string, number> | undefined): ReadonlySet<number> {
-  return insertFxDriverOn(params, "mbc", MBC_ONE_KNOB.on.slot) ? MBC_LEVEL_DRIVEN : EMPTY_SLOTS;
+  return insertFxDriverOn(params, "mbc", MBC_ONE_KNOB.on.slot) ? MBC_ONE_KNOB_HELD : EMPTY_SLOTS;
 }
-const MBC_LEVEL_DRIVEN: ReadonlySet<number> = new Set([
+const MBC_ONE_KNOB_HELD: ReadonlySet<number> = new Set([
   // EVERY per-band slot, read off the descriptors rather than named here: that is the rule
   // the run measured, and a band parameter added later is in it without anyone remembering.
   ...MBC_PARAMS.filter((d) => d.band !== undefined).map((d) => d.slot),
   MBC_GLOBAL.release,
   MBC_GLOBAL.xoverLowMid,
   MBC_GLOBAL.xoverMidHigh,
+  MBC_GLOBAL.outGain,
 ]);
+
+/** The M.B.Comp slots the 1-knob sets to the type's own values when it is switched on, and
+ *  which hold those values while it stays on: each band's Attack and Bypass, the Release, both
+ *  crossovers and the Out Gain. */
+export const MBC_ONE_KNOB_FIXED: readonly number[] = [
+  ...MBC_BANDS.map((b) => b.attack),
+  ...MBC_BANDS.map((b) => b.bypass),
+  MBC_GLOBAL.release,
+  MBC_GLOBAL.xoverLowMid,
+  MBC_GLOBAL.xoverMidHigh,
+  MBC_GLOBAL.outGain,
+];
+
+/** What setting the M.B.Comp 1-knob to `on` writes, slot by slot: switched on from off, the
+ *  Level goes to 0 and `MBC_ONE_KNOB_FIXED` to the type's own values, as the unit does;
+ *  otherwise only the switch moves. */
+export function mbcOneKnobSwitch(params: Record<string, number> | undefined, on: boolean): Record<number, number> {
+  const out: Record<number, number> = { [MBC_ONE_KNOB.on.slot]: on ? 1 : 0 };
+  if (!on || insertFxDriverOn(params, "mbc", MBC_ONE_KNOB.on.slot)) return out;
+  const defs = insertFxDefaults("mbc");
+  out[MBC_ONE_KNOB.level.slot] = 0;
+  for (const slot of MBC_ONE_KNOB_FIXED) out[slot] = defs[slot];
+  return out;
+}
 
 /**
  * The Pitch Fix slots the unit itself drives while MIDI Control is not Off: the Scale enum

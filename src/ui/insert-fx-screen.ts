@@ -29,6 +29,7 @@ import {
   MBC_BANDS,
   MBC_GLOBAL,
   MBC_ONE_KNOB,
+  mbcOneKnobSwitch,
   mbcBandCurve,
   mbcOutGainDb,
   mbcXoverHz,
@@ -1296,10 +1297,9 @@ function mbcOneKnobSection(ctx: DynRowCtx): HTMLElement {
   const raw = (slot: number): number => insertFxVal(ctx.plan, ctx.nodeId, "mbc", slot, 0);
   const on = insertFxDriverOn(ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams, "mbc", MBC_ONE_KNOB.on.slot);
   const locked = insertFxLockedSlots("mbc", ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams);
-  const set = (slot: number, v: number): void => ctx.set({ [slotKey("mbc", slot)]: v });
-  // A CONTINUOUS value writes without rebuilding. `set` re-renders the screen, which
+  // A CONTINUOUS value writes without rebuilding. `ctx.set` re-renders the screen, which
   // replaces the element the pointer is holding, so a drag ends after its first step and
-  // the slider can only be moved one detent at a time. The switch above keeps `set`: it
+  // the slider can only be moved one detent at a time. The switch below keeps `ctx.set`: it
   // changes what the rest of the panel is (locks, the note under the display), and it is
   // one press rather than a gesture that has to survive.
   const setValue = (slot: number, v: number): void => ctx.setValue({ [slotKey("mbc", slot)]: v });
@@ -1308,7 +1308,16 @@ function mbcOneKnobSection(ctx: DynRowCtx): HTMLElement {
     ctx.midi(
       settingsRow(
         ctx.m.inspector.on,
-        onOff(on, (v) => set(MBC_ONE_KNOB.on.slot, v ? 1 : 0)),
+        onOff(on, (v) =>
+          // Switched on, the knob also sets the Level and the values it holds fixed.
+          ctx.set(
+            Object.fromEntries(
+              Object.entries(mbcOneKnobSwitch(ctx.live().plan.nodeParams[ctx.nodeId]?.insertFxParams, v)).map(
+                ([slot, raw]): [string, number] => [slotKey("mbc", Number(slot)), raw],
+              ),
+            ),
+          ),
+        ),
       ),
       slotKey("mbc", MBC_ONE_KNOB.on.slot),
     ),

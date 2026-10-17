@@ -73,7 +73,9 @@ import {
   insertFxLockedSlots,
   insertFxParams,
   insertFxSlotVal,
+  insertFxParamKey,
   insertFxSwitchOn,
+  mbcOneKnobSwitch,
   reKeyInsertFxParams,
   MBC_ONE_KNOB,
 } from "../control/insert-fx-effect";
@@ -1055,6 +1057,11 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
         np().insertFxParams = reKeyInsertFxParams(np().insertFxParams ?? {}, insFxFamily, patch);
       };
       if (d.control === "toggle") {
+        // The multi-band compressor's 1-knob, switched on, also sets the Level and the values it
+        // holds fixed (`mbcOneKnobSwitch`), and names each of them, since any can already hold
+        // the value it writes.
+        const knob = insFxFamily === "mbc" && d.slot === MBC_ONE_KNOB.on.slot;
+        let knobAlsoWrote: readonly string[] = [];
         out.push({
           id: controlId(id, "insfx", scope),
           node: id,
@@ -1066,9 +1073,19 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
           get: () => (insertFxSwitchOn(cur()) ? 1 : 0),
           set: (v) => {
             if (lockedNow()) return false;
-            write(v >= 0.5 ? 1 : 0);
+            if (!knob) {
+              write(v >= 0.5 ? 1 : 0);
+              return true;
+            }
+            const patch = mbcOneKnobSwitch(plan.nodeParams[id]?.insertFxParams, v >= 0.5);
+            np().insertFxParams = reKeyInsertFxParams(np().insertFxParams ?? {}, "mbc", patch);
+            knobAlsoWrote = Object.keys(patch).flatMap((slot) => [
+              `insertFxParams.${insertFxParamKey("mbc", Number(slot))}`,
+              `insertFxParams.${slot}`,
+            ]);
             return true;
           },
+          ...(knob ? { alsoWrote: () => knobAlsoWrote } : {}),
         });
         continue;
       }

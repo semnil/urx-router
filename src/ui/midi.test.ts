@@ -450,6 +450,36 @@ describe("MidiControl", () => {
     }
   });
 
+  // The multi-band compressor's 1-knob, switched on, sets the Level and the values it holds fixed,
+  // any of which can already hold the value it writes; the apply sets them and names each.
+  it("sets and names every value an M.B.Comp 1-knob switched on writes", async () => {
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({
+        models: { URX44V: [{ control: "bus.mix1/insfx@insfx.mbc.6", addr: MAPPING.addr, mode: "absolute" }] },
+      }),
+    );
+    const { hooks, plan } = install();
+    plan.nodeParams["bus.mix1"] = {
+      ...plan.nodeParams["bus.mix1"],
+      insertFx: 1792,
+      insertFxOn: true,
+      insertFxParams: { "mbc:7": 0, "mbc:26": 68 },
+    };
+    await attached();
+    dispatch({ type: "ready" });
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+
+    mocks.inputReceiver!([0xb0, 7, 127]);
+    const params = plan.nodeParams["bus.mix1"]?.insertFxParams as Record<string, number>;
+    expect(params["mbc:6"]).toBe(1);
+    expect(params["mbc:8"], "LOW Attack").toBe(17);
+    const keys = vi.mocked(hooks.onApplied).mock.calls.at(-1)?.[2] ?? [];
+    for (const slot of [7, 8, 12, 13, 17, 18, 22, 23, 24, 25, 26])
+      expect(keys, `slot ${slot}`).toContain(nodeParamContestPath("bus.mix1", `insertFxParams.mbc:${slot}`));
+  });
+
   it("names the partner's send parameter", async () => {
     localStorage.setItem(
       "urx-midi",
