@@ -9263,6 +9263,69 @@ describe("an engaged Clip Safe during Live sync", () => {
     expect(gainBox().querySelector(".lbl")?.textContent).toBe("A.GAIN");
     expect(clipSafeOn()?.classList.contains("clip-safe")).toBe(false);
   });
+
+  it("shows an engagement the unit announced while the session was still starting", SLOW, async () => {
+    let announced = false;
+    const shell: TauriShell = await bootDevice({
+      // The last registration before the session counts as up: CH 1 is selected while it waits.
+      vd_watch_link: () => {
+        pressNode("ch1");
+        expect(clipSafeOn(), "the premise: CH 1's Clip Safe row is shown").not.toBeNull();
+        notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 1 }]);
+        announced = true;
+        return null;
+      },
+    });
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    expect(announced, "the premise: announced before the session was up").toBe(true);
+    expect(clipSafeOn()?.classList.contains("clip-safe"), "the Inspector's Clip Safe ON").toBe(true);
+    $("btn-view-console").click();
+    expect(gainBox().classList.contains("clip-safe"), "the CONSOLE's A.GAIN").toBe(true);
+  });
+
+  it("drops the state when the session ends, and the next session starts without it", SLOW, async () => {
+    const shell = await bootDevice();
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    pressNode("ch1");
+    $("btn-view-console").click();
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 1 }]);
+    expect(gainBox().classList.contains("clip-safe"), "the premise: shown during the session").toBe(true);
+    live().click();
+    await invoked(shell, "vd_disconnect");
+    expect(gainBox().classList.contains("clip-safe")).toBe(false);
+    expect(clipSafeOn()?.classList.contains("clip-safe")).toBe(false);
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").disabled).toBe(false));
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    expect(gainBox().classList.contains("clip-safe"), "nothing carried into the next session").toBe(false);
+    expect(clipSafeOn()?.classList.contains("clip-safe")).toBe(false);
+  });
+
+  it("shows on every channel reading the jack the unit names, and on no other", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [`${PARAMS.INPUT_SOURCE.id}/0/2`]: 0 });
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    const gain = (name: string): HTMLElement =>
+      [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")]
+        .find((st) => st.getAttribute("aria-label") === spoken(name))!
+        .querySelector<HTMLElement>(".con-gain[data-clip-safe-jack]")!;
+    $("btn-view-console").click();
+    expect(
+      [gain("CH 1"), gain("CH 2"), gain("CH 3")].map((g) => g.dataset.clipSafeJack),
+      "CH 3 reads jack 1",
+    ).toEqual(["0", "1", "0"]);
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 1 }]);
+    expect([gain("CH 1"), gain("CH 2"), gain("CH 3")].map((g) => g.classList.contains("clip-safe"))).toEqual([
+      true,
+      false,
+      true,
+    ]);
+    $("btn-view-graph").click();
+    pressNode("ch3");
+    expect(clipSafeOn()?.classList.contains("clip-safe"), "CH 3's Clip Safe ON").toBe(true);
+  });
 });
 
 // A write settles the sample rate once, at its start, and then converges the plan it re-reads
