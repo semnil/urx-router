@@ -176,6 +176,20 @@ describe("how a tagged item was settled", () => {
     expect(run(text).status).toBe(0);
   });
 
+  // After a blank line, a paragraph left of the entry's own text belongs to the item above the
+  // entry, not to the entry: it does not fill in a label left empty. One at the entry's text
+  // column does.
+  it("does not fill an empty label with the item's own paragraph after a blank line", () => {
+    for (const label of ["Result:", "Left open by the operator:"]) {
+      const text = body(`${tagged}\n    - ${label}\n\n    A note about the item itself.`);
+      expect(unsettled(text)).toHaveLength(1);
+      expect(run(text).status).toBe(1);
+    }
+    const own = body(`${tagged}\n    - Result:\n\n      one notify per move, on URX44V.`);
+    expect(unsettled(own)).toEqual([]);
+    expect(run(own).status).toBe(0);
+  });
+
   // A numbered list is a list: the same result written as `1.` is the same entry as `-`.
   it("reads a numbered entry under the item the way it reads a bulleted one", () => {
     for (const marker of ["1.", "1)", "-", "*"]) {

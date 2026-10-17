@@ -81,6 +81,7 @@ export function assumptionEntries(body) {
   let inSub = false;
   let afterBlank = false;
   let subs = [];
+  let subCol = 0;
   const end = () => {
     if (current !== null) items.push({ text: current, subs });
     current = null;
@@ -98,11 +99,15 @@ export function assumptionEntries(body) {
     afterBlank = false;
     if (current !== null && indent >= contentCol) {
       // Inside the current item: a sub-entry, or a paragraph of the item's own.
+      // A line continues the last sub-entry when it follows it directly, or, after a blank
+      // line, when it starts at that entry's text column; a paragraph left of that column
+      // after a blank line is the item's own.
       if (nested) {
         inSub = true;
         subs.push(nested[3]);
+        subCol = nested[1].length + nested[2].length;
       } else if (!inSub) current += ` ${l.trim()}`;
-      else subs[subs.length - 1] += ` ${l.trim()}`;
+      else if (!blank || indent >= subCol) subs[subs.length - 1] += ` ${l.trim()}`;
     } else if (nested) {
       end();
       current = nested[3];
