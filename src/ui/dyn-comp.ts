@@ -139,6 +139,9 @@ export const COMP_DYN: DynPlotProcessor = {
   // only — `patch` merges onto what the plan holds.
   read: (ctx) => ({ knee: COMP_KNEE_DEFAULT, ...io.read(ctx) }),
   patch: io.patch,
+  // Every key the edit carries, since the 1-knob switch writes attack, release, Auto Makeup and
+  // the level at once, and any of them can already hold the value it writes.
+  written: (_ctx, patch) => Object.keys(patch).map((key) => `comp.${key}`),
   // Knee is a three-value selector, which the catalog does not carry: a control
   // that answers null neither rings nor arms.
   controlId: (ctx, key) => (key === "knee" ? null : controlId(ctx.nodeId, key as ControlParam, COMP_SCOPE)),

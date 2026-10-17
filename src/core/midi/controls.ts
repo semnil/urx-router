@@ -295,8 +295,9 @@ export interface BoundControl extends ControlDesc {
   /** The refusal a write of `v` meets, or null when `set` would take it. A refused write
    *  edits nothing and is reported, where a device lock drops it silently. */
   refuses?(v: number): ControlRefusal | null;
-  /** The node-param paths the last `set` wrote besides `writes`, on this control's node: a
-   *  HI-Z write that lowered A.Gain names `gain`. Empty when it wrote `writes` alone. */
+  /** The node-param paths the last `set` wrote besides `writes`, on the node `writes` names: a
+   *  HI-Z write that lowered A.Gain names `gain`, and a COMP 1-knob switched on names the attack,
+   *  release, Auto Makeup and level it set. Empty when it wrote `writes` alone. */
   alsoWrote?(): readonly string[];
 }
 
@@ -791,15 +792,22 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
             ),
           );
         out.push(subFlag("comp", COMP_SCOPE, "autoMakeup", "autoMakeup", false, oneOn, compKnob));
+        // Switched on, the knob also takes attack, release, Auto Makeup and the level to the
+        // values the unit gives them (`compOneKnobPatch`), and names each of them, since any can
+        // already hold the value it writes.
+        let knobAlsoWrote: readonly string[] = [];
         out.push({
           ...subFlag("comp", COMP_SCOPE, "oneKnob", "oneKnob", false, undefined, undefined, compKnob),
-          // Switched on, the knob also takes attack, release, Auto Makeup and the level to the
-          // values the unit gives them (`compOneKnobPatch`).
           set: (v) => {
             const p = np();
-            p.comp = { ...comp(), ...compOneKnobPatch(comp(), v >= 0.5) };
+            const patch = compOneKnobPatch(comp(), v >= 0.5);
+            knobAlsoWrote = Object.keys(patch)
+              .filter((k) => k !== "oneKnob")
+              .map((k) => `comp.${k}`);
+            p.comp = { ...comp(), ...patch };
             return true;
           },
+          alsoWrote: () => knobAlsoWrote,
         });
         out.push(
           oneKnobLevel(
