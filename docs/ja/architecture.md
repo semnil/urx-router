@@ -1947,7 +1947,8 @@ MIDI パネルの `midiErrorStatus` が同じ役回りで、`midi-port-not-found
   `fxTypeDefaults`。パネル専用のアクション `onSetFxEffectType` から呼ぶ)。insert FX セレクタの **No Effect** は
   バイパスを切にする。STREAMING の **Delay Time** は本体の 0.01 ms 刻みに揃える。どの規則も、全員が通る
   node-param の関数ではなく、パネル自身のコントロールかアクションに置いてある。EFFECT TYPE のアクションには
-  CONSOLE のタイプ一覧と SIM ビューの EFFECT TYPE も届くので、3 つのどこで選んでも同じ既定値が入る。ほかの規則は
+  CONSOLE のタイプ一覧と SIM ビューの EFFECT TYPE も届くので、3 つのどこで選んでも同じ既定値が入る。チャンネルが今持つ
+  型を選び直しても何も変わらない。ほかの規則は
   パネルのものに留まり、同じ関数に届く MIDI・調整画面の挙動は変わらない。
   ライブ同期中は、その後の書込は本体が既に持っている値を運ぶ。BUS Type の書込の収束は、プランと一致した
   バンクを読み戻す。EFFECT TYPE の書込の手前の退避 (park) は、どの書き手のときとも同じく出ていく配列を読むが、

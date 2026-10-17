@@ -2378,7 +2378,7 @@ written at all:
   STREAMING **Delay Time** is kept on the unit's 0.01 ms grid. Each rule sits in the panel's own control, or in an
   action rather than in the node-param funnel every surface reaches. The EFFECT TYPE action is also the one the
   CONSOLE's type list and the SIM view's EFFECT TYPE reach, so a type chosen on any of the three puts the same
-  defaults in; the other rules stay the panel's, so MIDI and the tuning screens, which reach the funnel, keep the
+  defaults in, and the type a channel already holds, picked again, changes nothing; the other rules stay the panel's, so MIDI and the tuning screens, which reach the funnel, keep the
   behaviour they had.
   Under Live sync the write then carries what the unit already holds. A BUS Type write's converge reads back a
   bank the plan now agrees with. The park in front of an EFFECT TYPE write reads the outgoing array as it does for
