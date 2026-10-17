@@ -150,7 +150,11 @@ carries a one-line map of the same directories and points here.
   than its own factory ones. The insert effect stays the refusal's. A send into a MIX bus
   whose Pan Link is on that carries a pan other than its source's own is set to the source's value the same
   way and said on the same line, reading the pair as its copy leaves it, since in BAL the copy moves the
-  balance the send is held at (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). An on/off written as a
+  balance the send is held at (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). A COMP whose
+  1-knob is on and whose attack, release or Auto Makeup is not the value the knob gives it — switching the knob on sets
+  all three on the unit, and nothing on the unit moves them while it stays on — has them set to the knob's values the
+  same way and said on the same line, reading a key the document leaves out as the factory value the fill gives it and
+  the pair as its copy leaves it (`compOneKnobProblems`; channel-tuning.md "COMP"). An on/off written as a
   number — a leaf the model's factory values hold as a boolean, at the same path on the same node — is
   converted to the on/off the write sends, off for 0 and on for any other number, and said on the same
   line (`booleanParamProblems`). It comes first, and every other check reads the document as it leaves it,
@@ -1912,7 +1916,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   Track Count while Live sync is up and
   the sends into FX 2 at a rate that takes FX 2 out (each the wording the Inspector already gives), and an insert
   effect's value its own screen holds shut for the effect's current values, such as M.B.Comp's bands while its 1-knob
-  is on (that screen's wording).
+  is on (that screen's wording), and a COMP value the unit sets for the group's switches — threshold / ratio / gain /
+  knee / attack / release while its 1-knob is on, the gain while Auto Makeup is on (the COMP screen's "Device-driven").
 - **Meters**: while Live sync is on and the view is up, it borrows the session's one meter subscription from the
   CONSOLE, as a tuning screen does, and gives it back when it is hidden. The simulator's meter ids are mapped onto
   the CONSOLE's taps (`simMeterTap`). Without Live sync the LCD's meters read nothing.
@@ -2027,8 +2032,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   screen's parameter takes its grid from the same `DynField` table its slider is built from; which route
   each side takes to that grid, and what it does and does not put a MIDI value and a dragged slider on, is
   channel-tuning.md "MIDI assignment". Device locks refuse the write: a FIXED bus's send level, pan and
-  PRE/POST, a Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain and Auto
-  Makeup while 1-knob is on (the device computes them), COMP's 1-knob level while it is off, every EQ band
+  PRE/POST, a Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain / attack /
+  release and Auto Makeup while 1-knob is on (the device sets them), COMP's 1-knob level while it is off, every EQ band
   value while EQ 1-knob is on, and the Q / gain a filter type does not read. The enum selectors (COMP knee,
   the EQ filter type and 1-knob type) carry no control at all. +48V and HI-Z refuse differently: turning one
   on while the other is on for the jack the channel reads is refused by the control itself (`refuses`) and reported on the
