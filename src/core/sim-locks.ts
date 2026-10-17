@@ -42,8 +42,11 @@ export interface SimLockState {
   linked: boolean;
   live: boolean;
   dawIntegration: boolean;
-  /** Whether the session takes a rate chosen on the LCD: Live sync with Follow USB off. */
+  /** Whether the session takes a rate chosen on the LCD: Live sync whose scope carries the rate,
+   *  with Follow USB off. */
   rateOpen: boolean;
+  /** Whether Follow USB is what holds the rate during Live sync. */
+  rateFollowUsb: boolean;
 }
 
 /** The SETUP > GENERAL screens of settings the app neither reads nor writes: the operation mode and
@@ -97,7 +100,7 @@ export function simLocks(
   if (state.linked && !state.rateOpen)
     out.push({
       target: { kind: "screen", id: "setup.rate" },
-      reason: state.live ? reasons.rateFollowUsb : reasons.rateLinked,
+      reason: state.rateFollowUsb ? reasons.rateFollowUsb : reasons.rateLinked,
     });
   const fx2Out = model.nodes.some((n) => n.id === "bus.fx2") && nodeRateDisabled("bus.fx2", plan.sampleRate);
   for (const path of paths) {

@@ -9256,6 +9256,22 @@ describe("the sample rate during Live sync", () => {
     expect(picker().value).toBe("48000");
   });
 
+  // A Scene-only session leaves the rate out of what it writes, so a rate chosen then would show in
+  // the app and never reach the unit.
+  it("keeps the rate locked for a session whose scope leaves the rate out", SLOW, async () => {
+    const shell = (await bootApp({
+      seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) },
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok" }, SEED),
+    }))!;
+    await goLive();
+    expect(picker().disabled).toBe(true);
+    chooseRate(96_000);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(confirms(shell), "nothing asked").toEqual([]);
+    expect(rateWrites(shell)).toEqual([]);
+    expect(picker().value).toBe("48000");
+  });
+
   it(
     "keeps the rate locked while Follow USB is on, and opens it once the unit turns Follow USB off",
     SLOW,

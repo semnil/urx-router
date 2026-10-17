@@ -343,10 +343,11 @@ function setFollowUsbBadge(state: boolean | null): void {
   simView?.unitStateChanged();
 }
 
-/** Whether a rate chosen in the app goes to the unit while Live sync is up: Follow USB is off, so
- *  the unit keeps a rate written to it rather than taking the computer's back. */
+/** Whether a rate chosen in the app goes to the unit while Live sync is up: the session's device
+ *  scope carries the rate (Scene only leaves it out), and Follow USB is off, so the unit keeps a
+ *  rate written to it rather than taking the computer's back. */
 function liveRateOpen(): boolean {
-  return liveSessionUp && followUsbState === false;
+  return liveSessionUp && getSettings().deviceScope === "all" && followUsbState === false;
 }
 
 // Theme mode (ThemeMode, ui/prefs.ts): auto follows the OS color scheme. A
@@ -1295,6 +1296,7 @@ const buildSimView = (): SimView =>
             live: liveSessionUp,
             dawIntegration: liveSessionUp && (unitIntegration?.active ?? false),
             rateOpen: liveRateOpen(),
+            rateFollowUsb: liveSessionUp && getSettings().deviceScope === "all" && followUsbState !== false,
           },
           {
             unitOnly: t().sim.lockUnitOnly,
