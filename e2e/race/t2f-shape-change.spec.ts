@@ -14,6 +14,8 @@ import {
   divergeAt,
   depthOf,
   hasProbe,
+  setDialogAnswer,
+  dialogsOf,
   type TraceEvent,
 } from "./fake-device";
 import { analyze, report, timeline, markTime, setsOf, getsOf, spans } from "./analyze";
@@ -166,10 +168,9 @@ test.describe("T2f shape-change", () => {
 
     // The device's rate reached the plan — the picker read 48000 a moment ago and the
     // only thing that has touched it since is the starting readback's read of 766 —
-    // and the picker locked with the session: while live the rate is the device's,
-    // settled at the write boundary instead.
+    // and the picker stays open with the session, since the fake answers Follow USB off.
     await expect(page.locator("#rate-picker")).toHaveValue(String(DEVICE_RATE));
-    await expect(page.locator("#rate-picker")).toBeDisabled();
+    await expect(page.locator("#rate-picker")).toBeEnabled();
 
     // Phase A — a device-side Follow USB change. The badge is the only Follow USB
     // control while live, so the notify has to reach it; the hook consumes the notify
@@ -207,17 +208,19 @@ test.describe("T2f shape-change", () => {
     await expect(badge).toHaveAttribute("data-state", "on");
     await expect(badge).toHaveAttribute("aria-pressed", "true");
     expect(afterFu).toHaveLength(0);
+    // …and the rate locks with it: with Follow USB on the unit takes the computer's rate back.
+    await expect(page.locator("#rate-picker")).toBeDisabled();
 
     // Phase B — the rate on the wire, ordered against an ordinary edit.
     //
-    // The picker is disabled while live, so this gesture is NOT one an operator can
-    // make; it is dispatched straight at the change handler on purpose. main.ts says
-    // why in as many words — "This is a guard rail, not an invariant: nothing below the
-    // UI enforces it, so a future path that mutates plan.sampleRate while live would
-    // bypass it" — and the second guard, the history's own rate refusal, is dead code
-    // until something takes that path. Phase C is what measures that guard; this phase
-    // gets the rate into one flush beside a fader step so the SEND ORDER is measurable
-    // on the wire and not only in the registration.
+    // Follow USB goes off again, which opens the picker, and the operator agrees to the
+    // re-clock. The rate lands once that answer is in, after the fader step dispatched in the
+    // same tick, so the fader is the edit made FIRST — and both still leave in one flush, the
+    // rate ahead of it: the order is translate's rather than the order they were made in.
+    await pushNotify(page, [[848, 0, 0, 0]]);
+    await expect(badge).toHaveAttribute("data-state", "off");
+    await expect(page.locator("#rate-picker")).toBeEnabled();
+    await setDialogAnswer(page, "Ok");
     await page.click("#btn-view-console");
     await expect(firstStripReadout(page)).toBeVisible();
     await waitQuiet(page, 400);
@@ -236,6 +239,7 @@ test.describe("T2f shape-change", () => {
       fader.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
     }, EDIT_RATE);
     await settleAfter(page, "rate-and-fader", 1200);
+    expect(await dialogsOf(page), "the operator was asked about the re-clock").toHaveLength(1);
 
     trace = await traceOf(page);
     const rateAt = markTime(trace, "rate-and-fader")!;
@@ -280,9 +284,9 @@ test.describe("T2f shape-change", () => {
     expect(depthAfter.undo - depthBefore.undo).toBe(1);
     expect(readoutAfter).not.toBe(readoutBefore);
 
-    // Phase C — the undo that touches sampleRate, while the session is up. The refusal
-    // is decided on the ENTRY, not on the address: one entry that touches the rate is
-    // refused whole, so the fader step inside it cannot be undone either.
+    // Phase C — the undo that touches sampleRate, while the session holds the rate: Follow
+    // USB on again. The refusal is decided on the ENTRY, not on the address: one entry that
+    // touches the rate is refused whole, so the fader step inside it cannot be undone either.
     //
     // The wording follows from that: this entry is NOT nothing but the rate, so the
     // mixed message fires rather than the rate-only one. The earlier wording named only
@@ -290,6 +294,8 @@ test.describe("T2f shape-change", () => {
     // this phase is in a position to check, since it is the only route into the guard
     // at all. It also says the step is held back rather than lost; the assertions below
     // are what make that true.
+    await pushNotify(page, [[848, 0, 0, 1]]);
+    await expect(page.locator("#rate-picker")).toBeDisabled();
     await mark(page, "undo-rate");
     await page.keyboard.press("Control+z");
     await expect(page.locator("#statusbar")).toContainText("the whole step is held back, not lost");

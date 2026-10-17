@@ -27,7 +27,7 @@ import {
   unwrittenRead,
 } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
-import { formatRate } from "./core/constraints";
+import { formatRate, trackCountDrop } from "./core/constraints";
 import { attackToVd, eqFreqToVd, gainToVd, levelToVd, vdToLevel } from "./core/control/vd";
 import { formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, STEREO_FADER } from "./core/control/params";
@@ -4258,7 +4258,6 @@ describe("the live session", () => {
     await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
     expect(picker.disabled).toBe(true);
     expect(($("btn-fetch") as HTMLButtonElement).disabled).toBe(true);
-    expect($<HTMLSelectElement>("rate-picker").disabled).toBe(true);
 
     const disconnects = shell.count("vd_disconnect");
     $("btn-live").click();
@@ -9208,6 +9207,121 @@ describe("replacing the plan while a write holds the link", () => {
 // every round — so a rate the plan takes after the settle goes out with no re-clock confirm and
 // no Track Count warning. Undo is where that can come from, and it is refused for the rate while
 // any device action holds the link, as the rate picker is.
+// A live session takes a rate chosen in the app while Follow USB is off, once the operator has
+// agreed to what it costs — the questions a write's settle asks. With Follow USB on the unit takes
+// the computer's rate back, so the rate stays locked.
+describe("the sample rate during Live sync", () => {
+  const rateWrites = (shell: TauriShell): number[] =>
+    shell.invokes.flatMap((cmd, i) =>
+      cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.SAMPLE_RATE.id ? [shell.args[i]!.value as number] : [],
+    );
+  const picker = (): HTMLSelectElement => $<HTMLSelectElement>("rate-picker");
+  const goLive = async (): Promise<void> => {
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+  };
+  const SEED = { [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000, [FOLLOW_USB_SEED]: 0, [TRACK_COUNT_SEED]: 8 };
+
+  it("writes a rate chosen while Follow USB is off once the operator agrees to what it costs", SLOW, async () => {
+    const shell = await bootDevice({}, true, SEED);
+    await goLive();
+    expect(picker().disabled).toBe(false);
+    chooseRate(96_000);
+    await vi.waitFor(() => expect(rateWrites(shell)).toEqual([96_000]), { timeout: 10_000 });
+    const drop = trackCountDrop(16, 96_000)!;
+    expect(confirms(shell)).toEqual([
+      `${t().confirm.reclock(formatRate(48_000), formatRate(96_000))} ${t().confirm.trackCountDrop(drop.from, drop.to)}`,
+    ]);
+    expect(picker().value).toBe("96000");
+  });
+
+  it("writes nothing when the operator declines, and shows the rate the plan holds", SLOW, async () => {
+    const shell = await bootDevice({}, false, SEED);
+    await goLive();
+    chooseRate(44_100);
+    await vi.waitFor(() => expect(confirms(shell)).toHaveLength(1), { timeout: 10_000 });
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled));
+    expect(rateWrites(shell)).toEqual([]);
+    expect(picker().value).toBe("48000");
+  });
+
+  it("refuses a rate while the microSD recorder holds a file", SLOW, async () => {
+    const shell = await bootDevice({}, true, { ...SEED, [PLAYBACK_SEED]: 1 });
+    await goLive();
+    chooseRate(44_100);
+    await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 10_000 });
+    expect(errors(shell)[0]).toBe(t().error.rateDuringPlaybackLive(formatRate(48_000), formatRate(44_100)));
+    expect(confirms(shell), "nothing asked").toEqual([]);
+    expect(rateWrites(shell)).toEqual([]);
+    expect(picker().value).toBe("48000");
+  });
+
+  // Armed once the session is up, so the reads its start takes answer from the table.
+  it.each([
+    [PLAYBACK_ADDR, (e: string) => t().error.playbackUnread(e)],
+    [TRACK_COUNT_ADDR, (e: string) => t().error.trackCountUnread(e)],
+  ])("writes nothing, and asks nothing, when %s cannot be read", SLOW, async (failing, message) => {
+    const armed = { on: false };
+    const tauri = deviceCommands({ "plugin:dialog|message": "Ok" }, SEED);
+    const read = tauri.vd_get as (a: Record<string, unknown>) => unknown;
+    tauri.vd_get = (a: Record<string, unknown>) => {
+      if (armed.on && `${a.paramId}:${a.x}:${a.y}` === failing) throw new Error("timeout");
+      return read(a);
+    };
+    const shell = (await bootApp({ tauri }))!;
+    await goLive();
+    armed.on = true;
+    chooseRate(44_100);
+    await vi.waitFor(() => expect(errors(shell)).toEqual([message("timeout")]), { timeout: 10_000 });
+    expect(confirms(shell), "nothing asked").toEqual([]);
+    expect(rateWrites(shell)).toEqual([]);
+    expect(picker().value).toBe("48000");
+  });
+
+  // A Scene-only session leaves the rate out of what it writes, so a rate chosen then would show in
+  // the app and never reach the unit.
+  it("keeps the rate locked for a session whose scope leaves the rate out", SLOW, async () => {
+    const shell = (await bootApp({
+      seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) },
+      tauri: deviceCommands({ "plugin:dialog|message": "Ok" }, SEED),
+    }))!;
+    await goLive();
+    expect(picker().disabled).toBe(true);
+    chooseRate(96_000);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(confirms(shell), "nothing asked").toEqual([]);
+    expect(rateWrites(shell)).toEqual([]);
+    expect(picker().value).toBe("48000");
+  });
+
+  it(
+    "keeps the rate locked while Follow USB is on, and opens it once the unit turns Follow USB off",
+    SLOW,
+    async () => {
+      const shell = await bootDevice({}, true, { ...SEED, [FOLLOW_USB_SEED]: 1 });
+      await goLive();
+      expect(picker().disabled).toBe(true);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.FOLLOW_USB.id, x: 0, y: 0, value: 0 }]);
+      await vi.waitFor(() => expect(picker().disabled).toBe(false), { timeout: 10_000 });
+    },
+  );
+
+  it("asks before an undo moves the rate, and writes it back once agreed", SLOW, async () => {
+    const shell = await bootDevice({}, true, SEED);
+    await goLive();
+    chooseRate(44_100);
+    await vi.waitFor(() => expect(rateWrites(shell)).toEqual([44_100]), { timeout: 10_000 });
+    // A press and release closes the open entry one macrotask later.
+    window.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 9 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 9 }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    await vi.waitFor(() => expect(rateWrites(shell)).toEqual([44_100, 48_000]), { timeout: 10_000 });
+    expect(confirms(shell)).toHaveLength(2);
+    expect(picker().value).toBe("48000");
+  });
+});
+
 describe("the sample rate during a write", () => {
   /** A press and release on the window: it closes the open undo entry one macrotask later. */
   const boundary = async (): Promise<void> => {
@@ -11844,6 +11958,21 @@ describe("the SIM view over a live session", () => {
     await transport().write("setup.followUsb", false);
     await vi.waitFor(() => expect(badge.dataset.state).toBe("off"));
     expect(setsOf(shell, PARAMS.FOLLOW_USB.id)).toEqual([[0, 0]]);
+  });
+
+  // The glass keeps the plan's rate until the operator answers, so the write itself is refused.
+  it("asks before a rate chosen on the glass during Live sync, and writes it once agreed", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, {
+      [`${PARAMS.SAMPLE_RATE.id}/0/0`]: 48_000,
+      [FOLLOW_USB_SEED]: 0,
+      [TRACK_COUNT_SEED]: 8,
+    });
+    await openSim();
+    await goLive();
+    await expect(transport().write("setup.samplingFrequency", 96_000)).rejects.toThrow("refused");
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.SAMPLE_RATE.id)).toEqual([[0, 96_000]]), { timeout: 10_000 });
+    expect(confirms(shell)).toHaveLength(1);
+    expect($<HTMLSelectElement>("rate-picker").value).toBe("96000");
   });
 
   it("names a unit operation the glass refuses on the status line", SLOW, async () => {

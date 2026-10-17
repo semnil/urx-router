@@ -639,6 +639,7 @@ export const ja: Messages = {
     lockUnitOnly: "本体で変更してください",
     lockUnitOp: "本体で操作してください",
     lockRateLinked: "デバイスとの接続中は変更できません",
+    lockRateFollowUsb: "Live 同期中に変えるには Follow USB をオフにしてください",
     lockIntegrationOff: "Live 同期中、Cubase・Nuendo・MixKey が本体とつながっている間に使えます",
   },
   shelf: {
@@ -1087,6 +1088,8 @@ export const ja: Messages = {
       `microSD レコーダーが再生中かどうかを読み取れませんでした (${message})。レート変更は再生を止めてしまうため、何も書き込んでいません。`,
     rateDuringPlayback: (deviceRate: string, planRate: string): string =>
       `microSD レコーダーの再生中・一時停止中は、本体のサンプリング周波数を ${deviceRate} から ${planRate} に変更できません。本体で再生を停止してから、もう一度書き込んでください。何も書き込んでいません。`,
+    rateDuringPlaybackLive: (deviceRate: string, planRate: string): string =>
+      `microSD レコーダーの再生中・一時停止中は、本体のサンプリング周波数を ${deviceRate} から ${planRate} に変更できません。本体で再生を停止してから、もう一度レートを選んでください。何も書き込んでいません。`,
     trackCountUnread: (message: string): string =>
       `microSD レコーダーの Track Count を読み取れませんでした (${message})。レート変更はこの値を元に戻せない形で下げることがあるため、何も書き込んでいません。`,
     followUsbWrite: (message: string, on = false): string =>

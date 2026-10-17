@@ -1,5 +1,7 @@
 import { test, expect, textContrast } from "./fixtures";
-import { LIVE_COMMANDS, stubTauriDevice } from "./tauri-stub";
+import { LIVE_COMMANDS, dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
+import { chooseOption } from "./choose-option";
+import { PARAMS } from "../src/core/control/params";
 
 // What the toolbar says and refuses while a live session holds the device.
 //
@@ -42,4 +44,34 @@ test("a live session prints the tag alone and locks the model picker", async ({ 
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
   await expect(page.locator("#live-tally")).toBeHidden();
   await expect(page.locator("#model-picker")).toBeEnabled();
+});
+
+// With Follow USB off the rate picker stays open during a session, and a rate chosen there reaches
+// the unit once the operator has agreed to the re-clock.
+test("a live session with Follow USB off writes a rate chosen on the picker once it is agreed", async ({ page }) => {
+  await stubTauriDevice(page, {
+    commands: LIVE_COMMANDS,
+    confirm: "Ok",
+    values: {
+      [PARAMS.SAMPLE_RATE.id]: 48_000,
+      [PARAMS.FOLLOW_USB.id]: 0,
+      [PARAMS.SD_PLAYBACK.id]: 0,
+      [PARAMS.SD_REC_TRACK_COUNT.id]: 8,
+    },
+  });
+  await page.goto("/");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("#rate-picker")).toBeEnabled();
+
+  await chooseOption(page.locator("#rate-picker"), "44100");
+  await expect
+    .poll(async () => (await writesOf(page)).filter(([id]) => id === PARAMS.SAMPLE_RATE.id))
+    .toEqual([[PARAMS.SAMPLE_RATE.id, 44_100]]);
+  expect(
+    (await dialogsOf(page)).filter((m) => m.includes("44.1 kHz")),
+    "the re-clock was asked",
+  ).toHaveLength(1);
+  await expect(page.locator("#rate-picker")).toHaveValue("44100");
 });
