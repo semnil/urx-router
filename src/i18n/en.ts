@@ -105,6 +105,8 @@ export const en = {
     sideShowing: (pair: string, shown: string) => `${pair}, showing ${shown}`,
     // The gain knob's tooltip when another channel reads the same jack or source.
     gainShared: (others: string) => `Shared with ${others}`,
+    // The A.GAIN label while the jack's Clip Safe is holding the gain down.
+    clipSafeLabel: fixed("SAFE"),
     eq: dev("EQ"),
     // The FX strip's processing chip. Named for what happens there rather than for the
     // strip — the scribble above it already reads FX 1 / FX 2 — and the unit's own
@@ -466,6 +468,7 @@ export const en = {
     // What the Ф row is announced as.
     phaseName: tr("Phase"),
     clipSafe: dev("Clip Safe"),
+    clipSafeEngaged: tr("Clip Safe is holding the gain down"),
     hiZ: dev("Hi-Z"),
     insertFx: dev("Insert FX"),
     // The selector's own row, inside a section already headed "Insert FX". Naming the row

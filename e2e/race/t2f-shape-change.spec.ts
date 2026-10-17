@@ -21,6 +21,7 @@ import {
 import { analyze, report, timeline, markTime, setsOf, getsOf, spans } from "./analyze";
 import { readoutOf } from "./ui";
 import { cueNotifyAddrs } from "../../src/core/control/translate";
+import { MIC_LINE_JACK_BASE, PARAMS } from "../../src/core/control/params";
 import { getModel } from "../../src/models";
 
 // T2f shape-change — the two addresses that are in the plan's world without being in
@@ -81,8 +82,15 @@ const UDK_FUNCTION_ID = 770;
 /** The [CUE] flags main.ts registers after Follow USB and the LCD selection, each with the
  *  instances the unit sets beside it. */
 const CUE_ADDRS = cueNotifyAddrs(getModel("URX44V"));
+/** Each MIC/LINE jack's engaged Clip Safe, which every session registers after the [CUE] flags. */
+const CLIP_SAFE_ADDRS: Array<[number, number, number]> = getModel("URX44V")
+  .nodes.flatMap((n) => {
+    const base = MIC_LINE_JACK_BASE[n.id];
+    return base === undefined ? [] : [base, base + 1];
+  })
+  .map((j): [number, number, number] => [PARAMS.CLIP_SAFE_ENGAGED.id, 0, j]);
 /** The host-owned tail of the registration, in the order main.ts's addrs hook appends it. */
-const HOST_TAIL: Array<[number, number, number]> = [[848, 0, 0], [762, 0, 0], ...CUE_ADDRS];
+const HOST_TAIL: Array<[number, number, number]> = [[848, 0, 0], [762, 0, 0], ...CUE_ADDRS, ...CLIP_SAFE_ADDRS];
 const UDK_SLOTS = 16;
 
 /** Whole-device reconciles that began after `at` (see RATE_ADDR). */

@@ -66,6 +66,7 @@ export const ja: Messages = {
     power: "オン/オフ",
     sideShowing: (pair: string, shown: string) => `${pair}、${shown} を表示中`,
     gainShared: (others: string) => `${others} と共有`,
+    clipSafeLabel: "SAFE",
     eq: "EQ",
     effect: "EFFECT",
     effectHint:
@@ -337,6 +338,7 @@ export const ja: Messages = {
     phase: "Ф",
     phaseName: "フェーズ",
     clipSafe: "Clip Safe",
+    clipSafeEngaged: "Clip Safe がゲインを下げています",
     hiZ: "Hi-Z",
     insertFx: "Insert FX",
     insertFxType: "EFFECT TYPE",

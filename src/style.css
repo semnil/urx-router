@@ -1389,6 +1389,12 @@ input[type="range"]:focus-visible,
   background: var(--led-face);
   border-color: var(--led-ink);
 }
+/* Clip Safe's ON while the jack's Clip Safe is holding the gain down, as the unit lights it orange. */
+#inspector .toggle button.on.clip-safe {
+  color: var(--warn-ink);
+  background: var(--warn);
+  border-color: var(--warn);
+}
 
 /* Read-only toggle (e.g. CH -> FX Pre/Post, which the device rejects from
    software): shows the current state but cannot be changed. */
@@ -2663,6 +2669,17 @@ input[type="range"]:focus-visible,
 }
 .con-gain .val {
   font: 700 14px var(--mono);
+}
+/* The jack's Clip Safe holding the gain down: the label reads SAFE, and the value and the knob's rim
+   take the warn colour, as the unit lights its [Clip Safe] orange. */
+.con-gain.clip-safe .lbl,
+.con-gain.clip-safe .val {
+  color: var(--warn);
+}
+.con-gain.clip-safe .con-knob {
+  box-shadow:
+    0 0 0 2px var(--warn),
+    var(--ctl-shadow);
 }
 /* Rotary gain knob: drag (or arrows) to set, double-click to reset. */
 .con-knob {

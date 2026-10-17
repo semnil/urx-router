@@ -9232,6 +9232,39 @@ describe("replacing the plan while a write holds the link", () => {
   });
 });
 
+// The unit announces when a jack's Clip Safe is holding the gain down, and lights its [Clip Safe]
+// orange then. Every session follows it, and the CONSOLE's A.GAIN and the Inspector's Clip Safe ON
+// show it while it lasts.
+describe("an engaged Clip Safe during Live sync", () => {
+  const gainBox = (): HTMLElement =>
+    [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")]
+      .find((st) => st.getAttribute("aria-label") === "C H 1")!
+      .querySelector<HTMLElement>(".con-gain")!;
+  const clipSafeOn = (): HTMLButtonElement | null =>
+    document.querySelector<HTMLButtonElement>("#inspector [data-clip-safe-jack] .toggle button");
+
+  it("shows on the CONSOLE's A.GAIN and the Inspector's Clip Safe while the unit announces it", SLOW, async () => {
+    const shell = await bootDevice();
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    pressNode("ch1");
+    $("btn-view-console").click();
+    expect(gainBox().classList.contains("clip-safe"), "the premise: nothing announced").toBe(false);
+    expect(gainBox().querySelector(".lbl")?.textContent).toBe("A.GAIN");
+
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 1 }]);
+    expect(gainBox().classList.contains("clip-safe")).toBe(true);
+    expect(gainBox().querySelector(".lbl")?.textContent).toBe(t().console.clipSafeLabel);
+    expect(clipSafeOn()?.classList.contains("clip-safe"), "the Inspector's Clip Safe ON").toBe(true);
+    expect(clipSafeOn()?.getAttribute("aria-description")).toBe(t().inspector.clipSafeEngaged);
+
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 0 }]);
+    expect(gainBox().classList.contains("clip-safe")).toBe(false);
+    expect(gainBox().querySelector(".lbl")?.textContent).toBe("A.GAIN");
+    expect(clipSafeOn()?.classList.contains("clip-safe")).toBe(false);
+  });
+});
+
 // A write settles the sample rate once, at its start, and then converges the plan it re-reads
 // every round — so a rate the plan takes after the settle goes out with no re-clock confirm and
 // no Track Count warning. Undo is where that can come from, and it is refused for the rate while
