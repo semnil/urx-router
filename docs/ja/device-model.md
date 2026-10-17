@@ -244,7 +244,8 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 
 > **Post Fader Send for FX (DAW Integration メニュー、V1.2 以降)。** 各 FX Bus は MIX Bus から
 > **post-fader** で追加供給できる (FX 1 ← MIX n、FX 2 ← MIX n)。対応 DAW ソフト接続時のみ表示される
-> DAW Integration 専用機能で、単体の制御アドレスを持たないため、本ツールではモデル化**しない**。
+> DAW Integration 専用の設定 (FX 1 は `879`、FX 2 は `880`) で、プランではモデル化**しない**。SIM ビューは
+> DAW Integration 中の Live 同期の間だけ、これを表示して書く (architecture.md の「SETUP > Software Integration」)。
 
 ### 4. ストリーミング / モニタソース (`source`, 受け口 1 本)
 

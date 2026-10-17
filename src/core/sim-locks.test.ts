@@ -12,10 +12,11 @@ const REASONS = {
   trackCountLive: "trackCountLive",
   fx2Rate: "fx2Rate",
   deviceDriven: "deviceDriven",
+  integrationOff: "integrationOff",
 };
 const model = getModel("URX44V");
 const paths = [...simBindings(model).keys()];
-const OFFLINE: SimLockState = { linked: false, live: false };
+const OFFLINE: SimLockState = { linked: false, live: false, dawIntegration: false };
 
 function locks(state = OFFLINE, rate = 48_000): SimLockSpec[] {
   const plan = defaultPlan("URX44V");
@@ -47,10 +48,31 @@ describe("the controls the SIM view holds shut", () => {
     expect(reasonFor(all, { kind: "screen", id: "setup.patch" }), "Output Patch is the plan's").toBeNull();
   });
 
+  it("opens Software Integration and its sends only while Live sync is up on a unit a compatible DAW holds", () => {
+    const targets = [
+      { kind: "screen", id: "setup.integration" } as const,
+      path("setup.integration.fx1Send"),
+      path("setup.integration.fx2Send"),
+    ];
+    for (const target of targets) {
+      const name = JSON.stringify(target);
+      expect(reasonFor(locks(), target), name).toBe("integrationOff");
+      expect(reasonFor(locks({ linked: true, live: true, dawIntegration: false }), target), name).toBe(
+        "integrationOff",
+      );
+      expect(reasonFor(locks({ linked: true, live: false, dawIntegration: true }), target), `${name} no session`).toBe(
+        "integrationOff",
+      );
+      expect(reasonFor(locks({ linked: true, live: true, dawIntegration: true }), target), name).toBeNull();
+    }
+  });
+
   it("holds a channel's PRE into an FX bus while Live sync is up, which the unit does not take, and nothing else of the send", () => {
     expect(reasonFor(locks(), path("ch.ch1.send.fx1.pre")), "offline the tap is the plan's").toBeNull();
-    expect(reasonFor(locks({ linked: true, live: false }), path("ch.ch1.send.fx1.pre"))).toBeNull();
-    const all = locks({ linked: true, live: true });
+    expect(
+      reasonFor(locks({ linked: true, live: false, dawIntegration: false }), path("ch.ch1.send.fx1.pre")),
+    ).toBeNull();
+    const all = locks({ linked: true, live: true, dawIntegration: false });
     expect(paths).toContain("ch.ch1.send.fx1.pre");
     expect(reasonFor(all, path("ch.ch1.send.fx1.pre"))).toBe("notAccepted");
     expect(reasonFor(all, path("ch.ch1.send.fx2.pre"))).toBe("notAccepted");
@@ -68,10 +90,10 @@ describe("the controls the SIM view holds shut", () => {
   it("holds the rate while the device link is held, and the Track Count while Live sync is up", () => {
     expect(reasonFor(locks(), { kind: "screen", id: "setup.rate" })).toBeNull();
     expect(reasonFor(locks(), path("sd.trackCount"))).toBeNull();
-    const linked = locks({ linked: true, live: false });
+    const linked = locks({ linked: true, live: false, dawIntegration: false });
     expect(reasonFor(linked, { kind: "screen", id: "setup.rate" })).toBe("rateLinked");
     expect(reasonFor(linked, path("sd.trackCount"))).toBeNull();
-    const live = locks({ linked: true, live: true });
+    const live = locks({ linked: true, live: true, dawIntegration: false });
     expect(reasonFor(live, path("sd.trackCount"))).toBe("trackCountLive");
   });
 

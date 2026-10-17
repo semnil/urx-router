@@ -154,14 +154,14 @@ test("draws the ground around the LCD the same in both themes", async ({ page })
   expect(dark).toContain("dark");
 });
 
-test("holds the settings only the unit changes shut on the LCD, with the reason as its tooltip", async ({ page }) => {
+test("holds Software Integration shut on the LCD with no session, with the reason as its tooltip", async ({ page }) => {
   await openSim(page);
   const lcd = sim(page).locator(".lcd[data-screen]:not([inert])");
   await lcd.getByRole("button", { name: "SETUP", exact: true }).click();
   await expect(sim(page).locator('.lcd[data-screen="setup"]:not([inert])')).toHaveCount(1);
   const integration = lcd.getByRole("button", { name: /Software\s*Integration/ });
   await expect(integration).toHaveAttribute("aria-disabled", "true");
-  await expect(integration).toHaveAttribute("title", en.sim.lockUnitOnly);
+  await expect(integration).toHaveAttribute("title", en.sim.lockIntegrationOff);
   await expect(integration.locator(".lock-mark")).toHaveCount(1);
   const language = lcd.getByRole("button", { name: "Language", exact: true });
   await expect(language, "a setting the app writes to the unit is not held").not.toHaveAttribute("aria-disabled");
@@ -681,6 +681,47 @@ test("the LCD's [Sends] destination is the unit's while Live sync is up, and the
   // Leaving the SIM view gives the session's meters back to the CONSOLE.
   await page.click("#btn-view-console");
   await expect(page.locator("#sim-host")).toBeHidden();
+});
+
+// SETUP > Software Integration opens on the unit only while a compatible DAW holds it (816 not 0),
+// and so on the LCD only then and only while Live sync is up: its two sends are the unit's, read by
+// the session, followed through their notifies and written when picked on the glass, and held shut
+// in place when the DAW lets go of the unit with the screen open.
+test("opens Software Integration on the LCD while a DAW holds the unit, and writes a send picked there", async ({
+  page,
+}) => {
+  const DAW: number = PARAMS.DAW_INTEGRATION.id;
+  const FX2: number = PARAMS.POST_FADER_SEND_FX2.id;
+  await stubTauriDevice(page, { values: { [FX2]: 290 }, commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await lcd(page).getByRole("button", { name: "SETUP", exact: true }).click();
+  const integration = lcd(page).getByRole("button", { name: /Software\s*Integration/ });
+  await expect(integration, "no DAW holds the unit").toHaveAttribute("aria-disabled", "true");
+  await expect(integration).toHaveAttribute("title", en.sim.lockIntegrationOff);
+
+  await setDeviceValue(page, DAW, 0, 2);
+  await notifyParam(page, DAW, 0, 2);
+  await expect(integration).not.toHaveAttribute("aria-disabled");
+  await integration.click();
+  const fx2 = lcd(page).getByLabel(/^for FX2: /);
+  await expect(fx2, "the send the unit holds").toHaveAttribute("aria-label", /^for FX2: MIX 2 /);
+  await fx2.click();
+  await lcd(page).getByRole("option", { name: "MIX 1", exact: true }).click();
+  await expect.poll(async () => (await writesOf(page)).flatMap(([id, v]) => (id === FX2 ? [v] : []))).toEqual([288]);
+  await expect(fx2).toHaveAttribute("aria-label", /^for FX2: MIX 1 /);
+
+  // The DAW lets go while the screen is open: the sends stay where they are and take nothing.
+  await setDeviceValue(page, DAW, 0, 0);
+  await notifyParam(page, DAW, 0, 0);
+  for (const send of [lcd(page).getByLabel(/^for FX1: /), fx2]) {
+    await expect(send).toHaveAttribute("aria-disabled", "true");
+    await expect(send).toHaveAttribute("title", en.sim.lockIntegrationOff);
+  }
 });
 
 // The unit's [CUE] is live-session state outside the plan: while Live sync is up the LCD shows

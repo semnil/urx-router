@@ -767,6 +767,16 @@ export const PARAMS = {
   /** SETUP > [Operation Mode] (global, y0): 0 = Standard, 1 = Simple. The unit announces a
    *  change. Read for the SIM view; never written. */
   OPERATION_MODE: { id: 817, encoding: "raw", planExternal: true, readOnly: true },
+  /** DAW Integration (global, y0): 0 while no compatible software (Cubase, Nuendo, MixKey) holds
+   *  the unit, non-zero while one does. SETUP > [Software Integration] is usable on the unit only
+   *  while it is non-zero. The unit announces a change. Read for the SIM view; never written. */
+  DAW_INTEGRATION: { id: 816, encoding: "raw", planExternal: true, readOnly: true },
+  /** SETUP > Software Integration > Post Fader Send for FX (global, y0): the MIX bus FX 1 (879) and
+   *  FX 2 (880) are fed from post-fader during DAW Integration — 288 = MIX 1, 290 = MIX 2. Readable
+   *  and writable, announced on every change. A setting rather than a routing choice, so never part
+   *  of the plan; the live session reads and writes them directly (`daw-integration.ts`). */
+  POST_FADER_SEND_FX1: { id: 879, encoding: "raw", sceneExternal: true, planExternal: true },
+  POST_FADER_SEND_FX2: { id: 880, encoding: "raw", sceneExternal: true, planExternal: true },
   /** Whether a MIC/LINE jack's Clip Safe is holding its gain down (y = jack 0..), the state its
    *  [Clip Safe] is lit orange for. The unit announces it while Clip Safe is on. Read for the SIM
    *  view; never written. */

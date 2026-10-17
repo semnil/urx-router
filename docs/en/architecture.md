@@ -396,6 +396,11 @@ carries a one-line map of the same directories and points here.
       it, `main.ts` reads it at a Live-sync start, takes its notifies through the follow `intercept`, reads
       it again 1 s after the unit announces a rate above 96 kHz — the unit moves FX 2 to FX 1 then and
       announces nothing — and writes the destination the SIM view's LCD chooses
+    - `daw-integration.ts` SETUP > Software Integration: whether a compatible DAW holds the unit (816, read
+      only, anything but 0 while one does) and Post Fader Send for FX (879 / 880, MIX 1 288, MIX 2 290), with
+      their read and write. On an experimental launch `main.ts` reads all three at a Live-sync start, takes their
+      notifies through the follow `intercept`, and writes a send the SIM view's LCD picks while a DAW holds the
+      unit
     - `cue.ts` the unit's [CUE] flags, held outside the plan for the live session (see "CUE" under "What
       the app models, and what it leaves to the unit"): `CueSet` applies the unit's rules to every change
       from either side, `CueEchoes` tells the unit's answer to the app's own write from a press on the panel,
@@ -1852,12 +1857,20 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   Refused like a path the table does not carry, one of these would take the whole edit back with it. A value the plan holds but the edit cannot take in its present state (PAN/BAL on an unlinked pair, an
   unwired send, an FX 2 send at a rate that takes FX 2 out, the recorder's Track Count
   while Live sync is up) is refused. A path neither the table nor the unit's values below carry — the scenes and
-  the card, Software Integration — shows the simulator's value and takes no edit: the simulator puts it back.
+  the card — shows the simulator's value and takes no edit: the simulator puts it back.
 - **HOME's [Sends] destination** is the unit's UI state rather than the plan's (`sends-target.ts`). The SIM view is
   built once the experimental gate resolves on, so no other launch builds it or reads the destination. While Live
   sync is up the LCD shows the destination the unit holds and follows a choice made on the unit's panel, and a
   destination chosen on the LCD is written to the unit — FX 2 is refused above 96 kHz. With no session the LCD
   keeps a destination of its own, which reaches nothing.
+- **SETUP > Software Integration** is the unit's setting rather than the plan's (`daw-integration.ts`). The unit opens
+  it only while a compatible DAW (Cubase, Nuendo, MixKey) holds it, which `816` reads as anything but 0, and the LCD
+  opens it only then and only while Live sync is up. A session reads `816` and the two Post Fader Send for FX values
+  (`879` for FX 1, `880` for FX 2), registers all three, reads them again once registered — a DAW that took or let
+  go of the unit in between announced itself to nobody — and follows their announcements, an announcement or a pick made
+  while that read is out standing over its answer for that one value, the read's answer taken for the others. The LCD shows the sends the session holds, and a send picked on it is
+  written to the unit behind every unit write queued so far, unless no DAW holds the unit by its turn: it is then
+  dropped and the sends are read again.
 - **The [CUE] flags** are live-session state rather than the plan's (`cue.ts`; see "CUE" under "What the app models,
   and what it leaves to the unit"). While Live sync is up the LCD shows every strip's flag as the session holds it
   and follows every change of it, from any surface or the unit's panel, and a [CUE] press on the LCD reaches the
@@ -1886,8 +1899,9 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
 - **What it holds shut** is drawn on the LCD before it is pressed (`sim-locks.ts`, handed to the simulator's
   `setLocks()` at mount, on every plan change and when the device link is taken or let go): a held control keeps its
   place with a padlock at its top right and the reason as its tooltip, and takes no touch, key or drag. Held are the
-  SETUP > GENERAL screens of what the app neither reads nor writes — the operation mode, Software Integration and the
-  unit's clock ("Change it on the device"), the unit's own operations and USB Storage
+  SETUP > GENERAL screens of what the app neither reads nor writes — the operation mode and the
+  unit's clock ("Change it on the device"), Software Integration and its two sends — held in place on a screen already
+  open — except while Live sync is up on a unit a compatible DAW holds ("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"), the unit's own operations and USB Storage
   Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus while Live sync is up, as on the CONSOLE
   and in the Inspector (their wording), the sampling frequency while the device link is held, the recorder's
   Track Count while Live sync is up and
