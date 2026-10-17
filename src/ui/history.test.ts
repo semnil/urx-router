@@ -26,6 +26,9 @@ interface Harness {
   edit: (mutate: (p: Plan) => void) => void;
   /** Every key set `onAuthored` reported, in the order it reported them. */
   authored: string[][];
+  /** What `confirmRate` answers, and every rate it was asked about. */
+  confirmRate: ((rate: number) => Promise<boolean> | null) | null;
+  rateAsked: number[];
 }
 
 function harness(): Harness {
@@ -33,7 +36,16 @@ function harness(): Harness {
   const h: Partial<Harness> &
     Pick<
       Harness,
-      "reflects" | "statuses" | "blocked" | "rateLocked" | "patchRefusal" | "patchAsked" | "depthReports" | "authored"
+      | "reflects"
+      | "statuses"
+      | "blocked"
+      | "rateLocked"
+      | "patchRefusal"
+      | "patchAsked"
+      | "depthReports"
+      | "authored"
+      | "confirmRate"
+      | "rateAsked"
     > = {
     reflects: [],
     statuses: [],
@@ -43,12 +55,15 @@ function harness(): Harness {
     patchAsked: [],
     depthReports: 0,
     authored: [],
+    confirmRate: null,
+    rateAsked: [],
   };
   const history = new PlanHistory({
     getPlan: () => plan,
     reflect: (touch) => h.reflects.push(touch),
     blocked: () => h.blocked,
     rateLocked: () => h.rateLocked,
+    confirmRate: (rate) => (h.rateAsked.push(rate), h.confirmRate ? h.confirmRate(rate) : null),
     patchBlocked: (patch) => (h.patchAsked.push(patch), h.patchRefusal),
     labelOf: (id) => id.toUpperCase(),
     onStatus: (msg) => h.statuses.push(msg),
@@ -769,6 +784,38 @@ describe("refusals", () => {
     h.history.undo();
     settle();
     expect(h.plan.sampleRate).not.toBe(96000);
+    expect(h.plan.nodeParams.ch1).toBeUndefined();
+  });
+
+  // A session that takes the rate asks first: the entry waits on the answer, a yes applies it and
+  // a no leaves it standing for the next press.
+  it.each([
+    [true, false],
+    [false, true],
+  ])("asks before an undo moves the rate the unit takes (agreed: %s)", async (agreed, kept) => {
+    const h = harness();
+    h.edit((p) => (p.sampleRate = 96000));
+    idle();
+    let answer!: (ok: boolean) => void;
+    h.confirmRate = () => new Promise<boolean>((r) => (answer = r));
+    h.history.undo();
+    expect(h.rateAsked).toEqual([48000]);
+    expect(h.plan.sampleRate, "nothing moves while the question is open").toBe(96000);
+    answer(agreed);
+    await Promise.resolve();
+    await Promise.resolve();
+    settle();
+    expect(h.plan.sampleRate === 96000).toBe(kept);
+    expect(h.rateAsked, "asked once").toEqual([48000]);
+  });
+
+  it("asks nothing for an undo that leaves the rate alone", () => {
+    const h = harness();
+    h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
+    idle();
+    h.confirmRate = () => Promise.resolve(false);
+    h.history.undo();
+    expect(h.rateAsked).toEqual([]);
     expect(h.plan.nodeParams.ch1).toBeUndefined();
   });
 

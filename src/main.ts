@@ -338,7 +338,15 @@ function renderFollowUsbBadge(): void {
 function setFollowUsbBadge(state: boolean | null): void {
   followUsbState = state;
   renderFollowUsbBadge();
+  // The rate picker opens during Live sync only while Follow USB is off.
+  syncDeviceActionUi();
   simView?.unitStateChanged();
+}
+
+/** Whether a rate chosen in the app goes to the unit while Live sync is up: Follow USB is off, so
+ *  the unit keeps a rate written to it rather than taking the computer's back. */
+function liveRateOpen(): boolean {
+  return liveSessionUp && followUsbState === false;
 }
 
 // Theme mode (ThemeMode, ui/prefs.ts): auto follows the OS color scheme. A
@@ -1286,12 +1294,14 @@ const buildSimView = (): SimView =>
             linked: deviceLinkHolder !== null,
             live: liveSessionUp,
             dawIntegration: liveSessionUp && (unitIntegration?.active ?? false),
+            rateOpen: liveRateOpen(),
           },
           {
             unitOnly: t().sim.lockUnitOnly,
             notAccepted: t().inspector.prePostLcdOnly,
             unitOp: t().sim.lockUnitOp,
             rateLinked: t().sim.lockRateLinked,
+            rateFollowUsb: t().sim.lockRateFollowUsb,
             trackCountLive: t().inspector.sdRecTrackCountLive,
             fx2Rate: t().inspector.fx2RateLocked,
             deviceDriven: t().dynTuning.insfx.deviceOnlyTag,
@@ -2145,15 +2155,12 @@ function syncDeviceActionUi(): void {
   // URX44V the session survives the re-clock. During a live START it must not: the
   // session is not up yet, so the same handler would take the connecting branch.
   followUsbBadge.disabled = deviceLinkHolder !== null && !liveSessionUp;
-  // A rate change re-clocks the device and renegotiates the USB stream, which
-  // interrupts audio mid-session and puts the held connection at risk. The rate is
-  // settled at the write boundary instead (settleSampleRate), so while live the
-  // picker only reports what the device is running at. Locked here, beside the
-  // other device actions, so no early return can leave it stuck disabled.
-  //
-  // This is a guard rail, not an invariant: nothing below the UI enforces it, so a
-  // future path that mutates plan.sampleRate while live would bypass it.
-  ratePicker.disabled = deviceLinkHolder !== null;
+  // A write settles the rate at its boundary (settleSampleRate), so while one holds the link the
+  // picker only reports the rate. A live session takes a rate chosen here once the operator has
+  // been asked what it costs (confirmLiveRate), and only while Follow USB is off: with it on the
+  // unit takes the computer's rate back. Locked here, beside the other device actions, so no
+  // early return can leave it stuck disabled.
+  ratePicker.disabled = deviceLinkHolder !== null && !liveRateOpen();
   // The model picker locks for the live SESSION only, not for every holder: a switch
   // replaces the plan wholesale, which a session cannot survive (loadPlan ends it),
   // and while live the picker is the only surface naming the unit on the wire — the
@@ -3733,7 +3740,13 @@ function applySimEdit(edit: SimEdit): boolean {
       break;
     // The toolbar's rate picker is locked while the device link is held, and so is this.
     case "rate":
-      if (deviceLinkHolder !== null) return false;
+      if (deviceLinkHolder !== null && !liveRateOpen()) return false;
+      // During Live sync the LCD's choice waits for the operator's answer, and the glass shows
+      // the plan's rate until then.
+      if (deviceLinkHolder !== null) {
+        pickSampleRate(edit.rate);
+        return false;
+      }
       chooseSampleRate(edit.rate);
       break;
     case "deviceWrite":
@@ -3765,6 +3778,62 @@ function writeHeldDeviceValue(param: number, y: number, value: number): void {
     .catch((err: unknown) => stopLiveOnError(errorText(err)));
 }
 
+/**
+ * Ask the operator about a rate a live session would write to the unit, the way a write's settle
+ * asks: refused while the microSD recorder holds a file, and confirmed with what it costs the
+ * recorder's Track Count otherwise. Null when nothing needs asking — no session, or the rate the
+ * plan already holds. A read that fails says so and answers no.
+ */
+function confirmLiveRate(rate: number): Promise<boolean> | null {
+  if (!liveSessionUp || rate === plan.sampleRate) return null;
+  const deviceRate = formatRate(plan.sampleRate);
+  const nextRate = formatRate(rate);
+  return (async () => {
+    const recorder = hasRecorder(modelId);
+    let held: boolean;
+    try {
+      held = recorder ? await readSdPlaybackHeld() : false;
+    } catch (err) {
+      showError(t().error.playbackUnread(errorText(err)));
+      return false;
+    }
+    if (held) {
+      showError(t().error.rateDuringPlaybackLive(deviceRate, nextRate));
+      return false;
+    }
+    let cost: { from: number; to: number } | null;
+    try {
+      cost = recorder ? trackCountDrop(await readTrackCount(), rate) : null;
+    } catch (err) {
+      showError(t().error.trackCountUnread(errorText(err)));
+      return false;
+    }
+    const drop = cost ? t().confirm.trackCountDrop(cost.from, cost.to) : "";
+    const ask = [t().confirm.reclock(deviceRate, nextRate), drop].filter(Boolean).join(" ");
+    if (await confirmDialog(ask)) return liveRateOpen();
+    setStatus(t().status.canceled);
+    return false;
+  })();
+}
+
+/** Take a rate chosen in the app: during Live sync once the operator has agreed to what it costs,
+ *  and not at all while the link holds the rate. */
+function pickSampleRate(rate: number): void {
+  if (deviceLinkHolder !== null && !liveRateOpen()) {
+    ratePicker.value = String(plan.sampleRate);
+    return;
+  }
+  const asked = confirmLiveRate(rate);
+  if (!asked) {
+    chooseSampleRate(rate);
+    return;
+  }
+  ratePicker.value = String(plan.sampleRate);
+  void asked.then((ok) => {
+    if (ok) chooseSampleRate(rate);
+  });
+}
+
 function chooseSampleRate(rate: number): void {
   // The recorder's Track Count goes with the rate, one way: see setPlanSampleRate.
   setPlanSampleRate(plan, rate);
@@ -3776,7 +3845,7 @@ function chooseSampleRate(rate: number): void {
   setStatus(t().status.sampleRate(formatRate(plan.sampleRate)));
 }
 
-ratePicker.addEventListener("change", () => chooseSampleRate(Number(ratePicker.value)));
+ratePicker.addEventListener("change", () => pickSampleRate(Number(ratePicker.value)));
 
 $("btn-new").addEventListener(
   "click",
@@ -4031,9 +4100,10 @@ planHistory = new PlanHistory({
         : modalOpen() && !dynScreen.isOpen()
           ? t().status.undoModal
           : null,
-  // Every holder, as the rate picker locks: a write converges the plan it re-reads each
-  // round, and a session holds the rate at the unit's.
-  rateLocked: () => deviceLinkHolder !== null,
+  // As the rate picker locks: a write converges the plan it re-reads each round, and a session
+  // takes a rate only while Follow USB is off, once the operator has agreed to it.
+  rateLocked: () => deviceLinkHolder !== null && !liveRateOpen(),
+  confirmRate: (rate) => confirmLiveRate(rate),
   // Asked of the state the entry would leave behind rather than of the keys it carries: an
   // undo turns a switch on as much as the gesture it reverses did, and which of the two an
   // entry moved does not decide the answer. The patch is applied to a copy, which is the

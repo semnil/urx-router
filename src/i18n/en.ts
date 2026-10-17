@@ -867,6 +867,7 @@ export const en = {
     lockUnitOnly: tr("Change it on the device"),
     lockUnitOp: tr("Operate it on the device"),
     lockRateLinked: tr("Cannot be changed while connected to the device"),
+    lockRateFollowUsb: tr("Turn Follow USB off to change it during Live sync"),
     lockIntegrationOff: tr("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"),
   },
   shelf: {
@@ -1397,6 +1398,8 @@ export const en = {
       `Whether the microSD recorder is playing could not be read (${message}), and a rate change ends a playback. Nothing was written.`,
     rateDuringPlayback: (deviceRate: string, planRate: string): string =>
       `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is playing or paused. Stop the playback on the device, then write again. Nothing was written.`,
+    rateDuringPlaybackLive: (deviceRate: string, planRate: string): string =>
+      `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is playing or paused. Stop the playback on the device, then choose the rate again. Nothing was written.`,
     trackCountUnread: (message: string): string =>
       `The microSD recorder's Track Count could not be read (${message}), and a rate change can lower it for good. Nothing was written.`,
     followUsbWrite: (message: string, on = false): string =>

@@ -1005,8 +1005,8 @@ test.describe("T3 undo", () => {
     await releaseBarrier(page);
     await waitQuiet(page, 1500, 120_000);
 
-    // (i) a sampleRate-touching entry while live. Recorded offline first, because the
-    // rate picker locks the moment a session is up.
+    // (i) a sampleRate-touching entry while live. Recorded offline first, so the entry
+    // exists before the session starts.
     const rateBefore = await page.locator("#rate-picker").inputValue();
     await chooseOption(page.locator("#rate-picker"), "96000");
     // The rate change really did record an entry — without this probe, (i) below
@@ -1048,10 +1048,12 @@ test.describe("T3 undo", () => {
     expect(verdicts[7]).toBe(BUSY_REFUSAL); // (g)
     // (i) — PINNED as an unreachable refusal while live. The rate change above IS
     // undoable while offline (probed), and activating a session runs the readback's
-    // rerenderPlan, which resets BOTH stacks; the picker is disabled from then on. So no
-    // sampleRate entry can exist while live. The refusal is reached from an offline
-    // write instead (src/main.device.test.ts, "the sample rate during a write").
-    expect(rateLocked).toBe(true);
+    // rerenderPlan, which resets BOTH stacks, so no sampleRate entry recorded before the
+    // session exists in it. The picker opens with the session, since the fake answers
+    // Follow USB off; what a rate chosen then asks is pinned in src/main.device.test.ts
+    // ("the sample rate during Live sync"), and the refusal from an offline write in "the
+    // sample rate during a write".
+    expect(rateLocked).toBe(false);
     expect(verdicts[8]).toBe(NOTHING_TO_UNDO);
     expect(verdicts[9]).toMatch(UNDO_APPLIED); // (j) permissive
   });

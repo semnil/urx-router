@@ -66,6 +66,10 @@ export interface PlanHistoryHooks {
   /** True while a device action holds the sample rate — a live session at the unit's value,
    *  a write converging the plan's. */
   rateLocked: () => boolean;
+  /** Asked before an undo / redo moves the sample rate while the rate is not locked: answers
+   *  once the operator has agreed to the rate the entry would leave, or null when nothing needs
+   *  asking. The entry stays on the stack while the question is open. */
+  confirmRate?: (rate: number) => Promise<boolean> | null;
   /** Display name for a node id, for the status line. */
   labelOf: (nodeId: string) => string;
   onStatus: (msg: string) => void;
@@ -332,7 +336,7 @@ export class PlanHistory {
     this.run("redo");
   }
 
-  private run(kind: Direction): void {
+  private run(kind: Direction, agreedRate: number | null = null): void {
     // Resolved once, so the direction is not re-tested at every step below.
     const s = t().status;
     const op =
@@ -382,6 +386,18 @@ export class PlanHistory {
     if (stateRefusal) {
       this.hooks.onStatus(stateRefusal);
       return;
+    }
+    // A rate the unit takes is asked about first, the entry left where it is; the same press
+    // runs again once the operator agrees, for as long as the entry still leaves that rate.
+    const rate = pending.find((e) => e.field === "sampleRate");
+    if (rate && rate.after !== agreedRate) {
+      const asked = this.hooks.confirmRate?.(rate.after) ?? null;
+      if (asked) {
+        void asked.then((ok) => {
+          if (ok) this.run(kind, rate.after);
+        });
+        return;
+      }
     }
     const patch = op.take();
     if (!patch) return;

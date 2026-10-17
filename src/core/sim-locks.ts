@@ -24,6 +24,8 @@ export interface SimLockReasons {
   unitOp: string;
   /** The sampling frequency while the device link is held. */
   rateLinked: string;
+  /** The sampling frequency during Live sync while Follow USB is on. */
+  rateFollowUsb: string;
   /** The recorder's Track Count while Live sync is up. */
   trackCountLive: string;
   /** An FX 2 send at a rate that takes FX 2 out. */
@@ -40,6 +42,8 @@ export interface SimLockState {
   linked: boolean;
   live: boolean;
   dawIntegration: boolean;
+  /** Whether the session takes a rate chosen on the LCD: Live sync with Follow USB off. */
+  rateOpen: boolean;
 }
 
 /** The SETUP > GENERAL screens of settings the app neither reads nor writes: the operation mode and
@@ -90,7 +94,11 @@ export function simLocks(
       out.push({ target, reason: reasons.integrationOff });
   for (const op of UNIT_OPS) out.push({ target: { kind: "op", op }, reason: reasons.unitOp });
   out.push({ target: { kind: "path", path: "sd.usbStorage" }, reason: reasons.unitOp });
-  if (state.linked) out.push({ target: { kind: "screen", id: "setup.rate" }, reason: reasons.rateLinked });
+  if (state.linked && !state.rateOpen)
+    out.push({
+      target: { kind: "screen", id: "setup.rate" },
+      reason: state.live ? reasons.rateFollowUsb : reasons.rateLinked,
+    });
   const fx2Out = model.nodes.some((n) => n.id === "bus.fx2") && nodeRateDisabled("bus.fx2", plan.sampleRate);
   for (const path of paths) {
     // A channel's send into an FX bus: while Live sync is up PRE / POST is the unit's own, as on the
