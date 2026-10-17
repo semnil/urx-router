@@ -60,7 +60,14 @@ import {
   type PlanPatch,
 } from "./core/plan-history";
 import { formatRate, rateConstraints, SAMPLE_RATES, trackCountDrop } from "./core/constraints";
-import { applyParamRange, isRefusal, needsDecision, planProblems, prepareLoadedPlan } from "./core/plan-validate";
+import {
+  applyParamRange,
+  isRefusal,
+  needsDecision,
+  paramRangeProblems,
+  planProblems,
+  prepareLoadedPlan,
+} from "./core/plan-validate";
 import { jackName, phantomHiZBothOn, switchAddr, switchOfKey } from "./core/input-lock";
 import type { InputSwitch, SwitchSession } from "./core/input-lock";
 import type { LoadProblem } from "./core/plan-validate";
@@ -252,7 +259,7 @@ import {
   type DawIntegration,
   type IntegrationField,
 } from "./core/control/daw-integration";
-import { confirmedAdoptions } from "./app/adopt-writes";
+import { boundByRead, confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
 import {
   markAuthored,
@@ -557,9 +564,7 @@ const live = DEMO
         liveAdopted = 0;
         const notes = flushReadNotes;
         flushReadNotes = [];
-        setStatus(
-          [...notes, t().status.liveSynced(n) + (taken ? ` — ${t().status.paramsBounded(taken)}` : "")].join(" — "),
-        );
+        setStatus([...notes, t().status.liveSynced(n) + takeBoundedNote(taken)].join(" — "));
       },
       onConfirmed: (confirmed, sent) => {
         liveAdopted += adoptConfirmedWrites(confirmed, sent);
@@ -679,7 +684,7 @@ const live = DEMO
         // to it — a reverb tuned on the panel appearing in the app. The park the converge
         // takes is not that gesture, and the flush reports what it sends on the same line, so
         // saying it there would announce one repair twice.
-        if (scope.only) setStatus(withSwitchNotes(t().status.liveFollowed(merged.applied), merged));
+        if (scope.only) setStatus(withSwitchNotes(t().status.liveFollowed(merged.applied) + takeBoundedNote(), merged));
         // Past the gate, because this arrives inside the operator's OWN gesture: a park runs
         // in front of a head write, and the head is a selector they have just chosen in — so
         // the control the gate would hold the rebuild for is the one showing the stale value,
@@ -1442,6 +1447,16 @@ function adoptConfirmedWrites(confirmed: ReadonlySet<number>, sent: Plan = plan)
 }
 // What the live flush's converge took back, waiting for the line `onSent` writes.
 let liveAdopted = 0;
+// What a follow read took back — a value the plan held outside what this app can write, read
+// from the unit as the nearest value it can send — waiting for the next line that reports a
+// read or a flush.
+let followBounded = 0;
+/** The bounded values waiting to be reported, as the tail of a status line, and spent. */
+function takeBoundedNote(extra = 0): string {
+  const n = followBounded + extra;
+  followBounded = 0;
+  return n ? ` — ${t().status.paramsBounded(n)}` : "";
+}
 let followFull = false;
 // How many keys the follow reads behind the pending reflect actually authored. A COUNT
 // rather than a flag because the reflect is coalesced at ~20 Hz, so several reads can
@@ -1615,7 +1630,7 @@ function supplyUnsourced(merged: MergedRead): string | null {
 // them.
 function reapplyHeld(merged: MergedRead): void {
   if (!merged.held.length) {
-    setStatus(withSwitchNotes(t().status.liveFollowed(merged.applied), merged));
+    setStatus(withSwitchNotes(t().status.liveFollowed(merged.applied) + takeBoundedNote(), merged));
     return;
   }
   // A follow read outlives a session that merely ended (`abandonFollowWork` is not called
@@ -1624,7 +1639,9 @@ function reapplyHeld(merged: MergedRead): void {
   if (live?.isActive()) {
     live.schedule();
     const held = heldByHold(merged.held);
-    setStatus(withSwitchNotes(t().status.liveHeld(merged.applied, held.unrunnable, held.source), merged));
+    setStatus(
+      withSwitchNotes(t().status.liveHeld(merged.applied, held.unrunnable, held.source) + takeBoundedNote(), merged),
+    );
     return;
   }
   // Nothing left to send them through: the values stay in the plan, and the status line
@@ -1759,6 +1776,9 @@ async function followRead(
   // to this one.
   const rateMark = rateSeq;
   let establishedRate = false;
+  // What the plan holds outside what this app can write, which the read may answer with the
+  // nearest value it can send.
+  const unwritable = paramRangeProblems(plan);
   try {
     const merged = await readIntoPlan(
       () => plan,
@@ -1786,6 +1806,7 @@ async function followRead(
     else {
       notePatchFromDevice(merged.devicePatch);
       takeRefusedEdits(merged);
+      followBounded += boundByRead(unwritable, plan);
     }
     return merged;
   } finally {
