@@ -505,7 +505,8 @@ carries a one-line map of the same directories and points here.
   makes the parks the only part of a converging flush that refuses a press — or while a file flow does, while a *drag* (a press that has moved — a press
   alone cannot gate it, since a wire is selected by a script-dispatched `pointerdown` with no matching
   `pointerup`) is in progress, with a modal open (except the channel tuning screen, the one that edits the
-  plan), and for a `sampleRate` patch while live (refused WHOLE — a partial undo would put the plan in a
+  plan), and for a `sampleRate` patch while the rate is locked — any device action but a live session with
+  Follow USB off, which asks instead (see the undo refusals below) — (refused WHOLE — a partial undo would put the plan in a
   state no gesture produced and `reflectHistory`'s `markChanged()` would push it at the unit — so the
   wording is chosen by `touch.fields.size === 1`: an entry that moved something else too says the whole step
   is held back, since naming only the rate leaves the collateral edits refused in silence. It is a deferral,
@@ -1903,7 +1904,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   unit's clock ("Change it on the device"), Software Integration and its two sends — held in place on a screen already
   open — except while Live sync is up on a unit a compatible DAW holds ("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"), the unit's own operations and USB Storage
   Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus while Live sync is up, as on the CONSOLE
-  and in the Inspector (their wording), the sampling frequency while the device link is held, the recorder's
+  and in the Inspector (their wording), the sampling frequency while the device link is held — during Live sync
+  only while Follow USB is on ("Turn Follow USB off to change it during Live sync") — the recorder's
   Track Count while Live sync is up and
   the sends into FX 2 at a rate that takes FX 2 out (each the wording the Inspector already gives), and an insert
   effect's value its own screen holds shut for the effect's current values, such as M.B.Comp's bands while its 1-knob
@@ -2269,8 +2271,8 @@ call `vdConnect` from `core` and so cannot be funnelled any lower.
 
 `syncDeviceActionUi` is that latch's affordance: while the link is held, every device entry greys **except
 its holder's own**, which is that holder's Cancel (fetch, write, compare, the self-test) or its stop (Live
-sync). The rate picker locks for every holder — a rate change re-clocks the unit and renegotiates the USB
-stream. The model picker locks for a live **session** only, which is the one entry that unlocks at the toggle
+sync). The rate picker locks for every holder but a live session with Follow USB off — a rate change
+re-clocks the unit and renegotiates the USB stream, so that session asks first (`confirmLiveRate`). The model picker locks for a live **session** only, which is the one entry that unlocks at the toggle
 rather than at the disconnect: a switch replaces the plan wholesale (which is
 why `loadPlan` ends a session), and while live the picker is the only surface naming the unit on the wire —
 the on-air tally prints the tag alone rather than repeating a model the picker already states, since a
@@ -2959,7 +2961,7 @@ agreed with the plan at every key leaves both stacks as they were.
 | An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |
 | An edit made while a Fetch's or Live-sync start's read carries a model switch | on the board, before it writes anything (`planTakesEdits`); everywhere else `markChanged`, which puts the plan back to the state the read began from; both say so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
 | A gesture still in progress on the plan a switch replaces | the surface holding it, as the plan is replaced — the board (`Graph.setModel` handed another plan), the inspector (rebuilt past its gate, its actions answering only for the plan the panel was built for), a tuning screen (`refresh`) and the CONSOLE (`render`, which hands keyboard focus on only across a rebuild of the same plan) | the plan the gesture began on is gone, so a pointer or a key still held writes nothing into the one that replaced it |
-| A `sampleRate` patch while live | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
+| A `sampleRate` patch while the rate is locked (any device action but a live session with Follow USB off) | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
 | An undo / redo whose result would leave +48V and HI-Z both on for a jack | `patchBlocked` on the peeked entry, over the state the patch would create | the app never turns one of the two on while the other is on, and an undo turns one on as much as the gesture it reverses did |
 | An undo / redo whose result would leave an input that takes one source with two, or STREAMING with none | `patchBlocked` on the peeked entry (`wireShapeBroken`), over the state the patch would create | the board never draws either — a drop onto an occupied input replaces its wire — and replaying an entry after a device read moved that input's source under it would |
 | An ON of +48V / HI-Z made while a device read was in flight, on a jack where that read finds the other one on | `readIntoPlan`, after the merge (`readRefusedSwitches`): the switch and the keys the witness saw the same edit write go back to the read's values, and the edit leaves the undo stack (`PlanHistory.retract`). In a live session, an ON its flush already sent is on the unit and is not refused (`SwitchSession.holdsOn`), and an ON the flush held back that the merge replaced with the read's value is reported and retracted the same way (`unsentRefusedSwitches`) | the surface asked the rule of a plan that had not heard what the unit holds; the unit's own switch is what the read found, and it stays |
@@ -3438,9 +3440,10 @@ Frequency] out of reach. A 766 written over the link then is still accepted: the
 RECORDER screen comes back with no file names, and the playback stops. So the rate settle reads 836
 (`readSdPlaybackHeld` in `client.ts`, a model with a recorder only) once it knows a rate would change, and both arms
 that write the plan's rate — the re-clock confirm and the three-way's RELEASE arm — stop the write with nothing sent;
-ADOPT writes no rate and stays open. A read that fails stops the write, as the Track Count read does. While Live sync
-or any other link is up the rate picker, the SIM view's rate and an undo that would move the rate are already locked,
-so the write is the one path that reaches 766 during a playback.
+ADOPT writes no rate and stays open. A read that fails stops the write, as the Track Count read does. While any other
+link is up the rate picker, the SIM view's rate and an undo that would move the rate are locked, and during Live sync
+with Follow USB off they ask first and are refused the same way during a playback (`confirmLiveRate`), so no path
+reaches 766 during a playback without being stopped.
 
 The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen
 with no device attached, so there is nothing to compare against until a connection exists.
@@ -3456,8 +3459,13 @@ would mean the warning only arrives once the operator has already committed to o
 remembered value would be a claim about
 hardware that may not even be attached. For the same reason it goes back to unknown whenever the plan switches
 to another model, whichever entry switched it — the model picker, File > Open, a drop, a recent row, or the
-switch a Fetch or a Live-sync start offers. The Rate picker itself locks while Live sync is on, because re-clocking
-renegotiates the USB stream, interrupting audio and putting the held connection at risk. The badge stays live:
+switch a Fetch or a Live-sync start offers. During Live sync the Rate picker locks while Follow USB is on: the unit
+accepts a rate written then and takes the computer's rate back about a third of a second later, so the rate would
+show and vanish. With Follow USB off it opens, and a rate chosen on the picker, on the SIM view or by an undo / redo
+goes through `confirmLiveRate` before the flush writes it — refused while the microSD recorder holds a file, and
+otherwise confirmed with the re-clock and what it costs the recorder's Track Count, the questions the write's settle
+asks. The held connection survives the re-clock: a connection written 766 over kept answering reads, online, on a
+URX44V and a URX22. The badge stays live:
 toggling Follow USB only re-clocks when the host is on a different rate, and the connection survived it on a URX44V.
 
 Above 96 kHz the device drops whole features (stereo channel EQ, insert FX, the FX2 bus), but it still **accepts
@@ -4382,10 +4390,13 @@ An undo is refused, with the reason on the status line and **without spending th
   context menu took does not leave the refusal standing;
 - a modal is open — none of them edits the plan, except the channel tuning screen, which is exactly
   what its sliders do, so an undo taken with that one open belongs to the plan behind it;
-- the patch touches `sampleRate` while any device action holds the link — the rate picker is locked
-  for the same holders and the same reason: a live session holds the rate at the unit's, and a write
-  settles the rate once and then converges the plan it re-reads every round, so a rate the plan took
-  after the settle would re-clock the unit with no confirm and no Track Count warning. A patch is
+- the patch touches `sampleRate` while the rate is locked — any device action but a live session with
+  Follow USB off, the holders the rate picker locks for and for the same reason: a write settles the
+  rate once and then converges the plan it re-reads every round, so a rate the plan took after the
+  settle would re-clock the unit with no confirm and no Track Count warning, and with Follow USB on the
+  unit takes the computer's rate back. A live session with Follow USB off asks first instead
+  (`confirmRate`, answered by `confirmLiveRate`): the entry stays on the stack while the question is
+  open, and the same press runs again once the operator agrees, while the entry still leaves that rate. A patch is
   applied atomically, so the refusal takes the **whole** entry: when the entry carries more than the
   rate, the status line says so (`undoRateLockedMixed`, chosen by whether the entry's field set is
   nothing but `sampleRate`). Either way the entry is held back, not lost — the refusal runs on a peeked
