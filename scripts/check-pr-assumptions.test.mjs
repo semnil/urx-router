@@ -36,6 +36,14 @@ ${field}
 - [ ] E2E coverage added for new behavior
 `;
 
+/** The same run, handed the body as a file — the way it is run by hand. */
+const runFile = (text) => {
+  const path = join(mkdtempSync(join(tmpdir(), "pr-body-")), "body.md");
+  writeFileSync(path, text);
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "PR_BODY"));
+  return spawnSync(process.execPath, [SCRIPT, "--file", path], { encoding: "utf8", env });
+};
+
 const run = (text) =>
   spawnSync(process.execPath, [SCRIPT], { encoding: "utf8", env: { ...process.env, PR_BODY: text } });
 
@@ -184,6 +192,14 @@ describe("how a tagged item was settled", () => {
       const text = body(`${tagged}\n    - ${label}\n\n    A note about the item itself.`);
       expect(unsettled(text)).toHaveLength(1);
       expect(run(text).status).toBe(1);
+    }
+    for (const label of ["Result:", "Left open by the operator:"]) {
+      const wrapped = body(
+        `${tagged}\n    - ${label}\n\n    A note about the item itself,\n    continued onto a second line.`,
+      );
+      expect(unsettled(wrapped)).toHaveLength(1);
+      expect(run(wrapped).status).toBe(1);
+      expect(runFile(wrapped).status).toBe(1);
     }
     const own = body(`${tagged}\n    - Result:\n\n      one notify per move, on URX44V.`);
     expect(unsettled(own)).toEqual([]);
