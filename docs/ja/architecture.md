@@ -142,7 +142,11 @@ flowchart TD
   (`linkedSendPanProblems`。「リセット連鎖と、収束ラウンドが送るもの」節)。1-knob が入の COMP が、ノブの値と違う
   Attack・Release・Auto Makeup を持っていれば — ノブを入れると実機は 3 つともその値にし、入っている間は実機の上で
   何も動かさない — 同じくノブの値にそろえ、同じ行で伝える。文書に無いキーは補完が与える工場出荷値として、ペアは
-  写した後の状態で読む (`compOneKnobProblems`。channel-tuning.md の「COMP」節)。数値で書かれたオン/オフ
+  写した後の状態で読む (`compOneKnobProblems`。channel-tuning.md の「COMP」節)。1-knob が入の M.B.Comp が、
+  タイプ固有の値と違う Attack・Bypass・Release・クロスオーバー・Out Gain を持っていれば — ノブを入れると実機は
+  それらをその値にし、入っている間は実機の上で何も動かさない — 同じくその値にそろえ、同じ行で伝える。値は書込が
+  送る形で読む (`mbcOneKnobProblems`。known-issues.md の「Multi-Band Compressor の 1-knob が ON の間、その値は
+  実機のものになる」)。数値で書かれたオン/オフ
   — 機種の工場出荷値が同じノードの同じパスで真偽値として持つ葉 — は、書き込みが送るオン/オフ (0 はオフ、
   それ以外の数値はオン) に変換し、同じ行で伝える (`booleanParamProblems`)。これが最初に走り、ほかの検査は
   すべて変換後の文書を読む。書き込みにとってと同じく、`panLink: 1` は送りのパンの検査にとってリンク中の

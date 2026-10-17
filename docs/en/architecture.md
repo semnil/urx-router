@@ -154,7 +154,12 @@ carries a one-line map of the same directories and points here.
   1-knob is on and whose attack, release or Auto Makeup is not the value the knob gives it — switching the knob on sets
   all three on the unit, and nothing on the unit moves them while it stays on — has them set to the knob's values the
   same way and said on the same line, reading a key the document leaves out as the factory value the fill gives it and
-  the pair as its copy leaves it (`compOneKnobProblems`; channel-tuning.md "COMP"). An on/off written as a
+  the pair as its copy leaves it (`compOneKnobProblems`; channel-tuning.md "COMP"). An M.B.Comp whose
+  1-knob is on and whose Attacks, Bypasses, Release, crossovers or Out Gain are not the type's own values —
+  the switch sets them on the unit, and nothing on the unit moves them while it stays on — has them set to
+  those values the same way and said on the same line, reading each the way the write would send it
+  (`mbcOneKnobProblems`; known-issues.md "While the Multi-Band Compressor's 1-knob is on, its values are the
+  unit's"). An on/off written as a
   number — a leaf the model's factory values hold as a boolean, at the same path on the same node — is
   converted to the on/off the write sends, off for 0 and on for any other number, and said on the same
   line (`booleanParamProblems`). It comes first, and every other check reads the document as it leaves it,
