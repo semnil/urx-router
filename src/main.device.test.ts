@@ -12038,64 +12038,32 @@ describe("the SIM view over a live session", () => {
     await expect(transport().write("setup.language", "Klingon")).rejects.toThrow("refused");
   });
 
-  it("writes a SETUP setting changed on the glass with no session over a connection of its own", SLOW, async () => {
+  // The unit's SETUP > GENERAL settings are written over the Live sync session alone: with no session
+  // an edit on the glass is refused and no connection is opened for it.
+  it("refuses a SETUP setting changed on the glass with no session, and opens no connection", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true });
     await openSim();
-    await expect(transport().write("setup.brightness", 3)).resolves.toBe(3);
-    expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]);
-    expect(shell.count("vd_disconnect"), "the connection is let go").toBe(shell.count("vd_connect"));
-    expect((await transport().snapshot()).get("setup.brightness")).toBe(3);
+    await expect(transport().write("setup.brightness", 3)).rejects.toThrow("refused");
+    await expect(transport().write("setup.udk.1.A", "Monitor 2 Level")).rejects.toThrow("refused");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([]);
+    expect(shell.count("vd_connect"), "no connection of its own").toBe(0);
   });
 
-  // A drag or a wheel on the glass makes several edits while the first is still being written over
-  // its own connection: the ones made meanwhile wait behind it as one write, which carries the last
-  // value of each setting, so a value passed through on the way is never written.
-  it("writes the last of several SETUP edits made with no session while the first is written", SLOW, async () => {
-    const shell = await bootDevice({ experimental_enabled: true });
+  // Two knobs assigned on the glass during Live sync go out each on its own knob.
+  it("writes every knob assigned on the glass during Live sync", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true);
     await openSim();
-    const first = transport().write("setup.brightness", 3);
-    const second = transport().write("setup.brightness", 4);
-    const third = transport().write("setup.brightness", 5);
-    await expect(Promise.all([first, second, third])).resolves.toEqual([3, 5, 5]);
-    expect(setsOf(shell, PARAMS.BRIGHTNESS.id), "the first value, then the last").toEqual([
-      [0, 3],
-      [0, 5],
-    ]);
-    expect(statusText()).not.toBe(t().status.deviceLinkBusy);
-    expect(shell.count("vd_disconnect"), "every connection is let go").toBe(shell.count("vd_connect"));
-    expect((await transport().snapshot()).get("setup.brightness")).toBe(5);
-  });
-
-  // Two knobs assigned while a write runs go out together, each on its own knob.
-  it("writes every knob assigned with no session while a SETUP write runs", SLOW, async () => {
-    const shell = await bootDevice({ experimental_enabled: true });
-    await openSim();
-    const first = transport().write("setup.brightness", 3);
-    const knobA = transport().write("setup.udk.1.A", "Monitor 2 Level");
-    const knobB = transport().write("setup.udk.1.B", "Monitor 2 Level");
-    await Promise.all([first, knobA, knobB]);
+    await goLive();
+    await transport().write("setup.udk.1.A", "Monitor 2 Level");
+    await transport().write("setup.udk.1.B", "Monitor 2 Level");
     const knobs = await transport().snapshot();
     expect([knobs.get("setup.udk.1.A"), knobs.get("setup.udk.1.B")]).toEqual(["Monitor 2 Level", "Monitor 2 Level"]);
-    const fnWrites = shell.invokes.flatMap((cmd, i) =>
-      cmd === "vd_set_str" && shell.args[i]!.paramId === PARAMS.UDK_FUNCTION.id ? [shell.args[i]!.y] : [],
-    );
-    expect(fnWrites, "knob A and knob B, in one write").toEqual([0, 1]);
-  });
-
-  it("refuses the SETUP edits waiting behind one the unit refuses with no session", SLOW, async () => {
-    const shell = await bootDevice({ experimental_enabled: true });
-    await openSim();
-    shell.failOnce("vd_set", new Error("setup write refused"));
-    const first = transport().write("setup.brightness", 3);
-    const second = transport().write("setup.brightness", 4);
-    await expect(first).rejects.toThrow("refused");
-    await expect(second).rejects.toThrow("refused");
-    expect(errors(shell).filter((e) => e.includes("setup write refused"))).toHaveLength(1);
-    expect(
-      setsOf(shell, PARAMS.BRIGHTNESS.id).some(([, v]) => v === 4),
-      "nothing written past the failure",
-    ).toBe(false);
-    expect(shell.count("vd_disconnect"), "the connection is let go").toBe(shell.count("vd_connect"));
+    const fnWrites = (): unknown[] =>
+      shell.invokes.flatMap((cmd, i) =>
+        cmd === "vd_set_str" && shell.args[i]!.paramId === PARAMS.UDK_FUNCTION.id ? [shell.args[i]!.y] : [],
+      );
+    await vi.waitFor(() => expect(fnWrites(), "knob A and knob B").toEqual([0, 1]), { timeout: 10_000 });
   });
 
   it("shows the unit's operation mode, and an engaged Clip Safe while the unit announces one", SLOW, async () => {
@@ -12386,15 +12354,6 @@ describe("the SIM view over a live session", () => {
     await transport().write("setup.integration.fx1Send", "MIX 2");
     await invoked(shell, "vd_disconnect");
     expect(errors(shell).join(" "), "the refused write is what ended it").toContain("send write refused");
-  });
-
-  it("reports a SETUP setting the unit refuses with no session, and leaves the glass's value", SLOW, async () => {
-    const shell = await bootDevice({ experimental_enabled: true });
-    await openSim();
-    shell.failOnce("vd_set", new Error("setup write refused"));
-    await expect(transport().write("setup.brightness", 2)).rejects.toThrow("refused");
-    expect(errors(shell).join(" ")).toContain(t().error.deviceSetupWrite("setup write refused"));
-    expect(shell.count("vd_disconnect"), "the connection is let go").toBe(shell.count("vd_connect"));
   });
 
   it("ends the session when a delay time turned under tempo Sync is refused", SLOW, async () => {

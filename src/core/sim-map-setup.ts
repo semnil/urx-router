@@ -8,6 +8,7 @@ import {
   BRIGHTNESS_MAX,
   BRIGHTNESS_MIN,
   DATE_FORMAT_LABELS,
+  defaultDeviceSetup,
   HDMI_CHANNEL_LABELS,
   setupSupport,
   TIME_FORMAT_LABELS,
@@ -78,6 +79,12 @@ export function setupGlassValues(model: DeviceModel, setup: DeviceSetup): Map<st
     if (UDK_BY_NAME.has(name)) out.set(udkPath(slot), name);
   });
   return out;
+}
+
+/** Every path of the unit's settings an edit on the glass changes on `model`: the paths the glass
+ *  shows for the factory settings, less the knob bank. */
+export function setupGlassPaths(model: DeviceModel): string[] {
+  return [...setupGlassValues(model, defaultDeviceSetup()).keys()].filter((path) => isSetupGlassPath(model, path));
 }
 
 /** Whether `path` is one of the unit's settings an edit on the glass changes on `model`. */

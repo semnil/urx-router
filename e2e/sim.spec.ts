@@ -2,11 +2,9 @@ import { test, expect, type Page } from "./fixtures";
 import {
   LIVE_COMMANDS,
   deviceValueOf,
-  heldWritesOf,
   notifyParam,
   savedFilesOf,
   setDeviceValue,
-  setHeldWrites,
   setWriteEffect,
   stubTauriBoot,
   stubTauriDevice,
@@ -164,16 +162,16 @@ test("holds Software Integration shut on the LCD with no session, with the reaso
   await expect(integration).toHaveAttribute("aria-disabled", "true");
   await expect(integration).toHaveAttribute("title", en.sim.lockIntegrationOff);
   await expect(integration.locator(".lock-mark")).toHaveCount(1);
-  const language = lcd.getByRole("button", { name: "Language", exact: true });
-  await expect(language, "a setting the app writes to the unit is not held").not.toHaveAttribute("aria-disabled");
+  const patch = lcd.getByRole("button", { name: "Output Patch", exact: true });
+  await expect(patch, "the plan's Output Patch is not held").not.toHaveAttribute("aria-disabled");
 
   // Pressed where it stands (Playwright declines to click a control marked out of reach), then
-  // Language: the LCD reaching Language's screen says the press on Software Integration was
-  // answered and opened nothing.
+  // Output Patch: the LCD reaching that screen says the press on Software Integration was answered
+  // and opened nothing.
   const at = (await integration.boundingBox())!;
   await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
-  await language.click();
-  await expect(sim(page).locator('.lcd[data-screen="setup.language"]:not([inert])')).toHaveCount(1);
+  await patch.click();
+  await expect(sim(page).locator('.lcd[data-screen="setup.patch"]:not([inert])')).toHaveCount(1);
 });
 
 test("takes Follow USB on the LCD's Sampling Frequency screen as the toolbar's FOLLOW USB", async ({ page }) => {
@@ -272,28 +270,42 @@ test("holds the Sampling Frequency screen shut while connected during Live sync,
   await tapInto(page, entry, "setup.rate");
 });
 
-// With no session a SETUP setting changed on the LCD is written over a connection of its own; the
-// edits made while that write runs go out after it as one, carrying the last value.
-test("writes the last of several SETUP edits made on the LCD with no session", async ({ page }) => {
+// The unit's SETUP > GENERAL settings are written over the Live sync session alone: with no session
+// the LCD holds their screens shut with the reason as the tooltip, and during Live sync an edit there
+// is written to the unit.
+test("holds SETUP > GENERAL shut on the LCD with no session, and writes an edit there during Live sync", async ({
+  page,
+}) => {
   const BRIGHTNESS: number = PARAMS.BRIGHTNESS.id;
-  await stubTauriDevice(page, { values: { [BRIGHTNESS]: 5 }, commands: { experimental_enabled: true } });
+  await stubTauriDevice(page, {
+    values: { [BRIGHTNESS]: 5 },
+    commands: { experimental_enabled: true, ...LIVE_COMMANDS },
+  });
   await page.goto("/");
   await page.click("#btn-view-sim");
   await expect(lcd(page)).toBeVisible();
   await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
-  await tapInto(page, lcd(page).getByRole("button", { name: "Brightness", exact: true }), "setup.brightness");
+  const entry = lcd(page).getByRole("button", { name: "Brightness", exact: true });
+  await expect(entry).toHaveAttribute("aria-disabled", "true");
+  await expect(entry).toHaveAttribute("title", en.sim.lockSetupOffline);
+  await expect(entry.locator(".lock-mark")).toHaveCount(1);
+  // Pressed where it stands (Playwright declines to click a control marked out of reach): the LCD
+  // stays on SETUP, and nothing reaches the unit.
+  const at = (await entry.boundingBox())!;
+  await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
+  await expect(onScreen(page, "setup")).toHaveCount(1);
   const brightnessWrites = async (): Promise<number[]> =>
     (await writesOf(page)).flatMap(([id, v]) => (id === BRIGHTNESS ? [v] : []));
-  await setHeldWrites(page, [BRIGHTNESS]);
+  expect(await brightnessWrites()).toEqual([]);
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(entry.locator(".lock-mark")).toHaveCount(0);
+  await tapInto(page, entry, "setup.brightness");
   await onScreen(page, "setup.brightness").getByRole("spinbutton").focus();
   await page.keyboard.press("ArrowDown");
-  await expect.poll(() => heldWritesOf(page), "the first edit is being written").toBe(1);
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
-  await setHeldWrites(page, []);
-  await expect.poll(brightnessWrites).toHaveLength(2);
-  const [first, last] = await brightnessWrites();
-  expect(last, "the second and third edits went out as one, at the last value").toBe(first! - 2);
+  await expect.poll(brightnessWrites).toEqual([4]);
 });
 
 // A change the unit makes beside the one asked for — a BUS Type resetting its bank, an EFFECT TYPE

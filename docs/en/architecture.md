@@ -1901,10 +1901,9 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   badge holds it, the operation mode (`817`) as a session read it, and each MIC/LINE jack's Clip Safe as holding its
   gain down while the unit announces it (`864`, which every session registers, since the CONSOLE and the Inspector
   show it too). A session on an experimental launch registers the others and reads SETUP again once
-  an announcement at one settles. A SETUP setting changed on the LCD is written to the unit — behind every unit
-  write queued so far while Live sync is up, and otherwise over a connection of its own that reads SETUP first, as
-  the Device setup screen does. Edits made while such a write runs are merged and written after it, so the last value
-  of each setting reaches the unit; a failed write is reported once and refuses the edits waiting behind it too. Follow USB pressed on the LCD is a press of the toolbar's FOLLOW USB, its confirm
+  an announcement at one settles. A SETUP setting changed on the LCD is written to the unit during Live sync,
+  behind every unit write queued so far; with no session the app writes none of them, and the LCD holds those
+  screens shut (below). Follow USB pressed on the LCD is a press of the toolbar's FOLLOW USB, its confirm
   included. The User Defined Knobs bank is read and never written, so the bank the LCD shows is its own once
   chosen there.
 - **What it shows** follows every writer: each place that schedules MIDI feedback (`markChanged`,
@@ -1919,7 +1918,9 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   unit draws it, by the simulator: a COMP or M.B.Comp value its 1-knob drives, Pitch Fix's notes under MIDI Control,
   FX 2's sends at a rate that takes FX 2 out, the rates while Follow USB is on. Held are the
   SETUP > GENERAL screens of what the app does not write — the operation mode, which a session reads and shows,
-  and the unit's clock ("Change it on the device"), Software Integration and its two sends — held in place on a screen already
+  and the unit's clock ("Change it on the device"), the SETUP > GENERAL screens of what it does write and their
+  values — held in place on a screen already open — while Live sync is down, since the app writes them over a
+  session alone ("Usable during Live sync"), Software Integration and its two sends — held in place on a screen already
   open — while Live sync is down, since whether a compatible DAW holds the unit is read only during a session ("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"), the unit's own operations and USB Storage
   Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus while Live sync is up, as on the CONSOLE
   and in the Inspector (their wording), the sampling frequency while the device link is held and the unit is not known

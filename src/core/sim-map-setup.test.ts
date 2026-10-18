@@ -3,13 +3,20 @@ import { shippedValues } from "urx-lcd-sim/embed";
 import { getModel } from "../models";
 import type { ModelId } from "../models/types";
 import { defaultDeviceSetup, udkSlot } from "./control/device-setup";
-import { isSetupGlassPath, setupGlassEdit, setupGlassValues, withSetupEdit } from "./sim-map-setup";
+import { isSetupGlassPath, setupGlassEdit, setupGlassPaths, setupGlassValues, withSetupEdit } from "./sim-map-setup";
 
 const MODELS: ModelId[] = ["URX22", "URX44", "URX44V"];
 
 describe.each(MODELS)("the SIM's SETUP > GENERAL on a %s", (modelId) => {
   const model = getModel(modelId);
   const shipped = shippedValues(modelId);
+
+  // The simulator's own paths are the oracle: the list the locks hold shut with no session is every
+  // one of them an edit changes on the unit, and nothing else.
+  it("lists exactly the simulator's paths an edit changes on the unit", () => {
+    const taken = [...shipped.keys()].filter((path) => isSetupGlassPath(model, path));
+    expect(setupGlassPaths(model).sort()).toEqual(taken.sort());
+  });
 
   it("takes every value the simulator ships, and shows it back", () => {
     const taken = [...shipped].filter(([path]) => isSetupGlassPath(model, path));
