@@ -20,6 +20,7 @@ import {
   MBC_GLOBAL,
   PITCH_KEY_SLOT,
   PITCH_NOTE_SLOTS,
+  PITCH_SCALE_CUSTOM,
   PITCH_SCALE_SLOT,
   PITCH_SCALE_MAJOR,
   insertFxLockedSlots,
@@ -1300,6 +1301,18 @@ describe("a gesture taken while the rebuild is deferred", () => {
     sp.dispatchEvent(new Event("change", { bubbles: true }));
     const params = h.plan.nodeParams.ch1!.insertFxParams!;
     expect(Object.entries(params).filter(([k]) => k.endsWith(":16"))).toEqual([[expect.any(String), 2]]);
+    screen.close();
+  });
+
+  it("shows a Scale the list does not carry as Custom", () => {
+    holding("ch1", "Pitch Fix");
+    h.plan.nodeParams.ch1!.insertFxParams = { ...h.plan.nodeParams.ch1!.insertFxParams, [K(PITCH_SCALE_SLOT)]: 99 };
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    const scale = [...h.box.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
+      [...s.options].some((o) => o.textContent === t().inspector.insertFxEffect.scaleMajor),
+    )!;
+    expect(scale.value).toBe(String(PITCH_SCALE_CUSTOM));
     screen.close();
   });
 
