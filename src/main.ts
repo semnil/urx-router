@@ -210,7 +210,8 @@ import {
   reachedAndFailed,
   rateAction,
   readClockState,
-  readSdPlaybackHeld,
+  readSdRecorderHold,
+  type SdRecorderHold,
   readFollowUsb,
   readLcdSelection,
   readTrackCount,
@@ -3842,15 +3843,16 @@ function confirmLiveRate(rate: number): Promise<boolean> | null {
   const nextRate = formatRate(rate);
   return (async () => {
     const recorder = hasRecorder(modelId);
-    let held: boolean;
+    let held: SdRecorderHold;
     try {
-      held = recorder ? await readSdPlaybackHeld() : false;
+      held = recorder ? await readSdRecorderHold() : null;
     } catch (err) {
       showError(t().error.playbackUnread(errorText(err)));
       return false;
     }
     if (held) {
-      showError(t().error.rateDuringPlaybackLive(deviceRate, nextRate));
+      const refuse = held === "recording" ? t().error.rateDuringRecordingLive : t().error.rateDuringPlaybackLive;
+      showError(refuse(deviceRate, nextRate));
       return false;
     }
     let cost: { from: number; to: number } | null;
@@ -4639,21 +4641,23 @@ if (!DEMO) {
       showError(t().status.writeError(t().error.trackCountUnread(errorText(err))));
       return false;
     }
-    // A file held by the microSD recorder (playing or paused) is when the unit keeps its own
-    // rate control out of reach, and a rate written then ends the playback. Both arms that
-    // write the plan's rate stop here; adopting the device's rate writes none and stays open.
-    let playbackHeld;
+    // A playback or a recording held by the microSD recorder is when the unit keeps its own
+    // rate control out of reach. Both arms that write the plan's rate stop here; adopting the
+    // device's rate writes none and stays open.
+    let recorderHold: SdRecorderHold;
     try {
-      playbackHeld = hasRecorder(modelId) ? await readSdPlaybackHeld() : false;
+      recorderHold = hasRecorder(modelId) ? await readSdRecorderHold() : null;
     } catch (err) {
       showError(t().status.writeError(t().error.playbackUnread(errorText(err))));
       return false;
     }
+    const refuseHeldRate = (): false => {
+      const refuse = recorderHold === "recording" ? t().error.rateDuringRecording : t().error.rateDuringPlayback;
+      showError(t().status.writeError(refuse(deviceRate, planRate)));
+      return false;
+    };
     if (action === "confirmReclock") {
-      if (playbackHeld) {
-        showError(t().status.writeError(t().error.rateDuringPlayback(deviceRate, planRate)));
-        return false;
-      }
+      if (recorderHold) return refuseHeldRate();
       // The device will take the rate and hold it. Re-clocking interrupts audio and
       // renegotiates the USB stream, so it is worth stating outright — but it is a
       // plain yes/no: the plan's rate is the one that sticks.
@@ -4693,10 +4697,7 @@ if (!DEMO) {
       syncRateUi(); // persists the adopted rate as the last known one
       return true;
     }
-    if (playbackHeld) {
-      showError(t().status.writeError(t().error.rateDuringPlayback(deviceRate, planRate)));
-      return false;
-    }
+    if (recorderHold) return refuseHeldRate();
     try {
       await setFollowUsb(false);
     } catch (err) {

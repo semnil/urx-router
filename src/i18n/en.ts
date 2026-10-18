@@ -1398,11 +1398,15 @@ export const en = {
     clockUnread: (message: string): string =>
       `The device's sample rate and Follow USB state could not be read (${message}), so the plan's rate was not checked against the unit. Nothing was written.`,
     playbackUnread: (message: string): string =>
-      `Whether the microSD recorder is playing could not be read (${message}), and a rate change ends a playback. Nothing was written.`,
+      `Whether the microSD recorder is playing or recording could not be read (${message}), and the device does not let its sample rate change during either. Nothing was written.`,
     rateDuringPlayback: (deviceRate: string, planRate: string): string =>
       `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is playing or paused. Stop the playback on the device, then write again. Nothing was written.`,
     rateDuringPlaybackLive: (deviceRate: string, planRate: string): string =>
       `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is playing or paused. Stop the playback on the device, then choose the rate again. Nothing was written.`,
+    rateDuringRecording: (deviceRate: string, planRate: string): string =>
+      `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is recording, paused or in record standby. Stop the recording or leave standby on the device, then write again. Nothing was written.`,
+    rateDuringRecordingLive: (deviceRate: string, planRate: string): string =>
+      `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is recording, paused or in record standby. Stop the recording or leave standby on the device, then choose the rate again. Nothing was written.`,
     trackCountUnread: (message: string): string =>
       `The microSD recorder's Track Count could not be read (${message}), and a rate change can lower it for good. Nothing was written.`,
     followUsbWrite: (message: string, on = false): string =>

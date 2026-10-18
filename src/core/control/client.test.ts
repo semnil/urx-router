@@ -22,6 +22,8 @@ import {
   rateAction,
   readClockState,
   readFollowUsb,
+  readSdRecorderHold,
+  sdRecorderHold,
   sendCommands,
   reachedAndFailed,
   sendConverging,
@@ -134,6 +136,31 @@ describe("clock state", () => {
     expect(rateAction(48000, { followUsb: true, sampleRate: 48000 })).toBe("proceed");
     expect(rateAction(96000, { followUsb: false, sampleRate: 48000 })).toBe("confirmReclock");
     expect(rateAction(96000, { followUsb: true, sampleRate: 48000 })).toBe("askChoice");
+  });
+});
+
+describe("microSD recorder hold", () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  // 836 as the unit reports it: stopped, playing, paused, recording, record standby, recording paused.
+  it("reads a playback and a recording apart", () => {
+    expect([0, 1, 2, 3, 4, 5].map(sdRecorderHold)).toEqual([
+      null,
+      "playback",
+      "playback",
+      "recording",
+      "recording",
+      "recording",
+    ]);
+    expect(sdRecorderHold(6), "a state the unit is not known to report still holds").toBe("playback");
+  });
+
+  it("reads 836 and propagates a failed read", async () => {
+    vi.mocked(vdGet).mockResolvedValue(4);
+    await expect(readSdRecorderHold()).resolves.toBe("recording");
+    expect(vi.mocked(vdGet).mock.calls).toEqual([[PARAMS.SD_PLAYBACK.id, 0, 0]]);
+    vi.mocked(vdGet).mockRejectedValue(new Error("timeout"));
+    await expect(readSdRecorderHold()).rejects.toThrow("timeout");
   });
 });
 
