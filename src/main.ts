@@ -3898,6 +3898,17 @@ function insertNames(off: InsertOffAtRate[]): string {
   return off.map((o) => `${o.label} (${graph.labelOf(o.node)})`).join(", ");
 }
 
+/** Write to the unit each value of `id`'s rows the unit drives that an edit moved — `before` is what
+ *  they held ahead of it. A row the unit started driving in the same edit is left to the unit. */
+function writeMovedHeld(id: string, before: readonly { param: number; y: number; value: number }[]): void {
+  if (!liveSessionUp) return;
+  const was = new Map(before.map((w) => [`${w.param}/${w.y}`, w.value]));
+  for (const w of fxHeldWrites(plan, id)) {
+    const prev = was.get(`${w.param}/${w.y}`);
+    if (prev !== undefined && prev !== w.value) writeHeldDeviceValue(w.param, w.y, w.value);
+  }
+}
+
 function chooseSampleRate(rate: number): void {
   // The recorder's Track Count and the inserts the rate rules out go with the rate, one way:
   // see changePlanSampleRate.
@@ -4103,7 +4114,11 @@ const dynScreen = new DynScreen({
   getModel: () => getModel(modelId),
   getPlan: () => plan,
   isLive: () => liveSessionUp,
-  onUpdateNodeParams: (id, patch, written) => inspectorActions.onUpdateNodeParams(id, patch, written),
+  onUpdateNodeParams: (id, patch, written) => {
+    const held = fxHeldWrites(plan, id);
+    inspectorActions.onUpdateNodeParams(id, patch, written);
+    writeMovedHeld(id, held);
+  },
   releaseMeters: () => consoleView.releaseMeters(),
   regainMeters: () => consoleView.regainMeters(),
   onMeterError: (message) => stopLiveOnError(errorText(message)),
@@ -5382,7 +5397,13 @@ if (!DEMO) {
     getModel: () => getModel(modelId),
     getPlan: () => plan,
     // A CUE control switches the flag while a session is up, and is refused otherwise.
-    cue: { has: (node) => cues.has(node), set: (node, on) => setCue(node, on, "app"), enabled: () => liveSessionUp },
+    // …and a delay time tempo Sync drives is written to the unit while one is up, as on the glass.
+    cue: {
+      has: (node) => cues.has(node),
+      set: (node, on) => setCue(node, on, "app"),
+      enabled: () => liveSessionUp,
+      writeHeld: (param, y, value) => writeHeldDeviceValue(param, y, value),
+    },
     onApplied: (control, mirrored, keys) => {
       markChanged("midi", [
         ...keys,

@@ -917,8 +917,8 @@ export function insertFxWritableSlots(family: InsertFxFamily): InsertFxSlotSpec[
   }));
   if (family === "pitch") {
     // MIDI Control's two bits come FIRST, so a flush that turns the mode on does its erase
-    // before the mask and the Scale would be written — and while it is on those two are the
-    // unit's (`pitchDeviceDriven`) and are not written at all.
+    // before the Scale and the mask would be written — and while it is on the mask is the
+    // unit's (`pitchDeviceDriven`) and is not written at all.
     out.push({ slot: PITCH_MIDI_ENABLE_SLOT, rawMin: 0, rawMax: 1 });
     out.push({ slot: PITCH_MIDI_REALTIME_SLOT, rawMin: 0, rawMax: 1 });
     out.push({ slot: PITCH_SCALE_SLOT, rawMin: PITCH_SCALE_CUSTOM, rawMax: PITCH_SCALE_CHROMATIC });
@@ -1163,7 +1163,7 @@ export function insertFxInactiveSlots(
  *
  * Two rules, and each is a rule about what the UNIT is doing rather than about the panel:
  * the multi-band compressor's 1-knob owns the values it recomputes and its Level owns
- * nothing while the knob is off, and Pitch Fix's MIDI Control owns the scale and the mask.
+ * nothing while the knob is off, and Pitch Fix's MIDI Control owns the mask.
  *
  * Clean's modulation is NOT one of them. Speed and Depth are heard on the vibrato alone,
  * but the unit stores them and takes a write to either whatever the setting reads, so
@@ -1186,7 +1186,98 @@ const MOD_GATED: ReadonlySet<number> = new Set([GUITAR_MOD.speed, GUITAR_MOD.dep
 export function pitchDeviceDriven(params: Record<string, number> | undefined): ReadonlySet<number> {
   return insertFxDriverOn(params, "pitch", PITCH_MIDI_ENABLE_SLOT) ? PITCH_MIDI_DRIVEN : EMPTY_SLOTS;
 }
-const PITCH_MIDI_DRIVEN: ReadonlySet<number> = new Set([PITCH_SCALE_SLOT, ...PITCH_NOTE_SLOTS]);
+const PITCH_MIDI_DRIVEN: ReadonlySet<number> = new Set(PITCH_NOTE_SLOTS);
+
+/**
+ * The engine patch a Pitch Fix scale selection writes: the scale slot, and the twelve
+ * notes the preset turns on AT THIS KEY.
+ *
+ * The mask slots are absolute semitones and the unit derives them from the Scale enum and
+ * the Key. Authoring them from the same offsets is what keeps a plan written offline
+ * agreeing with what the unit would have derived — a mask rooted at C, written at any
+ * other Key, is a different scale.
+ *
+ * Custom carries no pattern: it names whatever mask is already there, so the patch is the
+ * enum alone.
+ */
+export function pitchScalePatch(scale: number, key: number): Record<number, number> {
+  const patch: Record<number, number> = { [PITCH_SCALE_SLOT]: scale };
+  const offsets = PITCH_SCALE_OFFSETS[scale];
+  if (!offsets) return patch;
+  const on = new Set(offsets.map((o) => (o + key) % 12));
+  PITCH_NOTE_SLOTS.forEach((s, i) => (patch[s] = on.has(i) ? 1 : 0));
+  return patch;
+}
+
+/** The mask a Key change re-roots to, keeping the scale it is currently spelling. The unit
+ *  re-derives on a Key write of its own, so this is what an offline plan needs to match. */
+export function pitchKeyPatch(scale: number, key: number): Record<number, number> {
+  return { [PITCH_KEY_SLOT]: key, ...pitchScalePatch(scale, key) };
+}
+
+/**
+ * MIDI Control's three-way, folded from its two engine bits: enable off = Off, enable on
+ * with realtime off = Setting, both on = Real Time.
+ *
+ * It is written, through `pitchMidiModeChange` below. While it is on, the twelve-note mask is
+ * the unit's (`pitchDeviceDriven`): the screen locks it and the writer stops emitting it. The
+ * Scale stays the operator's, from the list the mode offers (`pitchScalesOffered`).
+ */
+export function pitchMidiMode(enable: unknown, realtime: unknown): 0 | 1 | 2 {
+  return !insertFxSwitchOn(enable) ? 0 : !insertFxSwitchOn(realtime) ? 1 : 2;
+}
+
+/**
+ * …and the inverse, as the slot patch a write speaks. Two bits for three modes, so a write
+ * names BOTH: setting the enable bit alone would leave whichever real-time bit was there
+ * and land on a mode nobody chose.
+ */
+export function pitchMidiPatch(mode: number): Record<number, number> {
+  return { [PITCH_MIDI_ENABLE_SLOT]: mode === 0 ? 0 : 1, [PITCH_MIDI_REALTIME_SLOT]: mode === 2 ? 1 : 0 };
+}
+
+/** The scales MIDI Control lets the Scale list offer: all of them under Off, all but Chromatic
+ *  under Setting, Custom and Single under Real Time. */
+export function pitchScalesOffered(mode: number): (scale: number) => boolean {
+  if (mode === 2) return (scale) => scale === PITCH_SCALE_CUSTOM || scale === PITCH_SCALE_SINGLE;
+  if (mode === 1) return (scale) => scale !== PITCH_SCALE_CHROMATIC;
+  return () => true;
+}
+
+/** The engine patch a Scale choice writes under MIDI Control `mode`: under Real Time the mask
+ *  stays empty, so the choice is the enum alone. */
+export function pitchScaleChoice(mode: number, scale: number, key: number): Record<number, number> {
+  return mode === 2 ? { [PITCH_SCALE_SLOT]: scale } : pitchScalePatch(scale, key);
+}
+
+/** The engine patch a Key choice writes under MIDI Control `mode`: under Real Time the mask
+ *  stays empty, so the choice is the Key alone. */
+export function pitchKeyChoice(mode: number, scale: number, key: number): Record<number, number> {
+  return mode === 2 ? { [PITCH_KEY_SLOT]: key } : pitchKeyPatch(scale, key);
+}
+
+/**
+ * The engine patch a MIDI Control change writes, from mode `was` to `mode`: the two bits, and
+ * what the unit does to the Scale and the mask on the same change.
+ * - Onto Real Time the mask empties, and a scale other than Single turns Custom.
+ * - From Real Time onto Setting or Off, a named scale fills the mask in again at the Key.
+ * - From Off onto Setting, a Custom or Chromatic scale empties the mask onto Custom.
+ */
+export function pitchMidiModeChange(was: number, mode: number, scale: number, key: number): Record<number, number> {
+  const patch = pitchMidiPatch(mode);
+  if (mode === was) return patch;
+  const empty = (): void => PITCH_NOTE_SLOTS.forEach((s) => (patch[s] = 0));
+  if (mode === 2) {
+    if (scale !== PITCH_SCALE_SINGLE) patch[PITCH_SCALE_SLOT] = PITCH_SCALE_CUSTOM;
+    empty();
+  } else if (was === 2) {
+    if (PITCH_SCALE_OFFSETS[scale]) Object.assign(patch, pitchScalePatch(scale, key));
+  } else if (mode === 1 && (scale === PITCH_SCALE_CUSTOM || scale === PITCH_SCALE_CHROMATIC)) {
+    patch[PITCH_SCALE_SLOT] = PITCH_SCALE_CUSTOM;
+    empty();
+  }
+  return patch;
+}
 const EMPTY_SLOTS: ReadonlySet<number> = new Set();
 
 // ---- plan storage keys ----

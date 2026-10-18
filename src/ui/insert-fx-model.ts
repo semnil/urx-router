@@ -5,17 +5,7 @@
 // slot key — without checking it.
 
 import type { Plan } from "../core/plan";
-import {
-  insertFxSlotVal,
-  insertFxSwitchOn,
-  PITCH_KEY_SLOT,
-  PITCH_MIDI_ENABLE_SLOT,
-  PITCH_MIDI_REALTIME_SLOT,
-  PITCH_NOTE_SLOTS,
-  PITCH_SCALE_OFFSETS,
-  PITCH_SCALE_SLOT,
-  type InsertFxFamily,
-} from "../core/control/insert-fx-effect";
+import { insertFxSlotVal, type InsertFxFamily } from "../core/control/insert-fx-effect";
 
 // The engine-slot map is keyed by family + slot, so a value stored by one effect is
 // never read by the next one the selector names (insert-fx-effect.ts). A bare slot
@@ -30,52 +20,14 @@ export function insertFxVal(plan: Plan, nodeId: string, fam: InsertFxFamily, slo
 // selection takes, which the load applies too. Both are re-exported here so the editor's
 // modules take the whole value model from one import.
 export { parkOutgoingInsertFxParams, reKeyInsertFxParams, seedInsertFxParams } from "../core/control/insert-fx-effect";
-
-/**
- * The engine patch a Pitch Fix scale selection writes: the scale slot, and the twelve
- * notes the preset turns on AT THIS KEY.
- *
- * The mask slots are absolute semitones and the unit derives them from the Scale enum and
- * the Key. Authoring them from the same offsets is what keeps a plan written offline
- * agreeing with what the unit would have derived — a mask rooted at C, written at any
- * other Key, is a different scale.
- *
- * Custom carries no pattern: it names whatever mask is already there, so the patch is the
- * enum alone.
- */
-export function pitchScalePatch(scale: number, key: number): Record<number, number> {
-  const patch: Record<number, number> = { [PITCH_SCALE_SLOT]: scale };
-  const offsets = PITCH_SCALE_OFFSETS[scale];
-  if (!offsets) return patch;
-  const on = new Set(offsets.map((o) => (o + key) % 12));
-  PITCH_NOTE_SLOTS.forEach((s, i) => (patch[s] = on.has(i) ? 1 : 0));
-  return patch;
-}
-
-/** The mask a Key change re-roots to, keeping the scale it is currently spelling. The unit
- *  re-derives on a Key write of its own, so this is what an offline plan needs to match. */
-export function pitchKeyPatch(scale: number, key: number): Record<number, number> {
-  return { [PITCH_KEY_SLOT]: key, ...pitchScalePatch(scale, key) };
-}
-
-/**
- * MIDI Control's three-way, folded from its two engine bits: enable off = Off, enable on
- * with realtime off = Setting, both on = Real Time.
- *
- * It is written, through `pitchMidiPatch` below. While it is on, the twelve-note mask and
- * the Scale are the unit's (`pitchDeviceDriven`): the screen locks them and the writer
- * stops emitting them. insert-fx-effect.ts's note on read-only slots says why that
- * replaced a refusal to write the mode.
- */
-export function pitchMidiMode(enable: unknown, realtime: unknown): 0 | 1 | 2 {
-  return !insertFxSwitchOn(enable) ? 0 : !insertFxSwitchOn(realtime) ? 1 : 2;
-}
-
-/**
- * …and the inverse, as the slot patch a write speaks. Two bits for three modes, so a write
- * names BOTH: setting the enable bit alone would leave whichever real-time bit was there
- * and land on a mode nobody chose.
- */
-export function pitchMidiPatch(mode: number): Record<number, number> {
-  return { [PITCH_MIDI_ENABLE_SLOT]: mode === 0 ? 0 : 1, [PITCH_MIDI_REALTIME_SLOT]: mode === 2 ? 1 : 0 };
-}
+// So do Pitch Fix's patches, which the SIM view's rows write through as well.
+export {
+  pitchKeyChoice,
+  pitchKeyPatch,
+  pitchMidiMode,
+  pitchMidiModeChange,
+  pitchMidiPatch,
+  pitchScaleChoice,
+  pitchScalePatch,
+  pitchScalesOffered,
+} from "../core/control/insert-fx-effect";

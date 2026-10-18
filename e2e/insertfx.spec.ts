@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { test, expect, colorToken, type Page } from "./fixtures";
 import { planParamZ } from "./plan-param";
 import { dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
@@ -706,12 +706,21 @@ test("pitch MIDI Control is written, and the mask it clears becomes the unit's",
   await expect(mode).toHaveValue("2");
   expect(await panelHeight()).toBe(untagged);
   // Both bits, or the mode is one nobody chose. Read back off the row rather than the plan:
-  // the row is what the operator sees, and it decodes the pair.
-  await expect(screenRow(page, "Scale")).toHaveClass(/\blocked\b/);
+  // the row is what the operator sees, and it decodes the pair. Under Real Time the notes are
+  // the unit's, and the Scale stays the operator's on the list the unit's own screen offers.
   await expect(screenRow(page, "Notes")).toHaveClass(/\blocked\b/);
-  // …and back off releases them.
-  await chooseOption(mode, { label: "Off" });
   await expect(screenRow(page, "Scale")).not.toHaveClass(/\blocked\b/);
+  await expect(screenSelect(page, "Scale").locator("option")).toHaveText(["Custom", "Single"]);
+  await chooseOption(screenSelect(page, "Scale"), { label: "Single" });
+  await expect(screenSelect(page, "Scale")).toHaveValue("1");
+  // Setting offers every scale but Chromatic.
+  await chooseOption(mode, { label: "Setting" });
+  await expect(screenSelect(page, "Scale").locator("option")).not.toContainText(["Chromatic"]);
+  await expect(screenSelect(page, "Scale").locator("option", { hasText: "Major" })).toHaveCount(1);
+  // …and back off releases the notes and offers every scale again.
+  await chooseOption(mode, { label: "Off" });
+  await expect(screenRow(page, "Notes")).not.toHaveClass(/\blocked\b/);
+  await expect(screenSelect(page, "Scale").locator("option", { hasText: "Chromatic" })).toHaveCount(1);
   await closeScreen(page);
 });
 
@@ -766,6 +775,22 @@ test("pitch scale select seeds the note keyboard, and a note edit persists as Cu
   await expect(screenSelect(page, "Scale")).toHaveValue("0"); // Custom
   await expect(screenSelect(page, "Scale").locator("option", { hasText: "Custom" })).toBeEnabled();
   await expect(noteToggle(page, "F#")).toHaveAttribute("aria-pressed", "true");
+});
+
+// A Key picked on the screen re-roots the Scale the notes spell: Major on C, then Key G,
+// leaves G major pressed (F# in, F out).
+test("a picked Key re-roots the scale the note keyboard shows", async ({ page }) => {
+  await node(page, "ch1").click();
+  await chooseOption(await insertSelect(page), { label: "Pitch Fix" });
+  await openScreen(page);
+  await chooseOption(screenSelect(page, "Scale"), { label: "Major" });
+  await expect(noteToggle(page, "F#")).toHaveAttribute("aria-pressed", "false");
+  await expect(noteToggle(page, "F")).toHaveAttribute("aria-pressed", "true");
+  await chooseOption(screenSelect(page, "Key"), { label: "G" });
+  await expect(screenSelect(page, "Scale")).toHaveValue("2");
+  await expect(noteToggle(page, "F#")).toHaveAttribute("aria-pressed", "true");
+  await expect(noteToggle(page, "F")).toHaveAttribute("aria-pressed", "false");
+  await closeScreen(page);
 });
 
 // A plan can carry any Scale preset: it must display verbatim instead of collapsing to
@@ -1320,5 +1345,118 @@ test("Pitch Fix keeps each of its three groups on one row", async ({ page }) => 
   // or a column of twelve — satisfies every assertion above.
   const distinct = new Set([...tops.flat(), await rowOf("Correction")]);
   expect(distinct.size, "the face wraps at all").toBeGreaterThan(1);
+  await closeScreen(page);
+});
+
+// A tag on a CARD says one thing — when this value applies — and whether it lands beside a knob's
+// name or on a row spanning the grid is decided by the control, which the reader cannot see. So
+// the two are drawn alike.
+//
+// Read as a RECIPE rather than as five properties: the difference the two used to have was a
+// font, a border style, a radius, a padding and a colour at once, so a short list leaves the
+// ones it omits free to diverge — a filled amber block in Helvetica passes a list of five that
+// happens to agree. Composed opacity is in it because it is the one thing that is not on the
+// element: a locked card used to dim its whole self, tag included, while a locked ROW exempts
+// the pill by name, and `getComputedStyle` reports 1 on both.
+//
+// Compared to each other rather than to literal values, which the palette would age out — with
+// one value ANCHORED, because an equality alone also holds when the recipe vanishes and both
+// fall back to what they inherit.
+const tagFace = (page: Page, sel: string) =>
+  screenBox(page)
+    .locator(sel)
+    .first()
+    .evaluate((el) => {
+      const cs = getComputedStyle(el);
+      let opacity = 1;
+      for (let n: Element | null = el; n; n = n.parentElement) opacity *= Number(getComputedStyle(n).opacity);
+      return {
+        font: [cs.fontFamily, cs.fontSize, cs.fontWeight, cs.letterSpacing].join(" "),
+        // All four sides and all four corners, since a recipe can lose one of them on its own.
+        border: [cs.borderWidth, cs.borderStyle, cs.borderColor, cs.borderRadius].join(" "),
+        padding: cs.padding,
+        color: cs.color,
+        // Both, because the recipe's own claim is that the tag is OUTLINED and not filled, and
+        // a fill written as a gradient leaves `background-color` transparent.
+        background: [cs.backgroundColor, cs.backgroundImage].join(" "),
+        opacity: +opacity.toFixed(3),
+      };
+    });
+
+test("a card's tag is drawn the same whichever kind of card carries it", async ({ page }) => {
+  const lamp = await colorToken(page, "--led-ink");
+
+  // Clean's Speed and Depth are heard on the vibrato alone, and it ships on another modulation,
+  // so both knobs carry the tag.
+  await node(page, "ch1").click();
+  await chooseOption(await insertSelect(page), { label: "Clean" });
+  await openScreen(page);
+  const onAKnob = await tagFace(page, ".gt-knobs > .gt-knob .gt-knobtag");
+  // The anchor: the card recipe is the lamp's ink, at full strength.
+  expect(onAKnob.color).toBe(lamp);
+  expect(onAKnob.opacity).toBe(1);
+  // An unlocked knob card's frame, for the locked one below to be read against.
+  const plainFrames = await screenBox(page)
+    .locator(".gt-knobs > .gt-knob:not(.locked)")
+    .evaluateAll((cards) => [
+      ...new Set(
+        cards.map((el) => {
+          const cs = getComputedStyle(el);
+          return [cs.borderWidth, cs.borderStyle, cs.borderColor, cs.backgroundImage].join(" ");
+        }),
+      ),
+    ]);
+  expect(plainFrames.length, "Clean draws its knob cards unlocked").toBe(1);
+  await closeScreen(page);
+
+  // Pitch Fix's twelve notes are the unit's under MIDI Control, on the row that spans the grid.
+  await chooseOption(await insertSelect(page), { label: "Pitch Fix" });
+  await openScreen(page);
+  await chooseOption(screenSelect(page, "MIDI Control"), { label: "Setting" });
+  expect(await tagFace(page, ".gt-knobs > .prefs-row .prefs-lock")).toEqual(onAKnob);
+  await closeScreen(page);
+
+  // A locked card dims its contents and keeps its own frame, the way a locked row does, so the
+  // frame is read against an unlocked card's (Clean's, above): putting the dim back on the card
+  // would take the frame with it. The multi-band compressor's 1-knob locks the cards it holds.
+  const plan = {
+    format: "urx-router-plan",
+    version: 1,
+    modelId: "URX44V",
+    connections: [],
+    nodeParams: { "bus.mix1": { insertFx: 1792, insertFxOn: true, insertFxParams: { "6": 1, "7": 4 } } },
+  };
+  await page.goto(`/?plan=${planParamZ(plan)}`);
+  await node(page, "bus.mix1").click();
+  await openScreen(page);
+  const lockedFrames = await screenBox(page)
+    .locator(".gt-knobs > .gt-knob.locked")
+    .evaluateAll((cards) => [
+      ...new Set(
+        cards.map((el) => {
+          const cs = getComputedStyle(el);
+          return [cs.borderWidth, cs.borderStyle, cs.borderColor, cs.backgroundImage].join(" ");
+        }),
+      ),
+    ]);
+  expect(lockedFrames.length, "the 1-knob locks band cards").toBe(1);
+  expect(lockedFrames).toEqual(plainFrames);
+  await closeScreen(page);
+
+  // The control, without which the comparison is satisfied by every tag having become one
+  // thing: a row OUTSIDE the knob grid keeps the settings pill, because a list of them on the
+  // rows a panel has dimmed would make amber the brightest thing on the screen. Asserted as
+  // the recipe it keeps rather than as "not the other one", which any difference satisfies —
+  // including the pill losing its own round corners.
+  await node(page, "ch1").click();
+  const eq = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^EQ$/ }) });
+  if (!(await eq.evaluate((el) => (el as HTMLDetailsElement).open))) await eq.locator("summary").click();
+  await eq.locator("#btn-eq-screen").click();
+  await expect(screenBox(page)).toContainText("EQ");
+  await expect(screenBox(page).locator(".gt-knobs")).toHaveCount(0);
+  const outsideTheGrid = await tagFace(page, ".prefs-row .prefs-lock");
+  expect(outsideTheGrid.border).toBe(`1px dashed ${await colorToken(page, "--ctl-border")} 999px`);
+  expect(outsideTheGrid.padding).toBe("1px 7px");
+  expect(outsideTheGrid).not.toEqual(onAKnob);
   await closeScreen(page);
 });

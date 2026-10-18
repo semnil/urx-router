@@ -71,10 +71,11 @@ import { EQ_FREQ_MAX_HZ, EQ_FREQ_MIN_HZ } from "../core/control/vd";
 import type { DynBinding, DynCtx, DynLane, DynProcessor, DynRowCtx, DynValues } from "./dyn-screen";
 import {
   insertFxVal,
-  pitchKeyPatch,
+  pitchKeyChoice,
   pitchMidiMode,
-  pitchMidiPatch,
-  pitchScalePatch,
+  pitchMidiModeChange,
+  pitchScaleChoice,
+  pitchScalesOffered,
   reKeyInsertFxParams,
 } from "./insert-fx-model";
 import type { Messages } from "../i18n/en";
@@ -994,10 +995,10 @@ function insFxFace(): DynProcessor {
               label,
               PITCH_KEYS,
               cur,
-              (v) => ctx.set(slotPatch(pitchKeyPatch(scaleOf(ctx), v))),
+              (v) => ctx.set(slotPatch(pitchKeyChoice(midiModeOf(ctx), scaleOf(ctx), v))),
               ctx.states.get(key),
             ),
-            pitchScaleRow(ctx, rateHeld(ctx) ? { locked: true } : deviceOwned(ctx)),
+            pitchScaleRow(ctx),
           );
           continue;
         }
@@ -1240,19 +1241,29 @@ const PITCH_DEFAULTS = insertFxDefaults("pitch");
 const scaleOf = (ctx: DynCtx): number =>
   insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_SCALE_SLOT, PITCH_DEFAULTS[PITCH_SCALE_SLOT]);
 
+/** MIDI Control's mode, as the plan holds it: 0 Off, 1 Setting, 2 Real Time. */
+const midiModeOf = (ctx: DynCtx): number =>
+  pitchMidiMode(
+    insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_ENABLE_SLOT, PITCH_DEFAULTS[PITCH_MIDI_ENABLE_SLOT]),
+    insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_REALTIME_SLOT, PITCH_DEFAULTS[PITCH_MIDI_REALTIME_SLOT]),
+  );
+
 /**
  * The Scale selector, beside the Key it is rooted at.
  *
- * Every preset is selectable: the unit derives the twelve-note mask from the Scale and the
- * Key for all eight, and the app authors the same offsets — which is what lets a preset be
- * shown as itself instead of collapsing to Custom.
+ * It offers what the unit's own list offers under the current MIDI Control (`pitchScalesOffered`).
+ * The unit derives the twelve-note mask from the Scale and the Key for every preset, and the
+ * app authors the same offsets — which is what lets a preset be shown as itself instead of
+ * collapsing to Custom. Under Real Time the mask stays empty whatever is chosen.
  */
-function pitchScaleRow(ctx: DynRowCtx, owned: SettingsRowOptions | undefined): HTMLElement {
+function pitchScaleRow(ctx: DynRowCtx): HTMLElement {
   const t = ctx.m.inspector.insertFxEffect;
   const scale = scaleOf(ctx);
   // Read at the gesture, not here: `ctx.live()` is the whole reason the Key that reaches
   // the mask is the one the plan holds when the operator picks, rather than the one drawn.
   const keyNow = (): number => insertFxVal(ctx.live().plan, ctx.nodeId, "pitch", PITCH_KEY_SLOT, 0);
+  const mode = midiModeOf(ctx);
+  const offered = pitchScalesOffered(mode);
   const scales = [
     { value: PITCH_SCALE_CHROMATIC, label: t.scaleChromatic },
     { value: PITCH_SCALE_MAJOR, label: t.scaleMajor },
@@ -1263,12 +1274,15 @@ function pitchScaleRow(ctx: DynRowCtx, owned: SettingsRowOptions | undefined): H
     { value: PITCH_SCALE_MELODIC_MINOR, label: t.scaleMelodicMinor },
     { value: PITCH_SCALE_PENTATONIC, label: t.scalePentatonic },
   ];
+  // A scale the plan holds that the mode does not offer stays on the list, so the row shows
+  // what the plan holds rather than another value.
+  const shown = scales.filter((o) => offered(o.value) || o.value === scale);
   return enumRow(
     t.scale,
-    scales,
-    scales.some((o) => o.value === scale) ? scale : PITCH_SCALE_CUSTOM,
-    (v) => ctx.set(slotPatch(pitchScalePatch(v, keyNow()))),
-    owned,
+    shown,
+    shown.some((o) => o.value === scale) ? scale : PITCH_SCALE_CUSTOM,
+    (v) => ctx.set(slotPatch(pitchScaleChoice(midiModeOf(ctx.live()), v, keyNow()))),
+    rateHeld(ctx) ? { locked: true } : undefined,
   );
 }
 
@@ -1368,9 +1382,9 @@ function mbcOneKnobSection(ctx: DynRowCtx): HTMLElement {
 }
 
 /**
- * How the Scale row and the twelve notes are drawn while the unit owns them, or undefined.
+ * How the twelve notes are drawn while the unit owns them, or undefined.
  *
- * `rowStates` cannot reach either: it is keyed by FIELD, and these two are rows this file
+ * `rowStates` cannot reach them: it is keyed by FIELD, and the notes are a row this file
  * builds by hand. So the same question is asked here, of the same list the writer reads.
  */
 function deviceOwned(ctx: DynRowCtx): SettingsRowOptions | undefined {
@@ -1385,25 +1399,25 @@ function deviceOwned(ctx: DynRowCtx): SettingsRowOptions | undefined {
  * Two bits for three modes, so the write names both — setting the enable bit alone would
  * leave whichever real-time bit was there and land on a mode nobody chose.
  *
- * Switching it on clears the twelve-note mask and takes the Scale to Custom. That is the
- * unit's own behaviour when the mode is changed on its front panel, and it is what the
- * operator asked for by changing it: from there the notes the correction aims at come from
- * a USB-MIDI port of the unit's own, so the mask and the Scale are the unit's while it is
- * on (`pitchDeviceDriven`) — locked here, and not emitted by the writer.
+ * A change also moves the Scale and the mask the way the unit moves them when the mode is
+ * changed on its front panel (`pitchMidiModeChange`). While it is on the notes the correction
+ * aims at come from a USB-MIDI port of the unit's own, so the mask is the unit's
+ * (`pitchDeviceDriven`) — locked here, and not emitted by the writer.
  */
 function pitchMidiRow(ctx: DynRowCtx): HTMLElement {
   const t = ctx.m.inspector.insertFxEffect;
-  const mode = pitchMidiMode(
-    insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_ENABLE_SLOT, PITCH_DEFAULTS[PITCH_MIDI_ENABLE_SLOT]),
-    insertFxVal(ctx.plan, ctx.nodeId, "pitch", PITCH_MIDI_REALTIME_SLOT, PITCH_DEFAULTS[PITCH_MIDI_REALTIME_SLOT]),
-  );
+  const mode = midiModeOf(ctx);
   // A select, like the Key and the Scale above it: three buttons do not fit the row, and
   // "Real Time" wrapped onto a second line, which moved everything below it.
   const row = enumRow(
     t.params.midiControl,
     PITCH_MIDI_MODES.map((label, value) => ({ value, label })),
     mode,
-    (v) => ctx.set(slotPatch(pitchMidiPatch(v))),
+    (v) => {
+      const now = ctx.live();
+      const keyNow = insertFxVal(now.plan, ctx.nodeId, "pitch", PITCH_KEY_SLOT, 0);
+      ctx.set(slotPatch(pitchMidiModeChange(midiModeOf(now), v, scaleOf(now), keyNow)));
+    },
     rateHeld(ctx) ? { locked: true } : undefined,
   );
   row.title = t.midiControlDeviceOnly;

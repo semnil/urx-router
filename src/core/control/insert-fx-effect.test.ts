@@ -292,15 +292,15 @@ describe("insert-fx family / engine / slot mapping", () => {
     expect(w.filter((s) => s.mirror !== undefined).length).toBe(3);
   });
 
-  it("stops writing the mask and the Scale while MIDI Control is on", () => {
-    // Its transition clears both, which is what the operator asked for by switching it, and
-    // in Setting and Real Time the notes come from a port of the unit's own. Re-sending the
-    // plan's copy would put the pre-change mask straight back.
+  it("stops writing the mask while MIDI Control is on, and keeps writing the Scale", () => {
+    // In Setting and Real Time the notes come from a port of the unit's own, so re-sending the
+    // plan's copy would put the pre-change mask straight back. The Scale stays the operator's:
+    // the unit's own list offers it in both modes.
     const on = pitchDeviceDriven({ [insertFxParamKey("pitch", PITCH_MIDI_ENABLE_SLOT)]: 1 });
-    expect(on.has(PITCH_SCALE_SLOT)).toBe(true);
+    expect(on.has(PITCH_SCALE_SLOT)).toBe(false);
     for (const n of PITCH_NOTE_SLOTS) expect(on.has(n)).toBe(true);
     // …and nothing else: Coarse and the rest stay the operator's in every mode.
-    expect(on.size).toBe(1 + PITCH_NOTE_SLOTS.length);
+    expect(on.size).toBe(PITCH_NOTE_SLOTS.length);
     // The positive control: with the mode off the same call claims nothing.
     expect(pitchDeviceDriven({}).size).toBe(0);
     // …and it reads the bare slot a readback writes, as well as the qualified key.
@@ -308,8 +308,8 @@ describe("insert-fx family / engine / slot mapping", () => {
   });
 
   // The mode is asked of the raw the write sends at its enable bit, as the multi-band
-  // compressor's switch is: `true` sent nothing there and still took the Scale and the mask
-  // out of the write.
+  // compressor's switch is: `true` sent nothing there and still took the mask out of the
+  // write.
   it.each([[true], [false], [-1], [0.4], [0.5], [1], [2], ["1"]])(
     "reads a MIDI Control enable holding %j the way the write sends it",
     (v) => {

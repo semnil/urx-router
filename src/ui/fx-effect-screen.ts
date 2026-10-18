@@ -20,7 +20,6 @@ import {
   fxEffectTypes,
   fxFamilyOf,
   fxParams,
-  fxRowOwners,
   resolveFxEffectType,
 } from "../core/control/fx-effect";
 import type { FxFamily, FxParamDesc } from "../core/control/fx-effect";
@@ -195,26 +194,6 @@ function offNote(ctx: DynCtx): string | null {
   return nodeRateDisabled(ctx.nodeId, ctx.plan.sampleRate) ? ctx.m.inspector.fx2RateLocked : null;
 }
 
-/** The rows the unit owns, tagged with which of the two things it is doing. Both stay on
- *  the panel and stay readable — the computed one is where the derived time is read — and
- *  neither is removed, so the face keeps its height whatever Sync is set to.
- *
- *  The cost of locking the note value is that it cannot be chosen before Sync is switched
- *  on; switching Sync on first is the one extra gesture. It is locked all the same, because
- *  a control the unit is not reading is a control whose value means nothing yet.
- *
- *  The lock the OPERATOR sees; the writer honours the same list by leaving a computed slot
- *  out of what it sends, so the gesture and the command agree about who owns the row. */
-function lockedRows(ctx: DynCtx, type: number): ReadonlyMap<string, { locked: true; tag: string }> | null {
-  const g = ctx.m.dynTuning.fx;
-  const owners = fxRowOwners(type, fxOf(ctx).params);
-  const out = new Map<string, { locked: true; tag: string }>();
-  for (const [planKey, why] of owners) {
-    out.set(fieldKey(planKey), { locked: true, tag: why === "computed" ? g.syncedTag : g.syncOffTag });
-  }
-  return out.size ? out : null;
-}
-
 /** The label an i18n table has for a catalogue row. The catalogue's `label` is the shared
  *  name (both reverbs' `hpf`), which is what keeps one message per parameter rather than one
  *  per family. */
@@ -361,14 +340,11 @@ function fxFace(): DynProcessor {
     },
 
     rowStates: (ctx) => {
-      const type = boundTypeOf(ctx);
       // Above 96 kHz the FX2 bus is gone: every row read-only and assignable. Untagged, since one
       // reason covers every row and the line under the display gives it.
-      if (nodeRateDisabled(ctx.nodeId, ctx.plan.sampleRate)) {
-        const held: SettingsRowOptions = { locked: true, assignable: true };
-        return new Map(rowsOf(type).map((d) => [fieldKey(d.key), held]));
-      }
-      return lockedRows(ctx, type);
+      if (!nodeRateDisabled(ctx.nodeId, ctx.plan.sampleRate)) return null;
+      const held: SettingsRowOptions = { locked: true, assignable: true };
+      return new Map(rowsOf(boundTypeOf(ctx)).map((d) => [fieldKey(d.key), held]));
     },
 
     // Everything that is not a knob — the delay's Sync switch and its Note value. Placed in

@@ -2295,7 +2295,7 @@ export class DynScreen {
     });
     if (opts?.locked) input.disabled = true;
     knob.append(ind, input);
-    // A row's tag ("Vib only", "Synced") is what says when its value applies — on a LOCKED row
+    // A row's tag ("Vib only") is what says when its value applies — on a LOCKED row
     // that is also why it cannot be touched, so it travels with the card rather than being
     // dropped in this layout, and the card's own dim leaves it out.
     if (opts?.tag) {

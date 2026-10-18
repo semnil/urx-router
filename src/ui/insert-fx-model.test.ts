@@ -7,10 +7,14 @@ import { describe, expect, it } from "vitest";
 import {
   insertFxVal,
   parkOutgoingInsertFxParams,
+  pitchKeyChoice,
   pitchMidiMode,
+  pitchMidiModeChange,
   pitchMidiPatch,
   pitchKeyPatch,
+  pitchScaleChoice,
   pitchScalePatch,
+  pitchScalesOffered,
   reKeyInsertFxParams,
 } from "./insert-fx-model";
 import {
@@ -241,6 +245,76 @@ describe("pitch MIDI control tri-state", () => {
     for (const mode of [0, 1, 2]) {
       const p = pitchMidiPatch(mode);
       expect(pitchMidiMode(p[PITCH_MIDI_ENABLE_SLOT], p[PITCH_MIDI_REALTIME_SLOT]), String(mode)).toBe(mode);
+    }
+  });
+});
+
+// What the unit does to the Scale and the mask when MIDI Control changes, as the unit's own screen
+// and the control link record it (vd-params.md, Pitch Fix; urx-lcd-sim's screen inventory).
+describe("a Pitch Fix MIDI Control change, and the choices each mode allows", () => {
+  const OFF = 0;
+  const SETTING = 1;
+  const REAL_TIME = 2;
+  const empty = Object.fromEntries(PITCH_NOTE_SLOTS.map((s) => [s, 0]));
+  const D = 2;
+
+  it("empties the mask onto Real Time, and turns any scale but Single Custom", () => {
+    expect(pitchMidiModeChange(OFF, REAL_TIME, PITCH_SCALE_MAJOR, D)).toEqual({
+      ...pitchMidiPatch(REAL_TIME),
+      [PITCH_SCALE_SLOT]: PITCH_SCALE_CUSTOM,
+      ...empty,
+    });
+    expect(pitchMidiModeChange(SETTING, REAL_TIME, PITCH_SCALE_SINGLE, D)).toEqual({
+      ...pitchMidiPatch(REAL_TIME),
+      ...empty,
+    });
+  });
+
+  it("fills a named scale's mask in again at the Key, from Real Time onto Setting or Off", () => {
+    for (const to of [SETTING, OFF])
+      expect(pitchMidiModeChange(REAL_TIME, to, PITCH_SCALE_SINGLE, D), String(to)).toEqual({
+        ...pitchMidiPatch(to),
+        ...pitchScalePatch(PITCH_SCALE_SINGLE, D),
+      });
+    // Custom names no pattern, so it stays empty.
+    expect(pitchMidiModeChange(REAL_TIME, OFF, PITCH_SCALE_CUSTOM, D)).toEqual(pitchMidiPatch(OFF));
+  });
+
+  it("empties a Custom or Chromatic mask onto Custom from Off onto Setting, and keeps a named one", () => {
+    for (const scale of [PITCH_SCALE_CUSTOM, PITCH_SCALE_CHROMATIC])
+      expect(pitchMidiModeChange(OFF, SETTING, scale, D), String(scale)).toEqual({
+        ...pitchMidiPatch(SETTING),
+        [PITCH_SCALE_SLOT]: PITCH_SCALE_CUSTOM,
+        ...empty,
+      });
+    expect(pitchMidiModeChange(OFF, SETTING, PITCH_SCALE_MAJOR, D)).toEqual(pitchMidiPatch(SETTING));
+    // Setting back onto Off leaves both where they are, and so does the mode it already holds.
+    expect(pitchMidiModeChange(SETTING, OFF, PITCH_SCALE_CUSTOM, D)).toEqual(pitchMidiPatch(OFF));
+    expect(pitchMidiModeChange(SETTING, SETTING, PITCH_SCALE_CHROMATIC, D)).toEqual(pitchMidiPatch(SETTING));
+  });
+
+  it("offers every scale under Off, all but Chromatic under Setting, Custom and Single under Real Time", () => {
+    const all = [
+      PITCH_SCALE_CUSTOM,
+      PITCH_SCALE_SINGLE,
+      PITCH_SCALE_MAJOR,
+      PITCH_SCALE_NATURAL_MINOR,
+      PITCH_SCALE_HARMONIC_MINOR,
+      PITCH_SCALE_MELODIC_MINOR,
+      PITCH_SCALE_PENTATONIC,
+      PITCH_SCALE_CHROMATIC,
+    ];
+    expect(all.filter(pitchScalesOffered(OFF))).toEqual(all);
+    expect(all.filter(pitchScalesOffered(SETTING))).toEqual(all.filter((x) => x !== PITCH_SCALE_CHROMATIC));
+    expect(all.filter(pitchScalesOffered(REAL_TIME))).toEqual([PITCH_SCALE_CUSTOM, PITCH_SCALE_SINGLE]);
+  });
+
+  it("fills nothing in for a scale or a Key chosen under Real Time, and fills the mask in otherwise", () => {
+    expect(pitchScaleChoice(REAL_TIME, PITCH_SCALE_SINGLE, D)).toEqual({ [PITCH_SCALE_SLOT]: PITCH_SCALE_SINGLE });
+    expect(pitchKeyChoice(REAL_TIME, PITCH_SCALE_SINGLE, D)).toEqual({ [PITCH_KEY_SLOT]: D });
+    for (const mode of [OFF, SETTING]) {
+      expect(pitchScaleChoice(mode, PITCH_SCALE_MAJOR, D)).toEqual(pitchScalePatch(PITCH_SCALE_MAJOR, D));
+      expect(pitchKeyChoice(mode, PITCH_SCALE_MAJOR, D)).toEqual(pitchKeyPatch(PITCH_SCALE_MAJOR, D));
     }
   });
 });

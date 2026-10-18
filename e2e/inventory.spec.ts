@@ -763,8 +763,8 @@ test("the channel tuning screens show every processor, both displays and their n
   await openInsFx("ch1", "Clean");
   // Pitch Fix is one face, and the only place the note strip and the MIDI Control row
   // appear. Driven through BOTH of its states: from Setting on, the notes the correction
-  // aims at come from a port of the unit's own, and the Scale and the mask are the unit's —
-  // which is the only place the pill that says so is on screen.
+  // aims at come from a port of the unit's own, and the mask is the unit's — which is the
+  // only place the pill that says so is on screen.
   await openInsFx("ch3", "Pitch Fix");
   await page.locator('#graph-host g.node[data-id="ch3"]').click();
   await openInsertFxSection(page);

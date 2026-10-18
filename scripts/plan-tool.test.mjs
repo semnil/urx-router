@@ -850,27 +850,34 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
       { insertFx: 512, insertFxParams: { "pitch:16": 6, 16: 1 } },
       false,
     ],
-    // A dropped gate is not a gate: the unit drives nothing, so the Scale IS written and two
+    // A dropped gate is not a gate: the unit drives nothing, so the mask IS written and two
     // values for it are two states. This is the direction that matters most — the CLI
     // clearing a document the app refuses.
     [
-      "a string gate with the Scale differing",
-      { insertFx: 512, insertFxParams: { "pitch:34": "on", "pitch:16": 0 } },
-      { insertFx: 512, insertFxParams: { "pitch:34": "on", "pitch:16": 1 } },
+      "a string gate with a mask note differing",
+      { insertFx: 512, insertFxParams: { "pitch:34": "on", "pitch:22": 0 } },
+      { insertFx: 512, insertFxParams: { "pitch:34": "on", "pitch:22": 1 } },
       false,
     ],
     [
-      "a null gate with the Scale differing",
-      { insertFx: 512, insertFxParams: { "pitch:34": null, "pitch:16": 0 } },
-      { insertFx: 512, insertFxParams: { "pitch:34": null, "pitch:16": 1 } },
+      "a null gate with a mask note differing",
+      { insertFx: 512, insertFxParams: { "pitch:34": null, "pitch:22": 0 } },
+      { insertFx: 512, insertFxParams: { "pitch:34": null, "pitch:22": 1 } },
       false,
     ],
-    // …and the control for those two: a gate that survives DOES suppress the Scale.
+    // …and the control for those two: a gate that survives DOES suppress the mask.
+    [
+      "a surviving gate with a mask note differing",
+      { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:22": 0 } },
+      { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:22": 1 } },
+      true,
+    ],
+    // …and not the Scale, which is written under the gate.
     [
       "a surviving gate with the Scale differing",
       { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:16": 0 } },
       { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:16": 1 } },
-      true,
+      false,
     ],
   ])("agrees with the app about %s", (_name, ch1, ch2, ok) => {
     const plan = {
@@ -947,19 +954,19 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
             expect(real.app, "the app, a real bypass difference").toBe(false);
             expect(real.tool, `the tool, a real bypass difference\n${real.stdout}`).toBe(false);
 
-            // Pitch Fix's gate: a container there gates nothing, so the Scale IS written and
+            // Pitch Fix's gate: a container there gates nothing, so the mask IS written and
             // two values for it are two states.
             const gate = ask(
-              { insertFx: 512, insertFxParams: { "pitch:34": container, "pitch:16": 0 } },
-              { insertFx: 512, insertFxParams: { "pitch:34": container, "pitch:16": 1 } },
+              { insertFx: 512, insertFxParams: { "pitch:34": container, "pitch:22": 0 } },
+              { insertFx: 512, insertFxParams: { "pitch:34": container, "pitch:22": 1 } },
             );
             expect(gate.app, `the app, pitch gate ${_name}`).toBe(false);
             expect(gate.tool, `the tool, pitch gate ${_name}\n${gate.stdout}`).toBe(false);
 
-            // …and its control: a gate that IS a scalar still suppresses the Scale.
+            // …and its control: a gate that IS a scalar still suppresses the mask.
             const scalarGate = ask(
-              { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:16": 0 } },
-              { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:16": 1 } },
+              { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:22": 0 } },
+              { insertFx: 512, insertFxParams: { "pitch:34": 1, "pitch:22": 1 } },
             );
             expect(scalarGate.app, "the app, a scalar pitch gate").toBe(true);
             expect(scalarGate.tool, `the tool, a scalar pitch gate\n${scalarGate.stdout}`).toBe(true);

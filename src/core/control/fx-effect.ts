@@ -662,46 +662,38 @@ export const FX_TYPE_DEFAULTS: Record<number, Record<number, number>> = {
   1025: { 3: 120, 4: 0, 6: 5000, 7: 14, 8: 4, 9: 0, 10: 120, 11: 9 },
 };
 
-/** Array slots the delay families address by number here: the delay time both types share,
- *  the tempo Sync switch that decides who owns it, and the note value Sync reads. */
+/** Array slots the delay families address by number here: the delay time both types share and
+ *  the tempo Sync switch that decides whether the unit computes it. */
 const DELAY_TIME_SLOT = 6;
 export const DELAY_SYNC_SLOT = 4;
-const DELAY_NOTE_SLOT = 11;
 
-/** Why a row is not the operator's right now. `computed` = the unit is deriving the value
- *  and announcing it; `unused` = the unit stores it and does not read it in this state. */
-export type FxRowOwner = "computed" | "unused";
+/** Why a value is the unit's to set right now. `computed` = the unit is deriving the value
+ *  and announcing it. */
+export type FxRowOwner = "computed";
 
 /**
- * The plan keys the UNIT owns for a type, given the plan's stored params, and why.
+ * The plan keys whose value the UNIT computes for a type, given the plan's stored params.
  *
  * While tempo Sync is on the delay time is the device's: it recomputes that slot from BPM
- * and the note value and announces the result on the array address. With Sync off it is the
- * NOTE that goes unread — the effect guide conditions it on tempo sync being enabled — while
- * the delay time is the operator's again. BPM is neither: the guide puts no condition on it.
+ * and the note value and announces the result on the array address. The row stays the
+ * operator's to turn, as on the unit's own panel, where a turned value is kept and Sync stays
+ * on until the BPM or the note moves.
  *
- * One list, because two surfaces read it: the tuning screen locks and tags these rows, and
- * the MIDI catalogue declines a write to a computed one. Spelled at each, the two would
- * drift and a mapping would drive a control the screen says is not the operator's.
- *
- * THREE surfaces read it, the same three the insert-FX list has: the screen locks and tags
- * these rows, the MIDI catalogue declines a write to a `computed` one, and the writer leaves
- * a `computed` slot out of what it sends. The writer's share is not redundancy — the unit
- * ACCEPTS a write to that slot while Sync is on and holds it, so re-sending the plan's copy
- * takes the delay time off the note value and leaves Sync on with nothing driving it.
- * `unused` is the operator's throughout: the unit stores the note value while it is not
- * reading it.
+ * The writer leaves a `computed` slot out of what it sends — the unit ACCEPTS a write to that
+ * slot while Sync is on and holds it, so re-sending the plan's copy takes the delay time off
+ * the note value and leaves Sync on with nothing driving it. A value turned by hand during a
+ * session is therefore written to the unit directly (the screen, a MIDI control and the SIM
+ * view each do), and the subscription follows the slot so the unit's recompute reaches the plan.
  */
 export function fxRowOwners(type: number, params: Record<string, number> | undefined): ReadonlyMap<string, FxRowOwner> {
   const out = new Map<string, FxRowOwner>();
   if (fxFamilyOf(type) !== "delay") return out;
   const descs = fxParams(type);
-  const keyAt = (slot: number): string | undefined => descs.find((d) => d.slot === slot)?.key;
-  const syncKey = keyAt(DELAY_SYNC_SLOT);
+  const syncKey = descs.find((d) => d.slot === DELAY_SYNC_SLOT)?.key;
   const syncDef = descs.find((d) => d.slot === DELAY_SYNC_SLOT)?.def ?? 0;
   const synced = (params?.[syncKey ?? ""] ?? syncDef) !== 0;
-  const owned = keyAt(synced ? DELAY_TIME_SLOT : DELAY_NOTE_SLOT);
-  if (owned) out.set(owned, synced ? "computed" : "unused");
+  const time = descs.find((d) => d.slot === DELAY_TIME_SLOT)?.key;
+  if (synced && time) out.set(time, "computed");
   return out;
 }
 

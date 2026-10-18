@@ -311,10 +311,12 @@ or inside a group — is written `true` / `false`: a number there loads converte
   recomputes the band Thresholds, Ratios and Gains and pins all but the Out Gain back.
   The load sets those fixed slots to the type's own values wherever slot 6 is on.
   Pitch Fix's MIDI Control (slots 34 and 35, two bits for three
-  modes): while it is anything but Off, the app stops writing the Scale (slot 16) and
-  the twelve note-mask slots (22–33), because switching the mode on clears that mask
-  on the unit. In both cases the skipped slots are dropped from the write silently
-  and the app's tuning screen locks the same rows. "On" means the number the write
+  modes): while it is anything but Off, the app stops writing the twelve note-mask
+  slots (22–33), because from Setting on the unit owns that mask. The Scale (slot 16)
+  is still written, after the two bits: the unit's own list offers every scale but
+  Chromatic under Setting, and Custom and Single under Real Time. In both cases the
+  skipped slots are dropped from the write silently and the app's tuning screen locks
+  the same rows. "On" means the number the write
   sends to the switch is 1: a finite number of 0.5 or more (rounded, and bounded to
   0..1). A boolean or any other non-number is not written at all and counts as off.
 

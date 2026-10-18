@@ -20,6 +20,7 @@ import {
   MBC_GLOBAL,
   PITCH_KEY_SLOT,
   PITCH_NOTE_SLOTS,
+  PITCH_SCALE_CUSTOM,
   PITCH_SCALE_SLOT,
   PITCH_SCALE_MAJOR,
   insertFxLockedSlots,
@@ -1303,6 +1304,18 @@ describe("a gesture taken while the rebuild is deferred", () => {
     screen.close();
   });
 
+  it("shows a Scale the list does not carry as Custom", () => {
+    holding("ch1", "Pitch Fix");
+    h.plan.nodeParams.ch1!.insertFxParams = { ...h.plan.nodeParams.ch1!.insertFxParams, [K(PITCH_SCALE_SLOT)]: 99 };
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    const scale = [...h.box.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
+      [...s.options].some((o) => o.textContent === t().inspector.insertFxEffect.scaleMajor),
+    )!;
+    expect(scale.value).toBe(String(PITCH_SCALE_CUSTOM));
+    screen.close();
+  });
+
   it("writes a picked Key and re-roots the Scale the mask spells at it", () => {
     holding("ch1", "Pitch Fix");
     const screen = new DynScreen(h.hooks);
@@ -1614,17 +1627,17 @@ describe("the multi-band compressor", () => {
     screen.close();
   });
 
-  it("writes both bits of Pitch Fix's MIDI Control, and locks the mask it clears", () => {
-    // Two bits for three modes, so the write names both; and from Setting on, the notes the
-    // correction aims at come from a port of the unit's own, so the mask is the unit's.
+  it("locks Pitch Fix's mask while MIDI Control is on, and leaves the Scale the operator's", () => {
+    // From Setting on, the notes the correction aims at come from a port of the unit's own, so
+    // the mask is the unit's. The Scale is offered on the unit's own list in both modes.
     const ctx = holding("ch1", "Pitch Fix");
     h.plan.nodeParams.ch1!.insertFxOn = true;
     expect(INSFX_DYN.rowStates!(ctx, {})).toBeNull();
     h.plan.nodeParams.ch1!.insertFxParams = { [insertFxParamKey("pitch", 34)]: 1 };
     const states = INSFX_DYN.rowStates!(ctx, {})!;
     const slots = [...states.keys()].map((k) => Number(/:(\d+)$/.exec(k)?.[1]));
-    expect(slots).toContain(PITCH_SCALE_SLOT);
-    expect(slots.length).toBe(1 + PITCH_NOTE_SLOTS.length);
+    expect(slots).not.toContain(PITCH_SCALE_SLOT);
+    expect(slots.sort((x, y) => x - y)).toEqual([...PITCH_NOTE_SLOTS]);
     expect([...states.values()].every((o) => o.locked === true)).toBe(true);
   });
 
