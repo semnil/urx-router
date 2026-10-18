@@ -1974,7 +1974,7 @@ MIDI パネルの `midiErrorStatus` が同じ役回りで、`midi-port-not-found
   使い切る記録 `fxReseeds` から、チャンネルごとに `keepFx` として読みへ渡す。そのため、出ていくタイプの値を
   本体のパネルで動かしてあっても、その値が 2 つのタイプの共有するキーに置かれて入ってくるタイプの既定値の代わりに
   送られることはなく、出ていくタイプだけが使うキーは従来どおり退避される (`readback.test.ts` の
-  "leaves the keys keepFx names standing"、`main.device.test.ts` の "leaves the defaults an Inspector selection
+  "leaves the keys keepFx names standing"、`main.device.fx.test.ts` の "leaves the defaults an Inspector selection
   took standing")。キーを渡すのはそのチャンネルのタイプ書込の手前の park だけで、タイプ書込が待っていない記録 —
   チャンネルが記録したタイプから外れた (選択をアンドゥした) もの、本体へ最後に送ったのがそのタイプである
   (選択が本体のタイプへ戻った) もの — は次に走る park が消す (`app/fx-reseed.ts` の `takeFxReseeds`)。そのため

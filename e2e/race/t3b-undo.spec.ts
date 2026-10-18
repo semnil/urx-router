@@ -1440,7 +1440,7 @@ test.describe("T3b undo", () => {
   // redo write afterwards — "Nothing to undo" / "Nothing to redo" answer whether an entry
   // is left, which the edit menu's state does not (it counts an open entry as undoable).
   // The refusal that would fire if such an entry existed is asserted in
-  // `src/ui/history.test.ts`, and the picker being locked in `src/main.device.test.ts`.
+  // `src/ui/history.test.ts`, and the picker being locked in `src/main.device.clock.test.ts`.
   test.skip("a sampleRate-touching entry is refused while live", () => {});
 
   // Reset path (g), a .urxf settings import, is behind the --experimental launch flag,

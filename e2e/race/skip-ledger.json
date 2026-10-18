@@ -50,7 +50,7 @@
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "T3b undo > a sampleRate-touching entry is refused while live",
       "guardedBy": {
-        "file": "src/main.device.test.ts",
+        "file": "src/main.device.fetch.test.ts",
         "title": "Fetch from device > drops the undo history on a live start whose read changed no value"
       }
     },
@@ -58,7 +58,7 @@
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "T3b undo > a .urxf settings import empties both stacks",
       "guardedBy": {
-        "file": "src/main.device.test.ts",
+        "file": "src/main.device.shell.test.ts",
         "title": "the desktop-only surfaces > keeps the settings import behind the flag, and the race fake never sets it"
       }
     },
