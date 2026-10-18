@@ -238,6 +238,40 @@ test("leaves the Sampling Frequency screen to the unit during Live sync while Fo
   await expect(page.locator("#rate-picker")).toHaveValue("48000");
 });
 
+// The app holds the Sampling Frequency screen shut while it is connected to the unit and the rate is
+// not one Live sync takes (Scene only here), and lets it go the moment the connection is let go,
+// which comes after the session has ended rather than with it.
+test("holds the Sampling Frequency screen shut while connected during Live sync, and opens it once the link is let go", async ({
+  page,
+}) => {
+  await page.addInitScript(() => localStorage.setItem("urx-settings", JSON.stringify({ deviceScope: "scene" })));
+  await stubTauriDevice(page, {
+    values: { [PARAMS.FOLLOW_USB.id]: 0, [PARAMS.SAMPLE_RATE.id]: 48000 },
+    commands: { experimental_enabled: true, ...LIVE_COMMANDS },
+  });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+  const entry = lcd(page).getByRole("button", { name: "Sampling Frequency" });
+  await expect(entry.locator(".lock-mark"), "not held with no connection").toHaveCount(0);
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(entry).toHaveAttribute("aria-disabled", "true");
+  await expect(entry).toHaveAttribute("title", en.sim.lockRateLinked);
+  await expect(entry.locator(".lock-mark")).toHaveCount(1);
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+  await expect(page.locator("#rate-picker"), "the toolbar's rate is open again").toBeEnabled();
+  await expect(entry.locator(".lock-mark")).toHaveCount(0);
+  await expect(entry).not.toHaveAttribute("aria-disabled");
+  await tapInto(page, entry, "setup.rate");
+});
+
 // With no session a SETUP setting changed on the LCD is written over a connection of its own; the
 // edits made while that write runs go out after it as one, carrying the last value.
 test("writes the last of several SETUP edits made on the LCD with no session", async ({ page }) => {

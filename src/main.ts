@@ -2213,6 +2213,8 @@ function syncDeviceActionUi(): void {
   // legitimately change there (offerModelSwitch), and the switch is already refused
   // for the read's duration by the deviceReadInFlight latch in fileFlow.
   picker.disabled = liveSessionUp;
+  // The SIM view holds the Sampling Frequency screen shut while the link is held.
+  simView?.relock();
 }
 
 // Reflect the live-sync state across the toggle, the on-air tally, and the other
