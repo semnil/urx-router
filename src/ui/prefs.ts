@@ -182,9 +182,7 @@ export class PrefsPanel {
       const sec = this.section(m.deviceSection);
       const locked = !desktop;
       const scopeToggle = this.choice(m.scopeAll, m.scopeScene, s.deviceScope === "all", (all) => {
-        const next = all ? "all" : "scene";
-        if (next === s.deviceScope) return;
-        this.apply({ deviceScope: next });
+        this.apply({ deviceScope: all ? "all" : "scene" });
         this.hooks.onDeviceScopeChanged();
       });
       scopeToggle.id = "prefs-device-scope";

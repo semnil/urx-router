@@ -171,13 +171,16 @@ describe("PrefsPanel", () => {
     // session to build again, and choosing the scope already in force hands it nothing.
     const scope = row(t().prefs.scope);
     expect(scope.classList.contains("locked")).toBe(false);
-    const sceneOnly = (): HTMLButtonElement =>
-      document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button")[1];
-    sceneOnly().click();
+    const scopeButton = (i: number): HTMLButtonElement =>
+      document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button")[i];
+    scopeButton(1).click();
     expect(getSettings().deviceScope).toBe("scene");
     expect(hooks.onDeviceScopeChanged).toHaveBeenCalledTimes(1);
-    sceneOnly().click();
+    scopeButton(1).click();
     expect(hooks.onDeviceScopeChanged).toHaveBeenCalledTimes(1);
+    scopeButton(0).click();
+    expect(getSettings().deviceScope).toBe("all");
+    expect(hooks.onDeviceScopeChanged).toHaveBeenCalledTimes(2);
   });
 
   // Every committed change rebuilds the box, and so does the shell's refresh while it is
