@@ -7019,6 +7019,51 @@ describe("the desktop-only surfaces", () => {
     expect(shell.count("vd_connect")).toBeGreaterThan(0);
   });
 
+  // While a session is up the screen reads and writes over the session's connection: no second
+  // connection, the session stays up, and a change applied there goes to the unit behind the
+  // session's own writes.
+  it("opens the device setup modal during Live sync and applies a change over the session", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [`${PARAMS.DEVICE_LANGUAGE.id}/0/0`]: 0 });
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    const connects = shell.count("vd_connect");
+    expect($<HTMLButtonElement>("btn-device-setup").disabled, "the entry stays open").toBe(false);
+    $("btn-device-setup").click();
+    await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(false), { timeout: 20_000 });
+    const lang = document.querySelector<HTMLSelectElement>("#device-setup-language")!;
+    expect(lang.value, "the session read the unit's settings").toBe("0");
+    lang.value = "1";
+    lang.dispatchEvent(new Event("change", { bubbles: true }));
+    $<HTMLButtonElement>("device-setup-apply").click();
+    await vi.waitFor(
+      () =>
+        expect(
+          shell.invokes.some(
+            (cmd, i) =>
+              cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.DEVICE_LANGUAGE.id && shell.args[i]?.value === 1,
+          ),
+        ).toBe(true),
+      { timeout: 10_000 },
+    );
+    expect(shell.count("vd_connect"), "over the session's own connection").toBe(connects);
+    expect(live().getAttribute("aria-checked"), "and the session is still up").toBe("true");
+  });
+
+  it("ends the session when a device setup change applied during Live sync is refused", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [`${PARAMS.DEVICE_LANGUAGE.id}/0/0`]: 0 });
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    $("btn-device-setup").click();
+    await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(false), { timeout: 20_000 });
+    const lang = document.querySelector<HTMLSelectElement>("#device-setup-language")!;
+    lang.value = "1";
+    lang.dispatchEvent(new Event("change", { bubbles: true }));
+    shell.failOnce("vd_set", new Error("setup write refused"));
+    $<HTMLButtonElement>("device-setup-apply").click();
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the refused write is what ended it").toContain("setup write refused");
+  });
+
   it("opens the MIDI control window through the shell", SLOW, async () => {
     const shell = await bootDevice({ open_midi_window: null });
     $("btn-midi").click();

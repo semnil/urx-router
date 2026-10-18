@@ -295,7 +295,7 @@ import {
   withSetupWrites,
 } from "./core/control/device-setup";
 import { isSetupGlassPath, setupGlassEdit, setupGlassValues, withSetupEdit } from "./core/sim-map-setup";
-import type { DeviceSetup } from "./core/control/device-setup";
+import type { DeviceSetup, SetupWrite } from "./core/control/device-setup";
 
 // Clear persisted UI state (theme / model / meter points / consent gate / recent
 // files / inspector sections / user preferences) when the browser dev app is opened with ?reset (or
@@ -2204,6 +2204,9 @@ function syncDeviceActionUi(): void {
   // URX44V the session survives the re-clock. During a live START it must not: the
   // session is not up yet, so the same handler would take the connecting branch.
   followUsbBadge.disabled = deviceLinkHolder !== null && !liveSessionUp;
+  // The Device setup screen is the other: while a session is up it reads and writes over the
+  // session's connection, behind every unit write queued so far.
+  $<HTMLButtonElement>("btn-device-setup").disabled = deviceLinkHolder !== null && !liveSessionUp;
   // A write settles the rate at its boundary (settleSampleRate), so while one holds the link the
   // picker only reports the rate. A live session takes a rate chosen here once the operator has
   // been asked what it costs (confirmLiveRate), and only while Follow USB is off: with it on the
@@ -5458,6 +5461,7 @@ if (!DEMO) {
     model: () => getModel(modelId),
     confirmDiscard: () => confirmDialog(t().confirm.deviceSetupDiscard),
     apply: async (writes, changed) => {
+      if (liveSessionUp) return applySetupLive(writes, changed);
       let applied = false;
       await withCheckedDevice(
         "device-setup",
@@ -5475,15 +5479,52 @@ if (!DEMO) {
     },
   });
 
+  /** Write the screen's changes over the live session's connection, behind every unit write queued
+   *  so far. A write that fails ends the session, as any other session write does. */
+  async function applySetupLive(writes: SetupWrite[], changed: number): Promise<boolean> {
+    let applied = false;
+    const run = cueWrites.then(async () => {
+      if (!liveSessionUp) return;
+      await live?.idle();
+      if (!liveSessionUp) return;
+      await sendDeviceSetup(writes);
+      applied = true;
+      if (unitSetup) unitSetup = withSetupWrites(unitSetup, writes);
+      setStatus(t().status.deviceSetupApplied(changed));
+    });
+    cueWrites = run.catch((err: unknown) => stopLiveOnError(t().error.deviceSetupWrite(errorText(err))));
+    await cueWrites;
+    simView?.unitStateChanged();
+    return applied;
+  }
+
+  /** Read the unit's settings over the live session's connection, behind every unit write queued
+   *  so far; null when the session ended first or the read failed, which ends it. */
+  async function readSetupLive(): Promise<DeviceSetup | null> {
+    const model = getModel(modelId);
+    let read: DeviceSetup | null = null;
+    const run = cueWrites.then(async () => {
+      if (!liveSessionUp) return;
+      await live?.idle();
+      if (!liveSessionUp) return;
+      read = await readDeviceSetup(model);
+    });
+    cueWrites = run.catch((err: unknown) => stopLiveOnError(t().error.deviceSetupRead(errorText(err))));
+    await cueWrites;
+    return liveSessionUp && getModel(modelId) === model ? read : null;
+  }
+
   $("btn-device-setup").addEventListener("click", async () => {
-    // A live session holds the one connection, and these settings are outside the
-    // plan that session mirrors — so the menu entry is disabled while live
-    // (syncDeviceActionUi), and this is the belt for any path that reaches here
-    // anyway. Kept beside withCheckedDevice's own link check because it says
-    // something the generic one cannot: these settings are not part of what a
-    // session mirrors, so the answer is not "wait" but "not while live".
+    // A live session holds the one connection, so the screen reads over it rather than opening
+    // a second one.
     if (liveSessionUp) {
-      showError(t().error.notWhileLive);
+      setStatus(t().status.deviceSetupReading);
+      const read = await readSetupLive();
+      if (!read) return;
+      unitSetup = read;
+      simView?.unitStateChanged();
+      setStatus(t().status.deviceSetupRead);
+      deviceSetup?.open(read);
       return;
     }
     let setup: DeviceSetup | null = null;

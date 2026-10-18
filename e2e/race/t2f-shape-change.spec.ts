@@ -504,12 +504,12 @@ test.describe("T2f shape-change", () => {
     expect(lcdReads).toHaveLength(1);
     expect(liveReads.length).toBeGreaterThan(500);
 
-    // Phase 3 — the catalog's "do the modal's reads disturb a live session" question,
-    // answered structurally: the menu entry rides the same setLiveUi list as Fetch /
-    // Write / Compare, and main.ts keeps a second belt behind it. There is no timing to
-    // measure because there is no opening.
+    // Phase 3 — the menu entry stays open during a session: the screen reads over the session's
+    // own connection, behind every unit write it has queued, so its reads are the session's and
+    // the counts above are taken before any opening. What an opening reads and writes is pinned
+    // in src/main.device.test.ts ("opens the device setup modal during Live sync").
     await page.click("#btn-device");
-    await expect(page.locator("#btn-device-setup")).toBeDisabled();
+    await expect(page.locator("#btn-device-setup")).toBeEnabled();
     await page.click("#btn-device");
 
     // Phase 4 — the control. One notify, same shape as the probe below, on an address
