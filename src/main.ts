@@ -5783,12 +5783,13 @@ if (!DEMO) {
       return;
     }
     if (result.errors.length) console.warn("settings import issues:", result.errors);
-    // Same provenance as a device fetch: nodes whose values did not come through
-    // still show their plan default, and the graph flags them as such.
-    plan.unreadNodes = result.unreadNodes;
     // During a session the import is an edit: the session writes it to the unit, and it is one
     // undo step on top of the history it found. Otherwise it settled the plan the way a read does.
     const edit = live && liveSessionUp;
+    // Same provenance as a device fetch: nodes whose values did not come through
+    // still show their plan default, and the graph flags them as such. During a session
+    // they hold what the session read from the unit, so none is flagged.
+    if (!edit) plan.unreadNodes = result.unreadNodes;
     rerenderPlan(edit ? "keep" : "reset");
     dirty = true;
     if (edit) {

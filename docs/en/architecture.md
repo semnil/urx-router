@@ -4979,7 +4979,9 @@ source travels as a parameter: the pass and each reading helper bind their own `
 from it, so a device follow reconcile and a file import cannot read each other's source and need no
 guard against overlapping. While a session is up an import is an edit like any other: its confirm says the
 imported settings go to the unit, the values land in the plan through `markChanged`, the session's next flush
-writes them, and the import is one undo step. A file that changes how the unit is clocked is asked about before
+writes them, and the import is one undo step. The nodes the file does not carry hold what the session read from
+the unit, so none is flagged as unread, while the status line still counts them. A file that changes how the unit
+is clocked is asked about before
 anything is imported (`confirmImportClock`), and imports nothing when the operator declines or the microSD recorder
 holds a file. A rate the file changes with Follow USB left as it is gets the confirm a rate chosen in the app gets —
 with Follow USB on as well, where the unit takes the computer's rate back after the write; a file that turns Follow

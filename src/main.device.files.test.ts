@@ -705,6 +705,26 @@ describe("importing a settings file", () => {
         osc: [0],
       });
     });
+
+    // The nodes the file does not carry hold what the session read from the unit, so none is
+    // flagged as unread, while the import's status line still counts them. The line is read where
+    // the import offers its report, since the flush that follows writes its own.
+    it("flags none of the nodes the file did not carry, and counts them on its line", SLOW, async () => {
+      let line = "";
+      const shell = await liveImport(sourceFile(), unit(false), (message) => {
+        if (message === t().confirm.deviceErrorExport) line = statusText();
+        return "Ok";
+      });
+      await importNow(shell);
+      await importDone(shell);
+      const counts = [...line.matchAll(/\d+/g)].map((m) => Number(m[0]));
+      expect(line).toBe(t().status.settingsPartial(counts[0], counts[1], counts[2]));
+      expect(counts[2], "nodes the file did not carry").toBeGreaterThan(0);
+      const flagged = [...$("graph-host").querySelectorAll("g.node[data-id]")].filter((g) =>
+        [...g.querySelectorAll("text")].some((el) => el.textContent === "?"),
+      );
+      expect(flagged).toHaveLength(0);
+    });
   });
 
   // The confirms ask about a session or about none, and the import goes ahead only in the state
