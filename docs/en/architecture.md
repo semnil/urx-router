@@ -3734,8 +3734,10 @@ edit → apply:
    device holds, which is what a retry needs. The rows stay editable while the apply is in flight, and an
    edit made then is not part of what was sent, so it stays pending afterwards.
 
-Closing with unapplied edits asks first. The entry disables while Live sync holds the connection, on the
-same list as Fetch / Write / Compare.
+Closing with unapplied edits asks first. The entry disables while Fetch / Write / Compare holds the
+connection. **While Live sync is up it stays open** and works over the session's connection: opening reads
+the set behind every unit write the session has queued, and applying writes the differences the same way —
+a read or a write that fails ends the session, as any other session read or write does.
 
 **Model gating.** The URX22 has no `Date/Time` menu (it has no microSD recorder for the clock to stamp)
 and the `HDMI` sub-page is URX44V only. Those rows render **locked with a dashed model tag** rather than

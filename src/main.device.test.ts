@@ -7019,6 +7019,89 @@ describe("the desktop-only surfaces", () => {
     expect(shell.count("vd_connect")).toBeGreaterThan(0);
   });
 
+  // While a session is up the screen reads and writes over the session's connection: no second
+  // connection, the session stays up, and a change applied there goes to the unit behind the
+  // session's own writes.
+  it("opens the device setup modal during Live sync and applies a change over the session", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [`${PARAMS.DEVICE_LANGUAGE.id}/0/0`]: 0 });
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    const connects = shell.count("vd_connect");
+    expect($<HTMLButtonElement>("btn-device-setup").disabled, "the entry stays open").toBe(false);
+    $("btn-device-setup").click();
+    await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(false), { timeout: 20_000 });
+    const lang = document.querySelector<HTMLSelectElement>("#device-setup-language")!;
+    expect(lang.value, "the session read the unit's settings").toBe("0");
+    lang.value = "1";
+    lang.dispatchEvent(new Event("change", { bubbles: true }));
+    $<HTMLButtonElement>("device-setup-apply").click();
+    await vi.waitFor(
+      () =>
+        expect(
+          shell.invokes.some(
+            (cmd, i) =>
+              cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.DEVICE_LANGUAGE.id && shell.args[i]?.value === 1,
+          ),
+        ).toBe(true),
+      { timeout: 10_000 },
+    );
+    expect(shell.count("vd_connect"), "over the session's own connection").toBe(connects);
+    expect(live().getAttribute("aria-checked"), "and the session is still up").toBe("true");
+  });
+
+  it("ends the session when a device setup change applied during Live sync is refused", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [`${PARAMS.DEVICE_LANGUAGE.id}/0/0`]: 0 });
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    $("btn-device-setup").click();
+    await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(false), { timeout: 20_000 });
+    const lang = document.querySelector<HTMLSelectElement>("#device-setup-language")!;
+    lang.value = "1";
+    lang.dispatchEvent(new Event("change", { bubbles: true }));
+    shell.failOnce("vd_set", new Error("setup write refused"));
+    $<HTMLButtonElement>("device-setup-apply").click();
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the refused write is what ended it").toContain("setup write refused");
+  });
+
+  // A second pick of the entry while the session's read is outstanding starts no second read, so
+  // no later open replaces what was edited on the screen the first one opened. Once that screen
+  // is closed, the entry reads again.
+  it("starts one read for two picks during Live sync, and keeps the first screen's edits", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [`${PARAMS.DEVICE_LANGUAGE.id}/0/0`]: 0 });
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    const releases: ((v: number) => void)[] = [];
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      if (a.paramId === PARAMS.BRIGHTNESS.id) return new Promise<number>((resolve) => releases.push(resolve));
+      return unwrittenRead(a);
+    });
+    $("btn-device-setup").click();
+    $("btn-device-setup").click();
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    releases[0](4);
+    await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(false), { timeout: 20_000 });
+    const language = document.querySelector<HTMLSelectElement>("#device-setup-language")!;
+    language.value = "1";
+    language.dispatchEvent(new Event("change", { bubbles: true }));
+    // The first open's read has run to its end, so a second read, had one been queued behind it,
+    // would have begun by now.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(releases, "one read for the two picks").toHaveLength(1);
+    expect(document.querySelector<HTMLSelectElement>("#device-setup-language")!.value).toBe("1");
+    expect($("device-setup-pending").textContent).not.toBe("");
+
+    // The control: with the screen closed the entry reads again.
+    language.value = "0";
+    language.dispatchEvent(new Event("change", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>("#device-setup-modal .consent-btn-secondary")!.click();
+    await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(true));
+    $("btn-device-setup").click();
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    releases[1](4);
+    await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(false), { timeout: 20_000 });
+  });
+
   it("opens the MIDI control window through the shell", SLOW, async () => {
     const shell = await bootDevice({ open_midi_window: null });
     $("btn-midi").click();
