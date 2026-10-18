@@ -1723,3 +1723,48 @@ describe("a document that omits Track Count at a rate the recorder cannot carry"
     expect(await at(rate)).toBe(expected);
   });
 });
+
+// Raising the rate past an insert effect's own ceiling takes that insert off the plan, as the
+// unit takes it off the channel; the status line names it, and undo puts it back with the rate.
+describe("a rate the plan's inserts cannot run at", () => {
+  it("takes them off, says which, and undoes with the rate", async () => {
+    const { encodePlanParam } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const { INSERT_FX_OPTIONS } = await import("./core/control/params");
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      insertFx: INSERT_FX_OPTIONS.find((o) => o.label === "Pitch Fix")!.value,
+    };
+    plan.nodeParams.ch2 = {
+      ...plan.nodeParams.ch2,
+      insertFx: INSERT_FX_OPTIONS.find((o) => o.label === "Clean")!.value,
+    };
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("48000"), APP_SETTLE);
+    const { t: tApp } = await import("./i18n");
+    $("btn-view-console").click();
+    const face = (i: number): HTMLElement =>
+      [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")][i].querySelector<HTMLElement>(".con-ifxface")!;
+    // The link decodes after the board paints, so its plan is what is waited for.
+    await vi.waitFor(
+      () => expect(face(0).classList.contains("vacant"), "CH 1 holds Pitch Fix").toBe(false),
+      APP_SETTLE,
+    );
+
+    const picker = $<HTMLSelectElement>("rate-picker");
+    picker.value = "88200";
+    picker.dispatchEvent(new Event("change"));
+    await vi.waitFor(
+      () => expect(status()).toBe(tApp().status.insertsOffAtRate("88.2 kHz", "Pitch Fix (CH 1)")),
+      APP_SETTLE,
+    );
+    expect(face(0).classList.contains("vacant"), "Pitch Fix came off").toBe(true);
+    expect(face(1).classList.contains("vacant"), "Clean runs at 88.2 kHz").toBe(false);
+
+    chord("z", { ctrlKey: true });
+    await vi.waitFor(() => expect(picker.value).toBe("48000"), APP_SETTLE);
+    expect(face(0).classList.contains("vacant"), "undo puts it back").toBe(false);
+  });
+});

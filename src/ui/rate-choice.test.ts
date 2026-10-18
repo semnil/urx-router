@@ -10,6 +10,7 @@ function installDom(): void {
       <h1 id="rate-choice-title"></h1>
       <p id="rate-choice-intro"></p>
       <p id="rate-choice-note"></p>
+      <p id="rate-choice-adopt-note"></p>
       <p id="rate-choice-release-note"></p>
       <button id="rate-choice-adopt"></button>
       <button id="rate-choice-release"></button>
@@ -50,6 +51,24 @@ describe("askRateChoice", () => {
     await withNote;
 
     const without = askRateChoice("96 kHz", "48 kHz", null);
+    expect(el.hidden).toBe(true);
+    document.getElementById("rate-choice-cancel")!.click();
+    await without;
+  });
+
+  // The adopt arm's own note, for the same reason: the inserts adopting the device's rate takes
+  // off the plan are a cost of that arm alone.
+  it("puts the adopt-arm note on its own element, and hides it when there is none", async () => {
+    const withNote = askRateChoice("48 kHz", "192 kHz", null, "", "Pitch Fix comes off");
+    const el = document.getElementById("rate-choice-adopt-note") as HTMLElement;
+    expect(el.textContent).toBe("Pitch Fix comes off");
+    expect(el.hidden).toBe(false);
+    expect(document.getElementById("rate-choice-note")?.textContent).toBe("");
+    expect(document.getElementById("rate-choice-release-note")?.hidden).toBe(true);
+    document.getElementById("rate-choice-cancel")!.click();
+    await withNote;
+
+    const without = askRateChoice("48 kHz", "192 kHz", null);
     expect(el.hidden).toBe(true);
     document.getElementById("rate-choice-cancel")!.click();
     await without;

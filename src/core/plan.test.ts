@@ -15,11 +15,14 @@ import {
   PLAN_FORMAT,
   PLAN_VERSION,
   setPlanSampleRate,
+  changePlanSampleRate,
+  insertsAboveRate,
   supplyRequiredSources,
   type Plan,
 } from "./plan";
 import { defaultPlan } from "../models/initial-state";
 import { DEFAULT_SAMPLE_RATE, SAMPLE_RATES } from "./constraints";
+import { INSERT_FX_NONE, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "./control/params";
 import { MODELS } from "../models/index";
 import { ref } from "../models/types";
 
@@ -376,6 +379,52 @@ describe("encodePlanParam / decodePlanParam", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+// The unit takes an insert off a channel or bus when the rate goes above its effect's own
+// ceiling, and does not put it back when the rate comes down. A rate change made as an edit
+// does the same to the plan; a load and a device read do not.
+describe("an edit's rate change takes off the inserts the unit takes off", () => {
+  const effect = (label: string): number =>
+    [...INSERT_FX_OPTIONS, ...OUTPUT_INSERT_FX_OPTIONS].find((o) => o.label === label)!.value;
+  const holding = (): Plan => {
+    const p = emptyPlan("URX44V");
+    p.nodeParams.ch1 = { ...p.nodeParams.ch1, insertFx: effect("Pitch Fix"), insertFxOn: true };
+    p.nodeParams.ch2 = { ...p.nodeParams.ch2, insertFx: effect("Clean") };
+    p.nodeParams["bus.stereo"] = { ...p.nodeParams["bus.stereo"], insertFx: effect("M.B.Comp") };
+    return p;
+  };
+
+  it("takes off only the effects whose ceiling the new rate passes, and names them", () => {
+    const p = holding();
+    expect(changePlanSampleRate(p, 88_200)).toEqual([{ node: "ch1", label: "Pitch Fix" }]);
+    expect(p.nodeParams.ch1?.insertFx).toBe(INSERT_FX_NONE);
+    expect(p.nodeParams.ch2?.insertFx, "Clean runs to 96 kHz").toBe(effect("Clean"));
+    expect(changePlanSampleRate(p, 192_000).map((o) => o.label)).toEqual(["Clean", "M.B.Comp"]);
+    expect(p.nodeParams["bus.stereo"]?.insertFx).toBe(INSERT_FX_NONE);
+    expect(p.sampleRate).toBe(192_000);
+  });
+
+  it("does not put them back when the rate comes down", () => {
+    const p = holding();
+    changePlanSampleRate(p, 192_000);
+    expect(changePlanSampleRate(p, 48_000)).toEqual([]);
+    expect(insertsAboveRate(p, 192_000)).toEqual([]);
+    for (const node of ["ch1", "ch2", "bus.stereo"]) expect(p.nodeParams[node]?.insertFx, node).toBe(INSERT_FX_NONE);
+  });
+
+  it("leaves every insert alone at a rate they all run at", () => {
+    const p = holding();
+    expect(changePlanSampleRate(p, 48_000)).toEqual([]);
+    expect(p.nodeParams.ch1?.insertFx).toBe(effect("Pitch Fix"));
+  });
+
+  it("leaves a load's or a read's rate setter to keep the inserts as written", () => {
+    const p = holding();
+    setPlanSampleRate(p, 192_000);
+    expect(p.nodeParams.ch1?.insertFx).toBe(effect("Pitch Fix"));
+    expect(insertsAboveRate(p, 192_000).length).toBe(3);
   });
 });
 

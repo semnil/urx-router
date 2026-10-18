@@ -30,7 +30,13 @@ import type { TauriShell } from "./main.test-util";
 import { formatRate, trackCountDrop } from "./core/constraints";
 import { attackToVd, eqFreqToVd, gainToVd, levelToVd, vdToLevel } from "./core/control/vd";
 import { formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
-import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, STEREO_FADER } from "./core/control/params";
+import {
+  COMP_EQ_SSMCS,
+  denormalizeInsertFx,
+  INSERT_FX_NONE,
+  INSERT_FX_OPTIONS,
+  STEREO_FADER,
+} from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
@@ -8100,6 +8106,47 @@ describe("the sample rate a write happens at", () => {
     expect(followUsbWrites(shell)).toEqual([]); // adopting does not touch the policy
   });
 
+  // Adopting a device rate an insert the plan holds cannot run at takes that insert off the plan,
+  // as the unit already has — said on the adopt arm's own line, and written as No Effect.
+  it("names on the adopt arm the inserts the device's rate takes off the plan", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: clockReads(true, 192_000) });
+    $("btn-view-console").click();
+    document.querySelector<HTMLElement>(".con-strip .con-ifxopen")!.click();
+    [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")]
+      .find((r) => r.textContent?.includes("Pitch Fix"))!
+      .click();
+    expect(document.querySelector(".con-strip .con-ifxface")?.classList.contains("vacant"), "the premise").toBe(false);
+    await askedToChoose(shell);
+    const note = $("rate-choice-adopt-note");
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe(t().rateChoice.insertsOffAtRate(formatRate(192_000), "Pitch Fix (CH 1)"));
+    // At 192 kHz the shared note carries the high-rate limits, and leaves out the insert line,
+    // which says the plan keeps what the adopt arm here takes off.
+    expect($("rate-choice-note").textContent, "the premise: the shared note is drawn").toContain(t().warning.fx2);
+    expect($("rate-choice-note").textContent, "the shared note leaves the insert line out").not.toContain(
+      t().warning.insFx,
+    );
+    $("rate-choice-adopt").click();
+    await invoked(shell, "vd_disconnect");
+    const insertWrites = shell.invokes.flatMap((cmd, i) =>
+      cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.INSERT_FX.id && shell.args[i]?.y === 0
+        ? [shell.args[i]!.value as number]
+        : [],
+    );
+    expect(insertWrites).not.toContain(
+      denormalizeInsertFx(INSERT_FX_OPTIONS.find((o) => o.label === "Pitch Fix")!.value),
+    );
+    expect(document.querySelector(".con-strip .con-ifxface")?.classList.contains("vacant")).toBe(true);
+  });
+
+  // The other half: with nothing the device's rate rules out, the adopt arm has no line.
+  it("draws no adopt-arm line when the plan holds no insert the device's rate rules out", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: clockReads(true, 96_000) });
+    await askedToChoose(shell);
+    expect($("rate-choice-adopt-note").hidden).toBe(true);
+    $("rate-choice-cancel").click();
+  });
+
   // Releasing turns Follow USB off so the plan's rate can stick, and the badge follows at
   // once: the operator is being told the picker is authoritative again.
   it("releases the clock so the plan's rate can stick", SLOW, async () => {
@@ -9407,6 +9454,36 @@ describe("the sample rate during Live sync", () => {
       `${t().confirm.reclock(formatRate(48_000), formatRate(96_000))} ${t().confirm.trackCountDrop(drop.from, drop.to)}`,
     ]);
     expect(picker().value).toBe("96000");
+  });
+
+  // A rate past an insert effect's own ceiling takes that insert off, on the unit and in the
+  // plan, and lowering the rate does not put it back — so it is named in front of the decision,
+  // and the write that follows puts the plan's channel on No Effect.
+  it("names the inserts a rate chosen during Live sync takes off, before writing it", SLOW, async () => {
+    const shell = await bootDevice({}, true, SEED);
+    await goLive();
+    const pitch = INSERT_FX_OPTIONS.find((o) => o.label === "Pitch Fix")!.value;
+    const insertWrites = (): number[] =>
+      shell.invokes.flatMap((cmd, i) =>
+        cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.INSERT_FX.id && shell.args[i]?.y === 0
+          ? [shell.args[i]!.value as number]
+          : [],
+      );
+    // CH 1 takes Pitch Fix from its INS FX list during the session, and the unit gets it.
+    $("btn-view-console").click();
+    document.querySelector<HTMLElement>(".con-strip .con-ifxopen")!.click();
+    [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")]
+      .find((r) => r.textContent?.includes("Pitch Fix"))!
+      .click();
+    await vi.waitFor(() => expect(insertWrites()).toContain(denormalizeInsertFx(pitch)), { timeout: 10_000 });
+    chooseRate(88_200);
+    await vi.waitFor(() => expect(rateWrites(shell)).toEqual([88_200]), { timeout: 10_000 });
+    expect(confirms(shell).at(-1) ?? "").toContain(t().confirm.insertsOffAtRate("Pitch Fix (CH 1)"));
+    // …and the plan's CH 1 is on No Effect, which the session writes.
+    await vi.waitFor(() => expect(insertWrites().at(-1)).toBe(denormalizeInsertFx(INSERT_FX_NONE)), {
+      timeout: 10_000,
+    });
+    expect(document.querySelector(".con-strip .con-ifxface")?.classList.contains("vacant")).toBe(true);
   });
 
   it("writes nothing when the operator declines, and shows the rate the plan holds", SLOW, async () => {
