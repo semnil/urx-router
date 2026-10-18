@@ -59,6 +59,7 @@ import {
   insertFxDriverSlots,
   insertFxFamilyOf,
   insertFxWritableSlots,
+  MBC_ONE_KNOB_FIXED,
 } from "../core/control/insert-fx-effect";
 
 // Compact, machine-readable shape consumed by scripts/plan_tool.py. A rule is a
@@ -104,8 +105,10 @@ export interface SkillModel {
        *  value also goes to, and whether it is sent under the DRIVER name. */
       slots: { slot: number; rawMin: number; rawMax: number; def: number; mirror?: number; driver?: true }[];
       /** The slots the unit drives ITSELF while `gate` is non-zero, which the write then
-       *  leaves out. Absent for a family that drives nothing. */
-      driven?: { gate: number; slots: number[] };
+       *  leaves out, and among them the ones `fixed` at their `def` from the moment the gate goes
+       *  on, which the load sets a document's to while the gate is on (`mbcOneKnobProblems`).
+       *  Absent for a family that drives nothing. */
+      driven?: { gate: number; slots: number[]; fixed?: number[] };
     }
   >;
   /** Per FX-channel node id: the effect types its menu offers, and what each parameter key
@@ -408,7 +411,15 @@ function insertFxParamSpaceBySelector(): SkillModel["insertFxParamSpace"] {
     out[String(option.value)] = {
       family,
       slots,
-      ...(gate !== undefined && driven.length > 0 ? { driven: { gate, slots: driven.sort((a, b) => a - b) } } : {}),
+      ...(gate !== undefined && driven.length > 0
+        ? {
+            driven: {
+              gate,
+              slots: driven.sort((a, b) => a - b),
+              ...(family === "mbc" ? { fixed: [...MBC_ONE_KNOB_FIXED].sort((a, b) => a - b) } : {}),
+            },
+          }
+        : {}),
     };
   }
   return out;

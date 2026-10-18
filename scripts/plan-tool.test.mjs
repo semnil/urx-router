@@ -2500,6 +2500,89 @@ describe.skipIf(!python)("plan_tool.py (CPython) agrees with the app's loader", 
     expect(set.no).toBeGreaterThan(0);
   });
 
+  // Switching an M.B.Comp's 1-knob on sets each band's Attack and Bypass, the Release, both
+  // crossovers and the Out Gain to the type's own values, and the app's load sets a document's to
+  // them wherever the knob is on. The app's answer is read the way the COMP case reads it — the
+  // document loaded as written against the same document with the knob off — and compared with
+  // the slots the tool says it sets: values the document writes, a bare slot, a value outside its
+  // window (bounded first, then set), a knob written as a fraction that rounds on, beside the
+  // documents nothing may be said about — the knob off, a knob written as a boolean, the type's own
+  // values already there, another effect, and the selector on a channel, whose menu does not
+  // offer it. Every model.
+  it("agrees with the app about the M.B.Comp values a 1-knob that is on sets on load", async () => {
+    const FIXED = [8, 12, 13, 17, 18, 22, 23, 24, 25, 26];
+    const mbc = (params, node = "bus.stereo", insertFx = 1792) => ({
+      [node]: { insertFx, insertFxOn: true, insertFxParams: params },
+    });
+    const corpus = [
+      ["values the document writes", mbc({ "mbc:6": 1, "mbc:8": 5, "mbc:17": 1, "mbc:26": 59 })],
+      ["a bare slot", mbc({ "mbc:6": 1, 25: 3 })],
+      ["a value outside its window", mbc({ "mbc:6": 1, "mbc:26": 100 })],
+      ["a knob written as a fraction that rounds on", mbc({ "mbc:6": 0.6, "mbc:24": 100 })],
+      // …and the documents nothing may be said about.
+      ["the knob off", mbc({ "mbc:6": 0, "mbc:26": 59 })],
+      ["a knob written as a boolean", mbc({ "mbc:6": true, "mbc:26": 59 })],
+      ["the type's own values already there", mbc({ "mbc:6": 1, "mbc:8": 17, "mbc:26": 68.2 })],
+      ["another effect", mbc({ "mbc:6": 1, "mbc:26": 59 }, "bus.stereo", 1793)],
+      ["the selector on a channel", mbc({ "mbc:6": 1, "mbc:26": 59 }, "ch1")],
+    ];
+    const knobOff = (nodeParams) =>
+      Object.fromEntries(
+        Object.entries(nodeParams).map(([id, np]) => [
+          id,
+          {
+            ...np,
+            insertFxParams: {
+              ...Object.fromEntries(Object.entries(np.insertFxParams).filter(([k]) => k !== "6")),
+              "mbc:6": 0,
+            },
+          },
+        ]),
+      );
+    const set = { yes: 0, no: 0 };
+    for (const modelId of MODEL_IDS) {
+      for (const [name, nodeParams] of corpus) {
+        const doc = (params) => ({
+          format: "urx-router-plan",
+          version: PLAN_VERSION,
+          modelId,
+          positions: {},
+          connections: [],
+          nodeParams: params,
+        });
+        const plan = doc(nodeParams);
+        const on = await appLoad(plan, true);
+        const off = await appLoad(doc(knobOff(nodeParams)), true);
+        const app = [];
+        for (const [id, np] of Object.entries(on.nodeParams)) {
+          const a = np.insertFxParams ?? {};
+          const b = off.nodeParams[id]?.insertFxParams ?? {};
+          for (const slot of FIXED)
+            if (a[`mbc:${slot}`] !== b[`mbc:${slot}`]) app.push(`${id}.mbc:${slot} = ${a[`mbc:${slot}`]}`);
+        }
+        app.sort();
+        const file = join(dir, "plan.json");
+        writeFileSync(file, JSON.stringify(plan));
+        const r = runTool("validate", file);
+        expect(r.status, `${modelId} ${name}\n${r.stdout}`).toBe(0);
+        const tool = r.stderr
+          .split(/\r?\n/)
+          .map((l) =>
+            /^WARNING: node param (\S+)\.insertFxParams\.(mbc:\d+): the app sets this to (\S+) on load/.exec(l),
+          )
+          .filter((m) => m !== null)
+          .map((m) => `${m[1]}.${m[2]} = ${m[3]}`)
+          .sort();
+        expect(tool, `${modelId} ${name}\n${r.stderr}`).toEqual(app);
+        set[app.length > 0 ? "yes" : "no"]++;
+      }
+    }
+    // Both answers are real populations: documents whose M.B.Comp the load sets, and documents it
+    // leaves as written.
+    expect(set.yes).toBeGreaterThan(0);
+    expect(set.no).toBeGreaterThan(0);
+  });
+
   // An on/off written as a number is converted on load to on, or to off for 0, wherever the
   // model's factory values hold an on/off. The leaves the conversion CHANGES from a number to a
   // boolean are compared with the ones the tool says it converts, value included: every on/off

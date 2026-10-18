@@ -1556,8 +1556,17 @@ set, and `translate` stops emitting it while the knob is on, for the reason `COM
 exists — re-sending the plan's copy of a value the unit is recomputing puts the pre-knob number back
 on it.
 
-**Out Gain is the one writable slot the knob leaves alone**, so it is the one the app keeps writing
-and the one row on MAIN that stays live while the knob is on.
+**Out Gain is set at the switch and then left alone**: a Level change does not move it, and the
+unit's own screen does not let it be turned while the knob is on, so it joins `mbcDeviceDriven` — the
+app stops writing it and locks its row with the rest.
+
+**The switch moves the plan the way it moves the unit.** Switched on, the knob sets the Level to 0 and
+each band's Attack and Bypass, the Release, both crossovers and the Out Gain to the type's own values,
+so the plan takes those at the same press (`mbcOneKnobSwitch`) — from this screen, a MIDI control and
+the SIM view alike — and names every slot it wrote, since any of them can already hold the value. The
+band Thresholds, Ratios and Gains are not written there: the Level recomputes them. A loaded document
+that carries other fixed values beside a knob that is on is set to them (architecture.md "Source
+layout", `plan-validate.ts`).
 
 **Arming before the knob goes on reads as a silence**, the trap the COMP knee sets too: a parameter
 driven to the value it already holds looks exactly like one nothing touched. `probe-mbc-fixed-scope`

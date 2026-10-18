@@ -36,6 +36,9 @@ loads the plan as authored":
   load (core/plan-validate.ts `linkedSendPanProblems`) wherever the document gives it
   another, which is reported as a warning — the plan loads with the pan the unit
   holds there rather than the one it wrote,
+- an M.B.Comp whose 1-knob is on and whose Attacks, Bypasses, Release, crossovers or Out Gain
+  are not the type's own values (models.json `insertFxParamSpace[...].driven.fixed`) is set to
+  them on load (core/plan-validate.ts `mbcOneKnobProblems`), which is reported as a warning,
 - a COMP whose 1-knob is on and whose attack, release or Auto Makeup is not the value the
   unit gives it when the knob is switched on (models.json `compOneKnob`) is set to that value
   on load (core/plan-validate.ts `compOneKnobProblems`), which is reported as a warning — the
@@ -273,6 +276,7 @@ def validate(plan, models):
     paired, paired_kept = paired_view(view, model, kept, pairs)
     warnings.extend(linked_send_pan_warnings(paired, model, paired_kept))
     warnings.extend(comp_one_knob_warnings(paired, model))
+    warnings.extend(mbc_one_knob_warnings(paired, model))
     warnings.extend(collection_warnings(view))
     warnings.extend(name_fill_warnings(view, (model.get("factory") or {}).get("nodeNames")))
     warnings.extend(color_warnings(view, model.get("colors"), (model.get("factory") or {}).get("nodeColors")))
@@ -600,6 +604,52 @@ def comp_one_knob_warnings(plan, model):
             label = model["nodes"].get(node_id, {}).get("label", node_id)
             why = f"{label}'s COMP 1-knob is on, and the unit holds {key} at {shown} while it is"
             out.append(f"node param {node_id}.comp.{key}: the app sets this to {shown} on load — {why}")
+    return out
+
+
+def mbc_one_knob_warnings(plan, model):
+    """The M.B.Comp values the app's load sets (core/plan-validate.ts `mbcOneKnobProblems`):
+    switching the 1-knob on sets each band's Attack and Bypass, the Release, both crossovers and
+    the Out Gain to the type's own values, and nothing on the unit moves them while it stays on
+    (models.json `insertFxParamSpace[...].driven.fixed`), so the load sets a document's to those
+    values wherever the knob is on. A value is read the way the write would send it — rounded and
+    held to its slot's window — and a slot the document leaves out, or holds as something other
+    than a finite number, counts as the type's own value. Only a node whose menu offers the
+    selector is asked, since another node's selector is No Effect to the app."""
+    nodes = model.get("nodes") or {}
+    space_all = model.get("insertFxParamSpace") or {}
+    node_params = plan.get("nodeParams")
+    node_params = node_params if isinstance(node_params, dict) else {}
+    out = []
+    for node_id in nodes:
+        carried = node_params.get(node_id)
+        if not isinstance(carried, dict) or insert_fx_slot(node_id, carried, nodes) is None:
+            continue
+        space = space_all.get(str(sanitized(node_params, node_id, "insertFx")))
+        if not isinstance(space, dict) or space.get("family") != "mbc":
+            continue
+        driven = space.get("driven") or {}
+        windows = {spec.get("slot"): spec for spec in space.get("slots") or [] if isinstance(spec, dict)}
+        params = sanitized_params(carried.get("insertFxParams"))
+
+        def sent(value, spec):
+            if not is_number(value):
+                return None
+            return min(max(js_round(value), spec.get("rawMin")), spec.get("rawMax"))
+
+        gate = driven.get("gate")
+        if gate not in windows or (sent(insert_fx_slot_value(params, "mbc", gate), windows[gate]) or 0) == 0:
+            continue
+        label = nodes.get(node_id, {}).get("label", node_id)
+        for slot in driven.get("fixed") or []:
+            spec = windows.get(slot)
+            if spec is None:
+                continue
+            value = sent(insert_fx_slot_value(params, "mbc", slot), spec)
+            if value is None or value == spec.get("def"):
+                continue
+            why = f"{label}'s M.B.Comp 1-knob is on, and the unit holds this slot at {spec.get('def')} while it is"
+            out.append(f"node param {node_id}.insertFxParams.mbc:{slot}: the app sets this to {spec.get('def')} on load — {why}")
     return out
 
 

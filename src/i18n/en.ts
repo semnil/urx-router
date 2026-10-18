@@ -856,7 +856,7 @@ export const en = {
       // Shown in place of the line above while the unit is driving the panel. It says who
       // owns the values rather than what they do, because that is what changed.
       mbcOneKnob: tr(
-        "1-knob is on: the unit sets the bands, Release and the crossovers from its level, so edits to them are not sent. Out Gain and the 1-knob are still sent.",
+        "1-knob is on: the unit sets the bands, Release and the crossovers from its level and Out Gain when it is switched on, so edits to them are not sent. The 1-knob is still sent.",
       ),
       // The pill on a row the unit has taken over — Pitch Fix's Scale and its twelve notes
       // while MIDI Control is not Off, which is when the notes the correction aims at come
@@ -926,6 +926,11 @@ export const en = {
       `${count} on/off ${count === 1 ? "value written as a number was" : "values written as numbers were"} converted to on/off`,
     linkedSendPansAligned: (count: number): string =>
       `${count} ${count === 1 ? "send pan into a MIX bus with Pan Link on now follows its source's" : "send pans into MIX buses with Pan Link on now follow their sources'"} own PAN / BAL`,
+    // One sentence and no count: a plan holds the M.B.Comp on one output at most, the device-wide
+    // output dynamics slot being one.
+    mbcOneKnobAligned: tr(
+      "The M.B.Comp's 1-knob is on, so its Attacks, Bypasses, Release, crossovers and Out Gain now read as the unit holds them there",
+    ),
     compOneKnobsAligned: (count: number): string =>
       `${count} ${count === 1 ? "channel's COMP 1-knob is" : "channels' COMP 1-knobs are"} on, so attack, release and Auto Makeup now read as the unit holds them there`,
     streamingSourceUnlisted: tr(

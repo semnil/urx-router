@@ -929,6 +929,46 @@ describe("a COMP 1-knob that is on in a loaded plan", () => {
   });
 });
 
+// The unit's M.B.Comp 1-knob, switched on, sets each band's Attack and Bypass, the Release, both
+// crossovers and the Out Gain, and nothing on the unit moves them while it stays on. A document from
+// anywhere else can carry other values there beside a knob that is on; the load sets the type's own,
+// says so on the status line, and names each slot in the report a held load shows.
+describe("an M.B.Comp 1-knob that is on in a loaded plan", () => {
+  const doc = async (extra: Record<string, Record<string, unknown>> = {}): Promise<string> => {
+    const { encodePlanParam } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.stereo"] = {
+      ...plan.nodeParams["bus.stereo"],
+      insertFx: 1792,
+      insertFxOn: true,
+      insertFxParams: { "mbc:6": 1, "mbc:26": 59, "mbc:12": 1 },
+    };
+    for (const [id, np] of Object.entries(extra)) plan.nodeParams[id] = { ...plan.nodeParams[id], ...np };
+    return `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`;
+  };
+
+  it("opens with the type's own fixed values, and says so", async () => {
+    history.replaceState(null, "", await doc());
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.planLoaded), APP_SETTLE);
+    expect(status()).toBe([t().status.mbcOneKnobAligned, t().status.planLoaded].join(" — "));
+    expect($("load-report").hidden).toBe(true);
+  });
+
+  it("names each slot in the report a held load shows", async () => {
+    history.replaceState(null, "", await doc({ ch1: { insertFx: 256 }, ch2: { insertFx: 257 } }));
+    await boot();
+
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), APP_SETTLE);
+    const body = $("load-report-body").textContent ?? "";
+    expect(body).toContain("[mbcOneKnob] bus.stereo.insertFxParams: mbc:12 1 -> 0, mbc:26 59 -> 68");
+    $("load-report-proceed").click();
+    await vi.waitFor(() => expect(status()).toContain(t().status.mbcOneKnobAligned), APP_SETTLE);
+  });
+});
+
 // The unit answers a BUS Type write by resetting the MIX's whole send bank — every level to -∞,
 // every send ON off under FIXED and on under VARI — and FIXED turns its Pan Link off, which VARI
 // does not turn back on. The plan takes the same answer from the panel's own control, in one
