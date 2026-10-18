@@ -699,7 +699,8 @@ carries a one-line map of the same directories and points here.
   plan, and the view that mounts the simulator over it (see "SIM view (the unit's LCD)"). The table is assembled
   from `sim-map-processors.ts` (the processors) and `sim-map-routing.ts` (routing and setup), on the shapes and
   helpers in `sim-map-base.ts`. `sim-map-setup.ts` maps the simulator's SETUP > GENERAL paths onto the unit's own
-  settings, which the unit holds outside the plan. `sim-locks.ts` names the controls the view holds shut and the
+  settings, which the unit holds outside the plan, and `sim-map-scene.ts` its scene pointers onto the unit's scene
+  recalled and SCENE LIST cursor. `sim-locks.ts` names the controls the view holds shut and the
   reason each gives.
 - `src/app/` — the parts of the app entry that are not wiring, lifted out of `main.ts` so each can be
   driven without booting the whole application. `view-state.ts` the UI state that persists per browser
@@ -1866,12 +1867,12 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   (channel-tuning.md, "What the unit computes while Sync is on"). The simulator's own state that the LCD writes beside an
   edit or keeps for a screen is held by the view rather than the plan: which channel a linked pair's compressors hear
   (written as the pair is linked or taken into SSMCS), the recorder's playback (which a rate change stops), the output
-  patch's and the Peripheral screen's tab, the scene list's bank and row, the microSD folder and file a screen has
-  picked, the User Defined Knobs bank on show, and the output cues the LCD's own CUE rule remembers to put back.
+  patch's and the Peripheral screen's tab, the scene list's bank and row (until the unit's cursor moves, below), the
+  microSD folder and file a screen has picked, the User Defined Knobs bank on show, and the output cues the LCD's own CUE rule remembers to put back.
   Refused like a path the table does not carry, one of these would take the whole edit back with it. A value the plan holds but the edit cannot take in its present state (PAN/BAL on an unlinked pair, an
   unwired send, an FX 2 send at a rate that takes FX 2 out, the recorder's Track Count
-  while Live sync is up) is refused. A path neither the table nor the unit's values below carry — the scenes and
-  the card — shows the simulator's value and takes no edit: the simulator puts it back.
+  while Live sync is up) is refused. A path neither the table nor the unit's values below carry — the scenes'
+  contents and titles, and the card — shows the simulator's value and takes no edit: the simulator puts it back.
 - **HOME's [Sends] destination** is the unit's UI state rather than the plan's (`sends-target.ts`). The SIM view is
   built once the experimental gate resolves on, so no other launch builds it or reads the destination. While Live
   sync is up the LCD shows the destination the unit holds and follows a choice made on the unit's panel, and a
@@ -1898,7 +1899,10 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
 - **The unit's own settings and states** are shown in place of the simulator's where the app knows them
   (`core/sim-map-setup.ts`): SETUP > GENERAL as the last reading of it — a session's start on an experimental launch,
   the Device setup screen, a SETUP edit on the LCD — kept until the model changes, Follow USB as the toolbar's
-  badge holds it, the operation mode (`817`) as a session read it, and each MIC/LINE jack's Clip Safe as holding its
+  badge holds it, the operation mode (`817`) as a session read it, the scene the unit recalled (`781`) and the row
+  its SCENE LIST cursor stands on (`863`) as a session read them and the unit announced them since — by number with
+  no title, the unit's titles not being readable, and on the tab that lists the cursor's row where only one does; a
+  row picked on the glass shows until the unit's cursor moves — and each MIC/LINE jack's Clip Safe as holding its
   gain down while the unit announces it (`864`, which every session registers, since the CONSOLE and the Inspector
   show it too). A session on an experimental launch registers the others and reads SETUP again once
   an announcement at one settles. A SETUP setting changed on the LCD is written to the unit during Live sync,

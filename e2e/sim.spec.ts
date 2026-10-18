@@ -948,6 +948,44 @@ test("opens Software Integration on the LCD during Live sync, and writes a send 
   await expect(fx2.locator(".lock-mark")).toHaveCount(0);
 });
 
+// The unit's scene recalled and SCENE LIST's cursor are live-session state outside the plan: while
+// Live sync is up the LCD shows them by number, with no title, and follows the unit's cursor.
+test("the LCD shows the unit's scene recalled and SCENE LIST's cursor while Live sync is up", async ({ page }) => {
+  const CURRENT: number = PARAMS.CURRENT_SCENE.id;
+  const CURSOR: number = PARAMS.SCENE_CURSOR.id;
+  await stubTauriDevice(page, {
+    values: { [CURRENT]: 8, [CURSOR]: 9 },
+    commands: { experimental_enabled: true, ...LIVE_COMMANDS },
+  });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  const box = lcd(page).locator(".scene-box").first();
+  await expect(box.locator(".scene-no"), "the glass's own scene with no session").toHaveText("00");
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  // HOME's box names the cursor's scene, waiting while it is not the one recalled.
+  await expect(box.locator(".scene-no")).toHaveText("10");
+  await expect(box.locator(".scene-no")).toHaveClass(/is-pending/);
+  await expect(box.locator(".scene-title"), "no title of the unit's").toHaveText("");
+
+  await tapInto(page, box, "scene");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Scene List", exact: true }), "scene.list");
+  const rows = onScreen(page, "scene.list").locator(".scene-list .list-row");
+  await expect(rows.filter({ hasText: "10" }).first(), "the cursor on 10").toHaveAttribute("aria-selected", "true");
+  await expect(rows.filter({ hasText: "09" }).first(), "09 marked recalled").toHaveAttribute(
+    "aria-description",
+    /recalled/,
+  );
+
+  // The cursor moved on the unit's panel, onto P01: the LCD follows it to the Simple tab.
+  await setDeviceValue(page, CURSOR, 0, 0x8001);
+  await notifyParam(page, CURSOR, 0, 0x8001);
+  await expect(rows.filter({ hasText: "P01" }).first()).toHaveAttribute("aria-selected", "true");
+});
+
 // The unit's [CUE] is live-session state outside the plan: while Live sync is up the LCD shows
 // the flags the unit holds and a press on the glass switches them on the unit, the way the
 // CONSOLE chip does; with no session a press reaches nothing.

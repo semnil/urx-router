@@ -302,6 +302,7 @@ import {
   setupGlassValues,
   withSetupEdit,
 } from "./core/sim-map-setup";
+import { SCENE_CURSOR_PATHS, sceneGlassValues } from "./core/sim-map-scene";
 import type { DeviceSetup, SetupWrite } from "./core/control/device-setup";
 
 // Clear persisted UI state (theme / model / meter points / consent gate / recent
@@ -938,10 +939,12 @@ function resetSendsTarget(): void {
 // The unit's own settings and states the SIM view shows beside the plan: SETUP > GENERAL
 // (core/control/device-setup.ts), the operation mode and each MIC/LINE jack's engaged Clip Safe.
 // SETUP is known from the last reading of it — a session's start, the Device setup screen, a SETUP
-// edit on the glass — and kept until the model changes, as Follow USB is. The operation mode is a
-// session's reading, and the engaged Clip Safe what the unit announced during one.
+// edit on the glass — and kept until the model changes, as Follow USB is. The operation mode and the
+// scene pointers (the scene recalled, SCENE LIST's cursor) are a session's reading, and the engaged
+// Clip Safe what the unit announced during one.
 let unitSetup: DeviceSetup | null = null;
 let unitOperationMode: number | null = null;
+let unitScene: { current: number | null; cursor: number | null } = { current: null, cursor: null };
 // SETUP > Software Integration, as a session read it and the unit announced it since, and a count
 // of the changes made to each of its values, which a read taken while one lands does not override.
 let unitIntegration: DawIntegration | null = null;
@@ -960,6 +963,7 @@ function unitGlassValues(): Map<string, SimValue> {
   if (followUsbState !== null) out.set("setup.followUsb", followUsbState);
   const mode = unitOperationMode === null ? undefined : OPERATION_MODES[unitOperationMode];
   if (mode !== undefined) out.set("setup.operationMode", mode);
+  for (const [path, value] of sceneGlassValues(unitScene.current, unitScene.cursor)) out.set(path, value);
   if (unitIntegration) for (const [path, send] of integrationGlassValues(unitIntegration)) out.set(path, send);
   return out;
 }
@@ -1038,8 +1042,8 @@ function scheduleUnitSetupRead(): void {
   }, CUE_READ_SETTLE_MS);
 }
 
-/** The addresses the unit announces its settings, its operation mode and Software Integration at,
- *  which a session on an experimental launch registers. */
+/** The addresses the unit announces its settings, its operation mode, its scene pointers and
+ *  Software Integration at, which a session on an experimental launch registers. */
 function unitStateNotifyAddrs(model: DeviceModel): [number, number, number][] {
   const setup = [
     PARAMS.BRIGHTNESS,
@@ -1054,7 +1058,14 @@ function unitStateNotifyAddrs(model: DeviceModel): [number, number, number][] {
   const knobs = [PARAMS.UDK_FUNCTION, PARAMS.UDK_PARAM1, PARAMS.UDK_PARAM2].flatMap((p) =>
     Array.from({ length: UDK_SLOTS }, (_, y): [number, number, number] => [p.id, 0, y]),
   );
-  return [...setup, ...knobs, [PARAMS.OPERATION_MODE.id, 0, 0], ...dawIntegrationNotifyAddrs()];
+  return [
+    ...setup,
+    ...knobs,
+    [PARAMS.OPERATION_MODE.id, 0, 0],
+    [PARAMS.CURRENT_SCENE.id, 0, 0],
+    [PARAMS.SCENE_CURSOR.id, 0, 0],
+    ...dawIntegrationNotifyAddrs(),
+  ];
 }
 
 /** The addresses the unit announces each MIC/LINE jack's engaged Clip Safe at, which every session
@@ -1093,6 +1104,17 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
     simView?.unitStateChanged();
     return true;
   }
+  if (paramId === PARAMS.CURRENT_SCENE.id) {
+    unitScene = { ...unitScene, current: value };
+    simView?.unitStateChanged();
+    return true;
+  }
+  // The unit's cursor moving takes the glass's off the row it picked.
+  if (paramId === PARAMS.SCENE_CURSOR.id) {
+    unitScene = { ...unitScene, cursor: value };
+    simView?.unitTookOwn(SCENE_CURSOR_PATHS);
+    return true;
+  }
   const field = integrationFieldOf(paramId);
   if (field !== null) {
     if (unitIntegration) unitIntegration = withIntegrationNotify(unitIntegration, paramId, value) ?? unitIntegration;
@@ -1129,6 +1151,7 @@ function resetUnitSessionState(): void {
   if (unitSetupReadTimer !== null) clearTimeout(unitSetupReadTimer);
   unitSetupReadTimer = null;
   unitOperationMode = null;
+  unitScene = { current: null, cursor: null };
   unitIntegration = null;
   clipSafeEngaged.clear();
   paintClipSafe();
@@ -5157,6 +5180,7 @@ if (!DEMO) {
         let sendsRead: number | null = null;
         let setupRead: DeviceSetup | null = null;
         let modeRead: number | null = null;
+        let sceneRead: { current: number | null; cursor: number | null } = { current: null, cursor: null };
         let integrationRead: DawIntegration | null = null;
         let cueRead: string[] = [];
         let merged: MergedRead | null;
@@ -5170,6 +5194,10 @@ if (!DEMO) {
                 sendsRead = await readSendsTarget();
                 setupRead = await readDeviceSetup(getModel(switchTo ? switchTo.modelId : modelId));
                 modeRead = await vdGet(PARAMS.OPERATION_MODE.id, 0, 0);
+                sceneRead = {
+                  current: await vdGet(PARAMS.CURRENT_SCENE.id, 0, 0),
+                  cursor: await vdGet(PARAMS.SCENE_CURSOR.id, 0, 0),
+                };
                 integrationRead = await readDawIntegration();
               }
               // On the device's model: a read that carries a switch reads for the plan it
@@ -5239,6 +5267,8 @@ if (!DEMO) {
         resetUnitSessionState();
         if (setupRead) unitSetup = setupRead;
         unitOperationMode = modeRead;
+        unitScene = sceneRead;
+        simView?.unitTookOwn(SCENE_CURSOR_PATHS);
         unitIntegration = integrationRead;
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.

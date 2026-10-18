@@ -12066,6 +12066,48 @@ describe("the SIM view over a live session", () => {
     await vi.waitFor(() => expect(fnWrites(), "knob A and knob B").toEqual([0, 1]), { timeout: 10_000 });
   });
 
+  // The unit's scene pointers are read at the session's start and followed as the unit announces
+  // them. The unit's cursor moving takes the glass's off a row it picked, and a session that ends
+  // leaves both to the glass.
+  it(
+    "shows the unit's scene recalled and SCENE LIST's cursor, the unit's cursor taking the glass's off its row",
+    SLOW,
+    async () => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, {
+        [`${PARAMS.CURRENT_SCENE.id}/0/0`]: 8,
+        [`${PARAMS.SCENE_CURSOR.id}/0/0`]: 9,
+      });
+      await openSim();
+      await goLive();
+      const shown = async (path: string): Promise<unknown> => (await transport().snapshot()).get(path);
+      await vi.waitFor(async () =>
+        expect([await shown("scene.current"), await shown("scene.selected")], "09 recalled, the cursor on 10").toEqual([
+          9, 10,
+        ]),
+      );
+      const registered = (
+        shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: [number, number, number][] }
+      ).addrs;
+      for (const id of [PARAMS.CURRENT_SCENE.id, PARAMS.SCENE_CURSOR.id])
+        expect(
+          registered.some(([at, x, y]) => at === id && x === 0 && y === 0),
+          `${id} is announced to the session`,
+        ).toBe(true);
+      await transport().write("scene.selected", 3);
+      expect(await shown("scene.selected"), "a row picked on the glass").toBe(3);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.SCENE_CURSOR.id, x: 0, y: 0, value: 0x8001 }]);
+      await vi.waitFor(async () => expect(await shown("scene.selected"), "the unit's cursor on P01").toBe(101));
+      expect(await shown("scene.bank"), "on the tab that lists P01").toBe("Simple");
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.CURRENT_SCENE.id, x: 0, y: 0, value: 0x8002 }]);
+      await vi.waitFor(async () => expect(await shown("scene.current"), "P02 recalled").toBe(102));
+      $("btn-live").click();
+      await invoked(shell, "vd_disconnect");
+      await vi.waitFor(async () =>
+        expect(await shown("scene.current"), "the glass's own once the session ends").toBe(0),
+      );
+    },
+  );
+
   it("shows the unit's operation mode, and an engaged Clip Safe while the unit announces one", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.OPERATION_MODE.id}/0/0`]: 1 });
     await openSim();
