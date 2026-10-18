@@ -4465,8 +4465,10 @@ Both stacks are dropped, and the baseline re-taken, when no earlier entry descri
 can return to: a **new document** (`loadPlan` — New / Open / a drop / a recent row / the model picker
 / the model switch a Fetch or Live-sync start offers, applied once its read has landed complete / the `?plan=`
 deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch, Live-sync start
-and the `.urxf` import; plus device-follow's reconciles, scoped or full, once their read has authored at least one
-key). A side-effect refetch only takes the keys the device authored into the baseline, keeping the entries already
+and a `.urxf` import made with no session up; plus device-follow's reconciles, scoped or full, once their read has
+authored at least one key). A `.urxf` import made during a session is an edit instead: it keeps both stacks and is
+one entry of its own, an entry open on either side of it closed as it stands (`PlanHistory.commit`). A side-effect
+refetch only takes the keys the device authored into the baseline, keeping the entries already
 recorded. A read that refuses a +48V / HI-Z ON — made while it was in
 flight, or held back by a live flush and never sent — takes that one edit out instead (`PlanHistory.retract`):
 the newest entry carrying each key it took back loses the key when that entry still holds the refused value, an

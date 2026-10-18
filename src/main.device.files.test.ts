@@ -16,6 +16,7 @@ import type { Plan } from "./core/plan";
 import { CURRENT_FIELDS, buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
 import type { Field } from "./core/control/urxf.test-util";
 import { formatRate } from "./core/constraints";
+import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
 import {
   SLOW,
@@ -27,7 +28,12 @@ import {
   confirms,
   errors,
   byMessage,
+  countFor,
   countedHead,
+  oscFace,
+  paramRow,
+  selectNode,
+  turnOscOn,
 } from "./main.device.test-util";
 
 // The experimental `.urxf` import: the unit's own microSD settings file read onto the plan
@@ -318,6 +324,22 @@ describe("importing a settings file", () => {
     expect(errors(shell)).toEqual([]); // abandoned, not failed
   });
 
+  // With no session up the import settles the plan the way a read does: the edit made before it is
+  // no longer in the history.
+  it("drops the undo history with no session up, as a read does", SLOW, async () => {
+    const shell = await bootImport(sampleUrxf());
+    turnOscOn();
+    expect(oscFace(), "the premise: the edit landed").toBe("ON");
+    selectNode("ch1"); // the press that ends the edit's entry
+    await new Promise((r) => setTimeout(r, 0));
+    $("btn-open-settings").click();
+    await vi.waitFor(() => expect(statusText()).toContain(t().status.settingsPartial(0, 0, 0).split(" ")[0]), {
+      timeout: 15_000,
+    });
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    expect(statusText()).toBe(t().status.nothingToUndo);
+  });
+
   // A dismissed file dialog is not a failure and not a cancel of anything: nothing was
   // asked and nothing happened, so the status line must not move at all.
   it("does nothing when the file dialog is dismissed", SLOW, async () => {
@@ -370,9 +392,10 @@ describe("importing a settings file", () => {
     expect($<HTMLButtonElement>("btn-open-settings").disabled).toBe(false);
   });
 
-  // A file that changes how the unit is clocked is asked about before anything is imported, and
-  // imports nothing when the operator declines or the microSD recorder holds a file.
-  describe("during a live session, the file's rate and Follow USB", () => {
+  // During a session the import is an edit. A file that changes how the unit is clocked is asked
+  // about before anything is imported, and imports nothing when the operator declines or the
+  // microSD recorder holds a file.
+  describe("during a live session", () => {
     const RATE = PARAMS.SAMPLE_RATE.id;
     const FOLLOW = PARAMS.FOLLOW_USB.id;
     const unit = (followUsb: boolean, rate = 48_000, playback = 0): Record<string, number> => ({
@@ -561,6 +584,126 @@ describe("importing a settings file", () => {
         timeout: 15_000,
       });
       expect(written(shell, RATE, from)).toEqual([]);
+    });
+
+    /** Undo or redo from the Edit menu, pressed again while a follow read in flight refuses it —
+     *  a refused press is left where it was, so the next one is the same press. The invoke the
+     *  press that went through started from. */
+    const editMenu = async (shell: TauriShell, id: string): Promise<number> => {
+      let from = 0;
+      await vi.waitFor(
+        () => {
+          from = shell.invokes.length;
+          expect(shell.emit(EDIT_MENU_EVENT, id)).toBe(1);
+          expect(statusText()).not.toBe(t().status.undoDeviceBusy);
+        },
+        { timeout: 15_000, interval: 50 },
+      );
+      return from;
+    };
+    /** The flush carrying the last edit has ended: it writes how many commands it sent. */
+    const synced = (): Promise<void> =>
+      vi.waitFor(() => expect(countFor(statusText(), t().status.liveSynced)).not.toBeNaN(), { timeout: 15_000 });
+    /** The import has run to its end: its last step offers to save the report of what the file
+     *  did not carry. */
+    const importDone = (shell: TauriShell): Promise<void> => invoked(shell, "plugin:dialog|save");
+    // The file moves CH 1's input source off the jack the unit holds, and carries nothing else.
+    const SOURCE = PARAMS.INPUT_SOURCE.id;
+    const OSC = PARAMS.OSC_ON.id;
+    const sourceFile = (): Uint8Array =>
+      buildUrxf([
+        {
+          chunk: "CURRENT",
+          block: "CSF_BACKUP",
+          label: "",
+          fields: [{ id: SOURCE, typecode: 1, elemSize: 4, values: [0x80000100] }],
+        },
+      ]);
+    const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+    // The import is one undo step: its undo and redo reach the unit through the session, and the
+    // edit made before it stays in the history behind it.
+    it("is one undo step the session writes, with the history before it kept", SLOW, async () => {
+      const shell = await liveImport(sourceFile(), unit(false));
+      turnOscOn();
+      selectNode("ch1"); // the press that ends the edit's entry
+      await tick();
+      await vi.waitFor(() => expect(written(shell, OSC, 0)).toEqual([1]), { timeout: 15_000 });
+      const from = await importNow(shell);
+      await importDone(shell);
+      await vi.waitFor(() => expect(written(shell, SOURCE, from)).toEqual([256]), { timeout: 15_000 });
+
+      let at = await editMenu(shell, EDIT_UNDO_ID);
+      expect(statusText()).toBe(t().status.undone);
+      await synced();
+      expect({ source: written(shell, SOURCE, at), osc: written(shell, OSC, at) }, "the import alone").toEqual({
+        source: [0],
+        osc: [],
+      });
+
+      at = await editMenu(shell, EDIT_UNDO_ID);
+      await synced();
+      expect({ source: written(shell, SOURCE, at), osc: written(shell, OSC, at) }, "the edit before it").toEqual({
+        source: [],
+        osc: [0],
+      });
+
+      at = await editMenu(shell, EDIT_REDO_ID);
+      await synced();
+      expect(written(shell, OSC, at)).toEqual([1]);
+      at = await editMenu(shell, EDIT_REDO_ID);
+      expect(statusText()).toBe(t().status.redone);
+      await synced();
+      expect({ source: written(shell, SOURCE, at), osc: written(shell, OSC, at) }, "the import again").toEqual({
+        source: [256],
+        osc: [],
+      });
+    });
+
+    // An entry still open on either side of the import is not part of it: a press held across the
+    // import keeps the edits made before and after it open, and each undo takes one of the three.
+    it("keeps the edits made on either side of it out of its undo step", SLOW, async () => {
+      const shell = await liveImport(sourceFile(), unit(false));
+      // By way of another node: a second press on the oscillator inside the board's double-press
+      // window opens its note editor.
+      const pressOsc = (face: string): void => {
+        selectNode("ch1");
+        selectNode("bus.osc");
+        [...paramRow(t().inspector.oscOn).querySelectorAll<HTMLButtonElement>("button")]
+          .find((b) => b.textContent === face)!
+          .click();
+      };
+      const held = $("statusbar");
+      held.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, bubbles: true }));
+      pressOsc("ON");
+      const from = await importNow(shell);
+      await importDone(shell);
+      pressOsc("OFF");
+      held.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, bubbles: true }));
+      await tick();
+      // The oscillator went on and off again inside the press, so the flush has nothing to send for it.
+      await vi.waitFor(() => expect(written(shell, SOURCE, from)).toEqual([256]), { timeout: 15_000 });
+
+      let at = await editMenu(shell, EDIT_UNDO_ID);
+      await synced();
+      expect({ source: written(shell, SOURCE, at), osc: written(shell, OSC, at) }, "the edit after it").toEqual({
+        source: [],
+        osc: [1],
+      });
+
+      at = await editMenu(shell, EDIT_UNDO_ID);
+      await synced();
+      expect({ source: written(shell, SOURCE, at), osc: written(shell, OSC, at) }, "the import alone").toEqual({
+        source: [0],
+        osc: [],
+      });
+
+      at = await editMenu(shell, EDIT_UNDO_ID);
+      await synced();
+      expect({ source: written(shell, SOURCE, at), osc: written(shell, OSC, at) }, "the edit before it").toEqual({
+        source: [],
+        osc: [0],
+      });
     });
   });
 

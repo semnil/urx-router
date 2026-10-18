@@ -2459,8 +2459,8 @@ function hasRecorder(reported: string): boolean {
   return getModel(known ? (reported as ModelId) : modelId).nodes.some((n) => n.id === SDREC_NODE_ID);
 }
 
-// A device readback of any breadth settled the plan (fetch, Live-sync start, the .urxf
-// import). The history re-takes its whole baseline: a device-authored value must not
+// A device readback of any breadth settled the plan (fetch, Live-sync start, a .urxf
+// import with no session up). The history re-takes its whole baseline: a device-authored value must not
 // ride along in the next entry, or undoing an app edit would push it back over the
 // operator's own move on the hardware. The follow-side writers do NOT come through here
 // — each settles the history at its own site, where what the device authored is known:
@@ -3145,7 +3145,7 @@ function syncRateUi(): void {
 // clears dirty, leaves live sync, and re-seeds the persisted model/rate/hidden).
 // Used wherever the plan's contents changed under the same document: a Fetch, a live
 // session's readback, and a `.urxf` settings import — the three callers below.
-function rerenderPlan(): void {
+function rerenderPlan(history: "reset" | "keep" = "reset"): void {
   graph.setModel(getModel(modelId), plan);
   selection = null;
   syncRateUi(); // also re-renders the CONSOLE strips (applyRateConstraints)
@@ -3153,10 +3153,10 @@ function rerenderPlan(): void {
   // re-authored. Refresh redraws it, and closes it when the channel no longer carries the
   // processor it edits.
   dynScreen.refresh();
-  // Every value here was re-authored — by the device or by the settings file — so the
-  // entries recorded against the old contents describe states this plan cannot return
-  // to.
-  planHistory?.reset();
+  // Every value here was re-authored — by the device, or by a settings file imported with no
+  // session up — so the entries recorded against the old contents describe states this plan
+  // cannot return to. A settings file imported during a session is an edit, and keeps them.
+  if (history === "reset") planHistory?.reset();
 }
 
 // Reflect an undo / redo whose patch is already applied to the plan. Modelled on
@@ -5764,6 +5764,8 @@ if (!DEMO) {
     }
     let result: ReadbackResult;
     let rateKept = false;
+    // During a session the import is one undo step of its own, so the edits before it close here.
+    if (live) planHistory?.commit();
     try {
       // A settings FILE, not the connected unit: its values are the same kind of thing a plan
       // document supplies, so they are recorded as such. Calling them the unit's would claim
@@ -5784,12 +5786,15 @@ if (!DEMO) {
     // Same provenance as a device fetch: nodes whose values did not come through
     // still show their plan default, and the graph flags them as such.
     plan.unreadNodes = result.unreadNodes;
-    rerenderPlan();
+    // During a session the import is an edit: the session writes it to the unit, and it is one
+    // undo step on top of the history it found. Otherwise it settled the plan the way a read does.
+    const edit = live && liveSessionUp;
+    rerenderPlan(edit ? "keep" : "reset");
     dirty = true;
-    // During a session the import is an edit: the session writes it to the unit and it is
-    // one undo step. Otherwise it settled the plan the way a read does.
-    if (live && liveSessionUp) markChanged("ui");
-    else planReadFromDevice();
+    if (edit) {
+      markChanged("ui");
+      planHistory?.commit();
+    } else planReadFromDevice();
     const unread = result.unreadNodes.size;
     setStatus(
       withSwitchNotes(

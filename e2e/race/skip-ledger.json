@@ -56,7 +56,7 @@
     },
     {
       "file": "e2e/race/t3b-undo.spec.ts",
-      "title": "T3b undo > a .urxf settings import empties both stacks",
+      "title": "T3b undo > a .urxf settings import with no session up empties both stacks",
       "guardedBy": {
         "file": "src/main.device.shell.test.ts",
         "title": "the desktop-only surfaces > keeps the settings import behind the flag, and the race fake never sets it"
