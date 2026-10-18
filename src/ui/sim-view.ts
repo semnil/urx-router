@@ -360,10 +360,15 @@ export class SimView {
     if (was && this.visible) this.mounting = this.mount();
   }
 
-  /** Live sync started or stopped, or the device link was taken or let go. */
+  /** Live sync started or stopped. */
   setLive(): void {
-    if (this.transport) this.sim?.setLocks(this.hooks.locks(this.transport.paths()));
+    this.relock();
     if (this.visible) this.startMeters();
+  }
+
+  /** Something the app's locks read moved: Live sync, or the device link taken or let go. */
+  relock(): void {
+    if (this.transport) this.sim?.setLocks(this.hooks.locks(this.transport.paths()));
   }
 
   private async mount(): Promise<void> {
