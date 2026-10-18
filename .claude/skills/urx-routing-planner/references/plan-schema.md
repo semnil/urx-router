@@ -303,10 +303,13 @@ or inside a group — is written `true` / `false`: a number there loads converte
 - `insertFxParams` — insert-FX engine values are raw slot integers. Two switches in
   here decide whether OTHER slots are written at all, so a plan carrying one of them
   is asking for more than the switch. The Multi-Band Compressor's 1-Knob On (slot 6):
-  while it is on, the app stops writing every slot of the effect except Out Gain —
-  Threshold, Ratio, Gain and Attack in all three bands (8-11, 13-16, 18-21), the
-  Release (25) and both crossovers (23, 24) — because a change to 1-Knob Level
-  (slot 7) recomputes the first nine and pins the other six back to fixed values.
+  while it is on, the app stops writing every slot of the effect but the knob's own two
+  — Threshold, Ratio, Gain, Attack and Bypass in all three bands (8-12, 13-17, 18-22),
+  the Release (25), both crossovers (23, 24) and the Out Gain (26) — because switching
+  it on sets the Attacks, Bypasses, Release, crossovers and Out Gain to the type's own
+  values (17 / 19 / 9, 0, 7, 37 / 94, 68) and a change to 1-Knob Level (slot 7)
+  recomputes the band Thresholds, Ratios and Gains and pins all but the Out Gain back.
+  The load sets those fixed slots to the type's own values wherever slot 6 is on.
   Pitch Fix's MIDI Control (slots 34 and 35, two bits for three
   modes): while it is anything but Off, the app stops writing the Scale (slot 16) and
   the twelve note-mask slots (22–33), because switching the mode on clears that mask

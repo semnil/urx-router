@@ -154,6 +154,6 @@ describe("the controls the SIM view holds shut", () => {
     plan.nodeParams["bus.mix1"].insertFxParams = { "mbc:6": 1 };
     const knobOn = simLocks(model, plan, paths, OFFLINE, REASONS);
     expect(reasonFor(knobOn, path("ch.bus.mix1.insFx.lowThreshold")), "the knob sets the bands").toBe("deviceDriven");
-    expect(reasonFor(knobOn, path("ch.bus.mix1.insFx.outGain"))).toBeNull();
+    expect(reasonFor(knobOn, path("ch.bus.mix1.insFx.outGain")), "the switch set Out Gain").toBe("deviceDriven");
   });
 });

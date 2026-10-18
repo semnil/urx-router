@@ -633,7 +633,7 @@ export const ja: Messages = {
       mbcBandBypassed:
         "このバンドはバイパスされています。圧縮もメイクアップも掛からず unity で素通しします。下の値は保持され、ここで編集もできます。",
       mbcOneKnob:
-        "1-knob が ON です。バンドの値・Release・クロスオーバーは本体がレベルから設定し、その編集は送られません。Out Gain と 1-knob は送られます。",
+        "1-knob が ON です。バンドの値・Release・クロスオーバーは本体がレベルから、Out Gain は ON にしたときに設定し、その編集は送られません。1-knob は送られます。",
       deviceOnlyTag: "本体で設定",
     },
   },
@@ -692,6 +692,8 @@ export const ja: Messages = {
       `数値で書かれていたオン/オフの値 ${count} 件を、オン/オフの値に変換しました`,
     linkedSendPansAligned: (count: number): string =>
       `Pan Link がオンの MIX への SEND PAN ${count} 件を、Send 元自身の PAN / BAL にそろえました`,
+    mbcOneKnobAligned:
+      "M.B.Comp の 1-knob がオンのため、Attack・Bypass・Release・クロスオーバー・Out Gain を本体と同じ値にそろえました",
     compOneKnobsAligned: (count: number): string =>
       `COMP の 1-knob がオンのチャンネル ${count} 件で、Attack・Release・Auto Makeup を本体と同じ値にそろえました`,
     streamingSourceUnlisted: "本体の STREAMING が一覧に無い状態だったため、計画では STEREO にしました",

@@ -549,11 +549,11 @@ test("multi-band comp splits into what the bands share and what each band is", a
   await closeScreen(page);
 });
 
-// 1-knob is the unit's, and the app neither writes it nor writes over what it computed.
-// Both halves are here: the switch offers no gesture, and every value below it is locked
-// while it reads on. Seeded through a plan because there is no control to press.
-test("MBC 1-knob is operable, and locks what its Level recomputes", async ({ page }) => {
-  const params: Record<string, number> = { "9": 100, "14": 100, "19": 100 };
+// The 1-knob is an operator control, and every value it holds is the unit's while it reads on:
+// the switch is live, pressing it on sets the values the unit fixes, and every value it holds is
+// locked — seeded through a plan as well, for the band face.
+test("MBC 1-knob is operable, and locks what it holds", async ({ page }) => {
+  const params: Record<string, number> = { "9": 100, "14": 100, "19": 100, "26": 59 };
   const plan = (oneKnob: boolean) => ({
     format: "urx-router-plan",
     version: 1,
@@ -580,16 +580,22 @@ test("MBC 1-knob is operable, and locks what its Level recomputes", async ({ pag
   const outGain = screenRow(page, "Out Gain");
   await expect(outGain).not.toHaveClass(/\blocked\b/);
   await expect(outGain.locator("input")).toBeEnabled();
+  await expect(outGain).toContainText("-5 dB");
+  // Pressed on, the switch sets the Out Gain to the type's own +4 dB, as the unit does, and the
+  // row locks with the rest of what the knob holds.
+  await oneKnobRow.locator("button", { hasText: "ON" }).click();
+  await expect(screenRow(page, "1-knob Level")).not.toHaveClass(/\blocked\b/);
+  await expect(screenRow(page, "Out Gain")).toContainText("4 dB");
+  await expect(screenRow(page, "Out Gain").locator("input")).toBeDisabled();
   await closeScreen(page);
 
-  // On: the Level is live, and so is Out Gain — the one writable value a Level change
-  // never reasserts. The crossovers beside it are not: the same change pins those back to
-  // fixed values whatever was written over them.
+  // On from the plan: the Level is live, and Out Gain and the crossovers beside it are not —
+  // the switch set them and the unit's own screen turns none of them while it stays on.
   await page.goto(`/?plan=${planParamZ(plan(true))}`);
   await node(page, "bus.mix1").click();
   await openScreen(page);
   await expect(screenRow(page, "1-knob Level")).not.toHaveClass(/\blocked\b/);
-  await expect(screenRow(page, "Out Gain").locator("input")).toBeEnabled();
+  await expect(screenRow(page, "Out Gain").locator("input")).toBeDisabled();
   await expect(screenRow(page, "L-M Xover").locator("input")).toBeDisabled();
   await expect(screenBox(page).getByText("1-knob is on", { exact: false })).toBeVisible();
   await page.click("#dyn-face-insfx-low");

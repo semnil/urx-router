@@ -3,6 +3,7 @@ import {
   applyBooleanParams,
   applyCompOneKnobs,
   applyLinkedSendPans,
+  applyMbcOneKnobs,
   applyLoadRepairs,
   applyParamRange,
   applyRequiredSources,
@@ -11,6 +12,7 @@ import {
   insertFxPairProblems,
   insertFxSlotProblems,
   isRefusal,
+  mbcOneKnobProblems,
   linkedPairProblems,
   linkedSendPanProblems,
   nodeColorProblems,
@@ -1603,6 +1605,67 @@ describe("compOneKnobProblems", () => {
         release: COMP_ONE_KNOB_ON.release,
         autoMakeup: false,
       });
+  });
+});
+
+describe("mbcOneKnobProblems", () => {
+  const u44v = getModel("URX44V");
+  const doc = (params: Record<string, unknown>, extra: Partial<NodeParams> = {}): Plan => ({
+    ...emptyPlan("URX44V"),
+    nodeParams: { "bus.stereo": { insertFx: 1792, insertFxOn: true, insertFxParams: params as never, ...extra } },
+  });
+  const found = (plan: Plan) =>
+    mbcOneKnobProblems(u44v, plan).map(
+      (p) => `${p.node} ${p.slots.map((s) => `${s.slot}:${String(s.stored)}->${s.value}`).join(" ")}`,
+    );
+
+  it("sets the fixed slots to the type's own values on an M.B.Comp whose 1-knob is on", () => {
+    const plan = doc({ "mbc:6": 1, "mbc:7": 30, "mbc:8": 5, "12": 1, "mbc:26": 59, "mbc:9": 90 });
+    const problems = mbcOneKnobProblems(u44v, plan);
+    expect(problems).toEqual([
+      {
+        reason: "mbcOneKnob",
+        node: "bus.stereo",
+        slots: [
+          { slot: 8, stored: 5, value: 17 },
+          { slot: 12, stored: 1, value: 0 },
+          { slot: 26, stored: 59, value: 68 },
+        ],
+      },
+    ]);
+    expect(planProblems(u44v, plan).filter((p) => p.reason === "mbcOneKnob")).toEqual(problems);
+    expect(isRefusal(problems[0]) || needsDecision(problems[0])).toBe(false);
+    applyMbcOneKnobs(plan, problems);
+    // The Level and a value the Level recomputes are left as the document wrote them; a bare slot
+    // the repair sets is re-keyed under the family.
+    expect(plan.nodeParams["bus.stereo"]!.insertFxParams).toEqual({
+      "mbc:6": 1,
+      "mbc:7": 30,
+      "mbc:8": 17,
+      "mbc:12": 0,
+      "mbc:26": 68,
+      "mbc:9": 90,
+    });
+    expect(mbcOneKnobProblems(u44v, plan)).toEqual([]);
+  });
+
+  // A value is read the way the write would send it: bounded to its slot's window first, and a
+  // slot the document leaves out is the type's own value the load completes it with.
+  it("reads a value as the write would send it, and an absent slot as the type's own", () => {
+    expect(found(doc({ "mbc:6": 1 }))).toEqual([]);
+    expect(found(doc({ "mbc:6": 1, "mbc:26": 68.2, "mbc:8": 16.6 }))).toEqual([]);
+    expect(found(doc({ "mbc:6": 1, "mbc:26": 100 }))).toEqual(["bus.stereo 26:100->68"]);
+  });
+
+  it("finds nothing while the knob is off, on another effect, or on a node with no such insert", () => {
+    expect(found(doc({ "mbc:6": 0, "mbc:26": 59 }))).toEqual([]);
+    expect(found(doc({ "mbc:26": 59 }))).toEqual([]);
+    expect(found(doc({ "mbc:6": 1, "mbc:26": 59 }, { insertFx: 1793 }))).toEqual([]);
+    const channel: Plan = {
+      ...emptyPlan("URX44V"),
+      nodeParams: { ch1: { insertFx: 1792, insertFxParams: { "mbc:6": 1, "mbc:26": 59 } } },
+    };
+    expect(found(channel), "the selector is off a channel's menu").toEqual([]);
   });
 });
 
