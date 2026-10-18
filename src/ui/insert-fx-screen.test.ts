@@ -1289,6 +1289,20 @@ describe("a gesture taken while the rebuild is deferred", () => {
     screen.close();
   });
 
+  it("writes a value picked on a select row to its slot", () => {
+    holding("ch1", "Clean");
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    const sp = [...h.box.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
+      [...s.options].some((o) => o.textContent === "AC 2x12"),
+    )!;
+    sp.value = "2";
+    sp.dispatchEvent(new Event("change", { bubbles: true }));
+    const params = h.plan.nodeParams.ch1!.insertFxParams!;
+    expect(Object.entries(params).filter(([k]) => k.endsWith(":16"))).toEqual([[expect.any(String), 2]]);
+    screen.close();
+  });
+
   it("writes a picked Key and re-roots the Scale the mask spells at it", () => {
     holding("ch1", "Pitch Fix");
     const screen = new DynScreen(h.hooks);
