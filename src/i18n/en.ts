@@ -971,6 +971,10 @@ export const en = {
     settingsPartial: (n: number, failed: number, unread: number): string =>
       `Imported ${n}, ${failed} failed` + (unread ? `, ${unread} node${unread === 1 ? "" : "s"} not read` : ""),
     settingsError: (message: string): string => `Settings file could not be imported: ${message}`,
+    // Appended to an import's status while Live sync is up under the Scene only device scope,
+    // which leaves the file's sampling frequency out of the session.
+    settingsRateKept: (rate: string): string =>
+      ` — the sampling frequency stays at ${rate}, outside the Scene only device scope`,
     dropUnsupported: (name: string): string => `${name} cannot be opened here — drop a plan (.json)`,
     dropUnsupportedSettings: (name: string): string =>
       `${name} cannot be opened here — drop a plan (.json) or a settings file (.urxf)`,
@@ -1125,11 +1129,18 @@ export const en = {
     ),
     importSettings: (name: string, model: string): string =>
       `Import ${name} onto the current ${model} plan? A settings file does not say which unit it came from, so check that ${model} is the right model. Layout, hidden nodes, and notes are kept — the file carries no editing state.`,
+    // The same question while Live sync is up, where the imported settings go to the unit.
+    importSettingsLive: (name: string, model: string): string =>
+      `Import ${name} onto the current ${model} plan and write it to the unit? Live sync is on, so every imported setting is sent to the unit; the sampling frequency stays as it is. A settings file does not say which unit it came from, so check that ${model} is the right model. Layout, hidden nodes, and notes are kept.`,
     reclock: (deviceRate: string, planRate: string): string =>
       `The device is running at ${deviceRate} and the plan is set to ${planRate}. Writing re-clocks the device and renegotiates the USB stream, interrupting audio for a moment. The computer follows the device's new rate. Continue?`,
     followUsbOn: tr(
       "Turn Follow USB on? The device hands its clock back to the computer. If the computer is running a different rate, the device re-clocks to it immediately, which can interrupt audio; if the rates already match, nothing changes.",
     ),
+    // A settings file imported during Live sync that turns Follow USB off at the rate the
+    // device is already running.
+    followUsbOffImport: (rate: string): string =>
+      `The settings file turns Follow USB off. Turn it off? The device stops taking its clock from the computer and runs at ${rate}.`,
     insertsOffAtRate: (list: string): string =>
       `This rate takes ${list} off: the unit runs no insert above its own rate limit and puts that channel or bus on No Effect. Lowering the rate again does not put it back.`,
     trackCountDrop: (from: number, to: number): string =>
@@ -1420,6 +1431,14 @@ export const en = {
       `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is recording, paused or in record standby. Stop the recording or leave standby on the device, then write again. Nothing was written.`,
     rateDuringRecordingLive: (deviceRate: string, planRate: string): string =>
       `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is recording, paused or in record standby. Stop the recording or leave standby on the device, then choose the rate again. Nothing was written.`,
+    // A settings file imported during Live sync that changes how the unit is clocked — its
+    // sampling frequency or Follow USB — while the microSD recorder holds a file.
+    settingsClockDuringPlayback: tr(
+      "The settings file changes how the device is clocked, so it is not imported while the microSD recorder is playing or paused. Stop the playback on the device, then import the file again. Nothing was imported.",
+    ),
+    settingsClockDuringRecording: tr(
+      "The settings file changes how the device is clocked, so it is not imported while the microSD recorder is recording, paused or in record standby. Stop the recording or leave standby on the device, then import the file again. Nothing was imported.",
+    ),
     trackCountUnread: (message: string): string =>
       `The microSD recorder's Track Count could not be read (${message}), and a rate change can lower it for good. Nothing was written.`,
     followUsbWrite: (message: string, on = false): string =>
@@ -1427,9 +1446,6 @@ export const en = {
     unknownModel: (model: string): string => `Unknown model: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `The connected device is ${device}, but ${ui} is selected. Open or switch to a plan for that model first.`,
-    notWhileLive: tr(
-      "Stop Live sync first — importing replaces every setting at once, which a live session cannot follow.",
-    ),
     notPlanFile: tr("This is not a URX Router plan file"),
     urxf: {
       notUrxf: tr("This is not a URX settings file"),

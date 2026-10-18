@@ -1443,9 +1443,9 @@ test.describe("T3b undo", () => {
   // `src/ui/history.test.ts`, and the picker being locked in `src/main.device.clock.test.ts`.
   test.skip("a sampleRate-touching entry is refused while live", () => {});
 
-  // Reset path (g), a .urxf settings import, is behind the --experimental launch flag,
-  // which the fake answers `false` for (experimental_enabled). Driving it would mean
-  // making the fake claim a launch mode the shipped app does not have, so the case
-  // would measure the harness rather than the app.
-  test.skip("a .urxf settings import empties both stacks", () => {});
+  // Reset path (g), a .urxf settings import made with no session up, is behind the
+  // --experimental launch flag, which the fake answers `false` for (experimental_enabled).
+  // Driving it would mean making the fake claim a launch mode the shipped app does not
+  // have, so the case would measure the harness rather than the app.
+  test.skip("a .urxf settings import with no session up empties both stacks", () => {});
 });

@@ -227,7 +227,7 @@ export class PlanHistory {
   }
 
   /** The plan settled at values no entry should describe: a device readback of any
-   *  breadth landed (fetch, Live-sync start, the `.urxf` import). Re-takes the baseline
+   *  breadth landed (fetch, Live-sync start, a `.urxf` import with no session up). Re-takes the baseline
    *  so those values cannot ride along in the next entry, and drops any entry still open
    *  — which is what makes it the wrong call for a writer that knows WHICH keys the
    *  device authored: dropping the entry makes an app edit made in that window silently
@@ -428,8 +428,10 @@ export class PlanHistory {
   }
 
   /** Close the open entry now. A gesture that moved no value diffs to nothing and
-   *  records no entry, so a mis-grab costs no Ctrl+Z. */
-  private commit(): void {
+   *  records no entry, so a mis-grab costs no Ctrl+Z. Also called by an edit that is one
+   *  entry of its own however it was reached (a settings file imported during a session),
+   *  on both sides of it. */
+  commit(): void {
     this.cancelPending();
     if (!this.open) return;
     this.open = false;

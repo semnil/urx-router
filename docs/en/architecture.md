@@ -384,7 +384,7 @@ carries a one-line map of the same directories and points here.
       only by its own F table, and an x axis stored flattened onto consecutive ids. It exposes a chunk as a
       `ParamSource`, so `readback.ts` runs its existing device→plan inverse against a file
       (`applySourceState`) instead of a second inverse — the source travels as a parameter, so a file import
-      and a device follow reconcile cannot cross. An import is refused while Live sync is up. **Read-only**
+      and a device follow reconcile cannot cross. During Live sync an import is an edit the session writes to the unit. **Read-only**
       (writing back is untested against the unit's scene memory) and gated behind `--experimental`
     - `device-setup.ts` the unit's SETUP > GENERAL settings (brightness / auto power off / date-time formats
       + time zone / language / HDMI + USB Main / the 16 User Defined Knobs assignments) — catalogued in
@@ -4465,8 +4465,10 @@ Both stacks are dropped, and the baseline re-taken, when no earlier entry descri
 can return to: a **new document** (`loadPlan` — New / Open / a drop / a recent row / the model picker
 / the model switch a Fetch or Live-sync start offers, applied once its read has landed complete / the `?plan=`
 deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch, Live-sync start
-and the `.urxf` import; plus device-follow's reconciles, scoped or full, once their read has authored at least one
-key). A side-effect refetch only takes the keys the device authored into the baseline, keeping the entries already
+and a `.urxf` import made with no session up; plus device-follow's reconciles, scoped or full, once their read has
+authored at least one key). A `.urxf` import made during a session is an edit instead: it keeps both stacks and is
+one entry of its own, an entry open on either side of it closed as it stands (`PlanHistory.commit`). A side-effect
+refetch only takes the keys the device authored into the baseline, keeping the entries already
 recorded. A read that refuses a +48V / HI-Z ON — made while it was in
 flight, or held back by a live flush and never sent — takes that one edit out instead (`PlanHistory.retract`):
 the newest entry carrying each key it took back loses the key when that entry still holds the refused value, an
@@ -4975,10 +4977,20 @@ parses the file and exposes one chunk as a `ParamSource`, and `readback.ts` runs
 `applyDeviceState` logic against that source instead of the live device (`applySourceState`). The
 source travels as a parameter: the pass and each reading helper bind their own `vdGet` / `vdGetStr`
 from it, so a device follow reconcile and a file import cannot read each other's source and need no
-guard against overlapping. Because an import replaces every value at once — which Live sync cannot
-follow — it is refused while a session is up, the same rule fetch and write already follow. It is refused
-while any other device action holds the link as well (a Live sync still connecting holds it with no session up
-yet), and the import asks again once its confirms are answered, since the window keeps running behind them.
+guard against overlapping. While a session is up an import is an edit like any other: its confirm says the
+imported settings go to the unit, the values land in the plan through `markChanged`, the session's next flush
+writes them, and the import is one undo step. A file that changes how the unit is clocked is asked about before
+anything is imported (`confirmImportClock`), and imports nothing when the operator declines or the microSD recorder
+holds a file. A rate the file changes with Follow USB left as it is gets the confirm a rate chosen in the app gets —
+with Follow USB on as well, where the unit takes the computer's rate back after the write; a file that turns Follow
+USB on gets the confirm the toolbar's FOLLOW USB gives, refused as well while the recorder holds a file; one that
+turns it off is asked about its rate where that differs, and about turning Follow USB off where it does not. The
+file's Follow USB is written before the rest, so the rate the session then writes lands on a unit clocked the way
+the file says. Under the Scene only device scope both are outside the session: nothing is asked, the file's rate is
+not taken, and the status line says the rate stayed. The import is refused
+while any other device action holds the link (a Live sync still connecting holds it with no session up yet), and
+asks again once its confirms are answered, going ahead only in the state the confirm asked about, since the
+window keeps running behind them.
 
 Format notes that shape the reader (full spec: the private reference repository):
 

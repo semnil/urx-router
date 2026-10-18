@@ -1323,8 +1323,9 @@ loss (the state every device readback produces), so only differing owners are st
 and the report is **value-keyed**: it fires on an actual loss, latched on the owner SET, so a standing
 collision is one sentence rather than one per flush. Three surfaces — the live status line, the Write
 confirm (prefixed, and appended to "nothing to write"), and the Compare report's "Shared device
-settings" section — and one deliberate silence: a Fetch or a `.urxf` import authors no commands. A
-colliding plan opened from a file is not silent, though: it is warned about at load (fix 7), and the
+settings" section — and one deliberate silence: a Fetch, or a `.urxf` import made with no session up, authors
+no commands.
+A colliding plan opened from a file is not silent, though: it is warned about at load (fix 7), and the
 collision it carries reaches these same three surfaces as soon as it is written.
 
 The latch clears in **`capture()`**, not only in the flush that finds no collision — the first draft
