@@ -34,6 +34,7 @@ import {
   mbcXoverHz,
   pitchDeviceDriven,
   mbcXoverLabel,
+  PITCH_KEYS,
   PITCH_KEY_SLOT,
   PITCH_MIDI_ENABLE_SLOT,
   PITCH_MIDI_REALTIME_SLOT,
@@ -990,7 +991,7 @@ function insFxFace(): DynProcessor {
             pitchMidiRow(ctx),
             enumRow(
               label,
-              d.options ?? [],
+              PITCH_KEYS,
               cur,
               (v) => ctx.set(slotPatch(pitchKeyPatch(scaleOf(ctx), v))),
               ctx.states.get(key),
@@ -1021,7 +1022,7 @@ function insFxFace(): DynProcessor {
                 ),
                 key,
               )
-            : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v }), state),
+            : enumRow(label, d.options, cur, (v) => ctx.set({ [key]: v }), state),
         );
       }
       tail.push(...pending);

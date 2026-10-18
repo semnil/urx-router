@@ -137,6 +137,12 @@ function typeOf(ctx: DynCtx): number | null {
   return resolveFxEffectType(fxIndex, ctx.plan.nodeParams[ctx.nodeId]?.fxEffect?.type);
 }
 
+/** The held type on a screen this face is open on. `bind` admits an FX bus alone and the host
+ *  calls nothing else before it has bound, so every other callback runs on one of the two. */
+function boundTypeOf(ctx: DynCtx): number {
+  return resolveFxEffectType(FX_CHANNEL_NODE_INDEX[ctx.nodeId], ctx.plan.nodeParams[ctx.nodeId]?.fxEffect?.type);
+}
+
 const fxOf = (ctx: DynCtx): FxEffectParams => ctx.plan.nodeParams[ctx.nodeId]?.fxEffect ?? {};
 
 /** The catalogue rows for the held type, in this face's order. Anything the order does not
@@ -256,10 +262,8 @@ function fxFace(): DynProcessor {
     // picked it is on another surface: without it the heading names a channel rather than
     // what is in it. The host prints the channel beside this.
     title: (m, ctx) => {
-      const fxIndex = fxIndexOf(ctx);
-      const type = typeOf(ctx);
-      const name =
-        fxIndex === null || type === null ? undefined : fxEffectTypes(fxIndex).find((o) => o.value === type)?.label;
+      const type = boundTypeOf(ctx);
+      const name = fxEffectTypes(FX_CHANNEL_NODE_INDEX[ctx.nodeId]).find((o) => o.value === type)?.label;
       return name ? `${m.dynTuning.fx.title} — ${name}` : m.dynTuning.fx.title;
     },
 
@@ -300,8 +304,7 @@ function fxFace(): DynProcessor {
     },
 
     read: (ctx) => {
-      const type = typeOf(ctx);
-      if (type === null) return {};
+      const type = boundTypeOf(ctx);
       const out: Record<string, unknown> = {};
       for (const d of fxParams(type)) out[fieldKey(d.key)] = rawOf(ctx, d);
       return out;
@@ -337,8 +340,7 @@ function fxFace(): DynProcessor {
 
     fieldLabel: (f, m, ctx) => {
       const planKey = planKeyOf(f.key);
-      const type = typeOf(ctx);
-      const d = type === null ? undefined : fxParams(type).find((x) => x.key === planKey);
+      const d = fxParams(boundTypeOf(ctx)).find((x) => x.key === planKey);
       return d && labelOf(d, m);
     },
 
@@ -346,8 +348,7 @@ function fxFace(): DynProcessor {
     // hertz and the THRU at a filter's end all come from the one place they are defined.
     fieldText: (f, v, ctx) => {
       const planKey = planKeyOf(f.key);
-      const type = typeOf(ctx);
-      if (type === null) return undefined;
+      const type = boundTypeOf(ctx);
       const d = fxParams(type).find((x) => x.key === planKey);
       if (!d?.format) return undefined;
       // The sibling values a formatter folds in, taken from the plan and overridden with
@@ -360,8 +361,7 @@ function fxFace(): DynProcessor {
     },
 
     rowStates: (ctx) => {
-      const type = typeOf(ctx);
-      if (type === null) return null;
+      const type = boundTypeOf(ctx);
       // Above 96 kHz the FX2 bus is gone: every row read-only and assignable. Untagged, since one
       // reason covers every row and the line under the display gives it.
       if (nodeRateDisabled(ctx.nodeId, ctx.plan.sampleRate)) {
@@ -375,8 +375,7 @@ function fxFace(): DynProcessor {
     // front of the knob that follows them in the face's order, so the panel reads in one
     // order rather than knobs-then-the-rest.
     rows: (ctx) => {
-      const type = typeOf(ctx);
-      if (type === null) return {};
+      const type = boundTypeOf(ctx);
       const before: Record<string, HTMLElement[]> = {};
       const tail: HTMLElement[] = [];
       let pending: HTMLElement[] = [];
@@ -409,7 +408,7 @@ function fxFace(): DynProcessor {
                 ),
                 key,
               )
-            : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v }), state),
+            : enumRow(label, d.options, cur, (v) => ctx.set({ [key]: v }), state),
         );
       }
       tail.push(...pending);
@@ -423,8 +422,7 @@ function fxFace(): DynProcessor {
     controlId: (ctx, key) => {
       const planKey = planKeyOf(key);
       if (!planKey) return null;
-      const type = typeOf(ctx);
-      const d = type === null ? undefined : fxParams(type).find((x) => x.key === planKey);
+      const d = fxParams(boundTypeOf(ctx)).find((x) => x.key === planKey);
       // An enum answers null — a select has no normalized domain, which is the treatment
       // COMP's knee already gets. Everything continuous is armable: a control whose own grid
       // is finer than the wire is handled by the catalogue's codec rather than refused here.

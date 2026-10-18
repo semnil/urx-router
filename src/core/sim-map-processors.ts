@@ -699,7 +699,7 @@ const FX_ROWS: Record<FxFamily, Record<string, FxRow>> = {
 function descRange(d: FxParamDesc): [number, number] {
   if (d.control === "toggle") return [0, 1];
   if (d.control === "select") {
-    const values = (d.options ?? []).map((o) => o.value);
+    const values = d.options.map((o) => o.value);
     return [Math.min(...values), Math.max(...values)];
   }
   return [d.rawMin ?? d.def, d.rawMax ?? d.def];

@@ -208,16 +208,17 @@ describe("fx-effect encodings (live calibration anchors)", () => {
     // — the rule is stated, so it is asked of a menu that can produce one.
     const gapped: FxParamDesc = {
       ...note,
+      control: "select",
       options: [
         { value: 0, label: "a" },
         { value: 2, label: "b" },
       ],
     };
     expect(fxRawForDesc(gapped, 1)).toBe(0);
-    expect(fxRawForDesc({ ...gapped, options: [...gapped.options!].reverse() }, 1)).toBe(0);
+    expect(fxRawForDesc({ ...gapped, control: "select", options: [...gapped.options!].reverse() }, 1)).toBe(0);
 
     // The declared order of the options decides nothing: reversed, the answers are the same.
-    const reversed: FxParamDesc = { ...note, options: [...note.options!].reverse() };
+    const reversed: FxParamDesc = { ...note, control: "select", options: [...note.options!].reverse() };
     for (const raw of [0.5, 3.5, 14.6, 9999, -9999, Number.MAX_VALUE]) {
       expect(fxRawForDesc(reversed, raw), `reversed ${raw}`).toBe(fxRawForDesc(note, raw));
     }
