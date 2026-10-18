@@ -12070,7 +12070,7 @@ describe("the SIM view over a live session", () => {
   // them. The unit's cursor moving takes the glass's off a row it picked, and a session that ends
   // leaves both to the glass.
   it(
-    "shows the unit's scene recalled and SCENE LIST's cursor, the unit's cursor taking the glass's off its row",
+    "shows the unit's current scene and SCENE LIST's cursor, the unit's cursor taking the glass's off its row",
     SLOW,
     async () => {
       const shell = await bootDevice({ experimental_enabled: true }, true, {
@@ -12081,7 +12081,7 @@ describe("the SIM view over a live session", () => {
       await goLive();
       const shown = async (path: string): Promise<unknown> => (await transport().snapshot()).get(path);
       await vi.waitFor(async () =>
-        expect([await shown("scene.current"), await shown("scene.selected")], "09 recalled, the cursor on 10").toEqual([
+        expect([await shown("scene.current"), await shown("scene.selected")], "09 current, the cursor on 10").toEqual([
           9, 10,
         ]),
       );
@@ -12099,7 +12099,7 @@ describe("the SIM view over a live session", () => {
       await vi.waitFor(async () => expect(await shown("scene.selected"), "the unit's cursor on P01").toBe(101));
       expect(await shown("scene.bank"), "on the tab that lists P01").toBe("Simple");
       notifyChannel(shell).onmessage([{ param_id: PARAMS.CURRENT_SCENE.id, x: 0, y: 0, value: 0x8002 }]);
-      await vi.waitFor(async () => expect(await shown("scene.current"), "P02 recalled").toBe(102));
+      await vi.waitFor(async () => expect(await shown("scene.current"), "P02 current").toBe(102));
       $("btn-live").click();
       await invoked(shell, "vd_disconnect");
       await vi.waitFor(async () =>

@@ -1,4 +1,4 @@
-// The LCD simulator's scene pointers over the unit's own: the scene the unit recalled and the row
+// The LCD simulator's scene pointers over the unit's own: the unit's current scene and the row
 // its SCENE LIST cursor stands on (control/params.ts CURRENT_SCENE / SCENE_CURSOR), which the unit
 // holds outside the plan. No scene title is given: the glass shows the unit's scenes by number.
 import type { SimValue } from "./sim-map-base";
@@ -28,13 +28,13 @@ export function simSceneNumber(raw: number): number | null {
   return raw < USER_SCENES ? raw + 1 : null;
 }
 
-/** What the glass shows for the unit's scene pointers: the scene recalled, SCENE LIST's cursor,
+/** What the glass shows for the unit's scene pointers: the current scene, SCENE LIST's cursor,
  *  and the tab that lists the cursor's row where only one of the two lists it (00 on Standard, a
  *  preset on Simple). A pointer outside the encoding is left to the glass. */
 export function sceneGlassValues(current: number | null, cursor: number | null): Map<string, SimValue> {
   const out = new Map<string, SimValue>();
-  const recalled = current === null ? null : simSceneNumber(current);
-  if (recalled !== null) out.set("scene.current", recalled);
+  const now = current === null ? null : simSceneNumber(current);
+  if (now !== null) out.set("scene.current", now);
   const picked = cursor === null ? null : simSceneNumber(cursor);
   if (picked !== null) {
     out.set("scene.selected", picked);

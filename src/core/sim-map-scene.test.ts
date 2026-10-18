@@ -14,7 +14,7 @@ describe("the unit's scene pointers on the glass", () => {
     expect(sceneGlassValues(null, null).size).toBe(0);
   });
 
-  it("shows the scene recalled and the cursor, and the tab where only one of the two lists the cursor's row", () => {
+  it("shows the current scene and the cursor, and the tab where only one of the two lists the cursor's row", () => {
     expect(Object.fromEntries(sceneGlassValues(8, 9))).toEqual({ "scene.current": 9, "scene.selected": 10 });
     expect(Object.fromEntries(sceneGlassValues(0x8000, 0x8000))).toEqual({
       "scene.current": 0,

@@ -948,9 +948,9 @@ test("opens Software Integration on the LCD during Live sync, and writes a send 
   await expect(fx2.locator(".lock-mark")).toHaveCount(0);
 });
 
-// The unit's scene recalled and SCENE LIST's cursor are live-session state outside the plan: while
+// The unit's current scene and SCENE LIST's cursor are live-session state outside the plan: while
 // Live sync is up the LCD shows them by number, with no title, and follows the unit's cursor.
-test("the LCD shows the unit's scene recalled and SCENE LIST's cursor while Live sync is up", async ({ page }) => {
+test("the LCD shows the unit's current scene and SCENE LIST's cursor while Live sync is up", async ({ page }) => {
   const CURRENT: number = PARAMS.CURRENT_SCENE.id;
   const CURSOR: number = PARAMS.SCENE_CURSOR.id;
   await stubTauriDevice(page, {
@@ -966,7 +966,7 @@ test("the LCD shows the unit's scene recalled and SCENE LIST's cursor while Live
   await page.click("#btn-device");
   await page.click("#btn-live");
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
-  // HOME's box names the cursor's scene, waiting while it is not the one recalled.
+  // HOME's box names the cursor's scene, waiting while it is not the current one.
   await expect(box.locator(".scene-no")).toHaveText("10");
   await expect(box.locator(".scene-no")).toHaveClass(/is-pending/);
   await expect(box.locator(".scene-title"), "no title of the unit's").toHaveText("");

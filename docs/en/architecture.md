@@ -699,8 +699,8 @@ carries a one-line map of the same directories and points here.
   plan, and the view that mounts the simulator over it (see "SIM view (the unit's LCD)"). The table is assembled
   from `sim-map-processors.ts` (the processors) and `sim-map-routing.ts` (routing and setup), on the shapes and
   helpers in `sim-map-base.ts`. `sim-map-setup.ts` maps the simulator's SETUP > GENERAL paths onto the unit's own
-  settings, which the unit holds outside the plan, and `sim-map-scene.ts` its scene pointers onto the unit's scene
-  recalled and SCENE LIST cursor. `sim-locks.ts` names the controls the view holds shut and the
+  settings, which the unit holds outside the plan, and `sim-map-scene.ts` its scene pointers onto the unit's current
+  scene and SCENE LIST cursor. `sim-locks.ts` names the controls the view holds shut and the
   reason each gives.
 - `src/app/` — the parts of the app entry that are not wiring, lifted out of `main.ts` so each can be
   driven without booting the whole application. `view-state.ts` the UI state that persists per browser
@@ -1899,7 +1899,7 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
 - **The unit's own settings and states** are shown in place of the simulator's where the app knows them
   (`core/sim-map-setup.ts`): SETUP > GENERAL as the last reading of it — a session's start on an experimental launch,
   the Device setup screen, a SETUP edit on the LCD — kept until the model changes, Follow USB as the toolbar's
-  badge holds it, the operation mode (`817`) as a session read it, the scene the unit recalled (`781`) and the row
+  badge holds it, the operation mode (`817`) as a session read it, the unit's current scene (`781`, which a Recall and a Store move) and the row
   its SCENE LIST cursor stands on (`863`) as a session read them and the unit announced them since — by number with
   no title, the unit's titles not being readable, and on the tab that lists the cursor's row where only one does; a
   row picked on the glass shows until the unit's cursor moves — and each MIC/LINE jack's Clip Safe as holding its

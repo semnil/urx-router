@@ -940,7 +940,7 @@ function resetSendsTarget(): void {
 // (core/control/device-setup.ts), the operation mode and each MIC/LINE jack's engaged Clip Safe.
 // SETUP is known from the last reading of it — a session's start, the Device setup screen, a SETUP
 // edit on the glass — and kept until the model changes, as Follow USB is. The operation mode and the
-// scene pointers (the scene recalled, SCENE LIST's cursor) are a session's reading, and the engaged
+// scene pointers (the current scene, SCENE LIST's cursor) are a session's reading, and the engaged
 // Clip Safe what the unit announced during one.
 let unitSetup: DeviceSetup | null = null;
 let unitOperationMode: number | null = null;
