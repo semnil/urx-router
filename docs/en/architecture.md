@@ -3420,8 +3420,18 @@ slots it gates move even where the rate-disabled set does not (48 to 96 kHz move
 a node or wire the rate took off the board is dropped with it — with the CONSOLE view up too, so the Inspector and
 `Delete` are never left holding a wire the board no longer draws (`setDisabledNodes`, `hasDisabledNodes`).
 
-**The rate settle also names what the change costs the microSD recorder**, which is the one rate side effect the
-unit ACTS on rather than merely refuses: it lowers its own Track Count to fit a rate it cannot carry (16 tracks at
+**A rate change made as an edit also takes off the inserts it rules out**, as the unit does: above an insert
+effect's own ceiling the unit puts that channel or bus on No Effect, and lowering the rate does not put it back.
+`changePlanSampleRate` (`core/plan.ts`) is how the picker and the three-way's ADOPT arm move the rate: it sets each
+insert `insertsAboveRate` names to No Effect, then moves the rate as `setPlanSampleRate` does. A load and a device
+read keep `setPlanSampleRate` — a loaded document's inserts stay as written, and every surface holds them read-only
+at that rate; a read brings the unit's own selectors. The picker names what came off on the status line and undo puts
+it back with the rate; during Live sync the re-clock confirm names it before anything is written; the three-way names
+it on the ADOPT arm's own line (`#rate-choice-adopt-note`) and leaves the insert line out of the shared note while it
+does, since that note says the plan keeps what the rate leaves out.
+
+**The rate settle also names what the change costs the microSD recorder**, which, with taking an insert off (the
+paragraph above), is a rate side effect the unit ACTS on rather than merely refuses: it lowers its own Track Count to fit a rate it cannot carry (16 tracks at
 44.1 / 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz), lowering the rate again does not raise it, and param 839
 refuses every value the app could write it back with. So this is not a feature left out of one write like the
 >96 kHz family — it is destroyed, and the notice belongs in front of the decision. `trackCountCeiling` /
