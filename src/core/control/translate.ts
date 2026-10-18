@@ -2421,8 +2421,8 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
         // above. Emitting them is not merely redundant: anything that re-sends the plan's copy
         // after the unit has computed puts the operator's earlier values back on the unit,
         // which is what a converge sharing the flush does (it reads the unit, sees the
-        // computed values differ from the plan, and writes the plan's). Attack, release and
-        // the two switches stay authored — neither moves those.
+        // computed values differ from the plan, and writes the plan's). The two switches and
+        // the level stay authored.
         const driven = emit.includeDeviceDriven ? new Set<string>() : compDeviceDriven(np.comp);
         const deviceDriven = (key: string): boolean => driven.has(key);
         pushDynCommands(

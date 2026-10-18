@@ -633,7 +633,7 @@ export const ja: Messages = {
       mbcBandBypassed:
         "このバンドはバイパスされています。圧縮もメイクアップも掛からず unity で素通しします。下の値は保持され、ここで編集もできます。",
       mbcOneKnob:
-        "1-knob が ON です。バンドの値・Release・クロスオーバーは本体がレベルから設定し、その編集は送られません。Out Gain と 1-knob は送られます。",
+        "1-knob が ON です。バンドの値・Release・クロスオーバーはレベルから、Out Gain は ON 時に本体が設定し、編集は送られません。1-knob は送られます。",
       deviceOnlyTag: "本体で設定",
     },
   },
@@ -673,6 +673,8 @@ export const ja: Messages = {
     loaded: (model: string): string => `${model} を読み込みました — ドラッグで配置・結線`,
     switchedModel: (model: string): string => `${model} に切り替えました`,
     sampleRate: (rate: string): string => `サンプルレート: ${rate}`,
+    insertsOffAtRate: (rate: string, list: string): string =>
+      `サンプルレート: ${rate} — ${list} を外しました。デバイスはエフェクトごとの上限を超えたレートでインサートを外します。レートを下げても元には戻りません。`,
     followUsbOn: "Follow USB ON — デバイスは USB ホストのクロックで動作します",
     followUsbOff: "Follow USB OFF — デバイスは自身のクロックで動作します",
     newPlan: "新規計画を作成しました",
@@ -692,6 +694,10 @@ export const ja: Messages = {
       `数値で書かれていたオン/オフの値 ${count} 件を、オン/オフの値に変換しました`,
     linkedSendPansAligned: (count: number): string =>
       `Pan Link がオンの MIX への SEND PAN ${count} 件を、Send 元自身の PAN / BAL にそろえました`,
+    mbcOneKnobAligned:
+      "M.B.Comp の 1-knob がオンのため、Attack・Bypass・Release・クロスオーバー・Out Gain を本体と同じ値にそろえました",
+    compOneKnobsAligned: (count: number): string =>
+      `COMP の 1-knob がオンのチャンネル ${count} 件で、Attack・Release・Auto Makeup を本体と同じ値にそろえました`,
     streamingSourceUnlisted: "本体の STREAMING が一覧に無い状態だったため、計画では STEREO にしました",
     planLoaded: "計画を読み込みました",
     phantomHiZBothOn: (channels: string): string => `${channels} で +48V と Hi-Z が両方オンになっています`,
@@ -864,6 +870,8 @@ export const ja: Messages = {
       `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。コンピューター側はデバイスの新しいレートに追従します。続行しますか?`,
     followUsbOn:
       "Follow USB を ON にしますか? デバイスはクロックをコンピューターに委ねます。コンピューターが別のレートで動作している場合は直ちにそのレートへリクロックするため、音声が中断される場合があります。レートが既に一致していれば何も起きません。",
+    insertsOffAtRate: (list: string): string =>
+      `このレートでは ${list} が外れます。デバイスはエフェクトごとの上限を超えたレートではインサートを動かさず、そのチャンネルやバスを No Effect にします。レートを下げても元には戻りません。`,
     trackCountDrop: (from: number, to: number): string =>
       `microSD レコーダーの Track Count が ${from} トラックに設定されており、このレートで使えるのは ${to} トラックです。デバイスが自動的に下げます。このアプリから書ける値では元に戻せません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。`,
     trackCountMayDrop:
@@ -892,6 +900,8 @@ export const ja: Messages = {
       `${limits} これらの設定は今回の書き込みから除外されますが、計画には保持されるため、レートを下げれば再び書き込まれます。`,
     trackCountDrop: (from: number, to: number): string =>
       `Follow USB を OFF にしてプランのレートで書き込むと、microSD レコーダーの Track Count が下がります: 現在 ${from} トラックで、そのレートで使えるのは ${to} トラックです。このアプリから書ける値では元に戻せません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。`,
+    insertsOffAtRate: (deviceRate: string, list: string): string =>
+      `${deviceRate} で書き込むと、デバイスと同じく計画から ${list} が外れます。それらのエフェクトはそのレートでは動きません。`,
     adopt: (deviceRate: string): string => `${deviceRate} で書き込む`,
     release: (planRate: string): string => `Follow USB を OFF にして ${planRate} で書き込む`,
     cancel: "キャンセル",
@@ -1087,11 +1097,15 @@ export const ja: Messages = {
     clockUnread: (message: string): string =>
       `デバイスのサンプルレートと Follow USB の状態を読み取れませんでした (${message})。計画のレートを実機と照合していないため、何も書き込んでいません。`,
     playbackUnread: (message: string): string =>
-      `microSD レコーダーが再生中かどうかを読み取れませんでした (${message})。レート変更は再生を止めてしまうため、何も書き込んでいません。`,
+      `microSD レコーダーが再生中・録音中かどうかを読み取れませんでした (${message})。本体はどちらの間もサンプリング周波数を変更させないため、何も書き込んでいません。`,
     rateDuringPlayback: (deviceRate: string, planRate: string): string =>
       `microSD レコーダーの再生中・一時停止中は、本体のサンプリング周波数を ${deviceRate} から ${planRate} に変更できません。本体で再生を停止してから、もう一度書き込んでください。何も書き込んでいません。`,
     rateDuringPlaybackLive: (deviceRate: string, planRate: string): string =>
       `microSD レコーダーの再生中・一時停止中は、本体のサンプリング周波数を ${deviceRate} から ${planRate} に変更できません。本体で再生を停止してから、もう一度レートを選んでください。何も書き込んでいません。`,
+    rateDuringRecording: (deviceRate: string, planRate: string): string =>
+      `microSD レコーダーの録音中・録音の一時停止中・録音待機中は、本体のサンプリング周波数を ${deviceRate} から ${planRate} に変更できません。本体で録音を停止するか待機を解除してから、もう一度書き込んでください。何も書き込んでいません。`,
+    rateDuringRecordingLive: (deviceRate: string, planRate: string): string =>
+      `microSD レコーダーの録音中・録音の一時停止中・録音待機中は、本体のサンプリング周波数を ${deviceRate} から ${planRate} に変更できません。本体で録音を停止するか待機を解除してから、もう一度レートを選んでください。何も書き込んでいません。`,
     trackCountUnread: (message: string): string =>
       `microSD レコーダーの Track Count を読み取れませんでした (${message})。レート変更はこの値を元に戻せない形で下げることがあるため、何も書き込んでいません。`,
     followUsbWrite: (message: string, on = false): string =>

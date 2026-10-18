@@ -53,7 +53,7 @@
     "src/core/control/follow.test.ts": 2,
     "src/core/control/live.test.ts": 7,
     "src/core/control/live.ts": 5,
-    "src/core/control/params.ts": 13,
+    "src/core/control/params.ts": 12,
     "src/core/control/read-merge.test.ts": 3,
     "src/core/control/readback.test.ts": 7,
     "src/core/control/readback.ts": 4,

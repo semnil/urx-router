@@ -16,7 +16,8 @@ export type RateChoice = "adopt" | "release" | "cancel";
  * answers are offered instead of guessing which was meant.
  *
  * `hiRateNote` names the plan settings a device rate above 96 kHz would leave
- * unwritten, so choosing `adopt` is not a surprise. The plan keeps them either way.
+ * unwritten, so choosing `adopt` is not a surprise. The plan keeps them either way, except the
+ * inserts adopting takes off, which `adoptNote` names.
  */
 /**
  * `releaseNote` belongs to the RELEASE arm alone, not to the shared note: it is what writing
@@ -24,18 +25,22 @@ export type RateChoice = "adopt" | "release" | "cancel";
  * set above the actions row that all three buttons share rather than beside the RELEASE
  * button, so its wording has to name the arm it is about. A cost put in the shared note, or
  * worded without its arm, would read as true of the choice the operator makes to AVOID it.
+ * `adoptNote` is the same for the ADOPT arm: the inserts the plan holds that the device's rate
+ * takes off it.
  */
 export function askRateChoice(
   planRate: string,
   deviceRate: string,
   hiRateNote: string | null,
   releaseNote = "",
+  adoptNote = "",
 ): Promise<RateChoice> {
   const scrim = document.getElementById("rate-choice") as HTMLElement;
   const title = document.getElementById("rate-choice-title") as HTMLElement;
   const intro = document.getElementById("rate-choice-intro") as HTMLElement;
   const note = document.getElementById("rate-choice-note") as HTMLElement;
   const releaseNoteEl = document.getElementById("rate-choice-release-note") as HTMLElement;
+  const adoptNoteEl = document.getElementById("rate-choice-adopt-note") as HTMLElement;
   const adopt = document.getElementById("rate-choice-adopt") as HTMLButtonElement;
   const release = document.getElementById("rate-choice-release") as HTMLButtonElement;
   const cancel = document.getElementById("rate-choice-cancel") as HTMLButtonElement;
@@ -47,6 +52,8 @@ export function askRateChoice(
   note.hidden = hiRateNote === null;
   releaseNoteEl.textContent = releaseNote;
   releaseNoteEl.hidden = releaseNote === "";
+  adoptNoteEl.textContent = adoptNote;
+  adoptNoteEl.hidden = adoptNote === "";
   adopt.textContent = m.adopt(deviceRate);
   release.textContent = m.release(planRate);
   cancel.textContent = m.cancel;

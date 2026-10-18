@@ -36,7 +36,7 @@ no hint of which picture it selects, so supporting it means calibrating the whol
 glyph set against the unit's screen first. The name and the color are supported because their values are
 self-describing.
 
-## While the Multi-Band Compressor's 1-knob is on, only Out Gain stays yours
+## While the Multi-Band Compressor's 1-knob is on, its values are the unit's
 
 The unit's multi-band compressor has a **1-knob** — an On switch and a Level — that sets
 the whole effect from one number. Both are offered and both are written, like the 1-knobs
@@ -56,11 +56,16 @@ values whatever was written over them (**the three Attacks, the three Bypasses, 
 Release and both crossovers**). The planner stops writing those eighteen while the knob is
 on, and the tuning screen locks the same rows.
 
-**The output gain is the exception** — the knob never touches it, so the planner keeps
-writing it and its row stays live. Measured on a URX44V by writing all seven of the
-non-recomputed values away from the preset AFTER switching the knob on: every one took the
-value and held it through 3.2 s of polling, and then a Level change put six of them back
-while the output gain kept what was written.
+**The output gain is set at the switch and then left alone** — a Level change does not move
+it, but the unit's own screen does not let it be turned while the knob is on either. Measured
+on a URX44V by writing all seven of the non-recomputed values away from the preset AFTER
+switching the knob on: every one took the value and held it through 3.2 s of polling, and then
+a Level change put six of them back while the output gain kept what was written. The planner
+treats it as the unit does: it stops writing the output gain while the knob is on and locks
+its row, and switching the knob on in the planner sets the Level to 0 and the fixed values —
+each band's Attack and Bypass, the Release, both crossovers and the output gain — to the
+type's own, so the rows read what the unit holds with Live sync off too. A loaded plan that
+carries other values there beside a knob that is on is set to them.
 
 ## While Pitch Fix's MIDI Control is on, the Scale and the notes are the unit's
 

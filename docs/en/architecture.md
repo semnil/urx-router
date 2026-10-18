@@ -150,7 +150,16 @@ carries a one-line map of the same directories and points here.
   than its own factory ones. The insert effect stays the refusal's. A send into a MIX bus
   whose Pan Link is on that carries a pan other than its source's own is set to the source's value the same
   way and said on the same line, reading the pair as its copy leaves it, since in BAL the copy moves the
-  balance the send is held at (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). An on/off written as a
+  balance the send is held at (`linkedSendPanProblems`; see "Reset chains, and what a converge round sends"). A COMP whose
+  1-knob is on and whose attack, release or Auto Makeup is not the value the knob gives it — switching the knob on sets
+  all three on the unit, and nothing on the unit moves them while it stays on — has them set to the knob's values the
+  same way and said on the same line, reading a key the document leaves out as the factory value the fill gives it and
+  the pair as its copy leaves it (`compOneKnobProblems`; channel-tuning.md "COMP"). An M.B.Comp whose
+  1-knob is on and whose Attacks, Bypasses, Release, crossovers or Out Gain are not the type's own values —
+  the switch sets them on the unit, and nothing on the unit moves them while it stays on — has them set to
+  those values the same way and said on the same line, reading each the way the write would send it
+  (`mbcOneKnobProblems`; known-issues.md "While the Multi-Band Compressor's 1-knob is on, its values are the
+  unit's"). An on/off written as a
   number — a leaf the model's factory values hold as a boolean, at the same path on the same node — is
   converted to the on/off the write sends, off for 0 and on for any other number, and said on the same
   line (`booleanParamProblems`). It comes first, and every other check reads the document as it leaves it,
@@ -2029,8 +2038,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   screen's parameter takes its grid from the same `DynField` table its slider is built from; which route
   each side takes to that grid, and what it does and does not put a MIDI value and a dragged slider on, is
   channel-tuning.md "MIDI assignment". Device locks refuse the write: a FIXED bus's send level, pan and
-  PRE/POST, a Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain and Auto
-  Makeup while 1-knob is on (the device computes them), COMP's 1-knob level while it is off, every EQ band
+  PRE/POST, a Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain / attack /
+  release and Auto Makeup while 1-knob is on (the device sets them), COMP's 1-knob level while it is off, every EQ band
   value while EQ 1-knob is on, and the Q / gain a filter type does not read. The enum selectors (COMP knee,
   the EQ filter type and 1-knob type) carry no control at all. +48V and HI-Z refuse differently: turning one
   on while the other is on for the jack the channel reads is refused by the control itself (`refuses`) and reported on the
@@ -3422,8 +3431,18 @@ slots it gates move even where the rate-disabled set does not (48 to 96 kHz move
 a node or wire the rate took off the board is dropped with it — with the CONSOLE view up too, so the Inspector and
 `Delete` are never left holding a wire the board no longer draws (`setDisabledNodes`, `hasDisabledNodes`).
 
-**The rate settle also names what the change costs the microSD recorder**, which is the one rate side effect the
-unit ACTS on rather than merely refuses: it lowers its own Track Count to fit a rate it cannot carry (16 tracks at
+**A rate change made as an edit also takes off the inserts it rules out**, as the unit does: above an insert
+effect's own ceiling the unit puts that channel or bus on No Effect, and lowering the rate does not put it back.
+`changePlanSampleRate` (`core/plan.ts`) is how the picker and the three-way's ADOPT arm move the rate: it sets each
+insert `insertsAboveRate` names to No Effect, then moves the rate as `setPlanSampleRate` does. A load and a device
+read keep `setPlanSampleRate` — a loaded document's inserts stay as written, and every surface holds them read-only
+at that rate; a read brings the unit's own selectors. The picker names what came off on the status line and undo puts
+it back with the rate; during Live sync the re-clock confirm names it before anything is written; the three-way names
+it on the ADOPT arm's own line (`#rate-choice-adopt-note`) and leaves the insert line out of the shared note while it
+does, since that note says the plan keeps what the rate leaves out.
+
+**The rate settle also names what the change costs the microSD recorder**, which, with taking an insert off (the
+paragraph above), is a rate side effect the unit ACTS on rather than merely refuses: it lowers its own Track Count to fit a rate it cannot carry (16 tracks at
 44.1 / 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz), lowering the rate again does not raise it, and param 839
 refuses every value the app could write it back with. So this is not a feature left out of one write like the
 >96 kHz family — it is destroyed, and the notice belongs in front of the decision. `trackCountCeiling` /
@@ -3442,15 +3461,18 @@ answer never came may have landed and taken the count down with it — rather th
 returns, which a cancel between two sends throws away.
 
 **A rate is not written while the microSD recorder holds a file.** Param 836 reads 0 when the recorder is stopped, 1
-while it plays and 2 while it is paused, and while it is not 0 the unit keeps its own SETUP > GENERAL [Sampling
-Frequency] out of reach. A 766 written over the link then is still accepted: the unit shows its Loading screen, the
-RECORDER screen comes back with no file names, and the playback stops. So the rate settle reads 836
-(`readSdPlaybackHeld` in `client.ts`, a model with a recorder only) once it knows a rate would change, and both arms
-that write the plan's rate — the re-clock confirm and the three-way's RELEASE arm — stop the write with nothing sent;
-ADOPT writes no rate and stays open. A read that fails stops the write, as the Track Count read does. While any other
-link is up the rate picker, the SIM view's rate and an undo that would move the rate are locked, and during Live sync
-with Follow USB off they ask first and are refused the same way during a playback (`confirmLiveRate`), so no path
-reaches 766 during a playback without being stopped.
+while it plays, 2 while a playback is paused, 3 while it records, 4 in record standby and 5 while a recording is
+paused, and while it is not 0 the unit keeps its own SETUP > GENERAL [Sampling Frequency] out of reach. A 766 written
+over the link then is still accepted. During a playback the unit shows its Loading screen, the RECORDER screen comes
+back with no file names, and the playback stops; during a recording the RECORDER goes on showing the old rate and
+recording, and once it is stopped SETUP shows the new one. So the rate settle reads 836 (`readSdRecorderHold` in
+`client.ts`, a model with a recorder only, which tells a playback from a recording) once it knows a rate would change,
+and both arms that write the plan's rate — the re-clock confirm and the three-way's RELEASE arm — stop the write with
+nothing sent, naming the playback or the recording the operator has to stop; ADOPT writes no rate and stays open. A
+read that fails stops the write, as the Track Count read does. While any other link is up the rate picker, the SIM
+view's rate and an undo that would move the rate are locked, and during Live sync with Follow USB off they ask first
+and are refused the same way while the recorder holds a file (`confirmLiveRate`), so no path reaches 766 then
+without being stopped.
 
 The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen
 with no device attached, so there is nothing to compare against until a connection exists.

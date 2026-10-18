@@ -37,7 +37,10 @@ import {
   SDREC_NODE_ID,
   LEVEL_MIN_DB,
   serialize,
+  changePlanSampleRate,
+  insertsAboveRate,
   setPlanSampleRate,
+  type InsertOffAtRate,
   SSMCS_INITIAL,
   supplyRequiredSources,
 } from "./core/plan";
@@ -210,7 +213,8 @@ import {
   reachedAndFailed,
   rateAction,
   readClockState,
-  readSdPlaybackHeld,
+  readSdRecorderHold,
+  type SdRecorderHold,
   readFollowUsb,
   readLcdSelection,
   readTrackCount,
@@ -3404,6 +3408,10 @@ function buildPlanReport(model: string, problems: LoadProblem[], refused: boolea
       }
       if (p.reason === "linkedSendPan")
         return `[${p.reason}] ${p.from} -> ${p.to}: ${p.stored ?? "(none)"} -> ${p.pan}`;
+      if (p.reason === "compOneKnob")
+        return `[${p.reason}] ${p.node}.comp: ${p.keys.map((k) => `${k.key} ${k.stored === undefined ? "(none)" : JSON.stringify(k.stored)} -> ${k.value}`).join(", ")}`;
+      if (p.reason === "mbcOneKnob")
+        return `[${p.reason}] ${p.node}.insertFxParams: ${p.slots.map((s) => `mbc:${s.slot} ${s.stored === undefined ? "(none)" : JSON.stringify(s.stored)} -> ${s.value}`).join(", ")}`;
       if (p.reason === "booleanParam") return `[${p.reason}] ${p.node}.${p.path}: ${p.stored} -> ${p.value}`;
       if (p.reason === "nodeColor") return `[${p.reason}] ${p.node}: ${JSON.stringify(p.stored)} -> (dropped)`;
       if (p.reason === "documentText")
@@ -3454,11 +3462,8 @@ function loadFromText(text: string, path?: string): boolean | null {
     // omits is a key the panel draws a default for and the write does not send. The DEVICE
     // paths do not come through here: a fetch fills from the unit, and a node it could not
     // read stays absent on purpose.
-    const { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, colors, texts } = prepareLoadedPlan(
-      getModel(next.modelId),
-      next,
-      problems,
-    );
+    const { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, oneKnobs, mbcKnobs, colors, texts } =
+      prepareLoadedPlan(getModel(next.modelId), next, problems);
     // A STREAMING source the load supplied is recorded as the fill's, so the write confirm
     // names that receiver when the write moves it.
     markSource(
@@ -3513,6 +3518,8 @@ function loadFromText(text: string, path?: string): boolean | null {
         ...(sendLevels.length > 0 ? [t().status.sendLevelsSupplied(sendLevels.length)] : []),
         ...(linkedPairs.length > 0 ? [t().status.linkedPairsAligned(linkedPairs.length)] : []),
         ...(linkedPans.length > 0 ? [t().status.linkedSendPansAligned(linkedPans.length)] : []),
+        ...(oneKnobs.length > 0 ? [t().status.compOneKnobsAligned(oneKnobs.length)] : []),
+        ...(mbcKnobs.length > 0 ? [t().status.mbcOneKnobAligned] : []),
         ...(colors.length > 0 ? [t().status.colorsDropped(colors.length)] : []),
         ...(texts.length > 0 ? [t().status.textsRewritten(texts.length)] : []),
       ];
@@ -3838,15 +3845,16 @@ function confirmLiveRate(rate: number): Promise<boolean> | null {
   const nextRate = formatRate(rate);
   return (async () => {
     const recorder = hasRecorder(modelId);
-    let held: boolean;
+    let held: SdRecorderHold;
     try {
-      held = recorder ? await readSdPlaybackHeld() : false;
+      held = recorder ? await readSdRecorderHold() : null;
     } catch (err) {
       showError(t().error.playbackUnread(errorText(err)));
       return false;
     }
     if (held) {
-      showError(t().error.rateDuringPlaybackLive(deviceRate, nextRate));
+      const refuse = held === "recording" ? t().error.rateDuringRecordingLive : t().error.rateDuringPlaybackLive;
+      showError(refuse(deviceRate, nextRate));
       return false;
     }
     let cost: { from: number; to: number } | null;
@@ -3857,7 +3865,9 @@ function confirmLiveRate(rate: number): Promise<boolean> | null {
       return false;
     }
     const drop = cost ? t().confirm.trackCountDrop(cost.from, cost.to) : "";
-    const ask = [t().confirm.reclock(deviceRate, nextRate), drop].filter(Boolean).join(" ");
+    const off = insertsAboveRate(plan, rate);
+    const offNote = off.length ? t().confirm.insertsOffAtRate(insertNames(off)) : "";
+    const ask = [t().confirm.reclock(deviceRate, nextRate), offNote, drop].filter(Boolean).join(" ");
     if (await confirmDialog(ask)) return liveRateOpen();
     setStatus(t().status.canceled);
     return false;
@@ -3882,15 +3892,26 @@ function pickSampleRate(rate: number): void {
   });
 }
 
+/** The inserts a rate takes off, each named by its effect and, in parentheses, the channel or bus
+ *  that held it — the same in every language, since both are the unit's own names. */
+function insertNames(off: InsertOffAtRate[]): string {
+  return off.map((o) => `${o.label} (${graph.labelOf(o.node)})`).join(", ");
+}
+
 function chooseSampleRate(rate: number): void {
-  // The recorder's Track Count goes with the rate, one way: see setPlanSampleRate.
-  setPlanSampleRate(plan, rate);
+  // The recorder's Track Count and the inserts the rate rules out go with the rate, one way:
+  // see changePlanSampleRate.
+  const off = changePlanSampleRate(plan, rate);
   // Same change funnel as every other edit: dirty + (in Live sync) push the new
   // rate to the device. Re-clocking glitches audio, but that is inherent to a
   // deliberate rate change and keeps Live sync from deferring it onto a later edit.
   markChanged();
   syncRateUi();
-  setStatus(t().status.sampleRate(formatRate(plan.sampleRate)));
+  setStatus(
+    off.length
+      ? t().status.insertsOffAtRate(formatRate(plan.sampleRate), insertNames(off))
+      : t().status.sampleRate(formatRate(plan.sampleRate)),
+  );
 }
 
 ratePicker.addEventListener("change", () => pickSampleRate(Number(ratePicker.value)));
@@ -4635,21 +4656,23 @@ if (!DEMO) {
       showError(t().status.writeError(t().error.trackCountUnread(errorText(err))));
       return false;
     }
-    // A file held by the microSD recorder (playing or paused) is when the unit keeps its own
-    // rate control out of reach, and a rate written then ends the playback. Both arms that
-    // write the plan's rate stop here; adopting the device's rate writes none and stays open.
-    let playbackHeld;
+    // A playback or a recording held by the microSD recorder is when the unit keeps its own
+    // rate control out of reach. Both arms that write the plan's rate stop here; adopting the
+    // device's rate writes none and stays open.
+    let recorderHold: SdRecorderHold;
     try {
-      playbackHeld = hasRecorder(modelId) ? await readSdPlaybackHeld() : false;
+      recorderHold = hasRecorder(modelId) ? await readSdRecorderHold() : null;
     } catch (err) {
       showError(t().status.writeError(t().error.playbackUnread(errorText(err))));
       return false;
     }
+    const refuseHeldRate = (): false => {
+      const refuse = recorderHold === "recording" ? t().error.rateDuringRecording : t().error.rateDuringPlayback;
+      showError(t().status.writeError(refuse(deviceRate, planRate)));
+      return false;
+    };
     if (action === "confirmReclock") {
-      if (playbackHeld) {
-        showError(t().status.writeError(t().error.rateDuringPlayback(deviceRate, planRate)));
-        return false;
-      }
+      if (recorderHold) return refuseHeldRate();
       // The device will take the rate and hold it. Re-clocking interrupts audio and
       // renegotiates the USB stream, so it is worth stating outright — but it is a
       // plain yes/no: the plan's rate is the one that sticks.
@@ -4661,8 +4684,13 @@ if (!DEMO) {
     }
     // Above 96 kHz whole features drop out, so adopting a high device rate means
     // part of the plan will not be written. Name it before the choice is made.
+    // The inserts adopting the device's rate takes off the plan. While there are any, the shared
+    // note leaves the insert line out: it says the plan keeps what the rate leaves out, which is
+    // untrue of these on the adopt arm, and the adopt arm's own line names them.
+    const adoptOff = insertsAboveRate(plan, clock.sampleRate);
     const limits = rateConstraints(getModel(modelId), clock.sampleRate)
-      .warnings.map((w) => t().warning[w])
+      .warnings.filter((w) => !(w === "insFx" && adoptOff.length))
+      .map((w) => t().warning[w])
       .join(" ");
     // The note belongs to the whole dialog, so it may only say what is true of every arm.
     // `limits` is: adopting the device's high rate and releasing to the plan's each leave
@@ -4674,7 +4702,8 @@ if (!DEMO) {
     // has to say which one it is about. `trackCost` decides WHETHER, the message decides
     // how it reads here.
     const releaseNote = trackCost ? t().rateChoice.trackCountDrop(trackCost.from, trackCost.to) : "";
-    const choice = await askRateChoice(planRate, deviceRate, note, releaseNote);
+    const adoptNote = adoptOff.length ? t().rateChoice.insertsOffAtRate(deviceRate, insertNames(adoptOff)) : "";
+    const choice = await askRateChoice(planRate, deviceRate, note, releaseNote, adoptNote);
     if (choice === "cancel") {
       setStatus(t().status.canceled);
       return false;
@@ -4684,15 +4713,12 @@ if (!DEMO) {
       // gating downstream matches what the hardware can actually hold. This is an
       // edit like any other — the operator chose it — so it goes through the same
       // funnel and is remembered as the last known rate.
-      setPlanSampleRate(plan, clock.sampleRate);
+      changePlanSampleRate(plan, clock.sampleRate);
       markChanged();
       syncRateUi(); // persists the adopted rate as the last known one
       return true;
     }
-    if (playbackHeld) {
-      showError(t().status.writeError(t().error.rateDuringPlayback(deviceRate, planRate)));
-      return false;
-    }
+    if (recorderHold) return refuseHeldRate();
     try {
       await setFollowUsb(false);
     } catch (err) {

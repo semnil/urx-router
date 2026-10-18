@@ -33,6 +33,8 @@ import {
   insertFxParamKey,
   insertFxParams,
   mbcDeviceDriven,
+  mbcOneKnobSwitch,
+  MBC_ONE_KNOB_FIXED,
   mergeReadInsertFxParams,
   PITCH_SCALE_CHROMATIC,
   PITCH_SCALE_SLOT,
@@ -342,12 +344,11 @@ describe("the multi-band compressor's Band Bypass", () => {
   });
 
   it("belongs to the 1-knob while it is on", () => {
-    // Switching the knob on clears all three, and a Level change clears them again over
-    // anything written in between — the treatment the other fifteen driven slots get, and
-    // not Out Gain's, which the knob leaves alone.
+    // The knob holds all three while it is on, as it holds every other band value and the
+    // Out Gain.
     const on = mbcDeviceDriven({ [insertFxParamKey("mbc", MBC_ONE_KNOB.on.slot)]: 1 });
     for (const b of MBC_BANDS) expect(on.has(b.bypass), b.band).toBe(true);
-    expect(on.has(MBC_GLOBAL.outGain)).toBe(false);
+    expect(on.has(MBC_GLOBAL.outGain)).toBe(true);
     // The positive control: with the knob off the same call claims nothing.
     expect(mbcDeviceDriven({}).size).toBe(0);
   });
@@ -634,11 +635,17 @@ describe("the multi-band compressor's 1-knob", () => {
     expect(writes.get(MBC_GLOBAL.oneKnobLevel)).toBe(24);
   });
 
-  it("keeps emitting Out Gain, the one value the knob leaves alone", () => {
+  it("stops emitting Out Gain while the knob is on, with the values it pins", () => {
     // A Level change pins Attack, Release and both crossovers straight back to fixed
-    // values whatever was written over them, so those are the unit's while the knob is on
-    // — but it never touches Out Gain, and the plan's copy of that one is authoritative.
+    // values whatever was written over them, and the switch sets Out Gain, which the
+    // unit's own screen then turns no more: all of them are the unit's while the knob is on.
     const attack = MBC_BANDS[0].attack;
+    const off = engineWrites(
+      planToCommands(model, mbcPlan({ [insertFxParamKey("mbc", MBC_GLOBAL.outGain)]: 59 })),
+      ENGINE_OUTPUT,
+    );
+    // The positive control: with the knob off the same Out Gain is written.
+    expect(off.get(MBC_GLOBAL.outGain)).toBe(59);
     const writes = engineWrites(
       planToCommands(
         model,
@@ -651,7 +658,7 @@ describe("the multi-band compressor's 1-knob", () => {
       ),
       ENGINE_OUTPUT,
     );
-    expect(writes.get(MBC_GLOBAL.outGain)).toBe(59);
+    expect(writes.has(MBC_GLOBAL.outGain)).toBe(false);
     expect(writes.has(attack)).toBe(false);
     expect(writes.has(MBC_GLOBAL.release)).toBe(false);
     expect(writes.has(MBC_GLOBAL.xoverLowMid)).toBe(false);
@@ -817,5 +824,37 @@ describe("what a device read leaves in the stored map", () => {
     // A bare slot whose family is No Effect belongs to nothing: no layout can address it,
     // and the next effect selected would read it as its own.
     expect(out["14"]).toBeUndefined();
+  });
+});
+
+// The unit's 1-knob, switched on, sets the Level to 0 and each band's Attack and Bypass, the
+// Release, both crossovers and the Out Gain to the type's own values; a switch to off, or to on over a knob
+// already on, moves only the switch.
+describe("the multi-band compressor's 1-knob switch", () => {
+  const ON = MBC_ONE_KNOB.on.slot;
+  const held = {
+    [insertFxParamKey("mbc", MBC_ONE_KNOB.level.slot)]: 30,
+    [insertFxParamKey("mbc", MBC_BANDS[0].attack)]: 5,
+    [insertFxParamKey("mbc", MBC_GLOBAL.outGain)]: 59,
+  };
+
+  it("takes the Level and the fixed values to the unit's as it comes on", () => {
+    const defs = insertFxDefaults("mbc");
+    const patch = mbcOneKnobSwitch(held, true);
+    expect(patch[ON]).toBe(1);
+    expect(patch[MBC_ONE_KNOB.level.slot]).toBe(0);
+    expect(
+      Object.keys(patch)
+        .map(Number)
+        .sort((a, b) => a - b),
+    ).toEqual([ON, MBC_ONE_KNOB.level.slot, ...MBC_ONE_KNOB_FIXED].sort((a, b) => a - b));
+    for (const slot of MBC_ONE_KNOB_FIXED) expect(patch[slot], `slot ${slot}`).toBe(defs[slot]);
+    // The values the unit puts there, which are the type's own.
+    expect(MBC_ONE_KNOB_FIXED.map((slot) => patch[slot])).toEqual([17, 19, 9, 0, 0, 0, 7, 37, 94, 68]);
+  });
+
+  it("moves only the switch going off, or going on over a knob already on", () => {
+    expect(mbcOneKnobSwitch(held, false)).toEqual({ [ON]: 0 });
+    expect(mbcOneKnobSwitch({ ...held, [insertFxParamKey("mbc", ON)]: 1 }, true)).toEqual({ [ON]: 1 });
   });
 });

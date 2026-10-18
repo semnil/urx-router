@@ -856,7 +856,7 @@ export const en = {
       // Shown in place of the line above while the unit is driving the panel. It says who
       // owns the values rather than what they do, because that is what changed.
       mbcOneKnob: tr(
-        "1-knob is on: the unit sets the bands, Release and the crossovers from its level, so edits to them are not sent. Out Gain and the 1-knob are still sent.",
+        "1-knob is on: the unit sets the bands, Release and the crossovers from its level and Out Gain when it is switched on, so edits to them are not sent. The 1-knob is still sent.",
       ),
       // The pill on a row the unit has taken over — Pitch Fix's Scale and its twelve notes
       // while MIDI Control is not Off, which is when the notes the correction aims at come
@@ -902,6 +902,9 @@ export const en = {
     loaded: (model: string): string => `Loaded ${model} — drag to place and connect`,
     switchedModel: (model: string): string => `Switched to ${model}`,
     sampleRate: (rate: string): string => `Sample rate: ${rate}`,
+    // The inserts a rate change took off, behind the line above: each effect stops at its own rate.
+    insertsOffAtRate: (rate: string, list: string): string =>
+      `Sample rate: ${rate} — ${list} came off, as the unit takes an insert off above its own rate limit. Lowering the rate does not put it back.`,
     followUsbOn: tr("Follow USB on — the device now clocks from the USB host"),
     followUsbOff: tr("Follow USB off — the device now holds its own clock"),
     newPlan: tr("Created a new plan"),
@@ -923,6 +926,13 @@ export const en = {
       `${count} on/off ${count === 1 ? "value written as a number was" : "values written as numbers were"} converted to on/off`,
     linkedSendPansAligned: (count: number): string =>
       `${count} ${count === 1 ? "send pan into a MIX bus with Pan Link on now follows its source's" : "send pans into MIX buses with Pan Link on now follow their sources'"} own PAN / BAL`,
+    // One sentence and no count: a plan holds the M.B.Comp on one output at most, the device-wide
+    // output dynamics slot being one.
+    mbcOneKnobAligned: tr(
+      "The M.B.Comp's 1-knob is on, so its Attacks, Bypasses, Release, crossovers and Out Gain now read as the unit holds them there",
+    ),
+    compOneKnobsAligned: (count: number): string =>
+      `${count} ${count === 1 ? "channel's COMP 1-knob is" : "channels' COMP 1-knobs are"} on, so attack, release and Auto Makeup now read as the unit holds them there`,
     streamingSourceUnlisted: tr(
       "The unit's STREAMING was on a state its source list does not offer, so the plan takes STEREO",
     ),
@@ -1122,6 +1132,8 @@ export const en = {
     followUsbOn: tr(
       "Turn Follow USB on? The device hands its clock back to the computer. If the computer is running a different rate, the device re-clocks to it immediately, which can interrupt audio; if the rates already match, nothing changes.",
     ),
+    insertsOffAtRate: (list: string): string =>
+      `This rate takes ${list} off: the unit runs no insert above its own rate limit and puts that channel or bus on No Effect. Lowering the rate again does not put it back.`,
     trackCountDrop: (from: number, to: number): string =>
       `The microSD recorder is set to ${from} tracks and this rate allows ${to}, so the unit lowers it. Nothing this app can write raises it again — the way back is the unit's own microSD screen, RECORDER menu, [Track Count].`,
     trackCountMayDrop: tr(
@@ -1158,6 +1170,9 @@ export const en = {
      *  reads as true of the arm that costs nothing too. */
     trackCountDrop: (from: number, to: number): string =>
       `Turning Follow USB off and writing the plan's rate lowers the microSD recorder: it is set to ${from} tracks and that rate allows ${to}. Nothing this app can write raises it again — the way back is the unit's own microSD screen, RECORDER menu, [Track Count].`,
+    /** Named for its ARM, like the Track Count line: only adopting the device's rate takes these off. */
+    insertsOffAtRate: (deviceRate: string, list: string): string =>
+      `Writing at ${deviceRate} takes ${list} off the plan, as the unit already has: those effects do not run at that rate.`,
     adopt: (deviceRate: string): string => `Write at ${deviceRate}`,
     release: (planRate: string): string => `Turn Follow USB off and write at ${planRate}`,
     cancel: tr("Cancel"),
@@ -1398,11 +1413,15 @@ export const en = {
     clockUnread: (message: string): string =>
       `The device's sample rate and Follow USB state could not be read (${message}), so the plan's rate was not checked against the unit. Nothing was written.`,
     playbackUnread: (message: string): string =>
-      `Whether the microSD recorder is playing could not be read (${message}), and a rate change ends a playback. Nothing was written.`,
+      `Whether the microSD recorder is playing or recording could not be read (${message}), and the device does not let its sample rate change during either. Nothing was written.`,
     rateDuringPlayback: (deviceRate: string, planRate: string): string =>
       `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is playing or paused. Stop the playback on the device, then write again. Nothing was written.`,
     rateDuringPlaybackLive: (deviceRate: string, planRate: string): string =>
       `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is playing or paused. Stop the playback on the device, then choose the rate again. Nothing was written.`,
+    rateDuringRecording: (deviceRate: string, planRate: string): string =>
+      `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is recording, paused or in record standby. Stop the recording or leave standby on the device, then write again. Nothing was written.`,
+    rateDuringRecordingLive: (deviceRate: string, planRate: string): string =>
+      `The device's sample rate cannot be changed from ${deviceRate} to ${planRate} while the microSD recorder is recording, paused or in record standby. Stop the recording or leave standby on the device, then choose the rate again. Nothing was written.`,
     trackCountUnread: (message: string): string =>
       `The microSD recorder's Track Count could not be read (${message}), and a rate change can lower it for good. Nothing was written.`,
     followUsbWrite: (message: string, on = false): string =>

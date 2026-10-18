@@ -30,7 +30,13 @@ import type { TauriShell } from "./main.test-util";
 import { formatRate, trackCountDrop } from "./core/constraints";
 import { attackToVd, eqFreqToVd, gainToVd, levelToVd, vdToLevel } from "./core/control/vd";
 import { formatHz, fxEffectTypes, fxParams } from "./core/control/fx-effect";
-import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, STEREO_FADER } from "./core/control/params";
+import {
+  COMP_EQ_SSMCS,
+  denormalizeInsertFx,
+  INSERT_FX_NONE,
+  INSERT_FX_OPTIONS,
+  STEREO_FADER,
+} from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { PARAMS } from "./core/control/params";
@@ -899,6 +905,55 @@ describe("Fetch from device", () => {
     selectNode("ch1");
     expect(insertFxSection()!.querySelector("select")!.value).toBe(String(COMPANDER_H));
     expect(insertFxOnFace()).toBe("ON");
+  });
+
+  // A COMP 1-knob switched on writes attack, release, Auto Makeup and the level beside the switch.
+  // After an ON and an OFF each of them already holds the value the next ON writes, so the plan's
+  // diff cannot tell them from keys nobody touched — and a read in flight carrying the unit's
+  // older values would take them back. The read here answers attack 10 ms, release 100 ms, Auto
+  // Makeup on and level 50; the press made inside it has to keep the knob's values, on the
+  // member pressed and, on a linked pair, on its partner too.
+  it.each([
+    ["a channel", false],
+    ["a STEREO-linked pair", true],
+  ])("keeps the values a COMP 1-knob switched on writes through a read in flight, on %s", SLOW, async (_l, linked) => {
+    const shell = await bootDevice(SAVES);
+    selectNode("ch1");
+    if (linked) pickSignalType(1);
+    $("btn-comp-screen").click();
+    const knob = (text: string): HTMLButtonElement =>
+      [
+        ...[...$("dyn-screen-box").querySelectorAll<HTMLElement>(".prefs-section")]
+          .find((sec) => sec.querySelector("h3")?.textContent === t().inspector.oneKnob)!
+          .querySelectorAll<HTMLButtonElement>(".prefs-row button"),
+      ].find((b) => b.textContent === text)!;
+    knob(t().inspector.on).click();
+    knob(t().inspector.off).click();
+
+    const stale: Record<number, number> = {
+      [PARAMS.COMP_ATTACK.id]: 10120,
+      [PARAMS.COMP_RELEASE.id]: 1001,
+      [PARAMS.COMP_AUTO_MAKEUP.id]: 1,
+      [PARAMS.COMP_ONE_KNOB_LEVEL.id]: 50,
+    };
+    shell.answer(
+      "vd_get",
+      (a: Record<string, unknown>) =>
+        new Promise((r) => setTimeout(() => r(stale[a.paramId as number] ?? unwrittenRead(a)), 1)),
+    );
+    $("btn-fetch").click();
+    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
+    knob(t().inspector.on).click();
+    await invoked(shell, "vd_disconnect");
+
+    const before = shell.count("write_text_file");
+    $("btn-save").click();
+    await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
+    const saved = shell.args[shell.invokes.lastIndexOf("write_text_file")];
+    const doc = JSON.parse(String((saved as { contents: string }).contents));
+    const held = { oneKnob: true, attack: 24.87, release: 295.5, autoMakeup: false, oneKnobLevel: 0 };
+    expect(doc.nodeParams.ch1.comp, "CH 1").toMatchObject(held);
+    if (linked) expect(doc.nodeParams.ch2.comp, "CH 2").toMatchObject(held);
   });
 
   it("connects, reads the whole unit, and drops the link when it is done", SLOW, async () => {
@@ -4498,6 +4553,27 @@ describe("Write to device", () => {
     },
   );
 
+  // Recording (3), record standby (4) and a paused recording (5) hold the rate the same way, and say so.
+  it.each([3, 4, 5])(
+    "writes nothing, and asks nothing, while the recorder holds a recording (state %i)",
+    SLOW,
+    async (state) => {
+      const shell = await bootDevice({}, true, { [PLAYBACK_SEED]: state });
+      chooseRate(96_000);
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect");
+      await vi.waitFor(
+        () =>
+          expect(errors(shell)).toEqual([
+            t().status.writeError(t().error.rateDuringRecording(formatRate(0), formatRate(96_000))),
+          ]),
+        { timeout: 10_000 },
+      );
+      expect(confirms(shell)).toEqual([]);
+      expect(shell.count("vd_set")).toBe(0);
+    },
+  );
+
   it("writes nothing when whether the recorder is playing cannot be read", SLOW, async () => {
     const shell = await bootDevice(
       {
@@ -4521,22 +4597,26 @@ describe("Write to device", () => {
 
   // With Follow USB on, the operator picks: adopting the device's rate writes no rate and
   // stays open while a file is held, releasing to the plan's would write one and stops.
-  it("lets a held file adopt the device's rate but not release to the plan's", SLOW, async () => {
-    const release = await bootDevice({}, true, { [PLAYBACK_SEED]: 1, [FOLLOW_USB_SEED]: 1 });
-    chooseRate(96_000);
-    $("btn-write").click();
-    await vi.waitFor(() => expect($("rate-choice").hidden).toBe(false), { timeout: 10_000 });
-    $("rate-choice-release").click();
-    await invoked(release, "vd_disconnect");
-    await vi.waitFor(
-      () =>
-        expect(errors(release)).toEqual([
-          t().status.writeError(t().error.rateDuringPlayback(formatRate(0), formatRate(96_000))),
-        ]),
-      { timeout: 10_000 },
-    );
-    expect(release.count("vd_set")).toBe(0);
-  });
+  it.each([
+    [1, (from: string, to: string) => t().error.rateDuringPlayback(from, to)],
+    [4, (from: string, to: string) => t().error.rateDuringRecording(from, to)],
+  ])(
+    "lets a held recorder (state %i) adopt the device's rate but not release to the plan's",
+    SLOW,
+    async (state, refusal) => {
+      const release = await bootDevice({}, true, { [PLAYBACK_SEED]: state, [FOLLOW_USB_SEED]: 1 });
+      chooseRate(96_000);
+      $("btn-write").click();
+      await vi.waitFor(() => expect($("rate-choice").hidden).toBe(false), { timeout: 10_000 });
+      $("rate-choice-release").click();
+      await invoked(release, "vd_disconnect");
+      await vi.waitFor(
+        () => expect(errors(release)).toEqual([t().status.writeError(refusal(formatRate(0), formatRate(96_000)))]),
+        { timeout: 10_000 },
+      );
+      expect(release.count("vd_set")).toBe(0);
+    },
+  );
 
   // The read is worth nothing until something redraws. The plan taking the unit's value
   // is not the same as the operator seeing it: the follow queue this tail used to call
@@ -8051,6 +8131,47 @@ describe("the sample rate a write happens at", () => {
     expect(followUsbWrites(shell)).toEqual([]); // adopting does not touch the policy
   });
 
+  // Adopting a device rate an insert the plan holds cannot run at takes that insert off the plan,
+  // as the unit already has — said on the adopt arm's own line, and written as No Effect.
+  it("names on the adopt arm the inserts the device's rate takes off the plan", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: clockReads(true, 192_000) });
+    $("btn-view-console").click();
+    document.querySelector<HTMLElement>(".con-strip .con-ifxopen")!.click();
+    [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")]
+      .find((r) => r.textContent?.includes("Pitch Fix"))!
+      .click();
+    expect(document.querySelector(".con-strip .con-ifxface")?.classList.contains("vacant"), "the premise").toBe(false);
+    await askedToChoose(shell);
+    const note = $("rate-choice-adopt-note");
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe(t().rateChoice.insertsOffAtRate(formatRate(192_000), "Pitch Fix (CH 1)"));
+    // At 192 kHz the shared note carries the high-rate limits, and leaves out the insert line,
+    // which says the plan keeps what the adopt arm here takes off.
+    expect($("rate-choice-note").textContent, "the premise: the shared note is drawn").toContain(t().warning.fx2);
+    expect($("rate-choice-note").textContent, "the shared note leaves the insert line out").not.toContain(
+      t().warning.insFx,
+    );
+    $("rate-choice-adopt").click();
+    await invoked(shell, "vd_disconnect");
+    const insertWrites = shell.invokes.flatMap((cmd, i) =>
+      cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.INSERT_FX.id && shell.args[i]?.y === 0
+        ? [shell.args[i]!.value as number]
+        : [],
+    );
+    expect(insertWrites).not.toContain(
+      denormalizeInsertFx(INSERT_FX_OPTIONS.find((o) => o.label === "Pitch Fix")!.value),
+    );
+    expect(document.querySelector(".con-strip .con-ifxface")?.classList.contains("vacant")).toBe(true);
+  });
+
+  // The other half: with nothing the device's rate rules out, the adopt arm has no line.
+  it("draws no adopt-arm line when the plan holds no insert the device's rate rules out", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: clockReads(true, 96_000) });
+    await askedToChoose(shell);
+    expect($("rate-choice-adopt-note").hidden).toBe(true);
+    $("rate-choice-cancel").click();
+  });
+
   // Releasing turns Follow USB off so the plan's rate can stick, and the badge follows at
   // once: the operator is being told the picker is authoritative again.
   it("releases the clock so the plan's rate can stick", SLOW, async () => {
@@ -9360,6 +9481,36 @@ describe("the sample rate during Live sync", () => {
     expect(picker().value).toBe("96000");
   });
 
+  // A rate past an insert effect's own ceiling takes that insert off, on the unit and in the
+  // plan, and lowering the rate does not put it back — so it is named in front of the decision,
+  // and the write that follows puts the plan's channel on No Effect.
+  it("names the inserts a rate chosen during Live sync takes off, before writing it", SLOW, async () => {
+    const shell = await bootDevice({}, true, SEED);
+    await goLive();
+    const pitch = INSERT_FX_OPTIONS.find((o) => o.label === "Pitch Fix")!.value;
+    const insertWrites = (): number[] =>
+      shell.invokes.flatMap((cmd, i) =>
+        cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.INSERT_FX.id && shell.args[i]?.y === 0
+          ? [shell.args[i]!.value as number]
+          : [],
+      );
+    // CH 1 takes Pitch Fix from its INS FX list during the session, and the unit gets it.
+    $("btn-view-console").click();
+    document.querySelector<HTMLElement>(".con-strip .con-ifxopen")!.click();
+    [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")]
+      .find((r) => r.textContent?.includes("Pitch Fix"))!
+      .click();
+    await vi.waitFor(() => expect(insertWrites()).toContain(denormalizeInsertFx(pitch)), { timeout: 10_000 });
+    chooseRate(88_200);
+    await vi.waitFor(() => expect(rateWrites(shell)).toEqual([88_200]), { timeout: 10_000 });
+    expect(confirms(shell).at(-1) ?? "").toContain(t().confirm.insertsOffAtRate("Pitch Fix (CH 1)"));
+    // …and the plan's CH 1 is on No Effect, which the session writes.
+    await vi.waitFor(() => expect(insertWrites().at(-1)).toBe(denormalizeInsertFx(INSERT_FX_NONE)), {
+      timeout: 10_000,
+    });
+    expect(document.querySelector(".con-strip .con-ifxface")?.classList.contains("vacant")).toBe(true);
+  });
+
   it("writes nothing when the operator declines, and shows the rate the plan holds", SLOW, async () => {
     const shell = await bootDevice({}, false, SEED);
     await goLive();
@@ -9370,12 +9521,15 @@ describe("the sample rate during Live sync", () => {
     expect(picker().value).toBe("48000");
   });
 
-  it("refuses a rate while the microSD recorder holds a file", SLOW, async () => {
-    const shell = await bootDevice({}, true, { ...SEED, [PLAYBACK_SEED]: 1 });
+  it.each([
+    [1, (from: string, to: string) => t().error.rateDuringPlaybackLive(from, to)],
+    [3, (from: string, to: string) => t().error.rateDuringRecordingLive(from, to)],
+  ])("refuses a rate while the microSD recorder holds a file (state %i)", SLOW, async (state, refusal) => {
+    const shell = await bootDevice({}, true, { ...SEED, [PLAYBACK_SEED]: state });
     await goLive();
     chooseRate(44_100);
     await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 10_000 });
-    expect(errors(shell)[0]).toBe(t().error.rateDuringPlaybackLive(formatRate(48_000), formatRate(44_100)));
+    expect(errors(shell)[0]).toBe(refusal(formatRate(48_000), formatRate(44_100)));
     expect(confirms(shell), "nothing asked").toEqual([]);
     expect(rateWrites(shell)).toEqual([]);
     expect(picker().value).toBe("48000");
