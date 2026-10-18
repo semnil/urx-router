@@ -76,8 +76,10 @@ export const SENDS_TARGET_PATH = "ui.sendsTarget";
 /** The simulator's own state, kept by the view rather than the plan: which channel a linked pair's
  *  compressors hear (written with the pair's link or COMP / EQ type), the recorder's playback (which
  *  a rate change stops), the output cues its CUE rule remembers to put back, and what a screen has
- *  open or picked — the output patch's and the Peripheral screen's tab, the scene list's bank and row,
- *  the microSD folder and file, the User Defined Knobs bank on show. */
+ *  open or picked — the output patch's and the Peripheral screen's tab, the scene list's row (until
+ *  the unit's cursor moves: `unitTookOwn`) and bank (until it moves onto a row one bank alone lists),
+ *  the microSD folder and file, the User Defined Knobs
+ *  bank on show. */
 const GLASS_OWN = new Set([
   "sd.playing",
   "sd.playingFile",
@@ -279,6 +281,11 @@ export class PlanTransport implements DeviceTransport {
     return () => this.listeners.delete(listener);
   }
 
+  /** Let go of the glass's own values at `paths`, so the unit's show again. */
+  yieldOwn(paths: Iterable<string>): void {
+    for (const path of paths) this.own.delete(path);
+  }
+
   /** Tell the glass every value the plan now holds differently. */
   push(): void {
     if (this.closed) return;
@@ -350,6 +357,13 @@ export class SimView {
 
   /** The unit's [Sends] destination changed, or the session that held it started or ended. */
   unitStateChanged(): void {
+    this.planChanged();
+  }
+
+  /** A value the unit holds moved at `paths`, which the glass keeps as its own once chosen there:
+   *  the unit's shows again. */
+  unitTookOwn(paths: Iterable<string>): void {
+    this.transport?.yieldOwn(paths);
     this.planChanged();
   }
 

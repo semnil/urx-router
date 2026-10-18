@@ -12066,6 +12066,156 @@ describe("the SIM view over a live session", () => {
     await vi.waitFor(() => expect(fnWrites(), "knob A and knob B").toEqual([0, 1]), { timeout: 10_000 });
   });
 
+  // The pointers are read before the session registers for the unit's announcements, so a move on
+  // the unit in between announces itself to nobody: the session reads them again once it is up.
+  it.each([
+    [PARAMS.CURRENT_SCENE.id, "scene.current"],
+    [PARAMS.SCENE_CURSOR.id, "scene.selected"],
+  ])("takes a scene pointer (%i) the unit moved before the session registered for it", SLOW, async (id, path) => {
+    const cmds = deviceCommands(
+      { "plugin:dialog|message": "Ok", experimental_enabled: true },
+      { [`${PARAMS.CURRENT_SCENE.id}/0/0`]: 8, [`${PARAMS.SCENE_CURSOR.id}/0/0`]: 8 },
+    );
+    const set = cmds.vd_set as (a: Record<string, unknown>) => unknown;
+    const subscribe = cmds.vd_params_subscribe as (a: Record<string, unknown>) => unknown;
+    let moved = false;
+    cmds.vd_params_subscribe = (a: Record<string, unknown>) => {
+      if (!moved) {
+        moved = true;
+        set({ paramId: id, x: 0, y: 0, value: 9 });
+      }
+      return subscribe(a);
+    };
+    const shell = (await bootApp({ tauri: cmds }))!;
+    await openSim();
+    await goLive();
+    expect(moved).toBe(true);
+    await vi.waitFor(async () =>
+      expect((await transport().snapshot()).get(path), "the move the session missed").toBe(10),
+    );
+    notifyChannel(shell).onmessage([{ param_id: id, x: 0, y: 0, value: 10 }]);
+    await vi.waitFor(async () => expect((await transport().snapshot()).get(path), "an announced move").toBe(11));
+  });
+
+  // A pointer the unit announces while the session's own read of it runs is newer than that read.
+  // Every read of the pointer after the session's first is held (the dev build's parameter watch
+  // reads both too), and released only after the announcement.
+  it.each([
+    [PARAMS.CURRENT_SCENE.id, PARAMS.SCENE_CURSOR.id, "scene.current"],
+    [PARAMS.SCENE_CURSOR.id, PARAMS.CURRENT_SCENE.id, "scene.selected"],
+  ])("keeps a scene pointer (%i) the unit announced while the session read it again", SLOW, async (id, other, path) => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    let reads = 0;
+    const held: ((v: number) => void)[] = [];
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      if (a.paramId === other) return 8;
+      if (a.paramId !== id) return unwrittenRead(a);
+      return ++reads === 1 ? 8 : new Promise<number>((done) => held.push(done));
+    });
+    await openSim();
+    await goLive();
+    await vi.waitFor(() => expect(held.length, "a read again is under way").toBeGreaterThan(0));
+    notifyChannel(shell).onmessage([{ param_id: id, x: 0, y: 0, value: 9 }]);
+    await vi.waitFor(async () => expect((await transport().snapshot()).get(path)).toBe(10));
+    for (const done of held.splice(0)) done(8);
+    await new Promise((done) => setTimeout(done, 50));
+    expect((await transport().snapshot()).get(path), "the announcement, not the older read").toBe(10);
+  });
+
+  // A session that ends while its read again is on the wire waits for that read before it
+  // disconnects, and what the read answers is then no session's to show; the next session reads
+  // its own.
+  it("leaves the scene pointers a session read again after it ended to no session", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    let session = 1;
+    let reads = 0;
+    const held: ((v: number) => void)[] = [];
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      if (a.paramId === PARAMS.SCENE_CURSOR.id) return session === 1 ? 8 : 20;
+      if (a.paramId !== PARAMS.CURRENT_SCENE.id) return unwrittenRead(a);
+      if (session === 2) return 20;
+      return ++reads === 1 ? 8 : new Promise<number>((done) => held.push(done));
+    });
+    await openSim();
+    const offline = (await transport().snapshot()).get("scene.current");
+    await goLive();
+    await vi.waitFor(() => expect(held.length, "the first session's read again is under way").toBeGreaterThan(0));
+    $("btn-live").click();
+    for (const done of held.splice(0)) done(30);
+    await invoked(shell, "vd_disconnect");
+    await new Promise((done) => setTimeout(done, 50));
+    expect((await transport().snapshot()).get("scene.current"), "not the ended session's read").toBe(offline);
+    session = 2;
+    await goLive();
+    await vi.waitFor(async () =>
+      expect((await transport().snapshot()).get("scene.current"), "the second session's read").toBe(21),
+    );
+  });
+
+  // A user scene is on both tabs, so the unit's cursor moving onto one leaves the tab the glass shows;
+  // 00 and a preset are each on one tab alone, which the glass opens.
+  it.each([
+    [0x8001, "Simple"],
+    [0x8000, "Standard"],
+  ])(
+    "keeps the tab its cursor stood on (%i) when the unit's cursor moves onto a user scene",
+    SLOW,
+    async (from, tab) => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, {
+        [`${PARAMS.CURRENT_SCENE.id}/0/0`]: 8,
+        [`${PARAMS.SCENE_CURSOR.id}/0/0`]: from,
+      });
+      await openSim();
+      await goLive();
+      await vi.waitFor(async () => expect((await transport().snapshot()).get("scene.bank")).toBe(tab));
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.SCENE_CURSOR.id, x: 0, y: 0, value: 9 }]);
+      await vi.waitFor(async () => expect((await transport().snapshot()).get("scene.selected")).toBe(10));
+      expect((await transport().snapshot()).get("scene.bank"), "10 is on that tab too").toBe(tab);
+    },
+  );
+
+  // The unit's scene pointers are read at the session's start and followed as the unit announces
+  // them. The unit's cursor moving takes the glass's off a row it picked, and a session that ends
+  // leaves both to the glass.
+  it(
+    "shows the unit's current scene and SCENE LIST's cursor, the unit's cursor taking the glass's off its row",
+    SLOW,
+    async () => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, {
+        [`${PARAMS.CURRENT_SCENE.id}/0/0`]: 8,
+        [`${PARAMS.SCENE_CURSOR.id}/0/0`]: 9,
+      });
+      await openSim();
+      await goLive();
+      const shown = async (path: string): Promise<unknown> => (await transport().snapshot()).get(path);
+      await vi.waitFor(async () =>
+        expect([await shown("scene.current"), await shown("scene.selected")], "09 current, the cursor on 10").toEqual([
+          9, 10,
+        ]),
+      );
+      const registered = (
+        shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: [number, number, number][] }
+      ).addrs;
+      for (const id of [PARAMS.CURRENT_SCENE.id, PARAMS.SCENE_CURSOR.id])
+        expect(
+          registered.some(([at, x, y]) => at === id && x === 0 && y === 0),
+          `${id} is announced to the session`,
+        ).toBe(true);
+      await transport().write("scene.selected", 3);
+      expect(await shown("scene.selected"), "a row picked on the glass").toBe(3);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.SCENE_CURSOR.id, x: 0, y: 0, value: 0x8001 }]);
+      await vi.waitFor(async () => expect(await shown("scene.selected"), "the unit's cursor on P01").toBe(101));
+      expect(await shown("scene.bank"), "on the tab that lists P01").toBe("Simple");
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.CURRENT_SCENE.id, x: 0, y: 0, value: 0x8002 }]);
+      await vi.waitFor(async () => expect(await shown("scene.current"), "P02 current").toBe(102));
+      $("btn-live").click();
+      await invoked(shell, "vd_disconnect");
+      await vi.waitFor(async () =>
+        expect(await shown("scene.current"), "the glass's own once the session ends").toBe(0),
+      );
+    },
+  );
+
   it("shows the unit's operation mode, and an engaged Clip Safe while the unit announces one", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.OPERATION_MODE.id}/0/0`]: 1 });
     await openSim();
