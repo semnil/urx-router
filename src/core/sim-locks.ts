@@ -49,8 +49,8 @@ export interface SimLockState {
   rateFollowUsb: boolean;
 }
 
-/** The SETUP > GENERAL screens of settings the app neither reads nor writes: the operation mode and
- *  the unit's clock. */
+/** The SETUP > GENERAL screens of settings the app does not write: the operation mode, which a session
+ *  reads and shows, and the unit's clock. */
 export const UNIT_ONLY_SCREENS = ["setup.mode", "setup.datetime.set"] as const;
 
 /** Every operation of the unit's own the simulator can ask for. */

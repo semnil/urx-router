@@ -92,6 +92,7 @@ import {
   insertFxMenu,
   isMonitorBus,
   canPatchFromMonitor,
+  nodeRateDisabled,
   outputMono,
   rateConstraints,
   trackCountCeiling,
@@ -905,10 +906,16 @@ export function renderInspector(
     // it is not modeled here.)
     const fxY = fxChannelIndex(node.id);
     if (fxY !== null) {
+      // FX2 above 96 kHz: the bus is gone, so its switch and its effect show their values and
+      // take no edit, as its CONSOLE strip does.
+      const rateGone = nodeRateDisabled(node.id, plan.sampleRate);
       const ps = section(m.inspector.parameters, { key: "params" });
       ps.body.append(
-        boolToggle(m.inspector.channelOn, plan.nodeParams[node.id]?.on ?? true, (v) =>
-          actions.onUpdateNodeParams(node.id, { on: v }),
+        boolToggle(
+          m.inspector.channelOn,
+          plan.nodeParams[node.id]?.on ?? true,
+          (v) => actions.onUpdateNodeParams(node.id, { on: v }),
+          rateGone ? m.inspector.fx2RateLocked : undefined,
         ),
       );
       host.append(ps.el);
@@ -1211,8 +1218,14 @@ export function renderInspector(
     // do not. `isFixedToSt` only drives the toggle's label / default-off presentation.
     const isFixedToSt = isFixedConnection(model, from, to) && conn.kind === "sendSwitch";
     const hasSendOn = sendHasOn(model, from, to);
+    // A send into or out of a bus the sample rate has removed sets values on DSP the unit is
+    // not running: every field shows its value and takes no edit, as the CONSOLE's column does.
+    const rateGone =
+      nodeRateDisabled(parseRef(from).nodeId, plan.sampleRate) ||
+      nodeRateDisabled(parseRef(to).nodeId, plan.sampleRate);
     if (fields.length || hasSendOn) {
       host.append(subheading(m.inspector.parameters));
+      const at = host.childElementCount;
       // ON first to match the device SEND TO screen order (ON, PRE, Pan, Level).
       // The CH/FX sends ship ON (default true); the TO ST switch ships off.
       if (hasSendOn) {
@@ -1230,9 +1243,12 @@ export function renderInspector(
       // disabled with an explanatory tooltip so the value is visible but unchangeable.
       const tapEditable = !liveActive || sendTapWritable(model, from, to);
       for (const f of fields) host.append(paramControl(f, conn, actions.onUpdateParams, panLabel, tapEditable));
+      if (rateGone)
+        for (const row of [...host.children].slice(at)) holdRow(row as HTMLElement, m.inspector.fx2RateLocked);
     } else {
       host.append(hint(m.inspector[sendlessNote(model, from, to)]));
     }
+    if (rateGone && (fields.length || hasSendOn)) host.append(hint(m.inspector.fx2RateLocked));
     if (busFixed) host.append(hint(m.inspector.busFixedSend));
     if (panLinked) host.append(hint(m.inspector.panLinked));
   }
@@ -1399,6 +1415,16 @@ function field(label: string, value: string): HTMLElement {
 
 type UpdateParams = (from: string, to: string, patch: ConnParams) => void;
 
+/** Show a built control row's value and refuse its edit: every button, select and input in it
+ *  disabled, with the reason as the row's tooltip. */
+function holdRow(row: HTMLElement, title: string): void {
+  row.title = title;
+  for (const c of row.querySelectorAll<HTMLButtonElement | HTMLSelectElement | HTMLInputElement>(
+    "button, select, input",
+  ))
+    c.disabled = true;
+}
+
 function paramControl(
   field: ParamField,
   conn: PlanConnection,
@@ -1509,7 +1535,15 @@ function fxEffectSection(
   const type = resolveFxEffectType(fxIndex, fx.type);
   const { el, body } = section(t.title, { key: "fxEffect" });
 
-  body.append(enumSelect(t.effectType, fxEffectTypes(fxIndex), type, (v) => actions.onSetFxEffectType(nodeId, v)));
+  const select = enumSelect(
+    t.effectType,
+    fxEffectTypes(fxIndex),
+    type,
+    (v) => actions.onSetFxEffectType(nodeId, v),
+    nodeRateDisabled(nodeId, plan.sampleRate),
+  );
+  if (nodeRateDisabled(nodeId, plan.sampleRate)) select.title = m.inspector.fx2RateLocked;
+  body.append(select);
   // The type's own parameters moved to the tuning screen, for the reason stated on
   // `dynLauncher`: they belong beside the meters either side of the effect, and a second
   // copy here would sit at the position it was drawn at — these sliders read a captured

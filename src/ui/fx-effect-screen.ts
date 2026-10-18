@@ -31,7 +31,7 @@ import { tapFor } from "../core/meters";
 import type { FxEffectParams, NodeParams } from "../core/plan";
 import type { DynBinding, DynCtx, DynLane, DynProcessor } from "./dyn-screen";
 import { enumRow, levelLane } from "./dyn-chan";
-import { onOffButton, settingsRow } from "./dom";
+import { onOffButton, settingsRow, type SettingsRowOptions } from "./dom";
 import type { Messages } from "../i18n/en";
 
 /** Lane ruler floor. Not one value on this screen is a level — the times are ms and
@@ -182,9 +182,8 @@ function lanesOf(ctx: DynCtx): DynLane[] {
  * all) is how one panel tells the operator the effect is off while another hands them a live
  * editor. The insert-FX screen puts the same note first, ahead of its bypass.
  *
- * It does not close the screen or lock a row. The unit accepts and keeps a parameter write at
- * any rate — the plan holds the values, the unit stores them, and the two lanes go on reading
- * whatever reaches them.
+ * It does not close the screen. Every row is read-only meanwhile and stays assignable to MIDI
+ * (`rowStates`), as every control the rate takes away does.
  */
 function offNote(ctx: DynCtx): string | null {
   return nodeRateDisabled(ctx.nodeId, ctx.plan.sampleRate) ? ctx.m.inspector.fx2RateLocked : null;
@@ -362,7 +361,14 @@ function fxFace(): DynProcessor {
 
     rowStates: (ctx) => {
       const type = typeOf(ctx);
-      return type === null ? null : lockedRows(ctx, type);
+      if (type === null) return null;
+      // Above 96 kHz the FX2 bus is gone: every row read-only and assignable. Untagged, since one
+      // reason covers every row and the line under the display gives it.
+      if (nodeRateDisabled(ctx.nodeId, ctx.plan.sampleRate)) {
+        const held: SettingsRowOptions = { locked: true, assignable: true };
+        return new Map(rowsOf(type).map((d) => [fieldKey(d.key), held]));
+      }
+      return lockedRows(ctx, type);
     },
 
     // Everything that is not a knob — the delay's Sync switch and its Note value. Placed in

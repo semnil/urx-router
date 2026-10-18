@@ -178,3 +178,27 @@ test("the CONSOLE locks what the rate takes away, and only then", async ({ page 
   // The bus the sends point at is dimmed whole, the way the graph dims its node.
   await expect(page.locator(".con-strip[title*='FX2']")).toHaveClass(/\binactive\b/);
 });
+
+// The FX2 bus itself above 96 kHz: its strip's own controls take no edit, and its Inspector
+// panel holds its switch and its effect type. 96 kHz is the control.
+test("FX2's own controls take no edit above 96 kHz, on the CONSOLE and in the Inspector", async ({ page }) => {
+  const fx2Strip = page.locator(".con-strip").filter({ has: page.locator(".con-scribble", { hasText: "FX 2" }) });
+  await chooseOption(page.locator("#rate-picker"), "96000");
+  await page.click("#btn-view-console");
+  const fader = fx2Strip.locator(".con-fader");
+  await expect(fader).not.toHaveAttribute("aria-disabled", "true");
+
+  await chooseOption(page.locator("#rate-picker"), "192000");
+  await page.click("#btn-view-console");
+  await expect(fader).toHaveAttribute("aria-disabled", "true");
+  await expect(fader).toHaveAttribute("title", /FX2 bus/);
+  const before = await fader.getAttribute("aria-valuenow");
+  await fader.focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(fader).toHaveAttribute("aria-valuenow", before!);
+  await expect(fx2Strip.locator(".con-power")).toHaveAttribute("aria-disabled", "true");
+
+  await page.click("#btn-view-graph");
+  await page.locator('#graph-host g.node[data-id="bus.fx2"]').click();
+  await expect(page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select")).toBeDisabled();
+});

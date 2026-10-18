@@ -382,6 +382,9 @@ interface KnobSpec {
   /** When set, the knob shows its value but cannot be edited (a device-locked
    *  control, e.g. a Pan-Link send pan). The string is the disabled tooltip. */
   readonlyTitle?: string;
+  /** With `readonlyTitle`: the knob still takes a MIDI learn, as a control the sample rate has
+   *  taken away does — its assignment outlives the rate, and only the value is refused. */
+  assignable?: boolean;
   /** The node-parameter keys `set` writes, for the change funnel's write witness.
    *  Absent for a knob that writes a wire's params instead. */
   keys?: readonly string[];
@@ -1187,7 +1190,9 @@ export class Console {
     // switch, its tap and its level all set something on a bus the unit is not running.
     // FIXED is the narrower lock below — that one takes the level and the tap and leaves
     // the switch.
-    const rateOff = nodeRateDisabled(target, this.hooks.getPlan().sampleRate);
+    const rateOff =
+      nodeRateDisabled(target, this.hooks.getPlan().sampleRate) ||
+      nodeRateDisabled(m.id, this.hooks.getPlan().sampleRate);
     // FIXED BUS Type leaves a MIX send its ON alone: the level and the PRE tap turn
     // read-only (matching the graph inspector, which drops them) and the enable chip
     // stays editable.
@@ -1231,7 +1236,7 @@ export class Console {
         return next;
       },
       rateOff
-        ? { cls: "con-sl", readonlyTitle: t().inspector.fx2RateLocked }
+        ? { cls: "con-sl", readonlyTitle: t().inspector.fx2RateLocked, midiId: controlId(m.id, "mute", target) }
         : {
             cls: "con-sl",
             midiId: controlId(m.id, "mute", target),
@@ -1257,7 +1262,11 @@ export class Console {
         return next;
       },
       rateOff
-        ? { cls: "con-slp", readonlyTitle: t().inspector.fx2RateLocked }
+        ? {
+            cls: "con-slp",
+            readonlyTitle: t().inspector.fx2RateLocked,
+            midiId: isMix ? controlId(m.id, "tap", target) : undefined,
+          }
         : mixFixed
           ? { cls: "con-slp", readonlyTitle: t().inspector.busFixedSend }
           : tapReadonly
@@ -1275,6 +1284,7 @@ export class Console {
 
     // A FIXED-bus send fader is display-only: paint its value but skip the wiring.
     if (!busFixed) this.wireColFader(m.id, target, c, ref, range, swap, readoutText);
+    else if (rateOff) this.learnOnly(fader, controlId(m.id, "level", target));
     this.updateColLevel(ref, range, c?.params?.level ?? LEVEL_OFF_DB, c?.params?.tap === "pre");
     col.append(chip, preBtn, fader);
     return { el: col, ref };
@@ -1469,6 +1479,8 @@ export class Console {
     ph.append(cat, who);
     const grid = el("div", "pcols");
     this.wireRowKeys(grid, false);
+    // A strip the rate removes holds its send pans read-only, and assignable, as its rack does.
+    const selfOff = nodeRateDisabled(stripId, plan.sampleRate);
     for (const target of this.sendSlots()) {
       if (!this.isMixBus(target) || !this.hasSend(stripId, target)) continue;
       const pcol = el("div", "pcol");
@@ -1484,7 +1496,15 @@ export class Console {
           if (c) c.params = { ...c.params, pan: v };
         },
         factory,
-        busFixed ? t().inspector.busFixedSend : panLinked ? t().inspector.panLinked : undefined,
+        selfOff
+          ? t().inspector.fx2RateLocked
+          : busFixed
+            ? t().inspector.busFixedSend
+            : panLinked
+              ? t().inspector.panLinked
+              : undefined,
+        undefined,
+        selfOff,
       );
       // partnerSync off: the mirror is handled by commit; a re-render would tear down
       // this popover, and no partner send-pan control is on screen. Horizontal: the
@@ -1699,10 +1719,11 @@ export class Console {
    * Three things that list has and this one does not, all for one reason — an FX channel's
    * selector has no "no effect" value and its engine is its own:
    *   - no empty row, so every entry is an effect;
-   *   - no disabled row. Both channels' five types run at every rate the bus itself runs at
-   *     (the effect list gives FX1's five 176.4 / 192 kHz and FX2's five a 96 kHz ceiling,
-   *     which is the rate the FX2 bus stops at anyway), and there is no shared slot for a
-   *     second holder to take. So there is no `why` column here at all;
+   *   - no row disabled on its own account. Both channels' five types run at every rate the
+   *     bus itself runs at (the effect list gives FX1's five 176.4 / 192 kHz and FX2's five a
+   *     96 kHz ceiling, which is the rate the FX2 bus stops at anyway), and there is no shared
+   *     slot for a second holder to take. So there is no `why` column here at all — only the
+   *     bus itself, gone above 96 kHz, holds every row but the current one;
    *   - the launcher is never inert, because there is always an effect to open.
    *
    * There is no ON row here, and the INS FX popover's bypass has no counterpart: an FX
@@ -1725,15 +1746,22 @@ export class Console {
     const list = el("div", "ilist");
     list.setAttribute("role", "menu");
     this.wireRowKeys(list);
+    const rateOff = nodeRateDisabled(id, plan.sampleRate);
     for (const option of fxEffectTypes(fxIndex)) {
       const current = option.value === cur;
-      const row = el("div", "irow" + (current ? " active" : ""));
+      const row = el("div", "irow" + (current ? " active" : "") + (rateOff && !current ? " off" : ""));
       row.dataset.ctl = "fx:" + option.value;
       row.setAttribute("role", "menuitemradio");
       row.setAttribute("aria-checked", String(current));
       const nm = el("span", "nm");
       nm.textContent = option.label;
       row.append(nm);
+      if (rateOff) {
+        row.title = t().inspector.fx2RateLocked;
+        row.setAttribute("aria-disabled", "true");
+        list.append(row);
+        continue;
+      }
       row.tabIndex = 0;
       const pick = (): void => this.setFxType(id, option.value);
       row.addEventListener("click", pick);
@@ -1751,8 +1779,8 @@ export class Console {
     open.dataset.ctl = "open-screen";
     open.textContent = dynOpenLabel("fx", t());
     open.setAttribute("role", "button");
-    // An effect on a bus the rate has taken away is still an effect to tune — the screen says
-    // so under its own display — so nothing gates this.
+    // An effect on a bus the rate has taken away still opens: the screen holds its rows
+    // read-only and says why under its own display, so nothing gates this.
     this.wireActivate(open, undefined, () => {
       this.closeTypePop();
       this.hooks.onOpenDynScreen?.("fx", id);
@@ -2025,6 +2053,15 @@ export class Console {
     });
   }
 
+  // A read-only control that stays a MIDI-learn target: learn mode marks it, puts it in the tab
+  // order and arms it on a press; outside learn mode a press does nothing. The read-only chip
+  // takes the same treatment in `buildChip`.
+  private learnOnly(el: HTMLElement, midiId: string | undefined): void {
+    if (!midiId) return;
+    this.wireActivate(el, midiId, () => {});
+    el.tabIndex = this.hooks.midi?.learnActive() ? 0 : -1;
+  }
+
   // Make the LED a power button: the LED reflects the on-state, click / Enter / Space
   // toggle the node master (or oscillator) through the shared funnel. A full re-render
   // follows so the strip's inactive dim updates. The button's class carries no state —
@@ -2035,6 +2072,13 @@ export class Console {
     power.setAttribute("role", "button");
     power.setAttribute("aria-pressed", String(spec.on));
     power.setAttribute("aria-label", spoken(`${m.label} ${t().console.power}`));
+    // A node the rate removes keeps its LED as it stands and refuses the press.
+    if (nodeRateDisabled(m.id, this.hooks.getPlan().sampleRate)) {
+      power.setAttribute("aria-disabled", "true");
+      setTip(power, t().inspector.fx2RateLocked);
+      this.learnOnly(power, spec.midiId);
+      return;
+    }
     this.wireActivate(power, spec.midiId, () => {
       this.commit(m.id, spec.toggle());
       this.render();
@@ -2742,10 +2786,9 @@ export class Console {
     // with the scribble power LED, not a badge, marking why. The MUTE chip below is a
     // separate control: the → STEREO send's ON/OFF, unaffected by the master.
     // …and a node the RATE removes is dimmed the same way, which is what the graph
-    // already does with the same predicate. Its own controls stay reachable — this is a
-    // statement about the bus, not a second lock on every value it holds — while every
-    // send AIMED at it is locked in `buildSendCol`, since those are the ones that would
-    // otherwise route audio into a bus the unit is not running.
+    // already does with the same predicate. Every control it holds is read-only and stays
+    // a MIDI-learn target, as is every send AIMED at it (`buildSendCol`): the unit is not
+    // running the bus, and a value set on it would set nothing there.
     const rateOff = nodeRateDisabled(m.id, this.hooks.getPlan().sampleRate);
     const strip = el("div", "con-strip" + (m.inactive || rateOff ? " inactive" : ""));
     nameStrip(strip, m);
@@ -2818,7 +2861,9 @@ export class Console {
           if (c) c.params = { ...c.params, on: nextOn };
           return !nextOn; // chip "on" (highlighted) = muted
         },
-        { midiId: controlId(m.id, "mute") },
+        rateOff
+          ? { midiId: controlId(m.id, "mute"), readonlyTitle: t().inspector.fx2RateLocked }
+          : { midiId: controlId(m.id, "mute") },
       );
     }
     const cue = this.cueChip(m.id);
@@ -2959,6 +3004,7 @@ export class Console {
       if (channelEqUnavailable(m.id, rate)) {
         this.makeChip(m.id, proc, t().console.eq, false, false, () => false, {
           readonlyTitle: t().inspector.eqRateLocked,
+          midiId: controlId(m.id, "eqOn"),
         });
         // No opener. A disclosure the rate has emptied is DROPPED rather than drawn inert:
         // a face carries the reason and stays, while a way IN to something that is not
@@ -3026,6 +3072,7 @@ export class Console {
           this.buildChip(m.id, "INS FX", false, () => false, {
             cls: IFX_FACE_CLS,
             ctl: "ifx-face",
+            midiId: controlId(m.id, "insertFxOn"),
             readonlyTitle:
               selected?.option.maxRate !== undefined
                 ? t().inspector.insFxRateLockedAt(selected.option.label, formatRate(selected.option.maxRate))
@@ -3155,7 +3202,14 @@ export class Console {
     // PAN (mono) / BALANCE (stereo) = the source's → STEREO main-path pan,
     // L63 – C – R63. Per-send pan lives in the SENDS rack's SEND PAN popover.
     if (m.isChannel || this.isFxChannel(m.id)) {
-      this.addSendPanKnob(head, m.id, MAIN_BUS, m.isBalance ? "BAL" : "PAN");
+      this.addSendPanKnob(
+        head,
+        m.id,
+        MAIN_BUS,
+        m.isBalance ? "BAL" : "PAN",
+        rateOff ? t().inspector.fx2RateLocked : undefined,
+        rateOff,
+      );
     }
     // Master balance (STEREO 583 / MIX 676) = the bus output's L/R balance, edited
     // on the node's own `pan`. `busBalance` is the single source of truth for which
@@ -3265,15 +3319,23 @@ export class Console {
     // the edit path uses (as buildSendCol does via updateColLevel), so build and
     // edit cannot drift apart.
     this.updateStripLevel(refObj, level);
-    this.wireFader(refObj);
+    this.wireFader(refObj, rateOff ? t().inspector.fx2RateLocked : undefined);
     return strip;
   }
 
-  private wireFader(r: StripRef): void {
+  private wireFader(r: StripRef, readonlyTitle?: string): void {
     const fader = r.fader;
     if (!fader) return; // meter-only strips have no fader to wire
     const range = r.m.range;
     const midiId = controlId(r.m.id, "level");
+    // A strip the rate removes paints its level and takes no edit, and stays a learn target.
+    if (readonlyTitle) {
+      fader.classList.add("readonly");
+      fader.setAttribute("aria-disabled", "true");
+      setTip(fader, readonlyTitle);
+      this.learnOnly(fader, midiId);
+      return;
+    }
     this.midiMark(fader, midiId);
     const setLevel = (db: number): void => {
       const written = this.setMain(r.m, db);
@@ -3557,8 +3619,10 @@ export class Console {
     reset: number,
     readonlyTitle?: string,
     keys?: readonly string[],
+    assignable = false,
   ): KnobSpec {
     return {
+      assignable,
       get,
       set,
       min: PAN_MIN,
@@ -3574,7 +3638,14 @@ export class Console {
 
   /** Add a PAN/BALANCE knob bound to a send connection's `pan` (L63 – C – R63),
    *  resetting to the factory plan's value on double-click. */
-  private addSendPanKnob(head: HTMLElement, id: string, target: string, label: string, readonlyTitle?: string): void {
+  private addSendPanKnob(
+    head: HTMLElement,
+    id: string,
+    target: string,
+    label: string,
+    readonlyTitle?: string,
+    assignable = false,
+  ): void {
     const conn = (): PlanConnection | undefined => sendConnection(this.hooks.getPlan(), id, target);
     const factory = sendConnection(this.factoryPlan(), id, target)?.params?.pan ?? 0;
     this.addKnob(
@@ -3588,6 +3659,8 @@ export class Console {
         },
         factory,
         readonlyTitle,
+        undefined,
+        assignable,
       ),
       id,
       controlId(id, "pan", target === MAIN_BUS ? undefined : target),
@@ -3989,7 +4062,11 @@ export class Console {
       if (partnerSync) this.syncPartnerStrip(id, k.pairs);
     };
     show(Math.max(k.min, Math.min(k.max, k.get()))); // initial display, not dirty
-    if (k.readonlyTitle) return; // device-locked: value painted, no input handlers
+    if (k.readonlyTitle) {
+      // device-locked: value painted, no input handlers — a learn target still where it is assignable
+      if (k.assignable) this.learnOnly(knob, midiId);
+      return;
+    }
     this.midiMark(knob, midiId);
     knob.addEventListener("pointerdown", (e) => {
       e.preventDefault();

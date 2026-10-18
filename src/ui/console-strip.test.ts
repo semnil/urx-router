@@ -1492,3 +1492,70 @@ describe("a gain held on a jack or source", () => {
     expect(gain("ch3"), "CH 3 reads AUX too").toBe(gain("ch_5_6"));
   });
 });
+
+// Above 96 kHz the FX 2 bus is gone: its own controls, its sends into a MIX and every send into
+// it show their values and take no edit, with the reason on each. 96 kHz is the control.
+describe("FX 2 above 96 kHz", () => {
+  const held = (el: HTMLElement | null | undefined, what: string): HTMLElement => {
+    expect(el, what).toBeTruthy();
+    expect(el!.getAttribute("aria-disabled"), what).toBe("true");
+    expect(tipOf(el!), what).toContain(t().inspector.fx2RateLocked);
+    return el!;
+  };
+
+  it("holds the strip's own controls, its sends and the sends into it", () => {
+    const plan = defaultPlan("URX44V");
+    plan.sampleRate = 192000;
+    h = consoleHost({ plan });
+    const before = JSON.stringify(h.plan);
+    const fx2 = h.strip("bus.fx2");
+    const fader = held(fx2.fader, "the fader");
+    dragY(fader, -60);
+    key(fader, "ArrowUp");
+    held(fx2.root.querySelector<HTMLElement>(".con-power"), "the master ON").click();
+    held(chips(fx2.root).get(t().console.mute), "the MUTE").click();
+    const pan = held(
+      fx2.root.querySelector<HTMLElement>(".con-knob[aria-label='PAN'], .con-knob[aria-label='BAL']"),
+      "the PAN",
+    );
+    dragY(pan, -60);
+    key(pan, "ArrowRight");
+    const cols = [...fx2.root.querySelectorAll<HTMLElement>(".con-scol")].filter((c) => c.querySelector(".con-vfad"));
+    expect(cols.length, "its sends into the MIX buses").toBeGreaterThan(0);
+    for (const col of cols) {
+      dragY(held(col.querySelector<HTMLElement>(".con-vfad"), "a send fader"), -60);
+      held(col.querySelector<HTMLElement>(".con-sl"), "a send ON").click();
+    }
+    const intoFx2 = [...h.strip("ch1").root.querySelectorAll<HTMLElement>(".con-scol.rate-off")];
+    expect(intoFx2.length, "CH 1's column into FX 2").toBe(1);
+    dragY(held(intoFx2[0].querySelector<HTMLElement>(".con-vfad"), "the send into FX 2"), -60);
+    expect(JSON.stringify(h.plan), "nothing moved").toBe(before);
+  });
+
+  it("leaves them live at 96 kHz", () => {
+    const plan = defaultPlan("URX44V");
+    plan.sampleRate = 96000;
+    h = consoleHost({ plan });
+    const fx2 = h.strip("bus.fx2");
+    expect(fx2.fader!.getAttribute("aria-disabled")).toBeNull();
+    const before = sendConnection(h.plan, "bus.fx2", "bus.stereo")?.params?.level;
+    key(fx2.fader!, "ArrowUp");
+    expect(sendConnection(h.plan, "bus.fx2", "bus.stereo")?.params?.level).not.toBe(before);
+  });
+
+  it("offers the effect it holds and holds the others in its EFFECT TYPE list", () => {
+    const plan = defaultPlan("URX44V");
+    plan.sampleRate = 192000;
+    h = consoleHost({ plan });
+    const before = JSON.stringify(h.plan);
+    h.strip("bus.fx2").root.querySelector<HTMLElement>(".con-fxopen")!.click();
+    const rows = [...document.querySelectorAll<HTMLElement>(".con-ifxpop .irow")];
+    expect(rows.length).toBe(fxEffectTypes(1).length);
+    for (const row of rows.filter((r) => !r.classList.contains("active"))) {
+      expect(row.classList.contains("off")).toBe(true);
+      expect(row.getAttribute("aria-disabled")).toBe("true");
+      row.click();
+    }
+    expect(JSON.stringify(h.plan), "no type was taken").toBe(before);
+  });
+});

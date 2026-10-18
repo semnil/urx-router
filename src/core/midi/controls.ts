@@ -455,6 +455,10 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
   const lockNode = (nodeId: string): string =>
     isStereoLinkedPair(model, plan, nodeId) ? (pairPrimary(model, nodeId) ?? nodeId) : nodeId;
   const conn = (toId: string): PlanConnection | undefined => sendConnection(plan, id, toId);
+  /** The sample rate has removed this node (FX 2 above 96 kHz): every value it holds is on DSP the
+   *  unit is not running, so each control refuses a write, as the CONSOLE strip does. Asked NOW, since
+   *  a mapping outlives the rate it was made at. */
+  const selfGone = (): boolean => nodeRateDisabled(id, plan.sampleRate);
 
   // A continuous control persisted on a send connection's params (level / pan);
   // no `send` = the fixed main path into STEREO.
@@ -517,6 +521,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
     kind: "toggle",
     get: () => (plan.nodeParams[id]?.on === false ? 0 : 1),
     set: (v) => {
+      if (selfGone()) return false;
       np().on = v >= 0.5;
       return true;
     },
@@ -1015,9 +1020,10 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
       // The same refusal the tuning screen draws, asked of the same predicate and asked
       // NOW rather than when the mapping was made: a mapping outlives the state that
       // locked its slot, and one made before the unit took the slot over would otherwise
-      // write the plan while the writer is suppressing it.
+      // write the plan while the writer is suppressing it. The held effect's rate lock
+      // refuses every slot, as it refuses the face's switch above.
       const lockedNow = (): boolean =>
-        insertFxLockedSlots(insFxFamily, plan.nodeParams[id]?.insertFxParams).has(d.slot);
+        rateLocked() || insertFxLockedSlots(insFxFamily, plan.nodeParams[id]?.insertFxParams).has(d.slot);
       // The slot whose value decides that set: the multi-band compressor's 1-knob switch. Pitch
       // Fix's MIDI Control decides one too and is NOT here — it is a writable slot with no
       // parameter row, so no mapping can name it, nothing can be ganged to it and nothing waits
@@ -1108,8 +1114,9 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
       // The same refusal the tuning screen draws, asked of the same predicate and asked NOW
       // rather than when the mapping was made: while tempo Sync is on the unit is computing
       // the delay time and announcing it, so a mapping made before Sync went on would drive
-      // a value the unit overwrites on its own.
-      const drivenNow = (): boolean => fxRowOwners(fxType, fxParamsOf()).get(d.key) === "computed";
+      // a value the unit overwrites on its own. Every row refuses while the rate has removed the
+      // FX channel, as the tuning screen draws them.
+      const drivenNow = (): boolean => selfGone() || fxRowOwners(fxType, fxParamsOf()).get(d.key) === "computed";
       // Which row that is depends on the Sync switch, so the switch governs it — and governs
       // nothing when it is not the one deciding, itself included.
       const syncKey = fxParams(fxType).find((x) => x.slot === DELAY_SYNC_SLOT)?.key;
@@ -1156,23 +1163,23 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
 
   if (isChannel || isFx) {
     // Main path: the fixed send into STEREO carries the fader / MUTE / PAN-BAL.
-    out.push(connControl("level", undefined, levelCodec, 0));
-    out.push(connMute(undefined, true));
-    out.push(connControl("pan", undefined, panCodec, 0));
+    out.push(connControl("level", undefined, levelCodec, 0, selfGone));
+    out.push(connMute(undefined, true, selfGone));
+    out.push(connControl("pan", undefined, panCodec, 0, selfGone));
     // Sends: level + mute per reachable bus; pan on MIX sends only (FX sends are
     // mono on the device). FIXED BUS Type locks the level, the pan and the tap (the
     // send keeps only its ON), Pan Link the pan.
     for (const target of SEND_TARGETS) {
       if (target === id || !conn(target)) continue;
       const locks = (): { busFixed: boolean; panLinked: boolean } => mixSendLocks(plan, target);
-      // …and a send into a bus the sample rate has removed sets three values on DSP the
-      // unit is not running. The CONSOLE locks the whole column on this predicate, so a
+      // …and a send into a bus the sample rate has removed, or out of one, sets values on DSP
+      // the unit is not running. The CONSOLE locks the whole column on this predicate, so a
       // mapping that reached past it would be the one surface still writing there.
-      const rateGone = (): boolean => nodeRateDisabled(target, plan.sampleRate);
+      const rateGone = (): boolean => nodeRateDisabled(target, plan.sampleRate) || selfGone();
       out.push(connControl("level", target, levelCodec, LEVEL_OFF_DB, () => locks().busFixed || rateGone()));
       out.push(connMute(target, true, rateGone));
       if (target === "bus.mix1" || target === "bus.mix2") {
-        out.push(connControl("pan", target, panCodec, 0, () => locks().busFixed || locks().panLinked));
+        out.push(connControl("pan", target, panCodec, 0, () => locks().busFixed || locks().panLinked || rateGone()));
         // Send tap (PRE/POST) as a toggle: MIX taps are freely writable (a CH → FX
         // tap is device-locked and gets no control — the rack shows it read-only).
         // Under FIXED it reads the stored tap and refuses writes, like the level beside it.
@@ -1186,7 +1193,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
           get: () => (conn(target)?.params?.tap === "pre" ? 1 : 0),
           set: (v) => {
             const c = conn(target);
-            if (!c || locks().busFixed) return false;
+            if (!c || locks().busFixed || rateGone()) return false;
             c.params = { ...c.params, tap: v >= 0.5 ? "pre" : "post" };
             return true;
           },

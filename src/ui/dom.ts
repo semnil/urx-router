@@ -747,6 +747,10 @@ export interface SettingsRowOptions {
   tag?: string;
   /** Not applicable in this build / on this model: dim the row and refuse input. */
   locked?: boolean;
+  /** With `locked`: the row's control stays a MIDI-learn target — a value the sample rate has
+   *  taken away keeps its assignment, and only the value is refused. Read by the surface that
+   *  arms rows; the row itself renders as any locked one. */
+  assignable?: boolean;
   /** Extra classes, e.g. the Device setup screen's `sub` indent and `dirty` mark. */
   cls?: string;
   /** A legend printed on the label itself — what the *parameter* is (the FINE grid),
