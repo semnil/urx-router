@@ -1379,6 +1379,18 @@ test("a card's tag is drawn the same whichever kind of card carries it", async (
   // The anchor: the card recipe is the lamp's ink, at full strength.
   expect(onAKnob.color).toBe(lamp);
   expect(onAKnob.opacity).toBe(1);
+  // An unlocked knob card's frame, for the locked one below to be read against.
+  const plainFrames = await screenBox(page)
+    .locator(".gt-knobs > .gt-knob:not(.locked)")
+    .evaluateAll((cards) => [
+      ...new Set(
+        cards.map((el) => {
+          const cs = getComputedStyle(el);
+          return [cs.borderWidth, cs.borderStyle, cs.borderColor, cs.backgroundImage].join(" ");
+        }),
+      ),
+    ]);
+  expect(plainFrames.length, "Clean draws its knob cards unlocked").toBe(1);
   await closeScreen(page);
 
   // Pitch Fix's twelve notes are the unit's under MIDI Control, on the row that spans the grid.
@@ -1389,8 +1401,8 @@ test("a card's tag is drawn the same whichever kind of card carries it", async (
   await closeScreen(page);
 
   // A locked card dims its contents and keeps its own frame, the way a locked row does, so the
-  // frame is read against an unlocked neighbour's: putting the dim back on the card would take
-  // the frame with it. The multi-band compressor's 1-knob locks the band cards it drives.
+  // frame is read against an unlocked card's (Clean's, above): putting the dim back on the card
+  // would take the frame with it. The multi-band compressor's 1-knob locks the cards it holds.
   const plan = {
     format: "urx-router-plan",
     version: 1,
@@ -1401,19 +1413,18 @@ test("a card's tag is drawn the same whichever kind of card carries it", async (
   await page.goto(`/?plan=${planParamZ(plan)}`);
   await node(page, "bus.mix1").click();
   await openScreen(page);
-  const frames = await screenBox(page)
-    .locator(".gt-knobs > .gt-knob")
-    .evaluateAll((cards) => {
-      const face = (el: Element) => {
-        const cs = getComputedStyle(el);
-        return [cs.borderWidth, cs.borderStyle, cs.borderColor, cs.backgroundImage].join(" ");
-      };
-      const locked = cards.filter((c) => c.classList.contains("locked"));
-      const plain = cards.filter((c) => !c.classList.contains("locked"));
-      return { locked: [...new Set(locked.map(face))], plain: [...new Set(plain.map(face))] };
-    });
-  expect(frames.locked.length, "the 1-knob locks band cards").toBe(1);
-  expect(frames.plain).toEqual(frames.locked);
+  const lockedFrames = await screenBox(page)
+    .locator(".gt-knobs > .gt-knob.locked")
+    .evaluateAll((cards) => [
+      ...new Set(
+        cards.map((el) => {
+          const cs = getComputedStyle(el);
+          return [cs.borderWidth, cs.borderStyle, cs.borderColor, cs.backgroundImage].join(" ");
+        }),
+      ),
+    ]);
+  expect(lockedFrames.length, "the 1-knob locks band cards").toBe(1);
+  expect(lockedFrames).toEqual(plainFrames);
   await closeScreen(page);
 
   // The control, without which the comparison is satisfied by every tag having become one
