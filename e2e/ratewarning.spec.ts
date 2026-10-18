@@ -1,5 +1,6 @@
 import { test, expect, textContrast } from "./fixtures";
 import { chooseOption } from "./choose-option";
+import { selectWire } from "./graph-helpers";
 
 // The block diagram flags the stereo-channel (CH 5/6–11/12) EQ as disabled at
 // 176.4 / 192 kHz. The app still shows that EQ as editable, so a top-of-panel
@@ -201,4 +202,27 @@ test("FX2's own controls take no edit above 96 kHz, on the CONSOLE and in the In
   await page.click("#btn-view-graph");
   await page.locator('#graph-host g.node[data-id="bus.fx2"]').click();
   await expect(page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select")).toBeDisabled();
+});
+
+// A send into the FX2 bus: above 96 kHz every field on the Inspector's connection panel shows
+// its value and takes no edit, with the reason beside it; at 96 kHz the same panel is live.
+test("a send into FX2 takes no edit in the Inspector above 96 kHz", async ({ page }) => {
+  await page.addInitScript(() => localStorage.removeItem("urx-seed"));
+  await page.reload();
+  const fields = page.locator("#inspector .param").locator("button, select, input");
+
+  await chooseOption(page.locator("#rate-picker"), "96000");
+  await selectWire(page, "ch1:out", "bus.fx2:in");
+  await expect(page.locator("#inspector")).not.toContainText("FX2 bus");
+  expect(await fields.count()).toBeGreaterThan(0);
+  await expect(fields.first()).toBeEnabled();
+
+  await chooseOption(page.locator("#rate-picker"), "192000");
+  await selectWire(page, "ch1:out", "bus.fx2:in");
+  await expect(page.locator("#inspector")).toContainText("FX2 bus");
+  const n = await fields.count();
+  expect(n).toBeGreaterThan(0);
+  for (let i = 0; i < n; i++) await expect(fields.nth(i)).toBeDisabled();
+  // The reason rides on each held row, as its tooltip.
+  await expect(page.locator('#inspector [title*="FX2 bus"]').locator("button, select, input").first()).toBeDisabled();
 });
