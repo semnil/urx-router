@@ -13,6 +13,7 @@ import type { DeviceModel, ModelId } from "./models/types";
 import { parseRef, ref } from "./models/types";
 import {
   alignLinkedSendPans,
+  panLinkedSendPan,
   applyPairTransition,
   INSERT_FX_PAIR_KEYS,
   mirrorLinkedPair,
@@ -2527,26 +2528,27 @@ const inspectorActions = {
     // phantom control author a value the next flush puts on the wire — name the lock
     // that refused it, and rebuild the panel so the control goes away now.
     const { busFixed, panLinked } = mixSendLocks(plan, parseRef(to).nodeId);
-    const refusal =
-      busFixed && (patch.level !== undefined || patch.tap !== undefined || patch.pan !== undefined)
-        ? t().inspector.busFixedSend
-        : panLinked && patch.pan !== undefined
-          ? t().inspector.panLinked
-          : null;
-    if (refusal) {
-      setStatus(refusal);
+    if (busFixed && (patch.level !== undefined || patch.tap !== undefined || patch.pan !== undefined)) {
+      setStatus(t().inspector.busFixedSend);
       refreshInspector();
       return;
     }
     const wasOff = (conn.params?.level ?? 0) <= LEVEL_MIN_DB;
     conn.params = { ...conn.params, ...patch };
+    // Under Pan Link a send pan is its source's own PAN / BAL, and turning it moves the source,
+    // as the unit's SEND TO screen does.
+    const sourceMoved =
+      panLinked && patch.pan !== undefined ? panLinkedSendPan(plan, parseRef(from).nodeId, patch.pan) : [];
     // A STEREO-linked pair moves as one: copy the same send change to the partner
     // channel. The pan goes with it in BAL, where it is the pair's one shared balance,
     // and stays the member's own in PAN (see mirrorLinkedPair).
     const source = parseRef(from).nodeId;
     const mirrored = mirrorLinkedPair(getModel(modelId), plan, source);
     // A linked MIX's send pans from this source (and a mirrored partner) follow its position.
-    markChanged("ui", alignLinkedSendPans(plan, withLinkedPartner(getModel(modelId), plan, source)));
+    markChanged("ui", [
+      ...sourceMoved,
+      ...alignLinkedSendPans(plan, withLinkedPartner(getModel(modelId), plan, source)),
+    ]);
     // A PRE/POST change flips the wire's pre-fader marker; a send ON/OFF, an OSC L/R
     // assign change, or a level that crosses -∞ flips the wire's (and its jacks') off-state
     // dimming. Those repaint the wire layer, which leaves the panel and the slider holding

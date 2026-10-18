@@ -78,6 +78,7 @@ import { inputShare } from "./input-share";
 import { nodeParamContestPath } from "../core/plan-history";
 import {
   alignLinkedSendPans,
+  panLinkedSendPan,
   INSERT_FX_PAIR_KEYS,
   isBalLinkedPair,
   isNodeInactive,
@@ -380,8 +381,10 @@ interface KnobSpec {
    *  range. Override to place specific values (e.g. PHONES 2/8) at the horizontal. */
   angle?: (v: number) => number;
   /** When set, the knob shows its value but cannot be edited (a device-locked
-   *  control, e.g. a Pan-Link send pan). The string is the disabled tooltip. */
+   *  control, e.g. a FIXED-bus send pan). The string is the disabled tooltip. */
   readonlyTitle?: string;
+  /** Repaints, in place, another knob showing the value this one just wrote. */
+  mirror?: (knob: HTMLElement, val: HTMLElement) => void;
   /** The node-parameter keys `set` writes, for the change funnel's write witness.
    *  Absent for a knob that writes a wire's params instead. */
   keys?: readonly string[];
@@ -1439,8 +1442,9 @@ export class Console {
     }
   }
 
-  /** The FIXED and Pan Link locks of every MIX bus a strip's SEND PAN popover draws a
-   *  knob for, as one comparable string. */
+  /** The FIXED lock and the Pan Link of every MIX bus a strip's SEND PAN popover draws a
+   *  knob for, as one comparable string: FIXED locks a knob, and Pan Link moves the send pan
+   *  it shows to the source's own. */
   private sendPanLockKey(stripId: string): string {
     const plan = this.hooks.getPlan();
     return this.sendSlots()
@@ -1476,16 +1480,24 @@ export class Console {
       capEl.textContent = SEND_LABEL[target];
       const conn = (): PlanConnection | undefined => sendConnection(this.hooks.getPlan(), stripId, target);
       const factory = sendConnection(this.factoryPlan(), stripId, target)?.params?.pan ?? 0;
-      const { busFixed, panLinked } = mixSendLocks(plan, target);
+      const { busFixed } = mixSendLocks(plan, target);
       const spec = this.panKnobSpec(
         () => conn()?.params?.pan ?? 0,
         (v) => {
           const c = conn();
-          if (c) c.params = { ...c.params, pan: v };
+          if (!c) return;
+          c.params = { ...c.params, pan: v };
+          // Under Pan Link the send pan is the strip's own PAN / BAL, and turning it moves the
+          // strip, as the unit's SEND TO screen does.
+          if (mixSendLocks(this.hooks.getPlan(), target).panLinked) panLinkedSendPan(this.hooks.getPlan(), stripId, v);
         },
         factory,
-        busFixed ? t().inspector.busFixedSend : panLinked ? t().inspector.panLinked : undefined,
+        busFixed ? t().inspector.busFixedSend : undefined,
       );
+      // …and the strip's own PAN knob shows the value it moved to.
+      spec.mirror = (knob, val) => {
+        if (mixSendLocks(this.hooks.getPlan(), target).panLinked) this.mirrorStripPan(stripId, knob, val);
+      };
       // partnerSync off: the mirror is handled by commit; a re-render would tear down
       // this popover, and no partner send-pan control is on screen. Horizontal: the
       // knob steps on Left / Right, and Up / Down walk the popover's knobs.
@@ -3683,6 +3695,18 @@ export class Console {
     }
   }
 
+  /** Paint `strip`'s own PAN / BAL knob, in place, with the value `knob` shows. */
+  private mirrorStripPan(strip: string, knob: HTMLElement, val: HTMLElement): void {
+    const own = this.refs
+      .get(strip)
+      ?.root.querySelector<HTMLElement>(`.con-knob[data-ctl="${controlId(strip, "pan")}"]`);
+    if (!own) return;
+    own.style.setProperty("--rot", knob.style.getPropertyValue("--rot"));
+    for (const a of ["aria-valuenow", "aria-valuetext"]) own.setAttribute(a, knob.getAttribute(a) ?? "");
+    const ownVal = own.parentElement?.querySelector<HTMLElement>(".val");
+    if (ownVal) ownVal.textContent = val.textContent;
+  }
+
   /** Push a STEREO-linked strip's mirrored fader level onto the partner strip's level
    *  DOM in place, so a linked fader tracks live without a rebuild (keeps focus). */
   private mirrorPartnerLevel(id: string): void {
@@ -3967,6 +3991,7 @@ export class Console {
       show(v);
       this.commit(id, k.keys);
       this.mirrorHolderKnob(id, knob, val, k.keys);
+      k.mirror?.(knob, val);
     };
     const apply = (raw: number, st = k.step): void => {
       const to = k.grid ?? st;

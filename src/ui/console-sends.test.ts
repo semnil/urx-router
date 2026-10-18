@@ -427,11 +427,11 @@ describe("the SEND PAN popover", () => {
     expect(panBtn("ch2").getAttribute("aria-expanded")).toBe("true");
   });
 
-  // A device-side Pan Link flip announces only the MIX bus, so the follow rebuilds that bus's
+  // A device-side BUS Type flip announces only the MIX bus, so the follow rebuilds that bus's
   // strip and not the strip whose popover is open. The popover's MIX 1 knob is read-only
-  // under the link, and live without it — so it is re-read when the bus is rebuilt, in both
+  // under FIXED, and live under VARI — so it is re-read when the bus is rebuilt, in both
   // directions, and left alone (the same elements) when the rebuild changed no lock.
-  it("re-reads a MIX bus's Pan Link when that bus's strip is rebuilt, and only when it moved", () => {
+  it("re-reads a MIX bus's BUS Type when that bus's strip is rebuilt, and only when it moved", () => {
     h = consoleHost();
     const mix1 = (): HTMLElement => pop().querySelector<HTMLElement>('.pcol .con-knob[aria-label="MIX 1"]')!;
     const send = sendConnection(h.plan, "ch1", "bus.mix1")!;
@@ -444,16 +444,16 @@ describe("the SEND PAN popover", () => {
     expect(mix1(), "no lock moved: the same knob").toBe(drawn);
 
     mix1().focus();
-    (h.plan.nodeParams["bus.mix1"] ??= {}).panLink = true;
+    (h.plan.nodeParams["bus.mix1"] ??= {}).busType = BUS_TYPE_FIXED;
     send.params = { ...send.params, pan: -20 };
     h.view.refreshStrip("bus.mix1");
     expect(pop().hidden).toBe(false);
-    expect(mix1().getAttribute("aria-disabled"), "locked under the link").toBe("true");
-    expect(mix1().getAttribute("aria-valuenow"), "showing the pan the link put there").toBe("-20");
+    expect(mix1().getAttribute("aria-disabled"), "locked under FIXED").toBe("true");
+    expect(mix1().getAttribute("aria-valuenow"), "showing the pan the plan holds").toBe("-20");
     expect(panBtn("ch1").getAttribute("aria-expanded")).toBe("true");
     expect(document.activeElement, "the focus the locked knob had goes to the trigger").toBe(panBtn("ch1"));
 
-    h.plan.nodeParams["bus.mix1"]!.panLink = false;
+    delete h.plan.nodeParams["bus.mix1"]!.busType;
     h.view.refreshStrip("bus.mix1");
     expect(mix1().getAttribute("aria-disabled"), "live again without it").toBeNull();
     expect(mix1().tabIndex).toBe(0);
@@ -466,6 +466,21 @@ describe("the SEND PAN popover", () => {
     const before = sendConnection(h.plan, "ch1", "bus.mix1")?.params?.pan ?? 0;
     key(knob, "ArrowRight");
     expect(sendConnection(h.plan, "ch1", "bus.mix1")?.params?.pan).not.toBe(before);
+  });
+
+  // Under Pan Link the unit's SEND TO screen turns the send pan, and that moves the source's own
+  // PAN / BAL. So does this knob: it stays live, and its value lands on the strip's own PAN too.
+  it("moves the strip's own PAN from a MIX knob Pan Link ties to it", () => {
+    h = consoleHost();
+    (h.plan.nodeParams["bus.mix1"] ??= {}).panLink = true;
+    panBtn("ch1").click();
+    const mix1 = pop().querySelector<HTMLElement>('.pcol .con-knob[aria-label="MIX 1"]')!;
+    expect(mix1.getAttribute("aria-disabled"), "live under the link").toBeNull();
+    const before = sendConnection(h.plan, "ch1", "bus.stereo")?.params?.pan ?? 0;
+    key(mix1, "ArrowRight");
+    const send = sendConnection(h.plan, "ch1", "bus.mix1")?.params?.pan;
+    expect(send).not.toBe(before);
+    expect(sendConnection(h.plan, "ch1", "bus.stereo")?.params?.pan, "the strip's own PAN").toBe(send);
   });
 });
 
@@ -1307,9 +1322,9 @@ describe("the arrow keys inside SEND PAN", () => {
     expect(pans()).toEqual(before);
   });
 
-  it("pass over a knob Pan Link locked", () => {
+  it("pass over a knob FIXED locked", () => {
     const plan = defaultPlan("URX44V");
-    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], panLink: true };
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], busType: BUS_TYPE_FIXED };
     h = consoleHost({ plan });
     openFromKeyboard();
     const mix2 = knobFor("MIX 2");

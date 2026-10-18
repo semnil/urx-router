@@ -46,6 +46,23 @@ test("FIXED bus leaves a send only its ON and shows a hint", async ({ page }) =>
   await expect(page.locator("#inspector .hint", { hasText: "Only the send ON applies" })).toHaveCount(1);
 });
 
+// Under Pan Link the unit's SEND TO screen turns the send pan, and that moves the source's own
+// PAN / BAL. So does the connection panel: the Pan row stays, and the value it is turned to lands
+// on the channel's own pan, which the main path into STEREO shows.
+test("under Pan Link a send's Pan row moves the source's own PAN", async ({ page }) => {
+  await node(page, "bus.mix1").click();
+  await param(page, "Pan Link").locator("button", { hasText: "ON" }).click();
+  await selectWire(page, "ch1:out", "bus.mix1:in");
+  const pan = paramExact(page, "Pan").locator("input[type=range]");
+  await expect(pan).toHaveCount(1);
+  await pan.focus();
+  for (let i = 0; i < 7; i++) await page.keyboard.press("ArrowRight");
+  await expect(pan).toHaveValue("7");
+  await expect(page.locator("#inspector .hint", { hasText: "Pan Link" })).toHaveCount(1);
+  await selectWire(page, "ch1:out", "bus.stereo:in");
+  await expect(paramExact(page, "Pan").locator("input[type=range]")).toHaveValue("7");
+});
+
 // The board draws a PRE send dashed and tagged; a FIXED bus takes the same tap after the
 // fader, so the tag goes when the bus turns FIXED and comes back when it turns VARI.
 test("a PRE send into a FIXED bus loses its PRE tag on the board", async ({ page }) => {
@@ -109,16 +126,6 @@ test("STEREO / MIX master expose a Balance control that stays Balance under Pan 
   await param(page, "Pan Link").locator("button", { hasText: "ON" }).click();
   await expect(paramExact(page, "Balance")).toHaveCount(1);
   await expect(paramExact(page, "Pan")).toHaveCount(0);
-});
-
-test("VARI + Pan Link drops the send PAN and shows a hint", async ({ page }) => {
-  await node(page, "bus.mix1").click();
-  await param(page, "Pan Link").locator("button", { hasText: "ON" }).click();
-
-  await selectWire(page, "ch1:out", "bus.mix1:in");
-  await expect(param(page, "Pan")).toHaveCount(0);
-  await expect(param(page, "Level")).toHaveCount(1);
-  await expect(page.locator("#inspector .hint", { hasText: "Pan follows" })).toHaveCount(1);
 });
 
 // The inspector's sliders are native ranges, like the tuning screen's rows, and every one

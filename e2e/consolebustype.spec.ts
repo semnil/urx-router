@@ -62,22 +62,34 @@ test("VARI (default) leaves the MIX send column fader editable", async ({ page }
   await expect(mix1Col(page).locator(".con-vfad")).not.toHaveClass(/readonly/);
 });
 
-test("Pan Link locks the SEND PAN knob read-only", async ({ page }) => {
+// The unit's SEND TO screen turns a Pan-Linked send pan, and that moves the source's own PAN / BAL.
+test("under Pan Link the SEND PAN knob moves the channel's own PAN", async ({ page }) => {
   await page.locator('g.node[data-id="bus.mix1"]').click();
   await param(page, "Pan Link").locator("button", { hasText: "ON" }).click();
   await page.click("#btn-view-console");
 
-  // Open CH 1's SEND PAN popover: its MIX 1 knob is read-only under Pan Link.
   await strip(page, "CH 1").locator(".con-panbtn").click();
-  const knob = page.locator(".con-spop .pcol", { hasText: "MIX 1" }).locator(".con-knob");
-  await expect(knob).toHaveClass(/readonly/);
-  await expect(knob).toHaveAttribute("aria-disabled", "true");
+  const col = page.locator(".con-spop .pcol", { hasText: "MIX 1" });
+  const knob = col.locator(".con-knob");
+  await expect(knob).not.toHaveClass(/readonly/);
+  await expect(knob).not.toHaveAttribute("aria-disabled", "true");
+  await knob.focus();
+  for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowRight");
+  await expect(col.locator(".rv")).toHaveText("R5");
+  await page.keyboard.press("Escape");
+  // Read off a rebuilt strip, so what is asserted is the plan rather than a knob painted in place.
+  await page.click("#btn-view-graph");
+  await page.click("#btn-view-console");
+  await expect(strip(page, "CH 1").locator(".con-head .con-knob[aria-label='PAN']")).toHaveAttribute(
+    "aria-valuenow",
+    "5",
+  );
 });
 
 // While Pan Link holds, the unit keeps each send pan into the MIX at its source's own
 // position: it moves them there when the link goes on and carries them along when the source
-// moves. The SEND PAN knob is read-only then and shows that value — set here to R40 first,
-// unlinked, so the link has somewhere to move it from.
+// moves. The SEND PAN knob shows that value — set here to R40 first, unlinked, so the link has
+// somewhere to move it from.
 test("under Pan Link the SEND PAN knob shows the channel's own PAN, from the switch on and through a PAN move", async ({
   page,
 }) => {

@@ -15,7 +15,7 @@ import { chips, consoleHost, dragY, key, wheel, type ConsoleHost } from "./conso
 import type { ConsoleMidiHooks } from "./console";
 import { tipOf } from "./glyph";
 import { sendConnection, setExclusiveConnection } from "../core/plan";
-import { PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
+import { BUS_TYPE_FIXED, PAN_BAL_BAL, PAN_BAL_PAN } from "../core/control/params";
 import { nodeParamContestPath } from "../core/plan-history";
 import {
   COLOR_OFF,
@@ -642,12 +642,12 @@ describe("the strip root", () => {
 });
 
 describe("a device-locked knob", () => {
-  // A PAN-linked MIX bus locks its send pan. The knob still paints the value — hiding
+  // A FIXED MIX bus locks its send pan. The knob still paints the value — hiding
   // it would read as "this send has no pan" — but takes no input at all, from any of
   // the four routes.
   it("paints its value and refuses every input route", () => {
     h = consoleHost();
-    (h.plan.nodeParams["bus.mix1"] ??= {}).panLink = true;
+    (h.plan.nodeParams["bus.mix1"] ??= {}).busType = BUS_TYPE_FIXED;
     h.view.refresh();
     h.strip("ch1").root.querySelector<HTMLButtonElement>(".con-panbtn")!.click();
 

@@ -67,7 +67,14 @@ import {
   EQ_TYPE_SHELVING,
   insertFxEngaged,
 } from "../control/params";
-import { isBalLinkedPair, isStereoLinkedPair, mixSendLocks, pairPrimary, pairSharesNodeKey } from "../routing";
+import {
+  isBalLinkedPair,
+  isStereoLinkedPair,
+  mixSendLocks,
+  pairPrimary,
+  pairSharesNodeKey,
+  panLinkedSendPan,
+} from "../routing";
 import {
   insertFxFamilyOf,
   insertFxLockedSlots,
@@ -1207,7 +1214,17 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
       out.push(connControl("level", target, levelCodec, LEVEL_OFF_DB, () => locks().busFixed || rateGone()));
       out.push(connMute(target, true, rateGone));
       if (target === "bus.mix1" || target === "bus.mix2") {
-        out.push(connControl("pan", target, panCodec, 0, () => locks().busFixed || locks().panLinked));
+        // Under Pan Link the send pan is the source's own PAN / BAL, and turning it moves the
+        // source, as the unit's SEND TO screen does.
+        const pan = connControl("pan", target, panCodec, 0, () => locks().busFixed);
+        out.push({
+          ...pan,
+          set: (v) => {
+            if (!pan.set(v)) return false;
+            if (locks().panLinked) panLinkedSendPan(plan, id, conn(target)?.params?.pan ?? 0);
+            return true;
+          },
+        });
         // Send tap (PRE/POST) as a toggle: MIX taps are freely writable (a CH → FX
         // tap is device-locked and gets no control — the rack shows it read-only).
         // Under FIXED it reads the stored tap and refuses writes, like the level beside it.

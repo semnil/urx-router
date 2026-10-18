@@ -100,8 +100,9 @@ export function sendHasOn(model: DeviceModel, from: string, to: string): boolean
 // the destination bus's node params: FIXED BUS Type leaves a send only its ON — the
 // unit takes it after the source's fader at a fixed level, placed by the source's own PAN / BAL,
 // so the LEVEL, the PRE/POST tap and the send's own PAN are all inert — and Pan Link
-// ties each send pan to its source's own PAN / BAL (the PAN control is inert), under
-// either BUS Type: the plan keeps it through FIXED and the write sends it there too.
+// ties each send pan to its source's own PAN / BAL, under either BUS Type: the plan keeps
+// it through FIXED and the write sends it there too. A send pan turned under Pan Link
+// moves the source's own (`panLinkedSendPan`).
 // Only MIX 1 / MIX 2 carry these; any other destination returns both false.
 // Shared by the inspector (which drops the gated controls), the console (which
 // renders them read-only) and the MIDI catalogue (which refuses their writes).
@@ -154,6 +155,16 @@ export function alignLinkedSendPans(plan: Plan, sources: ReadonlySet<string>): s
   for (const bus of MIX_BUSES)
     if (plan.nodeParams[bus]?.panLink === true) changed.push(...setSendPans(plan, bus, (s) => sources.has(s)).changed);
   return changed;
+}
+
+/** A send pan turned while its MIX's Pan Link is on moves the source's own pan / balance, as the
+ *  unit's SEND TO screen does: the value lands on the source's fixed main path into STEREO, and
+ *  `alignLinkedSendPans` then carries it onto every linked send. Returns the contest key it wrote. */
+export function panLinkedSendPan(plan: Plan, source: string, pan: number): string[] {
+  const main = plan.connections.find((m) => m.from === ref(source, "out") && m.to === ref("bus.stereo", "in"));
+  if (!main) return [];
+  main.params = { ...main.params, pan };
+  return [connParamContestKey(main.from, main.to, "pan")];
 }
 
 /** A send source's own pan / balance: the pan on its fixed main path into STEREO, 0 where the

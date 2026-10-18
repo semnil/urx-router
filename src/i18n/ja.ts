@@ -520,7 +520,7 @@ export const ja: Messages = {
     panLink: "Pan Link",
     busFixedSend:
       "Send は ON のみ有効 (BUS Type: FIXED)。Send 元のフェーダーの後で固定レベルで取り出し、Send 元自身の PAN / BAL に従う。",
-    panLinked: "パンは Send 元自身の PAN / BAL に追従 (Pan Link)。",
+    panLinked: "パンは Send 元自身の PAN / BAL と同じです (Pan Link)。ここで回すと Send 元の位置が動きます。",
     sdRecTrackCount: "Track Count",
     sdRecTrackCountLive: "Track Count はデバイス側でのみ設定できます (broker が公開するのは 8 段階のうち 1 つだけ)。",
     sdRecTrackCountRate: (ceiling: number): string =>
