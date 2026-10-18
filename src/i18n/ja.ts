@@ -633,7 +633,7 @@ export const ja: Messages = {
       mbcBandBypassed:
         "このバンドはバイパスされています。圧縮もメイクアップも掛からず unity で素通しします。下の値は保持され、ここで編集もできます。",
       mbcOneKnob:
-        "1-knob が ON です。バンドの値・Release・クロスオーバーは本体がレベルから、Out Gain は ON にしたときに設定し、その編集は送られません。1-knob は送られます。",
+        "1-knob が ON です。バンドの値・Release・クロスオーバーはレベルから、Out Gain は ON 時に本体が設定し、編集は送られません。1-knob は送られます。",
       deviceOnlyTag: "本体で設定",
     },
   },
