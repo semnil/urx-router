@@ -4553,6 +4553,27 @@ describe("Write to device", () => {
     },
   );
 
+  // Recording (3), record standby (4) and a paused recording (5) hold the rate the same way, and say so.
+  it.each([3, 4, 5])(
+    "writes nothing, and asks nothing, while the recorder holds a recording (state %i)",
+    SLOW,
+    async (state) => {
+      const shell = await bootDevice({}, true, { [PLAYBACK_SEED]: state });
+      chooseRate(96_000);
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect");
+      await vi.waitFor(
+        () =>
+          expect(errors(shell)).toEqual([
+            t().status.writeError(t().error.rateDuringRecording(formatRate(0), formatRate(96_000))),
+          ]),
+        { timeout: 10_000 },
+      );
+      expect(confirms(shell)).toEqual([]);
+      expect(shell.count("vd_set")).toBe(0);
+    },
+  );
+
   it("writes nothing when whether the recorder is playing cannot be read", SLOW, async () => {
     const shell = await bootDevice(
       {
@@ -4576,22 +4597,26 @@ describe("Write to device", () => {
 
   // With Follow USB on, the operator picks: adopting the device's rate writes no rate and
   // stays open while a file is held, releasing to the plan's would write one and stops.
-  it("lets a held file adopt the device's rate but not release to the plan's", SLOW, async () => {
-    const release = await bootDevice({}, true, { [PLAYBACK_SEED]: 1, [FOLLOW_USB_SEED]: 1 });
-    chooseRate(96_000);
-    $("btn-write").click();
-    await vi.waitFor(() => expect($("rate-choice").hidden).toBe(false), { timeout: 10_000 });
-    $("rate-choice-release").click();
-    await invoked(release, "vd_disconnect");
-    await vi.waitFor(
-      () =>
-        expect(errors(release)).toEqual([
-          t().status.writeError(t().error.rateDuringPlayback(formatRate(0), formatRate(96_000))),
-        ]),
-      { timeout: 10_000 },
-    );
-    expect(release.count("vd_set")).toBe(0);
-  });
+  it.each([
+    [1, (from: string, to: string) => t().error.rateDuringPlayback(from, to)],
+    [4, (from: string, to: string) => t().error.rateDuringRecording(from, to)],
+  ])(
+    "lets a held recorder (state %i) adopt the device's rate but not release to the plan's",
+    SLOW,
+    async (state, refusal) => {
+      const release = await bootDevice({}, true, { [PLAYBACK_SEED]: state, [FOLLOW_USB_SEED]: 1 });
+      chooseRate(96_000);
+      $("btn-write").click();
+      await vi.waitFor(() => expect($("rate-choice").hidden).toBe(false), { timeout: 10_000 });
+      $("rate-choice-release").click();
+      await invoked(release, "vd_disconnect");
+      await vi.waitFor(
+        () => expect(errors(release)).toEqual([t().status.writeError(refusal(formatRate(0), formatRate(96_000)))]),
+        { timeout: 10_000 },
+      );
+      expect(release.count("vd_set")).toBe(0);
+    },
+  );
 
   // The read is worth nothing until something redraws. The plan taking the unit's value
   // is not the same as the operator seeing it: the follow queue this tail used to call
@@ -9496,12 +9521,15 @@ describe("the sample rate during Live sync", () => {
     expect(picker().value).toBe("48000");
   });
 
-  it("refuses a rate while the microSD recorder holds a file", SLOW, async () => {
-    const shell = await bootDevice({}, true, { ...SEED, [PLAYBACK_SEED]: 1 });
+  it.each([
+    [1, (from: string, to: string) => t().error.rateDuringPlaybackLive(from, to)],
+    [3, (from: string, to: string) => t().error.rateDuringRecordingLive(from, to)],
+  ])("refuses a rate while the microSD recorder holds a file (state %i)", SLOW, async (state, refusal) => {
+    const shell = await bootDevice({}, true, { ...SEED, [PLAYBACK_SEED]: state });
     await goLive();
     chooseRate(44_100);
     await vi.waitFor(() => expect(errors(shell)).toHaveLength(1), { timeout: 10_000 });
-    expect(errors(shell)[0]).toBe(t().error.rateDuringPlaybackLive(formatRate(48_000), formatRate(44_100)));
+    expect(errors(shell)[0]).toBe(refusal(formatRate(48_000), formatRate(44_100)));
     expect(confirms(shell), "nothing asked").toEqual([]);
     expect(rateWrites(shell)).toEqual([]);
     expect(picker().value).toBe("48000");
