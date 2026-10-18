@@ -825,23 +825,21 @@ describe("planToCommands", () => {
     plan.nodeParams.ch1 = { comp: { ...comp, oneKnob: true, oneKnobLevel: 50 } };
     const on = planToCommands(model, plan).filter((c) => c.node === "ch1");
     const has = (list: typeof on, name: string): boolean => list.some((c) => c.name === name);
-    for (const name of ["COMP_THRESHOLD", "COMP_RATIO", "COMP_GAIN", "COMP_KNEE"]) expect(has(on, name)).toBe(false);
-    // Only those four. The knob leaves attack, release and Auto Makeup where the operator
-    // put them, so they stay authored — and the knob's own two params are the write.
-    for (const name of ["COMP_ATTACK", "COMP_RELEASE", "COMP_AUTO_MAKEUP"]) expect(has(on, name)).toBe(true);
-    expect(has(on, "COMP_ONE_KNOB")).toBe(true);
-    expect(has(on, "COMP_ONE_KNOB_LEVEL")).toBe(true);
+    const driven = ["COMP_THRESHOLD", "COMP_RATIO", "COMP_GAIN", "COMP_KNEE", "COMP_ATTACK", "COMP_RELEASE"];
+    for (const name of driven) expect(has(on, name)).toBe(false);
+    // Only those six. Auto Makeup and the knob's own two params are the write.
+    for (const name of ["COMP_AUTO_MAKEUP", "COMP_ONE_KNOB", "COMP_ONE_KNOB_LEVEL"]) expect(has(on, name)).toBe(true);
 
-    // Off: the plan authors all four again.
+    // Off: the plan authors all six again.
     plan.nodeParams.ch1 = { comp: { ...comp, oneKnob: false, oneKnobLevel: 50 } };
     const off = planToCommands(model, plan).filter((c) => c.node === "ch1");
-    for (const name of ["COMP_THRESHOLD", "COMP_RATIO", "COMP_GAIN", "COMP_KNEE"]) expect(has(off, name)).toBe(true);
+    for (const name of driven) expect(has(off, name)).toBe(true);
 
     // The escape hatch reaches them while it is on, for a caller that wants every
     // address the unit holds rather than the ones the plan authors.
     plan.nodeParams.ch1 = { comp: { ...comp, oneKnob: true, oneKnobLevel: 50 } };
     const all = planToCommands(model, plan, "all", { includeDeviceDriven: true }).filter((c) => c.node === "ch1");
-    for (const name of ["COMP_THRESHOLD", "COMP_RATIO", "COMP_GAIN", "COMP_KNEE"]) expect(has(all, name)).toBe(true);
+    for (const name of driven) expect(has(all, name)).toBe(true);
   });
 
   // Auto Makeup computes the gain whenever the threshold or the ratio moves, so the writer

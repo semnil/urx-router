@@ -303,12 +303,10 @@ export const PARAMS = {
   COMP_RELEASE: { id: 40, encoding: "releaseTime" },
   /** COMP Auto Makeup ON (auto-drives the makeup gain). */
   COMP_AUTO_MAKEUP: { id: 41, encoding: "bool" },
-  // The COMP 1-knob drives the values in COMP_ONE_KNOB_DRIVEN below, and the unit announces
-  // the recomputation: measured on a URX44V (2026-08), turning it ON moved 35 / 36 / 37 / 38
-  // and a level change afterwards moved 35 / 36 / 38 again, every one of them within 0.13 ms
-  // of the written address's own notify and none ahead of it. So both are a "refetch" for
-  // the same reason the EQ 1-knob is — the plan mirrors those values while the knob is on,
-  // and pushing them back would fight the device.
+  // The COMP 1-knob drives the values in COMP_ONE_KNOB_DRIVEN below: turning it ON moves
+  // 35 / 36 / 37 / 38 / 39 / 40, and a level change afterwards moves 35 / 36 / 38 again. So
+  // both are a "refetch" for the same reason the EQ 1-knob is — the plan mirrors those values
+  // while the knob is on, and pushing them back would fight the device.
   /** COMP 1-knob ON (drives all comp params from the 1-knob level). */
   COMP_ONE_KNOB: { id: 42, encoding: "bool", sideEffect: "refetch" },
   /** COMP 1-knob level (0 … 100, raw). */
@@ -1150,11 +1148,48 @@ export const COMP_KNEE_OPTIONS = [
  * A screen that says "the device owns this" over a writer that keeps sending it is the
  * defect either copy drifting produces.
  *
- * Confirmed on a URX44V (2026-08): switching the knob on moved all four (the knee Soft ->
- * Medium); moving the level afterwards moved the first three and left the knee where the
- * knob had put it. Attack, release and Auto Makeup did not move and stay plan-authored.
+ * Switching the knob on sets all six: threshold, ratio and gain to an uncompressed curve, the
+ * knee to Medium, and attack and release to `COMP_ONE_KNOB_ON`'s. Moving the level afterwards
+ * recomputes the first three and leaves the other three where the switch put them; on the unit's
+ * own COMP screen, none of the curve's handles turns while the knob is on, and neither attack nor
+ * release does.
  */
-export const COMP_ONE_KNOB_DRIVEN: ReadonlySet<string> = new Set(["threshold", "ratio", "gain", "knee"]);
+export const COMP_ONE_KNOB_DRIVEN: ReadonlySet<string> = new Set([
+  "threshold",
+  "ratio",
+  "gain",
+  "knee",
+  "attack",
+  "release",
+]);
+
+/**
+ * What the unit puts in a COMP group's plan-held keys when its 1-knob is switched on, by their
+ * `NodeParams.comp` key: attack and release at the one pair the knob runs at (raw 24870 µs and
+ * 2955 ×10 ms), Auto Makeup off, and the level at 0. The other driven values are the unit's to
+ * compute and the plan's only to mirror (`COMP_ONE_KNOB_DRIVEN`).
+ */
+export const COMP_ONE_KNOB_ON = {
+  attack: 24870 / 1000,
+  release: 2955 / 10,
+  autoMakeup: false,
+  oneKnobLevel: 0,
+} as const;
+
+/** The keys of `COMP_ONE_KNOB_ON` that hold while the knob stays on: attack and release, which
+ *  nothing on the unit moves then, and Auto Makeup, which it cannot be switched to. The level
+ *  is free to move once the knob is on. */
+export const COMP_ONE_KNOB_HELD = ["attack", "release", "autoMakeup"] as const;
+
+/** What setting a COMP group's 1-knob to `on` changes in it, to merge over the group: switched
+ *  on from off, the group takes `COMP_ONE_KNOB_ON` as the unit does; otherwise only the switch
+ *  moves. */
+export function compOneKnobPatch(
+  comp: { oneKnob?: unknown } | undefined,
+  on: boolean,
+): { oneKnob: boolean } & Partial<typeof COMP_ONE_KNOB_ON> {
+  return on && comp?.oneKnob !== true ? { ...COMP_ONE_KNOB_ON, oneKnob: true } : { oneKnob: on };
+}
 
 /** The COMP value Auto Makeup computes while it is on: the gain, recomputed whenever the
  *  threshold or the ratio moves and when Auto Makeup is switched on. */

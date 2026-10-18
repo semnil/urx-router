@@ -61,6 +61,7 @@ import {
   COMP_EQ_COMP_FIRST,
   COMP_ONE_KNOB_DRIVEN,
   compDeviceDriven,
+  compOneKnobPatch,
   EQ_TYPE_PASS,
   EQ_TYPE_PEAKING,
   EQ_TYPE_SHELVING,
@@ -294,8 +295,9 @@ export interface BoundControl extends ControlDesc {
   /** The refusal a write of `v` meets, or null when `set` would take it. A refused write
    *  edits nothing and is reported, where a device lock drops it silently. */
   refuses?(v: number): ControlRefusal | null;
-  /** The node-param paths the last `set` wrote besides `writes`, on this control's node: a
-   *  HI-Z write that lowered A.Gain names `gain`. Empty when it wrote `writes` alone. */
+  /** The node-param paths the last `set` wrote besides `writes`, on the node `writes` names: a
+   *  HI-Z write that lowered A.Gain names `gain`, and a COMP 1-knob switched on names the attack,
+   *  release, Auto Makeup and level it set. Empty when it wrote `writes` alone. */
   alsoWrote?(): readonly string[];
 }
 
@@ -772,8 +774,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
       // COMP is absent in SSMCS mode (the morphing strip replaces it), which is
       // also how the tuning screen learns to refuse to open.
       if (dyn.comp) {
-        // A value the unit computes — threshold / ratio / gain / knee while 1-knob is on,
-        // the gain while Auto Makeup is on — is refused, the set the writer stops sending
+        // A value the unit computes — threshold / ratio / gain / knee / attack / release while
+        // 1-knob is on, the gain while Auto Makeup is on — is refused, the set the writer stops sending
         // and the screen locks (`compDeviceDriven`). Auto Makeup cannot be operated while
         // 1-knob is on either, and the level does nothing while it is off.
         const comp = (): Record<string, unknown> => (plan.nodeParams[id]?.comp ?? {}) as Record<string, unknown>;
@@ -790,7 +792,23 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
             ),
           );
         out.push(subFlag("comp", COMP_SCOPE, "autoMakeup", "autoMakeup", false, oneOn, compKnob));
-        out.push(subFlag("comp", COMP_SCOPE, "oneKnob", "oneKnob", false, undefined, undefined, compKnob));
+        // Switched on, the knob also takes attack, release, Auto Makeup and the level to the
+        // values the unit gives them (`compOneKnobPatch`), and names each of them, since any can
+        // already hold the value it writes.
+        let knobAlsoWrote: readonly string[] = [];
+        out.push({
+          ...subFlag("comp", COMP_SCOPE, "oneKnob", "oneKnob", false, undefined, undefined, compKnob),
+          set: (v) => {
+            const p = np();
+            const patch = compOneKnobPatch(comp(), v >= 0.5);
+            knobAlsoWrote = Object.keys(patch)
+              .filter((k) => k !== "oneKnob")
+              .map((k) => `comp.${k}`);
+            p.comp = { ...comp(), ...patch };
+            return true;
+          },
+          alsoWrote: () => knobAlsoWrote,
+        });
         out.push(
           oneKnobLevel(
             COMP_SCOPE,

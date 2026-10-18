@@ -36,6 +36,10 @@ loads the plan as authored":
   load (core/plan-validate.ts `linkedSendPanProblems`) wherever the document gives it
   another, which is reported as a warning — the plan loads with the pan the unit
   holds there rather than the one it wrote,
+- a COMP whose 1-knob is on and whose attack, release or Auto Makeup is not the value the
+  unit gives it when the knob is switched on (models.json `compOneKnob`) is set to that value
+  on load (core/plan-validate.ts `compOneKnobProblems`), which is reported as a warning — the
+  plan loads with the values the unit holds there rather than the ones it wrote,
 - an on/off written as a number where the model's factory values hold an on/off
   (models.json `booleanLeaves`) is converted on load to on, or to off for 0
   (core/plan-validate.ts `booleanParamProblems`), which is reported as a warning —
@@ -268,6 +272,7 @@ def validate(plan, models):
     warnings.extend(linked_pair_warnings(pairs))
     paired, paired_kept = paired_view(view, model, kept, pairs)
     warnings.extend(linked_send_pan_warnings(paired, model, paired_kept))
+    warnings.extend(comp_one_knob_warnings(paired, model))
     warnings.extend(collection_warnings(view))
     warnings.extend(name_fill_warnings(view, (model.get("factory") or {}).get("nodeNames")))
     warnings.extend(color_warnings(view, model.get("colors"), (model.get("factory") or {}).get("nodeColors")))
@@ -560,6 +565,41 @@ def linked_send_pan_warnings(plan, model, kept):
         label = model["nodes"].get(mix, {}).get("label", mix)
         why = f"{label}'s Pan Link holds it at its source's own PAN / BAL"
         out.append(f"connection {frm} -> {to}: the app sets this send's pan to {pan} on load — {why}")
+    return out
+
+
+def comp_one_knob_warnings(plan, model):
+    """The COMP values the app's load sets (core/plan-validate.ts `compOneKnobProblems`): switching
+    a COMP's 1-knob on sets its attack, release and Auto Makeup on the unit (models.json
+    `compOneKnob.held`), and nothing on the unit moves them while it stays on, so the load sets a
+    document's to those values wherever its 1-knob is on. A key the document leaves out, or holds
+    as a value of the wrong kind, counts as the factory value the load fills in. A node whose
+    `compEqType` is SSMCS carries no COMP, and is not asked."""
+    spec = model.get("compOneKnob") or {}
+    factory = (model.get("factory") or {}).get("nodeParams") or {}
+    node_params = plan.get("nodeParams")
+    node_params = node_params if isinstance(node_params, dict) else {}
+    out = []
+    for node_id in spec.get("nodes", []):
+        comp_eq = sanitized(node_params, node_id, "compEqType")
+        if not isinstance(comp_eq, bool) and comp_eq == spec.get("ssmcs"):
+            continue
+        carried = node_params.get(node_id)
+        comp = carried.get("comp") if isinstance(carried, dict) else None
+        comp = comp if isinstance(comp, dict) else {}
+        if comp.get("oneKnob") is not True:
+            continue
+        filled_comp = (factory.get(node_id) or {}).get("comp") or {}
+        for key, value in spec.get("held", {}).items():
+            stored = comp.get(key)
+            same_kind = isinstance(stored, bool) if isinstance(value, bool) else is_number(stored)
+            effective = stored if same_kind else filled_comp.get(key)
+            if effective == value and isinstance(effective, bool) == isinstance(value, bool):
+                continue
+            shown = json.dumps(value)
+            label = model["nodes"].get(node_id, {}).get("label", node_id)
+            why = f"{label}'s COMP 1-knob is on, and the unit holds {key} at {shown} while it is"
+            out.append(f"node param {node_id}.comp.{key}: the app sets this to {shown} on load — {why}")
     return out
 
 

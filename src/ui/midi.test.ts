@@ -415,6 +415,41 @@ describe("MidiControl", () => {
     expect(keys, "and the partner the mirror wrote").toContain(nodeParamContestPath("ch2", path));
   });
 
+  // Switching a COMP 1-knob on also writes attack, release, Auto Makeup and the level, and any of
+  // them can already hold the value it writes — as after an ON and OFF — so nothing in the plan's
+  // diff says the app touched them. A device read in flight would then take them back. The apply
+  // names each of them, on the member and, where the pair mirror carries them, on the partner.
+  it.each([
+    ["a channel", false],
+    ["a STEREO-linked pair", true],
+  ])("names every value a COMP 1-knob switched on writes, on %s", async (_label, linked) => {
+    localStorage.setItem(
+      "urx-midi",
+      JSON.stringify({ models: { URX44V: [{ control: "ch1/oneKnob@comp", addr: MAPPING.addr, mode: "absolute" }] } }),
+    );
+    const { hooks, plan } = install();
+    const comp = { oneKnob: false, attack: 24.87, release: 295.5, autoMakeup: false, oneKnobLevel: 0 };
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      comp,
+      ...(linked ? { stereoLink: true, panBal: PAN_BAL_BAL } : {}),
+    };
+    plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, comp };
+    await attached();
+    dispatch({ type: "ready" });
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(mocks.inputReceiver).toBeDefined());
+
+    mocks.inputReceiver!([0xb0, 7, 127]);
+    expect(plan.nodeParams.ch1?.comp?.oneKnob).toBe(true);
+    const keys = vi.mocked(hooks.onApplied).mock.calls.at(-1)?.[2] ?? [];
+    for (const key of ["oneKnob", "attack", "release", "autoMakeup", "oneKnobLevel"]) {
+      expect(keys, `CH 1 ${key}`).toContain(nodeParamContestPath("ch1", `comp.${key}`));
+      if (linked) expect(keys, `CH 2 ${key}`).toContain(nodeParamContestPath("ch2", `comp.${key}`));
+      else expect(keys, `CH 2 ${key}`).not.toContain(nodeParamContestPath("ch2", `comp.${key}`));
+    }
+  });
+
   it("names the partner's send parameter", async () => {
     localStorage.setItem(
       "urx-midi",

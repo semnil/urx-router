@@ -205,6 +205,13 @@ or inside a group — is written `true` / `false`: a number there loads converte
   of them.
   The top stop is the unit's `INF:1` and is written as **655.35** (JSON has no
   infinity to carry).
+  With `oneKnob` true the unit runs the compressor from `oneKnobLevel` alone:
+  switching the knob on sets `attack` to **24.87**, `release` to **295.5** and
+  `autoMakeup` to false, and nothing on the unit moves them while it stays on, so
+  the load sets a plan's to those values wherever its `oneKnob` is true (an absent
+  key counts as its factory value). `threshold`, `ratio`, `gain` and `knee` are the
+  unit's to compute from the level and are not sent while the knob is on — write a
+  1-knob COMP as the switch and the level.
 - `ducker` — `{ threshold, range (dB), attack, decay (ms) }`; `duckerOn` (bool).
   Set these under the **ducker node's id** (`out.ducker1` …, kind `ducker` in
   the model reference), never under the channel it ducks — a channel id

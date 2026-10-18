@@ -1647,6 +1647,46 @@ describe("the compressor's panel", () => {
     expect(comp().oneKnobLevel).toBe(Number(level.value));
     screen.close();
   });
+
+  // Switching 1-knob on sets the unit's attack, release, Auto Makeup and level, and the unit's
+  // COMP screen offers attack and release no more while it stays on. The plan takes the same
+  // values, so the rows read what the unit holds, and they lock. Switching it off moves nothing
+  // but the switch.
+  it("takes attack, release, Auto Makeup and the level to the knob's values as 1-knob comes on", () => {
+    host = dynHost();
+    const comp0 = host.plan.nodeParams["ch1"]?.comp as Record<string, unknown>;
+    host.plan.nodeParams["ch1"] = {
+      ...host.plan.nodeParams["ch1"],
+      comp: { ...comp0, attack: 10, release: 100, autoMakeup: true, oneKnobLevel: 60 },
+    };
+    const screen = new DynScreen(host.hooks);
+    screen.open(COMP, "ch1");
+    const comp = (): Record<string, unknown> => (host.plan.nodeParams["ch1"]?.comp ?? {}) as Record<string, unknown>;
+    const knobButton = (text: string): HTMLButtonElement =>
+      [
+        ...[...host.box.querySelectorAll<HTMLElement>(".prefs-section")]
+          .find((s) => s.querySelector("h3")?.textContent === t().inspector.oneKnob)!
+          .querySelectorAll<HTMLButtonElement>(".prefs-row button"),
+      ].find((b) => b.textContent === text)!;
+    expect(rowsByKey(host.box).get("attack")!.disabled).toBe(false);
+
+    knobButton(t().inspector.on).click();
+    expect(comp()).toMatchObject({ oneKnob: true, attack: 24.87, release: 295.5, autoMakeup: false, oneKnobLevel: 0 });
+    expect(rowsByKey(host.box).get("attack")!.disabled).toBe(true);
+    expect(rowsByKey(host.box).get("release")!.disabled).toBe(true);
+
+    host.plan.nodeParams["ch1"] = { ...host.plan.nodeParams["ch1"], comp: { ...comp(), oneKnobLevel: 40 } };
+    knobButton(t().inspector.off).click();
+    expect(comp()).toMatchObject({
+      oneKnob: false,
+      attack: 24.87,
+      release: 295.5,
+      autoMakeup: false,
+      oneKnobLevel: 40,
+    });
+    expect(rowsByKey(host.box).get("attack")!.disabled).toBe(false);
+    screen.close();
+  });
 });
 
 // The line that says nothing here reaches the signal. It belongs to the host rather than

@@ -692,6 +692,8 @@ export const ja: Messages = {
       `数値で書かれていたオン/オフの値 ${count} 件を、オン/オフの値に変換しました`,
     linkedSendPansAligned: (count: number): string =>
       `Pan Link がオンの MIX への SEND PAN ${count} 件を、Send 元自身の PAN / BAL にそろえました`,
+    compOneKnobsAligned: (count: number): string =>
+      `COMP の 1-knob がオンのチャンネル ${count} 件で、Attack・Release・Auto Makeup を本体と同じ値にそろえました`,
     streamingSourceUnlisted: "本体の STREAMING が一覧に無い状態だったため、計画では STEREO にしました",
     planLoaded: "計画を読み込みました",
     phantomHiZBothOn: (channels: string): string => `${channels} で +48V と Hi-Z が両方オンになっています`,

@@ -12,7 +12,13 @@ import { factoryNodeColors, factoryNodeNames, factoryNodeParams, fillFactoryPara
 import { getModel, MODEL_IDS } from "../models";
 import { insertFxCensus } from "./constraints";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
-import { isPlanColor, type InsertFxSlot } from "./control/params";
+import {
+  COMP_EQ_COMP_FIRST,
+  COMP_ONE_KNOB_HELD,
+  COMP_ONE_KNOB_ON,
+  isPlanColor,
+  type InsertFxSlot,
+} from "./control/params";
 import {
   fixedConnection,
   isPlainRecord,
@@ -33,6 +39,7 @@ import {
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "./plan";
 import {
   admitLeaf,
+  channelDynamics,
   colorControl,
   effectiveInsertFx,
   insertFxControl,
@@ -643,6 +650,62 @@ export function applyLinkedSendPans(model: DeviceModel, plan: Plan, problems: Li
   }
 }
 
+/** A COMP group whose 1-knob is on, holding an attack, a release or an Auto Makeup other than the
+ *  one the knob gives it (`COMP_ONE_KNOB_ON`). Switching the knob on sets all three on the unit,
+ *  and nothing on the unit moves them while it stays on, so the values a document carries are
+ *  ones the unit never holds there — while the tuning screen, the MIDI feedback and the next save
+ *  all read them. The loader sets them to the knob's values and says so.
+ *
+ *  Counted the way the write sees it: a key the document leaves out is the factory value the
+ *  fill gives it, and a value of the wrong kind is one the range check drops to that value.
+ *  Read on the plan as the linked-pair copy leaves it, since a STEREO-linked pair holds its COMP
+ *  once. Like every check in this file it does NOT run on a device readback or the `.urxf`
+ *  import: there the unit's own values arrive. */
+export interface CompOneKnobProblem {
+  reason: "compOneKnob";
+  node: string;
+  /** Each held key off the knob's value, with what the document carries there (absent where it
+   *  names none) and the value the loader writes. */
+  keys: { key: (typeof COMP_ONE_KNOB_HELD)[number]; stored?: unknown; value: number | boolean }[];
+}
+
+/** Every COMP group whose 1-knob is on and whose held keys are off the knob's values, in model
+ *  order. */
+export function compOneKnobProblems(model: DeviceModel, plan: Plan): CompOneKnobProblem[] {
+  const out: CompOneKnobProblem[] = [];
+  for (const node of model.nodes) {
+    const np = plan.nodeParams[node.id];
+    if (!channelDynamics(model, node.id, np?.compEqType ?? COMP_EQ_COMP_FIRST)?.comp) continue;
+    const comp = (np?.comp ?? {}) as Record<string, unknown>;
+    if (comp.oneKnob !== true) continue;
+    const factory = (factoryNodeParams(model.id, node.id)?.comp ?? {}) as Record<string, unknown>;
+    const keys: CompOneKnobProblem["keys"] = [];
+    for (const key of COMP_ONE_KNOB_HELD) {
+      const value = COMP_ONE_KNOB_ON[key];
+      const stored = comp[key];
+      const effective =
+        typeof stored === typeof value && (typeof stored !== "number" || Number.isFinite(stored))
+          ? stored
+          : factory[key];
+      if (effective === value) continue;
+      keys.push({ key, ...(stored === undefined ? {} : { stored }), value });
+    }
+    if (keys.length > 0) out.push({ reason: "compOneKnob", node: node.id, keys });
+  }
+  return out;
+}
+
+/** Set each reported group's held keys to the knob's values. Separate from finding them for the
+ *  reason `applyParamRange` is. */
+export function applyCompOneKnobs(plan: Plan, problems: CompOneKnobProblem[]): void {
+  for (const { node, keys } of problems) {
+    const np = plan.nodeParams[node] ?? {};
+    const comp = { ...np.comp } as Record<string, unknown>;
+    for (const { key, value } of keys) comp[key] = value;
+    plan.nodeParams[node] = { ...np, comp: comp as NodeParams["comp"] };
+  }
+}
+
 /** A node colour that is no plan colour (`isPlanColor`) — not one of the unit's ten palette
  *  hexes, nor `COLOR_OFF`. The write sends nothing for one while every surface would paint
  *  whatever the string says, so the loader drops it — the fill then gives a colourable node its
@@ -762,7 +825,8 @@ export function applyBooleanParams(plan: Plan, problems: BooleanParamProblem[]):
  *  given no source (completed, then reported), a send listed without a level (completed,
  *  then reported), a linked pair whose members disagree (the primary copied onto the
  *  secondary, then reported), a linked send pan off its source's value (set to it, then
- *  reported), an on/off written as a number (converted, then reported), a colour that is no
+ *  reported), a COMP 1-knob that is on beside an attack, release or Auto Makeup it never runs
+ *  with (set to the knob's, then reported), an on/off written as a number (converted, then reported), a colour that is no
  *  plan colour (dropped, then reported), or a name or note in a form the app does not keep
  *  (rewritten, then reported). */
 export type LoadProblem =
@@ -774,6 +838,7 @@ export type LoadProblem =
   | SendLevelProblem
   | LinkedPairProblem
   | LinkedSendPanProblem
+  | CompOneKnobProblem
   | BooleanParamProblem
   | NodeColorProblem
   | DocumentTextProblem;
@@ -786,7 +851,8 @@ export type LoadProblem =
 // it, which is the order the loader applies them in: `panLink: 1` is a linked MIX to the
 // send-pan check, and `stereoLink: 1` a linked pair to the insert-FX pair check. The send-pan
 // check reads it as the linked-pair copy leaves it too, since in BAL that copy moves the pans
-// it compares against.
+// it compares against, and so does the COMP 1-knob check, since the copy carries a pair's COMP
+// onto its secondary.
 export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
   const booleans = booleanParamProblems(model, plan);
   const read = booleans.length > 0 ? structuredClone(plan) : plan;
@@ -804,6 +870,7 @@ export function planProblems(model: DeviceModel, plan: Plan): LoadProblem[] {
     ...sendLevelProblems(model, read),
     ...pairs,
     ...linkedSendPanProblems(model, paired),
+    ...compOneKnobProblems(model, paired),
     ...nodeColorProblems(read),
     ...documentTextProblems(read),
   ];
@@ -821,6 +888,7 @@ export function isRefusal(problem: LoadProblem): boolean {
     problem.reason !== "sendLevel" &&
     problem.reason !== "linkedPair" &&
     problem.reason !== "linkedSendPan" &&
+    problem.reason !== "compOneKnob" &&
     problem.reason !== "booleanParam" &&
     problem.reason !== "nodeColor" &&
     problem.reason !== "documentText"
@@ -829,7 +897,8 @@ export function isRefusal(problem: LoadProblem): boolean {
 
 /** Whether a problem stops the load until the operator answers. A refusal does not — there
  *  is nothing to answer — and neither a normalized range, a completed source, a linked send
- *  pan set to its source's value nor a converted on/off does: each is
+ *  pan set to its source's value, a COMP 1-knob's held values set to the knob's nor a converted
+ *  on/off does: each is
  *  repaired before the document opens and reported on the status line, which is where
  *  architecture.md puts a partial success. Only the slot collision leaves a document the app
  *  can open and the unit cannot run, which is a decision and nobody else's. */
@@ -845,6 +914,7 @@ export interface LoadRepairs {
   sendLevels: SendLevelProblem[];
   linkedPairs: LinkedPairProblem[];
   linkedPans: LinkedSendPanProblem[];
+  oneKnobs: CompOneKnobProblem[];
   colors: NodeColorProblem[];
   texts: DocumentTextProblem[];
 }
@@ -854,7 +924,8 @@ export interface LoadRepairs {
  *  bounded or dropped, a receiver the unit never leaves without a source gets the one a new plan
  *  carries, a send listed without a level gets the one the write sends, a linked pair's
  *  secondary takes its primary's shared values, a send into a MIX whose Pan Link is on
- *  takes its source's own pan / balance, a colour that is no plan colour is dropped, and a name
+ *  takes its source's own pan / balance, a COMP group whose 1-knob is on takes the knob's attack,
+ *  release and Auto Makeup, a colour that is no plan colour is dropped, and a name
  *  or a note is rewritten to the form the app keeps.
  *  Refusals and decisions are the caller's; the reasons they carry are not repaired here. */
 export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadProblem[]): LoadRepairs {
@@ -870,11 +941,13 @@ export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadP
   applyLinkedPairs(model, plan, linkedPairs);
   const linkedPans = problems.filter((p) => p.reason === "linkedSendPan");
   applyLinkedSendPans(model, plan, linkedPans);
+  const oneKnobs = problems.filter((p) => p.reason === "compOneKnob");
+  applyCompOneKnobs(plan, oneKnobs);
   const colors = problems.filter((p) => p.reason === "nodeColor");
   applyNodeColors(plan, colors);
   const texts = problems.filter((p) => p.reason === "documentText");
   applyDocumentText(plan, texts);
-  return { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, colors, texts };
+  return { booleans, ranged, supplied, sendLevels, linkedPairs, linkedPans, oneKnobs, colors, texts };
 }
 
 /** Give each node's selected insert effect every engine slot it leaves out, at that type's own

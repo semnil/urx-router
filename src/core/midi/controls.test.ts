@@ -554,9 +554,42 @@ describe("channel tuning screen parameters", () => {
     // about Auto Makeup; only the level is left.
     expect(thr.set(0.9)).toBe(false);
     expect(bindControl(model, plan, "ch1/ratio@comp")!.set(0.9)).toBe(false);
+    // …and holds attack and release where the switch put them.
+    expect(bindControl(model, plan, "ch1/attack@comp")!.set(0.9)).toBe(false);
+    expect(bindControl(model, plan, "ch1/release@comp")!.set(0.9)).toBe(false);
     expect(auto.set(0)).toBe(false);
     expect(level.set(0.5)).toBe(true);
     expect(plan.nodeParams.ch1?.comp?.oneKnobLevel).toBe(50);
+  });
+
+  // The unit's switch sets attack, release, Auto Makeup and the level; a controller's press is
+  // the same switch, so the plan takes the same values, and a press that turns it off moves
+  // only the switch.
+  it("takes attack, release, Auto Makeup and the level to the knob's values as COMP 1-knob comes on", () => {
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      comp: { ...plan.nodeParams.ch1?.comp, attack: 10, release: 100, autoMakeup: true, oneKnobLevel: 60 },
+    };
+    const knob = bindControl(model, plan, "ch1/oneKnob@comp")!;
+    expect(knob.set(1)).toBe(true);
+    expect(plan.nodeParams.ch1?.comp).toMatchObject({
+      oneKnob: true,
+      attack: 24.87,
+      release: 295.5,
+      autoMakeup: false,
+      oneKnobLevel: 0,
+    });
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, comp: { ...plan.nodeParams.ch1?.comp, oneKnobLevel: 40 } };
+    // A second press of ON is the switch the unit already holds.
+    expect(knob.set(1)).toBe(true);
+    expect(plan.nodeParams.ch1?.comp?.oneKnobLevel).toBe(40);
+    expect(knob.set(0)).toBe(true);
+    expect(plan.nodeParams.ch1?.comp).toMatchObject({
+      oneKnob: false,
+      attack: 24.87,
+      release: 295.5,
+      oneKnobLevel: 40,
+    });
   });
 
   it("refuses the band values while EQ 1-knob is on", () => {

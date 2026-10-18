@@ -139,7 +139,10 @@ flowchart TD
   は自身の工場出荷値ではなくプライマリーの値を持つ。インサートエフェクトは引き続き拒否の側が扱う。Pan Link が入の MIX
   バスへの送りが送り元自身と違うパンを持っていれば、同じく送り元の値にそろえ、同じ行で伝える。このときペアは
   写した後の状態で読む — BAL では写しが送りの固定先のバランスを動かすためである
-  (`linkedSendPanProblems`。「リセット連鎖と、収束ラウンドが送るもの」節)。数値で書かれたオン/オフ
+  (`linkedSendPanProblems`。「リセット連鎖と、収束ラウンドが送るもの」節)。1-knob が入の COMP が、ノブの値と違う
+  Attack・Release・Auto Makeup を持っていれば — ノブを入れると実機は 3 つともその値にし、入っている間は実機の上で
+  何も動かさない — 同じくノブの値にそろえ、同じ行で伝える。文書に無いキーは補完が与える工場出荷値として、ペアは
+  写した後の状態で読む (`compOneKnobProblems`。channel-tuning.md の「COMP」節)。数値で書かれたオン/オフ
   — 機種の工場出荷値が同じノードの同じパスで真偽値として持つ葉 — は、書き込みが送るオン/オフ (0 はオフ、
   それ以外の数値はオン) に変換し、同じ行で伝える (`booleanParamProblems`)。これが最初に走り、ほかの検査は
   すべて変換後の文書を読む。書き込みにとってと同じく、`panLink: 1` は送りのパンの検査にとってリンク中の
@@ -1631,7 +1634,7 @@ macOS ではアームしたコントロールをクリックした瞬間に**メ
   得る。両者がそのグリッドへどの道で到達するか、そしてそれが MIDI 値とドラッグしたスライダーを同じ値に
   載せる範囲と載せない範囲は channel-tuning.md の「MIDI 割り当て」が持つ。
   デバイスロックは書込みを拒否する: FIXED Bus の送りレベル・pan・PRE/POST、Pan Link の送り pan、176.4/192 kHz のステレオ
-  CH EQ、COMP 1-knob 中の threshold / ratio / gain と Auto Makeup (実機が算出する)、1-knob OFF 中の COMP 1-knob
+  CH EQ、COMP 1-knob 中の threshold / ratio / gain / attack / release と Auto Makeup (実機が決める)、1-knob OFF 中の COMP 1-knob
   レベル、EQ 1-knob 中の全バンド値、フィルタタイプが読まない Q / gain。列挙セレクタ (COMP の knee、EQ の
   フィルタタイプと 1-knob タイプ) はコントロール自体を持たない。+48V と HI-Z の拒否は形が違う: チャンネルが読むジャックで
   片方がオンの間にもう片方をオンにする書込はコントロール自身が拒否し (`refuses`)、捨てずにステータス行へ
