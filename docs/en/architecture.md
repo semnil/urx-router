@@ -2937,7 +2937,7 @@ it read included; a reconcile reads the names of the nodes it covers and takes t
 | Session start | `begin` from the starting read's clone | `reset` |
 | App edit, `markChanged` | per address, as its own write returns | entry opened, closed at the gesture boundary |
 | Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands, and an entry already recorded takes a nested `nodeParams` / `connParams` leaf only where its `before` AND its `after` both hold what the read measured from — both sides then take the read's value, and a whole field is never folded |
-| Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect, when the read authored at least one key (`followAuthored`) |
+| Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect, when the read authored at least one key besides the sample rate (`followAuthored`); a read that moved the sample rate alone is `absorb`ed at its hook (`followAuthor`) |
 | Side-effect refetch | `capture` from the read's clone for the nodes it read, their names excepted since the read carries none, then the same journal replay | `absorb` of the device-authored keys only |
 | Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel, then the journal replay for the notifies stamped after the freeze — less an address a converge write the unit accepted has replaced since | untouched |
 
@@ -2975,7 +2975,8 @@ The reflect is coalesced across *producers*, so it cannot know what the device a
 history is settled at each producer's own site (see the table above) and not here. Its full branch calls
 `PlanHistory.reset` when the reconciles behind it authored at least one key (`followAuthored`), because such a
 readback re-authored the plan's values and no earlier entry describes a state it can return to; a reconcile that
-agreed with the plan at every key leaves both stacks as they were.
+agreed with the plan at every key leaves both stacks as they were, and one that moved the sample rate alone takes it
+into the baseline at its hook (`followAuthor`) and leaves them as well.
 
 #### What is discarded, and where
 
@@ -4418,8 +4419,8 @@ An undo is refused, with the reason on the status line and **without spending th
   the open entry is **closed**, not merely before it is consumed, so the press is exact when it is
   retried. A reconcile whose read changed a value resets the history in its reflect a moment later, so
   there the refused entry is one the operator loses — visibly, rather than as an edit that may or may
-  not have reached the unit; a reconcile that agreed with the plan at every key leaves the entry for the
-  retry. Those three deliberately do **not** refuse a file flow: they start on
+  not have reached the unit; a reconcile that agreed with the plan at every key, or changed the sample
+  rate alone, leaves the entry for the retry. Those three deliberately do **not** refuse a file flow: they start on
   their own and nothing on screen names them, so the plan-replacement side is handled at the read
   instead (`loadPlan` ends the session and abandons the read; the read is bound to the plan it was
   issued for and drops its result if that plan is gone). The 1-knob refetch holds the refusal
@@ -4466,7 +4467,8 @@ can return to: a **new document** (`loadPlan` — New / Open / a drop / a recent
 / the model switch a Fetch or Live-sync start offers, applied once its read has landed complete / the `?plan=`
 deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch, Live-sync start
 and a `.urxf` import made with no session up; plus device-follow's reconciles, scoped or full, once their read has
-authored at least one key). A `.urxf` import made during a session is an edit instead: it keeps both stacks and is
+authored at least one key besides the sample rate — one that moved the rate alone takes it into the baseline and
+keeps both stacks). A `.urxf` import made during a session is an edit instead: it keeps both stacks and is
 one entry of its own, an entry open on either side of it closed as it stands (`PlanHistory.commit`). A side-effect
 refetch only takes the keys the device authored into the baseline, keeping the entries already
 recorded. A read that refuses a +48V / HI-Z ON — made while it was in

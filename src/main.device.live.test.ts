@@ -12,6 +12,7 @@ import { levelToVd } from "./core/control/vd";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, PARAMS } from "./core/control/params";
 import { nameControl } from "./core/control/translate";
 import { getModel } from "./models";
+import { EDIT_MENU_EVENT, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
 import { spoken } from "./ui/glyph";
 import {
@@ -37,6 +38,7 @@ import {
   streamingWrites,
   streamingDrawn,
   quiet,
+  turnOscOn,
 } from "./main.device.test-util";
 
 describe("the live session", () => {
@@ -409,6 +411,55 @@ describe("the live session", () => {
     // there. Before the fix, the reflect reset both stacks and this chord did nothing.
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(slider().getAttribute("aria-valuenow")).toBe(before), { timeout: 10_000 });
+  });
+
+  // A reconcile that read back a sample rate the unit moved, and nothing else, takes the rate
+  // into the baseline and leaves every entry standing; one that read back another key as well
+  // drops both stacks, as any reconcile that authored a key does. The unit moves on its own
+  // panel: its table is written directly and the rate announced.
+  it.each([
+    ["keeps", "the sample rate alone", false],
+    ["drops", "the sample rate and CH 1's fader", true],
+  ])("%s the undo history through a reconcile that read back %s", SLOW, async (_, __, fader) => {
+    const RATE = PARAMS.SAMPLE_RATE.id;
+    const table = deviceCommands(
+      { "plugin:dialog|message": "Ok" },
+      { [`${RATE}/0/0`]: 48_000, [`${PARAMS.FOLLOW_USB.id}/0/0`]: 0 },
+    );
+    const shell = (await bootApp({ tauri: table }))!;
+    const oscWrites = (from: number): number[] =>
+      shell.invokes.flatMap((cmd, i) =>
+        i >= from && cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.OSC_ON.id
+          ? [shell.args[i]!.value as number]
+          : [],
+      );
+    $("btn-live").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    turnOscOn();
+    selectNode("ch1"); // the press that ends the edit's entry
+    await new Promise((r) => setTimeout(r, 0));
+    await vi.waitFor(() => expect(oscWrites(0)).toEqual([1]), { timeout: 15_000 });
+    await quiet(shell);
+
+    const panel = table.vd_set as (a: Record<string, unknown>) => unknown;
+    panel({ paramId: RATE, x: 0, y: 0, value: 96_000 });
+    if (fader) panel({ paramId: PARAMS.CH_FADER.id, x: 0, y: 0, value: levelToVd(-10) });
+    notifyChannel(shell).onmessage([{ param_id: RATE, x: 0, y: 0, value: 96_000 }]);
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("96000"), { timeout: 20_000 });
+
+    // A press refused while a follow read runs is left where it was, so the next one is the same press.
+    let at = 0;
+    await vi.waitFor(
+      () => {
+        at = shell.invokes.length;
+        expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+        expect(statusText()).not.toBe(t().status.undoDeviceBusy);
+      },
+      { timeout: 15_000, interval: 50 },
+    );
+    if (fader) expect(statusText()).toBe(t().status.nothingToUndo);
+    else
+      await vi.waitFor(() => expect(oscWrites(at), "the edit made before the read").toEqual([0]), { timeout: 15_000 });
   });
 
   // A follow read is all or nothing, as the session's starting read is: one that comes back
