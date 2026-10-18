@@ -55,9 +55,12 @@ export type UpdateCheckOutcome =
   | { kind: "busy" };
 
 export interface PrefsHooks {
-  /** Live sync is up: the device scope is part of the held session (snapshot +
-   *  notify registration), so its control locks until the session ends. */
-  isLive: () => boolean;
+  /** The device scope changed. A session is built for one scope (its snapshot and its
+   *  notify registration), so the shell builds it again for the new one. */
+  onDeviceScopeChanged: () => void;
+  /** A session is starting, the one a scope change starts again included: the device scope
+   *  holds still until it is up or has failed. */
+  isDeviceScopeHeld: () => boolean;
   /** The recent-plans store changed (trim / clear); the shell re-renders. */
   onRecentChanged: (list: RecentEntry[]) => void;
   /** A warning-visibility toggle changed; the shell re-renders the warning cards. */
@@ -180,10 +183,11 @@ export class PrefsPanel {
     }
     {
       const sec = this.section(m.deviceSection);
-      const locked = !desktop || this.hooks.isLive();
-      const scopeToggle = this.choice(m.scopeAll, m.scopeScene, s.deviceScope === "all", (all) =>
-        this.apply({ deviceScope: all ? "all" : "scene" }),
-      );
+      const locked = !desktop || this.hooks.isDeviceScopeHeld();
+      const scopeToggle = this.choice(m.scopeAll, m.scopeScene, s.deviceScope === "all", (all) => {
+        this.apply({ deviceScope: all ? "all" : "scene" });
+        this.hooks.onDeviceScopeChanged();
+      });
       scopeToggle.id = "prefs-device-scope";
       sec.append(
         this.row(m.scope, scopeToggle, locked, !desktop),
@@ -425,8 +429,8 @@ export class PrefsPanel {
 
   // `locked` disables the control (not applicable in this build / state); `tag` adds
   // the dashed "Desktop app only" pill and defaults to the lock, since a locked row
-  // is desktop-gated at every site except the device scope (which also locks while
-  // live, without the tag).
+  // is desktop-gated at every site except the device scope (which also locks while a
+  // session starts, without the tag).
   private row(labelText: string, control: HTMLElement, locked = false, tag = locked): HTMLElement {
     return settingsRow(labelText, control, { locked, tag: tag ? t().prefs.desktopOnly : undefined });
   }

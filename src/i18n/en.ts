@@ -1028,6 +1028,8 @@ export const en = {
     liveConnecting: tr("Connecting for live sync…"),
     liveOn: (model: string, n: number): string => `Live sync on · ${model} · ${n} setting${n === 1 ? "" : "s"} read`,
     liveOff: tr("Live sync off"),
+    // The device scope changed while Live sync was up: the session is started again for the new scope.
+    liveRescoped: tr("Device scope changed — starting Live sync again for the new scope"),
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: tr("← device…"),
     liveFollowed: (n: number): string => `← device (${n})`,

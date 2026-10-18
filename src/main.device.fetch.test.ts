@@ -1533,6 +1533,184 @@ describe("a scoped read under the Scene only device scope", () => {
     return shell;
   };
 
+  // A session is built for one scope. Changing the scope while it is up starts it again, and
+  // the start reads the unit for the new scope: the oscillator's assign the scene scope left
+  // as the plan's is now read from the unit.
+  it("starts the session again for a device scope changed while it is up", SLOW, async () => {
+    const shell = await sceneSession();
+    const connects = shell.count("vd_connect");
+    $("btn-prefs").click();
+    document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button")[0].click();
+    await vi.waitFor(() => expect(shell.count("vd_connect"), "a new session connected").toBeGreaterThan(connects), {
+      timeout: 15_000,
+    });
+    await liveUp();
+    await vi.waitFor(() => expect(oscDrawn(), "the unit's assign, read for the whole scope").toEqual(["bus.fx1:in"]), {
+      timeout: 15_000,
+    });
+    $("prefs-modal").querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
+    live().click();
+    await invoked(shell, "vd_disconnect");
+  });
+
+  /** The scene-scope unit of `sceneSession`, whose first read of a send level waits once `arm`
+   *  is called — `held()` from then — until `release` answers it or `refuse` refuses it. */
+  const heldReadUnit = (): {
+    commands: Record<string, unknown>;
+    arm: () => void;
+    held: () => boolean;
+    release: () => void;
+    refuse: () => void;
+  } => {
+    const commands = deviceCommands({ "plugin:dialog|message": "Ok" }, { [`${PARAMS.OSC_ASSIGN_FX.id}/0/0`]: 1 });
+    const get = commands.vd_get as (a: Record<string, unknown>) => unknown;
+    let armed = false;
+    let waiting = false;
+    let answer = (_refused: boolean): void => {};
+    const answered = new Promise<boolean>((done) => (answer = done));
+    commands.vd_get = async (a: Record<string, unknown>) => {
+      if (armed && a.paramId === PARAMS.SEND_LEVEL.id) {
+        armed = false;
+        waiting = true;
+        if (await answered) throw new Error("refused");
+      }
+      return get(a);
+    };
+    return {
+      commands,
+      arm: () => (armed = true),
+      held: () => waiting,
+      release: () => answer(false),
+      refuse: () => answer(true),
+    };
+  };
+  const scopeButtons = (): HTMLButtonElement[] => [
+    ...document.querySelectorAll<HTMLButtonElement>("#prefs-device-scope button"),
+  ];
+
+  // The device scope holds still while a session starts: its read takes the scope it finds,
+  // and its snapshot and registration the scope they find once the read is done.
+  it("holds the device scope still while a session starts", SLOW, async () => {
+    const unit = heldReadUnit();
+    const shell = (await bootApp({
+      seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) },
+      tauri: unit.commands,
+    }))!;
+    unit.arm();
+    live().click();
+    await vi.waitFor(() => expect(unit.held(), "the starting read is under way").toBe(true), { timeout: 15_000 });
+    $("btn-prefs").click();
+    expect(scopeButtons().map((b) => b.disabled)).toEqual([true, true]);
+    unit.release();
+    await liveUp();
+    await quiet(shell);
+    expect(
+      scopeButtons().map((b) => b.disabled),
+      "open once the session is up",
+    ).toEqual([false, false]);
+    expect(oscDrawn(), "the scene scope kept the plan's assign").toEqual(["bus.stereo:in"]);
+    live().click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(() =>
+      expect(
+        scopeButtons().map((b) => b.disabled),
+        "open once the session has ended",
+      ).toEqual([false, false]),
+    );
+    $("prefs-modal").querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
+  });
+
+  // A session that fails to start lets the device scope go with the link.
+  it("lets the device scope go when a session fails to start", SLOW, async () => {
+    const unit = heldReadUnit();
+    const shell = (await bootApp({
+      seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) },
+      tauri: unit.commands,
+    }))!;
+    unit.arm();
+    live().click();
+    await vi.waitFor(() => expect(unit.held(), "the starting read is under way").toBe(true), { timeout: 15_000 });
+    $("btn-prefs").click();
+    expect(scopeButtons().map((b) => b.disabled)).toEqual([true, true]);
+    unit.refuse();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(() =>
+      expect(
+        scopeButtons().map((b) => b.disabled),
+        "open once the start has failed",
+      ).toEqual([false, false]),
+    );
+    expect(live().getAttribute("aria-checked"), "no session came up").not.toBe("true");
+    $("prefs-modal").querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
+  });
+
+  // …and so does one whose connect is refused, which never reaches a session to end.
+  it("lets the device scope go when a session's connect is refused", SLOW, async () => {
+    const unit = heldReadUnit();
+    let refuse = (): void => {};
+    const refused = new Promise<void>((done) => (refuse = done));
+    let connecting = false;
+    unit.commands.vd_connect = async () => {
+      connecting = true;
+      await refused;
+      throw new Error("no broker");
+    };
+    const shell = (await bootApp({
+      seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) },
+      tauri: unit.commands,
+    }))!;
+    live().click();
+    await vi.waitFor(() => expect(connecting, "the connect is under way").toBe(true), { timeout: 15_000 });
+    $("btn-prefs").click();
+    expect(scopeButtons().map((b) => b.disabled)).toEqual([true, true]);
+    refuse();
+    await vi.waitFor(() =>
+      expect(
+        scopeButtons().map((b) => b.disabled),
+        "open once the connect is refused",
+      ).toEqual([false, false]),
+    );
+    expect(shell.count("vd_disconnect"), "there was no session to end").toBe(0);
+    $("prefs-modal").querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
+  });
+
+  // …and while a scope change starts it again, from the change until the new session is up.
+  it("holds the device scope still while a changed scope starts the session again", SLOW, async () => {
+    const unit = heldReadUnit();
+    const shell = (await bootApp({
+      seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) },
+      tauri: unit.commands,
+    }))!;
+    live().click();
+    await liveUp();
+    await quiet(shell);
+    unit.arm();
+    $("btn-prefs").click();
+    scopeButtons()[0].click();
+    expect(
+      scopeButtons().map((b) => b.disabled),
+      "held from the change",
+    ).toEqual([true, true]);
+    await vi.waitFor(() => expect(unit.held(), "the new session's read is under way").toBe(true), { timeout: 15_000 });
+    expect(
+      scopeButtons().map((b) => b.disabled),
+      "held while it reads",
+    ).toEqual([true, true]);
+    unit.release();
+    await liveUp();
+    await quiet(shell);
+    await vi.waitFor(() =>
+      expect(
+        scopeButtons().map((b) => b.disabled),
+        "open once it is up",
+      ).toEqual([false, false]),
+    );
+    expect(oscDrawn(), "the whole scope read the unit's assign").toEqual(["bus.fx1:in"]);
+    $("prefs-modal").querySelector<HTMLButtonElement>(".consent-btn-secondary")!.click();
+    live().click();
+    await invoked(shell, "vd_disconnect");
+  });
+
   it("keeps the plan's assigns through a follow read of an FX channel", SLOW, async () => {
     const shell = await sceneSession();
     const send = planToCommands(model(), defaultPlan("URX44V")).find(

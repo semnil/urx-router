@@ -684,7 +684,7 @@ carries a one-line map of the same directories and points here.
   `urx-theme`, read before settings load) + device read/write scope + plan-file save scope + update check +
   warning visibility + wheel step + fine style + the idle-sleep hold (taken only while Live sync is up, and
   stored only once the OS agreed) + export scale/background + recent plans; rows needing the desktop shell
-  render locked with a "Desktop app only" tag, and the device scope locks while Live sync is up — see
+  render locked with a "Desktop app only" tag, and changing the device scope during Live sync starts the session again (the control holds still while a session starts) — see
   "Preferences") / `link-stats.ts` the link ledger's face: **two of the ledger's rows** (`Link up` /
   `No answer`) at the right end of the status bar and the full ledger on click, live while a session is up
   and **only under `--experimental`**. The bar is a subset held to it by
@@ -4607,8 +4607,11 @@ what the desktop app offers.
   reconcile and a `sideEffect: "refetch"` read — take the same keep and restore (`applyNodeStateScoped`), since a
   node read there carries scene-external values of its own (the oscillator's assign into STEREO, a MIX or an FX
   channel). The diagnostics (compare / self-test / prepare) always
-  run at full scope, and the control locks while Live sync is up, since the scope is part of the
-  held session's snapshot and notify registration. A scene-only write also skips the sample-rate
+  run at full scope. A session is built for one scope — its snapshot and its notify registration — so changing
+  the scope while one is up ends it and starts it again once its link is given back, and the start reads the unit
+  for the new scope. The control holds still while a session holds the link and is not up — while one starts, the
+  one a change starts again included — since a starting session's read takes the scope it finds and its snapshot and
+  registration the scope they find once the read is done. A scene-only write also skips the sample-rate
   settle: the rate is out of scope, so the device keeps its own clock.
 - **Plan-file save scope** — full plan (default) or scene only, applied to file save, the share
   URL and the demo JSON download (see Persistence format below for the document shape and the
