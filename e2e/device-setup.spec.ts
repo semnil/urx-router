@@ -1,5 +1,5 @@
 import { test, expect, colorToken, contrastRatio, textContrast } from "./fixtures";
-import { dialogsOf, stubTauriDevice, strWritesOf, writesOf } from "./tauri-stub";
+import { LIVE_COMMANDS, dialogsOf, stubTauriDevice, strWritesOf, writesOf } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 
 // The device setup screen: the unit's SETUP > GENERAL settings, which no node on
@@ -8,9 +8,9 @@ import { chooseOption } from "./choose-option";
 // sends only the differences — so the two things worth pinning are that opening
 // writes nothing and that applying writes exactly what changed.
 //
-// Not covered here: the menu entry disables while Live sync holds the connection.
-// It rides the same setLiveUi list as Fetch / Write / Compare, and no spec drives a
-// live session, so the lock is pinned where that list is.
+// During Live sync the screen opens on the session's connection and applies there
+// (the last case); the menu entry's state while another holder has the link is pinned
+// where the device actions' list is.
 
 /** Param ids under test (control/params.ts). */
 const BRIGHTNESS = 758;
@@ -383,4 +383,24 @@ test("a brightness drag interrupted by a window blur is committed, and the row i
   await page.click("#device-setup-apply");
   await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
   expect(await writesOf(page)).toEqual([[BRIGHTNESS, Number(dragged)]]);
+});
+
+// A live session holds the one connection, so the screen reads and applies over it: the
+// session stays up, and what Apply sends is the one change, behind the session's own writes.
+test("opens during Live sync and applies a change over the session", async ({ page }) => {
+  await stubTauriDevice(page, { values: DEVICE_VALUES, commands: LIVE_COMMANDS });
+  await page.goto("/");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+
+  await openSetup(page);
+  await expect(page.locator("#device-setup-brightness")).toHaveValue("4");
+  const before = (await writesOf(page)).length;
+  await page.locator("#device-setup-brightness").fill("9");
+  await page.locator("#device-setup-brightness").dispatchEvent("change");
+  await page.click("#device-setup-apply");
+  await expect(page.locator("#statusbar")).toContainText("Applied 1 setting to the device");
+  expect((await writesOf(page)).slice(before)).toEqual([[BRIGHTNESS, 9]]);
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
 });
