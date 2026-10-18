@@ -881,6 +881,94 @@ describe("Pan Link in the panel", () => {
   });
 });
 
+// The unit's COMP 1-knob, switched on, sets attack, release and Auto Makeup, and nothing on the
+// unit moves them while it stays on. A document from anywhere else can carry other values beside a
+// knob that is on; the load sets the knob's, says how many channels on the status line, and names
+// each value in the report a held load shows.
+describe("a COMP 1-knob that is on in a loaded plan", () => {
+  const doc = async (extra: Record<string, Record<string, unknown>> = {}): Promise<string> => {
+    const { encodePlanParam } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const plan = defaultPlan("URX44V");
+    const comp = (id: string, values: Record<string, unknown>): void => {
+      plan.nodeParams[id] = { ...plan.nodeParams[id], comp: { ...plan.nodeParams[id]?.comp, ...values } };
+    };
+    comp("ch1", { oneKnob: true, attack: 10.12, release: 100.1, autoMakeup: true });
+    comp("ch3", { oneKnob: true, attack: 24.87, release: 295.5, autoMakeup: false });
+    comp("ch4", { oneKnob: false, attack: 10.12 });
+    for (const [id, np] of Object.entries(extra)) plan.nodeParams[id] = { ...plan.nodeParams[id], ...np };
+    return `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`;
+  };
+
+  it("opens with the knob's attack, release and Auto Makeup, and says how many channels", async () => {
+    history.replaceState(null, "", await doc());
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.planLoaded), APP_SETTLE);
+    expect(status()).toBe([t().status.compOneKnobsAligned(1), t().status.planLoaded].join(" — "));
+    expect($("load-report").hidden).toBe(true);
+    // The singular branch reads differently from the plural one, with the digit masked.
+    expect(t().status.compOneKnobsAligned(1).replace("1", "N")).not.toBe(
+      t().status.compOneKnobsAligned(2).replace("2", "N"),
+    );
+  });
+
+  it("names each value in the report a held load shows", async () => {
+    history.replaceState(null, "", await doc({ ch1: { insertFx: 256 }, ch2: { insertFx: 257 } }));
+    await boot();
+
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), APP_SETTLE);
+    const body = $("load-report-body").textContent ?? "";
+    expect(body).toContain(
+      "[compOneKnob] ch1.comp: attack 10.12 -> 24.87, release 100.1 -> 295.5, autoMakeup true -> false",
+    );
+    expect(body).not.toContain("[compOneKnob] ch3");
+    expect(body).not.toContain("[compOneKnob] ch4");
+    $("load-report-proceed").click();
+    await vi.waitFor(() => expect(status()).toContain(t().status.compOneKnobsAligned(1)), APP_SETTLE);
+  });
+});
+
+// The unit's M.B.Comp 1-knob, switched on, sets each band's Attack and Bypass, the Release, both
+// crossovers and the Out Gain, and nothing on the unit moves them while it stays on. A document from
+// anywhere else can carry other values there beside a knob that is on; the load sets the type's own,
+// says so on the status line, and names each slot in the report a held load shows.
+describe("an M.B.Comp 1-knob that is on in a loaded plan", () => {
+  const doc = async (extra: Record<string, Record<string, unknown>> = {}): Promise<string> => {
+    const { encodePlanParam } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.stereo"] = {
+      ...plan.nodeParams["bus.stereo"],
+      insertFx: 1792,
+      insertFxOn: true,
+      insertFxParams: { "mbc:6": 1, "mbc:26": 59, "mbc:12": 1 },
+    };
+    for (const [id, np] of Object.entries(extra)) plan.nodeParams[id] = { ...plan.nodeParams[id], ...np };
+    return `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`;
+  };
+
+  it("opens with the type's own fixed values, and says so", async () => {
+    history.replaceState(null, "", await doc());
+    await boot();
+
+    await vi.waitFor(() => expect(status()).toContain(t().status.planLoaded), APP_SETTLE);
+    expect(status()).toBe([t().status.mbcOneKnobAligned, t().status.planLoaded].join(" — "));
+    expect($("load-report").hidden).toBe(true);
+  });
+
+  it("names each slot in the report a held load shows", async () => {
+    history.replaceState(null, "", await doc({ ch1: { insertFx: 256 }, ch2: { insertFx: 257 } }));
+    await boot();
+
+    await vi.waitFor(() => expect($("load-report").hidden).toBe(false), APP_SETTLE);
+    const body = $("load-report-body").textContent ?? "";
+    expect(body).toContain("[mbcOneKnob] bus.stereo.insertFxParams: mbc:12 1 -> 0, mbc:26 59 -> 68");
+    $("load-report-proceed").click();
+    await vi.waitFor(() => expect(status()).toContain(t().status.mbcOneKnobAligned), APP_SETTLE);
+  });
+});
+
 // The unit answers a BUS Type write by resetting the MIX's whole send bank — every level to -∞,
 // every send ON off under FIXED and on under VARI — and FIXED turns its Pan Link off, which VARI
 // does not turn back on. The plan takes the same answer from the panel's own control, in one
@@ -1673,5 +1761,50 @@ describe("a document that omits Track Count at a rate the recorder cannot carry"
     [48_000, "16"],
   ])("%i Hz shows %s", async (rate, expected) => {
     expect(await at(rate)).toBe(expected);
+  });
+});
+
+// Raising the rate past an insert effect's own ceiling takes that insert off the plan, as the
+// unit takes it off the channel; the status line names it, and undo puts it back with the rate.
+describe("a rate the plan's inserts cannot run at", () => {
+  it("takes them off, says which, and undoes with the rate", async () => {
+    const { encodePlanParam } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const { INSERT_FX_OPTIONS } = await import("./core/control/params");
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      insertFx: INSERT_FX_OPTIONS.find((o) => o.label === "Pitch Fix")!.value,
+    };
+    plan.nodeParams.ch2 = {
+      ...plan.nodeParams.ch2,
+      insertFx: INSERT_FX_OPTIONS.find((o) => o.label === "Clean")!.value,
+    };
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("48000"), APP_SETTLE);
+    const { t: tApp } = await import("./i18n");
+    $("btn-view-console").click();
+    const face = (i: number): HTMLElement =>
+      [...$("console-host").querySelectorAll<HTMLElement>(".con-strip")][i].querySelector<HTMLElement>(".con-ifxface")!;
+    // The link decodes after the board paints, so its plan is what is waited for.
+    await vi.waitFor(
+      () => expect(face(0).classList.contains("vacant"), "CH 1 holds Pitch Fix").toBe(false),
+      APP_SETTLE,
+    );
+
+    const picker = $<HTMLSelectElement>("rate-picker");
+    picker.value = "88200";
+    picker.dispatchEvent(new Event("change"));
+    await vi.waitFor(
+      () => expect(status()).toBe(tApp().status.insertsOffAtRate("88.2 kHz", "Pitch Fix (CH 1)")),
+      APP_SETTLE,
+    );
+    expect(face(0).classList.contains("vacant"), "Pitch Fix came off").toBe(true);
+    expect(face(1).classList.contains("vacant"), "Clean runs at 88.2 kHz").toBe(false);
+
+    chord("z", { ctrlKey: true });
+    await vi.waitFor(() => expect(picker.value).toBe("48000"), APP_SETTLE);
+    expect(face(0).classList.contains("vacant"), "undo puts it back").toBe(false);
   });
 });

@@ -369,11 +369,22 @@ which is the alternative rejected for the gate below. Merging it into the level 
 answers the same problem better, and a merged lane is on that column's ruler by construction.
 
 **Some values belong to the device while it drives them.** With 1-knob on, the unit owns
-threshold / ratio / gain / knee — it computes the first three from a single level, and takes the
-knee when the knob engages; with Auto Makeup on, it computes the gain. Each
-recomputation is announced per address (measured), so those rows stay on screen and keep updating —
-tagged, dimmed and read-only — rather than being hidden or recomputed here, and the writer does not
-send them (`compDeviceDriven`, below).
+threshold / ratio / gain / knee / attack / release — switching the knob on sets all six (an
+uncompressed curve, the knee at Medium, attack at 24.87 ms and release at 295.5 ms, on every model,
+channel and rate measured), moving its level afterwards recomputes the first three, and on the unit's
+own COMP screen none of the curve's handles turns while the knob stays on, and neither attack nor
+release does; with Auto Makeup on, it computes the
+gain. Each recomputation is announced per address (measured), so those rows stay on screen and keep
+updating — tagged, dimmed and read-only — rather than being hidden or recomputed here, and the writer
+does not send them (`compDeviceDriven`, below).
+
+**The switch moves the plan the way it moves the unit.** Switched on, the knob also leaves attack and
+release at that pair, Auto Makeup off and the level at 0, so the plan takes those four at the same
+press (`compOneKnobPatch`) — from this screen, a MIDI control and the SIM view alike — and the rows read
+what the unit holds with Live sync off too. Threshold / ratio / gain / knee are not written there: the
+level moves them again, at values this app does not model. Switched off, only the switch moves. A loaded
+document that carries another attack, release or Auto Makeup beside a knob that is on is set to the
+knob's values (architecture.md "Source layout", `plan-validate.ts`).
 
 **The 1-knob is a section above the parameters, not three rows inside them.** It decides whose the
 rows below it are, which is a different kind of thing from a value they set — and it is how the unit
@@ -1546,8 +1557,17 @@ set, and `translate` stops emitting it while the knob is on, for the reason `COM
 exists — re-sending the plan's copy of a value the unit is recomputing puts the pre-knob number back
 on it.
 
-**Out Gain is the one writable slot the knob leaves alone**, so it is the one the app keeps writing
-and the one row on MAIN that stays live while the knob is on.
+**Out Gain is set at the switch and then left alone**: a Level change does not move it, and the
+unit's own screen does not let it be turned while the knob is on, so it joins `mbcDeviceDriven` — the
+app stops writing it and locks its row with the rest.
+
+**The switch moves the plan the way it moves the unit.** Switched on, the knob sets the Level to 0 and
+each band's Attack and Bypass, the Release, both crossovers and the Out Gain to the type's own values,
+so the plan takes those at the same press (`mbcOneKnobSwitch`) — from this screen, a MIDI control and
+the SIM view alike — and names every slot it wrote, since any of them can already hold the value. The
+band Thresholds, Ratios and Gains are not written there: the Level recomputes them. A loaded document
+that carries other fixed values beside a knob that is on is set to them (architecture.md "Source
+layout", `plan-validate.ts`).
 
 **Arming before the knob goes on reads as a silence**, the trap the COMP knee sets too: a parameter
 driven to the value it already holds looks exactly like one nothing touched. `probe-mbc-fixed-scope`
@@ -2044,7 +2064,7 @@ neither the row it began on nor the fresh one under the still-held pointer, whic
 driving — and once it ends the rows are drawn again from what the plan holds. The hold in turn asks for the row that is on screen
 rather than the one the gesture started on, since a rebuild may already have replaced it. A rebuilt row
 keeps whatever `disabled` state the rebuild gave it — COMP's 1-knob coming on hands threshold / ratio /
-gain / knee to the device and locks those rows — and a row the rebuild locked does not get focus back.
+gain / knee / attack / release to the device and locks those rows — and a row the rebuild locked does not get focus back.
 
 **Every rebuild of the screen carries keyboard focus** to the same control in the new box — a value row by
 the field it edits, a control with an id by that id, anything else by its place among the box's controls

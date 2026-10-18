@@ -15,6 +15,8 @@ import { INSFX_DYN, companderResponse, insertFxScreenFamily } from "./insert-fx-
 import { planToCommands } from "../core/control/translate";
 import {
   MBC_BANDS,
+  MBC_ONE_KNOB_FIXED,
+  insertFxDefaults,
   MBC_GLOBAL,
   PITCH_KEY_SLOT,
   PITCH_NOTE_SLOTS,
@@ -1460,23 +1462,23 @@ describe("the multi-band compressor", () => {
     expect(INSFX_DYN.bind(mbc(MAIN))!.lanes.map((l) => l.key)).toEqual(["in", "out"]);
   });
 
-  it("locks everything a Level change reasserts while 1-knob is on, and Out Gain never", () => {
+  it("locks every value the knob holds while 1-knob is on, Out Gain included", () => {
     // The positive control first: with the knob off the same call answers null, so the
     // assertion below is about the knob rather than about a screen that locks everything.
     expect(INSFX_DYN.rowStates!(mbc(MAIN), {})).toBeNull();
     const states = INSFX_DYN.rowStates!(mbc(MAIN, oneKnobOn()), {})!;
     const slotOf = (key: string): number => Number(/:(\d+)$/.exec(key)?.[1]);
     const locked = [...states.keys()].map(slotOf).sort((a, b) => a - b);
-    // Nine the Level recomputes (Threshold, Ratio, Gain per band) and nine it pins back to
+    // Nine the Level recomputes (Threshold, Ratio, Gain per band), nine it pins back to
     // fixed values whatever was written over them (the three Attacks, the three Bypasses,
-    // Release, both crossovers). Out Gain is the one writable slot the knob leaves alone.
-    expect(locked).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]);
+    // Release, both crossovers), and the Out Gain the switch set.
+    expect(locked).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]);
     expect([...states.values()].every((o) => o.locked === true)).toBe(true);
     expect(locked).toContain(MBC_BANDS[0].attack);
     expect(locked).toContain(MBC_BANDS[0].bypass);
     expect(locked).toContain(MBC_GLOBAL.release);
-    expect(locked).not.toContain(MBC_GLOBAL.outGain);
-    // …and NOT tagged: eighteen copies of one word carry nothing, and the word wraps inside
+    expect(locked).toContain(MBC_GLOBAL.outGain);
+    // …and NOT tagged: nineteen copies of one word carry nothing, and the word wraps inside
     // a card and grows the panel, which is the resize the lock exists to avoid.
     expect([...states.values()].every((o) => o.tag === undefined)).toBe(true);
   });
@@ -1488,11 +1490,11 @@ describe("the multi-band compressor", () => {
     expect(INSFX_DYN.hint!(mbc(MAIN, oneKnobOn()))).toBe(g.mbcOneKnob);
   });
 
-  // The line that says who owns the panel must not say MAIN's one live row is the unit's: Out
-  // Gain stays writable and sent while the knob is on, so the line names it, in both catalogs.
-  it("names Out Gain as the operator's while the 1-knob owns the rest", () => {
+  // The line that says who owns the panel names Out Gain among what the unit holds, and no
+  // longer as a value still sent, in both catalogs.
+  it("says Out Gain is the unit's while the 1-knob is on", () => {
     const states = INSFX_DYN.rowStates!(mbc(MAIN, oneKnobOn()), {})!;
-    expect(states.has(`ifx:mbc:${MBC_GLOBAL.outGain}`)).toBe(false);
+    expect(states.get(`ifx:mbc:${MBC_GLOBAL.outGain}`)?.locked).toBe(true);
     try {
       for (const lang of ["en", "ja"] as const) {
         setLang(lang);
@@ -1543,6 +1545,33 @@ describe("the multi-band compressor", () => {
       expect(rows[1].textContent, String(sel)).toContain("24");
       screen.close();
     }
+  });
+
+  // The unit's switch sets the Level to 0 and the values it holds fixed — each band's Attack and
+  // Bypass, the Release, both crossovers and the Out Gain — to the type's own; the screen's switch
+  // takes the plan the same way and names every slot, since any of them can already hold the
+  // value it writes.
+  it("takes the Level and the fixed values to the unit's as the 1-knob comes on, and names each", () => {
+    mbc(MAIN, {
+      [insertFxParamKey("mbc", MBC_GLOBAL.oneKnobLevel)]: 30,
+      [insertFxParamKey("mbc", MBC_BANDS[0].attack)]: 5,
+      [insertFxParamKey("mbc", MBC_BANDS[0].bypass)]: 1,
+      [insertFxParamKey("mbc", MBC_GLOBAL.outGain)]: 59,
+    });
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "bus.mix1");
+    const on = [...h.box.querySelectorAll<HTMLElement>(".prefs-section .prefs-row")][0]!;
+    [...on.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === t().inspector.on)!.click();
+    const params = h.plan.nodeParams["bus.mix1"]!.insertFxParams as Record<string, number>;
+    const defs = insertFxDefaults("mbc");
+    expect(params[insertFxParamKey("mbc", MBC_GLOBAL.oneKnobOn)]).toBe(1);
+    expect(params[insertFxParamKey("mbc", MBC_GLOBAL.oneKnobLevel)]).toBe(0);
+    for (const slot of MBC_ONE_KNOB_FIXED)
+      expect(params[insertFxParamKey("mbc", slot)], `slot ${slot}`).toBe(defs[slot]);
+    const written = h.patches.at(-1)!.written ?? [];
+    for (const slot of [MBC_GLOBAL.oneKnobOn, MBC_GLOBAL.oneKnobLevel, ...MBC_ONE_KNOB_FIXED])
+      expect(written, `slot ${slot}`).toContain(`insertFxParams.${insertFxParamKey("mbc", slot)}`);
+    screen.close();
   });
 
   // The switch is drawn from the raw the write sends there, the same question the lock below it

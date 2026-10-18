@@ -590,7 +590,13 @@ describe("an insert effect's rows, which the plan holds as the engine's raws", (
     ["M.B.Comp", "xoverLowMid", 1000, { 23: 73 }],
     ["M.B.Comp", "release", 1000, { 25: 17 }],
     ["M.B.Comp", "outGain", -6, { 26: 58 }],
-    ["M.B.Comp", "oneKnobOn", true, { 6: 1 }],
+    // The switch sets the Level and the values the knob holds fixed, as the unit does.
+    [
+      "M.B.Comp",
+      "oneKnobOn",
+      true,
+      { 6: 1, 7: 0, 8: 17, 12: 0, 13: 19, 17: 0, 18: 9, 22: 0, 23: 37, 24: 94, 25: 7, 26: 68 },
+    ],
   ];
 
   it.each(WRITES)("writes %s %s = %j onto the family's own keys, as the tuning screen does", (name, key, v, raws) => {
@@ -641,9 +647,7 @@ describe("an insert effect's rows, which the plan holds as the engine's raws", (
     mbc.nodeParams["bus.mix1"].insertFxParams = { ...mbc.nodeParams["bus.mix1"].insertFxParams, "mbc:6": 1 };
     expect(refusal(binding(bindings, "ch.bus.mix1.insFx.lowThreshold"), mbc, -30)).toBe("locked");
     expect(refusal(binding(bindings, "ch.bus.mix1.insFx.xoverLowMid"), mbc, 1000)).toBe("locked");
-    expect(patchOf(binding(bindings, "ch.bus.mix1.insFx.outGain"), mbc, -6), "Out Gain stays the operator's").toEqual({
-      insertFxParams: { ...mbc.nodeParams["bus.mix1"].insertFxParams, "mbc:26": 58 },
-    });
+    expect(refusal(binding(bindings, "ch.bus.mix1.insFx.outGain"), mbc, -6), "the switch set Out Gain").toBe("locked");
     expect(binding(bindings, "ch.bus.mix1.insFx.oneKnobLevel").write!(mbc, 20)).not.toHaveProperty("refused");
 
     const pitch = holding("ch1", 512);

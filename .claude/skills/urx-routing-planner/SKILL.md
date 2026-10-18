@@ -261,7 +261,11 @@ given 0 dB,
 secondary takes the primary's values (a linked pair holds one set, the primary's,
 so a plan may write them on the primary alone),
 `[linkedSendPan] <from> -> <to>: <stored> -> <pan>` for a send pan into a MIX
-whose Pan Link is on, set to its source's own, and `[booleanParam] <node>.<path>:
+whose Pan Link is on, set to its source's own, `[compOneKnob] <node>.comp: <key>
+<stored> -> <value>, …` for a COMP whose 1-knob is on, its attack, release and
+Auto Makeup set to the values the knob runs at, `[mbcOneKnob]
+<node>.insertFxParams: mbc:<slot> <stored> -> <value>, …` for an M.B.Comp whose
+1-knob is on, its fixed slots set to the type's own values, and `[booleanParam] <node>.<path>:
 <number> -> <true|false>` for an on/off written as a number — and those need no
 answer.
 

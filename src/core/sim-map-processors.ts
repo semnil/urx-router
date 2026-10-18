@@ -15,6 +15,7 @@ import { effectiveInsertFx, insertFxControl } from "./control/translate";
 import {
   BUS_TYPE_OPTIONS,
   COMP_EQ_OPTIONS,
+  compOneKnobPatch,
   EQ_ONE_KNOB_TYPE_OPTIONS,
   INSERT_FX_NONE,
   insertFxEngaged,
@@ -88,6 +89,7 @@ import {
   PITCH_SCALE_PENTATONIC,
   PITCH_SCALE_SINGLE,
   PITCH_SCALE_SLOT,
+  mbcOneKnobSwitch,
   reKeyInsertFxParams,
   seedInsertFxParams,
   type InsertFxFamily,
@@ -428,6 +430,17 @@ const printed =
   (raw: number): number =>
     Number.parseFloat(format(raw));
 
+/** The M.B.Comp rows its 1-knob switch moves besides itself: the Level and the values it holds
+ *  fixed (`mbcOneKnobSwitch`). */
+const MBC_ONE_KNOB_MOVES: readonly string[] = [
+  "oneKnobLevel",
+  ...MBC_BANDS.flatMap((b) => [`${b.band}Attack`, `${b.band}Bypass`]),
+  "release",
+  "xoverLowMid",
+  "xoverMidHigh",
+  "outGain",
+];
+
 /** The rows of each family the simulator names on an insert, by its key. */
 function familyRows(family: InsertFxFamily): Record<string, InsertRow> {
   const at = (slot: number, law: InsertLaw) => slotRow(family, slot, law);
@@ -549,13 +562,19 @@ function insertFxParam(model: DeviceModel, id: string, key: string, families: re
     write: (plan, v) => {
       const h = held(plan);
       if (!h) return refused("type");
-      const raws = h.row.take(v);
-      if (!raws) return refused("value");
+      const own = h.row.take(v);
+      if (!own) return refused("value");
       if (h.row.read(h.raw) === v) return UNCHANGED;
       if (insertFxRateLock(insertFxMenu(model, plan, id), h.sel).locked) return refused("rate");
-      const slots = Object.keys(raws).map(Number);
       const locked = insertFxLockedSlots(h.family, h.params);
-      if (slots.some((slot) => locked.has(slot))) return refused("locked");
+      if (Object.keys(own).some((slot) => locked.has(Number(slot)))) return refused("locked");
+      // The multi-band compressor's 1-knob, switched on, also sets the Level and the values it
+      // holds fixed, as the unit does.
+      const raws =
+        h.family === "mbc" && key === "oneKnobOn"
+          ? mbcOneKnobSwitch(h.params, (own[MBC_GLOBAL.oneKnobOn] ?? 0) !== 0)
+          : own;
+      const slots = Object.keys(raws).map(Number);
       return {
         kind: "node",
         id,
@@ -783,6 +802,29 @@ function fxEffectBindings(id: string, fxIndex: number, out: Map<string, SimBindi
   for (const key of keys) out.set(`${base}.${key}`, fxEffectValue(id, fxIndex, key, families));
 }
 
+/** A mono channel's COMP 1-knob switch. Switched on, it also takes the group's attack, release,
+ *  Auto Makeup and level to the values the unit gives them (`compOneKnobPatch`), so those paths
+ *  move with it. */
+function compOneKnobOn(id: string, moves: readonly string[]): SimBinding {
+  const read = groupValue(id, "comp", "oneKnob", "boolean").read;
+  return {
+    read,
+    write: (plan, v) => {
+      const on = bool(v);
+      if (on === null) return refused("value");
+      const held = np(plan, id).comp ?? {};
+      const patch = compOneKnobPatch(held, on);
+      return {
+        kind: "node",
+        id,
+        patch: { comp: { ...held, ...patch } },
+        written: Object.keys(patch).map((k) => `comp.${k}`),
+      };
+    },
+    moves,
+  };
+}
+
 /** Add the processor paths the plan of `model` answers to `out`. */
 export function processorBindings(model: DeviceModel, out: Map<string, SimBinding>): void {
   for (const node of model.nodes) {
@@ -800,7 +842,15 @@ export function processorBindings(model: DeviceModel, out: Map<string, SimBindin
     }
 
     if (isMonoChannel(id)) {
-      out.set(`${ch}.comp.oneKnob.on`, groupValue(id, "comp", "oneKnob", "boolean"));
+      out.set(
+        `${ch}.comp.oneKnob.on`,
+        compOneKnobOn(id, [
+          `${ch}.comp.oneKnob.level`,
+          `${ch}.comp.attack`,
+          `${ch}.comp.release`,
+          `${ch}.comp.autoMakeup`,
+        ]),
+      );
       out.set(`${ch}.comp.oneKnob.level`, groupValue(id, "comp", "oneKnobLevel", "number"));
       out.set(`${ch}.compEqOrder`, optionValue(id, "compEqType", COMP_EQ_OPTIONS, COMP_EQ_OPTIONS[0].value));
       ssmcsBindings(id, ch, out);
@@ -815,7 +865,12 @@ export function processorBindings(model: DeviceModel, out: Map<string, SimBindin
         moves: [`${ch}.insFx.on`, ...keys.map((key) => `${ch}.insFx.${key}`)],
       });
       out.set(`${ch}.insFx.on`, insertFxOn(model, id));
-      for (const key of keys) out.set(`${ch}.insFx.${key}`, insertFxParam(model, id, key, families));
+      for (const key of keys) {
+        const binding = insertFxParam(model, id, key, families);
+        // The M.B.Comp 1-knob switch moves the Level and the values it holds fixed as well.
+        const moves = key === "oneKnobOn" ? MBC_ONE_KNOB_MOVES.map((k) => `${ch}.insFx.${k}`) : undefined;
+        out.set(`${ch}.insFx.${key}`, moves ? { ...binding, moves } : binding);
+      }
     }
 
     if (id === "bus.mix1" || id === "bus.mix2")

@@ -11,10 +11,13 @@ import { insertFxFamilyOf, qualifyInsertFxParams } from "./control/insert-fx-eff
 import {
   D_GAIN_SOURCES,
   HI_Z_JACKS,
+  INSERT_FX_NONE,
+  INSERT_FX_OPTIONS,
   LEGACY_HI_Z_CHANNELS,
   LEGACY_STEREO_DGAIN_ID,
   MIC_LINE_JACK_BASE,
   NODE_NAME_MAX_CHARS,
+  OUTPUT_INSERT_FX_OPTIONS,
 } from "./control/params";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "./control/vd";
 import { stripSceneExternal } from "./scene-scope";
@@ -34,6 +37,41 @@ export function setPlanSampleRate(plan: Plan, rate: number): void {
   if (at !== undefined) {
     plan.nodeParams[SDREC_NODE_ID] = { ...plan.nodeParams[SDREC_NODE_ID], sdRecTrackCount: at };
   }
+}
+
+/** An insert a rate takes off a node: the node and the effect it held. */
+export interface InsertOffAtRate {
+  node: string;
+  label: string;
+}
+
+/** The inserts `plan` holds whose effect does not run at `rate`, in node order — what the unit
+ *  takes off its channels and buses when it moves to that rate. */
+export function insertsAboveRate(plan: Plan, rate: number): InsertOffAtRate[] {
+  const out: InsertOffAtRate[] = [];
+  for (const [node, np] of Object.entries(plan.nodeParams)) {
+    const value = np?.insertFx;
+    if (value === undefined || value === INSERT_FX_NONE) continue;
+    const option = [...INSERT_FX_OPTIONS, ...OUTPUT_INSERT_FX_OPTIONS].find((o) => o.value === value);
+    if (option?.maxRate !== undefined && rate > option.maxRate) out.push({ node, label: option.label });
+  }
+  return out;
+}
+
+/**
+ * Move `plan` onto `rate` as an edit does — the picker, adopting the unit's rate — taking the
+ * same insert effects off that the unit takes off: above an effect's own ceiling the unit puts
+ * that channel or bus on [No Effect], and lowering the rate again does not put the effect back.
+ * The Track Count moves as in `setPlanSampleRate`. Returns the inserts it took off.
+ *
+ * A load and a device read take `setPlanSampleRate` instead: neither moves the rate, a read
+ * brings the unit's own selectors, and a loaded document's inserts stay as written.
+ */
+export function changePlanSampleRate(plan: Plan, rate: number): InsertOffAtRate[] {
+  const off = insertsAboveRate(plan, rate);
+  for (const { node } of off) plan.nodeParams[node] = { ...plan.nodeParams[node], insertFx: INSERT_FX_NONE };
+  setPlanSampleRate(plan, rate);
+  return off;
 }
 
 /** The microSD recorder's node. Spelled once: the count, the slots and the scene scope all
