@@ -777,6 +777,22 @@ test("pitch scale select seeds the note keyboard, and a note edit persists as Cu
   await expect(noteToggle(page, "F#")).toHaveAttribute("aria-pressed", "true");
 });
 
+// A Key picked on the screen re-roots the Scale the notes spell: Major on C, then Key G,
+// leaves G major pressed (F# in, F out).
+test("a picked Key re-roots the scale the note keyboard shows", async ({ page }) => {
+  await node(page, "ch1").click();
+  await chooseOption(await insertSelect(page), { label: "Pitch Fix" });
+  await openScreen(page);
+  await chooseOption(screenSelect(page, "Scale"), { label: "Major" });
+  await expect(noteToggle(page, "F#")).toHaveAttribute("aria-pressed", "false");
+  await expect(noteToggle(page, "F")).toHaveAttribute("aria-pressed", "true");
+  await chooseOption(screenSelect(page, "Key"), { label: "G" });
+  await expect(screenSelect(page, "Scale")).toHaveValue("2");
+  await expect(noteToggle(page, "F#")).toHaveAttribute("aria-pressed", "true");
+  await expect(noteToggle(page, "F")).toHaveAttribute("aria-pressed", "false");
+  await closeScreen(page);
+});
+
 // A plan can carry any Scale preset: it must display verbatim instead of collapsing to
 // Custom. Enum values are LCD-confirmed (insert-fx-effect.ts).
 test("a device-preset pitch scale (Pentatonic) loaded from a plan displays verbatim", async ({ page }) => {
