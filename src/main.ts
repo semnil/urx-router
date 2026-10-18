@@ -562,8 +562,12 @@ function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
       // that replaced it. Ahead of the catch rather than behind it, so a disconnect that
       // failed cannot leave the app locked out of its own device actions: behind one that
       // absorbs the rejection, a `finally` and a `then` do the same thing and neither says
-      // which was meant.
-      .finally(() => releaseDeviceLink("live"))
+      // which was meant. The Preferences device scope, held while the session held the link,
+      // is drawn open again with it.
+      .finally(() => {
+        releaseDeviceLink("live");
+        prefs.refresh();
+      })
       // …and a disconnect that could not be sent leaves the app unable to say whether the
       // unit is still attached to a worker, which is a dialog rather than a status line.
       // Not on a session ending in ERROR: stopLiveOnError has already raised one naming
@@ -2151,6 +2155,11 @@ let deviceLinkHolder: LinkHolder | null = null;
 let restartLiveForScope: (() => void) | null = null;
 // Settles once the last session to end has given the device link back.
 let liveReleased: Promise<void> = Promise.resolve();
+
+/** Whether the device scope holds still: while a session holds the link and is not up — starting,
+ *  or ending, the one a scope change ends and starts again included — since a starting session's
+ *  read and its snapshot and registration take the scope each finds. */
+const deviceScopeHeld = (): boolean => deviceLinkHolder === "live" && !liveSessionUp;
 
 // Each device entry and the holder it belongs to. While the link is held, every
 // entry greys except its holder's own. The `.urxf` import owns no holder because it
@@ -4089,6 +4098,7 @@ const prefs = new PrefsPanel({
   // A session is built for one scope: its snapshot and its notify registration. A change
   // during one ends it and starts it again, which reads the unit for the new scope.
   onDeviceScopeChanged: () => restartLiveForScope?.(),
+  isDeviceScopeHeld: deviceScopeHeld,
   onRecentChanged: (list) => {
     recent = list;
     refreshInspector();
@@ -5132,17 +5142,23 @@ if (!DEMO) {
     // happens. The connection is held open for the session and released when the
     // toggle, a write failure, or a plan replacement turns sync off.
     async function activateLive(): Promise<void> {
-      if (!live) return;
-      // The link is taken for the whole activation, not just for the connect: the
-      // starting readback runs for seconds with liveSessionUp still false, and it was
-      // exactly that window in which another action could take the connection away
-      // (or be started under one). A session that comes up keeps the holder until
-      // deactivateLive gives it back; every other exit gives it back here.
-      if (!holdDeviceLink("live")) return;
       try {
-        await startLiveSession();
+        if (!live) return;
+        // The link is taken for the whole activation, not just for the connect: the
+        // starting readback runs for seconds with liveSessionUp still false, and it was
+        // exactly that window in which another action could take the connection away
+        // (or be started under one). A session that comes up keeps the holder until
+        // deactivateLive gives it back; every other exit gives it back here.
+        if (!holdDeviceLink("live")) return;
+        // The device scope holds still from here until the session is up or has failed.
+        prefs.refresh();
+        try {
+          await startLiveSession();
+        } finally {
+          if (!liveSessionUp) releaseDeviceLink("live");
+        }
       } finally {
-        if (!liveSessionUp) releaseDeviceLink("live");
+        prefs.refresh();
       }
     }
 

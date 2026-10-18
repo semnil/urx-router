@@ -43,6 +43,7 @@ function row(label: string): HTMLElement {
 function install() {
   const hooks: PrefsHooks = {
     onDeviceScopeChanged: vi.fn(),
+    isDeviceScopeHeld: vi.fn(() => false),
     onRecentChanged: vi.fn(),
     onWarningsChanged: vi.fn(),
     onFineChanged: vi.fn(),
@@ -181,6 +182,20 @@ describe("PrefsPanel", () => {
     scopeButton(0).click();
     expect(getSettings().deviceScope).toBe("all");
     expect(hooks.onDeviceScopeChanged).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds the device scope still while a session starts, with no tag, and lets it go once the session is up", () => {
+    const { panel, hooks } = install();
+    vi.mocked(hooks.isDeviceScopeHeld).mockReturnValue(true);
+    panel.open();
+    const scope = row(t().prefs.scope);
+    expect(scope.classList.contains("locked")).toBe(true);
+    expect([...scope.querySelectorAll<HTMLButtonElement>("button")].every((b) => b.disabled)).toBe(true);
+    expect(scope.textContent, "the row says nothing of the desktop app").not.toContain(t().prefs.desktopOnly);
+
+    vi.mocked(hooks.isDeviceScopeHeld).mockReturnValue(false);
+    panel.refresh();
+    expect(row(t().prefs.scope).classList.contains("locked")).toBe(false);
   });
 
   // Every committed change rebuilds the box, and so does the shell's refresh while it is
