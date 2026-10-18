@@ -2414,7 +2414,7 @@ written at all:
   channel to the read as `keepFx`, from the `fxReseeds` record `onSetFxEffectType` makes and that park spends —
   so a value moved on the unit's panel for the outgoing type is not filed under a key the two types share and does
   not go out in place of the incoming type's default, while a key only the outgoing type uses is still parked
-  (`readback.test.ts`, "leaves the keys keepFx names standing"; `main.device.test.ts`, "leaves the defaults an
+  (`readback.test.ts`, "leaves the keys keepFx names standing"; `main.device.fx.test.ts`, "leaves the defaults an
   Inspector selection took standing"). Only the park in front of that channel's type write is handed the keys, and
   a record no type write is pending for — the channel has left the type, as an undo of the selection leaves it, or
   the unit was last sent it, as selections that come back to the unit's type leave it — is dropped by whichever

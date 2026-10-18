@@ -1050,7 +1050,7 @@ test.describe("T3 undo", () => {
     // undoable while offline (probed), and activating a session runs the readback's
     // rerenderPlan, which resets BOTH stacks, so no sampleRate entry recorded before the
     // session exists in it. The picker opens with the session, since the fake answers
-    // Follow USB off; what a rate chosen then asks is pinned in src/main.device.test.ts
+    // Follow USB off; what a rate chosen then asks is pinned in src/main.device.clock.test.ts
     // ("the sample rate during Live sync"), and the refusal from an offline write in "the
     // sample rate during a write".
     expect(rateLocked).toBe(false);

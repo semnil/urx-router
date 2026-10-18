@@ -2,7 +2,7 @@
  * Launch flags the race fake never claims, in one place because two sides read it.
  *
  * `fake-device.ts` answers every one of these `false`, and a unit guard
- * (`src/main.device.test.ts`) asserts that `experimental_enabled` is among them —
+ * (`src/main.device.shell.test.ts`) asserts that `experimental_enabled` is among them —
  * `e2e/race/t3b-undo.spec.ts` skips its `.urxf` case on the settings import being
  * unreachable from this harness, and that rests on the answer staying false.
  *

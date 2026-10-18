@@ -1190,7 +1190,7 @@ describe("a STEREO-linked pair", () => {
 
   // The funnel names what it WROTE, and the head amp is not among it: each member reads its
   // own jack, and claiming the partner's gain would take the device's answer away for a value
-  // the mirror left alone, which a read in flight then drops (src/main.device.test.ts carries
+  // the mirror left alone, which a read in flight then drops (src/main.device.fetch.test.ts carries
   // that end of it).
   it("does not name the partner's head amp as written", () => {
     h = consoleHost();

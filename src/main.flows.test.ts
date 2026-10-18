@@ -36,7 +36,7 @@ import { faceplate, press, wireHit } from "./ui/graph.test-util";
 const nodes = (): number => $("graph-host").querySelectorAll("g.node[data-id]").length;
 
 // The boot fixture is `main.test-util.ts`, shared with the other two entry suites.
-// `tauri: false`: the desktop half is `main.device.test.ts`'s, and with no shell
+// `tauri: false`: the desktop half is the `main.device.*.test.ts` files', and with no shell
 // `isTauri()` stays false, which is what keeps this file from asserting against a
 // shell that is not there.
 const boot = (seed: Record<string, string> = {}): Promise<unknown> => bootApp({ seed, tauri: false });
@@ -223,7 +223,7 @@ describe("the deep link", () => {
    *  The effect's parameters are drawn there rather than in the Inspector, so a case about
    *  what the app SHOWS for a stored raw has to open it. */
   const fxScreenValue = (nodeId: string, label: string): string => {
-    // Completed, for the reason `selectNode` in main.device.test.ts gives: a press the board
+    // Completed, for the reason `selectNode` in main.device.test-util.ts gives: a press the board
     // never sees released arms its path-trace hold, which writes a status line of its own.
     const node = $("graph-host").querySelector<SVGGElement>(`g.node[data-id="${nodeId}"]`)!;
     node.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, bubbles: true }));

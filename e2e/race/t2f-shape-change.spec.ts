@@ -507,7 +507,7 @@ test.describe("T2f shape-change", () => {
     // Phase 3 — the menu entry stays open during a session: the screen reads over the session's
     // own connection, behind every unit write it has queued, so its reads are the session's and
     // the counts above are taken before any opening. What an opening reads and writes is pinned
-    // in src/main.device.test.ts ("opens the device setup modal during Live sync").
+    // in src/main.device.shell.test.ts ("opens the device setup modal during Live sync").
     await page.click("#btn-device");
     await expect(page.locator("#btn-device-setup")).toBeEnabled();
     await page.click("#btn-device");

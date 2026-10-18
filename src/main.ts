@@ -4589,7 +4589,7 @@ if (!DEMO) {
           // failed — the read worked and the merge left the operator's own edits
           // standing — so the default wording would report correct behaviour as a
           // fault, and do it right after the status line said the fetch succeeded.
-          // Pinned in src/main.device.test.ts by a fetch whose edit lands inside the read on
+          // Pinned in src/main.device.clock.test.ts by a fetch whose edit lands inside the read on
           // a key the read authored: "keeps an edit made while a fetch reads Follow USB"
           // (the prompt) and "saves the device values a fetch left standing, under the
           // prompt that says so" (the prompt and the report).

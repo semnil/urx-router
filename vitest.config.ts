@@ -23,7 +23,7 @@ export default defineConfig({
     // 2.1 s at 72 workers, 3.1 s at the default worker count, 3.3 s with the Vite cache
     // cleared, and 6.4 s on the first run after a `pnpm install` — the run that failed,
     // at 129% of the default, and taken while this suite was smaller than it is now.
-    // 30 s is what main.device.test.ts already passes per test for the same kind of case,
+    // 30 s is what the main.device.*.test.ts files already pass per test for the same kind of case,
     // and a stuck test still reports in half a minute.
     testTimeout: 30_000,
     // scripts/ is tooling rather than app code, so it is included here but deliberately
