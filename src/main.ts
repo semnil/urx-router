@@ -37,7 +37,10 @@ import {
   SDREC_NODE_ID,
   LEVEL_MIN_DB,
   serialize,
+  changePlanSampleRate,
+  insertsAboveRate,
   setPlanSampleRate,
+  type InsertOffAtRate,
   SSMCS_INITIAL,
   supplyRequiredSources,
 } from "./core/plan";
@@ -3861,7 +3864,9 @@ function confirmLiveRate(rate: number): Promise<boolean> | null {
       return false;
     }
     const drop = cost ? t().confirm.trackCountDrop(cost.from, cost.to) : "";
-    const ask = [t().confirm.reclock(deviceRate, nextRate), drop].filter(Boolean).join(" ");
+    const off = insertsAboveRate(plan, rate);
+    const offNote = off.length ? t().confirm.insertsOffAtRate(insertNames(off)) : "";
+    const ask = [t().confirm.reclock(deviceRate, nextRate), offNote, drop].filter(Boolean).join(" ");
     if (await confirmDialog(ask)) return liveRateOpen();
     setStatus(t().status.canceled);
     return false;
@@ -3886,15 +3891,26 @@ function pickSampleRate(rate: number): void {
   });
 }
 
+/** The inserts a rate takes off, each named by its effect and, in parentheses, the channel or bus
+ *  that held it — the same in every language, since both are the unit's own names. */
+function insertNames(off: InsertOffAtRate[]): string {
+  return off.map((o) => `${o.label} (${graph.labelOf(o.node)})`).join(", ");
+}
+
 function chooseSampleRate(rate: number): void {
-  // The recorder's Track Count goes with the rate, one way: see setPlanSampleRate.
-  setPlanSampleRate(plan, rate);
+  // The recorder's Track Count and the inserts the rate rules out go with the rate, one way:
+  // see changePlanSampleRate.
+  const off = changePlanSampleRate(plan, rate);
   // Same change funnel as every other edit: dirty + (in Live sync) push the new
   // rate to the device. Re-clocking glitches audio, but that is inherent to a
   // deliberate rate change and keeps Live sync from deferring it onto a later edit.
   markChanged();
   syncRateUi();
-  setStatus(t().status.sampleRate(formatRate(plan.sampleRate)));
+  setStatus(
+    off.length
+      ? t().status.insertsOffAtRate(formatRate(plan.sampleRate), insertNames(off))
+      : t().status.sampleRate(formatRate(plan.sampleRate)),
+  );
 }
 
 ratePicker.addEventListener("change", () => pickSampleRate(Number(ratePicker.value)));
@@ -4665,8 +4681,13 @@ if (!DEMO) {
     }
     // Above 96 kHz whole features drop out, so adopting a high device rate means
     // part of the plan will not be written. Name it before the choice is made.
+    // The inserts adopting the device's rate takes off the plan. While there are any, the shared
+    // note leaves the insert line out: it says the plan keeps what the rate leaves out, which is
+    // untrue of these on the adopt arm, and the adopt arm's own line names them.
+    const adoptOff = insertsAboveRate(plan, clock.sampleRate);
     const limits = rateConstraints(getModel(modelId), clock.sampleRate)
-      .warnings.map((w) => t().warning[w])
+      .warnings.filter((w) => !(w === "insFx" && adoptOff.length))
+      .map((w) => t().warning[w])
       .join(" ");
     // The note belongs to the whole dialog, so it may only say what is true of every arm.
     // `limits` is: adopting the device's high rate and releasing to the plan's each leave
@@ -4678,7 +4699,8 @@ if (!DEMO) {
     // has to say which one it is about. `trackCost` decides WHETHER, the message decides
     // how it reads here.
     const releaseNote = trackCost ? t().rateChoice.trackCountDrop(trackCost.from, trackCost.to) : "";
-    const choice = await askRateChoice(planRate, deviceRate, note, releaseNote);
+    const adoptNote = adoptOff.length ? t().rateChoice.insertsOffAtRate(deviceRate, insertNames(adoptOff)) : "";
+    const choice = await askRateChoice(planRate, deviceRate, note, releaseNote, adoptNote);
     if (choice === "cancel") {
       setStatus(t().status.canceled);
       return false;
@@ -4688,7 +4710,7 @@ if (!DEMO) {
       // gating downstream matches what the hardware can actually hold. This is an
       // edit like any other — the operator chose it — so it goes through the same
       // funnel and is remembered as the last known rate.
-      setPlanSampleRate(plan, clock.sampleRate);
+      changePlanSampleRate(plan, clock.sampleRate);
       markChanged();
       syncRateUi(); // persists the adopted rate as the last known one
       return true;

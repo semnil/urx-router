@@ -673,6 +673,8 @@ export const ja: Messages = {
     loaded: (model: string): string => `${model} を読み込みました — ドラッグで配置・結線`,
     switchedModel: (model: string): string => `${model} に切り替えました`,
     sampleRate: (rate: string): string => `サンプルレート: ${rate}`,
+    insertsOffAtRate: (rate: string, list: string): string =>
+      `サンプルレート: ${rate} — ${list} を外しました。デバイスはエフェクトごとの上限を超えたレートでインサートを外します。レートを下げても元には戻りません。`,
     followUsbOn: "Follow USB ON — デバイスは USB ホストのクロックで動作します",
     followUsbOff: "Follow USB OFF — デバイスは自身のクロックで動作します",
     newPlan: "新規計画を作成しました",
@@ -864,6 +866,8 @@ export const ja: Messages = {
       `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。コンピューター側はデバイスの新しいレートに追従します。続行しますか?`,
     followUsbOn:
       "Follow USB を ON にしますか? デバイスはクロックをコンピューターに委ねます。コンピューターが別のレートで動作している場合は直ちにそのレートへリクロックするため、音声が中断される場合があります。レートが既に一致していれば何も起きません。",
+    insertsOffAtRate: (list: string): string =>
+      `このレートでは ${list} が外れます。デバイスはエフェクトごとの上限を超えたレートではインサートを動かさず、そのチャンネルやバスを No Effect にします。レートを下げても元には戻りません。`,
     trackCountDrop: (from: number, to: number): string =>
       `microSD レコーダーの Track Count が ${from} トラックに設定されており、このレートで使えるのは ${to} トラックです。デバイスが自動的に下げます。このアプリから書ける値では元に戻せません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。`,
     trackCountMayDrop:
@@ -892,6 +896,8 @@ export const ja: Messages = {
       `${limits} これらの設定は今回の書き込みから除外されますが、計画には保持されるため、レートを下げれば再び書き込まれます。`,
     trackCountDrop: (from: number, to: number): string =>
       `Follow USB を OFF にしてプランのレートで書き込むと、microSD レコーダーの Track Count が下がります: 現在 ${from} トラックで、そのレートで使えるのは ${to} トラックです。このアプリから書ける値では元に戻せません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。`,
+    insertsOffAtRate: (deviceRate: string, list: string): string =>
+      `${deviceRate} で書き込むと、デバイスと同じく計画から ${list} が外れます。それらのエフェクトはそのレートでは動きません。`,
     adopt: (deviceRate: string): string => `${deviceRate} で書き込む`,
     release: (planRate: string): string => `Follow USB を OFF にして ${planRate} で書き込む`,
     cancel: "キャンセル",

@@ -469,6 +469,24 @@ test("the rate-choice modal shows all three answers and the high-rate note", asy
   await expect(page.locator("#rate-choice")).toBeVisible();
   await inv.take(page, "#rate-choice");
 
+  // The adopt arm's own line, which appears only when the device's rate rules out an insert
+  // the plan holds: Pitch Fix stops at 48 kHz and the device is on 192.
+  await stubTauriDevice(page, { values: { 766: 192000, 848: 1 } });
+  await page.goto(
+    `/?plan=${planParam({
+      format: "urx-router-plan",
+      version: 2,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { ch1: { insertFx: 512, insertFxOn: true } },
+    })}`,
+  );
+  await expect(page.locator("#statusbar")).toContainText(en.status.planLoaded);
+  await page.click("#btn-device");
+  await page.click("#btn-write");
+  await expect(page.locator("#rate-choice-adopt-note")).toBeVisible();
+  await inv.take(page, "#rate-choice");
+
   expectComplete("rateChoice", inv);
 });
 
