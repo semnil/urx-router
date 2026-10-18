@@ -9638,6 +9638,72 @@ describe("the delay time tempo Sync drives, during Live sync", () => {
   });
 });
 
+// The same delay time, turned from a MIDI controller, goes to the unit over the session too; and a
+// MIDI CUE switches the strip's flag while the session is up, as on the glass.
+describe("a MIDI control during Live sync", () => {
+  const DELAY_CC = 27;
+  const CUE_CC = 28;
+  const seed = { [`${PARAMS.FX_EFFECT_TYPE.id}/0/0`]: 1024, "681/0/4": 1, "681/0/6": 5000 };
+  const setsOf = (shell: TauriShell, paramId: number): [number, number][] =>
+    shell.invokes.flatMap((cmd, i) => {
+      const a = shell.args[i] as Record<string, number>;
+      return cmd === "vd_set" && a.paramId === paramId ? [[a.y, a.value] as [number, number]] : [];
+    });
+  const bootMidi = async (): Promise<TauriShell> => {
+    const shell = (await bootApp({
+      seed: {
+        "urx-midi": JSON.stringify({
+          input: "Controller In",
+          models: {
+            URX44V: [
+              {
+                control: "bus.fx1/fx@fx.delay",
+                addr: { type: "cc", channel: 0, controller: DELAY_CC },
+                mode: "absolute",
+              },
+              {
+                control: "ch1/cue",
+                addr: { type: "cc", channel: 0, controller: CUE_CC },
+                mode: "absolute",
+                button: "edge",
+              },
+            ],
+          },
+        }),
+      },
+      tauri: deviceCommands(
+        {
+          "plugin:dialog|message": "Ok",
+          midi_list_inputs: ["Controller In"],
+          midi_open_input: null,
+          midi_close_input: null,
+        },
+        seed,
+      ),
+    }))!;
+    await invoked(shell, "midi_open_input");
+    return shell;
+  };
+  const sendCc = (shell: TauriShell, cc: number, value: number): void =>
+    (
+      shell.args[shell.invokes.indexOf("midi_open_input")] as { channel: { onmessage: (d: unknown) => void } }
+    ).channel.onmessage([{ bytes: [0xb0, cc, value] }]);
+
+  it("writes a Sync-driven delay time and a CUE to the unit", SLOW, async () => {
+    const shell = await bootMidi();
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    sendCc(shell, DELAY_CC, 32);
+    await vi.waitFor(() => expect(setsOf(shell, 681).filter(([y]) => y === 6)).toHaveLength(1), { timeout: 10_000 });
+    expect(
+      setsOf(shell, 681).some(([y]) => y === 4),
+      "Sync is left as it is",
+    ).toBe(false);
+    sendCc(shell, CUE_CC, 127);
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.CUE_MONO.id)).toEqual([[0, 1]]), { timeout: 10_000 });
+  });
+});
+
 describe("the sample rate during a write", () => {
   /** A press and release on the window: it closes the open undo entry one macrotask later. */
   const boundary = async (): Promise<void> => {
