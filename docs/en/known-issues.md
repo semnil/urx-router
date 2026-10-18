@@ -283,8 +283,8 @@ Scene routes into Simple Mode and the other presets have not been measured. The 
 does not read it, so it presents the same controls either way, including for things
 Simple Mode has taken away on the unit itself.
 
-The loaded **preset** is readable too (`781:0:0`, the unit's `P02`-style indicator),
-but it is not the mode: it keeps the Simple preset's value after the unit is switched
+The scene or **preset** last recalled is readable too (`781:0:0`, which reads `0x8000` + n for the
+unit's `Pn`), but it is not the mode: it keeps the Simple preset's value after the unit is switched
 back to Standard. What Simple Mode does to a write the app sends for a control it has
 removed has not been measured.
 

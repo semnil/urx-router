@@ -3636,8 +3636,8 @@ it properly removes it from the candidates, which is a different claim — see `
 A dev build (`pnpm tauri dev`) records a handful of parameters the app neither reads nor writes for as long as
 Live sync is up, so that an intermittent change on the unit can be put beside what the operator was doing when
 it happened. The subject is `838:0:0`, an unnamed runtime parameter (0–2) that the unit sets to 1 when its
-microSD screen is opened; `817:0:0` (the operation mode) and the preset indices `781:0:0` and `863:0:0` are
-recorded beside it as context. The list is `WATCHED` in `src/ui/param-watch.ts`.
+microSD screen is opened; `817:0:0` (the operation mode), `781:0:0` (the scene recalled) and `863:0:0` (the
+row SCENE LIST's cursor stands on) are recorded beside it as context. The list is `WATCHED` in `src/ui/param-watch.ts`.
 
 - **A subscription of its own.** `vd_probe_subscribe` registers the addresses as a second parameter
   subscription in the worker, beside the one the follow layer reads, so the live-sync set stays exactly what the
