@@ -370,46 +370,210 @@ describe("importing a settings file", () => {
     expect($<HTMLButtonElement>("btn-open-settings").disabled).toBe(false);
   });
 
-  // A drop reaches the import flow without going near the menu entry (the shell intercepts
-  // it and hands it on as an event), so this is the path that has to carry the session's
-  // rule on its own. The file's sampling frequency is not taken: the rate is locked while
-  // Live sync is on, and the session would re-clock the unit on its next flush.
-  it("writes a settings file DROPPED during a live session to the unit, keeping the rate", SLOW, async () => {
-    const file = buildUrxf([
-      {
-        chunk: "CURRENT",
-        block: "CSF_BACKUP",
-        label: "",
-        fields: [...CURRENT_FIELDS, { id: PARAMS.SAMPLE_RATE.id, typecode: 2, elemSize: 4, values: [96_000] }],
+  // A file that changes how the unit is clocked is asked about before anything is imported, and
+  // imports nothing when the operator declines or the microSD recorder holds a file.
+  describe("during a live session, the file's rate and Follow USB", () => {
+    const RATE = PARAMS.SAMPLE_RATE.id;
+    const FOLLOW = PARAMS.FOLLOW_USB.id;
+    const unit = (followUsb: boolean, rate = 48_000, playback = 0): Record<string, number> => ({
+      [`${FOLLOW}/0/0`]: followUsb ? 1 : 0,
+      [`${RATE}/0/0`]: rate,
+      [`${PARAMS.SD_PLAYBACK.id}/0/0`]: playback,
+    });
+    const file = (followUsb: boolean, rate: number): Uint8Array =>
+      buildUrxf([
+        {
+          chunk: "CURRENT",
+          block: "CSF_BACKUP",
+          label: "",
+          fields: [
+            ...CURRENT_FIELDS,
+            { id: RATE, typecode: 2, elemSize: 4, values: [rate] },
+            { id: FOLLOW, typecode: 1, elemSize: 1, values: [followUsb ? 1 : 0] },
+          ],
+        },
+      ]);
+    /** The unit `seed`, the import armed with `bytes`, a session up — under the Scene only device
+     *  scope where `scene` — and every confirm answered by `answer`. */
+    const liveImport = async (
+      bytes: Uint8Array,
+      seed: Record<string, number>,
+      answer: (message: string) => string | Promise<string> = () => "Ok",
+      scene = false,
+    ): Promise<TauriShell> => {
+      const shell = (await bootApp({
+        ...(scene ? { seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) } } : {}),
+        tauri: deviceCommands(
+          {
+            experimental_enabled: true,
+            "plugin:dialog|open": PATH,
+            read_binary_file: () => bytes.buffer,
+            "plugin:dialog|save": null,
+            "plugin:dialog|message": (a: Record<string, unknown>) =>
+              a.buttons === "OkCancel" ? answer(String(a.message ?? "")) : "Ok",
+          },
+          seed,
+        ),
+      }))!;
+      await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
+      $("btn-live").click();
+      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+      return shell;
+    };
+    /** The values written to `paramId` from invoke `from` on, in order. */
+    const written = (shell: TauriShell, paramId: number, from: number): number[] =>
+      shell.invokes.flatMap((cmd, i) => {
+        const a = shell.args[i] as Record<string, number> | undefined;
+        return i >= from && cmd === "vd_set" && a?.paramId === paramId ? [a.value] : [];
+      });
+    const importNow = async (shell: TauriShell): Promise<number> => {
+      const from = shell.invokes.length;
+      expect(shell.emit("tauri://drag-drop", { paths: [PATH] })).toBe(1);
+      await vi.waitFor(() =>
+        expect(confirms(shell)).toContain(t().confirm.importSettingsLive("backup.urxf", "URX44V")),
+      );
+      return from;
+    };
+    const imported = (): Promise<void> =>
+      vi.waitFor(() => expect(statusText()).toContain(t().status.settingsPartial(0, 0, 0).split(" ")[0]), {
+        timeout: 15_000,
+      });
+    const reclock = t().confirm.reclock(formatRate(48_000), formatRate(96_000));
+
+    it.each([
+      ["off on both", false, false],
+      ["on on both", true, true],
+    ])(
+      "asks about another rate with Follow USB %s, and writes it once agreed",
+      SLOW,
+      async (_, unitFollow, fileFollow) => {
+        const shell = await liveImport(file(fileFollow, 96_000), unit(unitFollow));
+        const from = await importNow(shell);
+        await imported();
+        expect(
+          confirms(shell).some((m) => m.startsWith(reclock)),
+          "asked as a rate chosen in the app",
+        ).toBe(true);
+        await vi.waitFor(() => expect(written(shell, RATE, from)).toContain(96_000), { timeout: 15_000 });
+        expect(written(shell, FOLLOW, from), "Follow USB is the file's already").toEqual([]);
       },
-    ]);
-    const shell = await bootImport(file);
+    );
+
+    it("imports nothing when the operator declines the re-clock", SLOW, async () => {
+      const shell = await liveImport(file(false, 96_000), unit(false), (m) =>
+        m.startsWith(reclock) ? "Cancel" : "Ok",
+      );
+      const from = await importNow(shell);
+      await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 15_000 });
+      expect(
+        shell.invokes.slice(from).filter((cmd) => cmd === "vd_set"),
+        "nothing was written",
+      ).toEqual([]);
+      expect($<HTMLSelectElement>("rate-picker").value).toBe("48000");
+    });
+
+    it.each([
+      ["another rate", false, 96_000],
+      ["Follow USB turned on", true, 48_000],
+    ])("imports nothing for %s while the microSD recorder is recording", SLOW, async (_, fileFollow, rate) => {
+      const shell = await liveImport(file(fileFollow, rate), unit(false, 48_000, 3));
+      const from = await importNow(shell);
+      await vi.waitFor(() => expect(errors(shell)).toContain(t().error.settingsClockDuringRecording), {
+        timeout: 15_000,
+      });
+      expect(
+        shell.invokes.slice(from).filter((cmd) => cmd === "vd_set"),
+        "nothing was written",
+      ).toEqual([]);
+    });
+
+    it("turns Follow USB on as the toolbar does, before the rest is written", SLOW, async () => {
+      const shell = await liveImport(file(true, 48_000), unit(false));
+      const from = await importNow(shell);
+      await imported();
+      expect(
+        confirms(shell).some((m) => m.startsWith(t().confirm.followUsbOn)),
+        "asked as the toolbar asks",
+      ).toBe(true);
+      expect(written(shell, FOLLOW, from)).toEqual([1]);
+      const sets = shell.invokes.map((cmd, i) => (i >= from && cmd === "vd_set" ? i : -1)).filter((i) => i >= 0);
+      expect((shell.args[sets[0]] as Record<string, number>).paramId, "Follow USB goes first").toBe(FOLLOW);
+    });
+
+    it.each([
+      ["agrees", "Ok", [0]],
+      ["declines", "Cancel", []],
+    ])(
+      "asks about turning Follow USB off at the same rate, and writes it where the operator %s",
+      SLOW,
+      async (_, reply, follow) => {
+        const off = t().confirm.followUsbOffImport(formatRate(48_000));
+        const shell = await liveImport(file(false, 48_000), unit(true), (m) => (m === off ? reply : "Ok"));
+        const from = await importNow(shell);
+        await vi.waitFor(() => expect(confirms(shell)).toContain(off), { timeout: 15_000 });
+        if (reply === "Ok") await imported();
+        else await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 15_000 });
+        expect(written(shell, FOLLOW, from)).toEqual(follow);
+      },
+    );
+
+    it("turns Follow USB off before writing the file's other rate", SLOW, async () => {
+      const shell = await liveImport(file(false, 96_000), unit(true));
+      const from = await importNow(shell);
+      await imported();
+      expect(
+        confirms(shell).some((m) => m.startsWith(reclock)),
+        "asked about the rate",
+      ).toBe(true);
+      await vi.waitFor(() => expect(written(shell, RATE, from)).toContain(96_000), { timeout: 15_000 });
+      const first = (id: number): number =>
+        shell.invokes.findIndex(
+          (cmd, i) => i >= from && cmd === "vd_set" && (shell.args[i] as Record<string, number>).paramId === id,
+        );
+      expect(first(FOLLOW), "Follow USB is off first").toBeLessThan(first(RATE));
+    });
+
+    it("keeps the rate under the Scene only device scope, asking nothing about it", SLOW, async () => {
+      const shell = await liveImport(file(false, 96_000), unit(false), () => "Ok", true);
+      const from = await importNow(shell);
+      await vi.waitFor(() => expect(statusText()).toContain(t().status.settingsRateKept(formatRate(48_000))), {
+        timeout: 15_000,
+      });
+      expect(confirms(shell).some((m) => m.startsWith(reclock))).toBe(false);
+      // A rate the session took would lead the flush that writes the rest.
+      await vi.waitFor(() => expect(shell.invokes.slice(from), "the import's flush").toContain("vd_set"), {
+        timeout: 15_000,
+      });
+      expect(written(shell, RATE, from)).toEqual([]);
+    });
+  });
+
+  // The confirms ask about a session or about none, and the import goes ahead only in the state
+  // they asked about: one asked to write to the unit does not change the plan alone once the
+  // session has ended behind it.
+  it("imports nothing when the session ended behind its confirm", SLOW, async () => {
+    let ended = false;
+    const shell = await bootImport(sampleUrxf(), false);
+    // The confirm is answered once the session has ended and given the link back.
+    shell.answer("plugin:dialog|message", async (a: Record<string, unknown>) => {
+      if (a.message === t().confirm.importSettingsLive("backup.urxf", "URX44V") && !ended) {
+        ended = true;
+        $("btn-live").click();
+        await invoked(shell, "vd_disconnect");
+        await vi.waitFor(() => expect($<HTMLButtonElement>("btn-fetch").disabled, "the link is back").toBe(false));
+      }
+      return "Ok";
+    });
     $("btn-live").click();
     await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
-    const sets = shell.count("vd_set");
-    const rate = $<HTMLSelectElement>("rate-picker").value;
-
+    const from = shell.invokes.length;
     expect(shell.emit("tauri://drag-drop", { paths: [PATH] })).toBe(1);
-    await vi.waitFor(() => expect(statusText()).toContain(t().status.settingsRateKept(formatRate(Number(rate)))), {
-      timeout: 15_000,
-    });
-    expect(confirms(shell), "the confirm says the import goes to the unit").toContain(
-      t().confirm.importSettingsLive("backup.urxf", "URX44V"),
-    );
-    await vi.waitFor(
-      () => expect(shell.count("vd_set"), "the session wrote what the file changed").toBeGreaterThan(sets),
-      {
-        timeout: 15_000,
-      },
-    );
-    expect($<HTMLSelectElement>("rate-picker").value, "the file's 96 kHz was not taken").toBe(rate);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.canceled), { timeout: 15_000 });
+    expect(ended, "the session ended behind the confirm").toBe(true);
     expect(
-      shell.invokes.some(
-        (cmd, i) => cmd === "vd_set" && (shell.args[i] as Record<string, number>).paramId === PARAMS.SAMPLE_RATE.id,
-      ),
-      "no rate is written mid-session",
-    ).toBe(false);
-    expect(live().getAttribute("aria-checked"), "the session is still up").toBe("true");
+      shell.invokes.slice(from).filter((cmd) => cmd === "vd_set"),
+      "nothing was written",
+    ).toEqual([]);
   });
 });
 

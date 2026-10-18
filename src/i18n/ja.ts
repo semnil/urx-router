@@ -733,7 +733,8 @@ export const ja: Messages = {
     settingsPartial: (n: number, failed: number, unread: number): string =>
       `${n} 件取り込み、${failed} 件失敗` + (unread ? `、${unread} ノード未取得` : ""),
     settingsError: (message: string): string => `設定ファイルを取り込めませんでした: ${message}`,
-    settingsRateKept: (rate: string): string => ` — Live 同期中のため、サンプリング周波数は ${rate} のままです`,
+    settingsRateKept: (rate: string): string =>
+      ` — デバイスの範囲が「シーンのみ」のため、サンプリング周波数は ${rate} のままです`,
     dropUnsupported: (name: string): string => `${name} は開けません — 計画ファイル (.json) をドロップしてください`,
     dropUnsupportedSettings: (name: string): string =>
       `${name} は開けません — 計画ファイル (.json) か設定ファイル (.urxf) をドロップしてください`,
@@ -873,6 +874,8 @@ export const ja: Messages = {
       `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。コンピューター側はデバイスの新しいレートに追従します。続行しますか?`,
     followUsbOn:
       "Follow USB を ON にしますか? デバイスはクロックをコンピューターに委ねます。コンピューターが別のレートで動作している場合は直ちにそのレートへリクロックするため、音声が中断される場合があります。レートが既に一致していれば何も起きません。",
+    followUsbOffImport: (rate: string): string =>
+      `設定ファイルは Follow USB を OFF にします。OFF にしますか? デバイスはクロックをコンピューターから受け取るのをやめ、${rate} で動作します。`,
     insertsOffAtRate: (list: string): string =>
       `このレートでは ${list} が外れます。デバイスはエフェクトごとの上限を超えたレートではインサートを動かさず、そのチャンネルやバスを No Effect にします。レートを下げても元には戻りません。`,
     trackCountDrop: (from: number, to: number): string =>
@@ -1109,6 +1112,10 @@ export const ja: Messages = {
       `microSD レコーダーの録音中・録音の一時停止中・録音待機中は、本体のサンプリング周波数を ${deviceRate} から ${planRate} に変更できません。本体で録音を停止するか待機を解除してから、もう一度書き込んでください。何も書き込んでいません。`,
     rateDuringRecordingLive: (deviceRate: string, planRate: string): string =>
       `microSD レコーダーの録音中・録音の一時停止中・録音待機中は、本体のサンプリング周波数を ${deviceRate} から ${planRate} に変更できません。本体で録音を停止するか待機を解除してから、もう一度レートを選んでください。何も書き込んでいません。`,
+    settingsClockDuringPlayback:
+      "設定ファイルは本体のクロック (サンプリング周波数か Follow USB) を変えるため、microSD レコーダーの再生中・一時停止中は取り込みません。本体で再生を停止してから、もう一度取り込んでください。何も取り込んでいません。",
+    settingsClockDuringRecording:
+      "設定ファイルは本体のクロック (サンプリング周波数か Follow USB) を変えるため、microSD レコーダーの録音中・録音の一時停止中・録音待機中は取り込みません。本体で録音を停止するか待機を解除してから、もう一度取り込んでください。何も取り込んでいません。",
     trackCountUnread: (message: string): string =>
       `microSD レコーダーの Track Count を読み取れませんでした (${message})。レート変更はこの値を元に戻せない形で下げることがあるため、何も書き込んでいません。`,
     followUsbWrite: (message: string, on = false): string =>

@@ -197,7 +197,7 @@ import {
   readIntoPlan,
   sourceChoiceHoldKeys,
 } from "./core/control/readback";
-import type { MergedRead, ReadbackResult } from "./core/control/readback";
+import type { MergedRead, ParamSource, ReadbackResult } from "./core/control/readback";
 import type { PendingWrites } from "./core/control/settle";
 import { parseUrxf, paramSourceOf, UrxfError } from "./core/control/urxf";
 import {
@@ -3851,45 +3851,114 @@ function writeHeldDeviceValue(param: number, y: number, value: number): void {
     .catch((err: unknown) => stopLiveOnError(errorText(err)));
 }
 
+/** What the microSD recorder refuses a clock change with during a session, by what it holds. */
+interface RecorderRefusals {
+  recording: string;
+  playback: string;
+}
+
+/** Whether the microSD recorder lets a session change the unit's clock: refused, saying so, while
+ *  it holds a file. A read that fails says so and answers no. */
+async function recorderAllowsClockChange(refusals: RecorderRefusals): Promise<boolean> {
+  let held: SdRecorderHold;
+  try {
+    held = hasRecorder(modelId) ? await readSdRecorderHold() : null;
+  } catch (err) {
+    showError(t().error.playbackUnread(errorText(err)));
+    return false;
+  }
+  if (!held) return true;
+  showError(held === "recording" ? refusals.recording : refusals.playback);
+  return false;
+}
+
 /**
- * Ask the operator about a rate a live session would write to the unit, the way a write's settle
- * asks: refused while the microSD recorder holds a file, and confirmed with what it costs the
- * recorder's Track Count otherwise. Null when nothing needs asking — no session, or the rate the
- * plan already holds. A read that fails says so and answers no.
+ * Ask the operator about re-clocking the unit to `rate` during a session, the way a write's settle
+ * asks: refused with `refusals` while the microSD recorder holds a file, and confirmed with what it
+ * costs the recorder's Track Count and the inserts otherwise. A read that fails says so and
+ * answers no.
+ */
+async function askLiveRate(rate: number, refusals: RecorderRefusals): Promise<boolean> {
+  if (!(await recorderAllowsClockChange(refusals))) return false;
+  let cost: { from: number; to: number } | null;
+  try {
+    cost = hasRecorder(modelId) ? trackCountDrop(await readTrackCount(), rate) : null;
+  } catch (err) {
+    showError(t().error.trackCountUnread(errorText(err)));
+    return false;
+  }
+  const drop = cost ? t().confirm.trackCountDrop(cost.from, cost.to) : "";
+  const off = insertsAboveRate(plan, rate);
+  const offNote = off.length ? t().confirm.insertsOffAtRate(insertNames(off)) : "";
+  const ask = [t().confirm.reclock(formatRate(plan.sampleRate), formatRate(rate)), offNote, drop]
+    .filter(Boolean)
+    .join(" ");
+  if (await confirmDialog(ask)) return true;
+  setStatus(t().status.canceled);
+  return false;
+}
+
+/**
+ * Ask the operator about a rate a live session would write to the unit (askLiveRate), taken only
+ * while the session takes a rate at all. Null when nothing needs asking — no session, or the rate
+ * the plan already holds.
  */
 function confirmLiveRate(rate: number): Promise<boolean> | null {
   if (!liveSessionUp || rate === plan.sampleRate) return null;
   const deviceRate = formatRate(plan.sampleRate);
   const nextRate = formatRate(rate);
-  return (async () => {
-    const recorder = hasRecorder(modelId);
-    let held: SdRecorderHold;
-    try {
-      held = recorder ? await readSdRecorderHold() : null;
-    } catch (err) {
-      showError(t().error.playbackUnread(errorText(err)));
-      return false;
-    }
-    if (held) {
-      const refuse = held === "recording" ? t().error.rateDuringRecordingLive : t().error.rateDuringPlaybackLive;
-      showError(refuse(deviceRate, nextRate));
-      return false;
-    }
-    let cost: { from: number; to: number } | null;
-    try {
-      cost = recorder ? trackCountDrop(await readTrackCount(), rate) : null;
-    } catch (err) {
-      showError(t().error.trackCountUnread(errorText(err)));
-      return false;
-    }
-    const drop = cost ? t().confirm.trackCountDrop(cost.from, cost.to) : "";
-    const off = insertsAboveRate(plan, rate);
-    const offNote = off.length ? t().confirm.insertsOffAtRate(insertNames(off)) : "";
-    const ask = [t().confirm.reclock(deviceRate, nextRate), offNote, drop].filter(Boolean).join(" ");
-    if (await confirmDialog(ask)) return liveRateOpen();
+  return (async () =>
+    (await askLiveRate(rate, {
+      recording: t().error.rateDuringRecordingLive(deviceRate, nextRate),
+      playback: t().error.rateDuringPlaybackLive(deviceRate, nextRate),
+    })) && liveRateOpen())();
+}
+
+/**
+ * What a settings file imported during a session does to the unit's clock, once the operator has
+ * agreed to it: the Follow USB to write before the import where the file's differs from the
+ * unit's, and whether the file's rate is taken. Null where the operator declined or the microSD
+ * recorder refused it, which imports nothing. Under the Scene only device scope the rate and
+ * Follow USB are outside the session: nothing is asked and the rate is not taken.
+ *
+ * - The same Follow USB, another rate: asked as a rate chosen in the app is (askLiveRate); with
+ *   Follow USB on, the unit takes the computer's rate back after the write.
+ * - Follow USB turned on: asked as the toolbar's FOLLOW USB asks, and refused while the recorder
+ *   holds a file.
+ * - Follow USB turned off: asked about the file's rate where it differs, and otherwise about
+ *   turning Follow USB off.
+ *
+ * A value the file does not carry is one it does not change.
+ */
+async function confirmImportClock(
+  source: ParamSource,
+): Promise<{ followUsb: boolean | undefined; takeRate: boolean } | null> {
+  if (getSettings().deviceScope !== "all") return { followUsb: undefined, takeRate: false };
+  const carried = (paramId: number): Promise<number | null> => source.get(paramId, 0, 0).catch(() => null);
+  const fileRate = (await carried(PARAMS.SAMPLE_RATE.id)) ?? plan.sampleRate;
+  const fileFollow = await carried(PARAMS.FOLLOW_USB.id);
+  const followUsb =
+    fileFollow !== null && followUsbState !== null && (fileFollow !== 0) !== followUsbState
+      ? fileFollow !== 0
+      : undefined;
+  const refusals: RecorderRefusals = {
+    recording: t().error.settingsClockDuringRecording,
+    playback: t().error.settingsClockDuringPlayback,
+  };
+  const asked = async (question: string): Promise<boolean> => {
+    if (await confirmDialog(question)) return true;
     setStatus(t().status.canceled);
     return false;
-  })();
+  };
+  if (followUsb === true) {
+    const cost = hasRecorder(modelId) ? ` ${t().confirm.trackCountMayDrop}` : "";
+    if (!(await recorderAllowsClockChange(refusals))) return null;
+    return (await asked(`${t().confirm.followUsbOn}${cost}`)) ? { followUsb, takeRate: true } : null;
+  }
+  if (fileRate !== plan.sampleRate)
+    return (await askLiveRate(fileRate, refusals)) ? { followUsb, takeRate: true } : null;
+  if (followUsb === false && !(await asked(t().confirm.followUsbOffImport(formatRate(plan.sampleRate))))) return null;
+  return { followUsb, takeRate: true };
 }
 
 /** Take a rate chosen in the app: during Live sync once the operator has agreed to what it costs,
@@ -5651,30 +5720,47 @@ if (!DEMO) {
       return;
     }
     if (!(await confirmDiscard())) return;
-    if (
-      !(await confirmDialog(
-        (liveSessionUp ? t().confirm.importSettingsLive : t().confirm.importSettings)(name, modelId),
-      ))
-    ) {
+    // The confirms ask about a session, or about none, as they find it.
+    const live = liveSessionUp;
+    if (!(await confirmDialog((live ? t().confirm.importSettingsLive : t().confirm.importSettings)(name, modelId)))) {
       setStatus(t().status.canceled);
       return;
     }
+    // During a session the file can change how the unit is clocked, which is asked about
+    // before anything is imported.
+    const source = paramSourceOf(current);
+    const clock = live ? await confirmImportClock(source) : { followUsb: undefined, takeRate: true };
+    if (!clock) return;
     // Re-checked HERE, not only at the flow's entry. This is the one wholesale plan
     // replacement that does not go through `loadPlan` — it mutates the module plan in
     // place — so it has no share of that backstop, and the entry check is separated
-    // from the mutation by two confirm dialogs. Those leave the window running, so a
+    // from the mutation by the confirm dialogs. Those leave the window running, so a
     // device action can take the link behind them — a write converging the plan object
     // this is about to overwrite key by key, or a read merging into it. A session that
     // came up behind the confirms would take every imported value with no confirm of its
-    // own, so the import goes ahead only in the state the confirm asked about.
+    // own, so the import goes ahead only in the state the confirms asked about.
     if (flow.deviceReadInFlight) {
       setStatus(t().status.busyDeviceRead);
       return;
     }
-    const live = liveSessionUp;
-    if (importBlocked() || live !== (deviceLinkHolder === "live")) {
+    if (importBlocked()) {
       setStatus(t().status.deviceLinkBusy);
       return;
+    }
+    if (liveSessionUp !== live) {
+      setStatus(t().status.canceled);
+      return;
+    }
+    // The file's Follow USB goes to the unit first, so the rate the session then writes lands
+    // on a unit clocked the way the file says.
+    if (live && clock.followUsb !== undefined) {
+      try {
+        await setFollowUsb(clock.followUsb);
+        setFollowUsbBadge(clock.followUsb);
+      } catch (err) {
+        stopLiveOnError(errorText(err));
+        return;
+      }
     }
     let result: ReadbackResult;
     let rateKept = false;
@@ -5683,10 +5769,9 @@ if (!DEMO) {
       // document supplies, so they are recorded as such. Calling them the unit's would claim
       // the connected device holds them, which a file written by another unit does not.
       const beforeImport = clonePlanState(plan);
-      result = await applySourceState(getModel(modelId), plan, paramSourceOf(current));
-      // During a session the sampling frequency stays the unit's: the rate is locked while
-      // Live sync is on, and the session would re-clock the unit on its next flush.
-      if (live && plan.sampleRate !== beforeImport.sampleRate) {
+      result = await applySourceState(getModel(modelId), plan, source);
+      // A rate outside the session stays the unit's.
+      if (live && !clock.takeRate && plan.sampleRate !== beforeImport.sampleRate) {
         setPlanSampleRate(plan, beforeImport.sampleRate);
         rateKept = true;
       }

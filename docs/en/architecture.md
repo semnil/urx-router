@@ -4977,8 +4977,15 @@ source travels as a parameter: the pass and each reading helper bind their own `
 from it, so a device follow reconcile and a file import cannot read each other's source and need no
 guard against overlapping. While a session is up an import is an edit like any other: its confirm says the
 imported settings go to the unit, the values land in the plan through `markChanged`, the session's next flush
-writes them, and the import is one undo step. The sampling frequency is the exception — the rate is locked while
-Live sync is on, so the file's rate is not taken and the status line says the rate stayed. The import is refused
+writes them, and the import is one undo step. A file that changes how the unit is clocked is asked about before
+anything is imported (`confirmImportClock`), and imports nothing when the operator declines or the microSD recorder
+holds a file. A rate the file changes with Follow USB left as it is gets the confirm a rate chosen in the app gets —
+with Follow USB on as well, where the unit takes the computer's rate back after the write; a file that turns Follow
+USB on gets the confirm the toolbar's FOLLOW USB gives, refused as well while the recorder holds a file; one that
+turns it off is asked about its rate where that differs, and about turning Follow USB off where it does not. The
+file's Follow USB is written before the rest, so the rate the session then writes lands on a unit clocked the way
+the file says. Under the Scene only device scope both are outside the session: nothing is asked, the file's rate is
+not taken, and the status line says the rate stayed. The import is refused
 while any other device action holds the link (a Live sync still connecting holds it with no session up yet), and
 asks again once its confirms are answered, going ahead only in the state the confirm asked about, since the
 window keeps running behind them.
