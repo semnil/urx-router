@@ -197,7 +197,7 @@ export const EQ_DYN: DynPlotProcessor = {
   rowStates: (ctx, vals) => {
     const band = ["on", "type", "freq", "q", "gain"];
     if (channelEqUnavailable(ctx.nodeId, ctx.plan.sampleRate)) {
-      const locked = { tag: ctx.m.inspector.eqRateLocked, locked: true };
+      const locked = { tag: ctx.m.inspector.eqRateLocked, locked: true, assignable: true };
       return new Map([...band, "oneKnobOn", "oneKnobType", "oneKnobLevel"].map((k) => [k, locked]));
     }
     const out = new Map<string, SettingsRowOptions>();

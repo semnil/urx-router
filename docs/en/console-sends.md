@@ -93,7 +93,8 @@ still claims is given back — and that is the state an operator most needs to r
 - **Above 96 kHz the FX2 bus is gone**, so an `F2` column sets three values on a bus the unit is
   not running. All three go read-only together — the enable chip, the PRE button and the fader —
   each carrying `inspector.fx2RateLocked`, and the FX2 strip itself is dimmed the way the graph
-  dims its node. The predicate is `nodeRateDisabled` in `core/constraints.ts`, which is also what
+  dims its node, with its own fader, MUTE, PAN, ON and sends into the MIX buses read-only too.
+  Each stays a MIDI-learn target, and the bound controller is refused while the rate holds. The predicate is `nodeRateDisabled` in `core/constraints.ts`, which is also what
   builds the graph's `disabledNodes`, so the two cannot disagree about which rates remove it.
 - This is the narrower FIXED-bus lock's wider sibling: FIXED takes the level and the tap (and the
   send pan in the SEND PAN popover) and leaves the switch, because the bus is still there.
@@ -244,7 +245,8 @@ exactly one home.
 
 - Send level / send on-off / send pan use the send-scoped control ids
   (`controlId(node, param, target)`), so a mapping names the send it was made on rather than a
-  position in the rack. The rack chips, column faders, and SEND PAN knobs are armable in learn mode.
+  position in the rack. The rack chips, column faders, and SEND PAN knobs are armable in learn mode,
+  the ones the sample rate holds read-only included.
 - A `tap` control per MIX send (toggle). CH → FX taps are rejected as device-locked, like the
   other locked controls.
 

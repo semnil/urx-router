@@ -221,7 +221,7 @@ const GUITAR_LEAD_TYPES = [
 // editing any note shows "Custom"). The full Scale enum is LCD-confirmed
 // (sentinel writes, values 0..7). MIDI Control packs two bits across 34/35:
 // Off (0,0) / Setting (1,0) / Real Time (1,1).
-const PITCH_KEYS = SEMITONE_NAMES.map((label, value) => ({ value, label }));
+export const PITCH_KEYS = SEMITONE_NAMES.map((label, value) => ({ value, label }));
 export const PITCH_SCALE_SLOT = 16;
 export const PITCH_SCALE_CUSTOM = 0;
 export const PITCH_SCALE_SINGLE = 1;
@@ -268,7 +268,7 @@ export const PITCH_MIDI_REALTIME_SLOT = 35;
 
 // ---- per-effect parameter descriptors ----
 
-export interface InsertFxParamDesc {
+interface InsertFxParamFields {
   /** Engine array slot. Some params mirror onto a second slot (see `mirror`). */
   slot: number;
   /** Optional second slot written with the same raw (Pitch Coarse/Fine/Formant). */
@@ -280,7 +280,6 @@ export interface InsertFxParamDesc {
    *  different slots and a surface that has to tell them apart reads this. Absent on
    *  every effect whose parameters occur once. */
   band?: "low" | "mid" | "high";
-  control: "slider" | "toggle" | "select";
   rawMin?: number;
   rawMax?: number;
   rawStep?: number;
@@ -297,9 +296,15 @@ export interface InsertFxParamDesc {
   def: number;
   /** Display formatter for a raw value (slider/select). */
   format?: (raw: number) => string;
-  /** Option list for a select control (value = raw). */
-  options?: { value: number; label: string }[];
 }
+
+/** A select carries the options it offers (value = raw); a slider or a toggle carries none. */
+export type InsertFxParamDesc = InsertFxParamFields &
+  (
+    | { control: "slider"; options?: undefined }
+    | { control: "toggle"; options?: undefined }
+    | { control: "select"; options: { value: number; label: string }[] }
+  );
 
 /** Compander Release raw (ms×10) → the label the unit prints: three significant figures, to
  *  no finer than the 0.1 ms the value holds (5.0 ms, 65.4 ms, 999 ms, 1.23 s, 42.3 s). */
@@ -867,7 +872,7 @@ export interface InsertFxSlotSpec {
  *  kind rather than as rawMin/rawMax. */
 function descBounds(d: InsertFxParamDesc): { rawMin: number; rawMax: number } {
   if (d.control === "select") {
-    const values = (d.options ?? []).map((o) => o.value);
+    const values = d.options.map((o) => o.value);
     return { rawMin: Math.min(...values), rawMax: Math.max(...values) };
   }
   if (d.control === "toggle") return { rawMin: 0, rawMax: 1 };

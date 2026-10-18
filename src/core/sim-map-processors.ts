@@ -588,30 +588,6 @@ function insertFxParam(model: DeviceModel, id: string, key: string, families: re
   };
 }
 
-/** The paths of the insert rows the unit drives itself for the effect each node now holds. */
-export function insertDrivenPaths(model: DeviceModel, plan: Plan): string[] {
-  const out: string[] = [];
-  for (const node of model.nodes) {
-    const id = node.id;
-    if (!insertFxEffect(model, id)) continue;
-    const sel = effectiveInsertFx(model, plan, id);
-    const family = sel === undefined ? null : insertFxFamilyOf(sel);
-    if (sel === undefined || !family) continue;
-    const params = np(plan, id).insertFxParams;
-    const locked = insertFxLockedSlots(family, params);
-    if (locked.size === 0) continue;
-    const defaults = insertFxDefaults(family, sel);
-    const raw = (slot: number): number => insertFxSlotVal(params, family, slot, defaults[slot]);
-    for (const [key, row] of Object.entries(insertRows(family))) {
-      const shown = row.read(raw);
-      const slots = shown === undefined ? null : row.take(shown);
-      if (slots && Object.keys(slots).some((slot) => locked.has(Number(slot))))
-        out.push(`ch.${simStripId(id)}.insFx.${key}`);
-    }
-  }
-  return out;
-}
-
 /** The 1-knob EQ's kept band gain: the plan holds none, so it reads nothing and a write of it changes nothing. */
 const EQ_ONE_KNOB_BASE: SimBinding = { read: () => undefined, write: () => UNCHANGED };
 
@@ -718,7 +694,7 @@ const FX_ROWS: Record<FxFamily, Record<string, FxRow>> = {
 function descRange(d: FxParamDesc): [number, number] {
   if (d.control === "toggle") return [0, 1];
   if (d.control === "select") {
-    const values = (d.options ?? []).map((o) => o.value);
+    const values = d.options.map((o) => o.value);
     return [Math.min(...values), Math.max(...values)];
   }
   return [d.rawMin ?? d.def, d.rawMax ?? d.def];

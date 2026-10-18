@@ -345,14 +345,20 @@ test("switching family rebuilds the rows, and going back reloads the reverb's fa
   await closeScreen(page);
 });
 
-test("FX 2 above 96 kHz still opens, with the rate note in front", async ({ page }) => {
+test("FX 2 above 96 kHz still opens, with the rate note in front and every row held", async ({ page }) => {
   await page.click("#btn-view-graph");
   await chooseOption(page.locator("#rate-picker"), { label: "192 kHz" });
   await openFromInspector(page, "bus.fx2");
   await expect(screenBox(page)).toContainText("above 96 kHz");
-  // The bus is gone at this rate; its own controls are not. The values are untouched and
-  // the screen is the same screen.
-  await expect(screenRow(page, "Delay").locator('input[type="range"]')).toBeEnabled();
+  // The bus is gone at this rate, and so is every value it holds: the screen is the same
+  // screen, showing the values, and takes no edit.
+  const delay = screenRow(page, "Delay").locator('input[type="range"]');
+  await expect(delay).toBeDisabled();
+  await closeScreen(page);
+  // …and at 96 kHz the same row is live again, which is what makes the lock the rate's.
+  await chooseOption(page.locator("#rate-picker"), { label: "96 kHz" });
+  await openFromInspector(page, "bus.fx2");
+  await expect(delay).toBeEnabled();
   await closeScreen(page);
 });
 

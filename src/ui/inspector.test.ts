@@ -2121,3 +2121,51 @@ describe("names and states a screen reader is given", () => {
     expect(slider.getAttribute("aria-valuetext")).not.toBe(slider.value);
   });
 });
+
+// Above 96 kHz the FX2 bus is gone: a send into it or out of it, and the bus's own switch and
+// effect, show their values and take no edit, with the reason on screen. 96 kHz is the control.
+describe("FX2 above 96 kHz", () => {
+  const u44v = getModel("URX44V");
+  const panel = (plan: Plan, sel: Selection): HTMLElement => {
+    const el = document.createElement("div");
+    renderInspector(el, u44v, plan, sel, actions());
+    return el;
+  };
+  const controls = (el: HTMLElement): HTMLInputElement[] => [
+    ...el.querySelectorAll<HTMLInputElement>(".param button, .param select, .param input"),
+  ];
+
+  it.each([
+    ["into it", "ch1:out", "bus.fx2:in"],
+    ["out of it", "bus.fx2:out", "bus.mix1:in"],
+  ])("holds a send %s", (_what, from, to) => {
+    const plan = defaultPlan("URX44V");
+    plan.sampleRate = 192000;
+    const el = panel(plan, connSel(from, to));
+    expect(el.textContent).toContain(t().inspector.fx2RateLocked);
+    expect(controls(el).length).toBeGreaterThan(0);
+    for (const c of controls(el)) expect(c.disabled, c.outerHTML).toBe(true);
+    plan.sampleRate = 96000;
+    const live = panel(plan, connSel(from, to));
+    expect(live.textContent).not.toContain(t().inspector.fx2RateLocked);
+    expect(
+      controls(live).some((c) => !c.disabled),
+      "live at 96 kHz",
+    ).toBe(true);
+  });
+
+  it("holds the bus's own switch and its effect type", () => {
+    const plan = defaultPlan("URX44V");
+    plan.sampleRate = 192000;
+    const el = panel(plan, nodeSel("bus.fx2"));
+    const select = el.querySelector<HTMLSelectElement>(".param select")!;
+    expect(select.disabled).toBe(true);
+    const onButtons = [...el.querySelectorAll<HTMLButtonElement>(".param button")].filter((b) =>
+      b.closest(".param")?.textContent?.includes(t().inspector.channelOn),
+    );
+    expect(onButtons.length).toBeGreaterThan(0);
+    for (const b of onButtons) expect(b.disabled).toBe(true);
+    plan.sampleRate = 96000;
+    expect(panel(plan, nodeSel("bus.fx2")).querySelector<HTMLSelectElement>(".param select")!.disabled).toBe(false);
+  });
+});

@@ -1912,17 +1912,19 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   The plan holds none of them, so the LCD carries none out, and the status line says so.
 - **What it holds shut** is drawn on the LCD before it is pressed (`sim-locks.ts`, handed to the simulator's
   `setLocks()` at mount, on every plan change and when the device link is taken or let go): a held control keeps its
-  place with a padlock at its top right and the reason as its tooltip, and takes no touch, key or drag. Held are the
-  SETUP > GENERAL screens of what the app neither reads nor writes — the operation mode and the
-  unit's clock ("Change it on the device"), Software Integration and its two sends — held in place on a screen already
-  open — except while Live sync is up on a unit a compatible DAW holds ("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"), the unit's own operations and USB Storage
+  place with a padlock at its top right and the reason as its tooltip, and takes no touch, key or drag. **Only what the
+  app cannot do is held this way** — a value it does not write, a function it does not carry, a state it cannot read.
+  The LCD simulates the unit, so a control the unit itself holds still or hides, showing nothing for it, is drawn as the
+  unit draws it, by the simulator: a COMP or M.B.Comp value its 1-knob drives, Pitch Fix's notes under MIDI Control,
+  FX 2's sends at a rate that takes FX 2 out, the rates while Follow USB is on. Held are the
+  SETUP > GENERAL screens of what the app does not write — the operation mode, which a session reads and shows,
+  and the unit's clock ("Change it on the device"), Software Integration and its two sends — held in place on a screen already
+  open — while Live sync is down, since whether a compatible DAW holds the unit is read only during a session ("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"), the unit's own operations and USB Storage
   Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus while Live sync is up, as on the CONSOLE
-  and in the Inspector (their wording), the sampling frequency while the device link is held — during Live sync
-  only while Follow USB is on ("Turn Follow USB off to change it during Live sync") — the recorder's
-  Track Count while Live sync is up and
-  the sends into FX 2 at a rate that takes FX 2 out (each the wording the Inspector already gives), and an insert
-  effect's value its own screen holds shut for the effect's current values, such as M.B.Comp's bands while its 1-knob
-  is on (that screen's wording).
+  and in the Inspector (their wording), the sampling frequency while the device link is held and the unit is not known
+  to have Follow USB on — during Live sync only while the session carries no rate (Scene only), and while Follow USB
+  is not yet read ("Turn Follow USB off to change it during Live sync") — and the recorder's
+  Track Count while Live sync is up (the wording the Inspector already gives).
 - **Meters**: while Live sync is on and the view is up, it borrows the session's one meter subscription from the
   CONSOLE, as a tuning screen does, and gives it back when it is hidden. The simulator's meter ids are mapped onto
   the CONSOLE's taps (`simMeterTap`). Without Live sync the LCD's meters read nothing.
@@ -2044,7 +2046,10 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   the EQ filter type and 1-knob type) carry no control at all. +48V and HI-Z refuse differently: turning one
   on while the other is on for the jack the channel reads is refused by the control itself (`refuses`) and reported on the
   status line rather than dropped, and the CONSOLE chip that rule locks stays a learn target
-  (known-issues.md "The unit lets +48V and HI-Z be on together; the app does not").
+  (known-issues.md "The unit lets +48V and HI-Z be on together; the app does not"). A control the sample rate
+  takes away is read-only on every surface and stays a learn target on the CONSOLE and the tuning screens, its
+  bound controller refused while the rate holds: FX 2's own values and every send into or out of it above
+  96 kHz, the stereo-channel EQ at 176.4 / 192 kHz, and an insert held above its own ceiling.
 - **Engine (`engine.ts`)** — routes incoming events onto bound controls. A take-in mode belongs to the
   physical control rather than to one binding — every binding on one address carries the same one, which a
   learn onto the address takes and a change in the window sets for all of them: absolute / pickup (swallowed until the physical value reaches or crosses the plan value). 14-bit CC assembles the MSB/LSB
@@ -3507,7 +3512,8 @@ is unwritable": only the DSP is gone, the stored value survives. So the write se
 would prevent no non-convergence (there is none to prevent), it would only stop the plan
 from reaching the device, which would leave settings the plan never asked for in place once the rate came back
 down. The UI still reflects the functional limits (`channelEqUnavailable` / `insertFxMenu` lock the EQ and
-INS FX chips, `rateConstraints` dims FX2), because those features genuinely do not run at those rates.
+INS FX chips and their tuning screens, `nodeRateDisabled` holds FX2's strip, its sends, its Inspector panel and
+its tuning screen read-only), because those features genuinely do not run at those rates.
 
 `SAMPLE_RATE` is emitted **first** so the rest of the write lands on a device already clocked the way the plan
 says. Confirmed on hardware: a rate-changing write completes, with the commands after the re-clock all arriving.

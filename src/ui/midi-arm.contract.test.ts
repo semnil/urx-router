@@ -33,11 +33,11 @@ import { DynScreen } from "./dyn-screen";
 import { DYN_PROCESSORS } from "./dyn-registry";
 import type { DynCtx, DynProcessor } from "./dyn-screen";
 import { bindControl } from "../core/midi/controls";
-import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS } from "../core/control/params";
+import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS, OUTPUT_INSERT_FX_OPTIONS } from "../core/control/params";
 import { defaultPlan } from "../models/initial-state";
 import { getModel } from "../models";
 import { isStereoChannel } from "../core/control/translate";
-import { setExclusiveConnection } from "../core/plan";
+import { serialize, setExclusiveConnection } from "../core/plan";
 import { setLang, t } from "../i18n";
 import { setDisplayedSide } from "../core/stereo-side";
 import { tipOf } from "./glyph";
@@ -206,9 +206,10 @@ describe("arming surfaces against the control catalog", () => {
 
   // A +48V chip that HI-Z locks is read-only for a press and still a learn target: the bound
   // controller's ON is refused while the lock holds, so the binding is worth making. A chip the
-  // RATE locks offers nothing. The whole-surface pass runs with both on screen, so the
-  // marked-versus-armed equality is asked of a strip carrying the locked chip.
-  it("keeps a +48V chip HI-Z locks armable, and leaves a rate-locked chip unmarked", () => {
+  // RATE locks is the same: read-only, assignable, and its bound controller refused while the
+  // rate holds. The whole-surface pass runs with both on screen, so the marked-versus-armed
+  // equality is asked of a strip carrying the locked chips.
+  it("keeps a +48V chip HI-Z locks and a rate-locked chip armable, and edits nothing through either", () => {
     // CH 3 reads jack 3, which carries HI-Z.
     const JACK3 = "in.micline_3_4";
     const armed: string[] = [];
@@ -237,14 +238,36 @@ describe("arming surfaces against the control catalog", () => {
 
     const eq = chipOf("ch_5_6", t().console.eq);
     expect(eq.getAttribute("aria-disabled"), "the stereo EQ chip is rate-locked").toBe("true");
-    expect(eq.classList.contains("midi-target"), "and offers nothing").toBe(false);
+    expect(eq.classList.contains("midi-target"), "and still offers itself").toBe(true);
     armed.length = 0;
+    const eqBefore = plan.nodeParams.ch_5_6?.eqOn;
     eq.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    expect(armed, "and arms nothing").toEqual([]);
+    expect(armed, "a press arms its id").toEqual(["ch_5_6/eqOn"]);
+    expect(plan.nodeParams.ch_5_6?.eqOn, "and edits nothing").toBe(eqBefore);
+    const bound = bindControl(ch.model, ch.plan, "ch_5_6/eqOn");
+    expect(bound, "which the catalog binds").toBeTruthy();
+    expect(bound!.set(1), "and refuses while the rate holds").toBe(false);
 
     armed.length = 0;
+    const planBefore = serialize(plan);
     const { marked, ids } = armEverything(ch.host, armed);
     expect(ids).toContain("ch3/phantom");
+    // Every control the rate takes away offers itself: FX 2's own fader, MUTE, PAN and master ON,
+    // its send into a MIX, a channel's send into it, and the stereo channel's EQ.
+    for (const id of [
+      "bus.fx2/level",
+      "bus.fx2/mute",
+      "bus.fx2/pan",
+      "bus.fx2/chOn",
+      "bus.fx2/level@bus.mix1",
+      "bus.fx2/mute@bus.mix1",
+      "bus.fx2/tap@bus.mix1",
+      "ch1/level@bus.fx2",
+      "ch1/mute@bus.fx2",
+      "ch_5_6/eqOn",
+    ])
+      expect(ids, id).toContain(id);
+    expect(serialize(plan), "and arming them edited nothing").toBe(planBefore);
     expect(ids.length).toBe(marked);
     expect(ids.filter((id) => !bindControl(ch!.model, ch!.plan, id))).toEqual([]);
 
@@ -377,6 +400,52 @@ describe("arming surfaces against the control catalog", () => {
       checkNode({ ...proc, controlId: undefined }, nodeIds[0], `${nodeIds[0]} / no controlId`);
     },
   );
+});
+
+// A screen the sample rate has taken away holds every row and keeps each one assignable: learn
+// mode arms what it marks, each id binds and refuses a value while the rate holds, and arming
+// edits nothing. Outside learn mode every control in a held row is disabled.
+describe("a tuning screen the rate has taken", () => {
+  it.each([
+    ["eq", "ch_5_6", 192000, null],
+    ["fx", "bus.fx2", 192000, null],
+    ["insfx", "ch1", 88200, "Pitch Fix"],
+    ["insfx", "bus.mix1", 192000, "M.B.Comp"],
+  ] as const)("the %s screen on %s at %d Hz", (kind, nodeId, rate, effect) => {
+    const armed: string[] = [];
+    let learning = true;
+    dh = dynHost({ midi: { ...learnHooks(armed), learnActive: () => learning }, plotSize: { w: 300, h: 120 } });
+    const { model, plan, box } = dh;
+    plan.sampleRate = rate;
+    if (effect)
+      plan.nodeParams[nodeId] = {
+        ...plan.nodeParams[nodeId],
+        insertFx: [...INSERT_FX_OPTIONS, ...OUTPUT_INSERT_FX_OPTIONS].find((o) => o.label === effect)!.value,
+      };
+    const screen = new DynScreen(dh.hooks);
+    screen.open(DYN_PROCESSORS[kind], nodeId);
+    expect(screen.isOpen()).toBe(true);
+    const before = serialize(plan);
+    // Every row that offers itself is a held one: the rate holds the whole screen, not a part.
+    for (const target of box.querySelectorAll<HTMLElement>(".midi-target"))
+      expect(target.closest(".prefs-row, .gt-knob")?.classList.contains("locked"), target.outerHTML).toBe(true);
+    const { marked, ids } = armEverything(box, armed);
+    expect(marked, "rows offer themselves").toBeGreaterThan(0);
+    expect(ids.length).toBe(marked);
+    for (const id of ids) {
+      const bound = bindControl(model, plan, id);
+      expect(bound, id).toBeTruthy();
+      expect(bound!.set(bound!.get() >= 0.5 ? 0 : 1), `${id} refuses`).toBe(false);
+    }
+    expect(serialize(plan), "and arming edited nothing").toBe(before);
+    learning = false;
+    screen.refresh();
+    const rows = [...box.querySelectorAll<HTMLElement>(".prefs-row.locked, .gt-knob.locked")];
+    expect(rows.length, "rows are held").toBeGreaterThan(0);
+    for (const c of rows.flatMap((r) => [...r.querySelectorAll<HTMLInputElement>("button, select, input")]))
+      expect(c.disabled, "a held control takes no edit").toBe(true);
+    screen.close();
+  });
 });
 
 // Every control mapped, learn off: the tooltip each one carries holds the address, whose CH
