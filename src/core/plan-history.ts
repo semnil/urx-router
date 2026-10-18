@@ -1033,6 +1033,30 @@ export class PlanHistoryStack {
     }
   }
 
+  /**
+   * The unit took the sample rate back to the value an entry moved it from: the rate leaves the
+   * newest entry that carries it, when that entry moved the rate from the value the read found on
+   * the unit to the value the read found in the plan (the patch's `after` and `before`). An entry
+   * left with nothing leaves the stack, and an older entry is not one the read names. The baseline
+   * takes the patch in context either way, so the read is not recorded as an edit of its own.
+   */
+  takeBackRate(patch: PlanPatch): void {
+    if (!patch.length) return;
+    applyPatchInContext(this.baseline, patch);
+    for (const p of patch) {
+      if (p.field !== "sampleRate") continue;
+      for (let at = this.undoStack.length - 1; at >= 0; at--) {
+        const entry = this.undoStack[at];
+        const e = entry.find((x) => x.field === "sampleRate");
+        if (!e || e.field !== "sampleRate") continue;
+        if (e.after !== p.before || e.before !== p.after) break;
+        entry.splice(entry.indexOf(e), 1);
+        if (!entry.length) this.undoStack.splice(at, 1);
+        break;
+      }
+    }
+  }
+
   private retractKey(nodeId: string, key: string, taken: Slot<unknown>): void {
     for (let at = this.undoStack.length - 1; at >= 0; at--) {
       const entry = this.undoStack[at];

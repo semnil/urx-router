@@ -30,6 +30,7 @@ import {
   byMessage,
   countFor,
   countedHead,
+  notifyChannel,
   oscFace,
   paramRow,
   selectNode,
@@ -417,12 +418,14 @@ describe("importing a settings file", () => {
         },
       ]);
     /** The unit `seed`, the import armed with `bytes`, a session up — under the Scene only device
-     *  scope where `scene` — and every confirm answered by `answer`. */
+     *  scope where `scene` — and every confirm answered by `answer`. The unit accepts and does not
+     *  keep a write `ignoreWrite` names. */
     const liveImport = async (
       bytes: Uint8Array,
       seed: Record<string, number>,
       answer: (message: string) => string | Promise<string> = () => "Ok",
       scene = false,
+      ignoreWrite?: (a: Record<string, unknown>) => boolean,
     ): Promise<TauriShell> => {
       const shell = (await bootApp({
         ...(scene ? { seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) } } : {}),
@@ -436,6 +439,7 @@ describe("importing a settings file", () => {
               a.buttons === "OkCancel" ? answer(String(a.message ?? "")) : "Ok",
           },
           seed,
+          ignoreWrite,
         ),
       }))!;
       await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
@@ -704,6 +708,62 @@ describe("importing a settings file", () => {
         source: [],
         osc: [0],
       });
+    });
+
+    // Under Follow USB on the unit takes a rate written to it back to the computer's, and the read
+    // that finds it takes the rate out of the import's undo step: the step undoes and redoes during
+    // the session, writing no rate, with the edit before it still behind it.
+    it("takes a rate the unit took back out of its undo step", SLOW, async () => {
+      const bytes = buildUrxf([
+        {
+          chunk: "CURRENT",
+          block: "CSF_BACKUP",
+          label: "",
+          fields: [
+            { id: SOURCE, typecode: 1, elemSize: 4, values: [0x80000100] },
+            { id: RATE, typecode: 2, elemSize: 4, values: [96_000] },
+            { id: FOLLOW, typecode: 1, elemSize: 1, values: [1] },
+          ],
+        },
+      ]);
+      const shell = await liveImport(
+        bytes,
+        unit(true),
+        () => "Ok",
+        false,
+        (a) => a.paramId === RATE,
+      );
+      turnOscOn();
+      selectNode("ch1"); // the press that ends the edit's entry
+      await tick();
+      await vi.waitFor(() => expect(written(shell, OSC, 0)).toEqual([1]), { timeout: 15_000 });
+      const from = await importNow(shell);
+      await importDone(shell);
+      await vi.waitFor(() => expect(written(shell, SOURCE, from)).toEqual([256]), { timeout: 15_000 });
+      expect(written(shell, RATE, from), "the file's rate went to the unit").toContain(96_000);
+      notifyChannel(shell).onmessage([{ param_id: RATE, x: 0, y: 0, value: 48_000 }]);
+      await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("48000"), { timeout: 20_000 });
+
+      const sent = (at: number): Record<string, number[]> => ({
+        source: written(shell, SOURCE, at),
+        rate: written(shell, RATE, at),
+        osc: written(shell, OSC, at),
+      });
+      let at = await editMenu(shell, EDIT_UNDO_ID);
+      expect(statusText()).toBe(t().status.undone);
+      await synced();
+      expect(sent(at), "the import, without the rate").toEqual({ source: [0], rate: [], osc: [] });
+
+      at = await editMenu(shell, EDIT_UNDO_ID);
+      await synced();
+      expect(sent(at), "the edit before it").toEqual({ source: [], rate: [], osc: [0] });
+
+      at = await editMenu(shell, EDIT_REDO_ID);
+      await synced();
+      at = await editMenu(shell, EDIT_REDO_ID);
+      expect(statusText()).toBe(t().status.redone);
+      await synced();
+      expect(sent(at), "the import again, without the rate").toEqual({ source: [256], rate: [], osc: [] });
     });
 
     // The nodes the file does not carry hold what the session read from the unit, so none is

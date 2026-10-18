@@ -1,6 +1,14 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
-import { LIVE_COMMANDS, heldReadsOf, setHeldReads, stubTauriDevice, writesOf } from "./tauri-stub";
+import {
+  LIVE_COMMANDS,
+  heldReadsOf,
+  notifyParam,
+  setHeldReads,
+  setWriteEffect,
+  stubTauriDevice,
+  writesOf,
+} from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
 import { buildUrxf } from "../src/core/control/urxf.test-util";
 import type { Field } from "../src/core/control/urxf.test-util";
@@ -78,4 +86,34 @@ test("a settings file imported during Live sync is one undo step the session wri
   await expect.poll(() => sources(page)).toEqual([256, 0]);
   await press(page, "ControlOrMeta+Shift+z");
   await expect.poll(() => sources(page)).toEqual([256, 0, 256]);
+});
+
+// Under Follow USB on the unit takes a rate written to it back to the computer's. The import's undo
+// step then carries no rate: it undoes and redoes during the session, writing no rate.
+test("a settings file whose rate the unit takes back undoes during Live sync without the rate", async ({ page }) => {
+  const RATE = PARAMS.SAMPLE_RATE.id;
+  await liveWith(
+    page,
+    settingsFile([
+      { id: RATE, typecode: 2, elemSize: 4, values: [96_000] },
+      { id: PARAMS.FOLLOW_USB.id, typecode: 1, elemSize: 1, values: [1] },
+    ]),
+    1,
+  );
+  // The unit goes on holding 48 kHz when the file's rate is written to it, and then says so.
+  await setWriteEffect(page, RATE, 0, 96_000, [[RATE, 0, 48_000]]);
+  await importFile(page);
+  await expect.poll(() => sources(page)).toEqual([256]);
+  expect(await written(page, RATE), "the file's rate went to the unit").toContain(96_000);
+  await notifyParam(page, RATE, 0, 48_000);
+  await expect(page.locator("#rate-picker")).toHaveValue("48000");
+  const rates = (await written(page, RATE)).length;
+
+  // A rate written in the same flush goes ahead of the source.
+  await press(page, "ControlOrMeta+z");
+  await expect.poll(() => sources(page)).toEqual([256, 0]);
+  expect(await written(page, RATE), "no rate on the undo").toHaveLength(rates);
+  await press(page, "ControlOrMeta+Shift+z");
+  await expect.poll(() => sources(page)).toEqual([256, 0, 256]);
+  expect(await written(page, RATE), "no rate on the redo").toHaveLength(rates);
 });
