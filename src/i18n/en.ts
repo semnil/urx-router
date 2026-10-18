@@ -1446,9 +1446,6 @@ export const en = {
     unknownModel: (model: string): string => `Unknown model: ${model}`,
     modelMismatch: (device: string, ui: string): string =>
       `The connected device is ${device}, but ${ui} is selected. Open or switch to a plan for that model first.`,
-    notWhileLive: tr(
-      "Stop Live sync first — importing replaces every setting at once, which a live session cannot follow.",
-    ),
     notPlanFile: tr("This is not a URX Router plan file"),
     urxf: {
       notUrxf: tr("This is not a URX settings file"),

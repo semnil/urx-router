@@ -124,7 +124,7 @@ the second set, and a one-shot action is consumed by the first caller (an HMR re
 | Self-test round trip | proving write fidelity against the unit (clamping, ignored params, full restore) | `pnpm tauri dev -- -- --experimental --self-test` — **both flags**, the auto-run is nested inside the experimental gate |
 | Audit-prep writer | spreading every writable scalar to a distinctive value so a scene SAVE/RECALL diff has something to show | `pnpm tauri dev -- -- --experimental --prepare-modified` (writes, deliberately does not restore) |
 | Compare with device | checking a `.urxf` import against the unit without writing anything | Device menu → Compare (experimental); full per-parameter log, compared count and elapsed time (`src/core/control/client.ts`) |
-| `.urxf` import | reading the unit's microSD settings file into a plan | File menu (experimental), or a drop onto the window; refused while Live sync is up (`src/core/control/urxf.ts`) |
+| `.urxf` import | reading the unit's microSD settings file into a plan | File menu (experimental), or a drop onto the window; during Live sync the import is an edit the session writes to the unit, asked about first where the file changes the unit's clock (`src/core/control/urxf.ts`) |
 | Storage reset | clearing the consent gate / model / view state | `pnpm reset:storage` (browser) or `pnpm tauri dev -- -- --reset-storage` |
 
 **Measuring and generating.**
