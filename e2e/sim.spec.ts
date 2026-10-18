@@ -6,6 +6,7 @@ import {
   savedFilesOf,
   setDeviceValue,
   setWriteEffect,
+  strWritesOf,
   stubTauriBoot,
   stubTauriDevice,
   writesOf,
@@ -307,6 +308,92 @@ test("holds SETUP > GENERAL shut on the LCD with no session, and writes an edit 
   await page.keyboard.press("ArrowDown");
   await expect.poll(brightnessWrites).toEqual([4]);
 });
+
+// A dialog already open on the LCD when Live sync ends is held with the setting it sets: its [OK]
+// is drawn shut with the reason as the tooltip and writes nothing, and once Live sync is up again
+// the same [OK] writes the pick to the unit.
+for (const { name, params, values, open } of [
+  {
+    name: "USER DEFINED KNOBS' assignment",
+    params: [PARAMS.UDK_FUNCTION.id, PARAMS.UDK_PARAM1.id, PARAMS.UDK_PARAM2.id] as number[],
+    values: {},
+    open: async (page: Page): Promise<void> => {
+      await tapInto(page, lcd(page).getByRole("button", { name: "User Defined Knobs", exact: true }), "setup.udk");
+      await lcd(page).locator(".udk-knob").first().click();
+      await expect(onScreen(page, "setup.udk.assign")).toHaveCount(1);
+      await lcd(page)
+        .locator(".pick-dialog-col")
+        .first()
+        .locator('.pick-dialog-row[aria-pressed="false"]')
+        .first()
+        .click();
+    },
+  },
+  {
+    name: "TIME ZONE",
+    params: [PARAMS.TIME_ZONE.id] as number[],
+    values: {},
+    open: async (page: Page): Promise<void> => {
+      await tapInto(page, lcd(page).getByRole("button", { name: "Date/Time", exact: true }), "setup.datetime");
+      await tapInto(page, lcd(page).getByRole("button", { name: /^Time Zone/ }), "setup.datetime.zone");
+      await lcd(page).locator('.pick-dialog-row[aria-pressed="false"]').first().click();
+    },
+  },
+  {
+    name: "Auto Power Off's warning",
+    params: [PARAMS.AUTO_POWER_OFF.id] as number[],
+    // On, so that switching it off asks.
+    values: { [PARAMS.AUTO_POWER_OFF.id]: 1 },
+    open: async (page: Page): Promise<void> => {
+      await tapInto(page, lcd(page).getByRole("button", { name: "Power Management", exact: true }), "setup.power");
+      await lcd(page).getByRole("button", { name: "Enable", exact: true }).click();
+    },
+  },
+]) {
+  test(`holds ${name}'s [OK] shut once Live sync ends with it open, and writes it once Live sync is up again`, async ({
+    page,
+  }) => {
+    await stubTauriDevice(page, { values, commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+    await page.goto("/");
+    await page.click("#btn-view-sim");
+    await expect(lcd(page)).toBeVisible();
+    const live = async (on: boolean): Promise<void> => {
+      await page.click("#btn-device");
+      await page.click("#btn-live");
+      await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", String(on), { timeout: 30_000 });
+    };
+    const setupWrites = async (): Promise<number> =>
+      (await writesOf(page)).filter(([id]) => params.includes(id)).length +
+      (await strWritesOf(page)).filter(([id]) => params.includes(id)).length;
+    const ok = sim(page).getByRole("button", { name: "OK", exact: true });
+
+    await live(true);
+    await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+    await open(page);
+    await expect(ok).toBeVisible();
+    await expect(ok).not.toHaveAttribute("aria-disabled");
+
+    await live(false);
+    await expect(ok).toHaveAttribute("aria-disabled", "true");
+    await expect(ok).toHaveAttribute("title", en.sim.lockSetupOffline);
+    await expect(ok.locator(".lock-mark")).toHaveCount(1);
+    const before = await setupWrites();
+    // Pressed where it stands (Playwright declines to click a control marked out of reach), its box
+    // taken once the LCD has drawn it.
+    let at: { x: number; y: number; width: number; height: number } | null = null;
+    await expect.poll(async () => (at = await ok.boundingBox())).not.toBeNull();
+    await page.mouse.click(at!.x + at!.width / 2, at!.y + at!.height / 2);
+    await expect(ok, "the dialog stays up").toBeVisible();
+    expect(await setupWrites(), "nothing reaches the unit").toBe(before);
+
+    await live(true);
+    await expect(ok.locator(".lock-mark")).toHaveCount(0);
+    const reconnected = await setupWrites();
+    await ok.click();
+    await expect(ok, "the dialog closes").toHaveCount(0);
+    await expect.poll(setupWrites, "the pick is written to the unit").toBeGreaterThan(reconnected);
+  });
+}
 
 // A change the unit makes beside the one asked for — a BUS Type resetting its bank, an EFFECT TYPE
 // refilling its effect — reaches the plan the same from the LCD as from the Inspector.
