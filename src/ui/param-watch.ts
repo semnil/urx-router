@@ -28,9 +28,9 @@
 import { appendWatchLog, isTauri, vdGet, vdProbeSubscribe, type ParamUpdate } from "../core/platform";
 import { createTraceSink } from "./trace-sink";
 
-/** The addresses recorded, `[paramId, x, y]`. 838 is the subject; 817 (operation mode),
- *  781 (the scene recalled) and 863 (the row SCENE LIST's cursor stands on) are the context it is
- *  read against. */
+/** The addresses recorded, `[paramId, x, y]`. 838 is the subject; 817 (operation mode), 781 (the current
+ *  scene, which a Recall and a Store move) and 863 (the row SCENE LIST's cursor stands on) are the context it
+ *  is read against. */
 export const WATCHED: ReadonlyArray<readonly [number, number, number]> = [
   [838, 0, 0],
   [817, 0, 0],
