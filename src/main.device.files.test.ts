@@ -500,6 +500,22 @@ describe("importing a settings file", () => {
       expect((shell.args[sets[0]] as Record<string, number>).paramId, "Follow USB goes first").toBe(FOLLOW);
     });
 
+    // A Follow USB write that fails ends the session with the error, and the file is not imported.
+    it("imports nothing when the Follow USB write fails, and ends the session with the error", SLOW, async () => {
+      const shell = await liveImport(file(true, 48_000), unit(false));
+      shell.failOnce("vd_set", new Error("write refused"));
+      await importNow(shell);
+      await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.liveError("write refused")]), {
+        timeout: 15_000,
+      });
+      expect(live().getAttribute("aria-checked")).toBe("false");
+      // The "?" badge is drawn from the unread set an import leaves, and this file leaves one.
+      const flagged = [...$("graph-host").querySelectorAll("g.node[data-id]")].filter((g) =>
+        [...g.querySelectorAll("text")].some((el) => el.textContent === "?"),
+      );
+      expect(flagged).toHaveLength(0);
+    });
+
     it.each([
       ["agrees", "Ok", [0]],
       ["declines", "Cancel", []],
