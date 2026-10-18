@@ -4,7 +4,7 @@ import { Console } from "./console";
 import { consoleHost, type ConsoleHost } from "./console.test-util";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
-import { COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
+import { BUS_TYPE_FIXED, COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
 import { setExclusiveConnection, type Plan } from "../core/plan";
 import { t } from "../i18n";
 
@@ -211,7 +211,7 @@ describe("Console UI", () => {
       panBtn().click();
       const mix1 = (): HTMLElement => h.host.querySelector<HTMLElement>('.con-spop .con-knob[aria-label="MIX 1"]')!;
       mix1().focus();
-      (h.plan.nodeParams["bus.mix1"] ??= {}).panLink = true;
+      (h.plan.nodeParams["bus.mix1"] ??= {}).busType = BUS_TYPE_FIXED;
       h.view.refreshStrip("ch1");
       expect(mix1().getAttribute("aria-disabled"), "the premise: the knob is locked now").toBe("true");
       expect(document.activeElement).toBe(panBtn());

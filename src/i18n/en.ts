@@ -666,7 +666,7 @@ export const en = {
     busFixedSend: tr(
       "Only the send ON applies (BUS Type: FIXED): the send is taken after the source's fader at a fixed level and follows the source's own PAN / BAL.",
     ),
-    panLinked: tr("Pan follows the source's own PAN / BAL (Pan Link)."),
+    panLinked: tr("Pan is the source's own PAN / BAL (Pan Link): turning it here moves the source."),
     sdRecTrackCount: dev("Track Count"),
     sdRecTrackCountLive: tr(
       "Track Count is set on the device only — the broker exposes just one of its eight settings.",

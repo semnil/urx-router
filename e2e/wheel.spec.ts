@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "./fixtures";
 import { wheelOver } from "./graph-helpers";
 import { planParamZ } from "./plan-param";
+import { chooseOption } from "./choose-option";
 
 // Mouse-wheel adjust on hover: every continuous control (inspector native-range
 // sliders + the console faders / knobs) nudges one detent per wheel notch, matching
@@ -153,12 +154,12 @@ test.describe("device-locked guard", () => {
     await expect(page.locator("#model-picker")).toHaveValue("URX44V");
   });
 
-  test("a Pan-Link-locked SEND PAN knob ignores the wheel", async ({ page }) => {
-    // Lock MIX 1's send pan via Pan Link, then confirm the console SEND PAN knob is
+  test("a FIXED-locked SEND PAN knob ignores the wheel", async ({ page }) => {
+    // Lock MIX 1's send pan via a FIXED BUS Type, then confirm the console SEND PAN knob is
     // read-only and takes no wheel input (the wheel handler sits below the same
     // readonlyTitle early-return that already blocks drag / keys).
     await node(page, "bus.mix1").click();
-    await param(page, "Pan Link").locator("button", { hasText: "ON" }).click();
+    await chooseOption(param(page, "BUS Type").locator("select"), "1");
     await page.click("#btn-view-console");
     await expect(page.locator("#console-host")).toBeVisible();
 

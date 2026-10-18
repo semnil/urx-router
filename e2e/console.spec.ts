@@ -494,9 +494,10 @@ test("the PAN ▾ button reads active while its SEND PAN popover is open", async
 
 // A Pan Link turned on at the unit announces only the MIX bus, so the follow rebuilds that
 // bus's strip and not CH 1's, whose SEND PAN popover is open: the popover is re-read from the
-// MIX strip and its MIX 1 knob locks. The whole-device read the follow takes afterwards closes
-// every popover, which would hide the difference, so that read is held for the case.
-test("a Pan Link the unit turns on locks the open SEND PAN popover's knob for that bus", async ({ page }) => {
+// MIX strip, and its MIX 1 knob shows the send pan the link moved to CH 1's own and stays live.
+// The whole-device read the follow takes afterwards closes every popover, which would hide the
+// difference, so that read is held for the case.
+test("a Pan Link the unit turns on re-reads the open SEND PAN popover's knob for that bus", async ({ page }) => {
   await stubTauriDevice(page, { commands: LIVE_COMMANDS });
   await page.goto("/");
   await expect(page.locator("#model-picker")).toHaveValue("URX44V");
@@ -508,15 +509,20 @@ test("a Pan Link the unit turns on locks the open SEND PAN popover's knob for th
   const knob = page.locator('.con-spop .con-knob[aria-label="MIX 1"]');
   await expect(knob).toHaveAttribute("tabindex", "0");
   await expect(knob).not.toHaveAttribute("aria-disabled", "true");
+  // The send pan away from CH 1's own (C), so the link has somewhere to move it from.
+  await knob.focus();
+  for (let i = 0; i < 10; i++) await page.keyboard.press("ArrowRight");
+  await expect(knob).toHaveAttribute("aria-valuenow", "10");
 
   await setHeldReads(page, [PARAMS.PAN_LINK.id]);
   await setDeviceValue(page, PARAMS.PAN_LINK.id, 0, 1);
   await notifyParam(page, PARAMS.PAN_LINK.id, 0, 1);
-  await expect(knob).toHaveAttribute("aria-disabled", "true");
+  await expect(knob).toHaveAttribute("aria-valuenow", "0");
   // The read that would close the popover is waiting, so what is on screen is the follow's.
   await expect.poll(() => heldReadsOf(page), { timeout: 30_000 }).toBeGreaterThan(0);
   await expect(page.locator(".con-spop")).toBeVisible();
-  await expect(knob).toHaveAttribute("aria-disabled", "true");
+  await expect(knob).toHaveAttribute("aria-valuenow", "0");
+  await expect(knob).not.toHaveAttribute("aria-disabled", "true");
   await setHeldReads(page, []);
 });
 

@@ -55,12 +55,13 @@ describe("sendFields", () => {
   });
 
   // Pan Link drops the PAN: it follows the source channel's own PAN.
-  it("drops the pan when the destination links it", () => {
+  // The unit's SEND TO screen turns a Pan-Linked send pan, which moves the source's own PAN / BAL.
+  it("keeps the pan when the destination links it", () => {
     const p = plan();
     p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: BUS_TYPE_VARI, panLink: true };
     const { fields, panLinked } = toMix1(p);
     expect(panLinked).toBe(true);
-    expect(fields).not.toContain("pan");
+    expect(fields).toContain("pan");
     expect(fields).toContain("level");
   });
 
@@ -77,10 +78,10 @@ describe("sendFields", () => {
   });
 
   // The order is the device SEND TO screen's, read top to bottom.
-  it("keeps the device's own row order whatever is dropped", () => {
+  it("keeps the device's own row order", () => {
     const p = plan();
     p.nodeParams["bus.mix1"] = { ...p.nodeParams["bus.mix1"], busType: BUS_TYPE_VARI, panLink: true };
-    expect(toMix1(p).fields).toEqual(["tap", "level"]);
+    expect(toMix1(p).fields).toEqual(["tap", "pan", "level"]);
   });
 });
 

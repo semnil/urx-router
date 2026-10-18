@@ -188,13 +188,14 @@ test.describe("T2e shape-change", () => {
   // BUS Type FIXED and Pan Link are parameters of the MIX bus: mixSendLocks
   // (core/routing.ts) is consulted by the inspector (which DROPS the gated controls), by
   // the console (which renders them read-only) and by core/midi/controls.ts (whose set()
-  // returns false and swallows the message). FIXED leaves a send only its ON; Pan Link
-  // takes its pan. So one write on bus.mix1 decides whether an incoming CC on ch1 reaches
-  // the device at all, with nothing written to ch1. FIXED reaches nothing in translate.ts,
-  // so no address enters or leaves the set; Pan Link takes the send pans into its MIX out
-  // of it, since the unit drives them (translate.ts), and phase 7 reads exactly that.
+  // returns false and swallows the message). FIXED leaves a send only its ON. Pan Link ties
+  // each send pan to its source's own: the pan control stays, and turning it moves ch1's own
+  // pan, as the unit's SEND TO screen does. So one write on bus.mix1 decides what an incoming
+  // CC on ch1 writes, with nothing written to ch1. FIXED reaches nothing in translate.ts, so no
+  // address enters or leaves the set; Pan Link takes the send pans into its MIX out of it,
+  // since the unit drives them (translate.ts), and phase 7 reads exactly that.
   // ---------------------------------------------------------------------------
-  test("a MIX bus's FIXED / Pan Link write locks the source channels' send controls without writing them", async ({
+  test("a MIX bus's FIXED / Pan Link write governs the source channels' send controls without writing them", async ({
     page,
   }) => {
     await installFake(page, {
@@ -421,13 +422,13 @@ test.describe("T2e shape-change", () => {
     const staleParamCount = await paramExact(page, "Pan").count();
     const staleHint = await page.locator("#inspector .hint", { hasText: "Pan Link" }).count();
     console.log(`under Pan Link the inspector shows ${staleParamCount} Pan control(s), ${staleHint} Pan-Link hint(s)`);
-    expect(staleParamCount).toBe(0);
+    expect(staleParamCount).toBe(1);
     expect(staleHint).toBe(1);
 
-    // The residual window made deterministic: a handle captured BEFORE the notify keeps
-    // its closure, so dispatching on it reaches `onUpdateParams` exactly as a slider the
-    // rebuild had not yet removed would. That path now asks the same lock the MIDI
-    // catalog asks, so nothing is authored and nothing reaches the wire.
+    // A handle captured BEFORE the notify keeps its closure, so dispatching on it reaches
+    // `onUpdateParams` exactly as the panel's slider does. Under the link that edit moves ch1's
+    // own pan — the funnel names that key — and the send pan into MIX 1 never reaches the wire.
+    await clearLedger(page);
     await mark(page, "stale-pan-edit");
     await stalePanSlider.evaluate((el: HTMLInputElement) => {
       el.value = String(Number(el.value) + 1);
@@ -442,14 +443,21 @@ test.describe("T2e shape-change", () => {
         `; status="${await page.locator("#statusbar").textContent()}"`,
     );
     for (const a of CH1_M1_PAN) expect(staleWrites.some((s) => s.addr === a)).toBe(false);
-    await expect(page.locator("#statusbar")).toContainText("Pan Link");
+    expect(
+      staleWrites.some((s) => s.addr === CH1_PAN),
+      "the edit wrote ch1's own pan",
+    ).toBe(true);
+    const staleKeys = [
+      ...new Set((await ledgerOf(page)).filter((l) => l.source === "ui").map((l) => `${l.field}[${l.key}]`)),
+    ];
+    expect(staleKeys, "ch1's own pan moved").toContain("connParams[ch1:out\u0000bus.stereo:in]");
 
-    // The plan HAS the lock, and core/midi/controls.ts is where that is enforced. One
-    // variable, mirrored from phase 5: the same pair of controls that landed in full there
-    // is sent again, and now the PAN is swallowed while the LEVEL still goes through — the
-    // free one being what wakes the link for settleAfter. The refused slider above left the
-    // plan at `variPan`, and controller 8 now carries the other end of its travel, so
-    // "the write had nothing to change" is excluded by the value it would have written.
+    // One variable, mirrored from phase 5: the same pair of controls that landed in full there
+    // is sent again. The PAN now lands on ch1's own pan, so the send pan into MIX 1 is not
+    // written, and the LEVEL is authored beside it. Controller 8 carries the other end of its
+    // travel from `variPan`, so "the write had nothing to change" is excluded by the value it
+    // would have written.
+    await clearLedger(page);
     await mark(page, "midi-under-panlink");
     await pushMidi(page, [cc(7, 96), cc(8, 120)]);
     await settleAfter(page, "midi-under-panlink", 1200);
@@ -459,18 +467,19 @@ test.describe("T2e shape-change", () => {
     const underLinkAddrs = new Set(underLink.map((s) => s.addr!));
     console.log(
       `MIDI under Pan Link emitted: ${underLink.map((s) => `${s.addr}=${s.value}`).join(", ") || "(nothing)"}` +
-        ` (controller 8 wrote ${variPan} in phase 5, against a plan the lock now refuses)`,
+        ` (controller 8 wrote ${variPan} in phase 5)`,
     );
     for (const a of CH1_M1_PAN) expect(underLinkAddrs.has(a)).toBe(false);
-    // The LEVEL went through — as far as a held link lets it. The barrier armed in phase
-    // 6 is still holding vd_get #1, and the bridge serves one command at a time
-    // (src-tauri/src/vd.rs), so live.ts's send loop — which awaits each vdSet — gets its
-    // FIRST command onto the queue and never issues the linked instance behind it.
-    // Asserting both would be asserting a bridge that serves two commands at once; what
-    // the phase is about is that the level was authored and emitted at all while the pan
-    // was swallowed, and one instance leaving states that as sharply as two. The pair is
-    // asserted whole in phase 5, where nothing is held.
-    expect(CH1_M1_LEVEL.filter((a) => underLinkAddrs.has(a))).toEqual([CH1_M1_LEVEL[0]]);
+    // What the burst authored is read off the ledger rather than the wire. The barrier armed
+    // in phase 6 is still holding vd_get #1, and the bridge serves one command at a time
+    // (src-tauri/src/vd.rs), so the stale edit's write of ch1's own pan above is the one
+    // command live.ts's send loop got onto the queue, and nothing behind it is issued until
+    // the release. The pair of levels is asserted on the wire in phase 5, where nothing is held.
+    const linkKeys = [
+      ...new Set((await ledgerOf(page)).filter((l) => l.source === "midi").map((l) => `${l.field}[${l.key}]`)),
+    ];
+    expect(linkKeys, "the level").toContain("connParams[ch1:out\u0000bus.mix1:in]");
+    expect(linkKeys, "ch1's own pan").toContain("connParams[ch1:out\u0000bus.stereo:in]");
 
     // Phase 7 — the reconcile is no longer the repair, but it must not undo it. Releasing
     // the barrier lets the 900 ms idle net's whole-device reconcile run; it re-derives
@@ -503,7 +512,7 @@ test.describe("T2e shape-change", () => {
         }),
       ),
     );
-    expect(healedParam).toBe(0);
+    expect(healedParam).toBe(1);
     expect(healedHint).toBe(1);
     // The barrier's release really did let a whole-device reconcile through — the same
     // premise phase 2 needs, and the only thing that makes the registration below a

@@ -267,7 +267,7 @@ param、セッションが無い状態。逆向きの差は意図的に判定し
 | `shape-fx-effect-type-slot-family` | inspector | param id ではなくスロット集合が変わる。undo が構造上不完全になる |
 | `shape-signal-type-pair-link` | inspector | 書込が別ノード全体をデバイス側でリセットする唯一の param |
 | `shape-pan-bal-mode-switch` | inspector | デバイスが他の接続の値を書き換える。undo 自体が古い書込になる |
-| `shape-bus-type-and-pan-link-locks` | 混合 | ノード A への書込が、書かずにノード B・C の観測状態を変える。BUS Type の書込そのものが一緒に運ぶのは、その MIX の送りバンクを本体と同じリセット値にしたものだけ |
+| `shape-bus-type-and-pan-link-locks` | 混合 | ノード A への書込が、書かずにノード B・C の観測状態を変える。BUS Type の書込そのものが一緒に運ぶのは、その MIX の送りバンクを本体と同じリセット値にしたものだけ。Pan Link 中の送りのパンの編集は送り元自身のパンを動かし、送りのパンは書かない |
 | `shape-pan-link-send-pans` | 混合 | 実機が告知しない書き換え: Pan Link の間はその MIX への送りのパンを書かないので、チャンネルの PAN を動かした後の収束に振れる値が無く、計画の送りのパンはその動きに追従する (送りのパンの MIDI コントロールがチャンネルの値を返す)。実機側でもアプリのパネルでも、切ると計画の送りのパンがチャンネルのパンになり、次の書込はその値しか送らない。アプリのパネルで FIXED にすると実機の Pan Link は切れ、計画の Pan Link も切になるので、入れ直す書込は無い |
 | `shape-sdrec-track-count-readonly` | 混合 | アプリが読むだけで書かない param。中断原則の否定対照。デバイス側変更は届かない |
 | `shape-sample-rate-and-follow-usb` | 混合 | 常に書込集合の先頭にあり、デバイスが自力で戻せる唯一のスカラー |

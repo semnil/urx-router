@@ -286,10 +286,15 @@ describe("normalized value access", () => {
     const before = conn("ch1", "bus.mix1").params?.level;
     expect(level.set(1)).toBe(false);
     expect(conn("ch1", "bus.mix1").params?.level).toBe(before);
-    // Pan Link (VARI): the send pan is inert
+    // Pan Link (VARI): the send pan is the source's own PAN, and turning it moves the source, as
+    // the unit's SEND TO screen does.
     plan.nodeParams["bus.mix2"] = { ...plan.nodeParams["bus.mix2"], panLink: true };
     const pan = bindControl(model, plan, "ch1/pan@bus.mix2")!;
-    expect(pan.set(1)).toBe(false);
+    expect(pan.set(1)).toBe(true);
+    expect(conn("ch1", "bus.stereo").params?.pan, "the source's own pan moved").toBe(
+      conn("ch1", "bus.mix2").params?.pan,
+    );
+    expect(conn("ch1", "bus.stereo").params?.pan).toBe(63);
     // Stereo-channel EQ is forced off at 192 kHz: reads 0 and refuses the write,
     // leaving whatever the plan already held (the factory seed) untouched.
     plan.sampleRate = 192000;
