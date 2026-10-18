@@ -172,7 +172,7 @@ export const bootDevice = async (
  * Wait until `cmd` has been invoked `n` times. The device flows here write the status
  * line several times on the way through ("Connecting to the device…" first), so
  * waiting for it to CHANGE returns in the middle of the flow — which is how a first
- * version of this file asserted "no writes happened" against a write that had not
+ * version of the device suite asserted "no writes happened" against a write that had not
  * started yet. The flow's own terminal command is the thing to wait on.
  */
 export async function invoked(shell: TauriShell, cmd: string, n = 1, timeout = 25_000): Promise<void> {
@@ -224,7 +224,7 @@ export const notifyChannel = (shell: TauriShell): { onmessage: (d: unknown) => v
  * over it, which is a deliberate loss: in the cases that reach for it, the decision under
  * test is taken before any value goes out, so what the reads answer afterwards only
  * changes whether the write that follows converges. That is a property of THOSE cases and
- * not of the file — a case that reads back after a write has to compose the two stores
+ * not of the suite — a case that reads back after a write has to compose the two stores
  * itself, and should say why. It also means a `vd_set` count taken under this store says
  * how much was sent, never that the write converged.
  */
@@ -408,7 +408,7 @@ export const diffReadsFail = (a: Record<string, unknown>): number => {
 /**
  * Press a node on the board by its own GROUP — the same completed press `selectNode` above
  * makes, aimed elsewhere. What separates the two is where it lands: `selectNode` presses the
- * faceplate, and the FX cases below need the group, or the tuning screen they open draws
+ * faceplate, and the FX cases need the group, or the tuning screen they open draws
  * another node's values or nothing at all.
  *
  * The release carries the same weight it carries there, for the reason written there. On a

@@ -42,7 +42,7 @@ import {
 /**
  * What the app does when the unit on the link is not the model on screen.
  *
- * Write and compare REFUSE (pinned in "Write to device" below) — they act on the plan as
+ * Write and compare REFUSE (pinned in "Write to device", `main.device.write.test.ts`) — they act on the plan as
  * it stands. Fetch and Live sync instead OFFER to switch the UI to a fresh plan of the
  * device's model, and that offer has three answers, none of which was driven before.
  */

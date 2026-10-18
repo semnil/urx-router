@@ -738,7 +738,7 @@ describe("the live session", () => {
   // The OTHER half of the same rule, and the one that made the split worth stating: a
   // session that merely ends lets its read finish, but a plan REPLACED under it does not —
   // the document is gone, so the read is filling something nothing shows. Nothing else in
-  // this file drives `abandonFollowWork` with a read actually in flight, and the abort is
+  // the main.device files drives `abandonFollowWork` with a read actually in flight, and the abort is
   // invisible from the merge (readIntoPlan drops the result either way, whether the round
   // trips stopped or ran to the end).
   it("abandons a follow read when the plan it was filling is replaced", SLOW, async () => {
@@ -1300,7 +1300,7 @@ describe("the inspector while the CONSOLE hides it", () => {
   // reflect's own rate — focus and caret capture included, on a subtree nothing can
   // focus. The rebuild is deferred, not dropped, so the value has to be on screen after
   // the view switch WITHOUT the operator re-selecting the node: every other case in
-  // this file re-selects on the way back, which rebuilds a visible panel and would pass
+  // the main.device files re-selects on the way back, which rebuilds a visible panel and would pass
   // with the drain deleted.
   it("holds the rebuild while the CONSOLE hides it, and pays it on the way back", SLOW, async () => {
     // The unit has CH 3 on jack 1 as well, so the one gain shows on both strips.

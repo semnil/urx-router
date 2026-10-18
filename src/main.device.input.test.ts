@@ -269,8 +269,9 @@ describe("+48V and Hi-Z on one channel", () => {
   // where the read lands: that ON goes back to the unit's OFF, the status line says why, and
   // no ON for it reaches the unit. The unit's own switch is never written.
   describe("against a device read in flight", () => {
-    // Every hold a case made is released here, ahead of the file's own teardown, which ends
-    // the session and then waits for the device link a held read keeps. A release behind
+    // Every hold a case made is released here, ahead of the teardown `main.device.test-util.ts`
+    // registers on this file, which ends the session and then waits for the device link a held
+    // read keeps. A release behind
     // `onTestFinished` would come too late: vitest runs it after every `afterEach`.
     const holds: Array<() => void> = [];
     afterEach(() => {

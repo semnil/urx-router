@@ -10,7 +10,7 @@ import { deviceCommands } from "./main.test-util";
 import { PARAMS } from "./core/control/params";
 import { bootDevice } from "./main.device.test-util";
 
-// The device table's own contract, which no case below can state: it is the fixture all of
+// The device table's own contract, which no other desktop case can state: it is the fixture all of
 // them run on, so a loosening here is invisible from inside them and every one of them goes
 // on passing. What it copies is the shell (`src-tauri/src/vd.rs`): every vd command but
 // connect, disconnect and the link stats goes through `sender()`, which answers
