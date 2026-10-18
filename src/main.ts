@@ -302,7 +302,7 @@ import {
   setupGlassValues,
   withSetupEdit,
 } from "./core/sim-map-setup";
-import { SCENE_CURSOR_PATHS, sceneGlassValues } from "./core/sim-map-scene";
+import { SCENE_CURSOR_PATH, SCENE_TAB_PATH, sceneGlassValues, sceneTab, type SceneTab } from "./core/sim-map-scene";
 import type { DeviceSetup, SetupWrite } from "./core/control/device-setup";
 
 // Clear persisted UI state (theme / model / meter points / consent gate / recent
@@ -944,7 +944,13 @@ function resetSendsTarget(): void {
 // Clip Safe what the unit announced during one.
 let unitSetup: DeviceSetup | null = null;
 let unitOperationMode: number | null = null;
-let unitScene: { current: number | null; cursor: number | null } = { current: null, cursor: null };
+// The scene pointers keep the tab SCENE LIST's cursor last needed, which a move onto a user scene
+// (on both tabs) leaves as it is.
+let unitScene: { current: number | null; cursor: number | null; tab: SceneTab | null } = {
+  current: null,
+  cursor: null,
+  tab: null,
+};
 // SETUP > Software Integration, as a session read it and the unit announced it since, and a count
 // of the changes made to each of its values, which a read taken while one lands does not override.
 let unitIntegration: DawIntegration | null = null;
@@ -963,7 +969,8 @@ function unitGlassValues(): Map<string, SimValue> {
   if (followUsbState !== null) out.set("setup.followUsb", followUsbState);
   const mode = unitOperationMode === null ? undefined : OPERATION_MODES[unitOperationMode];
   if (mode !== undefined) out.set("setup.operationMode", mode);
-  for (const [path, value] of sceneGlassValues(unitScene.current, unitScene.cursor)) out.set(path, value);
+  for (const [path, value] of sceneGlassValues(unitScene.current, unitScene.cursor, unitScene.tab))
+    out.set(path, value);
   if (unitIntegration) for (const [path, send] of integrationGlassValues(unitIntegration)) out.set(path, send);
   return out;
 }
@@ -1109,10 +1116,8 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
     simView?.unitStateChanged();
     return true;
   }
-  // The unit's cursor moving takes the glass's off the row it picked.
   if (paramId === PARAMS.SCENE_CURSOR.id) {
-    unitScene = { ...unitScene, cursor: value };
-    simView?.unitTookOwn(SCENE_CURSOR_PATHS);
+    takeUnitCursor(value);
     return true;
   }
   const field = integrationFieldOf(paramId);
@@ -1125,6 +1130,14 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
   if (!unitStateNotifyAddrs(getModel(modelId)).some(([id, , at]) => id === paramId && at === y)) return false;
   scheduleUnitSetupRead();
   return true;
+}
+
+/** Take the unit's SCENE LIST cursor at `raw`: the glass's own row gives way to it, and so does the
+ *  glass's own tab where the row is on one tab alone. */
+function takeUnitCursor(raw: number): void {
+  const tab = sceneTab(raw);
+  unitScene = { ...unitScene, cursor: raw, tab: tab ?? unitScene.tab };
+  simView?.unitTookOwn(tab === null ? [SCENE_CURSOR_PATH] : [SCENE_CURSOR_PATH, SCENE_TAB_PATH]);
 }
 
 /** Read SETUP > Software Integration again behind every unit write queued so far, and take each
@@ -1151,7 +1164,7 @@ function resetUnitSessionState(): void {
   if (unitSetupReadTimer !== null) clearTimeout(unitSetupReadTimer);
   unitSetupReadTimer = null;
   unitOperationMode = null;
-  unitScene = { current: null, cursor: null };
+  unitScene = { current: null, cursor: null, tab: null };
   unitIntegration = null;
   clipSafeEngaged.clear();
   paintClipSafe();
@@ -5267,8 +5280,8 @@ if (!DEMO) {
         resetUnitSessionState();
         if (setupRead) unitSetup = setupRead;
         unitOperationMode = modeRead;
-        unitScene = sceneRead;
-        simView?.unitTookOwn(SCENE_CURSOR_PATHS);
+        unitScene = { current: sceneRead.current, cursor: null, tab: null };
+        if (sceneRead.cursor !== null) takeUnitCursor(sceneRead.cursor);
         unitIntegration = integrationRead;
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.

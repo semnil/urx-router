@@ -12066,6 +12066,28 @@ describe("the SIM view over a live session", () => {
     await vi.waitFor(() => expect(fnWrites(), "knob A and knob B").toEqual([0, 1]), { timeout: 10_000 });
   });
 
+  // A user scene is on both tabs, so the unit's cursor moving onto one leaves the tab the glass shows;
+  // 00 and a preset are each on one tab alone, which the glass opens.
+  it.each([
+    [0x8001, "Simple"],
+    [0x8000, "Standard"],
+  ])(
+    "keeps the tab its cursor stood on (%i) when the unit's cursor moves onto a user scene",
+    SLOW,
+    async (from, tab) => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, {
+        [`${PARAMS.CURRENT_SCENE.id}/0/0`]: 8,
+        [`${PARAMS.SCENE_CURSOR.id}/0/0`]: from,
+      });
+      await openSim();
+      await goLive();
+      await vi.waitFor(async () => expect((await transport().snapshot()).get("scene.bank")).toBe(tab));
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.SCENE_CURSOR.id, x: 0, y: 0, value: 9 }]);
+      await vi.waitFor(async () => expect((await transport().snapshot()).get("scene.selected")).toBe(10));
+      expect((await transport().snapshot()).get("scene.bank"), "10 is on that tab too").toBe(tab);
+    },
+  );
+
   // The unit's scene pointers are read at the session's start and followed as the unit announces
   // them. The unit's cursor moving takes the glass's off a row it picked, and a session that ends
   // leaves both to the glass.

@@ -76,8 +76,9 @@ export const SENDS_TARGET_PATH = "ui.sendsTarget";
 /** The simulator's own state, kept by the view rather than the plan: which channel a linked pair's
  *  compressors hear (written with the pair's link or COMP / EQ type), the recorder's playback (which
  *  a rate change stops), the output cues its CUE rule remembers to put back, and what a screen has
- *  open or picked — the output patch's and the Peripheral screen's tab, the scene list's bank and row
- *  (until the unit's cursor moves: `unitTookOwn`), the microSD folder and file, the User Defined Knobs
+ *  open or picked — the output patch's and the Peripheral screen's tab, the scene list's row (until
+ *  the unit's cursor moves: `unitTookOwn`) and bank (until it moves onto a row one bank alone lists),
+ *  the microSD folder and file, the User Defined Knobs
  *  bank on show. */
 const GLASS_OWN = new Set([
   "sd.playing",

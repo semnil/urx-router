@@ -3,9 +3,14 @@
 // holds outside the plan. No scene title is given: the glass shows the unit's scenes by number.
 import type { SimValue } from "./sim-map-base";
 
-/** The glass's paths for SCENE LIST's cursor and the tab it stands on: the simulator keeps them as
- *  its own (`GLASS_OWN` in ui/sim-view.ts) until the unit's cursor moves. */
-export const SCENE_CURSOR_PATHS = ["scene.selected", "scene.bank"] as const;
+/** The glass's path for SCENE LIST's cursor, and for the tab it stands on: the simulator keeps both
+ *  as its own (`GLASS_OWN` in ui/sim-view.ts), the cursor until the unit's cursor moves and the tab
+ *  until it moves onto a row one tab alone lists. */
+export const SCENE_CURSOR_PATH = "scene.selected";
+export const SCENE_TAB_PATH = "scene.bank";
+
+/** SCENE LIST's two tabs, as the simulator names them. */
+export type SceneTab = "Standard" | "Simple";
 
 /** The simulator numbers a preset Pn past this base, P01 being 101. */
 const SIM_PRESET_BASE = 100;
@@ -28,18 +33,26 @@ export function simSceneNumber(raw: number): number | null {
   return raw < USER_SCENES ? raw + 1 : null;
 }
 
-/** What the glass shows for the unit's scene pointers: the current scene, SCENE LIST's cursor,
- *  and the tab that lists the cursor's row where only one of the two lists it (00 on Standard, a
- *  preset on Simple). A pointer outside the encoding is left to the glass. */
-export function sceneGlassValues(current: number | null, cursor: number | null): Map<string, SimValue> {
+/** The tab a cursor at `raw` stands on where only one of the two lists its row: 00 on Standard, a
+ *  preset on Simple. Null for a user scene, which both list, and for a value outside the encoding. */
+export function sceneTab(raw: number): SceneTab | null {
+  const no = simSceneNumber(raw);
+  if (no === 0) return "Standard";
+  return no !== null && no > SIM_PRESET_BASE ? "Simple" : null;
+}
+
+/** What the glass shows for the unit's scene pointers: the current scene, SCENE LIST's cursor and
+ *  the tab `tab` it stands on. A pointer outside the encoding is left to the glass. */
+export function sceneGlassValues(
+  current: number | null,
+  cursor: number | null,
+  tab: SceneTab | null,
+): Map<string, SimValue> {
   const out = new Map<string, SimValue>();
   const now = current === null ? null : simSceneNumber(current);
   if (now !== null) out.set("scene.current", now);
   const picked = cursor === null ? null : simSceneNumber(cursor);
-  if (picked !== null) {
-    out.set("scene.selected", picked);
-    if (picked === 0) out.set("scene.bank", "Standard");
-    else if (picked > SIM_PRESET_BASE) out.set("scene.bank", "Simple");
-  }
+  if (picked !== null) out.set(SCENE_CURSOR_PATH, picked);
+  if (tab !== null) out.set(SCENE_TAB_PATH, tab);
   return out;
 }
