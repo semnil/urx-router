@@ -91,7 +91,8 @@ STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップ�
 - **96 kHz を超えると FX2 バスは無くなる**ので、`F2` 列は実機が走らせていないバスに対して 3 つの値を
   設定することになる。3 つとも同時に読み取り専用になり (有効チップ・PRE ボタン・フェーダー)、それぞれ
   `inspector.fx2RateLocked` を持つ。FX2 のストリップ自体もグラフがそのノードを減光するのと同じように
-  減光する。述語は `core/constraints.ts` の `nodeRateDisabled` で、グラフの `disabledNodes` を作るのも
+  減光し、そのフェーダー・MUTE・PAN・ON・MIX バスへの送りも読み取り専用になる。どれも MIDI の学習対象のまま
+  残り、割り当てたコントローラの値はレートがある間は拒否される。述語は `core/constraints.ts` の `nodeRateDisabled` で、グラフの `disabledNodes` を作るのも
   同じものなので、どのレートで消えるかについて両者が食い違うことはない。
 - これは FIXED バスの狭いロックの広い兄弟である: FIXED はレベルとタップ (と SEND PAN ポップオーバーの
   送りの pan) を取り、スイッチは残す。バスそのものはまだ在るからである。
@@ -237,7 +238,8 @@ STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップ�
 
 - send レベル / send ON-OFF / send pan は send スコープ付きコントロール id
   (`controlId(node, param, target)`) を使う — アサインはラック内の位置ではなく、作った send を
-  名指す。ラックのチップ・列フェーダー・SEND PAN ノブはラーンで armable。
+  名指す。ラックのチップ・列フェーダー・SEND PAN ノブはラーンで armable で、サンプリング周波数が読み取り専用に
+  したものも含む。
 - MIX send ごとの `tap` コントロール (トグル)。CH → FX の tap は他のロック済み
   コントロールと同様、デバイスロックとして書込みを拒否する。
 

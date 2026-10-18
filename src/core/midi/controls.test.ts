@@ -300,6 +300,65 @@ describe("normalized value access", () => {
     expect(plan.nodeParams.ch_5_6?.eqOn).toBe(seeded);
   });
 
+  // FX 2 above 96 kHz: the unit runs none of the bus, so every value it holds — its own fader,
+  // MUTE, PAN, master ON and effect values, and its sends into a MIX — refuses a write and keeps
+  // what the plan held, as the CONSOLE strip and the tuning screen draw them. FX 1 is the control.
+  it("refuses every value FX 2 holds above 96 kHz, and leaves FX 1 writable", () => {
+    plan.sampleRate = 192000;
+    const ids = listControls(model, plan)
+      .map((d) => d.id)
+      .filter((id) => id.startsWith("bus.fx2/"));
+    const fxParam = ids.find((id) => id.startsWith(`bus.fx2/fx@${FX_SCOPE}.`));
+    expect(fxParam, "an effect value is among them").toBeDefined();
+    const expected = [
+      "bus.fx2/level",
+      "bus.fx2/mute",
+      "bus.fx2/pan",
+      "bus.fx2/chOn",
+      "bus.fx2/level@bus.mix1",
+      "bus.fx2/mute@bus.mix1",
+      "bus.fx2/pan@bus.mix1",
+      "bus.fx2/tap@bus.mix1",
+      fxParam!,
+    ];
+    for (const id of expected) expect(ids, id).toContain(id);
+    const before = serialize(plan);
+    for (const id of ids) {
+      const c = bindControl(model, plan, id)!;
+      expect(c.set(c.get() >= 0.5 ? 0 : 1), id).toBe(false);
+    }
+    expect(serialize(plan), "and the plan is unchanged").toBe(before);
+    expect(bindControl(model, plan, "bus.fx1/level")!.set(1), "FX 1 still takes one").toBe(true);
+    plan.sampleRate = 96000;
+    expect(bindControl(model, plan, "bus.fx2/level")!.set(1), "and FX 2 does at 96 kHz").toBe(true);
+  });
+
+  // A held insert above its own ceiling: the face's switch and every slot refuse. Pitch Fix
+  // stops at 48 kHz; at 88.2 kHz the amp beside it still runs and takes a write.
+  it("refuses every slot of an insert held above its rate ceiling", () => {
+    plan.sampleRate = 88200;
+    plan.nodeParams.ch1 = {
+      ...plan.nodeParams.ch1,
+      insertFx: INSERT_FX_OPTIONS.find((o) => o.label === "Pitch Fix")!.value,
+    };
+    plan.nodeParams.ch2 = {
+      ...plan.nodeParams.ch2,
+      insertFx: INSERT_FX_OPTIONS.find((o) => o.label === "Clean")!.value,
+    };
+    const slotsOf = (node: string): string[] =>
+      listControls(model, plan)
+        .map((d) => d.id)
+        .filter((id) => id.startsWith(`${node}/insfx@${INSFX_SCOPE}.`));
+    expect(slotsOf("ch1").length, "Pitch Fix offers slots").toBeGreaterThan(0);
+    for (const id of slotsOf("ch1")) {
+      const c = bindControl(model, plan, id)!;
+      expect(c.set(c.get() >= 0.5 ? 0 : 1), id).toBe(false);
+    }
+    const amp = slotsOf("ch2")[0];
+    const c = bindControl(model, plan, amp)!;
+    expect(c.set(c.get() >= 0.5 ? 0 : 1), "the amp still runs").toBe(true);
+  });
+
   it("leaves a FIXED-bus send only its MUTE: level, pan and PRE/POST tap are locked", () => {
     // FIXED BUS Type takes the send after the fader at a fixed level, placed by the
     // source's own PAN / BAL, so only the send's ON (MUTE) is editable — matching the console.

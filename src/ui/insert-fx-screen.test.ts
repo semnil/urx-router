@@ -1289,6 +1289,40 @@ describe("a gesture taken while the rebuild is deferred", () => {
     screen.close();
   });
 
+  it("writes a value picked on a select row to its slot", () => {
+    holding("ch1", "Clean");
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    const sp = [...h.box.querySelectorAll<HTMLSelectElement>("select")].find((s) =>
+      [...s.options].some((o) => o.textContent === "AC 2x12"),
+    )!;
+    sp.value = "2";
+    sp.dispatchEvent(new Event("change", { bubbles: true }));
+    const params = h.plan.nodeParams.ch1!.insertFxParams!;
+    expect(Object.entries(params).filter(([k]) => k.endsWith(":16"))).toEqual([[expect.any(String), 2]]);
+    screen.close();
+  });
+
+  it("writes a picked Key and re-roots the Scale the mask spells at it", () => {
+    holding("ch1", "Pitch Fix");
+    const screen = new DynScreen(h.hooks);
+    screen.open(INSFX_DYN, "ch1");
+    const selectIn = (label: string): HTMLSelectElement =>
+      [...h.box.querySelectorAll<HTMLElement>(".prefs-row")]
+        .find((r) => r.querySelector(".lbl")?.textContent === label)!
+        .querySelector("select")!;
+    const scale = selectIn(t().inspector.insertFxEffect.scale);
+    scale.value = String(PITCH_SCALE_MAJOR);
+    scale.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(maskOf()).toEqual([1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1]); // C major
+    const key = selectIn(t().inspector.insertFxEffect.params.key);
+    key.value = "7";
+    key.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(h.plan.nodeParams.ch1!.insertFxParams![K(PITCH_KEY_SLOT)]).toBe(7);
+    expect(maskOf()).toEqual([1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1]); // G major
+    screen.close();
+  });
+
   it("toggles a note from the value the plan holds, not the one the button shows", () => {
     holding("ch1", "Pitch Fix");
     const screen = new DynScreen(h.hooks);
