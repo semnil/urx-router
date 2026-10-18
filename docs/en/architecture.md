@@ -1900,8 +1900,9 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   (`core/sim-map-setup.ts`): SETUP > GENERAL as the last reading of it — a session's start on an experimental launch,
   the Device setup screen, a SETUP edit on the LCD — kept until the model changes, Follow USB as the toolbar's
   badge holds it, the operation mode (`817`) as a session read it, the unit's current scene (`781`, which a Recall and a Store move) and the row
-  its SCENE LIST cursor stands on (`863`) as a session read them and the unit announced them since — by number with
-  no title, the unit's titles not being readable, and on the tab that lists the cursor's row where only one does, the tab shown staying where both do; a
+  its SCENE LIST cursor stands on (`863`) as a session read them — at its start, and again once it has registered for
+  their announcements — and the unit announced them since — by number with no title, the unit's titles not being
+  readable, and on the tab that lists the cursor's row where only one does, the tab shown staying where both do; a
   row picked on the glass shows until the unit's cursor moves — and each MIC/LINE jack's Clip Safe as holding its
   gain down while the unit announces it (`864`, which every session registers, since the CONSOLE and the Inspector
   show it too). A session on an experimental launch registers the others and reads SETUP again once

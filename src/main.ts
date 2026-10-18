@@ -945,12 +945,14 @@ function resetSendsTarget(): void {
 let unitSetup: DeviceSetup | null = null;
 let unitOperationMode: number | null = null;
 // The scene pointers keep the tab SCENE LIST's cursor last needed, which a move onto a user scene
-// (on both tabs) leaves as it is.
+// (on both tabs) leaves as it is, and a count of the unit's announcements of each, which a read taken
+// while one lands does not override.
 let unitScene: { current: number | null; cursor: number | null; tab: SceneTab | null } = {
   current: null,
   cursor: null,
   tab: null,
 };
+const sceneVersions = { current: 0, cursor: 0 };
 // SETUP > Software Integration, as a session read it and the unit announced it since, and a count
 // of the changes made to each of its values, which a read taken while one lands does not override.
 let unitIntegration: DawIntegration | null = null;
@@ -1112,11 +1114,13 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
     return true;
   }
   if (paramId === PARAMS.CURRENT_SCENE.id) {
+    sceneVersions.current++;
     unitScene = { ...unitScene, current: value };
     simView?.unitStateChanged();
     return true;
   }
   if (paramId === PARAMS.SCENE_CURSOR.id) {
+    sceneVersions.cursor++;
     takeUnitCursor(value);
     return true;
   }
@@ -1138,6 +1142,28 @@ function takeUnitCursor(raw: number): void {
   const tab = sceneTab(raw);
   unitScene = { ...unitScene, cursor: raw, tab: tab ?? unitScene.tab };
   simView?.unitTookOwn(tab === null ? [SCENE_CURSOR_PATH] : [SCENE_CURSOR_PATH, SCENE_TAB_PATH]);
+}
+
+/** Read the scene pointers again behind every unit write queued so far, and take each the unit
+ *  holds unless the unit announced it while the read ran or the session that asked has ended. A
+ *  cursor read at the row it already stands on leaves the glass's own row. */
+function rereadScenePointers(): void {
+  if (!liveSessionUp || !experimentalOn) return;
+  const epoch = liveEpoch;
+  const ours = (): boolean => liveSessionUp && liveEpoch === epoch;
+  cueWrites = cueWrites
+    .then(async () => {
+      await live?.idle();
+      if (!ours()) return;
+      const since = { ...sceneVersions };
+      const current = await vdGet(PARAMS.CURRENT_SCENE.id, 0, 0);
+      const cursor = await vdGet(PARAMS.SCENE_CURSOR.id, 0, 0);
+      if (!ours()) return;
+      if (sceneVersions.current === since.current) unitScene = { ...unitScene, current };
+      if (sceneVersions.cursor === since.cursor && cursor !== unitScene.cursor) takeUnitCursor(cursor);
+      simView?.unitStateChanged();
+    })
+    .catch((err: unknown) => stopLiveOnError(errorText(err)));
 }
 
 /** Read SETUP > Software Integration again behind every unit write queued so far, and take each
@@ -5334,6 +5360,8 @@ if (!DEMO) {
         rereadSendsTarget();
         // …and Software Integration, which a DAW taking or letting go of the unit can have moved.
         rereadDawIntegration();
+        // …and the scene pointers, which a recall, a store or the cursor on the unit can have moved.
+        rereadScenePointers();
         simView?.unitStateChanged();
         // An edit made while the starting read ran had no session to flush through, so the
         // plan differs from the snapshot the session just took with nothing else left to
