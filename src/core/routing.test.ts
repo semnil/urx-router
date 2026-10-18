@@ -20,6 +20,7 @@ import {
   possibleSources,
   possibleTargets,
   alignLinkedSendPans,
+  panLinkedSendPan,
   sendPansToSources,
   withLinkedPartner,
   ruleKind,
@@ -410,6 +411,19 @@ describe("alignLinkedSendPans", () => {
       alignLinkedSendPans(p, withLinkedPartner(u44, p, "ch3"));
       expect([conn(p, "ch3", "bus.mix1").params?.pan, conn(p, "ch4", "bus.mix1").params?.pan]).toEqual(want);
     }
+  });
+
+  // A send pan turned under Pan Link lands on the source's own main path into STEREO, and names
+  // that path; a plan carrying no such path for the source is left as it is.
+  it("puts a Pan Link send pan on the source's main path, and writes nothing where there is none", () => {
+    const p = defaultPlan("URX44");
+    setPan(p, "ch1", "bus.stereo", -13);
+    expect(panLinkedSendPan(p, "ch1", 25)).toEqual([key("ch1", "bus.stereo")]);
+    expect(conn(p, "ch1", "bus.stereo").params?.pan).toBe(25);
+    p.connections = p.connections.filter((c) => !(c.from === ref("ch2", "out") && c.to === ref("bus.stereo", "in")));
+    const before = JSON.stringify(p.connections);
+    expect(panLinkedSendPan(p, "ch2", 25)).toEqual([]);
+    expect(JSON.stringify(p.connections)).toBe(before);
   });
 
   it("names a channel alone when its pair is not linked", () => {
