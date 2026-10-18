@@ -128,6 +128,14 @@ afterEach(async () => {
   untornDown = null;
 });
 
+/** How often the drain reads the invoke count. */
+export const DRAIN_READING_MS = 10;
+/** How many readings in a row with no new invoke end the drain. The run outlasts the MIDI
+ *  feedback pass (`FEEDBACK_DEBOUNCE_MS` in `src/ui/midi.ts`), the last thing the app still
+ *  does after a case, by readings to spare on a loaded machine; `main.device.table.test.ts`
+ *  holds the two apart. */
+export const DRAIN_QUIET_READINGS = 18;
+
 /** Wait until the page stops invoking. Bounded, and it THROWS at the bound rather than
  *  returning: an app that never goes quiet is a case leaking into the next one, which is
  *  the thing this exists to stop, and swallowing it here would put that back silently. */
@@ -139,7 +147,7 @@ export async function drainShell(shell: TauriShell, handedOver: () => boolean): 
   // the app produces late — a live start that fails emits one well after its own teardown
   // has handed the link back — rather than a flow's round trips, which resolve as
   // microtasks with no timer between them.
-  for (let quiet = 0; quiet < 25 && !handedOver();) {
+  for (let quiet = 0; quiet < DRAIN_QUIET_READINGS && !handedOver();) {
     if (Date.now() > deadline) throw new Error(`the page is still invoking (${shell.invokes.length})`);
     // The MIDI trace sink batches its writes, and that write is the last thing the app
     // does after a case — so a drain that only waited would be waiting out a timer rather
@@ -147,7 +155,7 @@ export async function drainShell(shell: TauriShell, handedOver: () => boolean): 
     // on every reading instead, which takes the sink out of what the window has to cover.
     // A no-op with nothing queued.
     (window as unknown as { __urxMidiProbe?: { flush(): void } }).__urxMidiProbe?.flush();
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, DRAIN_READING_MS));
     const now = shell.invokes.length;
     quiet = now === seen ? quiet + 1 : 0;
     seen = now;

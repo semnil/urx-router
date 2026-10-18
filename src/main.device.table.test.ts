@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-// The device table every desktop case runs on, stated as a contract of its own.
+// The device table every desktop case runs on, and the drain its teardown ends with, each stated as
+// a contract of its own.
 //
 // The setup, the teardown and the helpers every desktop case shares are `main.device.test-util.ts`'s,
 // which also states what the device table does and does not model.
@@ -8,7 +9,8 @@
 import { describe, expect, it } from "vitest";
 import { deviceCommands } from "./main.test-util";
 import { PARAMS } from "./core/control/params";
-import { bootDevice } from "./main.device.test-util";
+import { FEEDBACK_DEBOUNCE_MS } from "./ui/midi";
+import { bootDevice, DRAIN_QUIET_READINGS, DRAIN_READING_MS } from "./main.device.test-util";
 
 // The device table's own contract, which no other desktop case can state: it is the fixture all of
 // them run on, so a loosening here is invisible from inside them and every one of them goes
@@ -125,5 +127,16 @@ describe("the device table the desktop cases run on", () => {
     });
     expect(() => call(table, "vd_connect")).toThrow(/no-device/);
     expect(() => call(table, "vd_get", CH1)).toThrow(/not-connected/);
+  });
+});
+
+// The teardown drain ends on a run of readings with no new invoke, and the last thing the app
+// still invokes after a case is the trace line of the MIDI feedback pass, which runs
+// FEEDBACK_DEBOUNCE_MS after the last edit and which the drain's flush writes at its next
+// reading. A run shorter than that pause ends the drain with the line still to come, and the
+// line then lands in the next case's device stub, which nothing reports.
+describe("the drain a desktop case's teardown ends with", () => {
+  it("outlasts the MIDI feedback pass by five readings or more", () => {
+    expect(DRAIN_QUIET_READINGS * DRAIN_READING_MS - FEEDBACK_DEBOUNCE_MS).toBeGreaterThanOrEqual(5 * DRAIN_READING_MS);
   });
 });

@@ -139,7 +139,7 @@ function optionOf(kind: ControlKind, m: MidiMapping, mixed: boolean): "mode" | "
 
 // Incoming edits already suppress their own echo (engine.lastSent); this pass
 // batches feedback for edits from everywhere else (UI, device follow, plan load).
-const FEEDBACK_DEBOUNCE_MS = 120;
+export const FEEDBACK_DEBOUNCE_MS = 120;
 // A port that has stopped taking messages fails every send, and the catch below drops
 // the engine's sent cache — so the next pass finds every mapping changed and re-emits
 // all of them. Without a ceiling the two feed each other for as long as the app runs.
