@@ -1,9 +1,8 @@
 // Which of the LCD simulator's controls the SIM view holds shut, and why. The simulator draws a
-// held control with a padlock and the reason as its tooltip, and takes no edit through it.
-import type { DeviceModel } from "../models/types";
-import type { Plan } from "./plan";
-import { nodeRateDisabled } from "./constraints";
-import { insertDrivenPaths } from "./sim-map-processors";
+// held control with a padlock and the reason as its tooltip, and takes no edit through it. Only
+// what the app cannot do is held this way — a value it does not write, a function it does not
+// carry, a state it cannot read. A control the unit itself holds still or hides is left to the
+// simulator, which draws it as the unit does.
 import { INTEGRATION_GLASS_PATHS } from "./control/daw-integration";
 
 export type SimLockTarget =
@@ -28,25 +27,22 @@ export interface SimLockReasons {
   rateFollowUsb: string;
   /** The recorder's Track Count while Live sync is up. */
   trackCountLive: string;
-  /** An FX 2 send at a rate that takes FX 2 out. */
-  fx2Rate: string;
-  /** An insert effect's value the insert screen holds shut for the effect's current values. */
-  deviceDriven: string;
   /** SETUP > Software Integration while no session holds a unit a compatible DAW holds. */
   integrationOff: string;
 }
 
-/** Whether the device link is held, whether Live sync is up, and whether the unit it holds is held
- *  by a compatible DAW. */
+/** Whether the device link is held, whether Live sync is up, and what the session knows of the rate
+ *  and Follow USB. */
 export interface SimLockState {
   linked: boolean;
   live: boolean;
-  dawIntegration: boolean;
   /** Whether the session takes a rate chosen on the LCD: Live sync whose scope carries the rate,
    *  with Follow USB off. */
   rateOpen: boolean;
-  /** Whether Follow USB is what holds the rate during Live sync. */
+  /** Whether Follow USB may be what holds the rate during Live sync: on, or not yet read. */
   rateFollowUsb: boolean;
+  /** Whether the unit is known to have Follow USB on. */
+  followUsbOn: boolean;
 }
 
 /** The SETUP > GENERAL screens of settings the app neither reads nor writes: the operation mode and
@@ -77,19 +73,13 @@ export const UNIT_OPS = [
   "playback.stop",
 ] as const;
 
-/** The locks for `plan` on `model`, given the paths the SIM table binds. */
-export function simLocks(
-  model: DeviceModel,
-  plan: Plan,
-  paths: Iterable<string>,
-  state: SimLockState,
-  reasons: SimLockReasons,
-): SimLockSpec[] {
+/** The locks for the paths the SIM table binds. */
+export function simLocks(paths: Iterable<string>, state: SimLockState, reasons: SimLockReasons): SimLockSpec[] {
   const out: SimLockSpec[] = [];
   for (const id of UNIT_ONLY_SCREENS) out.push({ target: { kind: "screen", id }, reason: reasons.unitOnly });
-  // Software Integration is usable on the unit only while a compatible DAW holds it, and its values
-  // are the session's: the screen and, for a screen already open, its two sends.
-  if (!(state.live && state.dawIntegration))
+  // Software Integration's values are the session's, and whether a compatible DAW holds the unit is
+  // read only while Live sync is up: the screen and, for a screen already open, its two sends.
+  if (!state.live)
     for (const target of [
       { kind: "screen", id: "setup.integration" } as const,
       ...INTEGRATION_GLASS_PATHS.map((path) => ({ kind: "path", path }) as const),
@@ -97,23 +87,20 @@ export function simLocks(
       out.push({ target, reason: reasons.integrationOff });
   for (const op of UNIT_OPS) out.push({ target: { kind: "op", op }, reason: reasons.unitOp });
   out.push({ target: { kind: "path", path: "sd.usbStorage" }, reason: reasons.unitOp });
-  if (state.linked && !state.rateOpen)
+  // While Follow USB is on the unit takes no rate from its own screen either, which the simulator
+  // shows from the Follow USB it is given.
+  if (state.linked && !state.rateOpen && !state.followUsbOn)
     out.push({
       target: { kind: "screen", id: "setup.rate" },
       reason: state.rateFollowUsb ? reasons.rateFollowUsb : reasons.rateLinked,
     });
-  const fx2Out = model.nodes.some((n) => n.id === "bus.fx2") && nodeRateDisabled("bus.fx2", plan.sampleRate);
   for (const path of paths) {
-    // A channel's send into an FX bus: while Live sync is up PRE / POST is the unit's own, as on the
-    // CONSOLE and in the Inspector, and FX 2 leaves with the rate.
-    const send = /\.send\.(fx1|fx2)\.(on|level|pre|balance)$/.exec(path);
-    if (send && send[2] === "pre" && state.live)
+    // A channel's PRE / POST into an FX bus: while Live sync is up it is the unit's own, as on the
+    // CONSOLE and in the Inspector.
+    if (/\.send\.(fx1|fx2)\.pre$/.test(path) && state.live)
       out.push({ target: { kind: "path", path }, reason: reasons.notAccepted });
-    else if (send && send[1] === "fx2" && fx2Out) out.push({ target: { kind: "path", path }, reason: reasons.fx2Rate });
     if (path === "sd.trackCount" && state.live)
       out.push({ target: { kind: "path", path }, reason: reasons.trackCountLive });
   }
-  for (const path of insertDrivenPaths(model, plan))
-    out.push({ target: { kind: "path", path }, reason: reasons.deviceDriven });
   return out;
 }

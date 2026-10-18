@@ -203,6 +203,41 @@ test("takes Follow USB on the LCD's Sampling Frequency screen as the toolbar's F
     .toEqual([[PARAMS.FOLLOW_USB.id, 0]]);
 });
 
+// While Follow USB is on the unit takes no rate from its own Sampling Frequency screen either, so
+// during Live sync the LCD opens that screen with no lock of the app's own and holds the rates still
+// from the Follow USB it is given: a press there changes nothing and writes nothing.
+test("leaves the Sampling Frequency screen to the unit during Live sync while Follow USB is on", async ({ page }) => {
+  const RATE: number = PARAMS.SAMPLE_RATE.id;
+  await stubTauriDevice(page, {
+    values: { [PARAMS.FOLLOW_USB.id]: 1, [RATE]: 48000 },
+    commands: { experimental_enabled: true, ...LIVE_COMMANDS },
+  });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(page.locator("#follow-usb")).toHaveAttribute("data-state", "on");
+  await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+  const entry = lcd(page).getByRole("button", { name: "Sampling Frequency" });
+  await expect(entry.locator(".lock-mark")).toHaveCount(0);
+  await tapInto(page, entry, "setup.rate");
+  await expect(lcd(page).getByRole("button", { name: "Follow USB", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  const rate = lcd(page).getByRole("button", { name: "96kHz", exact: true });
+  await expect(rate).toHaveAttribute("aria-disabled", "true");
+  await expect(rate.locator(".lock-mark")).toHaveCount(0);
+  // Pressed where it stands, since Playwright declines to click a control marked out of reach.
+  const at = (await rate.boundingBox())!;
+  await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
+  await expect(rate).toHaveAttribute("aria-pressed", "false");
+  expect((await writesOf(page)).filter(([id]) => id === RATE)).toEqual([]);
+  await expect(page.locator("#rate-picker")).toHaveValue("48000");
+});
+
 // With no session a SETUP setting changed on the LCD is written over a connection of its own; the
 // edits made while that write runs go out after it as one, carrying the last value.
 test("writes the last of several SETUP edits made on the LCD with no session", async ({ page }) => {
@@ -526,6 +561,59 @@ test("an insert effect chosen again on the LCD keeps the values the plan holds f
   expect((await save(page)).nodeParams.ch1?.insertFxParams).toMatchObject({ "compander:6": tuned });
 });
 
+// The unit holds the values an insert's own switch drives still, with nothing drawn on them: the
+// M.B.Comp bands while its 1-knob is on, Pitch Fix's notes while MIDI Control is on. The LCD,
+// which simulates the unit, draws them the same way — no padlock of the app's own — and holds
+// them itself, so a turn or a touch there leaves the plan as it was.
+test("leaves the M.B.Comp bands its 1-knob drives to the LCD, which holds them with no padlock", async ({ page }) => {
+  await openSimSaving(page);
+  await openInsert(page, "bus.mix1");
+  await pickInsert(page, "M.B.Comp");
+  await lcd(page).getByRole("button", { name: "Next page of settings" }).click();
+  const attack = lcd(page).getByRole("spinbutton", { name: "Attack", exact: true });
+  const engine = async (): Promise<string> => JSON.stringify(insertOf(await save(page), "bus.mix1").insertFxParams);
+  const before = await engine();
+  // With the knob off, a turn of a band reaches the plan.
+  await attack.focus();
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(engine).not.toBe(before);
+
+  await lcd(page)
+    .getByRole("button", { name: /1-knob/ })
+    .first()
+    .click();
+  await expect(attack).toHaveAttribute("aria-disabled", "true");
+  await expect(attack.locator(".lock-mark")).toHaveCount(0);
+  const held = await engine();
+  await attack.focus();
+  await page.keyboard.press("ArrowUp");
+  expect(await engine(), "the knob holds the band still").toBe(held);
+});
+
+test("leaves Pitch Fix's notes under MIDI Control to the LCD, which holds them with no padlock", async ({ page }) => {
+  await openSimSaving(page, {
+    path: planLink("URX44V", (plan) => {
+      plan.nodeParams.ch1 = {
+        ...plan.nodeParams.ch1,
+        insertFx: 512,
+        insertFxOn: true,
+        insertFxParams: { "pitch:34": 1 },
+      };
+    }),
+  });
+  await openInsert(page, "ch1");
+  await lcd(page).getByRole("button", { name: "Next page of settings" }).click();
+  const c = lcd(page).getByRole("button", { name: "C", exact: true });
+  await expect(c).toHaveAttribute("aria-disabled", "true");
+  await expect(c.locator(".lock-mark")).toHaveCount(0);
+  const engine = async (): Promise<string> => JSON.stringify(insertOf(await save(page), "ch1").insertFxParams);
+  const held = await engine();
+  // Pressed where it stands, since Playwright declines to click a control marked out of reach.
+  const at = (await c.boundingBox())!;
+  await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
+  expect(await engine(), "MIDI Control holds the notes still").toBe(held);
+});
+
 /** A `?plan=` link to `model`'s new plan with `edit` applied to it. */
 function planLink(model: ModelId, edit: (plan: Plan) => void): string {
   const plan = defaultPlan(model);
@@ -770,11 +858,12 @@ test("the LCD's [Sends] destination is the unit's while Live sync is up, and the
   await expect(page.locator("#sim-host")).toBeHidden();
 });
 
-// SETUP > Software Integration opens on the unit only while a compatible DAW holds it (816 not 0),
-// and so on the LCD only then and only while Live sync is up: its two sends are the unit's, read by
-// the session, followed through their notifies and written when picked on the glass, and held shut
-// in place when the DAW lets go of the unit with the screen open.
-test("opens Software Integration on the LCD while a DAW holds the unit, and writes a send picked there", async ({
+// SETUP > Software Integration is usable on the unit only while a compatible DAW holds it (816 not 0),
+// which the app reads only while Live sync is up. During Live sync the LCD draws it as the unit does,
+// with no lock of the app's own: its two sends are the unit's, read by the session, followed through
+// their notifies, and written when picked on the glass while a DAW holds the unit — and a pick made
+// while none does writes nothing.
+test("opens Software Integration on the LCD during Live sync, and writes a send picked there while a DAW holds the unit", async ({
   page,
 }) => {
   const DAW: number = PARAMS.DAW_INTEGRATION.id;
@@ -788,27 +877,29 @@ test("opens Software Integration on the LCD while a DAW holds the unit, and writ
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
   await lcd(page).getByRole("button", { name: "SETUP", exact: true }).click();
   const integration = lcd(page).getByRole("button", { name: /Software\s*Integration/ });
-  await expect(integration, "no DAW holds the unit").toHaveAttribute("aria-disabled", "true");
-  await expect(integration).toHaveAttribute("title", en.sim.lockIntegrationOff);
-
-  await setDeviceValue(page, DAW, 0, 2);
-  await notifyParam(page, DAW, 0, 2);
-  await expect(integration).not.toHaveAttribute("aria-disabled");
+  await expect(integration, "no DAW holds the unit, and nothing of the app's is drawn").not.toHaveAttribute(
+    "aria-disabled",
+  );
+  await expect(integration.locator(".lock-mark")).toHaveCount(0);
   await integration.click();
   const fx2 = lcd(page).getByLabel(/^for FX2: /);
+  const fx2Writes = async (): Promise<number[]> => (await writesOf(page)).flatMap(([id, v]) => (id === FX2 ? [v] : []));
   await expect(fx2, "the send the unit holds").toHaveAttribute("aria-label", /^for FX2: MIX 2 /);
   await fx2.click();
   await lcd(page).getByRole("option", { name: "MIX 1", exact: true }).click();
-  await expect.poll(async () => (await writesOf(page)).flatMap(([id, v]) => (id === FX2 ? [v] : []))).toEqual([288]);
-  await expect(fx2).toHaveAttribute("aria-label", /^for FX2: MIX 1 /);
+  await expect(fx2, "a pick with no DAW holding the unit is taken back").toHaveAttribute(
+    "aria-label",
+    /^for FX2: MIX 2 /,
+  );
+  expect(await fx2Writes()).toEqual([]);
 
-  // The DAW lets go while the screen is open: the sends stay where they are and take nothing.
-  await setDeviceValue(page, DAW, 0, 0);
-  await notifyParam(page, DAW, 0, 0);
-  for (const send of [lcd(page).getByLabel(/^for FX1: /), fx2]) {
-    await expect(send).toHaveAttribute("aria-disabled", "true");
-    await expect(send).toHaveAttribute("title", en.sim.lockIntegrationOff);
-  }
+  await setDeviceValue(page, DAW, 0, 2);
+  await notifyParam(page, DAW, 0, 2);
+  await fx2.click();
+  await lcd(page).getByRole("option", { name: "MIX 1", exact: true }).click();
+  await expect.poll(fx2Writes).toEqual([288]);
+  await expect(fx2).toHaveAttribute("aria-label", /^for FX2: MIX 1 /);
+  await expect(fx2.locator(".lock-mark")).toHaveCount(0);
 });
 
 // The unit's [CUE] is live-session state outside the plan: while Live sync is up the LCD shows
