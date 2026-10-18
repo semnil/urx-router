@@ -67,16 +67,18 @@ each band's Attack and Bypass, the Release, both crossovers and the output gain 
 type's own, so the rows read what the unit holds with Live sync off too. A loaded plan that
 carries other values there beside a knob that is on is set to them.
 
-## While Pitch Fix's MIDI Control is on, the Scale and the notes are the unit's
+## While Pitch Fix's MIDI Control is on, the notes are the unit's
 
 Pitch Fix's **MIDI Control** picks where the correction takes its target notes from. From
-**Setting** on they arrive on a USB-MIDI port of the unit's own, and switching the mode on
-clears the twelve-note mask and takes the Scale enum to Custom (measured on a URX44V).
+**Setting** on they arrive on a USB-MIDI port of the unit's own, and a change of mode moves
+the Scale and the twelve-note mask the way the unit's own screen does (measured on a URX44V).
 
-The selector itself is offered and written. The Scale and the twelve notes are not, while
-the mode is anything but Off: writing them would put the operator's pre-change mask straight
-back over the erase the unit had just performed. The tuning screen locks the same two rows,
-and both are released as soon as the mode goes back to Off.
+The selector itself is offered and written, and so is the Scale, from the list the unit's
+own screen offers in that mode: every scale but Chromatic under Setting, Custom and Single
+under Real Time. The twelve notes are not written while the mode is anything but Off:
+writing them would put the operator's pre-change mask straight back over the erase the unit
+had just performed. The tuning screen locks the note row, and releases it as soon as the
+mode goes back to Off.
 
 ## CUE is controlled during Live sync only, and never saved
 

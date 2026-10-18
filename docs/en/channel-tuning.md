@@ -1233,23 +1233,18 @@ WebKit — and the vertical drag the face's cursor offers moved nothing. WebView
 left Volume at 1.9, a 30 px upward drag took it to 3.9, a sideways one left it, and one wheel notch
 and one ArrowUp each stepped it by 0.1; before this change the same press took it to 5.0 there too.
 
-**Where a card prints its tag depends on what the card holds.** A knob card puts it beside the name:
-the tag qualifies the name, and under the knob it would read as a second value. A card whose control
-is not a knob has no value line to compete with, and its label reserves two lines so a one-line name
-and a two-line one put their controls level — so a tag beside the name there hangs between the name
-and the line under it, and pushes the name off the card's centre. Those stack instead: the name on
-its own line, the tag under it. **The twelve-note keyboard's row is the exception** — it spans every
-column and is already past the card floor, so a stack is height the panel does not have, and the tag
-on it comes and goes with a selector on the same panel, which would resize the modal under the press
-that added it (the reason [the multi-band faces leave their locked rows untagged](#the-multi-band-compressor-is-four-faces)).
+**A card prints its tag beside the name.** On a knob card the tag qualifies the name, and under the
+knob it would read as a second value. The only other card that carries one is **the twelve-note
+keyboard's row**, which spans every column and is already past the card floor: its tag sits beside its
+name too, since it comes and goes with a selector on the same panel and a tag that took a line of its
+own would resize the modal under the press that added it (the reason [the multi-band faces leave their
+locked rows untagged](#the-multi-band-compressor-is-four-faces)). No other card carries a tag.
 
-**Every tag ON A CARD is drawn the same**, whichever of the two the field landed on. It is one
-statement — when this value applies — and which card kind carries it is decided by whether the
-control happens to be continuous, which is not something the reader can see. So the card recipe is
-one rule: 8 px, 2 px corners, outlined in the lamp's ink. Outlined and not filled, because the card
-already has a lit face in the knob's pointer. **The twelve-note keyboard's row takes it too** — it
-is a card, a wide one, and what excludes it from the stack above is the height a stack costs, which
-a face does not. **And a locked card dims its contents rather than itself**, the way a locked row
+**Every tag ON A CARD is drawn the same**, on a knob card and on the twelve-note row alike. It is one
+statement — when this value applies — and which card carries it is decided by the control, which is
+not something the reader can see. So the card recipe is one rule: 8 px, 2 px corners, outlined in the
+lamp's ink. Outlined and not filled, because the card already has a lit face in the knob's pointer.
+**And a locked card dims its contents rather than itself**, the way a locked row
 does, which decides two things at once: the tag stays at full strength — it is what says why the
 card cannot be touched, so it is the one thing the dim must not reach — and the card keeps its own
 frame, so a grid holding both kinds does not draw two strengths of card edge.
@@ -1359,23 +1354,26 @@ absolute bits moved — so the app authors the same offsets. Editing a note take
 writes it too, because the plan is what the next flush emits and a plan still spelling a preset would
 re-derive the mask over the edit.
 
-**MIDI Control is written, and the mask it clears becomes the unit's.** Switching it on erases a
-twelve-note mask that is FULL and takes the Scale enum to Custom with it (measured), and from Setting
-on the notes the correction aims at arrive on a USB-MIDI port of the unit's own. Both of those are
-what the unit does when the mode is changed on its front panel, and both are what the operator asked
-for by changing it — so the app does the same rather than refusing the gesture.
+**MIDI Control is written, and it moves the Scale and the mask the way the unit does.** From Setting on
+the notes the correction aims at arrive on a USB-MIDI port of the unit's own, and a change of mode moves
+the Scale and the mask as the unit moves them when the mode is changed on its front panel
+(`pitchMidiModeChange`): onto Real Time the mask empties and a scale other than Single turns Custom;
+from Real Time onto Setting or Off a named scale fills the mask in again at the Key; from Off onto
+Setting a Custom or Chromatic scale empties the mask onto Custom. The screen, and the SIM view's row,
+write that whole change, so a plan written offline holds what the unit would.
 
 **Two bits for three modes, so a write names BOTH.** Setting the enable bit alone would leave
 whichever real-time bit was there and land on a mode nobody chose. `pitchMidiPatch` is the inverse of
 `pitchMidiMode`, pinned against it over all three modes so the two cannot drift apart about which
 pair a mode is.
 
-**While it is not Off, the Scale and the twelve notes are the unit's.** `pitchDeviceDriven` is the
-same shape as `COMP_ONE_KNOB_DRIVEN`: `translate` stops emitting those thirteen slots and the screen
-locks the same rows with a pill saying who owns them. Without it the next flush would put the
-operator's pre-change mask straight back over the erase the unit had just done. The two MIDI bits are
-emitted FIRST, ahead of the Scale and the mask, so a flush that turns the mode on does its erase
-before either would have been written.
+**While it is not Off, the twelve notes are the unit's, and the Scale is chosen from the list the
+unit's own screen offers** — every scale but Chromatic under Setting, Custom and Single under Real Time
+(`pitchScalesOffered`). `pitchDeviceDriven` is the same shape as `COMP_ONE_KNOB_DRIVEN`: `translate`
+stops emitting the twelve note slots and the screen locks the note row with a pill saying who owns it.
+Under Real Time a scale or a Key chosen fills nothing in, as on the unit. The two MIDI bits are emitted
+FIRST, ahead of the Scale and the mask, so a flush that turns the mode on does its erase before the
+Scale is written.
 
 ### Neither reduction meter is indexed by its node
 
@@ -1619,8 +1617,8 @@ and finds it at the factory.
 
 **One predicate decides every lock on this screen, and the MIDI surface asks it too.**
 `insertFxLockedSlots` answers, for a family holding a set of values, which slots no surface may
-write: the eighteen while the 1-knob is on, the Level while it is off, and the scale and the mask
-while Pitch Fix's MIDI Control is on. A guitar amp locks nothing — its Speed and Depth carry a tag
+write: the eighteen while the 1-knob is on, the Level while it is off, and the mask while Pitch Fix's
+MIDI Control is on. A guitar amp locks nothing — its Speed and Depth carry a tag
 and stay writable, for the reason above. A MIDI mapping outlives the state that locked the control it names — nothing re-reads the
 screen when the state moves — so a mapping made before the lock applied would otherwise write the
 plan while the writer is suppressing the slot, which parts the plan from the unit silently and sends
@@ -1864,33 +1862,31 @@ corners could be drawn as boundary lines on a log-frequency axis, the way the mu
 MAIN face draws its crossovers — but two lines are not a figure worth a column, so the display is the
 lane rack alone, as the guitar amp's and Pitch Fix's are.
 
-### What the unit owns while Sync is on
+### What the unit computes while Sync is on
 
-The delay families carry a tempo Sync switch, and while it is on **the delay time is the device's**: it
-recomputes that slot from the BPM and the note value and announces the result on the array address.
-The row stays, readable and tagged, because it is where the computed time is read. With Sync off it is
-the NOTE that goes unread — the effect guide conditions it on tempo sync being enabled — so that row is
-locked and tagged instead. BPM is neither: the guide puts no condition on it.
+The delay families carry a tempo Sync switch, and while it is on the unit recomputes the delay time from
+the BPM and the note value and announces the result on the array address. **No row of the face is locked
+or tagged, whichever way Sync is set**: the unit's own panel turns the delay time and chooses the Note in
+either state — a delay time turned with Sync on is kept and Sync stays on until the BPM or the note next
+moves — and so do this screen, a MIDI control and the SIM view.
 
-The cost is that a note value cannot be chosen before Sync is switched on; switching Sync on first is
-the one extra gesture. `fxRowOwners` is the one list **four** surfaces read — this screen locks and
-tags the row, the MIDI catalogue declines a write to it, `pushFxEffectCommands` leaves it out of what
-it sends, and `planToFollowOnlyAddrs` puts that same slot back as an address the app only READS — so a
-mapping cannot drive a row the screen says is not the operator's, and neither can a Device-menu write.
-The writer's share is the one that is not merely tidy: **the unit accepts a write to that slot while
-Sync is on and keeps it**, so re-sending the plan's copy takes the delay time off the note value and
-leaves Sync switched on with nothing driving it, until the operator next touches the BPM or the note.
+`fxRowOwners` names the slot the unit computes, and three surfaces read it: `pushFxEffectCommands`
+leaves it out of what it sends, `planToFollowOnlyAddrs` puts that same slot back as an address the app
+only READS, and a value turned there by hand during Live sync is written to the unit directly (the screen
+through `writeMovedHeld` in `main.ts`, a MIDI control through `CueAccess.writeHeld`, the SIM view through
+its `deviceWrite` edit). The writer's share is the one that is not merely tidy: **the unit accepts a
+write to that slot while Sync is on and keeps it**, so re-sending the plan's copy at every write takes
+the delay time off the note value and leaves Sync switched on with nothing driving it, until the
+operator next touches the BPM or the note. With no session a value turned there stays in the plan, and
+the next write leaves it out: the unit computes the delay time from the BPM and the note value it is
+given.
 
-The fourth is the other half of the third, and it is not symmetry. Live sync registers for notifies on
-**the addresses it emits**, so withholding the write also unsubscribes the address — and the unit
-announces every delay time it computes there, for a BPM change and for a note change alike. Registered
-by neither list, that announcement reaches nobody: the plan keeps the number it had, this screen prints
-it under a tag saying the value is the unit's, and the writer sends it back the moment Sync goes off.
-The two lists are therefore exact complements — written and unheard while the operator owns the value,
-unwritten and followed while the unit does.
-
-The note value is the other half of the ownership list and is NOT withheld — the unit stores it while
-it is not reading it, and the app is still its author.
+The follow address is the other half of the writer's, and it is not symmetry. Live sync registers for
+notifies on **the addresses it emits**, so withholding the write also unsubscribes the address — and the
+unit announces every delay time it computes there, for a BPM change and for a note change alike.
+Registered by neither list, that announcement reaches nobody: the plan keeps the number it had, this
+screen prints it, and the writer sends it back the moment Sync goes off. The two lists are therefore
+exact complements — written and unheard while Sync is off, unwritten and followed while it is on.
 
 ### The value keys name the plan key, not a slot
 
