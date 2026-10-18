@@ -1580,17 +1580,17 @@ describe("the multi-band compressor", () => {
     screen.close();
   });
 
-  it("writes both bits of Pitch Fix's MIDI Control, and locks the mask it clears", () => {
-    // Two bits for three modes, so the write names both; and from Setting on, the notes the
-    // correction aims at come from a port of the unit's own, so the mask is the unit's.
+  it("locks Pitch Fix's mask while MIDI Control is on, and leaves the Scale the operator's", () => {
+    // From Setting on, the notes the correction aims at come from a port of the unit's own, so
+    // the mask is the unit's. The Scale is offered on the unit's own list in both modes.
     const ctx = holding("ch1", "Pitch Fix");
     h.plan.nodeParams.ch1!.insertFxOn = true;
     expect(INSFX_DYN.rowStates!(ctx, {})).toBeNull();
     h.plan.nodeParams.ch1!.insertFxParams = { [insertFxParamKey("pitch", 34)]: 1 };
     const states = INSFX_DYN.rowStates!(ctx, {})!;
     const slots = [...states.keys()].map((k) => Number(/:(\d+)$/.exec(k)?.[1]));
-    expect(slots).toContain(PITCH_SCALE_SLOT);
-    expect(slots.length).toBe(1 + PITCH_NOTE_SLOTS.length);
+    expect(slots).not.toContain(PITCH_SCALE_SLOT);
+    expect(slots.sort((x, y) => x - y)).toEqual([...PITCH_NOTE_SLOTS]);
     expect([...states.values()].every((o) => o.locked === true)).toBe(true);
   });
 

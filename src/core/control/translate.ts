@@ -1527,11 +1527,8 @@ function pushFxEffectCommands(
   // below skips its own: while tempo Sync is on the unit derives the delay time from the BPM
   // and the note value, and it ACCEPTS a write to that slot and holds it — so re-sending the
   // plan's copy does not merely repeat what is there, it takes the delay time off the note
-  // value and leaves Sync on with nothing driving it. `unused` is not skipped: the unit
-  // stores the note value while it is not reading it, and the app is still its author.
-  const driven = includeDeviceDriven
-    ? new Set<string>()
-    : new Set([...fxRowOwners(type, fx.params)].filter(([, why]) => why === "computed").map(([key]) => key));
+  // value and leaves Sync on with nothing driving it.
+  const driven = includeDeviceDriven ? new Set<string>() : new Set(fxRowOwners(type, fx.params).keys());
   for (const desc of fxParams(type)) {
     if (driven.has(desc.key)) continue;
     const raw = fxDescRawToSend(desc, fx.params?.[desc.key]);
@@ -3014,9 +3011,8 @@ export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: Wri
   // slot out of what it sends, and the registration the live layer builds is the emitted set
   // — so without this entry the address is subscribed by nobody while the unit is the one
   // moving it. The unit ANNOUNCES each recompute there, so the value would be announced into
-  // silence: the plan would keep the number it had, the screen would print it under a tag
-  // saying the value is the unit's, and the writer would send it back the moment Sync went
-  // off. Plan-dependent, unlike everything above it — which slot this is, and whether there
+  // silence: the plan would keep the number it had, the screen would print it, and the
+  // writer would send it back the moment Sync went off. Plan-dependent, unlike everything above it — which slot this is, and whether there
   // is one at all, is a function of the effect type and of the Sync switch.
   for (const node of model.nodes) {
     const fxIndex = fxChannelIndex(node.id);
@@ -3026,7 +3022,7 @@ export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: Wri
     const owners = fxRowOwners(type, fx?.params);
     if (!owners.size) continue;
     for (const desc of fxParams(type)) {
-      if (owners.get(desc.key) !== "computed") continue;
+      if (!owners.has(desc.key)) continue;
       out.push({ param: FX_EFFECT_ARRAY_PARAM[fxIndex], x: 0, y: desc.slot, name: "FX_EFFECT_PARAM", node: node.id });
     }
   }

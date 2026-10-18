@@ -557,7 +557,7 @@ export const en = {
       scaleMelodicMinor: dev("Melodic Minor"),
       scalePentatonic: dev("Pentatonic"),
       midiControlDeviceOnly: tr(
-        "From Setting on, the notes the correction aims at arrive on the unit's own USB-MIDI port — so switching it on clears the note mask and sets the Scale to Custom, and the two stay the unit's until it is switched back off.",
+        "From Setting on, the notes the correction aims at arrive on the unit's own USB-MIDI port, and the note mask is the unit's until it is switched back off. Setting offers every scale but Chromatic; Real Time offers Custom and Single and keeps the mask empty.",
       ),
       params: {
         bypass: dev("Bypass"),
@@ -809,11 +809,6 @@ export const en = {
       // uses (EFFECT TYPE). Latin in both languages, like every screen title.
       title: fixed("FX EFFECT"),
       open: tr("FX Effect screen"),
-      // While tempo Sync is on the unit computes the delay time from the BPM and the note
-      // value and announces the result, so the row reads it rather than setting it.
-      syncedTag: tr("Synced"),
-      // …and with Sync off the unit does not read the note value at all.
-      syncOffTag: tr("Sync off"),
     },
     // One screen for four effect families: the title names the effect the node holds,
     // since the selector that picked it is on another surface. Two output taps, because

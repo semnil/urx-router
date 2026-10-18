@@ -54,7 +54,7 @@ import {
   type InsertFxFamily,
 } from "../control/insert-fx-effect";
 import { wireRaw, wireSteps } from "./mapping";
-import { FX_CHANNEL_NODE_INDEX, fxEffectTypes } from "../control/fx-effect";
+import { FX_CHANNEL_NODE_INDEX, fxDescRawToSend, fxEffectTypes, fxParams } from "../control/fx-effect";
 
 const model = getModel("URX44V");
 let plan: Plan;
@@ -1029,26 +1029,40 @@ describe("a mapping cannot reach past a lock the screen draws", () => {
     return c.set(v);
   };
 
-  // The eighth lock, and the only one outside insert FX. While tempo Sync is on the unit
-  // recomputes the delay time from BPM and the note value and announces the result, so the
-  // screen locks the row and the catalogue has to refuse the write — `fxRowOwners` is the one
-  // list both read. Asked in BOTH directions, like every case around it: without the second
-  // half a `set` that never takes at all would satisfy the first.
-  it("refuses the FX delay time while tempo Sync is on, and takes it back when it is off", () => {
+  // Not a lock: the unit's own panel turns the delay time whichever way tempo Sync is set, and
+  // keeps Sync on when it is turned. The control takes the value in every state, and during a
+  // session with Sync on — the one state the plan's writer leaves the slot out — it also hands
+  // the value to the unit.
+  it("takes the FX delay time in every Sync state, and writes it to the unit under Sync during a session", () => {
     const cid = controlId("bus.fx2", "fx", "fx.delay");
-    const fxParamsOf = (): Record<string, number> | undefined => plan.nodeParams["bus.fx2"]?.fxEffect?.params;
+    const d = fxParams(1024).find((x) => x.key === "delay")!;
     const hold = (sync: number): void => {
       plan.nodeParams["bus.fx2"] = {
         ...plan.nodeParams["bus.fx2"],
         fxEffect: { ...plan.nodeParams["bus.fx2"]?.fxEffect, type: 1024, params: { delay: 5000, sync } },
       };
     };
-    hold(1);
-    expect(push(cid, 0.75), "while the unit is computing it").toBe(false);
-    expect(fxParamsOf()?.delay, "and the value did not move").toBe(5000);
-    hold(0);
-    expect(push(cid, 0.75), "with Sync off it is the operator's again").toBe(true);
-    expect(fxParamsOf()?.delay).not.toBe(5000);
+    const delay = (): number | undefined => plan.nodeParams["bus.fx2"]?.fxEffect?.params?.delay;
+    const writes: number[][] = [];
+    const access = (up: boolean) => ({
+      has: () => false,
+      set: () => undefined,
+      enabled: () => up,
+      writeHeld: (param: number, y: number, value: number) => {
+        if (up) writes.push([param, y, value]);
+      },
+    });
+    for (const sync of [0, 1])
+      for (const up of [false, true]) {
+        hold(sync);
+        const at = `Sync ${sync ? "on" : "off"}, ${up ? "a session" : "no session"}`;
+        writes.length = 0;
+        expect(bindControl(model, plan, cid, access(up))!.set(0.75), at).toBe(true);
+        expect(delay(), `${at}: the plan took it`).not.toBe(5000);
+        expect(writes, `${at}: what went to the unit directly`).toEqual(
+          sync && up ? [[685, d.slot, fxDescRawToSend(d, delay())]] : [],
+        );
+      }
   });
 
   it("refuses the slots the multi-band compressor's 1-knob is driving, and takes them back", () => {
@@ -1488,18 +1502,20 @@ describe("the lock dependencies the catalogue declares", () => {
       `bus.mix1/insfx@${INSFX_SCOPE}.mbc.${MBC_ONE_KNOB.level.slot}`,
       controlId("bus.mix1", "insfx", `${INSFX_SCOPE}.mbc.${MBC_ONE_KNOB.on.slot}`),
     ],
-    [
-      "FX Sync",
-      (p: Plan) => {
-        p.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { sync: 1, bpm: 120, note: 9, delay: 5000 } } };
-      },
-      `bus.fx2/fx@${FX_SCOPE}.delay`,
-      controlId("bus.fx2", "fx", `${FX_SCOPE}.sync`),
-    ],
   ])("%s names the control that governs it", (_family, seed, dependent, governor) => {
     const found = listFor(seed).find((c) => c.id === dependent);
     if (!found) throw new Error(`${dependent} is not in the catalogue — the case addresses nothing`);
     expect(found.governedBy).toBe(governor);
+  });
+
+  // Tempo Sync locks nothing — the unit turns the delay time in either state — so no FX control
+  // waits for it.
+  it("names no governor for an FX delay's controls", () => {
+    const fx = listFor((p) => {
+      p.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { sync: 1, bpm: 120, note: 9, delay: 5000 } } };
+    }).filter((c) => c.node === "bus.fx2" && c.param === "fx");
+    expect(fx.length, "the delay's controls are in the catalogue").toBeGreaterThan(0);
+    expect(fx.filter((c) => c.governedBy !== undefined).map((c) => c.id)).toEqual([]);
   });
 });
 

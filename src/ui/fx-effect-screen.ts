@@ -20,7 +20,6 @@ import {
   fxEffectTypes,
   fxFamilyOf,
   fxParams,
-  fxRowOwners,
   resolveFxEffectType,
 } from "../core/control/fx-effect";
 import type { FxFamily, FxParamDesc } from "../core/control/fx-effect";
@@ -190,26 +189,6 @@ function offNote(ctx: DynCtx): string | null {
   return nodeRateDisabled(ctx.nodeId, ctx.plan.sampleRate) ? ctx.m.inspector.fx2RateLocked : null;
 }
 
-/** The rows the unit owns, tagged with which of the two things it is doing. Both stay on
- *  the panel and stay readable — the computed one is where the derived time is read — and
- *  neither is removed, so the face keeps its height whatever Sync is set to.
- *
- *  The cost of locking the note value is that it cannot be chosen before Sync is switched
- *  on; switching Sync on first is the one extra gesture. It is locked all the same, because
- *  a control the unit is not reading is a control whose value means nothing yet.
- *
- *  The lock the OPERATOR sees; the writer honours the same list by leaving a computed slot
- *  out of what it sends, so the gesture and the command agree about who owns the row. */
-function lockedRows(ctx: DynCtx, type: number): ReadonlyMap<string, { locked: true; tag: string }> | null {
-  const g = ctx.m.dynTuning.fx;
-  const owners = fxRowOwners(type, fxOf(ctx).params);
-  const out = new Map<string, { locked: true; tag: string }>();
-  for (const [planKey, why] of owners) {
-    out.set(fieldKey(planKey), { locked: true, tag: why === "computed" ? g.syncedTag : g.syncOffTag });
-  }
-  return out.size ? out : null;
-}
-
 /** The label an i18n table has for a catalogue row. The catalogue's `label` is the shared
  *  name (both reverbs' `hpf`), which is what keeps one message per parameter rather than one
  *  per family. */
@@ -360,11 +339,6 @@ function fxFace(): DynProcessor {
       return d.format(v, ctxVals);
     },
 
-    rowStates: (ctx) => {
-      const type = typeOf(ctx);
-      return type === null ? null : lockedRows(ctx, type);
-    },
-
     // Everything that is not a knob — the delay's Sync switch and its Note value. Placed in
     // front of the knob that follows them in the face's order, so the panel reads in one
     // order rather than knobs-then-the-rest.
@@ -385,11 +359,6 @@ function fxFace(): DynProcessor {
         }
         const cur = rawOf(ctx, d);
         const label = labelOf(d, ctx.m);
-        // What `rowStates` said about this row. The host applies that answer to the FIELDS
-        // it lays out and to nothing else, so a row built here has to ask for it — and one
-        // that does not is drawn live while the operator has no way to know the value is
-        // not being read.
-        const state = ctx.states.get(key) ?? {};
         pending.push(
           d.control === "toggle"
             ? ctx.midi(
@@ -399,11 +368,10 @@ function fxFace(): DynProcessor {
                   // one-button form: the pair would split a card between two words where a
                   // single button prints the state it is in.
                   onOffButton(cur !== 0, (on) => ctx.set({ [key]: on ? 1 : 0 })),
-                  state,
                 ),
                 key,
               )
-            : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v }), state),
+            : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v })),
         );
       }
       tail.push(...pending);

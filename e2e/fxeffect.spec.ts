@@ -1,4 +1,4 @@
-import { test, expect, colorToken, scrollsByWheel, type Page } from "./fixtures";
+import { test, expect, scrollsByWheel, type Page } from "./fixtures";
 import { chooseOption } from "./choose-option";
 import { planParamZ } from "./plan-param";
 import { getModel } from "../src/models";
@@ -290,28 +290,22 @@ test("Rev-X Plate reads longer than Hall at the same Rev.Time", async ({ page })
   await closeScreen(page);
 });
 
-test("a delay face locks whichever row the unit owns", async ({ page }) => {
-  // FX 2 holds Mono Delay out of the factory.
+// The unit's own panel turns the delay time and chooses the Note whichever way tempo Sync is set,
+// and keeps Sync on when either moves. So does this face: no row is locked or tagged in either
+// state, and Sync switches without taking anything out of the operator's hands.
+test("a delay face locks no row, whichever way Sync is set", async ({ page }) => {
+  // FX 2 holds Mono Delay out of the factory, with Sync off.
   await openFromConsole(page, "FX 2");
   await expect(screenBox(page)).toContainText("FX EFFECT — Mono Delay");
-  const sync = screenRow(page, "Sync");
-  const note = screenRow(page, "Note");
-  const delayTime = screenRow(page, "Delay");
-  // Sync off: the unit does not read the note value, so that row is the locked one and the
-  // delay time is the operator's.
-  await expect(note).toHaveClass(/locked/);
-  await expect(delayTime).not.toHaveClass(/locked/);
-  // WHICH tag is on which row, not merely that a row is locked: swapping the two message
-  // keys leaves every class assertion here satisfied, and the tag is the whole of what tells
-  // the operator why the row is not theirs.
-  await expect(note).toContainText("Sync off");
-  await sync.getByRole("button").first().click();
-  // Sync on: the unit recomputes the delay time from BPM and the note value and announces
-  // it, so the two swap. Neither row is removed — the face keeps its height either way.
-  await expect(delayTime).toHaveClass(/locked/);
-  await expect(note).not.toHaveClass(/locked/);
-  await expect(delayTime).toContainText("Synced");
-  await expect(screenRow(page, "BPM")).not.toHaveClass(/locked/);
+  const held = screenBox(page).locator(".gt-knobs > .locked, .gt-knobs .prefs-lock, .gt-knobs .gt-knobtag");
+  for (const pass of ["Sync off", "Sync on"]) {
+    await expect(held, pass).toHaveCount(0);
+    await expect(screenRow(page, "Note").locator("select"), pass).toBeEnabled();
+    await expect(screenRow(page, "Delay").locator("input[type=range]"), pass).toBeEnabled();
+    await expect(screenRow(page, "BPM").locator("input[type=range]"), pass).toBeEnabled();
+    if (pass === "Sync off") await screenRow(page, "Sync").getByRole("button").first().click();
+  }
+  await expect(screenRow(page, "Sync").getByRole("button").first()).toHaveAttribute("aria-pressed", "true");
   await closeScreen(page);
 });
 
@@ -526,121 +520,6 @@ test("the reserved bar's row carries no words, and the same height on any title"
   await expect(screenBox(page)).toContainText("Gate");
   expect(await reserveWords()).toBe("");
   expect(await reserveHeight()).toBe(long);
-  await closeScreen(page);
-});
-
-// A tag says when a row's value applies. On a card it goes UNDER the name, where a knob card
-// prints its value — beside it, it is centred against a label box that reserves two lines and
-// holds one, so it hangs between the name and the line under it.
-test("the delay's Note card prints its tag under the name", async ({ page }) => {
-  await openFromInspector(page, "bus.fx2");
-  // `screenRow` names both card shapes, so a Note row that became a knob card fails here as a
-  // layout verdict rather than as a control that is not there. It is asserted to be the row
-  // shape the rule addresses, and to carry the tag, before anything is measured off it: the
-  // tag is on this row because Sync ships off, and a case that read its rectangle without
-  // saying so would throw rather than report where the tag went.
-  const note = screenRow(page, "Note");
-  await expect(note).toHaveClass(/\bprefs-row\b/);
-  await expect(note.locator(".prefs-lock")).toHaveText("Sync off");
-  const geometry = await note.evaluate((row) => {
-    const label = row.querySelector(".lbl")!.getBoundingClientRect();
-    const tag = row.querySelector(".prefs-lock")!.getBoundingClientRect();
-    return {
-      under: tag.top >= label.bottom - 0.5,
-      labelCentred: Math.abs(
-        (label.left + label.right) / 2 - (row.getBoundingClientRect().left + row.getBoundingClientRect().right) / 2,
-      ),
-    };
-  });
-  expect(geometry.under).toBe(true);
-  // …and the name keeps the card's centre, which it cannot while a tag shares its line.
-  expect(geometry.labelCentred).toBeLessThan(1);
-  await closeScreen(page);
-});
-
-// A tag on a CARD says one thing — when this value applies — and which of the two card kinds
-// carries it is decided by whether the control is continuous, which the reader cannot see. So
-// the two are drawn alike.
-//
-// Read as a RECIPE rather than as five properties: the difference the two used to have was a
-// font, a border style, a radius, a padding and a colour at once, so a short list leaves the
-// ones it omits free to diverge — a filled amber block in Helvetica passes a list of five that
-// happens to agree. Composed opacity is in it because it is the one thing that is not on the
-// element: a locked card used to dim its whole self, tag included, while a locked ROW exempts
-// the pill by name, and `getComputedStyle` reports 1 on both.
-//
-// Compared to each other rather than to literal values, which the palette would age out — with
-// one value ANCHORED, because an equality alone also holds when the recipe vanishes and both
-// fall back to what they inherit.
-const tagFace = (page: Page, sel: string) =>
-  screenBox(page)
-    .locator(sel)
-    .first()
-    .evaluate((el) => {
-      const cs = getComputedStyle(el);
-      let opacity = 1;
-      for (let n: Element | null = el; n; n = n.parentElement) opacity *= Number(getComputedStyle(n).opacity);
-      return {
-        font: [cs.fontFamily, cs.fontSize, cs.fontWeight, cs.letterSpacing].join(" "),
-        // All four sides and all four corners, since a recipe can lose one of them on its own.
-        border: [cs.borderWidth, cs.borderStyle, cs.borderColor, cs.borderRadius].join(" "),
-        padding: cs.padding,
-        color: cs.color,
-        // Both, because the recipe's own claim is that the tag is OUTLINED and not filled, and
-        // a fill written as a gradient leaves `background-color` transparent.
-        background: [cs.backgroundColor, cs.backgroundImage].join(" "),
-        opacity: +opacity.toFixed(3),
-      };
-    });
-
-test("a card's tag is drawn the same whichever kind of card carries it", async ({ page }) => {
-  const lamp = await colorToken(page, "--led-ink");
-
-  // Sync ships off, so the Note card carries the tag and the Delay knob does not.
-  await openFromInspector(page, "bus.fx2");
-  await expect(screenBox(page).locator(".gt-knobtag")).toHaveCount(0);
-  const onARowCard = await tagFace(page, ".gt-knobs > .prefs-row .prefs-lock");
-  // The anchor: the card recipe is the lamp's ink, at full strength on a locked card.
-  expect(onARowCard.color).toBe(lamp);
-  expect(onARowCard.opacity).toBe(1);
-  // Switching it on swaps which card holds one: the delay time becomes the unit's — and locks
-  // the card it moves to, which is what makes the two comparable at all. A locked card dims its
-  // contents and keeps its own frame, the way a locked row does, so the frame is read against an
-  // unlocked neighbour's: putting the dim back on the card would take the frame with it.
-  await screenRow(page, "Sync").getByRole("button").first().click();
-  await expect(screenBox(page).locator(".gt-knobs > .prefs-row .prefs-lock")).toHaveCount(0);
-  expect(await tagFace(page, ".gt-knobtag")).toEqual(onARowCard);
-  const frames = await screenBox(page)
-    .locator(".gt-knobs > .gt-knob")
-    .evaluateAll((cards) => {
-      const face = (el: Element) => {
-        const cs = getComputedStyle(el);
-        return [cs.borderWidth, cs.borderStyle, cs.borderColor, cs.backgroundImage].join(" ");
-      };
-      const locked = cards.filter((c) => c.classList.contains("locked"));
-      const plain = cards.filter((c) => !c.classList.contains("locked"));
-      return { locked: locked.map(face), plain: [...new Set(plain.map(face))] };
-    });
-  expect(frames.locked.length).toBe(1);
-  expect(frames.plain).toEqual([frames.locked[0]]);
-  await closeScreen(page);
-
-  // The control, without which the comparison is satisfied by every tag having become one
-  // thing: a row OUTSIDE the knob grid keeps the settings pill, because a list of them on the
-  // rows a panel has dimmed would make amber the brightest thing on the screen. Asserted as
-  // the recipe it keeps rather than as "not the other one", which any difference satisfies —
-  // including the pill losing its own round corners.
-  await page.click("#btn-view-graph");
-  await page.locator('g.node[data-id="ch1"]').click();
-  const eq = page.locator("#inspector .insp-section", { has: page.locator("summary", { hasText: /^EQ$/ }) });
-  if (!(await eq.evaluate((el) => (el as HTMLDetailsElement).open))) await eq.locator("summary").click();
-  await eq.locator("#btn-eq-screen").click();
-  await expect(screenBox(page)).toContainText("EQ");
-  await expect(screenBox(page).locator(".gt-knobs")).toHaveCount(0);
-  const outsideTheGrid = await tagFace(page, ".prefs-row .prefs-lock");
-  expect(outsideTheGrid.border).toBe(`1px dashed ${await colorToken(page, "--ctl-border")} 999px`);
-  expect(outsideTheGrid.padding).toBe("1px 7px");
-  expect(outsideTheGrid).not.toEqual(onARowCard);
   await closeScreen(page);
 });
 

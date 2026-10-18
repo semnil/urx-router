@@ -555,7 +555,12 @@ describe("an insert effect's rows, which the plan holds as the engine's raws", (
       expect(edit(binding(bindings, `ch.${e.node}.insFx.${key}`), plan, v), key).toEqual({ kind: "none" });
   });
 
-  /** Writes of another value, and the raws each lands on, by slot. */
+  /** Pitch Fix's twelve-note mask (slots 22-33, C first) with the given semitones on. */
+  const mask = (...on: number[]): Record<number, number> =>
+    Object.fromEntries(Array.from({ length: 12 }, (_, i) => [22 + i, on.includes(i) ? 1 : 0]));
+
+  /** Writes of another value, and the raws each lands on, by slot. Pitch Fix ships Chromatic at
+   *  C with MIDI Control off. */
   const WRITES: [string, string, SimValue, Record<number, number>][] = [
     ["Clean", "volume", 2.5, { 7: 25 }],
     ["Clean", "spType", "BS 4x12", { 16: 1 }],
@@ -569,11 +574,11 @@ describe("an insert effect's rows, which the plan holds as the engine's raws", (
     ["Drive", "micPosition", "Edge", { 18: 1 }],
     ["Pitch Fix", "coarse", 3, { 6: 3, 9: 3 }],
     ["Pitch Fix", "formant", -10, { 8: 54, 11: 54 }],
-    ["Pitch Fix", "midiControl", "Real Time", { 34: 1, 35: 1 }],
-    ["Pitch Fix", "midiControl", "Setting", { 34: 1, 35: 0 }],
-    ["Pitch Fix", "scale", "Major", { 16: 2 }],
+    ["Pitch Fix", "midiControl", "Real Time", { 34: 1, 35: 1, 16: 0, ...mask() }],
+    ["Pitch Fix", "midiControl", "Setting", { 34: 1, 35: 0, 16: 0, ...mask() }],
+    ["Pitch Fix", "scale", "Major", { 16: 2, ...mask(0, 2, 4, 5, 7, 9, 11) }],
     ["Pitch Fix", "note3", false, { 25: 0 }],
-    ["Pitch Fix", "key", "G", { 15: 7 }],
+    ["Pitch Fix", "key", "G", { 15: 7, 16: 7, ...mask(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) }],
     ["Pitch Fix", "correction", false, { 13: 0 }],
     ["Pitch Fix", "limitHigh", 100, { 21: 100 }],
     ["Compander-H", "threshold", -12.5, { 6: -1250 }],
@@ -652,11 +657,37 @@ describe("an insert effect's rows, which the plan holds as the engine's raws", (
 
     const pitch = holding("ch1", 512);
     pitch.nodeParams.ch1.insertFxParams = { ...pitch.nodeParams.ch1.insertFxParams, "pitch:34": 1 };
-    expect(refusal(binding(bindings, "ch.ch1.insFx.scale"), pitch, "Major")).toBe("locked");
-    expect(refusal(binding(bindings, "ch.ch1.insFx.note0"), pitch, false)).toBe("locked");
-    expect(edit(binding(bindings, "ch.ch1.insFx.scale"), pitch, "Chromatic"), "the value it holds").toEqual({
+    expect(refusal(binding(bindings, "ch.ch1.insFx.note0"), pitch, false), "the mask, under Setting").toBe("locked");
+  });
+
+  // The unit's own list offers a scale under Setting, and choosing a named one fills the mask in
+  // at the Key on the unit too. The glass writes the scale and then the mask the unit derived, so
+  // the plan takes both from the scale and each note the glass then writes is one it holds.
+  it("takes a Pitch Fix scale under MIDI Control, and the notes it derives, as the unit does", () => {
+    const plan = holding("ch1", 512);
+    const take = (path: string, v: SimValue): void => {
+      plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, ...patchOf(binding(bindings, `ch.ch1.insFx.${path}`), plan, v) };
+    };
+    const notes = (): boolean[] =>
+      Array.from({ length: 12 }, (_, i) => binding(bindings, `ch.ch1.insFx.note${i}`).read(plan) as boolean);
+    take("midiControl", "Setting");
+    take("scale", "Major");
+    const major = [true, false, true, false, true, true, false, true, false, true, false, true];
+    expect(notes(), "Major at C, filled in by the scale").toEqual(major);
+    expect(edit(binding(bindings, "ch.ch1.insFx.note0"), plan, true), "a note the plan holds").toEqual({
       kind: "none",
     });
+    expect(refusal(binding(bindings, "ch.ch1.insFx.note1"), plan, true), "one it does not").toBe("locked");
+    // Onto Real Time a scale other than Single turns Custom and the mask empties.
+    take("midiControl", "Real Time");
+    expect(binding(bindings, "ch.ch1.insFx.scale").read(plan)).toBe("Custom");
+    expect(notes()).toEqual(Array(12).fill(false));
+    // …and a scale chosen there fills nothing in.
+    take("scale", "Single");
+    expect(notes()).toEqual(Array(12).fill(false));
+    // Back onto Setting, the named scale fills the mask in again at the Key.
+    take("midiControl", "Setting");
+    expect(notes()).toEqual([true, ...Array(11).fill(false)]);
   });
 
   it("refuses a row of an effect the rate takes out", () => {

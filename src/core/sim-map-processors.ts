@@ -77,6 +77,12 @@ import {
   MBC_RELEASE_MS,
   mbcXoverHz,
   parkOutgoingInsertFxParams,
+  pitchKeyChoice,
+  pitchMidiMode,
+  pitchMidiModeChange,
+  pitchMidiPatch,
+  pitchScaleChoice,
+  PITCH_KEY_SLOT,
   PITCH_MIDI_ENABLE_SLOT,
   PITCH_MIDI_REALTIME_SLOT,
   PITCH_NOTE_SLOTS,
@@ -374,7 +380,11 @@ const WHOLE = linear(1);
 interface InsertRow {
   values?: readonly SimValue[];
   read(raw: (slot: number) => number): SimValue | undefined;
+  /** The slots the row itself names, at the raws `v` reads as. */
   take(v: SimValue): Record<number, number> | null;
+  /** What the plan takes for `v`, where the row moves more than its own slots: the slots `take`
+   *  names and the ones the unit moves with them. */
+  patch?(v: SimValue, raw: (slot: number) => number): Record<number, number> | null;
 }
 
 /** A row that is one slot of `family`, writing the slot the catalogue mirrors it onto as well. */
@@ -411,18 +421,48 @@ const PITCH_SCALE_NAMES = [
 /** MIDI Control's three settings: Off with the enable bit clear, Setting with it set, Real Time with both bits set. */
 const PITCH_MIDI_MODES = ["Off", "Setting", "Real Time"] as const;
 
+/** MIDI Control's mode as `raw` holds it: 0 Off, 1 Setting, 2 Real Time. */
+const pitchModeOf = (raw: (slot: number) => number): number =>
+  pitchMidiMode(raw(PITCH_MIDI_ENABLE_SLOT), raw(PITCH_MIDI_REALTIME_SLOT));
+
 const pitchMidiControl: InsertRow = {
   values: PITCH_MIDI_MODES,
-  read: (raw) =>
-    PITCH_MIDI_MODES[
-      !insertFxSwitchOn(raw(PITCH_MIDI_ENABLE_SLOT)) ? 0 : !insertFxSwitchOn(raw(PITCH_MIDI_REALTIME_SLOT)) ? 1 : 2
-    ],
+  read: (raw) => PITCH_MIDI_MODES[pitchModeOf(raw)],
   take: (v) => {
     const mode = PITCH_MIDI_MODES.indexOf(v as (typeof PITCH_MIDI_MODES)[number]);
+    return mode < 0 ? null : pitchMidiPatch(mode);
+  },
+  // The Scale and the mask move with the mode the way the unit moves them.
+  patch: (v, raw) => {
+    const mode = PITCH_MIDI_MODES.indexOf(v as (typeof PITCH_MIDI_MODES)[number]);
     if (mode < 0) return null;
-    return { [PITCH_MIDI_ENABLE_SLOT]: mode === 0 ? 0 : 1, [PITCH_MIDI_REALTIME_SLOT]: mode === 2 ? 1 : 0 };
+    return pitchMidiModeChange(pitchModeOf(raw), mode, raw(PITCH_SCALE_SLOT), raw(PITCH_KEY_SLOT));
   },
 };
+
+/** Pitch Fix's Scale: a named scale fills the mask in at the Key, except under Real Time. */
+function pitchScaleRow(): InsertRow {
+  const row = slotRow("pitch", PITCH_SCALE_SLOT, named(PITCH_SCALE_NAMES));
+  return {
+    ...row,
+    patch: (v, raw) => {
+      const own = row.take(v);
+      return own ? pitchScaleChoice(pitchModeOf(raw), own[PITCH_SCALE_SLOT]!, raw(PITCH_KEY_SLOT)) : null;
+    },
+  };
+}
+
+/** Pitch Fix's Key: it re-roots the mask of a named scale, except under Real Time. */
+function pitchKeyRow(): InsertRow {
+  const row = optionRow("pitch", PITCH_KEY_SLOT);
+  return {
+    ...row,
+    patch: (v, raw) => {
+      const own = row.take(v);
+      return own ? pitchKeyChoice(pitchModeOf(raw), raw(PITCH_SCALE_SLOT), own[PITCH_KEY_SLOT]!) : null;
+    },
+  };
+}
 
 /** A number the catalogue prints first in a slot's reading ("30 ms", "2.0:1"). */
 const printed =
@@ -482,8 +522,8 @@ function familyRows(family: InsertFxFamily): Record<string, InsertRow> {
         fine: at(7, WHOLE),
         formant: at(8, linear(1, 64)),
         midiControl: pitchMidiControl,
-        key: optionRow(family, 15),
-        scale: at(PITCH_SCALE_SLOT, named(PITCH_SCALE_NAMES)),
+        key: pitchKeyRow(),
+        scale: pitchScaleRow(),
         mix: at(14, WHOLE),
         limitLow: at(20, WHOLE),
         limitHigh: at(21, WHOLE),
@@ -574,11 +614,13 @@ function insertFxParam(model: DeviceModel, id: string, key: string, families: re
         h.family === "mbc" && key === "oneKnobOn"
           ? mbcOneKnobSwitch(h.params, (own[MBC_GLOBAL.oneKnobOn] ?? 0) !== 0)
           : own;
-      const slots = Object.keys(raws).map(Number);
+      const all = h.row.patch ? h.row.patch(v, h.raw) : raws;
+      if (!all) return refused("value");
+      const slots = Object.keys(all).map(Number);
       return {
         kind: "node",
         id,
-        patch: { insertFxParams: reKeyInsertFxParams(h.params ?? {}, h.family, raws) },
+        patch: { insertFxParams: reKeyInsertFxParams(h.params ?? {}, h.family, all) },
         written: slots.flatMap((slot) => [
           `insertFxParams.${insertFxParamKey(h.family, slot)}`,
           `insertFxParams.${slot}`,

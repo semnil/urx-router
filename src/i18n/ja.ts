@@ -423,7 +423,7 @@ export const ja: Messages = {
       scaleMelodicMinor: "Melodic Minor",
       scalePentatonic: "Pentatonic",
       midiControlDeviceOnly:
-        "Setting 以降は補正が狙う音が本体自身の USB-MIDI ポートから届きます。そのため ON にすると 12 音マスクが消去され Scale は Custom になり、OFF に戻すまでその 2 つは本体のものになります。",
+        "Setting 以降は補正が狙う音が本体自身の USB-MIDI ポートから届き、OFF に戻すまで 12 音マスクは本体のものになります。Setting では Chromatic 以外の Scale を、Real Time では Custom と Single を選べ、Real Time のあいだマスクは空のままです。",
       params: {
         bypass: "Bypass",
         threshold: "Threshold",
@@ -615,8 +615,6 @@ export const ja: Messages = {
     fx: {
       title: "FX EFFECT",
       open: "FX Effect 画面",
-      syncedTag: "同期中",
-      syncOffTag: "Sync オフ",
     },
     insfx: {
       title: "INS FX",

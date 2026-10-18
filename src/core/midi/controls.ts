@@ -28,7 +28,8 @@ import {
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../levels";
 import {
   FX_CHANNEL_NODE_INDEX,
-  DELAY_SYNC_SLOT,
+  FX_EFFECT_ARRAY_PARAM,
+  fxDescRawToSend,
   fxParams,
   fxRowOwners,
   resolveFxEffectType,
@@ -408,6 +409,9 @@ export interface CueAccess {
   set(node: string, on: boolean): void;
   /** Whether a switch can land: a CUE exists only while a Live-sync session is up. */
   enabled(): boolean;
+  /** Write a value the plan's writer leaves out — the delay time tempo Sync drives — to the unit
+   *  while a session is up. */
+  writeHeld?(param: number, y: number, value: number): void;
 }
 
 export function listControls(model: DeviceModel, plan: Plan, cue?: CueAccess): ControlDesc[] {
@@ -1140,18 +1144,13 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
       const scope = `${FX_SCOPE}.${d.key}`;
       const cur = (): number => fxParamsOf()?.[d.key] ?? d.def;
       const write = (raw: number): void => mergeFx({ params: { ...fxParamsOf(), [d.key]: raw } });
-      // The same refusal the tuning screen draws, asked of the same predicate and asked NOW
-      // rather than when the mapping was made: while tempo Sync is on the unit is computing
-      // the delay time and announcing it, so a mapping made before Sync went on would drive
-      // a value the unit overwrites on its own.
-      const drivenNow = (): boolean => fxRowOwners(fxType, fxParamsOf()).get(d.key) === "computed";
-      // Which row that is depends on the Sync switch, so the switch governs it — and governs
-      // nothing when it is not the one deciding, itself included.
-      const syncKey = fxParams(fxType).find((x) => x.slot === DELAY_SYNC_SLOT)?.key;
-      const fxGovernedBy =
-        syncKey === undefined || syncKey === d.key
-          ? undefined
-          : controlId(lockNode(id), "fx", `${FX_SCOPE}.${syncKey}`);
+      // While tempo Sync is on the unit computes the delay time; the control still turns it, as
+      // the unit's own panel does, and during a session the value is written to the unit
+      // directly, since the plan's writer leaves that slot out.
+      const writeHeld = (raw: number): void => {
+        if (fxRowOwners(fxType, fxParamsOf()).has(d.key))
+          cue?.writeHeld?.(FX_EFFECT_ARRAY_PARAM[fxIndex]!, d.slot, fxDescRawToSend(d, raw));
+      };
       if (d.control === "toggle") {
         out.push({
           id: controlId(id, "fx", scope),
@@ -1159,10 +1158,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
           param: "fx",
           scope,
           kind: "toggle",
-          governedBy: fxGovernedBy,
           get: () => (cur() ? 1 : 0),
           set: (v) => {
-            if (drivenNow()) return false;
             write(v >= 0.5 ? 1 : 0);
             return true;
           },
@@ -1176,11 +1173,11 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
         param: "fx",
         scope,
         kind: "continuous",
-        governedBy: fxGovernedBy,
         get: () => codec.get(cur()),
         set: (v) => {
-          if (drivenNow()) return false;
-          write(codec.set(v));
+          const raw = codec.set(v);
+          write(raw);
+          writeHeld(raw);
           return true;
         },
       });

@@ -9601,6 +9601,43 @@ describe("the sample rate during Live sync", () => {
   });
 });
 
+// The delay time tempo Sync drives is the unit's to compute, and the plan's writer leaves it out.
+// While a session is up it is turned by hand as the unit's own panel turns it — the unit takes it
+// and keeps Sync on — so the FX screen opens the row and the value is written to the unit directly.
+describe("the delay time tempo Sync drives, during Live sync", () => {
+  const seed = { [`${PARAMS.FX_EFFECT_TYPE.id}/0/0`]: 1024, "681/0/4": 1, "681/0/6": 5000 };
+  const setsOf = (shell: TauriShell, paramId: number): [number, number][] =>
+    shell.invokes.flatMap((cmd, i) => {
+      const a = shell.args[i] as Record<string, number>;
+      return cmd === "vd_set" && a.paramId === paramId ? [[a.y, a.value] as [number, number]] : [];
+    });
+  /** The FX 1 screen's delay time row, open on the screen. */
+  const delayRow = (): HTMLInputElement | null => {
+    pressNode("bus.fx1");
+    $<HTMLButtonElement>("btn-fx-screen").click();
+    return $("dyn-screen-box").querySelector<HTMLInputElement>('input[data-dyn="fx:delay"]');
+  };
+  const close = (): void => $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions button")!.click();
+
+  it("opens the row while a session is up and writes a turned value to the unit, keeping Sync on", SLOW, async () => {
+    const shell = await bootDevice({}, true, seed);
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    const row = delayRow();
+    if (!row) throw new Error("the FX 1 screen draws no delay time");
+    expect(row.disabled, "a session takes it").toBe(false);
+    row.value = String(Number(row.value) - 500);
+    row.dispatchEvent(new Event("input", { bubbles: true }));
+    row.dispatchEvent(new Event("change", { bubbles: true }));
+    close();
+    await vi.waitFor(() => expect(setsOf(shell, 681).filter(([y]) => y === 6)).toHaveLength(1), { timeout: 10_000 });
+    expect(
+      setsOf(shell, 681).some(([y]) => y === 4),
+      "Sync is left as it is",
+    ).toBe(false);
+  });
+});
+
 describe("the sample rate during a write", () => {
   /** A press and release on the window: it closes the open undo entry one macrotask later. */
   const boundary = async (): Promise<void> => {

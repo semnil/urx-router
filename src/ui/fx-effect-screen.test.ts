@@ -390,6 +390,39 @@ describe("operating the rows a delay adds to the face", () => {
   const moved = (before: Record<string, unknown>, after: Record<string, unknown>): string[] =>
     [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((k) => before[k] !== after[k]).sort();
 
+  // The unit's own panel turns the delay time and chooses the Note whichever way Sync is set, and
+  // so does the screen, with or without a session: no row of a delay face is locked or tagged.
+  it("leaves every delay row the operator's in both Sync states, with or without a session", () => {
+    setLang("en");
+    const h = dynHost();
+    const screen = new DynScreen(h.hooks);
+    host = h;
+    const rowsHeld = (): string[] =>
+      [...h.box.querySelectorAll<HTMLElement>(".prefs-row, .gt-knob")]
+        .filter((r) => r.classList.contains("locked") || r.querySelector(".prefs-lock, .gt-knobtag"))
+        .map((r) => r.querySelector(".lbl")?.textContent ?? "?");
+    const time = (): HTMLInputElement => h.box.querySelector<HTMLInputElement>('input[data-dyn="fx:delay"]')!;
+    const note = (): HTMLSelectElement => row(h, t().inspector.fxEffect.params.note).querySelector("select")!;
+    for (const sync of [0, 1]) {
+      h.plan.nodeParams["bus.fx2"] = {
+        ...h.plan.nodeParams["bus.fx2"],
+        fxEffect: { ...h.plan.nodeParams["bus.fx2"]?.fxEffect, type: 1024, params: { delay: 5000, sync } },
+      };
+      screen.open(FX_DYN, "bus.fx2");
+      for (const live of [false, true]) {
+        h.setLive(live);
+        screen.setLive(live);
+        const at = `Sync ${sync ? "on" : "off"}, ${live ? "a session" : "no session"}`;
+        expect(time().disabled, `${at}: the delay time`).toBe(false);
+        expect(note().disabled, `${at}: the Note`).toBe(false);
+        expect(rowsHeld(), `${at}: no row held`).toEqual([]);
+      }
+      h.setLive(false);
+      screen.setLive(false);
+      screen.close();
+    }
+  });
+
   it("writes the Sync switch through to the plan", () => {
     const h = openDelay();
     const params = (): Record<string, number> | undefined => h.plan.nodeParams["bus.fx2"]?.fxEffect?.params;
@@ -413,39 +446,38 @@ describe("operating the rows a delay adds to the face", () => {
     expect(moved(before, leaves(h))).toEqual(["params.sync"]);
   });
 
-  it("writes a chosen Note value through to the plan, from the state that can reach it", () => {
+  it("writes a chosen Note value through to the plan in either Sync state", () => {
     const h = openDelay();
     const params = (): Record<string, number> | undefined => h.plan.nodeParams["bus.fx2"]?.fxEffect?.params;
     const noteLabel = t().inspector.fxEffect.params.note;
-    // With Sync OFF the unit does not read the note value, so the row ships LOCKED and its
-    // select is `disabled`. Dispatching at it there writes the plan — `disabled` stops a
-    // person, not a dispatched event — so a case that starts here asserts a write down a path
-    // the operator cannot take, and leaves the one they do take unmeasured.
-    expect(params()?.sync ?? 0, "the factory state, where the row is not the operator's").toBe(0);
-    expect(row(h, noteLabel).querySelector<HTMLSelectElement>("select")?.disabled).toBe(true);
-
-    // The real route: switch Sync on, which rebuilds the face with the ownership swapped.
-    row(h, t().inspector.fxEffect.params.sync).querySelector<HTMLButtonElement>(".prefs-switch")!.click();
-    // Re-fetched AFTER the rebuild — the row a locator held before it is a row that is gone.
-    const select = row(h, noteLabel).querySelector<HTMLSelectElement>("select");
-    if (!select) throw new Error("the Note row carries no select");
-    expect(select.disabled, "the rebuild handed the row back to the operator").toBe(false);
-
-    // The state the choice is measured FROM, taken after the Sync press so that press's own
-    // write is not read as this one's.
-    const beforeNote = leaves(h);
-    const before = params()?.note ?? 9;
-    // Any option but the one it is on, so the case cannot pass on a no-op write.
-    const other = [...select.options].map((o) => Number(o.value)).find((v) => v !== before);
-    expect(other, "the Note row offers more than one value").toBeDefined();
-    select.value = String(other);
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(params()?.note, "the chosen note is in the plan").toBe(other);
-    // Two gestures, two writes — the Sync press and this one, and nothing between them.
-    expect(h.patches).toHaveLength(2);
+    /** Choose an option other than the current one, and return it. Re-fetched every time: the
+     *  Sync press rebuilds the face. */
+    const choose = (): number => {
+      const select = row(h, noteLabel).querySelector<HTMLSelectElement>("select");
+      if (!select) throw new Error("the Note row carries no select");
+      const before = params()?.note ?? 9;
+      const other = [...select.options].map((o) => Number(o.value)).find((v) => v !== before);
+      if (other === undefined) throw new Error("the Note row offers one value");
+      select.value = String(other);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      return other;
+    };
+    expect(params()?.sync ?? 0, "the factory state: Sync off").toBe(0);
+    const offBefore = leaves(h);
+    const offPick = choose();
+    expect(params()?.note, "chosen with Sync off").toBe(offPick);
     expect(h.patches.at(-1)?.written).toEqual(["fxEffect.params.note"]);
-    // Choosing a note leaves Sync where the operator put it, and everything else alone.
-    expect(moved(beforeNote, leaves(h))).toEqual(["params.note"]);
-    expect(params()?.sync, "still the state the row was reached from").toBe(1);
+    expect(moved(offBefore, leaves(h))).toEqual(["params.note"]);
+
+    row(h, t().inspector.fxEffect.params.sync).querySelector<HTMLButtonElement>(".prefs-switch")!.click();
+    expect(params()?.sync).toBe(1);
+    const onBefore = leaves(h);
+    const onPick = choose();
+    expect(params()?.note, "chosen with Sync on").toBe(onPick);
+    // Three gestures, three writes — the two choices and the Sync press between them.
+    expect(h.patches).toHaveLength(3);
+    expect(h.patches.at(-1)?.written).toEqual(["fxEffect.params.note"]);
+    expect(moved(onBefore, leaves(h))).toEqual(["params.note"]);
+    expect(params()?.sync, "choosing a note leaves Sync where it was").toBe(1);
   });
 });
