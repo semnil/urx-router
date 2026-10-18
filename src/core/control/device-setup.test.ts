@@ -32,10 +32,26 @@ import { getModel } from "../../models";
 import { defaultPlan } from "../../models/initial-state";
 
 const MODELS = ["URX22", "URX44", "URX44V"] as const;
-const setup = (patch: Partial<DeviceSetup> = {}): DeviceSetup => ({ ...defaultDeviceSetup(), ...patch });
+const setup = (patch: Partial<DeviceSetup> = {}): DeviceSetup => ({ ...defaultDeviceSetup(V), ...patch });
 const V = getModel("URX44V");
 
 describe("device setup catalog", () => {
+  // Read off factory-initialised units: a URX44V and a URX22 leave the factory with the same six
+  // knobs assigned, and Auto Power Off on the URX44V alone.
+  it.each(MODELS)("starts a %s from the settings it leaves the factory with", (id) => {
+    const factory = defaultDeviceSetup(getModel(id));
+    expect(factory.autoPowerOff, "Auto Power Off").toBe(id === "URX44V");
+    const assigned = factory.knobs.flatMap((k, y) => (k.fn === "No Assign" ? [] : [[y, `${k.fn}/${k.p1}/${k.p2}`]]));
+    expect(assigned).toEqual([
+      [0, "Phones/Phones 1/Level"],
+      [1, "Phones/Phones 2/Level"],
+      [4, "Brightness/Screen/"],
+      [7, "Oscillator/Level/"],
+      [8, "Monitor/Monitor 1/Level"],
+      [9, "Monitor/Monitor 2/Level"],
+    ]);
+  });
+
   it("is outside the plan: no plan-external param is ever emitted", () => {
     // The whole reason these live in their own module. A plan travels between
     // units, so emitting brightness / language / knob assignments would push one
@@ -135,7 +151,7 @@ describe("diffDeviceSetup", () => {
   });
 
   it("writes a knob's three columns together, even when one changed", () => {
-    const knobs = defaultDeviceSetup().knobs.slice();
+    const knobs = defaultDeviceSetup(V).knobs.slice();
     knobs[udkSlot(1, 2)] = { fn: "Monitor", p1: "Monitor 2", p2: "Level" };
     const writes = diffDeviceSetup(V, setup(), setup({ knobs }));
     expect(writes).toEqual([
@@ -195,7 +211,7 @@ describe("diffDeviceSetup", () => {
   });
 
   it("normalizes an inconsistent triple before sending it", () => {
-    const knobs = defaultDeviceSetup().knobs.slice();
+    const knobs = defaultDeviceSetup(V).knobs.slice();
     knobs[0] = { fn: "Oscillator", p1: "Phones 1", p2: "Level" };
     expect(diffDeviceSetup(V, setup(), setup({ knobs }))).toEqual([
       { kind: "str", name: "UDK_FUNCTION", y: 0, value: "Oscillator" },
@@ -439,7 +455,7 @@ describe("sendDeviceSetup", () => {
 describe("withSetupWrites", () => {
   it("is the setting a diff's writes leave, field by field", () => {
     const model = getModel("URX44V");
-    const from = defaultDeviceSetup();
+    const from = defaultDeviceSetup(V);
     const to: DeviceSetup = {
       ...from,
       brightness: 3,

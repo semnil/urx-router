@@ -14,7 +14,7 @@
 // device-link rule: a half-read screen would invite the operator to "apply" a diff
 // against values that were never established.
 
-import type { DeviceModel } from "../../models/types";
+import type { DeviceModel, ModelId } from "../../models/types";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import type { ParamName, WritableParamName } from "./params";
@@ -123,12 +123,25 @@ export function setupSupport(model: DeviceModel): SetupSupport {
   return { hdmi: model.hasHDMI, dateTime: model.hasSD };
 }
 
-/** The value a screen starts from before a device is read: the factory settings, so
+/** The knob assignments a unit leaves the factory with, by slot (y = bank × 4 + knob). */
+const UDK_FACTORY: Readonly<Record<number, UdkAssignment>> = {
+  [udkSlot(0, 0)]: { fn: "Phones", p1: "Phones 1", p2: "Level" },
+  [udkSlot(0, 1)]: { fn: "Phones", p1: "Phones 2", p2: "Level" },
+  [udkSlot(1, 0)]: { fn: "Brightness", p1: "Screen", p2: "" },
+  [udkSlot(1, 3)]: { fn: "Oscillator", p1: "Level", p2: "" },
+  [udkSlot(2, 0)]: { fn: "Monitor", p1: "Monitor 1", p2: "Level" },
+  [udkSlot(2, 1)]: { fn: "Monitor", p1: "Monitor 2", p2: "Level" },
+};
+
+/** Whether Auto Power Off is on as each model leaves the factory. */
+const AUTO_POWER_OFF_SHIPPED: Readonly<Record<ModelId, boolean>> = { URX22: false, URX44: false, URX44V: true };
+
+/** The value a screen starts from before a device is read: `model`'s factory settings, so
  *  a locked or unread row shows something defined rather than zero. */
-export function defaultDeviceSetup(): DeviceSetup {
+export function defaultDeviceSetup(model: DeviceModel): DeviceSetup {
   return {
     brightness: BRIGHTNESS_MAX,
-    autoPowerOff: true,
+    autoPowerOff: AUTO_POWER_OFF_SHIPPED[model.id],
     autoPowerOffTime: AUTO_POWER_OFF_MAX,
     hdcp: true,
     hdmiChannels: 0,
@@ -137,7 +150,7 @@ export function defaultDeviceSetup(): DeviceSetup {
     timeZone: 139,
     language: 0,
     usbSuppression: 0,
-    knobs: Array.from({ length: UDK_SLOTS }, () => ({ ...UDK_UNASSIGNED })),
+    knobs: Array.from({ length: UDK_SLOTS }, (_, y) => ({ ...(UDK_FACTORY[y] ?? UDK_UNASSIGNED) })),
     knobBank: 0,
   };
 }
@@ -187,7 +200,7 @@ export type SetupWrite =
  *  were never established. */
 export async function readDeviceSetup(model: DeviceModel): Promise<DeviceSetup> {
   const support = setupSupport(model);
-  const setup = defaultDeviceSetup();
+  const setup = defaultDeviceSetup(model);
   // Every read is a blocking round trip: the vd protocol carries no request id, so
   // the worker completes one command before dequeuing the next and there is nothing
   // to parallelize. That makes it worth not asking for values that cannot be used.
@@ -217,8 +230,7 @@ export async function readDeviceSetup(model: DeviceModel): Promise<DeviceSetup> 
     // Parameter 1 only carries information where the function offers a choice
     // (Monitor / Phones); elsewhere — and for Parameter 2, which never offers more
     // than one value — normalizeUdk would overwrite whatever came back, so reading
-    // it would cost a round trip for a value that is discarded. On a factory unit
-    // (every knob No Assign) that skips 32 of the 59 reads this screen makes.
+    // it would cost a round trip for a value that is discarded.
     const chooses = entry !== undefined && entry.p1.length > 1;
     const p1 = chooses ? await str("UDK_PARAM1", y) : "";
     // A Function the catalog does not have is kept as the unit holds it, so the screen

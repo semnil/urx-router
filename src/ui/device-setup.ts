@@ -80,9 +80,9 @@ export class DeviceSetupPanel {
   private readonly scrim: HTMLElement;
   private readonly box: HTMLElement;
   /** What the device reported when the screen opened — the diff baseline. */
-  private baseline: DeviceSetup = defaultDeviceSetup();
+  private baseline: DeviceSetup;
   /** What the screen currently shows. */
-  private draft: DeviceSetup = defaultDeviceSetup();
+  private draft: DeviceSetup;
   private bank = 0;
   /** Rows the pending diff says will be written; filled by each render pass. */
   private dirty: ReadonlySet<SetupField> = new Set();
@@ -98,6 +98,8 @@ export class DeviceSetupPanel {
   private releaseInert: (() => void) | null = null;
 
   constructor(private readonly hooks: DeviceSetupHooks) {
+    this.baseline = defaultDeviceSetup(hooks.model());
+    this.draft = defaultDeviceSetup(hooks.model());
     this.scrim = document.getElementById("device-setup-modal") as HTMLElement;
     this.box = document.getElementById("device-setup-box") as HTMLElement;
   }
