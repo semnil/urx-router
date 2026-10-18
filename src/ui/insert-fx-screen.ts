@@ -35,6 +35,7 @@ import {
   mbcXoverHz,
   pitchDeviceDriven,
   mbcXoverLabel,
+  PITCH_KEYS,
   PITCH_KEY_SLOT,
   PITCH_MIDI_ENABLE_SLOT,
   PITCH_MIDI_REALTIME_SLOT,
@@ -288,6 +289,14 @@ const companderSlot = (label: string): number => slotOf("compander", label);
  * on the third surface — or not at all — is how one panel tells the operator the effect is
  * off while another hands them a live editor for it.
  */
+/** Whether the held effect is above its rate ceiling: the unit runs none of it, so every value
+ *  on this screen is read-only — and stays assignable to MIDI, as every control the rate takes
+ *  away does. */
+function rateHeld(ctx: DynCtx): boolean {
+  const np = ctx.plan.nodeParams[ctx.nodeId];
+  return insertFxSelected(np) && insertFxRateLock(insertFxMenu(ctx.model, ctx.plan, ctx.nodeId), np?.insertFx).locked;
+}
+
 function offNote(ctx: DynCtx): string | null {
   const np = ctx.plan.nodeParams[ctx.nodeId];
   if (!insertFxSelected(np)) return null;
@@ -887,13 +896,20 @@ function insFxFace(): DynProcessor {
       const fam = familyOf(ctx);
       if (!fam) return null;
       const params = ctx.plan.nodeParams[ctx.nodeId]?.insertFxParams;
-      /** One state for each slot in `slots`, or null for none — the shape all three
+      /** One state for each slot in `slots`, or null for none — the shape all the
        *  branches below answer in, so the key convention is written once. */
       const statesFor = (slots: Iterable<number>, opts: SettingsRowOptions): Map<string, SettingsRowOptions> | null => {
         const out = new Map<string, SettingsRowOptions>();
         for (const slot of slots) out.set(slotKey(fam, slot), opts);
         return out.size ? out : null;
       };
+      // Above the held effect's rate ceiling every slot is read-only and assignable. Untagged,
+      // for the reason the multi-band compressor's 1-knob rows are: one reason for every row,
+      // which the line under the display already gives.
+      if (rateHeld(ctx)) {
+        const slots = insertFxParams(fam, effectiveInsertFx(ctx.model, ctx.plan, ctx.nodeId)).map((d) => d.slot);
+        return statesFor(slots, { locked: true, assignable: true });
+      }
       // While the multi-band compressor's 1-knob is on, the unit is setting these from its
       // own level. The set comes from the WRITER's own list rather than being spelled
       // again: a row locked while the plan still sends it is the drift.
@@ -975,8 +991,12 @@ function insFxFace(): DynProcessor {
         if (fam === "pitch" && d.label === "key") {
           pending.push(
             pitchMidiRow(ctx),
-            enumRow(label, d.options ?? [], cur, (v) =>
-              ctx.set(slotPatch(pitchKeyChoice(midiModeOf(ctx), scaleOf(ctx), v))),
+            enumRow(
+              label,
+              PITCH_KEYS,
+              cur,
+              (v) => ctx.set(slotPatch(pitchKeyChoice(midiModeOf(ctx), scaleOf(ctx), v))),
+              ctx.states.get(key),
             ),
             pitchScaleRow(ctx),
           );
@@ -1004,11 +1024,11 @@ function insFxFace(): DynProcessor {
                 ),
                 key,
               )
-            : enumRow(label, d.options ?? [], cur, (v) => ctx.set({ [key]: v }), state),
+            : enumRow(label, d.options, cur, (v) => ctx.set({ [key]: v }), state),
         );
       }
       tail.push(...pending);
-      if (fam === "pitch") tail.push(pitchNotesRow(ctx, deviceOwned(ctx)));
+      if (fam === "pitch") tail.push(pitchNotesRow(ctx, rateHeld(ctx) ? { locked: true } : deviceOwned(ctx)));
       return { before, tail };
     },
 
@@ -1257,8 +1277,12 @@ function pitchScaleRow(ctx: DynRowCtx): HTMLElement {
   // A scale the plan holds that the mode does not offer stays on the list, so the row shows
   // what the plan holds rather than another value.
   const shown = scales.filter((o) => offered(o.value) || o.value === scale);
-  return enumRow(t.scale, shown, shown.some((o) => o.value === scale) ? scale : PITCH_SCALE_CUSTOM, (v) =>
-    ctx.set(slotPatch(pitchScaleChoice(midiModeOf(ctx.live()), v, keyNow()))),
+  return enumRow(
+    t.scale,
+    shown,
+    shown.some((o) => o.value === scale) ? scale : PITCH_SCALE_CUSTOM,
+    (v) => ctx.set(slotPatch(pitchScaleChoice(midiModeOf(ctx.live()), v, keyNow()))),
+    rateHeld(ctx) ? { locked: true } : undefined,
   );
 }
 
@@ -1330,6 +1354,7 @@ function mbcOneKnobSection(ctx: DynRowCtx): HTMLElement {
             ),
           ),
         ),
+        ctx.states.get(slotKey("mbc", MBC_ONE_KNOB.on.slot)),
       ),
       slotKey("mbc", MBC_ONE_KNOB.on.slot),
     ),
@@ -1346,7 +1371,9 @@ function mbcOneKnobSection(ctx: DynRowCtx): HTMLElement {
         value: raw(MBC_ONE_KNOB.level.slot),
         format: String,
         onInput: (v: number) => setValue(MBC_ONE_KNOB.level.slot, v),
-        row: locked.has(MBC_ONE_KNOB.level.slot) ? { locked: true } : undefined,
+        row:
+          ctx.states.get(slotKey("mbc", MBC_ONE_KNOB.level.slot)) ??
+          (locked.has(MBC_ONE_KNOB.level.slot) ? { locked: true } : undefined),
       }),
       slotKey("mbc", MBC_ONE_KNOB.level.slot),
     ),
@@ -1391,6 +1418,7 @@ function pitchMidiRow(ctx: DynRowCtx): HTMLElement {
       const keyNow = insertFxVal(now.plan, ctx.nodeId, "pitch", PITCH_KEY_SLOT, 0);
       ctx.set(slotPatch(pitchMidiModeChange(midiModeOf(now), v, scaleOf(now), keyNow)));
     },
+    rateHeld(ctx) ? { locked: true } : undefined,
   );
   row.title = t.midiControlDeviceOnly;
   return row;

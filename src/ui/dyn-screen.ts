@@ -2162,10 +2162,18 @@ export class DynScreen {
     const control = row.querySelector<HTMLElement>(".ctl, .prefs-toggle, .con-knob, .prefs-switch");
     if (!control || !midi) return row;
     // A locked row's control is disabled; arming it would bind a mapping whose
-    // writes the catalog refuses anyway.
-    if (this.states.get(key)?.locked) return row;
+    // writes the catalog refuses anyway — unless the lock is the sample rate's, whose
+    // rows stay assignable. Such a row's controls are enabled while learn mode is on,
+    // so a press reaches the arming listener, which takes every edit gesture there.
+    const state = this.states.get(key);
+    if (state?.locked && !state.assignable) return row;
     const id = this.p().controlId?.(ctx, key);
     if (!id) return row;
+    if (state?.locked && midi.learnActive())
+      for (const c of row.querySelectorAll<HTMLButtonElement | HTMLSelectElement | HTMLInputElement>(
+        "button, select, input",
+      ))
+        c.disabled = false;
     markMidi(control, id, midi);
     armOnActivate(control, id, midi);
     // The mapped dot is the row's, not the control's. A console chip floats over the

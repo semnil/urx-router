@@ -1,5 +1,6 @@
 import { test, expect, textContrast } from "./fixtures";
 import { chooseOption } from "./choose-option";
+import { selectWire } from "./graph-helpers";
 
 // The block diagram flags the stereo-channel (CH 5/6–11/12) EQ as disabled at
 // 176.4 / 192 kHz. The app still shows that EQ as editable, so a top-of-panel
@@ -177,4 +178,51 @@ test("the CONSOLE locks what the rate takes away, and only then", async ({ page 
   await expect(fx2.locator(".con-sl")).toHaveAttribute("title", /FX2 bus/);
   // The bus the sends point at is dimmed whole, the way the graph dims its node.
   await expect(page.locator(".con-strip[title*='FX2']")).toHaveClass(/\binactive\b/);
+});
+
+// The FX2 bus itself above 96 kHz: its strip's own controls take no edit, and its Inspector
+// panel holds its switch and its effect type. 96 kHz is the control.
+test("FX2's own controls take no edit above 96 kHz, on the CONSOLE and in the Inspector", async ({ page }) => {
+  const fx2Strip = page.locator(".con-strip").filter({ has: page.locator(".con-scribble", { hasText: "FX 2" }) });
+  await chooseOption(page.locator("#rate-picker"), "96000");
+  await page.click("#btn-view-console");
+  const fader = fx2Strip.locator(".con-fader");
+  await expect(fader).not.toHaveAttribute("aria-disabled", "true");
+
+  await chooseOption(page.locator("#rate-picker"), "192000");
+  await page.click("#btn-view-console");
+  await expect(fader).toHaveAttribute("aria-disabled", "true");
+  await expect(fader).toHaveAttribute("title", /FX2 bus/);
+  const before = await fader.getAttribute("aria-valuenow");
+  await fader.focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(fader).toHaveAttribute("aria-valuenow", before!);
+  await expect(fx2Strip.locator(".con-power")).toHaveAttribute("aria-disabled", "true");
+
+  await page.click("#btn-view-graph");
+  await page.locator('#graph-host g.node[data-id="bus.fx2"]').click();
+  await expect(page.locator("#inspector .param", { hasText: "EFFECT TYPE" }).locator("select")).toBeDisabled();
+});
+
+// A send into the FX2 bus: above 96 kHz every field on the Inspector's connection panel shows
+// its value and takes no edit, with the reason beside it; at 96 kHz the same panel is live.
+test("a send into FX2 takes no edit in the Inspector above 96 kHz", async ({ page }) => {
+  await page.addInitScript(() => localStorage.removeItem("urx-seed"));
+  await page.reload();
+  const fields = page.locator("#inspector .param").locator("button, select, input");
+
+  await chooseOption(page.locator("#rate-picker"), "96000");
+  await selectWire(page, "ch1:out", "bus.fx2:in");
+  await expect(page.locator("#inspector")).not.toContainText("FX2 bus");
+  expect(await fields.count()).toBeGreaterThan(0);
+  await expect(fields.first()).toBeEnabled();
+
+  await chooseOption(page.locator("#rate-picker"), "192000");
+  await selectWire(page, "ch1:out", "bus.fx2:in");
+  await expect(page.locator("#inspector")).toContainText("FX2 bus");
+  const n = await fields.count();
+  expect(n).toBeGreaterThan(0);
+  for (let i = 0; i < n; i++) await expect(fields.nth(i)).toBeDisabled();
+  // The reason rides on each held row, as its tooltip.
+  await expect(page.locator('#inspector [title*="FX2 bus"]').locator("button, select, input").first()).toBeDisabled();
 });

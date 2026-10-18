@@ -259,16 +259,13 @@ function formatMs(ms: number): string {
 // ---- per-effect parameter descriptors ----
 
 /** Control kind for the inspector: a raw slider, a toggle, or an option select. */
-export type FxParamControl = "slider" | "toggle" | "select";
-
-export interface FxParamDesc {
+interface FxParamFields {
   /** Stable semantic key, also the plan storage key under FxEffectParams.params. */
   key: string;
   /** Array slot (y) the raw value is written to / read from. */
   slot: number;
   /** i18n label key (resolved by the inspector). */
   label: string;
-  control: FxParamControl;
   /** Slider raw bounds + step (slider only). */
   rawMin?: number;
   rawMax?: number;
@@ -278,9 +275,15 @@ export interface FxParamDesc {
   /** Display formatter for a raw value. `ctx` carries sibling raw values (e.g.
    *  Room Size for REV-X Reverb Time). Slider/select only. */
   format?: (raw: number, ctx: Record<string, number>) => string;
-  /** Option list for a `select` control (value = raw). */
-  options?: { value: number; label: string }[];
 }
+
+/** A select carries the options it offers (value = raw); a slider or a toggle carries none. */
+export type FxParamDesc = FxParamFields &
+  (
+    | { control: "slider"; options?: undefined }
+    | { control: "toggle"; options?: undefined }
+    | { control: "select"; options: { value: number; label: string }[] }
+  );
 
 // An FX channel's families share ONE plan params map (nodeParams[id].fxEffect.params,
 // keyed by `key`), so a key two families both use is one storage slot: switching the
@@ -753,7 +756,7 @@ export function fxRawForDesc(desc: FxParamDesc, raw: number): number {
   const v = Math.round(raw);
   if (desc.control === "toggle") return v <= 0 ? 0 : 1;
   if (desc.control === "select") {
-    const values = (desc.options ?? []).map((o) => o.value).sort((a, b) => a - b);
+    const values = desc.options.map((o) => o.value).sort((a, b) => a - b);
     if (values.length === 0) return v;
     // The TOP is answered before any distance is measured. Subtracting a far-outside value from
     // each option gives the same double for all of them — every distance from Number.MAX_VALUE

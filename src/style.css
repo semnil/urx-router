@@ -4501,10 +4501,12 @@ button.consent-btn-primary {
    three classes are shared by the CONSOLE strips and the channel tuning screens
    (ui/midi-learn.ts) — one vocabulary, so a strip control and a screen control
    read the same. Only the pointer affordance is per-surface, since each names its
-   own armable elements. */
+   own armable elements. A read-only control that is still a learn target (a value the
+   sample rate has taken away) takes the same cursor. */
 .con-root.midi-learn .con-fader,
 .con-root.midi-learn .con-knob,
 .con-root.midi-learn .con-chip:not(.readonly):not(.static):not(.spacer),
+.con-root.midi-learn .midi-target.readonly,
 #dyn-screen-box .midi-target {
   cursor: copy;
 }

@@ -1102,10 +1102,11 @@ a slot rather than what is in it.
 **The note under the display says when nothing reaches the signal**, in either of the two ways
 that happens. Above the held effect's own ceiling it names the effect and the ceiling, in the same
 words the Inspector and the CONSOLE chip use — the alternative would be one panel saying the effect is
-off while another hands over a live editor for it. Switched out by its own bypass, it says that
-instead. Either way the values are still kept and edited here, and the two level lanes beside the
+off while another hands over a live editor for it. Above that ceiling every row is also read-only and
+stays assignable to MIDI ("MIDI assignment"). Switched out by its own bypass, it says that instead, and
+the values are still edited here. Either way the values are kept, and the two level lanes beside the
 note read the same thing. The launcher stays available: an effect held and not running is still an
-effect to tune.
+effect to look at.
 
 ### Reaching it from a strip
 
@@ -1913,12 +1914,12 @@ move a single step, which is 0.1 ms.
 
 ### Above 96 kHz
 
-The rate opens the screen and locks nothing; the note under the display says so — the note the INS FX
-screen puts first, ahead of its bypass. The unit accepts and keeps a parameter write at any rate: the
-plan holds the values, the unit stores them, and both lanes go on reading whatever reaches them. There
-is no bypassed state here, since an FX channel's effect has no switch of its own beside the strip's
-[ON]. The CONSOLE dims an FX 2 strip above 96 kHz but leaves its own controls reachable — what the rate
-closes is the sends INTO that bus — so the disclosure stays pressable there.
+The rate opens the screen and holds every row read-only; the note under the display says why — the
+note the INS FX screen puts first, ahead of its bypass. Each row stays assignable to MIDI ("MIDI
+assignment"). There is no bypassed state here, since an FX channel's effect has no switch of its own
+beside the strip's [ON]. The CONSOLE holds an FX 2 strip above 96 kHz the same way — its fader, MUTE,
+PAN, ON and sends, and every send into it — and its EFFECT TYPE list offers only the effect it holds;
+the disclosure stays pressable, so the screen is reachable there.
 
 ## Off the scale is off the frame
 
@@ -2182,10 +2183,13 @@ and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catal
   solid pulse, and an already-bound one an amber dot — the console's own three states, so a strip
   control and a screen control read the same. The press is taken in the **capture phase**, so the
   slider never starts a drag on the click that arms it, and the wheel is gated for the same reason.
-- **A row that is locked is not offered.** The reasons are the ones the rows already print: the rate
-  has a stereo channel's EQ inert, 1-knob has handed the values to the device, or the filter type does
-  not read that value. Nor are the enum selectors (COMP knee, EQ filter type, EQ 1-knob type) — the
-  catalog carries continuous and toggle controls only.
+- **A row that is locked is not offered, unless the sample rate locked it.** The reasons are the ones
+  the rows already print: 1-knob has handed the values to the device, or the filter type does not read
+  that value. A row the rate holds — a stereo channel's EQ at 176.4 / 192 kHz, FX 2's effect above
+  96 kHz, an insert held above its own ceiling — stays offered: the assignment outlives the rate, its
+  control is enabled while learn is on so the press reaches the arming, and the bound controller is
+  refused while the rate holds. Nor are the enum selectors (COMP knee, EQ filter type, EQ 1-knob type)
+  — the catalog carries continuous and toggle controls only.
 - **A band binds to that band.** The id's scope is `@eq.low` … `@eq.high`, not "whichever band the bar
   has selected": a mapping has to keep working with this screen closed, and the bar resets to LOW on
   every open. `DynProcessor.controlId` is where a descriptor answers which id one of its value keys
