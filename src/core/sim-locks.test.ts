@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../models";
 import { simBindings } from "./sim-map";
-import { UNIT_ONLY_SCREENS, simLocks, UNIT_OPS, type SimLockSpec, type SimLockState } from "./sim-locks";
+import { setupGlassPaths } from "./sim-map-setup";
+import {
+  SETUP_WRITTEN_SCREENS,
+  UNIT_ONLY_SCREENS,
+  simLocks,
+  UNIT_OPS,
+  type SimLockSpec,
+  type SimLockState,
+} from "./sim-locks";
 
 const REASONS = {
   unitOnly: "unitOnly",
@@ -11,6 +19,7 @@ const REASONS = {
   trackCountLive: "trackCountLive",
   integrationOff: "integrationOff",
   rateFollowUsb: "rateFollowUsb",
+  setupOffline: "setupOffline",
 };
 const model = getModel("URX44V");
 const paths = [...simBindings(model).keys()];
@@ -25,7 +34,7 @@ const LINKED: SimLockState = { ...OFFLINE, linked: true };
 const LIVE: SimLockState = { ...LINKED, live: true };
 
 function locks(state = OFFLINE): SimLockSpec[] {
-  return simLocks(paths, state, REASONS);
+  return simLocks(paths, setupGlassPaths(model), state, REASONS);
 }
 /** The reason `target` is held for, or null where it is not. */
 function reasonFor(all: SimLockSpec[], target: SimLockSpec["target"]): string | null {
@@ -35,21 +44,39 @@ const path = (p: string) => ({ kind: "path", path: p }) as const;
 
 describe("the controls the SIM view holds shut", () => {
   it("holds the SETUP > GENERAL settings the app does not write and every operation of the unit's own, at any time", () => {
-    const all = locks();
+    const all = locks(LIVE);
     for (const id of UNIT_ONLY_SCREENS) expect(reasonFor(all, { kind: "screen", id })).toBe("unitOnly");
-    for (const id of [
-      "setup.language",
-      "setup.brightness",
-      "setup.udk",
-      "setup.peripheral",
-      "setup.power",
-      "setup.datetime",
-    ])
+    for (const id of SETUP_WRITTEN_SCREENS)
       expect(reasonFor(all, { kind: "screen", id }), `${id} is written to the unit`).toBeNull();
     for (const op of UNIT_OPS) expect(reasonFor(all, { kind: "op", op })).toBe("unitOp");
     expect(reasonFor(all, path("sd.usbStorage"))).toBe("unitOp");
     expect(reasonFor(all, path("setup.followUsb")), "a press is the toolbar's FOLLOW USB").toBeNull();
     expect(reasonFor(all, { kind: "screen", id: "setup.patch" }), "Output Patch is the plan's").toBeNull();
+  });
+
+  // The app writes the unit's SETUP > GENERAL settings over the Live sync session alone, so with no
+  // session the screens and the values on a screen already open are held, a link without a session
+  // included.
+  it("holds the SETUP > GENERAL settings the app writes while Live sync is down, and opens them while it is up", () => {
+    const values = setupGlassPaths(model);
+    for (const p of [
+      "setup.brightness",
+      "setup.language",
+      "setup.power.autoPowerOff",
+      "setup.udk.1.A",
+      "setup.udk.4.D",
+    ])
+      expect(values, p).toContain(p);
+    expect(values, "the unit's knob bank is read and never written").not.toContain("setup.udk.bank");
+    for (const state of [OFFLINE, LINKED]) {
+      const all = locks(state);
+      for (const id of SETUP_WRITTEN_SCREENS) expect(reasonFor(all, { kind: "screen", id }), id).toBe("setupOffline");
+      for (const p of values) expect(reasonFor(all, path(p)), p).toBe("setupOffline");
+      expect(reasonFor(all, path("setup.udk.bank"))).toBeNull();
+    }
+    const live = locks(LIVE);
+    for (const id of SETUP_WRITTEN_SCREENS) expect(reasonFor(live, { kind: "screen", id }), id).toBeNull();
+    for (const p of values) expect(reasonFor(live, path(p)), p).toBeNull();
   });
 
   // Whether a compatible DAW holds the unit is read only while Live sync is up, so the screen is held

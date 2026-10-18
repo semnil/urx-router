@@ -295,7 +295,13 @@ import {
   UDK_SLOTS,
   withSetupWrites,
 } from "./core/control/device-setup";
-import { isSetupGlassPath, setupGlassEdit, setupGlassValues, withSetupEdit } from "./core/sim-map-setup";
+import {
+  isSetupGlassPath,
+  setupGlassEdit,
+  setupGlassPaths,
+  setupGlassValues,
+  withSetupEdit,
+} from "./core/sim-map-setup";
 import type { DeviceSetup, SetupWrite } from "./core/control/device-setup";
 
 // Clear persisted UI state (theme / model / meter points / consent gate / recent
@@ -959,8 +965,8 @@ function unitGlassValues(): Map<string, SimValue> {
 }
 
 /** An edit of one of the unit's values on the glass. Follow USB is the toolbar's press. A SETUP
- *  setting is written while a session is up behind every unit write queued so far, and otherwise
- *  over a connection of its own that reads the settings first, as the Device setup screen does. */
+ *  setting is written while a session is up, behind every unit write queued so far, and refused
+ *  without one. */
 function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
   const shown = (): SimValue => unitGlassValues().get(path) ?? value;
   if (path === "setup.followUsb") {
@@ -991,9 +997,8 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
   const model = getModel(modelId);
   const edit = setupGlassEdit(model, path, value);
   if (edit === null || edit === "refused") return Promise.reject(new Error("refused"));
-  const writesOver = (base: DeviceSetup) => diffDeviceSetup(model, base, withSetupEdit(base, edit));
   if (liveSessionUp && unitSetup) {
-    const writes = writesOver(unitSetup);
+    const writes = diffDeviceSetup(model, unitSetup, withSetupEdit(unitSetup, edit));
     unitSetup = withSetupWrites(unitSetup, writes);
     cueWrites = cueWrites
       .then(async () => {
@@ -1004,78 +1009,7 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
       .catch((err: unknown) => stopLiveOnError(errorText(err)));
     return Promise.resolve(shown());
   }
-  if (liveSessionUp) return Promise.reject(new Error("refused"));
-  return new Promise<SimValue>((resolve, reject) => {
-    const waiter = { resolve: () => resolve(shown()), reject: () => reject(new Error("refused")) };
-    if (offlineSetup) {
-      offlineSetup.edit = mergeSetupEdits(offlineSetup.edit, edit);
-      offlineSetup.waiters.push(waiter);
-    } else offlineSetup = { model, edit, waiters: [waiter] };
-    void runOfflineSetup();
-  });
-}
-
-// The glass's SETUP edits waiting for a connection of their own, merged into one: an edit made
-// while one is being written goes with the next write, which carries the latest value of each.
-let offlineSetup: {
-  model: DeviceModel;
-  edit: Partial<DeviceSetup>;
-  waiters: { resolve: () => void; reject: () => void }[];
-} | null = null;
-let offlineSetupRunning = false;
-
-/** The waiters of the glass SETUP edits still queued, which the queue then forgets. */
-function takeOfflineSetupWaiters(): { resolve: () => void; reject: () => void }[] {
-  const waiters = offlineSetup?.waiters ?? [];
-  offlineSetup = null;
-  return waiters;
-}
-
-/** Two glass edits of the unit's settings as one, the later winning where both name a field. */
-function mergeSetupEdits(a: Partial<DeviceSetup>, b: Partial<DeviceSetup>): Partial<DeviceSetup> {
-  const merged: Partial<DeviceSetup> = { ...a, ...b };
-  if (a.knobs || b.knobs) {
-    const knobs: DeviceSetup["knobs"] = [];
-    for (const list of [a.knobs, b.knobs]) list?.forEach((k, i) => (knobs[i] = k));
-    merged.knobs = knobs;
-  }
-  return merged;
-}
-
-/** Write the waiting glass SETUP edits over a connection of their own, one write at a time, until
- *  none waits. A write that fails reports itself and refuses every edit still waiting. */
-async function runOfflineSetup(): Promise<void> {
-  if (offlineSetupRunning) return;
-  offlineSetupRunning = true;
-  try {
-    while (offlineSetup) {
-      const { model, edit, waiters } = offlineSetup;
-      offlineSetup = null;
-      let done = false;
-      await withCheckedDevice(
-        "device-setup",
-        t().status.deviceSetupApplying,
-        (message) => t().error.deviceSetupWrite(message),
-        async () => {
-          const base = await readDeviceSetup(model);
-          const writes = diffDeviceSetup(model, base, withSetupEdit(base, edit));
-          await sendDeviceSetup(writes);
-          unitSetup = withSetupWrites(base, writes);
-          done = true;
-          setStatus(t().status.deviceSetupApplied(1));
-        },
-      );
-      simView?.unitStateChanged();
-      if (done) {
-        for (const w of waiters) w.resolve();
-        continue;
-      }
-      // Edits made while this one was being written wait behind it, and go with it.
-      for (const w of [...waiters, ...takeOfflineSetupWaiters()]) w.reject();
-    }
-  } finally {
-    offlineSetupRunning = false;
-  }
+  return Promise.reject(new Error("refused"));
 }
 
 // The settle a re-read of the unit's settings waits for after the unit announces one, as a
@@ -1319,6 +1253,7 @@ const buildSimView = (): SimView =>
       locks: (paths) =>
         simLocks(
           paths,
+          setupGlassPaths(getModel(modelId)),
           {
             linked: deviceLinkHolder !== null,
             live: liveSessionUp,
@@ -1334,6 +1269,7 @@ const buildSimView = (): SimView =>
             rateFollowUsb: t().sim.lockRateFollowUsb,
             trackCountLive: t().inspector.sdRecTrackCountLive,
             integrationOff: t().sim.lockIntegrationOff,
+            setupOffline: t().sim.lockSetupOffline,
           },
         ),
       releaseMeters: () => consoleView.releaseMeters(),

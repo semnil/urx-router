@@ -867,6 +867,7 @@ export const en = {
     lockRateLinked: tr("Cannot be changed while connected to the device"),
     lockRateFollowUsb: tr("Turn Follow USB off to change it during Live sync"),
     lockIntegrationOff: tr("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"),
+    lockSetupOffline: tr("Usable during Live sync"),
   },
   shelf: {
     title: tr("Hidden"),

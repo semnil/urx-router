@@ -641,6 +641,7 @@ export const ja: Messages = {
     lockRateLinked: "デバイスとの接続中は変更できません",
     lockRateFollowUsb: "Live 同期中に変えるには Follow USB をオフにしてください",
     lockIntegrationOff: "Live 同期中、Cubase・Nuendo・MixKey が本体とつながっている間に使えます",
+    lockSetupOffline: "Live 同期中に使えます",
   },
   shelf: {
     title: "非表示",

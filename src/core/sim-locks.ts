@@ -29,6 +29,8 @@ export interface SimLockReasons {
   trackCountLive: string;
   /** SETUP > Software Integration while no session holds a unit a compatible DAW holds. */
   integrationOff: string;
+  /** A SETUP > GENERAL setting the app writes, while Live sync is down. */
+  setupOffline: string;
 }
 
 /** Whether the device link is held, whether Live sync is up, and what the session knows of the rate
@@ -48,6 +50,16 @@ export interface SimLockState {
 /** The SETUP > GENERAL screens of settings the app does not write: the operation mode, which a session
  *  reads and shows, and the unit's clock. */
 export const UNIT_ONLY_SCREENS = ["setup.mode", "setup.datetime.set"] as const;
+
+/** The SETUP > GENERAL screens of settings the app writes to the unit, during Live sync only. */
+export const SETUP_WRITTEN_SCREENS = [
+  "setup.language",
+  "setup.brightness",
+  "setup.udk",
+  "setup.peripheral",
+  "setup.power",
+  "setup.datetime",
+] as const;
 
 /** Every operation of the unit's own the simulator can ask for. */
 export const UNIT_OPS = [
@@ -73,10 +85,24 @@ export const UNIT_OPS = [
   "playback.stop",
 ] as const;
 
-/** The locks for the paths the SIM table binds. */
-export function simLocks(paths: Iterable<string>, state: SimLockState, reasons: SimLockReasons): SimLockSpec[] {
+/** The locks for the paths the SIM table binds and for `setupPaths`, the SETUP > GENERAL settings the
+ *  app writes. */
+export function simLocks(
+  paths: Iterable<string>,
+  setupPaths: Iterable<string>,
+  state: SimLockState,
+  reasons: SimLockReasons,
+): SimLockSpec[] {
   const out: SimLockSpec[] = [];
   for (const id of UNIT_ONLY_SCREENS) out.push({ target: { kind: "screen", id }, reason: reasons.unitOnly });
+  // The app writes the unit's SETUP > GENERAL settings over the Live sync session alone: the screens
+  // and, for a screen already open when the session ends, their values.
+  if (!state.live)
+    for (const target of [
+      ...SETUP_WRITTEN_SCREENS.map((id) => ({ kind: "screen", id }) as const),
+      ...[...setupPaths].map((path) => ({ kind: "path", path }) as const),
+    ])
+      out.push({ target, reason: reasons.setupOffline });
   // Software Integration's values are the session's, and whether a compatible DAW holds the unit is
   // read only while Live sync is up: the screen and, for a screen already open, its two sends.
   if (!state.live)
