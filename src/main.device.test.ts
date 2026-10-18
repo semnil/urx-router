@@ -7064,6 +7064,44 @@ describe("the desktop-only surfaces", () => {
     expect(errors(shell).join(" "), "the refused write is what ended it").toContain("setup write refused");
   });
 
+  // A second pick of the entry while the session's read is outstanding starts no second read, so
+  // no later open replaces what was edited on the screen the first one opened. Once that screen
+  // is closed, the entry reads again.
+  it("starts one read for two picks during Live sync, and keeps the first screen's edits", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [`${PARAMS.DEVICE_LANGUAGE.id}/0/0`]: 0 });
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    const releases: ((v: number) => void)[] = [];
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      if (a.paramId === PARAMS.BRIGHTNESS.id) return new Promise<number>((resolve) => releases.push(resolve));
+      return unwrittenRead(a);
+    });
+    $("btn-device-setup").click();
+    $("btn-device-setup").click();
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    releases[0](4);
+    await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(false), { timeout: 20_000 });
+    const language = document.querySelector<HTMLSelectElement>("#device-setup-language")!;
+    language.value = "1";
+    language.dispatchEvent(new Event("change", { bubbles: true }));
+    // The first open's read has run to its end, so a second read, had one been queued behind it,
+    // would have begun by now.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(releases, "one read for the two picks").toHaveLength(1);
+    expect(document.querySelector<HTMLSelectElement>("#device-setup-language")!.value).toBe("1");
+    expect($("device-setup-pending").textContent).not.toBe("");
+
+    // The control: with the screen closed the entry reads again.
+    language.value = "0";
+    language.dispatchEvent(new Event("change", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>("#device-setup-modal .consent-btn-secondary")!.click();
+    await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(true));
+    $("btn-device-setup").click();
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    releases[1](4);
+    await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(false), { timeout: 20_000 });
+  });
+
   it("opens the MIDI control window through the shell", SLOW, async () => {
     const shell = await bootDevice({ open_midi_window: null });
     $("btn-midi").click();

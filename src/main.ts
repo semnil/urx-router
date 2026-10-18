@@ -5514,35 +5514,40 @@ if (!DEMO) {
     return liveSessionUp && getModel(modelId) === model ? read : null;
   }
 
-  $("btn-device-setup").addEventListener("click", async () => {
-    // A live session holds the one connection, so the screen reads over it rather than opening
-    // a second one.
-    if (liveSessionUp) {
-      setStatus(t().status.deviceSetupReading);
-      const read = await readSetupLive();
-      if (!read) return;
-      unitSetup = read;
+  // One read-and-open at a time: a second pick while the first read is outstanding would open
+  // the screen again on its own read and replace whatever was edited on the first.
+  $("btn-device-setup").addEventListener(
+    "click",
+    guarded(async () => {
+      // A live session holds the one connection, so the screen reads over it rather than opening
+      // a second one.
+      if (liveSessionUp) {
+        setStatus(t().status.deviceSetupReading);
+        const read = await readSetupLive();
+        if (!read) return;
+        unitSetup = read;
+        simView?.unitStateChanged();
+        setStatus(t().status.deviceSetupRead);
+        deviceSetup?.open(read);
+        return;
+      }
+      let setup: DeviceSetup | null = null;
+      await withCheckedDevice(
+        "device-setup",
+        t().status.deviceSetupReading,
+        (message) => t().error.deviceSetupRead(message),
+        async () => {
+          setup = await readDeviceSetup(getModel(modelId));
+          unitSetup = setup;
+        },
+      );
       simView?.unitStateChanged();
-      setStatus(t().status.deviceSetupRead);
-      deviceSetup?.open(read);
-      return;
-    }
-    let setup: DeviceSetup | null = null;
-    await withCheckedDevice(
-      "device-setup",
-      t().status.deviceSetupReading,
-      (message) => t().error.deviceSetupRead(message),
-      async () => {
-        setup = await readDeviceSetup(getModel(modelId));
-        unitSetup = setup;
-      },
-    );
-    simView?.unitStateChanged();
-    if (setup) {
-      setStatus(t().status.deviceSetupRead);
-      deviceSetup?.open(setup);
-    }
-  });
+      if (setup) {
+        setStatus(t().status.deviceSetupRead);
+        deviceSetup?.open(setup);
+      }
+    }),
+  );
 
   // Experimental-only menu group (its separator + the self-test): the self-test
   // is a diagnostic that briefly overwrites every parameter, so it stays behind
