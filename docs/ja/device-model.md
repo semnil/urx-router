@@ -200,9 +200,10 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 > PAN / BAL にそろえ、送りのパンが書かれると送り元を動かすので、アプリはリンク中の MIX へ送りのパンを書かない。計画の送りの
 > パンは Pan Link が入ると送り元のパンになり、入の間は送り元に追従し、切ると実機でも計画でも送り元のパンのまま残る。計画は FIXED にしても Pan Link を保つ: 実機は
 > BUS Type が FIXED になると Pan Link を切り、アプリは BUS Type の後に書き直す。どちらも MIX Bus ノードに保持し、接続パネルは
-> FIXED で LEVEL・PRE/POST・PAN、Pan Link で PAN を隠し、かかっているロックごとに短い注記を表示する。CONSOLE も SENDS ラックで
-> 同じロックを適用し、FIXED ではその MIX 列の PRE ボタン・ミニフェーダーと SEND PAN ノブを、Pan Link では
-> SEND PAN ノブを read-only にする。MIDI も同じで、ロック中の値に割り当てたコントロールは何も書かない。
+> FIXED で LEVEL・PRE/POST・PAN を隠し、かかっているものごとに短い注記を表示する。Pan Link 中は PAN を残し、送りのパンを
+> 回すと実機の SEND TO 画面と同じく送り元自身の PAN / BAL が動き、リンク中の送りがそろう。CONSOLE も SENDS ラックで
+> 同じ規則を適用し、FIXED ではその MIX 列の PRE ボタン・ミニフェーダーと SEND PAN ノブを read-only にし、Pan Link 中は
+> SEND PAN ノブでストリップを動かす。MIDI も同じで、ロック中の値に割り当てたコントロールは何も書かない。
 > 盤面も鳴らない送りの判定で同じ規則に従う: FIXED の Bus への Send を減光・点線で描くのは ON が OFF のときだけで、
 > 実機が使わない -∞ のレベルを保持しているだけでは点線にしない。
 

@@ -229,8 +229,9 @@ carries a one-line map of the same directories and points here.
     **scope**: a send-target bus (`@bus.mix1`) or a
     processor / band (`@gate`, `@comp`, `@eq.low`) — a node has one fader but three thresholds, and a band
     is a scope rather than a cursor because a mapping has to work with the screen closed. Device locks
-    reject writes (FIXED bus send level / pan / tap, Pan Link send pan, rate-restricted stereo CH EQ, COMP's device-driven
-    values under 1-knob, EQ band values under 1-knob, the Q/gain a filter type does not read); +48V and HI-Z
+    reject writes (FIXED bus send level / pan / tap, rate-restricted stereo CH EQ, COMP's device-driven
+    values under 1-knob, EQ band values under 1-knob, the Q/gain a filter type does not read); a send pan under Pan Link
+    moves its source's own PAN / BAL, as on the unit's SEND TO screen; +48V and HI-Z
     each refuse turning on while the other is on (`refuses`, reported rather than dropped); the enum
     selectors (knee / filter type / 1-knob type) carry no control / `engine.ts` incoming-message application
     (14-bit CC pairs; toggles have a per-mapping button behavior named after the sender's button type =
@@ -1671,8 +1672,8 @@ drag lands on the nearest.
   meter-only strips get the same spacer, so fader tops stay aligned. The header swaps its `SENDS` label for a
   value readout (`MIX 1 -3.2` — the tap is read off the column's own PRE button) while a column is
   touched, and a full-width **PAN ▾** button opens the
-  **SEND PAN popover** below it — the MIX sends' pan as rotary knobs (FX sends are mono; FIXED BUS Type and
-  Pan Link lock a knob read-only). Clicking any `SENDS` header collapses/expands every rack together (a `sends-collapsed` host
+  **SEND PAN popover** below it — the MIX sends' pan as rotary knobs (FX sends are mono; FIXED BUS Type
+  locks a knob read-only, and under Pan Link turning one moves the strip's own PAN / BAL). Clicking any `SENDS` header collapses/expands every rack together (a `sends-collapsed` host
   class, persisted in `localStorage` `urx-sends-open`), showing one amber dot per active send when collapsed.
   When any node's **master is off** (the power LED off — CH_ON / MIX 675 / STEREO 582 / MONITOR 723, all on
   `np.on`, or the oscillator's `osc.on`), the strip **dims** — the shared `isNodeInactive` predicate the graph
@@ -2036,9 +2037,10 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   screen's parameter takes its grid from the same `DynField` table its slider is built from; which route
   each side takes to that grid, and what it does and does not put a MIDI value and a dragged slider on, is
   channel-tuning.md "MIDI assignment". Device locks refuse the write: a FIXED bus's send level, pan and
-  PRE/POST, a Pan-Link send pan, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain / attack /
+  PRE/POST, the stereo-channel EQ at 176.4 / 192 kHz, COMP's threshold / ratio / gain / attack /
   release and Auto Makeup while 1-knob is on (the device sets them), COMP's 1-knob level while it is off, every EQ band
-  value while EQ 1-knob is on, and the Q / gain a filter type does not read. The enum selectors (COMP knee,
+  value while EQ 1-knob is on, and the Q / gain a filter type does not read. A send pan under Pan Link moves the
+  source's own PAN / BAL, as the unit's SEND TO screen does. The enum selectors (COMP knee,
   the EQ filter type and 1-knob type) carry no control at all. +48V and HI-Z refuse differently: turning one
   on while the other is on for the jack the channel reads is refused by the control itself (`refuses`) and reported on the
   status line rather than dropped, and the CONSOLE chip that rule locks stays a learn target
@@ -3171,7 +3173,9 @@ none of it announced. **No send pan into a linked MIX is emitted
 at all**, the self-test restore's device-driven values included: the unit derives them from the source pans, and
 one written there would move its source instead, so a converge that sent the plan's copy back swung the channel
 between the two values round after round. The plan keeps those send pans where the unit holds them, so what the
-connection panel, the CONSOLE's read-only SEND PAN knob and a MIDI control show is the unit's value. When Pan Link turns
+connection panel, the CONSOLE's SEND PAN knob and a MIDI control show is the unit's value. Each of them turns
+it as the unit's SEND TO screen does: the value lands on the source's own PAN / BAL (`routing.ts`
+`panLinkedSendPan`), which is what the write then sends, and the send pans follow it. When Pan Link turns
 on or off — in the panel, on the unit through device follow, or found by a device read — every send pan into that MIX
 is set to its source's pan (`routing.ts` `sendPansToSources`); turned off, the unit leaves them there, so what the next
 write sends is what the unit already holds. While it is on, an edit that moves a source's position — the inspector,

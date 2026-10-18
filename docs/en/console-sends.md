@@ -157,8 +157,9 @@ still claims is given back — and that is the state an operator most needs to r
   the MIX sends' rotary knobs laid out as horizontal columns (destination label above each knob,
   value below). The column order, the "C" knob, and the label-on-top arrangement reuse the head
   BAL/PAN knob and the SENDS rack column grammar, so the rack and the popover stay symmetric. FX
-  sends are mono on the device and have no pan. FIXED and Pan Link (BUS type) locks render the
-  knob read-only, as in the inspector.
+  sends are mono on the device and have no pan. A FIXED BUS Type renders the knob read-only, as in
+  the inspector; under Pan Link the knob stays live and turning it moves the strip's own PAN / BAL,
+  as on the unit's SEND TO screen.
 
   ```text
   ┌── SEND PAN    CH 1 ──┐  header: category (left) + owning strip (right)
@@ -217,7 +218,7 @@ still claims is given back — and that is the state an operator most needs to r
   with a `data-ctl` (its MIDI id where it has one, else a fixed name), and a rebuild looks that
   identity up among the controls the rebuilt strip — or the re-opened popover — offers to the
   keyboard. A control a lock took out of the tab order (a +48V that HI-Z locked, a SEND PAN knob
-  under Pan Link) or one the rate withheld answers nothing, so the focus is dropped, or handed to
+  under FIXED) or one the rate withheld answers nothing, so the focus is dropped, or handed to
   the popover's trigger, rather than passed to the neighbour that moved up into its place.
 - **A focus this view placed itself outlives the next rebuild.** The two anchors below are
   `tabindex="-1"` — present, not tabbable — so the strip rebuild's focus carry-over, which looks
@@ -255,8 +256,8 @@ STEREO-linked pairs mirror via `mirrorLinkedPair`, and device-side changes arriv
 is open, `refreshStrip` re-opens it against the fresh strip's PAN ▾ button, so the knobs re-read
 the plan and the trigger keeps its open marking (device follow and external MIDI alike). A
 rebuilt MIX strip re-opens ANOTHER strip's open SEND PAN popover the same way when one of the
-FIXED / Pan Link locks its knobs read has changed — a Pan Link turned on at the unit announces
-only the MIX bus — and leaves it alone otherwise, since a re-open under a knob being dragged
+FIXED lock its knobs read has changed — a BUS Type switched at the unit announces only the MIX
+bus — and leaves it alone otherwise, since a re-open under a knob being dragged
 ends the drag. A knob the re-open locked hands the focus to the PAN ▾ button. Sends
 have no meters — the broker exposes no per-send meter addresses — so the rack contains no signal
 display by design.
