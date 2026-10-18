@@ -482,6 +482,62 @@ describe("the SEND PAN popover", () => {
     expect(send).not.toBe(before);
     expect(sendConnection(h.plan, "ch1", "bus.stereo")?.params?.pan, "the strip's own PAN").toBe(send);
   });
+
+  // One turn under Pan Link moves every linked MIX send and the strip's own PAN together, so each
+  // knob showing one of those values shows the plan's value — and the next step from any of them
+  // reads as one step from where it shows.
+  it("shows the moved pan on every other linked MIX knob, so the next turn steps from there", () => {
+    h = consoleHost();
+    (h.plan.nodeParams["bus.mix1"] ??= {}).panLink = true;
+    (h.plan.nodeParams["bus.mix2"] ??= {}).panLink = true;
+    panBtn("ch1").click();
+    const knob = (label: string): HTMLElement =>
+      pop().querySelector<HTMLElement>(`.pcol .con-knob[aria-label="${label}"]`)!;
+    const own = h.strip("ch1").root.querySelector<HTMLElement>('.con-knob[data-ctl="ch1/pan"]')!;
+    const shown = (k: HTMLElement): string | null | undefined =>
+      k.parentElement?.querySelector(".rv, .val")?.textContent;
+    const agree = (want: number): void => {
+      for (const k of [knob("MIX 1"), knob("MIX 2"), own]) {
+        expect(k.getAttribute("aria-valuenow"), k.getAttribute("aria-label") ?? "").toBe(String(want));
+        expect(k.style.getPropertyValue("--rot")).toBe(knob("MIX 1").style.getPropertyValue("--rot"));
+        expect(shown(k)).toBe(shown(knob("MIX 1")));
+      }
+    };
+
+    key(knob("MIX 1"), "ArrowRight");
+    expect(sendConnection(h.plan, "ch1", "bus.mix2")?.params?.pan, "the link moved MIX 2").toBe(1);
+    agree(1);
+    expect(shown(knob("MIX 2"))).toBe("R1");
+
+    const turned = knob("MIX 2");
+    turned.focus();
+    key(turned, "ArrowRight");
+    expect(sendConnection(h.plan, "ch1", "bus.mix1")?.params?.pan, "one step from R1").toBe(2);
+    agree(2);
+    expect(pop().hidden, "the popover stays open").toBe(false);
+    expect(knob("MIX 2"), "the same knob, not a rebuilt one").toBe(turned);
+    expect(document.activeElement, "the turned knob keeps the focus").toBe(turned);
+  });
+
+  // A STEREO-linked pair shares its BAL, so a turn that moves one member's BAL moves the other
+  // member's as well, and that member's own knob shows it. In PAN each member keeps its own pan,
+  // and the partner's knob keeps showing the pan it held.
+  it.each([
+    ["BAL", PAN_BAL_BAL, 1],
+    ["PAN", PAN_BAL_PAN, 0],
+  ])("repaints a STEREO-linked partner's own knob with the value it holds (%s)", (_, panBal, held) => {
+    h = consoleHost();
+    h.plan.nodeParams.ch1.stereoLink = true;
+    h.plan.nodeParams.ch1.panBal = panBal;
+    (h.plan.nodeParams["bus.mix1"] ??= {}).panLink = true;
+    h.view.refresh();
+    panBtn("ch1").click();
+    key(pop().querySelector<HTMLElement>('.pcol .con-knob[aria-label="MIX 1"]')!, "ArrowRight");
+    expect(sendConnection(h.plan, "ch2", "bus.stereo")?.params?.pan ?? 0, "what the partner holds").toBe(held);
+    const partner = h.strip("ch2").root.querySelector<HTMLElement>('.con-knob[data-ctl="ch2/pan"]')!;
+    expect(partner.getAttribute("aria-valuenow")).toBe(String(held));
+    expect(partner.parentElement?.querySelector(".val")?.textContent).toBe(held === 0 ? "C" : "R1");
+  });
 });
 
 describe("the meter-point popover", () => {

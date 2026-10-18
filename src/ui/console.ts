@@ -450,6 +450,8 @@ const READOUT_EVERY = 5;
 export class Console {
   private paintN = 0; // frame counter gating the throttled numeric readout
   private refs = new Map<string, StripRef>();
+  /** Each knob's own repaint from its spec's getter — what the plan holds, shown in place. */
+  private knobRepaint = new WeakMap<HTMLElement, () => void>();
   private factory: { id: string; plan: Plan } | null = null; // cached factory plan
   private headH = { key: "", px: 0 }; // cached MAIN-tab head height (key: model + hidden)
   // The insert-FX slot census of the build pass in progress. It is a whole-model
@@ -1508,9 +1510,10 @@ export class Console {
         undefined,
         selfOff,
       );
-      // …and the strip's own PAN knob shows the value it moved to.
-      spec.mirror = (knob, val) => {
-        if (mixSendLocks(this.hooks.getPlan(), target).panLinked) this.mirrorStripPan(stripId, knob, val);
+      // …and every knob the turn moved shows what the plan now holds: the strip's own PAN, a
+      // linked partner's, and the other linked MIX knobs in this popover.
+      spec.mirror = () => {
+        if (mixSendLocks(this.hooks.getPlan(), target).panLinked) this.repaintPanLinked(stripId);
       };
       // partnerSync off: the mirror is handled by commit; a re-render would tear down
       // this popover, and no partner send-pan control is on screen. Horizontal: the
@@ -3762,16 +3765,16 @@ export class Console {
     }
   }
 
-  /** Paint `strip`'s own PAN / BAL knob, in place, with the value `knob` shows. */
-  private mirrorStripPan(strip: string, knob: HTMLElement, val: HTMLElement): void {
-    const own = this.refs
-      .get(strip)
-      ?.root.querySelector<HTMLElement>(`.con-knob[data-ctl="${controlId(strip, "pan")}"]`);
-    if (!own) return;
-    own.style.setProperty("--rot", knob.style.getPropertyValue("--rot"));
-    for (const a of ["aria-valuenow", "aria-valuetext"]) own.setAttribute(a, knob.getAttribute(a) ?? "");
-    const ownVal = own.parentElement?.querySelector<HTMLElement>(".val");
-    if (ownVal) ownVal.textContent = val.textContent;
+  /** After a send pan turned under Pan Link moved its strip, repaint from the plan the knobs the
+   *  turn moved: the strip's own PAN and a linked partner's, and every send pan in the open
+   *  SEND PAN popover. */
+  private repaintPanLinked(strip: string): void {
+    const plan = this.hooks.getPlan();
+    for (const id of withLinkedPartner(this.hooks.getModel(), plan, strip)) {
+      const own = this.refs.get(id)?.root.querySelector<HTMLElement>(`.con-knob[data-ctl="${controlId(id, "pan")}"]`);
+      if (own) this.knobRepaint.get(own)?.();
+    }
+    for (const knob of this.sendPanPop.querySelectorAll<HTMLElement>(".con-knob")) this.knobRepaint.get(knob)?.();
   }
 
   /** Push a STEREO-linked strip's mirrored fader level onto the partner strip's level
@@ -4080,7 +4083,9 @@ export class Console {
     const syncPartner = (): void => {
       if (partnerSync) this.syncPartnerStrip(id, k.pairs);
     };
-    show(Math.max(k.min, Math.min(k.max, k.get()))); // initial display, not dirty
+    const repaint = (): void => show(Math.max(k.min, Math.min(k.max, k.get())));
+    this.knobRepaint.set(knob, repaint);
+    repaint(); // initial display, not dirty
     if (k.readonlyTitle) {
       // device-locked: value painted, no input handlers — a learn target still where it is assignable
       if (k.assignable) this.learnOnly(knob, midiId);
