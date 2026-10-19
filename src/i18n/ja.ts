@@ -78,7 +78,7 @@ export const ja: Messages = {
     cue: "C.INT",
     cueFull: "Cue Interrupt",
     cueChip: "CUE",
-    cueOffline: "CUE は Live 同期中に本体の CUE を切り替えます。",
+    cueOffline: "CUE はライブ同期中に本体の CUE を切り替えます。",
     cueTaking: "Cue Interrupt — 何かを CUE している間、このモニターは元の音の代わりに CUE バスを流します",
     mono: "MONO",
     // ストリップ群の区切りラベル (この master と下の group*) と読み値キャプション
@@ -485,7 +485,7 @@ export const ja: Messages = {
     monitorOn: "Monitor",
     cueInterrupt: "CUE Interrupt",
     cue: "CUE",
-    cueOffline: "CUE は Live 同期中に本体の CUE を切り替えます。",
+    cueOffline: "CUE はライブ同期中に本体の CUE を切り替えます。",
     mono: "MONO",
     phonesLevel: "PHONES Level",
     on: "ON",
@@ -639,9 +639,11 @@ export const ja: Messages = {
     lockUnitOnly: "本体で変更してください",
     lockUnitOp: "本体で操作してください",
     lockRateLinked: "デバイスとの接続中は変更できません",
-    lockRateFollowUsb: "Live 同期中に変えるには Follow USB をオフにしてください",
-    lockIntegrationOff: "Live 同期中、Cubase・Nuendo・MixKey が本体とつながっている間に使えます",
-    lockSetupOffline: "Live 同期中に使えます",
+    lockRateScope:
+      "範囲が「シーンのみ」のライブ同期ではサンプルレートを扱いません。ライブ同期中に変えるには、環境設定 > デバイス入出力 > 範囲 を「全対応項目」にしてください",
+    lockRateFollowUsb: "ライブ同期中に変えるには Follow USB をオフにしてください",
+    lockIntegrationOff: "ライブ同期中、Cubase・Nuendo・MixKey が本体とつながっている間に使えます",
+    lockSetupOffline: "ライブ同期中に使えます",
   },
   shelf: {
     title: "非表示",
@@ -827,6 +829,13 @@ export const ja: Messages = {
     undoRateLocked: "デバイス操作の実行中はサンプルレートを元に戻せません",
     undoRateLockedMixed:
       "この操作はサンプルレートの変更を含みます — デバイス操作の実行中はサンプルレートを元に戻せないため、操作全体を保留しました。破棄はしていません。その操作が終われば同じ操作が通ります",
+    undoRateScope:
+      "範囲が「シーンのみ」のライブ同期ではサンプルレートを扱いません。ライブ同期中に元に戻すには、環境設定 > デバイス入出力 > 範囲 を「全対応項目」にしてください",
+    undoRateScopeMixed:
+      "この操作はサンプルレートの変更を含みます — 範囲が「シーンのみ」のライブ同期ではサンプルレートを扱わないため、操作全体を保留しました。破棄はしていません。環境設定 > デバイス入出力 > 範囲 を「全対応項目」にすれば同じ操作が通ります",
+    undoRateFollowUsb: "ライブ同期中にサンプルレートを元に戻すには Follow USB をオフにしてください",
+    undoRateFollowUsbMixed:
+      "この操作はサンプルレートの変更を含みます — ライブ同期は Follow USB がオフの間しかサンプルレートを受け付けないため、操作全体を保留しました。破棄はしていません。Follow USB をオフにすれば同じ操作が通ります",
     undoPhantomHiZ: (channels: string): string =>
       `この操作は ${channels} で +48V と Hi-Z を両方オンにします — どちらかを切ってからやり直してください。操作は保留しました。破棄はしていません`,
     undoWireShape: (receivers: string): string =>
@@ -869,7 +878,7 @@ export const ja: Messages = {
     importSettings: (name: string, model: string): string =>
       `${name} を現在の ${model} 計画に取り込みますか? 設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます (ファイルに編集状態は含まれません)。`,
     importSettingsLive: (name: string, model: string): string =>
-      `${name} を現在の ${model} 計画に取り込み、本体に書き込みますか? Live 同期中のため、取り込んだ設定はすべて本体に送られます (サンプリング周波数は今のままです)。設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます。`,
+      `${name} を現在の ${model} 計画に取り込み、本体に書き込みますか? ライブ同期中のため、取り込んだ設定はすべて本体に送られます (サンプリング周波数は今のままです)。設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます。`,
     reclock: (deviceRate: string, planRate: string): string =>
       `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。コンピューター側はデバイスの新しいレートに追従します。続行しますか?`,
     followUsbOn:
@@ -981,7 +990,8 @@ export const ja: Messages = {
     scope: "範囲",
     scopeAll: "全対応項目",
     scopeScene: "シーンのみ",
-    deviceNote: "デバイスから取得・デバイスへ書き込み・ライブ同期に共通で適用されます。ライブ同期中は変更できません。",
+    deviceNote:
+      "デバイスから取得・デバイスへ書き込み・ライブ同期に共通で適用されます。ライブ同期中に変えると、セッションを張り直します。",
     sceneNote:
       "シーンのみでは URX のデバイス全体設定 (モニター・ヘッドホン・出力パッチ・ストリーミング・オシレーター・サンプルレート) に触れません。",
     diagNote: "照合とセルフテストは常に全項目を対象とします。",

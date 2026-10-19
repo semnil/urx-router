@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDLE_COMMIT_MS, PlanHistory } from "./history";
 import type { PatchTouch, PlanPatch } from "../core/plan-history";
+import type { RateHold } from "../core/sim-locks";
+import { t } from "../i18n";
 import { applyPatch, nodeParamContestPath } from "../core/plan-history";
 import { emptyPlan } from "../core/plan";
 import type { Plan } from "../core/plan";
@@ -15,7 +17,7 @@ interface Harness {
   reflects: PatchTouch[];
   statuses: string[];
   blocked: string | null;
-  rateLocked: boolean;
+  rateHeld: RateHold | null;
   /** What `patchBlocked` answers for the entry it is handed… */
   patchRefusal: string | null;
   /** …and every patch it was asked about, so a test can assert WHICH entry was asked. */
@@ -39,7 +41,7 @@ function harness(): Harness {
       | "reflects"
       | "statuses"
       | "blocked"
-      | "rateLocked"
+      | "rateHeld"
       | "patchRefusal"
       | "patchAsked"
       | "depthReports"
@@ -50,7 +52,7 @@ function harness(): Harness {
     reflects: [],
     statuses: [],
     blocked: null,
-    rateLocked: false,
+    rateHeld: null,
     patchRefusal: null,
     patchAsked: [],
     depthReports: 0,
@@ -62,7 +64,7 @@ function harness(): Harness {
     getPlan: () => plan,
     reflect: (touch) => h.reflects.push(touch),
     blocked: () => h.blocked,
-    rateLocked: () => h.rateLocked,
+    rateHeld: () => h.rateHeld,
     confirmRate: (rate) => (h.rateAsked.push(rate), h.confirmRate ? h.confirmRate(rate) : null),
     patchBlocked: (patch) => (h.patchAsked.push(patch), h.patchRefusal),
     labelOf: (id) => id.toUpperCase(),
@@ -420,7 +422,7 @@ describe("apply", () => {
         history.note();
       },
       blocked: () => null,
-      rateLocked: () => false,
+      rateHeld: () => null,
       patchBlocked: () => null,
       labelOf: (id) => id,
       onStatus: () => {},
@@ -752,12 +754,12 @@ describe("refusals", () => {
     const h = harness();
     h.edit((p) => (p.sampleRate = 96000));
     idle();
-    h.rateLocked = true;
+    h.rateHeld = "link";
     h.history.undo();
     expect(h.statuses.at(-1)).toBe("The sample rate cannot be undone while a device operation is running");
     expect(h.plan.sampleRate).toBe(96000);
     // Not consumed: once the action ends the same press works.
-    h.rateLocked = false;
+    h.rateHeld = null;
     h.history.undo();
     settle();
     expect(h.plan.sampleRate).not.toBe(96000);
@@ -772,7 +774,7 @@ describe("refusals", () => {
       p.nodeParams.ch1 = { hpf: true };
     });
     idle();
-    h.rateLocked = true;
+    h.rateHeld = "link";
     h.history.undo();
     expect(h.statuses.at(-1)).toBe(
       "This step also changes the sample rate, which cannot be undone while a device operation is running — the whole step is held back, not lost; it works again once that operation ends",
@@ -780,11 +782,37 @@ describe("refusals", () => {
     expect(h.plan.sampleRate).toBe(96000);
     expect(h.plan.nodeParams.ch1).toEqual({ hpf: true });
     // Not consumed either: the same press works once the action ends.
-    h.rateLocked = false;
+    h.rateHeld = null;
     h.history.undo();
     settle();
     expect(h.plan.sampleRate).not.toBe(96000);
     expect(h.plan.nodeParams.ch1).toBeUndefined();
+  });
+
+  // A live session holds the rate for a reason of its own — a device scope that leaves the rate
+  // out, or a Follow USB not known to be off — and the refusal names that reason, for an entry that
+  // is nothing but the rate and for one that carries more.
+  it.each([
+    ["scope", "undoRateScope", "undoRateScopeMixed"],
+    ["followUsb", "undoRateFollowUsb", "undoRateFollowUsbMixed"],
+  ] as const)("names what holds the rate during a live session (%s)", (held, only, mixed) => {
+    const rateOnly = harness();
+    rateOnly.edit((p) => (p.sampleRate = 96000));
+    idle();
+    rateOnly.rateHeld = held;
+    rateOnly.history.undo();
+    expect(rateOnly.statuses.at(-1), "the rate alone").toBe(t().status[only]);
+    expect(rateOnly.plan.sampleRate).toBe(96000);
+    const more = harness();
+    more.edit((p) => {
+      p.sampleRate = 96000;
+      p.nodeParams.ch1 = { hpf: true };
+    });
+    idle();
+    more.rateHeld = held;
+    more.history.undo();
+    expect(more.statuses.at(-1), "the rate and more").toBe(t().status[mixed]);
+    expect(more.plan.nodeParams.ch1).toEqual({ hpf: true });
   });
 
   // A session that takes the rate asks first: the entry waits on the answer, a yes applies it and
@@ -823,7 +851,7 @@ describe("refusals", () => {
     const h = harness();
     h.edit((p) => (p.nodeParams.ch1 = { hpf: true }));
     idle();
-    h.rateLocked = true;
+    h.rateHeld = "link";
     h.history.undo();
     expect(h.plan.nodeParams.ch1).toBeUndefined();
   });

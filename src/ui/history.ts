@@ -16,6 +16,7 @@ import { t } from "../i18n";
 import type { Plan } from "../core/plan";
 import type { PatchTouch, PlanPatch } from "../core/plan-history";
 import { applyPatch, patchTouch, PlanHistoryStack, patchContestNames } from "../core/plan-history";
+import type { RateHold } from "../core/sim-locks";
 import { mouseMovedUnpressed } from "./dom";
 import { ownsNativeUndo, SIM_ROOT } from "./keys";
 
@@ -63,9 +64,10 @@ export interface PlanHistoryHooks {
    *  the edit that recorded it and this asks what the two switches end up at. Asked on the
    *  PEEKED entry, so a refusal leaves it where it is. */
   patchBlocked: (patch: PlanPatch) => string | null;
-  /** True while a device action holds the sample rate — a live session at the unit's value,
-   *  a write converging the plan's. */
-  rateLocked: () => boolean;
+  /** What holds the sample rate, or null while nothing does: a device action other than a live
+   *  session (a write converging the plan's), or a live session that takes no rate — its device
+   *  scope leaves the rate out, or Follow USB is not known to be off. */
+  rateHeld: () => RateHold | null;
   /** Asked before an undo / redo moves the sample rate while the rate is not locked: answers
    *  once the operator has agreed to the rate the entry would leave, or null when nothing needs
    *  asking. The entry stays on the stack while the question is open. */
@@ -380,11 +382,18 @@ export class PlanHistory {
     // While a session is up the rate is the device's, settled at the write
     // boundary; the picker is locked for the same reason. Refusing keeps the patch
     // atomic, so an entry that moved something else too is refused whole — the
-    // wording says so, chosen by whether the entry is nothing but the rate. The
-    // entry is held back rather than lost: this runs on a peeked entry, before
-    // op.take(), and leaving the session makes the same press work.
-    if (touch.fields.has("sampleRate") && this.hooks.rateLocked()) {
-      this.hooks.onStatus(touch.fields.size === 1 ? s.undoRateLocked : s.undoRateLockedMixed);
+    // wording says so, chosen by what holds the rate and by whether the entry is nothing but
+    // the rate. The entry is held back rather than lost: this runs on a peeked entry, before
+    // op.take(), and ending what holds the rate makes the same press work.
+    const held = touch.fields.has("sampleRate") ? this.hooks.rateHeld() : null;
+    if (held !== null) {
+      const only = touch.fields.size === 1;
+      const said = {
+        link: only ? s.undoRateLocked : s.undoRateLockedMixed,
+        scope: only ? s.undoRateScope : s.undoRateScopeMixed,
+        followUsb: only ? s.undoRateFollowUsb : s.undoRateFollowUsbMixed,
+      };
+      this.hooks.onStatus(said[held]);
       return;
     }
     // …and the same for a state the app does not put the plan into, whichever key of the

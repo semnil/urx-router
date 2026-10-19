@@ -860,11 +860,15 @@ export const en = {
       deviceOnlyTag: tr("Set on the device"),
     },
   },
-  // Why a control on the SIM view's LCD is held shut — its tooltip.
+  // Why a control on the SIM view's LCD is held shut — its tooltip. The rate's three reasons are the
+  // toolbar rate picker's tooltip too.
   sim: {
     lockUnitOnly: tr("Change it on the device"),
     lockUnitOp: tr("Operate it on the device"),
     lockRateLinked: tr("Cannot be changed while connected to the device"),
+    lockRateScope: tr(
+      "Scene only leaves the sample rate out of Live sync. To change it during Live sync, set Scope in Preferences to All supported",
+    ),
     lockRateFollowUsb: tr("Turn Follow USB off to change it during Live sync"),
     lockIntegrationOff: tr("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"),
     lockSetupOffline: tr("Usable during Live sync"),
@@ -1078,6 +1082,16 @@ export const en = {
     undoRateLockedMixed: tr(
       "This step also changes the sample rate, which cannot be undone while a device operation is running — the whole step is held back, not lost; it works again once that operation ends",
     ),
+    undoRateScope: tr(
+      "Scene only leaves the sample rate out of Live sync. To undo it during Live sync, set Scope in Preferences to All supported",
+    ),
+    undoRateScopeMixed: tr(
+      "This step also changes the sample rate, which Scene only leaves out of Live sync — the whole step is held back, not lost; it works again once Scope in Preferences is All supported",
+    ),
+    undoRateFollowUsb: tr("Turn Follow USB off to undo the sample rate during Live sync"),
+    undoRateFollowUsbMixed: tr(
+      "This step also changes the sample rate, which Live sync takes only while Follow USB is off — the whole step is held back, not lost; it works again once Follow USB is off",
+    ),
     // The step is held back rather than taken: the same press works once the channel holds
     // one of the two.
     undoPhantomHiZ: (channels: string): string =>
@@ -1277,7 +1291,9 @@ export const en = {
     scope: tr("Scope"),
     scopeAll: tr("All supported"),
     scopeScene: tr("Scene only"),
-    deviceNote: tr("One scope for Fetch from device, Write to device, and Live sync. Locked while Live sync is on."),
+    deviceNote: tr(
+      "One scope for Fetch from device, Write to device, and Live sync. Changing it during Live sync starts the session again.",
+    ),
     sceneNote: tr(
       "Scene only leaves the URX's device-wide settings untouched: monitor, phones, output patches, streaming, oscillator, and the sample rate.",
     ),

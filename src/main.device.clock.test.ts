@@ -340,6 +340,7 @@ describe("the Follow USB badge", () => {
     const from = shell.invokes.length;
     $("btn-fetch").click();
     expect($<HTMLSelectElement>("rate-picker").disabled, "the premise: the fetch took the link").toBe(true);
+    expect($("rate-picker").parentElement!.title, "the field names the link").toBe(t().sim.lockRateLinked);
     await settled();
     await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.fetchError("read-refused")]), {
       timeout: 10_000,
@@ -881,19 +882,46 @@ describe("the sample rate during Live sync", () => {
   });
 
   // A Scene-only session leaves the rate out of what it writes, so a rate chosen then would show in
-  // the app and never reach the unit.
-  it("keeps the rate locked for a session whose scope leaves the rate out", SLOW, async () => {
+  // the app and never reach the unit. The field says so, in the language on screen.
+  it("keeps the rate locked for a session whose scope leaves the rate out, and names the scope", SLOW, async () => {
     const shell = (await bootApp({
       seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) },
       tauri: deviceCommands({ "plugin:dialog|message": "Ok" }, SEED),
     }))!;
     await goLive();
     expect(picker().disabled).toBe(true);
+    const field = picker().parentElement!;
+    expect(field.title, "the field names the scope").toBe(t().sim.lockRateScope);
+    const i18n = await import("./i18n");
+    i18n.setLang("ja");
+    expect(field.title, "in the language switched to").toBe(i18n.t().sim.lockRateScope);
+    expect(field.title).not.toBe(t().sim.lockRateScope);
+    i18n.setLang("en");
     chooseRate(96_000);
     await new Promise((r) => setTimeout(r, 50));
     expect(confirms(shell), "nothing asked").toEqual([]);
     expect(rateWrites(shell)).toEqual([]);
     expect(picker().value).toBe("48000");
+  });
+
+  // An undo that would move the rate is held for the same reason the picker is, and the status line
+  // names it: a rate the session wrote while Follow USB was off, undone after the unit turned it on.
+  it("holds back an undo that would move the rate once Follow USB is on, and names Follow USB", SLOW, async () => {
+    const shell = await bootDevice({}, true, SEED);
+    await goLive();
+    chooseRate(44_100);
+    await vi.waitFor(() => expect(rateWrites(shell)).toEqual([44_100]), { timeout: 10_000 });
+    // A press and release closes the open entry one macrotask later.
+    window.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 9 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 9 }));
+    await new Promise((r) => setTimeout(r, 0));
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.FOLLOW_USB.id, x: 0, y: 0, value: 1 }]);
+    await vi.waitFor(() => expect(picker().disabled, "the premise: Follow USB on holds the rate").toBe(true), {
+      timeout: 10_000,
+    });
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    expect(statusText()).toBe(t().status.undoRateFollowUsb);
+    expect(rateWrites(shell), "nothing written back").toEqual([44_100]);
   });
 
   it(
@@ -903,8 +931,10 @@ describe("the sample rate during Live sync", () => {
       const shell = await bootDevice({}, true, { ...SEED, [FOLLOW_USB_SEED]: 1 });
       await goLive();
       expect(picker().disabled).toBe(true);
+      expect(picker().parentElement!.title, "the field names Follow USB").toBe(t().sim.lockRateFollowUsb);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.FOLLOW_USB.id, x: 0, y: 0, value: 0 }]);
       await vi.waitFor(() => expect(picker().disabled).toBe(false), { timeout: 10_000 });
+      expect(picker().parentElement!.hasAttribute("title"), "and no reason once it opens").toBe(false);
     },
   );
 

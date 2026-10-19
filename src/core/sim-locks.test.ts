@@ -3,6 +3,7 @@ import { getModel } from "../models";
 import { simBindings } from "./sim-map";
 import { setupGlassPaths } from "./sim-map-setup";
 import {
+  rateHoldReason,
   SETUP_WRITTEN_SCREENS,
   UNIT_ONLY_SCREENS,
   simLocks,
@@ -16,6 +17,7 @@ const REASONS = {
   notAccepted: "notAccepted",
   unitOp: "unitOp",
   rateLinked: "rateLinked",
+  rateScope: "rateScope",
   trackCountLive: "trackCountLive",
   integrationOff: "integrationOff",
   rateFollowUsb: "rateFollowUsb",
@@ -27,7 +29,7 @@ const OFFLINE: SimLockState = {
   linked: false,
   live: false,
   rateOpen: false,
-  rateFollowUsb: false,
+  rateScope: false,
   followUsbOn: false,
 };
 const LINKED: SimLockState = { ...OFFLINE, linked: true };
@@ -110,12 +112,29 @@ describe("the controls the SIM view holds shut", () => {
   // shows that from the Follow USB it is given, so nothing of the app's own is drawn there.
   it("opens the rate during Live sync while Follow USB is off, and leaves it to the unit while Follow USB is on", () => {
     const screen = { kind: "screen", id: "setup.rate" } as const;
-    expect(reasonFor(locks({ ...LIVE, rateFollowUsb: true, followUsbOn: true }), screen), "Follow USB on").toBeNull();
+    expect(reasonFor(locks({ ...LIVE, followUsbOn: true }), screen), "Follow USB on").toBeNull();
     expect(reasonFor(locks({ ...LINKED, followUsbOn: true }), screen), "Follow USB on, no session").toBeNull();
-    expect(reasonFor(locks({ ...LIVE, rateFollowUsb: true }), screen), "Follow USB not yet read").toBe("rateFollowUsb");
-    expect(reasonFor(locks(LIVE), screen), "a Scene-only session carries no rate").toBe("rateLinked");
+    expect(
+      reasonFor(locks({ ...LIVE, rateScope: true, followUsbOn: true }), screen),
+      "Follow USB on, Scene only",
+    ).toBeNull();
+    expect(reasonFor(locks(LIVE), screen), "Follow USB not yet read").toBe("rateFollowUsb");
+    expect(reasonFor(locks({ ...LIVE, rateScope: true }), screen), "a Scene-only session carries no rate").toBe(
+      "rateScope",
+    );
     expect(reasonFor(locks({ ...LIVE, rateOpen: true }), screen)).toBeNull();
     expect(reasonFor(locks(LINKED), screen)).toBe("rateLinked");
+  });
+
+  // The toolbar's rate picker gives the same reason, and holds the rate while Follow USB is on as
+  // well: it has no simulator of its own to hold it.
+  it("names why a rate chosen in the app does not reach the unit, and nothing where it does", () => {
+    expect(rateHoldReason(OFFLINE, REASONS), "no link").toBeNull();
+    expect(rateHoldReason(LINKED, REASONS), "a device action").toBe("rateLinked");
+    expect(rateHoldReason({ ...LINKED, rateScope: true }, REASONS), "a session starting").toBe("rateLinked");
+    expect(rateHoldReason({ ...LIVE, rateScope: true }, REASONS), "Scene only").toBe("rateScope");
+    expect(rateHoldReason(LIVE, REASONS), "Follow USB on or not yet read").toBe("rateFollowUsb");
+    expect(rateHoldReason({ ...LIVE, rateOpen: true }, REASONS), "Follow USB off").toBeNull();
   });
 
   it("holds the rate while the device link is held, and the Track Count while Live sync is up", () => {

@@ -515,8 +515,8 @@ carries a one-line map of the same directories and points here.
   makes the parks the only part of a converging flush that refuses a press — or while a file flow does, while a *drag* (a press that has moved — a press
   alone cannot gate it, since a wire is selected by a script-dispatched `pointerdown` with no matching
   `pointerup`) is in progress, with a modal open (except the channel tuning screen, the one that edits the
-  plan), and for a `sampleRate` patch while the rate is locked — any device action but a live session with
-  Follow USB off, which asks instead (see the undo refusals below) — (refused WHOLE — a partial undo would put the plan in a
+  plan), and for a `sampleRate` patch while the rate is locked — any device action but a live session that takes
+  the rate (the whole device in scope, Follow USB off), which asks instead (see the undo refusals below) — (refused WHOLE — a partial undo would put the plan in a
   state no gesture produced and `reflectHistory`'s `markChanged()` would push it at the unit — so the
   wording is chosen by `touch.fields.size === 1`: an entry that moved something else too says the whole step
   is held back, since naming only the rate leaves the collateral edits refused in silence. It is a deferral,
@@ -1919,7 +1919,12 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   included. The User Defined Knobs bank is read and never written, so the bank the LCD shows is its own once
   chosen there.
 - **What it shows** follows every writer: each place that schedules MIDI feedback (`markChanged`,
-  `planValuesChanged`, a load, an undo's repaint) also tells the view, which pushes the values that moved.
+  `planValuesChanged`, a load, an undo's repaint) also tells the view, which pushes the values that moved. A value
+  the LCD was given that is no longer given at all — whether a DAW holds the unit, once the session that read it
+  ends — cannot be pushed, and the simulator keeps what it was told; the view then has it read the whole set again,
+  which drops it, so Software Integration is held shut with its reason again rather than drawn as the session left
+  it. That read answers every path the app gives nothing of its own with what the LCD holds there, so the LCD's own
+  showing — the channel selected on it, the bank it shows, its knob mode — stays as it was.
 - **What it refuses** are the unit's own operations — a scene recall or store, the card, the recorder, playback.
   The plan holds none of them, so the LCD carries none out, and the status line says so.
 - **What it holds shut** is drawn on the LCD before it is pressed (`sim-locks.ts`, handed to the simulator's
@@ -1937,8 +1942,10 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   open — while Live sync is down, since whether a compatible DAW holds the unit is read only during a session ("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"), the unit's own operations and USB Storage
   Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus while Live sync is up, as on the CONSOLE
   and in the Inspector (their wording), the sampling frequency while the device link is held and the unit is not known
-  to have Follow USB on — during Live sync only while the session carries no rate (Scene only), and while Follow USB
-  is not yet read ("Turn Follow USB off to change it during Live sync") — and the recorder's
+  to have Follow USB on — with the reason the toolbar's rate gives (`rateHoldReason`): "Cannot be changed while
+  connected to the device" for a link held by anything but a Live sync session, during Live sync the Scene only
+  device scope, which leaves the rate out (naming the Preferences Scope that puts it back), and a Follow USB not yet
+  read ("Turn Follow USB off to change it during Live sync") — and the recorder's
   Track Count while Live sync is up (the wording the Inspector already gives).
 - **Meters**: while Live sync is on and the view is up, it borrows the session's one meter subscription from the
   CONSOLE, as a tuning screen does, and gives it back when it is hidden. The simulator's meter ids are mapped onto
@@ -3003,7 +3010,7 @@ the rate leaves that entry too.
 | An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |
 | An edit made while a Fetch's or Live-sync start's read carries a model switch | on the board, before it writes anything (`planTakesEdits`); everywhere else `markChanged`, which puts the plan back to the state the read began from; both say so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
 | A gesture still in progress on the plan a switch replaces | the surface holding it, as the plan is replaced — the board (`Graph.setModel` handed another plan), the inspector (rebuilt past its gate, its actions answering only for the plan the panel was built for), a tuning screen (`refresh`) and the CONSOLE (`render`, which hands keyboard focus on only across a rebuild of the same plan) | the plan the gesture began on is gone, so a pointer or a key still held writes nothing into the one that replaced it |
-| A `sampleRate` patch while the rate is locked (any device action but a live session with Follow USB off) | refused whole, with the wording chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
+| A `sampleRate` patch while the rate is locked (any device action but a live session that takes the rate — the whole device in scope, Follow USB off) | refused whole, with the wording naming what holds the rate (`rateHold`: a device action, the Scene only scope, Follow USB) and chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
 | An undo / redo whose result would leave +48V and HI-Z both on for a jack | `patchBlocked` on the peeked entry, over the state the patch would create | the app never turns one of the two on while the other is on, and an undo turns one on as much as the gesture it reverses did |
 | An undo / redo whose result would leave an input that takes one source with two, or STREAMING with none | `patchBlocked` on the peeked entry (`wireShapeBroken`), over the state the patch would create | the board never draws either — a drop onto an occupied input replaces its wire — and replaying an entry after a device read moved that input's source under it would |
 | An ON of +48V / HI-Z made while a device read was in flight, on a jack where that read finds the other one on | `readIntoPlan`, after the merge (`readRefusedSwitches`): the switch and the keys the witness saw the same edit write go back to the read's values, and the edit leaves the undo stack (`PlanHistory.retract`). In a live session, an ON its flush already sent is on the unit and is not refused (`SwitchSession.holdsOn`), and an ON the flush held back that the merge replaced with the read's value is reported and retracted the same way (`unsentRefusedSwitches`) | the surface asked the rule of a plan that had not heard what the unit holds; the unit's own switch is what the read found, and it stays |
@@ -3519,6 +3526,9 @@ to another model, whichever entry switched it — the model picker, File > Open,
 switch a Fetch or a Live-sync start offers. During Live sync the Rate picker locks while Follow USB is on: the unit
 accepts a rate written then and takes the computer's rate back about a third of a second later, so the rate would
 show and vanish. It stays locked as well for a session whose device scope is Scene only, which writes no rate.
+Wherever it is locked, the field it sits in shows why as its tooltip — the connection, for a link held by anything
+but a Live sync session, and during one the Scene only scope (naming the Preferences Scope that puts the rate back
+in) or Follow USB — the reason the SIM view's Sampling Frequency gives too (`rateHoldReason`).
 With Follow USB off and the whole device in scope it opens, and a rate chosen on the picker, on the SIM view or by an undo / redo
 goes through `confirmLiveRate` before the flush writes it — refused while the microSD recorder holds a file, and
 otherwise confirmed with the re-clock and what it costs the recorder's Track Count, the questions the write's settle

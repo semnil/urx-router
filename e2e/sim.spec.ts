@@ -175,6 +175,73 @@ test("holds Software Integration shut on the LCD with no session, with the reaso
   await expect(sim(page).locator('.lcd[data-screen="setup.patch"]:not([inert])')).toHaveCount(1);
 });
 
+// A session tells the glass whether a DAW holds the unit, and the glass draws the entry as the unit
+// does. Once the session ends, what it told the glass goes with it, and the entry is held shut with
+// the reason again.
+test("holds Software Integration shut again once Live sync ends, with the reason as its tooltip", async ({ page }) => {
+  await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+  const integration = lcd(page).getByRole("button", { name: /Software\s*Integration/ });
+  await expect(integration.locator(".lock-mark"), "held with no session").toHaveCount(1);
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(integration.locator(".lock-mark"), "drawn as the unit draws it, no DAW holding it").toHaveCount(0);
+  await expect(integration).toHaveAttribute("aria-disabled", "true");
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+  await expect(integration).toHaveAttribute("title", en.sim.lockIntegrationOff);
+  await expect(integration.locator(".lock-mark")).toHaveCount(1);
+});
+
+// What the session told the glass goes when it ends, and what the glass keeps for its own showing
+// stays: the channel selected on it, the bank it shows and its knob mode.
+test("keeps the LCD's selected channel when Live sync ends", async ({ page }) => {
+  await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  const selected = glass(page).locator(".strip.is-selected .strip-id");
+  await expect(selected).toHaveText("CH 1");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await glass(page)
+    .locator(".strip")
+    .filter({ has: page.locator(".strip-id", { hasText: /^CH 2$/ }) })
+    .locator(".strip-name")
+    .click();
+  await expect(selected).toHaveText("CH 2");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#rate-picker"), "the session's link is let go").toBeEnabled();
+  await expect(selected).toHaveText("CH 2");
+});
+
+test("keeps the LCD's bank and knob mode when Live sync ends", async ({ page }) => {
+  await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await glass(page).locator(".bank-btn").click();
+  await glass(page).locator(".bank-option-output").last().click();
+  await expect(glass(page).locator(".bank-btn")).toHaveAttribute("aria-label", "OUTPUT channel bank 1 of 1");
+  await glass(page).getByRole("button", { name: "USER DEFINED KNOBS mode", exact: true }).click();
+  await expect(glass(page).locator(".udk-toggle")).toHaveAttribute("aria-pressed", "true");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#rate-picker"), "the session's link is let go").toBeEnabled();
+  await expect(glass(page).locator(".bank-btn")).toHaveAttribute("aria-label", "OUTPUT channel bank 1 of 1");
+  await expect(glass(page).locator(".udk-toggle")).toHaveAttribute("aria-pressed", "true");
+});
+
 test("takes Follow USB on the LCD's Sampling Frequency screen as the toolbar's FOLLOW USB", async ({ page }) => {
   await stubTauriDevice(page, {
     values: { [PARAMS.FOLLOW_USB.id]: 1 },
@@ -239,7 +306,8 @@ test("leaves the Sampling Frequency screen to the unit during Live sync while Fo
 
 // The app holds the Sampling Frequency screen shut while it is connected to the unit and the rate is
 // not one Live sync takes (Scene only here), and lets it go the moment the connection is let go,
-// which comes after the session has ended rather than with it.
+// which comes after the session has ended rather than with it. The toolbar's rate field gives the
+// same reason as its tooltip, and drops it once the rate opens.
 test("holds the Sampling Frequency screen shut while connected during Live sync, and opens it once the link is let go", async ({
   page,
 }) => {
@@ -259,13 +327,17 @@ test("holds the Sampling Frequency screen shut while connected during Live sync,
   await page.click("#btn-live");
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
   await expect(entry).toHaveAttribute("aria-disabled", "true");
-  await expect(entry).toHaveAttribute("title", en.sim.lockRateLinked);
+  await expect(entry).toHaveAttribute("title", en.sim.lockRateScope);
   await expect(entry.locator(".lock-mark")).toHaveCount(1);
+  const rateField = page.locator("label", { has: page.locator("#rate-picker") });
+  await expect(page.locator("#rate-picker")).toBeDisabled();
+  await expect(rateField, "the toolbar's rate names the same reason").toHaveAttribute("title", en.sim.lockRateScope);
 
   await page.click("#btn-device");
   await page.click("#btn-live");
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
   await expect(page.locator("#rate-picker"), "the toolbar's rate is open again").toBeEnabled();
+  await expect(rateField, "and names no reason").not.toHaveAttribute("title");
   await expect(entry.locator(".lock-mark")).toHaveCount(0);
   await expect(entry).not.toHaveAttribute("aria-disabled");
   await tapInto(page, entry, "setup.rate");
