@@ -853,14 +853,19 @@ describe("the SIM view over a live session", () => {
     const shell = await bootDevice({ experimental_enabled: true });
     await openSim();
     const daw = async (): Promise<unknown> => (await transport().snapshot()).get("setup.integration.daw");
+    // The simulator's own copy, which decides how it draws Software Integration.
+    const held = (): boolean => simMounted.glasses.at(-1)!.store.has("setup.integration.daw");
     expect(await daw(), "no session to read it from").toBeUndefined();
+    expect(held(), "nor does the glass hold one").toBe(false);
     await goLive();
     await vi.waitFor(async () => expect(await daw(), "none holds it").toBe(false));
+    await vi.waitFor(() => expect(held(), "the glass takes it").toBe(true));
     notifyChannel(shell).onmessage([{ param_id: PARAMS.DAW_INTEGRATION.id, x: 0, y: 0, value: 2 }]);
     await vi.waitFor(async () => expect(await daw(), "the unit's announcement").toBe(true));
     $("btn-live").click();
     await invoked(shell, "vd_disconnect");
     await vi.waitFor(async () => expect(await daw(), "the session that read it ended").toBeUndefined());
+    await vi.waitFor(() => expect(held(), "and the glass lets it go").toBe(false));
   });
 
   // The reads a case's session made of one address.

@@ -1919,7 +1919,11 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   included. The User Defined Knobs bank is read and never written, so the bank the LCD shows is its own once
   chosen there.
 - **What it shows** follows every writer: each place that schedules MIDI feedback (`markChanged`,
-  `planValuesChanged`, a load, an undo's repaint) also tells the view, which pushes the values that moved.
+  `planValuesChanged`, a load, an undo's repaint) also tells the view, which pushes the values that moved. A value
+  the LCD was given that is no longer given at all — whether a DAW holds the unit, once the session that read it
+  ends — cannot be pushed, and the simulator keeps what it was told; the view then has it read the whole set again,
+  which drops it, so Software Integration is held shut with its reason again rather than drawn as the session left
+  it.
 - **What it refuses** are the unit's own operations — a scene recall or store, the card, the recorder, playback.
   The plan holds none of them, so the LCD carries none out, and the status line says so.
 - **What it holds shut** is drawn on the LCD before it is pressed (`sim-locks.ts`, handed to the simulator's

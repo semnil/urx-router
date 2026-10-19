@@ -175,6 +175,31 @@ test("holds Software Integration shut on the LCD with no session, with the reaso
   await expect(sim(page).locator('.lcd[data-screen="setup.patch"]:not([inert])')).toHaveCount(1);
 });
 
+// A session tells the glass whether a DAW holds the unit, and the glass draws the entry as the unit
+// does. Once the session ends, what it told the glass goes with it, and the entry is held shut with
+// the reason again.
+test("holds Software Integration shut again once Live sync ends, with the reason as its tooltip", async ({ page }) => {
+  await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+  const integration = lcd(page).getByRole("button", { name: /Software\s*Integration/ });
+  await expect(integration.locator(".lock-mark"), "held with no session").toHaveCount(1);
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(integration.locator(".lock-mark"), "drawn as the unit draws it, no DAW holding it").toHaveCount(0);
+  await expect(integration).toHaveAttribute("aria-disabled", "true");
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+  await expect(integration).toHaveAttribute("title", en.sim.lockIntegrationOff);
+  await expect(integration.locator(".lock-mark")).toHaveCount(1);
+});
+
 test("takes Follow USB on the LCD's Sampling Frequency screen as the toolbar's FOLLOW USB", async ({ page }) => {
   await stubTauriDevice(page, {
     values: { [PARAMS.FOLLOW_USB.id]: 1 },

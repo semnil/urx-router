@@ -286,15 +286,19 @@ export class PlanTransport implements DeviceTransport {
     for (const path of paths) this.own.delete(path);
   }
 
-  /** Tell the glass every value the plan now holds differently. */
-  push(): void {
-    if (this.closed) return;
+  /** Tell the glass every value the plan now holds differently. True where a value the glass was
+   *  given is no longer given at all — the DAW a session read, once it ends — which no notify can
+   *  say: the glass then reads the whole set again, which drops it. */
+  push(): boolean {
+    if (this.closed) return false;
     const now = this.current();
     for (const [path, value] of now) {
       if (this.held.get(path) === value) continue;
       for (const listener of this.listeners) listener({ path, value, echo: false });
     }
+    const dropped = [...this.held.keys()].some((path) => !now.has(path));
     this.held = now;
+    return dropped;
   }
 
   close(): void {
@@ -350,8 +354,13 @@ export class SimView {
     this.pushQueued = true;
     queueMicrotask(() => {
       this.pushQueued = false;
-      this.transport?.push();
-      if (this.transport) this.sim?.setLocks(this.hooks.locks(this.transport.paths()));
+      const transport = this.transport;
+      if (!transport) return;
+      // The simulator keeps a value it was given until a snapshot leaves it out, so a value no
+      // longer given is dropped by attaching the same transport again. A transport an unmount
+      // closed answers no snapshot, and the glass it fed is gone with it.
+      if (transport.push() && this.sim) void this.sim.store.attach(transport).catch(() => undefined);
+      this.sim?.setLocks(this.hooks.locks(transport.paths()));
     });
   }
 
