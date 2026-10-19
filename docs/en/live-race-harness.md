@@ -1441,6 +1441,14 @@ carries a set a few milliseconds past the detachment that belongs to an edit the
 made; the invariant-10 cases bound their window at `detachAt + 300 ms` rather than at `detachAt`, which
 still excludes the seconds of pointer movement where every write used to be.
 
+`baseline-view-locale-churn` opens its window at its theme switch rather than at a detachment, and the
+send of the last move before the rebuild can start after that mark: on 2026-10-19 it started 59–89 ms
+ahead of the mark unthrottled and 185–398 ms ahead at 6× CPU throttling (10 runs each, the `t0b-sweeps`
+and `t2f-shape-change` pair on 2 workers), always carrying `-320`, the level the drag reaches before the
+rebuild; each of the three runs that failed (2026-09-23, 10-03 and 10-17) caught one write of `-320` after the mark. So that case
+judges a write by its level: one carrying the level the readout showed before the rebuild is that send, and any other level is
+a move made after the rebuild reaching the unit.
+
 ### 12. Holding a reconcile off a converge (`follow.ts` / `live.ts`)
 
 A device-follow reconcile and a converge round read the link at the same time, interleaved. The

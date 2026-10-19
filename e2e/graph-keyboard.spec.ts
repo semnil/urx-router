@@ -79,10 +79,41 @@ test("the Inspector connects a wire from the keyboard, replacing STREAMING's sou
   await expect(routing).toHaveJSProperty("open", true);
   const picker = routing.locator(".param", { hasText: "Connect the output to" }).locator("select");
   await picker.focus();
+  // From the pick on, each focus change and each time the inspector's contents are replaced,
+  // printed when the focus assertion fails: where focus went, and after how many rebuilds.
+  await page.evaluate(() => {
+    const log: string[] = [];
+    const t0 = performance.now();
+    const say = (s: string) => log.push(`${(performance.now() - t0).toFixed(0)} ms ${s}`);
+    const name = (n: EventTarget | null) =>
+      n instanceof Element
+        ? `${n.tagName.toLowerCase()}${n.id ? `#${n.id}` : ""}${n.getAttribute("data-focus-key") ? `[${n.getAttribute("data-focus-key")}]` : ""}`
+        : String(n);
+    (window as unknown as { __focusLog: { log: string[]; name: typeof name } }).__focusLog = { log, name };
+    document.addEventListener("focusin", (e) => say(`focusin ${name(e.target)}`), true);
+    document.addEventListener("focusout", (e) => say(`focusout ${name(e.target)} → ${name(e.relatedTarget)}`), true);
+    new MutationObserver((records) => {
+      const removed = records.reduce((n, r) => n + r.removedNodes.length, 0);
+      if (removed) say(`inspector rebuilt (${removed} removed)`);
+    }).observe(document.getElementById("inspector")!, { childList: true, subtree: true });
+  });
   await chooseOption(picker, { value: "bus.stream:in" });
   await expect(wire(page, "bus.mix2:out", "bus.stream:in")).toHaveCount(1);
   await expect(wire(page, "bus.stereo:out", "bus.stream:in")).toHaveCount(0);
-  await expect(page.locator("#inspector .param", { hasText: "Connect the output to" }).locator("select")).toBeFocused();
+  try {
+    await expect(
+      page.locator("#inspector .param", { hasText: "Connect the output to" }).locator("select"),
+    ).toBeFocused();
+  } catch (e) {
+    const record = await page.evaluate(() => {
+      const { log, name } = (
+        window as unknown as { __focusLog: { log: string[]; name: (n: EventTarget | null) => string } }
+      ).__focusLog;
+      return { active: name(document.activeElement), log };
+    });
+    console.log(`focus after the pick: ${record.active}\n  ${record.log.join("\n  ")}`);
+    throw e;
+  }
 });
 
 // Disconnecting: a drawn wire's Routing row selects it, focus moves into its panel, and the
