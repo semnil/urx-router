@@ -1082,6 +1082,16 @@ export const en = {
     undoRateLockedMixed: tr(
       "This step also changes the sample rate, which cannot be undone while a device operation is running — the whole step is held back, not lost; it works again once that operation ends",
     ),
+    undoRateScope: tr(
+      "Scene only leaves the sample rate out of Live sync. To undo it during Live sync, set Scope in Preferences to All supported",
+    ),
+    undoRateScopeMixed: tr(
+      "This step also changes the sample rate, which Scene only leaves out of Live sync — the whole step is held back, not lost; it works again once Scope in Preferences is All supported",
+    ),
+    undoRateFollowUsb: tr("Turn Follow USB off to undo the sample rate during Live sync"),
+    undoRateFollowUsbMixed: tr(
+      "This step also changes the sample rate, which Live sync takes only while Follow USB is off — the whole step is held back, not lost; it works again once Follow USB is off",
+    ),
     // The step is held back rather than taken: the same press works once the channel holds
     // one of the two.
     undoPhantomHiZ: (channels: string): string =>

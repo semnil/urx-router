@@ -904,6 +904,26 @@ describe("the sample rate during Live sync", () => {
     expect(picker().value).toBe("48000");
   });
 
+  // An undo that would move the rate is held for the same reason the picker is, and the status line
+  // names it: a rate the session wrote while Follow USB was off, undone after the unit turned it on.
+  it("holds back an undo that would move the rate once Follow USB is on, and names Follow USB", SLOW, async () => {
+    const shell = await bootDevice({}, true, SEED);
+    await goLive();
+    chooseRate(44_100);
+    await vi.waitFor(() => expect(rateWrites(shell)).toEqual([44_100]), { timeout: 10_000 });
+    // A press and release closes the open entry one macrotask later.
+    window.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 9 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 9 }));
+    await new Promise((r) => setTimeout(r, 0));
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.FOLLOW_USB.id, x: 0, y: 0, value: 1 }]);
+    await vi.waitFor(() => expect(picker().disabled, "the premise: Follow USB on holds the rate").toBe(true), {
+      timeout: 10_000,
+    });
+    expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID)).toBe(1);
+    expect(statusText()).toBe(t().status.undoRateFollowUsb);
+    expect(rateWrites(shell), "nothing written back").toEqual([44_100]);
+  });
+
   it(
     "keeps the rate locked while Follow USB is on, and opens it once the unit turns Follow USB off",
     SLOW,
@@ -911,6 +931,7 @@ describe("the sample rate during Live sync", () => {
       const shell = await bootDevice({}, true, { ...SEED, [FOLLOW_USB_SEED]: 1 });
       await goLive();
       expect(picker().disabled).toBe(true);
+      expect(picker().parentElement!.title, "the field names Follow USB").toBe(t().sim.lockRateFollowUsb);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.FOLLOW_USB.id, x: 0, y: 0, value: 0 }]);
       await vi.waitFor(() => expect(picker().disabled).toBe(false), { timeout: 10_000 });
       expect(picker().parentElement!.hasAttribute("title"), "and no reason once it opens").toBe(false);

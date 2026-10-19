@@ -112,7 +112,7 @@ import { Console } from "./ui/console";
 import { SimView } from "./ui/sim-view";
 import type { SimEdit, SimValue } from "./core/sim-map";
 import { fxHeldWrites } from "./core/sim-map-processors";
-import { rateHoldReason, simLocks, type SimLockReasons, type SimLockState } from "./core/sim-locks";
+import { rateHold, rateHoldReason, simLocks, type SimLockReasons, type SimLockState } from "./core/sim-locks";
 import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
 import { initDropzone } from "./ui/dropzone";
@@ -4341,9 +4341,10 @@ planHistory = new PlanHistory({
         : modalOpen() && !dynScreen.isOpen()
           ? t().status.undoModal
           : null,
-  // As the rate picker locks: a write converges the plan it re-reads each round, and a session
-  // takes a rate only while Follow USB is off, once the operator has agreed to it.
-  rateLocked: () => deviceLinkHolder !== null && !liveRateOpen(),
+  // As the rate picker locks, and for the same reason: a write converges the plan it re-reads each
+  // round, and a session takes a rate only under a scope that carries it and while Follow USB is
+  // off, once the operator has agreed to it.
+  rateHeld: () => rateHold(rateHoldState()),
   confirmRate: (rate) => confirmLiveRate(rate),
   // Asked of the state the entry would leave behind rather than of the keys it carries: an
   // undo turns a switch on as much as the gesture it reverses did, and which of the two an
