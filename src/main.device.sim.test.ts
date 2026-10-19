@@ -938,6 +938,7 @@ describe("the SIM view over a live session", () => {
     await openSim();
     const badge = $("follow-usb");
     expect(badge.dataset.state).toBe("unknown");
+    expect((await transport().snapshot()).get("setup.followUsb"), "off until the unit's is read").toBe(false);
     await transport().write("setup.followUsb", false);
     await vi.waitFor(() => expect(badge.dataset.state, "unknown: the press reads the unit").toBe("on"));
     expect(setsOf(shell, PARAMS.FOLLOW_USB.id)).toEqual([]);

@@ -1899,7 +1899,7 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
 - **The unit's own settings and states** are shown in place of the simulator's where the app knows them
   (`core/sim-map-setup.ts`): SETUP > GENERAL as the last reading of it — a session's start on an experimental launch,
   the Device setup screen, a SETUP edit on the LCD — kept until the model changes, Follow USB as the toolbar's
-  badge holds it, the operation mode (`817`) as a session read it, the unit's current scene (`781`, which a Recall and a Store move) and the row
+  badge holds it and off while the badge does not know it, the operation mode (`817`) as a session read it, the unit's current scene (`781`, which a Recall and a Store move) and the row
   its SCENE LIST cursor stands on (`863`) as a session read them — at its start, and again once it has registered for
   their announcements — and the unit announced them since — by number with no title, the unit's titles not being
   readable, and on the tab that lists the cursor's row where only one does, the tab shown staying where both do; a
