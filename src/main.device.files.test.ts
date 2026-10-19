@@ -679,14 +679,15 @@ describe("importing a settings file", () => {
       };
       const held = $("statusbar");
       held.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, bubbles: true }));
+      // Each edit reaches the unit before the next step, so every undo below has a value to send.
       pressOsc("ON");
+      await vi.waitFor(() => expect(written(shell, OSC, 0)).toEqual([1]), { timeout: 15_000 });
       const from = await importNow(shell);
       await importDone(shell);
+      await vi.waitFor(() => expect(written(shell, SOURCE, from)).toEqual([256]), { timeout: 15_000 });
       pressOsc("OFF");
       held.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, bubbles: true }));
-      await tick();
-      // The oscillator went on and off again inside the press, so the flush has nothing to send for it.
-      await vi.waitFor(() => expect(written(shell, SOURCE, from)).toEqual([256]), { timeout: 15_000 });
+      await vi.waitFor(() => expect(written(shell, OSC, 0)).toEqual([1, 0]), { timeout: 15_000 });
 
       let at = await editMenu(shell, EDIT_UNDO_ID);
       await synced();
