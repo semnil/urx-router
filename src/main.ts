@@ -941,13 +941,18 @@ function resetSendsTarget(): void {
 }
 
 // The unit's own settings and states the SIM view shows beside the plan: SETUP > GENERAL
-// (core/control/device-setup.ts), the operation mode and each MIC/LINE jack's engaged Clip Safe.
+// (core/control/device-setup.ts), the operation mode, the microSD card and each MIC/LINE jack's
+// engaged Clip Safe.
 // SETUP is known from the last reading of it — a session's start, the Device setup screen, a SETUP
-// edit on the glass — and kept until the model changes, as Follow USB is. The operation mode and the
-// scene pointers (the current scene, SCENE LIST's cursor) are a session's reading, and the engaged
-// Clip Safe what the unit announced during one.
+// edit on the glass — and kept until the model changes, as Follow USB is. The operation mode, the
+// scene pointers (the current scene, SCENE LIST's cursor) and the microSD card are a session's
+// reading, and the engaged Clip Safe what the unit announced during one.
 let unitSetup: DeviceSetup | null = null;
 let unitOperationMode: number | null = null;
+// Whether a card is in the unit's microSD slot, and a count of the unit's announcements of it,
+// which a read taken while one lands does not override.
+let unitCardIn: boolean | null = null;
+let cardVersion = 0;
 // The scene pointers keep the tab SCENE LIST's cursor last needed, which a move onto a user scene
 // (on both tabs) leaves as it is, and a count of the unit's announcements of each, which a read taken
 // while one lands does not override.
@@ -979,6 +984,7 @@ function unitGlassValues(): Map<string, SimValue> {
   for (const [path, value] of sceneGlassValues(unitScene.current, unitScene.cursor, unitScene.tab))
     out.set(path, value);
   if (unitIntegration) for (const [path, send] of integrationGlassValues(unitIntegration)) out.set(path, send);
+  if (unitCardIn !== null) out.set("sd.mounted", unitCardIn);
   return out;
 }
 
@@ -1056,8 +1062,8 @@ function scheduleUnitSetupRead(): void {
   }, CUE_READ_SETTLE_MS);
 }
 
-/** The addresses the unit announces its settings, its operation mode, its scene pointers and
- *  Software Integration at, which a session on an experimental launch registers. */
+/** The addresses the unit announces its settings, its operation mode, its scene pointers, its
+ *  microSD card and Software Integration at, which a session on an experimental launch registers. */
 function unitStateNotifyAddrs(model: DeviceModel): [number, number, number][] {
   const setup = [
     PARAMS.BRIGHTNESS,
@@ -1078,6 +1084,7 @@ function unitStateNotifyAddrs(model: DeviceModel): [number, number, number][] {
     [PARAMS.OPERATION_MODE.id, 0, 0],
     [PARAMS.CURRENT_SCENE.id, 0, 0],
     [PARAMS.SCENE_CURSOR.id, 0, 0],
+    ...(model.hasSD ? [[PARAMS.SD_CARD.id, 0, 0] as [number, number, number]] : []),
     ...dawIntegrationNotifyAddrs(),
   ];
 }
@@ -1129,6 +1136,12 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
     takeUnitCursor(value);
     return true;
   }
+  if (paramId === PARAMS.SD_CARD.id) {
+    cardVersion++;
+    unitCardIn = value !== 0;
+    simView?.unitStateChanged();
+    return true;
+  }
   const field = integrationFieldOf(paramId);
   if (field !== null) {
     if (unitIntegration) unitIntegration = withIntegrationNotify(unitIntegration, paramId, value) ?? unitIntegration;
@@ -1171,6 +1184,25 @@ function rereadScenePointers(): void {
     .catch((err: unknown) => stopLiveOnError(errorText(err)));
 }
 
+/** Read the unit's microSD card again behind every unit write queued so far, and take it unless the
+ *  unit announced a change while the read ran. */
+function rereadCardIn(): void {
+  if (!liveSessionUp || !experimentalOn || !getModel(modelId).hasSD) return;
+  const epoch = liveEpoch;
+  const ours = (): boolean => liveSessionUp && liveEpoch === epoch;
+  cueWrites = cueWrites
+    .then(async () => {
+      await live?.idle();
+      if (!ours()) return;
+      const since = cardVersion;
+      const card = (await vdGet(PARAMS.SD_CARD.id, 0, 0)) !== 0;
+      if (!ours()) return;
+      if (cardVersion === since) unitCardIn = card;
+      simView?.unitStateChanged();
+    })
+    .catch((err: unknown) => stopLiveOnError(errorText(err)));
+}
+
 /** Read SETUP > Software Integration again behind every unit write queued so far, and take each
  *  value the unit holds unless that value changed while the read ran. */
 function rereadDawIntegration(): void {
@@ -1197,6 +1229,7 @@ function resetUnitSessionState(): void {
   unitOperationMode = null;
   unitScene = { current: null, cursor: null, tab: null };
   unitIntegration = null;
+  unitCardIn = null;
   clipSafeEngaged.clear();
   paintClipSafe();
   simView?.unitStateChanged();
@@ -5322,6 +5355,7 @@ if (!DEMO) {
         let modeRead: number | null = null;
         let sceneRead: { current: number | null; cursor: number | null } = { current: null, cursor: null };
         let integrationRead: DawIntegration | null = null;
+        let cardRead: boolean | null = null;
         let cueRead: string[] = [];
         let merged: MergedRead | null;
         try {
@@ -5339,6 +5373,8 @@ if (!DEMO) {
                   cursor: await vdGet(PARAMS.SCENE_CURSOR.id, 0, 0),
                 };
                 integrationRead = await readDawIntegration();
+                if (getModel(switchTo ? switchTo.modelId : modelId).hasSD)
+                  cardRead = (await vdGet(PARAMS.SD_CARD.id, 0, 0)) !== 0;
               }
               // On the device's model: a read that carries a switch reads for the plan it
               // switches to.
@@ -5410,6 +5446,7 @@ if (!DEMO) {
         unitScene = { current: sceneRead.current, cursor: null, tab: null };
         if (sceneRead.cursor !== null) takeUnitCursor(sceneRead.cursor);
         unitIntegration = integrationRead;
+        unitCardIn = cardRead;
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.
         liveAdopted = 0;
@@ -5463,6 +5500,8 @@ if (!DEMO) {
         rereadDawIntegration();
         // …and the scene pointers, which a recall, a store or the cursor on the unit can have moved.
         rereadScenePointers();
+        // …and the microSD card, which can have gone in or come out.
+        rereadCardIn();
         simView?.unitStateChanged();
         // An edit made while the starting read ran had no session to flush through, so the
         // plan differs from the snapshot the session just took with nothing else left to

@@ -25,6 +25,7 @@ import {
   TRACK_COUNT_SEED,
   FOLLOW_USB_SEED,
   errors,
+  connectAs,
 } from "./main.device.test-util";
 
 // The side a stereo channel shows is linked to the unit's LCD selection while live: the
@@ -628,6 +629,104 @@ describe("the SIM view over a live session", () => {
       );
     },
   );
+
+  // Whether a card is in the unit's microSD slot is read at the session's start and followed as the
+  // unit announces it; a session that ends leaves it to the glass, whose own card is in.
+  it(
+    "shows the unit's microSD card on the glass while Live sync is up, and the glass's own once it ends",
+    SLOW,
+    async () => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.SD_CARD.id}/0/0`]: 0 });
+      await openSim();
+      const card = async (): Promise<unknown> => (await transport().snapshot()).get("sd.mounted");
+      expect(await card(), "the glass's own with no session").toBe(true);
+      await goLive();
+      await vi.waitFor(async () => expect(await card(), "no card in the unit").toBe(false));
+      const registered = (
+        shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: [number, number, number][] }
+      ).addrs;
+      expect(
+        registered.some(([at, x, y]) => at === PARAMS.SD_CARD.id && x === 0 && y === 0),
+        "the card is announced to the session",
+      ).toBe(true);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.SD_CARD.id, x: 0, y: 0, value: 1 }]);
+      await vi.waitFor(async () => expect(await card(), "a card put in").toBe(true));
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.SD_CARD.id, x: 0, y: 0, value: 0 }]);
+      await vi.waitFor(async () => expect(await card(), "and taken out").toBe(false));
+      $("btn-live").click();
+      await invoked(shell, "vd_disconnect");
+      await vi.waitFor(async () => expect(await card(), "the glass's own once the session ends").toBe(true));
+    },
+  );
+
+  // The card is read before the session registers for the unit's announcements, so a card taken out
+  // in between announces itself to nobody: the session reads it again once it is up.
+  it("takes a card taken out of the unit before the session registered for it", SLOW, async () => {
+    const cmds = deviceCommands(
+      { "plugin:dialog|message": "Ok", experimental_enabled: true },
+      { [`${PARAMS.SD_CARD.id}/0/0`]: 1 },
+    );
+    const set = cmds.vd_set as (a: Record<string, unknown>) => unknown;
+    const subscribe = cmds.vd_params_subscribe as (a: Record<string, unknown>) => unknown;
+    let moved = false;
+    cmds.vd_params_subscribe = (a: Record<string, unknown>) => {
+      if (!moved) {
+        moved = true;
+        set({ paramId: PARAMS.SD_CARD.id, x: 0, y: 0, value: 0 });
+      }
+      return subscribe(a);
+    };
+    await bootApp({ tauri: cmds });
+    await openSim();
+    await goLive();
+    expect(moved).toBe(true);
+    await vi.waitFor(async () =>
+      expect((await transport().snapshot()).get("sd.mounted"), "the removal the session missed").toBe(false),
+    );
+  });
+
+  // An announcement that lands while the session's own read again runs is newer than that read.
+  // Every read of the card after the session's first is held, and released only after it.
+  it("keeps a card the unit announced while the session read it again", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    let reads = 0;
+    const held: ((v: number) => void)[] = [];
+    shell.answer("vd_get", (a: Record<string, unknown>) => {
+      if (a.paramId !== PARAMS.SD_CARD.id) return unwrittenRead(a);
+      return ++reads === 1 ? 1 : new Promise<number>((done) => held.push(done));
+    });
+    await openSim();
+    await goLive();
+    await vi.waitFor(() => expect(held.length, "a read again is under way").toBeGreaterThan(0));
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.SD_CARD.id, x: 0, y: 0, value: 0 }]);
+    await vi.waitFor(async () => expect((await transport().snapshot()).get("sd.mounted")).toBe(false));
+    for (const done of held.splice(0)) done(1);
+    await new Promise((done) => setTimeout(done, 50));
+    expect((await transport().snapshot()).get("sd.mounted"), "the announcement, not the older read").toBe(false);
+  });
+
+  // The URX22 has no microSD slot, so a session on one neither reads the card nor registers for it.
+  it("neither reads nor registers the microSD card on a unit with no slot", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true, ...connectAs("URX22") });
+    await openSim();
+    await goLive();
+    expect($<HTMLSelectElement>("model-picker").value, "the session runs on a URX22").toBe("URX22");
+    const reads = shell.invokes.filter(
+      (cmd, i) => cmd === "vd_get" && (shell.args[i] as Record<string, number>).paramId === PARAMS.SD_CARD.id,
+    );
+    expect(reads, "no read of the card").toEqual([]);
+    const registered = shell.invokes.flatMap((cmd, i) =>
+      cmd === "vd_params_subscribe" ? (shell.args[i] as { addrs: [number, number, number][] }).addrs : [],
+    );
+    expect(
+      registered.some(([at]) => at === PARAMS.SD_CARD.id),
+      "no registration for the card",
+    ).toBe(false);
+    expect(
+      registered.some(([at]) => at === PARAMS.OPERATION_MODE.id),
+      "the premise: the unit states are registered",
+    ).toBe(true);
+  });
 
   it("shows the unit's operation mode, and an engaged Clip Safe while the unit announces one", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.OPERATION_MODE.id}/0/0`]: 1 });
