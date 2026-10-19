@@ -1937,8 +1937,10 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   open — while Live sync is down, since whether a compatible DAW holds the unit is read only during a session ("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"), the unit's own operations and USB Storage
   Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus while Live sync is up, as on the CONSOLE
   and in the Inspector (their wording), the sampling frequency while the device link is held and the unit is not known
-  to have Follow USB on — during Live sync only while the session carries no rate (Scene only), and while Follow USB
-  is not yet read ("Turn Follow USB off to change it during Live sync") — and the recorder's
+  to have Follow USB on — with the reason the toolbar's rate gives (`rateHoldReason`): "Cannot be changed while
+  connected to the device" for a link held by anything but a Live sync session, during Live sync the Scene only
+  device scope, which leaves the rate out (naming the Preferences Scope that puts it back), and a Follow USB not yet
+  read ("Turn Follow USB off to change it during Live sync") — and the recorder's
   Track Count while Live sync is up (the wording the Inspector already gives).
 - **Meters**: while Live sync is on and the view is up, it borrows the session's one meter subscription from the
   CONSOLE, as a tuning screen does, and gives it back when it is hidden. The simulator's meter ids are mapped onto
@@ -3519,6 +3521,9 @@ to another model, whichever entry switched it — the model picker, File > Open,
 switch a Fetch or a Live-sync start offers. During Live sync the Rate picker locks while Follow USB is on: the unit
 accepts a rate written then and takes the computer's rate back about a third of a second later, so the rate would
 show and vanish. It stays locked as well for a session whose device scope is Scene only, which writes no rate.
+Wherever it is locked, the field it sits in shows why as its tooltip — the connection, for a link held by anything
+but a Live sync session, and during one the Scene only scope (naming the Preferences Scope that puts the rate back
+in) or Follow USB — the reason the SIM view's Sampling Frequency gives too (`rateHoldReason`).
 With Follow USB off and the whole device in scope it opens, and a rate chosen on the picker, on the SIM view or by an undo / redo
 goes through `confirmLiveRate` before the flush writes it — refused while the microSD recorder holds a file, and
 otherwise confirmed with the re-clock and what it costs the recorder's Track Count, the questions the write's settle

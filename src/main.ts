@@ -112,7 +112,7 @@ import { Console } from "./ui/console";
 import { SimView } from "./ui/sim-view";
 import type { SimEdit, SimValue } from "./core/sim-map";
 import { fxHeldWrites } from "./core/sim-map-processors";
-import { simLocks } from "./core/sim-locks";
+import { rateHoldReason, simLocks, type SimLockReasons, type SimLockState } from "./core/sim-locks";
 import { MidiControl } from "./ui/midi";
 import { showConsent } from "./ui/consent";
 import { initDropzone } from "./ui/dropzone";
@@ -372,6 +372,26 @@ function setFollowUsbBadge(state: boolean | null): void {
  *  rate written to it rather than taking the computer's back. */
 function liveRateOpen(): boolean {
   return liveSessionUp && getSettings().deviceScope === "all" && followUsbState === false;
+}
+
+/** What decides whether a rate chosen in the app reaches the unit, as the toolbar's rate and the
+ *  LCD's Sampling Frequency both read it (`rateHoldReason`). */
+function rateHoldState(): Pick<SimLockState, "linked" | "live" | "rateOpen" | "rateScope"> {
+  return {
+    linked: deviceLinkHolder !== null,
+    live: liveSessionUp,
+    rateOpen: liveRateOpen(),
+    rateScope: liveSessionUp && getSettings().deviceScope !== "all",
+  };
+}
+
+/** The reasons the rate is held for, in the language on screen. */
+function rateHoldReasons(): Pick<SimLockReasons, "rateLinked" | "rateScope" | "rateFollowUsb"> {
+  return {
+    rateLinked: t().sim.lockRateLinked,
+    rateScope: t().sim.lockRateScope,
+    rateFollowUsb: t().sim.lockRateFollowUsb,
+  };
 }
 
 // Theme mode (ThemeMode, ui/prefs.ts): auto follows the OS color scheme. A
@@ -1354,19 +1374,12 @@ const buildSimView = (): SimView =>
         simLocks(
           paths,
           setupGlassPaths(getModel(modelId)),
-          {
-            linked: deviceLinkHolder !== null,
-            live: liveSessionUp,
-            rateOpen: liveRateOpen(),
-            rateFollowUsb: liveSessionUp && getSettings().deviceScope === "all" && followUsbState !== false,
-            followUsbOn: followUsbState === true,
-          },
+          { ...rateHoldState(), followUsbOn: followUsbState === true },
           {
             unitOnly: t().sim.lockUnitOnly,
             notAccepted: t().inspector.prePostLcdOnly,
             unitOp: t().sim.lockUnitOp,
-            rateLinked: t().sim.lockRateLinked,
-            rateFollowUsb: t().sim.lockRateFollowUsb,
+            ...rateHoldReasons(),
             trackCountLive: t().inspector.sdRecTrackCountLive,
             integrationOff: t().sim.lockIntegrationOff,
             setupOffline: t().sim.lockSetupOffline,
@@ -2263,7 +2276,7 @@ function syncDeviceActionUi(): void {
   // been asked what it costs (confirmLiveRate), and only while Follow USB is off: with it on the
   // unit takes the computer's rate back. Locked here, beside the other device actions, so no
   // early return can leave it stuck disabled.
-  ratePicker.disabled = deviceLinkHolder !== null && !liveRateOpen();
+  syncRateHold();
   // The model picker locks for the live SESSION only, not for every holder: a switch
   // replaces the plan wholesale, which a session cannot survive (loadPlan ends it),
   // and while live the picker is the only surface naming the unit on the wire — the
@@ -2273,6 +2286,16 @@ function syncDeviceActionUi(): void {
   picker.disabled = liveSessionUp;
   // The SIM view holds the Sampling Frequency screen shut while the link is held.
   simView?.relock();
+}
+
+// The rate picker holds still for the reason the LCD's Sampling Frequency gives, and the field it
+// sits in shows that reason as its tooltip.
+function syncRateHold(): void {
+  const held = rateHoldReason(rateHoldState(), rateHoldReasons());
+  const field = ratePicker.parentElement!;
+  ratePicker.disabled = held !== null;
+  if (held === null) field.removeAttribute("title");
+  else field.title = held;
 }
 
 // Reflect the live-sync state across the toggle, the on-air tally, and the other
@@ -2795,6 +2818,7 @@ function applyStaticI18n(): void {
   const m = t();
   $("lbl-model").textContent = m.toolbar.model;
   $("lbl-rate").textContent = m.toolbar.rate;
+  syncRateHold();
   // The badge's hint differs by state, so it cannot be relabelled from the
   // language alone — re-paint it from the state the session already holds.
   renderFollowUsbBadge();

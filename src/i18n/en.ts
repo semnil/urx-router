@@ -860,11 +860,15 @@ export const en = {
       deviceOnlyTag: tr("Set on the device"),
     },
   },
-  // Why a control on the SIM view's LCD is held shut — its tooltip.
+  // Why a control on the SIM view's LCD is held shut — its tooltip. The rate's three reasons are the
+  // toolbar rate picker's tooltip too.
   sim: {
     lockUnitOnly: tr("Change it on the device"),
     lockUnitOp: tr("Operate it on the device"),
     lockRateLinked: tr("Cannot be changed while connected to the device"),
+    lockRateScope: tr(
+      "Scene only leaves the sample rate out of Live sync. To change it during Live sync, set Scope in Preferences to All supported",
+    ),
     lockRateFollowUsb: tr("Turn Follow USB off to change it during Live sync"),
     lockIntegrationOff: tr("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"),
     lockSetupOffline: tr("Usable during Live sync"),

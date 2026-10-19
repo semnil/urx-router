@@ -639,6 +639,8 @@ export const ja: Messages = {
     lockUnitOnly: "本体で変更してください",
     lockUnitOp: "本体で操作してください",
     lockRateLinked: "デバイスとの接続中は変更できません",
+    lockRateScope:
+      "範囲が「シーンのみ」のライブ同期ではサンプルレートを扱いません。ライブ同期中に変えるには、環境設定 > デバイス入出力 > 範囲 を「全対応項目」にしてください",
     lockRateFollowUsb: "ライブ同期中に変えるには Follow USB をオフにしてください",
     lockIntegrationOff: "ライブ同期中、Cubase・Nuendo・MixKey が本体とつながっている間に使えます",
     lockSetupOffline: "ライブ同期中に使えます",

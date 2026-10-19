@@ -239,7 +239,8 @@ test("leaves the Sampling Frequency screen to the unit during Live sync while Fo
 
 // The app holds the Sampling Frequency screen shut while it is connected to the unit and the rate is
 // not one Live sync takes (Scene only here), and lets it go the moment the connection is let go,
-// which comes after the session has ended rather than with it.
+// which comes after the session has ended rather than with it. The toolbar's rate field gives the
+// same reason as its tooltip, and drops it once the rate opens.
 test("holds the Sampling Frequency screen shut while connected during Live sync, and opens it once the link is let go", async ({
   page,
 }) => {
@@ -259,13 +260,17 @@ test("holds the Sampling Frequency screen shut while connected during Live sync,
   await page.click("#btn-live");
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
   await expect(entry).toHaveAttribute("aria-disabled", "true");
-  await expect(entry).toHaveAttribute("title", en.sim.lockRateLinked);
+  await expect(entry).toHaveAttribute("title", en.sim.lockRateScope);
   await expect(entry.locator(".lock-mark")).toHaveCount(1);
+  const rateField = page.locator("label", { has: page.locator("#rate-picker") });
+  await expect(page.locator("#rate-picker")).toBeDisabled();
+  await expect(rateField, "the toolbar's rate names the same reason").toHaveAttribute("title", en.sim.lockRateScope);
 
   await page.click("#btn-device");
   await page.click("#btn-live");
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
   await expect(page.locator("#rate-picker"), "the toolbar's rate is open again").toBeEnabled();
+  await expect(rateField, "and names no reason").not.toHaveAttribute("title");
   await expect(entry.locator(".lock-mark")).toHaveCount(0);
   await expect(entry).not.toHaveAttribute("aria-disabled");
   await tapInto(page, entry, "setup.rate");

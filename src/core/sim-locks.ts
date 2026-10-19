@@ -23,7 +23,10 @@ export interface SimLockReasons {
   unitOp: string;
   /** The sampling frequency while the device link is held. */
   rateLinked: string;
-  /** The sampling frequency during Live sync while Follow USB is on. */
+  /** The sampling frequency during Live sync under the Scene only device scope, which leaves the rate
+   *  out. */
+  rateScope: string;
+  /** The sampling frequency during Live sync while Follow USB is on or not yet read. */
   rateFollowUsb: string;
   /** The recorder's Track Count while Live sync is up. */
   trackCountLive: string;
@@ -41,10 +44,33 @@ export interface SimLockState {
   /** Whether the session takes a rate chosen on the LCD: Live sync whose scope carries the rate,
    *  with Follow USB off. */
   rateOpen: boolean;
-  /** Whether Follow USB may be what holds the rate during Live sync: on, or not yet read. */
-  rateFollowUsb: boolean;
+  /** Whether the session's device scope leaves the rate out (Scene only). */
+  rateScope: boolean;
   /** Whether the unit is known to have Follow USB on. */
   followUsbOn: boolean;
+}
+
+/** Why a rate chosen in the app does not reach the unit: a link held by anything but a Live sync
+ *  session, a session whose device scope leaves the rate out, and a session that does not know
+ *  Follow USB to be off. */
+export type RateHold = "link" | "scope" | "followUsb";
+
+/** The hold on a rate chosen in the app, or null where it reaches the unit. The toolbar's rate, the
+ *  LCD's Sampling Frequency and an undo / redo that would move the rate are held for the same one. */
+export function rateHold(state: Pick<SimLockState, "linked" | "live" | "rateOpen" | "rateScope">): RateHold | null {
+  if (!state.linked || state.rateOpen) return null;
+  if (!state.live) return "link";
+  return state.rateScope ? "scope" : "followUsb";
+}
+
+/** The tooltip the rate is held with, or null where it is not held. */
+export function rateHoldReason(
+  state: Pick<SimLockState, "linked" | "live" | "rateOpen" | "rateScope">,
+  reasons: Pick<SimLockReasons, "rateLinked" | "rateScope" | "rateFollowUsb">,
+): string | null {
+  const hold = rateHold(state);
+  if (hold === null) return null;
+  return { link: reasons.rateLinked, scope: reasons.rateScope, followUsb: reasons.rateFollowUsb }[hold];
 }
 
 /** The SETUP > GENERAL screens of settings the app does not write: the operation mode, which a session
@@ -115,11 +141,8 @@ export function simLocks(
   out.push({ target: { kind: "path", path: "sd.usbStorage" }, reason: reasons.unitOp });
   // While Follow USB is on the unit takes no rate from its own screen either, which the simulator
   // shows from the Follow USB it is given.
-  if (state.linked && !state.rateOpen && !state.followUsbOn)
-    out.push({
-      target: { kind: "screen", id: "setup.rate" },
-      reason: state.rateFollowUsb ? reasons.rateFollowUsb : reasons.rateLinked,
-    });
+  const rateHeld = state.followUsbOn ? null : rateHoldReason(state, reasons);
+  if (rateHeld !== null) out.push({ target: { kind: "screen", id: "setup.rate" }, reason: rateHeld });
   for (const path of paths) {
     // A channel's PRE / POST into an FX bus: while Live sync is up it is the unit's own, as on the
     // CONSOLE and in the Inspector.

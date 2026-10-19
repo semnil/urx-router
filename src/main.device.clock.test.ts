@@ -340,6 +340,7 @@ describe("the Follow USB badge", () => {
     const from = shell.invokes.length;
     $("btn-fetch").click();
     expect($<HTMLSelectElement>("rate-picker").disabled, "the premise: the fetch took the link").toBe(true);
+    expect($("rate-picker").parentElement!.title, "the field names the link").toBe(t().sim.lockRateLinked);
     await settled();
     await vi.waitFor(() => expect(errors(shell)).toEqual([t().status.fetchError("read-refused")]), {
       timeout: 10_000,
@@ -881,14 +882,21 @@ describe("the sample rate during Live sync", () => {
   });
 
   // A Scene-only session leaves the rate out of what it writes, so a rate chosen then would show in
-  // the app and never reach the unit.
-  it("keeps the rate locked for a session whose scope leaves the rate out", SLOW, async () => {
+  // the app and never reach the unit. The field says so, in the language on screen.
+  it("keeps the rate locked for a session whose scope leaves the rate out, and names the scope", SLOW, async () => {
     const shell = (await bootApp({
       seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) },
       tauri: deviceCommands({ "plugin:dialog|message": "Ok" }, SEED),
     }))!;
     await goLive();
     expect(picker().disabled).toBe(true);
+    const field = picker().parentElement!;
+    expect(field.title, "the field names the scope").toBe(t().sim.lockRateScope);
+    const i18n = await import("./i18n");
+    i18n.setLang("ja");
+    expect(field.title, "in the language switched to").toBe(i18n.t().sim.lockRateScope);
+    expect(field.title).not.toBe(t().sim.lockRateScope);
+    i18n.setLang("en");
     chooseRate(96_000);
     await new Promise((r) => setTimeout(r, 50));
     expect(confirms(shell), "nothing asked").toEqual([]);
@@ -905,6 +913,7 @@ describe("the sample rate during Live sync", () => {
       expect(picker().disabled).toBe(true);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.FOLLOW_USB.id, x: 0, y: 0, value: 0 }]);
       await vi.waitFor(() => expect(picker().disabled).toBe(false), { timeout: 10_000 });
+      expect(picker().parentElement!.hasAttribute("title"), "and no reason once it opens").toBe(false);
     },
   );
 
