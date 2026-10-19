@@ -769,6 +769,24 @@ describe("the SIM view over a live session", () => {
     },
   );
 
+  // A read that fails ends the session, as every other failed read on the device link does.
+  it("ends the session when its read again of the microSD card fails", SLOW, async () => {
+    let reads = 0;
+    const shell = await bootDevice({
+      experimental_enabled: true,
+      vd_get: (a: Record<string, unknown>) => {
+        if (a.paramId !== PARAMS.SD_CARD.id) return unwrittenRead(a);
+        if (++reads > 1) throw new Error("card read lost");
+        return 1;
+      },
+    });
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+    expect(reads, "the starting read, then the read again").toBe(2);
+    expect(errors(shell).join(" "), "the failed read again is what ended it").toContain("card read lost");
+    expect(live().getAttribute("aria-checked")).toBe("false");
+  });
+
   it("shows the unit's operation mode, and an engaged Clip Safe while the unit announces one", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.OPERATION_MODE.id}/0/0`]: 1 });
     await openSim();
