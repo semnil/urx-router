@@ -78,7 +78,7 @@ export const ja: Messages = {
     cue: "C.INT",
     cueFull: "Cue Interrupt",
     cueChip: "CUE",
-    cueOffline: "CUE は Live 同期中に本体の CUE を切り替えます。",
+    cueOffline: "CUE はライブ同期中に本体の CUE を切り替えます。",
     cueTaking: "Cue Interrupt — 何かを CUE している間、このモニターは元の音の代わりに CUE バスを流します",
     mono: "MONO",
     // ストリップ群の区切りラベル (この master と下の group*) と読み値キャプション
@@ -485,7 +485,7 @@ export const ja: Messages = {
     monitorOn: "Monitor",
     cueInterrupt: "CUE Interrupt",
     cue: "CUE",
-    cueOffline: "CUE は Live 同期中に本体の CUE を切り替えます。",
+    cueOffline: "CUE はライブ同期中に本体の CUE を切り替えます。",
     mono: "MONO",
     phonesLevel: "PHONES Level",
     on: "ON",
@@ -639,9 +639,9 @@ export const ja: Messages = {
     lockUnitOnly: "本体で変更してください",
     lockUnitOp: "本体で操作してください",
     lockRateLinked: "デバイスとの接続中は変更できません",
-    lockRateFollowUsb: "Live 同期中に変えるには Follow USB をオフにしてください",
-    lockIntegrationOff: "Live 同期中、Cubase・Nuendo・MixKey が本体とつながっている間に使えます",
-    lockSetupOffline: "Live 同期中に使えます",
+    lockRateFollowUsb: "ライブ同期中に変えるには Follow USB をオフにしてください",
+    lockIntegrationOff: "ライブ同期中、Cubase・Nuendo・MixKey が本体とつながっている間に使えます",
+    lockSetupOffline: "ライブ同期中に使えます",
   },
   shelf: {
     title: "非表示",
@@ -869,7 +869,7 @@ export const ja: Messages = {
     importSettings: (name: string, model: string): string =>
       `${name} を現在の ${model} 計画に取り込みますか? 設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます (ファイルに編集状態は含まれません)。`,
     importSettingsLive: (name: string, model: string): string =>
-      `${name} を現在の ${model} 計画に取り込み、本体に書き込みますか? Live 同期中のため、取り込んだ設定はすべて本体に送られます (サンプリング周波数は今のままです)。設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます。`,
+      `${name} を現在の ${model} 計画に取り込み、本体に書き込みますか? ライブ同期中のため、取り込んだ設定はすべて本体に送られます (サンプリング周波数は今のままです)。設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます。`,
     reclock: (deviceRate: string, planRate: string): string =>
       `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。コンピューター側はデバイスの新しいレートに追従します。続行しますか?`,
     followUsbOn:

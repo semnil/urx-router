@@ -344,7 +344,7 @@ Auto Makeup ON では gain を実機が算出する。再計算はアドレス�
 
 **スイッチは実機を動かすのと同じようにプランを動かす。** ノブを入れると実機は attack と release をその組に、
 Auto Makeup を OFF に、レベルを 0 にもするので、プランも同じ押下でその 4 つを取る (`compOneKnobPatch`) — この画面
-からでも、MIDI のコントロールからでも、SIM ビューからでも同じ — ので、Live 同期が切れていても行は実機が持つ値を
+からでも、MIDI のコントロールからでも、SIM ビューからでも同じ — ので、ライブ同期が切れていても行は実機が持つ値を
 読む。threshold / ratio / gain / knee はそこでは書かない: レベルがまた動かし、その値はこのアプリが再現しないため。
 切ったときはスイッチだけが動く。ノブが入っていて別の attack・release・Auto Makeup を持つ文書は、読み込み時に
 ノブの値へそろえる (architecture.md の「ソース構成」の `plan-validate.ts`)。
@@ -1652,7 +1652,7 @@ BPM と Note が 2 段目を開くことになる。リバーブは 3 段、デ�
 SIM ビューも同じにする。
 
 `fxRowOwners` は実機が計算するスロットを名指し、それを読む面は 3 つある — `pushFxEffectCommands` が
-送る集合から外し、`planToFollowOnlyAddrs` が同じスロットを「読むだけのアドレス」として戻し、Live 同期中に
+送る集合から外し、`planToFollowOnlyAddrs` が同じスロットを「読むだけのアドレス」として戻し、ライブ同期中に
 手で回した値は本体へ直接書く (画面は `main.ts` の `writeMovedHeld`、MIDI の割当は `CueAccess.writeHeld`、
 SIM ビューは `deviceWrite` の編集から)。書き手の分担だけは体裁の問題ではない: **実機は Sync ON 中の
 当該スロットへの書込を受け入れて保持する**ため、書込のたびにプランの写しを送り直すとディレイタイムが
