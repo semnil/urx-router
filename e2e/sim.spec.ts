@@ -200,6 +200,48 @@ test("holds Software Integration shut again once Live sync ends, with the reason
   await expect(integration.locator(".lock-mark")).toHaveCount(1);
 });
 
+// What the session told the glass goes when it ends, and what the glass keeps for its own showing
+// stays: the channel selected on it, the bank it shows and its knob mode.
+test("keeps the LCD's selected channel when Live sync ends", async ({ page }) => {
+  await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  const selected = glass(page).locator(".strip.is-selected .strip-id");
+  await expect(selected).toHaveText("CH 1");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await glass(page)
+    .locator(".strip")
+    .filter({ has: page.locator(".strip-id", { hasText: /^CH 2$/ }) })
+    .locator(".strip-name")
+    .click();
+  await expect(selected).toHaveText("CH 2");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#rate-picker"), "the session's link is let go").toBeEnabled();
+  await expect(selected).toHaveText("CH 2");
+});
+
+test("keeps the LCD's bank and knob mode when Live sync ends", async ({ page }) => {
+  await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await glass(page).locator(".bank-btn").click();
+  await glass(page).locator(".bank-option-output").last().click();
+  await expect(glass(page).locator(".bank-btn")).toHaveAttribute("aria-label", "OUTPUT channel bank 1 of 1");
+  await glass(page).getByRole("button", { name: "USER DEFINED KNOBS mode", exact: true }).click();
+  await expect(glass(page).locator(".udk-toggle")).toHaveAttribute("aria-pressed", "true");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#rate-picker"), "the session's link is let go").toBeEnabled();
+  await expect(glass(page).locator(".bank-btn")).toHaveAttribute("aria-label", "OUTPUT channel bank 1 of 1");
+  await expect(glass(page).locator(".udk-toggle")).toHaveAttribute("aria-pressed", "true");
+});
+
 test("takes Follow USB on the LCD's Sampling Frequency screen as the toolbar's FOLLOW USB", async ({ page }) => {
   await stubTauriDevice(page, {
     values: { [PARAMS.FOLLOW_USB.id]: 1 },

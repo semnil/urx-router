@@ -1923,7 +1923,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   the LCD was given that is no longer given at all — whether a DAW holds the unit, once the session that read it
   ends — cannot be pushed, and the simulator keeps what it was told; the view then has it read the whole set again,
   which drops it, so Software Integration is held shut with its reason again rather than drawn as the session left
-  it.
+  it. That read answers every path the app gives nothing of its own with what the LCD holds there, so the LCD's own
+  showing — the channel selected on it, the bank it shows, its knob mode — stays as it was.
 - **What it refuses** are the unit's own operations — a scene recall or store, the card, the recorder, playback.
   The plan holds none of them, so the LCD carries none out, and the status line says so.
 - **What it holds shut** is drawn on the LCD before it is pressed (`sim-locks.ts`, handed to the simulator's

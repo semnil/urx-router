@@ -187,7 +187,12 @@ export class PlanTransport implements DeviceTransport {
   /** What the glass shows: the plan where the table answers, the [Sends] destination the session
    *  holds, and the unit as it ships elsewhere. */
   private current(): Map<string, SimValue> {
-    const out = new Map<string, SimValue>(this.shipped);
+    return new Map<string, SimValue>([...this.shipped, ...this.given()]);
+  }
+
+  /** Every value the app gives the glass over the shipped ones. */
+  private given(): Map<string, SimValue> {
+    const out = new Map<string, SimValue>();
     for (const [path, value] of readSim(this.bindings, this.hooks.getPlan())) out.set(path, value);
     const sends = this.hooks.unitSendsTarget();
     if (sends !== null) out.set(SENDS_TARGET_PATH, sends);
@@ -199,10 +204,31 @@ export class PlanTransport implements DeviceTransport {
     return out;
   }
 
+  /** What the next snapshot answers a path only the shipped values answer with: the glass's own
+   *  reading, where one is given (`readGlassNext`). */
+  private glassReading: ((path: ParamPath) => ParamValue | undefined) | null = null;
+
+  /** Have the next snapshot answer each path only the shipped values answer with what the glass
+   *  holds there, so a snapshot taken to drop a value leaves the screen state and the simulator's
+   *  own values as they are. */
+  readGlassNext(read: (path: ParamPath) => ParamValue | undefined): void {
+    this.glassReading = read;
+  }
+
   snapshot(): Promise<Map<ParamPath, ParamValue>> {
     if (this.closed) return Promise.reject(new Error("closed"));
-    this.held = this.current();
-    return Promise.resolve(new Map(this.held));
+    const given = this.given();
+    this.held = new Map<string, SimValue>([...this.shipped, ...given]);
+    const out = new Map<ParamPath, ParamValue>(this.held);
+    const glass = this.glassReading;
+    this.glassReading = null;
+    if (glass)
+      for (const path of this.shipped.keys()) {
+        if (given.has(path)) continue;
+        const value = glass(path);
+        if (value !== undefined) out.set(path, value);
+      }
+    return Promise.resolve(out);
   }
 
   writable(path: ParamPath): boolean {
@@ -357,9 +383,14 @@ export class SimView {
       const transport = this.transport;
       if (!transport) return;
       // The simulator keeps a value it was given until a snapshot leaves it out, so a value no
-      // longer given is dropped by attaching the same transport again. A transport an unmount
-      // closed answers no snapshot, and the glass it fed is gone with it.
-      if (transport.push() && this.sim) void this.sim.store.attach(transport).catch(() => undefined);
+      // longer given is dropped by attaching the same transport again, with what the glass holds
+      // everywhere the app gives nothing of its own. A transport an unmount closed answers no
+      // snapshot, and the glass it fed is gone with it.
+      const sim = this.sim;
+      if (transport.push() && sim) {
+        transport.readGlassNext((path) => (sim.store.has(path) ? sim.store.get(path, 0) : undefined));
+        void sim.store.attach(transport).catch(() => undefined);
+      }
       this.sim?.setLocks(this.hooks.locks(transport.paths()));
     });
   }
