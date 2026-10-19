@@ -911,7 +911,9 @@ describe("the live session", () => {
   // an operator's own No Effect. What says otherwise is the rate notify that escalated to
   // the read — which arrives BEFORE it starts, so the rate history is not sliced to the
   // read's own window the way the insert-FX announcements are.
-  it("keeps an effect through a rate excursion that was over before the read asked", SLOW, async () => {
+  // Its own budget rather than SLOW: the two waits below may take 25 s each, and a wait that
+  // runs out inside the test's budget is what reports how far the read had gone.
+  it("keeps an effect through a rate excursion that was over before the read asked", { timeout: 60_000 }, async () => {
     const shell = await bootDevice();
     await heldByExcursion(shell);
 
@@ -932,10 +934,22 @@ describe("the live session", () => {
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
     ]);
 
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
+    // Each wait names how far the read had gone when it last looked — the reads the unit
+    // answered, the insert-FX writes sent and the status line — so a wait that runs out says
+    // whether the full read began and whether it reached the write.
+    const progress = (): string =>
+      `${shell.count("vd_get")} read(s), ${insertFxWrites(shell).length} insert-FX write(s), status "${statusText()}"`;
+    await vi.waitFor(
+      () =>
+        expect(
+          countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0)),
+          progress(),
+        ).not.toBeNaN(),
+      { timeout: 25_000 },
+    );
+    await vi.waitFor(() => expect(insertFxWrites(shell).length, progress()).toBeGreaterThan(written), {
       timeout: 25_000,
     });
-    await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
     expect(insertFxWrites(shell).at(-1)).toBe(COMPANDER_H);
     await endLive();
   });
