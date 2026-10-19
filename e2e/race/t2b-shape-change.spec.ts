@@ -358,12 +358,8 @@ test.describe("T2b shape-change", () => {
         ` achieved keystroke gaps max ${Math.max(...keyGaps).toFixed(0)} ms (requested 90, flush window 120)`,
     );
 
-    // The achieved gaps are printed above rather than asserted, and the reason is worth
-    // keeping: they are NOT what decides this case. At 12x CPU throttling the undo half
-    // breaks (typed 4 → settled 0 instead of 1) with a max gap of 152 ms, while at 6x it
-    // passes with a LARGER one, 188 ms. A guard on the gap would therefore have turned a
-    // case that is correct at CI-equivalent load red, and named the wrong cause while
-    // doing it. What actually happens at 12x is open — reference/work/e2e-flakes.md.
+    // The achieved gaps are printed above rather than asserted; what this case holds is the
+    // write-count range and the single undo entry below.
     //
     // The string path is throttled by the flush window like everything else, but it is
     // NOT coalesced by the gesture: eight keystrokes 90 ms apart leave as one write per
