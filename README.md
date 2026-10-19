@@ -48,9 +48,9 @@ Live sync is turned on. The parameter mapping and the factory-initial plan are v
 hardware for the **URX44V** and the **URX22**; the **URX44** is assumed identical to the URX44V
 and is not verified on hardware. Writing overwrites the device's current settings; see the
 [Disclaimer](#disclaimer). External MIDI controllers can be mapped to the console controls
-(**Device → MIDI control**). The `--experimental` flag additionally unlocks a
-destructive-then-restored self-test diagnostic, importing a URX `.urxf` settings file, and a
-read-only **Compare with device**.
+(**Device → MIDI control**). The `--experimental` flag additionally unlocks the **SIM** view (the
+unit's LCD, drawn over the same plan), a destructive-then-restored self-test diagnostic, importing a
+URX `.urxf` settings file, and a read-only **Compare with device**.
 
 The console view shows the same plan as a mixer surface — per-strip faders, mutes, EQ,
 dynamics, and sends. Edits made here live-sync to the device the same way, and live meters
@@ -112,8 +112,9 @@ both app languages. That is enforced by the compiler rather than by review: ever
 `tr()` (this app's own copy), and a translation of a `dev()` string fails the build. See
 [CONTRIBUTING.md](CONTRIBUTING.md#conventions).
 
-Pass `--experimental` to enable the hidden-by-default diagnostics — the on-device self-test,
-`.urxf` settings-file import, and read-only **Compare with device**:
+Pass `--experimental` to enable what is hidden by default — the **SIM** view, the on-device
+self-test, `.urxf` settings-file import, read-only **Compare with device**, and the
+**Device Center link** readout on the status bar:
 
 ```sh
 pnpm tauri dev -- -- --experimental          # dev

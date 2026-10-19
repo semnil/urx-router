@@ -267,7 +267,8 @@ carries a one-line map of the same directories and points here.
     and that is the head's own design rather than an oversight: engagement is the head's to own, so a pickup
     gang whose members sit at different values crosses over on the head's value
   - `src/core/control/` — live device control (vd protocol). Writes and Live sync are always enabled on
-    desktop; only the round-trip diagnostics in `selftest.ts` require an `--experimental` launch
+    desktop; the round-trip diagnostics in `selftest.ts` require an `--experimental` launch, as Compare with
+    device, the `.urxf` import, the SIM view and the link statistics readout do
     - `comp-ratio.ts` the ratios a compressor's Ratio control stops on — the channel COMP and the SSMCS
       strip's compressor stop on the same ones and write them differently, and a module of its own is what
       lets both of the layers below read the table at module scope (channel-tuning.md "Ratio stops where
@@ -751,7 +752,9 @@ carries a one-line map of the same directories and points here.
   `append_link_log` appends one JSONL line to the app log directory and `append_midi_log` a batch of them
   to the MIDI trace beside it and `append_watch_log` to the parameter watch's file (dev binaries only — both
   refuse outright otherwise); `--experimental` gate:
-  `experimental_enabled`/`self_test_requested` are self-test only) + **the session teardown** (one epilogue
+  `experimental_enabled` answers for the launch flag that opens the self-test, Compare with device, the `.urxf`
+  import, the SIM view and the link statistics readout, and `self_test_requested` for the self-test's auto-run
+  alone) + **the session teardown** (one epilogue
   every break lands on: unregister every address the session registered, then begin the orderly close (shutting
   the socket's write half) — a replaced connection, an explicit disconnect, a dropped channel, the pump's own error and the
   app's quit all leave the same way, and the drain stops at the socket's first read timeout rather than
