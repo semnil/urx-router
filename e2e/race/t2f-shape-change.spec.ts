@@ -23,6 +23,7 @@ import { readoutOf } from "./ui";
 import { cueNotifyAddrs } from "../../src/core/control/translate";
 import { MIC_LINE_JACK_BASE, PARAMS } from "../../src/core/control/params";
 import { getModel } from "../../src/models";
+import { en } from "../../src/i18n/en";
 
 // T2f shape-change — the two addresses that are in the plan's world without being in
 // the plan (docs/{en,ja}/live-race-harness.md).
@@ -385,11 +386,31 @@ test.describe("T2f shape-change", () => {
     // The device's rate is now the plan's, on a value the operator explicitly chose
     // against 1.5 s earlier…
     await expect(page.locator("#rate-picker")).toHaveValue(String(DEVICE_RATE));
-    // …and the entry that would have said so is gone: a full reflect re-authored the
-    // plan from the device, so no earlier entry describes a state it can return to.
-    // The refusal in phase C was therefore not a deferral — there is nothing left to
-    // retry once the session ends.
-    expect(depthEnd).toEqual({ undo: 0, redo: 0 });
+    // …and the entry phase C held back stands, with the rate taken out of it: the reconcile
+    // read back the rate alone, at the value that entry moved it from. What is left is the
+    // fader step, so the press phase C refused now applies during the session with Follow
+    // USB still on — the fader goes back, and no rate is written.
+    expect(depthEnd).toEqual(depthAfter);
+    await mark(page, "undo-after-takeback");
+    await expect
+      .poll(async () => {
+        await page.keyboard.press("Control+z");
+        return page.locator("#statusbar").textContent();
+      })
+      .not.toBe(en.status.undoDeviceBusy);
+    await expect(firstStripReadout(page)).toHaveText(readoutBefore);
+    await settleAfter(page, "undo-after-takeback", 900, 2000);
+    trace = await traceOf(page);
+    const takenBack = setsAfter(trace, markTime(trace, "undo-after-takeback")!);
+    expect(
+      takenBack.filter((s) => s.addr === RATE_ADDR),
+      "no rate on the undo",
+    ).toHaveLength(0);
+    expect(
+      takenBack.filter((s) => paramIdOf(s.addr) === CH1_FADER_ID),
+      "the fader back",
+    ).toHaveLength(1);
+    expect(await depthOf(page)).toEqual({ undo: depthAfter.undo - 1, redo: depthAfter.redo + 1 });
   });
 
   // shape-device-setup-plan-external. The fourteen SETUP > GENERAL addresses share the
