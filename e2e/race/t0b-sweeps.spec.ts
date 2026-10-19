@@ -1402,6 +1402,9 @@ test.describe("T0b baseline sweeps", () => {
       await page.mouse.move(x, box.y + box.height * (0.25 + 0.03 * i));
       await page.waitForTimeout(25);
     }
+    // The level the drag left in the plan before the rebuild: the readout the last move
+    // painted. Its write can still be on its way when the switches land.
+    const beforeRebuild = (await faderReadout(page, "CH 1").textContent()) ?? "";
 
     await mark(page, "lang-switch");
     await page.locator("#btn-prefs").dispatchEvent("click");
@@ -1425,7 +1428,7 @@ test.describe("T0b baseline sweeps", () => {
 
     const shown = (await faderReadout(page, "CH 1").textContent()) ?? "";
     const held = (await memOf(page))[CH1_FADER];
-    console.log(`after the rebuild: screen shows ${shown} dB, device holds ${held}`);
+    console.log(`after the rebuild: screen shows ${shown} dB, device holds ${held}; before it ${beforeRebuild} dB`);
 
     // The deferred refresh: leave the console, let the device change ch2 while the
     // console is off screen, come back. The ledger says whether the plan took the
@@ -1478,10 +1481,17 @@ test.describe("T0b baseline sweeps", () => {
     const trace = await traceOf(page);
     const themeAt = markTime(trace, "theme-switch")!;
     const endAt = markTime(trace, "drag-end")!;
-    // The writes the drag made AFTER the console was rebuilt under it. Bounded at the
-    // pointerup, so a later flush of the same value cannot stand in for one.
+    // The writes the drag made AFTER the console was rebuilt under it: a level other than
+    // the one the plan held when the rebuild landed. The send of the last move before the
+    // rebuild carries that level and can start after the theme mark, so it is not one of
+    // them. Bounded at the pointerup, so a later flush of the same value cannot stand in
+    // for one.
     const afterRebuild = setsOf(trace).filter(
-      (s) => s.addr === CH1_FADER && s.start > themeAt && s.start < endAt + 400,
+      (s) =>
+        s.addr === CH1_FADER &&
+        s.start > themeAt &&
+        s.start < endAt + 400 &&
+        deviceLevelText(s.value) !== beforeRebuild,
     );
 
     console.log(timeline(trace, { from: markTime(trace, "drag-start")! - 50, limit: 80 }));
@@ -1510,6 +1520,7 @@ test.describe("T0b baseline sweeps", () => {
     //    rule belongs to Console.render() rather than to the link.
     expect(afterRebuild).toHaveLength(0);
     expect(shown).not.toBe("0.00"); // and the drag really did move it off the factory value
+    expect(shown).toBe(beforeRebuild);
     expect(shown).toBe(deviceLevelText(held));
     // 2. A direct notify that arrives while the CONSOLE is off screen reaches the plan
     //    (the ledger names follow-direct as the writer) and the deferred refresh is
