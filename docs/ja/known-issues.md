@@ -230,7 +230,7 @@ param 736。[device-model.md](device-model.md) 参照)。
 
 これは URX44 / URX44V のみです (URX22 に microSD 録音はありません)。
 
-## アプリは本体の動作モード (Standard / Simple) に従わない
+## グラフと CONSOLE は本体の動作モード (Standard / Simple) に従わない
 
 URX は初期設定または SETUP > [Operation Mode] で選ぶ 2 つの動作モード — **Standard** と
 **Simple** — のいずれかで動作します。Simple Mode では本体が提供する範囲が目に見えて狭まり、
@@ -240,8 +240,10 @@ URX は初期設定または SETUP > [Operation Mode] で選ぶ 2 つの動作�
 入ってプリセットを適用すると 1 になり、変化のたびに notify で告知します。Standard に戻すと 0 に
 戻り、ほかのパラメータは動きません。実機 URX22 と URX44V (System 1.3.1.0) で、SETUP >
 [Operation Mode] から P02 のプリセットで Simple に入って確認しました。Setup Assistant と Scene
-からの入り方、ほかのプリセットは測定していません。アプリはこれを読まないので、どちらでも同じ
-コントロールを表示します — Simple Mode の本体側では取り上げられている機能についても同様です。
+からの入り方、ほかのプリセットは測定していません。実験的起動では、アプリはライブ同期中にこれを
+読み、notify にも追従して SIM ビューの LCD に表示します (architecture.md「SIM ビュー (本体の LCD)」)。ほかの
+面はこれを読みません: グラフ・CONSOLE・インスペクタは、どちらのモードでも同じコントロールを表示
+します — Simple Mode の本体側では取り上げられている機能についても同様です。
 
 現在のシーンや**プリセット**も読み取れます (`781:0:0`。Recall と Store で動き、本体の `Pn` は `0x8000` + n) が、
 モードとは別物で、Standard に戻した後も Simple のプリセットの値のまま残ります。取り上げられた
