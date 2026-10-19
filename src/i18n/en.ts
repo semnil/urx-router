@@ -1277,7 +1277,9 @@ export const en = {
     scope: tr("Scope"),
     scopeAll: tr("All supported"),
     scopeScene: tr("Scene only"),
-    deviceNote: tr("One scope for Fetch from device, Write to device, and Live sync. Locked while Live sync is on."),
+    deviceNote: tr(
+      "One scope for Fetch from device, Write to device, and Live sync. Changing it during Live sync starts the session again.",
+    ),
     sceneNote: tr(
       "Scene only leaves the URX's device-wide settings untouched: monitor, phones, output patches, streaming, oscillator, and the sample rate.",
     ),
