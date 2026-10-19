@@ -50,8 +50,8 @@
       "file": "e2e/race/t3b-undo.spec.ts",
       "title": "T3b undo > a sampleRate-touching entry is refused while live",
       "guardedBy": {
-        "file": "src/main.device.fetch.test.ts",
-        "title": "Fetch from device > drops the undo history on a live start whose read changed no value"
+        "file": "src/ui/history.test.ts",
+        "title": "refusals > names the rest of the entry when the refused step carries more than the rate"
       }
     },
     {

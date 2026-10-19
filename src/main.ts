@@ -1498,8 +1498,16 @@ let followFull = false;
 // land before one runs and a flag ASSIGNED per call would let the last one speak for
 // all of them; it accumulates instead. Only its emptiness is read — the keys
 // themselves are the reads' own business, and each already absorbed or re-based with
-// them at its own site. Both reconcile hooks add; the reflect drains it.
+// them at its own site. Both reconcile hooks add through followAuthor; the reflect drains it.
 let followAuthored = 0;
+/** Settle the history for what a reconcile authored. A patch that moved the sample rate and
+ *  nothing else is taken into the baseline here, and takes the rate out of the undo entry whose
+ *  move the unit took back, or the redo entry whose move the unit made; every entry stands
+ *  otherwise. Any other patch is counted for the reflect, which drops both stacks. */
+function followAuthor(patch: PlanPatch): void {
+  if (patch.length > 0 && patch.every((e) => e.field === "sampleRate")) planHistory?.takeBackRate(patch);
+  else followAuthored += patch.length;
+}
 function reflectFollow(): void {
   const ids = [...followDirtyNodes];
   followDirtyNodes.clear();
@@ -1525,7 +1533,8 @@ function reflectFollow(): void {
     // announcement mistaken for a device edit, and a write the unit never announced
     // (follow.ts's idle net) — and neither is rare enough to pay for. Nothing is
     // absorbed in the other arm: PlanHistoryStack.absorb returns immediately on an
-    // empty patch, so the fallback would be a no-op spelled as code.
+    // empty patch, so the fallback would be a no-op spelled as code. A read that moved
+    // the sample rate alone is not counted here: followAuthor absorbed it at its hook.
     const authored = followAuthored;
     followAuthored = 0;
     if (authored) planHistory?.reset();
@@ -2034,7 +2043,7 @@ const follow =
           // the session it belongs to ends at this throw.
           assertReadComplete(merged, "device-follow scoped readback issues:");
           live?.resync(merged.deviceView, since, nodeIds);
-          followAuthored += merged.devicePatch.length;
+          followAuthor(merged.devicePatch);
           followFull = true;
           requestReflect();
           reapplyHeld(merged);
@@ -2067,7 +2076,7 @@ const follow =
           assertReadComplete(merged, "device-follow readback issues:");
           plan.unreadNodes = merged.unreadNodes;
           live?.resync(merged.deviceView, since);
-          followAuthored += merged.devicePatch.length;
+          followAuthor(merged.devicePatch);
           followFull = true;
           requestReflect();
           reapplyHeld(merged);
@@ -5783,12 +5792,13 @@ if (!DEMO) {
       return;
     }
     if (result.errors.length) console.warn("settings import issues:", result.errors);
-    // Same provenance as a device fetch: nodes whose values did not come through
-    // still show their plan default, and the graph flags them as such.
-    plan.unreadNodes = result.unreadNodes;
     // During a session the import is an edit: the session writes it to the unit, and it is one
     // undo step on top of the history it found. Otherwise it settled the plan the way a read does.
     const edit = live && liveSessionUp;
+    // Same provenance as a device fetch: nodes whose values did not come through
+    // still show their plan default, and the graph flags them as such. During a session
+    // they hold what the session read from the unit, so none is flagged.
+    if (!edit) plan.unreadNodes = result.unreadNodes;
     rerenderPlan(edit ? "keep" : "reset");
     dirty = true;
     if (edit) {

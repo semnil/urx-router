@@ -1427,20 +1427,16 @@ test.describe("T3b undo", () => {
     expect(status).toBe(NOTHING_TO_UNDO);
   });
 
-  // A sampleRate entry cannot coexist with a live session: activating one runs the
-  // readback's rerenderPlan, which resets both stacks, and the rate picker is disabled
-  // from then on. t3-undo.spec.ts's refusal ladder already probes both halves of that
-  // (the offline rate change IS undoable; the picker IS locked while live) and pins
-  // `undoRateLocked` as an unreachable refusal while live. There is no second route into the state
-  // — a ?plan= link and a file load both go through loadPlan, which resets too — so
-  // there is nothing here that could fail.
+  // A sampleRate entry recorded during a session is refused while the session holds the
+  // rate, and t2f-shape-change.spec.ts runs that in this tier: its Phase C records the rate
+  // and a fader step as one entry with Follow USB off, turns Follow USB on with a notify, and
+  // has the undo refused whole and held back, with nothing sent. An entry recorded before the
+  // session does not reach it — activating one runs the readback's rerenderPlan, which resets
+  // both stacks — and t3-undo.spec.ts's refusal ladder pins that as (i). This case would
+  // repeat Phase C.
   //
-  // The reason is guarded at unit level (the ledger names the test): the readback a
-  // session starts with drops both stacks, read through the status line an undo and a
-  // redo write afterwards — "Nothing to undo" / "Nothing to redo" answer whether an entry
-  // is left, which the edit menu's state does not (it counts an open entry as undoable).
-  // The refusal that would fire if such an entry existed is asserted in
-  // `src/ui/history.test.ts`, and the picker being locked in `src/main.device.clock.test.ts`.
+  // The ledger names the unit test of the refusal itself: an entry carrying the rate and
+  // more is refused whole while the rate is held, and the same press works once it is not.
   test.skip("a sampleRate-touching entry is refused while live", () => {});
 
   // Reset path (g), a .urxf settings import made with no session up, is behind the
