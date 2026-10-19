@@ -1880,7 +1880,9 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   keeps a destination of its own, which reaches nothing.
 - **SETUP > Software Integration** is the unit's setting rather than the plan's (`daw-integration.ts`). The unit opens
   it only while a compatible DAW (Cubase, Nuendo, MixKey) holds it, which `816` reads as anything but 0, and the LCD
-  opens it only then and only while Live sync is up. A session reads `816` and the two Post Fader Send for FX values
+  opens it only then and only while Live sync is up: during Live sync the session tells the LCD whether one does, and
+  the LCD draws the entry as the unit does, out of reach with none and with nothing of the app's on it; with no session
+  the app holds it shut (below). A session reads `816` and the two Post Fader Send for FX values
   (`879` for FX 1, `880` for FX 2), registers all three, reads them again once registered — a DAW that took or let
   go of the unit in between announced itself to nobody — and follows their announcements, an announcement or a pick made
   while that read is out standing over its answer for that one value, the read's answer taken for the others. The LCD shows the sends the session holds, and a send picked on it is
@@ -1921,7 +1923,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   app cannot do is held this way** — a value it does not write, a function it does not carry, a state it cannot read.
   The LCD simulates the unit, so a control the unit itself holds still or hides, showing nothing for it, is drawn as the
   unit draws it, by the simulator: a COMP or M.B.Comp value its 1-knob drives, Pitch Fix's notes under MIDI Control,
-  FX 2's sends at a rate that takes FX 2 out, the rates while Follow USB is on. Held are the
+  FX 2's sends at a rate that takes FX 2 out, the rates while Follow USB is on, Software Integration while no compatible
+  DAW holds the unit during Live sync. Held are the
   SETUP > GENERAL screens of what the app does not write — the operation mode, which a session reads and shows,
   and the unit's clock ("Change it on the device"), the SETUP > GENERAL screens of what it does write and their
   values — held in place on a screen already open — while Live sync is down, since the app writes them over a

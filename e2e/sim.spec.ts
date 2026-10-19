@@ -909,7 +909,7 @@ test("the LCD's [Sends] destination is the unit's while Live sync is up, and the
 // with no lock of the app's own: its two sends are the unit's, read by the session, followed through
 // their notifies, and written when picked on the glass while a DAW holds the unit — and a pick made
 // while none does writes nothing.
-test("opens Software Integration on the LCD during Live sync, and writes a send picked there while a DAW holds the unit", async ({
+test("draws Software Integration on the LCD during Live sync as the unit does, and writes a send picked there while a DAW holds the unit", async ({
   page,
 }) => {
   const DAW: number = PARAMS.DAW_INTEGRATION.id;
@@ -923,9 +923,15 @@ test("opens Software Integration on the LCD during Live sync, and writes a send 
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
   await lcd(page).getByRole("button", { name: "SETUP", exact: true }).click();
   const integration = lcd(page).getByRole("button", { name: /Software\s*Integration/ });
-  await expect(integration, "no DAW holds the unit, and nothing of the app's is drawn").not.toHaveAttribute(
+  await expect(integration, "no DAW holds the unit: out of reach, as on the unit").toHaveAttribute(
     "aria-disabled",
+    "true",
   );
+  await expect(integration.locator(".lock-mark"), "and nothing of the app's is drawn").toHaveCount(0);
+
+  await setDeviceValue(page, DAW, 0, 2);
+  await notifyParam(page, DAW, 0, 2);
+  await expect(integration, "a DAW holds the unit: the entry opens").not.toHaveAttribute("aria-disabled");
   await expect(integration.locator(".lock-mark")).toHaveCount(0);
   await integration.click();
   const fx2 = lcd(page).getByLabel(/^for FX2: /);
@@ -933,19 +939,20 @@ test("opens Software Integration on the LCD during Live sync, and writes a send 
   await expect(fx2, "the send the unit holds").toHaveAttribute("aria-label", /^for FX2: MIX 2 /);
   await fx2.click();
   await lcd(page).getByRole("option", { name: "MIX 1", exact: true }).click();
-  await expect(fx2, "a pick with no DAW holding the unit is taken back").toHaveAttribute(
-    "aria-label",
-    /^for FX2: MIX 2 /,
-  );
-  expect(await fx2Writes()).toEqual([]);
-
-  await setDeviceValue(page, DAW, 0, 2);
-  await notifyParam(page, DAW, 0, 2);
-  await fx2.click();
-  await lcd(page).getByRole("option", { name: "MIX 1", exact: true }).click();
   await expect.poll(fx2Writes).toEqual([288]);
   await expect(fx2).toHaveAttribute("aria-label", /^for FX2: MIX 1 /);
   await expect(fx2.locator(".lock-mark")).toHaveCount(0);
+
+  // The DAW lets go of the unit with the screen still open: a pick there is taken back.
+  await setDeviceValue(page, DAW, 0, 0);
+  await notifyParam(page, DAW, 0, 0);
+  await fx2.click();
+  await lcd(page).getByRole("option", { name: "MIX 2", exact: true }).click();
+  await expect(fx2, "a pick with no DAW holding the unit is taken back").toHaveAttribute(
+    "aria-label",
+    /^for FX2: MIX 1 /,
+  );
+  expect(await fx2Writes()).toEqual([288]);
 });
 
 // The unit's current scene and SCENE LIST's cursor are live-session state outside the plan: while

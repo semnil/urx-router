@@ -691,6 +691,20 @@ describe("the SIM view over a live session", () => {
     expect(setsOf(shell, PARAMS.POST_FADER_SEND_FX1.id), "nothing written once the DAW let go").toEqual([[0, 290]]);
   });
 
+  it("tells the glass whether a DAW holds the unit while Live sync is up, and nothing once it ends", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    const daw = async (): Promise<unknown> => (await transport().snapshot()).get("setup.integration.daw");
+    expect(await daw(), "no session to read it from").toBeUndefined();
+    await goLive();
+    await vi.waitFor(async () => expect(await daw(), "none holds it").toBe(false));
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.DAW_INTEGRATION.id, x: 0, y: 0, value: 2 }]);
+    await vi.waitFor(async () => expect(await daw(), "the unit's announcement").toBe(true));
+    $("btn-live").click();
+    await invoked(shell, "vd_disconnect");
+    await vi.waitFor(async () => expect(await daw(), "the session that read it ended").toBeUndefined());
+  });
+
   // The reads a case's session made of one address.
   const readsOf = (shell: TauriShell, paramId: number): number =>
     shell.invokes.filter((cmd, i) => cmd === "vd_get" && (shell.args[i] as Record<string, number>).paramId === paramId)

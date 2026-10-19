@@ -35,6 +35,9 @@ export const INTEGRATION_SLOTS = Object.keys(SLOT_PARAM) as IntegrationSlot[];
 const glassPath = (slot: IntegrationSlot): string => `setup.integration.${slot}`;
 /** The glass's paths of both slots. */
 export const INTEGRATION_GLASS_PATHS: readonly string[] = INTEGRATION_SLOTS.map(glassPath);
+/** The glass's path of whether a compatible DAW holds the unit, which its [Software Integration]
+ *  entry follows as the unit's does. */
+const DAW_GLASS_PATH = "setup.integration.daw";
 
 /** One value of SETUP > Software Integration the session holds. */
 export type IntegrationField = keyof DawIntegration;
@@ -101,9 +104,10 @@ export async function writeIntegrationSend(slot: IntegrationSlot, raw: number): 
   await writeSettle.settle(new Map([[addrKey(id, 0, 0), mark]]));
 }
 
-/** The glass's value of each slot `state` knows, by path. */
-export function integrationGlassValues(state: DawIntegration): Map<string, IntegrationSend> {
-  const out = new Map<string, IntegrationSend>();
+/** The glass's values of SETUP > Software Integration `state` knows, by path: whether a compatible
+ *  DAW holds the unit, and each send. */
+export function integrationGlassValues(state: DawIntegration): Map<string, IntegrationSend | boolean> {
+  const out = new Map<string, IntegrationSend | boolean>([[DAW_GLASS_PATH, state.active]]);
   for (const slot of INTEGRATION_SLOTS) {
     const send = state[slot];
     if (send !== null) out.set(glassPath(slot), send);
