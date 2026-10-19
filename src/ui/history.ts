@@ -258,7 +258,7 @@ export class PlanHistory {
     this.notifyDepth();
   }
 
-  /** The unit took the sample rate back to the value an entry moved it from: the rate leaves that
+  /** The unit moved the sample rate the way an entry's undo or redo would: the rate leaves that
    *  entry, and the baseline takes the read (`PlanHistoryStack.takeBackRate`). */
   takeBackRate(patch: PlanPatch): void {
     this.stack.takeBackRate(patch);

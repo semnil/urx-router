@@ -767,6 +767,76 @@ describe("importing a settings file", () => {
       expect(sent(at), "the import again, without the rate").toEqual({ source: [256], rate: [], osc: [] });
     });
 
+    // The same move made on the redo side: the import undone with Follow USB off, then Follow USB
+    // turned on and the unit moving to the file's rate itself. The redo carries no rate any more,
+    // so it applies during the session, writing the source and no rate.
+    it("takes a rate the unit moved out of the redo step that would move it", SLOW, async () => {
+      const bytes = buildUrxf([
+        {
+          chunk: "CURRENT",
+          block: "CSF_BACKUP",
+          label: "",
+          fields: [
+            { id: SOURCE, typecode: 1, elemSize: 4, values: [0x80000100] },
+            { id: RATE, typecode: 2, elemSize: 4, values: [96_000] },
+            { id: FOLLOW, typecode: 1, elemSize: 1, values: [0] },
+          ],
+        },
+      ]);
+      const table = deviceCommands(
+        {
+          experimental_enabled: true,
+          "plugin:dialog|open": PATH,
+          read_binary_file: () => bytes.buffer,
+          "plugin:dialog|save": null,
+          "plugin:dialog|message": "Ok",
+        },
+        unit(false),
+      );
+      const shell = (await bootApp({ tauri: table }))!;
+      await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
+      $("btn-live").click();
+      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+      const from = await importNow(shell);
+      await importDone(shell);
+      await vi.waitFor(() => expect(written(shell, SOURCE, from)).toEqual([256]), { timeout: 15_000 });
+      expect(written(shell, RATE, from), "the file's rate went to the unit").toContain(96_000);
+
+      // The undo moves the rate, so it is asked about before it applies.
+      let at = await editMenu(shell, EDIT_UNDO_ID);
+      await vi.waitFor(
+        () =>
+          expect({ source: written(shell, SOURCE, at), rate: written(shell, RATE, at) }, "the import undone").toEqual({
+            source: [0],
+            rate: [48_000],
+          }),
+        { timeout: 15_000 },
+      );
+
+      // Follow USB on, and the unit at the file's rate, both on its own panel.
+      const panel = table.vd_set as (a: Record<string, unknown>) => unknown;
+      panel({ paramId: FOLLOW, x: 0, y: 0, value: 1 });
+      notifyChannel(shell).onmessage([{ param_id: FOLLOW, x: 0, y: 0, value: 1 }]);
+      panel({ paramId: RATE, x: 0, y: 0, value: 96_000 });
+      notifyChannel(shell).onmessage([{ param_id: RATE, x: 0, y: 0, value: 96_000 }]);
+      await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("96000"), { timeout: 20_000 });
+
+      at = await editMenu(shell, EDIT_REDO_ID);
+      expect(statusText()).toBe(t().status.redone);
+      await synced();
+      expect({ source: written(shell, SOURCE, at), rate: written(shell, RATE, at) }, "the import again").toEqual({
+        source: [256],
+        rate: [],
+      });
+      at = await editMenu(shell, EDIT_UNDO_ID);
+      expect(statusText()).toBe(t().status.undone);
+      await synced();
+      expect({ source: written(shell, SOURCE, at), rate: written(shell, RATE, at) }, "and undone").toEqual({
+        source: [0],
+        rate: [],
+      });
+    });
+
     // The nodes the file does not carry hold what the session read from the unit, so none is
     // flagged as unread, while the import's status line still counts them. The line is read where
     // the import offers its report, since the flush that follows writes its own.

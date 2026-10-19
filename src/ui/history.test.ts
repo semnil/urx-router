@@ -910,6 +910,26 @@ describe("reset", () => {
   // must be able to land without disturbing the stacks, so absorbing its empty patch is
   // the same no-op as skipping the call. Without this, "reset only when the read wrote
   // something" would have no stated meaning for the other arm.
+  // A redo the unit has already made — the rate it moves, and nothing else — leaves the redo
+  // side, and the menu hears that there is nothing left to redo.
+  it("reports a redo the unit made the rate move of as gone", () => {
+    const h = harness();
+    const was = h.plan.sampleRate;
+    h.edit((p) => (p.sampleRate = 96000));
+    idle();
+    h.history.undo();
+    settle();
+    expect(h.history.canRedo()).toBe(true);
+    const reports = h.depthReports;
+
+    h.plan.sampleRate = 96000;
+    h.history.takeBackRate([{ field: "sampleRate", before: was, after: 96000 }]);
+    expect(h.history.canRedo()).toBe(false);
+    expect(h.depthReports).toBe(reports + 1);
+    h.history.redo();
+    expect(h.statuses.at(-1)).toBe("Nothing to redo");
+  });
+
   it("absorbs an empty patch without touching either stack", () => {
     const h = harness();
     h.edit((p) => (p.sampleRate = 96000));

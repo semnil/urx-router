@@ -2937,7 +2937,7 @@ it read included; a reconcile reads the names of the nodes it covers and takes t
 | Session start | `begin` from the starting read's clone | `reset` |
 | App edit, `markChanged` | per address, as its own write returns | entry opened, closed at the gesture boundary |
 | Device notify, direct | that one entry, `noteDirect` | `absorb` of the keys that notify wrote, diffed around the apply; an entry the operator has open stands, and an entry already recorded takes a nested `nodeParams` / `connParams` leaf only where its `before` AND its `after` both hold what the read measured from — both sides then take the read's value, and a whole field is never folded |
-| Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect, when the read authored at least one key besides the sample rate (`followAuthored`); a read that moved the sample rate alone is taken into the baseline at its hook, and takes the rate out of the entry that moved it where the unit took it back to the value that entry moved it from (`followAuthor`, `PlanHistory.takeBackRate`) |
+| Reconcile readback, scoped or full | `resync` from the read's clone — a scoped read takes the nodes it covered and keeps the rest — then the direct journal's entries stamped after the read was issued | `reset`, in the reflect, when the read authored at least one key besides the sample rate (`followAuthored`); a read that moved the sample rate alone is taken into the baseline at its hook, and takes the rate out of the undo entry whose move the unit took back, or the redo entry whose move the unit made (`followAuthor`, `PlanHistory.takeBackRate`) |
 | Side-effect refetch | `capture` from the read's clone for the nodes it read, their names excepted since the read carries none, then the same journal replay | `absorb` of the device-authored keys only |
 | Converge round | `capture` from the frozen clone, keeping what the snapshot held for a refetch head the flush did not send and for a switch the unit turned on at its own panel, then the journal replay for the notifies stamped after the freeze — less an address a converge write the unit accepted has replaced since | untouched |
 
@@ -2979,7 +2979,9 @@ agreed with the plan at every key leaves both stacks as they were, and one that 
 into the baseline at its hook (`followAuthor`) and leaves them as well. Where the unit took the rate back to the value
 the newest entry carrying the rate moved it from — a rate written under Follow USB on, which the unit returns to the
 computer's — the rate leaves that entry, and an entry left with nothing leaves the stack (`PlanHistory.takeBackRate`),
-so the rest of it undoes and redoes during the session without the refusal a rate entry meets there.
+so the rest of it undoes and redoes during the session without the refusal a rate entry meets there. The redo side
+is read the same way: where the unit moved the rate to the value the newest redo entry carrying it would move it to,
+the rate leaves that entry too.
 
 #### What is discarded, and where
 
@@ -4471,7 +4473,7 @@ can return to: a **new document** (`loadPlan` — New / Open / a drop / a recent
 deep link), and a **device readback of any breadth** (`rerenderPlan`, covering fetch, Live-sync start
 and a `.urxf` import made with no session up; plus device-follow's reconciles, scoped or full, once their read has
 authored at least one key besides the sample rate — one that moved the rate alone takes it into the baseline and
-keeps both stacks, taking the rate out of the entry that moved it where the unit took it back). A `.urxf` import made during a session is an edit instead: it keeps both stacks and is
+keeps both stacks, taking the rate out of the entry whose move the unit took back or made). A `.urxf` import made during a session is an edit instead: it keeps both stacks and is
 one entry of its own, an entry open on either side of it closed as it stands (`PlanHistory.commit`). A side-effect
 refetch only takes the keys the device authored into the baseline, keeping the entries already
 recorded. A read that refuses a +48V / HI-Z ON — made while it was in

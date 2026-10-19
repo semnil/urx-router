@@ -966,6 +966,20 @@ export class PlanWriteWitness {
  *  device. The baseline is what a commit diffs against, and is re-taken by every
  *  operation that settles the plan — a device readback included, which is what
  *  keeps device-authored values out of the next entry. */
+/** Take the rate out of the newest entry in `stack` that carries it, when that entry moves the
+ *  rate from `from` to `to`. An entry left with nothing leaves the stack. */
+function dropRate(stack: PlanPatch[], from: number, to: number): void {
+  for (let at = stack.length - 1; at >= 0; at--) {
+    const entry = stack[at];
+    const e = entry.find((x) => x.field === "sampleRate");
+    if (!e || e.field !== "sampleRate") continue;
+    if (e.before !== from || e.after !== to) return;
+    entry.splice(entry.indexOf(e), 1);
+    if (!entry.length) stack.splice(at, 1);
+    return;
+  }
+}
+
 export class PlanHistoryStack {
   private baseline: Plan;
   private undoStack: PlanPatch[] = [];
@@ -1034,26 +1048,21 @@ export class PlanHistoryStack {
   }
 
   /**
-   * The unit took the sample rate back to the value an entry moved it from: the rate leaves the
-   * newest entry that carries it, when that entry moved the rate from the value the read found on
-   * the unit to the value the read found in the plan (the patch's `after` and `before`). An entry
-   * left with nothing leaves the stack, and an older entry is not one the read names. The baseline
-   * takes the patch in context either way, so the read is not recorded as an edit of its own.
+   * The unit moved the sample rate the way an entry's undo or redo would (the patch's `before` is
+   * the plan's rate the read found, its `after` the unit's): the rate leaves the newest undo entry
+   * that carries it when that entry moved the rate from the unit's value to the plan's, and the
+   * newest redo entry that carries it when that entry moves the rate from the plan's value to the
+   * unit's. An entry left with nothing leaves its stack, and an older entry is not one the read
+   * names. The baseline takes the patch in context either way, so the read is not recorded as an
+   * edit of its own.
    */
   takeBackRate(patch: PlanPatch): void {
     if (!patch.length) return;
     applyPatchInContext(this.baseline, patch);
     for (const p of patch) {
       if (p.field !== "sampleRate") continue;
-      for (let at = this.undoStack.length - 1; at >= 0; at--) {
-        const entry = this.undoStack[at];
-        const e = entry.find((x) => x.field === "sampleRate");
-        if (!e || e.field !== "sampleRate") continue;
-        if (e.after !== p.before || e.before !== p.after) break;
-        entry.splice(entry.indexOf(e), 1);
-        if (!entry.length) this.undoStack.splice(at, 1);
-        break;
-      }
+      dropRate(this.undoStack, p.after, p.before);
+      dropRate(this.redoStack, p.before, p.after);
     }
   }
 

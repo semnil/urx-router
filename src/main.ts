@@ -1501,8 +1501,8 @@ let followFull = false;
 // them at its own site. Both reconcile hooks add through followAuthor; the reflect drains it.
 let followAuthored = 0;
 /** Settle the history for what a reconcile authored. A patch that moved the sample rate and
- *  nothing else is taken into the baseline here, and takes the rate out of the entry that moved it
- *  where the unit took it back to the value that entry moved it from; every entry stands
+ *  nothing else is taken into the baseline here, and takes the rate out of the undo entry whose
+ *  move the unit took back, or the redo entry whose move the unit made; every entry stands
  *  otherwise. Any other patch is counted for the reflect, which drops both stacks. */
 function followAuthor(patch: PlanPatch): void {
   if (patch.length > 0 && patch.every((e) => e.field === "sampleRate")) planHistory?.takeBackRate(patch);
