@@ -3880,7 +3880,7 @@ function applySimEdit(edit: SimEdit): boolean {
       break;
     // The toolbar's rate picker is locked while the device link is held, and so is this.
     case "rate":
-      if (deviceLinkHolder !== null && !liveRateOpen()) return false;
+      if (rateHold(rateHoldState()) !== null) return false;
       // During Live sync the LCD's choice waits for the operator's answer, and the glass shows
       // the plan's rate until then.
       if (deviceLinkHolder !== null) {
@@ -4031,7 +4031,7 @@ async function confirmImportClock(
 /** Take a rate chosen in the app: during Live sync once the operator has agreed to what it costs,
  *  and not at all while the link holds the rate. */
 function pickSampleRate(rate: number): void {
-  if (deviceLinkHolder !== null && !liveRateOpen()) {
+  if (rateHold(rateHoldState()) !== null) {
     ratePicker.value = String(plan.sampleRate);
     return;
   }
