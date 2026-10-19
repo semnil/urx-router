@@ -770,6 +770,9 @@ export const PARAMS = {
    *  the unit, non-zero while one does. SETUP > [Software Integration] is usable on the unit only
    *  while it is non-zero. The unit announces a change. Read for the SIM view; never written. */
   DAW_INTEGRATION: { id: 816, encoding: "raw", planExternal: true, readOnly: true },
+  /** microSD card presence (global, y0): 1 while a card is in the slot, 0 with none. The unit
+   *  announces an insertion and a removal. Read for the SIM view; never written. */
+  SD_CARD: { id: 837, encoding: "raw", planExternal: true, readOnly: true },
   /** The unit's current scene (781), which a Recall and a Store move, and the row its SCENE LIST
    *  cursor stands on (863) (global, y0), in one encoding: a user scene n is n - 1, 00 Initial Data
    *  0x8000, a preset Pn 0x8000 + n. The unit announces both. Read for the SIM view; never written. */

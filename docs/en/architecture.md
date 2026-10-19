@@ -1872,7 +1872,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   Refused like a path the table does not carry, one of these would take the whole edit back with it. A value the plan holds but the edit cannot take in its present state (PAN/BAL on an unlinked pair, an
   unwired send, an FX 2 send at a rate that takes FX 2 out, the recorder's Track Count
   while Live sync is up) is refused. A path neither the table nor the unit's values below carry — the scenes'
-  contents and titles, and the card — shows the simulator's value and takes no edit: the simulator puts it back.
+  contents and titles, and the card's contents, name and free space — shows the simulator's value and takes no
+  edit: the simulator puts it back.
 - **HOME's [Sends] destination** is the unit's UI state rather than the plan's (`sends-target.ts`). The SIM view is
   built once the experimental gate resolves on, so no other launch builds it or reads the destination. While Live
   sync is up the LCD shows the destination the unit holds and follows a choice made on the unit's panel, and a
@@ -1905,9 +1906,13 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   its SCENE LIST cursor stands on (`863`) as a session read them — at its start, and again once it has registered for
   their announcements — and the unit announced them since — by number with no title, the unit's titles not being
   readable, and on the tab that lists the cursor's row where only one does, the tab shown staying where both do; a
-  row picked on the glass shows until the unit's cursor moves — and each MIC/LINE jack's Clip Safe as holding its
+  row picked on the glass shows until the unit's cursor moves — whether a card is in the microSD slot (`837`, on a
+  model that has one) as a session read it — at its start, and again once it has registered for its announcements —
+  and the unit announced it since, and each MIC/LINE jack's Clip Safe as holding its
   gain down while the unit announces it (`864`, which every session registers, since the CONSOLE and the Inspector
-  show it too). A session on an experimental launch registers the others and reads SETUP again once
+  show it too). What a session read or was announced of the operation mode, the current scene, SCENE LIST's cursor
+  and the card is dropped when it ends, and when it fails to start after its starting read, and the LCD shows the
+  simulator's own again. A session on an experimental launch registers the others and reads SETUP again once
   an announcement at one settles. A SETUP setting changed on the LCD is written to the unit during Live sync,
   behind every unit write queued so far; with no session the app writes none of them, and the LCD holds those
   screens shut (below). Follow USB pressed on the LCD is a press of the toolbar's FOLLOW USB, its confirm

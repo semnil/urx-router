@@ -1080,6 +1080,41 @@ test("the LCD shows the unit's current scene and SCENE LIST's cursor while Live 
   await expect(rows.filter({ hasText: "P01" }).first()).toHaveAttribute("aria-selected", "true");
 });
 
+// Whether a card is in the unit's microSD slot is live-session state outside the plan: while Live
+// sync is up the LCD's microSD screen follows the unit's slot, and with no session it shows the
+// glass's own card again.
+test("the LCD's microSD screen follows the unit's card while Live sync is up", async ({ page }) => {
+  const CARD: number = PARAMS.SD_CARD.id;
+  await stubTauriDevice(page, { values: { [CARD]: 0 }, commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await tapInto(page, lcd(page).getByRole("button", { name: "microSD", exact: true }), "microsd");
+  const noCard = onScreen(page, "microsd").getByRole("button", { name: "Not inserted microSD card" });
+  const recorder = onScreen(page, "microsd").getByRole("button", { name: "Recorder", exact: true });
+  await expect(recorder, "the glass's own card with no session").toBeVisible();
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(noCard, "no card in the unit").toBeVisible();
+  await expect(noCard, "putting one in is the unit's own operation").toHaveAttribute("title", en.sim.lockUnitOp);
+
+  // A card put in on the unit.
+  await setDeviceValue(page, CARD, 0, 1);
+  await notifyParam(page, CARD, 0, 1);
+  await expect(recorder).toBeVisible();
+  // …and taken out again.
+  await setDeviceValue(page, CARD, 0, 0);
+  await notifyParam(page, CARD, 0, 0);
+  await expect(noCard).toBeVisible();
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false", { timeout: 30_000 });
+  await expect(recorder, "the glass's own card once the session ends").toBeVisible();
+});
+
 // The unit's [CUE] is live-session state outside the plan: while Live sync is up the LCD shows
 // the flags the unit holds and a press on the glass switches them on the unit, the way the
 // CONSOLE chip does; with no session a press reaches nothing.
