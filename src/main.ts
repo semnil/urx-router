@@ -972,7 +972,8 @@ const OPERATION_MODES = ["Standard", "Simple"];
 function unitGlassValues(): Map<string, SimValue> {
   const model = getModel(modelId);
   const out = unitSetup ? setupGlassValues(model, unitSetup) : new Map<string, SimValue>();
-  if (followUsbState !== null) out.set("setup.followUsb", followUsbState);
+  // Off until the unit's is read, so the glass takes the plan's rate.
+  out.set("setup.followUsb", followUsbState ?? false);
   const mode = unitOperationMode === null ? undefined : OPERATION_MODES[unitOperationMode];
   if (mode !== undefined) out.set("setup.operationMode", mode);
   for (const [path, value] of sceneGlassValues(unitScene.current, unitScene.cursor, unitScene.tab))

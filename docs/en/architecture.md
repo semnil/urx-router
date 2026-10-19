@@ -1880,7 +1880,9 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   keeps a destination of its own, which reaches nothing.
 - **SETUP > Software Integration** is the unit's setting rather than the plan's (`daw-integration.ts`). The unit opens
   it only while a compatible DAW (Cubase, Nuendo, MixKey) holds it, which `816` reads as anything but 0, and the LCD
-  opens it only then and only while Live sync is up. A session reads `816` and the two Post Fader Send for FX values
+  opens it only then and only while Live sync is up: during Live sync the session tells the LCD whether one does, and
+  the LCD draws the entry as the unit does, out of reach with none and with nothing of the app's on it; with no session
+  the app holds it shut (below). A session reads `816` and the two Post Fader Send for FX values
   (`879` for FX 1, `880` for FX 2), registers all three, reads them again once registered — a DAW that took or let
   go of the unit in between announced itself to nobody — and follows their announcements, an announcement or a pick made
   while that read is out standing over its answer for that one value, the read's answer taken for the others. The LCD shows the sends the session holds, and a send picked on it is
@@ -1899,7 +1901,7 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
 - **The unit's own settings and states** are shown in place of the simulator's where the app knows them
   (`core/sim-map-setup.ts`): SETUP > GENERAL as the last reading of it — a session's start on an experimental launch,
   the Device setup screen, a SETUP edit on the LCD — kept until the model changes, Follow USB as the toolbar's
-  badge holds it, the operation mode (`817`) as a session read it, the unit's current scene (`781`, which a Recall and a Store move) and the row
+  badge holds it and off while the badge does not know it, the operation mode (`817`) as a session read it, the unit's current scene (`781`, which a Recall and a Store move) and the row
   its SCENE LIST cursor stands on (`863`) as a session read them — at its start, and again once it has registered for
   their announcements — and the unit announced them since — by number with no title, the unit's titles not being
   readable, and on the tab that lists the cursor's row where only one does, the tab shown staying where both do; a
@@ -1921,7 +1923,8 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   app cannot do is held this way** — a value it does not write, a function it does not carry, a state it cannot read.
   The LCD simulates the unit, so a control the unit itself holds still or hides, showing nothing for it, is drawn as the
   unit draws it, by the simulator: a COMP or M.B.Comp value its 1-knob drives, Pitch Fix's notes under MIDI Control,
-  FX 2's sends at a rate that takes FX 2 out, the rates while Follow USB is on. Held are the
+  FX 2's sends at a rate that takes FX 2 out, the rates while Follow USB is on, Software Integration while no compatible
+  DAW holds the unit during Live sync. Held are the
   SETUP > GENERAL screens of what the app does not write — the operation mode, which a session reads and shows,
   and the unit's clock ("Change it on the device"), the SETUP > GENERAL screens of what it does write and their
   values — held in place on a screen already open — while Live sync is down, since the app writes them over a

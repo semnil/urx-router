@@ -48,10 +48,14 @@ describe("SETUP > Software Integration (816 / 879 / 880)", () => {
     expect(mergeIntegrationRead(null, read, new Set(["active"])), "nothing held to keep").toEqual(read);
   });
 
-  it("names each send by the glass's path, and shows none it could not decode", () => {
+  it("names whether a DAW holds the unit and each send by the glass's path, and shows no send it could not decode", () => {
     expect([...integrationGlassValues({ active: true, fx1Send: "MIX 2", fx2Send: null })]).toEqual([
+      ["setup.integration.daw", true],
       ["setup.integration.fx1Send", "MIX 2"],
     ]);
+    expect(integrationGlassValues({ active: false, fx1Send: null, fx2Send: null }).get("setup.integration.daw")).toBe(
+      false,
+    );
     expect(integrationSlotAt("setup.integration.fx1Send")).toBe("fx1Send");
     expect(integrationSlotAt("setup.integration.fx2Send")).toBe("fx2Send");
     expect(integrationSlotAt("setup.integration")).toBeNull();
