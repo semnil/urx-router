@@ -268,7 +268,7 @@ Raising the rate is worth a thought about the recorder first.
 
 This applies to the URX44 / URX44V only (the URX22 has no microSD recording).
 
-## The app does not follow the unit's operation mode (Standard / Simple)
+## The graph and the CONSOLE do not follow the unit's operation mode (Standard / Simple)
 
 The URX runs in one of two operation modes, chosen during its initial setup or from
 SETUP > [Operation Mode]: **Standard** or **Simple**. Simple Mode visibly reduces
@@ -279,8 +279,10 @@ moves to 1 when Simple Mode is entered and its preset applied, announcing each c
 with a notify. Switching back to Standard moves it back to 0, with no other parameter
 changing. This was verified on a real URX22 and URX44V (System 1.3.1.0) by entering
 Simple through SETUP > [Operation Mode] with the P02 preset; the Setup Assistant and
-Scene routes into Simple Mode and the other presets have not been measured. The app
-does not read it, so it presents the same controls either way, including for things
+Scene routes into Simple Mode and the other presets have not been measured. On an
+experimental launch the app reads it while Live sync is up and follows its notify, to show
+it on the SIM view's LCD (architecture.md, "SIM view (the unit's LCD)"). Nothing else reads it: the graph,
+the CONSOLE and the Inspector present the same controls either way, including for things
 Simple Mode has taken away on the unit itself.
 
 The current scene — or **preset** — is readable too (`781:0:0`, which a Recall and a Store move and which
