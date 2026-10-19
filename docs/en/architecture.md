@@ -1910,7 +1910,9 @@ urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime depen
   model that has one) as a session read it — at its start, and again once it has registered for its announcements —
   and the unit announced it since, and each MIC/LINE jack's Clip Safe as holding its
   gain down while the unit announces it (`864`, which every session registers, since the CONSOLE and the Inspector
-  show it too). A session on an experimental launch registers the others and reads SETUP again once
+  show it too). What a session read or was announced of the operation mode, the current scene, SCENE LIST's cursor
+  and the card is dropped when it ends, and when it fails to start after its starting read, and the LCD shows the
+  simulator's own again. A session on an experimental launch registers the others and reads SETUP again once
   an announcement at one settles. A SETUP setting changed on the LCD is written to the unit during Live sync,
   behind every unit write queued so far; with no session the app writes none of them, and the LCD holds those
   screens shut (below). Follow USB pressed on the LCD is a press of the toolbar's FOLLOW USB, its confirm

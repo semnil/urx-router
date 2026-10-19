@@ -728,6 +728,47 @@ describe("the SIM view over a live session", () => {
     ).toBe(true);
   });
 
+  // A session refused after its starting read leaves nothing of that read on the glass, and the
+  // next session reads the unit again.
+  it.each(["vd_params_subscribe", "vd_watch_link"])(
+    "leaves the glass its own card, scene and operation mode when the session's %s is refused",
+    SLOW,
+    async (refused) => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, {
+        [`${PARAMS.SD_CARD.id}/0/0`]: 0,
+        [`${PARAMS.CURRENT_SCENE.id}/0/0`]: 8,
+        [`${PARAMS.OPERATION_MODE.id}/0/0`]: 1,
+      });
+      await openSim();
+      const shown = async (): Promise<unknown[]> => {
+        const values = await transport().snapshot();
+        return [values.get("sd.mounted"), values.get("scene.current"), values.get("setup.operationMode")];
+      };
+      const own = await shown();
+      expect(own, "the glass's own with no session").toEqual([true, 0, "Standard"]);
+      shell.failOnce(refused, new Error("registration refused"));
+      $("btn-live").click();
+      await invoked(shell, "vd_disconnect");
+      expect(errors(shell).join(" "), "the refusal is what stopped it").toContain("registration refused");
+      expect(live().getAttribute("aria-checked"), "no session").toBe("false");
+      expect(
+        shell.invokes.indexOf(refused),
+        "the premise: the starting read took the card before the refusal",
+      ).toBeGreaterThan(
+        shell.invokes.findIndex(
+          (cmd, i) => cmd === "vd_get" && (shell.args[i] as Record<string, number>).paramId === PARAMS.SD_CARD.id,
+        ),
+      );
+      expect(await shown(), "the glass's own again").toEqual(own);
+      await goLive();
+      await vi.waitFor(async () =>
+        expect(await shown(), "the next session reads the unit").toEqual([false, 9, "Simple"]),
+      );
+      $("btn-live").click();
+      await invoked(shell, "vd_disconnect", 2);
+    },
+  );
+
   it("shows the unit's operation mode, and an engaged Clip Safe while the unit announces one", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, { [`${PARAMS.OPERATION_MODE.id}/0/0`]: 1 });
     await openSim();

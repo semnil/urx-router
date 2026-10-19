@@ -5309,9 +5309,11 @@ if (!DEMO) {
         // both end()s no-op when nothing was started.
         follow?.end();
         live?.end();
-        // The cues the starting read took belong to the session that did not start.
+        // The cues, the [Sends] destination and the unit's states the starting read took belong
+        // to the session that did not start.
         resetCues();
         resetSendsTarget();
+        resetUnitSessionState();
         await releaseLive(device.epoch, "error");
         showError(message, supplied ?? "");
       };
