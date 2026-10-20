@@ -131,7 +131,7 @@ UPDATE_SKILL=1 pnpm test skill-export
   ときは、その言葉を引用した `Left open by the operator` の項目を書く)。`pnpm check:pr-assumptions`
   はタグの無い項目と、どちらの項目も持たないタグ付きの項目を拒否し、横のチェックボックスが付いて
   いるかどうかに関わらず、書かれた内容を読む。
-- マージは `ci-required` / `docs-required` / `format` / `race-required` の 4 つを待つ。いずれもすべての
+- マージは `ci-required` / `docs-required` / `format` / `race-required` / `auto-merge` を待つ。いずれもすべての
   プルリクエストで結果を返すため、対象外としてスキップされた変更でも「永久に来ないチェック」
   ではなく緑のチェックが付く。これを保つのが `pnpm check:gates` で、`.github/workflows/`
   配下を編集したら実行する。GitHub の外から取得するステップがステップ自身の `timeout-minutes` を
