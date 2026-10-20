@@ -1,3 +1,5 @@
+<!-- English or Japanese are both fine — 日本語で構いません。 -->
+
 # Summary
 
 <!-- What changes, and why. Link the issue this closes, if there is one. -->
