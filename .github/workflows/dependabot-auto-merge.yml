@@ -6,6 +6,7 @@ name: Dependabot auto-merge
 # other update type, including one fetch-metadata cannot read, it turns off an auto-merge an
 # earlier head enabled: a push from Dependabot leaves auto-merge on, and a rebase can turn a
 # patch into a minor or major update. On every other pull request both steps are skipped.
+# The step fails when it cannot read whether auto-merge is on.
 #
 # The job reports `auto-merge`, one of the contexts .github/required-checks.json makes a
 # merge condition, so a pull request does not merge before the run for its head commit has
@@ -42,6 +43,12 @@ jobs:
         run: |
           if [ "$UPDATE_TYPE" = 'version-update:semver-patch' ]; then
             gh pr merge --auto --merge --match-head-commit "$HEAD_SHA" "$PR_URL"
-          elif [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" = 'true' ]; then
-            gh pr merge --disable-auto "$PR_URL"
+          else
+            enabled=$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')
+            if [ "$enabled" = 'true' ]; then
+              gh pr merge --disable-auto "$PR_URL"
+            elif [ "$enabled" != 'false' ]; then
+              echo "::error::could not read whether auto-merge is enabled: '$enabled'"
+              exit 1
+            fi
           fi
