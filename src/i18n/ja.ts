@@ -62,7 +62,7 @@ export const ja: Messages = {
   },
   console: {
     mute: "MUTE",
-    // スクリブル電源 LED (ノード master on/off) の読み上げ名サフィックス。
+    // Accessible name suffix for the scribble power LED (the node master on/off).
     power: "オン/オフ",
     sideShowing: (pair: string, shown: string) => `${pair}、${shown} を表示中`,
     gainShared: (others: string) => `${others} と共有`,
@@ -81,10 +81,11 @@ export const ja: Messages = {
     cueOffline: "CUE はライブ同期中に本体の CUE を切り替えます。",
     cueTaking: "Cue Interrupt — 何かを CUE している間、このモニターは元の音の代わりに CUE バスを流します",
     mono: "MONO",
-    // ストリップ群の区切りラベル (この master と下の group*) と読み値キャプション
-    // (readFader / readMeter)。区切りは縦書きで組むため全角字が列幅そのものを変え、
-    // キャプションはその区切りに合わせる — ストリップ上で 1 語だけ和文になるのを避ける。
-    // どの言語でも英語表記のまま。調整画面の同じ項目は「メーター」と訳す (下の readouts)。
+    // Strip group separators (this master and the group* keys below) and the readout captions
+    // (readFader / readMeter). The separators are set in vertical writing mode, where a full-width
+    // glyph changes the column's width itself, and the captions follow the separators, so no single
+    // word on a strip is Japanese. English in every language. The same item on the tuning screens
+    // is translated as 「メーター」 (readouts below).
     master: "MASTER",
     meterPoint: "METER POINT",
     meterPointHint: "実機がメーターを出すタップ点のみ表示。",
@@ -93,7 +94,8 @@ export const ja: Messages = {
     groupInputs: "INPUTS",
     groupBus: "BUS / FX",
     groupMon: "MONITOR",
-    // INS FX チップのポップオーバー。見出しと切替は実機の語なので訳さない。
+    // The INS FX chip's popover. The heading and the switch are the device's words, so they
+    // are not translated.
     insFxType: "EFFECT TYPE",
     insFxInUse: "使用中",
     insFxMax: (maxRate: string): string => `上限 ${maxRate}`,
@@ -101,9 +103,10 @@ export const ja: Messages = {
     insFxRemove: "解除",
     insFxPickFirst: "先に上のリストからエフェクトを選んでください。",
   },
-  // 本体の SETUP > GENERAL。節名・コントロール名は日本語版ユーザーガイドでも英語のままなので
-  // 訳さず、説明文だけを日本語にする。本体の表記と一致していることが、画面の行を
-  // ハードウェアのメニューへ読み替えられる根拠になる。
+  // SETUP > GENERAL on the unit. Section and control names stay in English in the Japanese
+  // user guide too, so they are not translated; only the explanatory notes are in Japanese.
+  // Matching the unit's own wording is what lets a row on this screen be read as the menu on
+  // the hardware.
   deviceSetup: {
     menuItem: "本体設定",
     title: "本体設定",
@@ -171,27 +174,29 @@ export const ja: Messages = {
     mappings: "割り当て",
     noMappings: "割り当てはまだありません。",
     remove: "割り当てを削除",
-    // 先の割り当てと MIDI コントロールを共有する行 (連動) に表示。一緒に動き、
-    // フィードバックは最初の割り当てに追従する。
+    // Shown on a row that shares its MIDI control with an earlier assignment (linked): they move
+    // together, and feedback follows the first assignment.
     linked: "連動",
     inactiveNoSource: (channel: string): string => `無効 — ${channel} にソースがありません`,
     inactiveNoSwitch: (channel: string, control: string): string =>
       `無効 — ${channel} の入力に ${control} がありません`,
     linkedHint:
       "このアドレスの最初の割り当てと 1 つの MIDI コントロールを共有します。一緒に動き、MIDI フィードバックは最初の割り当てに追従します。",
-    // 選択肢ラベルは英語表記のまま (幅固定のセレクトでカタカナ表記は
-    // 「アブソリュート」等が収まらない。他の MIDI マッピングツールとも同語彙)。
-    // 挙動説明 (下の *Desc) のみ日本語。保存値は互換のため "edge" / "state" のまま。
-    // ボタン動作は送信側 (コントローラー・Stream Deck 等) のボタン種別で命名:
-    // モーメンタリーボタン (押下で値・離すと 0) = edge、トグルボタン (127/0 交互) = state。
+    // The option labels stay in English (katakana such as 「アブソリュート」 does not fit the
+    // fixed-width select, and other MIDI mapping tools use the same vocabulary).
+    // Only the behavior notes (the *Desc keys below) are in Japanese. The stored values stay
+    // "edge" / "state" for compatibility.
+    // The button modes are named after the sender's button type (a controller, Stream Deck, etc.):
+    // a momentary button (value on press, 0 on release) = edge, a toggle button (alternating
+    // 127/0) = state.
     mode: { absolute: "Absolute", pickup: "Pickup" },
     buttonMode: { edge: "Momentary", state: "Toggle" },
-    // セレクトが操作する設定名。ツールチップ、aria-label の前半、
-    // および表の下の凡例でその語彙に付く見出しに使う。
+    // Names the setting a select controls: used for its tooltip, the first half of its
+    // aria-label, and the heading over that vocabulary in the legend under the table.
     modeTitle: "取り込みモード",
     buttonModeTitle: "ボタン動作",
-    // 挙動説明。一覧が使っている語彙の分だけ上記の凡例に印字する
-    // (ネイティブのドロップダウンは選択肢に注釈を付けられない)。
+    // Behavior notes, printed in that legend for each vocabulary the list uses
+    // (a native dropdown cannot annotate its own options).
     modeDesc: {
       absolute: "受信値をそのまま位置として適用。物理位置と盤面値がずれていると値が飛ぶ。",
       pickup: "物理値が盤面値に追いつく (通過する) まで無視。値は飛ばないが、追いつくまで効かない。",
@@ -213,7 +218,7 @@ export const ja: Messages = {
     outputError: (message: string): string => `MIDI 出力エラー: ${message}`,
     outputStalled:
       "MIDI フィードバックを停止しました — 出力ポートがメッセージを受け付け続けませんでした。コントローラーを接続し直し、ポートを選び直してください。",
-    // コントロール名はコンソールストリップの表記 (チップ / ノブ) をそのまま使う。
+    // Control names reuse the console strip's wording (chips / knobs) as is.
     param: {
       level: "Level",
       mute: "MUTE",
@@ -286,7 +291,8 @@ export const ja: Messages = {
       "キーボードでは Tab で盤面に入り、矢印キーでノード間を移動し、Enter で選択します。" +
       "選択したノードのルーティング欄からポートを結線し、結線を選択できます。",
     type: "種別",
-    // 実機の CH SETTING 画面が持つ行。実機は表示言語を日本語にしても英語のままなので訳さない。
+    // Rows the unit's CH SETTING screen carries. The unit keeps them in English with its display
+    // language set to Japanese, so they are not translated.
     name: "Name",
     color: "Color",
     colorName: {
@@ -357,7 +363,8 @@ export const ja: Messages = {
     fineHint: "微調整 — Shift を押しながら操作",
     fineHintLatch: "微調整 — Shift で切り替え",
     eqBand: { low: "LOW", lowMid: "LOW MID", highMid: "HIGH MID", high: "HIGH" },
-    // GATE / COMP / DUCKER 画面の行。実機は表示言語を日本語にしても英語のままなので訳さない。
+    // Rows of the GATE / COMP / DUCKER screens. The unit keeps them in English with its display
+    // language set to Japanese, so they are not translated.
     dyn: {
       threshold: "Threshold",
       range: "Range",
@@ -558,10 +565,11 @@ export const ja: Messages = {
       recPoint: "Rec Point タップ (チャンネルのみ)",
     },
   },
-  // レーンのキャプション (プロセッサのどちら端か) と表示モード名は ja でも英語のまま
-  // (CONSOLE のメーターポイントバッジと同じ点を指すため表記を揃える)。その上の見出しは
-  // 対象外 — ユーザーガイドの日本語が片仮名なので「メーター」と訳す。
-  // レベルタップの名前はここに無い — `core/meters.ts` の tap テーブルが持つ。
+  // A lane's caption (which end of the processor it reads) and the display mode names stay
+  // English in ja too (they name the same points as the CONSOLE's meter-point badges, so the
+  // wording matches). The heading above them is not covered by this: the Japanese user guide
+  // writes it in katakana, so it is translated as 「メーター」.
+  // A level tap's name is not here — the tap table in `core/meters.ts` carries it.
   dynTuning: {
     close: "閉じる",
     display: "Display",
