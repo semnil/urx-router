@@ -1,6 +1,6 @@
 # チャンネル調整画面 (設計仕様)
 
-> English: [../en/channel-tuning.md](../en/channel-tuning.md)
+> English version: [../en/channel-tuning.md](../en/channel-tuning.md)
 
 **状態: GATE / COMP / EQ / DUCKER と SSMCS バンク実装済み。** 1 つの処理のパラメーターを、
 その効果を映すメーターの隣に置くノード単位の画面の仕様。insert FX のダイナミクス系にもゲインリダクション

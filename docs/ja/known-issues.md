@@ -1,5 +1,7 @@
 # 既知の問題
 
+> English version: [../en/known-issues.md](../en/known-issues.md)
+
 現時点の制限事項の一覧。ルーティング規則の詳細は [device-model.md](device-model.md) を参照。
 
 ## CH → FX send の PRE/POST は実機へ反映できない

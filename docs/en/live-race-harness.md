@@ -1,5 +1,7 @@
 # Live-sync race diagnosis harness
 
+> 日本語版: [../ja/live-race-harness.md](../ja/live-race-harness.md)
+
 Design for the instrumentation harness that systematically detects the defects where, during Live
 sync, an operator's edit is overtaken by a device-originated readback, or is absorbed by a snapshot
 re-base and never sent.
