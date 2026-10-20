@@ -5162,6 +5162,19 @@ branches are force-pushed, so it is pinned to an append-only `master` commit wit
 as an explicit `toolchain:` input. Its comment names the branch (`# master`) rather than a version, and
 Dependabot moves the pin to that branch's current tip.
 
+A Dependabot pull request whose update is a semver patch merges on its own.
+`.github/workflows/dependabot-auto-merge.yml` reads the update type with `dependabot/fetch-metadata`
+and, for a patch, enables auto-merge (merge commit) pinned to the head commit it read; for any other type,
+including one it cannot read, it turns off an auto-merge an earlier head enabled, since a push from
+Dependabot leaves auto-merge on and a rebase can change the update type. Its job reports `auto-merge`, one
+of the status checks the ruleset requires, so a Dependabot pull request does not merge before the run for
+its head commit has decided; a minor or major update stays open for a person to merge. A merge made by
+auto-merge is attributed to `GITHUB_TOKEN`, and a push made with that token starts no workflow: `ci.yml`,
+`docs.yml` and `post-merge.yml` do not run on that merge commit — the license gate and the cache warm
+included — and the next merge's runs cover the tree that contains it. `tag-release.yml` starts from
+`ci.yml` finishing on main, so it does not run either, and a Dependabot pull request does not move the
+`version` it compares.
+
 ### Browser demo (GitHub Pages)
 
 Separate from the desktop app, a browser-only demo is published to GitHub Pages. `vite build --mode demo`

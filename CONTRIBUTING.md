@@ -145,7 +145,7 @@ CI diffs the generated files, so an out-of-date bundle fails the build.
   request with the item still open, a `Left open by the operator` entry quoting that).
   `pnpm check:pr-assumptions` refuses an untagged item and a tagged one with neither entry,
   and it reads what is written there whether or not the box beside it is ticked.
-- A merge waits for `ci-required`, `docs-required`, `format` and `race-required`. Each
+- A merge waits for `ci-required`, `docs-required`, `format`, `race-required` and `auto-merge`. Each
   reports on every pull request, so a change that skips the work behind one of them still
   gets a green check rather than a check that never arrives. `pnpm check:gates` is what
   keeps that true; run it after editing anything under `.github/workflows/`. It also fails a

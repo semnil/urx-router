@@ -1,5 +1,5 @@
 // Pins the merge-gate checker, which nothing else covers: it is the only guard over the
-// four status checks a merge waits for, and it had shipped two defects and then three more
+// status checks a merge waits for, and it had shipped two defects and then three more
 // in its ref matcher, every one of them found by hand-run fixtures that were then thrown
 // away. These are those fixtures, kept.
 //

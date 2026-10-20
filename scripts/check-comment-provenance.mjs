@@ -595,7 +595,7 @@ function scanJs(src, mode = "js") {
     // `a < b > /re/.test(c)` compares and then matches — one grammar cannot tell them apart,
     // and what separates them in FORMATTED text is the space: Prettier writes every
     // comparison as `a < b` and every type argument list tight against its name (measured
-    // both ways, and `format` is one of the four checks a merge waits for). So a `<` counts
+    // both ways, and `format` is one of the checks a merge waits for). So a `<` counts
     // only where it touches the name in front of it. Read as an operator, the `>` left the
     // grammar expecting an expression and the `/` after it opened a pattern that swallowed
     // the line.
