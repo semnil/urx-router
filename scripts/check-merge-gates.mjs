@@ -747,6 +747,7 @@ const GITHUB_ONLY_ACTIONS = new Set([
   "actions/upload-pages-artifact",
   "actions/deploy-pages",
   "actions/github-script",
+  "dependabot/fetch-metadata",
   "swatinem/rust-cache",
   "./.github/actions/playwright-version",
 ]);
