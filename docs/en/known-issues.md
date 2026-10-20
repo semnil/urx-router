@@ -1,5 +1,7 @@
 # Known issues
 
+> 日本語版: [../ja/known-issues.md](../ja/known-issues.md)
+
 A list of current limitations. See [device-model.md](device-model.md) for the
 routing rules in detail.
 

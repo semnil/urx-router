@@ -774,6 +774,6 @@ test.describe("T8 stress", () => {
   // harness has (DOM, status line, localStorage, the fake's IPC). Subscription
   // counters alone would pin one of the four assertions and silently pass the rest.
   // It needs the VITE_TRACE build's module-scope probe (docs/{en,ja}/live-race-harness.md,
-  // "既知のギャップ"); the 30-minute duration is the smaller obstacle.
+  // "Known gaps"); the 30-minute duration is the smaller obstacle.
   test.skip("a thirty-minute session leaks no subscription, timer or plan", async () => {});
 });

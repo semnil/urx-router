@@ -1,6 +1,6 @@
 # CONSOLE send ラック (設計仕様)
 
-> English: [../en/console-sends.md](../en/console-sends.md)
+> English version: [../en/console-sends.md](../en/console-sends.md)
 
 **ステータス: 実装済み (2026-07-12)。** CONSOLE ビューの「Send to」モードタブ (send-on-fader)
 を置き換えたストリップ内 SENDS ラックの仕様。本書がラック挙動のリファレンスであり、
