@@ -4422,11 +4422,12 @@ installer.nsi:823-849・:914-954・:897-901)。ピン留めしたショートカ
 リリースは `.github/workflows/release.yml` で自動化する。`vX.Y.Z` タグ (プレリリースは
 `vX.Y.Z-` に続けて `alpha` / `beta` / `rc`、その後は数字とドットのみ。`v1.9.0-rc1` や
 `v1.9.0-rc.2` は通り、`v1.9.0-rc-2` は通らない) を push すると
-5 ジョブが走る: `check-tag` がタグを検証し、この形から外れたタグでは run を失敗させる。
+6 ジョブが走る: `check-tag` がタグを検証し、この形から外れたタグでは run を失敗させる。
 `create-release` が **draft** の GitHub Release を作り、`licenses` が同梱する通知を 1 回だけ生成し
-(後述の「サードパーティライセンス」)、`build` マトリクス (`macos-26` /
-`windows-latest`) が各プラットフォームを [`tauri-action`](https://github.com/tauri-apps/tauri-action)
-でパッケージし draft に添付する。draft は公開前に手動レビューする。手動 `workflow_dispatch`
+(後述の「サードパーティライセンス」)、`compile` マトリクス (`macos-26` / `windows-latest`) が
+各プラットフォームのバイナリをビルドし、`build` マトリクスがそのバイナリを
+[`tauri-action`](https://github.com/tauri-apps/tauri-action) でパッケージして draft に添付し、
+タグがそれらを揃えずに終わったときは `release-gate` が run を失敗させる。draft は公開前に手動レビューする。手動 `workflow_dispatch`
 実行ではリリースを作らず、成果物を job artifact としてのみ残す (パッケージ検証用)。
 
 この形を決めているのは `scripts/release-tag-shape.sh` の 1 ファイルだけである。`check-tag` は
@@ -4450,7 +4451,7 @@ installer.nsi:823-849・:914-954・:897-901)。ピン留めしたショートカ
 前者はリリースが復元するキャッシュがこれから行うビルドを表すため、後者は pull request がリリースと同じ
 SDK で crate をコンパイルするため。その選択の背後にあるランナーイメージの提供終了の日程はワークフローのヘッダにある。
 
-`build` マトリクスは Rust キャッシュを復元専用で使う: 復元できるのは自分の ref かデフォルトブランチの
+`compile` マトリクスは Rust キャッシュを復元専用で使う: 復元できるのは自分の ref かデフォルトブランチの
 キャッシュだけで、タグはそれぞれ別スコープになるため、リリース中に保存したキャッシュは次のリリース
 から読めない。代わりに `post-merge.yml` の `warm-cache` ジョブが `main` 上で同じターゲットをビルドして
 Rust とプラットフォーム版 pnpm のキャッシュを温める — これがリリースの依存ツリー全体の再コンパイルを
@@ -4469,7 +4470,17 @@ macOS で 35 crate を再コンパイルした。
 macOS の署名・公証は任意で、署名 secret (`MACOS_SIGNING_CERT` / `MACOS_SIGNING_CERT_PASSWORD` /
 `MACOS_SIGNING_IDENTITY`) と公証 secret (`MACOS_NOTARIZATION_USERNAME` / `MACOS_NOTARIZATION_PASSWORD` /
 `MACOS_NOTARIZATION_TEAM_ID`) があれば `tauri-action` に渡し、無ければ未署名で配布する
-(secret 名は他リポジトリと共通化)。Windows のコンソールウィンドウは `src-tauri/src/main.rs` の
+(secret 名は他リポジトリと共通化)。これらの secret と自動更新の署名鍵が届くのは `build` ジョブの
+`tauri-action` のステップだけで、そのジョブではサードパーティのビルドコードを 1 つも実行しない。
+フロントエンドのビルドと Rust のコンパイル (各クレートのビルドスクリプトと手続き型マクロを含む) は
+`compile` で走る。`compile` は secret を持たず、`build` へはバイナリだけを artifact として渡す。
+`build` は自分専用の VM で始まるため、`compile` が作業領域・インストール・環境へ書いたものは届かない。
+`build` の checkout は git の設定にトークンを残さず、キャッシュを復元せず、依存は install スクリプトを
+止めて導入し、`tauri-action` は `scripts/tauri-bundle.mjs` 経由で起動する。このスクリプトはアクションが
+実行する `tauri build` を `tauri bundle` に置き換えるので、何もコンパイルせず `beforeBuildCommand` も
+走らせずに、そのバイナリをパッケージ・署名・公証する。リポジトリの内容に書き込めるのは
+`create-release` と `build` だけである。この配置は `pnpm test release-secrets` が固定している。
+Windows のコンソールウィンドウは `src-tauri/src/main.rs` の
 `windows_subsystem = "windows"` によりリリースビルドで既に抑止される (dev / `cargo build` では出る)。
 
 全ワークフローでサードパーティのアクションはバージョンコメント付きの commit SHA
