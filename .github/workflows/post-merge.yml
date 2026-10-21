@@ -37,7 +37,7 @@ jobs:
   # than on src-tauri changes alone: a restore refreshes the cache's eviction
   # clock, and a tag can follow any merge. A miss is silent — it only shows up
   # as a slow release — so the matrix, each entry's cacheKey included, has to
-  # stay identical to release.yml's build job.
+  # stay identical to release.yml's compile job.
   warm-cache:
     strategy:
       fail-fast: false
