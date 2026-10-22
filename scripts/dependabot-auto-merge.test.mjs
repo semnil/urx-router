@@ -27,7 +27,7 @@ const HEAD_SHA = "2222222222222222222222222222222222222222";
 // Skipped where the tools are absent, and the skip is named rather than silent. On CI they are
 // present, so there the skip is refused outright: a green run that judged nothing is the
 // failure this file exists to catch.
-const has = (cmd) => !spawnSync(cmd, ["--version"], { encoding: "utf8" }).error;
+const has = (command) => !spawnSync(command, ["--version"], { encoding: "utf8" }).error;
 const toolsAvailable = has("bash") && has("jq");
 
 const BLOCK = runBlock(readFileSync(join(ROOT, WORKFLOW), "utf8"), "UPDATED:");
@@ -35,7 +35,7 @@ const BLOCK = runBlock(readFileSync(join(ROOT, WORKFLOW), "utf8"), "UPDATED:");
 // One `updatedDependency` as fetch-metadata builds it. `packageEcosystem` is the second segment
 // of Dependabot's branch name, so it reads `npm_and_yarn` and `github_actions` rather than the
 // names dependabot.yml uses. An update with no version reaches it as an empty `updateType`.
-const dep = (name, ecosystem, updateType, prevVersion, newVersion) => ({
+const dependency = (name, ecosystem, updateType, prevVersion, newVersion) => ({
   dependencyName: name,
   dependencyType: "direct:production",
   updateType,
@@ -56,16 +56,16 @@ const PATCH = "version-update:semver-patch";
 const MINOR = "version-update:semver-minor";
 const MAJOR = "version-update:semver-major";
 
-const JSDOM_PATCH = dep("jsdom", "npm_and_yarn", PATCH, "30.1.2", "30.1.3");
-const PLAYWRIGHT_MINOR = dep("@playwright/test", "npm_and_yarn", MINOR, "1.63.0", "1.64.0");
-const ESBUILD_MINOR = dep("esbuild", "npm_and_yarn", MINOR, "0.28.2", "0.29.0");
-const UPDATER_MINOR = dep("tauri-plugin-updater", "cargo", MINOR, "2.13.3", "2.14.0");
-const LIBC_PATCH = dep("libc", "cargo", PATCH, "0.2.186", "0.2.190");
-const TUNGSTENITE_MINOR = dep("tungstenite", "cargo", MINOR, "0.29.0", "0.30.0");
-const MIDIR_MINOR = dep("midir", "cargo", MINOR, "0.10.4", "0.11.0");
-const SETUP_NODE_MINOR = dep("actions/setup-node", "github_actions", MINOR, "7.0.0", "7.1.0");
-const JSDOM_MAJOR = dep("jsdom", "npm_and_yarn", MAJOR, "29.1.1", "30.0.0");
-const TOOLCHAIN_SHA = dep(
+const JSDOM_PATCH = dependency("jsdom", "npm_and_yarn", PATCH, "30.1.2", "30.1.3");
+const PLAYWRIGHT_MINOR = dependency("@playwright/test", "npm_and_yarn", MINOR, "1.63.0", "1.64.0");
+const ESBUILD_MINOR = dependency("esbuild", "npm_and_yarn", MINOR, "0.28.2", "0.29.0");
+const UPDATER_MINOR = dependency("tauri-plugin-updater", "cargo", MINOR, "2.13.3", "2.14.0");
+const LIBC_PATCH = dependency("libc", "cargo", PATCH, "0.2.186", "0.2.190");
+const TUNGSTENITE_MINOR = dependency("tungstenite", "cargo", MINOR, "0.29.0", "0.30.0");
+const MIDIR_MINOR = dependency("midir", "cargo", MINOR, "0.10.4", "0.11.0");
+const SETUP_NODE_MINOR = dependency("actions/setup-node", "github_actions", MINOR, "7.0.0", "7.1.0");
+const JSDOM_MAJOR = dependency("jsdom", "npm_and_yarn", MAJOR, "29.1.1", "30.0.0");
+const TOOLCHAIN_SHA = dependency(
   "dtolnay/rust-toolchain",
   "github_actions",
   "",
