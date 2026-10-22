@@ -29,6 +29,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runBlock } from "./workflow-block.test-util.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const read = (path) => readFileSync(join(ROOT, path), "utf8");
@@ -61,24 +62,6 @@ const executableLines = (text) =>
     .split("\n")
     .filter((line) => !/^\s*#/.test(line))
     .join("\n");
-
-// The `run: |` block that follows an anchor, dedented. Its end is the first line indented
-// no further than the `run:` key itself, which is how a YAML block scalar ends.
-function runBlock(text, anchor) {
-  const lines = text.split("\n");
-  const from = lines.findIndex((line) => line.includes(anchor));
-  if (from < 0) throw new Error(`anchor not found: ${anchor}`);
-  const at = lines.findIndex((line, i) => i >= from && /^\s*run: \|\s*$/.test(line));
-  if (at < 0) throw new Error(`no \`run: |\` after: ${anchor}`);
-  const keyIndent = lines[at].search(/\S/);
-  const body = [];
-  for (const line of lines.slice(at + 1)) {
-    if (line.trim() !== "" && line.search(/\S/) <= keyIndent) break;
-    body.push(line);
-  }
-  const indent = Math.min(...body.filter((l) => l.trim() !== "").map((l) => l.search(/\S/)));
-  return body.map((l) => l.slice(indent)).join("\n") + "\n";
-}
 
 // --- the sandbox the blocks run in -------------------------------------------------------
 

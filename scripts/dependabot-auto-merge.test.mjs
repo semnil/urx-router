@@ -16,6 +16,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runBlock } from "./workflow-block.test-util.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const WORKFLOW = ".github/workflows/dependabot-auto-merge.yml";
@@ -28,24 +29,6 @@ const HEAD_SHA = "2222222222222222222222222222222222222222";
 // failure this file exists to catch.
 const has = (cmd) => !spawnSync(cmd, ["--version"], { encoding: "utf8" }).error;
 const toolsAvailable = has("bash") && has("jq");
-
-// The `run: |` block that follows an anchor, dedented. Its end is the first line indented no
-// further than the `run:` key itself, which is how a YAML block scalar ends.
-function runBlock(text, anchor) {
-  const lines = text.split("\n");
-  const from = lines.findIndex((line) => line.includes(anchor));
-  if (from < 0) throw new Error(`anchor not found: ${anchor}`);
-  const at = lines.findIndex((line, i) => i >= from && /^\s*run: \|\s*$/.test(line));
-  if (at < 0) throw new Error(`no \`run: |\` after: ${anchor}`);
-  const keyIndent = lines[at].search(/\S/);
-  const body = [];
-  for (const line of lines.slice(at + 1)) {
-    if (line.trim() !== "" && line.search(/\S/) <= keyIndent) break;
-    body.push(line);
-  }
-  const indent = Math.min(...body.filter((l) => l.trim() !== "").map((l) => l.search(/\S/)));
-  return body.map((l) => l.slice(indent)).join("\n") + "\n";
-}
 
 const BLOCK = runBlock(readFileSync(join(ROOT, WORKFLOW), "utf8"), "UPDATED:");
 
