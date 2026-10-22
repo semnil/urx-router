@@ -1,5 +1,6 @@
 // Pins which Dependabot pull requests .github/workflows/dependabot-auto-merge.yml lets merge on
-// their own: every updated dependency a semver patch update.
+// their own: every updated dependency a semver patch or a semver minor update, a minor update
+// of a cargo crate below 1.0 excepted.
 //
 // It RUNS the workflow's own `run:` block rather than reading it, against a stub `gh` that
 // records what it was asked to do, with the metadata handed to it in the shape
@@ -74,7 +75,12 @@ const MAJOR = "version-update:semver-major";
 
 const JSDOM_PATCH = dep("jsdom", "npm_and_yarn", PATCH, "30.1.2", "30.1.3");
 const PLAYWRIGHT_MINOR = dep("@playwright/test", "npm_and_yarn", MINOR, "1.63.0", "1.64.0");
+const ESBUILD_MINOR = dep("esbuild", "npm_and_yarn", MINOR, "0.28.2", "0.29.0");
+const UPDATER_MINOR = dep("tauri-plugin-updater", "cargo", MINOR, "2.13.3", "2.14.0");
 const LIBC_PATCH = dep("libc", "cargo", PATCH, "0.2.186", "0.2.190");
+const TUNGSTENITE_MINOR = dep("tungstenite", "cargo", MINOR, "0.29.0", "0.30.0");
+const MIDIR_MINOR = dep("midir", "cargo", MINOR, "0.10.4", "0.11.0");
+const SETUP_NODE_MINOR = dep("actions/setup-node", "github_actions", MINOR, "7.0.0", "7.1.0");
 const JSDOM_MAJOR = dep("jsdom", "npm_and_yarn", MAJOR, "29.1.1", "30.0.0");
 const TOOLCHAIN_SHA = dep(
   "dtolnay/rust-toolchain",
@@ -135,8 +141,13 @@ it("runs where the tools are, and never skips on CI", () => {
 describe.skipIf(!toolsAvailable)("the decision", () => {
   const enables = [
     ["a patch update", [JSDOM_PATCH]],
+    ["a minor update of an npm package", [PLAYWRIGHT_MINOR]],
+    // The 0.x exception is cargo's alone: an npm package below 1.0 qualifies like any other.
+    ["a minor update of an npm package below 1.0", [ESBUILD_MINOR]],
+    ["a minor update of a crate at 1.0 or above", [UPDATER_MINOR]],
     ["a patch update of a crate below 1.0", [LIBC_PATCH]],
-    ["several updates that each qualify", [LIBC_PATCH, JSDOM_PATCH]],
+    ["a minor update of an action", [SETUP_NODE_MINOR]],
+    ["several updates that each qualify", [UPDATER_MINOR, LIBC_PATCH, JSDOM_PATCH]],
   ];
   it.each(enables)("enables auto-merge for %s", (_, updated) => {
     const result = run(updated);
@@ -145,11 +156,15 @@ describe.skipIf(!toolsAvailable)("the decision", () => {
   });
 
   const disables = [
-    ["a minor update", [PLAYWRIGHT_MINOR]],
+    ["a minor update of a crate below 1.0", [TUNGSTENITE_MINOR]],
     ["a major update", [JSDOM_MAJOR]],
     ["an update with no version", [TOOLCHAIN_SHA]],
     // fetch-metadata's `update-type` reads patch here: a dependency with no type is not counted.
     ["a patch update beside one with no version", [JSDOM_PATCH, TOOLCHAIN_SHA]],
+    // fetch-metadata's `previous-version` reads 2.13.3 here: it is the first dependency's.
+    ["a qualifying minor update beside a minor of a crate below 1.0", [UPDATER_MINOR, MIDIR_MINOR]],
+    ["a minor update of a crate whose previous version is missing", [{ ...UPDATER_MINOR, prevVersion: "" }]],
+    ["a minor update whose ecosystem is missing", [{ ...PLAYWRIGHT_MINOR, packageEcosystem: "" }]],
     ["metadata listing no dependency", []],
     ["metadata fetch-metadata did not write", ""],
   ];
