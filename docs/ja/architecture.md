@@ -4491,14 +4491,16 @@ SHA とコメントを一緒にバンプする。例外は `dtolnay/rust-toolcha
 (チャンネルは `toolchain:` 入力で明示)。コメントはバージョンでなくブランチ名 (`# master`) を指し、
 Dependabot がピンをそのブランチの先頭へ進める。
 
-更新が semver の patch である Dependabot のプルリクエストは自動でマージされる。
-`.github/workflows/dependabot-auto-merge.yml` が `dependabot/fetch-metadata` で更新種別を読み、
-patch なら読んだ head コミットに固定して自動マージ (merge commit) を予約する。それ以外の種別
-(読めなかった場合を含む) では、前の head で予約された自動マージを解除する。Dependabot の push では
-予約が外れず、rebase で更新種別が変わることがあるため。このジョブはルールセットが要求する
+更新する依存がすべて semver の patch である Dependabot のプルリクエストは自動でマージされる。
+`.github/workflows/dependabot-auto-merge.yml` が `dependabot/fetch-metadata` で更新する依存を 1 つずつ
+読み、すべてが patch なら読んだ head コミットに固定して自動マージ (merge commit) を予約する。それ以外
+(minor と major の更新、版番号の無い更新 = `dtolnay/rust-toolchain` のピンのような commit SHA、
+読めなかったメタデータ) では、前の head で予約された自動マージを解除する。Dependabot の push では
+予約が外れず、rebase で更新の中身が変わることがあるため。このジョブはルールセットが要求する
 ステータスチェックの一つ `auto-merge` を報告するので、Dependabot のプルリクエストはその head
 コミットについての判定が出るまでマージされない。minor と major の更新は人がマージするまで開いたまま
-残る。自動マージによるマージは `GITHUB_TOKEN` によるものとして扱われ、そのトークンでの push は
+残る。`pnpm test dependabot-auto-merge` がワークフローの判定をこれらの種類ごとに走らせる。
+自動マージによるマージは `GITHUB_TOKEN` によるものとして扱われ、そのトークンでの push は
 ワークフローを起動しない。そのマージコミットでは `ci.yml`・`docs.yml`・`post-merge.yml` (ライセンス
 検査とキャッシュの準備を含む) が走らず、それを含むツリーは次のマージの実行が検査する。
 `tag-release.yml` は main での `ci.yml` の完了から起動するのでこれも走らないが、Dependabot の
