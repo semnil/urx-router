@@ -4496,10 +4496,12 @@ Dependabot がピンをそのブランチの先頭へ進める。
 Dependabot はこれを semver-minor と付ける。除くのは cargo だけで、esbuild のような 1.0 未満の npm
 パッケージの minor 更新は他と同じく自動でマージされる。
 `.github/workflows/dependabot-auto-merge.yml` が `dependabot/fetch-metadata` で更新する依存を 1 つずつ
-読み、すべてが条件に合えば読んだ head コミットに固定して自動マージ (merge commit) を予約する。それ以外
-(major の更新、版番号の無い更新 = `dtolnay/rust-toolchain` のピンのような commit SHA、
-読めなかったメタデータ) では、前の head で予約された自動マージを解除する。Dependabot の push では
-予約が外れず、rebase で更新の中身が変わることがあるため。このジョブはルールセットが要求する
+読み、すべてが条件に合い、かつプルリクエストのコミットが head の 1 つだけ (`dependabot[bot]` が書き、
+署名が検証済み) のときに、読んだ head コミットに固定して自動マージ (merge commit) を予約する。この
+アクションは最初のコミットしか読まないため。それ以外 (major の更新、版番号の無い更新 =
+`dtolnay/rust-toolchain` のピンのような commit SHA、読めなかったメタデータ、それ以外のコミットの並び)
+では、前の head で予約された自動マージを解除する。push では予約が外れず、rebase や足されたコミットで
+更新の中身が変わることがあるため。このジョブはルールセットが要求する
 ステータスチェックの一つ `auto-merge` を報告するので、Dependabot のプルリクエストはその head
 コミットについての判定が出るまでマージされない。それ以外の更新は人がマージするまで開いたまま
 残る。`pnpm test dependabot-auto-merge` がワークフローの判定をこれらの種類ごとに走らせる。

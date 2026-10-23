@@ -5178,10 +5178,12 @@ merges on its own, except for a minor update of a cargo crate below 1.0: Cargo t
 incompatible, while Dependabot labels it semver-minor. The exception is cargo's alone; a minor update of
 an npm package below 1.0, such as esbuild, merges on its own like any other.
 `.github/workflows/dependabot-auto-merge.yml` reads each updated dependency with
-`dependabot/fetch-metadata` and, when all of them qualify, enables auto-merge (merge commit) pinned to the
-head commit it read; otherwise — a major update, an update with no version (a commit SHA, such as the
-`dtolnay/rust-toolchain` pin), or metadata it cannot read — it turns off an auto-merge an earlier head
-enabled, since a push from Dependabot leaves auto-merge on and a rebase can change what the update is. Its
+`dependabot/fetch-metadata` and, when all of them qualify and the pull request is one commit — the head,
+written by `dependabot[bot]` with a verified signature, since the action reads the first commit alone —
+enables auto-merge (merge commit) pinned to the head commit it read; otherwise — a major update, an update
+with no version (a commit SHA, such as the `dtolnay/rust-toolchain` pin), metadata it cannot read, or any
+other commit history — it turns off an auto-merge an earlier head enabled, since a push leaves auto-merge
+on and a rebase or an added commit can change what the update is. Its
 job reports `auto-merge`, one of the status checks the ruleset requires, so a Dependabot pull request does
 not merge before the run for its head commit has decided; any other update stays open for a person to
 merge. `pnpm test dependabot-auto-merge` runs the workflow's decision against each of

@@ -1,6 +1,7 @@
 // Pins which Dependabot pull requests .github/workflows/dependabot-auto-merge.yml lets merge on
 // their own: every updated dependency a semver patch or a semver minor update, a minor update
-// of a cargo crate below 1.0 excepted.
+// of a cargo crate below 1.0 excepted, in a pull request that is one commit, the head, which
+// dependabot[bot] wrote and GitHub verified the signature of.
 //
 // It RUNS the workflow's own `run:` block rather than reading it, against a stub `gh` that
 // records what it was asked to do, with the metadata handed to it in the shape
@@ -8,7 +9,9 @@
 // `updatedDependency` objects, field names as that action spells them. The dependencies below
 // are this repository's own, so the cases are the kinds Dependabot opens here; the
 // multi-dependency ones are the arrangement fetch-metadata's summary outputs read wrongly,
-// which is why the block reads every dependency instead.
+// which is why the block reads every dependency instead. The stub answers the pull request's
+// commit list in the shape the REST pulls API returns it, because fetch-metadata reads the
+// first commit alone.
 
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -23,6 +26,15 @@ const WORKFLOW = ".github/workflows/dependabot-auto-merge.yml";
 
 const PR_URL = "https://github.com/semnil/urx-router/pull/1";
 const HEAD_SHA = "2222222222222222222222222222222222222222";
+const OTHER_SHA = "3333333333333333333333333333333333333333";
+
+// One commit as the REST pulls API lists it, with the fields the block reads.
+const commit = (sha, login, verified = true) => ({
+  sha,
+  author: { login },
+  commit: { verification: { verified } },
+});
+const DEPENDABOT_AT_HEAD = [commit(HEAD_SHA, "dependabot[bot]")];
 
 // Skipped where the tools are absent, and the skip is named rather than silent. On CI they are
 // present, so there the skip is refused outright: a green run that judged nothing is the
@@ -73,16 +85,21 @@ const TOOLCHAIN_SHA = dependency(
   "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
 );
 
-function run(updated, { autoMerge = "false" } = {}) {
+function run(updated, { autoMerge = "false", commits = DEPENDABOT_AT_HEAD } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "urx-dependabot-auto-merge-"));
   mkdirSync(join(dir, "bin"));
   const calls = join(dir, "calls.log");
   writeFileSync(calls, "");
+  const commitsFile = join(dir, "commits.json");
+  if (commits !== null) writeFileSync(commitsFile, JSON.stringify(commits));
   writeFileSync(
     join(dir, "bin", "gh"),
     [
       "#!/bin/bash",
       `printf '%s\\n' "gh $*" >> ${calls}`,
+      'if [[ "$1" == "api" ]]; then',
+      commits === null ? "  echo 'HTTP 502' >&2; exit 1" : `  cat ${commitsFile}; exit 0`,
+      "fi",
       'if [[ "$1 $2" == "pr view" ]]; then',
       `  echo '${autoMerge}'`,
       "fi",
@@ -99,7 +116,9 @@ function run(updated, { autoMerge = "false" } = {}) {
     env: {
       ...process.env,
       PATH: `${join(dir, "bin")}:${process.env.PATH}`,
+      GITHUB_REPOSITORY: "semnil/urx-router",
       PR_URL,
+      PR_NUMBER: "1",
       HEAD_SHA,
       UPDATED: typeof updated === "string" ? updated : JSON.stringify(updated),
     },
@@ -114,8 +133,10 @@ function run(updated, { autoMerge = "false" } = {}) {
   };
 }
 
+const COMMITS = "gh api repos/semnil/urx-router/pulls/1/commits?per_page=100";
 const ENABLE = `gh pr merge --auto --merge --match-head-commit ${HEAD_SHA} ${PR_URL}`;
 const VIEW = `gh pr view ${PR_URL} --json autoMergeRequest --jq .autoMergeRequest != null`;
+const DISABLE = `gh pr merge --disable-auto ${PR_URL}`;
 
 it("runs where the tools are, and never skips on CI", () => {
   if (!toolsAvailable) expect(process.env.CI, "bash and jq are missing on CI").toBeFalsy();
@@ -135,7 +156,7 @@ describe.skipIf(!toolsAvailable)("the decision", () => {
   it.each(enables)("enables auto-merge for %s", (_, updated) => {
     const result = run(updated);
     expect(result.status).toBe(0);
-    expect(result.calls).toEqual([ENABLE]);
+    expect(result.calls).toEqual([COMMITS, ENABLE]);
   });
 
   const disables = [
@@ -158,11 +179,43 @@ describe.skipIf(!toolsAvailable)("the decision", () => {
   });
 });
 
+describe.skipIf(!toolsAvailable)("the commit history", () => {
+  const leavesOff = [
+    ["a commit someone added after Dependabot's", [commit(OTHER_SHA, "dependabot[bot]"), commit(HEAD_SHA, "someone")]],
+    ["one commit someone else wrote", [commit(HEAD_SHA, "someone")]],
+    ["one Dependabot commit whose signature is not verified", [commit(HEAD_SHA, "dependabot[bot]", false)]],
+    ["one Dependabot commit that is not the head", [commit(OTHER_SHA, "dependabot[bot]")]],
+    [
+      "two Dependabot commits with the head listed first",
+      [commit(HEAD_SHA, "dependabot[bot]"), commit(OTHER_SHA, "dependabot[bot]")],
+    ],
+    ["no commit", []],
+  ];
+  it.each(leavesOff)("leaves auto-merge off for a qualifying update in %s", (_, commits) => {
+    const result = run([JSDOM_PATCH], { commits });
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([COMMITS, VIEW]);
+  });
+
+  it("turns off an auto-merge an earlier head enabled when a commit was added", () => {
+    const commits = [commit(OTHER_SHA, "dependabot[bot]"), commit(HEAD_SHA, "someone")];
+    const result = run([PLAYWRIGHT_MINOR], { commits, autoMerge: "true" });
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([COMMITS, VIEW, DISABLE]);
+  });
+
+  it("fails when it cannot read the commits", () => {
+    const result = run([JSDOM_PATCH], { commits: null });
+    expect(result.status).not.toBe(0);
+    expect(result.calls).toEqual([COMMITS]);
+  });
+});
+
 describe.skipIf(!toolsAvailable)("the disable half", () => {
   it("turns off an auto-merge an earlier head enabled", () => {
     const result = run([JSDOM_MAJOR], { autoMerge: "true" });
     expect(result.status).toBe(0);
-    expect(result.calls).toEqual([VIEW, `gh pr merge --disable-auto ${PR_URL}`]);
+    expect(result.calls).toEqual([VIEW, DISABLE]);
   });
 
   it("fails when it cannot read whether auto-merge is on", () => {
