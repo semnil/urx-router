@@ -5179,7 +5179,8 @@ incompatible, while Dependabot labels it semver-minor. The exception is cargo's 
 an npm package below 1.0, such as esbuild, merges on its own like any other.
 `.github/workflows/dependabot-auto-merge.yml` reads each updated dependency with
 `dependabot/fetch-metadata` and, when all of them qualify and the pull request is one commit — the head,
-written by `dependabot[bot]` with a verified signature, since the action reads the first commit alone —
+written by `dependabot[bot]`, committed by GitHub (web-flow) and with a verified signature, since the
+action reads the first commit alone and an amend keeps the author —
 enables auto-merge (merge commit) pinned to the head commit it read; otherwise — a major update, an update
 with no version (a commit SHA, such as the `dtolnay/rust-toolchain` pin), metadata it cannot read, or any
 other commit history — it turns off an auto-merge an earlier head enabled, since a push leaves auto-merge

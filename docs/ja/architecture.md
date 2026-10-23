@@ -4497,8 +4497,8 @@ Dependabot はこれを semver-minor と付ける。除くのは cargo だけで
 パッケージの minor 更新は他と同じく自動でマージされる。
 `.github/workflows/dependabot-auto-merge.yml` が `dependabot/fetch-metadata` で更新する依存を 1 つずつ
 読み、すべてが条件に合い、かつプルリクエストのコミットが head の 1 つだけ (`dependabot[bot]` が書き、
-署名が検証済み) のときに、読んだ head コミットに固定して自動マージ (merge commit) を予約する。この
-アクションは最初のコミットしか読まないため。それ以外 (major の更新、版番号の無い更新 =
+GitHub (web-flow) がコミットし、署名が検証済み) のときに、読んだ head コミットに固定して自動マージ (merge commit) を予約する。この
+アクションは最初のコミットしか読まず、amend では作者が残るため。それ以外 (major の更新、版番号の無い更新 =
 `dtolnay/rust-toolchain` のピンのような commit SHA、読めなかったメタデータ、それ以外のコミットの並び)
 では、前の head で予約された自動マージを解除する。push では予約が外れず、rebase や足されたコミットで
 更新の中身が変わることがあるため。このジョブはルールセットが要求する

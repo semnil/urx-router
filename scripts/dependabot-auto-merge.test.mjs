@@ -1,7 +1,7 @@
 // Pins which Dependabot pull requests .github/workflows/dependabot-auto-merge.yml lets merge on
 // their own: every updated dependency a semver patch or a semver minor update, a minor update
 // of a cargo crate below 1.0 excepted, in a pull request that is one commit, the head, which
-// dependabot[bot] wrote and GitHub verified the signature of.
+// dependabot[bot] wrote, GitHub (web-flow) committed and GitHub verified the signature of.
 //
 // It RUNS the workflow's own `run:` block rather than reading it, against a stub `gh` that
 // records what it was asked to do, with the metadata handed to it in the shape
@@ -29,9 +29,10 @@ const HEAD_SHA = "2222222222222222222222222222222222222222";
 const OTHER_SHA = "3333333333333333333333333333333333333333";
 
 // One commit as the REST pulls API lists it, with the fields the block reads.
-const commit = (sha, login, verified = true) => ({
+const commit = (sha, login, verified = true, committer = "web-flow") => ({
   sha,
   author: { login },
+  committer: { login: committer },
   commit: { verification: { verified } },
 });
 const DEPENDABOT_AT_HEAD = [commit(HEAD_SHA, "dependabot[bot]")];
@@ -185,6 +186,7 @@ describe.skipIf(!toolsAvailable)("the commit history", () => {
     ["one commit someone else wrote", [commit(HEAD_SHA, "someone")]],
     ["one Dependabot commit whose signature is not verified", [commit(HEAD_SHA, "dependabot[bot]", false)]],
     ["one Dependabot commit that is not the head", [commit(OTHER_SHA, "dependabot[bot]")]],
+    ["one Dependabot commit someone else amended and signed", [commit(HEAD_SHA, "dependabot[bot]", true, "someone")]],
     [
       "two Dependabot commits with the head listed first",
       [commit(HEAD_SHA, "dependabot[bot]"), commit(OTHER_SHA, "dependabot[bot]")],
