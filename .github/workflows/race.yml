@@ -24,7 +24,7 @@ name: Race harness
 # installs, and because it is what survives anyone narrowing the first clause. In front of
 # the tag rather than behind it, where a red result would arrive after the tag exists.
 #
-# The cost is taken deliberately and measured: Dependabot's npm ecosystem runs weekly and
+# The cost is taken deliberately and measured: Dependabot's npm ecosystem runs daily and
 # every one of its pull requests now spends a harness run. The frequency, against the two
 # narrower rules this replaced, is in docs/{en,ja}/live-race-harness.md.
 #
