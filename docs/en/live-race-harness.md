@@ -687,7 +687,7 @@ it still read as the thing that keeps the harness in front of a release. It is k
 exactly that statement, and because it survives anyone narrowing the first clause. In front of the tag
 rather than behind it, since a release-time run would report on a tag that already exists. A
 `paths: package.json` filter on the trigger would not have said "version bump" either — Dependabot
-edits that file weekly — which is why the comparison is a job and not a filter.
+edits that file on its daily runs — which is why the comparison is a job and not a filter.
 
 **The first clause is an exclusion because three attempts to write it as a watch list each leaked.**
 The list is worth reading as a sequence, because each entry was added only after the gap was pointed

@@ -4,7 +4,7 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     open-pull-requests-limit: 5
     ignore:
       # @types/node is major-pinned to the Node 24 LTS runtime used in CI.
@@ -16,7 +16,7 @@ updates:
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
-      interval: weekly
+      interval: daily
     open-pull-requests-limit: 5
 
   # The workflow actions used above. Actions are SHA-pinned with a version
@@ -24,4 +24,4 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
