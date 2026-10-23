@@ -277,8 +277,8 @@ jobs:
       # this step through four names — a step id, a step output key, a job output key and
       # this env key — and GitHub resolves a name that does not exist to the empty string
       # rather than to an error. Playwright then falls back to the equal-count split with no
-      # message of any kind (measured: an empty variable collects 57 cases for --shard=1/3
-      # where the weights give 38), so every signal would say the run worked while the tier
+      # message of any kind (measured: an empty variable collects 62 cases for --shard=1/3
+      # where the weights give 53), so every signal would say the run worked while the tier
       # went back to the imbalance this arrangement exists to remove. Checking the value
       # rather than the spelling is what makes any of those four names fail loudly.
       #
