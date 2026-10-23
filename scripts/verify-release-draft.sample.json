@@ -1,0 +1,23 @@
+{
+  "version": "1.18.2",
+  "notes": "",
+  "pub_date": "2026-10-23T16:50:15.565Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRNCtMaldFWS9idmIxZC9JTHNVZndCcGhLZU1wbGJMVFZYaEkwdTZ4MU9oaEljWS84K0VVczhUQ3NhbzcwRGNldGd1Wk1OcjRMNXErdDg4M2FvODFnWTdPd3grQTMyREEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNzczOTkwCWZpbGU6VVJYIFJvdXRlcl8xLjE4LjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjEuMTguMgpFVUgydWg1bk9XWCtsYWVteG0zaGZFbldISXlFdVRBVVMvVEZrdFp5QXdCMUVoU08yTmR5RFFEdzNrWWNBUU84b2IyN25QcC91RjJFUUdwcFRhUlBBUT09Cg==",
+      "url": "https://api.github.com/repos/semnil/urx-router/releases/assets/669750618"
+    },
+    "windows-x86_64-nsis": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRNCtMaldFWS9idmIxZC9JTHNVZndCcGhLZU1wbGJMVFZYaEkwdTZ4MU9oaEljWS84K0VVczhUQ3NhbzcwRGNldGd1Wk1OcjRMNXErdDg4M2FvODFnWTdPd3grQTMyREEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNzczOTkwCWZpbGU6VVJYIFJvdXRlcl8xLjE4LjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjEuMTguMgpFVUgydWg1bk9XWCtsYWVteG0zaGZFbldISXlFdVRBVVMvVEZrdFp5QXdCMUVoU08yTmR5RFFEdzNrWWNBUU84b2IyN25QcC91RjJFUUdwcFRhUlBBUT09Cg==",
+      "url": "https://api.github.com/repos/semnil/urx-router/releases/assets/669750618"
+    },
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRNCtMaldFWS9idmNBMUVKMTE3ZHZxNFUxQUUxVHhQbURYY3U1ajc5L2hnSTNCSytIZlQwYStvQ2tZelhSaWlzTTRNVEl5THJkT1l2Slh1VHdRQVRmS1J6ZElUNkduR2cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNzc0MjExCWZpbGU6VVJYIFJvdXRlci5hcHAudGFyLmd6CXZlcnNpb246MS4xOC4yClZWWWVUbmxLRVJzc0JCcFRiWDJNT2k2UEZjYlEyT2FGR2FwaXhjWGI3dzYvMGJsc0tmTE9zK3U2d0FqcDBHUmNacEdXWld3RUJMUzVvZE9LVHZQN0RnPT0K",
+      "url": "https://api.github.com/repos/semnil/urx-router/releases/assets/669759781"
+    },
+    "darwin-aarch64-app": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRNCtMaldFWS9idmNBMUVKMTE3ZHZxNFUxQUUxVHhQbURYY3U1ajc5L2hnSTNCSytIZlQwYStvQ2tZelhSaWlzTTRNVEl5THJkT1l2Slh1VHdRQVRmS1J6ZElUNkduR2cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNzc0MjExCWZpbGU6VVJYIFJvdXRlci5hcHAudGFyLmd6CXZlcnNpb246MS4xOC4yClZWWWVUbmxLRVJzc0JCcFRiWDJNT2k2UEZjYlEyT2FGR2FwaXhjWGI3dzYvMGJsc0tmTE9zK3U2d0FqcDBHUmNacEdXWld3RUJMUzVvZE9LVHZQN0RnPT0K",
+      "url": "https://api.github.com/repos/semnil/urx-router/releases/assets/669759781"
+    }
+  }
+}

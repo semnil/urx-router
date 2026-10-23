@@ -4422,13 +4422,25 @@ installer.nsi:823-849・:914-954・:897-901)。ピン留めしたショートカ
 リリースは `.github/workflows/release.yml` で自動化する。`vX.Y.Z` タグ (プレリリースは
 `vX.Y.Z-` に続けて `alpha` / `beta` / `rc`、その後は数字とドットのみ。`v1.9.0-rc1` や
 `v1.9.0-rc.2` は通り、`v1.9.0-rc-2` は通らない) を push すると
-6 ジョブが走る: `check-tag` がタグを検証し、この形から外れたタグでは run を失敗させる。
+7 ジョブが走る: `check-tag` がタグを検証し、この形から外れたタグでは run を失敗させる。
 `create-release` が **draft** の GitHub Release を作り、`licenses` が同梱する通知を 1 回だけ生成し
 (後述の「サードパーティライセンス」)、`compile` マトリクス (`macos-26` / `windows-latest`) が
 各プラットフォームのバイナリをビルドし、`build` マトリクスがそのバイナリを
 [`tauri-action`](https://github.com/tauri-apps/tauri-action) でパッケージして draft に添付し、
-タグがそれらを揃えずに終わったときは `release-gate` が run を失敗させる。draft は公開前に手動レビューする。手動 `workflow_dispatch`
+`verify-draft` が組み上がった draft を読み、その updater manifest が出荷可能でないときは run を
+失敗させ (後述)、タグがそれらを揃えずに終わったときは `release-gate` が run を失敗させる。draft は公開前に手動レビューする。手動 `workflow_dispatch`
 実行ではリリースを作らず、成果物を job artifact としてのみ残す (パッケージ検証用)。
+
+`verify-draft` は組み上がった draft を読み、その updater manifest が出荷可能でないときは拒否する:
+latest.json の version と各署名の trusted comment の version がタグと一致し、各署名が
+`src-tauri/tauri.conf.json` の公開鍵で本物であること。検証するのは global signature — minisign の
+2 つ目の署名で、version を載せる trusted comment を署名したもの — で、Node 標準の Ed25519 を使うため
+バンドルの DL は要らない (各バンドル本体に対する file signature はクライアントが確かめる)。2 つの
+version が食い違う draft は installed client が一様に拒否するので、これは公開前に人が手で行っていた
+確認であり、いまは赤い run になる (`scripts/verify-release-draft.mjs`、傍らの本物の v1.18.2 manifest に
+対して `scripts/verify-release-draft.test.mjs` が固定)。このジョブが `contents: write` を持つのは
+GitHub が draft を read-only トークンに見せないからだけで、署名秘密は持たずビルドコードも走らせない。
+したがってリリースの pull request は手動のドラフト検証の前提を 1 つも持たない。
 
 この形を決めているのは `scripts/release-tag-shape.sh` の 1 ファイルだけである。`check-tag` は
 渡されたタグをこれに掛け、`.github/workflows/tag-release.yml` — マージされたバージョン更新を
@@ -4479,7 +4491,9 @@ macOS の署名・公証は任意で、署名 secret (`MACOS_SIGNING_CERT` / `MA
 止めて導入し、`tauri-action` は `scripts/tauri-bundle.mjs` 経由で起動する。このスクリプトはアクションが
 実行する `tauri build` を `tauri bundle` に置き換えるので、何もコンパイルせず `beforeBuildCommand` も
 走らせずに、そのバイナリをパッケージ・署名・公証する。リポジトリの内容に書き込めるのは
-`create-release` と `build` だけである。この配置は `pnpm test release-secrets` が固定している。
+`create-release`・`build`・`verify-draft` だけである (`verify-draft` が持つのは draft の読み取りのため
+だけで — GitHub が draft を read-only トークンに見せない — secret を持たずビルドコードも走らせない)。
+この配置は `pnpm test release-secrets` が固定している。
 Windows のコンソールウィンドウは `src-tauri/src/main.rs` の
 `windows_subsystem = "windows"` によりリリースビルドで既に抑止される (dev / `cargo build` では出る)。
 

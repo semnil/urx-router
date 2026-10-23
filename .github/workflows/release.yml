@@ -382,6 +382,45 @@ jobs:
             src-tauri/target/**/bundle/nsis/*.exe
           if-no-files-found: error
 
+  # Reads the draft this run assembled and fails the run if its updater manifest is not
+  # releasable: latest.json's `version` and every signature's trusted-comment `version:`
+  # must agree with the tag, and each signature must be authentic under the public key in
+  # src-tauri/tauri.conf.json. A draft whose two versions disagree is one every installed
+  # client refuses, so this is the check a person used to do by hand before publishing — a
+  # red run here is what now stops a broken draft from being published.
+  #
+  # It holds `contents: write` only to READ the draft: GitHub hides a draft Release from a
+  # read-only token, and this job downloads its latest.json. It holds no signing secret,
+  # uploads nothing and runs no third-party build code — the token is `github.token`, not a
+  # configured secret — so scripts/release-secrets.test.mjs lists it among the write-holders
+  # with that reason rather than refusing it.
+  #
+  # Runs only on a tag whose build produced a draft: a branch dispatch uploads no release,
+  # so create-release is skipped and the implicit success() on `needs` skips this too.
+  verify-draft:
+    needs: [check-tag, create-release, build]
+    if: needs.check-tag.outputs.validTag == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # read the draft Release, which GitHub hides from a read-only token
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.check-tag.outputs.version }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Verify the release draft's updater manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check-tag.outputs.version }}
+        run: |
+          mkdir -p draft
+          gh release download "${TAG}" --repo "${GITHUB_REPOSITORY}" --pattern latest.json --dir draft
+          node scripts/verify-release-draft.mjs --tag "${TAG}" --latest draft/latest.json
+
   # The run's own verdict, said in terms of the tag. Nothing waits on this workflow's
   # conclusion — tag-release.yml dispatches it and ends — and a tag whose release failed
   # leaves no trace on the Releases page, which is the one page the operator is required to

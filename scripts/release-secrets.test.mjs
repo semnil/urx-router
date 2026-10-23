@@ -7,8 +7,10 @@
 // cache.
 //
 // The rules, each a property of the workflow text:
-//   - the workflow-level `permissions` grant nothing beyond read, and only `create-release`
-//     and `build` grant `contents: write`;
+//   - the workflow-level `permissions` grant nothing beyond read, and only `create-release`,
+//     `build` and `verify-draft` grant `contents: write` — `verify-draft` holds it only to
+//     read the draft Release, which GitHub hides from a read-only token, and it names no
+//     secret and runs no build code, so it joins the write-holders rather than being refused;
 //   - no job but `build` names a secret, and in `build` only the tauri-action step does;
 //   - `compile` builds the binary — `tauri build --no-bundle` — and hands it to `build` as an
 //     artifact that `build` downloads, restoring the executable bit an artifact drops before
@@ -35,7 +37,7 @@ const RELEASE = ".github/workflows/release.yml";
 const SHIM = "scripts/tauri-bundle.mjs";
 const read = (path) => readFileSync(join(ROOT, path), "utf8");
 
-const WRITERS = new Set(["create-release", "build"]);
+const WRITERS = new Set(["create-release", "build", "verify-draft"]);
 
 // --- reading the workflow ----------------------------------------------------------------
 
@@ -213,7 +215,7 @@ describe("release.yml keeps third-party build code away from the signing materia
     expect(exposures(WORKFLOW)).toEqual([]);
   });
 
-  it("refuses contents: write beyond create-release and build", () => {
+  it("refuses contents: write beyond create-release, build and verify-draft", () => {
     const wide = mutate(WORKFLOW, /^permissions:\n {2}contents: read$/m, "permissions:\n  contents: write");
     expect(exposures(wide)).toContain("the workflow grants contents: write to every job");
     const all = mutate(WORKFLOW, /^permissions:\n {2}contents: read$/m, "permissions: write-all");

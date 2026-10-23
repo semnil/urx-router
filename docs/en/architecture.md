@@ -5096,15 +5096,30 @@ mode, so it would pop a dialog mid-auto-update. The `LICENSE.txt` on the agreeme
 Releases are automated by `.github/workflows/release.yml`. Pushing a `vX.Y.Z`
 tag — or, for a prerelease, `vX.Y.Z-` followed by `alpha`, `beta` or `rc` and then
 digits and dots only (`v1.9.0-rc1`, `v1.9.0-rc.2`; **not** `v1.9.0-rc-2`) — runs
-six jobs: `check-tag` validates the tag and fails the run on one outside those
+seven jobs: `check-tag` validates the tag and fails the run on one outside those
 forms, `create-release` opens a **draft** GitHub Release, `licenses`
 generates the bundled notice once (see "Third-party licenses" below), a
 `compile` matrix (`macos-26` / `windows-latest`) builds each platform's binary, a
 `build` matrix packages that binary with
 [`tauri-action`](https://github.com/tauri-apps/tauri-action) and attaches the
-bundles to the draft, and `release-gate` fails the run when a tag ends without them. The draft is left for manual review before publishing. A
+bundles to the draft, `verify-draft` reads the assembled draft and fails the run
+when its updater manifest is not releasable (below), and `release-gate` fails the
+run when a tag ends without them. The draft is left for manual review before publishing. A
 manual `workflow_dispatch` run builds without creating a release, uploading the
 bundles as job artifacts only (to verify the packaging pipeline).
+
+`verify-draft` reads the draft the build just assembled and refuses it when its updater
+manifest is not releasable: latest.json's version and every signature's trusted-comment
+version must agree with the tag, and each signature must be authentic under the public key
+in `src-tauri/tauri.conf.json`. It verifies the global signature — minisign's second
+signature, over the trusted comment that carries the version — with Node's own Ed25519, so
+it needs no bundle download; the file signature over each bundle is the client's to check. A
+draft whose two versions disagree is one every installed client refuses, so this is the
+check a person once did by hand before publishing, now a red run
+(`scripts/verify-release-draft.mjs`, pinned by `scripts/verify-release-draft.test.mjs`
+against the genuine v1.18.2 manifest beside it). The job holds `contents: write` only
+because GitHub hides a draft from a read-only token; it holds no signing secret and runs no
+build code. A release pull request therefore carries no manual draft-verification assumption.
 
 Those forms are decided in one file, `scripts/release-tag-shape.sh`. `check-tag`
 runs it on the tag it was given, and `.github/workflows/tag-release.yml` — which
