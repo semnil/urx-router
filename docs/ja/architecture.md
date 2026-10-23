@@ -4435,7 +4435,9 @@ installer.nsi:823-849・:914-954・:897-901)。ピン留めしたショートカ
 latest.json の version と各署名の trusted comment の version がタグと一致し、各署名が
 `src-tauri/tauri.conf.json` の公開鍵で本物であること。検証するのは global signature — minisign の
 2 つ目の署名で、version を載せる trusted comment を署名したもの — で、Node 標準の Ed25519 を使うため
-バンドルの DL は要らない (各バンドル本体に対する file signature はクライアントが確かめる)。2 つの
+バンドルの DL は要らない (各バンドル本体に対する file signature はクライアントが確かめる)。また、
+クライアントが parse する形になっていない署名 — 74 バイトの file signature、既知のアルゴリズム、
+trusted comment の接頭辞 — は拒否し、クライアントと同じ地点で弾く。2 つの
 version が食い違う draft は installed client が一様に拒否するので、これは公開前に人が手で行っていた
 確認であり、いまは赤い run になる (`scripts/verify-release-draft.mjs`、傍らの本物の v1.18.2 manifest に
 対して `scripts/verify-release-draft.test.mjs` が固定)。このジョブが `contents: write` を持つのは

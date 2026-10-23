@@ -5113,7 +5113,10 @@ manifest is not releasable: latest.json's version and every signature's trusted-
 version must agree with the tag, and each signature must be authentic under the public key
 in `src-tauri/tauri.conf.json`. It verifies the global signature — minisign's second
 signature, over the trusted comment that carries the version — with Node's own Ed25519, so
-it needs no bundle download; the file signature over each bundle is the client's to check. A
+it needs no bundle download; the file signature over each bundle is the client's to check.
+It also refuses a signature that is not structurally what the client parses — a 74-byte file
+signature, a known algorithm, a trusted-comment prefix — so it rejects at the same point the
+client does. A
 draft whose two versions disagree is one every installed client refuses, so this is the
 check a person once did by hand before publishing, now a red run
 (`scripts/verify-release-draft.mjs`, pinned by `scripts/verify-release-draft.test.mjs`

@@ -45,19 +45,29 @@ export function parsePublicKey(pubkeyField) {
 
 /** A latest.json signature is base64 over the four-line minisign signature file: an
  *  untrusted comment, the file signature, the trusted comment, and the global signature
- *  over the file signature followed by the trusted comment's text. */
+ *  over the file signature followed by the trusted comment's text. The file signature is
+ *  exactly a 2-byte algorithm, an 8-byte key id and a 64-byte signature; the algorithm is
+ *  one minisign defines; and the trusted comment line carries its prefix. A signature that
+ *  is none of these is one the downstream client refuses at parse time, so this does too
+ *  rather than reading the bytes it wanted out of it. */
 export function parseSignature(signatureField) {
   const text = Buffer.from(signatureField, "base64").toString("utf8");
   const lines = text.split("\n");
   if (lines.length < 4) throw new Error("signature is not a minisign signature");
-  const { keyId, rest } = decodeKeyline(lines[1]);
-  const trusted = lines[2].replace(/^trusted comment: /, "");
+  const line = Buffer.from(lines[1], "base64");
+  if (line.length !== 74)
+    throw new Error(`signature line is ${line.length} bytes, not the 74 a minisign signature carries`);
+  const algorithm = line.subarray(0, 2).toString("latin1");
+  if (algorithm !== "Ed" && algorithm !== "ED")
+    throw new Error(`signature algorithm ${JSON.stringify(algorithm)} is not one minisign defines`);
+  if (!lines[2].startsWith("trusted comment: ")) throw new Error("signature has no trusted comment line");
+  const trusted = lines[2].slice("trusted comment: ".length);
   const version = Object.fromEntries(
     trusted.split("\t").map((f) => [f.slice(0, f.indexOf(":")), f.slice(f.indexOf(":") + 1)]),
   ).version;
   return {
-    keyId,
-    fileSignature: rest.subarray(0, 64),
+    keyId: line.subarray(2, 10),
+    fileSignature: line.subarray(10, 74),
     trusted,
     version,
     globalSignature: Buffer.from(lines[3], "base64"),
