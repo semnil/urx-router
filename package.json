@@ -30,6 +30,7 @@
     "check:gates": "node scripts/check-merge-gates.mjs",
     "check:skips": "node scripts/check-race-skips.mjs",
     "check:platform": "node scripts/check-macho-platform.mjs",
+    "verify:release-draft": "node scripts/verify-release-draft.mjs",
     "format": "node scripts/format.mjs",
     "preview": "vite preview --port 4173 --strictPort",
     "e2e:serve": "node scripts/e2e-serve.mjs",
