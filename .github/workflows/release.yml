@@ -223,7 +223,7 @@ jobs:
       # Read-only for the same reason: a cache saved here lands in the tag's own
       # scope, where nothing reads it. Why macOS has a key of its own is stated
       # beside post-merge.yml's matrix.
-      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
           shared-key: ${{ matrix.cacheKey }}
