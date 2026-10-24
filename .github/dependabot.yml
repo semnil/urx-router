@@ -1,10 +1,14 @@
 version: 2
+# Every entry runs every day at 00:00 JST on a cron schedule; `interval: daily`
+# runs on weekdays only.
 updates:
   # Frontend dev dependencies (pnpm; Dependabot reads pnpm-lock.yaml).
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: daily
+      interval: cron
+      cronjob: "0 0 * * *"
+      timezone: "Asia/Tokyo"
     open-pull-requests-limit: 5
     ignore:
       # @types/node is major-pinned to the Node 24 LTS runtime used in CI.
@@ -16,7 +20,9 @@ updates:
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
-      interval: daily
+      interval: cron
+      cronjob: "0 0 * * *"
+      timezone: "Asia/Tokyo"
     open-pull-requests-limit: 5
 
   # The workflow actions used above. Actions are SHA-pinned with a version
@@ -24,4 +30,6 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: daily
+      interval: cron
+      cronjob: "0 0 * * *"
+      timezone: "Asia/Tokyo"
