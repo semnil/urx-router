@@ -24,6 +24,14 @@ updates:
       cronjob: "0 0 * * *"
       timezone: "Asia/Tokyo"
     open-pull-requests-limit: 5
+    groups:
+      # Patch and minor updates of tauri, tauri-build and the tauri-plugin-*
+      # crates arrive in one pull request: tauri depends on tauri-build, so an
+      # update of one can move the other. A major update of any of them is a
+      # pull request of its own.
+      tauri:
+        patterns: ["tauri", "tauri-*"]
+        update-types: ["minor", "patch"]
 
   # The workflow actions used above. Actions are SHA-pinned with a version
   # comment (`@<sha> # vX.Y.Z`); Dependabot bumps the pin and comment together.

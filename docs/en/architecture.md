@@ -5191,6 +5191,10 @@ branches are force-pushed, so it is pinned to an append-only `master` commit wit
 as an explicit `toolchain:` input. Its comment names the branch (`# master`) rather than a version, and
 Dependabot moves the pin to that branch's current tip.
 
+Dependabot's cargo entry groups the Tauri crates: patch and minor updates of `tauri`, `tauri-build` and the
+`tauri-plugin-*` crates arrive together in one pull request, and a major update of any of them is a pull
+request of its own (the `tauri` group in `.github/dependabot.yml`, which says why).
+
 A Dependabot pull request in which every updated dependency is a semver patch or a semver minor update
 merges on its own, except for a minor update of a cargo crate below 1.0: Cargo treats a 0.x minor as
 incompatible, while Dependabot labels it semver-minor. The exception is cargo's alone; a minor update of
