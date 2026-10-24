@@ -32,6 +32,10 @@ updates:
       tauri:
         patterns: ["tauri", "tauri-*"]
         update-types: ["minor", "patch"]
+      # The same for serde and serde_json, which depends on serde.
+      serde:
+        patterns: ["serde", "serde_json"]
+        update-types: ["minor", "patch"]
 
   # The workflow actions used above. Actions are SHA-pinned with a version
   # comment (`@<sha> # vX.Y.Z`); Dependabot bumps the pin and comment together.

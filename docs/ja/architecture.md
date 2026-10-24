@@ -4507,9 +4507,10 @@ SHA とコメントを一緒にバンプする。例外は `dtolnay/rust-toolcha
 (チャンネルは `toolchain:` 入力で明示)。コメントはバージョンでなくブランチ名 (`# master`) を指し、
 Dependabot がピンをそのブランチの先頭へ進める。
 
-Dependabot の cargo の設定は Tauri の crate をまとめる。`tauri`・`tauri-build`・`tauri-plugin-*` の
-patch と minor の更新は 1 つのプルリクエストにまとめて届き、どれかの major の更新はそれだけの
-プルリクエストになる (`.github/dependabot.yml` の `tauri` グループ。理由もそこにある)。
+Dependabot の cargo の設定は互いに依存する crate をまとめる。`tauri`・`tauri-build`・`tauri-plugin-*` の
+patch と minor の更新は 1 つのプルリクエストにまとめて届き、`serde` と `serde_json` も同じく 1 つに
+まとまる。どれかの major の更新はそれだけのプルリクエストになる (`.github/dependabot.yml` の cargo の
+`groups`。理由もそこにある)。
 
 更新する依存がすべて semver の patch か minor である Dependabot のプルリクエストは自動でマージされる。
 ただし 1.0 未満の cargo crate の minor 更新は除く。Cargo は 0.x の minor を非互換として扱うが、
