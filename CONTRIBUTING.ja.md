@@ -19,8 +19,9 @@ URX Router は単独メンテナーのプロジェクトだが、外部からの
 ## セットアップ
 
 `package.json` の `engines` が宣言する範囲の Node、pnpm、およびデスクトップシェルを触る場合のみ
-rustup 経由の Rust。その範囲は開発用の依存が宣言する範囲 (jsdom・vitest・vite がそれぞれ宣言する) の
-重なる部分で、`?plan=` のコーデックが使う `CompressionStream("deflate-raw")` だけなら 21.2 以降で足りる。
+rustup 経由の Rust。その範囲は、直接の依存がそれぞれの `engines` で宣言する範囲と、`?plan=` の
+コーデックが使う `CompressionStream("deflate-raw")` が要る 21.2 以降の重なる部分で、両者が食い違うと
+`pnpm test node-engines` が落ちる。
 
 ```sh
 pnpm install
