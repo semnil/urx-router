@@ -172,10 +172,10 @@ function playwright(project, { args = [], env = {}, tag = project } = {}) {
 function vitestRun(guards) {
   const file = join(reports, "vitest-run.json");
   const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // The runner filters on space-joined titles. A ledger separator may
-  // instead be literal text inside a title; both spellings reach the result check,
-  // which still compares the structured name and refuses ambiguous matches.
-  const names = guards.map(({ title }) => title.split(NAME_SEP).map(escape).join("(?: > | )"));
+  // The runner filters on titles joined with the ledger's own separator, so a ledger title is
+  // the pattern as written, a separator that is literal text inside a title included; the
+  // result check still compares the structured name and refuses ambiguous matches.
+  const names = guards.map(({ title }) => escape(title));
   const args = [
     "run",
     "--reporter=json",
