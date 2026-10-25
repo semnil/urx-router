@@ -5205,13 +5205,15 @@ the current major's updates either, so vitest moves to a new major by hand.
 A Dependabot pull request in which every updated dependency is a semver patch or a semver minor update
 merges on its own, except for a minor update of a cargo crate below 1.0: Cargo treats a 0.x minor as
 incompatible, while Dependabot labels it semver-minor. The exception is cargo's alone; a minor update of
-an npm package below 1.0, such as esbuild, merges on its own like any other.
+an npm package below 1.0, such as esbuild, merges on its own like any other. So does an update of the
+`vendor/urx-lcd-sim` submodule, which `.github/dependabot.yml` moves to the newest commit of urx-lcd-sim's
+default branch with no cooldown: the update is a commit, and fetch-metadata gives it no semver type.
 `.github/workflows/dependabot-auto-merge.yml` reads each updated dependency with
 `dependabot/fetch-metadata` and, when all of them qualify and the pull request is one commit — the head,
 written by `dependabot[bot]`, committed by GitHub (web-flow) and with a verified signature, since the
 action reads the first commit alone and an amend keeps the author —
 enables auto-merge (merge commit) pinned to the head commit it read; otherwise — a major update, an update
-with no version (a commit SHA, such as the `dtolnay/rust-toolchain` pin), metadata it cannot read, a run in
+with no version outside a submodule (a commit SHA, such as the `dtolnay/rust-toolchain` pin), metadata it cannot read, a run in
 which fetch-metadata fails (its check still passes, so a person can merge the pull request), or any other
 commit history — it turns off an auto-merge an earlier head enabled, since a push leaves auto-merge
 on and a rebase or an added commit can change what the update is. A run whose head is no longer the head

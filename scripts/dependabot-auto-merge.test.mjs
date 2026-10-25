@@ -1,6 +1,6 @@
 // Pins which Dependabot pull requests .github/workflows/dependabot-auto-merge.yml lets merge on
 // their own: every updated dependency a semver patch or a semver minor update, a minor update
-// of a cargo crate below 1.0 excepted, in a pull request that is one commit, the head, which
+// of a cargo crate below 1.0 excepted, or a git submodule, in a pull request that is one commit, the head, which
 // dependabot[bot] wrote, GitHub (web-flow) committed and GitHub verified the signature of.
 //
 // It RUNS the workflow's own `run:` block rather than reading it, against a stub `gh` that
@@ -89,6 +89,14 @@ const TOOLCHAIN_SHA = dependency(
   "",
   "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
 );
+// A submodule's update is a commit: fetch-metadata gives it no type and no previous version.
+const LCD_SIM_COMMIT = dependency(
+  "vendor/urx-lcd-sim",
+  "submodules",
+  null,
+  "",
+  "2612f186cf4796f93afa8e12719d958b1a3efc91",
+);
 
 function run(
   updated,
@@ -164,6 +172,7 @@ describe.skipIf(!toolsAvailable)("the decision", () => {
     ["a patch update of a crate below 1.0", [LIBC_PATCH]],
     ["a minor update of an action", [SETUP_NODE_MINOR]],
     ["several updates that each qualify", [UPDATER_MINOR, LIBC_PATCH, JSDOM_PATCH]],
+    ["a submodule update", [LCD_SIM_COMMIT]],
   ];
   it.each(enables)("enables auto-merge for %s", (_, updated) => {
     const result = run(updated);
@@ -175,6 +184,12 @@ describe.skipIf(!toolsAvailable)("the decision", () => {
     ["a minor update of a crate below 1.0", [TUNGSTENITE_MINOR]],
     ["a major update", [JSDOM_MAJOR]],
     ["an update with no version", [TOOLCHAIN_SHA]],
+    // The submodule exception is the ecosystem's, not the missing type's.
+    [
+      "an update with no version whose ecosystem is not a submodule's",
+      [{ ...LCD_SIM_COMMIT, packageEcosystem: "npm_and_yarn" }],
+    ],
+    ["a submodule update beside a major update", [LCD_SIM_COMMIT, JSDOM_MAJOR]],
     // fetch-metadata's `update-type` reads patch here: a dependency with no type is not counted.
     ["a patch update beside one with no version", [JSDOM_PATCH, TOOLCHAIN_SHA]],
     // fetch-metadata's `previous-version` reads 2.13.3 here: it is the first dependency's.
