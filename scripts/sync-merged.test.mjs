@@ -29,7 +29,7 @@ import {
 import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { REGENERABLE, decide, holdersOf, run } from "./sync-merged.mjs";
 
 const PROGRAM = resolve(dirname(fileURLToPath(import.meta.url)), "sync-merged.mjs");
@@ -50,11 +50,12 @@ function git(cwd, ...args) {
  * request leaves), a fast-forward, or a squash. The three are not interchangeable — only the first
  * leaves a tip that is reachable and off the first-parent line.
  */
-function fixture({ landing = "merge", base = "main", ignore = null } = {}) {
+function fixture({ landing = "merge", base = "main", ignore = null, submodule = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "sync-merged-"));
   roots.push(root);
   const origin = join(root, "origin");
   const down = join(root, "down");
+  const lib = join(root, "lib");
   mkdirSync(origin);
   git(origin, "init", "-q", "-b", base);
   git(origin, "config", "user.email", "t@t");
@@ -67,6 +68,10 @@ function fixture({ landing = "merge", base = "main", ignore = null } = {}) {
   if (ignore) {
     writeFileSync(join(origin, ".gitignore"), ignore);
     git(origin, "add", ".gitignore");
+  }
+  if (submodule) {
+    libRepo(lib);
+    git(origin, "submodule", "add", "-q", lib, "vendor/lib");
   }
   git(origin, "commit", "-qm", "one");
 
@@ -87,7 +92,37 @@ function fixture({ landing = "merge", base = "main", ignore = null } = {}) {
     git(origin, "commit", "-qm", "squashed");
   }
   if (landing !== "none") git(origin, "branch", "-D", "feat");
-  return { root, origin, down };
+  return { root, origin, down, lib };
+}
+
+/** A repository to stand in as a submodule: one commit, with `work/` ignored the way a project
+ *  ignores local notes. Returns the commit. */
+function libRepo(lib) {
+  mkdirSync(lib);
+  git(lib, "init", "-q", "-b", "main");
+  git(lib, "config", "user.email", "t@t");
+  git(lib, "config", "user.name", "t");
+  writeFileSync(join(lib, ".gitignore"), "work/\n");
+  writeFileSync(join(lib, "l.txt"), "1\n");
+  git(lib, "add", ".gitignore", "l.txt");
+  git(lib, "commit", "-qm", "lib one");
+  return git(lib, "rev-parse", "HEAD");
+}
+
+/** A further commit on the submodule's repository, returned. */
+function libCommit(lib, content) {
+  writeFileSync(join(lib, "l.txt"), content);
+  git(lib, "commit", "-qam", `lib ${content.trim()}`);
+  return git(lib, "rev-parse", "HEAD");
+}
+
+/** Records the submodule at `commit` on the origin's default branch, the way a merged update does. */
+function bumpOnOrigin(origin, commit) {
+  const sub = join(origin, "vendor", "lib");
+  git(sub, "fetch", "-q", "origin");
+  git(sub, "checkout", "-q", commit);
+  git(origin, "add", "vendor/lib");
+  git(origin, "commit", "-qm", "bump vendor/lib");
 }
 
 /** The output lines a run prints, and the exit code it would return. */
@@ -1313,6 +1348,138 @@ describe("sync-merged, when a second session changes something after the plan wa
     expect(r.code).toBe(0);
     expect(r.text).toContain("synced main");
     expect(branches(down)).not.toContain("feat");
+    expect(at(down, "main")).toBe(at(down, "origin/main"));
+  });
+});
+
+describe("sync-merged, around a submodule", () => {
+  // The fixtures' submodules are local repositories, and git refuses to clone one over the file
+  // transport unless told to. Set in the environment, so the program's own `git submodule
+  // update` inherits it as the fixture's commands do.
+  const saved = {};
+  const allow = { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "protocol.file.allow", GIT_CONFIG_VALUE_0: "always" };
+  beforeEach(() => {
+    for (const [k, v] of Object.entries(allow)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+  });
+  afterEach(() => {
+    for (const k of Object.keys(allow)) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  /** A landed branch's worktree with the submodule checked out in it, beside a default branch's
+   *  checkout that has it checked out too. */
+  function landedWithSubmodule() {
+    const fx = fixture({ submodule: true });
+    git(fx.down, "submodule", "update", "-q", "--init");
+    const tree = join(fx.down, "..", "wt");
+    git(fx.down, "worktree", "add", tree, "feat");
+    git(tree, "submodule", "update", "-q", "--init");
+    return { ...fx, tree, sub: join(tree, "vendor", "lib") };
+  }
+
+  it("removes a worktree whose submodule is checked out as git left it, and leaves the main checkout's alone", () => {
+    const { down, tree } = landedWithSubmodule();
+    const { code, text } = report(down, true);
+    expect(text).toContain("removed feat");
+    expect(code).toBe(0);
+    expect(existsSync(tree)).toBe(false);
+    // The registration a deinit would have taken from the shared configuration, and the checkout
+    // that registration belongs to. The helper trims, so a status line that begins with its
+    // initialized-and-recorded space begins with the commit; `-` or `+` would remain.
+    expect(git(down, "config", "--get", "submodule.vendor/lib.url")).not.toBe("");
+    expect(git(down, "submodule", "status")).toMatch(/^[0-9a-f]{40} vendor\/lib/);
+  });
+
+  it("keeps one whose submodule holds ignored files that are not build output", () => {
+    const { down, tree, sub } = landedWithSubmodule();
+    mkdirSync(join(sub, "work"));
+    writeFileSync(join(sub, "work", "notes.md"), "kept\n");
+    // The tree's own status is clean: what is in the submodule is ignored there.
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(report(down, true).text).toMatch(
+      /^keep {3}feat.*its submodule vendor\/lib holds ignored files that no command here rebuilds: work\/$/m,
+    );
+    expect(readFileSync(join(sub, "work", "notes.md"), "utf8")).toBe("kept\n");
+    expect(branches(down)).toContain("feat");
+  });
+
+  it("keeps one whose submodule holds commits its remote does not", () => {
+    const { down, tree, sub } = landedWithSubmodule();
+    const recorded = git(sub, "rev-parse", "HEAD");
+    git(sub, "config", "user.email", "t@t");
+    git(sub, "config", "user.name", "t");
+    git(sub, "switch", "-q", "-c", "local-work");
+    writeFileSync(join(sub, "l.txt"), "local\n");
+    git(sub, "commit", "-qam", "local");
+    const local = git(sub, "rev-parse", "HEAD");
+    git(sub, "checkout", "-q", "--detach", recorded);
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(report(down, true).text).toMatch(
+      /^keep {3}feat.*its submodule vendor\/lib holds commits its remote does not$/m,
+    );
+    expect(git(sub, "rev-parse", "local-work")).toBe(local);
+  });
+
+  it("keeps one whose submodule holds a stash", () => {
+    const { down, tree, sub } = landedWithSubmodule();
+    git(sub, "config", "user.email", "t@t");
+    git(sub, "config", "user.name", "t");
+    writeFileSync(join(sub, "l.txt"), "stashed\n");
+    git(sub, "stash", "-q");
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(report(down, true).text).toMatch(/^keep {3}feat.*its submodule vendor\/lib holds a stash$/m);
+    expect(git(sub, "stash", "list")).not.toBe("");
+  });
+
+  it("brings the default branch's submodule to the commit the merge records", () => {
+    const { origin, down, lib } = fixture({ submodule: true });
+    git(down, "submodule", "update", "-q", "--init");
+    const was = git(join(down, "vendor", "lib"), "rev-parse", "HEAD");
+    const next = libCommit(lib, "2\n");
+    bumpOnOrigin(origin, next);
+    expect(report(down).text).toContain(`sync   vendor/lib ${was.slice(0, 7)} -> ${next.slice(0, 7)}`);
+    const { code, text } = report(down, true);
+    expect(text).toContain(`synced vendor/lib -> ${next.slice(0, 7)}`);
+    expect(code).toBe(0);
+    expect(git(join(down, "vendor", "lib"), "rev-parse", "HEAD")).toBe(next);
+    expect(git(down, "status", "--porcelain=v1")).toBe("");
+  });
+
+  it("checks out a submodule the merge introduces", () => {
+    const { root, origin, down } = fixture();
+    const lib = join(root, "lib");
+    const first = libRepo(lib);
+    git(origin, "submodule", "add", "-q", lib, "vendor/lib");
+    git(origin, "commit", "-qm", "add vendor/lib");
+    expect(report(down).text).toContain(`sync   vendor/lib (new) -> ${first.slice(0, 7)}`);
+    const { code, text } = report(down, true);
+    expect(text).toContain(`synced vendor/lib -> ${first.slice(0, 7)}`);
+    expect(code).toBe(0);
+    expect(git(join(down, "vendor", "lib"), "rev-parse", "HEAD")).toBe(first);
+    expect(git(down, "status", "--porcelain=v1")).toBe("");
+  });
+
+  it("leaves a submodule moved by hand where it is, and says so", () => {
+    const { origin, down, lib } = fixture({ submodule: true });
+    git(down, "submodule", "update", "-q", "--init");
+    const next = libCommit(lib, "2\n");
+    const mine = libCommit(lib, "3\n");
+    bumpOnOrigin(origin, next);
+    const sub = join(down, "vendor", "lib");
+    git(sub, "fetch", "-q", "origin");
+    git(sub, "checkout", "-q", mine);
+    const { code, text } = report(down, true);
+    expect(text).toMatch(
+      new RegExp(`^keep {3}vendor/lib at ${mine.slice(0, 7)} — it is not where the old tip records it`, "m"),
+    );
+    expect(code).toBe(1);
+    expect(git(sub, "rev-parse", "HEAD")).toBe(mine);
+    // The tree itself is synced: the submodule is the one thing left alone.
     expect(at(down, "main")).toBe(at(down, "origin/main"));
   });
 });
