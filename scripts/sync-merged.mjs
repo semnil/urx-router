@@ -310,16 +310,32 @@ function checkedOutSubmodules(dir) {
   return links === null ? null : [...links.keys()].filter((p) => existsSync(join(dir, p, ".git")));
 }
 
+/** Every submodule a tree has checked out at any depth, as paths from the tree's top, or null where
+ *  one level cannot be read. A submodule's own submodules sit inside its working tree and its
+ *  repository, so a removal reaches them as well. */
+function checkedOutSubmodulesDeep(dir, prefix = "") {
+  const subs = checkedOutSubmodules(dir);
+  if (subs === null) return null;
+  const all = [];
+  for (const p of subs) {
+    const inner = checkedOutSubmodulesDeep(join(dir, p), `${prefix}${p}/`);
+    if (inner === null) return null;
+    all.push(`${prefix}${p}`, ...inner);
+  }
+  return all;
+}
+
 /**
- * Why a tree's checked-out submodules may not be deleted with it, or null when they may.
+ * Why a tree's checked-out submodules, at any depth, may not be deleted with it, or null when they
+ * may.
  *
  * The tree's own status already answers for a submodule moved off the commit it records or holding
  * a tracked or untracked change, and says nothing about the rest: ignored content inside it, and
  * commits or a stash that live only in its repository, which sits in the tree's administrative
- * directory and goes with it.
+ * directory and goes with it. A submodule's status says the same about its own submodules.
  */
 function submoduleWork(dir) {
-  const subs = checkedOutSubmodules(dir);
+  const subs = checkedOutSubmodulesDeep(dir);
   if (subs === null) return "its submodules could not be read";
   for (const p of subs) {
     const sub = join(dir, p);

@@ -70,7 +70,7 @@ function fixture({ landing = "merge", base = "main", ignore = null, submodule = 
     git(origin, "add", ".gitignore");
   }
   if (submodule) {
-    libRepo(lib);
+    libRepo(lib, submodule === "nested" ? join(root, "leaf") : null);
     git(origin, "submodule", "add", "-q", lib, "vendor/lib");
   }
   git(origin, "commit", "-qm", "one");
@@ -96,8 +96,9 @@ function fixture({ landing = "merge", base = "main", ignore = null, submodule = 
 }
 
 /** A repository to stand in as a submodule: one commit, with `work/` ignored the way a project
- *  ignores local notes. Returns the commit. */
-function libRepo(lib) {
+ *  ignores local notes. Given `leaf`, that commit records a repository built the same way at
+ *  `nested`, a submodule of the submodule. Returns the commit. */
+function libRepo(lib, leaf = null) {
   mkdirSync(lib);
   git(lib, "init", "-q", "-b", "main");
   git(lib, "config", "user.email", "t@t");
@@ -105,6 +106,10 @@ function libRepo(lib) {
   writeFileSync(join(lib, ".gitignore"), "work/\n");
   writeFileSync(join(lib, "l.txt"), "1\n");
   git(lib, "add", ".gitignore", "l.txt");
+  if (leaf) {
+    libRepo(leaf);
+    git(lib, "submodule", "add", "-q", leaf, "nested");
+  }
   git(lib, "commit", "-qm", "lib one");
   return git(lib, "rev-parse", "HEAD");
 }
@@ -1372,13 +1377,13 @@ describe("sync-merged, around a submodule", () => {
   });
 
   /** A landed branch's worktree with the submodule checked out in it, beside a default branch's
-   *  checkout that has it checked out too. */
-  function landedWithSubmodule() {
-    const fx = fixture({ submodule: true });
-    git(fx.down, "submodule", "update", "-q", "--init");
+   *  checkout that has it checked out too — the submodule's own submodule as well, given `nested`. */
+  function landedWithSubmodule({ nested = false } = {}) {
+    const fx = fixture({ submodule: nested ? "nested" : true });
+    git(fx.down, "submodule", "update", "-q", "--init", "--recursive");
     const tree = join(fx.down, "..", "wt");
     git(fx.down, "worktree", "add", tree, "feat");
-    git(tree, "submodule", "update", "-q", "--init");
+    git(tree, "submodule", "update", "-q", "--init", "--recursive");
     return { ...fx, tree, sub: join(tree, "vendor", "lib") };
   }
 
@@ -1472,6 +1477,31 @@ describe("sync-merged, around a submodule", () => {
       /^keep {3}feat.*its submodule vendor\/lib holds commits its remote does not$/m,
     );
     expect(git(sub, "cat-file", "-t", lost)).toBe("commit");
+  });
+
+  // A submodule's own submodule sits inside its working tree and its repository, so it goes with
+  // them, and what it holds reaches neither the tree's status nor the submodule's.
+  it("removes a worktree whose nested submodule is checked out as git left it", () => {
+    const { down, tree } = landedWithSubmodule({ nested: true });
+    expect(existsSync(join(tree, "vendor", "lib", "nested", ".git"))).toBe(true);
+    const { code, text } = report(down, true);
+    expect(text).toContain("removed feat");
+    expect(code).toBe(0);
+    expect(existsSync(tree)).toBe(false);
+  });
+
+  it("keeps one whose nested submodule holds ignored files that are not build output", () => {
+    const { down, tree, sub } = landedWithSubmodule({ nested: true });
+    const leaf = join(sub, "nested");
+    mkdirSync(join(leaf, "work"));
+    writeFileSync(join(leaf, "work", "operator-notes.txt"), "kept\n");
+    // Neither the tree nor the submodule around it reports the file: it is ignored in the leaf.
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(git(sub, "status", "--porcelain=v1", "--ignored=matching")).toBe("");
+    expect(report(down, true).text).toMatch(
+      /^keep {3}feat.*its submodule vendor\/lib\/nested holds ignored files that no command here rebuilds: work\/$/m,
+    );
+    expect(readFileSync(join(leaf, "work", "operator-notes.txt"), "utf8")).toBe("kept\n");
   });
 
   it("brings the default branch's submodule to the commit the merge records", () => {
