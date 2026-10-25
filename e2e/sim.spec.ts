@@ -57,8 +57,10 @@ test("offers no SIM tab and no SIM Scale without an experimental launch", async 
 // in the checkout the install links, rather than of the value the build defines; and checked against
 // this repository's own commit, which is what git answers with in a submodule left unchecked-out.
 test("shows the commit of the urx-lcd-sim it bundles as SETUP → Version's APP Version", async ({ page }) => {
+  // `safe.directory=*` lets git answer for a checkout another user owns — the E2E job's container
+  // workspace is one — instead of refusing it as dubious ownership.
   const git = (cwd: string, ...args: string[]) =>
-    execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+    execFileSync("git", ["-c", "safe.directory=*", "-C", cwd, ...args], { encoding: "utf8" }).trim();
   const dir = realpathSync.native(resolve("node_modules", "urx-lcd-sim"));
   expect(realpathSync.native(git(dir, "rev-parse", "--show-toplevel"))).toBe(dir);
   const commit = git(dir, "rev-parse", "--short=7", "HEAD");
