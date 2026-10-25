@@ -326,28 +326,58 @@ function checkedOutSubmodulesDeep(dir, prefix = "") {
 }
 
 /**
- * Why a tree's checked-out submodules, at any depth, may not be deleted with it, or null when they
- * may.
+ * Every submodule repository in a tree's administrative `modules` directory, which a removal deletes
+ * whole, as { name, gitDir }: checked out or not — a deinitialized submodule leaves its repository
+ * there — and the repositories of their own submodules, kept in each one's `modules` in turn. Null
+ * where the directory cannot be located or a level of it read.
+ */
+function submoduleRepos(dir) {
+  const modules = git(["rev-parse", "--path-format=absolute", "--git-path", "modules"], dir, true);
+  if (modules.status !== 0) return null;
+  const found = [];
+  const walk = (at, prefix) => {
+    let entries;
+    try {
+      entries = readdirSync(at, { withFileTypes: true });
+    } catch (e) {
+      return e.code === "ENOENT";
+    }
+    if (entries.some((e) => e.name === "HEAD") && entries.some((e) => e.name === "objects" && e.isDirectory())) {
+      found.push({ name: prefix.slice(0, -1), gitDir: at });
+      return walk(join(at, "modules"), prefix);
+    }
+    return entries.filter((e) => e.isDirectory()).every((e) => walk(join(at, e.name), `${prefix}${e.name}/`));
+  };
+  return walk(modules.out, "") ? found : null;
+}
+
+/**
+ * Why a tree's submodules may not be deleted with it, or null when they may.
  *
  * The tree's own status already answers for a submodule moved off the commit it records or holding
- * a tracked or untracked change, and says nothing about the rest: ignored content inside it, and
- * commits or a stash that live only in its repository, which sits in the tree's administrative
- * directory and goes with it. A submodule's status says the same about its own submodules.
+ * a tracked or untracked change, and says nothing about the rest: ignored content in a checked-out
+ * submodule at any depth, and commits or a stash that live only in a submodule's repository, which
+ * sits in the tree's administrative directory and goes with it, checked out or not. A submodule's
+ * status says the same about its own submodules.
  */
 function submoduleWork(dir) {
   const subs = checkedOutSubmodulesDeep(dir);
   if (subs === null) return "its submodules could not be read";
   for (const p of subs) {
-    const sub = join(dir, p);
-    const dirty = unclean(sub);
+    const dirty = unclean(join(dir, p));
     if (dirty) return dirty.replace(/^its worktree/, `its submodule ${p}`);
-    if (git(["rev-parse", "--verify", "--quiet", "refs/stash"], sub, true).status === 0)
-      return `its submodule ${p} holds a stash`;
+  }
+  const repos = submoduleRepos(dir);
+  if (repos === null) return "its submodules' repositories could not be read";
+  for (const { name, gitDir } of repos) {
+    const repo = (args) => git(["--git-dir", gitDir, ...args], dir, true);
+    if (repo(["rev-parse", "--verify", "--quiet", "refs/stash"]).status === 0)
+      return `its submodule ${name} holds a stash`;
     // Every local ref (a tag, a note) and every reflog entry, not only HEAD and the branches: a
     // commit any of them still holds goes with the repository.
-    const ahead = git(["rev-list", "-n", "1", "--all", "--reflog", "--not", "--remotes"], sub, true);
-    if (ahead.status !== 0) return `its submodule ${p} could not be read: ${ahead.err}`;
-    if (ahead.out !== "") return `its submodule ${p} holds commits its remote does not`;
+    const ahead = repo(["rev-list", "-n", "1", "--all", "--reflog", "--not", "--remotes"]);
+    if (ahead.status !== 0) return `its submodule ${name} could not be read: ${ahead.err}`;
+    if (ahead.out !== "") return `its submodule ${name} holds commits its remote does not`;
   }
   return null;
 }

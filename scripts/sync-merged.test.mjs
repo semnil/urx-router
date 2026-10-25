@@ -72,6 +72,10 @@ function fixture({ landing = "merge", base = "main", ignore = null, submodule = 
   if (submodule) {
     libRepo(lib, submodule === "nested" ? join(root, "leaf") : null);
     git(origin, "submodule", "add", "-q", lib, "vendor/lib");
+    if (submodule === "pair") {
+      libRepo(join(root, "lib2"));
+      git(origin, "submodule", "add", "-q", join(root, "lib2"), "vendor/other");
+    }
   }
   git(origin, "commit", "-qm", "one");
 
@@ -1377,9 +1381,10 @@ describe("sync-merged, around a submodule", () => {
   });
 
   /** A landed branch's worktree with the submodule checked out in it, beside a default branch's
-   *  checkout that has it checked out too — the submodule's own submodule as well, given `nested`. */
-  function landedWithSubmodule({ nested = false } = {}) {
-    const fx = fixture({ submodule: nested ? "nested" : true });
+   *  checkout that has it checked out too — the submodule's own submodule as well, given `nested`,
+   *  and a second submodule at vendor/other, given `pair`. */
+  function landedWithSubmodule({ nested = false, pair = false } = {}) {
+    const fx = fixture({ submodule: nested ? "nested" : pair ? "pair" : true });
     git(fx.down, "submodule", "update", "-q", "--init", "--recursive");
     const tree = join(fx.down, "..", "wt");
     git(fx.down, "worktree", "add", tree, "feat");
@@ -1502,6 +1507,57 @@ describe("sync-merged, around a submodule", () => {
       /^keep {3}feat.*its submodule vendor\/lib\/nested holds ignored files that no command here rebuilds: work\/$/m,
     );
     expect(readFileSync(join(leaf, "work", "operator-notes.txt"), "utf8")).toBe("kept\n");
+  });
+
+  // A deinitialized submodule has no working tree to read, while its repository stays in the
+  // tree's administrative directory, which the removal deletes whole.
+  /** Commits on a branch in the submodule repository at `dir`, then puts HEAD back where it was. */
+  function privateCommit(dir, branch = "private-experiment") {
+    const recorded = git(dir, "rev-parse", "HEAD");
+    git(dir, "config", "user.email", "t@t");
+    git(dir, "config", "user.name", "t");
+    git(dir, "switch", "-q", "-c", branch);
+    writeFileSync(join(dir, "l.txt"), `${branch}\n`);
+    git(dir, "commit", "-qam", branch);
+    const made = git(dir, "rev-parse", "HEAD");
+    git(dir, "checkout", "-q", "--detach", recorded);
+    return made;
+  }
+
+  /** The repository a submodule keeps in a tree's administrative directory, read without its working tree. */
+  const moduleRepo = (tree, name) => git(tree, "rev-parse", "--path-format=absolute", "--git-path", `modules/${name}`);
+
+  it("keeps one whose deinitialized submodule's repository holds a commit its remote does not", () => {
+    const { down, tree } = landedWithSubmodule({ pair: true });
+    const made = privateCommit(join(tree, "vendor", "other"));
+    git(tree, "submodule", "deinit", "-q", "--", "vendor/other");
+    expect(existsSync(join(tree, "vendor", "other", ".git"))).toBe(false);
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(report(down, true).text).toMatch(
+      /^keep {3}feat.*its submodule vendor\/other holds commits its remote does not$/m,
+    );
+    expect(git(tree, "--git-dir", moduleRepo(tree, "vendor/other"), "rev-parse", "private-experiment")).toBe(made);
+  });
+
+  it("keeps one whose deinitialized nested submodule's repository holds a commit its remote does not", () => {
+    const { down, tree, sub } = landedWithSubmodule({ nested: true });
+    const made = privateCommit(join(sub, "nested"));
+    git(sub, "submodule", "deinit", "-q", "--", "nested");
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(report(down, true).text).toMatch(
+      /^keep {3}feat.*its submodule vendor\/lib\/nested holds commits its remote does not$/m,
+    );
+    const nestedRepo = join(moduleRepo(tree, "vendor/lib"), "modules", "nested");
+    expect(git(tree, "--git-dir", nestedRepo, "rev-parse", "private-experiment")).toBe(made);
+  });
+
+  it("removes one whose deinitialized submodule's repository holds nothing of its own", () => {
+    const { down, tree } = landedWithSubmodule({ pair: true });
+    git(tree, "submodule", "deinit", "-q", "--", "vendor/other");
+    const { code, text } = report(down, true);
+    expect(text).toContain("removed feat");
+    expect(code).toBe(0);
+    expect(existsSync(tree)).toBe(false);
   });
 
   it("brings the default branch's submodule to the commit the merge records", () => {
