@@ -26,6 +26,7 @@ import {
   pickFxType,
   undoEdit,
   quiet,
+  flowInvokes,
 } from "./main.device.test-util";
 
 // The park in front of an EFFECT TYPE write.
@@ -346,16 +347,16 @@ describe("an EFFECT TYPE change while a session is live", () => {
     expect(shownHpf()).toBe(HPF.format!(TUNED, {}));
   });
 
-  /** Wait for the link to stop carrying traffic — a converge is hundreds of reads through
-   *  the stub, and every assertion below is about where it ended up rather than when. The
-   *  quiet window is longer than `SETTLE_TIMEOUT_MS`: a converge round waits out that bound
-   *  before its seed read, and a shorter window ends inside the wait. */
+  /** Wait for the app's traffic on the link to stop (`flowInvokes`) — a converge is hundreds
+   *  of reads through the stub, and every assertion below is about where it ended up rather
+   *  than when. The quiet window is longer than `SETTLE_TIMEOUT_MS`: a converge round waits
+   *  out that bound before its seed read, and a shorter window ends inside the wait. */
   const settled = async (shell: TauriShell): Promise<void> => {
     let quiet = 0;
     let last = -1;
     await vi.waitFor(
       () => {
-        const now = shell.invokes.length;
+        const now = flowInvokes(shell);
         quiet = now === last ? quiet + 1 : 0;
         last = now;
         if (quiet * 50 < SETTLE_TIMEOUT_MS * 3) throw new Error(`still talking (${now})`);

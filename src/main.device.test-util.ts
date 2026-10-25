@@ -28,6 +28,7 @@ import { PARAMS } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { faceplate } from "./ui/graph.test-util";
 import { EDIT_MENU_EVENT, EDIT_UNDO_ID } from "./core/platform";
+import { WATCHED } from "./ui/param-watch";
 import { t } from "./i18n";
 
 // The glass's refused-action hook, as the SIM view hands it to the simulator: no control on the
@@ -565,15 +566,35 @@ export const undoEdit = (shell: TauriShell): void => {
   expect(shell.emit(EDIT_MENU_EVENT, EDIT_UNDO_ID), "the undo was taken").toBe(1);
 };
 
-/** Wait until the shell stops being asked anything, so what happens next is the only
- *  thing in flight. A count that has merely grown says nothing about WHOSE reads they
- *  were. */
+/** The addresses the dev build's parameter watch (ui/param-watch.ts) reads, keyed "id:x:y". */
+const WATCH_READS = new Set(WATCHED.map(([id, x, y]) => `${id}:${x}:${y}`));
+
+/**
+ * How many invokes the shell has taken, the parameter watch's own left out: its registration, its
+ * reads of the addresses it watches and its log writes. While a session is up the watch reads those
+ * addresses once a second whatever the case is doing, so a wait for the app to go quiet reads this
+ * count rather than `shell.invokes.length`. The app's own reads of those addresses are left out with
+ * them.
+ */
+export const flowInvokes = (shell: TauriShell): number =>
+  shell.invokes.reduce((n, cmd, i) => {
+    const a = shell.args[i];
+    const watch =
+      cmd === "vd_probe_subscribe" ||
+      cmd === "append_watch_log" ||
+      (cmd === "vd_get" && WATCH_READS.has(`${a?.paramId}:${a?.x}:${a?.y}`));
+    return watch ? n : n + 1;
+  }, 0);
+
+/** Wait until the app stops asking the shell anything (`flowInvokes`), so what happens
+ *  next is the only thing in flight. A count that has merely grown says nothing about
+ *  WHOSE reads they were. */
 export const quiet = async (shell: TauriShell): Promise<void> => {
   let seen = -1;
   let stable = 0;
   await vi.waitFor(
     () => {
-      const now = shell.invokes.length;
+      const now = flowInvokes(shell);
       stable = now === seen ? stable + 1 : 0;
       seen = now;
       // Several readings, not one: a flush pauses between its own phases, and a single
