@@ -97,19 +97,22 @@ const run = (from, file) =>
   });
 
 const ledgerOf = (main) => join(main, "reference", "work", "e2e-flakes.md");
+// The anchor check names reference/ by the long name git gives the hook, while `main` may be
+// spelled by a short (8.3) alias of the temporary directory.
+const referenceOf = (main) => join(realpathSync.native(main), "reference");
 
 describe("the document hook and the private ledgers", () => {
   it("refuses a broken ledger edited from the checkout that holds reference/", () => {
     const { main } = checkout({ reference: true });
     const res = run(main, ledgerOf(main));
-    expect(res.stderr).toContain(`ledger-anchors: broken ledger in ${join(main, "reference")}`);
+    expect(res.stderr).toContain(`ledger-anchors: broken ledger in ${referenceOf(main)}`);
     expect(res.status).toBe(2);
   });
 
   it("refuses the same ledger edited from a worktree, whose own tree has no reference/", () => {
     const { main, worktree } = checkout({ reference: true });
     const res = run(worktree, ledgerOf(main));
-    expect(res.stderr).toContain(`ledger-anchors: broken ledger in ${join(main, "reference")}`);
+    expect(res.stderr).toContain(`ledger-anchors: broken ledger in ${referenceOf(main)}`);
     expect(res.status).toBe(2);
   });
 
