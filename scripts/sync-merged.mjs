@@ -71,7 +71,9 @@
 //
 // The dry run FETCHES, which prunes remote-tracking refs. It has to: every answer above is about
 // the remote, and reporting them off a stale one would be reporting about a different repository.
-// No branch, worktree, working tree or HEAD is touched.
+// The same holds for each submodule repository a worktree's removal would delete, which is fetched
+// and pruned before its commits are compared with its remote. No branch, worktree, working tree or
+// HEAD is touched.
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { platform } from "node:os";
@@ -371,6 +373,10 @@ function submoduleWork(dir) {
   if (repos === null) return "its submodules' repositories could not be read";
   for (const { name, gitDir } of repos) {
     const repo = (args) => git(["--git-dir", gitDir, ...args], dir, true);
+    // Its remote-tracking refs brought to what each remote holds now: one left from a branch deleted
+    // upstream names no copy, and a remote that cannot be asked keeps the tree.
+    const fetched = repo(["fetch", "--all", "--prune", "--quiet"]);
+    if (fetched.status !== 0) return `its submodule ${name} could not be checked against its remote: ${fetched.err}`;
     if (repo(["rev-parse", "--verify", "--quiet", "refs/stash"]).status === 0)
       return `its submodule ${name} holds a stash`;
     // Every local ref (a tag, a note) and every reflog entry, not only HEAD and the branches: a

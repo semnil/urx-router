@@ -22,6 +22,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -1558,6 +1559,45 @@ describe("sync-merged, around a submodule", () => {
     expect(text).toContain("removed feat");
     expect(code).toBe(0);
     expect(existsSync(tree)).toBe(false);
+  });
+
+  // A remote-tracking ref says what the remote held when it was last fetched, and a branch deleted
+  // upstream since leaves one behind that no longer names a copy.
+  it("keeps one whose submodule's commit is held by a remote-tracking ref its remote has since dropped", () => {
+    const { down, tree, sub, lib } = landedWithSubmodule();
+    const made = privateCommit(sub);
+    git(sub, "push", "-q", "origin", "private-experiment");
+    git(lib, "branch", "-D", "private-experiment");
+    git(lib, "reflog", "expire", "--expire=now", "--all");
+    git(lib, "gc", "-q", "--prune=now");
+    expect(spawnSync("git", ["cat-file", "-t", made], { cwd: lib }).status).not.toBe(0);
+    expect(git(sub, "rev-parse", "refs/remotes/origin/private-experiment")).toBe(made);
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(report(down, true).text).toMatch(
+      /^keep {3}feat.*its submodule vendor\/lib holds commits its remote does not$/m,
+    );
+    expect(git(sub, "rev-parse", "private-experiment")).toBe(made);
+  });
+
+  it("removes one whose submodule's commit its remote still holds", () => {
+    const { down, tree, sub } = landedWithSubmodule();
+    privateCommit(sub);
+    git(sub, "push", "-q", "origin", "private-experiment");
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    const { code, text } = report(down, true);
+    expect(text).toContain("removed feat");
+    expect(code).toBe(0);
+    expect(existsSync(tree)).toBe(false);
+  });
+
+  it("keeps one whose submodule's remote cannot be reached", () => {
+    const { down, tree, lib } = landedWithSubmodule();
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    renameSync(lib, `${lib}-gone`);
+    expect(report(down, true).text).toMatch(
+      /^keep {3}feat.*its submodule vendor\/lib could not be checked against its remote: /m,
+    );
+    expect(existsSync(tree)).toBe(true);
   });
 
   it("brings the default branch's submodule to the commit the merge records", () => {
