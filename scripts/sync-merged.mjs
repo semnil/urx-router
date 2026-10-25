@@ -328,15 +328,31 @@ function checkedOutSubmodulesDeep(dir, prefix = "") {
 }
 
 /**
- * Every submodule repository in a tree's administrative `modules` directory, which a removal deletes
- * whole, as { name, gitDir }: checked out or not — a deinitialized submodule leaves its repository
- * there — and the repositories of their own submodules, kept in each one's `modules` in turn. Null
- * where the directory cannot be located or a level of it read.
+ * Every submodule repository a removal deletes, as { name, gitDir }: each one in the tree's
+ * administrative `modules` directory, which goes whole, checked out or not — a deinitialized
+ * submodule leaves its repository there — and the one each checked-out submodule at `subs` uses,
+ * which for a submodule keeping its own `.git` directory is inside its working tree; with the
+ * repositories of their own submodules, kept in each one's `modules` in turn. Null where a
+ * repository cannot be located or a level of one read.
  */
-function submoduleRepos(dir) {
+function submoduleRepos(dir, subs) {
   const modules = git(["rev-parse", "--path-format=absolute", "--git-path", "modules"], dir, true);
   if (modules.status !== 0) return null;
   const found = [];
+  const seen = new Set();
+  // A repository reached both ways is listed once; false where it cannot be read.
+  const add = (gitDir, prefix) => {
+    let real;
+    try {
+      real = realpathSync.native(gitDir);
+    } catch {
+      return false;
+    }
+    if (seen.has(real)) return true;
+    seen.add(real);
+    found.push({ name: prefix.slice(0, -1), gitDir });
+    return walk(join(gitDir, "modules"), prefix);
+  };
   const walk = (at, prefix) => {
     let entries;
     try {
@@ -344,13 +360,16 @@ function submoduleRepos(dir) {
     } catch (e) {
       return e.code === "ENOENT";
     }
-    if (entries.some((e) => e.name === "HEAD") && entries.some((e) => e.name === "objects" && e.isDirectory())) {
-      found.push({ name: prefix.slice(0, -1), gitDir: at });
-      return walk(join(at, "modules"), prefix);
-    }
+    if (entries.some((e) => e.name === "HEAD") && entries.some((e) => e.name === "objects" && e.isDirectory()))
+      return add(at, prefix);
     return entries.filter((e) => e.isDirectory()).every((e) => walk(join(at, e.name), `${prefix}${e.name}/`));
   };
-  return walk(modules.out, "") ? found : null;
+  if (!walk(modules.out, "")) return null;
+  for (const p of subs) {
+    const own = git(["rev-parse", "--path-format=absolute", "--git-dir"], join(dir, p), true);
+    if (own.status !== 0 || !add(own.out, `${p}/`)) return null;
+  }
+  return found;
 }
 
 /**
@@ -359,8 +378,9 @@ function submoduleRepos(dir) {
  * The tree's own status already answers for a submodule moved off the commit it records or holding
  * a tracked or untracked change, and says nothing about the rest: ignored content in a checked-out
  * submodule at any depth, and commits or a stash that live only in a submodule's repository, which
- * sits in the tree's administrative directory and goes with it, checked out or not. A submodule's
- * status says the same about its own submodules.
+ * sits in the tree's administrative directory, checked out or not, or in the working tree of a
+ * submodule keeping its own `.git` directory, and goes with it. A submodule's status says the same
+ * about its own submodules.
  */
 function submoduleWork(dir) {
   const subs = checkedOutSubmodulesDeep(dir);
@@ -369,7 +389,7 @@ function submoduleWork(dir) {
     const dirty = unclean(join(dir, p));
     if (dirty) return dirty.replace(/^its worktree/, `its submodule ${p}`);
   }
-  const repos = submoduleRepos(dir);
+  const repos = submoduleRepos(dir, subs);
   if (repos === null) return "its submodules' repositories could not be read";
   for (const { name, gitDir } of repos) {
     const repo = (args) => git(["--git-dir", gitDir, ...args], dir, true);

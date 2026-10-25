@@ -1616,6 +1616,58 @@ describe("sync-merged, around a submodule", () => {
     expect(git(elsewhere, "show", ":staged-only.txt")).toBe("staged");
   });
 
+  // A submodule can keep its repository in a `.git` directory of its own rather than in the tree's
+  // administrative directory — git's old form, and what a clone at the gitlink's path leaves — and
+  // emptying the submodule's working tree deletes that repository with it.
+  /** A landed branch's worktree whose submodule at vendor/lib is a clone placed there, at the commit
+   *  the tree records, beside a default branch's checkout that has it checked out the usual way. */
+  function landedWithEmbeddedSubmodule({ nested = false } = {}) {
+    const fx = fixture({ submodule: nested ? "nested" : true });
+    git(fx.down, "submodule", "update", "-q", "--init", "--recursive");
+    const tree = join(fx.down, "..", "wt");
+    git(fx.down, "worktree", "add", tree, "feat");
+    const sub = join(tree, "vendor", "lib");
+    git(tree, "clone", "-q", fx.lib, sub);
+    git(sub, "checkout", "-q", "--detach", git(tree, "rev-parse", "HEAD:vendor/lib"));
+    expect(lstatSync(join(sub, ".git")).isDirectory()).toBe(true);
+    return { ...fx, tree, sub };
+  }
+
+  it("keeps one whose submodule keeps its repository in its own .git directory and holds commits its remote does not", () => {
+    const { down, tree, sub } = landedWithEmbeddedSubmodule();
+    const made = privateCommit(sub, "private-saved");
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(git(sub, "status", "--porcelain=v1")).toBe("");
+    expect(report(down, true).text).toMatch(
+      /^keep {3}feat.*its submodule vendor\/lib holds commits its remote does not$/m,
+    );
+    expect(git(sub, "rev-parse", "private-saved")).toBe(made);
+  });
+
+  it("keeps one whose deinitialized submodule inside a submodule with its own .git directory holds a commit its remote does not", () => {
+    const { down, tree, sub } = landedWithEmbeddedSubmodule({ nested: true });
+    git(sub, "submodule", "update", "-q", "--init");
+    const made = privateCommit(join(sub, "nested"));
+    git(sub, "submodule", "deinit", "-q", "--", "nested");
+    const nestedRepo = join(sub, ".git", "modules", "nested");
+    expect(git(tree, "--git-dir", nestedRepo, "rev-parse", "private-experiment")).toBe(made);
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(git(sub, "status", "--porcelain=v1")).toBe("");
+    expect(report(down, true).text).toMatch(
+      /^keep {3}feat.*its submodule vendor\/lib\/nested holds commits its remote does not$/m,
+    );
+    expect(git(tree, "--git-dir", nestedRepo, "rev-parse", "private-experiment")).toBe(made);
+  });
+
+  it("removes one whose submodule keeps its repository in its own .git directory and holds nothing of its own", () => {
+    const { down, tree } = landedWithEmbeddedSubmodule();
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    const { code, text } = report(down, true);
+    expect(text).toContain("removed feat");
+    expect(code).toBe(0);
+    expect(existsSync(tree)).toBe(false);
+  });
+
   it("brings the default branch's submodule to the commit the merge records", () => {
     const { origin, down, lib } = fixture({ submodule: true });
     git(down, "submodule", "update", "-q", "--init");
