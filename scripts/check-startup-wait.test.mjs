@@ -15,7 +15,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { devAppPid, hookMessage, launchReminder, startupWaitFinding } from "./check-startup-wait.mjs";
 
@@ -217,7 +217,7 @@ describe.skipIf(tools.some((path) => path === ""))("which app the check names, a
       const res = spawnSync(process.execPath, [SCRIPT, "--pid", running.tree, ...extra], {
         encoding: "utf8",
         timeout: 5000,
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+        env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` },
       });
       expect([res.signal, res.status, res.stdout]).toEqual([null, 2, ""]);
       expect(res.stderr).toMatch(/injected failure/);

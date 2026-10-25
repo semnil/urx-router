@@ -27,7 +27,7 @@ import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runBlock } from "./workflow-block.test-util.mjs";
 
@@ -86,11 +86,15 @@ function sandbox({
   if (script === null) copyFileSync(join(ROOT, SHAPE), join(dir, SHAPE));
   else if (script !== false) writeFileSync(join(dir, SHAPE), script, { mode: 0o644 });
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "urx-router", version }, null, 2));
-  writeFileSync(join(dir, "remote.txt"), remote);
+  const remoteList = join(dir, "remote.txt");
+  writeFileSync(remoteList, remote);
   const calls = join(dir, "calls.log");
   writeFileSync(calls, "");
+  // A path goes into a stub quoted: bare, bash reads the backslashes of a Windows path as
+  // escapes and writes to a different file.
+  const q = JSON.stringify;
   const stub = (name, body) => {
-    writeFileSync(join(dir, "bin", name), `#!/bin/bash\nprintf '%s\\n' "${name} $*" >> ${calls}\n${body}\n`, {
+    writeFileSync(join(dir, "bin", name), `#!/bin/bash\nprintf '%s\\n' "${name} $*" >> ${q(calls)}\n${body}\n`, {
       mode: 0o755,
     });
   };
@@ -102,7 +106,7 @@ function sandbox({
       `  show) printf '{"version":"%s"}\\n' ${previous} ;;`,
       remoteFails
         ? "  ls-remote) echo 'fatal: unable to access the remote' >&2; exit 128 ;;"
-        : `  ls-remote) cat ${join(dir, "remote.txt")}; [[ -s ${join(dir, "remote.txt")} || " $* " != *" --exit-code "* ]] || exit 2 ;;`,
+        : `  ls-remote) cat ${q(remoteList)}; [[ -s ${q(remoteList)} || " $* " != *" --exit-code "* ]] || exit 2 ;;`,
       "esac",
       "exit 0",
     ].join("\n"),
@@ -124,7 +128,7 @@ function execute(body, { dir, env = {} }) {
   const proc = spawnSync("bash", ["-e", path], {
     encoding: "utf8",
     cwd: dir,
-    env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, ...env },
+    env: { ...process.env, PATH: `${join(dir, "bin")}${delimiter}${process.env.PATH}`, ...env },
   });
   if (proc.error) throw new Error(`could not run the block: ${proc.error.message}`);
   return { status: proc.status, stdout: proc.stdout, stderr: proc.stderr };
