@@ -373,6 +373,16 @@ function submoduleWork(dir) {
   if (repos === null) return "its submodules' repositories could not be read";
   for (const { name, gitDir } of repos) {
     const repo = (args) => git(["--git-dir", gitDir, ...args], dir, true);
+    // A worktree of the repository's own, beside the one this tree checks out, keeps its index here
+    // and shares these objects, whatever its commits say.
+    const listed = repo(["worktree", "list", "--porcelain", "-z"]);
+    if (listed.status !== 0) return `its submodule ${name} could not be read: ${listed.err}`;
+    const others = listed.out
+      .split("\0")
+      .filter((rec) => rec.startsWith("worktree "))
+      .slice(1);
+    if (others.length > 0)
+      return `its submodule ${name} has a worktree of its own at ${others[0].slice("worktree ".length)}`;
     // Its remote-tracking refs brought to what each remote holds now: one left from a branch deleted
     // upstream names no copy, and a remote that cannot be asked keeps the tree.
     const fetched = repo(["fetch", "--all", "--prune", "--quiet"]);

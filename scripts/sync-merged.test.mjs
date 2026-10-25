@@ -1600,6 +1600,22 @@ describe("sync-merged, around a submodule", () => {
     expect(existsSync(tree)).toBe(true);
   });
 
+  // A submodule repository can carry worktrees of its own, outside the tree, whose index and objects
+  // live in that repository: removing it takes them along whatever their commits say.
+  it("keeps one whose submodule repository has a worktree of its own elsewhere", () => {
+    const { root, down, tree, sub } = landedWithSubmodule();
+    const elsewhere = join(root, "sub-elsewhere");
+    git(sub, "worktree", "add", "-q", "--detach", elsewhere, "HEAD");
+    writeFileSync(join(elsewhere, "staged-only.txt"), "staged\n");
+    git(elsewhere, "add", "staged-only.txt");
+    rmSync(join(elsewhere, "staged-only.txt"));
+    expect(git(elsewhere, "show", ":staged-only.txt")).toBe("staged");
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(git(sub, "status", "--porcelain=v1")).toBe("");
+    expect(report(down, true).text).toMatch(/^keep {3}feat.*its submodule vendor\/lib has a worktree of its own at /m);
+    expect(git(elsewhere, "show", ":staged-only.txt")).toBe("staged");
+  });
+
   it("brings the default branch's submodule to the commit the merge records", () => {
     const { origin, down, lib } = fixture({ submodule: true });
     git(down, "submodule", "update", "-q", "--init");
