@@ -6,9 +6,9 @@ version = "0.0.0"
 description = "Routing planner for YAMAHA URX series audio interfaces"
 license = "MIT"
 edition = "2021"
-# The highest rust-version the locked dependencies declare (tauri and its
-# plugins), so a dependency update that raises its own is a change to this one
-# too; every build here (CI and both platforms) runs stable.
+# The highest rust-version the locked dependencies declare, which
+# tests/rust_version.rs holds; every build here (CI and both platforms) runs
+# stable.
 rust-version = "1.90"
 
 [lib]

@@ -21,8 +21,9 @@ Security problems go through [SECURITY.md](SECURITY.md), not the issue tracker.
 ## Setup
 
 Node in the range `package.json` `engines` declares, pnpm, and — for the desktop shell only — Rust
-via rustup. That range is where the ranges the dev dependencies declare meet (jsdom, vitest and vite
-each declare one); the `?plan=` codec's `CompressionStream("deflate-raw")` alone needs 21.2 or later.
+via rustup. That range is where the ranges the direct dependencies declare in their own `engines`
+meet, together with the 21.2 or later the `?plan=` codec's `CompressionStream("deflate-raw")` needs;
+`pnpm test node-engines` fails when the two differ.
 
 ```sh
 pnpm install
