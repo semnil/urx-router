@@ -325,11 +325,13 @@ function submoduleWork(dir) {
     const sub = join(dir, p);
     const dirty = unclean(sub);
     if (dirty) return dirty.replace(/^its worktree/, `its submodule ${p}`);
-    const ahead = git(["rev-list", "-n", "1", "HEAD", "--branches", "--not", "--remotes"], sub, true);
-    if (ahead.status !== 0) return `its submodule ${p} could not be read: ${ahead.err}`;
-    if (ahead.out !== "") return `its submodule ${p} holds commits its remote does not`;
     if (git(["rev-parse", "--verify", "--quiet", "refs/stash"], sub, true).status === 0)
       return `its submodule ${p} holds a stash`;
+    // Every local ref (a tag, a note) and every reflog entry, not only HEAD and the branches: a
+    // commit any of them still holds goes with the repository.
+    const ahead = git(["rev-list", "-n", "1", "--all", "--reflog", "--not", "--remotes"], sub, true);
+    if (ahead.status !== 0) return `its submodule ${p} could not be read: ${ahead.err}`;
+    if (ahead.out !== "") return `its submodule ${p} holds commits its remote does not`;
   }
   return null;
 }

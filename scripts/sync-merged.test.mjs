@@ -1436,6 +1436,44 @@ describe("sync-merged, around a submodule", () => {
     expect(git(sub, "stash", "list")).not.toBe("");
   });
 
+  // A commit no branch holds is still the operator's while a tag or the reflog does, and the
+  // submodule's repository — tag and reflog with it — goes with the worktree.
+  it("keeps one whose submodule holds a commit only a local tag keeps", () => {
+    const { down, tree, sub } = landedWithSubmodule();
+    const recorded = git(sub, "rev-parse", "HEAD");
+    git(sub, "config", "user.email", "t@t");
+    git(sub, "config", "user.name", "t");
+    writeFileSync(join(sub, "l.txt"), "tagged\n");
+    git(sub, "commit", "-qam", "tagged");
+    git(sub, "tag", "private-experiment");
+    const tagged = git(sub, "rev-parse", "HEAD");
+    git(sub, "checkout", "-q", "--detach", recorded);
+    // The reflog emptied, so the tag is the one thing that holds the commit.
+    git(sub, "reflog", "expire", "--expire=now", "--all");
+    expect(git(sub, "rev-list", "--reflog", "--not", "--remotes")).toBe("");
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(report(down, true).text).toMatch(
+      /^keep {3}feat.*its submodule vendor\/lib holds commits its remote does not$/m,
+    );
+    expect(git(sub, "rev-parse", "private-experiment")).toBe(tagged);
+  });
+
+  it("keeps one whose submodule holds a commit only its reflog keeps", () => {
+    const { down, tree, sub } = landedWithSubmodule();
+    const recorded = git(sub, "rev-parse", "HEAD");
+    git(sub, "config", "user.email", "t@t");
+    git(sub, "config", "user.name", "t");
+    writeFileSync(join(sub, "l.txt"), "detached\n");
+    git(sub, "commit", "-qam", "detached");
+    const lost = git(sub, "rev-parse", "HEAD");
+    git(sub, "checkout", "-q", "--detach", recorded);
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    expect(report(down, true).text).toMatch(
+      /^keep {3}feat.*its submodule vendor\/lib holds commits its remote does not$/m,
+    );
+    expect(git(sub, "cat-file", "-t", lost)).toBe("commit");
+  });
+
   it("brings the default branch's submodule to the commit the merge records", () => {
     const { origin, down, lib } = fixture({ submodule: true });
     git(down, "submodule", "update", "-q", "--init");
