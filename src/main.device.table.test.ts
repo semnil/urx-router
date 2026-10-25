@@ -1,16 +1,26 @@
 // @vitest-environment jsdom
 
-// The device table every desktop case runs on, and the drain its teardown ends with, each stated as
-// a contract of its own.
+// The device table every desktop case runs on, the count its quiet waits read, and the drain its
+// teardown ends with, each stated as a contract of its own.
 //
 // The setup, the teardown and the helpers every desktop case shares are `main.device.test-util.ts`'s,
 // which also states what the device table does and does not model.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { deviceCommands } from "./main.test-util";
 import { PARAMS } from "./core/control/params";
 import { FEEDBACK_DEBOUNCE_MS } from "./ui/midi";
-import { bootDevice, DRAIN_QUIET_READINGS, DRAIN_READING_MS } from "./main.device.test-util";
+import { POLL_MS } from "./ui/param-watch";
+import {
+  SLOW,
+  bootDevice,
+  DRAIN_QUIET_READINGS,
+  DRAIN_READING_MS,
+  flowInvokes,
+  live,
+  quiet,
+  turnOscOn,
+} from "./main.device.test-util";
 
 // The device table's own contract, which no other desktop case can state: it is the fixture all of
 // them run on, so a loosening here is invisible from inside them and every one of them goes
@@ -127,6 +137,30 @@ describe("the device table the desktop cases run on", () => {
     });
     expect(() => call(table, "vd_connect")).toThrow(/no-device/);
     expect(() => call(table, "vd_get", CH1)).toThrow(/not-connected/);
+  });
+});
+
+// The count the live cases wait on for the app to go quiet (`quiet`, and the waits the FX and live
+// session cases write out themselves): they end on a run of readings in which it does not move. It leaves the dev build's parameter watch
+// out, which reads its addresses once a second for as long as a session is up, whatever the app is
+// doing.
+describe("the count a desktop case waits on for the app to go quiet", () => {
+  it("leaves out the parameter watch and counts what the app's own flows send", SLOW, async () => {
+    const shell = await bootDevice();
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    await quiet(shell);
+
+    const flows = flowInvokes(shell);
+    const all = shell.invokes.length;
+    await vi.waitFor(() => expect(shell.invokes.length, "the watch read again").toBeGreaterThan(all), {
+      timeout: POLL_MS * 5,
+    });
+    expect(flowInvokes(shell), "the watch's reads left the count where it was").toBe(flows);
+
+    // The other half: an edit's write is counted, so a count that never moves cannot pass.
+    turnOscOn();
+    await vi.waitFor(() => expect(flowInvokes(shell)).toBeGreaterThan(flows), { timeout: 10_000 });
   });
 });
 
