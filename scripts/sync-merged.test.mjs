@@ -59,6 +59,9 @@ function fixture({ landing = "merge", base = "main", ignore = null } = {}) {
   git(origin, "init", "-q", "-b", base);
   git(origin, "config", "user.email", "t@t");
   git(origin, "config", "user.name", "t");
+  // Files are checked out with the line ends they were written with, whatever `core.autocrlf`
+  // the machine sets; the clone takes the same setting before its own checkout.
+  git(origin, "config", "core.autocrlf", "false");
   writeFileSync(join(origin, "a.txt"), "a\n");
   git(origin, "add", "a.txt");
   if (ignore) {
@@ -67,7 +70,7 @@ function fixture({ landing = "merge", base = "main", ignore = null } = {}) {
   }
   git(origin, "commit", "-qm", "one");
 
-  git(root, "clone", "-q", origin, down);
+  git(root, "clone", "-q", "-c", "core.autocrlf=false", origin, down);
   git(down, "config", "user.email", "t@t");
   git(down, "config", "user.name", "t");
 
@@ -255,8 +258,9 @@ describe("sync-merged, when a branch has landed", () => {
 
     expect(report(down).text).toMatch(/^would remove feat \+ /m);
     expect(branches(down)).toContain("feat");
-    // Spelled the way git prints a worktree path, which separates with `/` on Windows too.
-    const removed = realpathSync(tree).replace(/\\/g, "/");
+    // Spelled the way git prints a worktree path, which separates with `/` on Windows too and
+    // names each directory by its long name rather than by a short (8.3) alias.
+    const removed = realpathSync.native(tree).replace(/\\/g, "/");
 
     const { code, text } = report(down, true);
     expect(code).toBe(0);

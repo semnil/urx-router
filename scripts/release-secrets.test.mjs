@@ -35,7 +35,8 @@ import { bundleArgs } from "./tauri-bundle.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const RELEASE = ".github/workflows/release.yml";
 const SHIM = "scripts/tauri-bundle.mjs";
-const read = (path) => readFileSync(join(ROOT, path), "utf8");
+// LF line ends, whatever line ends the checkout wrote (`core.autocrlf` writes CRLF).
+const read = (path) => readFileSync(join(ROOT, path), "utf8").replace(/\r\n/g, "\n");
 
 const WRITERS = new Set(["create-release", "build", "verify-draft"]);
 

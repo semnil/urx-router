@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runBlock } from "./workflow-block.test-util.mjs";
 
@@ -100,13 +100,16 @@ function run(
   writeFileSync(calls, "");
   const commitsFile = join(dir, "commits.json");
   if (commits !== null) writeFileSync(commitsFile, JSON.stringify(commits));
+  // A path goes into the stub quoted: bare, bash reads the backslashes of a Windows path as
+  // escapes and writes to a different file.
+  const q = JSON.stringify;
   writeFileSync(
     join(dir, "bin", "gh"),
     [
       "#!/bin/bash",
-      `printf '%s\\n' "gh $*" >> ${calls}`,
+      `printf '%s\\n' "gh $*" >> ${q(calls)}`,
       'if [[ "$1" == "api" ]]; then',
-      commits === null ? "  echo 'HTTP 502' >&2; exit 1" : `  cat ${commitsFile}; exit 0`,
+      commits === null ? "  echo 'HTTP 502' >&2; exit 1" : `  cat ${q(commitsFile)}; exit 0`,
       "fi",
       'if [[ "$1 $2" == "pr view" ]]; then',
       `  printf '%s\\t%s\\n' '${currentHead}' '${autoMerge}'`,
@@ -123,7 +126,7 @@ function run(
     cwd: dir,
     env: {
       ...process.env,
-      PATH: `${join(dir, "bin")}:${process.env.PATH}`,
+      PATH: `${join(dir, "bin")}${delimiter}${process.env.PATH}`,
       GITHUB_REPOSITORY: "semnil/urx-router",
       PR_URL,
       PR_NUMBER: "1",

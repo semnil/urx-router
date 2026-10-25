@@ -26,7 +26,8 @@ function check(path: string, expected: string, label: string): void {
     writeFileSync(path, expected);
     return;
   }
-  const actual = readFileSync(path, "utf-8");
+  // LF line ends, whatever line ends the checkout wrote (`core.autocrlf` writes CRLF).
+  const actual = readFileSync(path, "utf-8").replace(/\r\n/g, "\n");
   expect(actual, `${label} is stale — run \`UPDATE_SKILL=1 pnpm test skill-export\` and commit`).toBe(expected);
 }
 

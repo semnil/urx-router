@@ -90,6 +90,9 @@ function fixture() {
   git(repo, "init", "-q", "-b", "main");
   git(repo, "config", "user.email", "t@t");
   git(repo, "config", "user.name", "t");
+  // Files are checked out with the line ends they were written with, whatever `core.autocrlf`
+  // the machine sets.
+  git(repo, "config", "core.autocrlf", "false");
   writeFileSync(join(repo, ".gitignore"), "node_modules\n");
   writeFileSync(join(repo, "tracked.txt"), "tracked\n");
   copyFileSync(PROGRAM, join(repo, "scripts", "e2e-worktree.mjs"));
