@@ -1461,6 +1461,9 @@ CONSOLE のフェーダーとインスペクタの Level スライダー (バス
 (github.com/semnil/urx-lcd-sim。Web 層の唯一のランタイム依存で、`vendor/urx-lcd-sim` の git submodule を `package.json` がリンクする) が描き、
 その `mountSim()` でページに置く。タブと View メニューの SIM Scale は `data-experimental-only` で、実験的でない起動が
 覚えていた SIM ビューは GRAPH で開く。
+SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-sim のチェックアウトのコミットを短くしたものを出す。
+`vite.config.ts` がインストールのリンクの先でこれを読み、シミュレーターのソースに `__URX_LCD_SIM_COMMIT__` として
+定める。submodule をチェックアウトしていなければ、このリポジトリのコミットを出すのではなくビルドが止まる。
 
 - **編集するもの**はプランで、Inspector と調整画面と同じ入口 (`onUpdateNodeParams`・`onUpdateParams`・`onRenameNode`) を
   通す。このため LCD での編集もほかと同じアンドゥの 1 件になり、ライブ同期が書き、デバイスの読み取りはアプリの編集として

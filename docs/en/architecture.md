@@ -1835,6 +1835,10 @@ An experimental launch adds a third view beside the GRAPH and the CONSOLE: the u
 urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime dependency, a git submodule at
 `vendor/urx-lcd-sim` that `package.json` links) and mounted in the page with its `mountSim()`. The tab and the View menu's SIM Scale are
 `data-experimental-only`; a SIM view remembered by a launch that was not experimental opens on the GRAPH.
+Its SETUP → Version shows, as APP Version, the shortened commit of the urx-lcd-sim checkout the build
+bundles: `vite.config.ts` reads it where the install's link resolves and defines it as
+`__URX_LCD_SIM_COMMIT__` for the simulator's source, and a submodule left unchecked-out stops the build
+rather than naming this repository's commit.
 
 - **What it edits** is the plan, through the funnels the Inspector and the tuning screens use
   (`onUpdateNodeParams`, `onUpdateParams`, `onRenameNode`). An edit on the LCD is therefore an undo entry like any

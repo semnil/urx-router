@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import { test, expect, type Page } from "./fixtures";
 import {
   LIVE_COMMANDS,
@@ -48,6 +51,22 @@ test("offers no SIM tab and no SIM Scale without an experimental launch", async 
   await page.click("#btn-view");
   await expect(page.locator("#view-menu .sim-scale")).toHaveCount(5);
   for (const item of await page.locator("#view-menu .sim-scale").all()) await expect(item).toBeHidden();
+});
+
+// SETUP → Version's APP Version is the commit of the urx-lcd-sim the build bundles. Read here of git,
+// in the checkout the install links, rather than of the value the build defines; and checked against
+// this repository's own commit, which is what git answers with in a submodule left unchecked-out.
+test("shows the commit of the urx-lcd-sim it bundles as SETUP → Version's APP Version", async ({ page }) => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+  const dir = realpathSync.native(resolve("node_modules", "urx-lcd-sim"));
+  expect(realpathSync.native(git(dir, "rev-parse", "--show-toplevel"))).toBe(dir);
+  const commit = git(dir, "rev-parse", "--short=7", "HEAD");
+  expect(commit).not.toBe(git(".", "rev-parse", "--short=7", "HEAD"));
+  await openSim(page);
+  await tapInto(page, lcd(page).getByRole("button", { name: "SETUP", exact: true }), "setup");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Version", exact: true }), "setup.version");
+  await expect(onScreen(page, "setup.version").locator(".version-row-1 .version-value")).toHaveText(commit);
 });
 
 test("shows the LCD in place of the board, the view named on the root", async ({ page }) => {
