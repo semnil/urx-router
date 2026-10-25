@@ -40,6 +40,7 @@ import {
   streamingDrawn,
   quiet,
   turnOscOn,
+  flowInvokes,
 } from "./main.device.test-util";
 
 describe("the live session", () => {
@@ -399,7 +400,7 @@ describe("the live session", () => {
     let seen = -1;
     await vi.waitFor(
       () => {
-        const now = shell.invokes.length;
+        const now = flowInvokes(shell);
         const quiet = now === seen;
         seen = now;
         if (!quiet) throw new Error("still working");

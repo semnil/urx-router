@@ -140,8 +140,8 @@ describe("the device table the desktop cases run on", () => {
   });
 });
 
-// The count the live cases wait on for the app to go quiet (`quiet`, and the FX cases' `settled`):
-// they end on a run of readings in which it does not move. It leaves the dev build's parameter watch
+// The count the live cases wait on for the app to go quiet (`quiet`, and the waits the FX and live
+// session cases write out themselves): they end on a run of readings in which it does not move. It leaves the dev build's parameter watch
 // out, which reads its addresses once a second for as long as a session is up, whatever the app is
 // doing.
 describe("the count a desktop case waits on for the app to go quiet", () => {
