@@ -572,9 +572,9 @@ const WATCH_READS = new Set(WATCHED.map(([id, x, y]) => `${id}:${x}:${y}`));
 /**
  * How many invokes the shell has taken, the parameter watch's own left out: its registration, its
  * reads of the addresses it watches and its log writes. While a session is up the watch reads those
- * addresses once a second whatever the case is doing, so a wait for the app to go quiet reads this
- * count rather than `shell.invokes.length`. The app's own reads of those addresses are left out with
- * them.
+ * addresses once a second whatever the case is doing, so a wait inside a session for the app's flows
+ * to finish reads this count rather than `shell.invokes.length`. The app's own reads of those
+ * addresses are left out with them.
  */
 export const flowInvokes = (shell: TauriShell): number =>
   shell.invokes.reduce((n, cmd, i) => {
