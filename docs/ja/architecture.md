@@ -4507,6 +4507,13 @@ SHA とコメントを一緒にバンプする。例外は `dtolnay/rust-toolcha
 (チャンネルは `toolchain:` 入力で明示)。コメントはバージョンでなくブランチ名 (`# master`) を指し、
 Dependabot がピンをそのブランチの先頭へ進める。
 
+Dependabot は互いに依存する crate とパッケージをまとめる。`tauri`・`tauri-build`・`tauri-plugin-*`
+の patch と minor の更新は 1 つのプルリクエストにまとめて届き、`serde` と `serde_json`、`vitest` と
+`@vitest/*` も同じく組ごとに 1 つにまとまる (`.github/dependabot.yml` の `groups`。理由もそこにある)。
+major の更新はグループに入らない。crate ではそれだけのプルリクエストになる。vitest では Dependabot が major を
+更新できないと判定して何も開かず、新しい major が出ている間は今の major の更新も出さないので、vitest の
+major は手で上げる。
+
 更新する依存がすべて semver の patch か minor である Dependabot のプルリクエストは自動でマージされる。
 ただし 1.0 未満の cargo crate の minor 更新は除く。Cargo は 0.x の minor を非互換として扱うが、
 Dependabot はこれを semver-minor と付ける。除くのは cargo だけで、esbuild のような 1.0 未満の npm

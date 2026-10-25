@@ -10,6 +10,14 @@ updates:
       cronjob: "0 0 * * *"
       timezone: "Asia/Tokyo"
     open-pull-requests-limit: 5
+    groups:
+      # Patch and minor updates of vitest and the @vitest/* packages arrive in
+      # one pull request: @vitest/coverage-v8 requires the exact vitest version
+      # as a peer. A major update is outside the group, and Dependabot opens no
+      # pull request for a vitest major: vitest moves to a new major by hand.
+      vitest:
+        patterns: ["vitest", "@vitest/*"]
+        update-types: ["minor", "patch"]
     ignore:
       # @types/node is major-pinned to the Node 24 LTS runtime used in CI.
       # Allow 24.x minor bumps; block major jumps ahead of the runtime.
@@ -24,6 +32,18 @@ updates:
       cronjob: "0 0 * * *"
       timezone: "Asia/Tokyo"
     open-pull-requests-limit: 5
+    groups:
+      # Patch and minor updates of tauri, tauri-build and the tauri-plugin-*
+      # crates arrive in one pull request: tauri depends on tauri-build, so an
+      # update of one can move the other. A major update of any of them is a
+      # pull request of its own.
+      tauri:
+        patterns: ["tauri", "tauri-*"]
+        update-types: ["minor", "patch"]
+      # The same for serde and serde_json, which depends on serde.
+      serde:
+        patterns: ["serde", "serde_json"]
+        update-types: ["minor", "patch"]
 
   # The workflow actions used above. Actions are SHA-pinned with a version
   # comment (`@<sha> # vX.Y.Z`); Dependabot bumps the pin and comment together.
