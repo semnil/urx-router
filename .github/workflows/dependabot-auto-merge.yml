@@ -10,9 +10,10 @@ name: Dependabot auto-merge
 # event names, dependabot[bot] wrote it, GitHub (web-flow) committed it and GitHub verified its
 # signature: fetch-metadata reads the first commit alone, and an amend keeps the author while it
 # makes the amending person the committer. For anything else — a major update, an update with no version (a
-# commit SHA), one fetch-metadata cannot read, and any other commit history — it turns off an
-# auto-merge an earlier head enabled: a push leaves auto-merge on, and a rebase or an added
-# commit can change what the update is. On every other pull request both steps are skipped.
+# commit SHA), one fetch-metadata cannot read, a run in which fetch-metadata fails, and any other
+# commit history — it turns off an auto-merge an earlier head enabled: a push leaves auto-merge
+# on, and a rebase or an added commit can change what the update is. On every other pull request
+# both steps are skipped.
 # The step fails when it cannot read the commits of the pull request or whether auto-merge is
 # on.
 #
@@ -45,6 +46,7 @@ jobs:
     steps:
       - id: metadata
         if: github.event.pull_request.user.login == 'dependabot[bot]'
+        continue-on-error: true # the deciding step keeps auto-merge off and the check passes (dependabot-auto-merge.test.mjs:249)
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
       - name: Enable auto-merge for a patch or minor update Dependabot alone wrote, disable it otherwise
         if: github.event.pull_request.user.login == 'dependabot[bot]'
@@ -53,14 +55,20 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          METADATA_OUTCOME: ${{ steps.metadata.outcome }}
           UPDATED: ${{ steps.metadata.outputs.updated-dependencies-json }}
         run: |
-          eligible=$(printf '%s' "$UPDATED" | jq -r '
-            length > 0 and all(.[];
-              .updateType == "version-update:semver-patch"
-              or (.updateType == "version-update:semver-minor"
-                and (.packageEcosystem // "") != ""
-                and (.packageEcosystem != "cargo" or ((.prevVersion // "") | test("^[1-9][0-9]*\\.")))))')
+          eligible=false
+          if [ "$METADATA_OUTCOME" != 'success' ]; then
+            echo "::warning::fetch-metadata did not classify this pull request (${METADATA_OUTCOME}), so auto-merge stays off"
+          else
+            eligible=$(printf '%s' "$UPDATED" | jq -r '
+              length > 0 and all(.[];
+                .updateType == "version-update:semver-patch"
+                or (.updateType == "version-update:semver-minor"
+                  and (.packageEcosystem // "") != ""
+                  and (.packageEcosystem != "cargo" or ((.prevVersion // "") | test("^[1-9][0-9]*\\.")))))')
+          fi
           if [ "$eligible" = 'true' ]; then
             commits=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/commits?per_page=100")
             eligible=$(printf '%s' "$commits" | jq -r --arg head "$HEAD_SHA" '

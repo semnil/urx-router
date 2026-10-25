@@ -4522,7 +4522,8 @@ Dependabot はこれを semver-minor と付ける。除くのは cargo だけで
 読み、すべてが条件に合い、かつプルリクエストのコミットが head の 1 つだけ (`dependabot[bot]` が書き、
 GitHub (web-flow) がコミットし、署名が検証済み) のときに、読んだ head コミットに固定して自動マージ (merge commit) を予約する。この
 アクションは最初のコミットしか読まず、amend では作者が残るため。それ以外 (major の更新、版番号の無い更新 =
-`dtolnay/rust-toolchain` のピンのような commit SHA、読めなかったメタデータ、それ以外のコミットの並び)
+`dtolnay/rust-toolchain` のピンのような commit SHA、読めなかったメタデータ、fetch-metadata が失敗した実行
+(このときもチェックは通るので、人がマージできる)、それ以外のコミットの並び)
 では、前の head で予約された自動マージを解除する。push では予約が外れず、rebase や足されたコミットで
 更新の中身が変わることがあるため。このジョブはルールセットが要求する
 ステータスチェックの一つ `auto-merge` を報告するので、Dependabot のプルリクエストはその head

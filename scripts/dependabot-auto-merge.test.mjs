@@ -43,7 +43,11 @@ const DEPENDABOT_AT_HEAD = [commit(HEAD_SHA, "dependabot[bot]")];
 const has = (command) => !spawnSync(command, ["--version"], { encoding: "utf8" }).error;
 const toolsAvailable = has("bash") && has("jq");
 
-const BLOCK = runBlock(readFileSync(join(ROOT, WORKFLOW), "utf8"), "UPDATED:");
+const TEXT = readFileSync(join(ROOT, WORKFLOW), "utf8");
+const BLOCK = runBlock(TEXT, "UPDATED:");
+// The metadata step's own keys, up to the step after it.
+const METADATA_AT = TEXT.indexOf("- id: metadata");
+const METADATA_STEP = TEXT.slice(METADATA_AT, TEXT.indexOf("\n      - ", METADATA_AT));
 
 // One `updatedDependency` as fetch-metadata builds it. `packageEcosystem` is the second segment
 // of Dependabot's branch name, so it reads `npm_and_yarn` and `github_actions` rather than the
@@ -86,7 +90,7 @@ const TOOLCHAIN_SHA = dependency(
   "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
 );
 
-function run(updated, { autoMerge = "false", commits = DEPENDABOT_AT_HEAD } = {}) {
+function run(updated, { autoMerge = "false", commits = DEPENDABOT_AT_HEAD, metadataOutcome = "success" } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "urx-dependabot-auto-merge-"));
   mkdirSync(join(dir, "bin"));
   const calls = join(dir, "calls.log");
@@ -121,6 +125,7 @@ function run(updated, { autoMerge = "false", commits = DEPENDABOT_AT_HEAD } = {}
       PR_URL,
       PR_NUMBER: "1",
       HEAD_SHA,
+      METADATA_OUTCOME: metadataOutcome,
       UPDATED: typeof updated === "string" ? updated : JSON.stringify(updated),
     },
   });
@@ -231,5 +236,32 @@ describe.skipIf(!toolsAvailable)("the disable half", () => {
     const result = run("not json");
     expect(result.status).not.toBe(0);
     expect(result.calls).toEqual([]);
+  });
+});
+
+// The deciding step runs after a failed metadata step only when that failure does not fail the job (dependabot-auto-merge.yml:49).
+it("goes on to the deciding step after a failed metadata step, and hands it the outcome", () => {
+  expect(METADATA_STEP).toMatch(/^\s+continue-on-error: true\b/m);
+  expect(TEXT).toContain("METADATA_OUTCOME: ${{ steps.metadata.outcome }}");
+});
+
+describe.skipIf(!toolsAvailable)("a failed metadata step", () => {
+  it("turns off an auto-merge an earlier head enabled, and passes", () => {
+    const result = run("", { metadataOutcome: "failure", autoMerge: "true" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("::warning::fetch-metadata did not classify this pull request (failure)");
+    expect(result.calls).toEqual([VIEW, DISABLE]);
+  });
+
+  it("leaves auto-merge off, and passes", () => {
+    const result = run("", { metadataOutcome: "failure" });
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([VIEW]);
+  });
+
+  it("does not read the metadata a failed step left behind", () => {
+    const result = run([JSDOM_PATCH], { metadataOutcome: "failure", autoMerge: "true" });
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([VIEW, DISABLE]);
   });
 });
