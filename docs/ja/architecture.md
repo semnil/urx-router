@@ -1458,7 +1458,7 @@ CONSOLE のフェーダーとインスペクタの Level スライダー (バス
 ## SIM ビュー (本体の LCD)
 
 実験的起動では、GRAPH と CONSOLE の隣に 3 つ目のビューが加わる。本体の 4.3 インチ LCD を urx-lcd-sim
-(github.com/semnil/urx-lcd-sim。Web 層の唯一のランタイム依存で、`package.json` でコミットハッシュに固定する) が描き、
+(github.com/semnil/urx-lcd-sim。Web 層の唯一のランタイム依存で、`vendor/urx-lcd-sim` の git submodule を `package.json` がリンクする) が描き、
 その `mountSim()` でページに置く。タブと View メニューの SIM Scale は `data-experimental-only` で、実験的でない起動が
 覚えていた SIM ビューは GRAPH で開く。
 

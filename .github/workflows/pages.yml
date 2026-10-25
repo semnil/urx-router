@@ -43,6 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: true
           # The released commit, named rather than inferred. Empty on a manual
           # dispatch, where checkout falls back to the dispatched ref. Creating a
           # release needs write access, so this field is not an outside input the

@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       urx-lcd-sim:
-        specifier: github:semnil/urx-lcd-sim#41bdcbe3ae57c484cbb6f1cb431a7601c6b32eca
-        version: https://codeload.github.com/semnil/urx-lcd-sim/tar.gz/41bdcbe3ae57c484cbb6f1cb431a7601c6b32eca
+        specifier: link:vendor/urx-lcd-sim
+        version: link:vendor/urx-lcd-sim
     devDependencies:
       '@playwright/test':
         specifier: ^1.64.1
@@ -1066,10 +1066,6 @@ packages:
     resolution: {integrity: sha512-+QBBXBCvifc56fsbuxZQ6Sic3wqqc3WWaqxs58gvJrcOuN83HGTCwz3oS5phzU9LthRNE9VrJCFCLUgHeeFnfA==}
     engines: {node: '>=18'}
 
-  urx-lcd-sim@https://codeload.github.com/semnil/urx-lcd-sim/tar.gz/41bdcbe3ae57c484cbb6f1cb431a7601c6b32eca:
-    resolution: {tarball: https://codeload.github.com/semnil/urx-lcd-sim/tar.gz/41bdcbe3ae57c484cbb6f1cb431a7601c6b32eca}
-    version: 1.0.2
-
   vite@8.3.5:
     resolution: {integrity: sha512-z1YpjieJ9g0ebTmQpLBv/oq9E3F9EIlOe+7LahW8SrE3LTiG3udBRUXQOlYXP9b+IC2q2phHeVxj9xGlw34OEQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -2000,8 +1996,6 @@ snapshots:
   undici@8.12.3: {}
 
   unicorn-magic@0.3.0: {}
-
-  urx-lcd-sim@https://codeload.github.com/semnil/urx-lcd-sim/tar.gz/41bdcbe3ae57c484cbb6f1cb431a7601c6b32eca: {}
 
   vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2):
     dependencies:

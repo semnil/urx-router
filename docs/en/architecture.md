@@ -1832,8 +1832,8 @@ the three gestures against a device change held behind a focused select
 ## SIM view (the unit's LCD)
 
 An experimental launch adds a third view beside the GRAPH and the CONSOLE: the unit's 4.3-inch LCD, drawn by
-urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime dependency, pinned by commit hash in
-`package.json`) and mounted in the page with its `mountSim()`. The tab and the View menu's SIM Scale are
+urx-lcd-sim (github.com/semnil/urx-lcd-sim — the web layer's one runtime dependency, a git submodule at
+`vendor/urx-lcd-sim` that `package.json` links) and mounted in the page with its `mountSim()`. The tab and the View menu's SIM Scale are
 `data-experimental-only`; a SIM view remembered by a launch that was not experimental opens on the GRAPH.
 
 - **What it edits** is the plan, through the funnels the Inspector and the tuning screens use

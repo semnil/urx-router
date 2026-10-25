@@ -89,6 +89,7 @@ The skill's routing data is generated from the same device model the app uses
 ## Development
 
 ```sh
+git submodule update --init   # vendor/urx-lcd-sim; a clone and a new worktree start with it empty
 pnpm install
 pnpm dev            # browser at http://localhost:5173 (Rust not required)
 pnpm tauri dev      # launch as a desktop app (Rust toolchain required)

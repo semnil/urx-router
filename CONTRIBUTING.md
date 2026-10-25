@@ -26,6 +26,7 @@ meet, together with the 21.2 or later the `?plan=` codec's `CompressionStream("d
 `pnpm test node-engines` fails when the two differ.
 
 ```sh
+git submodule update --init   # vendor/urx-lcd-sim; a clone and a new worktree start with it empty
 pnpm install
 pnpm dev           # browser at http://localhost:5173, no Rust required
 pnpm tauri dev     # desktop app

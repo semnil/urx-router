@@ -24,6 +24,7 @@ rustup 経由の Rust。その範囲は、直接の依存がそれぞれの `eng
 `pnpm test node-engines` が落ちる。
 
 ```sh
+git submodule update --init   # vendor/urx-lcd-sim。clone 直後と新しい worktree では空
 pnpm install
 pnpm dev           # ブラウザ版 http://localhost:5173（Rust 不要）
 pnpm tauri dev     # デスクトップアプリ

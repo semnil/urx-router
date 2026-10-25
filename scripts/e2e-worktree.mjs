@@ -153,7 +153,9 @@ try {
   if (untracked.length) console.log(`carried   ${untracked.length} untracked file(s)`);
 
   // Linked, not installed: an install per run would cost more than the run. pnpm's
-  // tree resolves through the link, and the worktree is discarded with it.
+  // tree resolves through the link, and the worktree is discarded with it. urx-lcd-sim
+  // resolves through it to THIS checkout's vendor/urx-lcd-sim, so the submodule is tested
+  // as it is checked out here, and the worktree's own copy of it stays empty.
   symlinkSync(join(ROOT, "node_modules"), join(wt, "node_modules"), process.platform === "win32" ? "junction" : "dir");
 
   // Playwright is invoked directly rather than through `pnpm test:e2e`: a package
