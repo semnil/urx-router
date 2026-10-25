@@ -20,8 +20,9 @@ Security problems go through [SECURITY.md](SECURITY.md), not the issue tracker.
 
 ## Setup
 
-Node >= 21.2 (the `?plan=` codec needs `CompressionStream("deflate-raw")`), pnpm, and — for the
-desktop shell only — Rust via rustup.
+Node in the range `package.json` `engines` declares, pnpm, and — for the desktop shell only — Rust
+via rustup. That range is where the ranges the dev dependencies declare meet (jsdom, vitest and vite
+each declare one); the `?plan=` codec's `CompressionStream("deflate-raw")` alone needs 21.2 or later.
 
 ```sh
 pnpm install
