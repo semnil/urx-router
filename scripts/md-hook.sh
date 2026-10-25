@@ -43,9 +43,11 @@ if (typeof file !== "string" || !file) process.exit(0);
 const reference = join(process.argv[1], "reference");
 const checker = join(reference, "scripts", "check-ledger-anchors.mjs");
 if (!existsSync(checker)) process.exit(0);
+// The native form names a Windows directory by its long name, which is how git spells the
+// checkout, while the edited path may arrive through a short (8.3) alias.
 const real = (p) => {
   try {
-    return realpathSync(p);
+    return realpathSync.native(p);
   } catch {
     return p;
   }

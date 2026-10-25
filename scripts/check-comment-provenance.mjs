@@ -2576,6 +2576,17 @@ const canonical = (path) => {
   }
 };
 
+/** The name the file system itself reports. `canonical` keeps a Windows directory spelled
+ *  by its short (8.3) alias as written, while git writes an absolute gitdir with the long
+ *  name, so two spellings of one directory compare equal only in this form. */
+const longPath = (path) => {
+  try {
+    return realpathSync.native(resolve(path));
+  } catch {
+    return resolve(path);
+  }
+};
+
 export const repoPath = (path) => relative(ROOT, canonical(path)).split(sep).join("/");
 
 /**
@@ -2619,7 +2630,7 @@ export function checkoutOf(path, root = ROOT) {
       if (statSync(git).isDirectory()) return null;
       const target = /^gitdir:\s*(.+)$/m.exec(readFileSync(git, "utf8"))?.[1]?.trim();
       // A relative gitdir (`git worktree add --relative-paths`) is relative to the `.git` file.
-      return target && !escapesRoot(relative(join(top, ".git", "worktrees"), canonical(resolve(dir, target))))
+      return target && !escapesRoot(relative(longPath(join(top, ".git", "worktrees")), longPath(resolve(dir, target))))
         ? dir
         : null;
     }
