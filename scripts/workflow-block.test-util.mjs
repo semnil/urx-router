@@ -3,8 +3,10 @@
 
 // The `run: |` block that follows an anchor, dedented. Its end is the first line indented no
 // further than the `run:` key itself, which is how a YAML block scalar ends.
+// A workflow checked out with `core.autocrlf` ends its lines with CRLF; the block comes back
+// with LF either way.
 export function runBlock(text, anchor) {
-  const lines = text.split("\n");
+  const lines = text.split(/\r?\n/);
   const from = lines.findIndex((line) => line.includes(anchor));
   if (from < 0) throw new Error(`anchor not found: ${anchor}`);
   const at = lines.findIndex((line, i) => i >= from && /^\s*run: \|\s*$/.test(line));
