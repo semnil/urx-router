@@ -5210,7 +5210,8 @@ enables auto-merge (merge commit) pinned to the head commit it read; otherwise â
 with no version (a commit SHA, such as the `dtolnay/rust-toolchain` pin), metadata it cannot read, a run in
 which fetch-metadata fails (its check still passes, so a person can merge the pull request), or any other
 commit history â€” it turns off an auto-merge an earlier head enabled, since a push leaves auto-merge
-on and a rebase or an added commit can change what the update is. Its
+on and a rebase or an added commit can change what the update is. A run whose head is no longer the head
+of the pull request changes nothing, and the runs for one pull request run one at a time. Its
 job reports `auto-merge`, one of the status checks the ruleset requires, so a Dependabot pull request does
 not merge before the run for its head commit has decided; any other update stays open for a person to
 merge. `pnpm test dependabot-auto-merge` runs the workflow's decision against each of
