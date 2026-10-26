@@ -784,6 +784,7 @@ ${steps}`;
     ["cargo test", "`cargo test`"],
     ["cargo build --release ${{ matrix.args }}", "`cargo build`"],
     ["pnpm tauri build --no-bundle ${{ matrix.args }}", "`tauri build`"],
+    ["pnpm exec playwright install chromium", "`playwright install`"],
   ])("requires a step bound on `run: %s`", (command, named) => {
     const bare = boundFindings(`      - run: ${command}\n`);
     expect(bare.join("\n")).toContain(named);

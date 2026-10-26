@@ -5143,7 +5143,7 @@ run when they disagree with the file. `pnpm check:platform <binary>` is the same
 What the runner image still decides is which SDK the binary actually links against, and `macos-26`
 is the one that agrees with the declared version, so the recorded value describes the build that
 took place rather than only what the file asked for. `post-merge.yml`'s `warm-cache` matrix and
-`ci.yml`'s `rust` job name the same image — the first so the cache a release restores describes the
+`ci.yml`'s `rust` matrix name the same image — the first so the cache a release restores describes the
 build it is about to do, the second so a pull request compiles the crate under the release's SDK.
 The workflow headers carry the runner-image retirement behind that choice.
 

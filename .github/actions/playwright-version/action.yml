@@ -4,12 +4,14 @@ description: >
 
 # Why this is a composite action and not a step in each job that needs it.
 #
-# The E2E jobs run inside the official Playwright image, whose tag has to name the SAME
-# Playwright the lockfile resolves: a stale tag means testing against a browser build the
+# The Ubuntu E2E jobs run inside the official Playwright image, whose tag has to name the
+# SAME Playwright the lockfile resolves: a stale tag means testing against a browser build the
 # installed Playwright does not drive. `container:` is evaluated before any step of its
 # own job, so the value can only reach it through a PRIOR job's output — never from the
 # job it configures. Both callers therefore run this in the job they already run first
 # (`ci.yml`'s `preflight`, `race.yml`'s `detect`) and publish it as that job's output.
+# `ci.yml`'s `e2e-windows` has no image and does not read it: it installs the browser with
+# the lockfile's own Playwright.
 #
 # A job of its own is what this replaced: it cost a dispatch and about six seconds on the
 # critical path, and bought nothing the earlier job was not already paying for. Put it in
