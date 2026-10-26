@@ -18,8 +18,9 @@
 //
 // WHAT IT REFUSES. Removing a worktree: the one this run is in, a locked one, one holding tracked
 // or untracked changes, one that cannot be read, one carrying ignored content that no command here
-// rebuilds, one whose checked-out submodule holds any of that or commits or a stash its remote does
-// not, one with a build or a server running out of it, and one that has been switched off the
+// rebuilds, one whose submodules keep repositories of their own — checked out, kept in a `.git`
+// directory of their own, or left behind by a deinit — since a submodule's repository is not
+// deleted here, one with a build or a server running out of it, and one that has been switched off the
 // branch it is about to lose. Fast-forwarding: a default branch that does not exist here, one
 // checked out nowhere, one checked out in a tree other than the one this run was started in, one
 // carrying commits the remote does not, one whose tree is not where the plan read it, and the same
@@ -72,11 +73,9 @@
 //
 // The dry run FETCHES, which prunes remote-tracking refs. It has to: every answer above is about
 // the remote, and reporting them off a stale one would be reporting about a different repository.
-// The same holds for each submodule repository a worktree's removal would delete, which is fetched
-// and pruned before its commits are compared with its remote. No branch, worktree, working tree or
-// HEAD is touched.
+// No branch, worktree, working tree or HEAD is touched.
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
 import { platform } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -313,139 +312,23 @@ function checkedOutSubmodules(dir) {
   return links === null ? null : [...links.keys()].filter((p) => existsSync(join(dir, p, ".git")));
 }
 
-/** Every submodule a tree has checked out at any depth, as paths from the tree's top, or null where
- *  one level cannot be read. A submodule's own submodules sit inside its working tree and its
- *  repository, so a removal reaches them as well. */
-function checkedOutSubmodulesDeep(dir, prefix = "") {
+/**
+ * Why a worktree's removal would delete a submodule repository, or null when it would delete none.
+ * A submodule's repository is not deleted here: what it holds is not what a commit, a stash or a
+ * status shows alone — hooks, local configuration and the index of a worktree of its own live
+ * there too — so a tree holding one is kept, and named with the command that removes it
+ * repository and all. One is held where a submodule is checked out (its `.git` a file into the
+ * tree's administrative `modules` directory, or a directory of its own) and where that `modules`
+ * directory is there with none checked out, which is what a deinit leaves.
+ */
+function keepsSubmoduleRepos(dir) {
   const subs = checkedOutSubmodules(dir);
-  if (subs === null) return null;
-  const all = [];
-  for (const p of subs) {
-    const inner = checkedOutSubmodulesDeep(join(dir, p), `${prefix}${p}/`);
-    if (inner === null) return null;
-    all.push(`${prefix}${p}`, ...inner);
-  }
-  return all;
-}
-
-/**
- * Every submodule repository a removal deletes, as { name, gitDir }: each one in the tree's
- * administrative `modules` directory, which goes whole, checked out or not — a deinitialized
- * submodule leaves its repository there — and the one each checked-out submodule at `subs` uses,
- * which for a submodule keeping its own `.git` directory is inside its working tree; with the
- * repositories of their own submodules, kept in each one's `modules` in turn. Null where a
- * repository cannot be located or a level of one read.
- */
-function submoduleRepos(dir, subs) {
-  const modules = git(["rev-parse", "--path-format=absolute", "--git-path", "modules"], dir, true);
-  if (modules.status !== 0) return null;
-  const found = [];
-  const seen = new Set();
-  // A repository reached both ways is listed once; false where it cannot be read.
-  const add = (gitDir, prefix) => {
-    let real;
-    try {
-      real = realpathSync.native(gitDir);
-    } catch {
-      return false;
-    }
-    if (seen.has(real)) return true;
-    seen.add(real);
-    found.push({ name: prefix.slice(0, -1), gitDir });
-    return walk(join(gitDir, "modules"), prefix);
-  };
-  const walk = (at, prefix) => {
-    let entries;
-    try {
-      entries = readdirSync(at, { withFileTypes: true });
-    } catch (e) {
-      return e.code === "ENOENT";
-    }
-    if (entries.some((e) => e.name === "HEAD") && entries.some((e) => e.name === "objects" && e.isDirectory()))
-      return add(at, prefix);
-    return entries.filter((e) => e.isDirectory()).every((e) => walk(join(at, e.name), `${prefix}${e.name}/`));
-  };
-  if (!walk(modules.out, "")) return null;
-  for (const p of subs) {
-    const own = git(["rev-parse", "--path-format=absolute", "--git-dir"], join(dir, p), true);
-    if (own.status !== 0 || !add(own.out, `${p}/`)) return null;
-  }
-  return found;
-}
-
-/**
- * Why a tree's submodules may not be deleted with it, or null when they may.
- *
- * The tree's own status already answers for a submodule moved off the commit it records or holding
- * a tracked or untracked change, and says nothing about the rest: ignored content in a checked-out
- * submodule at any depth, and commits or a stash that live only in a submodule's repository, which
- * sits in the tree's administrative directory, checked out or not, or in the working tree of a
- * submodule keeping its own `.git` directory, and goes with it. A submodule's status says the same
- * about its own submodules.
- */
-function submoduleWork(dir) {
-  const subs = checkedOutSubmodulesDeep(dir);
   if (subs === null) return "its submodules could not be read";
-  for (const p of subs) {
-    const dirty = unclean(join(dir, p));
-    if (dirty) return dirty.replace(/^its worktree/, `its submodule ${p}`);
-  }
-  const repos = submoduleRepos(dir, subs);
-  if (repos === null) return "its submodules' repositories could not be read";
-  for (const { name, gitDir } of repos) {
-    const repo = (args) => git(["--git-dir", gitDir, ...args], dir, true);
-    // A worktree of the repository's own, beside the one this tree checks out, keeps its index here
-    // and shares these objects, whatever its commits say.
-    const listed = repo(["worktree", "list", "--porcelain", "-z"]);
-    if (listed.status !== 0) return `its submodule ${name} could not be read: ${listed.err}`;
-    const others = listed.out
-      .split("\0")
-      .filter((rec) => rec.startsWith("worktree "))
-      .slice(1);
-    if (others.length > 0)
-      return `its submodule ${name} has a worktree of its own at ${others[0].slice("worktree ".length)}`;
-    // Its remote-tracking refs brought to what each remote holds now: one left from a branch deleted
-    // upstream names no copy, and a remote that cannot be asked keeps the tree.
-    const fetched = repo(["fetch", "--all", "--prune", "--quiet"]);
-    if (fetched.status !== 0) return `its submodule ${name} could not be checked against its remote: ${fetched.err}`;
-    if (repo(["rev-parse", "--verify", "--quiet", "refs/stash"]).status === 0)
-      return `its submodule ${name} holds a stash`;
-    // Every local ref (a tag, a note) and every reflog entry, not only HEAD and the branches: a
-    // commit any of them still holds goes with the repository.
-    const ahead = repo(["rev-list", "-n", "1", "--all", "--reflog", "--not", "--remotes"]);
-    if (ahead.status !== 0) return `its submodule ${name} could not be read: ${ahead.err}`;
-    if (ahead.out !== "") return `its submodule ${name} holds commits its remote does not`;
-  }
-  return null;
-}
-
-/**
- * Delete a tree's checked-out submodules ahead of `git worktree remove`, which refuses any tree
- * whose administrative directory holds a submodule's repository, emptied working tree or not.
- * Called on the reading `submoduleWork` took immediately before, so what is deleted is what a
- * `git submodule update --init` there checks out again.
- *
- * Not `git submodule deinit`: a submodule's registration lives in the configuration every
- * checkout of this repository shares, and deinit deletes it there, so the main checkout's own
- * submodule reads as never initialized afterwards. Emptied down to its directory, a submodule
- * looks as an uninitialized one does, and the tree's own status — git's refusal over anything
- * uncommitted — still stands in front of the removal.
- */
-function emptySubmodules(dir) {
-  const subs = checkedOutSubmodules(dir);
-  if (subs === null) throw new Error("its submodules could not be read before they were deleted");
-  if (subs.length === 0) return false;
   const modules = git(["rev-parse", "--path-format=absolute", "--git-path", "modules"], dir, true);
-  if (modules.status !== 0) throw new Error(`its submodules' repositories could not be located: ${modules.err}`);
-  try {
-    for (const p of subs) {
-      for (const name of readdirSync(join(dir, p))) rmSync(join(dir, p, name), { recursive: true, force: true });
-    }
-    rmSync(modules.out, { recursive: true, force: true });
-  } catch (e) {
-    throw new Error(`its submodules could not be deleted: ${e.message}`);
-  }
-  return true;
+  if (modules.status !== 0) return `its submodules' repositories could not be located: ${modules.err}`;
+  if (subs.length === 0 && !existsSync(modules.out)) return null;
+  const named = subs.length > 0 ? subs.join(", ") : "a deinitialized submodule";
+  return `its submodules keep repositories of their own (${named}), which this does not delete — \`git worktree remove --force ${dir}\` removes it with them`;
 }
 
 /**
@@ -630,7 +513,7 @@ function whyKeep(cwd, remote, branch, ref, s, at = null) {
   if (tree.locked) return { tree, why: "its worktree is locked — another session is inside" };
   const dirty = unclean(tree.path);
   if (dirty) return { tree, why: dirty };
-  const held = submoduleWork(tree.path);
+  const held = keepsSubmoduleRepos(tree.path);
   if (held) return { tree, why: held };
   const busy = holdersOf(tree.path, s.procs.known, s.trees);
   if (busy.length > 0) return { tree, why: `${busy.length} process(es) run out of its worktree: pid ${busy[0].pid}` };
@@ -848,10 +731,8 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
       failed = true;
       continue;
     }
-    let emptied = false;
     try {
       clearRebuildable(tree.path);
-      emptied = emptySubmodules(tree.path);
     } catch (e) {
       log(`keep   ${branch} — ${e.message}`);
       failed = true;
@@ -863,12 +744,9 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
       // branch below is then deleted like any other — so what is left is a directory git no
       // longer knows, not a branch kept with its worktree.
       const listed = worktrees(cwd).some((w) => w.path === tree.path);
-      const again = emptied
-        ? " (its submodules were emptied first; `git submodule update --init` there checks them out again)"
-        : "";
       log(
         listed
-          ? `keep   ${branch} — its worktree could not be removed: ${r.err}${again}`
+          ? `keep   ${branch} — its worktree could not be removed: ${r.err}`
           : `left   ${tree.path} — no longer a worktree, but the directory could not be deleted and is left to remove by hand: ${r.err}`,
       );
       failed = true;
