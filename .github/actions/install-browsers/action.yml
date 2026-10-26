@@ -66,6 +66,16 @@ description: >
 # 10-minute bound is about twice that stretch's slowest rather than several times 86 s, so a
 # run that slow still passes.
 #
+# Windows has no row above because no workflow here ran on it when the table was read. The
+# windows-latest readings come from a trial workflow on a throwaway branch, runs
+# 40205029114-40246785351 (7 runs), read the same way: pnpm/action-setup 14-26 s
+# (40205029114), pnpm install 1-4 s, dtolnay/rust-toolchain 9 s and `cargo test` with no
+# cache to restore 196 s (one run each, 40205029114), and `pnpm exec playwright install
+# chromium` 19-21 s (40206235817). That last command is how ci.yml's `e2e-windows` gets its
+# browser — a Windows runner takes no `container:`, and there are no system libraries for
+# `--with-deps` to fetch there — and its step carries the same 10-minute bound as this
+# action's calls.
+#
 # This action's own calls carry a 10-minute step bound, above its `timeout` input (300 s by
 # default), so the failure the script below names is the one that fires. `pnpm check:gates`
 # fails a step that uses an action in the table, or this one, or runs a command in it or

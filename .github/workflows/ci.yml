@@ -201,25 +201,36 @@ jobs:
   # latch, the ledger's rotation, the worker's connection generations, and which webview's
   # page load may tear the app's device session and MIDI ports down.
   #
-  # macOS rather than ubuntu, which would be the cheaper runner: this crate is only ever
-  # built on macos-26 and windows-latest, and a Linux build needs libwebkit2gtk installed
-  # from the Ubuntu mirror — the sequential apt path #257 took out of every E2E run, and
-  # a platform nothing else here compiles on. Free either way on a public repository.
+  # macOS and Windows rather than ubuntu, which would be the cheaper runner: this crate is
+  # only ever built on macos-26 and windows-latest, so those are the two it is tested on,
+  # and a Linux build needs libwebkit2gtk installed from the Ubuntu mirror — the sequential
+  # apt path #257 took out of every E2E run, and a platform nothing else here compiles on.
+  # Free either way on a public repository. Each platform compiles the code the other's
+  # `cfg` leaves out, and runs the cases the other gates off.
   rust:
     needs: preflight
     if: needs.preflight.outputs.code == 'true'
-    # The image release.yml packages on. macos-14, which this replaces, is retired on
-    # 2026-11-02 and fails during October's brownouts — and the context this job feeds is
+    # macos-26 is the image release.yml packages on. macos-14, which it replaces, is retired
+    # on 2026-11-02 and fails during October's brownouts — and the context this job feeds is
     # required, so that failure is every merge rather than this job alone.
-    runs-on: macos-26
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform's failure must not cancel the other's verdict.
+      fail-fast: false
+      matrix:
+        os: [macos-26, windows-latest]
     permissions:
       contents: read
+    # bash on both, so the steps below are one script whichever runner reads them.
+    defaults:
+      run:
+        shell: bash
     # No debug info. Nothing here debugs: the tests report by assertion message, and a
     # backtrace would be read from the source anyway. Restoring the cache is the larger
     # half of the job — ~67 s to pull a ~650 MB cache against ~21 s of cargo work — and
     # that cache shares a 10 GB repository budget with the two release caches (~610 MB
     # macOS / ~520 MB Windows), where eviction is what turns a warm run back into a cold
-    # one.
+    # one. The key carries the runner's OS, so each platform keeps a test cache of its own.
     #
     # Job level rather than on the cargo step: rust-cache runs earlier and folds CARGO_*
     # variables into its key, so setting it on the step would leave the key describing a
@@ -229,9 +240,9 @@ jobs:
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
-    # Unmeasured for this shape (debug profile, tests). The only figure that exists is
-    # post-merge.yml's slowest whole warm-cache run (~6.8 min), so this takes that bound
-    # with the same headroom rather than inventing a budget of its own.
+    # Sized from post-merge.yml's slowest whole warm-cache run (~6.8 min), with the same
+    # headroom, rather than a budget of its own. The Windows entry's cargo test with no
+    # cache to restore is in .github/actions/install-browsers' header, well inside it.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -394,6 +405,74 @@ jobs:
           path: test-results/
           retention-days: 7
 
+  # The unit suite on the other platform the desktop build ships on. `scripts/` drives git,
+  # bash, PowerShell and the file system directly, and on Windows each of those differs:
+  # path separators, drive letters, a directory spelled by its short (8.3) alias, junctions,
+  # and a checkout with CRLF line ends — this runner's own git configuration turns
+  # `core.autocrlf` on, and it is left on. The coverage reading and the bundle and
+  # skip-ledger checks stay with `frontend`; this job runs the suite and nothing else.
+  #
+  # bash rather than the runner's PowerShell default: it is the shell the suite is run from
+  # on a Windows checkout as well.
+  unit-windows:
+    needs: preflight
+    if: needs.preflight.outputs.code == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
+      - run: pnpm build
+      - run: pnpm test
+
+  # The ordinary E2E suite (--project=chromium) on Windows, in one job. There is no
+  # Playwright container for this runner, so the browser comes from `playwright install`
+  # instead of an image, and no coverage is taken: the reading Codecov keeps is the Ubuntu
+  # shards'. What this answers that they cannot is the platform's own: the layout a case
+  # measures is laid out in Windows' fonts, and the preview server is reached over the
+  # loopback Windows resolves.
+  e2e-windows:
+    needs: preflight
+    if: needs.preflight.outputs.code == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
+      - run: pnpm exec playwright install chromium
+        timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
+      - run: pnpm test:e2e:app
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: playwright-traces-windows
+          path: test-results/
+          retention-days: 7
+
   # The single context this workflow contributes to the branch ruleset (.github/required-checks.json).
   # It reports on every pull request, including a doc-only one where everything above it
   # skipped — which is the point: a required check that does not report cannot be waited
@@ -407,7 +486,7 @@ jobs:
     # `e2e` is one entry here whatever the matrix does: a matrix job's result is the
     # aggregate, failure if any shard failed, so the gate needs no per-shard knowledge and
     # a fourth shard does not have to be remembered here.
-    needs: [preflight, frontend, rust, e2e, e2e-webkit]
+    needs: [preflight, frontend, rust, e2e, e2e-webkit, unit-windows, e2e-windows]
     if: always()
     runs-on: ubuntu-26.04
     permissions: {}
@@ -426,6 +505,8 @@ jobs:
           # Bracketed, not dotted: a hyphen is not a legal character in an expression's
           # property path, and `needs.e2e-webkit.result` parses as a subtraction.
           E2E_WEBKIT: ${{ needs['e2e-webkit'].result }}
+          UNIT_WINDOWS: ${{ needs['unit-windows'].result }}
+          E2E_WINDOWS: ${{ needs['e2e-windows'].result }}
         run: |
-          echo "::error::CI did not pass — preflight=${PREFLIGHT} frontend=${FRONTEND} rust=${RUST} e2e=${E2E} e2e-webkit=${E2E_WEBKIT}"
+          echo "::error::CI did not pass — preflight=${PREFLIGHT} frontend=${FRONTEND} rust=${RUST} e2e=${E2E} e2e-webkit=${E2E_WEBKIT} unit-windows=${UNIT_WINDOWS} e2e-windows=${E2E_WINDOWS}"
           exit 1
