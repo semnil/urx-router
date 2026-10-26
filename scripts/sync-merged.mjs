@@ -60,6 +60,7 @@
 // A submodule is brought along with the tree: one checked out at the commit the old tip records,
 // or not checked out at all, is moved to the commit the new tip records. One moved off that
 // commit by hand is left where it is and named, since what it is on is that session's choice.
+// Either that or a submodule that cannot be moved stops the run before anything is removed.
 //
 // Where the machine cannot be asked what is running, both halves go ahead saying so: git still
 // refuses to remove a worktree holding changes, and refuses to write over them when the sync
@@ -449,8 +450,8 @@ function emptySubmodules(dir) {
 
 /**
  * Bring a tree's submodules to what `ahead` records, once the tree itself is there. Returns the
- * lines to print, whether any of them is a failure, and whether it is a step that failed — which
- * stops the run before anything is removed — rather than a submodule left where it was found.
+ * lines to print and whether any of them is a failure; a failure stops the run before anything is
+ * removed.
  *
  * Moved only where it is checked out at what `local` recorded, or not checked out at all: a
  * submodule on any other commit was put there by hand, and is left there and named.
@@ -459,7 +460,7 @@ function syncSubmodules(dir, local, ahead) {
   const before = gitlinksAt(dir, local);
   const after = gitlinksAt(dir, ahead);
   if (before === null || after === null)
-    return [{ text: "SUBMODULES NOT SYNCED — the commits could not be read", failed: true, aborts: true }];
+    return [{ text: "SUBMODULES NOT SYNCED — the commits could not be read", failed: true }];
   const lines = [];
   for (const [p, want] of after) {
     const sub = join(dir, p);
@@ -478,11 +479,7 @@ function syncSubmodules(dir, local, ahead) {
     lines.push(
       r.status === 0
         ? { text: `synced ${p} -> ${want.slice(0, 7)}`, failed: false }
-        : {
-            text: `SUBMODULE NOT SYNCED — ${p} could not be brought to ${want.slice(0, 7)}: ${r.err}`,
-            failed: true,
-            aborts: true,
-          },
+        : { text: `SUBMODULE NOT SYNCED — ${p} could not be brought to ${want.slice(0, 7)}: ${r.err}`, failed: true },
     );
   }
   return lines;
@@ -829,13 +826,12 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
   if (sync.ff) {
     log(`synced ${base} -> ${ahead.slice(0, 7)}`);
     let unsynced = false;
-    for (const { text, failed: bad, aborts } of syncSubmodules(sync.tree, local, ahead)) {
+    for (const { text, failed: bad } of syncSubmodules(sync.tree, local, ahead)) {
       log(text);
-      if (bad) failed = true;
-      if (aborts) unsynced = true;
+      if (bad) unsynced = true;
     }
     if (unsynced) {
-      log("\nnothing removed — a submodule of the default branch could not be synced");
+      log("\nnothing removed — a submodule of the default branch was not synced");
       return 1;
     }
   }

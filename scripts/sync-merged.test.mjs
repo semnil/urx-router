@@ -1714,9 +1714,8 @@ describe("sync-merged, around a submodule", () => {
     expect(branches(down)).toContain("feat");
   });
 
-  it("leaves a submodule moved by hand where it is, and says so", () => {
-    const { origin, down, lib } = fixture({ submodule: true });
-    git(down, "submodule", "update", "-q", "--init");
+  it("leaves a submodule moved by hand where it is, says so, and removes nothing", () => {
+    const { origin, down, tree, lib } = landedWithSubmodule();
     const next = libCommit(lib, "2\n");
     const mine = libCommit(lib, "3\n");
     bumpOnOrigin(origin, next);
@@ -1727,10 +1726,13 @@ describe("sync-merged, around a submodule", () => {
     expect(text).toMatch(
       new RegExp(`^keep {3}vendor/lib at ${mine.slice(0, 7)} — it is not where the old tip records it`, "m"),
     );
+    expect(text).toMatch(/^nothing removed — /m);
     expect(code).toBe(1);
     expect(git(sub, "rev-parse", "HEAD")).toBe(mine);
     // The tree itself is synced: the submodule is the one thing left alone.
     expect(at(down, "main")).toBe(at(down, "origin/main"));
+    expect(existsSync(tree)).toBe(true);
+    expect(branches(down)).toContain("feat");
   });
 });
 
