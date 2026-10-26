@@ -19,6 +19,10 @@ function normalized(path: string): string {
  * many shards ci.yml runs. */
 function repoSourcePath(path: string): string {
   const source = normalized(path);
+  // A dependency's own src/ — urx-lcd-sim's, under vendor/ or node_modules/ — is not this
+  // repository's, some of its paths being spelled like ours (its src/ui/dom.ts). It keeps its
+  // full path, which the filter below leaves out.
+  if (/(^|\/)(vendor|node_modules)\//.test(source)) return source;
   const index = source.lastIndexOf("src/");
   return index === -1 ? source : source.slice(index);
 }

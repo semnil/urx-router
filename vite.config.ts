@@ -1,5 +1,32 @@
 import { defineConfig } from "vite";
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
+
+/** The urx-lcd-sim checkout this build bundles: where the install's link resolves, which is this
+ *  checkout's vendor/urx-lcd-sim, or the linked checkout's in a worktree whose node_modules is a link. */
+export const LCD_SIM_DIR = realpathSync(resolve(import.meta.dirname, "node_modules", "urx-lcd-sim"));
+
+/**
+ * The commit a urx-lcd-sim checkout is at, shortened: what the SIM view's SETUP → Version shows as
+ * APP Version (`__URX_LCD_SIM_COMMIT__`, which the simulator's source reads). Refuses a directory that
+ * is not the top of its own work tree — the submodule not checked out — since git run there answers
+ * for this repository instead.
+ */
+export function lcdSimCommit(dir: string): string {
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", dir, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", LANG: "C" },
+    }).trim();
+  const top = git("rev-parse", "--show-toplevel");
+  // Compared by the native real path, which spells a Windows 8.3 short name (RUNNER~1) out in full
+  // as git does.
+  if (realpathSync.native(top) !== realpathSync.native(dir)) {
+    throw new Error(`${dir} is not checked out (git answers for ${top}): run git submodule update --init`);
+  }
+  return git("rev-parse", "--short=7", "HEAD");
+}
 
 // Relative base so the built assets load inside the Tauri webview as well as a browser.
 export default defineConfig(({ mode }) => {
@@ -7,6 +34,7 @@ export default defineConfig(({ mode }) => {
   return {
     base: "./",
     clearScreen: false,
+    define: { __URX_LCD_SIM_COMMIT__: JSON.stringify(lcdSimCommit(LCD_SIM_DIR)) },
     server: {
       port: 5173,
       strictPort: true,

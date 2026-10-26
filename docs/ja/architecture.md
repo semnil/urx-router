@@ -1458,9 +1458,12 @@ CONSOLE のフェーダーとインスペクタの Level スライダー (バス
 ## SIM ビュー (本体の LCD)
 
 実験的起動では、GRAPH と CONSOLE の隣に 3 つ目のビューが加わる。本体の 4.3 インチ LCD を urx-lcd-sim
-(github.com/semnil/urx-lcd-sim。Web 層の唯一のランタイム依存で、`package.json` でコミットハッシュに固定する) が描き、
+(github.com/semnil/urx-lcd-sim。Web 層の唯一のランタイム依存で、`vendor/urx-lcd-sim` の git submodule を `package.json` がリンクする) が描き、
 その `mountSim()` でページに置く。タブと View メニューの SIM Scale は `data-experimental-only` で、実験的でない起動が
 覚えていた SIM ビューは GRAPH で開く。
+SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-sim のチェックアウトのコミットを短くしたものを出す。
+`vite.config.ts` がインストールのリンクの先でこれを読み、シミュレーターのソースに `__URX_LCD_SIM_COMMIT__` として
+定める。submodule をチェックアウトしていなければ、このリポジトリのコミットを出すのではなくビルドが止まる。
 
 - **編集するもの**はプランで、Inspector と調整画面と同じ入口 (`onUpdateNodeParams`・`onUpdateParams`・`onRenameNode`) を
   通す。このため LCD での編集もほかと同じアンドゥの 1 件になり、ライブ同期が書き、デバイスの読み取りはアプリの編集として
@@ -4517,11 +4520,13 @@ major は手で上げる。
 更新する依存がすべて semver の patch か minor である Dependabot のプルリクエストは自動でマージされる。
 ただし 1.0 未満の cargo crate の minor 更新は除く。Cargo は 0.x の minor を非互換として扱うが、
 Dependabot はこれを semver-minor と付ける。除くのは cargo だけで、esbuild のような 1.0 未満の npm
-パッケージの minor 更新は他と同じく自動でマージされる。
+パッケージの minor 更新は他と同じく自動でマージされる。`vendor/urx-lcd-sim` の submodule の更新も自動で
+マージされる。`.github/dependabot.yml` はこれを urx-lcd-sim のデフォルトブランチの最新のコミットへ、
+cooldown なしで進める。更新はコミットで、fetch-metadata は semver の種別を付けない。
 `.github/workflows/dependabot-auto-merge.yml` が `dependabot/fetch-metadata` で更新する依存を 1 つずつ
 読み、すべてが条件に合い、かつプルリクエストのコミットが head の 1 つだけ (`dependabot[bot]` が書き、
 GitHub (web-flow) がコミットし、署名が検証済み) のときに、読んだ head コミットに固定して自動マージ (merge commit) を予約する。この
-アクションは最初のコミットしか読まず、amend では作者が残るため。それ以外 (major の更新、版番号の無い更新 =
+アクションは最初のコミットしか読まず、amend では作者が残るため。それ以外 (major の更新、submodule 以外の版番号の無い更新 =
 `dtolnay/rust-toolchain` のピンのような commit SHA、読めなかったメタデータ、fetch-metadata が失敗した実行
 (このときもチェックは通るので、人がマージできる)、それ以外のコミットの並び)
 では、前の head で予約された自動マージを解除する。push では予約が外れず、rebase や足されたコミットで

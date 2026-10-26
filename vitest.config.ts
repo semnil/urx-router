@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { LCD_SIM_DIR, lcdSimCommit } from "./vite.config.ts";
 
 /** The setup file the worker log adds, while URX_VITEST_WORKER_LOG names a file. On Windows the variable is
  *  refused: there vitest's SIGTERM ends a worker without running the handler that writes its end line, so a
@@ -14,6 +15,7 @@ function workerLogSetupFiles(): string[] {
 // Core and models are DOM-free (see docs/*/architecture.md), so the node
 // environment is enough; UI-layer tests would opt into jsdom per file.
 export default defineConfig({
+  define: { __URX_LCD_SIM_COMMIT__: JSON.stringify(lcdSimCommit(LCD_SIM_DIR)) },
   test: {
     environment: "node",
     // A hang detector, not a budget. The cases that boot the whole app under jsdom run

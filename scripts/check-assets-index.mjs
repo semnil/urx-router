@@ -98,6 +98,7 @@ const PROSE_TOKENS = new Map([
   ["ci.yml", "named as the workflow that greps; the grep itself is asserted per handle"],
   ["ls scripts/", "an instruction to the reader, not a path"],
   [".gitignore", "the file the ignore rules live in, named as itself"],
+  [".git", "the directory or file git keeps at the top of a working tree, named as itself"],
   ["core.excludesFile", "a git configuration key, not a path"],
   ["target/", "the directory the fixture's own symlinks point at, which lives in a throwaway repository"],
   ["ruby", "the interpreter, named as the thing that has to be present for a differential to run"],

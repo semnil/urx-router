@@ -45,6 +45,18 @@ updates:
         patterns: ["serde", "serde_json"]
         update-types: ["minor", "patch"]
 
+  # vendor/urx-lcd-sim, moved to the newest commit of urx-lcd-sim's default branch. The entry
+  # is excluded from Dependabot's default cooldown, so a commit is offered on the next daily run.
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: cron
+      cronjob: "0 0 * * *"
+      timezone: "Asia/Tokyo"
+    cooldown:
+      exclude:
+        - "*"
+
   # The workflow actions used above. Actions are SHA-pinned with a version
   # comment (`@<sha> # vX.Y.Z`); Dependabot bumps the pin and comment together.
   - package-ecosystem: github-actions

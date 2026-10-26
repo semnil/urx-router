@@ -80,6 +80,7 @@ URX22 で実機検証済み**で、**URX44** は URX44V と同一と仮定して
 ## 開発
 
 ```sh
+git submodule update --init   # vendor/urx-lcd-sim。clone 直後と新しい worktree では空
 pnpm install
 pnpm dev            # ブラウザで http://localhost:5173 (Rust 不要)
 pnpm tauri dev      # デスクトップアプリとして起動 (Rust ツールチェーン必須)

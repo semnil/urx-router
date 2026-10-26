@@ -29,7 +29,7 @@ import {
 import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { REGENERABLE, decide, holdersOf, run } from "./sync-merged.mjs";
 
 const PROGRAM = resolve(dirname(fileURLToPath(import.meta.url)), "sync-merged.mjs");
@@ -50,11 +50,12 @@ function git(cwd, ...args) {
  * request leaves), a fast-forward, or a squash. The three are not interchangeable — only the first
  * leaves a tip that is reachable and off the first-parent line.
  */
-function fixture({ landing = "merge", base = "main", ignore = null } = {}) {
+function fixture({ landing = "merge", base = "main", ignore = null, submodule = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "sync-merged-"));
   roots.push(root);
   const origin = join(root, "origin");
   const down = join(root, "down");
+  const lib = join(root, "lib");
   mkdirSync(origin);
   git(origin, "init", "-q", "-b", base);
   git(origin, "config", "user.email", "t@t");
@@ -67,6 +68,14 @@ function fixture({ landing = "merge", base = "main", ignore = null } = {}) {
   if (ignore) {
     writeFileSync(join(origin, ".gitignore"), ignore);
     git(origin, "add", ".gitignore");
+  }
+  if (submodule) {
+    libRepo(lib, submodule === "nested" ? join(root, "leaf") : null);
+    git(origin, "submodule", "add", "-q", lib, "vendor/lib");
+    if (submodule === "pair") {
+      libRepo(join(root, "lib2"));
+      git(origin, "submodule", "add", "-q", join(root, "lib2"), "vendor/other");
+    }
   }
   git(origin, "commit", "-qm", "one");
 
@@ -87,7 +96,42 @@ function fixture({ landing = "merge", base = "main", ignore = null } = {}) {
     git(origin, "commit", "-qm", "squashed");
   }
   if (landing !== "none") git(origin, "branch", "-D", "feat");
-  return { root, origin, down };
+  return { root, origin, down, lib };
+}
+
+/** A repository to stand in as a submodule: one commit, with `work/` ignored the way a project
+ *  ignores local notes. Given `leaf`, that commit records a repository built the same way at
+ *  `nested`, a submodule of the submodule. Returns the commit. */
+function libRepo(lib, leaf = null) {
+  mkdirSync(lib);
+  git(lib, "init", "-q", "-b", "main");
+  git(lib, "config", "user.email", "t@t");
+  git(lib, "config", "user.name", "t");
+  writeFileSync(join(lib, ".gitignore"), "work/\n");
+  writeFileSync(join(lib, "l.txt"), "1\n");
+  git(lib, "add", ".gitignore", "l.txt");
+  if (leaf) {
+    libRepo(leaf);
+    git(lib, "submodule", "add", "-q", leaf, "nested");
+  }
+  git(lib, "commit", "-qm", "lib one");
+  return git(lib, "rev-parse", "HEAD");
+}
+
+/** A further commit on the submodule's repository, returned. */
+function libCommit(lib, content) {
+  writeFileSync(join(lib, "l.txt"), content);
+  git(lib, "commit", "-qam", `lib ${content.trim()}`);
+  return git(lib, "rev-parse", "HEAD");
+}
+
+/** Records the submodule at `commit` on the origin's default branch, the way a merged update does. */
+function bumpOnOrigin(origin, commit) {
+  const sub = join(origin, "vendor", "lib");
+  git(sub, "fetch", "-q", "origin");
+  git(sub, "checkout", "-q", commit);
+  git(origin, "add", "vendor/lib");
+  git(origin, "commit", "-qm", "bump vendor/lib");
 }
 
 /** The output lines a run prints, and the exit code it would return. */
@@ -1314,6 +1358,210 @@ describe("sync-merged, when a second session changes something after the plan wa
     expect(r.text).toContain("synced main");
     expect(branches(down)).not.toContain("feat");
     expect(at(down, "main")).toBe(at(down, "origin/main"));
+  });
+});
+
+describe("sync-merged, around a submodule", () => {
+  // The fixtures' submodules are local repositories, and git refuses to clone one over the file
+  // transport unless told to. Set in the environment, so the program's own `git submodule
+  // update` inherits it as the fixture's commands do.
+  const saved = {};
+  const allow = { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "protocol.file.allow", GIT_CONFIG_VALUE_0: "always" };
+  beforeEach(() => {
+    for (const [k, v] of Object.entries(allow)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+  });
+  afterEach(() => {
+    for (const k of Object.keys(allow)) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  /** A landed branch's worktree with the submodule checked out in it, beside a default branch's
+   *  checkout that has it checked out too. */
+  function landedWithSubmodule() {
+    const fx = fixture({ submodule: true });
+    git(fx.down, "submodule", "update", "-q", "--init");
+    const tree = join(fx.down, "..", "wt");
+    git(fx.down, "worktree", "add", tree, "feat");
+    git(tree, "submodule", "update", "-q", "--init");
+    return { ...fx, tree, sub: join(tree, "vendor", "lib") };
+  }
+
+  /** The same, with the landed branch's worktree never having initialized the submodule: its
+   *  directory is there and empty, and no repository of it is anywhere in the tree. */
+  function landedLeavingSubmoduleEmpty() {
+    const fx = fixture({ submodule: true });
+    git(fx.down, "submodule", "update", "-q", "--init");
+    const tree = join(fx.down, "..", "wt");
+    git(fx.down, "worktree", "add", tree, "feat");
+    return { ...fx, tree };
+  }
+
+  // A submodule's repository is not deleted here, so a worktree whose removal would take one with it
+  // is kept, named with the command that removes it repository and all.
+  it("keeps a worktree whose submodule is checked out, its repository and the main checkout's with it", () => {
+    const { down, tree, sub } = landedWithSubmodule();
+    const repo = git(sub, "rev-parse", "--path-format=absolute", "--git-dir");
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    const { text } = report(down, true);
+    expect(text).toMatch(/^keep {3}feat.*its submodules keep repositories of their own \(vendor\/lib\)/m);
+    expect(text).toMatch(/git worktree remove --force /);
+    expect(existsSync(tree)).toBe(true);
+    expect(existsSync(repo)).toBe(true);
+    expect(branches(down)).toContain("feat");
+    // The helper trims, so a status line that begins with its initialized-and-recorded space
+    // begins with the commit; `-` or `+` would remain.
+    expect(git(down, "config", "--get", "submodule.vendor/lib.url")).not.toBe("");
+    expect(git(down, "submodule", "status")).toMatch(/^[0-9a-f]{40} vendor\/lib/);
+  });
+
+  it("keeps one whose submodule keeps its repository in its own .git directory", () => {
+    const fx = fixture({ submodule: true });
+    git(fx.down, "submodule", "update", "-q", "--init");
+    const tree = join(fx.down, "..", "wt");
+    git(fx.down, "worktree", "add", tree, "feat");
+    // A clone placed at the gitlink's path keeps its repository in its working tree — git's old
+    // form of a submodule.
+    const sub = join(tree, "vendor", "lib");
+    git(tree, "clone", "-q", fx.lib, sub);
+    git(sub, "checkout", "-q", "--detach", git(tree, "rev-parse", "HEAD:vendor/lib"));
+    expect(lstatSync(join(sub, ".git")).isDirectory()).toBe(true);
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    const { text } = report(fx.down, true);
+    expect(text).toMatch(/^keep {3}feat.*its submodules keep repositories of their own \(vendor\/lib\)/m);
+    expect(lstatSync(join(sub, ".git")).isDirectory()).toBe(true);
+  });
+
+  it("keeps one whose deinitialized submodule's repository is still in its administrative directory", () => {
+    const { down, tree } = landedWithSubmodule();
+    const repo = git(tree, "rev-parse", "--path-format=absolute", "--git-path", "modules/vendor/lib");
+    git(tree, "submodule", "deinit", "-q", "--", "vendor/lib");
+    expect(existsSync(join(tree, "vendor", "lib", ".git"))).toBe(false);
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    const { text } = report(down, true);
+    expect(text).toMatch(/^keep {3}feat.*its submodules keep repositories of their own \(a deinitialized submodule\)/m);
+    expect(existsSync(repo)).toBe(true);
+  });
+
+  it("removes one whose submodule was never initialized there, and leaves the main checkout's alone", () => {
+    const { down, tree } = landedLeavingSubmoduleEmpty();
+    expect(existsSync(join(tree, "vendor", "lib"))).toBe(true);
+    expect(existsSync(join(tree, "vendor", "lib", ".git"))).toBe(false);
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    const { code, text } = report(down, true);
+    expect(text).toContain("removed feat");
+    expect(code).toBe(0);
+    expect(existsSync(tree)).toBe(false);
+    expect(branches(down)).not.toContain("feat");
+    expect(git(down, "submodule", "status")).toMatch(/^[0-9a-f]{40} vendor\/lib/);
+  });
+
+  it("brings the default branch's submodule to the commit the merge records", () => {
+    const { origin, down, lib } = fixture({ submodule: true });
+    git(down, "submodule", "update", "-q", "--init");
+    const was = git(join(down, "vendor", "lib"), "rev-parse", "HEAD");
+    const next = libCommit(lib, "2\n");
+    bumpOnOrigin(origin, next);
+    expect(report(down).text).toContain(`sync   vendor/lib ${was.slice(0, 7)} -> ${next.slice(0, 7)}`);
+    const { code, text } = report(down, true);
+    expect(text).toContain(`synced vendor/lib -> ${next.slice(0, 7)}`);
+    expect(code).toBe(0);
+    expect(git(join(down, "vendor", "lib"), "rev-parse", "HEAD")).toBe(next);
+    expect(git(down, "status", "--porcelain=v1")).toBe("");
+    expect(branches(down)).not.toContain("feat");
+  });
+
+  it("checks out a submodule the merge introduces", () => {
+    const { root, origin, down } = fixture();
+    const lib = join(root, "lib");
+    const first = libRepo(lib);
+    git(origin, "submodule", "add", "-q", lib, "vendor/lib");
+    git(origin, "commit", "-qm", "add vendor/lib");
+    expect(report(down).text).toContain(`sync   vendor/lib (new) -> ${first.slice(0, 7)}`);
+    const { code, text } = report(down, true);
+    expect(text).toContain(`synced vendor/lib -> ${first.slice(0, 7)}`);
+    expect(code).toBe(0);
+    expect(git(join(down, "vendor", "lib"), "rev-parse", "HEAD")).toBe(first);
+    expect(git(down, "status", "--porcelain=v1")).toBe("");
+  });
+
+  // The landed branch's worktree below holds no submodule repository, so it is one the run would
+  // otherwise remove: what keeps it is the default branch's submodule alone.
+  /** Moves the submodule origin's default branch records on, and points the default branch's own
+   *  submodule at a remote that is not there; the tree's fetch leaves submodules alone, so the
+   *  fast-forward goes through and the submodule update after it fails. */
+  function unreachableBump({ root, origin, down, lib }) {
+    const next = libCommit(lib, "2\n");
+    bumpOnOrigin(origin, next);
+    git(down, "config", "fetch.recurseSubmodules", "false");
+    git(join(down, "vendor", "lib"), "remote", "set-url", "origin", join(root, "gone"));
+    return next;
+  }
+
+  it("removes nothing once a submodule cannot be brought to the commit the merge records", () => {
+    const fx = landedLeavingSubmoduleEmpty();
+    const next = unreachableBump(fx);
+    expect(git(fx.tree, "status", "--porcelain=v1")).toBe("");
+    const { code, text } = report(fx.down, true);
+    expect(text).toMatch(/^SUBMODULE NOT SYNCED — vendor\/lib could not be brought to /m);
+    expect(text).toMatch(
+      new RegExp(`^keep {3}vendor/lib at [0-9a-f]{7} — not at ${next.slice(0, 7)}, the commit main records`, "m"),
+    );
+    expect(text).toMatch(/^nothing removed — /m);
+    expect(code).toBe(1);
+    expect(existsSync(fx.tree)).toBe(true);
+    expect(branches(fx.down)).toContain("feat");
+  });
+
+  it("removes nothing on a later run while that submodule is still behind, and cleans up once it is brought there", () => {
+    const fx = landedLeavingSubmoduleEmpty();
+    const next = unreachableBump(fx);
+    expect(report(fx.down, true).code).toBe(1);
+    // The default branch is at the remote now, so this run has nothing to fast-forward.
+    expect(at(fx.down, "main")).toBe(at(fx.down, "origin/main"));
+    const again = report(fx.down, true);
+    expect(again.text).toMatch(
+      new RegExp(`^keep {3}vendor/lib at [0-9a-f]{7} — not at ${next.slice(0, 7)}, the commit main records`, "m"),
+    );
+    expect(again.text).toMatch(/^nothing removed — /m);
+    expect(again.code).toBe(1);
+    expect(existsSync(fx.tree)).toBe(true);
+    expect(branches(fx.down)).toContain("feat");
+    const sub = join(fx.down, "vendor", "lib");
+    git(sub, "remote", "set-url", "origin", fx.lib);
+    git(fx.down, "submodule", "update", "-q", "--", "vendor/lib");
+    const last = report(fx.down, true);
+    expect(last.text).toContain("removed feat");
+    expect(last.code).toBe(0);
+    expect(existsSync(fx.tree)).toBe(false);
+  });
+
+  it("leaves a submodule moved by hand where it is, says so, and removes nothing", () => {
+    const { origin, down, tree, lib } = landedLeavingSubmoduleEmpty();
+    const next = libCommit(lib, "2\n");
+    const mine = libCommit(lib, "3\n");
+    bumpOnOrigin(origin, next);
+    const sub = join(down, "vendor", "lib");
+    git(sub, "fetch", "-q", "origin");
+    git(sub, "checkout", "-q", mine);
+    const { code, text } = report(down, true);
+    expect(text).toMatch(
+      new RegExp(
+        `^keep {3}vendor/lib at ${mine.slice(0, 7)} — not at ${next.slice(0, 7)}, the commit main records`,
+        "m",
+      ),
+    );
+    expect(text).toMatch(/^nothing removed — /m);
+    expect(code).toBe(1);
+    expect(git(sub, "rev-parse", "HEAD")).toBe(mine);
+    // The tree itself is synced: the submodule is the one thing left alone.
+    expect(at(down, "main")).toBe(at(down, "origin/main"));
+    expect(existsSync(tree)).toBe(true);
+    expect(branches(down)).toContain("feat");
   });
 });
 

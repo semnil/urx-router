@@ -1,0 +1,3 @@
+[submodule "vendor/urx-lcd-sim"]
+	path = vendor/urx-lcd-sim
+	url = https://github.com/semnil/urx-lcd-sim.git

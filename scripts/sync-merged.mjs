@@ -18,7 +18,9 @@
 //
 // WHAT IT REFUSES. Removing a worktree: the one this run is in, a locked one, one holding tracked
 // or untracked changes, one that cannot be read, one carrying ignored content that no command here
-// rebuilds, one with a build or a server running out of it, and one that has been switched off the
+// rebuilds, one whose submodules keep repositories of their own — checked out, kept in a `.git`
+// directory of their own, or left behind by a deinit — since a submodule's repository is not
+// deleted here, one with a build or a server running out of it, and one that has been switched off the
 // branch it is about to lose. Fast-forwarding: a default branch that does not exist here, one
 // checked out nowhere, one checked out in a tree other than the one this run was started in, one
 // carrying commits the remote does not, one whose tree is not where the plan read it, and the same
@@ -56,6 +58,12 @@
 // It is also taken in NO TREE BUT THE ONE THIS WAS STARTED IN, which bounds all of that to this
 // checkout. Run from anywhere else with a sync pending, nothing is applied.
 //
+// A submodule is brought along with the tree: one checked out at the commit the old tip records,
+// or not checked out at all, is moved to the commit the new tip records. One moved off that
+// commit by hand is left where it is, since what it is on is that session's choice. Then, on every
+// run, whether it moved the branch or not, nothing is removed while a submodule of that tree is
+// checked out at any commit other than the one its HEAD records.
+//
 // Where the machine cannot be asked what is running, both halves go ahead saying so: git still
 // refuses to remove a worktree holding changes, and refuses to write over them when the sync
 // brings a tree in line.
@@ -68,7 +76,7 @@
 // the remote, and reporting them off a stale one would be reporting about a different repository.
 // No branch, worktree, working tree or HEAD is touched.
 import { spawnSync } from "node:child_process";
-import { realpathSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
 import { platform } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -287,6 +295,94 @@ function unclean(path) {
   return `its worktree holds ignored files that no command here rebuilds: ${shown}${rest}`;
 }
 
+/** The submodules a commit records, as path -> commit, or null where the commit cannot be read. */
+function gitlinksAt(dir, commit) {
+  const r = git(["ls-tree", "-r", "-z", "--full-tree", commit], dir, true);
+  if (r.status !== 0) return null;
+  const links = new Map();
+  for (const rec of r.out.split("\0")) {
+    const m = /^160000 commit ([0-9a-f]+)\t(.+)$/s.exec(rec);
+    if (m) links.set(m[2], m[1]);
+  }
+  return links;
+}
+
+/** The submodules a tree has checked out: recorded at its HEAD and populated in its directory. */
+function checkedOutSubmodules(dir) {
+  const links = gitlinksAt(dir, "HEAD");
+  return links === null ? null : [...links.keys()].filter((p) => existsSync(join(dir, p, ".git")));
+}
+
+/**
+ * Why a worktree's removal would delete a submodule repository, or null when it would delete none.
+ * A submodule's repository is not deleted here: what it holds is not what a commit, a stash or a
+ * status shows alone — hooks, local configuration and the index of a worktree of its own live
+ * there too — so a tree holding one is kept, and named with the command that removes it
+ * repository and all. One is held where a submodule is checked out (its `.git` a file into the
+ * tree's administrative `modules` directory, or a directory of its own) and where that `modules`
+ * directory is there with none checked out, which is what a deinit leaves.
+ */
+function keepsSubmoduleRepos(dir) {
+  const subs = checkedOutSubmodules(dir);
+  if (subs === null) return "its submodules could not be read";
+  const modules = git(["rev-parse", "--path-format=absolute", "--git-path", "modules"], dir, true);
+  if (modules.status !== 0) return `its submodules' repositories could not be located: ${modules.err}`;
+  if (subs.length === 0 && !existsSync(modules.out)) return null;
+  const named = subs.length > 0 ? subs.join(", ") : "a deinitialized submodule";
+  return `its submodules keep repositories of their own (${named}), which this does not delete — \`git worktree remove --force ${dir}\` removes it with them`;
+}
+
+/**
+ * Bring a tree's submodules to what `ahead` records, once the tree itself is there. Returns the
+ * lines to print and whether any of them is a failure; a failure stops the run before anything is
+ * removed.
+ *
+ * Moved only where it is checked out at what `local` recorded, or not checked out at all: a
+ * submodule on any other commit was put there by hand, and is left there for `submodulesOff` to
+ * name.
+ */
+function syncSubmodules(dir, local, ahead) {
+  const before = gitlinksAt(dir, local);
+  const after = gitlinksAt(dir, ahead);
+  if (before === null || after === null)
+    return [{ text: "SUBMODULES NOT SYNCED — the commits could not be read", failed: true }];
+  const lines = [];
+  for (const [p, want] of after) {
+    const sub = join(dir, p);
+    if (existsSync(join(sub, ".git"))) {
+      const head = git(["rev-parse", "HEAD"], sub, true).out;
+      if (head === want || head !== before.get(p)) continue;
+    }
+    const r = git(["submodule", "update", "--init", "--", p], dir, true);
+    lines.push(
+      r.status === 0
+        ? { text: `synced ${p} -> ${want.slice(0, 7)}`, failed: false }
+        : { text: `SUBMODULE NOT SYNCED — ${p} could not be brought to ${want.slice(0, 7)}: ${r.err}`, failed: true },
+    );
+  }
+  return lines;
+}
+
+/**
+ * The submodules a tree has checked out at a commit other than the one its HEAD records, as
+ * { p, head, want }, or null where the commits cannot be read. One not checked out is not among
+ * them. Read on every run before anything is removed, rather than only by a run that moved the
+ * branch: a run after one whose submodule update failed finds the branch already moved and the
+ * submodule where it was.
+ */
+function submodulesOff(dir) {
+  const links = gitlinksAt(dir, "HEAD");
+  if (links === null) return null;
+  const off = [];
+  for (const [p, want] of links) {
+    if (!existsSync(join(dir, p, ".git"))) continue;
+    const head = git(["rev-parse", "HEAD"], join(dir, p), true);
+    if (head.status !== 0) return null;
+    if (head.out !== want) off.push({ p, head: head.out, want });
+  }
+  return off;
+}
+
 /** What HEAD names in a worktree and where it points, or null where it names no branch at all.
  *  Both in ONE invocation: this is the reading the fast-forward is guarded by, and the gap between
  *  it and the merge is the gap a switch has to land in. */
@@ -432,6 +528,8 @@ function whyKeep(cwd, remote, branch, ref, s, at = null) {
   if (tree.locked) return { tree, why: "its worktree is locked — another session is inside" };
   const dirty = unclean(tree.path);
   if (dirty) return { tree, why: dirty };
+  const held = keepsSubmoduleRepos(tree.path);
+  if (held) return { tree, why: held };
   const busy = holdersOf(tree.path, s.procs.known, s.trees);
   if (busy.length > 0) return { tree, why: `${busy.length} process(es) run out of its worktree: pid ${busy[0].pid}` };
   return { tree, why: null };
@@ -499,6 +597,12 @@ function plan(cwd, log) {
         ? `sync   ${base} -> ${remote}`
         : `sync   ${base} is already at ${remote}`,
   );
+  if (sync.act && sync.ff) {
+    const had = gitlinksAt(cwd, local) ?? new Map();
+    for (const [p, want] of gitlinksAt(cwd, ahead) ?? []) {
+      if (had.get(p) !== want) log(`sync   ${p} ${had.get(p)?.slice(0, 7) ?? "(new)"} -> ${want.slice(0, 7)}`);
+    }
+  }
   if (sync.note) log(`note   ${sync.note}`);
   // Said once rather than per worktree: where the machine cannot be asked, it cannot be asked
   // about any of them, and the removals below go ahead on git's own refusals alone.
@@ -617,7 +721,27 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
     log("\nnothing removed — the fast-forward is what makes the deletions legal");
     return 1;
   }
-  if (sync.ff) log(`synced ${base} -> ${ahead.slice(0, 7)}`);
+  let unsynced = false;
+  if (sync.ff) {
+    log(`synced ${base} -> ${ahead.slice(0, 7)}`);
+    for (const { text, failed: bad } of syncSubmodules(sync.tree, local, ahead)) {
+      log(text);
+      if (bad) unsynced = true;
+    }
+  }
+  const off = submodulesOff(sync.tree);
+  for (const { p, head, want } of off ?? [])
+    log(
+      `keep   ${p} at ${head.slice(0, 7)} — not at ${want.slice(0, 7)}, the commit ${base} records; \`git submodule update -- ${p}\` brings it there`,
+    );
+  if (unsynced || off === null || off.length > 0) {
+    log(
+      off === null
+        ? "\nnothing removed — the default branch's submodules could not be read"
+        : "\nnothing removed — a submodule of the default branch is not at the commit it records",
+    );
+    return 1;
+  }
 
   for (const { branch, ref, tree } of removals) {
     if (!tree) continue;

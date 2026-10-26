@@ -65,6 +65,6 @@
     "printWidth": 120
   },
   "dependencies": {
-    "urx-lcd-sim": "github:semnil/urx-lcd-sim#41bdcbe3ae57c484cbb6f1cb431a7601c6b32eca"
+    "urx-lcd-sim": "link:vendor/urx-lcd-sim"
   }
 }
