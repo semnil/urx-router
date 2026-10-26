@@ -60,8 +60,9 @@
 //
 // A submodule is brought along with the tree: one checked out at the commit the old tip records,
 // or not checked out at all, is moved to the commit the new tip records. One moved off that
-// commit by hand is left where it is and named, since what it is on is that session's choice.
-// Either that or a submodule that cannot be moved stops the run before anything is removed.
+// commit by hand is left where it is, since what it is on is that session's choice. Then, on every
+// run, whether it moved the branch or not, nothing is removed while a submodule of that tree is
+// checked out at any commit other than the one its HEAD records.
 //
 // Where the machine cannot be asked what is running, both halves go ahead saying so: git still
 // refuses to remove a worktree holding changes, and refuses to write over them when the sync
@@ -337,7 +338,8 @@ function keepsSubmoduleRepos(dir) {
  * removed.
  *
  * Moved only where it is checked out at what `local` recorded, or not checked out at all: a
- * submodule on any other commit was put there by hand, and is left there and named.
+ * submodule on any other commit was put there by hand, and is left there for `submodulesOff` to
+ * name.
  */
 function syncSubmodules(dir, local, ahead) {
   const before = gitlinksAt(dir, local);
@@ -349,14 +351,7 @@ function syncSubmodules(dir, local, ahead) {
     const sub = join(dir, p);
     if (existsSync(join(sub, ".git"))) {
       const head = git(["rev-parse", "HEAD"], sub, true).out;
-      if (head === want) continue;
-      if (head !== before.get(p)) {
-        lines.push({
-          text: `keep   ${p} at ${head.slice(0, 7) || "an unreadable commit"} — it is not where the old tip records it, so it is left for \`git submodule update -- ${p}\``,
-          failed: true,
-        });
-        continue;
-      }
+      if (head === want || head !== before.get(p)) continue;
     }
     const r = git(["submodule", "update", "--init", "--", p], dir, true);
     lines.push(
@@ -366,6 +361,26 @@ function syncSubmodules(dir, local, ahead) {
     );
   }
   return lines;
+}
+
+/**
+ * The submodules a tree has checked out at a commit other than the one its HEAD records, as
+ * { p, head, want }, or null where the commits cannot be read. One not checked out is not among
+ * them. Read on every run before anything is removed, rather than only by a run that moved the
+ * branch: a run after one whose submodule update failed finds the branch already moved and the
+ * submodule where it was.
+ */
+function submodulesOff(dir) {
+  const links = gitlinksAt(dir, "HEAD");
+  if (links === null) return null;
+  const off = [];
+  for (const [p, want] of links) {
+    if (!existsSync(join(dir, p, ".git"))) continue;
+    const head = git(["rev-parse", "HEAD"], join(dir, p), true);
+    if (head.status !== 0) return null;
+    if (head.out !== want) off.push({ p, head: head.out, want });
+  }
+  return off;
 }
 
 /** What HEAD names in a worktree and where it points, or null where it names no branch at all.
@@ -706,17 +721,26 @@ export function run(cwd = process.cwd(), apply = false, log = console.log) {
     log("\nnothing removed — the fast-forward is what makes the deletions legal");
     return 1;
   }
+  let unsynced = false;
   if (sync.ff) {
     log(`synced ${base} -> ${ahead.slice(0, 7)}`);
-    let unsynced = false;
     for (const { text, failed: bad } of syncSubmodules(sync.tree, local, ahead)) {
       log(text);
       if (bad) unsynced = true;
     }
-    if (unsynced) {
-      log("\nnothing removed — a submodule of the default branch was not synced");
-      return 1;
-    }
+  }
+  const off = submodulesOff(sync.tree);
+  for (const { p, head, want } of off ?? [])
+    log(
+      `keep   ${p} at ${head.slice(0, 7)} — not at ${want.slice(0, 7)}, the commit ${base} records; \`git submodule update -- ${p}\` brings it there`,
+    );
+  if (unsynced || off === null || off.length > 0) {
+    log(
+      off === null
+        ? "\nnothing removed — the default branch's submodules could not be read"
+        : "\nnothing removed — a submodule of the default branch is not at the commit it records",
+    );
+    return 1;
   }
 
   for (const { branch, ref, tree } of removals) {

@@ -1504,14 +1504,40 @@ describe("sync-merged, around a submodule", () => {
 
   it("removes nothing once a submodule cannot be brought to the commit the merge records", () => {
     const fx = landedLeavingSubmoduleEmpty();
-    unreachableBump(fx);
+    const next = unreachableBump(fx);
     expect(git(fx.tree, "status", "--porcelain=v1")).toBe("");
     const { code, text } = report(fx.down, true);
     expect(text).toMatch(/^SUBMODULE NOT SYNCED — vendor\/lib could not be brought to /m);
+    expect(text).toMatch(
+      new RegExp(`^keep {3}vendor/lib at [0-9a-f]{7} — not at ${next.slice(0, 7)}, the commit main records`, "m"),
+    );
     expect(text).toMatch(/^nothing removed — /m);
     expect(code).toBe(1);
     expect(existsSync(fx.tree)).toBe(true);
     expect(branches(fx.down)).toContain("feat");
+  });
+
+  it("removes nothing on a later run while that submodule is still behind, and cleans up once it is brought there", () => {
+    const fx = landedLeavingSubmoduleEmpty();
+    const next = unreachableBump(fx);
+    expect(report(fx.down, true).code).toBe(1);
+    // The default branch is at the remote now, so this run has nothing to fast-forward.
+    expect(at(fx.down, "main")).toBe(at(fx.down, "origin/main"));
+    const again = report(fx.down, true);
+    expect(again.text).toMatch(
+      new RegExp(`^keep {3}vendor/lib at [0-9a-f]{7} — not at ${next.slice(0, 7)}, the commit main records`, "m"),
+    );
+    expect(again.text).toMatch(/^nothing removed — /m);
+    expect(again.code).toBe(1);
+    expect(existsSync(fx.tree)).toBe(true);
+    expect(branches(fx.down)).toContain("feat");
+    const sub = join(fx.down, "vendor", "lib");
+    git(sub, "remote", "set-url", "origin", fx.lib);
+    git(fx.down, "submodule", "update", "-q", "--", "vendor/lib");
+    const last = report(fx.down, true);
+    expect(last.text).toContain("removed feat");
+    expect(last.code).toBe(0);
+    expect(existsSync(fx.tree)).toBe(false);
   });
 
   it("leaves a submodule moved by hand where it is, says so, and removes nothing", () => {
@@ -1524,7 +1550,10 @@ describe("sync-merged, around a submodule", () => {
     git(sub, "checkout", "-q", mine);
     const { code, text } = report(down, true);
     expect(text).toMatch(
-      new RegExp(`^keep {3}vendor/lib at ${mine.slice(0, 7)} — it is not where the old tip records it`, "m"),
+      new RegExp(
+        `^keep {3}vendor/lib at ${mine.slice(0, 7)} — not at ${next.slice(0, 7)}, the commit main records`,
+        "m",
+      ),
     );
     expect(text).toMatch(/^nothing removed — /m);
     expect(code).toBe(1);
