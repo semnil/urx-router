@@ -1680,6 +1680,7 @@ describe("sync-merged, around a submodule", () => {
     expect(code).toBe(0);
     expect(git(join(down, "vendor", "lib"), "rev-parse", "HEAD")).toBe(next);
     expect(git(down, "status", "--porcelain=v1")).toBe("");
+    expect(branches(down)).not.toContain("feat");
   });
 
   it("checks out a submodule the merge introduces", () => {
@@ -1694,6 +1695,23 @@ describe("sync-merged, around a submodule", () => {
     expect(code).toBe(0);
     expect(git(join(down, "vendor", "lib"), "rev-parse", "HEAD")).toBe(first);
     expect(git(down, "status", "--porcelain=v1")).toBe("");
+  });
+
+  it("removes nothing once a submodule cannot be brought to the commit the merge records", () => {
+    const { root, origin, down, tree, lib } = landedWithSubmodule();
+    const next = libCommit(lib, "2\n");
+    bumpOnOrigin(origin, next);
+    // The default branch's submodule cannot reach its remote, while the tree's own fetch leaves
+    // submodules alone, so the fast-forward goes through and the submodule update after it fails.
+    git(down, "config", "fetch.recurseSubmodules", "false");
+    git(join(down, "vendor", "lib"), "remote", "set-url", "origin", join(root, "gone"));
+    expect(git(tree, "status", "--porcelain=v1")).toBe("");
+    const { code, text } = report(down, true);
+    expect(text).toMatch(/^SUBMODULE NOT SYNCED — vendor\/lib could not be brought to /m);
+    expect(text).toMatch(/^nothing removed — /m);
+    expect(code).toBe(1);
+    expect(existsSync(tree)).toBe(true);
+    expect(branches(down)).toContain("feat");
   });
 
   it("leaves a submodule moved by hand where it is, and says so", () => {
