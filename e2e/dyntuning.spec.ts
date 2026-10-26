@@ -1467,10 +1467,23 @@ test.describe("ducker", () => {
 test.describe("the note under the display fits the space reserved for it", () => {
   test.use({ viewport: { width: 960, height: 700 } });
 
+  // What has to stay inside the box is the text: the area each line's glyphs are drawn in.
+  // The leading below the last line holds no ink, and with `line-height: normal` a font whose
+  // own line spacing is wider than the box allows overflows by that leading alone — which
+  // `scrollHeight` counts as overflow although nothing is cut.
   const noteOverflow = (page: Page) =>
     screenBox(page)
       .locator(".gt-note")
-      .evaluate((n) => ({ text: (n.textContent ?? "").trim(), over: n.scrollHeight - n.clientHeight }));
+      .evaluate((n) => {
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        const rects = [...range.getClientRects()];
+        return {
+          text: (n.textContent ?? "").trim(),
+          rects: rects.length,
+          over: Math.max(...rects.map((r) => r.bottom)) - n.getBoundingClientRect().bottom,
+        };
+      });
 
   for (const lang of ["en", "ja"] as const) {
     test(`in ${lang}, on every screen`, async ({ page }) => {
@@ -1479,7 +1492,8 @@ test.describe("the note under the display fits the space reserved for it", () =>
       await expect(page.locator("#model-picker")).toHaveValue("URX44V");
 
       const check = async (): Promise<void> => {
-        const { text, over } = await noteOverflow(page);
+        const { text, rects, over } = await noteOverflow(page);
+        expect(rects, `no text to measure in the note: "${text}"`).toBeGreaterThan(0);
         expect(over, `clipped: "${text}"`).toBeLessThanOrEqual(0);
       };
       for (const [nodeId, kind] of [
