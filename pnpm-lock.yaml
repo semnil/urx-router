@@ -34,8 +34,8 @@ importers:
         specifier: ^30.1.3
         version: 30.1.3
       monocart-coverage-reports:
-        specifier: ^3.0.0
-        version: 3.0.0
+        specifier: ^3.1.0
+        version: 3.1.0
       prettier:
         specifier: ^3.9.10
         version: 3.9.10
@@ -723,8 +723,8 @@ packages:
   estree-walker@3.0.3:
     resolution: {integrity: sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==}
 
-  execa@10.2.0:
-    resolution: {integrity: sha512-j1pFOVxaybMVCTNHSBuISL2KQcDS3KIE1wBmUp4n2X+1FgaQI2ZDJVy9TYxDyMCzYojRIMh9O8X/UoWZtxTJdw==}
+  execa@10.2.1:
+    resolution: {integrity: sha512-/Bofl3ZBh2Q4/PG0W63qFzP5vDAypi8Zc90UWTBzaDNIYiX7apPOd0N6L8hG8CojUdq4V51adu8BObP+iVsSTw==}
     engines: {node: '>=22'}
 
   expect-type@1.4.0:
@@ -900,8 +900,8 @@ packages:
   mdn-data@2.27.1:
     resolution: {integrity: sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==}
 
-  monocart-coverage-reports@3.0.0:
-    resolution: {integrity: sha512-e/1sowGv8sCDD/QV/6SPsaJz5i2VuPaY7hPlzAPiisgYaJHvuKOgDk78ixSFBGMgHjFcw7p/GDL1m1LcvfB3Dw==}
+  monocart-coverage-reports@3.1.0:
+    resolution: {integrity: sha512-FsS3MNxmrOzPaNu5HoXA6Yk5d8Cn6PiAKmiZmFRwguYKNZiMrrtp09vAFXvgTjE1SEfTI9N1APUzhwwclQSkeg==}
     engines: {node: '>=22.15.0'}
     hasBin: true
 
@@ -1662,7 +1662,7 @@ snapshots:
     dependencies:
       '@types/estree': 1.0.9
 
-  execa@10.2.0:
+  execa@10.2.1:
     dependencies:
       '@sindresorhus/merge-streams': 4.0.0
       figures: 6.1.0
@@ -1826,7 +1826,7 @@ snapshots:
 
   mdn-data@2.27.1: {}
 
-  monocart-coverage-reports@3.0.0:
+  monocart-coverage-reports@3.1.0:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
       acorn: 8.19.0
@@ -1836,7 +1836,7 @@ snapshots:
       console-grid: 2.2.4
       convert-source-map: 2.0.0
       eight-colors: 1.3.3
-      execa: 10.2.0
+      execa: 10.2.1
       istanbul-lib-coverage: 3.2.2
       istanbul-lib-report: 3.0.1
       istanbul-reports: 3.2.0
