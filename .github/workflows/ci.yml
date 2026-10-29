@@ -449,8 +449,9 @@ jobs:
 
   # The ordinary E2E suite (--project=chromium) on Windows, in one job. There is no
   # Playwright container for this runner, so the browser comes from `playwright install`
-  # instead of an image, and no coverage is taken: the reading Codecov keeps is the Ubuntu
-  # shards'. What this answers that they cannot is the platform's own: the layout a case
+  # instead of an image — the headless shell alone, which is the only build a headless run
+  # launches — and no coverage is taken: the reading Codecov keeps is the Ubuntu shards'.
+  # What this answers that they cannot is the platform's own: the layout a case
   # measures is laid out in Windows' fonts, and the preview server is reached over the
   # loopback Windows resolves.
   e2e-windows:
@@ -475,7 +476,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
-      - run: pnpm exec playwright install chromium
+      - run: pnpm exec playwright install --only-shell chromium
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       - run: pnpm test:e2e:app
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
