@@ -646,7 +646,7 @@ it into:
 
 | Tier | Machine time | Slowest test | Runs from |
 | --- | --- | --- | --- |
-| `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, sharded three ways, on every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside); and once more, in one job on `windows-latest`, on the same condition |
+| `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, sharded three ways, on every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside); and once more on `windows-latest`, also sharded three ways, on the same condition |
 | `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways by measured duration (below), on every PR except a documentation-only one, and on the version bump |
 | `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job, on the same condition |
 | `app-webkit` — the app tier's layout invariants | — | — | `ci.yml`, its own job, on the same condition as `chromium` |

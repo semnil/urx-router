@@ -71,8 +71,10 @@ description: >
 # 40205029114-40246785351 (7 runs), read the same way: pnpm/action-setup 14-26 s
 # (40205029114), pnpm install 1-4 s, dtolnay/rust-toolchain 9 s and `cargo test` with no
 # cache to restore 196 s (one run each, 40205029114), and `pnpm exec playwright install
-# chromium` 19-21 s (40206235817). That last command is how ci.yml's `e2e-windows` gets its
-# browser — a Windows runner takes no `container:`, and there are no system libraries for
+# chromium` 19-21 s (40206235817) — 9-11 s with `--only-shell`, which skips the full
+# browser build and fetches the headless shell alone (40860456652, three shards). That
+# `--only-shell` command is how ci.yml's `e2e-windows` gets its browser — a Windows
+# runner takes no `container:`, and there are no system libraries for
 # `--with-deps` to fetch there — and its step carries the same 10-minute bound as this
 # action's calls.
 #
