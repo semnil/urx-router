@@ -422,6 +422,9 @@ jobs:
   #
   # bash rather than the runner's PowerShell default: it is the shell the suite is run from
   # on a Windows checkout as well.
+  #
+  # Split across two runners by vitest's own file sharding; every shard keeps vitest's
+  # default worker count.
   unit-windows:
     needs: preflight
     if: needs.preflight.outputs.code == 'true'
@@ -432,6 +435,11 @@ jobs:
       run:
         shell: bash
     timeout-minutes: 30
+    # A red shard must not cancel the other, for the reason `e2e` gives.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -445,15 +453,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       - run: pnpm build
-      - run: pnpm test
+      - run: pnpm test --shard=${{ matrix.shard }}/${{ strategy.job-total }}
 
-  # The ordinary E2E suite (--project=chromium) on Windows, in one job. There is no
-  # Playwright container for this runner, so the browser comes from `playwright install`
-  # instead of an image — the headless shell alone, which is the only build a headless run
-  # launches — and no coverage is taken: the reading Codecov keeps is the Ubuntu shards'.
-  # What this answers that they cannot is the platform's own: the layout a case
-  # measures is laid out in Windows' fonts, and the preview server is reached over the
-  # loopback Windows resolves.
+  # The ordinary E2E suite (--project=chromium) on Windows, split three ways like `e2e`.
+  # There is no Playwright container for this runner, so the browser comes from
+  # `playwright install` instead of an image — the headless shell alone, which is the only
+  # build a headless run launches — and no coverage is taken: the reading Codecov keeps is
+  # the Ubuntu shards'. What this answers that they cannot is the platform's own: the
+  # layout a case measures is laid out in Windows' fonts, and the preview server is
+  # reached over the loopback Windows resolves.
   e2e-windows:
     needs: preflight
     if: needs.preflight.outputs.code == 'true'
@@ -464,6 +472,11 @@ jobs:
       run:
         shell: bash
     timeout-minutes: 30
+    # A red shard must not cancel the others, for the reason `e2e` gives.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -478,11 +491,12 @@ jobs:
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
       - run: pnpm exec playwright install --only-shell chromium
         timeout-minutes: 10 # hang detector, not a budget — see .github/actions/install-browsers
-      - run: pnpm test:e2e:app
+      - run: pnpm test:e2e:app --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      # One name per shard, for the reason `e2e`'s upload gives.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
-          name: playwright-traces-windows
+          name: playwright-traces-windows-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
 
