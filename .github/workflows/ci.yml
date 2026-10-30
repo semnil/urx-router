@@ -189,6 +189,11 @@ jobs:
       - name: Upload frontend coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
+        # A failed upload leaves the job's result to the tests: Codecov reports no merge
+        # condition (.github/required-checks.json:2), and fail_ci_if_error reaches only the
+        # action's last step (codecov-action's action.yml:334 at the pinned sha), not the
+        # dependency check or the OIDC token request in front of it (action.yml:182, :238).
+        continue-on-error: true
         with:
           fail_ci_if_error: false
           files: ./coverage/lcov.info
@@ -348,6 +353,11 @@ jobs:
       - name: Upload frontend E2E coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
+        # A failed upload leaves the job's result to the tests: Codecov reports no merge
+        # condition (.github/required-checks.json:2), and fail_ci_if_error reaches only the
+        # action's last step (codecov-action's action.yml:334 at the pinned sha), not the
+        # dependency check or the OIDC token request in front of it (action.yml:182, :238).
+        continue-on-error: true
         with:
           fail_ci_if_error: false
           files: ./coverage/e2e/lcov.info
