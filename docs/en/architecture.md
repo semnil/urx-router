@@ -816,7 +816,8 @@ carries a one-line map of the same directories and points here.
   node color overrides
   (`nodeColors`, the device CH SETTING color, drawn as a thin top accent cap; the picker offers the
   device's fixed palette and its Off — the plan's `"off"`, written as palette index 10 — so a chosen
-  color is read and written 1:1 to hardware — input channels, MIX, STEREO, FX and STREAMING. A plan
+  color is read and written 1:1 to hardware — input channels, MIX, STEREO, FX and STREAMING. On URX22,
+  CH 3/4, CH 5/6, CH 7/8 and CH 9/10 each carry their own color, independently of CH 1 and CH 2. A plan
   holds one of those eleven values or none (`isPlanColor`): the load drops any other string and says
   so, and gives every colorable node a document leaves without a color its factory color, recorded as
   the fill's so the write confirm names the strip when that color would move the unit
@@ -907,8 +908,10 @@ The constraint core (`core/routing.ts`):
   the rate on every entry, or `insertFxAllRateLocked` stops answering for it and the rate warning and the
   forced-off bypass go with it. Like the other two it is UI-only, and here that is a measurement rather than
   a convention: the unit **accepts** a mono-only selector on a linked pair, mirrors it to both members and
-  binds the engine, which is how the pair's mirror was established in the first place. Its own panel offers
-  no such entry, so the state is one only software can put it in — and a plan that carries such a value
+  binds the engine, which is how the pair's mirror was established in the first place. Its panel does not allow
+  selecting such an effect. On URX22 at 48 kHz, Clean, Crunch, Lead, Drive and Pitch Fix remain listed but
+  dimmed on CH 1 and CH 2 in PAN and BAL alike, while Compander-H and Compander-S keep their normal appearance.
+  The state is therefore one only software can put it in — and a plan that carries such a value
   (a file, a `?plan=` link, a device read of a unit some earlier build wrote to) still emits it, rather than
   being silently rewritten on the way out. What the unit's DSP does with it is not measured.
   The transition also **names every key it wrote** to the edit funnel's write witness, because none of them
@@ -1614,8 +1617,10 @@ drag lands on the nearest.
   PRE EQ → PRE INS FX → PRE FADER → POST; stereo channels INPUT → PRE FADER → PRE DUCKER → POST (no
   HPF/GATE/COMP/INS FX, and the LEVEL sits before the DUCKER); output buses PRE EQ (sum) → PRE FADER →
   PRE INS FX → POST; FX channels INPUT → PRE FADER → POST, where INPUT is the mono send sum reaching the
-  effect and PRE FADER is the effect's own stereo output; monitors and the oscillator are single-meter and have
-  no selector. STREAMING and the OSCILLATOR have device meters but no level fader, so they are **meter-only
+  effect and PRE FADER is the effect's own stereo output. On URX22, each FX channel's POST follows its own
+  level, independently of the other FX channel. Monitors and the oscillator are single-meter and have
+  no selector. On URX22, the oscillator meter follows the generator's ON/OFF and Level even with no output
+  bus assigned. STREAMING and the OSCILLATOR have device meters but no level fader, so they are **meter-only
   strips** (`buildMeterOnlyStrip`: a live meter with no fader, no set-level readout, and no tap selector). The
   **OSCILLATOR**'s on/off is the scribble power LED (`osc.on`, normally OFF, so its strip rests dimmed until
   switched on); it carries a **LEVEL
