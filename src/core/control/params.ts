@@ -907,8 +907,8 @@ export interface InsertFxOption {
   maxRate?: number;
   /** The 1-of-N device slot it occupies; absent = none (No Effect). */
   slot?: InsertFxSlot;
-  /** The effect runs on a MONO IN channel alone: a pair whose Signal Type is STEREO
-   *  cannot hold it. Absent = the pair may hold it, where it runs in stereo. */
+  /** The effect is selectable on a MONO IN channel alone. A STEREO pair lists it
+   *  as disabled in PAN and BAL. Absent = the pair may hold it, where it runs in stereo. */
   monoOnly?: boolean;
 }
 // Per-effect sample-rate ceilings (user guide, Appendix > Effect list): the guitar amps

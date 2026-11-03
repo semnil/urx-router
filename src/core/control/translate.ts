@@ -705,6 +705,7 @@ export function busEqOn(nodeId: string): { name: ParamName; param: number; insta
 // mono channel on the input slot (params 18/20), a stereo channel on the stereo
 // index (params 206/208) — the same split the fader/pan block uses (139.. vs
 // 266..). So they resolve to distinct identity kinds with different instances.
+// On URX22, stereo identity indices 0..3 address CH3/4, CH5/6, CH7/8 and CH9/10.
 type IdentityKind = "stereo" | "stream" | "fx" | "mix" | "monoChannel" | "stereoChannel";
 function nodeIdentity(model: DeviceModel, nodeId: string): { kind: IdentityKind; instances: number[] } | null {
   if (nodeId === "bus.stereo") return { kind: "stereo", instances: [0] };

@@ -99,6 +99,7 @@ const fxTaps = (mono: number, x: number): MeterTap[] => [
   { key: "post", label: "POST", l: [118, x], r: [118, x + 1] },
 ];
 // Single-point node (monitor / oscillator): one output meter, no chain to choose.
+// On URX22, the oscillator meter reads the generator even when no output bus is assigned.
 const single = (l: readonly [number, number], r?: readonly [number, number]): MeterTap[] => [
   r ? { key: "post", label: "OUT", l, r } : { key: "post", label: "OUT", l },
 ];
