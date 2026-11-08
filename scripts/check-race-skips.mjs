@@ -66,8 +66,8 @@
 // (measured over six on a 2026 Mac), on top of the two this check already takes.
 //
 // The price of being right is node_modules, so this runs from ci.yml rather than the
-// install-free docs.yml. Nothing is lost by that: the Markdown/docs-only pull request
-// ci.yml skips cannot change a spec or a guarantor.
+// install-free docs.yml. Nothing is lost by that: the ci.yml job it runs in runs on every
+// pull request, a Markdown/docs-only one included.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -125,9 +125,10 @@ CI diffs the generated files, so an out-of-date bundle fails the build.
 - Conventional Commits, **subject and body in English**, split by semantic unit.
 - **Pull request title and body in English** as well.
 - Include before/after screenshots for UI changes.
-- Pull request CI runs the build, `pnpm typecheck:e2e`, `pnpm check:skips`, the unit tests,
-  the ordinary E2E suite and `cargo test` — work that is skipped, as a rule, on a Markdown/docs-only pull
-  request. The exception is the skill's generated model references
+- Pull request CI runs the build, `pnpm typecheck:e2e`, `pnpm check:skips`, the unit tests and
+  the ordinary E2E suite on every pull request, since the coverage they upload is what Codecov's
+  required check reports on. `cargo test` and the Windows and WebKit jobs are skipped, as a rule, on a
+  Markdown/docs-only pull request. The exception is the skill's generated model references
   (`.claude/skills/urx-routing-planner/references/model-*.md`): they are Markdown, but they
   are diffed against their generator, so they run it too. Third-party license generation
   runs after merge. The live-sync race harness runs on a pull request whose diff touches
@@ -148,9 +149,10 @@ CI diffs the generated files, so an out-of-date bundle fails the build.
   request with the item still open, a `Left open by the operator` entry quoting that).
   `pnpm check:pr-assumptions` refuses an untagged item and a tagged one with neither entry,
   and it reads what is written there whether or not the box beside it is ticked.
-- A merge waits for `ci-required`, `docs-required`, `format`, `race-required` and `auto-merge`. Each
-  reports on every pull request, so a change that skips the work behind one of them still
-  gets a green check rather than a check that never arrives. `pnpm check:gates` is what
+- A merge waits for `ci-required`, `docs-required`, `format`, `race-required` and `auto-merge`, and
+  for Codecov's `codecov/project`. Each reports on every pull request, so a change that skips the
+  work behind one of them still gets a green check rather than a check that never arrives;
+  `codecov/project` does because the coverage it reports on is uploaded from every pull request. `pnpm check:gates` is what
   keeps that true; run it after editing anything under `.github/workflows/`. It also fails a
   step that fetches from outside GitHub without a `timeout-minutes` of its own, and a step
   that uses an action it does not yet classify.

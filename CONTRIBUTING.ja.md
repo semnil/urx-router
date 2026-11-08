@@ -115,8 +115,9 @@ UPDATE_SKILL=1 pnpm test skill-export
 - Conventional Commits、**件名も本文も英語**、意味単位で分割する。
 - **プルリクエストのタイトルと本文も英語**。
 - UI 変更には変更前後のスクリーンショットを添える。
-- プルリクエストの CI はビルド・`pnpm typecheck:e2e`・`pnpm check:skips`・ユニットテスト・
-  通常の E2E スイート・`cargo test` を実行する — この作業は原則として Markdown / docs のみの変更では省略される。例外は
+- プルリクエストの CI は、ビルド・`pnpm typecheck:e2e`・`pnpm check:skips`・ユニットテスト・
+  通常の E2E スイートをすべてのプルリクエストで実行する。これらが送るカバレッジが、Codecov の必須チェックの
+  元になるため。`cargo test` と Windows・WebKit のジョブは、原則として Markdown / docs のみの変更では省略される。例外は
   スキルの生成物であるモデル参照 (`.claude/skills/urx-routing-planner/references/model-*.md`) で、
   Markdown だが生成器との差分を検査するため通常 CI も走る。サードパーティライセンスの生成は
   マージ後に走る。ライブ同期のレース診断ハーネスは、差分がドキュメントだけではない
@@ -134,9 +135,10 @@ UPDATE_SKILL=1 pnpm test skill-export
   ときは、その言葉を引用した `Left open by the operator` の項目を書く)。`pnpm check:pr-assumptions`
   はタグの無い項目と、どちらの項目も持たないタグ付きの項目を拒否し、横のチェックボックスが付いて
   いるかどうかに関わらず、書かれた内容を読む。
-- マージは `ci-required` / `docs-required` / `format` / `race-required` / `auto-merge` を待つ。いずれもすべての
-  プルリクエストで結果を返すため、対象外としてスキップされた変更でも「永久に来ないチェック」
-  ではなく緑のチェックが付く。これを保つのが `pnpm check:gates` で、`.github/workflows/`
+- マージは `ci-required` / `docs-required` / `format` / `race-required` / `auto-merge` と、Codecov の
+  `codecov/project` を待つ。いずれもすべてのプルリクエストで結果を返すため、対象外としてスキップされた
+  変更でも「永久に来ないチェック」ではなく緑のチェックが付く。`codecov/project` が結果を返すのは、
+  その元になるカバレッジをすべてのプルリクエストから送っているため。これを保つのが `pnpm check:gates` で、`.github/workflows/`
   配下を編集したら実行する。GitHub の外から取得するステップがステップ自身の `timeout-minutes` を
   持たない場合と、まだ分類していないアクションをステップが使う場合も失敗にする。
 

@@ -7,7 +7,10 @@ name: CI
 # Doc-only changes (Markdown, docs/) don't affect the build or tests, so the expensive
 # jobs skip them — except the skill's generated model references, which
 # skill-export.test.ts diffs against the generator, so an .md-only edit there
-# must still run the unit tests.
+# must still run the unit tests. `frontend`, `e2e` and `coverage` run on every pull
+# request whatever it changes: `codecov/project` is a merge condition
+# (.github/required-checks.json), and Codecov reports it only once the uploads the
+# `coverage` job makes have arrived.
 #
 # That skip lives on the JOBS, and the trigger carries no `paths` at all. The difference
 # is not stylistic: a workflow skipped by a trigger filter reports no check run, so a
@@ -64,8 +67,8 @@ jobs:
       # which is the whole of what it did. See .github/actions/playwright-version for why
       # the tag is read from the lockfile at all.
       #
-      # Unconditional, including on the doc-only pull requests where the E2E job does not
-      # run: the whole step is one lockfile read, and a step skipped by `if:` publishes an
+      # Unconditional, including on the doc-only pull requests where the WebKit E2E job does
+      # not run: the whole step is one lockfile read, and a step skipped by `if:` publishes an
       # EMPTY output — which reaches `container:` as a tag that does not exist rather than
       # as a job that does not run.
       - id: pw
@@ -132,7 +135,6 @@ jobs:
 
   frontend:
     needs: preflight
-    if: needs.preflight.outputs.code == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
@@ -179,8 +181,8 @@ jobs:
       # reason true, or with a statement that nothing does. It asks both runners what they
       # collect rather than reading the specs, so it needs the install this job already
       # has — docs.yml, where the other three checks live, deliberately has none. Nothing
-      # is lost by not running it there: a Markdown/docs-only change, which is what this
-      # workflow skips, cannot move a spec or a guarantor. Beside the race tier itself it
+      # is lost by not running it there: this job runs on every pull request, a
+      # Markdown/docs-only one included. Beside the race tier itself it
       # would report on a smaller set of pull requests, since that tier's trigger skips one
       # whose diff touches neither src/ nor e2e/race/ nor the version.
       - run: pnpm check:skips
@@ -282,7 +284,6 @@ jobs:
   # whole reason for the rule. The race harness is deliberately NOT here; see race.yml.
   e2e:
     needs: preflight
-    if: needs.preflight.outputs.code == 'true'
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -525,14 +526,15 @@ jobs:
       - name: Upload frontend coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
-        # A failed upload leaves the job's result to the tests: Codecov reports no merge
-        # condition (.github/required-checks.json:2), and fail_ci_if_error reaches only the
-        # action's last step (codecov-action's action.yml:334 at the pinned sha), not the
-        # dependency check or the OIDC token request in front of it (action.yml:182, :238).
-        continue-on-error: true
+        # On a pull request a failed upload fails the job, so the run that lost it is red: an
+        # upload that never arrives leaves `codecov/project` unreported, which nothing else
+        # shows. On a push to main no merge waits for it, and the run stays green so
+        # tag-release.yml still reads a success. `codecov/project` is a merge condition on a
+        # pull request alone (.github/required-checks.json:8).
+        continue-on-error: ${{ github.event_name != 'pull_request' }}
         with:
           disable_search: true
-          fail_ci_if_error: false
+          fail_ci_if_error: true
           files: ./coverage-reports/coverage-unit/lcov.info
           flags: unit
           name: frontend-unit
@@ -540,11 +542,11 @@ jobs:
       - name: Upload frontend E2E coverage (shard 1)
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
-        # As the first upload's (.github/required-checks.json:2).
-        continue-on-error: true
+        # As the first upload's (.github/required-checks.json:8).
+        continue-on-error: ${{ github.event_name != 'pull_request' }}
         with:
           disable_search: true
-          fail_ci_if_error: false
+          fail_ci_if_error: true
           files: ./coverage-reports/coverage-e2e-1/lcov.info
           flags: e2e
           name: frontend-e2e-1
@@ -552,11 +554,11 @@ jobs:
       - name: Upload frontend E2E coverage (shard 2)
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
-        # As the first upload's (.github/required-checks.json:2).
-        continue-on-error: true
+        # As the first upload's (.github/required-checks.json:8).
+        continue-on-error: ${{ github.event_name != 'pull_request' }}
         with:
           disable_search: true
-          fail_ci_if_error: false
+          fail_ci_if_error: true
           files: ./coverage-reports/coverage-e2e-2/lcov.info
           flags: e2e
           name: frontend-e2e-2
@@ -564,19 +566,19 @@ jobs:
       - name: Upload frontend E2E coverage (shard 3)
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
-        # As the first upload's (.github/required-checks.json:2).
-        continue-on-error: true
+        # As the first upload's (.github/required-checks.json:8).
+        continue-on-error: ${{ github.event_name != 'pull_request' }}
         with:
           disable_search: true
-          fail_ci_if_error: false
+          fail_ci_if_error: true
           files: ./coverage-reports/coverage-e2e-3/lcov.info
           flags: e2e
           name: frontend-e2e-3
           use_oidc: true
 
   # The single context this workflow contributes to the branch ruleset (.github/required-checks.json).
-  # It reports on every pull request, including a doc-only one where everything above it
-  # skipped — which is the point: a required check that does not report cannot be waited
+  # It reports on every pull request, including a doc-only one where most of the jobs above
+  # it skipped — which is the point: a required check that does not report cannot be waited
   # for, it can only block forever.
   #
   # `always()` and an explicit read of the results, rather than a bare `needs:`, because a

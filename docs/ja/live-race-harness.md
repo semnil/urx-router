@@ -613,10 +613,10 @@ undo は WebKit 自身が持ち、アプリは意図的に `preventDefault` し�
 
 | ティア | マシン時間 | 最遅テスト | 実行元 |
 | --- | --- | --- | --- |
-| `chromium` — 従来のスイート | 6.5 分 | 5.8 秒 | `ci.yml`。3 分割。Markdown / docs のみの変更を除く全 PR と main への push (生成物の `model-*.md` は例外)。`windows-latest` でも同じく 3 分割で、同じ条件で走る |
+| `chromium` — 従来のスイート | 6.5 分 | 5.8 秒 | `ci.yml`。3 分割。全 PR と main への push。`windows-latest` でも同じく 3 分割で、Markdown / docs のみの変更を除いて走る (生成物の `model-*.md` は例外) |
 | `race` — ハーネス | 24.6 分 | 60 秒 | `race.yml`。所要時間で 3 分割 (下記)。ドキュメントのみの PR を除く全 PR と、バージョン更新 PR |
 | `race-webkit` | 2.1 分 | 48 秒 | `race.yml`。専用ジョブ。条件は同じ |
-| `app-webkit` — 従来ティアのレイアウト不変条件 | — | — | `ci.yml`。専用ジョブ。条件は `chromium` と同じ |
+| `app-webkit` — 従来ティアのレイアウト不変条件 | — | — | `ci.yml`。専用ジョブ。条件は `windows-latest` の走行と同じ |
 
 `app-webkit` に数値が無いのは、数値がこの境界を切っていないため。切っているのは**エンジン**であって
 時間ではない — 中身は従来ティア自身のケースで、判定対象が「2 つのエンジンが同じようには実装していない

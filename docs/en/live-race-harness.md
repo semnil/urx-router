@@ -646,10 +646,10 @@ it into:
 
 | Tier | Machine time | Slowest test | Runs from |
 | --- | --- | --- | --- |
-| `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, sharded three ways, on every PR and push to main except Markdown/docs-only ones (the generated `model-*.md` aside); and once more on `windows-latest`, also sharded three ways, on the same condition |
+| `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, sharded three ways, on every PR and push to main; and once more on `windows-latest`, also sharded three ways, on every one except Markdown/docs-only ones (the generated `model-*.md` aside) |
 | `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways by measured duration (below), on every PR except a documentation-only one, and on the version bump |
 | `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job, on the same condition |
-| `app-webkit` — the app tier's layout invariants | — | — | `ci.yml`, its own job, on the same condition as `chromium` |
+| `app-webkit` — the app tier's layout invariants | — | — | `ci.yml`, its own job, on the same condition as the `windows-latest` run |
 
 `app-webkit` carries no figure because no figure cuts it. Its boundary is the **engine**, not the
 time: the cases in it are the ordinary tier's own, re-run in the engine the macOS build renders in
