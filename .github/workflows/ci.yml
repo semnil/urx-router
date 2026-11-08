@@ -137,7 +137,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -186,20 +185,13 @@ jobs:
       # whose diff touches neither src/ nor e2e/race/ nor the version.
       - run: pnpm check:skips
       - run: pnpm test:coverage
-      - name: Upload frontend coverage
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
-        # A failed upload leaves the job's result to the tests: Codecov reports no merge
-        # condition (.github/required-checks.json:2), and fail_ci_if_error reaches only the
-        # action's last step (codecov-action's action.yml:334 at the pinned sha), not the
-        # dependency check or the OIDC token request in front of it (action.yml:182, :238).
-        continue-on-error: true
+      # The report is uploaded to Codecov by the `coverage` job, once every report exists.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          fail_ci_if_error: false
-          files: ./coverage/lcov.info
-          flags: unit
-          name: frontend-unit
-          use_oidc: true
+          name: coverage-unit
+          path: coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 1
 
   # The Rust half had no gate at all: `cargo fmt` runs in format.yml, the platform build
   # runs post-merge, and `cargo test` ran in neither — so nothing on a pull request
@@ -294,9 +286,6 @@ jobs:
     runs-on: ubuntu-26.04
     permissions:
       contents: read
-      # Codecov's tokenless upload exchanges GitHub's OIDC token. Job permissions do
-      # not inherit from frontend, so the container job needs its own grant.
-      id-token: write
     # The browsers and their system libraries come from the image rather than from the
     # runner's Ubuntu mirror. Pulling the image costs about what `--with-deps chromium`
     # costs on a good day — so the change is free in time and takes a whole run of
@@ -345,25 +334,14 @@ jobs:
       # suite AND passes, so nothing says the split stopped working. The count comes from
       # `strategy.job-total` so the matrix list above is the only place it is written.
       - run: pnpm test:e2e:coverage --shard=${{ matrix.shard }}/${{ strategy.job-total }}
-      # A separate flag keeps the two test tiers inspectable; Codecov merges both
-      # uploads for the commit, so a line reached by either unit or E2E is covered. The
-      # shards upload under that same flag and are merged the same way — a line one shard
-      # never reached is covered by whichever one did. Only `name` separates them, so a
-      # shard that uploaded nothing is still visible as itself.
-      - name: Upload frontend E2E coverage
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
-        # A failed upload leaves the job's result to the tests: Codecov reports no merge
-        # condition (.github/required-checks.json:2), and fail_ci_if_error reaches only the
-        # action's last step (codecov-action's action.yml:334 at the pinned sha), not the
-        # dependency check or the OIDC token request in front of it (action.yml:182, :238).
-        continue-on-error: true
+      # The report is uploaded to Codecov by the `coverage` job, once every report exists.
+      # One name per shard, for the reason the traces' upload below gives.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          fail_ci_if_error: false
-          files: ./coverage/e2e/lcov.info
-          flags: e2e
-          name: frontend-e2e-${{ matrix.shard }}
-          use_oidc: true
+          name: coverage-e2e-${{ matrix.shard }}
+          path: coverage/e2e/lcov.info
+          if-no-files-found: error
+          retention-days: 1
       # The "list" reporter writes no playwright-report/; traces (trace: on-first-retry,
       # with CI retries) and failure attachments land in the default test-results/, so
       # that is what a failing run has to upload. One name per shard: upload-artifact
@@ -510,6 +488,92 @@ jobs:
           path: test-results/
           retention-days: 7
 
+  # Every report a commit gets is uploaded to Codecov from here, after the jobs that produce
+  # them have all finished, and Codecov holds its statuses until that many uploads have
+  # arrived (`codecov.notify.after_n_builds` in .github/codecov.yml), so the statuses are
+  # computed from every report rather than from the ones that happened to arrive first.
+  #
+  # One upload per report. A separate flag keeps the two test tiers inspectable; Codecov
+  # merges every upload for the commit, so a line reached by either unit or E2E is covered,
+  # and a line one shard never reached is covered by whichever one did. Only `name`
+  # separates the shards, so a shard whose upload is missing is still visible as itself.
+  #
+  # The uploads below, the reports the jobs in `needs` produce (one per matrix combination)
+  # and `after_n_builds` are one count written three times; scripts/check-merge-gates.mjs
+  # holds them equal.
+  coverage:
+    needs: [frontend, e2e]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      # Codecov's tokenless upload exchanges GitHub's OIDC token.
+      id-token: write
+    # Above the four upload bounds together, so a stalled upload is reported by its own step
+    # rather than as a cancelled job.
+    timeout-minutes: 25
+    steps:
+      # The uploader matches the reports' paths against the checked-out tree and applies its
+      # file fixes from the sources there.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Each artifact lands in a directory of its own name.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-*
+          path: coverage-reports
+      # `disable_search` keeps each upload to the one report it names: the search would
+      # otherwise add every report under coverage-reports/ to every upload.
+      - name: Upload frontend coverage
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
+        # A failed upload leaves the job's result to the tests: Codecov reports no merge
+        # condition (.github/required-checks.json:2), and fail_ci_if_error reaches only the
+        # action's last step (codecov-action's action.yml:334 at the pinned sha), not the
+        # dependency check or the OIDC token request in front of it (action.yml:182, :238).
+        continue-on-error: true
+        with:
+          disable_search: true
+          fail_ci_if_error: false
+          files: ./coverage-reports/coverage-unit/lcov.info
+          flags: unit
+          name: frontend-unit
+          use_oidc: true
+      - name: Upload frontend E2E coverage (shard 1)
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
+        # As the first upload's (.github/required-checks.json:2).
+        continue-on-error: true
+        with:
+          disable_search: true
+          fail_ci_if_error: false
+          files: ./coverage-reports/coverage-e2e-1/lcov.info
+          flags: e2e
+          name: frontend-e2e-1
+          use_oidc: true
+      - name: Upload frontend E2E coverage (shard 2)
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
+        # As the first upload's (.github/required-checks.json:2).
+        continue-on-error: true
+        with:
+          disable_search: true
+          fail_ci_if_error: false
+          files: ./coverage-reports/coverage-e2e-2/lcov.info
+          flags: e2e
+          name: frontend-e2e-2
+          use_oidc: true
+      - name: Upload frontend E2E coverage (shard 3)
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
+        # As the first upload's (.github/required-checks.json:2).
+        continue-on-error: true
+        with:
+          disable_search: true
+          fail_ci_if_error: false
+          files: ./coverage-reports/coverage-e2e-3/lcov.info
+          flags: e2e
+          name: frontend-e2e-3
+          use_oidc: true
+
   # The single context this workflow contributes to the branch ruleset (.github/required-checks.json).
   # It reports on every pull request, including a doc-only one where everything above it
   # skipped — which is the point: a required check that does not report cannot be waited
@@ -523,7 +587,7 @@ jobs:
     # `e2e` is one entry here whatever the matrix does: a matrix job's result is the
     # aggregate, failure if any shard failed, so the gate needs no per-shard knowledge and
     # a fourth shard does not have to be remembered here.
-    needs: [preflight, frontend, rust, e2e, e2e-webkit, unit-windows, e2e-windows]
+    needs: [preflight, frontend, rust, e2e, e2e-webkit, unit-windows, e2e-windows, coverage]
     if: always()
     runs-on: ubuntu-26.04
     permissions: {}
@@ -544,6 +608,7 @@ jobs:
           E2E_WEBKIT: ${{ needs['e2e-webkit'].result }}
           UNIT_WINDOWS: ${{ needs['unit-windows'].result }}
           E2E_WINDOWS: ${{ needs['e2e-windows'].result }}
+          COVERAGE: ${{ needs.coverage.result }}
         run: |
-          echo "::error::CI did not pass — preflight=${PREFLIGHT} frontend=${FRONTEND} rust=${RUST} e2e=${E2E} e2e-webkit=${E2E_WEBKIT} unit-windows=${UNIT_WINDOWS} e2e-windows=${E2E_WINDOWS}"
+          echo "::error::CI did not pass — preflight=${PREFLIGHT} frontend=${FRONTEND} rust=${RUST} e2e=${E2E} e2e-webkit=${E2E_WEBKIT} unit-windows=${UNIT_WINDOWS} e2e-windows=${E2E_WINDOWS} coverage=${COVERAGE}"
           exit 1
