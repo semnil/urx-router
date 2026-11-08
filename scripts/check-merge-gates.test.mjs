@@ -875,3 +875,144 @@ ${steps}`;
     expect(boundsIn(bounded)).toEqual([]);
   });
 });
+
+describe("the Codecov upload count", () => {
+  const upload = (name) => `      - name: ${name}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        timeout-minutes: 5
+        with:
+          name: ${name}
+`;
+  // ci.yml's arrangement: one job producing a report, one matrix job producing one per
+  // shard, and a job that needs both and makes one upload per report.
+  const HEALTHY_UPLOADS = `name: A
+on:
+  push:
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo unit
+  e2e:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - run: echo e2e
+  coverage:
+    needs: [unit, e2e]
+    runs-on: ubuntu-latest
+    steps:
+${upload("unit")}${upload("e2e-1")}${upload("e2e-2")}${upload("e2e-3")}`;
+  const waitsFor = (n) => `codecov:\n  notify:\n    after_n_builds: ${n}\n`;
+  const uploadFindings = (text, codecovSource = waitsFor(4)) =>
+    inspect({
+      workflowSources: [{ path: ".github/workflows/a.yml", text }],
+      manifestSource: MANIFEST,
+      codecovSource,
+    }).findings.filter((f) => /Codecov|after_n_builds/.test(f));
+
+  it("passes one upload per report from a job that needs every producer", () => {
+    expect(uploadFindings(HEALTHY_UPLOADS)).toEqual([]);
+  });
+
+  // A matrix leg added without an upload is a report Codecov never sees.
+  it("rejects a shard added without an upload", () => {
+    const text = HEALTHY_UPLOADS.replace("shard: [1, 2, 3]", "shard: [1, 2, 3, 4]");
+    expect(uploadFindings(text).join("\n")).toContain("produce 5 report(s) (unit 1 + e2e 4)");
+  });
+
+  // An upload dropped leaves a report behind, and leaves the count waiting for one more.
+  it("rejects an upload dropped, against both the reports and the waiting count", () => {
+    const found = uploadFindings(HEALTHY_UPLOADS.replace(upload("e2e-3"), ""));
+    expect(found.join("\n")).toContain("makes 3 Codecov upload(s), but the jobs it needs produce 4");
+    expect(found.join("\n")).toContain("`codecov.notify.after_n_builds` is 4, but");
+  });
+
+  // Codecov's default posts after the first upload, which is the partial status this exists
+  // to keep out; a count written below the uploads does the same later.
+  it("rejects a waiting count that is unset or below the uploads, and accepts it once equal", () => {
+    expect(uploadFindings(HEALTHY_UPLOADS, null).join("\n")).toContain("is unset, which Codecov reads as 1");
+    expect(uploadFindings(HEALTHY_UPLOADS, "coverage:\n  status: {}\n").join("\n")).toContain("is unset");
+    expect(uploadFindings(HEALTHY_UPLOADS, waitsFor(3)).join("\n")).toContain("is 3, but");
+    expect(uploadFindings(HEALTHY_UPLOADS, waitsFor(5)).join("\n")).toContain("is 5, but");
+    expect(uploadFindings(HEALTHY_UPLOADS, `# the count\n${waitsFor(4)}`)).toEqual([]);
+  });
+
+  it("refuses a waiting count that is not a count", () => {
+    expect(uploadFindings(HEALTHY_UPLOADS, waitsFor("four")).join("\n")).toContain("which is not a count");
+    expect(uploadFindings(HEALTHY_UPLOADS, waitsFor(0)).join("\n")).toContain("which is not a count");
+  });
+
+  // The arrangement that posted partial statuses: each job uploading its own report.
+  it("rejects uploads made from the jobs that produce the reports", () => {
+    const text = HEALTHY_UPLOADS.replace("      - run: echo e2e\n", `      - run: echo e2e\n${upload("e2e")}`);
+    expect(uploadFindings(text).join("\n")).toContain(
+      "Codecov uploads are made from .github/workflows/a.yml (e2e), .github/workflows/a.yml (coverage)",
+    );
+  });
+
+  it("rejects an uploading job that is itself a matrix", () => {
+    const text = HEALTHY_UPLOADS.replace(
+      "    needs: [unit, e2e]\n",
+      "    needs: [unit, e2e]\n    strategy:\n      matrix:\n        n: [1]\n",
+    );
+    expect(uploadFindings(text).join("\n")).toContain("uploads to Codecov from a matrix job");
+  });
+
+  // Every key multiplies, and a block list counts the same as a flow one.
+  it("counts every matrix combination, in either list form", () => {
+    const blockList = HEALTHY_UPLOADS.replace(
+      "shard: [1, 2, 3]",
+      "shard:\n          - 1\n          - 2\n          - 3",
+    );
+    expect(uploadFindings(blockList)).toEqual([]);
+    const product = HEALTHY_UPLOADS.replace("shard: [1, 2, 3]", "shard: [1]\n        os: [a, b, c]");
+    expect(uploadFindings(product)).toEqual([]);
+    const larger = HEALTHY_UPLOADS.replace("shard: [1, 2, 3]", "shard: [1, 2]\n        os: [a, b]");
+    expect(uploadFindings(larger).join("\n")).toContain("produce 5 report(s) (unit 1 + e2e 4)");
+  });
+
+  // A count this reader cannot take is refused by name rather than guessed.
+  it.each([
+    ["an `include`", "shard: [1, 2, 3]\n        include:\n          - shard: 4"],
+    ["an expression", "shard: ${{ fromJSON(needs.plan.outputs.shards) }}"],
+    ["a nested list", "shard: [[1, 2], [3]]"],
+  ])("refuses a producer matrix with %s", (_, matrix) => {
+    const text = HEALTHY_UPLOADS.replace("shard: [1, 2, 3]", matrix);
+    expect(uploadFindings(text).join("\n")).toContain("whose matrix this checker cannot count");
+  });
+
+  it("refuses a need the workflow does not define", () => {
+    const text = HEALTHY_UPLOADS.replace("needs: [unit, e2e]", "needs: [unit, e2e, lint]");
+    expect(uploadFindings(text).join("\n")).toContain("needs `lint`, which .github/workflows/a.yml does not define");
+  });
+
+  // Uploads from another workflow land on the same commit, so they are counted together.
+  it("counts uploads across workflows", () => {
+    const other = `name: B
+on:
+  push:
+jobs:
+  extra:
+    runs-on: ubuntu-latest
+    steps:
+${upload("extra")}`;
+    const found = inspect({
+      workflowSources: [
+        { path: ".github/workflows/a.yml", text: HEALTHY_UPLOADS },
+        { path: ".github/workflows/b.yml", text: other },
+      ],
+      manifestSource: MANIFEST,
+      codecovSource: waitsFor(4),
+    }).findings;
+    expect(found.join("\n")).toContain(".github/workflows/a.yml (coverage), .github/workflows/b.yml (extra)");
+  });
+
+  it("refuses a waiting count with nothing uploading, and says nothing when neither is there", () => {
+    const none = HEALTHY_UPLOADS.replace(/      - name: [\s\S]*$/, "      - run: echo none\n");
+    expect(uploadFindings(none).join("\n")).toContain("no workflow uploads to Codecov");
+    expect(uploadFindings(none, null)).toEqual([]);
+  });
+});

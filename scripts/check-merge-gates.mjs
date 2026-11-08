@@ -17,7 +17,9 @@
 // One rule here is about no gate at all, and reaches every workflow: a step that fetches
 // from a host outside GitHub carries a `timeout-minutes` of its own, and a step `uses:`
 // an action this file does not classify is refused until it is classified (see
-// checkStepBounds).
+// checkStepBounds). Another reaches every workflow too: the uploads to Codecov are made
+// from one job after every report exists, one per report, and `.github/codecov.yml`'s
+// `codecov.notify.after_n_builds` is their number (see checkCodecovUploads).
 //
 //   node scripts/check-merge-gates.mjs            check .github/workflows against the manifest
 //   node scripts/check-merge-gates.mjs --ruleset  also diff the manifest against the live branch
@@ -874,6 +876,137 @@ function checkStepBounds(workflows) {
   }
 }
 
+// --- the Codecov upload count -----------------------------------------------------
+
+const CODECOV_CONFIG = ".github/codecov.yml";
+const CODECOV_ACTION = "codecov/codecov-action";
+
+// How many runs a job's matrix makes: the product of its keys' list lengths, 1 for a job
+// with no matrix, and null for a matrix this reader cannot count — an `include` or
+// `exclude`, an expression, or a value that is not a plain list.
+function combinationsOf(job) {
+  const matrix = job.children.get("strategy")?.children.get("matrix");
+  if (!matrix) return 1;
+  if (matrix.value || matrix.children.size === 0) return null;
+  let count = 1;
+  for (const [key, node] of matrix.children) {
+    if (key === "include" || key === "exclude") return null;
+    if (node.value && !node.value.startsWith("[")) return null;
+    if (/[[{]/.test(node.value.slice(1))) return null;
+    const values = listOf(node);
+    if (!values.length) return null;
+    count *= values.length;
+  }
+  return count;
+}
+
+// `codecov.notify.after_n_builds`, or Codecov's own default of 1 when the file or the key
+// is absent. `value` is null for a written value that is not a positive whole number.
+function afterNBuilds(source) {
+  if (source == null) return { value: 1, written: false };
+  const node = parse(source).children.get("codecov")?.children.get("notify")?.children.get("after_n_builds");
+  if (!node) return { value: 1, written: false };
+  const raw = unquote(node.value);
+  const value = /^[1-9]\d*$/.test(raw) ? Number(raw) : null;
+  return { value, written: true, raw };
+}
+
+// Codecov posts its statuses once `after_n_builds` uploads have arrived for a commit, and
+// computes them from what has arrived by then. This holds every upload to ONE job, with no
+// matrix, that needs every job producing a report; that job to one upload per report those
+// jobs produce, one per matrix combination; and `after_n_builds` to that number. A
+// matrix leg added without an upload is a report Codecov never sees, an upload with no
+// report behind it is one the count waits for and never gets, and an `after_n_builds` below
+// the uploads posts a status computed from part of them.
+//
+// Over every workflow, since an upload from any of them lands on the same commit.
+function checkCodecovUploads(workflows, codecovSource) {
+  const uploads = [];
+  for (const workflow of workflows) {
+    if (!workflow.root) continue;
+    for (const [id, job] of workflow.jobs) {
+      for (const step of stepsOf(workflow.root, job)) {
+        if (step.keys.has("uses") && actionOf(step.keys.get("uses")) === CODECOV_ACTION) {
+          uploads.push({ workflow, id, job });
+        }
+      }
+    }
+  }
+  const builds = afterNBuilds(codecovSource);
+  if (builds.value === null) {
+    finding(CODECOV_CONFIG, `\`codecov.notify.after_n_builds\` is \`${builds.raw}\`, which is not a count of uploads`);
+    return;
+  }
+  if (!uploads.length) {
+    if (builds.written) {
+      finding(
+        CODECOV_CONFIG,
+        `\`codecov.notify.after_n_builds\` waits for ${builds.value} upload(s) and no workflow uploads to Codecov`,
+      );
+    }
+    return;
+  }
+  const owners = [...new Set(uploads.map(({ workflow, id }) => `${workflow.path} (${id})`))];
+  if (owners.length > 1) {
+    finding(
+      owners[0],
+      `Codecov uploads are made from ${owners.join(", ")} — each job uploads as it finishes, so Codecov can ` +
+        `post a status from part of the reports. Make every upload from one job that needs every job producing one`,
+    );
+    return;
+  }
+  const { workflow, id, job } = uploads[0];
+  const where = owners[0];
+  if (job.children.get("strategy")?.children.has("matrix")) {
+    finding(
+      where,
+      "uploads to Codecov from a matrix job — each combination uploads as it finishes, so Codecov can post a " +
+        "status from part of the reports. Make the uploads from one job with no matrix",
+    );
+    return;
+  }
+  let reports = 0;
+  const parts = [];
+  for (const need of listOf(job.children.get("needs"))) {
+    const producer = workflow.jobs.get(need);
+    if (!producer) {
+      finding(where, `uploads to Codecov and needs \`${need}\`, which ${workflow.path} does not define`);
+      return;
+    }
+    const combinations = combinationsOf(producer);
+    if (combinations === null) {
+      finding(
+        where,
+        `uploads to Codecov and needs \`${need}\`, whose matrix this checker cannot count — write it as keys ` +
+          "holding plain lists, with no `include` or `exclude`",
+      );
+      return;
+    }
+    reports += combinations;
+    parts.push(`${need} ${combinations}`);
+  }
+  if (uploads.length !== reports) {
+    finding(
+      where,
+      `makes ${uploads.length} Codecov upload(s), but the jobs it needs produce ${reports} report(s) ` +
+        `(${parts.join(" + ") || "it needs none"}) — one upload per report, one report per matrix combination`,
+    );
+  }
+  if (uploads.length !== builds.value) {
+    const setting = builds.written ? `is ${builds.value}` : "is unset, which Codecov reads as 1";
+    finding(
+      CODECOV_CONFIG,
+      `\`codecov.notify.after_n_builds\` ${setting}, but ${where} makes ${uploads.length} upload(s) — ` +
+        "Codecov posts its statuses once that many have arrived, computed from those alone",
+    );
+  }
+}
+
+function readCodecovSource() {
+  const path = join(ROOT, CODECOV_CONFIG);
+  return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
 // --- the manifest -------------------------------------------------------------
 
 function readManifestSource() {
@@ -1137,7 +1270,7 @@ function compareRulesets({ repo, defaultBranch, details }, required, integration
 // The whole judgement, with every read already done by the caller. The CLI below is the
 // only thing that touches the filesystem or gh; this is what scripts/check-merge-gates.test.mjs
 // drives, so the tests exercise the composition and not a paraphrase of it.
-export function inspect({ workflowSources, manifestSource, ruleset = null }) {
+export function inspect({ workflowSources, manifestSource, codecovSource = null, ruleset = null }) {
   findings.length = 0;
   const required = readManifest(manifestSource);
   const workflows = readWorkflows(workflowSources);
@@ -1145,6 +1278,7 @@ export function inspect({ workflowSources, manifestSource, ruleset = null }) {
   checkPreconditionChains(workflows);
   checkPullRequestFieldConsumers(workflows);
   checkStepBounds(workflows);
+  checkCodecovUploads(workflows, codecovSource);
   const notes = ruleset ? compareRulesets(ruleset, required, integrationId) : [];
   return { findings: findings.slice(), required, workflows, seen, notes };
 }
@@ -1165,17 +1299,19 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
       process.exit(0);
     }
     const rel = (file ?? "").split("\\").join("/");
-    const relevant = /\.github\/workflows\/[^/]+\.ya?ml$/.test(rel) || rel.endsWith(MANIFEST);
+    const relevant =
+      /\.github\/workflows\/[^/]+\.ya?ml$/.test(rel) || rel.endsWith(MANIFEST) || rel.endsWith(CODECOV_CONFIG);
     if (!relevant) process.exit(0);
   }
 
   const manifestSource = readManifestSource();
   const workflowSources = readWorkflowSources();
+  const codecovSource = readCodecovSource();
   // Read before inspect(), which clears the list — so a gh failure is carried across and
   // reported alongside the rest rather than being dropped by the reset.
   const ruleset = argv.includes("--ruleset") ? readRulesets() : null;
   const pending = findings.slice();
-  const run = inspect({ workflowSources, manifestSource, ruleset });
+  const run = inspect({ workflowSources, manifestSource, codecovSource, ruleset });
   const all = [...pending, ...run.findings];
 
   if (all.length) {
@@ -1192,8 +1328,8 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   const silent = prWorkflows.filter((workflow) => ![...run.seen.values()].includes(workflow.path));
   console.log(
     `OK: ${run.required.size} required context(s) over ${prWorkflows.length} pull-request workflow(s), ` +
-      `all reportable on every pull request; declared preconditions and step bounds hold across ` +
-      `${run.workflows.length} workflow(s)`,
+      `all reportable on every pull request; declared preconditions, step bounds and the Codecov upload ` +
+      `count hold across ${run.workflows.length} workflow(s)`,
   );
   for (const [context, path] of run.seen) console.log(`    ${context} <- ${path}`);
   if (silent.length) console.log(`    advisory only (no required context): ${silent.map((w) => w.path).join(", ")}`);
