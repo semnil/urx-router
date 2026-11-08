@@ -1016,3 +1016,147 @@ ${upload("extra")}`;
     expect(uploadFindings(none, null)).toEqual([]);
   });
 });
+
+describe("a required context Codecov reports", () => {
+  const upload = (name) => `      - name: ${name}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        timeout-minutes: 5
+        with:
+          name: ${name}
+`;
+  // ci.yml's arrangement: the uploads wait for the producers, the producers wait for a
+  // preflight, and nothing on that chain carries a condition.
+  const UPLOADED_ON_EVERY_PR = `name: A
+on:
+  pull_request:
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo scope
+  unit:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo unit
+  coverage:
+    needs: [unit]
+    runs-on: ubuntu-latest
+    steps:
+${upload("unit")}`;
+  const requiring = (extra = {}) =>
+    JSON.stringify({
+      integration_id: 15368,
+      contexts: ["gate"],
+      codecov_integration_id: 254,
+      codecov_contexts: ["codecov/project"],
+      ...extra,
+    });
+  const requiredFindings = (text, manifest = requiring()) =>
+    inspect({
+      workflowSources: [{ path: ".github/workflows/a.yml", text }],
+      manifestSource: manifest,
+      codecovSource: null,
+    }).findings.filter((f) => /codecov/.test(f));
+
+  it("passes uploads that run on every pull request", () => {
+    expect(requiredFindings(UPLOADED_ON_EVERY_PR)).toEqual([]);
+  });
+
+  // The documentation-only skip ci.yml carried: a condition anywhere on the chain the
+  // uploads wait for leaves the pull requests it skips with nothing for Codecov to report.
+  it.each(["preflight", "unit", "coverage"])("rejects a condition on `%s`, which the uploads wait for", (job) => {
+    const text = UPLOADED_ON_EVERY_PR.replace(
+      `  ${job}:\n`,
+      `  ${job}:\n    if: needs.preflight.outputs.code == 'true'\n`,
+    );
+    expect(requiredFindings(text).join("\n")).toContain(
+      `.github/workflows/a.yml (${job}): carries \`if: needs.preflight.outputs.code == 'true'\``,
+    );
+  });
+
+  it("accepts `always()`, which skips no pull request", () => {
+    const text = UPLOADED_ON_EVERY_PR.replace("  coverage:\n", "  coverage:\n    if: always()\n");
+    expect(requiredFindings(text)).toEqual([]);
+  });
+
+  it("rejects a trigger filter, and a `types:` narrowed below the defaults", () => {
+    const filtered = UPLOADED_ON_EVERY_PR.replace(
+      "  pull_request:\n",
+      "  pull_request:\n    paths-ignore:\n      - 'docs/**'\n",
+    );
+    expect(requiredFindings(filtered).join("\n")).toContain("`on.pull_request.paths-ignore` skips the workflow");
+    const narrowed = UPLOADED_ON_EVERY_PR.replace("  pull_request:\n", "  pull_request:\n    types: [opened]\n");
+    expect(requiredFindings(narrowed).join("\n")).toContain("omits synchronize, reopened");
+  });
+
+  it("rejects uploads from a workflow that does not run on pull_request", () => {
+    const text = UPLOADED_ON_EVERY_PR.replace("  pull_request:\n", "  push:\n");
+    expect(requiredFindings(text).join("\n")).toContain("does not run on pull_request");
+  });
+
+  it("rejects a required Codecov context with nothing uploading", () => {
+    const text = UPLOADED_ON_EVERY_PR.replace(upload("unit"), "      - run: echo none\n");
+    expect(requiredFindings(text).join("\n")).toContain("no workflow uploads to Codecov, so it never reports");
+  });
+
+  // Without the list the same skip is only advisory, which is what keeps the rule from
+  // firing on a repository whose Codecov statuses are not a merge condition.
+  it("says nothing about a skipped upload when no Codecov context is required", () => {
+    const text = UPLOADED_ON_EVERY_PR.replace("  unit:\n", "  unit:\n    if: github.event_name == 'push'\n");
+    expect(requiredFindings(text, MANIFEST)).toEqual([]);
+    expect(requiredFindings(text).join("\n")).toContain("(unit): carries");
+  });
+
+  it("refuses an entry Codecov does not report, and a missing app id", () => {
+    expect(requiredFindings(UPLOADED_ON_EVERY_PR, requiring({ codecov_contexts: ["lint"] })).join("\n")).toContain(
+      '`"lint"` in `codecov_contexts` is not a context Codecov reports',
+    );
+    expect(
+      requiredFindings(UPLOADED_ON_EVERY_PR, requiring({ codecov_integration_id: undefined })).join("\n"),
+    ).toContain("`codecov_integration_id` is missing");
+  });
+
+  it("keeps refusing a Codecov context written into `contexts`", () => {
+    const manifest = JSON.stringify({ integration_id: 15368, contexts: ["gate", "codecov/project"] });
+    expect(findingsOf(HEALTHY, { manifest }).join("\n")).toContain("a Codecov one goes in `codecov_contexts`");
+  });
+
+  describe("against the live ruleset", () => {
+    const ruleset = (checks) => ({
+      repo: "owner/repo",
+      defaultBranch: "main",
+      details: [
+        {
+          name: "main",
+          conditions: { ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] } },
+          rules: [{ type: "required_status_checks", parameters: { required_status_checks: checks } }],
+        },
+      ],
+    });
+    const compare = (checks) =>
+      inspect({
+        workflowSources: [{ path: ".github/workflows/a.yml", text: HEALTHY }],
+        manifestSource: requiring(),
+        ruleset: ruleset(checks),
+      }).findings.join("\n");
+    const gate = { context: "gate", integration_id: 15368 };
+
+    it("passes the Codecov context pinned to Codecov's app", () => {
+      expect(compare([gate, { context: "codecov/project", integration_id: 254 }])).not.toMatch(/ruleset/);
+    });
+
+    it("reports it pinned to GitHub Actions, which never reports it", () => {
+      expect(compare([gate, { context: "codecov/project", integration_id: 15368 }])).toContain(
+        "requires `codecov/project` from app 15368, but Codecov reports it as app 254",
+      );
+    });
+
+    it("reports it pinned to no app, and missing from the ruleset", () => {
+      expect(compare([gate, { context: "codecov/project" }])).toContain(
+        "pin `integration_id` to 254 so only Codecov can satisfy it",
+      );
+      expect(compare([gate])).toContain("does not require `codecov/project`");
+    });
+  });
+});
