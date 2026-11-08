@@ -1023,7 +1023,8 @@ const DISABLED = /^(false|off|no|n)$/i;
 // Whether `.github/codecov.yml` has Codecov post a context: `codecov/<kind>` is the
 // `default` status under `coverage.status.<kind>`, and `codecov/<kind>/<name>` the status
 // named `<name>`. With no `coverage.status` at all Codecov posts its default `project` and
-// `patch` statuses. Returns the reason the context is not posted, or null.
+// `patch` statuses, and `coverage.status.<kind>: true` turns on that kind's default status
+// alone. Returns the reason the context is not posted, or null.
 function codecovStatusGap(context, codecovSource) {
   const [, kind, name = "default"] = context.split("/");
   const status = codecovSource == null ? null : parse(codecovSource).children.get("coverage")?.children.get("status");
@@ -1034,8 +1035,20 @@ function codecovStatusGap(context, codecovSource) {
   }
   const kindNode = status.children.get(kind);
   if (!kindNode) return `${CODECOV_CONFIG} defines no \`coverage.status.${kind}\``;
-  if (DISABLED.test(unquote(kindNode.value))) {
+  const kindValue = unquote(kindNode.value);
+  if (DISABLED.test(kindValue)) {
     return `${CODECOV_CONFIG} turns \`coverage.status.${kind}\` off (\`${kindNode.value}\`)`;
+  }
+  if (/^true$/i.test(kindValue)) {
+    return name === "default"
+      ? null
+      : `${CODECOV_CONFIG} sets \`coverage.status.${kind}: ${kindNode.value}\`, which turns on the default status alone`;
+  }
+  if (kindValue.startsWith("{")) {
+    return `${CODECOV_CONFIG} writes \`coverage.status.${kind}\` as a flow mapping; write it in block form so this checker can read it`;
+  }
+  if (kindValue) {
+    return `${CODECOV_CONFIG} sets \`coverage.status.${kind}\` to \`${kindNode.value}\`, which is neither a status definition nor \`true\``;
   }
   const statusNode = kindNode.children.get(name);
   if (!statusNode) return `${CODECOV_CONFIG} defines no \`coverage.status.${kind}.${name}\``;

@@ -1108,6 +1108,20 @@ ${upload("unit")}`;
       expect(found("ignore:\n  - src/x.ts\n")).toBe("");
     });
 
+    // Codecov's own basic configuration turns the default status on with `project: true`.
+    it("passes `project: true`, which turns on the default status alone", () => {
+      expect(found(status("    project: true\n"))).toBe("");
+      const named = requiring({ codecov_contexts: ["codecov/project/app"] });
+      expect(found(status("    project: true\n"), named)).toContain("which turns on the default status alone");
+    });
+
+    it.each([
+      ["a flow mapping", "    project: { default: { threshold: 1% } }\n", "as a flow mapping; write it in block form"],
+      ["another scalar", "    project: yes\n", "to `yes`, which is neither a status definition nor `true`"],
+    ])("refuses %s it cannot read as a status", (_, project, message) => {
+      expect(found(status(project))).toContain(message);
+    });
+
     it.each([
       ["`project: off`", status("    project: off\n"), "turns `coverage.status.project` off (`off`)"],
       ["`project: false`", status("    project: false\n"), "turns `coverage.status.project` off (`false`)"],
