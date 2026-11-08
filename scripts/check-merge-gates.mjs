@@ -939,7 +939,7 @@ function codecovUploads(workflows) {
     for (const [id, job] of workflow.jobs) {
       for (const step of stepsOf(workflow.root, job)) {
         if (step.keys.has("uses") && actionOf(step.keys.get("uses")) === CODECOV_ACTION) {
-          uploads.push({ workflow, id, job });
+          uploads.push({ workflow, id, job, step });
         }
       }
     }
@@ -1018,17 +1018,62 @@ function checkCodecovUploads(uploads, codecovSource) {
   }
 }
 
+const DISABLED = /^(false|off|no|n)$/i;
+
+// Whether `.github/codecov.yml` has Codecov post a context: `codecov/<kind>` is the
+// `default` status under `coverage.status.<kind>`, and `codecov/<kind>/<name>` the status
+// named `<name>`. With no `coverage.status` at all Codecov posts its default `project` and
+// `patch` statuses. Returns the reason the context is not posted, or null.
+function codecovStatusGap(context, codecovSource) {
+  const [, kind, name = "default"] = context.split("/");
+  const status = codecovSource == null ? null : parse(codecovSource).children.get("coverage")?.children.get("status");
+  if (!status) {
+    return name === "default" && (kind === "project" || kind === "patch")
+      ? null
+      : `${CODECOV_CONFIG} defines no \`coverage.status\`, so only the default project and patch statuses are posted`;
+  }
+  const kindNode = status.children.get(kind);
+  if (!kindNode) return `${CODECOV_CONFIG} defines no \`coverage.status.${kind}\``;
+  if (DISABLED.test(unquote(kindNode.value))) {
+    return `${CODECOV_CONFIG} turns \`coverage.status.${kind}\` off (\`${kindNode.value}\`)`;
+  }
+  const statusNode = kindNode.children.get(name);
+  if (!statusNode) return `${CODECOV_CONFIG} defines no \`coverage.status.${kind}.${name}\``;
+  if (DISABLED.test(unquote(statusNode.value))) {
+    return `${CODECOV_CONFIG} turns \`coverage.status.${kind}.${name}\` off (\`${statusNode.value}\`)`;
+  }
+  return null;
+}
+
 // A required context Codecov reports exists on a pull request only once that pull request's
-// uploads have arrived. So the workflow making them triggers on every pull request, and the
-// uploading job and every job it waits for, transitively, carry no condition but
-// `always()` — a pull request a trigger filter or a condition leaves without uploads is one
-// whose required context never reports, and that merge waits forever.
-function checkCodecovRequired(uploads, contexts) {
+// uploads have arrived and Codecov is configured to post it. So the workflow making the
+// uploads triggers on every pull request, the uploading job and every job it waits for,
+// transitively, carry no condition but `always()`, and so does each upload step; and
+// `.github/codecov.yml` defines that status and leaves it on. A pull request a trigger
+// filter or a condition leaves without uploads, or a status the configuration turns off, is
+// one whose required context never reports, and that merge waits forever.
+function checkCodecovRequired(uploads, contexts, codecovSource) {
   if (!contexts.size) return;
   const names = [...contexts].map((context) => `\`${context}\``).join(", ");
+  for (const context of contexts) {
+    const gap = codecovStatusGap(context, codecovSource);
+    if (gap) finding(MANIFEST, `requires \`${context}\`, but ${gap} — it never reports`);
+  }
   if (!uploads.length) {
     finding(MANIFEST, `requires ${names}, but no workflow uploads to Codecov, so it never reports`);
     return;
+  }
+  for (const { workflow, id, step } of uploads) {
+    const cond = unquote(step.keys.get("if") ?? "")
+      .replace(/^\$\{\{|\}\}$/g, "")
+      .trim();
+    if (cond && cond !== "always()") {
+      finding(
+        `${workflow.path}:${step.line} (${id})`,
+        `a Codecov upload carries \`if: ${cond}\` — a pull request the condition skips misses that upload, ` +
+          `Codecov waits for it, and required ${names} never reports on it`,
+      );
+    }
   }
   const owners = new Map();
   for (const { workflow, id } of uploads) owners.set(`${workflow.path} (${id})`, { workflow, id });
@@ -1378,7 +1423,7 @@ export function inspect({ workflowSources, manifestSource, codecovSource = null,
   checkStepBounds(workflows);
   const uploads = codecovUploads(workflows);
   checkCodecovUploads(uploads, codecovSource);
-  checkCodecovRequired(uploads, codecovContexts);
+  checkCodecovRequired(uploads, codecovContexts, codecovSource);
   const notes = ruleset ? compareRulesets(ruleset, required, integrationId, codecovContexts, codecovIntegrationId) : [];
   return { findings: findings.slice(), required, codecov: codecovContexts, workflows, seen, notes };
 }

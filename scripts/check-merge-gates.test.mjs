@@ -1052,11 +1052,11 @@ ${upload("unit")}`;
       codecov_contexts: ["codecov/project"],
       ...extra,
     });
-  const requiredFindings = (text, manifest = requiring()) =>
+  const requiredFindings = (text, manifest = requiring(), codecovSource = null) =>
     inspect({
       workflowSources: [{ path: ".github/workflows/a.yml", text }],
       manifestSource: manifest,
-      codecovSource: null,
+      codecovSource,
     }).findings.filter((f) => /codecov/.test(f));
 
   it("passes uploads that run on every pull request", () => {
@@ -1078,6 +1078,68 @@ ${upload("unit")}`;
   it("accepts `always()`, which skips no pull request", () => {
     const text = UPLOADED_ON_EVERY_PR.replace("  coverage:\n", "  coverage:\n    if: always()\n");
     expect(requiredFindings(text)).toEqual([]);
+  });
+
+  // The same skip written on the upload step rather than on a job: the pull requests it
+  // skips are one upload short of the count Codecov waits for.
+  it("rejects a condition on an upload step, and accepts `always()` there", () => {
+    const step = (cond) =>
+      UPLOADED_ON_EVERY_PR.replace("      - name: unit\n", `      - name: unit\n        if: ${cond}\n`);
+    expect(requiredFindings(step("github.event_name == 'push'")).join("\n")).toContain(
+      "a Codecov upload carries `if: github.event_name == 'push'`",
+    );
+    expect(requiredFindings(step("${{ github.event_name == 'push' }}")).join("\n")).toContain(
+      "a Codecov upload carries `if: github.event_name == 'push'`",
+    );
+    expect(requiredFindings(step("always()"))).toEqual([]);
+  });
+
+  // Codecov posts `codecov/project` from the `default` status under `coverage.status.project`,
+  // and with no `coverage.status` at all from its own defaults.
+  describe("against the status configuration", () => {
+    const status = (project) => `coverage:\n  status:\n${project}    patch:\n      default: {}\n`;
+    const THRESHOLD = "    project:\n      default:\n        threshold: 0.05%\n";
+    const found = (codecov, manifest = requiring()) =>
+      requiredFindings(UPLOADED_ON_EVERY_PR, manifest, codecov).join("\n");
+
+    it("passes the default status configured, and no status configuration at all", () => {
+      expect(found(status(THRESHOLD))).toBe("");
+      expect(found(null)).toBe("");
+      expect(found("ignore:\n  - src/x.ts\n")).toBe("");
+    });
+
+    it.each([
+      ["`project: off`", status("    project: off\n"), "turns `coverage.status.project` off (`off`)"],
+      ["`project: false`", status("    project: false\n"), "turns `coverage.status.project` off (`false`)"],
+      [
+        "`default: false`",
+        status("    project:\n      default: false\n"),
+        "turns `coverage.status.project.default` off (`false`)",
+      ],
+      [
+        "only a named status",
+        status("    project:\n      app:\n        target: 80%\n"),
+        "defines no `coverage.status.project.default`",
+      ],
+      [
+        "no project status",
+        "coverage:\n  status:\n    patch:\n      default: {}\n",
+        "defines no `coverage.status.project`",
+      ],
+    ])("rejects %s", (_, codecov, message) => {
+      expect(found(codecov)).toContain(message);
+    });
+
+    it("leaves a status nothing requires alone", () => {
+      expect(found(`coverage:\n  status:\n${THRESHOLD}    patch: off\n`)).toBe("");
+    });
+
+    it("reads a named context as the status of that name", () => {
+      const named = requiring({ codecov_contexts: ["codecov/project/app"] });
+      expect(found(status("    project:\n      app:\n        target: 80%\n"), named)).toBe("");
+      expect(found(status(THRESHOLD), named)).toContain("defines no `coverage.status.project.app`");
+      expect(found(null, named)).toContain("defines no `coverage.status`");
+    });
   });
 
   it("rejects a trigger filter, and a `types:` narrowed below the defaults", () => {
