@@ -2234,10 +2234,13 @@ const DEVICE_ENTRIES: ReadonlyArray<[string, LinkHolder | null]> = [
 /** Take the device link, or report that something else has it and refuse. */
 function holdDeviceLink(holder: LinkHolder): boolean {
   if (deviceLinkHolder !== null) {
-    // Reachable only past a disabled entry (a drop target, a keyboard path, a race
-    // between the click and the lock), so it is the belt rather than the affordance —
-    // but it says so, because an action that silently does nothing reads as a broken
-    // one.
+    // For an action whose entry syncDeviceActionUi disables, this is reachable only past
+    // that entry (a drop target, a keyboard path, a race between the click and the
+    // lock), so it is the belt rather than the affordance. It is the only refusal for an
+    // update install, whose Check now stays enabled while the link is held, and for the
+    // launch-time paths that have no entry: the update check at boot and the headless
+    // launch flags. Either way it says so, because an action that silently does nothing
+    // reads as a broken one.
     setStatus(t().status.deviceLinkBusy);
     return false;
   }
