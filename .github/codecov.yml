@@ -2,9 +2,10 @@
 # one that matters here is `project`: target `auto` (the base commit's coverage) with a
 # threshold of 0%, so ANY decrease fails the check.
 #
-# Four uploads arrive for a commit — `unit` from the frontend job, and `e2e` from each of
-# the three E2E shards. Codecov merges them: same flag or not, a line reached by any upload
-# is covered, which is what lets the tier be split across jobs without the figure moving
+# Four uploads arrive for a commit, all from ci.yml's `coverage` job — `unit` with the
+# frontend job's report, and `e2e` with each of the three E2E shards'. Codecov merges them:
+# same flag or not, a line reached by any upload is covered, which is what lets the tier
+# be split across jobs without the figure moving
 # (measured on the pull request that split it: 91.39%, -0.01% against its base).
 #
 # The E2E half is not reproducible to the line: a spec that races a repaint or a
@@ -58,3 +59,11 @@ coverage:
 ignore:
   - "src/i18n/en.ts"
   - "src/i18n/ja.ts"
+
+# Codecov posts its statuses once this many uploads have arrived for the commit, rather than
+# after each one. The `coverage` job in ci.yml makes every upload, after every job that
+# produces a report has finished; scripts/check-merge-gates.mjs holds this number equal to
+# that job's uploads and to the reports the jobs it needs produce.
+codecov:
+  notify:
+    after_n_builds: 4

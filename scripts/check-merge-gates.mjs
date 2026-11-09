@@ -17,7 +17,9 @@
 // One rule here is about no gate at all, and reaches every workflow: a step that fetches
 // from a host outside GitHub carries a `timeout-minutes` of its own, and a step `uses:`
 // an action this file does not classify is refused until it is classified (see
-// checkStepBounds).
+// checkStepBounds). Another reaches every workflow too: the uploads to Codecov are made
+// from one job after every report exists, one per report, and `.github/codecov.yml`'s
+// `codecov.notify.after_n_builds` is their number (see checkCodecovUploads).
 //
 //   node scripts/check-merge-gates.mjs            check .github/workflows against the manifest
 //   node scripts/check-merge-gates.mjs --ruleset  also diff the manifest against the live branch
@@ -37,9 +39,10 @@
 //   - The ruleset is repository state, not a file, and GITHUB_TOKEN cannot read it
 //     (`permissions:` has no administration scope), so CI checks the manifest against the
 //     workflows and `--ruleset` closes the other half from an admin's own machine.
-//   - A context reported by something other than GitHub Actions (Codecov's
-//     `codecov/project`, say) has no job to check, so the manifest rejects it by name
-//     instead of passing it over.
+//   - A context reported by something other than GitHub Actions has no job to check, so
+//     `contexts` refuses it by name instead of passing it over. The one exception is
+//     Codecov's, listed in `codecov_contexts`: what is checked for it is that the uploads
+//     it is computed from happen on every pull request (see checkCodecovRequired).
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -60,6 +63,9 @@ const finding = (where, message) => findings.push(`${where}: ${message}`);
 // Read out of the manifest, and only `--ruleset` reads it back: the workflow side has no
 // say in which app reports a job.
 let integrationId = null;
+// The required contexts Codecov reports rather than a workflow job, and Codecov's app id.
+let codecovContexts = new Set();
+let codecovIntegrationId = null;
 
 // --- the reader ---------------------------------------------------------------
 
@@ -438,33 +444,41 @@ function checkWorkflows(workflows, required) {
   return seen;
 }
 
+// The ways a `pull_request:` trigger leaves some pull requests with no run at all: a
+// filter key, and a `types:` that lists fewer than the three default events.
+function triggerGaps(workflow) {
+  const filters = ["paths", "paths-ignore", "branches", "branches-ignore"].filter((key) =>
+    workflow.pullRequest.children.has(key),
+  );
+  const types = listOf(workflow.pullRequest.children.get("types"));
+  const missingTypes = types.length
+    ? ["opened", "synchronize", "reopened"].filter((event) => !types.includes(event))
+    : [];
+  return { filters, missingTypes };
+}
+
 function checkJob(workflow, id, job, context) {
   const where = `${workflow.path} (${id})`;
+  const gaps = triggerGaps(workflow);
   // 1. The trigger has to be unfiltered, or the whole workflow — and this context with
   //    it — silently does not exist for the changes the filter excludes.
-  for (const key of ["paths", "paths-ignore", "branches", "branches-ignore"]) {
-    if (workflow.pullRequest.children.has(key)) {
-      finding(
-        where,
-        `\`on.pull_request.${key}\` skips the whole workflow, so required context \`${context}\` reports nothing at all ` +
-          `on an excluded pull request. Move the condition onto the jobs, where a skip reports success`,
-      );
-    }
+  for (const key of gaps.filters) {
+    finding(
+      where,
+      `\`on.pull_request.${key}\` skips the whole workflow, so required context \`${context}\` reports nothing at all ` +
+        `on an excluded pull request. Move the condition onto the jobs, where a skip reports success`,
+    );
   }
   // 1b. `types:` is a filter too, and the quietest one: the default set is opened +
   //     synchronize + reopened, and narrowing it (`types: [opened]`) leaves every later
   //     push to the branch with no run — so the context exists on the first commit and
   //     never on the head that gets merged. Narrowing is legal only by ADDING events.
-  const types = listOf(workflow.pullRequest.children.get("types"));
-  if (types.length) {
-    const missing = ["opened", "synchronize", "reopened"].filter((event) => !types.includes(event));
-    if (missing.length) {
-      finding(
-        where,
-        `\`on.pull_request.types\` omits ${missing.join(", ")}, so no run happens for that event and required context ` +
-          `\`${context}\` goes missing on the head commit it produces. List the three defaults and add to them`,
-      );
-    }
+  if (gaps.missingTypes.length) {
+    finding(
+      where,
+      `\`on.pull_request.types\` omits ${gaps.missingTypes.join(", ")}, so no run happens for that event and required context ` +
+        `\`${context}\` goes missing on the head commit it produces. List the three defaults and add to them`,
+    );
   }
   // 2. A matrix job reports one check per combination ("race (1)"), never the bare name.
   if (job.children.get("strategy")?.children.has("matrix")) {
@@ -874,6 +888,254 @@ function checkStepBounds(workflows) {
   }
 }
 
+// --- the Codecov upload count -----------------------------------------------------
+
+const CODECOV_CONFIG = ".github/codecov.yml";
+const CODECOV_ACTION = "codecov/codecov-action";
+
+// How many runs a job's matrix makes: the product of its keys' list lengths, 1 for a job
+// with no matrix, and null for a matrix this reader cannot count — an `include` or
+// `exclude`, an expression, or a value that is not a plain list.
+function combinationsOf(job) {
+  const matrix = job.children.get("strategy")?.children.get("matrix");
+  if (!matrix) return 1;
+  if (matrix.value || matrix.children.size === 0) return null;
+  let count = 1;
+  for (const [key, node] of matrix.children) {
+    if (key === "include" || key === "exclude") return null;
+    if (node.value && !node.value.startsWith("[")) return null;
+    if (/[[{]/.test(node.value.slice(1))) return null;
+    const values = listOf(node);
+    if (!values.length) return null;
+    count *= values.length;
+  }
+  return count;
+}
+
+// `codecov.notify.after_n_builds`, or Codecov's own default of 1 when the file or the key
+// is absent. `value` is null for a written value that is not a positive whole number.
+function afterNBuilds(source) {
+  if (source == null) return { value: 1, written: false };
+  const node = parse(source).children.get("codecov")?.children.get("notify")?.children.get("after_n_builds");
+  if (!node) return { value: 1, written: false };
+  const raw = unquote(node.value);
+  const value = /^[1-9]\d*$/.test(raw) ? Number(raw) : null;
+  return { value, written: true, raw };
+}
+
+// Codecov posts its statuses once `after_n_builds` uploads have arrived for a commit, and
+// computes them from what has arrived by then. This holds every upload to ONE job, with no
+// matrix, that needs every job producing a report; that job to one upload per report those
+// jobs produce, one per matrix combination; and `after_n_builds` to that number. A
+// matrix leg added without an upload is a report Codecov never sees, an upload with no
+// report behind it is one the count waits for and never gets, and an `after_n_builds` below
+// the uploads posts a status computed from part of them.
+//
+// Over every workflow, since an upload from any of them lands on the same commit.
+function codecovUploads(workflows) {
+  const uploads = [];
+  for (const workflow of workflows) {
+    if (!workflow.root) continue;
+    for (const [id, job] of workflow.jobs) {
+      for (const step of stepsOf(workflow.root, job)) {
+        if (step.keys.has("uses") && actionOf(step.keys.get("uses")) === CODECOV_ACTION) {
+          uploads.push({ workflow, id, job, step });
+        }
+      }
+    }
+  }
+  return uploads;
+}
+
+function checkCodecovUploads(uploads, codecovSource) {
+  const builds = afterNBuilds(codecovSource);
+  if (builds.value === null) {
+    finding(CODECOV_CONFIG, `\`codecov.notify.after_n_builds\` is \`${builds.raw}\`, which is not a count of uploads`);
+    return;
+  }
+  if (!uploads.length) {
+    if (builds.written) {
+      finding(
+        CODECOV_CONFIG,
+        `\`codecov.notify.after_n_builds\` waits for ${builds.value} upload(s) and no workflow uploads to Codecov`,
+      );
+    }
+    return;
+  }
+  const owners = [...new Set(uploads.map(({ workflow, id }) => `${workflow.path} (${id})`))];
+  if (owners.length > 1) {
+    finding(
+      owners[0],
+      `Codecov uploads are made from ${owners.join(", ")} — each job uploads as it finishes, so Codecov can ` +
+        `post a status from part of the reports. Make every upload from one job that needs every job producing one`,
+    );
+    return;
+  }
+  const { workflow, id, job } = uploads[0];
+  const where = owners[0];
+  if (job.children.get("strategy")?.children.has("matrix")) {
+    finding(
+      where,
+      "uploads to Codecov from a matrix job — each combination uploads as it finishes, so Codecov can post a " +
+        "status from part of the reports. Make the uploads from one job with no matrix",
+    );
+    return;
+  }
+  let reports = 0;
+  const parts = [];
+  for (const need of listOf(job.children.get("needs"))) {
+    const producer = workflow.jobs.get(need);
+    if (!producer) {
+      finding(where, `uploads to Codecov and needs \`${need}\`, which ${workflow.path} does not define`);
+      return;
+    }
+    const combinations = combinationsOf(producer);
+    if (combinations === null) {
+      finding(
+        where,
+        `uploads to Codecov and needs \`${need}\`, whose matrix this checker cannot count — write it as keys ` +
+          "holding plain lists, with no `include` or `exclude`",
+      );
+      return;
+    }
+    reports += combinations;
+    parts.push(`${need} ${combinations}`);
+  }
+  if (uploads.length !== reports) {
+    finding(
+      where,
+      `makes ${uploads.length} Codecov upload(s), but the jobs it needs produce ${reports} report(s) ` +
+        `(${parts.join(" + ") || "it needs none"}) — one upload per report, one report per matrix combination`,
+    );
+  }
+  if (uploads.length !== builds.value) {
+    const setting = builds.written ? `is ${builds.value}` : "is unset, which Codecov reads as 1";
+    finding(
+      CODECOV_CONFIG,
+      `\`codecov.notify.after_n_builds\` ${setting}, but ${where} makes ${uploads.length} upload(s) — ` +
+        "Codecov posts its statuses once that many have arrived, computed from those alone",
+    );
+  }
+}
+
+const DISABLED = /^(false|off|no|n)$/i;
+
+// Whether `.github/codecov.yml` has Codecov post a context: `codecov/<kind>` is the
+// `default` status under `coverage.status.<kind>`, and `codecov/<kind>/<name>` the status
+// named `<name>`. With no `coverage.status` at all Codecov posts its default `project` and
+// `patch` statuses, and `coverage.status.<kind>: true` turns on that kind's default status
+// alone. Returns the reason the context is not posted, or null.
+function codecovStatusGap(context, codecovSource) {
+  const [, kind, name = "default"] = context.split("/");
+  const status = codecovSource == null ? null : parse(codecovSource).children.get("coverage")?.children.get("status");
+  if (!status) {
+    return name === "default" && (kind === "project" || kind === "patch")
+      ? null
+      : `${CODECOV_CONFIG} defines no \`coverage.status\`, so only the default project and patch statuses are posted`;
+  }
+  const kindNode = status.children.get(kind);
+  if (!kindNode) return `${CODECOV_CONFIG} defines no \`coverage.status.${kind}\``;
+  const kindValue = unquote(kindNode.value);
+  if (DISABLED.test(kindValue)) {
+    return `${CODECOV_CONFIG} turns \`coverage.status.${kind}\` off (\`${kindNode.value}\`)`;
+  }
+  if (/^true$/i.test(kindValue)) {
+    return name === "default"
+      ? null
+      : `${CODECOV_CONFIG} sets \`coverage.status.${kind}: ${kindNode.value}\`, which turns on the default status alone`;
+  }
+  if (kindValue.startsWith("{")) {
+    return `${CODECOV_CONFIG} writes \`coverage.status.${kind}\` as a flow mapping; write it in block form so this checker can read it`;
+  }
+  if (kindValue) {
+    return `${CODECOV_CONFIG} sets \`coverage.status.${kind}\` to \`${kindNode.value}\`, which is neither a status definition nor \`true\``;
+  }
+  const statusNode = kindNode.children.get(name);
+  if (!statusNode) return `${CODECOV_CONFIG} defines no \`coverage.status.${kind}.${name}\``;
+  if (DISABLED.test(unquote(statusNode.value))) {
+    return `${CODECOV_CONFIG} turns \`coverage.status.${kind}.${name}\` off (\`${statusNode.value}\`)`;
+  }
+  return null;
+}
+
+// A required context Codecov reports exists on a pull request only once that pull request's
+// uploads have arrived and Codecov is configured to post it. So the workflow making the
+// uploads triggers on every pull request, the uploading job and every job it waits for,
+// transitively, carry no condition but `always()`, and so does each upload step; and
+// `.github/codecov.yml` defines that status and leaves it on. A pull request a trigger
+// filter or a condition leaves without uploads, or a status the configuration turns off, is
+// one whose required context never reports, and that merge waits forever.
+function checkCodecovRequired(uploads, contexts, codecovSource) {
+  if (!contexts.size) return;
+  const names = [...contexts].map((context) => `\`${context}\``).join(", ");
+  for (const context of contexts) {
+    const gap = codecovStatusGap(context, codecovSource);
+    if (gap) finding(MANIFEST, `requires \`${context}\`, but ${gap} — it never reports`);
+  }
+  if (!uploads.length) {
+    finding(MANIFEST, `requires ${names}, but no workflow uploads to Codecov, so it never reports`);
+    return;
+  }
+  for (const { workflow, id, step } of uploads) {
+    const cond = unquote(step.keys.get("if") ?? "")
+      .replace(/^\$\{\{|\}\}$/g, "")
+      .trim();
+    if (cond && cond !== "always()") {
+      finding(
+        `${workflow.path}:${step.line} (${id})`,
+        `a Codecov upload carries \`if: ${cond}\` — a pull request the condition skips misses that upload, ` +
+          `Codecov waits for it, and required ${names} never reports on it`,
+      );
+    }
+  }
+  const owners = new Map();
+  for (const { workflow, id } of uploads) owners.set(`${workflow.path} (${id})`, { workflow, id });
+  for (const [where, { workflow, id }] of owners) {
+    if (!workflow.pullRequest) {
+      finding(where, `uploads to Codecov for required ${names}, but ${workflow.path} does not run on pull_request`);
+      continue;
+    }
+    const gaps = triggerGaps(workflow);
+    for (const key of gaps.filters) {
+      finding(
+        where,
+        `\`on.pull_request.${key}\` skips the workflow that uploads to Codecov, so required ${names} never reports ` +
+          "on an excluded pull request",
+      );
+    }
+    if (gaps.missingTypes.length) {
+      finding(
+        where,
+        `\`on.pull_request.types\` omits ${gaps.missingTypes.join(", ")}, so the head commit that event produces gets ` +
+          `no Codecov uploads and required ${names} never reports on it`,
+      );
+    }
+    const visited = new Set();
+    const pending = [id];
+    while (pending.length) {
+      const next = pending.shift();
+      if (visited.has(next)) continue;
+      visited.add(next);
+      const job = workflow.jobs.get(next);
+      if (!job) continue;
+      const cond = condition(job);
+      if (cond !== null && cond !== "always()") {
+        finding(
+          `${workflow.path} (${next})`,
+          `carries \`if: ${cond}\`, and the Codecov uploads in ${where} wait for it — a pull request the condition ` +
+            `skips gets no uploads, and required ${names} never reports on it`,
+        );
+      }
+      pending.push(...listOf(job.children.get("needs")));
+    }
+  }
+}
+
+function readCodecovSource() {
+  const path = join(ROOT, CODECOV_CONFIG);
+  return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
 // --- the manifest -------------------------------------------------------------
 
 function readManifestSource() {
@@ -882,6 +1144,8 @@ function readManifestSource() {
 }
 
 function readManifest(source) {
+  codecovContexts = new Set();
+  codecovIntegrationId = null;
   if (source === null) {
     finding(MANIFEST, "missing — the list of required contexts has no source of truth");
     return new Set();
@@ -913,7 +1177,28 @@ function readManifest(source) {
     } else if (context.includes("/")) {
       finding(
         MANIFEST,
-        `\`${context}\` looks like a third-party check (Codecov and friends); this file only carries contexts a workflow job reports`,
+        `\`${context}\` looks like a third-party check (Codecov and friends); \`contexts\` only carries contexts a ` +
+          "workflow job reports, and a Codecov one goes in `codecov_contexts`",
+      );
+    }
+  }
+  const codecov = parsed.codecov_contexts;
+  if (codecov !== undefined) {
+    if (!Array.isArray(codecov)) {
+      finding(MANIFEST, "`codecov_contexts` is not a list");
+    } else {
+      for (const context of codecov) {
+        if (typeof context === "string" && context.startsWith("codecov/")) codecovContexts.add(context);
+        else
+          finding(MANIFEST, `\`${JSON.stringify(context)}\` in \`codecov_contexts\` is not a context Codecov reports`);
+      }
+    }
+    codecovIntegrationId = parsed.codecov_integration_id ?? null;
+    if (codecovContexts.size && !(Number.isInteger(codecovIntegrationId) && codecovIntegrationId > 0)) {
+      finding(
+        MANIFEST,
+        "`codecov_integration_id` is missing or not a positive integer — `--ruleset` cannot check that Codecov reports " +
+          "the contexts in `codecov_contexts`",
       );
     }
   }
@@ -1052,7 +1337,7 @@ function readRulesets() {
 
 // Reported per ruleset rather than as one union: two rulesets requiring different sets is
 // itself the thing worth seeing. Returns the lines to print; findings go to the list.
-function compareRulesets({ repo, defaultBranch, details }, required, integrationId) {
+function compareRulesets({ repo, defaultBranch, details }, required, integrationId, codecov, codecovId) {
   const notes = [];
   let carrying = 0;
   for (const detail of details) {
@@ -1101,10 +1386,14 @@ function compareRulesets({ repo, defaultBranch, details }, required, integration
     const entries = rule.parameters?.required_status_checks ?? [];
     const live = new Map(entries.map((check) => [check.context, check.integration_id]));
     for (const [context, appId] of live) {
-      if (!required.has(context)) {
+      const fromCodecov = codecov.has(context);
+      if (!required.has(context) && !fromCodecov) {
         finding(where, `requires \`${context}\`, which ${MANIFEST} does not list — nothing checks that it can report`);
         continue;
       }
+      const expected = fromCodecov ? codecovId : integrationId;
+      const provider = fromCodecov ? "Codecov" : "GitHub Actions";
+      const reporter = fromCodecov ? "Codecov" : "a workflow job";
       // A name alone is not the rule. An entry pinned to the wrong app is satisfied by
       // nothing this repository can produce — the check goes green and the merge stays
       // blocked, with the two halves of the reason in different places. An entry pinned to
@@ -1112,16 +1401,16 @@ function compareRulesets({ repo, defaultBranch, details }, required, integration
       if (appId === undefined || appId === null) {
         finding(
           where,
-          `requires \`${context}\` from any provider — pin \`integration_id\` to ${integrationId} so only GitHub Actions can satisfy it`,
+          `requires \`${context}\` from any provider — pin \`integration_id\` to ${expected} so only ${provider} can satisfy it`,
         );
-      } else if (integrationId !== null && appId !== integrationId) {
+      } else if (expected !== null && appId !== expected) {
         finding(
           where,
-          `requires \`${context}\` from app ${appId}, but a workflow job reports it as app ${integrationId} — that rule can never be satisfied`,
+          `requires \`${context}\` from app ${appId}, but ${reporter} reports it as app ${expected} — that rule can never be satisfied`,
         );
       }
     }
-    for (const context of required) {
+    for (const context of [...required, ...codecov]) {
       if (!live.has(context)) {
         finding(where, `does not require \`${context}\`, which ${MANIFEST} lists`);
       }
@@ -1137,7 +1426,7 @@ function compareRulesets({ repo, defaultBranch, details }, required, integration
 // The whole judgement, with every read already done by the caller. The CLI below is the
 // only thing that touches the filesystem or gh; this is what scripts/check-merge-gates.test.mjs
 // drives, so the tests exercise the composition and not a paraphrase of it.
-export function inspect({ workflowSources, manifestSource, ruleset = null }) {
+export function inspect({ workflowSources, manifestSource, codecovSource = null, ruleset = null }) {
   findings.length = 0;
   const required = readManifest(manifestSource);
   const workflows = readWorkflows(workflowSources);
@@ -1145,8 +1434,11 @@ export function inspect({ workflowSources, manifestSource, ruleset = null }) {
   checkPreconditionChains(workflows);
   checkPullRequestFieldConsumers(workflows);
   checkStepBounds(workflows);
-  const notes = ruleset ? compareRulesets(ruleset, required, integrationId) : [];
-  return { findings: findings.slice(), required, workflows, seen, notes };
+  const uploads = codecovUploads(workflows);
+  checkCodecovUploads(uploads, codecovSource);
+  checkCodecovRequired(uploads, codecovContexts, codecovSource);
+  const notes = ruleset ? compareRulesets(ruleset, required, integrationId, codecovContexts, codecovIntegrationId) : [];
+  return { findings: findings.slice(), required, codecov: codecovContexts, workflows, seen, notes };
 }
 
 // --- the command -----------------------------------------------------------------
@@ -1165,17 +1457,19 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
       process.exit(0);
     }
     const rel = (file ?? "").split("\\").join("/");
-    const relevant = /\.github\/workflows\/[^/]+\.ya?ml$/.test(rel) || rel.endsWith(MANIFEST);
+    const relevant =
+      /\.github\/workflows\/[^/]+\.ya?ml$/.test(rel) || rel.endsWith(MANIFEST) || rel.endsWith(CODECOV_CONFIG);
     if (!relevant) process.exit(0);
   }
 
   const manifestSource = readManifestSource();
   const workflowSources = readWorkflowSources();
+  const codecovSource = readCodecovSource();
   // Read before inspect(), which clears the list — so a gh failure is carried across and
   // reported alongside the rest rather than being dropped by the reset.
   const ruleset = argv.includes("--ruleset") ? readRulesets() : null;
   const pending = findings.slice();
-  const run = inspect({ workflowSources, manifestSource, ruleset });
+  const run = inspect({ workflowSources, manifestSource, codecovSource, ruleset });
   const all = [...pending, ...run.findings];
 
   if (all.length) {
@@ -1191,10 +1485,11 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   const prWorkflows = run.workflows.filter((workflow) => workflow.pullRequest);
   const silent = prWorkflows.filter((workflow) => ![...run.seen.values()].includes(workflow.path));
   console.log(
-    `OK: ${run.required.size} required context(s) over ${prWorkflows.length} pull-request workflow(s), ` +
-      `all reportable on every pull request; declared preconditions and step bounds hold across ` +
-      `${run.workflows.length} workflow(s)`,
+    `OK: ${run.required.size + run.codecov.size} required context(s) over ${prWorkflows.length} pull-request ` +
+      `workflow(s), all reportable on every pull request; declared preconditions, step bounds and the Codecov ` +
+      `upload count hold across ${run.workflows.length} workflow(s)`,
   );
   for (const [context, path] of run.seen) console.log(`    ${context} <- ${path}`);
+  for (const context of run.codecov) console.log(`    ${context} <- Codecov, from the uploads`);
   if (silent.length) console.log(`    advisory only (no required context): ${silent.map((w) => w.path).join(", ")}`);
 }

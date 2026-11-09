@@ -875,3 +875,364 @@ ${steps}`;
     expect(boundsIn(bounded)).toEqual([]);
   });
 });
+
+describe("the Codecov upload count", () => {
+  const upload = (name) => `      - name: ${name}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        timeout-minutes: 5
+        with:
+          name: ${name}
+`;
+  // ci.yml's arrangement: one job producing a report, one matrix job producing one per
+  // shard, and a job that needs both and makes one upload per report.
+  const HEALTHY_UPLOADS = `name: A
+on:
+  push:
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo unit
+  e2e:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - run: echo e2e
+  coverage:
+    needs: [unit, e2e]
+    runs-on: ubuntu-latest
+    steps:
+${upload("unit")}${upload("e2e-1")}${upload("e2e-2")}${upload("e2e-3")}`;
+  const waitsFor = (n) => `codecov:\n  notify:\n    after_n_builds: ${n}\n`;
+  const uploadFindings = (text, codecovSource = waitsFor(4)) =>
+    inspect({
+      workflowSources: [{ path: ".github/workflows/a.yml", text }],
+      manifestSource: MANIFEST,
+      codecovSource,
+    }).findings.filter((f) => /Codecov|after_n_builds/.test(f));
+
+  it("passes one upload per report from a job that needs every producer", () => {
+    expect(uploadFindings(HEALTHY_UPLOADS)).toEqual([]);
+  });
+
+  // A matrix leg added without an upload is a report Codecov never sees.
+  it("rejects a shard added without an upload", () => {
+    const text = HEALTHY_UPLOADS.replace("shard: [1, 2, 3]", "shard: [1, 2, 3, 4]");
+    expect(uploadFindings(text).join("\n")).toContain("produce 5 report(s) (unit 1 + e2e 4)");
+  });
+
+  // An upload dropped leaves a report behind, and leaves the count waiting for one more.
+  it("rejects an upload dropped, against both the reports and the waiting count", () => {
+    const found = uploadFindings(HEALTHY_UPLOADS.replace(upload("e2e-3"), ""));
+    expect(found.join("\n")).toContain("makes 3 Codecov upload(s), but the jobs it needs produce 4");
+    expect(found.join("\n")).toContain("`codecov.notify.after_n_builds` is 4, but");
+  });
+
+  // Codecov's default posts after the first upload, which is the partial status this exists
+  // to keep out; a count written below the uploads does the same later.
+  it("rejects a waiting count that is unset or below the uploads, and accepts it once equal", () => {
+    expect(uploadFindings(HEALTHY_UPLOADS, null).join("\n")).toContain("is unset, which Codecov reads as 1");
+    expect(uploadFindings(HEALTHY_UPLOADS, "coverage:\n  status: {}\n").join("\n")).toContain("is unset");
+    expect(uploadFindings(HEALTHY_UPLOADS, waitsFor(3)).join("\n")).toContain("is 3, but");
+    expect(uploadFindings(HEALTHY_UPLOADS, waitsFor(5)).join("\n")).toContain("is 5, but");
+    expect(uploadFindings(HEALTHY_UPLOADS, `# the count\n${waitsFor(4)}`)).toEqual([]);
+  });
+
+  it("refuses a waiting count that is not a count", () => {
+    expect(uploadFindings(HEALTHY_UPLOADS, waitsFor("four")).join("\n")).toContain("which is not a count");
+    expect(uploadFindings(HEALTHY_UPLOADS, waitsFor(0)).join("\n")).toContain("which is not a count");
+  });
+
+  // The arrangement that posted partial statuses: each job uploading its own report.
+  it("rejects uploads made from the jobs that produce the reports", () => {
+    const text = HEALTHY_UPLOADS.replace("      - run: echo e2e\n", `      - run: echo e2e\n${upload("e2e")}`);
+    expect(uploadFindings(text).join("\n")).toContain(
+      "Codecov uploads are made from .github/workflows/a.yml (e2e), .github/workflows/a.yml (coverage)",
+    );
+  });
+
+  it("rejects an uploading job that is itself a matrix", () => {
+    const text = HEALTHY_UPLOADS.replace(
+      "    needs: [unit, e2e]\n",
+      "    needs: [unit, e2e]\n    strategy:\n      matrix:\n        n: [1]\n",
+    );
+    expect(uploadFindings(text).join("\n")).toContain("uploads to Codecov from a matrix job");
+  });
+
+  // Every key multiplies, and a block list counts the same as a flow one.
+  it("counts every matrix combination, in either list form", () => {
+    const blockList = HEALTHY_UPLOADS.replace(
+      "shard: [1, 2, 3]",
+      "shard:\n          - 1\n          - 2\n          - 3",
+    );
+    expect(uploadFindings(blockList)).toEqual([]);
+    const product = HEALTHY_UPLOADS.replace("shard: [1, 2, 3]", "shard: [1]\n        os: [a, b, c]");
+    expect(uploadFindings(product)).toEqual([]);
+    const larger = HEALTHY_UPLOADS.replace("shard: [1, 2, 3]", "shard: [1, 2]\n        os: [a, b]");
+    expect(uploadFindings(larger).join("\n")).toContain("produce 5 report(s) (unit 1 + e2e 4)");
+  });
+
+  // A count this reader cannot take is refused by name rather than guessed.
+  it.each([
+    ["an `include`", "shard: [1, 2, 3]\n        include:\n          - shard: 4"],
+    ["an expression", "shard: ${{ fromJSON(needs.plan.outputs.shards) }}"],
+    ["a nested list", "shard: [[1, 2], [3]]"],
+  ])("refuses a producer matrix with %s", (_, matrix) => {
+    const text = HEALTHY_UPLOADS.replace("shard: [1, 2, 3]", matrix);
+    expect(uploadFindings(text).join("\n")).toContain("whose matrix this checker cannot count");
+  });
+
+  it("refuses a need the workflow does not define", () => {
+    const text = HEALTHY_UPLOADS.replace("needs: [unit, e2e]", "needs: [unit, e2e, lint]");
+    expect(uploadFindings(text).join("\n")).toContain("needs `lint`, which .github/workflows/a.yml does not define");
+  });
+
+  // Uploads from another workflow land on the same commit, so they are counted together.
+  it("counts uploads across workflows", () => {
+    const other = `name: B
+on:
+  push:
+jobs:
+  extra:
+    runs-on: ubuntu-latest
+    steps:
+${upload("extra")}`;
+    const found = inspect({
+      workflowSources: [
+        { path: ".github/workflows/a.yml", text: HEALTHY_UPLOADS },
+        { path: ".github/workflows/b.yml", text: other },
+      ],
+      manifestSource: MANIFEST,
+      codecovSource: waitsFor(4),
+    }).findings;
+    expect(found.join("\n")).toContain(".github/workflows/a.yml (coverage), .github/workflows/b.yml (extra)");
+  });
+
+  it("refuses a waiting count with nothing uploading, and says nothing when neither is there", () => {
+    const none = HEALTHY_UPLOADS.replace(/      - name: [\s\S]*$/, "      - run: echo none\n");
+    expect(uploadFindings(none).join("\n")).toContain("no workflow uploads to Codecov");
+    expect(uploadFindings(none, null)).toEqual([]);
+  });
+});
+
+describe("a required context Codecov reports", () => {
+  const upload = (name) => `      - name: ${name}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        timeout-minutes: 5
+        with:
+          name: ${name}
+`;
+  // ci.yml's arrangement: the uploads wait for the producers, the producers wait for a
+  // preflight, and nothing on that chain carries a condition.
+  const UPLOADED_ON_EVERY_PR = `name: A
+on:
+  pull_request:
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo scope
+  unit:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo unit
+  coverage:
+    needs: [unit]
+    runs-on: ubuntu-latest
+    steps:
+${upload("unit")}`;
+  const requiring = (extra = {}) =>
+    JSON.stringify({
+      integration_id: 15368,
+      contexts: ["gate"],
+      codecov_integration_id: 254,
+      codecov_contexts: ["codecov/project"],
+      ...extra,
+    });
+  const requiredFindings = (text, manifest = requiring(), codecovSource = null) =>
+    inspect({
+      workflowSources: [{ path: ".github/workflows/a.yml", text }],
+      manifestSource: manifest,
+      codecovSource,
+    }).findings.filter((f) => /codecov/.test(f));
+
+  it("passes uploads that run on every pull request", () => {
+    expect(requiredFindings(UPLOADED_ON_EVERY_PR)).toEqual([]);
+  });
+
+  // The documentation-only skip ci.yml carried: a condition anywhere on the chain the
+  // uploads wait for leaves the pull requests it skips with nothing for Codecov to report.
+  it.each(["preflight", "unit", "coverage"])("rejects a condition on `%s`, which the uploads wait for", (job) => {
+    const text = UPLOADED_ON_EVERY_PR.replace(
+      `  ${job}:\n`,
+      `  ${job}:\n    if: needs.preflight.outputs.code == 'true'\n`,
+    );
+    expect(requiredFindings(text).join("\n")).toContain(
+      `.github/workflows/a.yml (${job}): carries \`if: needs.preflight.outputs.code == 'true'\``,
+    );
+  });
+
+  it("accepts `always()`, which skips no pull request", () => {
+    const text = UPLOADED_ON_EVERY_PR.replace("  coverage:\n", "  coverage:\n    if: always()\n");
+    expect(requiredFindings(text)).toEqual([]);
+  });
+
+  // The same skip written on the upload step rather than on a job: the pull requests it
+  // skips are one upload short of the count Codecov waits for.
+  it("rejects a condition on an upload step, and accepts `always()` there", () => {
+    const step = (cond) =>
+      UPLOADED_ON_EVERY_PR.replace("      - name: unit\n", `      - name: unit\n        if: ${cond}\n`);
+    expect(requiredFindings(step("github.event_name == 'push'")).join("\n")).toContain(
+      "a Codecov upload carries `if: github.event_name == 'push'`",
+    );
+    expect(requiredFindings(step("${{ github.event_name == 'push' }}")).join("\n")).toContain(
+      "a Codecov upload carries `if: github.event_name == 'push'`",
+    );
+    expect(requiredFindings(step("always()"))).toEqual([]);
+  });
+
+  // Codecov posts `codecov/project` from the `default` status under `coverage.status.project`,
+  // and with no `coverage.status` at all from its own defaults.
+  describe("against the status configuration", () => {
+    const status = (project) => `coverage:\n  status:\n${project}    patch:\n      default: {}\n`;
+    const THRESHOLD = "    project:\n      default:\n        threshold: 0.05%\n";
+    const found = (codecov, manifest = requiring()) =>
+      requiredFindings(UPLOADED_ON_EVERY_PR, manifest, codecov).join("\n");
+
+    it("passes the default status configured, and no status configuration at all", () => {
+      expect(found(status(THRESHOLD))).toBe("");
+      expect(found(null)).toBe("");
+      expect(found("ignore:\n  - src/x.ts\n")).toBe("");
+    });
+
+    // Codecov's own basic configuration turns the default status on with `project: true`.
+    it("passes `project: true`, which turns on the default status alone", () => {
+      expect(found(status("    project: true\n"))).toBe("");
+      const named = requiring({ codecov_contexts: ["codecov/project/app"] });
+      expect(found(status("    project: true\n"), named)).toContain("which turns on the default status alone");
+    });
+
+    it.each([
+      ["a flow mapping", "    project: { default: { threshold: 1% } }\n", "as a flow mapping; write it in block form"],
+      ["another scalar", "    project: yes\n", "to `yes`, which is neither a status definition nor `true`"],
+    ])("refuses %s it cannot read as a status", (_, project, message) => {
+      expect(found(status(project))).toContain(message);
+    });
+
+    it.each([
+      ["`project: off`", status("    project: off\n"), "turns `coverage.status.project` off (`off`)"],
+      ["`project: false`", status("    project: false\n"), "turns `coverage.status.project` off (`false`)"],
+      [
+        "`default: false`",
+        status("    project:\n      default: false\n"),
+        "turns `coverage.status.project.default` off (`false`)",
+      ],
+      [
+        "only a named status",
+        status("    project:\n      app:\n        target: 80%\n"),
+        "defines no `coverage.status.project.default`",
+      ],
+      [
+        "no project status",
+        "coverage:\n  status:\n    patch:\n      default: {}\n",
+        "defines no `coverage.status.project`",
+      ],
+    ])("rejects %s", (_, codecov, message) => {
+      expect(found(codecov)).toContain(message);
+    });
+
+    it("leaves a status nothing requires alone", () => {
+      expect(found(`coverage:\n  status:\n${THRESHOLD}    patch: off\n`)).toBe("");
+    });
+
+    it("reads a named context as the status of that name", () => {
+      const named = requiring({ codecov_contexts: ["codecov/project/app"] });
+      expect(found(status("    project:\n      app:\n        target: 80%\n"), named)).toBe("");
+      expect(found(status(THRESHOLD), named)).toContain("defines no `coverage.status.project.app`");
+      expect(found(null, named)).toContain("defines no `coverage.status`");
+    });
+  });
+
+  it("rejects a trigger filter, and a `types:` narrowed below the defaults", () => {
+    const filtered = UPLOADED_ON_EVERY_PR.replace(
+      "  pull_request:\n",
+      "  pull_request:\n    paths-ignore:\n      - 'docs/**'\n",
+    );
+    expect(requiredFindings(filtered).join("\n")).toContain("`on.pull_request.paths-ignore` skips the workflow");
+    const narrowed = UPLOADED_ON_EVERY_PR.replace("  pull_request:\n", "  pull_request:\n    types: [opened]\n");
+    expect(requiredFindings(narrowed).join("\n")).toContain("omits synchronize, reopened");
+  });
+
+  it("rejects uploads from a workflow that does not run on pull_request", () => {
+    const text = UPLOADED_ON_EVERY_PR.replace("  pull_request:\n", "  push:\n");
+    expect(requiredFindings(text).join("\n")).toContain("does not run on pull_request");
+  });
+
+  it("rejects a required Codecov context with nothing uploading", () => {
+    const text = UPLOADED_ON_EVERY_PR.replace(upload("unit"), "      - run: echo none\n");
+    expect(requiredFindings(text).join("\n")).toContain("no workflow uploads to Codecov, so it never reports");
+  });
+
+  // Without the list the same skip is only advisory, which is what keeps the rule from
+  // firing on a repository whose Codecov statuses are not a merge condition.
+  it("says nothing about a skipped upload when no Codecov context is required", () => {
+    const text = UPLOADED_ON_EVERY_PR.replace("  unit:\n", "  unit:\n    if: github.event_name == 'push'\n");
+    expect(requiredFindings(text, MANIFEST)).toEqual([]);
+    expect(requiredFindings(text).join("\n")).toContain("(unit): carries");
+  });
+
+  it("refuses an entry Codecov does not report, and a missing app id", () => {
+    expect(requiredFindings(UPLOADED_ON_EVERY_PR, requiring({ codecov_contexts: ["lint"] })).join("\n")).toContain(
+      '`"lint"` in `codecov_contexts` is not a context Codecov reports',
+    );
+    expect(
+      requiredFindings(UPLOADED_ON_EVERY_PR, requiring({ codecov_integration_id: undefined })).join("\n"),
+    ).toContain("`codecov_integration_id` is missing");
+  });
+
+  it("keeps refusing a Codecov context written into `contexts`", () => {
+    const manifest = JSON.stringify({ integration_id: 15368, contexts: ["gate", "codecov/project"] });
+    expect(findingsOf(HEALTHY, { manifest }).join("\n")).toContain("a Codecov one goes in `codecov_contexts`");
+  });
+
+  describe("against the live ruleset", () => {
+    const ruleset = (checks) => ({
+      repo: "owner/repo",
+      defaultBranch: "main",
+      details: [
+        {
+          name: "main",
+          conditions: { ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] } },
+          rules: [{ type: "required_status_checks", parameters: { required_status_checks: checks } }],
+        },
+      ],
+    });
+    const compare = (checks) =>
+      inspect({
+        workflowSources: [{ path: ".github/workflows/a.yml", text: HEALTHY }],
+        manifestSource: requiring(),
+        ruleset: ruleset(checks),
+      }).findings.join("\n");
+    const gate = { context: "gate", integration_id: 15368 };
+
+    it("passes the Codecov context pinned to Codecov's app", () => {
+      expect(compare([gate, { context: "codecov/project", integration_id: 254 }])).not.toMatch(/ruleset/);
+    });
+
+    it("reports it pinned to GitHub Actions, which never reports it", () => {
+      expect(compare([gate, { context: "codecov/project", integration_id: 15368 }])).toContain(
+        "requires `codecov/project` from app 15368, but Codecov reports it as app 254",
+      );
+    });
+
+    it("reports it pinned to no app, and missing from the ruleset", () => {
+      expect(compare([gate, { context: "codecov/project" }])).toContain(
+        "pin `integration_id` to 254 so only Codecov can satisfy it",
+      );
+      expect(compare([gate])).toContain("does not require `codecov/project`");
+    });
+  });
+});

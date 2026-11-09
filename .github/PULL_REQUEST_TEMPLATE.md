@@ -15,8 +15,7 @@
 ## Testing
 
 <!-- Only what this PR's own checks do not already report. The build, the unit tests and
-     the ordinary E2E tier run on any PR that is not Markdown/docs-only, and their result
-     is in the checks above — do not restate them here.
+     the ordinary E2E tier run on every PR, and their result is in the checks above — do not restate them here.
 
      The assumptions line is answered, never used to defer. Write each assumption as a
      nested list item opening with the external thing its observation needs — [hardware] a

@@ -1,7 +1,7 @@
 name: Docs
 
 # The document-structure checks, and the "## Reusable assets" index in both directions.
-# ci.yml's expensive jobs skip a doc-only change, so this is where documentation is
+# Most of ci.yml's expensive jobs skip a doc-only change, so this is where documentation is
 # verified instead. Runs on external PRs too, which the local Claude Code hook cannot
 # cover.
 #
