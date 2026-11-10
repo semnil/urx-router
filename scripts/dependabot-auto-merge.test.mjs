@@ -11,7 +11,9 @@
 // multi-dependency ones are the arrangement fetch-metadata's summary outputs read wrongly,
 // which is why the block reads every dependency instead. The stub answers the pull request's
 // commit list in the shape the REST pulls API returns it, because fetch-metadata reads the
-// first commit alone.
+// first commit alone. It can also be told to fail the first calls of one kind, the way the
+// GitHub CLI fails on an error the API answers with, and a stub `sleep` records each wait the
+// block asks for instead of waiting.
 
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -98,9 +100,17 @@ const LCD_SIM_COMMIT = dependency(
   "2612f186cf4796f93afa8e12719d958b1a3efc91",
 );
 
+// `failures` names how many calls of a kind fail before one succeeds: `commits` the commit
+// list, `view` the read of the head and of auto-merge, `enable` and `disable` the two writes.
 function run(
   updated,
-  { autoMerge = "false", commits = DEPENDABOT_AT_HEAD, metadataOutcome = "success", currentHead = HEAD_SHA } = {},
+  {
+    autoMerge = "false",
+    commits = DEPENDABOT_AT_HEAD,
+    metadataOutcome = "success",
+    currentHead = HEAD_SHA,
+    failures = {},
+  } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "urx-dependabot-auto-merge-"));
   mkdirSync(join(dir, "bin"));
@@ -108,14 +118,30 @@ function run(
   writeFileSync(calls, "");
   const commitsFile = join(dir, "commits.json");
   if (commits !== null) writeFileSync(commitsFile, JSON.stringify(commits));
+  for (const [kind, count] of Object.entries(failures)) writeFileSync(join(dir, `fail-${kind}`), String(count));
   // A path goes into the stub quoted: bare, bash reads the backslashes of a Windows path as
   // escapes and writes to a different file.
   const q = JSON.stringify;
+  writeFileSync(join(dir, "bin", "sleep"), ["#!/bin/bash", `printf '%s\\n' "sleep $*" >> ${q(calls)}`].join("\n"), {
+    mode: 0o755,
+  });
   writeFileSync(
     join(dir, "bin", "gh"),
     [
       "#!/bin/bash",
       `printf '%s\\n' "gh $*" >> ${q(calls)}`,
+      "kind=",
+      'if [[ "$1" == "api" ]]; then kind=commits; fi',
+      'if [[ "$1 $2" == "pr view" ]]; then kind=view; fi',
+      'if [[ "$1 $2 $3" == "pr merge --auto" ]]; then kind=enable; fi',
+      'if [[ "$1 $2 $3" == "pr merge --disable-auto" ]]; then kind=disable; fi',
+      `left=$(cat ${q(join(dir, "fail-"))}"$kind" 2>/dev/null || echo 0)`,
+      'if [[ "$left" -gt 0 ]]; then',
+      `  echo $((left - 1)) > ${q(join(dir, "fail-"))}"$kind"`,
+      // The GitHub CLI prints the body of an error answer on stdout and its reading of it on stderr.
+      `  echo '{"message":"Server Error"}'`,
+      `  echo "stub gh: the $kind call failed" >&2; exit 1`,
+      "fi",
       'if [[ "$1" == "api" ]]; then',
       commits === null ? "  echo 'HTTP 502' >&2; exit 1" : `  cat ${q(commitsFile)}; exit 0`,
       "fi",
@@ -147,6 +173,7 @@ function run(
   return {
     status: proc.status,
     stdout: proc.stdout,
+    stderr: proc.stderr,
     calls: readFileSync(calls, "utf8")
       .split("\n")
       .filter((line) => line !== ""),
@@ -157,6 +184,7 @@ const COMMITS = "gh api repos/semnil/urx-router/pulls/1/commits?per_page=100";
 const ENABLE = `gh pr merge --auto --merge --match-head-commit ${HEAD_SHA} ${PR_URL}`;
 const VIEW = `gh pr view ${PR_URL} --json headRefOid,autoMergeRequest --jq [.headRefOid, (.autoMergeRequest != null)] | @tsv`;
 const DISABLE = `gh pr merge --disable-auto ${PR_URL}`;
+const WAIT = "sleep 10";
 
 it("runs where the tools are, and never skips on CI", () => {
   if (!toolsAvailable) expect(process.env.CI, "bash and jq are missing on CI").toBeFalsy();
@@ -235,7 +263,7 @@ describe.skipIf(!toolsAvailable)("the commit history", () => {
   it("fails when it cannot read the commits", () => {
     const result = run([JSDOM_PATCH], { commits: null });
     expect(result.status).not.toBe(0);
-    expect(result.calls).toEqual([COMMITS]);
+    expect(result.calls).toEqual([COMMITS, WAIT, COMMITS, WAIT, COMMITS]);
   });
 });
 
@@ -262,7 +290,7 @@ describe.skipIf(!toolsAvailable)("the disable half", () => {
   });
 });
 
-// The deciding step runs after a failed metadata step only when that failure does not fail the job (dependabot-auto-merge.yml:53).
+// The deciding step runs after a failed metadata step only when that failure does not fail the job (dependabot-auto-merge.yml:56).
 it("goes on to the deciding step after a failed metadata step, and hands it the outcome", () => {
   expect(METADATA_STEP).toMatch(/^\s+continue-on-error: true\b/m);
   expect(TEXT).toContain("METADATA_OUTCOME: ${{ steps.metadata.outcome }}");
@@ -317,5 +345,58 @@ describe.skipIf(!toolsAvailable)("a run for an older head", () => {
     const result = run([JSDOM_MAJOR], { autoMerge: "true", currentHead: "unreadable" });
     expect(result.status).toBe(1);
     expect(result.calls).toEqual([VIEW]);
+  });
+});
+
+// Each of the four calls goes through the block's retry on its own line, so each has its own
+// row: a row per call is what a retry missing from one of them fails.
+describe.skipIf(!toolsAvailable)("a failed call of the GitHub CLI", () => {
+  const sites = [
+    ["the read of the commits", "commits", [JSDOM_PATCH], {}, [COMMITS, WAIT, COMMITS, ENABLE]],
+    ["the enabling of auto-merge", "enable", [JSDOM_PATCH], {}, [COMMITS, ENABLE, WAIT, ENABLE]],
+    ["the read of the head", "view", [JSDOM_MAJOR], { autoMerge: "true" }, [VIEW, WAIT, VIEW, DISABLE]],
+    ["the disabling of auto-merge", "disable", [JSDOM_MAJOR], { autoMerge: "true" }, [VIEW, DISABLE, WAIT, DISABLE]],
+  ];
+  it.each(sites)("is made again when %s fails once, and the step passes", (_, kind, updated, options, calls) => {
+    const result = run(updated, { ...options, failures: { [kind]: 1 } });
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual(calls);
+    expect(result.stderr).toContain("::warning::attempt 1 of 3 failed");
+    expect(result.stderr).toContain(`stub gh: the ${kind} call failed`);
+  });
+
+  it("is made a third time when it fails twice", () => {
+    const result = run([JSDOM_PATCH], { failures: { enable: 2 } });
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([COMMITS, ENABLE, WAIT, ENABLE, WAIT, ENABLE]);
+    expect(result.stderr).toContain("::warning::attempt 2 of 3 failed");
+    expect(result.stdout).toBe("");
+  });
+
+  const givesUp = [
+    ["the read of the commits", "commits", [JSDOM_PATCH], {}, [COMMITS, WAIT, COMMITS, WAIT, COMMITS]],
+    ["the enabling of auto-merge", "enable", [JSDOM_PATCH], {}, [COMMITS, ENABLE, WAIT, ENABLE, WAIT, ENABLE]],
+    ["the read of the head", "view", [JSDOM_MAJOR], { autoMerge: "true" }, [VIEW, WAIT, VIEW, WAIT, VIEW]],
+    [
+      "the disabling of auto-merge",
+      "disable",
+      [JSDOM_MAJOR],
+      { autoMerge: "true" },
+      [VIEW, DISABLE, WAIT, DISABLE, WAIT, DISABLE],
+    ],
+  ];
+  it.each(givesUp)("fails the step when %s fails three times", (_, kind, updated, options, calls) => {
+    const result = run(updated, { ...options, failures: { [kind]: 9 } });
+    expect(result.status).toBe(1);
+    expect(result.calls).toEqual(calls);
+    expect(result.stderr).toContain(`stub gh: the ${kind} call failed`);
+  });
+
+  // The body of an error answer reaches stdout, where the block reads the answer from.
+  it("decides on the answer of the attempt that succeeded alone", () => {
+    const commits = [commit(HEAD_SHA, "someone")];
+    const result = run([JSDOM_PATCH], { commits, autoMerge: "true", failures: { commits: 1, view: 1 } });
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([COMMITS, WAIT, COMMITS, VIEW, WAIT, VIEW, DISABLE]);
   });
 });
