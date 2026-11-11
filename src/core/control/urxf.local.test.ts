@@ -15,6 +15,12 @@ const DIR = "reference/work/urxf/samples";
 const present = existsSync(DIR);
 const read = (name: string): Uint8Array => new Uint8Array(readFileSync(`${DIR}/${name}`));
 
+// How many parameters a chunk carries follows the System firmware that wrote it. A unit on 1.5
+// writes a CURRENT of 830 where an earlier one writes 820, and a scene it stores carries 712
+// where an earlier scene carries 695 — and a scene stored before the update keeps its 695 in a
+// file the updated unit writes, so one file can hold both.
+const WRITTEN_BY_SYSTEM_1_5 = new Set(["31-v15-ten-scenes.urxf"]);
+
 describe.skipIf(!present)("device-written settings files (private samples)", () => {
   it("parses every sample into a CURRENT chunk plus its scenes", () => {
     const files = readdirSync(DIR).filter((name) => name.endsWith(".urxf"));
@@ -22,12 +28,12 @@ describe.skipIf(!present)("device-written settings files (private samples)", () 
     for (const name of files) {
       const file = parseUrxf(read(name));
       expect(file.model, name).toBe("URX");
-      // CURRENT carries 820 parameters, each scene the 695-parameter subset.
+      const v15 = WRITTEN_BY_SYSTEM_1_5.has(name);
       expect(file.chunks[0].name, name).toBe("CURRENT");
-      expect(file.chunks[0].params.size, name).toBe(820);
+      expect(file.chunks[0].params.size, name).toBe(v15 ? 830 : 820);
       for (const scene of file.chunks.slice(1)) {
         expect(scene.name, name).toBe("SCENE");
-        expect(scene.params.size, name).toBe(695);
+        expect(v15 ? [695, 712] : [695], name).toContain(scene.params.size);
         expect(scene.label, name).not.toBe("");
       }
     }
@@ -73,7 +79,28 @@ describe.skipIf(!present)("device-written settings files (private samples)", () 
     ]);
   });
 
-  // The whole point of the reader: a real file drives the device→plan inverse and
+  // Nine scenes stored before the unit was updated, and one stored after. The later one adds the
+  // Output Patch and the STREAMING settings a scene keeps since System 1.5; CURRENT adds the ten
+  // parameters that firmware introduced, none of which the app names.
+  it("reads a file a unit on System 1.5 wrote, and imports its CURRENT with no failures", async () => {
+    const file = parseUrxf(read("31-v15-ten-scenes.urxf"));
+    expect(file.chunks.map((chunk) => chunk.params.size)).toEqual([830, ...Array(9).fill(695), 712]);
+    expect(file.chunks.at(-1)?.label).toBe("TEST3");
+    const earlier = new Set(file.chunks[1].params.keys());
+    const added = (chunk: (typeof file.chunks)[number], than: Set<number>): number[] =>
+      [...chunk.params.keys()].filter((id) => !than.has(id)).sort((a, b) => a - b);
+    expect(added(file.chunks.at(-1)!, earlier)).toEqual([
+      702, 703, 704, 705, 706, 707, 708, 729, 730, 731, 732, 733, 734, 735, 868, 893, 894,
+    ]);
+    const before = new Set(parseUrxf(read("29-pre-simple-11-scenes.urxf")).chunks[0].params.keys());
+    expect(added(file.chunks[0], before)).toEqual([893, 894, 897, 898, 899, 900, 901, 902, 903, 904]);
+
+    const result = await applySourceState(getModel("URX44V"), emptyPlan("URX44V"), paramSourceOf(file.chunks[0]));
+    expect(result.applied).toBeGreaterThan(100);
+    expect(result.errors).toEqual([]);
+    expect(result.unreadNodes).toEqual(new Set());
+  });
+
   // lands the unit's settings cleanly — no failures, no unread nodes. The one
   // structural gap (oscillator ON, which no file carries) is filled with its
   // load-time value rather than reported as a failure.
