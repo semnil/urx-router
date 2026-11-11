@@ -267,7 +267,7 @@ front-panel operation), which is the mistake that costs the most time to redisco
 
 ## Primary sources
 
-- Block diagram (`MWEM-C0`): <https://usa.yamaha.com/files/download/other_assets/5/2927055/urx44v_44_22_block_diagram_en_c0.pdf>
+- Block diagram (`MWEM-D0`): <https://download.yamaha.com/download/files/2927153/>
 - User guide (HTML): <https://manual.yamaha.com/audio/music_audio_production/urx44_urx22/ug/en-US/>
 - Official control software: TOOLS for MGX / URX (the control-protocol analysis source behind `src/core/control/`; analysis complete)
 
