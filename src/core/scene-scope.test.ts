@@ -230,6 +230,28 @@ describe("captureSceneExternal / applySceneExternal", () => {
     expect(next.connections.some((c) => c.kind === "source" && c.to.startsWith("bus.stream"))).toBe(true);
   });
 
+  it("the frame rate arrives on a plan that holds no STREAMING params, and its absence creates none", () => {
+    const current = defaultPlan("URX44V");
+    current.nodeParams["bus.stream"] = { delay: { on: true, time: 250, frameRate: 3 } };
+    const next = defaultPlan("URX44V");
+    delete next.nodeParams["bus.stream"];
+    applySceneExternal(next, captureSceneExternal(current));
+    expect(next.nodeParams["bus.stream"]).toEqual({ delay: { frameRate: 3 } });
+
+    const bare = defaultPlan("URX44V");
+    delete bare.nodeParams["bus.stream"];
+    const empty = defaultPlan("URX44V");
+    delete empty.nodeParams["bus.stream"];
+    applySceneExternal(empty, captureSceneExternal(bare));
+    expect(empty.nodeParams["bus.stream"]).toBeUndefined();
+
+    // A node that holds something else keeps it when the frame rate, and the block with it, goes.
+    const other = defaultPlan("URX44V");
+    other.nodeParams["bus.stream"] = { delay: { frameRate: 6 }, on: true };
+    applySceneExternal(other, captureSceneExternal(bare));
+    expect(other.nodeParams["bus.stream"]).toEqual({ on: true });
+  });
+
   it("the frame rate's absence crosses as an absence, without emptying the rest of the block", () => {
     const bare = defaultPlan("URX44V");
     bare.nodeParams["bus.stream"] = { delay: { on: true, time: 250 } };
@@ -337,6 +359,9 @@ describe("scene-scoped plan documents", () => {
     // A delay block holding the frame rate alone goes with it, and the node entry with the block.
     plan.nodeParams["bus.stream"] = { delay: { frameRate: 4 } };
     expect(stripSceneExternal(plan).nodeParams["bus.stream"]).toBeUndefined();
+    // …and a node with no delay block at all passes through as it is.
+    plan.nodeParams["bus.stream"] = { on: false };
+    expect(stripSceneExternal(plan).nodeParams["bus.stream"]).toEqual({ on: false });
   });
 
   it("deserializeDocument reports the marker and a load merge keeps current values", () => {
@@ -499,6 +524,21 @@ describe("sceneExternalParamNames", () => {
     // …and the arm's other side: a plan not carrying it does not name it.
     const noTracks = { ...plan, nodeParams: { ...plan.nodeParams, "out.sdrec": {} } };
     expect(sceneExternalParamNames(noTracks).has(tracks)).toBe(false);
+
+    // Of the STREAMING delay block only the frame rate is named, and only where the plan holds
+    // one; along the boundary before V1.5 the whole block is.
+    const frameRate = nodeParamContestPath("bus.stream", "delay.frameRate");
+    const delayOn = nodeParamContestPath("bus.stream", "delay.on");
+    const withDelay = (delay: NodeParams["delay"]): Plan => ({
+      ...plan,
+      nodeParams: { ...plan.nodeParams, "bus.stream": { ...plan.nodeParams["bus.stream"], delay } },
+    });
+    const full = withDelay({ on: true, time: 250, frameRate: 3 });
+    expect(sceneExternalParamNames(full).has(frameRate)).toBe(true);
+    expect(sceneExternalParamNames(full).has(delayOn)).toBe(false);
+    expect(sceneExternalParamNames(withDelay({ on: true, time: 250 })).has(frameRate)).toBe(false);
+    expect(sceneExternalParamNames(full, 1).has(delayOn)).toBe(true);
+    expect(sceneExternalParamNames(full, 1).has(frameRate)).toBe(true);
 
     // …and the reverse, on keys it does not name: a jack's A.Gain and a source's D.Gain are sent
     // under both scopes, so the set is a boundary rather than everything it happened to walk.
