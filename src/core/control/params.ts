@@ -111,8 +111,11 @@ export interface ParamSpec {
   follow?: "direct";
   /**
    * The device keeps this param as a device-wide setting, outside any scene
-   * (SETUP > SAVE/RECALL leaves it as-is; measured via the scene recall audit,
-   * Standard Mode). planToCommands drops these under the "scene" write scope;
+   * (a scene's Store does not take it and a Recall leaves it as-is; measured via
+   * the scene recall audit, Standard Mode). The boundary is System firmware V1.5's:
+   * the output patches and the STREAMING source, delay switch and time, and colour
+   * are inside a scene there and so carry no flag. planToCommands drops the flagged
+   * ones under the "scene" write scope;
    * the plan-level mirror of the same boundary is core/scene-scope.ts, and the
    * two are cross-checked by scene-scope.test.ts. OSC_ON has no .urxf
    * descriptor at all, so it was invisible to the file-diff audit; a one-item
@@ -582,20 +585,20 @@ export const PARAMS = {
   MONITOR_CUE_INTERRUPT: { id: 721, encoding: "bool", sceneExternal: true },
   MONITOR_MONO: { id: 722, encoding: "bool", sceneExternal: true },
   /** Analog output patch source L/R (y = 0/1). Raw bus port ref. */
-  OUT_PATCH_MAIN: { id: 730, encoding: "portRef", sceneExternal: true },
-  OUT_PATCH_LINE: { id: 731, encoding: "portRef", sceneExternal: true },
+  OUT_PATCH_MAIN: { id: 730, encoding: "portRef" },
+  OUT_PATCH_LINE: { id: 731, encoding: "portRef" },
   /** Streaming source select L/R (y = 0). Tagged port ref (0x80000000 | port). The unit's list
    *  offers STEREO / MIX 1 / MIX 2 and no None, so the emit never sends NONE here. */
-  STREAM_SRC_L: { id: 705, encoding: "portRefTagged", sceneExternal: true },
-  STREAM_SRC_R: { id: 706, encoding: "portRefTagged", sceneExternal: true },
+  STREAM_SRC_L: { id: 705, encoding: "portRefTagged" },
+  STREAM_SRC_R: { id: 706, encoding: "portRefTagged" },
   /** USB output source select (y = 0 and 1, the L/R pair). Raw port ref: one bus
    *  or channel per out, or a MONO IN pair written L = the primary's input slot, R =
    *  the partner's. The device allocates 2 slots per selector and both are written
    *  (ROUTING_SELECTORS in translate.ts). */
-  USB_OUT_SRC_A: { id: 732, encoding: "portRef", sceneExternal: true },
-  USB_OUT_SRC_B: { id: 733, encoding: "portRef", sceneExternal: true },
-  USB_OUT_SRC_C: { id: 734, encoding: "portRef", sceneExternal: true },
-  USB_OUT_SRC_SUB: { id: 735, encoding: "portRef", sceneExternal: true },
+  USB_OUT_SRC_A: { id: 732, encoding: "portRef" },
+  USB_OUT_SRC_B: { id: 733, encoding: "portRef" },
+  USB_OUT_SRC_C: { id: 734, encoding: "portRef" },
+  USB_OUT_SRC_SUB: { id: 735, encoding: "portRef" },
   /** Oscillator generator (global). Level is centi-dB (-96..0); freq is Hz×10. */
   OSC_ON: { id: 710, encoding: "bool", follow: "direct", sceneExternal: true },
   OSC_LEVEL: { id: 711, encoding: "centiDb", follow: "direct", sceneExternal: true },
@@ -631,11 +634,12 @@ export const PARAMS = {
   FX_COLOR: { id: 335, encoding: "raw" },
   /** STREAMING bus color (palette index). The device allocates 8 slots and mirrors
    *  the value across all of them; the app writes the L/R pair 0/1. */
-  STREAM_COLOR: { id: 704, encoding: "raw", sceneExternal: true },
+  STREAM_COLOR: { id: 704, encoding: "raw" },
   /** STREAMING DELAY (the bus.stream node, y = 0): on/off, time (ms×100,
-   *  1.00..1000.00 ms), frame rate (enum 0..7). Confirmed by live snapshot-diff. */
-  STREAM_DELAY_ON: { id: 707, encoding: "bool", sceneExternal: true },
-  STREAM_DELAY_TIME: { id: 708, encoding: "delayTime", sceneExternal: true },
+   *  1.00..1000.00 ms), frame rate (enum 0..7). Confirmed by live snapshot-diff. A scene
+   *  keeps the switch and the time and leaves the frame rate out. */
+  STREAM_DELAY_ON: { id: 707, encoding: "bool" },
+  STREAM_DELAY_TIME: { id: 708, encoding: "delayTime" },
   STREAM_DELAY_FRAME_RATE: { id: 830, encoding: "enum", sceneExternal: true },
   /** Mixer DSP / USB streaming sample rate (global, y0): raw Hz. Writing it
    *  re-clocks the hardware (confirmed by live write + host coreaudio + LCD).

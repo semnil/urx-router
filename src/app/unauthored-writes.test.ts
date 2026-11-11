@@ -502,12 +502,12 @@ describe("a routing wire the load completed", () => {
     expect(unauthoredWriteNodes(MODEL, plan, "all", others)).not.toContain("bus.stream");
   });
 
-  // …and a scene-scoped write does not send the selector at all.
-  it("leaves it out of a scene-scoped write", () => {
+  // …and a scene-scoped write sends the selector as well, since a scene keeps the source.
+  it("names it under a scene-scoped write too", () => {
     const plan = authored();
     markParamSource(plan, [STREAM_WIRE], "default");
     expect(unauthoredWriteNodes(MODEL, plan, "all", everyAddr(plan))).toContain("bus.stream");
-    expect(unauthoredWriteNodes(MODEL, plan, "scene", everyAddr(plan))).not.toContain("bus.stream");
+    expect(unauthoredWriteNodes(MODEL, plan, "scene", everyAddr(plan))).toContain("bus.stream");
   });
 });
 

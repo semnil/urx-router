@@ -1295,7 +1295,7 @@ export const en = {
       "One scope for Fetch from device, Write to device, and Live sync. Changing it during Live sync starts the session again.",
     ),
     sceneNote: tr(
-      "Scene only leaves the URX's device-wide settings untouched: monitor, phones, output patches, streaming, oscillator, and the sample rate.",
+      "Scene only leaves the URX's device-wide settings untouched: monitor, phones, microSD recording, oscillator, and the sample rate.",
     ),
     diagNote: tr("Compare and self-test always cover everything."),
     planSection: tr("Plan files"),

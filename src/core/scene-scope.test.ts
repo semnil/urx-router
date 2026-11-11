@@ -1,17 +1,18 @@
 import { describe, it, expect } from "vitest";
 import {
+  SCENE_BOUNDARY,
   applySceneExternal,
   captureSceneExternal,
   isSceneExternalConnection,
   sceneExternalParamNames,
   stripSceneExternal,
 } from "./scene-scope";
-import { deserializeDocument, serialize } from "./plan";
+import { PLAN_VERSION, deserializeDocument, serialize } from "./plan";
 import type { NodeParams, Plan } from "./plan";
 import { nodeParamContestPath } from "./plan-history";
 import { defaultPlan } from "../models/initial-state";
 import { getModel } from "../models";
-import { PARAMS } from "./control/params";
+import { COLOR_PALETTE, PARAMS } from "./control/params";
 import type { ParamSpec } from "./control/params";
 import { cmdAddr, planToCommands } from "./control/translate";
 
@@ -31,19 +32,8 @@ const AUDITED_SCENE_EXTERNAL = [
   "MONITOR_ON",
   "MONITOR_LEVEL",
   "PHONES_LEVEL",
-  "OUT_PATCH_MAIN",
-  "OUT_PATCH_LINE",
-  "USB_OUT_SRC_A",
-  "USB_OUT_SRC_B",
-  "USB_OUT_SRC_C",
-  "USB_OUT_SRC_SUB",
   "SD_REC_SOURCE",
   "SD_REC_TRACK_COUNT",
-  "STREAM_COLOR",
-  "STREAM_SRC_L",
-  "STREAM_SRC_R",
-  "STREAM_DELAY_ON",
-  "STREAM_DELAY_TIME",
   "STREAM_DELAY_FRAME_RATE",
   "OSC_ON",
   "OSC_LEVEL",
@@ -57,6 +47,23 @@ const AUDITED_SCENE_EXTERNAL = [
   "SAMPLE_RATE",
   "FOLLOW_USB",
 ].sort();
+
+// What System firmware V1.5 moved INTO the scene: a Store takes these and a Recall brings
+// them back, where the firmware before it left them alone. They carry no flag, and a
+// scene-scoped write sends them.
+const IN_SCENE_SINCE_V15 = [
+  "OUT_PATCH_MAIN",
+  "OUT_PATCH_LINE",
+  "USB_OUT_SRC_A",
+  "USB_OUT_SRC_B",
+  "USB_OUT_SRC_C",
+  "USB_OUT_SRC_SUB",
+  "STREAM_COLOR",
+  "STREAM_SRC_L",
+  "STREAM_SRC_R",
+  "STREAM_DELAY_ON",
+  "STREAM_DELAY_TIME",
+];
 
 // SETUP > GENERAL, grounded on the user guide's screen-category exclusion ("Settings
 // for the SETUP screen … are not saved" to a scene) rather than on the recall audit,
@@ -114,15 +121,51 @@ describe("scene boundary contract", () => {
     expect(scene).toEqual(all.filter((c) => !SCENE_EXTERNAL_NAMES.includes(c.name)));
   });
 
-  it("classifies the factory plan's wires: patches / records / monitor + stream sources / OSC assigns", () => {
+  it("the scene write scope sends what V1.5 moved into the scene, every one of them", () => {
+    const model = getModel("URX44V");
     const plan = defaultPlan("URX44V");
-    const external = plan.connections.filter(isSceneExternalConnection);
-    expect(external.some((c) => c.kind === "patch")).toBe(true);
+    plan.nodeParams["bus.stream"] = { ...plan.nodeParams["bus.stream"], delay: { on: true, time: 250, frameRate: 3 } };
+    plan.nodeColors["bus.stream"] = COLOR_PALETTE[1].hex;
+    const scene = new Set(planToCommands(model, plan, "scene").map((c) => c.name));
+    for (const name of IN_SCENE_SINCE_V15) {
+      expect((PARAMS as Record<string, ParamSpec>)[name].sceneExternal, name).toBeUndefined();
+      expect(scene.has(name as never), name).toBe(true);
+    }
+    // The frame rate sits in the same delay block and stays outside.
+    expect(scene.has("STREAM_DELAY_FRAME_RATE")).toBe(false);
+  });
+
+  it("classifies the factory plan's wires: records / monitor sources / OSC assigns outside, patches and the stream source inside", () => {
+    const plan = defaultPlan("URX44V");
+    const external = plan.connections.filter((c) => isSceneExternalConnection(c));
     expect(external.some((c) => c.kind === "record")).toBe(true);
     expect(external.some((c) => c.kind === "source" && c.to.startsWith("bus.mon1"))).toBe(true);
     expect(external.some((c) => c.kind === "sendSwitch" && c.from.startsWith("bus.osc"))).toBe(true);
+    expect(
+      plan.connections.some((c) => c.kind === "patch"),
+      "the premise",
+    ).toBe(true);
+    expect(
+      plan.connections.some((c) => c.kind === "source" && c.to.startsWith("bus.stream")),
+      "the premise",
+    ).toBe(true);
+    expect(external.some((c) => c.kind === "patch")).toBe(false);
+    expect(external.some((c) => c.kind === "source" && c.to.startsWith("bus.stream"))).toBe(false);
     // A channel input-source wire and a plain bus send stay scene-internal.
     expect(external.some((c) => c.kind === "send")).toBe(false);
+  });
+
+  it("the boundary before V1.5 also names every patch and the stream source, and nothing the current one does not", () => {
+    const plan = defaultPlan("URX44V");
+    const now = plan.connections.filter((c) => isSceneExternalConnection(c, SCENE_BOUNDARY));
+    const before = plan.connections.filter((c) => isSceneExternalConnection(c, 1));
+    for (const c of now) expect(before).toContain(c);
+    const added = before.filter((c) => !now.includes(c));
+    expect(added.length).toBeGreaterThan(0);
+    expect(added.every((c) => c.kind === "patch" || (c.kind === "source" && c.to.startsWith("bus.stream")))).toBe(true);
+    expect(added.filter((c) => c.kind === "patch").length).toBe(
+      plan.connections.filter((c) => c.kind === "patch").length,
+    );
   });
 });
 
@@ -131,35 +174,91 @@ describe("captureSceneExternal / applySceneExternal", () => {
     const current = defaultPlan("URX44V");
     current.sampleRate = 96000;
     current.nodeParams["bus.mon1"] = { level: -12, mono: true };
-    current.nodeParams["bus.stream"] = { delay: { on: true, time: 250 } };
+    current.nodeParams["bus.stream"] = { delay: { on: true, time: 250, frameRate: 3 } };
     current.nodeParams["out.sdrec"] = { sdRecTrackCount: 5 };
     current.nodeColors["bus.stream"] = "#123456";
     const keep = captureSceneExternal(current);
 
     const next = defaultPlan("URX44V");
+    next.nodeParams["bus.stream"] = { delay: { on: false, time: 40, frameRate: 6 } };
+    next.nodeColors["bus.stream"] = "#abcdef";
+    const patches = next.connections.filter((c) => c.kind === "patch");
+    next.connections = next.connections.filter((c) => c !== patches[0]);
     applySceneExternal(next, keep);
     expect(next.sampleRate).toBe(96000);
     expect(next.nodeParams["bus.mon1"]).toEqual({ level: -12, mono: true });
-    expect(next.nodeParams["bus.stream"]?.delay).toEqual({ on: true, time: 250 });
     expect(next.nodeParams["out.sdrec"]?.sdRecTrackCount).toBe(5);
-    expect(next.nodeColors["bus.stream"]).toBe("#123456");
+    // Of the delay block only the frame rate crosses; the switch, the time and the colour are
+    // the receiving plan's, since a scene keeps them.
+    expect(next.nodeParams["bus.stream"]?.delay).toEqual({ on: false, time: 40, frameRate: 3 });
+    expect(next.nodeColors["bus.stream"]).toBe("#abcdef");
+    // …and so are the patches: the one the receiving plan lacks is not put back.
+    expect(next.connections.filter((c) => c.kind === "patch")).toEqual(patches.slice(1));
     // The wire set matches the source plan's scene-external wires exactly.
-    expect(next.connections.filter(isSceneExternalConnection)).toEqual(
-      current.connections.filter(isSceneExternalConnection),
+    expect(next.connections.filter((c) => isSceneExternalConnection(c))).toEqual(
+      current.connections.filter((c) => isSceneExternalConnection(c)),
     );
+  });
+
+  it("along the boundary before V1.5, the patches and the whole STREAMING block cross too", () => {
+    const current = defaultPlan("URX44V");
+    current.nodeParams["bus.stream"] = { delay: { on: true, time: 250, frameRate: 3 } };
+    current.nodeColors["bus.stream"] = "#123456";
+    const keep = captureSceneExternal(current, 1);
+
+    const next = defaultPlan("URX44V");
+    next.nodeParams["bus.stream"] = { delay: { on: false, time: 40, frameRate: 6 }, on: false };
+    next.nodeColors["bus.stream"] = "#abcdef";
+    next.connections = next.connections.filter(
+      (c) => c.kind !== "patch" && !(c.kind === "source" && c.to.startsWith("bus.stream")),
+    );
+    applySceneExternal(next, keep);
+    expect(next.nodeParams["bus.stream"]).toEqual({ delay: { on: true, time: 250, frameRate: 3 }, on: false });
+    expect(next.nodeColors["bus.stream"]).toBe("#123456");
+    const key = (c: { from: string; to: string }): string => `${c.from} ${c.to}`;
+    expect(
+      next.connections
+        .filter((c) => c.kind === "patch")
+        .map(key)
+        .sort(),
+    ).toEqual(
+      current.connections
+        .filter((c) => c.kind === "patch")
+        .map(key)
+        .sort(),
+    );
+    expect(next.connections.some((c) => c.kind === "source" && c.to.startsWith("bus.stream"))).toBe(true);
+  });
+
+  it("the frame rate's absence crosses as an absence, without emptying the rest of the block", () => {
+    const bare = defaultPlan("URX44V");
+    bare.nodeParams["bus.stream"] = { delay: { on: true, time: 250 } };
+    const next = defaultPlan("URX44V");
+    next.nodeParams["bus.stream"] = { delay: { on: false, time: 40, frameRate: 6 } };
+    applySceneExternal(next, captureSceneExternal(bare));
+    expect(next.nodeParams["bus.stream"]?.delay).toEqual({ on: false, time: 40 });
+
+    // A block that held the frame rate alone goes with it.
+    const only = defaultPlan("URX44V");
+    only.nodeParams["bus.stream"] = { delay: { frameRate: 6 } };
+    applySceneExternal(only, captureSceneExternal(bare));
+    expect(only.nodeParams["bus.stream"]).toBeUndefined();
   });
 
   it("clears fields the captured plan did not have (absence round-trips too)", () => {
     const bare = defaultPlan("URX44V");
     delete bare.nodeParams["bus.mon1"];
     delete bare.nodeColors["bus.stream"];
-    const keep = captureSceneExternal(bare);
 
     const next = defaultPlan("URX44V");
     next.nodeParams["bus.mon1"] = { level: 5 };
     next.nodeColors["bus.stream"] = "#ff0000";
-    applySceneExternal(next, keep);
+    applySceneExternal(next, captureSceneExternal(bare));
     expect(next.nodeParams["bus.mon1"]).toBeUndefined();
+    // The colour is the scene's now, so its absence in the captured plan clears nothing…
+    expect(next.nodeColors["bus.stream"]).toBe("#ff0000");
+    // …and along the boundary before V1.5 it still does.
+    applySceneExternal(next, captureSceneExternal(bare, 1));
     expect(next.nodeColors["bus.stream"]).toBeUndefined();
   });
 
@@ -183,7 +282,7 @@ describe("captureSceneExternal / applySceneExternal", () => {
     const current = defaultPlan("URX44V");
     const next = defaultPlan("URX44V");
     const before = next.connections.map((c) => `${c.from} ${c.to}`);
-    expect(next.connections.some(isSceneExternalConnection)).toBe(true);
+    expect(next.connections.some((c) => isSceneExternalConnection(c))).toBe(true);
 
     applySceneExternal(next, captureSceneExternal(current));
     expect(next.connections.map((c) => `${c.from} ${c.to}`)).toEqual(before);
@@ -191,7 +290,7 @@ describe("captureSceneExternal / applySceneExternal", () => {
     // One the receiving plan does not have goes to the end, which is where a wire the
     // operator has never seen belongs.
     const captured = captureSceneExternal(current);
-    const dropped = next.connections.findIndex(isSceneExternalConnection);
+    const dropped = next.connections.findIndex((c) => isSceneExternalConnection(c));
     const key = `${next.connections[dropped].from} ${next.connections[dropped].to}`;
     next.connections.splice(dropped, 1);
     applySceneExternal(next, captured);
@@ -205,9 +304,16 @@ describe("scene-scoped plan documents", () => {
     plan.notes["ch1"] = "note";
     const doc = JSON.parse(serialize(plan, { sceneOnly: true })) as Record<string, unknown>;
     expect(doc.scope).toBe("scene");
+    expect(doc.version).toBe(PLAN_VERSION);
     expect("sampleRate" in doc).toBe(false);
-    const conns = doc.connections as Array<{ kind: string }>;
-    expect(conns.some((c) => c.kind === "patch" || c.kind === "record")).toBe(false);
+    const conns = doc.connections as Array<{ kind: string; to: string }>;
+    expect(conns.some((c) => c.kind === "record")).toBe(false);
+    expect(conns.some((c) => c.kind === "source" && c.to.startsWith("bus.mon"))).toBe(false);
+    // The output patches and the STREAMING source are the scene's, and stay in the file.
+    expect(conns.filter((c) => c.kind === "patch").length).toBe(
+      plan.connections.filter((c) => c.kind === "patch").length,
+    );
+    expect(conns.some((c) => c.kind === "source" && c.to.startsWith("bus.stream"))).toBe(true);
     const nodeParams = doc.nodeParams as Record<string, unknown>;
     expect(nodeParams["bus.mon1"]).toBeUndefined();
     expect(nodeParams["bus.osc"]).toBeUndefined();
@@ -219,19 +325,25 @@ describe("scene-scoped plan documents", () => {
     expect("scope" in full).toBe(false);
   });
 
-  it("stripSceneExternal drops the stream delay but keeps the node's other params", () => {
+  it("stripSceneExternal drops the stream delay's frame rate and keeps the rest of the node", () => {
     const plan = defaultPlan("URX44V");
-    plan.nodeParams["bus.stream"] = { delay: { on: true, time: 10 }, on: true };
+    plan.nodeParams["bus.stream"] = { delay: { on: true, time: 10, frameRate: 4 }, on: true };
+    plan.nodeColors["bus.stream"] = "#123456";
     const stripped = stripSceneExternal(plan);
-    expect(stripped.nodeParams["bus.stream"]).toEqual({ on: true });
+    expect(stripped.nodeParams["bus.stream"]).toEqual({ delay: { on: true, time: 10 }, on: true });
+    expect(stripped.nodeColors["bus.stream"]).toBe("#123456");
     // The source plan is untouched (strip returns a copy).
-    expect(plan.nodeParams["bus.stream"]?.delay).toEqual({ on: true, time: 10 });
+    expect(plan.nodeParams["bus.stream"]?.delay).toEqual({ on: true, time: 10, frameRate: 4 });
+    // A delay block holding the frame rate alone goes with it, and the node entry with the block.
+    plan.nodeParams["bus.stream"] = { delay: { frameRate: 4 } };
+    expect(stripSceneExternal(plan).nodeParams["bus.stream"]).toBeUndefined();
   });
 
   it("deserializeDocument reports the marker and a load merge keeps current values", () => {
     const saved = defaultPlan("URX44V");
     const doc = deserializeDocument(serialize(saved, { sceneOnly: true }));
     expect(doc.sceneScoped).toBe(true);
+    expect(doc.sceneBoundary).toBe(SCENE_BOUNDARY);
     expect(deserializeDocument(serialize(saved)).sceneScoped).toBe(false);
 
     // The loader's merge: current values win for everything outside the scene.
@@ -241,6 +353,98 @@ describe("scene-scoped plan documents", () => {
     applySceneExternal(doc.plan, captureSceneExternal(current));
     expect(doc.plan.sampleRate).toBe(176400);
     expect(doc.plan.nodeParams["bus.osc"]).toEqual({ osc: { on: true, level: -20 } });
+  });
+
+  // A scene-scoped file written before the boundary moved carries no output patch and no
+  // STREAMING source, delay or colour, and is tagged version 5 or lower. Opened along today's
+  // boundary their absence would be the document's own statement — "no output is patched" —
+  // and the next write would unpatch the unit.
+  it("a scene-scoped document of version 5 is read along the boundary before V1.5", () => {
+    const saved = defaultPlan("URX44V");
+    const old = JSON.parse(serialize(saved, { sceneOnly: true })) as Record<string, unknown>;
+    old.version = 5;
+    old.connections = (old.connections as Array<{ kind: string; to: string }>).filter(
+      (c) => c.kind !== "patch" && !(c.kind === "source" && c.to.startsWith("bus.stream")),
+    );
+    const nodeParams = old.nodeParams as Record<string, Record<string, unknown>>;
+    delete nodeParams["bus.stream"]?.delay;
+    delete (old.nodeColors as Record<string, string>)["bus.stream"];
+    const doc = deserializeDocument(JSON.stringify(old));
+    expect(doc.sceneScoped).toBe(true);
+    expect(doc.sceneBoundary).toBe(1);
+    expect(
+      doc.plan.connections.some((c) => c.kind === "patch"),
+      "the premise",
+    ).toBe(false);
+
+    const current = defaultPlan("URX44V");
+    current.nodeParams["bus.stream"] = {
+      ...current.nodeParams["bus.stream"],
+      delay: { on: true, time: 120, frameRate: 2 },
+    };
+    current.nodeColors["bus.stream"] = "#123456";
+    const main = current.connections.find((c) => c.kind === "patch" && c.to.startsWith("out.main"));
+    expect(main, "the premise").toBeDefined();
+    applySceneExternal(doc.plan, captureSceneExternal(current, doc.sceneBoundary));
+    const key = (c: { from: string; to: string }): string => `${c.from} ${c.to}`;
+    expect(
+      doc.plan.connections
+        .filter((c) => c.kind === "patch")
+        .map(key)
+        .sort(),
+    ).toEqual(
+      current.connections
+        .filter((c) => c.kind === "patch")
+        .map(key)
+        .sort(),
+    );
+    expect(doc.plan.connections.some((c) => c.kind === "source" && c.to.startsWith("bus.stream"))).toBe(true);
+    expect(doc.plan.nodeParams["bus.stream"]?.delay).toEqual({ on: true, time: 120, frameRate: 2 });
+    expect(doc.plan.nodeColors["bus.stream"]).toBe("#123456");
+  });
+
+  it("a document cut along today's boundary brings its own patches, and the current plan's do not replace them", () => {
+    const saved = defaultPlan("URX44V");
+    const dropped = saved.connections.find((c) => c.kind === "patch" && c.to.startsWith("out.main"));
+    expect(dropped, "the premise").toBeDefined();
+    saved.connections = saved.connections.filter((c) => c !== dropped);
+    saved.nodeParams["bus.stream"] = {
+      ...saved.nodeParams["bus.stream"],
+      delay: { on: true, time: 300, frameRate: 1 },
+    };
+    const doc = deserializeDocument(serialize(saved, { sceneOnly: true }));
+    expect(doc.sceneBoundary).toBe(SCENE_BOUNDARY);
+
+    const current = defaultPlan("URX44V");
+    current.nodeParams["bus.stream"] = {
+      ...current.nodeParams["bus.stream"],
+      delay: { on: false, time: 10, frameRate: 5 },
+    };
+    applySceneExternal(doc.plan, captureSceneExternal(current, doc.sceneBoundary));
+    expect(doc.plan.connections.some((c) => c.from === dropped!.from && c.to === dropped!.to)).toBe(false);
+    // The switch and the time are the document's; the frame rate, which it did not carry, is the current plan's.
+    expect(doc.plan.nodeParams["bus.stream"]?.delay).toEqual({ on: true, time: 300, frameRate: 5 });
+  });
+
+  it("the document's version decides the boundary: 6 and an unnamed one today's, 5 and below the earlier", () => {
+    const text = serialize(defaultPlan("URX44V"), { sceneOnly: true });
+    expect(PLAN_VERSION, "the premise: this build writes the first version of today's boundary").toBe(6);
+    const boundaryAt = (version: unknown): number => {
+      const doc = JSON.parse(text) as Record<string, unknown>;
+      if (version === undefined) delete doc.version;
+      else doc.version = version;
+      return deserializeDocument(JSON.stringify(doc)).sceneBoundary;
+    };
+    for (const version of [1, 2, 3, 4, 5]) expect(boundaryAt(version), String(version)).toBe(1);
+    expect(boundaryAt(6)).toBe(SCENE_BOUNDARY);
+    // A hand-authored document with no version, or one that is not a number, is the current format.
+    expect(boundaryAt(undefined)).toBe(SCENE_BOUNDARY);
+    expect(boundaryAt("5")).toBe(SCENE_BOUNDARY);
+    // The field an earlier draft of this change wrote decides nothing.
+    const doc = JSON.parse(text) as Record<string, unknown>;
+    doc.version = 5;
+    doc.sceneBoundary = 2;
+    expect(deserializeDocument(JSON.stringify(doc)).sceneBoundary).toBe(1);
   });
 });
 

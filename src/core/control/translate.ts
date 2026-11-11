@@ -2947,7 +2947,7 @@ export interface FollowOnlyAddr {
  * scene-external values afterwards (`main.ts` applyDeviceStateScoped → scene-scope.ts), so
  * a follow that pulled one in would be the one path in the app where *Scene only* does not
  * hold — the notify-driven read and the full read would disagree about the same value
- * under the same preference. Track Count and STREAMING's source are `sceneExternal`; the send
+ * under the same preference. Track Count is `sceneExternal`; STREAMING's source and the send
  * taps are not.
  */
 export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: WriteScope = "all"): FollowOnlyAddr[] {

@@ -344,19 +344,18 @@ export async function applyDeviceState(
    *  group count (T5 concentration: 8 groups per mono channel where the pin says 9),
    *  which is the only thing that counts them. */
   skipNames = false,
-  /** Skip the exclusive selectors the device keeps OUTSIDE its scenes — every output
-   *  patch, the microSD record assigns and the monitor / streaming source selects,
-   *  named by `isSceneExternalConnection`. Set by the scene device scope, and by
-   *  nothing else.
+  /** Skip the exclusive selectors the device keeps OUTSIDE its scenes — the microSD
+   *  record assigns and the monitor source selects, named by
+   *  `isSceneExternalConnection`. Set by the scene device scope, and by nothing else.
    *
    *  Under that scope the caller restores the plan's own values for exactly these
    *  wires after the read (`main.ts` applyDeviceStateScoped → scene-scope.ts), so
    *  reading them cannot change the plan — it can only return a VERDICT about routing
    *  the session does not sync. That verdict is not inert: a selector the unit holds
    *  in a shape the plan cannot express lands in `errors`, and an incomplete read is
-   *  what stops a live session from starting and ends a running one — so a USB output
-   *  held in a shape the unit's own list does not offer would stop Live sync for a
-   *  session that does not sync USB outputs at all. */
+   *  what stops a live session from starting and ends a running one — so a monitor
+   *  source held in a shape the unit's own list does not offer would stop Live sync for
+   *  a session that does not sync the monitors at all. */
   skipSceneExternal = false,
 ): Promise<ReadbackResult> {
   // Only `mustSettle` — the addresses inside this read's scope — may hold it open, and

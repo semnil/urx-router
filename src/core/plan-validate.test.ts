@@ -427,9 +427,11 @@ describe("paramRangeProblems", () => {
   // and move a unit holding anything else at those addresses. The version is what stops it:
   // that build refuses a document tagged higher than its own. A version-4 writer sends the
   // factory input stage for a channel holding none, so the same holds for the channels, which
-  // carry no input-stage key once it lives on the jacks and sources.
+  // carry no input-stage key once it lives on the jacks and sources. And a version-5 build
+  // opens a scene-scoped document keeping its own plan's output patches over the document's,
+  // which carries them from version 6 on.
   it("writes a version this change's own removal is safe under", () => {
-    expect(PLAN_VERSION).toBe(5);
+    expect(PLAN_VERSION).toBe(6);
     const doc = JSON.parse(serialize(defaultPlan("URX44V"))) as {
       version: number;
       nodeParams: Record<string, { fxEffect?: Record<string, unknown> }>;
