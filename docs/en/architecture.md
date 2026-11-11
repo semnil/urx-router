@@ -2808,7 +2808,7 @@ registration and the write suppression cannot drift apart; `live.ts` consumes th
 whole-device read puts the plan's scene-external values back after reading (`applyDeviceStateScoped` →
 `core/scene-scope.ts`, which names `sdRecTrackCount`), so a follow that pulled 839 in would be the one path where
 that preference does not hold — the notify-driven read and the full read would disagree about one value under one
-setting. Track Count and STREAMING's source are `sceneExternal` and drop out under *Scene only*; the send taps are scene state and stay. **The index entry and the readback gate are one decision, not two.** Naming an owner node is
+setting. Track Count is `sceneExternal` and drops out under *Scene only*; STREAMING's source and the send taps are scene state and stay. **The index entry and the readback gate are one decision, not two.** Naming an owner node is
 correct only while `readback` reads that address on a scoped read of that node — 839 is gated on
 `want("out.sdrec")` for exactly this reason, and the full-read behaviour is identical either way because `want` is
 `only === undefined || only.has(id)`. Were that gate `only === undefined`, every front-panel Track
@@ -4633,8 +4633,10 @@ what the desktop app offers.
   on the toolbar, which would overflow into a horizontal scrollbar at narrow widths.
 - **Device read / write scope** — one bidirectional scope for fetch, write and Live sync: "All
   supported" (default) or "Scene only", which leaves the URX's device-wide settings untouched
-  (monitor / phones, output + USB / SD patches, streaming, oscillator, sample rate — the set a
-  device scene excludes; see known-issues.md). The boundary is deliberately encoded twice:
+  (monitor / phones, the microSD record assigns and Track Count, the streaming delay's frame rate,
+  oscillator, sample rate — the set a device scene excludes; see known-issues.md). The boundary is
+  System firmware V1.5's, under which a scene keeps the output patches and the STREAMING source, delay
+  switch and time, and colour; the firmware before it left those device-wide too. It is deliberately encoded twice:
   `sceneExternal` flags in `control/params.ts` filter the write side at the one `planToCommands`
   chokepoint (so the diff, the live snapshot / flush and the follow notify registration all
   inherit it), and `core/scene-scope.ts` names the same boundary in plan terms for the read / save
@@ -4689,7 +4691,7 @@ what the desktop app offers.
 ```jsonc
 {
   "format": "urx-router-plan",
-  "version": 5,
+  "version": 6,
   "modelId": "URX44V",
   "sampleRate": 48000,
   "positions": { "ch1": { "x": 1, "y": 0 } },
@@ -4826,9 +4828,10 @@ exactly one STREAMING wire (device-model.md §4). **A document that names none i
 with the factory STEREO → STREAMING (`requiredSourceProblems` / `applyRequiredSources`), and the status line
 says so ahead of the load's own message, since the next write sends a selection the document did not name.
 Any wire into STREAMING counts, whatever kind it is stored under — the install restates the kind from the
-rule table — while one the sanitiser dropped does not. A scene-scoped document leaves the source out by
-design: opened over a plan of the same model it keeps that plan's source, as it keeps every scene-external
-value, and over another model it is completed like any other. `emptyPlan` carries the same wire, so a plan
+rule table — while one the sanitiser dropped does not. A scene-scoped document carries the source, which a
+scene keeps. One saved before the boundary moved (a document of version 5 or earlier) leaves the source out by
+design: opened over a plan of the same model it keeps that plan's source, as it keeps every value outside
+the scene it was cut along, and over another model it is completed like any other. `emptyPlan` carries the same wire, so a plan
 built from nothing — a new plan, a model switch, the self-test's capture — starts with it.
 
 The wire the load adds is recorded as the fill's: `default`, under the wire's own contest name
@@ -4836,7 +4839,7 @@ The wire the load adds is recorded as the fill's: `default`, under the wire's ow
 no parameter key — its value is the wire into its receiver — so this record is how the write confirm names
 STREAMING when the write moves the unit onto the source the load supplied (`app/unauthored-writes.ts`). It
 is the one routing selector the confirm names: every other wire is on the board as the operator drew, loaded
-or read it. A scene-scoped document that carries the source over carries the record with it.
+or read it. A scene-scoped document from before the boundary moved, which carries the plan's source over, carries the record with it.
 
 **A device read takes what the unit holds, and says what it could not take.** NONE at STREAMING's source is
 a state the unit's own list does not offer and a software write does reach, and the read reflects it as no
@@ -4972,10 +4975,19 @@ space has nothing to trim before the cut and ends on that space after it.
 
 A scene-scoped save (Preferences > Plan files) additionally writes `"scope": "scene"`, omits
 `sampleRate`, and strips the scene-external state (the monitor / oscillator node params, the
-streaming delay and color, and every patch / record / monitor- or streaming-source / OSC-assign
-wire). Loading such a document keeps the current plan's values for that state when the model
-matches — the same semantic as a scene recall on the unit; an older build simply loads the absent
-fields at their defaults, since every field is optional on load.
+streaming delay's frame rate, the recorder's Track Count, and every record / monitor-source /
+OSC-assign wire). Loading such a document keeps the current plan's values for that state when the
+model matches — the same semantic as a scene recall on the unit.
+
+The boundary a scene-scoped document was cut along is told by its `version`, and a load keeps values
+along the same one. From version 6 it is the unit's own since System firmware V1.5. A scene-scoped
+document of version 5 or earlier was saved along the boundary before it, where the output patches
+and the STREAMING source, whole delay block and colour were outside the scene as well: it carries
+none of them, and opened along today's boundary their absence would read as the document's own — no
+output patched — and the next write would unpatch the unit. It is opened along the earlier boundary
+instead, and keeps the current plan's values for them, as it did when it was saved. Version 6 exists
+for the other direction: a version-5 build opens a scene-scoped document by keeping its own plan's
+patches and dropping the document's, with nothing said, so a file written here is refused there.
 
 ## Opening files: drag & drop, and settings files
 

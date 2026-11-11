@@ -1073,7 +1073,7 @@ agreement, zero findings.
   hand since — the string-path addresses and the follow-only cases, which the unit announces and the
   app listens for without the emit writing them. They are enumerated in one place, architecture.md,
   "A write is not readable when it is acked" (the name path, and the follow-only table after it).
-  Under device scope `"scene"` the 65 addresses that scope drops are still undeliverable, **and so
+  Under device scope `"scene"` the addresses that scope drops are still undeliverable, **and so
   are the scene-external follow-only cases** (that section names them) — the follow-only list takes
   the same `sceneExternal` filter, because a full read under that scope restores the plan's
   scene-external values afterwards and following one of them would contradict it. The earlier "~1350 reads" figure was the fake answering a stimulus the shipped app
@@ -1105,7 +1105,7 @@ agreement, zero findings.
   address-free alternative is still the `BULK_CHANGE` sentinel, which bypasses the filter by contract
 - **WITHDRAWN — "scene write scope doubles the cost of a device-side knob move".** The scene-scoped
   session never registered the address, so its notify is refused: the cost is zero, not double. The
-  honest finding is that **the preference silently blinds device follow to the 65 addresses it drops**
+  honest finding is that **the preference silently blinds device follow to the addresses it drops**
   — a MONITOR_LEVEL or OSC_MODE moved on the unit is never learned, for the rest of the session
 - **WITHDRAWN — "839 / 193 / a device-side rename are expensive to follow (2 full reconciles each)".**
   All three were unfollowable, not expensive: no name address was in the registration (names ride the

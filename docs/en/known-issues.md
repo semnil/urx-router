@@ -387,24 +387,37 @@ shapes what a URX Router plan can carry that a device scene cannot.
 
 A **scene** on the unit stores the **mixing** setup — input channel processing
 (HA, HPF, EQ, gate, comp), sends, fader levels and pan, MIX / FX bus settings,
-insert FX, mute / on and channel names — and a recall restores it exactly.
+insert FX, mute / on and channel names — and a recall restores it exactly. Since System
+firmware V1.5 a scene also stores the **Output Patch** (the analog outputs and the **USB
+output** sources) and the **STREAMING** channel's source, delay switch and time, and colour.
 
 In **Standard Mode**, the URX keeps the following as **device-wide settings, outside any
-scene**, so saving and recalling a scene on the unit leaves them as they are:
+scene**, so storing and recalling a scene on the unit leaves them as they are:
 
 - **MONITOR 1 / 2** source, level and mono
 - **PHONES** level
-- **Output** patch, **USB output** source and **microSD recording** source
-- **Streaming** output and the **oscillator**
+- **microSD recording** source and Track Count
+- The **STREAMING** delay's frame rate
+- The **oscillator**
 - **Sample rate**, and system settings (brightness, USER DEFINED KNOBS, date / time)
 
 The **Monitor source** staying put after a recall is the most visible example.
-Yamaha's user guide states the same exclusions at a screen-category level: the
-SETUP, MONITOR, microSD and STREAMING settings are "not saved" to a scene. The same passage
-adds that **in Simple Mode** the Output Patch and Monitor settings are saved to a scene as
+Yamaha's user guide states the exclusions at a screen-category level: the SETUP settings other
+than the Output Patch menu, and the MONITOR and microSD settings, are not saved to a scene. The
+same passage adds that **in Simple Mode** the Monitor settings are saved to a scene as
 necessary. URX Router's scene-scoped save and load use the Standard Mode boundary above.
 
-> Confirmed in Standard Mode by comparing the unit's scene and live state.
+A scene stored before the unit was updated to V1.5 holds neither the Output Patch nor the
+STREAMING settings: it was stored when a scene did not keep them.
+
+A scene-scoped plan file saved by URX Router 1.18.6 or earlier was cut along the boundary of
+the firmware before V1.5, and still opens along it: the output patches and the STREAMING
+settings of the plan on screen are kept, as they were when the file was saved. A plan file
+saved by a later version, scene-scoped or not, is one URX Router 1.18.6 and earlier refuse to
+open.
+
+> Confirmed in Standard Mode on System 1.5.0.1, on a URX22 and a URX44V, by storing a scene,
+> changing the settings back and recalling it, and by the settings file the URX44V writes.
 
 ## Device Center sometimes needs a force quit after a long session
 

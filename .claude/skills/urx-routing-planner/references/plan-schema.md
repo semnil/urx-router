@@ -10,7 +10,7 @@ any private protocol knowledge.
 ```json
 {
   "format": "urx-router-plan",
-  "version": 5,
+  "version": 6,
   "modelId": "URX44V",
   "sampleRate": 48000,
   "connections": [ ... ],
@@ -39,7 +39,7 @@ the unit and edit that.
 
 - `format` — always the string `"urx-router-plan"`. Anything else and the app
   refuses the document before it looks at the routing.
-- `version` — always `4` for a plan written today. A document tagged newer than
+- `version` — always `6` for a plan written today. A document tagged newer than
   the app's version is refused; an older one is migrated forward on load, and an
   absent one reads as current. A version-1 document's FX parameters stored under
   their old shared names (`lpf`, `hpf`, … and a Ping Pong `delay`) move to the names
@@ -57,12 +57,17 @@ the unit and edit that.
   scene-scoped (Preferences → *Plan files* → *Save scope*, which also applies to
   the share URL and the JSON download). Such a document carries `"scope": "scene"`
   and deliberately omits `sampleRate` plus everything the URX keeps outside a
-  scene: the output / USB / microSD patches (`patch` and `record` wires), the
-  monitor and streaming source selects, the oscillator bus assigns, the monitor /
-  oscillator node params, the streaming delay and the microSD track count. So a
-  user-supplied scene plan is not missing its output patches — they are out of
-  scope. Opening one keeps the current plan's values for all of that (the scene-
-  recall semantic), and only when the model matches. Emit full plans yourself.
+  scene: the microSD record assigns (`record` wires), the monitor source selects,
+  the oscillator bus assigns, the monitor / oscillator node params, the streaming
+  delay's frame rate and the microSD track count. From `"version": 6` its output
+  patches (`patch` wires) and its STREAMING source and delay are in the document —
+  a scene keeps them since System firmware V1.5. A scene plan of **version 5 or
+  lower** was saved by URX Router 1.18.6 or earlier along the boundary before
+  that: it also omits every `patch` wire, the streaming source select, the whole
+  streaming delay and the STREAMING colour, so it is not missing its output
+  patches — they are out of its scope. Opening either keeps the current plan's
+  values for what its own boundary leaves out (the scene-recall semantic), and only
+  when the model matches. Emit full plans yourself.
 
 ## connections
 

@@ -156,8 +156,9 @@ grouped by kind — this is also your feasibility oracle: a route that isn't lis
 isn't possible on that model. **Author only routes that appear there**, copying
 the exact `from`/`to` refs and the route's `kind`. Read `references/plan-schema.md`
 for the JSON shape and parameter ranges — including what a plan the user hands you
-carrying `"scope": "scene"` deliberately leaves out (its output patches are not
-missing, they are outside the scene).
+carrying `"scope": "scene"` deliberately leaves out (what it omits is outside the
+scene it was cut along, not missing; which wires that covers depends on its
+`"version"`).
 
 **3. Map the request to wires.** For each thing the user wants routed, find the
 matching legal route and add a connection. Set parameters the user asked for
@@ -363,7 +364,7 @@ it, send it to the main mix at -3 dB, and also feed FX1 for reverb."
 ```json
 {
   "format": "urx-router-plan",
-  "version": 5,
+  "version": 6,
   "modelId": "URX44V",
   "connections": [
     { "from": "in.micline_1_2:out", "to": "ch1:in", "kind": "source" },
@@ -391,7 +392,7 @@ and give my streaming app the ducked mix on USB MAIN A."
 ```json
 {
   "format": "urx-router-plan",
-  "version": 5,
+  "version": 6,
   "modelId": "URX44V",
   "connections": [
     { "from": "in.micline_1_2:out", "to": "ch1:in", "kind": "source" },

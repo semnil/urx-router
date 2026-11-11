@@ -60,9 +60,10 @@ The desktop app reflects a plan to a connected URX. Steps for the user:
 5. **Scope** (Preferences → *Device read / write* → *Scope*) governs Fetch, Write
    and Live sync alike. The default *All supported* covers the whole plan;
    *Scene only* leaves the URX's device-wide settings untouched — monitor, phones,
-   output patches, streaming, oscillator and the sample rate. So a plan whose point
-   is an output patch (a bus to USB MAIN, say) does not reach the unit until the
-   scope is *All supported*.
+   the microSD recording sources, the oscillator and the sample rate. Output patches
+   and the STREAMING source are inside a scene since System firmware V1.5, so *Scene
+   only* writes them; a plan whose point is a monitor source or a microSD recording
+   source does not reach the unit until the scope is *All supported*.
 
 A write carries the input stage (+48V, gain, Clip Safe, HI-Z) of the jacks and sources
 some channel of the plan reads; a jack or source no channel reads keeps what the unit
