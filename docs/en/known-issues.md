@@ -410,6 +410,12 @@ necessary. URX Router's scene-scoped save and load use the Standard Mode boundar
 A scene stored before the unit was updated to V1.5 holds neither the Output Patch nor the
 STREAMING settings: it was stored when a scene did not keep them.
 
+URX Router follows the V1.5 boundary whatever firmware the connected unit runs. On a unit
+still on a firmware before V1.5, the *Scene only* device scope therefore writes and reads the
+Output Patch and the STREAMING settings, although that firmware keeps them outside its scenes.
+The app asks before it touches a unit whose System firmware is not the verified version above,
+unless the *Untested firmware* warning is turned off in Preferences.
+
 A scene-scoped plan file saved by URX Router 1.18.6 or earlier was cut along the boundary of
 the firmware before V1.5, and still opens along it: the output patches and the STREAMING
 settings of the plan on screen are kept, as they were when the file was saved. A plan file
