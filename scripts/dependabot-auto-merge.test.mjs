@@ -102,6 +102,8 @@ const LCD_SIM_COMMIT = dependency(
 
 // `failures` names how many calls of a kind fail before one succeeds: `commits` the commit
 // list, `view` the read of the head and of auto-merge, `enable` and `disable` the two writes.
+// `afterWait` is what the pull request answers once the block has waited: another `head`,
+// another `autoMerge`, or a read that fails (`viewFails`).
 function run(
   updated,
   {
@@ -110,6 +112,7 @@ function run(
     metadataOutcome = "success",
     currentHead = HEAD_SHA,
     failures = {},
+    afterWait = {},
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "urx-dependabot-auto-merge-"));
@@ -122,9 +125,12 @@ function run(
   // A path goes into the stub quoted: bare, bash reads the backslashes of a Windows path as
   // escapes and writes to a different file.
   const q = JSON.stringify;
-  writeFileSync(join(dir, "bin", "sleep"), ["#!/bin/bash", `printf '%s\\n' "sleep $*" >> ${q(calls)}`].join("\n"), {
-    mode: 0o755,
-  });
+  const waited = join(dir, "waited");
+  writeFileSync(
+    join(dir, "bin", "sleep"),
+    ["#!/bin/bash", `printf '%s\\n' "sleep $*" >> ${q(calls)}`, `: > ${q(waited)}`].join("\n"),
+    { mode: 0o755 },
+  );
   writeFileSync(
     join(dir, "bin", "gh"),
     [
@@ -146,6 +152,11 @@ function run(
       commits === null ? "  echo 'HTTP 502' >&2; exit 1" : `  cat ${q(commitsFile)}; exit 0`,
       "fi",
       'if [[ "$1 $2" == "pr view" ]]; then',
+      `  if [[ -e ${q(waited)} ]]; then`,
+      afterWait.viewFails
+        ? "    echo 'HTTP 502' >&2; exit 1"
+        : `    printf '%s\\t%s\\n' '${afterWait.head ?? currentHead}' '${afterWait.autoMerge ?? autoMerge}'; exit 0`,
+      "  fi",
       `  printf '%s\\t%s\\n' '${currentHead}' '${autoMerge}'`,
       "fi",
       "exit 0",
@@ -290,7 +301,7 @@ describe.skipIf(!toolsAvailable)("the disable half", () => {
   });
 });
 
-// The deciding step runs after a failed metadata step only when that failure does not fail the job (dependabot-auto-merge.yml:56).
+// The deciding step runs after a failed metadata step only when that failure does not fail the job (dependabot-auto-merge.yml:57).
 it("goes on to the deciding step after a failed metadata step, and hands it the outcome", () => {
   expect(METADATA_STEP).toMatch(/^\s+continue-on-error: true\b/m);
   expect(TEXT).toContain("METADATA_OUTCOME: ${{ steps.metadata.outcome }}");
@@ -348,14 +359,21 @@ describe.skipIf(!toolsAvailable)("a run for an older head", () => {
   });
 });
 
-// Each of the four calls goes through the block's retry on its own line, so each has its own
-// row: a row per call is what a retry missing from one of them fails.
+// Each of the four calls is made again at its own place in the block, so each has its own row:
+// a row per call is what a missing retry at one of them fails. The disabling is made again
+// behind a fresh read of the head and of auto-merge.
 describe.skipIf(!toolsAvailable)("a failed call of the GitHub CLI", () => {
   const sites = [
     ["the read of the commits", "commits", [JSDOM_PATCH], {}, [COMMITS, WAIT, COMMITS, ENABLE]],
     ["the enabling of auto-merge", "enable", [JSDOM_PATCH], {}, [COMMITS, ENABLE, WAIT, ENABLE]],
     ["the read of the head", "view", [JSDOM_MAJOR], { autoMerge: "true" }, [VIEW, WAIT, VIEW, DISABLE]],
-    ["the disabling of auto-merge", "disable", [JSDOM_MAJOR], { autoMerge: "true" }, [VIEW, DISABLE, WAIT, DISABLE]],
+    [
+      "the disabling of auto-merge",
+      "disable",
+      [JSDOM_MAJOR],
+      { autoMerge: "true" },
+      [VIEW, DISABLE, WAIT, VIEW, DISABLE],
+    ],
   ];
   it.each(sites)("is made again when %s fails once, and the step passes", (_, kind, updated, options, calls) => {
     const result = run(updated, { ...options, failures: { [kind]: 1 } });
@@ -382,7 +400,7 @@ describe.skipIf(!toolsAvailable)("a failed call of the GitHub CLI", () => {
       "disable",
       [JSDOM_MAJOR],
       { autoMerge: "true" },
-      [VIEW, DISABLE, WAIT, DISABLE, WAIT, DISABLE],
+      [VIEW, DISABLE, WAIT, VIEW, DISABLE, WAIT, VIEW, DISABLE],
     ],
   ];
   it.each(givesUp)("fails the step when %s fails three times", (_, kind, updated, options, calls) => {
@@ -398,5 +416,48 @@ describe.skipIf(!toolsAvailable)("a failed call of the GitHub CLI", () => {
     const result = run([JSDOM_PATCH], { commits, autoMerge: "true", failures: { commits: 1, view: 1 } });
     expect(result.status).toBe(0);
     expect(result.calls).toEqual([COMMITS, WAIT, COMMITS, VIEW, WAIT, VIEW, DISABLE]);
+  });
+});
+
+// A wait is long enough for the pull request to change, so an attempt to turn auto-merge off
+// after one acts on a fresh read rather than on the read taken before the wait.
+describe.skipIf(!toolsAvailable)("a failed disabling of auto-merge, after the wait", () => {
+  const disabling = { autoMerge: "true", failures: { disable: 1 } };
+
+  it("is made a third time behind a third read when it fails twice", () => {
+    const result = run([JSDOM_MAJOR], { autoMerge: "true", failures: { disable: 2 } });
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([VIEW, DISABLE, WAIT, VIEW, DISABLE, WAIT, VIEW, DISABLE]);
+    expect(result.stderr).toContain("::warning::attempt 2 of 3 failed");
+    expect(result.stdout).toBe("");
+  });
+
+  it("is not made again when the head has moved, and the step passes", () => {
+    const result = run([JSDOM_MAJOR], { ...disabling, afterWait: { head: OTHER_SHA } });
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([VIEW, DISABLE, WAIT, VIEW]);
+    expect(result.stdout).toContain(`::notice::the head of the pull request is now ${OTHER_SHA}`);
+  });
+
+  it("is not made again when auto-merge is off by then, and the step passes", () => {
+    const result = run([JSDOM_MAJOR], { ...disabling, afterWait: { autoMerge: "false" } });
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([VIEW, DISABLE, WAIT, VIEW]);
+    expect(result.stdout).toBe("");
+  });
+
+  it("is not made again when the read fails three times, and the step fails", () => {
+    const result = run([JSDOM_MAJOR], { ...disabling, afterWait: { viewFails: true } });
+    expect(result.status).toBe(1);
+    expect(result.calls).toEqual([VIEW, DISABLE, WAIT, VIEW, WAIT, VIEW, WAIT, VIEW]);
+  });
+
+  it("is not made again when the read cannot be understood, and the step fails", () => {
+    const result = run([JSDOM_MAJOR], { ...disabling, afterWait: { autoMerge: "" } });
+    expect(result.status).toBe(1);
+    expect(result.calls).toEqual([VIEW, DISABLE, WAIT, VIEW]);
+    expect(result.stdout).toContain(
+      "::error::could not read the head of the pull request and whether auto-merge is enabled",
+    );
   });
 });

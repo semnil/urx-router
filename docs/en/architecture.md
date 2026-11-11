@@ -5225,7 +5225,9 @@ on and a rebase or an added commit can change what the update is. A run whose he
 of the pull request changes nothing, and the runs for one pull request run one at a time. Each call
 the step makes through the GitHub CLI is made up to three times, ten seconds apart, and the step fails
 when the third attempt fails: a failed run leaves a required check red, and the pull request then waits
-for a person to re-run the job. Its
+for a person to re-run the job. Before each attempt to turn auto-merge off the step reads the head and
+auto-merge again, so an attempt made after a wait leaves a newer head, and an auto-merge already off,
+alone. Its
 job reports `auto-merge`, one of the status checks the ruleset requires, so a Dependabot pull request does
 not merge before the run for its head commit has decided; any other update stays open for a person to
 merge. `pnpm test dependabot-auto-merge` runs the workflow's decision against each of
