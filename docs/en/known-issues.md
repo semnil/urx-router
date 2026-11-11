@@ -118,9 +118,9 @@ but writes only the twenty stops from 40 to 118 Hz:
 
 > Confirmed on a URX44V (System 1.5.0.1, Device Center 2.3.0) by turning the unit's knob
 > through its range while reading the parameter, and by writing values inside and outside the
-> window. Turned without pushing, the knob was read stop by stop over the whole range; pushed
-> in, it was read between 47.5 and 150 Hz and moved by the same stops. Not measured on the
-> URX22 or the URX44.
+> window. The knob was read stop by stop over the whole range, turned without pushing and
+> turned while pushed in: the same sixty stops either way. A 42.5 Hz written over the control
+> connection reads 42.5 on the unit's screen. Not measured on the URX22 or the URX44.
 
 ## Live control is hardware-verified on the URX44V and the URX22
 
