@@ -10,8 +10,8 @@ document.
 ## Sources
 
 - Official block diagram: `USB AUDIO INTERFACE URX44V URX44 URX22 Block Diagram`
-  (Yamaha Corporation, 2026, file ID `MWEM-C0`).
-  URL: <https://usa.yamaha.com/files/download/other_assets/5/2927055/urx44v_44_22_block_diagram_en_c0.pdf>
+  (Yamaha Corporation, 2026, file ID `MWEM-D0`).
+  URL: <https://download.yamaha.com/download/files/2927153/>
 - Official user guide (HTML): <https://manual.yamaha.com/audio/music_audio_production/urx44_urx22/ug/en-US/>
 
 > The PDFs themselves are not included in the repository because they are copyrighted. The structure
