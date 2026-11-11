@@ -65,6 +65,11 @@ The desktop app reflects a plan to a connected URX. Steps for the user:
    only* writes them; a plan whose point is a monitor source or a microSD recording
    source does not reach the unit until the scope is *All supported*.
 
+A write leaves out an HPF frequency outside 40–120 Hz: the unit's own knob sets 20–600 Hz
+since System firmware V1.5, but the device connection refuses a write outside that window. The
+status line names the channels left out, and the unit keeps its own value there. During Live
+sync the Inspector offers 40–118 Hz for the same reason.
+
 A write carries the input stage (+48V, gain, Clip Safe, HI-Z) of the jacks and sources
 some channel of the plan reads; a jack or source no channel reads keeps what the unit
 holds. On URX44 the jack and source addresses are the URX44V's and are not yet
