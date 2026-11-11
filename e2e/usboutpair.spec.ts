@@ -199,32 +199,66 @@ test("Live sync does not start while the unit holds a USB output on a pair the w
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
 });
 
-test("Scene only starts Live sync against the same unit, and writes no USB output", async ({ page }) => {
-  // The scene device scope syncs the mixer and leaves the device-wide settings — every
-  // output patch among them — to the unit. A USB output the unit holds in a shape the read
-  // cannot place is then routing this session does not sync, and a verdict about it must
-  // not stop the session: the read does not ask for it at all, which is also what keeps it
-  // out of the writes.
+test("Scene only does not start Live sync on that unit either: a scene keeps the output patch", async ({ page }) => {
+  // The scene device scope syncs what a scene on the unit keeps, and since System firmware
+  // V1.5 that includes every output patch. A USB output the unit holds in a shape the read
+  // cannot place is then routing this session syncs, and the same incomplete read refuses it.
   await open_(page, { deviceScope: "scene" });
   await usbOutA(page, CH4_SLOT, CH3_SLOT);
 
-  await startLive(page);
+  await page.click("#btn-device");
+  await page.click("#btn-live");
 
-  const usbWrites = (await writesOf(page)).filter(([id]) => id === USB_OUT_A);
-  expect(usbWrites, "the scope's own rule: no write to a device-wide setting").toEqual([]);
-  // …and the board still shows the plan's own wire, which is what the scope restores.
-  await expect(wire(page, ...STEREO_TO_USB_A)).toHaveCount(1);
+  await expect.poll(async () => (await dialogsOf(page)).join(" | "), { timeout: 20000 }).toContain("could not be read");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
 });
 
-test("Scene only keeps a session running when a USB output turns unreadable mid-session", async ({ page }) => {
-  // The in-session half of the case above: the session is up, the unit comes to hold halves
-  // its list does not offer — the broker takes them from a write over the control link — and
+/** A port no selector's list decodes, on both halves of MONITOR 1's source. */
+const UNPLACEABLE_PORT = 8888;
+async function monitor1Source(page: Page, value: number): Promise<void> {
+  await setDeviceValue(page, PARAMS.MONITOR_SRC_L.id, 0, value);
+  await setDeviceValue(page, PARAMS.MONITOR_SRC_R.id, 0, value);
+}
+const monitorSourceWrites = async (page: Page) =>
+  (await writesOf(page)).filter(([id]) => id === PARAMS.MONITOR_SRC_L.id || id === PARAMS.MONITOR_SRC_R.id);
+
+test("Scene only starts Live sync while a monitor source cannot be placed, and writes no monitor source", async ({
+  page,
+}) => {
+  // What the scope does leave to the unit is the device-wide settings, the monitor source
+  // selects among them. One the unit holds in a shape the read cannot place is routing this
+  // session does not sync, and a verdict about it must not stop the session: the read does
+  // not ask for it at all, which is also what keeps it out of the writes.
+  await open_(page, { deviceScope: "scene" });
+  await monitor1Source(page, UNPLACEABLE_PORT);
+
+  await startLive(page);
+
+  expect(await monitorSourceWrites(page), "the scope's own rule: no write to a device-wide setting").toEqual([]);
+});
+
+test("All does not start Live sync while a monitor source cannot be placed", async ({ page }) => {
+  // The control for the case above: with every setting in the session the same seeding is
+  // the incomplete read that refuses one, so what let the scene session start was the scope.
+  await open_(page);
+  await monitor1Source(page, UNPLACEABLE_PORT);
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+
+  await expect.poll(async () => (await dialogsOf(page)).join(" | "), { timeout: 20000 }).toContain("could not be read");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+});
+
+test("Scene only keeps a session running when a monitor source turns unreadable mid-session", async ({ page }) => {
+  // The in-session half of the case above: the session is up, the unit comes to hold a source
+  // its list does not offer — the broker takes it from a write over the control link — and
   // the next whole-device read, the follow layer's answer to a burst wider than two hands,
   // must not end the session over routing it is not syncing.
   await open_(page, { deviceScope: "scene" });
   await startLive(page);
 
-  await usbOutA(page, CH4_SLOT, CH3_SLOT);
+  await monitor1Source(page, UNPLACEABLE_PORT);
   // Five distinct controls, past the follow layer's MAX_CONCENTRATION of 3, seeded first so
   // the read finds what the burst announced — delivered as ONE batch, or the settle can fire
   // part-way and take the scoped path this case is not about.
@@ -260,29 +294,31 @@ test("Scene only keeps a session running when a USB output turns unreadable mid-
   await setDeviceValue(page, PARAMS.CH_ON.id, 2, 0);
   await notifyParam(page, PARAMS.CH_ON.id, 2, 0);
   await expect(mutedTag(page, "ch3")).toHaveCount(1);
-  expect(
-    (await writesOf(page)).filter(([id]) => id === USB_OUT_A),
-    "no write to a device-wide setting",
-  ).toEqual([]);
+  expect(await monitorSourceWrites(page), "no write to a device-wide setting").toEqual([]);
 });
 
-test("All still ends a session when a USB output turns unreadable mid-session", async ({ page }) => {
-  // The scope's other half, and the reason the scene case is a SCOPE rule rather than a
-  // relaxed one: with every setting in the session, a value the whole-device read cannot
-  // place is still the incomplete read that ends it.
-  await open_(page);
-  await startLive(page);
+for (const [scope, settings] of [
+  ["All", undefined],
+  ["Scene only", { deviceScope: "scene" }],
+] as const) {
+  test(`${scope} ends a session when a USB output turns unreadable mid-session`, async ({ page }) => {
+    // The scope's other half, and the reason the monitor case is a SCOPE rule rather than a
+    // relaxed one: a value the whole-device read cannot place, on a setting the session
+    // syncs, is still the incomplete read that ends it — and both scopes sync the output patch.
+    await open_(page, settings);
+    await startLive(page);
 
-  await usbOutA(page, CH4_SLOT, CH3_SLOT);
-  const burst: Array<{ paramId: number; y: number; value: number }> = [0, 1, 2, 3].map((y) => ({
-    paramId: PARAMS.CH_FADER.id,
-    y,
-    value: 100,
-  }));
-  burst.push({ paramId: PARAMS.HA_GAIN.id, y: 0, value: 300 });
-  for (const b of burst) await setDeviceValue(page, b.paramId, b.y, b.value);
-  await notifyBurst(page, burst);
+    await usbOutA(page, CH4_SLOT, CH3_SLOT);
+    const burst: Array<{ paramId: number; y: number; value: number }> = [0, 1, 2, 3].map((y) => ({
+      paramId: PARAMS.CH_FADER.id,
+      y,
+      value: 100,
+    }));
+    burst.push({ paramId: PARAMS.HA_GAIN.id, y: 0, value: 300 });
+    for (const b of burst) await setDeviceValue(page, b.paramId, b.y, b.value);
+    await notifyBurst(page, burst);
 
-  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false", { timeout: 20000 });
-  await expect.poll(async () => (await dialogsOf(page)).join(" | ")).toContain("could not be read");
-});
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false", { timeout: 20000 });
+    await expect.poll(async () => (await dialogsOf(page)).join(" | ")).toContain("could not be read");
+  });
+}

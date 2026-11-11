@@ -20,7 +20,7 @@ import {
   OUTPUT_INSERT_FX_OPTIONS,
 } from "./control/params";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "./control/vd";
-import { stripSceneExternal } from "./scene-scope";
+import { SCENE_BOUNDARY, stripSceneExternal, type SceneBoundary } from "./scene-scope";
 
 /**
  * Move `plan` onto `rate`, and with it the recorder's Track Count.
@@ -494,7 +494,19 @@ export const PLAN_FORMAT = "urx-router-plan";
 // unit's +48V off and its gains down on whatever jacks those indexes name; tagged 5 it is
 // refused there. A document of any version that still carries the channel keys is moved onto
 // the jacks and sources by address (`migrateInputStage`).
-export const PLAN_VERSION = 5;
+//
+// 6 is the scene boundary of System firmware V1.5: a scene keeps the output patches and the
+// STREAMING source, delay switch and time, and colour, so a scene-scoped document this build
+// writes carries them. A version-5 build opens a scene-scoped document by keeping its own
+// plan's values for all of those and dropping the document's, with nothing said — the patch
+// the file was saved for would not arrive. Tagged 6 it is refused there, with the reason on
+// screen. The version is also what tells the two kinds of scene-scoped document apart on the
+// way in: one of version 5 or earlier was cut along the earlier boundary and carries none of
+// those, and is opened along that boundary (`sceneBoundary` below).
+export const PLAN_VERSION = 6;
+
+/** The first document version whose scene-scoped form is cut along today's boundary. */
+const SCENE_BOUNDARY_SINCE_VERSION = 6;
 
 // Language-agnostic load failures. The UI maps the code to a localized message.
 export type PlanErrorCode = "notPlanFile" | "missingModel" | "planUrlUnsupported" | "planVersionUnsupported";
@@ -546,8 +558,7 @@ export interface SerializeOptions {
   /** Scene-scoped save: strip the URX's device-wide (scene-external) state, omit
    *  the sample rate, and mark the document, so a load keeps the current values
    *  of everything outside the scene (see scene-scope.ts). An unmarked document
-   *  loads unchanged, and an older build reading a marked one simply falls back
-   *  to defaults for the absent fields. */
+   *  loads unchanged. */
   sceneOnly?: boolean;
 }
 
@@ -583,6 +594,11 @@ export interface PlanDocument {
    *  loader should keep the current plan's scene-external values instead of the
    *  defaults deserialize filled in for the absent fields. */
   sceneScoped: boolean;
+  /** The boundary a scene-scoped document was cut along, which is the one its load
+   *  has to keep values along: the earlier one for a document of version 5 or
+   *  before, today's from version 6. A document that names no version is read as
+   *  the current format, here as everywhere. Meaningless when `sceneScoped` is false. */
+  sceneBoundary: SceneBoundary;
 }
 
 export function deserialize(text: string): Plan {
@@ -630,7 +646,12 @@ export function deserializeDocument(text: string): PlanDocument {
   // to ask whether the pair it was handed is consistent.
   setPlanSampleRate(plan, loadedRate);
   const inputStageRewrites = migrateInputStage(plan.nodeParams, plan.modelId);
-  return { plan, sceneScoped: data.scope === "scene", inputStageRewrites };
+  return {
+    plan,
+    sceneScoped: data.scope === "scene",
+    sceneBoundary: version >= SCENE_BOUNDARY_SINCE_VERSION ? SCENE_BOUNDARY : 1,
+    inputStageRewrites,
+  };
 }
 
 // Encode a plan for the `?plan=` deep link: "z" + URL-safe base64 of the

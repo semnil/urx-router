@@ -3525,9 +3525,12 @@ function loadFromText(text: string, path?: string): boolean | null {
     // A scene-scoped file (Preferences > Plan files) omits the device-wide
     // settings; keep the current plan's values for them — the same semantic as a
     // scene recall on the unit. Only within the same model: another model's
-    // monitor / patch wiring would not validate on this one.
+    // monitor / patch wiring would not validate on this one. Cut along the boundary
+    // the file was saved under: an older file leaves out the output patches and the
+    // STREAMING settings too, and keeps the current ones for those as well.
     const carriedScene = doc.sceneScoped && next.modelId === plan.modelId;
-    if (carriedScene) applySceneExternal(next, captureSceneExternal(plan));
+    const boundary = doc.sceneBoundary;
+    if (carriedScene) applySceneExternal(next, captureSceneExternal(plan, boundary));
     // Surface every violation as a copyable report. A device readback runs neither
     // check — the unit is the authority for what it is actually running — which is
     // what splits the two classes: illegal routing is a plan this app cannot
@@ -3564,13 +3567,13 @@ function loadFromText(text: string, path?: string): boolean | null {
     // plan's. Left as the fill leaves them they would read as "the document wrote this",
     // which exempts the monitor, phones and oscillator from the write confirm's warning.
     if (carriedScene) {
-      for (const name of sceneExternalParamNames(next)) {
+      for (const name of sceneExternalParamNames(next, boundary)) {
         markSource(next, [name], plan.paramSource?.get(name) ?? "default");
       }
       // The same for the device-wide wires, whose record is the one a load completion leaves,
       // and for the params they carry, which answer to the wire's record where they have none
       // of their own — so one with no record here has none there either.
-      for (const c of next.connections.filter(isSceneExternalConnection)) {
+      for (const c of next.connections.filter((c) => isSceneExternalConnection(c, boundary))) {
         const name = connectionContestKey(c.from, c.to);
         const from = plan.paramSource?.get(name);
         if (from !== undefined) markSource(next, [name], from);

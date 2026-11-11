@@ -629,14 +629,13 @@ describe("Fetch from device", () => {
 
   // A scene-scoped document leaves STREAMING's source to the plan on screen, and that wire keeps
   // the record it had there: the one the load supplied is still named by the next write.
-  it("still names that source after a scene-scoped document carries it over", SLOW, async () => {
+  /** Boot on a plan whose STREAMING source the load supplied, drop `scene` on it, write, and
+   *  answer with the strips the write confirm named. */
+  async function stripsNamedAfterScene(scene: string): Promise<string[]> {
     const { serialize } = await import("./core/plan");
     const { defaultPlan } = await import("./models/initial-state");
-    const { getModel } = await import("./models");
-    const { fullLabel } = await import("./models/types");
     const written = defaultPlan("URX44V");
     written.connections = written.connections.filter((c) => c.to !== "bus.stream:in");
-    const scene = serialize(defaultPlan("URX44V"), { sceneOnly: true });
     const shell = (await bootApp({
       url: `/?plan=${encodeURIComponent(Buffer.from(serialize(written), "utf8").toString("base64url"))}`,
       tauri: deviceCommands({
@@ -656,8 +655,44 @@ describe("Fetch from device", () => {
     await invoked(shell, "vd_disconnect");
     const asked = confirms(shell).filter((m) => m.includes(t().confirm.write(1).slice(-20)));
     expect(asked, "the premise: the write asked").toHaveLength(1);
+    return stripsNamed(asked[0]);
+  }
+
+  // A scene-scoped document saved before the boundary moved is tagged version 5 and carries no
+  // STREAMING source: the plan on screen keeps its own, and with it the record of who put it there.
+  it("still names that source after a scene-scoped document from before V1.5 carries it over", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const { getModel } = await import("./models");
+    const { fullLabel } = await import("./models/types");
+    const old = JSON.parse(serialize(defaultPlan("URX44V"), { sceneOnly: true })) as {
+      version: number;
+      connections: Array<{ kind: string; to: string }>;
+      nodeParams: Record<string, Record<string, unknown>>;
+      nodeColors: Record<string, string>;
+    };
+    old.version = 5;
+    old.connections = old.connections.filter((c) => c.kind !== "patch" && c.to !== "bus.stream:in");
+    delete old.nodeParams["bus.stream"]?.delay;
+    delete old.nodeColors["bus.stream"];
     const stream = getModel("URX44V").nodes.find((n) => n.id === "bus.stream")!;
-    expect(stripsNamed(asked[0])).toEqual([fullLabel(stream)]);
+    expect(await stripsNamedAfterScene(JSON.stringify(old))).toEqual([fullLabel(stream)]);
+  });
+
+  // …and one cut along today's boundary brings its own source, which the document wrote: the
+  // write that moves the unit onto it is the operator's, and names nothing.
+  it("does not name it when the scene-scoped document brings its own STREAMING source", SLOW, async () => {
+    const { serialize } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const { getModel } = await import("./models");
+    const { fullLabel } = await import("./models/types");
+    const scene = serialize(defaultPlan("URX44V"), { sceneOnly: true });
+    expect(
+      JSON.parse(scene).connections.some((c: { to: string }) => c.to === "bus.stream:in"),
+      "the premise",
+    ).toBe(true);
+    const stream = getModel("URX44V").nodes.find((n) => n.id === "bus.stream")!;
+    expect(await stripsNamedAfterScene(scene)).not.toContain(fullLabel(stream));
   });
 
   // STREAMING's list on the unit has no None. A unit that holds NONE there is read as such, and

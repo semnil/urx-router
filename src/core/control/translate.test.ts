@@ -1153,8 +1153,19 @@ describe("planToCommands", () => {
     expect(cmds.filter((c) => c.name.startsWith("STREAM_SRC"))).toEqual([]);
     expect(cmds.some((c) => c.paramId === 705 || c.paramId === 706)).toBe(false);
     expect(follows(plan)).toEqual(["STREAM_SRC_L 705:0:0", "STREAM_SRC_R 706:0:0"]);
-    // Scene-external, like the write it stands in for.
-    expect(planToFollowOnlyAddrs(m, plan, "scene").some((f) => f.node === "bus.stream")).toBe(false);
+    // Inside the scene, like the write it stands in for: the scene scope follows it too.
+    expect(
+      planToFollowOnlyAddrs(m, plan, "scene")
+        .filter((f) => f.node === "bus.stream")
+        .map((f) => f.name),
+    ).toEqual(["STREAM_SRC_L", "STREAM_SRC_R"]);
+    // Track Count is outside the scene, and that scope does not follow it.
+    const tracks = (scope: "all" | "scene"): boolean =>
+      planToFollowOnlyAddrs(m, plan, scope).some((f) => f.name === "SD_REC_TRACK_COUNT");
+    if (m.nodes.some((n) => n.id === "out.sdrec")) {
+      expect(tracks("all")).toBe(true);
+      expect(tracks("scene")).toBe(false);
+    }
     // MONITOR's list does offer None, so a monitor with no wire is still cleared.
     const monitor = cmds.filter((c) => c.name === "MONITOR_SRC_L" || c.name === "MONITOR_SRC_R");
     expect(monitor).toHaveLength(4);
