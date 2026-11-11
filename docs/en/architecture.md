@@ -5222,11 +5222,16 @@ with no version outside a submodule (a commit SHA, such as the `dtolnay/rust-too
 which fetch-metadata fails (its check still passes, so a person can merge the pull request), or any other
 commit history — it turns off an auto-merge an earlier head enabled, since a push leaves auto-merge
 on and a rebase or an added commit can change what the update is. A run whose head is no longer the head
-of the pull request changes nothing, and the runs for one pull request run one at a time. Its
+of the pull request changes nothing, and the runs for one pull request run one at a time. Each call
+the step makes through the GitHub CLI is made up to three times, ten seconds apart, and the step fails
+when the third attempt fails: a failed run leaves a required check red, and the pull request then waits
+for a person to re-run the job. Before each attempt to turn auto-merge off the step reads the head and
+auto-merge again, so an attempt made after a wait leaves a newer head, and an auto-merge already off,
+alone. Its
 job reports `auto-merge`, one of the status checks the ruleset requires, so a Dependabot pull request does
 not merge before the run for its head commit has decided; any other update stays open for a person to
 merge. `pnpm test dependabot-auto-merge` runs the workflow's decision against each of
-those kinds. A merge made by
+those kinds, and against a call that fails. A merge made by
 auto-merge is attributed to `GITHUB_TOKEN`, and a push made with that token starts no workflow: `ci.yml`,
 `docs.yml` and `post-merge.yml` do not run on that merge commit — the license gate and the cache warm
 included — and the next merge's runs cover the tree that contains it. `tag-release.yml` starts from
