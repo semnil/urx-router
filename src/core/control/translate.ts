@@ -1395,16 +1395,18 @@ function hpfFreqSent(hasHpf: boolean, stored: number | undefined): number | null
 
 /**
  * The channels whose HPF frequency the plan holds and a write leaves out, because the control
- * link takes that address only inside 40 … 120 Hz. One entry per node, with the value held.
+ * link takes that address only inside 40 … 120 Hz. One entry per node, with the value held and
+ * the instance its address is at.
  */
-export function hpfFreqLeftOut(model: DeviceModel, plan: Plan): { node: string; hz: number }[] {
-  const out: { node: string; hz: number }[] = [];
+export function hpfFreqLeftOut(model: DeviceModel, plan: Plan): { node: string; hz: number; y: number }[] {
+  const out: { node: string; hz: number; y: number }[] = [];
   for (const node of model.nodes) {
     if (node.kind !== "channel") continue;
+    const cc = channelControl(model, node.id);
     const stored = plan.nodeParams[node.id]?.hpfFreq;
-    if (!channelControl(model, node.id)?.hasHpf || stored === undefined) continue;
+    if (!cc?.hasHpf || stored === undefined) continue;
     const hz = admitLeaf(HPF_FREQ_RULE, stored);
-    if (!hpfFreqLinkWritable(hz)) out.push({ node: node.id, hz });
+    if (!hpfFreqLinkWritable(hz)) out.push({ node: node.id, hz, y: cc.y });
   }
   return out;
 }
@@ -3010,10 +3012,8 @@ export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: Wri
   }
   // An HPF frequency the plan holds outside the link's write window: the emit leaves it out
   // (`hpfFreqSent`), and the unit announces a move of its own knob there.
-  for (const { node } of hpfFreqLeftOut(model, plan)) {
-    const cc = channelControl(model, node);
-    if (cc) out.push({ param: PARAMS.HPF_FREQ.id, x: 0, y: cc.y, name: "HPF_FREQ", node });
-  }
+  for (const { node, y } of hpfFreqLeftOut(model, plan))
+    out.push({ param: PARAMS.HPF_FREQ.id, x: 0, y, name: "HPF_FREQ", node });
   // The COMP gain Auto Makeup is computing right now. The writer leaves it out
   // (`compDeviceDriven`) and the unit announces each recompute there, so it is registered
   // here or nothing hears it. The 1-knob's values need no entry: its level is a refetch head.

@@ -210,9 +210,9 @@ describe("planToCommands", () => {
         .map((c) => c.node),
     ).toEqual(["ch4"]);
     expect(hpfFreqLeftOut(model, plan)).toEqual([
-      { node: "ch1", hz: 250 },
-      { node: "ch2", hz: 37.5 },
-      { node: "ch3", hz: 125 },
+      { node: "ch1", hz: 250, y: 0 },
+      { node: "ch2", hz: 37.5, y: 1 },
+      { node: "ch3", hz: 125, y: 2 },
     ]);
     expect(
       planToFollowOnlyAddrs(model, plan)

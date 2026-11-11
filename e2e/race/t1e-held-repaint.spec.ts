@@ -37,10 +37,11 @@ import { chooseOption } from "../choose-option";
 
 const CH1_INSERT_FX_ON = "134:0:0";
 
-/** CH 1's HPF frequency the unit moves to: 100 Hz, on its 20 Hz grid. */
+/** CH 1's HPF frequency the unit moves to: 100 Hz, a stop of its knob. */
 const MOVED_HPF = 1000;
 
-const hpfFreq = (page: Page) => paramExact(page, "HPF Freq").locator('input[type="range"]');
+/** The row's readout: the slider's own value is a position among the stops it offers. */
+const hpfFreq = (page: Page) => paramExact(page, "HPF Freq").locator(".param-val");
 
 /** Live, CH 1 selected, Compander-H chosen and the select left focused — and, with
  *  `follow`, a device-side change to CH 1's HPF frequency held behind that focus. */
@@ -90,13 +91,13 @@ test.describe("T1e held repaint", () => {
       page,
     }) => {
       await selectFocusedWithEffect(page, follow);
-      const before = await hpfFreq(page).inputValue();
+      const before = await hpfFreq(page).innerText();
 
       await mark(page, "bypass-off");
       await (await insertFxBypass(page)).locator("button", { hasText: /^OFF$/ }).click();
 
       expect(await writesAfter(page, "bypass-off")).toEqual([`${CH1_INSERT_FX_ON}=0`]);
-      await expect(hpfFreq(page)).toHaveValue(follow ? "100" : before);
+      await expect(hpfFreq(page)).toHaveText(follow ? "100 Hz" : before);
     });
   }
 
@@ -115,7 +116,7 @@ test.describe("T1e held repaint", () => {
     await page.keyboard.press("Space");
 
     expect(await writesAfter(page, "bypass-off")).toEqual([`${CH1_INSERT_FX_ON}=0`]);
-    await expect(hpfFreq(page)).toHaveValue("100");
+    await expect(hpfFreq(page)).toHaveText("100 Hz");
   });
 });
 
@@ -137,6 +138,6 @@ test.describe("T1e held repaint — touch", () => {
     await (await insertFxBypass(page)).locator("button", { hasText: /^OFF$/ }).tap();
 
     expect(await writesAfter(page, "bypass-off")).toEqual([`${CH1_INSERT_FX_ON}=0`]);
-    await expect(hpfFreq(page)).toHaveValue("100");
+    await expect(hpfFreq(page)).toHaveText("100 Hz");
   });
 });
