@@ -213,9 +213,11 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       const values: Record<number, number> = { ...(o.values ?? {}) };
       // What a param nothing wrote or seeded answers where 0 is not a value the unit can hold
       // there: STREAMING's source (705 / 706), whose list offers STEREO / MIX 1 / MIX 2, answers
-      // the factory STEREO as tagged port refs. Written as the raw values the unit answers
-      // rather than taken from the app's encoder.
-      const unwritten: Record<number, number> = { 705: 0x80000100, 706: 0x80000101 };
+      // the factory STEREO as tagged port refs; and the HPF frequency (26) answers the factory
+      // 80 Hz, since 0 is below the 20 Hz the knob stops at and reads as a frequency the control
+      // link cannot write. Written as the raw values the unit answers rather than taken from the
+      // app's encoder.
+      const unwritten: Record<number, number> = { 705: 0x80000100, 706: 0x80000101, 26: 800 };
       // The channels' input sources answer the factory routing, per instance: each mono slot
       // its own MIC/LINE jack (22), and the stereo channels AUX IN, USB MAIN A, B and C by
       // position (209 / 210). All 0 there would be every channel on jack 1, a state the unit's

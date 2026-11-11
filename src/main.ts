@@ -238,6 +238,7 @@ import {
   cueAddrs,
   cueAt,
   cueNotifyAddrs,
+  hpfFreqLeftOut,
   planToCommands,
   planToNameWrites,
   unnamedNodes,
@@ -1533,6 +1534,17 @@ let liveAdopted = 0;
 // from the unit as the nearest value it can send — waiting for the next line that reports a
 // read or a flush.
 let followBounded = 0;
+/** The tail a status line carries for the HPF frequencies a write leaves out: a stop the control
+ *  link refuses stays in the plan while the unit keeps its own, so the line names the channels. */
+function hpfFreqNotSentNote(since?: Plan): string {
+  // With `since`, only the values that moved from it: an import during a session is written as
+  // an edit, and a frequency the session read from the unit is not one the import failed to send.
+  const left = hpfFreqLeftOut(getModel(modelId), plan).filter(
+    ({ node, hz }) => !since || since.nodeParams[node]?.hpfFreq !== hz,
+  );
+  const strips = left.map(({ node }) => graph.labelOf(node)).join(", ");
+  return left.length ? ` — ${t().status.hpfFreqNotSent(strips, left.length)}` : "";
+}
 /** The bounded values waiting to be reported, as the tail of a status line, and spent. */
 function takeBoundedNote(extra = 0): string {
   const n = followBounded + extra;
@@ -4360,7 +4372,7 @@ planHistory = new PlanHistory({
   patchBlocked: (patch) => {
     const after = clonePlanState(plan);
     applyPatch(after, patch);
-    return undoRefusal(getModel(modelId), plan, after, (id) => graph.labelOf(id));
+    return undoRefusal(getModel(modelId), plan, after, (id) => graph.labelOf(id), liveSessionUp);
   },
   // The macOS application menu's Undo / Redo render this state (a no-op elsewhere).
   onDepthChange: () => editMenu.pushState(),
@@ -4967,7 +4979,9 @@ if (!DEMO) {
           // attempt's diff no longer reports it and its own count is 0 — while the plan is holding
           // the value the count is about.
           let adopted = 0;
-          const adoptedNote = (): string => (adopted ? ` — ${t().status.paramsBounded(adopted)}` : "");
+          // …and on every outcome the line says which HPF frequencies the write left out.
+          const adoptedNote = (): string =>
+            (adopted ? ` — ${t().status.paramsBounded(adopted)}` : "") + hpfFreqNotSentNote();
           // What the whole operation has sent, numeric values and presets both, and which nodes an
           // accepted preset left unconfirmed — across attempts, for the same reason: a retry that
           // stops before sending anything still stands on what an earlier attempt sent.
@@ -5848,11 +5862,12 @@ if (!DEMO) {
     let rateKept = false;
     // During a session the import is one undo step of its own, so the edits before it close here.
     if (live) planHistory?.commit();
+    // The plan as the import found it: what the import moved is measured against it.
+    const beforeImport = clonePlanState(plan);
     try {
       // A settings FILE, not the connected unit: its values are the same kind of thing a plan
       // document supplies, so they are recorded as such. Calling them the unit's would claim
       // the connected device holds them, which a file written by another unit does not.
-      const beforeImport = clonePlanState(plan);
       result = await applySourceState(getModel(modelId), plan, source);
       // A rate outside the session stays the unit's.
       if (live && !clock.takeRate && plan.sampleRate !== beforeImport.sampleRate) {
@@ -5884,7 +5899,10 @@ if (!DEMO) {
         result.errors.length
           ? t().status.settingsPartial(result.applied, result.errors.length, unread)
           : t().status.settingsImported(name, result.applied),
-      ) + (rateKept ? t().status.settingsRateKept(formatRate(plan.sampleRate)) : ""),
+      ) +
+        (rateKept ? t().status.settingsRateKept(formatRate(plan.sampleRate)) : "") +
+        // During a session the import is written to the unit, less what the link refuses.
+        (edit ? hpfFreqNotSentNote(beforeImport) : ""),
     );
     await offerErrorReport(
       result.errors.length
@@ -6045,7 +6063,9 @@ if (!DEMO) {
                 ? t().status.selfTestModelMismatch(report.device, modelId)
                 : report.refusal === "sideEffectUnheld"
                   ? t().status.selfTestRefusedHead
-                  : t().status.selfTestRefused
+                  : report.refusal === "hpfFreqUnwritable"
+                    ? t().status.selfTestRefusedHpfFreq
+                    : t().status.selfTestRefused
               : !report.restored
                 ? t().status.selfTestRestoreFail
                 : report.unverified.length

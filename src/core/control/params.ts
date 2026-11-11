@@ -190,7 +190,9 @@ export const PARAMS = {
   CH_PAN: { id: 141, encoding: "pan", follow: "direct" },
   /** Input channel HPF ON. */
   HPF_ON: { id: 25, encoding: "bool" },
-  /** Input channel HPF cutoff frequency (40 … 120 Hz). Confirmed by live scan. */
+  /** Input channel HPF cutoff frequency: one of the sixty stops of the unit's knob, 20.0 … 600
+   *  Hz (`HPF_FREQ_STOPS_HZ`). The control link takes a write only inside 40 … 120 Hz, so the
+   *  emit carries the stops in that window and the rest are read and followed, never sent. */
   HPF_FREQ: { id: 26, encoding: "freq" },
   /** Input channel COMP/EQ type: COMP->EQ vs SSMCS (MONO IN channels only). */
   COMP_EQ_TYPE: { id: 21, encoding: "enum", sideEffect: "converge" },

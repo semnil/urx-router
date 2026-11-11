@@ -39,7 +39,7 @@ import {
   COMP_EQ_SSMCS,
   recPointOptionsFor,
 } from "./params";
-import { D_GAIN_MIN_DB, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
+import { D_GAIN_MIN_DB, hpfFreqLinkWritable, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
 import { writeSettle } from "./settle";
 import {
   cancelledBeforeWriting,
@@ -110,7 +110,9 @@ function pairPlan({ linked, differ }: { linked: boolean; differ: boolean }): Pla
 // Faithful mock device: a value table seeded from a plan; vdSet writes, vdGet
 // reads (an unset port-ref address reads the NONE sentinel, like the broker).
 /** What the mock answers at an address nothing has written: a routing selector on NONE, an insert-FX
- *  selector holding no effect, and 0 everywhere else. */
+ *  selector holding no effect, an HPF frequency at the 80 Hz a unit ships with — 0 is below the
+ *  knob's range, and the run does not start on a frequency the link cannot write — and 0
+ *  everywhere else. */
 const INSERT_FX_SELECTORS: ReadonlySet<number> = new Set([
   PARAMS.INSERT_FX.id,
   PARAMS.OUTPUT_INSERT_FX_STEREO.id,
@@ -118,6 +120,7 @@ const INSERT_FX_SELECTORS: ReadonlySet<number> = new Set([
 ]);
 function unwrittenAnswer(id: number): number {
   if (PORT_REF_PARAMS.has(id)) return PORT_REF_NONE;
+  if (id === PARAMS.HPF_FREQ.id) return 800;
   return INSERT_FX_SELECTORS.has(id) ? denormalizeInsertFx(INSERT_FX_NONE) : 0;
 }
 
@@ -639,6 +642,22 @@ describe("stereo-link sweep", () => {
   });
 });
 
+describe("HPF frequency sweep", () => {
+  // The HPF frequency is held on a stop, so the sweep writes stops the link takes — the two ends
+  // of its window, a stop with a fraction, and one between.
+  it("sweeps an HPF frequency over stops the control link takes", () => {
+    const m = getModel("URX44V");
+    const seed = defaultPlan("URX44V");
+    const swept = new Set<number>();
+    for (let pass = 0; pass < passesFor(m); pass++) {
+      const hz = perturbedPlan(m, seed, pass).nodeParams.ch1.hpfFreq!;
+      swept.add(hz);
+      expect(hpfFreqLinkWritable(hz), `pass ${pass}: ${hz}`).toBe(true);
+    }
+    expect([...swept].sort((a, b) => a - b)).toEqual([40, 42.5, 63, 118]);
+  });
+});
+
 describe("runSelfTest", () => {
   // The independent-address device above cannot fail this way: it takes two different
   // selectors on one pair and keeps both. Run against one that mirrors a linked pair the
@@ -886,6 +905,23 @@ describe("runSelfTest", () => {
     const report = await runSelfTest(model, 0);
 
     expect(report.diag.bandsAfterRestore.map((b) => b.addr)).toContain(`${gain}:0:0`);
+  });
+
+  // A unit holding an HPF frequency on a stop the control link refuses — one its own knob set.
+  // The write carries no command for it, and the linked block has the unit copy a pair's primary
+  // onto its secondary, so the run could move it and never put it back.
+  it("does not start on a unit holding an HPF frequency the control link cannot write", async () => {
+    const table = installMockDevice(defaultPlan("URX44V"));
+    table.set(`${PARAMS.HPF_FREQ.id}:0:1`, 2500);
+    const before = new Map(table);
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("refused");
+    expect(report.refusal).toBe("hpfFreqUnwritable");
+    expect(report.errors.join("\n")).toContain("ch2 (250 Hz)");
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect(table).toEqual(before);
   });
 
   // A run whose every pass converged and whose restore did not: the verdict line says

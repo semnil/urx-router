@@ -906,17 +906,30 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
     ).toEqual(["ch1.recPoint 2 -> 1", "ch_5_6.recPoint 0 -> 4"]);
   });
 
-  // The HPF stops on five frequencies 20 Hz apart. A document between two of them was written
-  // as it stood, a cutoff the unit's own encoder cannot reach, while the slider sat on a
-  // detent and the readout said the document's number; one past the window read one value and
-  // sent another. Both go to the nearest detent, a tie going up as the slider rounds.
-  it("moves an HPF frequency to the nearest of its five detents, inside 40..120 Hz", () => {
-    const plan = load({ ch1: { hpfFreq: 70 }, ch2: { hpfFreq: 200 }, ch3: { hpfFreq: 39 }, ch4: { hpfFreq: 100 } });
+  // The HPF stops on the sixty frequencies of the unit's knob, 20 … 600 Hz. A document between
+  // two of them was written as it stood, a cutoff the unit's own encoder cannot reach, while the
+  // slider sat on a stop and the readout said the document's number; one past the range read
+  // one value and sent another. Both go to the nearest stop. 120 Hz, a detent before System
+  // 1.5, is between two: it goes to 118 Hz.
+  it("moves an HPF frequency to the nearest stop of the unit's knob, inside 20..600 Hz", () => {
+    const plan = load({
+      ch1: { hpfFreq: 70 },
+      ch2: { hpfFreq: 700 },
+      ch3: { hpfFreq: 19 },
+      ch4: { hpfFreq: 120 },
+    });
     expect(
       paramRangeProblems(plan)
         .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
         .sort(),
-    ).toEqual(["ch1.hpfFreq 70 -> 80", "ch2.hpfFreq 200 -> 120", "ch3.hpfFreq 39 -> 40"]);
+    ).toEqual(["ch1.hpfFreq 70 -> 71", "ch2.hpfFreq 700 -> 600", "ch3.hpfFreq 19 -> 20", "ch4.hpfFreq 120 -> 118"]);
+  });
+
+  // A stop outside the window the control link writes is still a value the unit's knob sets, and
+  // the plan keeps it as it stands.
+  it("keeps an HPF frequency on a stop, inside the link's window or not", () => {
+    const plan = load({ ch1: { hpfFreq: 250 }, ch2: { hpfFreq: 21.2 }, ch3: { hpfFreq: 42.5 }, ch4: { hpfFreq: 600 } });
+    expect(paramRangeProblems(plan).filter((p) => p.key === "hpfFreq")).toEqual([]);
   });
 
   // An enum off its menu drew a blank select, and hid or mislabelled the rows that depend on it,

@@ -91,6 +91,7 @@ import {
   cmdAddr,
   formatAddrKey,
   insertFxControl,
+  hpfFreqLeftOut,
   planToCommands,
   selectableInputIds,
   UNVERIFIED_MAPPINGS,
@@ -258,7 +259,7 @@ export interface SelfTestReport {
   /** Why a "refused" run declined: the connected unit is another model, the capture could not
    *  read a param whose write moves others (`ParamSpec.sideEffect`), or an address it would
    *  have to put back could not be read first. Absent on every other phase. */
-  refusal?: "modelMismatch" | "sideEffectUnheld" | "unreadable";
+  refusal?: "modelMismatch" | "sideEffectUnheld" | "unreadable" | "hpfFreqUnwritable";
   /**
    * DIAGNOSTIC — the restore's own account of itself, small enough to ride the report
    * line the headless launch already prints. It exists because a run that reported
@@ -417,11 +418,21 @@ export function passesFor(model: DeviceModel): number {
   return unlinkedPassesFor(model) + linkedPassesFor(model);
 }
 
+// The HPF frequencies a pass writes: the two ends of the window the control link takes, a
+// stop with a fraction, and one in between. The 80 Hz a unit ships with is left out, so a
+// unit at its default moves on every pass.
+const HPF_FREQ_SWEEP = [40, 42.5, 63, 118];
+
 // Perturb every scalar in an object tree in place: flip bools, nudge numbers,
 // cycle the PRE/POST tap, and set swept enums to this pass's option.
 function perturb(obj: Record<string, unknown>, pass: number): void {
   for (const [k, v] of Object.entries(obj)) {
     if (SKIP.has(k)) continue;
+    if (k === "hpfFreq" && typeof v === "number") {
+      // A stop, so the generic +1 would land between two and be sent as the one it started from.
+      obj[k] = HPF_FREQ_SWEEP[pass % HPF_FREQ_SWEEP.length];
+      continue;
+    }
     if (k in ENUM_SWEEP && typeof v === "number") {
       const opts = ENUM_SWEEP[k];
       obj[k] = opts[pass % opts.length];
@@ -796,6 +807,19 @@ export async function runSelfTest(
       report.errors.push(
         `${id}: source not captured, so no pass and not the restore writes it; the unit keeps its own`,
       );
+    }
+    // An HPF frequency the unit holds on a stop the control link refuses: the write carries no
+    // command for it, and the linked block has the unit copy a pair's primary onto its
+    // secondary, so a pass can move it and nothing here could write it back. Nothing has been
+    // written yet, so the run does not start.
+    const unwritable = hpfFreqLeftOut(model, original);
+    if (unwritable.length) {
+      report.errors.push(
+        `refusing to sweep: the HPF frequency of ${unwritable.map(({ node, hz }) => `${node} (${hz} Hz)`).join(", ")} is outside the 40 to 120 Hz the control link writes, so the restore could not put it back`,
+      );
+      report.phase = "refused";
+      report.refusal = "hpfFreqUnwritable";
+      return report;
     }
     // The capture as device values, for a failing pass's trace: the same inverse the
     // restore writes, indexed once rather than per pass.

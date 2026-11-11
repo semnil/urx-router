@@ -16,6 +16,7 @@ import { LEVEL_OFF_DB, jackKey, sendConnection, type EqBand, type Plan } from ".
 import { hiZPatch, inputOnRefused } from "./input-lock";
 import { nodeRateDisabled } from "./constraints";
 import { inputStageOf } from "./control/translate";
+import { HPF_FREQ_DEFAULT_HZ, hpfFreqStop } from "./control/vd";
 import {
   MAIN,
   SEND_TARGETS,
@@ -190,7 +191,15 @@ export function simBindings(model: DeviceModel): Map<string, SimBinding> {
 
     if (isMonoChannel(id)) {
       out.set(`${ch}.hpf.on`, nodeValue(id, "hpf", false, "boolean"));
-      out.set(`${ch}.hpf.freq`, nodeValue(id, "hpfFreq", 80, "number"));
+      // The plan holds a stop of the unit's knob, so a value written between two is taken to
+      // the nearest.
+      out.set(`${ch}.hpf.freq`, {
+        read: (plan) => np(plan, id).hpfFreq ?? HPF_FREQ_DEFAULT_HZ,
+        write: (_plan, v) => {
+          const hz = num(v);
+          return hz === null ? refused("value") : { kind: "node", id, patch: { hpfFreq: hpfFreqStop(hz) } };
+        },
+      });
       out.set(`${ch}.phase`, nodeValue(id, "phase", false, "boolean"));
       out.set(`${ch}.gate.on`, nodeValue(id, "gateOn", false, "boolean"));
       for (const f of ["threshold", "range", "attack", "hold", "decay"])

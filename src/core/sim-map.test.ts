@@ -69,6 +69,8 @@ const KNEES: Record<string, string> = { Soft: "Medium", Medium: "Hard", Hard: "S
 function another(path: string, binding: SimBinding, v: SimValue): SimValue {
   if (binding.values) return binding.values.find((x) => x !== v) ?? v;
   if (typeof v === "boolean") return !v;
+  // The HPF frequency is held on a stop of the unit's knob, so the other value is a stop too.
+  if (path.endsWith(".hpf.freq")) return v === 85 ? 80 : 85;
   if (typeof v === "number") return v <= -90 ? -20 : v - 1;
   if (path.endsWith(".shape")) return path.includes(".high.") && v === "H.Shelf" ? "LPF" : (SHAPES[v] ?? v);
   if (path.endsWith(".knee")) return KNEES[v] ?? v;
@@ -103,6 +105,24 @@ describe.each(["URX22", "URX44", "URX44V"] as ModelId[])("an edit on the SIM of 
     }
     expect(misses).toEqual([]);
     expect(written, "a real share of the table was written").toBeGreaterThan(100);
+  });
+
+  // The simulator's knob still steps in the five detents of the earlier firmware, 120 Hz among
+  // them, and 120 Hz is between two stops of the 1.5 knob.
+  it("takes an HPF frequency written between two stops to the nearest one", () => {
+    const [path, binding] = [...bindings].find(([p]) => p.endsWith(".hpf.freq"))!;
+    const plan = defaultPlan(modelId);
+    for (const [wrote, held] of [
+      [120, 118],
+      [41, 40],
+      [250, 250],
+    ]) {
+      const edit = binding.write!(plan, wrote);
+      if (isRefusal(edit)) throw new Error(`${path} refused ${wrote}`);
+      apply(model, plan, edit);
+      expect(binding.read(plan), `${path} after ${wrote}`).toBe(held);
+    }
+    expect(isRefusal(binding.write!(plan, "80"))).toBe(true);
   });
 
   it("leaves the plan's EQ bands as they are while 1-knob EQ drives them, and takes them once it is off", () => {

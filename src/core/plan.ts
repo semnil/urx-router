@@ -301,7 +301,8 @@ export interface NodeParams {
   on?: boolean;
   /** HPF_ON: high-pass filter engaged. Absent or false = off. */
   hpf?: boolean;
-  /** HPF_FREQ: high-pass cutoff in Hz (40 … 120). Absent = device default (80). */
+  /** HPF_FREQ: high-pass cutoff in Hz, one of the unit's sixty stops (20 … 600). Absent =
+   *  device default (80). A stop outside 40 … 120 is read from the unit and never written. */
   hpfFreq?: number;
   /** INSERT_FX: insert-effect enum value (MONO IN channels / output buses). Absent or -1 = No Effect. */
   insertFx?: number;

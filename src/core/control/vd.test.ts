@@ -39,6 +39,11 @@ import {
   GATE_RANGE_OFF_DB,
   gateRangeToVd,
   vdToGateRange,
+  freqToVd,
+  vdToFreq,
+  hpfFreqStop,
+  hpfFreqLinkWritable,
+  HPF_FREQ_STOPS_HZ,
 } from "./vd";
 
 describe("level encoding (shared by faders, sends and the monitor)", () => {
@@ -162,6 +167,50 @@ describe("EQ band encoding", () => {
     expect(eqFreqToVd(EQ_FREQ_MAX_HZ)).toBe(EQ_FREQ_MAX_HZ * 10); // 200000
     expect(eqFreqToVd(5)).toBe(EQ_FREQ_MIN_HZ * 10); // below floor
     expect(eqFreqToVd(40000)).toBe(EQ_FREQ_MAX_HZ * 10); // above ceiling
+  });
+
+  // The sixty stops of the 1.5 knob, spelled out here rather than derived, so a table built
+  // from the wrong grade of the series is a difference and not an agreement.
+  const HPF_STOPS = [
+    20, 21.2, 22.4, 23.6, 25, 26.5, 28, 30, 31.5, 33.5, 35.5, 37.5, 40, 42.5, 45, 47.5, 50, 53, 56, 60, 63, 67, 71, 75,
+    80, 85, 90, 95, 100, 106, 112, 118, 125, 132, 140, 150, 160, 170, 180, 190, 200, 212, 224, 236, 250, 265, 280, 300,
+    315, 335, 355, 375, 400, 425, 450, 475, 500, 530, 560, 600,
+  ];
+
+  it("holds the HPF frequency on the sixty stops of the unit's knob", () => {
+    expect(HPF_FREQ_STOPS_HZ).toEqual(HPF_STOPS);
+    // Every stop is a whole number of the broker's 0.1 Hz, and survives the round trip.
+    for (const hz of HPF_STOPS) {
+      expect(Number.isInteger(hz * 10), String(hz)).toBe(true);
+      expect(freqToVd(hz), String(hz)).toBe(hz * 10);
+      expect(vdToFreq(freqToVd(hz)), String(hz)).toBe(hz);
+    }
+  });
+
+  it("reads an HPF frequency between two stops as the nearest stop", () => {
+    // 120 Hz, a detent of the earlier firmware, is between 118 and 125.
+    expect(vdToFreq(1200)).toBe(118);
+    expect(vdToFreq(410)).toBe(40);
+    expect(vdToFreq(430)).toBe(42.5);
+    // Outside the knob's range, the end stop.
+    expect(vdToFreq(0)).toBe(20);
+    expect(vdToFreq(90000)).toBe(600);
+    expect(hpfFreqStop(119)).toBe(118);
+    expect(hpfFreqStop(122)).toBe(125);
+  });
+
+  it("reads an HPF frequency outside the link's write window as it stands", () => {
+    expect(vdToFreq(6000)).toBe(600);
+    expect(vdToFreq(200)).toBe(20);
+    expect(vdToFreq(2500)).toBe(250);
+  });
+
+  it("names the HPF frequencies the control link takes a write for: 40 to 120 Hz", () => {
+    expect(HPF_STOPS.filter(hpfFreqLinkWritable)).toEqual([
+      40, 42.5, 45, 47.5, 50, 53, 56, 60, 63, 67, 71, 75, 80, 85, 90, 95, 100, 106, 112, 118,
+    ]);
+    expect(hpfFreqLinkWritable(37.5)).toBe(false);
+    expect(hpfFreqLinkWritable(125)).toBe(false);
   });
 
   it("round-trips frequency through vdToEqFreq", () => {

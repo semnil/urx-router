@@ -122,11 +122,16 @@ const addr = (a: Record<string, unknown>): string => `${a.paramId}/${a.x}/${a.y}
  *  routing — each mono slot its own MIC/LINE jack (22), and the stereo channels AUX IN, USB MAIN
  *  A, B and C by position (209 / 210). All 0 there would be every mono slot and both sides of
  *  every stereo channel on jack 1, which the unit's own panel cannot produce (a mono pair takes
- *  one source together). Written as the raw values the unit answers rather than taken from the
- *  app's encoder. */
+ *  one source together); and the mono channels' HPF frequency (26) answers the factory 80 Hz —
+ *  0 is below the 20 Hz the knob stops at, and reads as a frequency the control link cannot
+ *  write. Written as the raw values the unit answers rather than taken from the app's encoder. */
 const UNWRITTEN: Record<string, number> = {
   "705/0/0": 0x80000100,
   "706/0/0": 0x80000101,
+  "26/0/0": 800,
+  "26/0/1": 800,
+  "26/0/2": 800,
+  "26/0/3": 800,
   "22/0/0": 0,
   "22/0/1": 1,
   "22/0/2": 2,

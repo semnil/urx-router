@@ -1207,6 +1207,89 @@ describe("renderInspector — every node of every model", () => {
   });
 });
 
+describe("the HPF frequency row", () => {
+  const model = getModel("URX44V");
+  const row = (): HTMLElement =>
+    [...panel.querySelectorAll<HTMLElement>(".param")].find((r) => r.dataset.paramLabel === t().inspector.hpfFreq)!;
+  const slider = (): HTMLInputElement => row().querySelector<HTMLInputElement>("input[type=range]")!;
+  const readout = (): string => row().querySelector(".param-val")!.textContent ?? "";
+  const set = (pos: number): void => {
+    slider().value = String(pos);
+    slider().dispatchEvent(new Event("input"));
+  };
+  const sent = (): unknown[] => vi.mocked(act.onUpdateNodeParams).mock.calls.map((c) => c[1].hpfFreq);
+  const holding = (hpfFreq: number): Plan => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hpfFreq };
+    return plan;
+  };
+
+  // The unit's knob stops on sixty frequencies, 20 … 600 Hz, and the readout prints them as its
+  // screen does: three figures.
+  it("walks the sixty stops of the unit's knob, printed to three figures", () => {
+    renderInspector(panel, model, holding(80), nodeSel("ch1"), act);
+    expect(slider().max).toBe("59");
+    expect(readout()).toBe("80.0 Hz");
+    set(0);
+    expect(readout()).toBe("20.0 Hz");
+    set(1);
+    expect(readout()).toBe("21.2 Hz");
+    set(59);
+    expect(readout()).toBe("600 Hz");
+    expect(sent()).toEqual([20, 21.2, 600]);
+    expect(panel.textContent).not.toContain(t().inspector.hpfFreqLive);
+  });
+
+  // During a session the row offers what the session can send: the control link refuses a
+  // write outside 40 … 120 Hz, which leaves the twenty stops from 40 to 118 Hz.
+  it("offers only the stops the control link writes while Live sync is up, and says why", () => {
+    renderInspector(panel, model, holding(80), nodeSel("ch1"), act, [], true);
+    expect(slider().max).toBe("19");
+    set(0);
+    expect(readout()).toBe("40.0 Hz");
+    set(19);
+    expect(readout()).toBe("118 Hz");
+    expect(sent()).toEqual([40, 118]);
+    expect(panel.textContent).toContain(t().inspector.hpfFreqLive);
+  });
+
+  // The unit's own knob can put the frequency outside the window; the session reads it, and the
+  // row shows it rather than the end of what it offers.
+  it("prints a frequency the unit holds outside the window, and steps from it onto the nearer end", () => {
+    renderInspector(panel, model, holding(250), nodeSel("ch1"), act, [], true);
+    expect(readout()).toBe("250 Hz");
+    expect(slider().value).toBe("19");
+    const press = (key: string): void => {
+      slider().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    };
+    press("ArrowUp");
+    expect(sent(), "away from the window: nothing").toEqual([]);
+    press("ArrowDown");
+    expect(sent()).toEqual([118]);
+    expect(readout()).toBe("118 Hz");
+
+    vi.mocked(act.onUpdateNodeParams).mockClear();
+    renderInspector(panel, model, holding(21.2), nodeSel("ch1"), act, [], true);
+    expect(readout()).toBe("21.2 Hz");
+    press("ArrowDown");
+    expect(sent()).toEqual([]);
+    press("ArrowUp");
+    expect(sent()).toEqual([40]);
+  });
+
+  // A stop each side of where the row stands, from the keys.
+  it("steps one stop per arrow key offline", () => {
+    renderInspector(panel, model, holding(118), nodeSel("ch1"), act);
+    const press = (key: string): void => {
+      slider().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    };
+    press("ArrowUp");
+    press("ArrowDown");
+    press("ArrowDown");
+    expect(sent()).toEqual([125, 118, 112]);
+  });
+});
+
 describe("device screen row orders", () => {
   const labelsFor = (id: string): string[] => {
     renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel(id), act);

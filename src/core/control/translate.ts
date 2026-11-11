@@ -146,7 +146,8 @@ import {
   holdToVd,
   HPF_FREQ_MAX_HZ,
   HPF_FREQ_MIN_HZ,
-  HPF_FREQ_STEP_HZ,
+  HPF_FREQ_STOPS_HZ,
+  hpfFreqLinkWritable,
   levelToVd,
   OSC_LEVEL_MAX_DB,
   OSC_LEVEL_MIN_DB,
@@ -1377,6 +1378,37 @@ function insertFxKeySlot(
   return /^[0-9]+$/.test(key) && selected ? { family: selected, slot: Number(key) } : null;
 }
 
+/** The HPF frequency: the stop of the unit's knob nearest the stored value. */
+const HPF_FREQ_RULE: BoundRule = { min: HPF_FREQ_MIN_HZ, max: HPF_FREQ_MAX_HZ, steps: HPF_FREQ_STOPS_HZ };
+
+/**
+ * The HPF frequency a channel's write would carry, or null where it carries none: the node has
+ * no HPF, the plan holds no value, or the value is a stop the control link refuses. The emit
+ * sends nothing for the last case, and the follow-only registration stands in for it
+ * (`planToFollowOnlyAddrs`) so the unit's own value still reaches the plan.
+ */
+function hpfFreqSent(hasHpf: boolean, stored: number | undefined): number | null {
+  if (!hasHpf || stored === undefined) return null;
+  const hz = admitLeaf(HPF_FREQ_RULE, stored);
+  return hpfFreqLinkWritable(hz) ? hz : null;
+}
+
+/**
+ * The channels whose HPF frequency the plan holds and a write leaves out, because the control
+ * link takes that address only inside 40 … 120 Hz. One entry per node, with the value held.
+ */
+export function hpfFreqLeftOut(model: DeviceModel, plan: Plan): { node: string; hz: number }[] {
+  const out: { node: string; hz: number }[] = [];
+  for (const node of model.nodes) {
+    if (node.kind !== "channel") continue;
+    const stored = plan.nodeParams[node.id]?.hpfFreq;
+    if (!channelControl(model, node.id)?.hasHpf || stored === undefined) continue;
+    const hz = admitLeaf(HPF_FREQ_RULE, stored);
+    if (!hpfFreqLinkWritable(hz)) out.push({ node: node.id, hz });
+  }
+  return out;
+}
+
 /**
  * Every leaf of one node's params that the write bounds, by dotted path, with the rule it is
  * bounded by. `np` is the node as stored; the insert-FX engine keys come from it, since the map
@@ -1396,7 +1428,7 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
   }
   if (D_GAIN_SOURCES[nodeId] && model.nodes.some((n) => n.id === nodeId))
     out.push(["dGain", { min: D_GAIN_MIN_DB, max: D_GAIN_MAX_DB }]);
-  if (cc?.hasHpf) out.push(["hpfFreq", { min: HPF_FREQ_MIN_HZ, max: HPF_FREQ_MAX_HZ, grid: HPF_FREQ_STEP_HZ }]);
+  if (cc?.hasHpf) out.push(["hpfFreq", HPF_FREQ_RULE]);
   // PAN/BAL exists only while the pair is linked; an unlinked pair reads PAN.
   if (model.channelPairs.some(([primary]) => primary === nodeId))
     out.push([
@@ -2373,7 +2405,10 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     if (!cc) continue;
     if (np.on !== undefined) out.push(rawCommand("CH_ON", cc.on, "bool", cc.y, np.on ? 1 : 0));
     if (cc.hasHpf && np.hpf !== undefined) out.push(command("HPF_ON", cc.y, np.hpf ? 1 : 0));
-    if (cc.hasHpf && np.hpfFreq !== undefined) out.push(command("HPF_FREQ", cc.y, np.hpfFreq));
+    // Only a stop the link takes: one outside its window is refused, which would stop the
+    // whole write, so that value stays in the plan and the address is followed instead.
+    const hpfFreq = hpfFreqSent(cc.hasHpf, np.hpfFreq);
+    if (hpfFreq !== null) out.push(command("HPF_FREQ", cc.y, hpfFreq));
     // Polarity invert: one toggle (mono) or two independent L/R (stereo).
     for (const ph of cc.phases) {
       const v = np[ph.key];
@@ -2972,6 +3007,12 @@ export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: Wri
       if (!sc || sendTapWritable(model, ref(node.id, "out"), ref(bus.id, "in"))) continue;
       out.push({ param: sc.tap, x: 0, y: sc.y, name: "SEND_TAP", node: node.id });
     }
+  }
+  // An HPF frequency the plan holds outside the link's write window: the emit leaves it out
+  // (`hpfFreqSent`), and the unit announces a move of its own knob there.
+  for (const { node } of hpfFreqLeftOut(model, plan)) {
+    const cc = channelControl(model, node);
+    if (cc) out.push({ param: PARAMS.HPF_FREQ.id, x: 0, y: cc.y, name: "HPF_FREQ", node });
   }
   // The COMP gain Auto Makeup is computing right now. The writer leaves it out
   // (`compDeviceDriven`) and the unit announces each recompute there, so it is registered
