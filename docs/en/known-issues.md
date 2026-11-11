@@ -129,8 +129,8 @@ protocol, so newer versions are not guaranteed to behave identically.
 | Component | Verified version |
 | --- | --- |
 | Device | URX44V, URX22 |
-| Firmware | V1.3.1.0 |
-| Device Center | 2.2.1 (2.2.1.1) |
+| Firmware | V1.5.0.1 |
+| Device Center | 2.3.0 (2.3.0.1) |
 
 ## The unit lets +48V and HI-Z be on together; the app does not
 
