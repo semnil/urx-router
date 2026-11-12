@@ -107,6 +107,11 @@ everything else the repo already carries — harnesses, probes, generators and p
 miss and expensive to duplicate. Before writing a new tool, `ls scripts/`, `grep -rn "window.__urx" src/`
 and the private probe index cost three minutes.
 
+**A fixture row is compared with the fixture by hand after a pull request adds a public call to it.**
+The check holds a row to naming every export only where the row is written as an inventory
+(rule E3 in `scripts/check-assets-index.mjs`); a row written as prose about when to reach for the
+fixture goes on passing while it describes the calls the fixture had before.
+
 **Driving the app from outside.** All five are statically dropped from a production bundle, and
 `ci.yml` greps `dist` for each name.
 
