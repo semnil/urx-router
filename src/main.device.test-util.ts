@@ -404,10 +404,11 @@ export const connectAs = (model: string): Record<string, unknown> => ({
   vd_connect: { model, label: model, firmware: SUPPORTED_SYSTEM_FIRMWARE, epoch: 1 },
 });
 
-/** A store that answers the clock and refuses every other read, so a write reaches its
- *  DIFF and stops there. The clock has to answer: a failed clock read ends the write one
- *  gate earlier, which is main's own "writes nothing when the clock cannot be read". */
+/** A store that answers the clock and Console Lock and refuses every other read, so a write
+ *  reaches its DIFF and stops there. Both have to answer: a failed read of either ends the write
+ *  a gate earlier — the lock is read right after the connect, the clock ahead of the diff. */
 export const diffReadsFail = (a: Record<string, unknown>): number => {
+  if (a.paramId === PARAMS.CONSOLE_LOCK.id) return 0;
   if (a.paramId === PARAMS.FOLLOW_USB.id || a.paramId === PARAMS.SAMPLE_RATE.id) {
     return clockReads(false, 48_000)(a);
   }

@@ -176,6 +176,7 @@ import {
   resetStorageRequested,
   setKeepAwake,
   thirdPartyLicenses,
+  holdDeviceWrites,
   vdConnect,
   vdDisconnect,
   vdGet,
@@ -267,6 +268,17 @@ import {
 } from "./core/control/cue";
 import type { CueMode } from "./core/control/cue";
 import {
+  consoleLockAbort,
+  consoleLockedOf,
+  isConsoleLockAddr,
+  CONSOLE_LOCK_ADDR,
+  readConsoleLock,
+  sameDeviceWrites,
+  stoppedByConsoleLock,
+  watchConsoleLock,
+  type LockWatch,
+} from "./core/control/console-lock";
+import {
   dawIntegrationNotifyAddrs,
   decodeIntegrationSend,
   encodeIntegrationSend,
@@ -297,7 +309,14 @@ import { LinkLedgerTracker } from "./core/control/link-stats";
 import type { LinkSessionEnd } from "./core/control/link-stats";
 import { LinkStatsView } from "./ui/link-stats";
 import { firmwareMismatch, SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
-import { cancelledBeforeWriting, formatSelfTestReport, runSelfTest, summarizeVerdicts } from "./core/control/selftest";
+import {
+  cancelledBeforeWriting,
+  formatSelfTestReport,
+  restoreSelfTest,
+  runSelfTest,
+  summarizeVerdicts,
+  type PendingRestore,
+} from "./core/control/selftest";
 import { runPrepareModified } from "./core/control/prepare";
 import { DeviceSetupPanel } from "./ui/device-setup";
 import {
@@ -485,6 +504,16 @@ let liveEpoch = 0;
 // scope so applyStaticI18n keeps the button's "Cancel" label across a language
 // switch mid-run, instead of reverting it to "Self-test" while a run is in flight.
 let selfTestAbort: AbortController | null = null;
+// What a self-test Console Lock stopped needs to put the unit back (selftest.ts PendingRestore),
+// until the Device menu's Restore after self-test has run it. In memory only: quitting drops it.
+let selfTestPending: PendingRestore | null = null;
+const selfTestRestoreBtn = $<HTMLButtonElement>("btn-selftest-restore");
+
+/** Show the Device menu's Restore after self-test while a restore is waiting, and only then. */
+function syncSelfTestRestore(): void {
+  selfTestRestoreBtn.hidden = selfTestPending === null;
+  selfTestRestoreBtn.textContent = t().toolbar.selfTestRestore;
+}
 // Same for the fetch / write device actions: each holds its in-flight controller
 // (a long read/write of the whole device can stall when the link drops), so a
 // second menu click cancels and applyStaticI18n keeps the "Cancel" label.
@@ -790,6 +819,8 @@ function cuePartner(node: string): string | undefined {
 function setCue(node: string, on: boolean, origin: "app" | "device"): void {
   // A notify can arrive while a starting session registers, before it counts as up.
   if (origin === "app" && !liveSessionUp) return;
+  // Console Lock: nothing is written, so the cue stays as the unit holds it.
+  if (origin === "app" && refusedForLock()) return;
   const changed = cues.apply(node, on, cuePartner(node));
   // A press on the unit is read back once the presses settle: it can put back output cues the
   // unit was holding from before this session, which the set has no record of, and the unit
@@ -857,7 +888,9 @@ function writeCue(node: string, on: boolean): void {
     })
     .catch((err: unknown) => {
       const guess = unverifiedGuessAt(model, addr.param, addr.y);
-      stopLiveOnError(errorText(err) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : ""));
+      sessionWriteFailed(err, errorText(err) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : ""));
+      // A cue the lock kept from the unit: the set is read back, so it shows what the unit holds.
+      if (stoppedByConsoleLock(err)) rereadCues();
     })
     .finally(() => {
       cueWritesPending--;
@@ -868,7 +901,7 @@ function writeCue(node: string, on: boolean): void {
  *  holding — including ones held from before this session, which the set has no record of — and,
  *  once the flags have been read back behind those writes, every cue that read found. */
 function clearCues(): void {
-  if (!liveSessionUp) return;
+  if (!liveSessionUp || refusedForLock()) return;
   const set = cues;
   if (set.group() !== "input") {
     for (const n of set.nodes()) setCue(n, false, "app");
@@ -896,7 +929,7 @@ function adoptCueRead(nodes: readonly string[], mode: CueMode, set: CueSet, sinc
  *  turns every cue off with the switch and announces none of those flags, so the set is emptied
  *  here and the flags are read back behind the write. */
 function setCueMode(mode: CueMode): void {
-  if (!liveSessionUp || cues.mode === mode) return;
+  if (!liveSessionUp || cues.mode === mode || refusedForLock()) return;
   cues.setMode(mode);
   cueWritesPending++;
   cueWrites = cueWrites
@@ -906,7 +939,7 @@ function setCueMode(mode: CueMode): void {
       cueModeEchoes.note(cueModeRaw(mode));
       await writeCueMode(mode);
     })
-    .catch((err: unknown) => stopLiveOnError(errorText(err)))
+    .catch((err: unknown) => sessionWriteFailed(err))
     .finally(() => {
       cueWritesPending--;
     });
@@ -934,6 +967,141 @@ function resetCues(): void {
   else renderCueBar();
 }
 
+// The unit's [Console Lock] during a live session (core/control/console-lock.ts): read with the
+// starting read and followed by its notify. While it stands the app sends the unit nothing — the
+// operator's decision — so an edit that would change what the session writes is put back, an
+// operation outside the plan that would write is refused, and what a flush had not sent when the
+// lock arrived is read back from the unit. Reading goes on: the session follows the unit, and the
+// meters run.
+let consoleLocked = false;
+
+/** Whether Console Lock holds the session: the unit is locked and a session is sending. */
+function consoleLockHolds(): boolean {
+  return consoleLocked && (live?.isActive() ?? false);
+}
+
+/** Refuse an operation outside the plan that would write to the unit while Console Lock holds the
+ *  session, saying so on the status line. True when it was refused. */
+function refusedForLock(): boolean {
+  if (!consoleLockHolds()) return false;
+  setStatus(t().status.consoleLockedNotSent);
+  return true;
+}
+
+/** A write queued on the session's line failed. One Console Lock refused ends nothing — the lock
+ *  is said and the session goes on; any other failure ends the session, as it always has. */
+function sessionWriteFailed(err: unknown, message: string = errorText(err)): void {
+  if (stoppedByConsoleLock(err)) {
+    setStatus(t().status.consoleLockedNotSent);
+    return;
+  }
+  stopLiveOnError(message);
+}
+
+/** The unit's [Console Lock] as the session learned it: its starting read, or a notify. */
+function takeConsoleLock(locked: boolean): void {
+  if (locked === consoleLocked) return;
+  consoleLocked = locked;
+  holdDeviceWrites(locked);
+  live?.setLocked(locked);
+  renderConsoleLock();
+  if (!locked) {
+    setStatus(t().status.consoleUnlocked);
+    return;
+  }
+  // The gesture in progress ends its entry here, so an edit refused from now on is taken back to
+  // where the plan stands at the lock rather than to where that gesture began — part of it may
+  // already be on the unit.
+  planHistory?.commit();
+  setStatus(t().status.consoleLocked);
+  void putBackUnsent();
+}
+
+/** Forget the lock: the session that knew it ended. */
+function resetConsoleLock(): void {
+  if (!consoleLocked) return;
+  consoleLocked = false;
+  holdDeviceWrites(false);
+  renderConsoleLock();
+}
+
+/**
+ * Read back from the unit what the plan holds and the session had not sent when the lock arrived —
+ * a flush the lock stopped part-way, or one that was waiting to go — so the plan shows what the
+ * unit holds. The edits behind it are not sent once the lock is taken off.
+ */
+async function putBackUnsent(): Promise<void> {
+  if (!live) return;
+  await live.idle();
+  if (!consoleLockHolds()) return;
+  const { nodes, whole } = live.unsent();
+  if (!whole && !nodes.size) return;
+  try {
+    if (whole) await reconcileAllNow();
+    else await reconcileNodesNow(nodes);
+  } catch (err) {
+    stopLiveOnError(errorText(err));
+    return;
+  }
+  if (consoleLockHolds()) setStatus(t().status.consoleLockedPutBack);
+}
+
+// One check of the edits made while Console Lock holds the session, queued behind the funnel that
+// called markChanged — which goes on writing the plan after its call. The keys every call in the
+// task named travel together; one call that named none leaves the set unnamed, as markChanged's own
+// `written` does.
+let lockCheck: { source: WriteSource; names: string[] | undefined } | null = null;
+
+/** An edit landed while Console Lock holds the session: the check runs once the funnel is done. */
+function queueLockedEdit(source: WriteSource, written?: Iterable<string>): void {
+  if (lockCheck) {
+    if (!written) lockCheck.names = undefined;
+    else lockCheck.names?.push(...written);
+    return;
+  }
+  lockCheck = { source, names: written ? [...written] : undefined };
+  queueMicrotask(() => {
+    const check = lockCheck!;
+    lockCheck = null;
+    settleLockedEdit(check.source, check.names);
+  });
+}
+
+/**
+ * Settle the edits made while Console Lock holds the session. Measured against the undo baseline,
+ * which takes every value the unit puts into the plan at the site that puts it there: what differs
+ * from it is the operator's. An edit that changes nothing the session writes stands; any other is
+ * taken back to the baseline and the status line says why.
+ */
+function settleLockedEdit(source: WriteSource, written?: Iterable<string>): void {
+  const model = getModel(modelId);
+  const before = planHistory?.baselineState();
+  if (
+    !planHistory ||
+    !before ||
+    !consoleLockHolds() ||
+    sameDeviceWrites(model, before, plan, getSettings().deviceScope)
+  ) {
+    applyEdit(source, written);
+    return;
+  }
+  const patch = planHistory.discardOpen();
+  if (patch.length) {
+    repaintPatched(patchTouch(patch));
+    midi?.scheduleFeedback();
+    simView?.planChanged();
+  }
+  setStatus(t().status.consoleLockedEditPutBack);
+}
+
+/** Paint the strip that says Console Lock holds the session. */
+function renderConsoleLock(): void {
+  const strip = $<HTMLElement>("lock-strip");
+  strip.hidden = !consoleLocked;
+  $("lock-strip-title").textContent = t().lock.title;
+  $("lock-strip-text").textContent = t().lock.body;
+}
+
 // HOME's [Sends] destination (core/control/sends-target.ts): UI state of the unit outside the
 // plan, shown on the SIM view's glass, so an experimental launch's alone. There a session's start
 // reads it, a change on the unit arrives as a notify, and a destination chosen on the glass is
@@ -958,7 +1126,7 @@ function takeSendsTarget(raw: number): void {
  *  is refused — with no session, for a destination the model has no bus for, and for FX 2 at a
  *  rate that takes FX 2 out. */
 function chooseSendsTarget(target: string): boolean {
-  if (!liveSessionUp) return false;
+  if (!liveSessionUp || refusedForLock()) return false;
   const raw = encodeSendsTarget(getModel(modelId), target, plan.sampleRate);
   if (raw === null) return false;
   sendsTarget = decodeSendsTarget(getModel(modelId), raw);
@@ -968,7 +1136,11 @@ function chooseSendsTarget(target: string): boolean {
       sendsEchoes.note(raw);
       await writeSendsTarget(raw);
     })
-    .catch((err: unknown) => stopLiveOnError(errorText(err)));
+    .catch((err: unknown) => {
+      sessionWriteFailed(err);
+      // The destination the lock kept from the unit: the glass is shown what the unit holds.
+      if (stoppedByConsoleLock(err)) rereadSendsTarget();
+    });
   return true;
 }
 
@@ -1066,6 +1238,8 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
   }
   // A Software Integration setting is the session's, and the unit takes one only while a
   // compatible DAW holds it.
+  // Console Lock: nothing on the glass is written to the unit.
+  if (refusedForLock()) return Promise.reject(new Error("refused"));
   const slot = integrationSlotAt(path);
   if (slot) {
     const raw = encodeIntegrationSend(String(value));
@@ -1082,7 +1256,10 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
         if (unitIntegration?.active) await writeIntegrationSend(slot, raw);
         else rereadDawIntegration();
       })
-      .catch((err: unknown) => stopLiveOnError(errorText(err)));
+      .catch((err: unknown) => {
+        sessionWriteFailed(err);
+        if (stoppedByConsoleLock(err)) rereadDawIntegration();
+      });
     return Promise.resolve(shown());
   }
   const model = getModel(modelId);
@@ -1097,7 +1274,10 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
         await live?.idle();
         if (liveSessionUp) await sendDeviceSetup(writes);
       })
-      .catch((err: unknown) => stopLiveOnError(errorText(err)));
+      .catch((err: unknown) => {
+        sessionWriteFailed(err);
+        if (stoppedByConsoleLock(err)) scheduleUnitSetupRead();
+      });
     return Promise.resolve(shown());
   }
   return Promise.reject(new Error("refused"));
@@ -1428,7 +1608,8 @@ const buildSimView = (): SimView =>
     {
       getModel: () => getModel(modelId),
       getPlan: () => plan,
-      apply: (edit) => planTakesEdits() && applySimEdit(edit),
+      // Every value the glass sets is the unit's, so Console Lock refuses them all.
+      apply: (edit) => planTakesEdits() && !refusedForLock() && applySimEdit(edit),
       onRefusedAction: () => setStatus(t().status.simUnitAction),
       isLive: () => liveSessionUp,
       locks: (paths) =>
@@ -1625,7 +1806,13 @@ let followAuthored = 0;
  *  otherwise. Any other patch is counted for the reflect, which drops both stacks. */
 function followAuthor(patch: PlanPatch): void {
   if (patch.length > 0 && patch.every((e) => e.field === "sampleRate")) planHistory?.takeBackRate(patch);
-  else followAuthored += patch.length;
+  else {
+    followAuthored += patch.length;
+    // Into the baseline at once while Console Lock holds the session: an edit refused before the
+    // reflect drops the stacks is taken back to the baseline, and the values this read brought in
+    // are the unit's, not part of that edit.
+    if (consoleLockHolds()) planHistory?.absorb(patch);
+  }
 }
 function reflectFollow(): void {
   const ids = [...followDirtyNodes];
@@ -2022,6 +2209,7 @@ const follow =
           ...(experimentalOn ? [SENDS_TARGET_ADDR] : []),
           ...cueNotifyAddrs(getModel(modelId)),
           CUE_MODE_ADDR,
+          CONSOLE_LOCK_ADDR,
           ...(experimentalOn ? unitStateNotifyAddrs(getModel(modelId)) : []),
           ...clipSafeNotifyAddrs(getModel(modelId)),
         ],
@@ -2058,6 +2246,12 @@ const follow =
           // [CUE Mode]: the unit answering a switch of this app's, or a switch on its panel.
           if (at(CUE_MODE_ADDR)) {
             if (!cueModeEchoes.take(p.value)) takeCueMode(cueModeOf(p.value));
+            return true;
+          }
+          // [Console Lock], locked or unlocked on the unit's panel. The app never writes it, so
+          // every notify is the unit's own.
+          if (isConsoleLockAddr(p)) {
+            takeConsoleLock(consoleLockedOf(p.value));
             return true;
           }
           const cue = cueAt(getModel(modelId), p.paramId, p.x, p.y);
@@ -2139,80 +2333,88 @@ const follow =
         // the next converge would then write the plan's stale value back over the
         // operator's own edit on the hardware. Reject so DeviceFollow takes its
         // stop-following path, the same one a rejected reconcile already took.
-        reconcileNodes: async (nodeIds) => {
-          // Taken before the read is issued: a direct notify landing while it is in
-          // flight is device truth the read's private copy predates, and the re-base
-          // below rebuilds the whole snapshot from that copy.
-          const since = live?.directMark();
-          // The session's own recent writes travel with the read. This node's addresses
-          // can include ones the flush wrote tens of ms ago, and a GET inside that
-          // window answers the PRE-write value — which the merge then takes as device
-          // truth while the unit's own notify for our write is consumed as an echo. The
-          // operator's toggle flips back on screen, and plan and snapshot agree on a
-          // value the device does not hold until the idle sweep re-reads past it.
-          const pending = live?.recentPending(nodeIds);
-          const merged = await followRead("device-follow scoped readback", (into, signal) =>
-            applyNodeStateScoped(into, nodeIds, signal, pending),
-          );
-          if (!merged) return;
-          // A Signal Type moved on the unit's own panel reaches the plan here, with no edit
-          // funnel to snap the pair's partner beside its primary.
-          snapLinkedPairs();
-          traceProbe?.sample("follow-scoped");
-          noteMergeConflicts(merged);
-          // Re-based here rather than in the coalesced reflect: only the copy this read
-          // ran against says what the device holds, it is not reachable from there, and
-          // the reflect's delay is a window in which an undo would diff against a
-          // snapshot that still describes the pre-read plan.
-          // Ahead of the re-base and the reflect: an incomplete read merged nothing, and
-          // the session it belongs to ends at this throw.
-          assertReadComplete(merged, "device-follow scoped readback issues:");
-          live?.resync(merged.deviceView, since, nodeIds);
-          followAuthor(merged.devicePatch);
-          followFull = true;
-          requestReflect();
-          reapplyHeld(merged);
-        },
+        reconcileNodes: (nodeIds) => reconcileNodesNow(nodeIds),
         // Escalation / idle safety net: pull the whole device into the plan.
-        reconcileAll: async () => {
-          const since = live?.directMark();
-          // Unscoped: a whole-device read covers every address, so every recent write is
-          // one it must settle before reading (the scoped case above says why).
-          const pending = live?.recentPending();
-          // The [CUE] flags are outside the plan, so the plan read does not carry them; they are
-          // read inside the same follow read, which a session's release waits for. A
-          // whole-device read follows a scene recall and stands in for any notify missed.
-          const cueSet = cues;
-          const cueSince = cueSet.version;
-          let cueGot: { nodes: string[]; mode: CueMode } | null = null;
-          const merged = await followRead("device-follow readback", async (into, signal) => {
-            const result = await applyDeviceStateScoped(into, signal, pending);
-            if (!result.errors.length) cueGot = { mode: await readCueMode(), nodes: await readCues(getModel(modelId)) };
-            return result;
-          });
-          if (!merged) return;
-          // Same as the scoped reconcile above: a link the whole-device read brought in gets
-          // its partner snapped. This is the hook a scene or preset recall on the unit takes,
-          // where several Signal Types move at once.
-          snapLinkedPairs();
-          traceProbe?.sample("follow-full");
-          noteMergeConflicts(merged);
-          // Ahead of the re-base and the reflect, as in the scoped reconcile above.
-          assertReadComplete(merged, "device-follow readback issues:");
-          plan.unreadNodes = merged.unreadNodes;
-          live?.resync(merged.deviceView, since);
-          followAuthor(merged.devicePatch);
-          followFull = true;
-          requestReflect();
-          reapplyHeld(merged);
-          // Narrowed by hand: the assignment is inside the read's callback, which the flow
-          // analysis does not follow.
-          const cueTaken = cueGot as { nodes: string[]; mode: CueMode } | null;
-          if (cueTaken) adoptCueRead(cueTaken.nodes, cueTaken.mode, cueSet, cueSince);
-        },
+        reconcileAll: () => reconcileAllNow(),
         onFollow: () => setStatus(t().status.liveFollowing),
         onError: (message) => stopLiveOnError(errorText(message)),
       });
+
+/** Device follow's scoped reconcile, and the read Console Lock takes back unsent nodes with: re-read
+ *  the nodes, reflect them, and re-base the live snapshot. A read that fails rejects. */
+async function reconcileNodesNow(nodeIds: ReadonlySet<string>): Promise<void> {
+  // Taken before the read is issued: a direct notify landing while it is in
+  // flight is device truth the read's private copy predates, and the re-base
+  // below rebuilds the whole snapshot from that copy.
+  const since = live?.directMark();
+  // The session's own recent writes travel with the read. This node's addresses
+  // can include ones the flush wrote tens of ms ago, and a GET inside that
+  // window answers the PRE-write value — which the merge then takes as device
+  // truth while the unit's own notify for our write is consumed as an echo. The
+  // operator's toggle flips back on screen, and plan and snapshot agree on a
+  // value the device does not hold until the idle sweep re-reads past it.
+  const pending = live?.recentPending(nodeIds);
+  const merged = await followRead("device-follow scoped readback", (into, signal) =>
+    applyNodeStateScoped(into, nodeIds, signal, pending),
+  );
+  if (!merged) return;
+  // A Signal Type moved on the unit's own panel reaches the plan here, with no edit
+  // funnel to snap the pair's partner beside its primary.
+  snapLinkedPairs();
+  traceProbe?.sample("follow-scoped");
+  noteMergeConflicts(merged);
+  // Re-based here rather than in the coalesced reflect: only the copy this read
+  // ran against says what the device holds, it is not reachable from there, and
+  // the reflect's delay is a window in which an undo would diff against a
+  // snapshot that still describes the pre-read plan.
+  // Ahead of the re-base and the reflect: an incomplete read merged nothing, and
+  // the session it belongs to ends at this throw.
+  assertReadComplete(merged, "device-follow scoped readback issues:");
+  live?.resync(merged.deviceView, since, nodeIds);
+  followAuthor(merged.devicePatch);
+  followFull = true;
+  requestReflect();
+  reapplyHeld(merged);
+}
+
+/** Device follow's full reconcile, and the read Console Lock takes back what a stopped converge
+ *  left with: re-read the whole unit, its [CUE] flags with it. A read that fails rejects. */
+async function reconcileAllNow(): Promise<void> {
+  const since = live?.directMark();
+  // Unscoped: a whole-device read covers every address, so every recent write is
+  // one it must settle before reading (the scoped case above says why).
+  const pending = live?.recentPending();
+  // The [CUE] flags are outside the plan, so the plan read does not carry them; they are
+  // read inside the same follow read, which a session's release waits for. A
+  // whole-device read follows a scene recall and stands in for any notify missed.
+  const cueSet = cues;
+  const cueSince = cueSet.version;
+  let cueGot: { nodes: string[]; mode: CueMode } | null = null;
+  const merged = await followRead("device-follow readback", async (into, signal) => {
+    const result = await applyDeviceStateScoped(into, signal, pending);
+    if (!result.errors.length) cueGot = { mode: await readCueMode(), nodes: await readCues(getModel(modelId)) };
+    return result;
+  });
+  if (!merged) return;
+  // Same as the scoped reconcile above: a link the whole-device read brought in gets
+  // its partner snapped. This is the hook a scene or preset recall on the unit takes,
+  // where several Signal Types move at once.
+  snapLinkedPairs();
+  traceProbe?.sample("follow-full");
+  noteMergeConflicts(merged);
+  // Ahead of the re-base and the reflect, as in the scoped reconcile above.
+  assertReadComplete(merged, "device-follow readback issues:");
+  plan.unreadNodes = merged.unreadNodes;
+  live?.resync(merged.deviceView, since);
+  followAuthor(merged.devicePatch);
+  followFull = true;
+  requestReflect();
+  reapplyHeld(merged);
+  // Narrowed by hand: the assignment is inside the read's callback, which the flow
+  // analysis does not follow.
+  const cueTaken = cueGot as { nodes: string[]; mode: CueMode } | null;
+  if (cueTaken) adoptCueRead(cueTaken.nodes, cueTaken.mode, cueSet, cueSince);
+}
 
 // `persist` false applies a view without remembering it: the startup's stand-in for a
 // remembered SIM view, which only an experimental launch shows.
@@ -2309,6 +2511,7 @@ const DEVICE_ENTRIES: ReadonlyArray<[string, LinkHolder | null]> = [
   ["btn-device-setup", "device-setup"],
   ["btn-live", "live"],
   ["btn-selftest", "run"],
+  ["btn-selftest-restore", "run"],
   ["btn-open-settings", "live"],
 ];
 
@@ -2439,6 +2642,8 @@ function deactivateLive(status?: string, end: LinkSessionEnd = "off"): void {
   resetCues();
   resetSendsTarget();
   resetUnitSessionState();
+  // …and so is the lock: a write outside a session reads it again once it connects.
+  resetConsoleLock();
   heldDeviceWrites.clear();
   // The flush that would have reported them has ended with the session.
   flushReadNotes = [];
@@ -2574,6 +2779,16 @@ function markChanged(source: WriteSource = "ui", written?: Iterable<string>): vo
     refuseSwitchReadEdit(switchRead);
     return;
   }
+  // Console Lock holds the session: whether the edit stands is decided once the funnel is done.
+  if (consoleLockHolds()) {
+    queueLockedEdit(source, written);
+    return;
+  }
+  applyEdit(source, written);
+}
+
+// The part of markChanged an edit that stands takes.
+function applyEdit(source: WriteSource, written?: Iterable<string>): void {
   dirty = true;
   // Attribute the write before the funnel's own side effects run: note() may commit an
   // entry, and the ledger has to say who authored the keys that entry carries.
@@ -2938,6 +3153,8 @@ function applyStaticI18n(): void {
   $("btn-device-setup").textContent = m.deviceSetup.menuItem;
   $("btn-compare").textContent = compareAbort ? m.toolbar.compareCancel : m.toolbar.compare;
   $("btn-selftest").textContent = selfTestAbort ? m.toolbar.selfTestCancel : m.toolbar.selfTest;
+  syncSelfTestRestore();
+  renderConsoleLock();
   // Live-sync toggle keeps a static label; aria-checked and the on-air tally
   // carry the on/off state. The tally is relabelled too — the tag is its whole
   // text, and a language may translate it.
@@ -3147,7 +3364,9 @@ function writeLcd(raw: number, guess: string | undefined): void {
   const write = writeLcdSelection(raw);
   lcdInFlight = write;
   write
-    .catch((err: unknown) => stopLiveOnError(errorText(err) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : "")))
+    .catch((err: unknown) =>
+      sessionWriteFailed(err, errorText(err) + (guess ? ` — ${t().status.unverifiedGuess(guess)}` : "")),
+    )
     .finally(() => {
       if (lcdInFlight === write) lcdInFlight = null;
       lcdWriting = false;
@@ -3164,6 +3383,8 @@ function writeLcd(raw: number, guess: string | undefined): void {
  *  session also moves the unit's LCD selection to that channel and side; a write the unit
  *  refuses ends the session and keeps the side. */
 function switchSide(channelId: string, side: JackSide, origin: "app" | "device"): void {
+  // Console Lock: the switch would move the unit's selection, so it is not made.
+  if (origin === "app" && liveSessionUp && refusedForLock()) return;
   if (!setDisplayedSide(channelId, side)) return;
   consoleView.refresh();
   if (inspectorNodes(getModel(modelId), plan, selection).includes(channelId)) rebuildInspectorNow();
@@ -3999,14 +4220,15 @@ const heldDeviceWrites = new Map<string, number>();
 /** Write one value the plan's writer leaves out to the unit, behind the plan flush and every unit
  *  write queued so far, while a session is up. With no session there is no unit to write it to. */
 function writeHeldDeviceValue(param: number, y: number, value: number): void {
-  if (!liveSessionUp) return;
+  // Under Console Lock the edit that moved the value is put back with nothing sent, and says so.
+  if (!liveSessionUp || consoleLockHolds()) return;
   heldDeviceWrites.set(`${param}/${y}`, value);
   cueWrites = cueWrites
     .then(async () => {
       await live?.idle();
       if (liveSessionUp) await vdSet(param, 0, y, value);
     })
-    .catch((err: unknown) => stopLiveOnError(errorText(err)));
+    .catch((err: unknown) => sessionWriteFailed(err));
 }
 
 /** What the microSD recorder refuses a clock change with during a session, by what it holds. */
@@ -4122,7 +4344,8 @@ async function confirmImportClock(
 /** Take a rate chosen in the app: during Live sync once the operator has agreed to what it costs,
  *  and not at all while the link holds the rate. */
 function pickSampleRate(rate: number): void {
-  if (rateHold(rateHoldState()) !== null) {
+  // Console Lock: the rate is the unit's, and nothing is asked about a write that cannot go out.
+  if (rateHold(rateHoldState()) !== null || (rate !== plan.sampleRate && refusedForLock())) {
     ratePicker.value = String(plan.sampleRate);
     return;
   }
@@ -4445,6 +4668,10 @@ planHistory = new PlanHistory({
   patchBlocked: (patch) => {
     const after = clonePlanState(plan);
     applyPatch(after, patch);
+    // Console Lock: an entry that would change what the session writes is held back, as an edit
+    // is put back. One that writes nothing — a node moved, a note — goes ahead.
+    if (consoleLockHolds() && !sameDeviceWrites(getModel(modelId), plan, after, getSettings().deviceScope))
+      return t().status.consoleLockedUndo;
     return undoRefusal(getModel(modelId), plan, after, (id) => graph.labelOf(id), liveSessionUp);
   },
   // The macOS application menu's Undo / Redo render this state (a no-op elsewhere).
@@ -4538,6 +4765,10 @@ async function withDevice(
   connecting: string,
   onError: (message: string) => string,
   action: (device: DeviceSummary) => Promise<void>,
+  /** An action that writes: the unit is asked about Console Lock before the action starts, and
+   *  watched for it while the action runs — a lock arriving aborts this controller, which stops
+   *  the action at its next command (core/control/console-lock.ts). */
+  writes?: AbortController,
 ): Promise<void> {
   // Ahead of the status line: an action that never starts must not leave its own
   // "connecting…" on screen over the holder's progress.
@@ -4545,16 +4776,26 @@ async function withDevice(
   setStatus(connecting);
   try {
     const device = await vdConnect(modelId);
+    let watch: LockWatch | null = null;
     try {
+      if (writes) {
+        watch = await watchConsoleLock(() => writes.abort(consoleLockAbort()));
+        if (watch.lockedAtStart) {
+          showError(t().error.consoleLocked);
+          return;
+        }
+      }
       await action(device);
     } finally {
+      watch?.stop();
       // Release exactly the connection this action opened, by its epoch.
       await vdDisconnect(device.epoch);
     }
   } catch (err) {
     // A cancel surfaces as an AbortError; show the neutral "canceled" status rather than
-    // wrapping it as an action failure.
-    if (isAbortError(err)) setStatus(t().status.canceled);
+    // wrapping it as an action failure — or, for a stop Console Lock made, say so.
+    if (isAbortError(err)) setStatus(stoppedByConsoleLock(err) ? t().status.consoleLockedStopped : t().status.canceled);
+    else if (stoppedByConsoleLock(err)) setStatus(t().status.consoleLockedStopped);
     else showError(connectFailureStatus(err, onError));
   } finally {
     releaseDeviceLink(holder);
@@ -4571,15 +4812,44 @@ async function withCheckedDevice(
   connecting: string,
   onError: (message: string) => string,
   action: (device: DeviceSummary) => Promise<void>,
+  writes?: AbortController,
 ): Promise<void> {
-  await withDevice(holder, connecting, onError, async (device) => {
-    if (!(await confirmFirmware(device))) {
-      setStatus(t().status.canceled);
-      return;
-    }
-    if (!refuseModelMismatch(device, onError)) return;
-    await action(device);
-  });
+  await withDevice(
+    holder,
+    connecting,
+    onError,
+    async (device) => {
+      if (!(await confirmFirmware(device))) {
+        setStatus(t().status.canceled);
+        return;
+      }
+      if (!refuseModelMismatch(device, onError)) return;
+      await action(device);
+    },
+    writes,
+  );
+}
+
+/** withDevice for an action that writes to the unit, watched for Console Lock through `writes`. */
+function withWritingDevice(
+  writes: AbortController,
+  holder: LinkHolder,
+  connecting: string,
+  onError: (message: string) => string,
+  action: (device: DeviceSummary) => Promise<void>,
+): Promise<void> {
+  return withDevice(holder, connecting, onError, action, writes);
+}
+
+/** withCheckedDevice for an action that writes to the unit, watched for Console Lock through `writes`. */
+function withWrite(
+  writes: AbortController,
+  holder: LinkHolder,
+  connecting: string,
+  onError: (message: string) => string,
+  action: (device: DeviceSummary) => Promise<void>,
+): Promise<void> {
+  return withCheckedDevice(holder, connecting, onError, action, writes);
 }
 
 // A failure report a device action produced (built while connected) but offers to
@@ -4659,10 +4929,16 @@ if (!DEMO) {
       // While live the connection is already held for the session; opening a second
       // one would fight it. Otherwise connect just for this write.
       if (liveSessionUp) {
+        if (refusedForLock()) return;
         if (!(await ask(modelId))) return;
         try {
           await apply();
         } catch (err) {
+          // The unit went into Console Lock while the question was open: nothing was written.
+          if (stoppedByConsoleLock(err)) {
+            setStatus(t().status.consoleLockedNotSent);
+            return;
+          }
           // The confirm leaves the window running, so the session can have ended behind it,
           // and its teardown reported its own cause and nothing about this write. A write
           // that failed with no session left is reported as this write's failure.
@@ -4676,13 +4952,19 @@ if (!DEMO) {
       }
       // Inside the holder, so the question is asked of a unit that answered: declining
       // leaves the link released by withDevice's own teardown and writes nothing.
-      await withDevice("follow-usb", t().status.writeConnecting, t().status.writeError, async (device) => {
-        if (!(await ask(device.model))) {
-          setStatus(t().status.canceled);
-          return;
-        }
-        await apply();
-      });
+      await withWritingDevice(
+        new AbortController(),
+        "follow-usb",
+        t().status.writeConnecting,
+        t().status.writeError,
+        async (device) => {
+          if (!(await ask(device.model))) {
+            setStatus(t().status.canceled);
+            return;
+          }
+          await apply();
+        },
+      );
     }),
   );
 
@@ -5028,7 +5310,7 @@ if (!DEMO) {
       writeBtn.textContent = t().toolbar.writeCancel;
       let report: ErrorReport = null;
       try {
-        await withCheckedDevice("write", t().status.writeConnecting, t().status.writeError, async (device) => {
+        await withWrite(controller, "write", t().status.writeConnecting, t().status.writeError, async (device) => {
           // Scene scope drops SAMPLE_RATE from the write set, so there is no
           // rate to settle — the device keeps running at its own.
           const scope = getSettings().deviceScope;
@@ -5060,6 +5342,13 @@ if (!DEMO) {
           // stops before sending anything still stands on what an earlier attempt sent.
           let sentSoFar = 0;
           const unconfirmedSoFar: string[] = [];
+          // What the attempt in flight has sent, counted as each send lands — a stop throws out of
+          // the loop and takes its outcomes with it — and how many it set out to send.
+          let sentNow = 0;
+          let attemptTotal = 0;
+          // What a stopped write says: a cancel, or Console Lock with how much of the write went out.
+          const stoppedLine = (sent: number): string =>
+            stoppedByConsoleLock(signal) ? t().status.writeLocked(sent, attemptTotal) : t().status.canceled;
           // A read that fails once something has gone out is a read-back the write could not
           // confirm; before anything has, it is the read the write stops on.
           const readFailed = (reads: string[]): void => {
@@ -5074,6 +5363,7 @@ if (!DEMO) {
           const attemptWrite = async (
             confirmFirst: boolean,
           ): Promise<{ sent: number; notSent: number; unread?: number } | null> => {
+            sentNow = 0;
             // A read failure leaves those parameters' device values unknown, so the
             // write stops on the first one — the rest of the sweep would only be
             // establishing values for a write that is already canceled.
@@ -5091,6 +5381,7 @@ if (!DEMO) {
               return null;
             }
             const total = diffs.length + nameWrites.length;
+            attemptTotal = total;
             // From the EMITTED list, not from `diffs`: a survivor that already
             // matches the device is not a diff, and the owner it displaced would
             // then go unmentioned — including when the only pending change is that
@@ -5155,6 +5446,7 @@ if (!DEMO) {
                 // rate that goes out arms it, whatever put it in the plan, on a model that
                 // has the recorder.
                 onSent: (o: SendOutcome) => {
+                  if (o.result === "accepted") sentNow++;
                   if (o.result !== "refused" && o.command.name === "SAMPLE_RATE" && hasRecorder(device.model)) {
                     trackCountMayHaveDropped = true;
                   }
@@ -5193,7 +5485,7 @@ if (!DEMO) {
               // between the loop stopping and the join.
               const cancelTaken = adoptConfirmedWrites(confirmedAddrs(ledger));
               adopted += cancelTaken;
-              setStatus(t().status.canceled + adoptedNote());
+              setStatus(stoppedLine(sentSoFar + sentNow) + adoptedNote());
               return null;
             }
             const { outcomes, residual, readErrors: convergeErrors } = convergeResult;
@@ -5221,7 +5513,7 @@ if (!DEMO) {
               // the adoption above has already changed the plan, and a bare "Canceled" from
               // withDevice would leave that unsaid.
               if (signal.aborted) {
-                setStatus(t().status.canceled + note);
+                setStatus(stoppedLine(sentSoFar + outcomes.filter((o) => o.ok).length + presetsSent) + note);
                 return null;
               }
               const nameOutcomes = await sendNames(nameWrites.filter((w) => w.name === undefined));
@@ -5248,7 +5540,7 @@ if (!DEMO) {
             // A cancel taken once a preset has gone out: what went out is in the report, and nothing
             // more is sent or offered.
             if (presetsCanceled) {
-              setStatus(t().status.canceled + note);
+              setStatus(stoppedLine(sentSoFar) + note);
               return null;
             }
             if (presetStop) {
@@ -5307,7 +5599,7 @@ if (!DEMO) {
             // withDevice would write for that says nothing about what an earlier attempt took
             // back. Counted across attempts because each one adopts different keys: a key the
             // plan has already taken is no longer a problem the next attempt reports.
-            setStatus(t().status.canceled + adoptedNote());
+            setStatus(stoppedLine(sentSoFar + sentNow) + adoptedNote());
             wroteOutcome = true;
           } finally {
             // INSIDE the action, because withDevice awaits its own vdDisconnect on the way
@@ -5428,10 +5720,11 @@ if (!DEMO) {
         follow?.end();
         live?.end();
         // The cues, the [Sends] destination and the unit's states the starting read took belong
-        // to the session that did not start.
+        // to the session that did not start, and so does the lock it read.
         resetCues();
         resetSendsTarget();
         resetUnitSessionState();
+        resetConsoleLock();
         await releaseLive(device.epoch, "error");
         showError(message, supplied ?? "");
       };
@@ -5478,6 +5771,7 @@ if (!DEMO) {
         let cardRead: boolean | null = null;
         let cueRead: string[] = [];
         let cueModeRead: CueMode = "mix";
+        let lockRead = false;
         let merged: MergedRead | null;
         try {
           merged = await readIntoPlan(
@@ -5501,6 +5795,8 @@ if (!DEMO) {
               // switches to.
               cueModeRead = await readCueMode();
               cueRead = await readCues(getModel(switchTo ? switchTo.modelId : modelId));
+              // A locked unit is followed like any other, and the session sends it nothing.
+              lockRead = await readConsoleLock();
               return applyDeviceStateScoped(into);
             },
             switchTo ? undefined : planWrites,
@@ -5580,6 +5876,9 @@ if (!DEMO) {
         // The copy the starting read ran against: without it an edit made during the
         // multi-second read is snapshotted as a value the device was already given.
         live.begin(merged.deviceView);
+        // Before anything can schedule a send: an edit made while the starting read ran is then
+        // read back from the unit rather than sent (putBackUnsent).
+        takeConsoleLock(lockRead);
         // Both registrations are awaited before the session counts as up. Without
         // the notify stream the app is blind to device-side edits and the next
         // converge writes the plan back over them; without the link watch an idle
@@ -5724,8 +6023,15 @@ if (!DEMO) {
     // a MIDI desk is a second physical surface, and the panel that configures it is
     // itself counted by modalOpen(). A read that carries a model switch says so instead
     // (see switchRead).
+    // Console Lock holds the session: every control a desk drives writes to the unit.
     blocked: () =>
-      switchRead ? t().status.busySwitchRead : flow.busy || deviceLinkHolder === "run" ? t().status.midiBusy : null,
+      switchRead
+        ? t().status.busySwitchRead
+        : flow.busy || deviceLinkHolder === "run"
+          ? t().status.midiBusy
+          : consoleLockHolds()
+            ? t().status.consoleLockedNotSent
+            : null,
     // Both arming surfaces repaint: learn mode, the armed control and the mapping
     // set all decide what they draw, and a tuning screen open over the console is
     // the one the operator is looking at.
@@ -5761,7 +6067,10 @@ if (!DEMO) {
     apply: async (writes, changed) => {
       if (liveSessionUp) return applySetupLive(writes, changed);
       let applied = false;
-      await withCheckedDevice(
+      // Watched for Console Lock: a lock that arrives stops it at the next write, which the write
+      // hold refuses (this send takes no signal).
+      await withWrite(
+        new AbortController(),
         "device-setup",
         t().status.deviceSetupApplying,
         (message) => t().error.deviceSetupWrite(message),
@@ -5780,6 +6089,8 @@ if (!DEMO) {
   /** Write the screen's changes over the live session's connection, behind every unit write queued
    *  so far. A write that fails ends the session, as any other session write does. */
   async function applySetupLive(writes: SetupWrite[], changed: number): Promise<boolean> {
+    // Console Lock: the screen stays open on its edits, with nothing written.
+    if (refusedForLock()) return false;
     let applied = false;
     const run = cueWrites.then(async () => {
       if (!liveSessionUp) return;
@@ -5790,7 +6101,7 @@ if (!DEMO) {
       if (unitSetup) unitSetup = withSetupWrites(unitSetup, writes);
       setStatus(t().status.deviceSetupApplied(changed));
     });
-    cueWrites = run.catch((err: unknown) => stopLiveOnError(t().error.deviceSetupWrite(errorText(err))));
+    cueWrites = run.catch((err: unknown) => sessionWriteFailed(err, t().error.deviceSetupWrite(errorText(err))));
     await cueWrites;
     simView?.unitStateChanged();
     return applied;
@@ -5877,6 +6188,8 @@ if (!DEMO) {
       setStatus(t().status.deviceLinkBusy);
       return;
     }
+    // During a session the import is an edit the session writes, which Console Lock refuses.
+    if (refusedForLock()) return;
     let name = "";
     let current;
     try {
@@ -5923,6 +6236,8 @@ if (!DEMO) {
       setStatus(t().status.canceled);
       return;
     }
+    // …and the unit can have gone into Console Lock behind the confirms.
+    if (refusedForLock()) return;
     // The file's Follow USB goes to the unit first, so the rate the session then writes lands
     // on a unit clocked the way the file says.
     if (live && clock.followUsb !== undefined) {
@@ -6103,6 +6418,12 @@ if (!DEMO) {
 
     // `headless` = the --self-test launch (see logReport).
     async function runDeviceSelfTest(headless = false): Promise<void> {
+      // A run Console Lock stopped is still waiting to be put back: a new one would capture the
+      // state that run left as the one to restore, and what the unit held before it would be lost.
+      if (selfTestPending) {
+        setStatus(t().status.selfTestRestorePending);
+        return;
+      }
       // Taken before the first await, so nothing can slip through between the click
       // and the connect — neither a MIDI message nor a second device action.
       if (!holdDeviceLink("run")) return;
@@ -6125,41 +6446,51 @@ if (!DEMO) {
         const verdicts = summarizeVerdicts(report.unverified);
         const divergence = report.residual.filter((r) => !r.stoppedOn).length;
         const neverCompared = report.residual.length - divergence;
+        // A run Console Lock stopped once it had written keeps what the restore needs, which the
+        // Device menu runs once the unit is unlocked.
+        if (report.pendingRestore) selfTestPending = report.pendingRestore;
+        syncSelfTestRestore();
         setStatus(
-          report.aborted
-            ? cancelledBeforeWriting(report)
-              ? t().status.selfTestCancelledUntouched
-              : t().status.selfTestCancelled
-            : // Before the restore verdict: a refusal wrote nothing, so `restored` is
-              // false only because there was nothing to restore — reading it as a failed
-              // restore tells the operator their unit may be left perturbed when it was
-              // never touched.
-              report.phase === "refused"
-              ? report.refusal === "modelMismatch"
-                ? t().status.selfTestModelMismatch(report.device, modelId)
-                : report.refusal === "sideEffectUnheld"
-                  ? t().status.selfTestRefusedHead
-                  : report.refusal === "hpfFreqUnwritable"
-                    ? t().status.selfTestRefusedHpfFreq
-                    : t().status.selfTestRefused
-              : !report.restored
-                ? t().status.selfTestRestoreFail
-                : report.unverified.length
-                  ? t().status.selfTestUnverified(
-                      verdicts.confirmed,
-                      verdicts.roundTripped,
-                      verdicts.refuted,
-                      verdicts.untestable,
-                    )
-                  : report.ok
-                    ? t().status.selfTestPass(report.written)
-                    : // `residual` holds two things once a pass can stop partway: what the
-                      // device answered differently, and what the run never got to ask
-                      // about. Only the first is a mismatch, and if there is any of the
-                      // second the headline is that the run did not finish.
-                      neverCompared > 0
-                      ? t().status.selfTestIncomplete(neverCompared)
-                      : t().status.selfTestFail(divergence),
+          report.locked
+            ? report.pendingRestore
+              ? t().status.selfTestLocked
+              : t().status.selfTestLockedUntouched
+            : report.aborted
+              ? cancelledBeforeWriting(report)
+                ? t().status.selfTestCancelledUntouched
+                : t().status.selfTestCancelled
+              : // Before the restore verdict: a refusal wrote nothing, so `restored` is
+                // false only because there was nothing to restore — reading it as a failed
+                // restore tells the operator their unit may be left perturbed when it was
+                // never touched.
+                report.phase === "refused"
+                ? report.refusal === "modelMismatch"
+                  ? t().status.selfTestModelMismatch(report.device, modelId)
+                  : report.refusal === "sideEffectUnheld"
+                    ? t().status.selfTestRefusedHead
+                    : report.refusal === "hpfFreqUnwritable"
+                      ? t().status.selfTestRefusedHpfFreq
+                      : report.refusal === "consoleLock"
+                        ? t().status.selfTestRefusedLock
+                        : t().status.selfTestRefused
+                : !report.restored
+                  ? t().status.selfTestRestoreFail
+                  : report.unverified.length
+                    ? t().status.selfTestUnverified(
+                        verdicts.confirmed,
+                        verdicts.roundTripped,
+                        verdicts.refuted,
+                        verdicts.untestable,
+                      )
+                    : report.ok
+                      ? t().status.selfTestPass(report.written)
+                      : // `residual` holds two things once a pass can stop partway: what the
+                        // device answered differently, and what the run never got to ask
+                        // about. Only the first is a mismatch, and if there is any of the
+                        // second the headline is that the run did not finish.
+                        neverCompared > 0
+                        ? t().status.selfTestIncomplete(neverCompared)
+                        : t().status.selfTestFail(divergence),
         );
         // Two reasons to keep the report, kept apart: the model's unconfirmed mappings
         // (a property of the model, so the run always has those verdicts to send back)
@@ -6192,6 +6523,43 @@ if (!DEMO) {
         selfTestBtn.textContent = t().toolbar.selfTest;
       }
     }
+
+    // The restore alone, for a run Console Lock stopped (selftest.ts restoreSelfTest). The run's
+    // own model is the one connected to, whatever the plan on screen is now.
+    selfTestRestoreBtn.addEventListener("click", async () => {
+      const pending = selfTestPending;
+      if (!pending || !holdDeviceLink("run")) return;
+      setStatus(t().status.selfTestRestoring);
+      try {
+        const report = await restoreSelfTest(getModel(pending.model), pending);
+        console.warn("[self-test restore]", JSON.stringify({ ...report, traces: report.traces.length }));
+        selfTestPending = report.pendingRestore ?? null;
+        setStatus(
+          report.refusal === "consoleLock"
+            ? t().status.selfTestRestoreRefusedLock
+            : report.refusal === "modelMismatch"
+              ? t().status.selfTestRestoreModelMismatch(report.device, pending.model)
+              : report.locked
+                ? t().status.selfTestLocked
+                : report.restored
+                  ? t().status.selfTestRestored
+                  : t().status.selfTestRestoreFail,
+        );
+        if (report.phase === "done" && !report.restored)
+          await offerErrorReport(
+            { filename: `${pending.model}-self-test-restore.md`, markdown: formatSelfTestReport(report) },
+            t().confirm.selfTestFailExport,
+            t().filter.report,
+          );
+      } catch (err) {
+        console.warn("[self-test restore] ERROR", err instanceof Error ? err.message : String(err));
+        showError(connectFailureStatus(err, t().status.selfTestError));
+      } finally {
+        releaseDeviceLink("run");
+        midi?.gateReleased();
+        syncSelfTestRestore();
+      }
+    });
 
     // A click cancels an in-flight run; otherwise it confirms first (the run is
     // destructive-then-restored) and starts one.

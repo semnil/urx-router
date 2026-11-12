@@ -92,12 +92,15 @@ const CLIP_SAFE_ADDRS: Array<[number, number, number]> = getModel("URX44V")
   .map((j): [number, number, number] => [PARAMS.CLIP_SAFE_ENGAGED.id, 0, j]);
 /** The unit's [CUE Mode], which rides with the flags: registered right after them. */
 const CUE_MODE_ADDR: [number, number, number] = [PARAMS.CUE_MODE.id, 0, 0];
+/** The unit's [Console Lock], which every session follows: registered right after CUE Mode. */
+const CONSOLE_LOCK_ADDR: [number, number, number] = [PARAMS.CONSOLE_LOCK.id, 0, 0];
 /** The host-owned tail of the registration, in the order main.ts's addrs hook appends it. */
 const HOST_TAIL: Array<[number, number, number]> = [
   [848, 0, 0],
   [762, 0, 0],
   ...CUE_ADDRS,
   CUE_MODE_ADDR,
+  CONSOLE_LOCK_ADDR,
   ...CLIP_SAFE_ADDRS,
 ];
 const UDK_SLOTS = 16;
@@ -469,7 +472,8 @@ test.describe("T2f shape-change", () => {
     expect(openWrites).toHaveLength(0);
 
     // Apply one row. The diff is what is sent, so one changed row is one bare vd_set —
-    // no snapshot to re-base, no converge round, no read of any kind behind it.
+    // no snapshot to re-base, no converge round, and no read behind it but the Console Lock
+    // a write outside a session asks first.
     await page.locator("#device-setup-brightness").fill("7");
     await page.locator("#device-setup-brightness").dispatchEvent("change");
     await expect(page.locator(".dev-slider .param-val")).toHaveText("7");
@@ -494,7 +498,9 @@ test.describe("T2f shape-change", () => {
     expect(applyWrites).toHaveLength(1);
     expect(applyWrites[0].addr).toBe("758:0:0");
     expect(applyWrites[0].value).toBe(onScreen);
-    expect(applied.filter((s) => s.cmd === "vd_get")).toHaveLength(0);
+    // The one read is the unit's Console Lock, which a write outside a session asks before it
+    // writes anything; nothing of SETUP > GENERAL is read back.
+    expect(applied.filter((s) => s.cmd === "vd_get").map((s) => s.addr)).toEqual(["895:0:0"]);
 
     await page.keyboard.press("Escape");
     await expect(page.locator("#device-setup-modal")).toBeHidden();

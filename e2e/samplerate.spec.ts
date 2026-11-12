@@ -11,6 +11,7 @@ import { chooseOption } from "./choose-option";
 // Param ids, spelled out here so the test pins the addresses the app must use.
 const SAMPLE_RATE = 766;
 const FOLLOW_USB = 848;
+const CONSOLE_LOCK = 895;
 // The microSD Track Count, in stereo PAIRS: 8 is the full 16 tracks.
 const SD_REC_TRACK_COUNT = 839;
 
@@ -29,9 +30,10 @@ interface StubOptions {
 
 // Only the two clock addresses are spec-specific; the rest of the link is the
 // shared stub. A failing clock read is expressed by simply not answering 848 and
-// letting the stub's failReads reject it.
+// letting the stub's failReads reject it. Console Lock is answered (unlocked) whatever
+// fails: a write reads it right after connecting, ahead of the clock.
 function stubDevice(page: Page, opts: StubOptions = {}): Promise<void> {
-  const values: Record<number, number> = { [SAMPLE_RATE]: opts.deviceRate ?? 48000 };
+  const values: Record<number, number> = { [SAMPLE_RATE]: opts.deviceRate ?? 48000, [CONSOLE_LOCK]: 0 };
   if (!opts.failClockRead) values[FOLLOW_USB] = opts.followUsb ? 1 : 0;
   if (opts.trackPairs !== undefined) values[SD_REC_TRACK_COUNT] = opts.trackPairs;
   return stubTauriDevice(page, { values, failReads: opts.failClockRead });

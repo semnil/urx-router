@@ -73,6 +73,7 @@ export const en = {
     compareCancel: tr("Cancel compare"),
     selfTest: tr("Self-test (experimental)"),
     selfTestCancel: tr("Cancel self-test"),
+    selfTestRestore: tr("Restore after self-test"),
     liveSync: tr("Live sync"),
     liveSyncHint: tr("Mirror every edit to the connected device in real time"),
     liveTag: tr("LIVE"),
@@ -1021,6 +1022,18 @@ export const en = {
     writeReadFailed: (n: number): string =>
       `Write canceled: ${n} setting${n === 1 ? "" : "s"} could not be read from the device`,
     writeError: (message: string): string => `Device write failed: ${message}`,
+    writeLocked: (sent: number, total: number): string =>
+      `The unit went into Console Lock, so the write stopped: ${sent} of ${total} sent. Write again once it is unlocked to send the rest`,
+    // Console Lock during Live sync (core/control/console-lock.ts).
+    consoleLocked: tr("The unit is under Console Lock — the app sends it nothing until it is unlocked on the unit"),
+    consoleUnlocked: tr("The unit's Console Lock is off — edits are sent to the unit again"),
+    consoleLockedNotSent: tr("The unit is under Console Lock, so nothing was sent"),
+    consoleLockedEditPutBack: tr("The unit is under Console Lock, so this edit was not sent and has been put back"),
+    consoleLockedPutBack: tr(
+      "The unit went into Console Lock before every edit was sent — the plan shows the unit's values again",
+    ),
+    consoleLockedUndo: tr("The unit is under Console Lock, so this would not be sent — nothing was undone or redone"),
+    consoleLockedStopped: tr("The unit went into Console Lock, so the operation stopped"),
     deviceSetupReading: tr("Reading the device's settings…"),
     deviceSetupRead: tr("Read the device's settings"),
     deviceSetupApplying: tr("Applying settings to the device…"),
@@ -1046,6 +1059,25 @@ export const en = {
     selfTestIncomplete: (n: number): string =>
       `Self-test did not complete: ${n} param${n === 1 ? "" : "s"} still differed when the run stopped — see the report`,
     selfTestRestoreFail: tr("Self-test: device may not be restored — fetch again to check"),
+    selfTestRefusedLock: tr("Self-test did not start — the unit is under Console Lock. The device was not touched."),
+    selfTestLockedUntouched: tr(
+      "Self-test stopped — the unit went into Console Lock before the run wrote anything. The device was not touched.",
+    ),
+    // The run stopped part-way and kept what the restore needs; the Device menu runs it once the
+    // unit is unlocked.
+    selfTestLocked: tr(
+      "Self-test stopped — the unit went into Console Lock. The unit is left changed: once it is unlocked, choose Restore after self-test in the Device menu",
+    ),
+    selfTestRestorePending: tr(
+      "A self-test Console Lock stopped is not restored yet — choose Restore after self-test in the Device menu first",
+    ),
+    selfTestRestoring: tr("Restoring the unit to what it held before the self-test…"),
+    selfTestRestored: tr("Restored the unit to what it held before the self-test"),
+    selfTestRestoreRefusedLock: tr(
+      "The unit is still under Console Lock — nothing was written. Unlock it on the unit, then restore again",
+    ),
+    selfTestRestoreModelMismatch: (device: string, model: string): string =>
+      `Nothing was restored — the self-test ran on ${model}, and the connected device is ${device}`,
     selfTestUnverified: (confirmed: number, roundTripped: number, refuted: number, untestable: number): string =>
       `Self-test guesses: ${confirmed} confirmed, ${roundTripped} round-tripped only, ${refuted} refuted, ${untestable} untestable`,
     selfTestError: (message: string): string => `Self-test error: ${message}`,
@@ -1257,6 +1289,13 @@ export const en = {
     label: (names: string): string => `CUE ${names}`,
     clear: tr("Clear CUE"),
   },
+  // The strip above the board while Console Lock holds a live session.
+  lock: {
+    title: dev("Console Lock"),
+    body: tr(
+      "The unit is locked. The app writes nothing to it until it is unlocked on the unit, and edits made here are put back.",
+    ),
+  },
   linkStats: {
     title: tr("Device Center link"),
     row: {
@@ -1380,6 +1419,7 @@ export const en = {
     trackCountReread: (message: string): string =>
       `A sample rate write went out, but the microSD recorder's Track Count could not be read back afterwards: ${message}. The unit lowers it by itself when the rate cannot carry it, so what the panel shows may be the value from before the change — read the device to find out.`,
     deviceSetupRead: (message: string): string => `Could not read the device's settings: ${message}`,
+    consoleLocked: tr("The unit is under Console Lock, so nothing was written. Unlock it on the unit, then try again."),
     followUsbRead: (message: string): string => `Could not read the device's Follow USB setting: ${message}`,
     deviceSetupWrite: (message: string): string => `Could not apply the settings: ${message}`,
     noRule: tr("This route cannot be connected"),

@@ -823,6 +823,38 @@ input[type="range"]:focus-visible,
   outline-color: var(--on-accent-ink);
 }
 
+/* ---- Console Lock ---- */
+
+/* The strip above the stage while Console Lock holds a live session: the warn recipe (.warning)
+   run the full width of the window, so the board below it reads as one the app is not sending. */
+.lock-strip {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 8px 16px 8px 13px;
+  background: var(--warn-bg);
+  border-bottom: 1px solid var(--warn);
+  border-left: 3px solid var(--warn);
+}
+
+.lock-strip-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--warn);
+  white-space: nowrap;
+}
+
+.lock-strip-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
 /* ---- stage ---- */
 
 #stage {

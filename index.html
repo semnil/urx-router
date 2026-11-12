@@ -165,6 +165,9 @@
               <button id="btn-selftest" class="menu-item" type="button" role="menuitem" data-experimental-only hidden>
                 Self-test (experimental)
               </button>
+              <button id="btn-selftest-restore" class="menu-item" type="button" role="menuitem" hidden>
+                Restore after self-test
+              </button>
             </div>
           </div>
           <div class="menu">
@@ -298,6 +301,23 @@
           </a>
         </div>
       </header>
+      <section id="lock-strip" class="lock-strip" aria-labelledby="lock-strip-title" hidden>
+        <span class="lock-strip-head"
+          ><svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+          >
+            <rect x="2" y="5.2" width="8" height="5.6" rx="1" />
+            <path d="M3.9 5.2V3.6a2.1 2.1 0 0 1 4.2 0v1.6" /></svg
+          ><span id="lock-strip-title"></span
+        ></span>
+        <span id="lock-strip-text" class="lock-strip-text"></span>
+      </section>
       <main id="stage">
         <div id="graph-host"></div>
         <aside id="inspector"></aside>
