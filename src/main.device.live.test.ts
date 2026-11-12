@@ -1575,6 +1575,63 @@ describe("the unit's CUE Mode", () => {
     expect(registered).toContainEqual([PARAMS.CUE_MONO.id, 0, 0]);
   });
 
+  // The unit announcing the mode the session already holds — another client's write of it, say —
+  // is no switch: nothing is shown differently and nothing is written.
+  it("changes nothing for an announcement of the mode it already holds", SLOW, async () => {
+    const shell = await bootDevice();
+    await up();
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 0 }]);
+    await quiet(shell);
+    expect(barShows()).toBe("true/false");
+    expect(modeWrites(shell)).toEqual([]);
+    expect(errors(shell)).toEqual([]);
+  });
+
+  // The mode is read with the flags, so one that moved with no announcement heard is taken by
+  // the next read of them — here the read a press on the unit schedules.
+  it("takes the mode a later read of the flags finds", SLOW, async () => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" });
+    const read = table.vd_get as (a: Record<string, unknown>) => number;
+    let moved = false;
+    table.vd_get = (a: Record<string, unknown>) => (moved && a.paramId === PARAMS.CUE_MODE.id ? 1 : read(a));
+    const shell = (await bootApp({ tauri: table }))!;
+    await up();
+    await quiet(shell);
+    expect(barShows()).toBe("true/false");
+    moved = true;
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MONO.id, x: 0, y: 0, value: 0 }]);
+    await vi.waitFor(() => expect(barShows()).toBe("false/true"), { timeout: 10_000 });
+    expect(modeWrites(shell)).toEqual([]);
+  });
+
+  // A press made as the session ends: the write waits its turn behind the session's other
+  // writes, and by then there is no session to write to.
+  it("writes nothing for a press the session ended behind", SLOW, async () => {
+    const shell = await bootDevice();
+    await up();
+    $("cue-mode-last").click();
+    live().click();
+    await invoked(shell, "vd_disconnect");
+    expect(modeWrites(shell)).toEqual([]);
+    expect($("cue-bar").hidden).toBe(true);
+  });
+
+  // A switch the unit refuses ends the session, as any failed write on the link does.
+  it("ends the session when the unit refuses the switch", SLOW, async () => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" });
+    const write = table.vd_set as (a: Record<string, unknown>) => unknown;
+    table.vd_set = (a: Record<string, unknown>) => {
+      if (a.paramId === PARAMS.CUE_MODE.id) throw new Error("refused by the unit");
+      return write(a);
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+    await up();
+    $("cue-mode-last").click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
+    expect(errors(shell).join("\n")).toContain("refused by the unit");
+    expect($("cue-bar").hidden).toBe(true);
+  });
+
   // A switch turns every cue off on the unit and announces none of those flags, so the cue
   // shown here goes with the press, ahead of the read behind the write.
   it("turns the cues it shows off with a switch", SLOW, async () => {
