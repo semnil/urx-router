@@ -96,3 +96,33 @@ would come back if the code were written the obvious way.
    chip named**, not `parentOf(id) ?? id`. Fitting the parent shows the parent, and the track slot
    that the chip, the status line and the inspector all name stays off screen (parent at 146–256,
    slot at 846–956, usable area 0–476).
+
+## The Rec Point tap's geometry
+
+What the tap jack is and how its wire is drawn is in architecture.md, "Rec Point tap jack". These
+are the choices that reading the code does not explain.
+
+- **The tap is left of the node's centre** (`TAP_CX`). The centre is where the tie of a STEREO link
+  lands on the lower node.
+- **The hit area is small and taken from the jack**, not a circle of the port's hit radius, which
+  would take the grab of the node's top edge. **It is not derived from the gap between rows.** Nodes
+  can be dragged anywhere and nothing stops them overlapping, so "it fits in the gap" does not mean
+  "it is not on the node above". Every pixel it reaches upward takes drags from a node placed above
+  it and adds to the area of blank canvas where a pan or a deselect does nothing.
+- **`ROW_GAP` went from 60 to 68.** At 60 the tap's line ran 2px under the bottom edge of the node
+  above and read as part of that node. The cost is the zoom that fits the board: about 5% less on a
+  WQHD screen and about 10% less at 1600px wide. 76 was turned down: the board looks stretched and
+  loses the density of a rack. Widening only when nodes are arranged is not possible, because the
+  arrangement is required to equal the default grid
+  ([arrange.spec.ts](../../../e2e/arrange.spec.ts)).
+- **The export is not affected.** Drawing with the tap's elements removed came out identical to the
+  pixel.
+
+## The shelf
+
+Hidden nodes sit on a shelf at the foot of the canvas, as chips in the module's rail colour. Two
+other places for them were turned down:
+
+- **A list inside the inspector.** It disappears while a node or a wire is selected, which is when it
+  cannot be used.
+- **A popover from the toolbar.** It covers the graph while it is open and costs one more click.
