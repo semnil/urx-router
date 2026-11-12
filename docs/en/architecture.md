@@ -3607,6 +3607,58 @@ its tuning screen read-only), because those features genuinely do not run at tho
 `SAMPLE_RATE` is emitted **first** so the rest of the write lands on a device already clocked the way the plan
 says. Confirmed on hardware: a rate-changing write completes, with the commands after the re-clock all arriving.
 
+### Console Lock
+
+System firmware V1.5 adds **[Console Lock]** to the unit's SETUP menu: the panel locks until it is unlocked on
+the unit. Its state is `CONSOLE_LOCK` (`895:0:0`, 0 unlocked, 1 locked), and a lock or an unlock on the unit is
+announced. **The unit goes on taking writes over the link while it is locked** — a self-test against a locked unit
+passes — so it is the app that holds its own writes back (`core/control/console-lock.ts`). The app reads `895` and
+never writes it: a 0 written over the link unlocks the unit whatever password is set, and a 1 takes effect only
+while the unit shows its Console Lock menu. The password beside it (`896`) is stored as plain text and is never read.
+
+**During Live sync** the starting read takes `895` with the cues, and its notify is registered with the session's
+follow set. While it reads 1:
+
+- The strip above the board (`#lock-strip`) says the unit is locked and that edits are put back.
+- **An edit that would change what the session writes is put back** with nothing sent, and the status line says so
+  (`status.consoleLockedEditPutBack`). It is decided in `markChanged` once the funnel that called it is done —
+  `sameDeviceWrites` compares the session's writes, names included, between the undo baseline and the plan — so
+  every surface is covered at once: the board, the CONSOLE, the Inspector, an incoming MIDI message, the SIM view,
+  undo and redo, a `.urxf` import and the rate. What is put back is the open entry, taken back to the history
+  baseline (`PlanHistory.discardOpen`); a value the unit put into the plan is in that baseline already, since every
+  follow-side writer settles the history at its own site, and a reconcile's patch is absorbed at once while the lock
+  holds rather than waiting for the coalesced reflect. An edit that writes nothing — a node moved, a note, a
+  colour — stands. An undo or redo whose entry would change the writes is held back the same way
+  (`status.consoleLockedUndo`), and MIDI and the SIM glass refuse before anything is applied.
+- **An operation outside the plan that would write** — a cue, Clear CUE, CUE Mode, a stereo channel's displayed
+  side, the Device setup screen, Follow USB, HOME's [Sends] destination, Software Integration — is refused with
+  `status.consoleLockedNotSent`.
+- **What a flush had not sent when the lock arrived** is read back from the unit: `LiveSync.setLocked` cancels an
+  armed flush and stops a running one at its next command, `LiveSync.unsent` names the nodes whose writes the
+  snapshot says the unit was not sent, and those nodes are reconciled (the whole unit, when a converge head went
+  out without the converge behind it). The edits behind them are not sent once the lock is taken off.
+- Reading goes on: the session follows the unit, and the meters run.
+
+**Outside a session**, a write — Write to device, Device setup's Apply, the Follow USB badge — reads `895` right
+after connecting and refuses a locked unit with `error.consoleLocked` before it asks anything (`withDevice`'s
+`writes` option). While it runs it is registered for `895`'s notify (`watchConsoleLock`), and a lock that arrives
+aborts the write's controller with `consoleLockAbort`, which stops it at its next command the way a cancel does;
+the status line says how far a Write to device got (`status.writeLocked`), and writing again once the unit is
+unlocked sends the rest. The self-test and `--prepare-modified` connect on their own and take the same watch through
+`watchRun`, after the model check — so a unit of another model is still neither read nor written.
+
+**A self-test the lock stops** once it has written leaves the unit changed. What its restore needs — the captured
+plan and the addresses read before the sweep — is kept on the report as `pendingRestore`, the app holds it in
+memory, and the Device menu shows **Restore after self-test** while it does. That runs the restore alone
+(`restoreSelfTest`): it refuses a unit still locked or of another model, keeps `pendingRestore` for another try
+when it does not run to its end, and never runs the sweep again. A new self-test is refused while a restore is
+waiting, since it would capture the state the stopped run left as the one to restore. Quitting the app drops it.
+
+**The write gate.** While the app knows the unit is locked, `holdDeviceWrites(true)` makes `vdSet` and `vdSetStr`
+reject with `writes-held:` before the command reaches the shell. Every write passes there, so a writer the handling
+above does not name still sends nothing; each path that can meet it takes it as the lock's stop rather than as a
+failed write (`stoppedByConsoleLock`), and a live session goes on through it.
+
 
 ## The link ledger
 

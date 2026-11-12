@@ -146,3 +146,38 @@ version went up with the removal. The unit keeps whatever it holds there.
 as they are. Each entry's `howToSettle` is the procedure that settles it, used as written.
 
 **Reopen when.** A URX44 unit is at hand.
+
+## Console Lock: the app holds its own writes back, and never writes the lock
+
+**Decision (2026-11-12, the operator).** The unit takes writes over the link while it is under
+[Console Lock] (System firmware V1.5) — a self-test against a locked unit passes — so the app holds
+its own back. It reads the lock (`895`) and never writes it: no unlock from the app, and no lock from
+it either, since a 1 written over the link takes effect only while the unit shows its Console Lock
+menu and no write that moves the unit there has been found, while a 0 unlocks the unit whatever
+password is set. Which writes stop, and what happens to the rest, was decided once every path the
+app writes through was listed (`vdSet` and `vdSetStr`, fifteen call sites):
+
+- **Edits to the plan during Live sync** — the board, the CONSOLE, the Inspector, MIDI, the SIM view,
+  undo, a `.urxf` import, the rate — are refused while the lock stands, put back, and said on the
+  status line, so the app's screen and the unit do not disagree.
+- **Operations outside the plan during Live sync** — a cue, Clear CUE, CUE Mode, a stereo channel's
+  displayed side, Device setup, Follow USB, the [Sends] destination — are refused and said.
+- **Writes outside Live sync** — Write to device, Device setup's Apply, Follow USB, the self-test —
+  read the lock right after connecting, and refuse a locked unit.
+- **Reading never stops**: a fetch, a compare, Live sync's start and follow, and the meters.
+- **A lock announced in the middle of a write stops it at the next command.** A Live sync flush puts
+  what it had not sent back to the unit's values at once; Write to device says how many of how many
+  went out, and pressing it again once the unit is unlocked sends the rest; a self-test keeps what
+  it read before the run, says the unit is not restored, and the operator runs the restore alone from
+  the Device menu once the unit is unlocked. The rest of the self-test is not resumed, and quitting
+  the app drops what it kept.
+
+How it is built is in [architecture.md](../architecture.md), "Console Lock".
+
+**Turned down.** Unlocking from the app; holding edits made under the lock and sending them once it
+is taken off; ending the Live sync session when the lock arrives; for Write to device, sending the
+rest by itself once the unit is unlocked; for the self-test, writing it back by itself once the unit
+is unlocked.
+
+**Reopen when.** A write over the link that moves the unit to its Console Lock menu turns up (it
+would make a lock from the app possible), or the unit starts refusing writes while it is locked.

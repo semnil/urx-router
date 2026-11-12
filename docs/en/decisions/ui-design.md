@@ -206,3 +206,17 @@ from one. Not raised again.
   because jsdom does no hit testing. The cover is now handed to each control inside a group, a case
   in [midi-arm.contract.test.ts](../../../src/ui/midi-arm.contract.test.ts) checks the covers on every
   screen for every assignment, and each E2E case ends by checking that no bare mark is left.
+
+## Console Lock: a strip above the board
+
+**Decision (2026-11-13, the operator).** While Console Lock holds a live session, a strip runs the
+width of the window between the toolbar and the board (`#lock-strip`): a padlock and **Console
+Lock** in the warn colour, and one sentence saying the unit is locked, the app writes nothing to it
+until it is unlocked on the unit, and edits made here are put back. It is the warning recipe
+(`.warning`) — warn ground, warn rule, 3 px left edge — stretched across the window. Chosen from
+three options shot on a live session in both themes. The board moves down by the strip's height for
+as long as it is shown. An edit put back still says so on the status line.
+
+**Turned down.** A pill beside the LIVE tally in the toolbar, which is seen wherever the operator
+looks but carries no explanation; a chip at the right of the status bar beside CUE Mode, which
+changes neither the toolbar nor the board but is the easiest of the three to miss.
