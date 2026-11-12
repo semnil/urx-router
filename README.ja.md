@@ -139,6 +139,7 @@ URX Router を使用することで、このリスクを受諾したものとす
 - [docs/ja/device-model.md](docs/ja/device-model.md) — 装置のルーティングモデルと接続制約
 - [docs/ja/console-sends.md](docs/ja/console-sends.md) — CONSOLE ビューのストリップ内センドラック設計
 - [docs/ja/known-issues.md](docs/ja/known-issues.md) — 現時点の制限事項
+- [docs/ja/decisions/](docs/ja/decisions/) — 閉じた判断の記録 (何を決めたか・理由・却下した案)
 
 ## コントリビューション
 
