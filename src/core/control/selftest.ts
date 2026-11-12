@@ -246,7 +246,8 @@ export interface SelfTestReport {
    *  restore's residual PLUS the addresses that write has no command for or only a default
    *  for (the capture could not read them), read before the sweep and written back after
    *  it (restoreUnsent) — the side of each mic strip the unit is not using among them (see
-   *  `diag.unusedSide`) — PLUS the node names and Sweet
+   *  `diag.unusedSide`), and slot 1 of an insert-FX engine no channel holds (see
+   *  `diag.idleEngineOn`) — PLUS the node names and Sweet
    *  Spot presets that still differ, or could not be read, after the string write-back. ⚠️ Still bounded by the app's
    *  parameter catalogue: a run also perturbs the unit's 1-knob base save-off, which
    *  has no entry and so cannot be read, written or counted (measured on a URX44V,
