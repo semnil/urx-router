@@ -875,6 +875,11 @@ is the same assumption the shipped COMP curve carries.
   same polynomial as the standard quadratic, satisfying the same four constraints (both edges, both
   slopes). The full-scale reduction annotation is read off the drawn curve with the gain terms taken
   back out, not off the asymptote, so a knee still open at 0 dBFS is labelled with what it does there.
+- **The app offers no control for the compressor's threshold.** No face has a row for it and the
+  inspector has none: the value is read from the unit and written back as it was, and it moves only
+  through the unit's own macro. At the factory threshold the two regions above give the same corner
+  at every drive, so on a new plan the two-region law changes nothing in the picture; it shows only
+  on a plan read from a unit whose threshold has been moved.
 - **The makeup is one gain over the whole curve**, as the shipped COMP screen applies its own. What was
   measured is what the unit does WHILE COMPRESSING — five raw points, linear, ±6 dB, with the GR meter
   unmoved. The same run's reading below the threshold is a null result at one threshold setting, and it
