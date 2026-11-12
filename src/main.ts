@@ -6245,7 +6245,8 @@ if (!DEMO) {
         await setFollowUsb(clock.followUsb);
         setFollowUsbBadge(clock.followUsb);
       } catch (err) {
-        stopLiveOnError(errorText(err));
+        // A lock that arrived as the write went out ends the import, not the session.
+        sessionWriteFailed(err);
         return;
       }
     }
