@@ -4051,6 +4051,13 @@ The GATE, COMP and EQ sections each hold their ON toggle and a control that open
 beside each processor chip. The screen owns the broker's single meter subscription slot while open.
 A node's ON/OFF (channel ON, each master, FX, MONITOR, Ducker, OSC) always leads its parameters, mirroring
 the canvas OFF display.
+Within a node or a connection the rows run in the order in which the unit's own LCD screen is read, top
+left to bottom right. The field arrays behind the rows may be reordered freely — each entry names its
+parameter, so the order decides only what is displayed first and which command is issued first — except
+`EQ_BAND_NAMES`, whose index computes the parameter's offset.
+A connection's parameters are changed in place and the inspector is not rendered again, so that a slider
+keeps its focus. A two-button toggle therefore sets its own pressed state on the click (`selectToggle`);
+without that the display stays stale until the element is selected again.
 A hand-folded section persists its open/closed state per section kind to `localStorage`
 (`urx-inspector-sections`), so it survives re-renders and reloads; toggling a section's ON value clears
 that override so the fold reverts to following the on-state. Within a section, the INPUT toggles flow
