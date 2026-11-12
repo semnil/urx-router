@@ -1553,9 +1553,47 @@ input[type="range"]:focus-visible,
 /* Left of the link readout, and pushed right with it. The face is its own element, so the gap
    to the message stays outside the colour. */
 .cuebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
   padding-left: 16px;
   flex-shrink: 0;
+}
+.cuebar[hidden],
+.cuebar-face[hidden] {
+  display: none;
+}
+/* The unit's [CUE Mode] beside what is cued: a joined pair, the pressed one in the CUE colour. */
+.cue-mode {
+  display: flex;
+  height: 20px;
+  border: 1px solid var(--ctl-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.cue-mode button {
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: inherit;
+  padding: 0 9px;
+  border: 0;
+  border-right: 1px solid var(--ctl-border);
+  background: var(--ctl-bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cue-mode button:last-child {
+  border-right: 0;
+}
+.cue-mode button[aria-pressed="true"] {
+  background: var(--cue);
+  color: var(--cue-ink);
+}
+.cue-mode button:focus-visible {
+  outline: 2px solid var(--led);
+  outline-offset: -2px;
 }
 .cuebar-face {
   display: flex;

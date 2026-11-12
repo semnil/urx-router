@@ -95,11 +95,16 @@ const UI_STATE_SCENE_EXTERNAL = ["LCD_SELECTION", "SENDS_TARGET"];
 // them, so a recall cannot move them back to a stored value.
 const CUE_SCENE_EXTERNAL = ["CUE_MONO", "CUE_STEREO_CH", "CUE_FX", "CUE_STEREO", "CUE_MIX", "CUE_STREAMING"];
 
+// [CUE Mode], System 1.5: the settings file carries it for the unit as a whole and in no scene —
+// a scene stored on that firmware does not hold it.
+const CUE_MODE_SCENE_EXTERNAL = ["CUE_MODE"];
+
 const SCENE_EXTERNAL_NAMES = [
   ...AUDITED_SCENE_EXTERNAL,
   ...SETUP_SCENE_EXTERNAL,
   ...UI_STATE_SCENE_EXTERNAL,
   ...CUE_SCENE_EXTERNAL,
+  ...CUE_MODE_SCENE_EXTERNAL,
 ].sort();
 
 describe("scene boundary contract", () => {

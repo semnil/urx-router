@@ -687,6 +687,12 @@ export const PARAMS = {
   CUE_STEREO: { id: 580, encoding: "bool", sceneExternal: true, planExternal: true },
   CUE_MIX: { id: 673, encoding: "bool", sceneExternal: true, planExternal: true },
   CUE_STREAMING: { id: 709, encoding: "bool", sceneExternal: true, planExternal: true },
+  /** [CUE Mode] of the MONITOR screen, System firmware V1.5: 0 = Mix CUE (the cues of a group
+   *  add up), 1 = Last CUE (a cue turned on replaces the other cues of its group). Device-wide —
+   *  the unit keeps it in its settings file and in no scene — and a switch, on the panel or over
+   *  the link, turns every cue off without announcing the cleared flags. Like the flags it
+   *  governs it is state of the live session rather than of a plan (`cue.ts`). */
+  CUE_MODE: { id: 897, encoding: "bool", sceneExternal: true, planExternal: true },
   /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
    *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
    *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.

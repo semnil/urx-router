@@ -716,6 +716,8 @@ const actions = (): InspectorActions => ({
   onSwitchSide: vi.fn(),
   cueOf: vi.fn(() => null),
   onSetCue: vi.fn(),
+  cueMode: vi.fn(() => ({ mode: "mix" as const, enabled: false })),
+  onSetCueMode: vi.fn(),
   onSetBusType: vi.fn(),
   onSetFxEffectType: vi.fn(),
 });
@@ -1833,6 +1835,68 @@ describe("live-connected presentation", () => {
 
 // A node's [CUE] row: the unit's state rather than the plan's, read and switched through the
 // actions, and switchable only while they say a session is up.
+// The unit's [CUE Mode] sits on its MONITOR screen, one setting for both monitors, so each
+// MONITOR node's panel carries the row between CUE Interrupt and MONO.
+describe("the CUE Mode row", () => {
+  const model = getModel("URX44V");
+  const row = (): HTMLElement | undefined =>
+    [...panel.querySelectorAll<HTMLElement>(".param")].find((r) => r.dataset.paramLabel === t().inspector.cueMode);
+  const button = (text: string): HTMLButtonElement =>
+    [...row()!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === text)!;
+  const pressed = (): string[] =>
+    [...row()!.querySelectorAll<HTMLButtonElement>("button")]
+      .filter((b) => b.getAttribute("aria-pressed") === "true")
+      .map((b) => b.textContent ?? "");
+
+  it("is drawn on both MONITOR nodes, between CUE Interrupt and MONO, and on no other node", () => {
+    for (const id of ["bus.mon1", "bus.mon2"]) {
+      renderInspector(panel, model, defaultPlan("URX44V"), nodeSel(id), act);
+      const labels = rowLabels();
+      const at = labels.indexOf(t().inspector.cueMode);
+      expect(labels[at - 1], id).toBe(t().inspector.cueInterrupt);
+      expect(labels[at + 1], id).toBe(t().inspector.mono);
+    }
+    for (const id of ["ch1", "bus.stereo", "bus.mix1", "out.phones1"]) {
+      renderInspector(panel, model, defaultPlan("URX44V"), nodeSel(id), act);
+      expect(row(), id).toBeUndefined();
+    }
+  });
+
+  it("shows the mode and switches it through the actions while a session is up", () => {
+    vi.mocked(act.cueMode).mockReturnValue({ mode: "last", enabled: true });
+    renderInspector(panel, model, defaultPlan("URX44V"), nodeSel("bus.mon1"), act);
+    expect(pressed()).toEqual([t().inspector.cueModeLast]);
+    expect(row()!.hasAttribute("title")).toBe(false);
+    button(t().inspector.cueModeMix).click();
+    expect(act.onSetCueMode).toHaveBeenCalledWith("mix");
+    // The mode is the unit's and not the plan's.
+    expect(act.onUpdateNodeParams).not.toHaveBeenCalled();
+  });
+
+  it("is read-only with the reason in its tooltip while no session is up", () => {
+    vi.mocked(act.cueMode).mockReturnValue({ mode: "mix", enabled: false });
+    renderInspector(panel, model, defaultPlan("URX44V"), nodeSel("bus.mon2"), act);
+    expect(row()!.title).toBe(t().inspector.cueModeOffline);
+    expect(pressed()).toEqual([t().inspector.cueModeMix]);
+    expect(button(t().inspector.cueModeLast).disabled).toBe(true);
+    button(t().inspector.cueModeLast).click();
+    expect(act.onSetCueMode).not.toHaveBeenCalled();
+  });
+
+  // A session starting, or the mode switching on the unit, repaints the row already drawn.
+  it("is repainted in place", () => {
+    vi.mocked(act.cueMode).mockReturnValue({ mode: "mix", enabled: false });
+    renderInspector(panel, model, defaultPlan("URX44V"), nodeSel("bus.mon1"), act);
+    const drawn = row()!;
+    syncInspectorCue(panel, act.cueOf, () => ({ mode: "last", enabled: true }));
+    expect(row()).toBe(drawn);
+    expect(pressed()).toEqual([t().inspector.cueModeLast]);
+    expect(drawn.hasAttribute("title")).toBe(false);
+    button(t().inspector.cueModeMix).click();
+    expect(act.onSetCueMode).toHaveBeenCalledWith("mix");
+  });
+});
+
 describe("the CUE row", () => {
   const cueRow = (): HTMLElement | undefined =>
     [...panel.querySelectorAll<HTMLElement>(".param")].find((r) => r.dataset.paramLabel === t().inspector.cue);
@@ -1871,7 +1935,7 @@ describe("the CUE row", () => {
     vi.mocked(act.cueOf).mockReturnValue({ on: false, enabled: false });
     renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
     const row = cueRow()!;
-    syncInspectorCue(panel, () => ({ on: true, enabled: true }));
+    syncInspectorCue(panel, () => ({ on: true, enabled: true }), act.cueMode);
     expect(cueRow()).toBe(row);
     expect(row.hasAttribute("title")).toBe(false);
     expect(button(t().inspector.on).getAttribute("aria-pressed")).toBe("true");

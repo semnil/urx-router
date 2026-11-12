@@ -10,12 +10,28 @@
 // press announces only some of them — so those rules are applied here, to every change from
 // either side, rather than waited for. A STEREO-linked mono pair shares one flag: a cue on
 // either member is a cue on both.
+//
+// That is the unit's Mix CUE. Under its other [CUE Mode], Last CUE, a cue turned on also
+// replaces the other cues of its own group, so a group holds one cue at a time — the two groups
+// still clear each other, and the one output cue an input cue cleared still comes back with the
+// last input cue off. A switch of the mode turns every cue off.
 
 import type { DeviceModel } from "../../models/types";
 import { vdGet, vdSet } from "../platform";
+import { PARAMS } from "./params";
 import { addrKey, cueAddrOf, cueAddrs, type CueAddr, type CueGroup } from "./translate";
 import { writeSettle } from "./settle";
 import { LcdEchoes } from "./lcd-selection";
+
+/** The unit's [CUE Mode]: the cues of a group together, or only the last one turned on. */
+export type CueMode = "mix" | "last";
+
+/** Where the unit keeps its [CUE Mode], as [paramId, x, y]. */
+export const CUE_MODE_ADDR: [number, number, number] = [PARAMS.CUE_MODE.id, 0, 0];
+
+/** The mode a raw value of the unit's stands for, and the raw a mode is written as. */
+export const cueModeOf = (raw: number): CueMode => (raw !== 0 ? "last" : "mix");
+export const cueModeRaw = (mode: CueMode): number => (mode === "last" ? 1 : 0);
 
 /** Which strips are cued, kept by the unit's rules. `version` moves on every change, so a read
  *  that started before one can tell it no longer describes the state it would replace. */
@@ -25,11 +41,31 @@ export class CueSet {
   // turned off. Null when the unit holds none.
   private displaced: Set<string> | null = null;
   private ver = 0;
+  private cueMode: CueMode = "mix";
 
   constructor(private readonly model: DeviceModel) {}
 
   get version(): number {
     return this.ver;
+  }
+
+  /** The unit's [CUE Mode], Mix CUE until a session has read it. */
+  get mode(): CueMode {
+    return this.cueMode;
+  }
+
+  /**
+   * The mode as the unit holds it now. A switch turns every cue off, as the unit does when its
+   * [CUE Mode] is switched, and forgets the output cues held to put back; the mode a read finds
+   * the set already in changes nothing. True when the mode changed.
+   */
+  setMode(mode: CueMode): boolean {
+    if (mode === this.cueMode) return false;
+    this.cueMode = mode;
+    this.cued.clear();
+    this.displaced = null;
+    this.ver++;
+    return true;
   }
 
   has(node: string): boolean {
@@ -64,8 +100,9 @@ export class CueSet {
    * One flag turned on or off, as the unit applies it. A cue in the other group clears every
    * cue of the group in use; the output cues an input cue clears come back, all of them, when
    * the last input cue is turned off, and a new output cue in the meantime forgets them. Input
-   * cues never come back. `partner` — the other member of a STEREO-linked mono pair — follows
-   * the flag it shares. True when the set changed.
+   * cues never come back. Under Last CUE a cue turned on also replaces the other cues of its own
+   * group. `partner` — the other member of a STEREO-linked mono pair — follows the flag it
+   * shares. True when the set changed.
    */
   apply(node: string, on: boolean, partner?: string): boolean {
     const addr = cueAddrOf(this.model, node);
@@ -77,7 +114,9 @@ export class CueSet {
         const outputs = this.inGroup("output");
         if (outputs.length) this.displaced = new Set(outputs);
       } else this.displaced = null;
-      for (const a of cueAddrs(this.model)) if (a.group !== addr.group) this.cued.delete(a.node);
+      // Under Last CUE the group's own cues go as well: the one turned on is the one left.
+      for (const a of cueAddrs(this.model))
+        if (a.group !== addr.group || this.cueMode === "last") this.cued.delete(a.node);
       for (const m of members) this.cued.add(m);
     } else {
       for (const m of members) this.cued.delete(m);
@@ -151,6 +190,24 @@ export class CueEchoes {
   clear(): void {
     this.byAddr.clear();
   }
+}
+
+/** Read the unit's [CUE Mode]. The caller must have connected first. */
+export async function readCueMode(
+  get: (paramId: number, x: number, y: number) => Promise<number> = vdGet,
+): Promise<CueMode> {
+  return cueModeOf(await get(...CUE_MODE_ADDR));
+}
+
+/** Write the unit's [CUE Mode], resolving once the unit has announced it — or once the settle
+ *  window has passed, for a write of the mode it already holds. The unit turns every cue off with
+ *  the switch and announces none of those flags, so the caller reads the flags back behind this.
+ *  The caller must have connected first. */
+export async function writeCueMode(mode: CueMode): Promise<void> {
+  const [param, x, y] = CUE_MODE_ADDR;
+  const mark = writeSettle.mark();
+  await vdSet(param, x, y, cueModeRaw(mode));
+  await writeSettle.settle(new Map([[addrKey(param, x, y), mark]]));
 }
 
 /** Read every cue flag of the model from the unit. The caller must have connected first.

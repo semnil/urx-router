@@ -1441,3 +1441,102 @@ describe("the inspector's CUE row", () => {
     expect(errors(shell)).toEqual([]);
   });
 });
+
+// The unit's [CUE Mode] (System 1.5): Mix CUE or Last CUE, one setting for the whole unit. Like
+// the cues it governs it is the session's — read at its start, followed by its notify, switched
+// from the status bar or the MONITOR node's panel while a session is up, and never in the plan.
+describe("the unit's CUE Mode", () => {
+  const MODE = `${PARAMS.CUE_MODE.id}/0/0`;
+  const modeWrites = (shell: TauriShell): number[] =>
+    shell.invokes.flatMap((cmd, i) =>
+      cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.CUE_MODE.id ? [shell.args[i]!.value as number] : [],
+    );
+  const pressed = (id: string): string | null => $(id).getAttribute("aria-pressed");
+  const barShows = (): string => `${pressed("cue-mode-mix")}/${pressed("cue-mode-last")}`;
+  const rowButton = (text: string): HTMLButtonElement =>
+    [...paramRow(t().inspector.cueMode).querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === text,
+    )!;
+  const up = async (): Promise<void> => {
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+  };
+
+  it("is read at a session's start and shown on the status bar and the MONITOR panel", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [MODE]: 1 });
+    expect($("cue-bar").hidden, "the premise: no session, no bar").toBe(true);
+    selectNode("bus.mon1");
+    expect(rowButton(t().inspector.cueModeLast).disabled, "read-only with no session").toBe(true);
+    expect(paramRow(t().inspector.cueMode).title).toBe(t().inspector.cueModeOffline);
+
+    await up();
+    expect($("cue-bar").hidden).toBe(false);
+    expect($("cue-bar-face").hidden, "nothing is cued").toBe(true);
+    expect(barShows()).toBe("false/true");
+    selectNode("bus.mon1");
+    expect(rowButton(t().inspector.cueModeLast).getAttribute("aria-pressed")).toBe("true");
+    expect(rowButton(t().inspector.cueModeLast).disabled).toBe(false);
+    expect(paramRow(t().inspector.cueMode).hasAttribute("title")).toBe(false);
+    expect(modeWrites(shell), "a read, never a write").toEqual([]);
+
+    // The session ends: the bar goes, and the row is read-only on the mode a unit ships with.
+    live().click();
+    await invoked(shell, "vd_disconnect");
+    expect($("cue-bar").hidden).toBe(true);
+    expect(rowButton(t().inspector.cueModeMix).getAttribute("aria-pressed")).toBe("true");
+    expect(rowButton(t().inspector.cueModeMix).disabled).toBe(true);
+  });
+
+  it("writes the mode from the status bar and from the panel, once each", SLOW, async () => {
+    const shell = await bootDevice();
+    await up();
+    expect(barShows()).toBe("true/false");
+    $("cue-mode-last").click();
+    await vi.waitFor(() => expect(modeWrites(shell)).toEqual([1]), { timeout: 25_000 });
+    expect(barShows()).toBe("false/true");
+    // The mode it is already in is not written again.
+    $("cue-mode-last").click();
+    selectNode("bus.mon1");
+    expect(rowButton(t().inspector.cueModeLast).getAttribute("aria-pressed")).toBe("true");
+    rowButton(t().inspector.cueModeMix).click();
+    await vi.waitFor(() => expect(modeWrites(shell)).toEqual([1, 0]), { timeout: 25_000 });
+    expect(barShows()).toBe("true/false");
+    expect(rowButton(t().inspector.cueModeMix).getAttribute("aria-pressed")).toBe("true");
+    expect(errors(shell)).toEqual([]);
+  });
+
+  // A switch on the unit's own MONITOR screen is announced; the app's own write is too, and
+  // that announcement is the unit answering it rather than a second switch.
+  it("follows a switch made on the unit, and takes its own write's announcement for an answer", SLOW, async () => {
+    const shell = await bootDevice();
+    await up();
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 1 }]);
+    await vi.waitFor(() => expect(barShows()).toBe("false/true"));
+    expect(modeWrites(shell), "followed, not written back").toEqual([]);
+
+    $("cue-mode-mix").click();
+    await vi.waitFor(() => expect(modeWrites(shell)).toEqual([0]), { timeout: 25_000 });
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 0 }]);
+    await quiet(shell);
+    expect(barShows()).toBe("true/false");
+    expect(modeWrites(shell)).toEqual([0]);
+    expect(errors(shell)).toEqual([]);
+  });
+
+  // A switch turns every cue off on the unit and announces none of those flags, so the cue
+  // shown here goes with the press, ahead of the read behind the write.
+  it("turns the cues it shows off with a switch", SLOW, async () => {
+    const shell = await bootDevice();
+    await up();
+    selectNode("ch1");
+    const cueOn = [...paramRow(t().inspector.cue).querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === t().inspector.on,
+    )!;
+    cueOn.click();
+    await vi.waitFor(() => expect($("cue-bar-face").hidden).toBe(false));
+    $("cue-mode-last").click();
+    expect($("cue-bar-face").hidden, "with the press").toBe(true);
+    await vi.waitFor(() => expect(modeWrites(shell)).toEqual([1]), { timeout: 25_000 });
+    expect(errors(shell)).toEqual([]);
+  });
+});
