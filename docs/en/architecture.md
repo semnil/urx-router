@@ -833,7 +833,11 @@ carries a one-line map of the same directories and points here.
   ([below](#undo--redo)). The transient `unreadNodes` provenance is excluded, being neither serialized
   nor reachable through an edit.
   A new plan comes from `defaultPlan(modelId)` in `models/initial-state.ts`, which seeds every model
-  with a factory initial state (node parameters + routing + CH SETTING colors and names). URX44V and URX22 are
+  with a factory initial state (node parameters + routing + CH SETTING colors and names). A scalar node
+  parameter is written only when the plan holds it, so the factory value of each one is seeded on every node
+  that has it (the oscillator, MONITOR, the STREAMING delay, PHONES Level, EQ 1-knob, Rec Point, BUS Type, the
+  FX channel's ON); a new plan that left one out would not bring that setting back to its factory value.
+  URX44V and URX22 are
   checked against a factory-initialised unit: every address a new plan writes already holds the plan's value there.
   URX44 reuses the URX44V capture verbatim (it differs only by URX44V's HDMI input, which no default routes), and
   URX22 is that capture remapped to its channel layout (`models/initial-urx22.ts`). The one address that differs on
