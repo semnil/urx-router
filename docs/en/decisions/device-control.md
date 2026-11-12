@@ -126,3 +126,23 @@ for the same bypass. The existing warning and hint styles carry it.
 kept the value it had held before. The other left/right selections were then audited and found
 correct: the linked kind writes the same value to both sides and reads back the first, which is
 sound by construction.
+
+## The effect array slot the unit does not show is neither read nor written
+
+**Decision (2026-09-10, the operator; not raised again).** One slot of the FX channel's effect
+array is reached by no control of the unit's own: its effect screen does not show it. That slot is
+out of the app, for reading and for writing alike. The row, the readout, the MIDI id, the plan
+field, the factory values, the emit and the readback were removed in
+[#481](https://github.com/semnil/urx-router/pull/481), which also says why the save format's
+version went up with the removal. The unit keeps whatever it holds there.
+
+**Reopen when.** A firmware update. Nothing else brings the slot back.
+
+## The six unverified mappings left on the URX44 stay until a URX44 is at hand
+
+**Decision (2026-10-17, the operator; not raised again).** Six entries of `UNVERIFIED_MAPPINGS` in
+`src/core/control/translate.ts` remain, and each of them is a guess about the URX44 alone:
+`dgain-source`, `jack-axis`, `stereo-block`, `input-ports`, `lcd-side` and `cue-flags`. They stay
+as they are. Each entry's `howToSettle` is the procedure that settles it, used as written.
+
+**Reopen when.** A URX44 unit is at hand.

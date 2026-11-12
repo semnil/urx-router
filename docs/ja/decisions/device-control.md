@@ -110,3 +110,22 @@ microSD Rec に結線しても、警告は出さない。ドライの信号を�
 **起きたこと。** USB 出力のソースを、左のスロットにだけ書いていて、右のスロットに前の値が残った。その後、
 ほかの左右の選択を点検し、正しいことを確かめた。リンクした種類は、両方の側に同じ値を書き、読み戻しは
 最初の 1 つを読む。これは、作りとして正しい。
+
+## The effect array slot the unit does not show is neither read nor written
+
+**決定 (2026-09-10、操作者。もう一度は持ち出さない)。** FX チャンネルのエフェクトの配列のうち 1 つのスロットには、
+実機自身のどの操作も届かない。実機のエフェクトの画面は、そのスロットを表示しない。このスロットは、読み取りも
+書込も、アプリの対象から外す。行、読み値、MIDI の id、プランのフィールド、工場出荷時の値、送信、読み戻しは
+[#481](https://github.com/semnil/urx-router/pull/481) で削除した。削除に合わせて保存形式の版を上げた理由も、
+その PR にある。実機は、そこに持っている値を、そのまま持ち続ける。
+
+**覆す条件。** ファームウェアの更新。ほかの理由では、このスロットを戻さない。
+
+## The six unverified mappings left on the URX44 stay until a URX44 is at hand
+
+**決定 (2026-10-17、操作者。もう一度は持ち出さない)。** `src/core/control/translate.ts` の
+`UNVERIFIED_MAPPINGS` には 6 件が残っていて、6 件はそれぞれ URX44 だけについての推測になっている:
+`dgain-source`、`jack-axis`、`stereo-block`、`input-ports`、`lcd-side`、`cue-flags`。今のまま残す。
+決着の手順は、各エントリの `howToSettle` を、書いてあるとおりに使う。
+
+**覆す条件。** URX44 の実機が手に入ったとき。
