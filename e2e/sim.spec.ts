@@ -1249,7 +1249,7 @@ test("the LCD's CUE switches the unit's flag while Live sync is up, and reaches 
   await cue(1).click();
   await expect.poll(cueWrites).toEqual([1, 0]);
   await expect(cue(1)).toHaveAttribute("aria-pressed", "false");
-  await expect(page.locator("#cue-bar")).toBeHidden();
+  await expect(page.locator("#cue-bar-face")).toBeHidden();
 });
 
 // STEREO and MIX 1 cued on the unit, then CH 1 pressed on the LCD during Live sync: the unit turns

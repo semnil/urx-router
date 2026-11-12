@@ -35,6 +35,11 @@ const chip = (page: Page, node: string) => page.locator(`#console-host .con-cue[
 const frame = (page: Page, node: string) => page.locator(`#graph-host [data-cue-frame="${node}"]`);
 // The readout as printed; a screen reader is handed its spoken form beside it.
 const readout = (page: Page) => page.locator('#cue-bar-names > [aria-hidden="true"]');
+// The unit's [CUE Mode], on the status bar for as long as a session is up. What is cued and the
+// button that clears it (`#cue-bar-face`) join it while something is.
+const CUE_MODE: number = PARAMS.CUE_MODE.id;
+const mode = (page: Page, which: "mix" | "last") => page.locator(`#cue-mode-${which}`);
+const modeWrites = (page: Page) => writesOf(page).then((w) => w.filter(([id]) => id === CUE_MODE).map(([, v]) => v));
 
 test.beforeEach(async ({ page }) => {
   await stubTauriDevice(page, { commands: LIVE_COMMANDS });
@@ -161,7 +166,7 @@ test("a node's CUE row in the inspector is read-only with no session and switche
   await setDeviceValue(page, CUE_MONO, 0, 0);
   await notifyParam(page, CUE_MONO, 0, 0);
   await expect(cueRow(page).getByRole("button", { name: "OFF", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator("#cue-bar")).toBeHidden();
+  await expect(page.locator("#cue-bar-face")).toBeHidden();
 });
 
 // The row is repainted in place, so what the operator is in the middle of in the panel stays as
@@ -239,7 +244,7 @@ test("a pair linked on the unit takes its primary's cue, which clears a cue on t
   await notifyParam(page, PARAMS.SIGNAL_TYPE.id, 0, 1);
   await notifyParam(page, CUE_MONO, 1, 0);
   await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "false", { timeout: 10_000 });
-  await expect(page.locator("#cue-bar")).toBeHidden();
+  await expect(page.locator("#cue-bar-face")).toBeHidden();
 });
 
 test("a pair linked in the app takes its primary's cue, which clears a cue on the partner alone", async ({ page }) => {
@@ -252,7 +257,7 @@ test("a pair linked in the app takes its primary's cue, which clears a cue on th
   await notifyParam(page, CUE_MONO, 1, 0);
   await page.click("#btn-view-console");
   await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "false");
-  await expect(page.locator("#cue-bar")).toBeHidden();
+  await expect(page.locator("#cue-bar-face")).toBeHidden();
 });
 
 test("Clear CUE turns every cue off and the readout goes", async ({ page }) => {
@@ -261,7 +266,7 @@ test("Clear CUE turns every cue off and the readout goes", async ({ page }) => {
   await goLive(page);
   await expect(readout(page)).toHaveText("CUE CH 1, CH 7/8");
   await page.click("#cue-bar-clear");
-  await expect(page.locator("#cue-bar")).toBeHidden();
+  await expect(page.locator("#cue-bar-face")).toBeHidden();
   await expect(frame(page, "ch1")).toHaveCount(0);
   await expect
     .poll(() => writesOf(page).then((w) => w.filter(([id]) => id === CUE_MONO || id === CUE_STEREO_CH)))
@@ -311,7 +316,7 @@ test("Clear CUE also turns off an output cue the unit held from before the sessi
       [CUE_MONO, 0],
       [CUE_STEREO, 0],
     ]);
-  await expect(page.locator("#cue-bar")).toBeHidden();
+  await expect(page.locator("#cue-bar-face")).toBeHidden();
   await page.click("#btn-view-console");
   await expect(chip(page, "bus.stereo")).toHaveAttribute("aria-pressed", "false");
 });
@@ -381,4 +386,114 @@ test("a read behind one write does not undo a cue still waiting to be written", 
   await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "false");
   await expect(chip(page, "ch1")).toHaveAttribute("aria-pressed", "true");
   await expect(readout(page)).toHaveText("CUE CH 1");
+});
+
+// [CUE Mode], System firmware V1.5: Mix CUE, or Last CUE, under which a cue turned on replaces the
+// other cues of its group. One setting for the whole unit, outside the plan as the cues are.
+test("the status bar carries the unit's CUE Mode for as long as a session is up, and a press writes it", async ({
+  page,
+}) => {
+  await setDeviceValue(page, CUE_MODE, 0, 1);
+  await expect(page.locator("#cue-bar")).toBeHidden();
+  await goLive(page);
+  await expect(page.locator("#cue-bar")).toBeVisible();
+  await expect(page.locator("#cue-bar-face"), "nothing is cued").toBeHidden();
+  await expect(mode(page, "last")).toHaveAttribute("aria-pressed", "true");
+  await expect(mode(page, "mix")).toHaveAttribute("aria-pressed", "false");
+  expect(await modeWrites(page), "read, not written").toEqual([]);
+
+  await mode(page, "mix").click();
+  await expect(mode(page, "mix")).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => modeWrites(page)).toEqual([0]);
+  // The CONSOLE shows the same bar.
+  await page.click("#btn-view-console");
+  await expect(mode(page, "mix")).toBeVisible();
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+  await expect(page.locator("#cue-bar")).toBeHidden();
+});
+
+test("under Last CUE a cue turned on replaces the cue of its own group", async ({ page }) => {
+  await setDeviceValue(page, CUE_MODE, 0, 1);
+  // What the unit does under Last CUE, which the app reads back behind each write: the group's
+  // other cue goes, with no notify for it.
+  await setWriteEffect(page, CUE_MONO, 1, 1, [[CUE_MONO, 0, 0]]);
+  await setWriteEffect(page, CUE_STEREO_CH, 1, 1, [[CUE_MONO, 1, 0]]);
+  await goLive(page);
+  await page.click("#btn-view-console");
+  await chip(page, "ch1").click();
+  await expect(readout(page)).toHaveText("CUE CH 1");
+  await chip(page, "ch2").click();
+  await expect(chip(page, "ch1")).toHaveAttribute("aria-pressed", "false");
+  await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "true");
+  await expect(readout(page)).toHaveText("CUE CH 2");
+  await chip(page, "ch_7_8").click();
+  await expect(readout(page)).toHaveText("CUE CH 7/8");
+  await expect(chip(page, "ch2")).toHaveAttribute("aria-pressed", "false");
+  // …and stays so once the reads behind the writes have landed.
+  await expect
+    .poll(() => writesOf(page).then((w) => w.filter(([id]) => id === CUE_MONO || id === CUE_STEREO_CH)))
+    .toEqual([
+      [CUE_MONO, 1],
+      [CUE_MONO, 1],
+      [CUE_STEREO_CH, 1],
+    ]);
+  await expect(readout(page)).toHaveText("CUE CH 7/8");
+});
+
+test("a CUE Mode switched on the unit is followed, and the cues shown go with it", async ({ page }) => {
+  await setDeviceValue(page, CUE_MONO, 0, 1);
+  await goLive(page);
+  await expect(readout(page)).toHaveText("CUE CH 1");
+  await expect(mode(page, "mix")).toHaveAttribute("aria-pressed", "true");
+  // The unit turns every cue off with the switch and announces the mode alone.
+  await setDeviceValue(page, CUE_MONO, 0, 0);
+  await setDeviceValue(page, CUE_MODE, 0, 1);
+  await notifyParam(page, CUE_MODE, 0, 1);
+  await expect(mode(page, "last")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#cue-bar-face")).toBeHidden();
+  await expect(frame(page, "ch1")).toHaveCount(0);
+  expect(await modeWrites(page), "followed, not written back").toEqual([]);
+});
+
+test("a switch of the CUE Mode in the app turns the cues it shows off, and the unit's are read back", async ({
+  page,
+}) => {
+  await setDeviceValue(page, CUE_MONO, 0, 1);
+  // What the unit does with the switch: every cue goes.
+  await setWriteEffect(page, CUE_MODE, 0, 1, [[CUE_MONO, 0, 0]]);
+  await goLive(page);
+  await expect(readout(page)).toHaveText("CUE CH 1");
+  await mode(page, "last").click();
+  await expect(page.locator("#cue-bar-face")).toBeHidden();
+  await expect.poll(() => modeWrites(page)).toEqual([1]);
+  await expect.poll(() => deviceValueOf(page, CUE_MONO, 0)).toBe(0);
+  await expect(page.locator("#cue-bar-face")).toBeHidden();
+  await expect(mode(page, "last")).toHaveAttribute("aria-pressed", "true");
+});
+
+// The unit keeps [CUE Mode] on its MONITOR screen, so each MONITOR node's panel carries it too.
+const cueModeRow = (page: Page) => page.locator('#inspector .param[data-param-label="CUE Mode"]');
+
+test("a MONITOR node's panel shows the CUE Mode, read-only with no session, and switches it with one", async ({
+  page,
+}) => {
+  const press = (name: string) => cueModeRow(page).getByRole("button", { name, exact: true });
+  await page.locator('#graph-host g.node[data-id="bus.mon1"]').click();
+  await expect(press("Last CUE")).toBeDisabled();
+  await expect(cueModeRow(page)).toHaveAttribute("title", /while Live sync is on/);
+
+  await goLive(page);
+  await page.locator('#graph-host g.node[data-id="bus.mon2"]').click();
+  await expect(press("Mix CUE")).toHaveAttribute("aria-pressed", "true");
+  await press("Last CUE").click();
+  await expect(press("Last CUE")).toHaveAttribute("aria-pressed", "true");
+  await expect(mode(page, "last"), "the status bar says the same").toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => modeWrites(page)).toEqual([1]);
+  // A switch on the unit repaints the row in place.
+  await setDeviceValue(page, CUE_MODE, 0, 0);
+  await notifyParam(page, CUE_MODE, 0, 0);
+  await expect(press("Mix CUE")).toHaveAttribute("aria-pressed", "true");
 });
