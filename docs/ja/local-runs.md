@@ -60,8 +60,10 @@ for p in $(lsof -tnP -iTCP:<port> -sTCP:LISTEN); do ps -o pid,ppid,lstart,comman
 `.gitignore` は `work/` を無視しない。その直下に置いたファイルは、`git status` に `?? work/` と出る。
 
 - その作業の後まで残さなくてよいファイル (例: プルリクエストの本文の下書き) は、リポジトリの外に置く。
-- 残すファイルは、サブディレクトリ `work/<name>/` に置き、そのサブディレクトリの 1 行を、チェックアウトの
-  `.git/info/exclude` に足す。
+- 残すファイルは、サブディレクトリ `work/<name>/` に置き、そのサブディレクトリの 1 行を、
+  `git rev-parse --path-format=absolute --git-path info/exclude` が出す除外のファイルに足す。追加した worktree では
+  `.git` がファイルなので、`.git/info/exclude` というパスは無い。このコマンドが出すファイルは主チェックアウトのもので、
+  そのリポジトリの worktree が共通で読む。
 
 ## `src/` のモジュールを、テストなしで 1 回だけ評価する
 
