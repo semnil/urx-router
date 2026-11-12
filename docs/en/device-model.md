@@ -497,6 +497,9 @@ one (a file, a `?plan=` link) is refused at load.
   it cannot hold a persistent assignment that a saved plan would represent. Which strips are cued is state of a
   Live-sync session, held outside the plan (architecture.md, "CUE" under "What the app models, and what it leaves
   to the unit"), and the board draws no node for the bus.
+- **When the model is edited, the sources each receiver can select are counted, one receiver at a time.**
+  A receiver left with a single possible source is one of the fixed 1:1 wires above and gets no editable
+  node.
 
 ## Sample-rate-dependent constraints
 

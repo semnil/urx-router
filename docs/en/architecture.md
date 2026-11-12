@@ -833,7 +833,11 @@ carries a one-line map of the same directories and points here.
   ([below](#undo--redo)). The transient `unreadNodes` provenance is excluded, being neither serialized
   nor reachable through an edit.
   A new plan comes from `defaultPlan(modelId)` in `models/initial-state.ts`, which seeds every model
-  with a factory initial state (node parameters + routing + CH SETTING colors and names). URX44V and URX22 are
+  with a factory initial state (node parameters + routing + CH SETTING colors and names). A scalar node
+  parameter is written only when the plan holds it, so the factory value of each one is seeded on every node
+  that has it (the oscillator, MONITOR, the STREAMING delay, PHONES Level, EQ 1-knob, Rec Point, BUS Type, the
+  FX channel's ON); a new plan that left one out would not bring that setting back to its factory value.
+  URX44V and URX22 are
   checked against a factory-initialised unit: every address a new plan writes already holds the plan's value there.
   URX44 reuses the URX44V capture verbatim (it differs only by URX44V's HDMI input, which no default routes), and
   URX22 is that capture remapped to its channel layout (`models/initial-urx22.ts`). The one address that differs on
@@ -1293,7 +1297,9 @@ the inspector, and the open modal itself.
 The same rule applies past the app's own edges: a failure raised outside the UI layer carries a
 **stable kebab-case code**, not prose. The message is either the bare code or `"<code>: <detail>"`,
 where the detail is the technical part only the source can supply — an OS message, a parameter
-address, a broker URI. Both sides of the shell raise them:
+address, a broker URI. An OS message comes in the language the OS words it in, not the app's: the
+detail after `file-io:` is English on macOS and follows the Windows display language on Windows, so
+Japanese there is the expected reading and not a defect. Both sides of the shell raise them:
 
 | Source                          | Codes                                                                                                                                                                                  |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -4045,6 +4051,13 @@ The GATE, COMP and EQ sections each hold their ON toggle and a control that open
 beside each processor chip. The screen owns the broker's single meter subscription slot while open.
 A node's ON/OFF (channel ON, each master, FX, MONITOR, Ducker, OSC) always leads its parameters, mirroring
 the canvas OFF display.
+Within a node or a connection the rows run in the order in which the unit's own LCD screen is read, top
+left to bottom right. The field arrays behind the rows may be reordered freely — each entry names its
+parameter, so the order decides only what is displayed first and which command is issued first — except
+`EQ_BAND_NAMES`, whose index computes the parameter's offset.
+A connection's parameters are changed in place and the inspector is not rendered again, so that a slider
+keeps its focus. A two-button toggle therefore sets its own pressed state on the click (`selectToggle`);
+without that the display stays stale until the element is selected again.
 A hand-folded section persists its open/closed state per section kind to `localStorage`
 (`urx-inspector-sections`), so it survives re-renders and reloads; toggling a section's ON value clears
 that override so the fold reverts to following the on-state. Within a section, the INPUT toggles flow
@@ -5138,7 +5151,11 @@ installer.nsi:823-849, :914-954 and :897-901). The path a pinned shortcut points
 rewrites in place, so it cannot happen. An existing MSI install is detected by the NSIS
 installer (matching `DisplayName` + `Publisher`) and uninstalled first — this runs even under the updater's
 passive mode — but the install location moves to `%LOCALAPPDATA%\URX Router`, so that one migration prompts
-for the MSI uninstall and elevation, and an existing pin has to be re-pinned.
+for the MSI uninstall and elevation, and an existing pin has to be re-pinned. The design assumes a copy
+installed from the MSI gets there through its own updater: the updater asks `latest.json` for a
+`windows-x86_64-msi` entry first and falls back to `windows-x86_64`, and a release that builds NSIS only
+publishes the setup.exe under that unsuffixed key. For the same reason the updater's `installMode` is never
+`quiet`: a silent run skips the installer's pages, and the MSI uninstall is done from one of them.
 
 `bundle.windows.nsis.languages` carries English + Japanese, and the installer **picks one from the OS
 language** (falling back to the first entry, English). The language selector (`displayLanguageSelector`) is
@@ -5190,7 +5207,10 @@ build and to `pnpm tauri dev` alike, so the two agree whatever Xcode each ran un
 decides is in "Display themes". `RUSTFLAGS` in the environment REPLACES that table rather than adding
 to it, which would drop the argument with no other symptom than a build that succeeds, so the `build`
 job reads the values back off the packaged binary (`scripts/check-macho-platform.mjs`) and fails the
-run when they disagree with the file. `pnpm check:platform <binary>` is the same check by hand.
+run when they disagree with the file. `pnpm check:platform <binary>` is the same check by hand. On a
+runner whose own SDK equals the declared version that read-back cannot tell a dropped argument from a
+kept one — the binary records the same numbers either way — so the check that can is `pnpm test
+macho-platform`, which reads the repository's config on every pull request.
 
 What the runner image still decides is which SDK the binary actually links against, and `macos-26`
 is the one that agrees with the declared version, so the recorded value describes the build that
@@ -5348,7 +5368,9 @@ Because the desktop app can write settings to a connected URX — overwriting it
 that risk is collected in two places. The **installer** shows a license-agreement page from
 `bundle.licenseFile` in `tauri.conf.json` (`src-tauri/LICENSE.txt`, which folds the device-control safety
 notice, the trademark statement, and the full MIT text into one file); on Windows the NSIS installer renders
-the plain text as is and the user must accept it to proceed. The macOS `.dmg` is a drag-install with no
+the plain text as is and the user must accept it to proceed. `LICENSE.txt` is kept to ASCII — no em
+dash, no typographic quotes — because a bundler that re-encodes the license under the installer
+language's code page fails for the one language whose code page lacks the character. The macOS `.dmg` is a drag-install with no
 agreement page, so a **first-run consent gate** covers it: `src/ui/consent.ts` shows the same disclaimer in
 a full-screen modal and, once accepted, records it in `localStorage` (`urx-disclaimer-accepted`) so it is
 never shown again (no re-consent after an auto-update). Declining quits the app (`plugin:process|exit`). The

@@ -154,6 +154,7 @@ English documentation lives under [docs/en/](docs/en/); the Japanese translation
 - [docs/en/device-model.md](docs/en/device-model.md) — the device routing model and connection constraints
 - [docs/en/console-sends.md](docs/en/console-sends.md) — the CONSOLE view's per-strip SENDS rack design
 - [docs/en/known-issues.md](docs/en/known-issues.md) — current limitations
+- [docs/en/decisions/](docs/en/decisions/) — records of closed decisions: what was decided, why, and what was turned down
 
 ## Contributing
 
