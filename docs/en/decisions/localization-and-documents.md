@@ -50,6 +50,12 @@ stays as the one earlier exception.
 the `dev()` declaration of those rows holds. How a row is established as the unit's is in
 architecture.md "Localization (i18n)" → Terminology.
 
+**The marks are not complete.** The titles of the two effect screens (`FX Effect`, `Insert Effect`)
+and the FX strip's `Mix` are still declared `dev()`, and `Mix` is known not to be on the unit. A row
+name can be off as well: one reverb row was spelled differently from the unit until the operator read
+it off the LCD (it is `E/R Delay`). A row name in the catalog is a lead to start from. The spelling
+that goes on a screen is checked on the unit.
+
 ## Surfaces left in English
 
 **Decision (2026-11-12).** Seven surfaces show English whatever the app language is, and they are
