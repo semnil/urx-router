@@ -167,6 +167,8 @@ the second set, and a one-shot action is consumed by the first caller (an HMR re
 | `e2e/race/analyze.ts` + `e2e/race/ui.ts` | the invariants over one ordered trace, and the locators plus the value-settle wait the harness shares (settleValue — wait for a readout to STOP moving and report when, instead of sleeping a guessed number of ms or polling for the value the case is about to assert) |
 | in-spec `__midiTest` / `__dynTest` | driving a MIDI control or a tuning screen's meter feed — copy the installed state object, do not invent a third stub shape. `__dynTest` also stops the clock the page's animation frames are handed and moves it by hand, for a case whose verdict is a window the screen times by its own frames (the peak hold) |
 
+**In a save → new → open round trip, a spec selects a node only after the open.** A node selection placed between the press of New and the press of Open timed the file chooser out when the specs ran in parallel; `e2e/rename.spec.ts` has the working order.
+
 **Unit fixtures — extend these rather than forking them.** The same rule as the E2E ones, and
 harder to find: vitest collects only the test files themselves, so these carry a `*.test-util.ts`
 suffix and a search for tests does not turn them up. Each is the host or stub some layer needs in
