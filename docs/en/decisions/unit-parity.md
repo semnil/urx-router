@@ -93,4 +93,4 @@ to another.
   source with two wires, or STREAMING with none.
 
 How a failed read is marked on the CONSOLE's gain knob, and how the MIDI window says that a control
-is inactive for now, were left to be drawn once the input stage existed; both are in #590.
+is not active at the moment, were to be drawn once the input stage existed. Both are in #590.
