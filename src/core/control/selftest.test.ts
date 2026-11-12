@@ -1418,6 +1418,47 @@ describe("runSelfTest and the side of a mic strip the unit is not using", () => 
     ]);
   });
 
+  // A refused write is reported where it happened, and the address is tried again on the next
+  // pass like any other that still differs — and counted once the passes are spent.
+  it("reports a write-back write the unit refuses, tries it again, and counts it", async () => {
+    const table = installRefillingDevice();
+    const refill = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, yy, v) => {
+      if (`${id}:${x}:${yy}` === OUT_GAIN) throw new Error("refused");
+      await refill(id, x, yy, v);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(table.get(OUT_GAIN), "the premise: the type switch refilled it").toBe(180);
+    expect(writesTo(OUT_GAIN)).toEqual([360, 360, 360]);
+    expect(report.errors.filter((e) => e === `restore ${OUT_GAIN}: refused`)).toHaveLength(3);
+    expect(report.residual.filter((r) => r.name === "SSMCS_OUT_GAIN")).toEqual([
+      expect.objectContaining({ y, expected: 360, actual: 180 }),
+    ]);
+    expect(report.restored).toBe(false);
+  });
+
+  // A read that fails while checking the write-back says nothing about the value: it is an
+  // error, not a match and not a mismatch with a number in it, and the run is not restored.
+  it("reports a read that fails while checking the write-back, and does not call the run restored", async () => {
+    installRefillingDevice();
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation((id, x, yy) => {
+      const writtenBack = vi.mocked(vdSet).mock.calls.some(([i, xx, yyy]) => `${i}:${xx}:${yyy}` === OUT_GAIN);
+      if (writtenBack && `${id}:${x}:${yy}` === OUT_GAIN) return Promise.reject(new Error("read timeout"));
+      return answer(id, x, yy);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(writesTo(OUT_GAIN).length, "the premise: the write-back wrote it").toBeGreaterThan(0);
+    expect(report.errors).toContain(`restore verify ${OUT_GAIN}: read timeout`);
+    expect(report.residual.filter((r) => r.name === "SSMCS_OUT_GAIN")).toEqual([]);
+    expect(report.restoreResidual).toBeGreaterThan(0);
+    expect(report.restored).toBe(false);
+  });
+
   // The capture reads a channel in COMP → EQ without touching its SSMCS values, so a failure
   // there shows only in the read of the other side. A pass could change that side and nothing
   // would hold what it was: the run does not start.
