@@ -126,7 +126,7 @@ the experimental features).
 - **A subshell that has not read the login profile has neither Node nor Cargo on its `PATH`.** Put
   the directories of the Node version manager's shims, of Cargo's binaries and of the package
   manager in front of it.
-- **If the SIM view fails with `Failed to resolve import "urx-lcd-sim/fonts/..."`**, the simulator is
+- **If the SIM view fails with `Failed to resolve import` naming the simulator's fonts**, the simulator is
   not linked into `node_modules`. Run the set-up commands of CLAUDE.md "Development" (the submodule,
   then the install). No tracked file changes.
 - **Whether the app is up** is answered by the process, not by the log: CLAUDE.md "Development",

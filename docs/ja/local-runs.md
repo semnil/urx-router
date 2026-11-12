@@ -113,7 +113,7 @@ git worktree add --detach <dir> <sha>
 
 - **ログインのプロファイルを読んでいないサブシェルの `PATH` には、Node も Cargo も無い。** Node の版を
   切り替える道具の shims、Cargo のバイナリ、パッケージマネージャーのディレクトリを、前に足す。
-- **SIM ビューが `Failed to resolve import "urx-lcd-sim/fonts/..."` で読めないとき**は、シミュレーターが
+- **SIM ビューが、シミュレーターのフォントを名指す `Failed to resolve import` で読めないとき**は、シミュレーターが
   `node_modules` につながっていない。CLAUDE.md「Development」の準備のコマンド (submodule、その後に
   インストール) を走らせる。追跡しているファイルは変わらない。
 - **アプリが上がったかどうか**は、ログではなく、プロセスで答える。CLAUDE.md「Development」の
