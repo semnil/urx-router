@@ -1681,10 +1681,8 @@ not repeat them.
   on the unfixed tree all passed. The four were named from the run logs afterwards, and the comparison
   itself was off by one — each run reports its count per job, and 1.6.0's two jobs reported one each.
   Three of the four have mechanisms of their own and are fixed: the two `t7-meter` ladder rungs in
-  `b96868c`, and `baseline-view-locale-churn` in `83eb598`. The fourth was a pin that required the
-  defect to reproduce, which fix 11 above deleted in `3ba19c4` — so the `vd_link_stats` link is now
-  unfalsifiable as well as unestablished. Every one of the 16 harness runs since those fixes landed
-  has reported **flaky 0**
+  `b96868c`, and `baseline-view-locale-churn` in `83eb598`. Every one of the 16 harness runs since
+  those fixes landed has reported **flaky 0**
 - **An address nothing wrote read 0, and at a node-param leaf 0 is often a value its control cannot
   take.** A session's readback took each such 0 into the plan, and once the write-time take-back reached
   node-param leaves (`74c4b97e`), the first converge — an insert-FX selection's, for one — bounded 41 of
