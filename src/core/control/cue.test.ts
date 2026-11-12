@@ -4,7 +4,17 @@ vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn() }));
 
 import { getModel } from "../../models";
 import { vdSet } from "../platform";
-import { CueEchoes, CueSet, readCues, writeCueFlag } from "./cue";
+import {
+  CUE_MODE_ADDR,
+  CueEchoes,
+  CueSet,
+  cueModeOf,
+  cueModeRaw,
+  readCueMode,
+  readCues,
+  writeCueFlag,
+  writeCueMode,
+} from "./cue";
 import { cueAddrOf, cueAddrs, cueAt, cueNotifyAddrs } from "./translate";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 
@@ -215,6 +225,170 @@ describe("CueEchoes", () => {
     e.note(580, 0, 1);
     vi.advanceTimersByTime(SETTLE_TIMEOUT_MS + 1);
     expect(e.take(580, 0, 1)).toBe(false);
+  });
+});
+
+// The unit's Last CUE, read off a URX22 and a URX44V on System 1.5: a cue turned on replaces the
+// other cues of its own group, the two groups still clear each other, and the output cue an input
+// cue cleared — one, since a group holds one — comes back with the last input cue off.
+describe("CueSet under Last CUE", () => {
+  const last = (): CueSet => {
+    const s = new CueSet(V);
+    s.setMode("last");
+    return s;
+  };
+
+  it("keeps only the cue turned on last within a group", () => {
+    const s = last();
+    s.apply("bus.fx1", true);
+    s.apply("ch1", true);
+    expect(s.nodes()).toEqual(["ch1"]);
+    s.apply("ch_7_8", true);
+    expect(s.nodes()).toEqual(["ch_7_8"]);
+    const out = last();
+    out.apply("bus.stereo", true);
+    out.apply("bus.mix1", true);
+    out.apply("bus.stream", true);
+    expect(out.nodes()).toEqual(["bus.stream"]);
+  });
+
+  it("still clears the group in use when a cue in the other group is turned on", () => {
+    const s = last();
+    s.apply("ch1", true);
+    s.apply("bus.stereo", true);
+    expect(s.nodes()).toEqual(["bus.stereo"]);
+    s.apply("ch2", true);
+    expect(s.nodes()).toEqual(["ch2"]);
+  });
+
+  // STEREO, then MIX 1 (which replaces it), then CH 1: what was cued when the input cue arrived
+  // is MIX 1 alone, and that is what comes back.
+  it("puts back the one output cue that was on when an input cue cleared it", () => {
+    const s = last();
+    s.apply("bus.stereo", true);
+    s.apply("bus.mix1", true);
+    s.apply("ch1", true);
+    expect(s.restorable()).toEqual(["bus.mix1"]);
+    s.apply("ch1", false);
+    expect(s.nodes()).toEqual(["bus.mix1"]);
+  });
+
+  // CH 2 replaces CH 1, so turning CH 1 off afterwards changes nothing; the output comes back
+  // with CH 2, the last input cue.
+  it("waits for the input cue that is on, not for one a later cue already replaced", () => {
+    const s = last();
+    s.apply("bus.stereo", true);
+    s.apply("ch1", true);
+    s.apply("ch2", true);
+    expect(s.apply("ch1", false)).toBe(false);
+    expect(s.nodes()).toEqual(["ch2"]);
+    s.apply("ch2", false);
+    expect(s.nodes()).toEqual(["bus.stereo"]);
+  });
+
+  it("keeps a linked pair together, as the one flag they share", () => {
+    const s = last();
+    s.apply("ch3", true);
+    s.apply("ch1", true, "ch2");
+    expect(s.nodes()).toEqual(["ch1", "ch2"]);
+    s.apply("ch3", true);
+    expect(s.nodes()).toEqual(["ch3"]);
+  });
+
+  it("adds cues up again once the mode is Mix CUE", () => {
+    const s = last();
+    s.setMode("mix");
+    s.apply("ch1", true);
+    s.apply("ch2", true);
+    expect(s.nodes()).toEqual(["ch1", "ch2"]);
+  });
+});
+
+// A switch of [CUE Mode] turns every cue off on the unit, and the unit announces none of them.
+describe("CueSet.setMode", () => {
+  it("starts on Mix CUE", () => {
+    expect(new CueSet(V).mode).toBe("mix");
+  });
+
+  it("turns every cue off on a switch, and forgets the outputs held to put back", () => {
+    const s = new CueSet(V);
+    s.apply("bus.stereo", true);
+    s.apply("ch1", true);
+    const before = s.version;
+    expect(s.setMode("last")).toBe(true);
+    expect(s.mode).toBe("last");
+    expect(s.size).toBe(0);
+    expect(s.restorable()).toEqual([]);
+    expect(s.version).toBeGreaterThan(before);
+    // …so an input cue turned on and off afterwards brings nothing back.
+    s.apply("ch1", true);
+    s.apply("ch1", false);
+    expect(s.size).toBe(0);
+  });
+
+  it("changes nothing for the mode it is already in", () => {
+    const s = new CueSet(V);
+    s.apply("ch1", true);
+    const before = s.version;
+    expect(s.setMode("mix")).toBe(false);
+    expect(s.nodes()).toEqual(["ch1"]);
+    expect(s.version).toBe(before);
+  });
+});
+
+describe("CUE Mode on the wire", () => {
+  it("is 0 for Mix CUE and 1 for Last CUE, at 897:0:0", () => {
+    expect(CUE_MODE_ADDR).toEqual([897, 0, 0]);
+    expect([cueModeOf(0), cueModeOf(1)]).toEqual(["mix", "last"]);
+    expect([cueModeRaw("mix"), cueModeRaw("last")]).toEqual([0, 1]);
+  });
+
+  it("reads the mode at its address", async () => {
+    const asked: string[] = [];
+    const read = (answer: number) =>
+      readCueMode(async (p, x, y) => {
+        asked.push(`${p}:${x}:${y}`);
+        return answer;
+      });
+    expect(await read(1)).toBe("last");
+    expect(await read(0)).toBe("mix");
+    expect(asked).toEqual(["897:0:0", "897:0:0"]);
+  });
+
+  it("rejects when the read fails, as on a unit whose firmware has no such address", async () => {
+    await expect(readCueMode(async () => Promise.reject(new Error("404")))).rejects.toThrow("404");
+  });
+});
+
+describe("writeCueMode", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(vdSet).mockResolvedValue(undefined);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.mocked(vdSet).mockReset();
+  });
+
+  it("writes the mode and resolves once the unit announces it", async () => {
+    let done = false;
+    void writeCueMode("last").then(() => (done = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vdSet).toHaveBeenCalledWith(897, 0, 0, 1);
+    expect(done).toBe(false);
+    writeSettle.note({ paramId: 897, x: 0, y: 0, value: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(done).toBe(true);
+  });
+
+  it("resolves at the settle window when nothing is announced", async () => {
+    let done = false;
+    void writeCueMode("mix").then(() => (done = true));
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS - 1);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(vdSet).toHaveBeenCalledWith(897, 0, 0, 0);
+    expect(done).toBe(true);
   });
 });
 

@@ -13,6 +13,7 @@ import { clipNodeName, jackKey, LEVEL_MIN_DB, LEVEL_OFF_DB, processorOn, SSMCS_I
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
 import { hiZPatch, inputOnRefused, jackGainRange, jackIndex } from "../core/input-lock";
 import { formatHz, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
+import type { CueMode } from "../core/control/cue";
 import { nearestStepIndex } from "../core/control/comp-ratio";
 
 import {
@@ -173,6 +174,11 @@ export interface InspectorActions {
   clipSafeEngaged?: (jack: number) => boolean;
   /** Switch the node's [CUE], as its CONSOLE chip does. */
   onSetCue: (id: string, on: boolean) => void;
+  /** The unit's [CUE Mode], which is outside the plan as the cues are: the mode the session
+   *  read, and whether a press switches it (a Live-sync session is up). */
+  cueMode: () => CueModeRowState;
+  /** Switch the unit's [CUE Mode]. */
+  onSetCueMode: (mode: CueMode) => void;
 }
 
 /** The nodes the panel's rendering is derived from — not the nodes the SELECTION names,
@@ -944,6 +950,8 @@ export function renderInspector(
           actions.onUpdateNodeParams(node.id, { cueInterrupt: v }),
         ),
       );
+      // The unit's MONITOR screen carries [CUE Mode] beside these, one setting for both monitors.
+      ps.body.append(cueModeRow(actions.cueMode(), actions, m));
       ps.body.append(
         boolToggle(m.inspector.mono, np.mono ?? false, (v) => actions.onUpdateNodeParams(node.id, { mono: v })),
       );
@@ -1764,13 +1772,56 @@ function paintCueRow(row: HTMLElement, state: CueRowState, m: Messages): void {
   else row.title = m.inspector.cueOffline;
 }
 
-/** Repaint the CUE row of a panel already on screen, if it carries one, from `cueOf`. Nothing
- *  else in the panel is touched. */
-export function syncInspectorCue(host: HTMLElement, cueOf: InspectorActions["cueOf"]): void {
+/** Repaint the CUE row and the CUE Mode row of a panel already on screen, if it carries one,
+ *  from `cueOf` and `cueMode`. Nothing else in the panel is touched. */
+export function syncInspectorCue(
+  host: HTMLElement,
+  cueOf: InspectorActions["cueOf"],
+  cueMode: InspectorActions["cueMode"],
+): void {
   for (const row of host.querySelectorAll<HTMLElement>("[data-cue-node]")) {
     const state = cueOf(row.dataset.cueNode!);
     if (state) paintCueRow(row, state, t());
   }
+  for (const row of host.querySelectorAll<HTMLElement>("[data-cue-mode]")) paintCueModeRow(row, cueMode(), t());
+}
+
+export type CueModeRowState = { mode: CueMode; enabled: boolean };
+
+/** The MONITOR node's [CUE Mode] row: Mix CUE / Last CUE, the unit's own two choices. Like the
+ *  CUE row its buttons keep their handlers whatever the session and are repainted in place. */
+function cueModeRow(state: CueModeRowState, actions: InspectorActions, m: Messages): HTMLElement {
+  const { row, labelId } = paramBlock(m.inspector.cueMode, "");
+  row.dataset.cueMode = "";
+  const group = toggleGroup(labelId);
+  for (const [mode, text] of [
+    ["mix", m.inspector.cueModeMix],
+    ["last", m.inspector.cueModeLast],
+  ] as const) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    b.dataset.cueModeValue = mode;
+    b.addEventListener("click", () => actions.onSetCueMode(mode));
+    group.append(b);
+  }
+  row.append(group);
+  paintCueModeRow(row, state, m);
+  return row;
+}
+
+/** Show `state` on a CUE Mode row: the lit choice, and read-only with the reason as its tooltip
+ *  while a press switches nothing. With no session the mode is the one a unit ships with, as
+ *  the CUE row beside it reads off. */
+function paintCueModeRow(row: HTMLElement, state: CueModeRowState, m: Messages): void {
+  for (const b of row.querySelectorAll<HTMLButtonElement>(".toggle button")) {
+    const lit = b.dataset.cueModeValue === state.mode;
+    b.classList.toggle("on", lit);
+    b.setAttribute("aria-pressed", String(lit));
+    b.disabled = !state.enabled;
+  }
+  if (state.enabled) row.removeAttribute("title");
+  else row.title = m.inspector.cueModeOffline;
 }
 
 /** Repaint the Clip Safe row of a panel already on screen, if it carries one, for whether its jack's

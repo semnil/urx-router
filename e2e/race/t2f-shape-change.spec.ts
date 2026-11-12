@@ -90,8 +90,16 @@ const CLIP_SAFE_ADDRS: Array<[number, number, number]> = getModel("URX44V")
     return base === undefined ? [] : [base, base + 1];
   })
   .map((j): [number, number, number] => [PARAMS.CLIP_SAFE_ENGAGED.id, 0, j]);
+/** The unit's [CUE Mode], which rides with the flags: registered right after them. */
+const CUE_MODE_ADDR: [number, number, number] = [PARAMS.CUE_MODE.id, 0, 0];
 /** The host-owned tail of the registration, in the order main.ts's addrs hook appends it. */
-const HOST_TAIL: Array<[number, number, number]> = [[848, 0, 0], [762, 0, 0], ...CUE_ADDRS, ...CLIP_SAFE_ADDRS];
+const HOST_TAIL: Array<[number, number, number]> = [
+  [848, 0, 0],
+  [762, 0, 0],
+  ...CUE_ADDRS,
+  CUE_MODE_ADDR,
+  ...CLIP_SAFE_ADDRS,
+];
 const UDK_SLOTS = 16;
 
 /** Whole-device reconciles that began after `at` (see RATE_ADDR). */

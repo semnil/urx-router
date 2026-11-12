@@ -626,6 +626,12 @@ export const en = {
     cue: dev("CUE"),
     // The CUE row's tooltip while Live sync is off, when its buttons do nothing.
     cueOffline: tr("CUE switches the unit's CUE while Live sync is on."),
+    // The MONITOR screen's [CUE Mode] and its two choices, the unit's own words.
+    cueMode: dev("CUE Mode"),
+    cueModeMix: dev("Mix CUE"),
+    cueModeLast: dev("Last CUE"),
+    // The CUE Mode row's tooltip while Live sync is off, when its buttons do nothing.
+    cueModeOffline: tr("CUE Mode shows and switches the unit's CUE Mode while Live sync is on."),
     mono: dev("MONO"),
     phonesLevel: dev("PHONES Level"),
     on: dev("ON"),

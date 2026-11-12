@@ -96,6 +96,16 @@ ends, and neither the CONSOLE's CUE chips, the inspector's CUE row nor a MIDI co
 assigned to a CUE switch one. A chip can still be armed for MIDI learn, so a control
 can be assigned to it.
 
+The unit's **CUE Mode** (System firmware V1.5: *Mix CUE* or *Last CUE*, on its MONITOR
+screen) is the session's in the same way. While Live sync is on, the status bar and each
+MONITOR node's panel show the unit's mode and switch it, and under *Last CUE* a cue turned
+on replaces the other cues of its group, as on the unit. Switching the mode turns every
+cue off — the unit does, and the app with it. The mode is not part of the plan: with Live
+sync off it is not shown on the status bar, and the MONITOR panel's row is read-only.
+
+> Confirmed on a URX22 and a URX44V (System 1.5.0.1): the Last CUE rule on both, and on
+> the URX44V a mode written over the control connection, read on the unit's screen.
+
 ## An HPF frequency outside 40–120 Hz cannot be written to the device
 
 Since System firmware V1.5 the unit's own **[HPF Freq.]** knob sets 20.0 to 600 Hz, in sixty
@@ -441,6 +451,9 @@ still on a firmware before V1.5, the *Scene only* device scope therefore writes 
 Output Patch and the STREAMING settings, although that firmware keeps them outside its scenes.
 The app asks before it touches a unit whose System firmware is not the verified version above,
 unless the *Untested firmware* warning is turned off in Preferences.
+
+Live sync also reads the unit's CUE Mode when it starts. A unit before V1.5 has no such
+setting, and a session whose starting read cannot be completed does not start.
 
 A scene-scoped plan file saved by URX Router 1.18.6 or earlier was cut along the boundary of
 the firmware before V1.5, and still opens along it: the output patches and the STREAMING
