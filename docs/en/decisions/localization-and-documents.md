@@ -78,3 +78,10 @@ An existing capitalised `Send` may stay; the two spellings may coexist.
 
 **History.** The rule was applied to source comments and UI strings first. The decision to state
 it here and to bring the Japanese documents under it was made on 2026-11-12.
+
+## The README's acknowledgement stays
+
+**Decision (2026-11-12, the operator).** The README's "Acknowledgments" section stays as it is. It
+credits, by GitHub handle and link, the author of the pull request that verified the URX22's meter
+mapping on hardware. It is the credit for a contribution, so the practice these documents follow
+elsewhere — an outside person is named by role — is not applied to it.
