@@ -77,8 +77,10 @@ get there, including decisions the operator withdrew on the way:
   operator asked for, which is not a reason to block. **The settled form is a driven set, not a
   refusal**: the writer leaves out only the slots the unit recomputes, and the screen locks those
   (`mbcDeviceDriven` and `pitchDeviceDriven`, the same shape as `COMP_ONE_KNOB_DRIVEN`). The
-  M.B.Comp's driven set is fifteen slots, and Out Gain alone stays the operator's. An earlier
-  reading, that Attack, Release and the crossovers are overwritten once when 1-Knob turns on and
+  M.B.Comp's driven set was fifteen slots when this was settled, with Out Gain alone left to the
+  operator; the decisions of 2026-10-18 in [sim-view.md](sim-view.md) (B-1 to B-12) added Out Gain.
+  The set is now nineteen slots — every per-band slot, the Release, both crossovers and the Out
+  Gain — and Out Gain is locked while 1-Knob is on. An earlier reading, that Attack, Release and the crossovers are overwritten once when 1-Knob turns on and
   are free afterwards, was wrong.
 - **`DynScreen` was generalised in one step**, with the ducker and the insert effects in view. The
   host does not know which processor it is showing.

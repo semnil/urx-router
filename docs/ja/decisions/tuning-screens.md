@@ -62,7 +62,10 @@
   却下した。COMP と EQ の 1-knob は同じ性質のまま書けるので、この 2 つだけが例外になっていた。値が失われるのは
   操作者が頼んだとおりのことで、止める理由にならない。**決まった形は、拒否ではなく、駆動集合。** 書く側は、実機が
   計算し直すスロットだけを送らず、画面はそのスロットをロックする (`mbcDeviceDriven` と `pitchDeviceDriven`。
-  `COMP_ONE_KNOB_DRIVEN` と同じ形)。M.B.Comp の駆動集合は 15 スロットで、Out Gain だけが操作者のもの。「Attack・
+  `COMP_ONE_KNOB_DRIVEN` と同じ形)。M.B.Comp の駆動集合は、これを決めたときは 15 スロットで、Out Gain だけが
+  操作者のものだった。[sim-view.md](sim-view.md) の 2026-10-18 の決定 (B-1〜B-12) が Out Gain を足した。今の
+  駆動集合は 19 スロット (バンドごとのスロットの全部・Release・2 つのクロスオーバー・Out Gain) で、1-Knob が ON の間は
+  Out Gain もロックされる。「Attack・
   Release・クロスオーバーは、1-Knob を ON にしたときに 1 度上書きされるだけで、その後は自由」という前の読みは、
   誤りだった。
 - **`DynScreen` の一般化は、1 度で行った。** ducker とインサートエフェクトまで見込んだ。ホストは、どの処理を
