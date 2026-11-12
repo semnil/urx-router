@@ -734,8 +734,13 @@ export async function applySilentState(
  * or the editing layer (positions / hidden / notes have no parameter), so the
  * caller picks the model and the values land on the plan already open.
  */
-export async function applySourceState(model: DeviceModel, plan: Plan, from: ParamSource): Promise<ReadbackResult> {
-  return readPass(from, model, plan);
+export async function applySourceState(
+  model: DeviceModel,
+  plan: Plan,
+  from: ParamSource,
+  signal?: AbortSignal,
+): Promise<ReadbackResult> {
+  return readPass(from, model, plan, signal);
 }
 
 async function readPass(

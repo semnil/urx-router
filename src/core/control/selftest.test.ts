@@ -1435,6 +1435,32 @@ describe("runSelfTest and the side of a mic strip the unit is not using", () => 
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(report.errors.some((e) => e.startsWith("refusing to sweep: the side"))).toBe(true);
   });
+
+  // The read of the other side walks the whole unit again, so a cancel that does not reach
+  // it holds the link (and every other device action) until that walk ends. The cancel lands
+  // on the first SSMCS read of CH 1, which is a COMP → EQ channel: only this read asks there.
+  // What the bound separates is stopping inside the group being read from reading the rest
+  // of the unit — several hundred reads without the signal.
+  it("stops reading the other side on a cancel, and writes nothing", async () => {
+    installRefillingDevice();
+    const controller = new AbortController();
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    let afterCancel = 0;
+    vi.mocked(vdGet).mockImplementation((id, x, yy) => {
+      if (controller.signal.aborted) afterCancel++;
+      else if (`${id}:${x}:${yy}` === THRESHOLD) controller.abort();
+      return answer(id, x, yy);
+    });
+
+    const report = await runSelfTest(model, 0, controller.signal);
+
+    expect(controller.signal.aborted, "the premise: the other side's read reached CH 1's SSMCS").toBe(true);
+    expect(report.aborted).toBe(true);
+    expect(report.phase).toBe("readback");
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect(afterCancel).toBeLessThan(40);
+    expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
+  });
 });
 
 describe("runSelfTest and the ON slot of an insert-FX engine no channel holds", () => {

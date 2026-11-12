@@ -893,7 +893,7 @@ export async function runSelfTest(
     // COMP/EQ type refills the side that comes into use, and a STEREO-linked pair copies one
     // member's values onto the other's unused side. Read here, before anything is perturbed,
     // and written back after the restore like the rest of this set.
-    const unused = await phaseStep(unusedSideCommands(model, captured, cap.unreadNodes));
+    const unused = await phaseStep(unusedSideCommands(model, captured, cap.unreadNodes, signal));
     if (!unused) return report; // cancelled during the read of the other side
     if (unused.unread.length) {
       report.errors.push(
@@ -1271,6 +1271,7 @@ async function unusedSideCommands(
   model: DeviceModel,
   captured: ReadonlyMap<number, unknown>,
   captureUnread: ReadonlySet<string>,
+  signal: AbortSignal | undefined,
 ): Promise<{ commands: VdCommand[]; unread: string[] }> {
   const otherSide: ParamSource = {
     get: async (paramId, x, y) => {
@@ -1281,7 +1282,7 @@ async function unusedSideCommands(
     getStr: (paramId, x, y) => vdGetStr(paramId, x, y),
   };
   const shadow = emptyPlan(model.id);
-  const read = await applySourceState(model, shadow, otherSide);
+  const read = await applySourceState(model, shadow, otherSide, signal);
   const strips = new Set(model.nodes.filter((n) => channelControl(model, n.id)?.hasMicStrip).map((n) => n.id));
   return {
     // Only what the strips themselves carry: this second read fails wherever the capture's
