@@ -105,3 +105,21 @@ git worktree add --detach <dir> <sha>
   問いに答えが無く、検査は実際には無い指摘を出す。
 - コミットは SHA で名指す。`HEAD~2` のような相対の指定は、コマンドを走らせたチェックアウトの HEAD から解かれる。
   シェルが別の worktree にいると、別のコミットになる。
+
+## 確かめるためにデスクトップアプリを起動する
+
+コマンドは、README の dev の行 (`pnpm tauri dev`。experimental の機能を出すときは、後ろに
+`-- -- --experimental` を付ける)。
+
+- **ログインのプロファイルを読んでいないサブシェルの `PATH` には、Node も Cargo も無い。** Node の版を
+  切り替える道具の shims、Cargo のバイナリ、パッケージマネージャーのディレクトリを、前に足す。
+- **SIM ビューが `Failed to resolve import "urx-lcd-sim/fonts/..."` で読めないとき**は、シミュレーターが
+  `node_modules` につながっていない。CLAUDE.md「Development」の準備のコマンド (submodule、その後に
+  インストール) を走らせる。追跡しているファイルは変わらない。
+- **アプリが上がったかどうか**は、ログではなく、プロセスで答える。CLAUDE.md「Development」の
+  「The dev app being up is a process, not a log line」。
+- **アプリは、submodule が指すコミットのシミュレーターを動かす。** シミュレーターのリポジトリでまだ
+  マージされていない変更は、アプリに入っていない。見たことを報告するときに、そう書く。
+- **ウィンドウを閉じると、コマンドは終了コード 0 で終わる。**
+- **止めるときは、自分が起動した `pnpm`・`vite`・アプリのプロセスだけを止める。** コマンドの文字列を
+  読んでから止める。同じマシンで、別のセッションの `vite` が動いていることがある。

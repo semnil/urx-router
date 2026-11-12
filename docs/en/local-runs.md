@@ -117,3 +117,22 @@ git worktree add --detach <dir> <sha>
   are not real.
 - Name the commit by its SHA. A relative revision such as `HEAD~2` is resolved against the HEAD of
   the checkout the command runs in, which is another commit when the shell is in another worktree.
+
+## Starting the desktop app for a check
+
+The command is the dev line in the README (`pnpm tauri dev`, with `-- -- --experimental` after it for
+the experimental features).
+
+- **A subshell that has not read the login profile has neither Node nor Cargo on its `PATH`.** Put
+  the directories of the Node version manager's shims, of Cargo's binaries and of the package
+  manager in front of it.
+- **If the SIM view fails with `Failed to resolve import "urx-lcd-sim/fonts/..."`**, the simulator is
+  not linked into `node_modules`. Run the set-up commands of CLAUDE.md "Development" (the submodule,
+  then the install). No tracked file changes.
+- **Whether the app is up** is answered by the process, not by the log: CLAUDE.md "Development",
+  "The dev app being up is a process, not a log line".
+- **The app runs the simulator at the commit the submodule points at.** A change that is not merged
+  in the simulator's repository is not in the app; say so when reporting what was seen.
+- **Closing the window ends the command with exit code 0.**
+- **When stopping it, stop only the `pnpm`, `vite` and app processes you started**, after reading
+  their command lines. Another session's `vite` may be running on the same machine.
