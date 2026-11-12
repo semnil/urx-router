@@ -1523,20 +1523,56 @@ describe("the unit's CUE Mode", () => {
     expect(errors(shell)).toEqual([]);
   });
 
-  // Two presses in a row: the unit's answer to the first arrives after the second was made, and
-  // is that write's answer rather than a switch back.
+  // Two presses in a row. The writes go out one at a time, each waiting for the unit's answer,
+  // so the answer to the first arrives while the second is still waiting to be sent — and by
+  // then the mode chosen here is the second one. The answer is that write's, not a switch back.
   it("does not take the answer to an earlier switch of its own for a switch on the unit", SLOW, async () => {
     const shell = await bootDevice();
     await up();
     $("cue-mode-last").click();
     $("cue-mode-mix").click();
-    await vi.waitFor(() => expect(modeWrites(shell)).toEqual([1, 0]), { timeout: 25_000 });
+    expect(barShows()).toBe("true/false");
+    await vi.waitFor(() => expect(modeWrites(shell)).toEqual([1]), { timeout: 25_000 });
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 1 }]);
+    expect(barShows(), "as the answer is delivered").toBe("true/false");
+    await vi.waitFor(() => expect(modeWrites(shell)).toEqual([1, 0]), { timeout: 25_000 });
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 0 }]);
     await quiet(shell);
     expect(barShows()).toBe("true/false");
     expect(modeWrites(shell)).toEqual([1, 0]);
     expect(errors(shell)).toEqual([]);
+  });
+
+  // The session's starting read is where the mode is first taken: the bar is right from the
+  // moment the session is up, with every later read of the mode still unanswered.
+  it("shows the mode its starting read found before any later read answers", SLOW, async () => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" }, { [MODE]: 1 });
+    const read = table.vd_get as (a: Record<string, unknown>) => number;
+    let modeReads = 0;
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    table.vd_get = (a: Record<string, unknown>) =>
+      a.paramId === PARAMS.CUE_MODE.id && ++modeReads > 1 ? held.then(() => read(a)) : read(a);
+    const shell = (await bootApp({ tauri: table }))!;
+    await up();
+    await vi.waitFor(() => expect(modeReads, "the premise: a later read is waiting").toBeGreaterThan(1));
+    expect(barShows()).toBe("false/true");
+    release();
+    await quiet(shell);
+    expect(barShows()).toBe("false/true");
+    expect(errors(shell)).toEqual([]);
+  });
+
+  // The unit announces a switch made on its own screen at the mode's address, so the session
+  // registers it beside the flags.
+  it("registers the mode's address for the unit's announcements", SLOW, async () => {
+    const shell = await bootDevice();
+    await up();
+    const registered = shell.invokes.flatMap((cmd, i) =>
+      cmd === "vd_params_subscribe" ? (shell.args[i] as { addrs: number[][] }).addrs : [],
+    );
+    expect(registered).toContainEqual([PARAMS.CUE_MODE.id, 0, 0]);
+    expect(registered).toContainEqual([PARAMS.CUE_MONO.id, 0, 0]);
   });
 
   // A switch turns every cue off on the unit and announces none of those flags, so the cue
