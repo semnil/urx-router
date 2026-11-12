@@ -54,9 +54,10 @@ import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan, PHANTOM_KEYS } from "../plan";
 import { canConnect, isStereoLinkedPair, mirrorLinkedPair, partnerChannel } from "../routing";
-import { vdConnect, vdDisconnect, vdGet, vdSet } from "../platform";
+import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
 import {
   BUS_TYPE_OPTIONS,
+  COMP_EQ_COMP_FIRST,
   COMP_EQ_SSMCS,
   DELAY_FRAME_RATE_OPTIONS,
   EQ_ONE_KNOB_TYPE_OPTIONS,
@@ -84,7 +85,8 @@ import type { NameOutcome, SendOutcome } from "./client";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import { A_GAIN_MIN_DB, D_GAIN_MIN_DB } from "./vd";
 import type { ConvergeRound } from "./client";
-import { applyDeviceState } from "./readback";
+import { applyDeviceState, applySourceState } from "./readback";
+import type { ParamSource } from "./readback";
 import {
   auditUnverified,
   channelControl,
@@ -241,7 +243,8 @@ export interface SelfTestReport {
   /** Params that still differ from what the unit held before the run: the converging
    *  restore's residual PLUS the addresses that write has no command for or only a default
    *  for (the capture could not read them), read before the sweep and written back after
-   *  it (restoreUnsent), PLUS the node names and Sweet
+   *  it (restoreUnsent) — the side of each mic strip the unit is not using among them (see
+   *  `diag.unusedSide`) — PLUS the node names and Sweet
    *  Spot presets that still differ, or could not be read, after the string write-back. ⚠️ Still bounded by the app's
    *  parameter catalogue: a run also perturbs the unit's 1-knob base save-off, which
    *  has no entry and so cannot be read, written or counted (measured on a URX44V,
@@ -277,6 +280,13 @@ export interface SelfTestReport {
      *  could not make leaves the plan's default there. Written back after the restore with
      *  `unrestorable`. */
     captureUnheld: string[];
+    /** The side of each mic strip the unit is NOT using, as the addresses that side holds:
+     *  the SSMCS values of a channel in COMP → EQ, the gate / compressor / EQ values of one in
+     *  SSMCS. The captured plan has no command for them and neither has any pass, yet the unit
+     *  rewrites them itself — when a pass switches the COMP/EQ type, and across a STEREO-linked
+     *  pair — so they are read before the sweep and written back after the restore with
+     *  `unrestorable`. */
+    unusedSide: string[];
     /** Per round of the converging restore: how much went out, how much of it was the
      *  PEQ and the 1-knob chain, and how much still differed on the re-read. A 1-knob
      *  group re-sent in the last round reloads the preset over the bands. */
@@ -306,6 +316,10 @@ export interface SelfTestReport {
 // a run reports a gap it does not have (the PEQ was listed as unrestorable in a run
 // that restored it, 2026-08-10).
 const RESTORE_EMIT = { includeDeviceDriven: true } as const;
+
+// How many times the write-back of the addresses the restore has no command for is tried:
+// each pass after the first writes only what the pass before left different.
+const WRITE_BACK_PASSES = 3;
 
 // The `pass` a residual entry or a trace carries when the restore, not a sweep pass, left it.
 const RESTORE_PASS = -1;
@@ -730,7 +744,7 @@ export async function runSelfTest(
     restoreResidual: 0,
     errors: [],
     phase: "connect",
-    diag: { unrestorable: [], captureUnheld: [], restoreRounds: [], bandsAfterRestore: [] },
+    diag: { unrestorable: [], captureUnheld: [], unusedSide: [], restoreRounds: [], bandsAfterRestore: [] },
   };
   // Run one phase's round-trips, returning its result — or undefined if the user
   // cancelled (the inner loops throw via signal.throwIfAborted). A cancel is
@@ -859,6 +873,25 @@ export async function runSelfTest(
     for (const command of [...held.diffs.map((d) => d.command), ...held.unread]) {
       writeBack.set(cmdAddr(command), command);
       report.diag.captureUnheld.push(`${command.name} ${formatAddrKey(cmdAddr(command))}`);
+    }
+    // And the side of each mic strip the unit is not using. No pass has a command for it and
+    // the restore has none either, but the unit writes there itself: switching a strip's
+    // COMP/EQ type refills the side that comes into use, and a STEREO-linked pair copies one
+    // member's values onto the other's unused side. Read here, before anything is perturbed,
+    // and written back after the restore like the rest of this set.
+    const unused = await phaseStep(unusedSideCommands(model, captured, cap.unreadNodes));
+    if (!unused) return report; // cancelled during the read of the other side
+    if (unused.unread.length) {
+      report.errors.push(
+        `refusing to sweep: the side ${unused.unread.join(", ")} ${unused.unread.length === 1 ? "is" : "are"} not using could not be read, so a pass could change it and nothing would put it back`,
+      );
+      report.phase = "refused";
+      report.refusal = "unreadable";
+      return report;
+    }
+    for (const command of unused.commands) {
+      if (!writeBack.has(cmdAddr(command))) writeBack.set(cmdAddr(command), command);
+      report.diag.unusedSide.push(`${command.name} ${formatAddrKey(cmdAddr(command))}`);
     }
     // A head among them on a node the capture could not read — an insert-FX selector, Signal
     // Type, any param whose write moves others — would be written back after the restore,
@@ -1167,6 +1200,46 @@ export async function runSelfTest(
 }
 
 /**
+ * The commands for the side of each mic strip the unit is NOT using, in the order a write
+ * sends them.
+ *
+ * A read of the unit follows each strip's COMP/EQ type: a channel in COMP → EQ has its gate,
+ * compressor and EQ read and its SSMCS values left alone, and the other way round. So the
+ * same read is run once more over a source that answers the OTHER type for every strip and
+ * the unit's own value for everything else, which makes the read walk the side it skipped;
+ * the plan it fills is then emitted like any other, and what the captured plan already has a
+ * command for is dropped. Nothing is written, and the unit's type is not touched.
+ *
+ * `unread` names the nodes whose other side could not be read although the capture itself
+ * read them: a pass could change that side and nothing would hold what it was.
+ */
+async function unusedSideCommands(
+  model: DeviceModel,
+  captured: ReadonlyMap<number, unknown>,
+  captureUnread: ReadonlySet<string>,
+): Promise<{ commands: VdCommand[]; unread: string[] }> {
+  const otherSide: ParamSource = {
+    get: async (paramId, x, y) => {
+      const value = await vdGet(paramId, x, y);
+      if (paramId !== PARAMS.COMP_EQ_TYPE.id) return value;
+      return value === COMP_EQ_SSMCS ? COMP_EQ_COMP_FIRST : COMP_EQ_SSMCS;
+    },
+    getStr: (paramId, x, y) => vdGetStr(paramId, x, y),
+  };
+  const shadow = emptyPlan(model.id);
+  const read = await applySourceState(model, shadow, otherSide);
+  const strips = new Set(model.nodes.filter((n) => channelControl(model, n.id)?.hasMicStrip).map((n) => n.id));
+  return {
+    // Only what the strips themselves carry: this second read fails wherever the capture's
+    // did, and what it leaves at its default elsewhere is not a side anything is not using.
+    commands: planToCommands(model, shadow, "all", RESTORE_EMIT).filter(
+      (c) => c.node !== undefined && strips.has(c.node) && !captured.has(cmdAddr(c)),
+    ),
+    unread: [...read.unreadNodes].filter((id) => strips.has(id) && !captureUnread.has(id)),
+  };
+}
+
+/**
  * Read what the unit holds at the addresses the restore has no command for, before
  * anything perturbs them. An address that cannot be read is left OUT of the result: the
  * run then neither writes it back nor claims it did, and the caller counts the shortfall
@@ -1256,48 +1329,70 @@ async function restoreUnsent(
   { writeBack }: { writeBack: boolean },
 ): Promise<number> {
   if (!before.size) return 0;
-  if (writeBack) {
-    // A Clip Safe OFF written back behind the same jack's A.Gain waits for that A.Gain's
-    // announcement, as every other sender's does.
-    const hold = new ClipSafeHold(settleMs);
+  // What still differs after a read past the settle window, as [address, command, what the
+  // unit answered or the read's failure].
+  type Left = { addr: number; c: VdCommand; want: number; got: number | null; error?: string };
+  const stillDiffers = async (): Promise<Left[]> => {
+    const left: Left[] = [];
     for (const [addr, c] of unrestorable) {
       const want = before.get(addr);
       if (want === undefined) continue;
       signal?.throwIfAborted();
       try {
-        await hold.before(c, want, signal);
-        hold.sending(c, want, writeSettle.mark());
-        await vdSet(c.paramId, c.x, c.y, want);
+        const got = await vdGet(c.paramId, c.x, c.y);
+        if (got !== want) left.push({ addr, c, want, got });
       } catch (e) {
-        report.errors.push(`restore ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+        left.push({ addr, c, want, got: null, error: e instanceof Error ? e.message : String(e) });
       }
     }
-    if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
-  }
-  let residual = 0;
-  for (const [addr, c] of unrestorable) {
-    const want = before.get(addr);
-    if (want === undefined) continue;
-    signal?.throwIfAborted();
-    try {
-      const got = await vdGet(c.paramId, c.x, c.y);
-      if (got === want) continue;
-      residual++;
-      report.residual.push({
-        name: c.name,
-        paramId: c.paramId,
-        x: c.x,
-        y: c.y,
-        expected: want,
-        actual: got,
-        pass: RESTORE_PASS,
-      });
-    } catch (e) {
-      residual++;
-      report.errors.push(`restore verify ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+    return left;
+  };
+  let left: Left[] | null = null;
+  if (writeBack) {
+    // More than one pass, each writing only what the pass before left different: a value
+    // written here can be reset by a later write of this same set (an SSMCS value by the
+    // strip's drive, a band by its 1-knob), and unlike the converging restore nothing would
+    // send it again. The first pass writes every address, changed or not, since what the
+    // unit answers now may not be what it holds once its own resets have landed.
+    for (let pass = 0; pass < WRITE_BACK_PASSES; pass++) {
+      const pending: ReadonlySet<number> | null = left ? new Set(left.map((l) => l.addr)) : null;
+      // A Clip Safe OFF written back behind the same jack's A.Gain waits for that A.Gain's
+      // announcement, as every other sender's does.
+      const hold = new ClipSafeHold(settleMs);
+      for (const [addr, c] of unrestorable) {
+        const want = before.get(addr);
+        if (want === undefined || (pending && !pending.has(addr))) continue;
+        signal?.throwIfAborted();
+        try {
+          await hold.before(c, want, signal);
+          hold.sending(c, want, writeSettle.mark());
+          await vdSet(c.paramId, c.x, c.y, want);
+        } catch (e) {
+          report.errors.push(`restore ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
+      left = await stillDiffers();
+      if (!left.length) break;
     }
   }
-  return residual;
+  left ??= await stillDiffers();
+  for (const { addr, c, want, got, error } of left) {
+    if (error !== undefined) {
+      report.errors.push(`restore verify ${formatAddrKey(addr)}: ${error}`);
+      continue;
+    }
+    report.residual.push({
+      name: c.name,
+      paramId: c.paramId,
+      x: c.x,
+      y: c.y,
+      expected: want,
+      actual: got,
+      pass: RESTORE_PASS,
+    });
+  }
+  return left.length;
 }
 
 /** Whether a cancelled run stopped before anything was written: in the capture or the

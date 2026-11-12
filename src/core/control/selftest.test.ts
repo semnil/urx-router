@@ -1333,6 +1333,106 @@ it("floorSilent turns every jack's +48V off", () => {
   expect(plan.nodeParams["in.micline_1_2"]).toEqual({ phantomL: false, phantomR: false });
 });
 
+// The side of a mic strip the unit is not using — the SSMCS values of a channel in COMP → EQ,
+// the gate / compressor / EQ values of one in SSMCS — has no command in the captured plan and
+// none in any pass, and the unit writes there itself: switching the COMP/EQ type refills the
+// side that comes into use, announcing that side's values at their defaults together with the
+// type. So the run reads that side before the sweep and writes it back after the restore.
+describe("runSelfTest and the side of a mic strip the unit is not using", () => {
+  const y = channelControl(model, "ch1")!.y;
+  const TYPE = PARAMS.COMP_EQ_TYPE.id;
+  const THRESHOLD = `${PARAMS.SSMCS_COMP_THRESHOLD.id}:0:${y}`;
+  const OUT_GAIN = `${PARAMS.SSMCS_OUT_GAIN.id}:0:${y}`;
+
+  /** A unit that puts a strip's SSMCS values at their defaults when its type goes to SSMCS. */
+  function installRefillingDevice(): Map<string, number> {
+    const table = installMockDevice(populatedPlan());
+    table.set(THRESHOLD, 23).set(OUT_GAIN, 360);
+    const store = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation((id, x, yy, v) => {
+      if (id === TYPE && v === COMP_EQ_SSMCS && (table.get(`${id}:${x}:${yy}`) ?? 0) !== v) {
+        table.set(`${PARAMS.SSMCS_COMP_THRESHOLD.id}:0:${yy}`, 100);
+        table.set(`${PARAMS.SSMCS_OUT_GAIN.id}:0:${yy}`, 180);
+      }
+      return store(id, x, yy, v);
+    });
+    return table;
+  }
+  const writesTo = (key: string): number[] =>
+    vi
+      .mocked(vdSet)
+      .mock.calls.filter(([id, x, yy]) => `${id}:${x}:${yy}` === key)
+      .map(([, , , v]) => v);
+
+  it("puts back what a type switch refilled, and counts it as restored", async () => {
+    const table = installRefillingDevice();
+    const report = await runSelfTest(model, 0);
+
+    expect(writesTo(`${TYPE}:0:${y}`), "the premise: a pass switched CH 1 to SSMCS").toContain(COMP_EQ_SSMCS);
+    expect(table.get(`${TYPE}:0:${y}`), "the premise: the type itself is back").toBe(0);
+    expect(report.phase).toBe("done");
+    expect([table.get(THRESHOLD), table.get(OUT_GAIN)]).toEqual([23, 360]);
+    expect(report.restored).toBe(true);
+    expect(report.diag.unusedSide).toEqual(expect.arrayContaining([`SSMCS_COMP_THRESHOLD ${THRESHOLD}`]));
+    // Only strips have another side: nothing of the buses or the routing is in the set.
+    expect(report.diag.unusedSide.filter((line) => !line.startsWith("SSMCS_"))).toEqual([]);
+  });
+
+  // A value written back can be reset by a later write of the same set, and nothing converges
+  // behind this write-back: here the ratio's write puts the output gain at its default.
+  it("writes again what a later write of the same set reset", async () => {
+    const table = installRefillingDevice();
+    const refill = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, yy, v) => {
+      await refill(id, x, yy, v);
+      if (id === PARAMS.SSMCS_COMP_RATIO.id) table.set(`${PARAMS.SSMCS_OUT_GAIN.id}:0:${yy}`, 180);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(table.get(OUT_GAIN)).toBe(360);
+    expect(writesTo(OUT_GAIN), "the first pass, then the one address the ratio reset").toEqual([360, 360]);
+    expect(report.restored).toBe(true);
+  });
+
+  // A unit that will not keep the value is tried a bounded number of times, and then counted.
+  it("counts an address the unit will not keep, after a bounded number of tries", async () => {
+    const table = installRefillingDevice();
+    const refill = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, yy, v) => {
+      await refill(id, x, yy, v);
+      if (`${id}:${x}:${yy}` === OUT_GAIN) table.set(OUT_GAIN, 180);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(writesTo(OUT_GAIN)).toEqual([360, 360, 360]);
+    expect(report.restored).toBe(false);
+    expect(report.restoreResidual).toBe(1);
+    expect(report.residual.filter((r) => r.name === "SSMCS_OUT_GAIN")).toEqual([
+      expect.objectContaining({ y, expected: 360, actual: 180 }),
+    ]);
+  });
+
+  // The capture reads a channel in COMP → EQ without touching its SSMCS values, so a failure
+  // there shows only in the read of the other side. A pass could change that side and nothing
+  // would hold what it was: the run does not start.
+  it("does not start when the other side cannot be read", async () => {
+    installRefillingDevice();
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation((id, x, yy) =>
+      id === PARAMS.SSMCS_OUT_GAIN.id ? Promise.reject(new Error("read timeout")) : answer(id, x, yy),
+    );
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("refused");
+    expect(report.refusal).toBe("unreadable");
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect(report.errors.some((e) => e.startsWith("refusing to sweep: the side"))).toBe(true);
+  });
+});
+
 describe("unverified-guess workflow (URX44)", () => {
   const m44 = getModel("URX44");
 
