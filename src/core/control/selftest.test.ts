@@ -20,6 +20,7 @@ import {
   channelControl,
   eqOneKnob,
   inputEq,
+  insertFxControl,
   planToCommands,
   selectableInputIds,
   UNVERIFIED_MAPPINGS,
@@ -41,10 +42,13 @@ import {
 } from "./params";
 import { D_GAIN_MIN_DB, hpfFreqLinkWritable, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
 import { writeSettle } from "./settle";
+import { ENGINE_GUITAR } from "./insert-fx-effect";
 import {
   cancelledBeforeWriting,
   floorSilent,
   formatSelfTestReport,
+  IDLE_ENGINE_ON,
+  idleEngineOnCommands,
   linkedPassesFor,
   passesFor,
   PASSES,
@@ -1331,6 +1335,260 @@ it("floorSilent turns every jack's +48V off", () => {
   floorSilent(plan);
   expect(plan.nodeParams["in.micline_3_4"]).toEqual({ phantomL: false, phantomR: false });
   expect(plan.nodeParams["in.micline_1_2"]).toEqual({ phantomL: false, phantomR: false });
+});
+
+// The side of a mic strip the unit is not using — the SSMCS values of a channel in COMP → EQ,
+// the gate / compressor / EQ values of one in SSMCS — has no command in the captured plan and
+// none in any pass, and the unit writes there itself: switching the COMP/EQ type refills the
+// side that comes into use, announcing that side's values at their defaults together with the
+// type. So the run reads that side before the sweep and writes it back after the restore.
+describe("runSelfTest and the side of a mic strip the unit is not using", () => {
+  const y = channelControl(model, "ch1")!.y;
+  const TYPE = PARAMS.COMP_EQ_TYPE.id;
+  const THRESHOLD = `${PARAMS.SSMCS_COMP_THRESHOLD.id}:0:${y}`;
+  const OUT_GAIN = `${PARAMS.SSMCS_OUT_GAIN.id}:0:${y}`;
+
+  /** A unit that puts a strip's SSMCS values at their defaults when its type goes to SSMCS. */
+  function installRefillingDevice(): Map<string, number> {
+    const table = installMockDevice(populatedPlan());
+    table.set(THRESHOLD, 23).set(OUT_GAIN, 360);
+    const store = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation((id, x, yy, v) => {
+      if (id === TYPE && v === COMP_EQ_SSMCS && (table.get(`${id}:${x}:${yy}`) ?? 0) !== v) {
+        table.set(`${PARAMS.SSMCS_COMP_THRESHOLD.id}:0:${yy}`, 100);
+        table.set(`${PARAMS.SSMCS_OUT_GAIN.id}:0:${yy}`, 180);
+      }
+      return store(id, x, yy, v);
+    });
+    return table;
+  }
+  const writesTo = (key: string): number[] =>
+    vi
+      .mocked(vdSet)
+      .mock.calls.filter(([id, x, yy]) => `${id}:${x}:${yy}` === key)
+      .map(([, , , v]) => v);
+
+  it("puts back what a type switch refilled, and counts it as restored", async () => {
+    const table = installRefillingDevice();
+    const report = await runSelfTest(model, 0);
+
+    expect(writesTo(`${TYPE}:0:${y}`), "the premise: a pass switched CH 1 to SSMCS").toContain(COMP_EQ_SSMCS);
+    expect(table.get(`${TYPE}:0:${y}`), "the premise: the type itself is back").toBe(0);
+    expect(report.phase).toBe("done");
+    expect([table.get(THRESHOLD), table.get(OUT_GAIN)]).toEqual([23, 360]);
+    expect(report.restored).toBe(true);
+    expect(report.diag.unusedSide).toEqual(expect.arrayContaining([`SSMCS_COMP_THRESHOLD ${THRESHOLD}`]));
+    // Only strips have another side: nothing of the buses or the routing is in the set.
+    expect(report.diag.unusedSide.filter((line) => !line.startsWith("SSMCS_"))).toEqual([]);
+  });
+
+  // A value written back can be reset by a later write of the same set, and nothing converges
+  // behind this write-back: here the ratio's write puts the output gain at its default.
+  it("writes again what a later write of the same set reset", async () => {
+    const table = installRefillingDevice();
+    const refill = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, yy, v) => {
+      await refill(id, x, yy, v);
+      if (id === PARAMS.SSMCS_COMP_RATIO.id) table.set(`${PARAMS.SSMCS_OUT_GAIN.id}:0:${yy}`, 180);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(table.get(OUT_GAIN)).toBe(360);
+    expect(writesTo(OUT_GAIN), "the first pass, then the one address the ratio reset").toEqual([360, 360]);
+    expect(report.restored).toBe(true);
+  });
+
+  // A unit that will not keep the value is tried a bounded number of times, and then counted.
+  it("counts an address the unit will not keep, after a bounded number of tries", async () => {
+    const table = installRefillingDevice();
+    const refill = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, yy, v) => {
+      await refill(id, x, yy, v);
+      if (`${id}:${x}:${yy}` === OUT_GAIN) table.set(OUT_GAIN, 180);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(writesTo(OUT_GAIN)).toEqual([360, 360, 360]);
+    expect(report.restored).toBe(false);
+    expect(report.restoreResidual).toBe(1);
+    expect(report.residual.filter((r) => r.name === "SSMCS_OUT_GAIN")).toEqual([
+      expect.objectContaining({ y, expected: 360, actual: 180 }),
+    ]);
+  });
+
+  // A refused write is reported where it happened, and the address is tried again on the next
+  // pass like any other that still differs — and counted once the passes are spent.
+  it("reports a write-back write the unit refuses, tries it again, and counts it", async () => {
+    const table = installRefillingDevice();
+    const refill = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, yy, v) => {
+      if (`${id}:${x}:${yy}` === OUT_GAIN) throw new Error("refused");
+      await refill(id, x, yy, v);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(table.get(OUT_GAIN), "the premise: the type switch refilled it").toBe(180);
+    expect(writesTo(OUT_GAIN)).toEqual([360, 360, 360]);
+    expect(report.errors.filter((e) => e === `restore ${OUT_GAIN}: refused`)).toHaveLength(3);
+    expect(report.residual.filter((r) => r.name === "SSMCS_OUT_GAIN")).toEqual([
+      expect.objectContaining({ y, expected: 360, actual: 180 }),
+    ]);
+    expect(report.restored).toBe(false);
+  });
+
+  // A read that fails while checking the write-back says nothing about the value: it is an
+  // error, not a match and not a mismatch with a number in it, and the run is not restored.
+  it("reports a read that fails while checking the write-back, and does not call the run restored", async () => {
+    installRefillingDevice();
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation((id, x, yy) => {
+      const writtenBack = vi.mocked(vdSet).mock.calls.some(([i, xx, yyy]) => `${i}:${xx}:${yyy}` === OUT_GAIN);
+      if (writtenBack && `${id}:${x}:${yy}` === OUT_GAIN) return Promise.reject(new Error("read timeout"));
+      return answer(id, x, yy);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(writesTo(OUT_GAIN).length, "the premise: the write-back wrote it").toBeGreaterThan(0);
+    expect(report.errors).toContain(`restore verify ${OUT_GAIN}: read timeout`);
+    expect(report.residual.filter((r) => r.name === "SSMCS_OUT_GAIN")).toEqual([]);
+    expect(report.restoreResidual).toBeGreaterThan(0);
+    expect(report.restored).toBe(false);
+  });
+
+  // The capture reads a channel in COMP → EQ without touching its SSMCS values, so a failure
+  // there shows only in the read of the other side. A pass could change that side and nothing
+  // would hold what it was: the run does not start.
+  it("does not start when the other side cannot be read", async () => {
+    installRefillingDevice();
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    vi.mocked(vdGet).mockImplementation((id, x, yy) =>
+      id === PARAMS.SSMCS_OUT_GAIN.id ? Promise.reject(new Error("read timeout")) : answer(id, x, yy),
+    );
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("refused");
+    expect(report.refusal).toBe("unreadable");
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect(report.errors.some((e) => e.startsWith("refusing to sweep: the side"))).toBe(true);
+  });
+
+  // The read of the other side walks the whole unit again, so a cancel that does not reach
+  // it holds the link (and every other device action) until that walk ends. The cancel lands
+  // on the first SSMCS read of CH 1, which is a COMP → EQ channel: only this read asks there.
+  // What the bound separates is stopping inside the group being read from reading the rest
+  // of the unit — several hundred reads without the signal.
+  it("stops reading the other side on a cancel, and writes nothing", async () => {
+    installRefillingDevice();
+    const controller = new AbortController();
+    const answer = vi.mocked(vdGet).getMockImplementation()!;
+    let afterCancel = 0;
+    vi.mocked(vdGet).mockImplementation((id, x, yy) => {
+      if (controller.signal.aborted) afterCancel++;
+      else if (`${id}:${x}:${yy}` === THRESHOLD) controller.abort();
+      return answer(id, x, yy);
+    });
+
+    const report = await runSelfTest(model, 0, controller.signal);
+
+    expect(controller.signal.aborted, "the premise: the other side's read reached CH 1's SSMCS").toBe(true);
+    expect(report.aborted).toBe(true);
+    expect(report.phase).toBe("readback");
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect(afterCancel).toBeLessThan(40);
+    expect(vi.mocked(vdDisconnect)).toHaveBeenCalled();
+  });
+});
+
+describe("runSelfTest and the ON slot of an insert-FX engine no channel holds", () => {
+  const GUITAR_ON = `${ENGINE_GUITAR}:0:1`;
+  const SELECTOR = PARAMS.INSERT_FX.id;
+  const guitar = (v: number): boolean => v >= 256 && v <= 259;
+  const writesTo = (key: string): number[] =>
+    vi
+      .mocked(vdSet)
+      .mock.calls.filter(([id, x, yy]) => `${id}:${x}:${yy}` === key)
+      .map(([, , , v]) => v);
+
+  /** A unit whose Guitar Amp engine turns its ON slot on when an input selects a Guitar Amp
+   *  type, and whose release leaves it there — the run in which nothing else puts it back. */
+  function installStickyEngine(seed: Plan): Map<string, number> {
+    const table = installMockDevice(seed);
+    const store = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation((id, x, yy, v) => {
+      if (id === SELECTOR && guitar(v)) table.set(GUITAR_ON, 1);
+      return store(id, x, yy, v);
+    });
+    return table;
+  }
+
+  it("puts slot 1 back when a release left it on, and counts it as restored", async () => {
+    const table = installStickyEngine(populatedPlan());
+    expect(table.get(GUITAR_ON) ?? 0, "the premise: slot 1 starts off").toBe(0);
+
+    const report = await runSelfTest(model, 0);
+
+    expect(
+      vi.mocked(vdSet).mock.calls.some(([id, , , v]) => id === SELECTOR && guitar(v)),
+      "the premise: a pass selected a Guitar Amp type",
+    ).toBe(true);
+    expect(report.phase).toBe("done");
+    expect(report.diag.idleEngineOn).toEqual([GUITAR_ON]);
+    expect(table.get(GUITAR_ON)).toBe(0);
+    expect(writesTo(GUITAR_ON)).toEqual([0]);
+    expect(report.restored).toBe(true);
+  });
+
+  it("counts slot 1 when the unit will not keep it off", async () => {
+    const table = installStickyEngine(populatedPlan());
+    const sticky = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, yy, v) => {
+      await sticky(id, x, yy, v);
+      if (`${id}:${x}:${yy}` === GUITAR_ON) table.set(GUITAR_ON, 1);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.restored).toBe(false);
+    expect(report.residual.filter((r) => r.paramId === ENGINE_GUITAR)).toEqual([
+      expect.objectContaining({ x: 0, y: 1, expected: 0, actual: 1 }),
+    ]);
+  });
+
+  // Held by a channel, slot 1 follows that channel's ON, which the restore writes; a write of
+  // slot 1 under a holder is not one anything has confirmed.
+  it("does not write slot 1 while a channel holds the engine", async () => {
+    const seed = populatedPlan();
+    seed.nodeParams.ch1 = { ...seed.nodeParams.ch1, insertFx: 256, insertFxOn: true };
+    installStickyEngine(seed);
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("done");
+    expect(report.diag.idleEngineOn).toEqual([]);
+    expect(writesTo(GUITAR_ON)).toEqual([]);
+  });
+
+  it("names slot 1 only on the models it is written on, and only with every insert-FX channel read", () => {
+    const plan = populatedPlan();
+    expect(idleEngineOnCommands(model, plan, new Set()).map((c) => `${c.paramId}:${c.x}:${c.y}`)).toEqual([GUITAR_ON]);
+    for (const id of ["URX22", "URX44"] as const) {
+      const other = getModel(id);
+      expect(idleEngineOnCommands(other, emptyPlan(id), new Set()), id).toEqual([]);
+    }
+    const insertChannel = model.nodes.find((n) => insertFxControl(model, n.id))!.id;
+    expect(idleEngineOnCommands(model, plan, new Set([insertChannel]))).toEqual([]);
+    const plain = model.nodes.find((n) => !insertFxControl(model, n.id))!.id;
+    expect(
+      idleEngineOnCommands(model, plan, new Set([plain])),
+      "an unread node with no insert FX holds nothing",
+    ).toHaveLength(1);
+    expect(IDLE_ENGINE_ON.URX22 ?? [], "nothing is written on a model it is not confirmed on").toEqual([]);
+  });
 });
 
 describe("unverified-guess workflow (URX44)", () => {

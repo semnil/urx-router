@@ -1124,7 +1124,18 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
   mapping, and the self-test prints for each that a round trip does not settle it and what does.
 - **Diagnostics.** The self-test floors every jack's A.Gain and every source's D.Gain and turns +48V off. The
   audit-prep writer routes the channels through every input in turn, so that every jack and source receives a
-  value, and then puts the captured routing back.
+  value, and then puts the captured routing back. The self-test also reads the side of each mic strip the unit is not
+  using — the SSMCS values of a channel in COMP → EQ, the gate, compressor and EQ values of one in SSMCS — before
+  it sweeps, and writes it back after the restore. No plan carries that side and no pass has a command for it, yet
+  the unit rewrites it: switching a strip's COMP/EQ type refills the side that comes into use, and a STEREO-linked
+  pair copies values onto its partner's unused side. That write-back is tried up to three times, each pass after
+  the first writing only what the one before left different, since one value of the set can reset another and
+  nothing converges behind it; what still differs then is counted in the restore's residual. On a URX44V the same
+  set also carries slot 1 of the Guitar Amp engine (`697:0:1`) when no input holds that effect before the run.
+  Slot 1 is the engine's ON: while an input holds the engine it follows that input's INS FX ON, which the restore
+  writes, but a pass that selects the effect and releases it again leaves the engine held by nothing, and the
+  release does not always turn slot 1 off. Writing it with nothing holding the engine is confirmed on the URX44V
+  only, so the other models do not write it.
 
 ## Localization (i18n)
 
