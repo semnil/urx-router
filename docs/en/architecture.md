@@ -416,7 +416,9 @@ carries a one-line map of the same directories and points here.
       the app models, and what it leaves to the unit"): `CueSet` applies the unit's rules to every change
       from either side, `CueEchoes` tells the unit's answer to the app's own write from a press on the panel,
       `readCues` reads every flag, and `writeCueFlag` writes one and resolves once the unit has announced it. The address of each strip's flag is
-      `cueAddrs` in `translate.ts`, where the URX44 guess is registered
+      `cueAddrs` in `translate.ts`, where the URX44 guess is registered. The unit's [CUE Mode] (System 1.5)
+      rides with them: `CueSet.mode` holds it and applies the Last CUE rule, `readCueMode` and `writeCueMode`
+      read and switch it at `CUE_MODE_ADDR`
     - `link-stats.ts` the link ledger (it owns its own session policy — the opening line, the per-minute
       interval, the warn-once latch — behind `begin`/`end`, as `LiveSync` and `DeviceFollow` do, so the
       timer's lifetime and `startedAt` cannot be kept in step by hand and drift) — what one session asked of
@@ -1036,6 +1038,12 @@ The board itself switches nothing: a selected node that has a [CUE] carries a **
 which switches it the way the node's CONSOLE chip does. A change of cue and a session starting repaint that row in
 place (`syncInspectorCue`) rather than rebuilding the panel, so a name being typed or a picker holding the focus is
 left as it is.
+
+The unit's [CUE Mode] has two places, both live-session state as the cues are. The status bar's CUE readout
+carries a joined pair, **Mix CUE | Last CUE**, for as long as a session is up — with nothing cued the pair
+stands alone, and what is cued and Clear CUE join it while something is — and each MONITOR node's panel has a
+**CUE Mode** row between CUE Interrupt and MONO, where the unit's MONITOR screen keeps it. The row is repainted in
+place with the CUE row (`syncInspectorCue`); with no session it is read-only on Mix CUE, the mode a unit ships with.
 
 **Uniform OFF display**: every state that silences a node — a muted channel / master / FX / MONITOR
 (`params.on`), a bypassed ducker (`duckerOn`), the oscillator off (`osc.on`) — funnels through the
@@ -2487,7 +2495,16 @@ written at all:
   settle window has passed, for one that changed nothing): the unit acks a write before the flag is readable, a
   read in between answers the value the write replaced, and the flags the unit clears or puts back with the
   write become readable with that announcement (see "A write is not readable when it is acked"). A read is taken
-  only when no write is waiting and nothing changed while it ran. **Clear CUE** turns the input cues off first, since turning the last input cue off is what puts
+  only when no write is waiting and nothing changed while it ran. **[CUE Mode]** (System 1.5, `CUE_MODE` at
+  897: Mix CUE or Last CUE, one setting for the unit, kept in its settings file and in no scene) is read with
+  the flags at every one of those reads and registered for notify beside them. Under Last CUE a cue turned on
+  also clears the other cues of its own group, so `CueSet.apply` does; the two groups still clear each other,
+  and the one output cue an input cue cleared still comes back with the last input cue off. A switch of the
+  mode turns every cue off on the unit, which announces the mode and none of the cleared flags: `CueSet.setMode`
+  empties the set, a switch made in the app (`setCueMode`, refused with no session) is written in the same
+  one-at-a-time line as the flags with a read of them behind it, and a switch on the unit's panel schedules the
+  same 300 ms read a press does. The mode is outside the plan as the flags are. A unit before V1.5 has no
+  such address, and a session whose starting read cannot be completed does not start. **Clear CUE** turns the input cues off first, since turning the last input cue off is what puts
   the held outputs back, reads the flags behind those writes, and then turns off every cue that read found —
   outputs held from before the session included. A read is taken into the set it was started for: a session's end
   or a model change replaces the set, and a read that lands after it is dropped. A session that fails to start
