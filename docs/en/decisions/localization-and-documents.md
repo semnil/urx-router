@@ -85,3 +85,20 @@ it here and to bring the Japanese documents under it was made on 2026-11-12.
 credits, by GitHub handle and link, the author of the pull request that verified the URX22's meter
 mapping on hardware. It is the credit for a contribution, so the practice these documents follow
 elsewhere — an outside person is named by role — is not applied to it.
+
+## The README's comparison paragraph and store links stay
+
+**Decision (2026-11-12, the operator).** Two more parts of `README.md` and `README.ja.md` stay as
+they are, as the description of the product:
+
+- the paragraph near the top that says where URX Router stands beside the other software for the
+  URX series — the manufacturer's mixer editor, the official Stream Deck plugin, and the DAW
+  integration screens;
+- the links to the two store pages that carry the installers beside the GitHub releases page.
+
+These documents otherwise leave comparisons with other products and store pages out. The README is
+where a reader finds out what the app is for and where to get it, so both stay there.
+
+**How the comparison is worded.** It states what each of the other tools covers and does not call
+URX Router the only tool of its kind: a claim of that shape can stop being true with time, and
+"fills this gap" does not depend on it.
