@@ -68,9 +68,9 @@ files, or both without.
   the repository.
 - Files that have to outlive it go in a subdirectory, `work/<name>/`, with one line for that
   subdirectory added to the exclude file that
-  `git rev-parse --path-format=absolute --git-path info/exclude` prints. In a linked worktree `.git`
-  is a file, so `.git/info/exclude` is not a path there; the file the command prints belongs to the
-  main checkout, and every worktree of the repository reads it.
+  `git rev-parse --path-format=absolute --git-path info/exclude` prints. A linked worktree keeps
+  its git directory elsewhere, so `.git/info/exclude` is not a path there; the file the command
+  prints belongs to the main checkout, and every worktree of the repository reads it.
 
 ## Evaluating a `src/` module once, without a test
 
