@@ -78,6 +78,17 @@ published a second time.
 recovery was a dispatch on `main`. The public demo was therefore built from a commit ahead of the
 tag, and "the demo follows the release" did not hold.
 
+## A hand-dispatched Pages deploy is an exception
+
+**Decision.** Dispatching `pages.yml` on `main` by hand is not an ordinary way to deploy the demo.
+It has been done as an exception, at times when `main` and the latest release were the same as far
+as the app goes. On 2026-10-10 the operator directed one: `main` was then v1.14.0 plus the
+correction to the size stated for the demo's link-preview image in `index.html`
+([#561](https://github.com/semnil/urx-router/pull/561)).
+
+**Before dispatching.** `git diff <release tag> origin/main` is read, and the dispatch goes ahead
+when the app's part is the same on both sides.
+
 ## The release build's cache: what was left out
 
 Warming the release cache on `main`, and leaving a prebuilt cargo-about out in favour of the

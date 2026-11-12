@@ -69,6 +69,15 @@ personal access token を増やさずに済むため。
 dispatch で行った。そのため公開のデモはタグより先のコミットから作られていて、「デモはリリースに追従する」は
 成り立っていなかった。
 
+## A hand-dispatched Pages deploy is an exception
+
+**決定。** `pages.yml` を `main` で手で dispatch することは、デモを配備するふだんの手段ではない。例外として
+行ったことがあり、そのときは、アプリの部分について `main` と最新のリリースが同じだった。2026-10-10 には、
+操作者の指示で 1 回行った。そのときの `main` は、v1.14.0 に、`index.html` に書くデモのリンクプレビュー画像の
+寸法の修正 ([#561](https://github.com/semnil/urx-router/pull/561)) を足したものだった。
+
+**dispatch の前に。** `git diff <リリースのタグ> origin/main` を読み、アプリの部分が両方で同じときに dispatch する。
+
 ## The release build's cache: what was left out
 
 リリースのキャッシュを `main` で温めること、リリース経路の信頼性を優先して cargo-about のビルド済みの
