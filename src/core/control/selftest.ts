@@ -86,6 +86,7 @@ import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import { A_GAIN_MIN_DB, D_GAIN_MIN_DB } from "./vd";
 import type { ConvergeRound } from "./client";
 import { ENGINE_GUITAR, insertFxEngine, insertFxFamilyOf } from "./insert-fx-effect";
+import { stoppedByConsoleLock, watchRun, type RunWatch } from "./console-lock";
 import { applyDeviceState, applySourceState } from "./readback";
 import type { ParamSource } from "./readback";
 import {
@@ -263,9 +264,17 @@ export interface SelfTestReport {
    *  perturbed). */
   phase: "connect" | "readback" | "write" | "verify" | "restore" | "done" | "refused";
   /** Why a "refused" run declined: the connected unit is another model, the capture could not
-   *  read a param whose write moves others (`ParamSpec.sideEffect`), or an address it would
-   *  have to put back could not be read first. Absent on every other phase. */
-  refusal?: "modelMismatch" | "sideEffectUnheld" | "unreadable" | "hpfFreqUnwritable";
+   *  read a param whose write moves others (`ParamSpec.sideEffect`), an address it would have
+   *  to put back could not be read first, or the unit is under Console Lock. Absent on every
+   *  other phase. */
+  refusal?: "modelMismatch" | "sideEffectUnheld" | "unreadable" | "hpfFreqUnwritable" | "consoleLock";
+  /** True when the unit went into Console Lock while the run was going: it stopped at the next
+   *  command, as a cancel stops it (`aborted` is true with it). */
+  locked?: boolean;
+  /** What a run Console Lock stopped once it had written, and before its restore was done, needs
+   *  to put the unit back: handed to `restoreSelfTest` once the unit is unlocked. Absent
+   *  otherwise. The unit is left changed until then. */
+  pendingRestore?: PendingRestore;
   /**
    * DIAGNOSTIC — the restore's own account of itself, small enough to ride the report
    * line the headless launch already prints. It exists because a run that reported
@@ -316,6 +325,21 @@ export interface SelfTestReport {
      *  the unit moved them after the write, not that the write never landed. */
     bandsAfterRestore: Array<{ addr: string; want: number; got: number | null }>;
   };
+}
+
+/**
+ * What a self-test needs to put the unit back, kept past the run that Console Lock stopped: the
+ * plan its capture read, which the converging restore writes, and the addresses that write has no
+ * command for with what the unit held at them before the sweep. Lives in memory only — the app
+ * that quits drops it, and the unit stays as the run left it.
+ */
+export interface PendingRestore {
+  readonly model: ModelId;
+  readonly original: Plan;
+  readonly captured: ReadonlyMap<number, CapturedValue>;
+  readonly unrestorable: ReadonlyMap<number, VdCommand>;
+  readonly writeBack: ReadonlyMap<number, VdCommand>;
+  readonly preSweep: ReadonlyMap<number, number>;
 }
 
 // What the restore emits, named once: the diagnostic below asks "which addresses will
@@ -729,18 +753,14 @@ export async function captureDeviceState(
  * leaves `phase` at the failing step. The caller must ensure the connected
  * device matches `model`.
  */
-export async function runSelfTest(
-  model: DeviceModel,
-  settleMs = SETTLE_TIMEOUT_MS,
-  signal?: AbortSignal,
-): Promise<SelfTestReport> {
-  const passes = passesFor(model);
-  const report: SelfTestReport = {
+/** A report with nothing in it yet, for a run of `passes` passes. */
+function emptyReport(model: DeviceModel, passes: number): SelfTestReport {
+  return {
     ok: false,
     device: "",
     applied: 0,
     passes,
-    unlinkedPasses: unlinkedPassesFor(model),
+    unlinkedPasses: passes ? unlinkedPassesFor(model) : 0,
     written: 0,
     residual: [],
     traces: [],
@@ -760,21 +780,38 @@ export async function runSelfTest(
       bandsAfterRestore: [],
     },
   };
-  // Run one phase's round-trips, returning its result — or undefined if the user
-  // cancelled (the inner loops throw via signal.throwIfAborted). A cancel is
-  // recorded on the report and swallowed so the caller can bail; anything else
-  // rethrows. Centralizes the "stop on our abort, propagate real errors" contract.
-  const phaseStep = async <T>(work: Promise<T>): Promise<T | undefined> => {
+}
+
+/** Run one phase's round-trips, returning its result — or undefined if the run was stopped (the
+ *  inner loops throw via signal.throwIfAborted), by a cancel or by Console Lock. A stop is
+ *  recorded on the report and swallowed so the caller can bail; anything else rethrows.
+ *  Centralizes the "stop on our abort, propagate real errors" contract. */
+type PhaseStep = <T>(work: Promise<T>) => Promise<T | undefined>;
+function phaseStepFor(report: SelfTestReport, signal: () => AbortSignal | undefined): PhaseStep {
+  return async <T>(work: Promise<T>): Promise<T | undefined> => {
     try {
       return await work;
     } catch (e) {
-      if (signal?.aborted) {
+      if (signal()?.aborted) {
         report.aborted = true;
         return undefined;
       }
       throw e;
     }
   };
+}
+
+export async function runSelfTest(
+  model: DeviceModel,
+  settleMs = SETTLE_TIMEOUT_MS,
+  outer?: AbortSignal,
+): Promise<SelfTestReport> {
+  const passes = passesFor(model);
+  const report = emptyReport(model, passes);
+  // The caller's cancel until the link is open; from there, the run's own signal, which the
+  // caller's cancel and Console Lock both abort (`watchRun`).
+  let signal = outer;
+  const phaseStep = phaseStepFor(report, () => signal);
   // Static audit (no device): guessed ids a confirmed param already owns are wrong
   // and must not be written. Their writes are suppressed; they are reported as
   // collisions so an owner knows the guess is refuted before any hardware round-trip.
@@ -813,14 +850,32 @@ export async function runSelfTest(
   for (const [addr, key] of addresses) if (suppress.has(key)) addresses.delete(addr);
   const device = await vdConnect(model.id);
   report.device = device.model;
+  let run: RunWatch | null = null;
+  // What the restore needs, once the reads ahead of the sweep have it.
+  let pending: PendingRestore | null = null;
   try {
+    // Connected device is not this model: nothing read, nothing written.
+    if (device.model !== model.id) {
+      report.errors.push(`connected device is ${device.model}, not ${model.id}`);
+      report.phase = "refused";
+      report.refusal = "modelMismatch";
+      return report;
+    }
+    // 0. A unit under Console Lock is not written to; one that goes into it stops the run.
+    run = await watchRun(outer);
+    signal = run.signal;
+    if (run.lockedAtStart) {
+      report.errors.push("refusing to sweep: the unit is under Console Lock");
+      report.phase = "refused";
+      report.refusal = "consoleLock";
+      return report;
+    }
     // 1. Capture the current device state (the connect prologue shared with prepare.ts).
     report.phase = "readback";
     const cap = await phaseStep(captureDeviceState(model, device.model, signal));
     if (!cap) return report; // cancelled during capture
     report.applied = cap.applied;
     report.errors.push(...cap.errors);
-    // Connected device is not this model: nothing read, nothing written.
     if (!cap.ok) {
       report.phase = "refused";
       report.refusal = "modelMismatch";
@@ -955,6 +1010,7 @@ export async function runSelfTest(
       report.refusal = "unreadable";
       return report;
     }
+    pending = { model: model.id, original, captured, unrestorable, writeBack, preSweep };
 
     // 2. Sweep: each pass writes a silent perturbed plan (converging, so params
     // the device resets as a side effect of a mode change are re-sent) and the
@@ -1082,143 +1138,221 @@ export async function runSelfTest(
     // 3. Restore the original state (converging, for the same reset behavior).
     // Skipped on cancel: the device is left silent (safe by makeSilent), and a
     // restore would only re-run the round-trips the user just cancelled.
-    if (!report.aborted) {
-      report.phase = "restore";
-      report.diag.unrestorable = [...unrestorable.values()].map((c) => `${c.name} ${formatAddrKey(cmdAddr(c))}`);
-      // includeDeviceDriven widens the restore — and only the restore — to the bands
-      // the app never authors while EQ 1-knob is on, because the unit drives them. A
-      // capture holding 1-knob ON otherwise emits none of them while every sweep pass
-      // wrote them, so the unit ends with a VISIBLE EQ change under a verdict that says
-      // it was restored. The unit keeps such a write (measured; see EmitOptions), and
-      // the residual now covers the same set, so a unit that did re-derive would be
-      // reported rather than passed over.
-      const restore = { settleMs, signal, trace: true, emit: RESTORE_EMIT, stopOnError: false };
-      const numeric = await phaseStep(sendConverging(model, original, restore));
-      // Then the captured Sweet Spot presets, which the converge cannot write, and the strip they
-      // rebuild converged again behind them (client.ts sendPresetsAndReconverge). One round of
-      // the sweep's pair links is undone inside the converge above, and that puts a preset of the
-      // link's choosing back on the secondary when it lands.
-      const presets =
-        numeric && !numeric.outcomes.some(reachedAndFailed) && !numeric.readErrors.length
-          ? await phaseStep(sendPresetsAndReconverge(model, original, restore))
-          : { presets: [], notSent: [], unconfirmed: [], canceled: false, readErrors: [], result: null };
-      if (!presets) return report;
-      report.errors.push(...nameFailureLines(presets.presets));
-      // A refused preset stops the restore's writes there. The nodes whose preset was accepted
-      // had their strip rebuilt with nothing reading it back, so their state is unknown.
-      for (const node of presets.unconfirmed)
-        report.errors.push(
-          `restore ${node}: its Sweet Spot preset rebuilt the strip, and the restore stopped before reading it back`,
-        );
-      // A cancel once a preset has gone out ends the run the way a cancel anywhere else in the
-      // restore does, with what went out already in the report.
-      if (presets.canceled) {
-        report.aborted = true;
-        return report;
-      }
-      const presetRefused = presets.presets.some((o) => !o.ok);
-      report.errors.push(...presets.readErrors.map((e) => `restore name read: ${e}`));
-      const back =
-        numeric && presets.result
-          ? {
-              ...presets.result,
-              outcomes: [...numeric.outcomes, ...presets.result.outcomes],
-              readErrors: [...numeric.readErrors, ...presets.result.readErrors],
-              trace: [...numeric.trace, ...presets.result.trace],
-            }
-          : numeric;
-      if (back) {
-        report.diag.restoreRounds = back.trace.map((r) => {
-          const position = new Map(r.sent.map((c, i) => [cmdAddr(c), i] as const));
-          return {
-            sent: r.sent.length,
-            ms: r.elapsedMs,
-            bands: r.sent.filter((c) => c.name.startsWith("EQ_BAND")).length,
-            oneKnob: r.sent.filter((c) => c.name.startsWith("EQ_ONE_KNOB")).length,
-            residual: r.reread?.length ?? null,
-            differing: (r.reread ?? []).map(
-              (d) =>
-                `${d.command.name} ${formatAddrKey(cmdAddr(d.command))}=${d.current} (${d.command.vdValue}) #${position.get(cmdAddr(d.command)) ?? "-"}`,
-            ),
-            sideEffects: r.sent.flatMap((c, i) =>
-              (PARAMS as Record<string, ParamSpec>)[c.name]?.sideEffect
-                ? [`#${i} ${c.name} ${formatAddrKey(cmdAddr(c))}=${c.vdValue}`]
-                : [],
-            ),
-          };
-        });
-        // Read back the band gains the restore just wrote, before anything else can
-        // touch the unit. RESTORE_EMIT, not the default: the default omits exactly the
-        // bands this exists to watch — the ones under EQ 1-knob — so asking with it
-        // inspects nothing in the one configuration that motivated the field.
-        if (!(await phaseStep(probeBands(model, original, signal, report)))) return report;
-        report.restoreResidual = back.residual.length;
-        // Each address the restore left different, itemized with its trace the way a
-        // sweep pass's residual is: a count alone names nothing to put back by hand.
-        const restoreStoppedOn: "read" | "write" | null = back.readErrors.length
-          ? "read"
-          : back.outcomes.some(reachedAndFailed)
-            ? "write"
-            : null;
-        for (const d of back.residual) {
-          report.residual.push({
-            name: d.command.name,
-            paramId: d.command.paramId,
-            x: d.command.x,
-            y: d.command.y,
-            expected: d.command.vdValue,
-            actual: d.current,
-            pass: RESTORE_PASS,
-            ...(restoreStoppedOn ? { stoppedOn: restoreStoppedOn } : {}),
-          });
-        }
-        if (back.residual.length) {
-          const baseline = back.residual.map((d) => captured.get(cmdAddr(d.command))).filter((v) => v !== undefined);
-          report.traces.push({ pass: RESTORE_PASS, baseline, rounds: back.trace });
-        }
-        // Same for the restore, and it matters more here: a read failure also ENDS the
-        // converge loop (sendConverging stops on one), so the write may have stopped
-        // part-way. Counting them keeps `restored` a statement about what was checked.
-        report.errors.push(...back.readErrors.map((e) => `restore read: ${e}`));
-        report.restoreResidual += back.readErrors.length;
-        // A refused WRITE ends the same loop, and without this the report says only that
-        // N params differ — which reads as a unit that would not keep the values, when
-        // the values never reached it. Not added to restoreResidual: the residual it left
-        // is the pre-write diff, so those params are already counted there.
-        report.errors.push(...sendFailureLines(back.outcomes, "restore"));
-
-        // Then the addresses that write has no command for, or only the captured plan's
-        // default for, put back from what the unit held before the sweep. Last, so the
-        // converging write's side-effect resets have already landed. After a refused preset nothing more is written: they are only
-        // read, and what still differs is counted as not put back.
-        const unsent = await phaseStep(
-          restoreUnsent(writeBack, preSweep, settleMs, signal, report, { writeBack: !presetRefused }),
-        );
-        if (unsent === undefined) return report; // cancelled during the write-back
-        report.restoreResidual += unsent;
-        // The string half: what the converge cannot write, verified the way it verifies its
-        // own. A name the first read could not see is counted too, since nothing put it back.
-        if (!presetRefused) {
-          const names = await phaseStep(diffNames(model, original));
-          if (!names) return report;
-          const renamed = await phaseStep(sendNames(names.writes.filter((w) => w.name === undefined)));
-          if (!renamed) return report;
-          report.errors.push(...nameFailureLines(renamed));
-        }
-        const namesAfter = await phaseStep(diffNames(model, original));
-        if (!namesAfter) return report;
-        report.errors.push(...namesAfter.errors.map((e) => `restore name verify: ${e}`));
-        for (const w of namesAfter.writes)
-          report.errors.push(`restore ${w.param}:0:${w.y}: still differs from ${JSON.stringify(w.value)}`);
-        report.restoreResidual +=
-          presets.readErrors.length + presets.unconfirmed.length + namesAfter.errors.length + namesAfter.writes.length;
-        report.restored = report.restoreResidual === 0;
-        report.phase = "done";
-      }
-    }
+    if (!report.aborted && pending) await restoreCaptured(model, pending, settleMs, signal, report, phaseStep);
     return report;
   } finally {
+    keepForLock(report, run, pending);
+    run?.stop();
     await vdDisconnect(device.epoch);
+  }
+}
+
+/**
+ * A run Console Lock stopped says so, and one it stopped once it had written, with the restore not
+ * done, keeps what the restore needs (`pendingRestore`) — what the run read before the sweep is
+ * the only record of what the unit held.
+ */
+function keepForLock(report: SelfTestReport, run: RunWatch | null, pending: PendingRestore | null): void {
+  if (!run || !stoppedByConsoleLock(run.signal)) return;
+  report.locked = true;
+  const wrote = report.phase === "write" || report.phase === "verify" || report.phase === "restore";
+  if (pending && wrote && !report.restored) report.pendingRestore = pending;
+}
+
+/**
+ * Put the unit back from what a self-test Console Lock stopped kept (`SelfTestReport.pendingRestore`):
+ * the restore alone, the sweep not run again. Connects on its own, refuses a unit that is still
+ * locked or is another model, and stops at the next command if the unit is locked again — keeping
+ * `pending` on the report for another try.
+ */
+export async function restoreSelfTest(
+  model: DeviceModel,
+  pending: PendingRestore,
+  settleMs = SETTLE_TIMEOUT_MS,
+  outer?: AbortSignal,
+): Promise<SelfTestReport> {
+  const report = emptyReport(model, 0);
+  let signal = outer;
+  const phaseStep = phaseStepFor(report, () => signal);
+  const device = await vdConnect(model.id);
+  report.device = device.model;
+  let run: RunWatch | null = null;
+  try {
+    if (device.model !== pending.model || model.id !== pending.model) {
+      report.errors.push(
+        `refusing to restore: the self-test ran on ${pending.model}, and ${device.model} is connected`,
+      );
+      report.phase = "refused";
+      report.refusal = "modelMismatch";
+      return report;
+    }
+    run = await watchRun(outer);
+    signal = run.signal;
+    if (run.lockedAtStart) {
+      report.errors.push("refusing to restore: the unit is under Console Lock");
+      report.phase = "refused";
+      report.refusal = "consoleLock";
+      return report;
+    }
+    await restoreCaptured(model, pending, settleMs, signal, report, phaseStep);
+    return report;
+  } finally {
+    if (run && stoppedByConsoleLock(run.signal)) report.locked = true;
+    // A restore that did not run to its end — refused, stopped or cancelled — leaves `pending` the
+    // only record of what the unit held, so it is kept for another try.
+    if (report.phase !== "done") report.pendingRestore = pending;
+    run?.stop();
+    await vdDisconnect(device.epoch);
+  }
+}
+
+/**
+ * The restore: the captured plan written back, converging, then the Sweet Spot presets, the
+ * addresses that write has no command for, and the names. A stop — a cancel, or Console Lock —
+ * returns where it lands, with what went out already in the report.
+ */
+async function restoreCaptured(
+  model: DeviceModel,
+  pending: PendingRestore,
+  settleMs: number,
+  signal: AbortSignal | undefined,
+  report: SelfTestReport,
+  phaseStep: PhaseStep,
+): Promise<void> {
+  const { original, captured, unrestorable } = pending;
+  const writeBack = new Map(pending.writeBack);
+  const preSweep = new Map(pending.preSweep);
+  report.phase = "restore";
+  report.diag.unrestorable = [...unrestorable.values()].map((c) => `${c.name} ${formatAddrKey(cmdAddr(c))}`);
+  // includeDeviceDriven widens the restore — and only the restore — to the bands
+  // the app never authors while EQ 1-knob is on, because the unit drives them. A
+  // capture holding 1-knob ON otherwise emits none of them while every sweep pass
+  // wrote them, so the unit ends with a VISIBLE EQ change under a verdict that says
+  // it was restored. The unit keeps such a write (measured; see EmitOptions), and
+  // the residual now covers the same set, so a unit that did re-derive would be
+  // reported rather than passed over.
+  const restore = { settleMs, signal, trace: true, emit: RESTORE_EMIT, stopOnError: false };
+  const numeric = await phaseStep(sendConverging(model, original, restore));
+  // Then the captured Sweet Spot presets, which the converge cannot write, and the strip they
+  // rebuild converged again behind them (client.ts sendPresetsAndReconverge). One round of
+  // the sweep's pair links is undone inside the converge above, and that puts a preset of the
+  // link's choosing back on the secondary when it lands.
+  const presets =
+    numeric && !numeric.outcomes.some(reachedAndFailed) && !numeric.readErrors.length
+      ? await phaseStep(sendPresetsAndReconverge(model, original, restore))
+      : { presets: [], notSent: [], unconfirmed: [], canceled: false, readErrors: [], result: null };
+  if (!presets) return;
+  report.errors.push(...nameFailureLines(presets.presets));
+  // A refused preset stops the restore's writes there. The nodes whose preset was accepted
+  // had their strip rebuilt with nothing reading it back, so their state is unknown.
+  for (const node of presets.unconfirmed)
+    report.errors.push(
+      `restore ${node}: its Sweet Spot preset rebuilt the strip, and the restore stopped before reading it back`,
+    );
+  // A cancel once a preset has gone out ends the run the way a cancel anywhere else in the
+  // restore does, with what went out already in the report.
+  if (presets.canceled) {
+    report.aborted = true;
+    return;
+  }
+  const presetRefused = presets.presets.some((o) => !o.ok);
+  report.errors.push(...presets.readErrors.map((e) => `restore name read: ${e}`));
+  const back =
+    numeric && presets.result
+      ? {
+          ...presets.result,
+          outcomes: [...numeric.outcomes, ...presets.result.outcomes],
+          readErrors: [...numeric.readErrors, ...presets.result.readErrors],
+          trace: [...numeric.trace, ...presets.result.trace],
+        }
+      : numeric;
+  if (back) {
+    report.diag.restoreRounds = back.trace.map((r) => {
+      const position = new Map(r.sent.map((c, i) => [cmdAddr(c), i] as const));
+      return {
+        sent: r.sent.length,
+        ms: r.elapsedMs,
+        bands: r.sent.filter((c) => c.name.startsWith("EQ_BAND")).length,
+        oneKnob: r.sent.filter((c) => c.name.startsWith("EQ_ONE_KNOB")).length,
+        residual: r.reread?.length ?? null,
+        differing: (r.reread ?? []).map(
+          (d) =>
+            `${d.command.name} ${formatAddrKey(cmdAddr(d.command))}=${d.current} (${d.command.vdValue}) #${position.get(cmdAddr(d.command)) ?? "-"}`,
+        ),
+        sideEffects: r.sent.flatMap((c, i) =>
+          (PARAMS as Record<string, ParamSpec>)[c.name]?.sideEffect
+            ? [`#${i} ${c.name} ${formatAddrKey(cmdAddr(c))}=${c.vdValue}`]
+            : [],
+        ),
+      };
+    });
+    // Read back the band gains the restore just wrote, before anything else can
+    // touch the unit. RESTORE_EMIT, not the default: the default omits exactly the
+    // bands this exists to watch — the ones under EQ 1-knob — so asking with it
+    // inspects nothing in the one configuration that motivated the field.
+    if (!(await phaseStep(probeBands(model, original, signal, report)))) return;
+    report.restoreResidual = back.residual.length;
+    // Each address the restore left different, itemized with its trace the way a
+    // sweep pass's residual is: a count alone names nothing to put back by hand.
+    const restoreStoppedOn: "read" | "write" | null = back.readErrors.length
+      ? "read"
+      : back.outcomes.some(reachedAndFailed)
+        ? "write"
+        : null;
+    for (const d of back.residual) {
+      report.residual.push({
+        name: d.command.name,
+        paramId: d.command.paramId,
+        x: d.command.x,
+        y: d.command.y,
+        expected: d.command.vdValue,
+        actual: d.current,
+        pass: RESTORE_PASS,
+        ...(restoreStoppedOn ? { stoppedOn: restoreStoppedOn } : {}),
+      });
+    }
+    if (back.residual.length) {
+      const baseline = back.residual.map((d) => captured.get(cmdAddr(d.command))).filter((v) => v !== undefined);
+      report.traces.push({ pass: RESTORE_PASS, baseline, rounds: back.trace });
+    }
+    // Same for the restore, and it matters more here: a read failure also ENDS the
+    // converge loop (sendConverging stops on one), so the write may have stopped
+    // part-way. Counting them keeps `restored` a statement about what was checked.
+    report.errors.push(...back.readErrors.map((e) => `restore read: ${e}`));
+    report.restoreResidual += back.readErrors.length;
+    // A refused WRITE ends the same loop, and without this the report says only that
+    // N params differ — which reads as a unit that would not keep the values, when
+    // the values never reached it. Not added to restoreResidual: the residual it left
+    // is the pre-write diff, so those params are already counted there.
+    report.errors.push(...sendFailureLines(back.outcomes, "restore"));
+
+    // Then the addresses that write has no command for, or only the captured plan's
+    // default for, put back from what the unit held before the sweep. Last, so the
+    // converging write's side-effect resets have already landed. After a refused preset nothing more is written: they are only
+    // read, and what still differs is counted as not put back.
+    const unsent = await phaseStep(
+      restoreUnsent(writeBack, preSweep, settleMs, signal, report, { writeBack: !presetRefused }),
+    );
+    if (unsent === undefined) return; // cancelled during the write-back
+    report.restoreResidual += unsent;
+    // The string half: what the converge cannot write, verified the way it verifies its
+    // own. A name the first read could not see is counted too, since nothing put it back.
+    if (!presetRefused) {
+      const names = await phaseStep(diffNames(model, original));
+      if (!names) return;
+      const renamed = await phaseStep(sendNames(names.writes.filter((w) => w.name === undefined)));
+      if (!renamed) return;
+      report.errors.push(...nameFailureLines(renamed));
+    }
+    const namesAfter = await phaseStep(diffNames(model, original));
+    if (!namesAfter) return;
+    report.errors.push(...namesAfter.errors.map((e) => `restore name verify: ${e}`));
+    for (const w of namesAfter.writes)
+      report.errors.push(`restore ${w.param}:0:${w.y}: still differs from ${JSON.stringify(w.value)}`);
+    report.restoreResidual +=
+      presets.readErrors.length + presets.unconfirmed.length + namesAfter.errors.length + namesAfter.writes.length;
+    report.restored = report.restoreResidual === 0;
+    report.phase = "done";
   }
 }
 
@@ -1503,6 +1637,12 @@ export function formatSelfTestReport(report: SelfTestReport): string {
         ? "- Restored: not applicable — the run was canceled before it wrote anything"
         : `- Restored: ${report.restored ? "yes" : `NO — ${report.restoreResidual} param(s) differ`}`,
   );
+  if (report.locked)
+    lines.push(
+      report.pendingRestore
+        ? "- Stopped: the unit went into Console Lock; the unit is left changed, and what the restore needs is kept for Restore after self-test"
+        : "- Stopped: the unit went into Console Lock",
+    );
 
   if (report.unverified.length) {
     lines.push("");

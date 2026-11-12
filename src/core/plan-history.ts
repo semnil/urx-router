@@ -1080,6 +1080,21 @@ export class PlanHistoryStack {
     }
   }
 
+  /** The plan as the baseline holds it — where the next entry measures from — as a copy. */
+  baselineState(): Plan {
+    return clonePlanState(this.baseline);
+  }
+
+  /** Take `plan` back to the baseline, both stacks standing, and hand back the patch that did
+   *  it: what was edited since the baseline was taken, refused after it landed. A plan of
+   *  another model is left as it is. */
+  revert(plan: Plan): PlanPatch {
+    if (this.baseline.modelId !== plan.modelId) return [];
+    const patch = diffPlans(plan, this.baseline);
+    applyPatch(plan, patch);
+    return patch;
+  }
+
   /** Re-take the baseline and drop both stacks: a different document, or every
    *  value re-authored by the device. */
   reset(plan: Plan): void {

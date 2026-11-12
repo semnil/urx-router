@@ -28,6 +28,7 @@ import type { SharedOwners, NameWrite, VdCommand, WriteScope } from "./translate
 import { ClipSafeHold, confirmedAddrs, reachedAndFailed, sendConverging } from "./client";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
+import { stoppedByConsoleLock } from "./console-lock";
 import { carrierOf, onExcludedBy, otherSwitchId } from "../input-lock";
 import type { PlanWriteWatch } from "../plan-history";
 
@@ -378,10 +379,56 @@ export class LiveSync {
   // the operator is editing, so a timed re-arm would repeat it during unrelated work.
   private collapsedKey = "";
 
+  // The unit is under Console Lock (console-lock.ts): nothing is sent. A flush running when it
+  // arrives stops at its next command, and what it left unsent stays a difference between the
+  // plan and the snapshot, which the caller puts back from the unit (`unsent`).
+  private locked = false;
+  // The lock stopped a flush after a head went out and before the converge behind it: the unit
+  // holds values the snapshot does not describe, so `unsent` asks for the whole unit. Cleared by
+  // the capture that read it back.
+  private lockDrift = false;
+
   constructor(private readonly hooks: LiveSyncHooks) {}
 
   isActive(): boolean {
     return this.active;
+  }
+
+  /** Hold every send (true) or let them through again (false). Holding cancels a flush that is
+   *  armed and stops one that is running at its next command; letting go sends nothing by
+   *  itself — the plan was put back to the unit's values while the hold stood. */
+  setLocked(on: boolean): void {
+    this.locked = on;
+    if (!on) return;
+    this.pending = false;
+    this.deferredSince = null;
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
+  /**
+   * What the plan holds that the snapshot says the unit was not sent: the nodes those
+   * differences belong to, and `whole` when one of them belongs to no node (the sample rate).
+   * Asked once a flush the lock stopped has finished, to read those nodes back from the unit.
+   */
+  unsent(): { nodes: Set<string>; whole: boolean } {
+    const model = this.hooks.getModel();
+    const plan = this.hooks.getPlan();
+    const nodes = new Set<string>();
+    let whole = this.lockDrift;
+    for (const c of planToCommands(model, plan, this.scope())) {
+      if (this.snapshot.get(cmdAddr(c)) === c.vdValue) continue;
+      if (c.node === undefined) whole = true;
+      else nodes.add(c.node);
+    }
+    for (const w of planToNameWrites(model, plan)) {
+      if (this.nameSnapshot.get(nameKey(w)) === w.value) continue;
+      if (w.node === undefined) whole = true;
+      else nodes.add(w.node);
+    }
+    return { nodes, whole };
   }
 
   /**
@@ -687,6 +734,9 @@ export class LiveSync {
   /** Stop syncing and cancel any pending flush. Does not touch the connection. */
   end(): void {
     this.active = false;
+    // A lock is a fact about the session's link, and the next session reads it again.
+    this.locked = false;
+    this.lockDrift = false;
     this.clipSafeHold = new ClipSafeHold();
     this.sessionGen++;
     this.sessionAbort.abort();
@@ -710,7 +760,7 @@ export class LiveSync {
   /** Note a plan change; a flush runs at the end of the current window. No-op when
    *  inactive. */
   schedule(): void {
-    if (!this.active) return;
+    if (!this.active || this.locked) return;
     if (this.timer !== null) {
       // A window is already armed and will pick this change up with the rest —
       // unless what is waiting in it would converge, in which case re-arm so a
@@ -791,6 +841,8 @@ export class LiveSync {
     // latch has to clear here or the next genuine loss of that same pair is swallowed.
     this.collapsedKey = "";
     this.snapshotEpoch++;
+    // A capture of the whole unit describes what a lock left behind (`lockDrift`).
+    if (!nodes) this.lockDrift = false;
     const model = this.hooks.getModel();
     const scope = this.scope();
     const plan = this.hooks.getPlan();
@@ -961,7 +1013,7 @@ export class LiveSync {
   }
 
   private async flush(): Promise<void> {
-    if (!this.active) return;
+    if (!this.active || this.locked) return;
     if (this.flushing) {
       this.pending = true;
       return;
@@ -1116,6 +1168,8 @@ export class LiveSync {
       // The frozen list's values by address, built the first time a command asks for another's.
       let frozen: Map<number, number> | null = null;
       for (const c of commands) {
+        // Console Lock arrived: nothing more goes out, and what is left stays a difference.
+        if (this.locked) return;
         const k = cmdAddr(c);
         if (this.snapshotEpoch !== valuesAt) {
           valuesAt = this.snapshotEpoch;
@@ -1217,6 +1271,7 @@ export class LiveSync {
       let namesAt = this.snapshotEpoch;
       let freshNames: Map<string, string> | null = null;
       for (const w of planToNameWrites(model, plan)) {
+        if (this.locked) return;
         const k = nameKey(w);
         if (this.snapshotEpoch !== namesAt) {
           namesAt = this.snapshotEpoch;
@@ -1283,6 +1338,12 @@ export class LiveSync {
         }
       }
       this.lastFlushConverged = sideEffect;
+      // A head went out and the converge that puts back what it reset cannot: the unit holds
+      // values the snapshot does not describe, and only a read of the whole unit finds them.
+      if (sideEffect && this.locked) {
+        this.lockDrift = true;
+        return;
+      }
       if (sideEffect) {
         // The device reset dependents; converge against its post-reset state and
         // rebuild the snapshot so the next diff measures from the device truth.
@@ -1383,6 +1444,12 @@ export class LiveSync {
         // session is gone there is nobody left to report a failed converge to, and the
         // capture below would write a dead plan's values into a rebuilt snapshot.
         if (this.sessionGen !== gen) return;
+        // Console Lock stopped the converge part-way, as it stops the send loops. What it sent
+        // and what the head reset are on the unit and in no snapshot.
+        if (this.locked) {
+          this.lockDrift = true;
+          return;
+        }
         // `converged` is what the loop sent and read back, so it is what the addresses mean.
         // Ahead of the failure check, because a round that failed leaves every earlier round's
         // confirmations standing and this is the last chance the plan has to take them: the
@@ -1541,6 +1608,9 @@ export class LiveSync {
       // or a converge the end aborted — is that session's, and the one running now is not
       // stopped by it.
       if (this.sessionGen !== gen) return;
+      // A write refused because the unit went into Console Lock under it: the send stops, and
+      // the session goes on. What it left unsent is put back from the unit (`unsent`).
+      if (this.locked && stoppedByConsoleLock(e)) return;
       this.active = false;
       this.hooks.onError(e instanceof Error ? e.message : String(e), (e as { guess?: string } | null)?.guess);
       return;

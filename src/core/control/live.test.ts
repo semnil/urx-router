@@ -17,6 +17,7 @@ vi.mock("../platform", () => ({
   vdGet: vi.fn(),
   vdGetStr: vi.fn(),
   vdParamsSubscribe: vi.fn(),
+  WRITES_HELD: "writes-held",
 }));
 
 import { vdSet, vdSetStr, vdGet, vdGetStr, vdParamsSubscribe, type ParamUpdate } from "../platform";
@@ -4158,4 +4159,128 @@ describe("LiveSync converge over a move on the unit", () => {
         expect(snap).toBe(table.get(k));
         expect(sentToFader.slice(1)).toEqual(after ? [] : [-1200]);
       });
+});
+
+// Console Lock (console-lock.ts): while the unit is locked the session sends it nothing. A flush
+// armed when the lock arrives never runs, one running stops at its next command, and what either
+// left unsent stays a difference between the plan and the snapshot for the caller to read back.
+describe("LiveSync: Console Lock", () => {
+  const sent = (): string[] => vi.mocked(vdSet).mock.calls.map((c) => `${c[0]}:${c[1]}:${c[2]}=${c[3]}`);
+
+  it("cancels a flush that is armed, and sends nothing while it holds", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    live.setLocked(true);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    setCh1Fader(plan, -12);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    expect(sent()).toEqual([]);
+    expect(live.unsent().nodes, "the edit is left for the caller to read back").toEqual(new Set(["ch1"]));
+    expect(live.unsent().whole).toBe(false);
+    // Letting go sends nothing by itself: the caller put the plan back while the hold stood.
+    live.setLocked(false);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    expect(sent()).toEqual([]);
+    // …and the next edit goes out as any other does.
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(sent()).toHaveLength(1);
+    live.end();
+  });
+
+  it("stops a running flush at its next command, and keeps the session", async () => {
+    const plan = basePlan();
+    const onError = vi.fn();
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError,
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    live.begin();
+    // Two channels' faders in one flush; the lock is announced while the first write is on the wire.
+    setCh1Fader(plan, -6);
+    const ch2 = plan.connections.find((c) => c.from === "ch2:out")!;
+    ch2.params = { ...ch2.params, level: -9 };
+    vi.mocked(vdSet).mockImplementationOnce(async () => {
+      live.setLocked(true);
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await live.idle();
+    expect(sent(), "the write on the wire lands; nothing after it goes").toHaveLength(1);
+    expect(onError).not.toHaveBeenCalled();
+    expect(live.isActive()).toBe(true);
+    const unsent = live.unsent();
+    expect(unsent.nodes.size, "the channel the stop left is still a difference").toBe(1);
+    expect(unsent.whole).toBe(false);
+    live.end();
+  });
+
+  // A write the platform held — the lock landed between the loop's own check and the write —
+  // is the lock's stop, not a failed write: the session goes on.
+  it("takes a write held for the lock as a stop rather than a failure", async () => {
+    const plan = basePlan();
+    const onError = vi.fn();
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError,
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    live.begin();
+    setCh1Fader(plan, -6);
+    vi.mocked(vdSet).mockImplementationOnce(async () => {
+      live.setLocked(true);
+      throw new Error("writes-held: the unit is under Console Lock, so the app sends it nothing");
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await live.idle();
+    expect(onError).not.toHaveBeenCalled();
+    expect(live.isActive()).toBe(true);
+    expect(live.unsent().nodes).toEqual(new Set(["ch1"]));
+    live.end();
+  });
+
+  it("ends the session as before for a failure that is not the lock's", async () => {
+    const plan = basePlan();
+    const onError = vi.fn();
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError,
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    live.begin();
+    setCh1Fader(plan, -6);
+    vi.mocked(vdSet).mockRejectedValueOnce(new Error("writes-held: held"));
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await live.idle();
+    // Unlocked, a held write is a failure like any other: nothing told the session to hold.
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(live.isActive()).toBe(false);
+  });
+
+  it("forgets the lock when the session ends", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    live.setLocked(true);
+    live.end();
+    live.begin();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(sent()).toHaveLength(1);
+    live.end();
+  });
 });

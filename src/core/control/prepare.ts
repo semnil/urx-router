@@ -29,6 +29,7 @@ import type { Plan } from "../plan";
 import { vdConnect, vdDisconnect } from "../platform";
 import { dryRun, reachedAndFailed, sendCommands } from "./client";
 import { captureDeviceState, floorSilent, sweepInputSource } from "./selftest";
+import { stoppedByConsoleLock, watchRun, type RunWatch } from "./console-lock";
 import { selectableInputIds } from "./translate";
 import type { VdCommand } from "./translate";
 import type { ParamName } from "./params";
@@ -87,8 +88,11 @@ export interface PrepareReport {
   residual: number;
   /** Read/send failures collected along the way. */
   errors: string[];
-  /** True if the user cancelled before the write finished. */
+  /** True if the user cancelled before the write finished, or Console Lock stopped it. */
   aborted: boolean;
+  /** True when the unit was under Console Lock, or went into it: nothing was written, or the
+   *  write stopped at its next command. */
+  locked?: boolean;
 }
 
 // Non-round, well-separated fractions of a range. Cycling them per scalar keeps
@@ -282,16 +286,29 @@ export function prepareBatches(model: DeviceModel, plan: Plan): VdCommand[][] {
  * caller must ensure the connected device matches `model`. Read/send failures are
  * collected, not thrown; the connection is always closed.
  */
-export async function runPrepareModified(model: DeviceModel, signal?: AbortSignal): Promise<PrepareReport> {
+export async function runPrepareModified(model: DeviceModel, outer?: AbortSignal): Promise<PrepareReport> {
   const report: PrepareReport = { device: "", applied: 0, written: 0, residual: 0, errors: [], aborted: false };
   const device = await vdConnect(model.id);
   report.device = device.model;
+  let run: RunWatch | null = null;
+  // The caller's cancel until the watch is up, then the run's own signal, which Console Lock
+  // aborts too — so the tolerant send below stops instead of taking each held write as a
+  // rejection and moving on to the next.
+  let signal = outer;
   try {
-    // Connect prologue shared with the self-test: model check + device capture.
+    // Connect prologue shared with the self-test: model check + device capture. Reads only, so
+    // it goes ahead on a locked unit; the lock is asked once there is something to write.
     const cap = await captureDeviceState(model, device.model, signal);
     report.applied = cap.applied;
     report.errors.push(...cap.errors);
     if (!cap.ok) return report;
+    run = await watchRun(outer);
+    signal = run.signal;
+    if (run.lockedAtStart) {
+      report.locked = true;
+      report.errors.push("refusing to write: the unit is under Console Lock");
+      return report;
+    }
 
     const plan = buildModifiedPlan(cap.plan);
     // Tolerant send: the live write path aborts the whole operation at the first
@@ -328,10 +345,12 @@ export async function runPrepareModified(model: DeviceModel, signal?: AbortSigna
   } catch (e) {
     if (signal?.aborted) {
       report.aborted = true;
+      if (stoppedByConsoleLock(signal)) report.locked = true;
       return report;
     }
     throw e;
   } finally {
+    run?.stop();
     await vdDisconnect(device.epoch);
   }
 }

@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   vdConnect: vi.fn<() => Promise<{ model: string; epoch: number }>>(),
   vdDisconnect: vi.fn<(epoch: number) => Promise<void>>(),
   vdSet: vi.fn<(id: number, x: number, y: number, v: number) => Promise<void>>(),
+  // The unit's Console Lock, read before the run writes (console-lock.ts watchRun), and the
+  // notify registration the run holds while it writes; `lock.deliver` drives that notify.
+  vdGet: vi.fn<(id: number, x: number, y: number) => Promise<number>>(),
+  vdParamsSubscribe: vi.fn(),
+  lock: { deliver: null as ((p: { paramId: number; x: number; y: number; value: number }) => void) | null },
   captureDeviceState: vi.fn(),
 }));
 
@@ -22,6 +27,8 @@ vi.mock("../platform", async (importOriginal) => ({
   vdConnect: mocks.vdConnect,
   vdDisconnect: mocks.vdDisconnect,
   vdSet: mocks.vdSet,
+  vdGet: mocks.vdGet,
+  vdParamsSubscribe: mocks.vdParamsSubscribe,
 }));
 
 vi.mock("./selftest", async (importOriginal) => ({
@@ -206,6 +213,14 @@ describe("runPrepareModified", () => {
     mocks.vdConnect.mockReset().mockResolvedValue({ model: "URX44V", epoch: 3 });
     mocks.vdDisconnect.mockReset().mockResolvedValue(undefined);
     mocks.vdSet.mockReset().mockResolvedValue(undefined);
+    mocks.vdGet.mockReset().mockResolvedValue(0);
+    mocks.lock.deliver = null;
+    mocks.vdParamsSubscribe.mockReset().mockImplementation(async (_addrs: unknown, onUpdate: never) => {
+      mocks.lock.deliver = onUpdate;
+      return () => {
+        mocks.lock.deliver = null;
+      };
+    });
     mocks.captureDeviceState.mockReset();
   });
 

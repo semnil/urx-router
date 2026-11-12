@@ -267,6 +267,23 @@ export class PlanHistory {
     this.notifyDepth();
   }
 
+  /** Where the next entry measures from, as a copy: the plan as of the last boundary, with every
+   *  value a device read put in since taken into it at the read's own site. */
+  baselineState(): Plan {
+    return this.stack.baselineState();
+  }
+
+  /** Refuse the edits made since the last boundary, after they landed: take the plan back to
+   *  the baseline and close the open entry with nothing recorded. The patch that did it, for the
+   *  repaint. */
+  discardOpen(): PlanPatch {
+    this.cancelPending();
+    this.open = false;
+    const patch = this.stack.revert(this.hooks.getPlan());
+    this.notifyDepth();
+    return patch;
+  }
+
   /** A different document, or every value re-authored by the device: drop both
    *  stacks. No earlier entry describes a state this plan can return to. */
   reset(): void {
