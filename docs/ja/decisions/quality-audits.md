@@ -24,8 +24,9 @@
 
 ## Accepted behaviors the audit tests pin
 
-**決定。** 下の挙動は、堅牢性の監査で見つかり、分かった上で、今のままにしている。それぞれ `*.audit.test.ts` の
-ケースが固定しているので、変えるときは、その pin も書き換える (`CLAUDE.md`「Conventions」)。
+**決定。** 下の挙動は、堅牢性の監査で見つかり、分かった上で、今のままにしている。`*.audit.test.ts` のケースが
+固定しているものは、そのファイルの名前を横に書いた。その挙動を変えるときは、pin も書き換える
+(`CLAUDE.md`「Conventions」)。
 
 - `src/core/constraints.ts` の `rateConstraints` は、サンプルレートを `> 96000` だけで分ける。表にあるレートか
   どうかは調べず、0 や負の値も断らない (`src/core/routing.audit.test.ts`)。

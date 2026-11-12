@@ -26,8 +26,8 @@ The fixes themselves are in [#366](https://github.com/semnil/urx-router/pull/366
 ## Accepted behaviors the audit tests pin
 
 **Decision.** The behaviors below were found in a robustness audit, are known, and are left as
-they are. Each is pinned by an `*.audit.test.ts` case, so a change to one of them rewrites its pin
-(`CLAUDE.md` "Conventions").
+they are. Where an `*.audit.test.ts` case pins one, the file is named beside it, and a change to
+that behavior rewrites the pin (`CLAUDE.md` "Conventions").
 
 - `rateConstraints` in `src/core/constraints.ts` classifies a sample rate by `> 96000` alone. It
   does not check that the rate is one of the table's, nor reject zero or a negative value
