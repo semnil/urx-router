@@ -104,8 +104,8 @@ the unit's values and writes them only during Live sync. Offline, the screen and
 held shut.
 
 **What it replaced.** #651 wrote them offline as well. The operator corrected that: being writable
-while not in Live sync was never the intent. The misunderstanding came from the question asked for
-#651, whose options did not include "during Live sync only".
+while not in Live sync was never the intent. The misunderstanding came from the question asked
+for #651, whose options did not include "during Live sync only".
 
 ## Decisions of 2026-10-17 (Q1 to Q8)
 
