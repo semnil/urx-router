@@ -49,7 +49,7 @@
 // settle (see UnverifiedOutcome), so an owner can confirm them. This is the live
 // counterpart of that confirmation workflow.
 
-import type { DeviceModel } from "../../models/types";
+import type { DeviceModel, ModelId } from "../../models/types";
 import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan, PHANTOM_KEYS } from "../plan";
@@ -85,12 +85,14 @@ import type { NameOutcome, SendOutcome } from "./client";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import { A_GAIN_MIN_DB, D_GAIN_MIN_DB } from "./vd";
 import type { ConvergeRound } from "./client";
+import { ENGINE_GUITAR, insertFxEngine, insertFxFamilyOf } from "./insert-fx-effect";
 import { applyDeviceState, applySourceState } from "./readback";
 import type { ParamSource } from "./readback";
 import {
   auditUnverified,
   channelControl,
   cmdAddr,
+  effectiveInsertFx,
   formatAddrKey,
   insertFxControl,
   hpfFreqLeftOut,
@@ -287,6 +289,10 @@ export interface SelfTestReport {
      *  pair — so they are read before the sweep and written back after the restore with
      *  `unrestorable`. */
     unusedSide: string[];
+    /** Slot 1 of each insert-FX engine no channel holds in the captured plan, on the models
+     *  `IDLE_ENGINE_ON` names (see `idleEngineOnCommands`). Read before the sweep and written
+     *  back after the restore with `unrestorable`. */
+    idleEngineOn: string[];
     /** Per round of the converging restore: how much went out, how much of it was the
      *  PEQ and the 1-knob chain, and how much still differed on the re-read. A 1-knob
      *  group re-sent in the last round reloads the preset over the bands. */
@@ -744,7 +750,14 @@ export async function runSelfTest(
     restoreResidual: 0,
     errors: [],
     phase: "connect",
-    diag: { unrestorable: [], captureUnheld: [], unusedSide: [], restoreRounds: [], bandsAfterRestore: [] },
+    diag: {
+      unrestorable: [],
+      captureUnheld: [],
+      unusedSide: [],
+      idleEngineOn: [],
+      restoreRounds: [],
+      bandsAfterRestore: [],
+    },
   };
   // Run one phase's round-trips, returning its result — or undefined if the user
   // cancelled (the inner loops throw via signal.throwIfAborted). A cancel is
@@ -892,6 +905,15 @@ export async function runSelfTest(
     for (const command of unused.commands) {
       if (!writeBack.has(cmdAddr(command))) writeBack.set(cmdAddr(command), command);
       report.diag.unusedSide.push(`${command.name} ${formatAddrKey(cmdAddr(command))}`);
+    }
+    // And slot 1 of an insert-FX engine no channel holds. Slot 1 is the engine's ON: while a
+    // channel holds the engine it follows that channel's INS FX ON, which the restore writes.
+    // A pass that selects the effect on a channel and then releases it leaves the engine held
+    // by nothing, and the release does not always put slot 1 back, so with nothing holding the
+    // engine at the end nothing the restore sends reaches it.
+    for (const command of idleEngineOnCommands(model, original, cap.unreadNodes)) {
+      if (!writeBack.has(cmdAddr(command))) writeBack.set(cmdAddr(command), command);
+      report.diag.idleEngineOn.push(formatAddrKey(cmdAddr(command)));
     }
     // A head among them on a node the capture could not read — an insert-FX selector, Signal
     // Type, any param whose write moves others — would be written back after the restore,
@@ -1197,6 +1219,37 @@ export async function runSelfTest(
   } finally {
     await vdDisconnect(device.epoch);
   }
+}
+
+/**
+ * The insert-FX engines whose slot 1 the self-test writes back itself, per model: the
+ * models on which writing that slot while no channel holds the engine has been confirmed to
+ * land, and to move nothing else. A model or an engine missing here gets no such write.
+ */
+export const IDLE_ENGINE_ON: Partial<Record<ModelId, readonly number[]>> = { URX44V: [ENGINE_GUITAR] };
+
+/**
+ * Slot 1 (ON) of each engine in `IDLE_ENGINE_ON` that no channel holds in `plan`, as commands
+ * for the write-back set. A channel holds an engine when its insert-FX selector is an effect
+ * that engine runs. A channel whose capture failed (`unreadNodes`) could be holding any of
+ * them, and writing slot 1 under a holder is not a write anything has confirmed, so with an
+ * insert-FX channel among those nothing is returned.
+ */
+export function idleEngineOnCommands(model: DeviceModel, plan: Plan, unreadNodes: ReadonlySet<string>): VdCommand[] {
+  const engines = IDLE_ENGINE_ON[model.id] ?? [];
+  if (!engines.length) return [];
+  const held = new Set<number>();
+  for (const node of model.nodes) {
+    const ifx = insertFxControl(model, node.id);
+    if (!ifx) continue;
+    if (unreadNodes.has(node.id)) return [];
+    const selector = effectiveInsertFx(model, plan, node.id);
+    const family = selector === undefined ? null : insertFxFamilyOf(selector);
+    if (family) held.add(insertFxEngine(family, ifx.isOutput));
+  }
+  return engines
+    .filter((engine) => !held.has(engine))
+    .map((engine) => ({ name: "INSERT_FX_EFFECT", paramId: engine, x: 0, y: 1, planValue: 0, vdValue: 0 }));
 }
 
 /**

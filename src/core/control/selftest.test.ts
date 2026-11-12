@@ -20,6 +20,7 @@ import {
   channelControl,
   eqOneKnob,
   inputEq,
+  insertFxControl,
   planToCommands,
   selectableInputIds,
   UNVERIFIED_MAPPINGS,
@@ -41,10 +42,13 @@ import {
 } from "./params";
 import { D_GAIN_MIN_DB, hpfFreqLinkWritable, PORT_REF_NONE, VD_LEVEL_OFF } from "./vd";
 import { writeSettle } from "./settle";
+import { ENGINE_GUITAR } from "./insert-fx-effect";
 import {
   cancelledBeforeWriting,
   floorSilent,
   formatSelfTestReport,
+  IDLE_ENGINE_ON,
+  idleEngineOnCommands,
   linkedPassesFor,
   passesFor,
   PASSES,
@@ -1430,6 +1434,93 @@ describe("runSelfTest and the side of a mic strip the unit is not using", () => 
     expect(report.refusal).toBe("unreadable");
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(report.errors.some((e) => e.startsWith("refusing to sweep: the side"))).toBe(true);
+  });
+});
+
+describe("runSelfTest and the ON slot of an insert-FX engine no channel holds", () => {
+  const GUITAR_ON = `${ENGINE_GUITAR}:0:1`;
+  const SELECTOR = PARAMS.INSERT_FX.id;
+  const guitar = (v: number): boolean => v >= 256 && v <= 259;
+  const writesTo = (key: string): number[] =>
+    vi
+      .mocked(vdSet)
+      .mock.calls.filter(([id, x, yy]) => `${id}:${x}:${yy}` === key)
+      .map(([, , , v]) => v);
+
+  /** A unit whose Guitar Amp engine turns its ON slot on when an input selects a Guitar Amp
+   *  type, and whose release leaves it there — the run in which nothing else puts it back. */
+  function installStickyEngine(seed: Plan): Map<string, number> {
+    const table = installMockDevice(seed);
+    const store = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation((id, x, yy, v) => {
+      if (id === SELECTOR && guitar(v)) table.set(GUITAR_ON, 1);
+      return store(id, x, yy, v);
+    });
+    return table;
+  }
+
+  it("puts slot 1 back when a release left it on, and counts it as restored", async () => {
+    const table = installStickyEngine(populatedPlan());
+    expect(table.get(GUITAR_ON) ?? 0, "the premise: slot 1 starts off").toBe(0);
+
+    const report = await runSelfTest(model, 0);
+
+    expect(
+      vi.mocked(vdSet).mock.calls.some(([id, , , v]) => id === SELECTOR && guitar(v)),
+      "the premise: a pass selected a Guitar Amp type",
+    ).toBe(true);
+    expect(report.phase).toBe("done");
+    expect(report.diag.idleEngineOn).toEqual([GUITAR_ON]);
+    expect(table.get(GUITAR_ON)).toBe(0);
+    expect(writesTo(GUITAR_ON)).toEqual([0]);
+    expect(report.restored).toBe(true);
+  });
+
+  it("counts slot 1 when the unit will not keep it off", async () => {
+    const table = installStickyEngine(populatedPlan());
+    const sticky = vi.mocked(vdSet).getMockImplementation()!;
+    vi.mocked(vdSet).mockImplementation(async (id, x, yy, v) => {
+      await sticky(id, x, yy, v);
+      if (`${id}:${x}:${yy}` === GUITAR_ON) table.set(GUITAR_ON, 1);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.restored).toBe(false);
+    expect(report.residual.filter((r) => r.paramId === ENGINE_GUITAR)).toEqual([
+      expect.objectContaining({ x: 0, y: 1, expected: 0, actual: 1 }),
+    ]);
+  });
+
+  // Held by a channel, slot 1 follows that channel's ON, which the restore writes; a write of
+  // slot 1 under a holder is not one anything has confirmed.
+  it("does not write slot 1 while a channel holds the engine", async () => {
+    const seed = populatedPlan();
+    seed.nodeParams.ch1 = { ...seed.nodeParams.ch1, insertFx: 256, insertFxOn: true };
+    installStickyEngine(seed);
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.phase).toBe("done");
+    expect(report.diag.idleEngineOn).toEqual([]);
+    expect(writesTo(GUITAR_ON)).toEqual([]);
+  });
+
+  it("names slot 1 only on the models it is written on, and only with every insert-FX channel read", () => {
+    const plan = populatedPlan();
+    expect(idleEngineOnCommands(model, plan, new Set()).map((c) => `${c.paramId}:${c.x}:${c.y}`)).toEqual([GUITAR_ON]);
+    for (const id of ["URX22", "URX44"] as const) {
+      const other = getModel(id);
+      expect(idleEngineOnCommands(other, emptyPlan(id), new Set()), id).toEqual([]);
+    }
+    const insertChannel = model.nodes.find((n) => insertFxControl(model, n.id))!.id;
+    expect(idleEngineOnCommands(model, plan, new Set([insertChannel]))).toEqual([]);
+    const plain = model.nodes.find((n) => !insertFxControl(model, n.id))!.id;
+    expect(
+      idleEngineOnCommands(model, plan, new Set([plain])),
+      "an unread node with no insert FX holds nothing",
+    ).toHaveLength(1);
+    expect(IDLE_ENGINE_ON.URX22 ?? [], "nothing is written on a model it is not confirmed on").toEqual([]);
   });
 });
 
