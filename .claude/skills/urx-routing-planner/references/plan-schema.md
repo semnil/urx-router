@@ -158,8 +158,15 @@ or inside a group — is written `true` / `false`: a number there loads converte
 
 **Stable, human-readable (author these freely):**
 - `on` — channel / STEREO master / FX channel / MONITOR on. `false` = muted.
-- `hpf` (bool), `hpfFreq` (Hz, 40–120 in 20 Hz steps — 40 / 60 / 80 / 100 / 120 —
-  default 80; a value between two steps opens at the nearer one, a tie going up).
+- `hpf` (bool), `hpfFreq` (Hz, default 80): one of the sixty stops of the unit's knob since
+  System firmware V1.5 — 20 / 21.2 / 22.4 / 23.6 / 25 / 26.5 / 28 / 30 / 31.5 / 33.5 / 35.5 /
+  37.5 / 40 / 42.5 / 45 / 47.5 / 50 / 53 / 56 / 60 / 63 / 67 / 71 / 75 / 80 / 85 / 90 / 95 /
+  100 / 106 / 112 / 118 / 125 / 132 / 140 / 150 / 160 / 170 / 180 / 190 / 200 / 212 / 224 /
+  236 / 250 / 265 / 280 / 300 / 315 / 335 / 355 / 375 / 400 / 425 / 450 / 475 / 500 / 530 /
+  560 / 600. A value between two stops opens at the nearer one, so the earlier firmware's
+  120 opens as 118. **Author 40–118 for a plan meant to be written to the unit**: the device
+  connection refuses a write outside 40–120 Hz, so a stop outside that window stays in the
+  plan and is left out of the write (the app's status line names the channels).
 - **The input stage is on the jack or the source, not on the channel.** A MIC/LINE
   input node (`in.micline_1_2`, `in.micline_3_4`) holds its two jacks' keys, `L`
   the first jack and `R` the second: `gainL` / `gainR` (A.Gain, -8 … +70 dB; -8 … +40
@@ -408,7 +415,7 @@ its table), the `ssmcs` raws and the
 `insertFxParams` engine values to whole numbers inside their windows (an engine key by the family
 its own name gives, a bare slot by the one the selector names), the EQ 1-knob and COMP 1-knob
 levels to 0–100, the oscillator's `interval` to 1–30 and its `level` to -96–0, a channel's
-jack's `gainL` / `gainR` and a source's `dGain` to their own ranges, an `hpfFreq` to the nearest of its five steps, an EQ band's `q`,
+jack's `gainL` / `gainR` and a source's `dGain` to their own ranges, an `hpfFreq` to the nearest of its sixty stops, an EQ band's `q`,
 `freq` and `gain` to their windows, and an enum
 off its menu — a LOW / HIGH band's `type`, `compEqType`,
 `recPoint`, `panBal`, `busType`, a COMP `knee`, an EQ 1-knob `type`, the oscillator's `mode`, the

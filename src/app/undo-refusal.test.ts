@@ -62,4 +62,31 @@ describe("why an undo or redo entry is held back", () => {
     });
     expect(undoRefusal(model, plan, both, label)).toBe(t().status.undoPhantomHiZ("CH3"));
   });
+
+  // The control link takes an HPF frequency only inside 40 … 120 Hz. A session sends what the
+  // plan holds, so an entry that would put a frequency outside that window is one it cannot
+  // send; offline the plan keeps it.
+  it("holds back, during a session, an entry that would put an HPF frequency outside the link's window", () => {
+    const plan = defaultPlan("URX44V");
+    const out = after(plan, (p) => {
+      p.nodeParams.ch1 = { ...p.nodeParams.ch1, hpfFreq: 250 };
+      p.nodeParams.ch2 = { ...p.nodeParams.ch2, hpfFreq: 21.2 };
+      p.nodeParams.ch3 = { ...p.nodeParams.ch3, hpfFreq: 118 };
+    });
+    expect(undoRefusal(model, plan, out, label, true)).toBe(t().status.undoHpfFreq("CH1 (250 Hz), CH2 (21.2 Hz)"));
+    expect(undoRefusal(model, plan, out, label, false), "offline").toBeNull();
+    expect(undoRefusal(model, plan, out, label), "offline is the default").toBeNull();
+  });
+
+  it("lets an entry apply during a session that leaves a frequency outside the window where it was", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, hpfFreq: 250 };
+    // The unit's own knob put it there and the session read it; an entry about something else
+    // does not move it.
+    const other = after(plan, (p) => (p.nodeParams.ch2 = { ...p.nodeParams.ch2, hpfFreq: 100 }));
+    expect(undoRefusal(model, plan, other, label, true)).toBeNull();
+    // …and one that moves it to another stop outside the window is held back.
+    const moved = after(plan, (p) => (p.nodeParams.ch1 = { ...p.nodeParams.ch1, hpfFreq: 300 }));
+    expect(undoRefusal(model, plan, moved, label, true)).toBe(t().status.undoHpfFreq("CH1 (300 Hz)"));
+  });
 });

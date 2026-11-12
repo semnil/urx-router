@@ -41,6 +41,8 @@ import {
   nameControl,
   planToCommands,
   planToCommandsUncollapsed,
+  hpfFreqLeftOut,
+  planToCommandOrigins,
   planToFollowOnlyAddrs,
   planToNameWrites,
   sendControl,
@@ -168,14 +170,67 @@ describe("planToCommands", () => {
   it("encodes HPF frequency in 0.1 Hz units on mono channels", () => {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
-    plan.nodeParams.ch1 = { hpfFreq: 120 };
-    plan.nodeParams.ch_5_6 = { hpfFreq: 120 };
+    plan.nodeParams.ch1 = { hpfFreq: 42.5 };
+    plan.nodeParams.ch_5_6 = { hpfFreq: 42.5 };
     const cmds = planToCommands(model, plan);
     const freq = cmds.find((c) => c.name === "HPF_FREQ");
-    // 120 Hz = broker 1200 at param 26:0:0; stereo channels have no HPF.
-    expect(freq!.vdValue).toBe(1200);
+    // 42.5 Hz = broker 425 at param 26:0:0; stereo channels have no HPF.
+    expect(freq!.vdValue).toBe(425);
     expect(uri(freq!)).toBe("/vd/parameters/26:0:0?operation=value");
     expect(cmds.filter((c) => c.name === "HPF_FREQ")).toHaveLength(1);
+  });
+
+  // 120 Hz was a detent of the earlier firmware and is not a stop of the 1.5 knob: a plan still
+  // holding it sends the stop below, the nearest.
+  it("sends an HPF frequency between two stops as the nearest stop", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { hpfFreq: 120 };
+    plan.nodeParams.ch2 = { hpfFreq: 41 };
+    const sent = planToCommands(model, plan)
+      .filter((c) => c.name === "HPF_FREQ")
+      .map((c) => `${c.node} ${c.vdValue}`);
+    expect(sent).toEqual(["ch1 1180", "ch2 400"]);
+  });
+
+  // The link refuses a write outside 40 … 120 Hz, and one refused command stops the whole
+  // write. A stop out there is therefore not emitted — and is followed instead, so a turn of
+  // the unit's own knob still reaches the plan.
+  it("leaves an HPF frequency outside the link's window out of the write, and follows it", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { hpfFreq: 250 };
+    plan.nodeParams.ch2 = { hpfFreq: 37.5 };
+    plan.nodeParams.ch3 = { hpfFreq: 125 };
+    plan.nodeParams.ch4 = { hpfFreq: 118 };
+    const hpf = (c: { name: string }): boolean => c.name === "HPF_FREQ";
+    expect(
+      planToCommands(model, plan)
+        .filter(hpf)
+        .map((c) => c.node),
+    ).toEqual(["ch4"]);
+    expect(hpfFreqLeftOut(model, plan)).toEqual([
+      { node: "ch1", hz: 250, y: 0 },
+      { node: "ch2", hz: 37.5, y: 1 },
+      { node: "ch3", hz: 125, y: 2 },
+    ]);
+    expect(
+      planToFollowOnlyAddrs(model, plan)
+        .filter(hpf)
+        .map((f) => `${f.node} ${f.param}:${f.x}:${f.y}`),
+    ).toEqual(["ch1 26:0:0", "ch2 26:0:1", "ch3 26:0:2"]);
+    // Nothing the emit builds after the skipped value is named as coming from it.
+    const fromHpfFreq = [...planToCommandOrigins(model, plan).values()].filter((o) => o?.endsWith("hpfFreq"));
+    expect(fromHpfFreq).toEqual([expect.stringContaining("ch4")]);
+  });
+
+  it("follows no HPF frequency the write carries, and names none as left out", () => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch1 = { hpfFreq: 40 };
+    plan.nodeParams.ch2 = { hpfFreq: 118 };
+    expect(hpfFreqLeftOut(model, plan)).toEqual([]);
+    expect(planToFollowOnlyAddrs(model, plan).filter((f) => f.name === "HPF_FREQ")).toEqual([]);
   });
 
   it("omits HPF on stereo channels", () => {

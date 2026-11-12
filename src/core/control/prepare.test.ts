@@ -82,7 +82,7 @@ describe("buildModifiedPlan value strategy", () => {
     expect(inRange(np.gainL, -8, 40)).toBe(true);
     expect(inRange(np.gainR, -8, 40)).toBe(true);
     expect(inRange(np.dGain, -24, 24)).toBe(true);
-    expect([40, 60, 100, 120]).toContain(np.hpfFreq);
+    expect([40, 60, 100, 118]).toContain(np.hpfFreq);
     expect(inRange(np.gate!.threshold, -72, -3)).toBe(true);
     expect(inRange(np.gate!.attack, 0.092, 80)).toBe(true);
     expect(inRange(np.gate!.hold, 0.02, 1960)).toBe(true);

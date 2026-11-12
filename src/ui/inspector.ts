@@ -13,6 +13,7 @@ import { clipNodeName, jackKey, LEVEL_MIN_DB, LEVEL_OFF_DB, processorOn, SSMCS_I
 import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels";
 import { hiZPatch, inputOnRefused, jackGainRange, jackIndex } from "../core/input-lock";
 import { formatHz, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
+import { nearestStepIndex } from "../core/control/comp-ratio";
 
 import {
   isFixedConnection,
@@ -68,9 +69,8 @@ import {
   D_GAIN_MAX_DB,
   D_GAIN_MIN_DB,
   HPF_FREQ_DEFAULT_HZ,
-  HPF_FREQ_MAX_HZ,
-  HPF_FREQ_MIN_HZ,
-  HPF_FREQ_STEP_HZ,
+  HPF_FREQ_STOPS_HZ,
+  hpfFreqLinkWritable,
   PAN_MIN,
   PAN_MAX,
   DELAY_TIME_MIN_MS,
@@ -776,16 +776,11 @@ export function renderInspector(
           boolToggle(m.inspector.hpf, np.hpf ?? false, (v) => actions.onUpdateNodeParams(node.id, { hpf: v })),
         );
         input.append(
-          rangeSlider(
-            m.inspector.hpfFreq,
-            HPF_FREQ_MIN_HZ,
-            HPF_FREQ_MAX_HZ,
-            HPF_FREQ_STEP_HZ,
-            np.hpfFreq ?? HPF_FREQ_DEFAULT_HZ,
-            (v) => `${v} Hz`,
-            (v) => actions.onUpdateNodeParams(node.id, { hpfFreq: v }),
+          hpfFreqSlider(m.inspector.hpfFreq, np.hpfFreq ?? HPF_FREQ_DEFAULT_HZ, liveActive, (v) =>
+            actions.onUpdateNodeParams(node.id, { hpfFreq: v }),
           ),
         );
+        if (liveActive) input.append(hint(m.inspector.hpfFreqLive));
       }
       // COMP/EQ type (COMP->EQ vs SSMCS) — the CH SETTING bank selector that drives
       // which COMP/EQ controls appear below. MONO IN channels only. Each type's bank
@@ -1671,6 +1666,30 @@ function snappedSlider(
   holdInertOnBlur(slider);
   row.append(slider);
   return row;
+}
+
+// The HPF frequency over the stops of the unit's knob. While Live sync is up the slider
+// offers only the stops the control link takes a write for: a stop outside that window
+// would be an edit the session cannot send. The readout still prints the value the plan
+// holds, which the unit's own knob can put outside it, and the thumb rests at the nearer end.
+function hpfFreqSlider(label: string, cur: number, liveActive: boolean, onChange: (hz: number) => void): HTMLElement {
+  const stops = liveActive ? HPF_FREQ_STOPS_HZ.filter(hpfFreqLinkWritable) : HPF_FREQ_STOPS_HZ;
+  const toPos = (hz: number): number => nearestStepIndex(stops, hz);
+  return snappedSlider(
+    label,
+    cur,
+    stops.length - 1,
+    toPos,
+    (pos) => stops[pos],
+    formatHz,
+    onChange,
+    (from, delta) => {
+      // A value past either end of what is offered moves onto that end, and no further out.
+      if (from > stops[stops.length - 1]) return delta < 0 ? stops[stops.length - 1] : from;
+      if (from < stops[0]) return delta > 0 ? stops[0] : from;
+      return stops[Math.min(stops.length - 1, Math.max(0, toPos(from) + delta))];
+    },
+  );
 }
 
 // EQ band frequency slider on a log scale (20 Hz … 20 kHz) so each octave gets

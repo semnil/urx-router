@@ -94,7 +94,7 @@ function richPlan(): Plan {
   plan.nodeParams.ch1 = {
     on: false,
     hpf: true,
-    hpfFreq: 120,
+    hpfFreq: 118,
     phase: true,
     compEqType: 0,
     gateOn: true,
@@ -172,7 +172,7 @@ describe("applyDeviceState round-trip", () => {
     expect(target.nodeParams.ch1.on).toBe(false);
     expect(target.nodeParams["in.micline_1_2"].gainL).toBe(-8);
     expect(target.nodeParams.ch1.hpf).toBe(true);
-    expect(target.nodeParams.ch1.hpfFreq).toBe(120);
+    expect(target.nodeParams.ch1.hpfFreq).toBe(118);
     expect(target.nodeParams["in.micline_1_2"].phantomL).toBe(true);
     expect(target.nodeParams["in.micline_1_2"].clipSafeL).toBe(true);
     expect(target.nodeParams.ch1.phase).toBe(true);
@@ -939,7 +939,7 @@ describe("applyDeviceState write overlay", () => {
 
   it("still reads every address the announcement does not name", async () => {
     const source = oneKnobPlan();
-    source.nodeParams.ch1 = { ...source.nodeParams.ch1, hpf: true, hpfFreq: 120 };
+    source.nodeParams.ch1 = { ...source.nodeParams.ch1, hpf: true, hpfFreq: 118 };
     const cmd = oneKnobCommand(source);
     mockVdGetFrom(staleTable(source, cmd));
 
@@ -947,7 +947,7 @@ describe("applyDeviceState write overlay", () => {
     await applyDeviceState(model, target, undefined, undefined, announced(cmd, 1));
 
     // One address is overlaid; the rest of the node is device truth as before.
-    expect(target.nodeParams.ch1.hpfFreq).toBe(120);
+    expect(target.nodeParams.ch1.hpfFreq).toBe(118);
   });
 
   it("reads a write the unit never announced rather than answering it from the write", async () => {
@@ -1081,13 +1081,13 @@ describe("applyDeviceState write overlay", () => {
     // the announcement, silent is asked for — and the pair is the point: handing over
     // only the announced subset would answer the second address on nothing at all.
     const source = oneKnobPlan();
-    source.nodeParams.ch1 = { ...source.nodeParams.ch1, hpf: true, hpfFreq: 120 };
+    source.nodeParams.ch1 = { ...source.nodeParams.ch1, hpf: true, hpfFreq: 118 };
     const knob = oneKnobCommand(source);
     mockVdGetFrom(staleTable(source, knob));
     // A different HPF frequency, so "read off the device" and "answered from the
     // announcement" cannot produce the same number.
     const moved = oneKnobPlan();
-    moved.nodeParams.ch1 = { ...moved.nodeParams.ch1, hpf: true, hpfFreq: 400 };
+    moved.nodeParams.ch1 = { ...moved.nodeParams.ch1, hpf: true, hpfFreq: 40 };
     const hpf = cmdFor(moved, "HPF_FREQ");
 
     const at = writeSettle.mark();
@@ -1105,7 +1105,7 @@ describe("applyDeviceState write overlay", () => {
     expect(wasRead(knob)).toBe(false);
     expect(target.nodeParams.ch1.eqOneKnob?.on).toBe(true);
     expect(wasRead(hpf)).toBe(true);
-    expect(target.nodeParams.ch1.hpfFreq).toBe(120);
+    expect(target.nodeParams.ch1.hpfFreq).toBe(118);
   });
 
   it("ignores an announcement that predates the address's own write", async () => {

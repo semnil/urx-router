@@ -18,6 +18,7 @@
 // comes from outside that cycle.
 import { COMP_RATIO_INF, COMP_RATIO_STEPS } from "./comp-ratio";
 import { DUCKER_DECAY_STOPS_MS, DYN_ATTACK_STOPS_MS, DYN_HOLD_STOPS_MS, DYN_RELEASE_STOPS_MS } from "./dyn-time-stops";
+import { preferredNumber, R40 } from "./preferred-numbers";
 
 // LEVEL fader / send range in dB (the device level_gain table, shared by every
 // fader, send and the monitor — UG "Range: -∞ dB to +10.00 dB"). The slider's
@@ -53,13 +54,35 @@ export const OSC_LEVEL_MAX_DB = 0;
 export const PAN_MIN = -63;
 export const PAN_MAX = 63;
 
-// HPF cutoff frequency (param 26): broker value is Hz×10 (the 0.1 Hz unit shared
-// with EQ frequency). Range 40 … 120 Hz, default 80 Hz, 20 Hz steps — i.e. the
-// five detents 40/60/80/100/120 Hz (confirmed by live scan: broker 400 … 1200).
-export const HPF_FREQ_MIN_HZ = 40;
-export const HPF_FREQ_MAX_HZ = 120;
-export const HPF_FREQ_STEP_HZ = 20;
+// HPF cutoff frequency (param 26): broker value is Hz×10 (the 0.1 Hz unit shared with EQ
+// frequency). On System 1.5 the unit's knob stops on the sixty values below, 20.0 … 600 Hz,
+// and the plan holds one of them. The control link is narrower than the knob: a write below
+// 40 Hz or above 120 Hz is refused, so the stops outside that window are read from the unit
+// and never sent to it (`hpfFreqLinkWritable`). 120 Hz itself is not a stop — the nearest is
+// 118 Hz. The stops are the R40 grades from 20 Hz up: 21.2, 22.4 … 560, 600.
+/** R40's offset for 20 Hz, the knob's lowest stop. */
+const HPF_FREQ_FIRST_GRADE = 52;
+export const HPF_FREQ_STOPS_HZ: readonly number[] = Array.from({ length: 60 }, (_, i) =>
+  preferredNumber(R40, HPF_FREQ_FIRST_GRADE + i),
+);
+export const HPF_FREQ_MIN_HZ = HPF_FREQ_STOPS_HZ[0];
+export const HPF_FREQ_MAX_HZ = HPF_FREQ_STOPS_HZ[HPF_FREQ_STOPS_HZ.length - 1];
+/** The window the control link takes a write in, in Hz. */
+export const HPF_FREQ_LINK_MIN_HZ = 40;
+export const HPF_FREQ_LINK_MAX_HZ = 120;
 export const HPF_FREQ_DEFAULT_HZ = 80;
+
+/** The stop nearest `hz`: what the plan holds for it, and what the unit's knob can set. */
+export function hpfFreqStop(hz: number): number {
+  let best = HPF_FREQ_STOPS_HZ[0];
+  for (const stop of HPF_FREQ_STOPS_HZ) if (Math.abs(stop - hz) < Math.abs(best - hz)) best = stop;
+  return best;
+}
+
+/** Whether the control link takes a write of this HPF frequency. */
+export function hpfFreqLinkWritable(hz: number): boolean {
+  return hz >= HPF_FREQ_LINK_MIN_HZ && hz <= HPF_FREQ_LINK_MAX_HZ;
+}
 
 // Output 4-band parametric EQ band values (verified on STEREO/MIX by live scan):
 //   freq: Hz×10 (the 0.1 Hz unit), 20 Hz … 20 kHz (broker 200 … 200000).
@@ -311,17 +334,17 @@ export function vdToGain(value: number): number {
   return clamp(Math.round(value / 100), GAIN_MIN_DB, GAIN_MAX_DB);
 }
 
-/** Plan HPF frequency (Hz) → broker 0.1 Hz units. */
+/** Plan HPF frequency (Hz) → broker 0.1 Hz units. Bounded to the knob's range; whether the
+ *  link takes the value is `hpfFreqLinkWritable`, asked by the emit before it builds one. */
 export function freqToVd(hz: number): number {
   return clamp(Math.round(hz * 10), HPF_FREQ_MIN_HZ * 10, HPF_FREQ_MAX_HZ * 10);
 }
 
-// Broker 0.1 Hz units → plan HPF frequency (Hz). Like vdToGain/vdToEqFreq, the
-// round is a no-op for real device values: hardware readback returned only
-// whole-Hz raws (multiples of 10), so the device's native frequency resolution is
-// whole Hz despite the broker's 0.1 Hz unit. Defensive, never observed to lose a value.
+/** Broker 0.1 Hz units → plan HPF frequency (Hz), on the stop nearest it. The unit can hold a
+ *  value between two stops — one written over the link, or the 120 Hz a unit carries over from
+ *  the firmware before 1.5 — and the plan reads it as the stop nearest it. */
 export function vdToFreq(value: number): number {
-  return clamp(Math.round(value / 10), HPF_FREQ_MIN_HZ, HPF_FREQ_MAX_HZ);
+  return hpfFreqStop(value / 10);
 }
 
 /** Plan EQ band frequency (Hz) → broker 0.1 Hz units (20 Hz … 20 kHz). */

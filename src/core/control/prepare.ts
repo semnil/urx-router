@@ -149,7 +149,7 @@ const RANGES: Record<string, [number, number]> = {
 // Enum / detent fields written by cycling a legal option list (never a blind +1,
 // which would drive a small enum out of range). hpfFreq skips its 80 Hz default.
 const OPTIONS: Record<string, number[]> = {
-  hpfFreq: [40, 60, 100, 120],
+  hpfFreq: [40, 60, 100, 118],
   "comp.knee": [0, 1, 2],
   "ssmcs.comp.knee": [0, 1, 2],
 };

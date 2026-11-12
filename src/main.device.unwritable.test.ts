@@ -838,3 +838,47 @@ describe("a value the unit holds and the app cannot write", () => {
     expect(shownLpf()).toBe(lpf.format!(BELOW, {}));
   });
 });
+
+// The unit's own knob sets the HPF frequency on sixty stops from 20 to 600 Hz, and the control
+// link takes a write only inside 40 … 120 Hz. A stop outside that window is a value the unit
+// holds and the app cannot write — a different kind from the ones above, since it is a value
+// the unit's panel does offer: the plan keeps it as read, and the write leaves it out.
+describe("an HPF frequency the unit holds outside what the control link writes", () => {
+  const HPF_CH1 = `${PARAMS.HPF_FREQ.id}/0/0`;
+  const hpfWrites = (shell: TauriShell): number[] =>
+    shell.invokes.flatMap((cmd, i) =>
+      cmd === "vd_set" && shell.args[i]?.paramId === PARAMS.HPF_FREQ.id ? [shell.args[i]!.value as number] : [],
+    );
+  const shownHpf = (): string => {
+    pressNode("ch1");
+    return paramRow(t().inspector.hpfFreq).querySelector(".param-val")?.textContent ?? "";
+  };
+
+  it("reads it as it stands, leaves it out of the write, and says so on the write's line", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [HPF_CH1]: 2500 });
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownHpf()).toBe("250 Hz");
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(hpfWrites(shell), "no HPF frequency is written at all: the others already match").toEqual([]);
+    expect(statusText()).toContain(t().status.hpfFreqNotSent("CH 1", 1));
+    // …and the plan still holds what the unit does.
+    expect(shownHpf()).toBe("250 Hz");
+  });
+
+  // 120 Hz is what a unit carries over from the firmware before 1.5, and no stop of the knob:
+  // the plan reads the stop below it, and a write puts the unit on that stop.
+  it("reads 120 Hz as 118 Hz, and writes 118 Hz", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [HPF_CH1]: 1200 });
+    $("btn-fetch").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shownHpf()).toBe("118 Hz");
+
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect", 2);
+    expect(hpfWrites(shell)).toEqual([1180]);
+    expect(statusText()).not.toContain("HPF Freq");
+  });
+});

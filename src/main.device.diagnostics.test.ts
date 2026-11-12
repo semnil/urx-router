@@ -289,6 +289,39 @@ describe("the device self-test", () => {
     expect(shell.count("vd_set")).toBe(0);
   });
 
+  // An address the capture could not read and the sweep could not read first either has no
+  // record of what it held: the run does not start, and says it is this refusal — an output
+  // patch carries no head, so it is not the one above.
+  it("says a run that could not read an address it would have to put back did not start", SLOW, async () => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok", experimental_enabled: true });
+    const read = table.vd_get as (a: Record<string, unknown>) => number;
+    table.vd_get = (a: Record<string, unknown>) => {
+      if (a.paramId === PARAMS.OUT_PATCH_MAIN.id && a.y === 1) throw new Error("timeout");
+      return read(a);
+    };
+    const shell = (await bootApp({ tauri: table }))!;
+    const btn = await selfTestBtn();
+    btn.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestRefused), { timeout: 25_000 });
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
+  // A unit whose own knob put a channel's HPF frequency outside the 40 … 120 Hz the control link
+  // writes: the run could move it and not put it back, so it does not start, and the status says
+  // what to do on the unit.
+  it("says a run on a unit holding an HPF frequency the link cannot write did not start", SLOW, async () => {
+    const shell = (await bootApp({
+      tauri: deviceCommands(
+        { "plugin:dialog|message": "Ok", experimental_enabled: true },
+        { [`${PARAMS.HPF_FREQ.id}/0/1`]: 2500 },
+      ),
+    }))!;
+    const btn = await selfTestBtn();
+    btn.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestRefusedHpfFreq), { timeout: 25_000 });
+    expect(shell.count("vd_set")).toBe(0);
+  });
+
   // A run that cannot open its own link surfaces as a dialog and lets the latch go.
   it("reports a run that cannot open its own link, and holds nothing afterwards", SLOW, async () => {
     const log = captureWarnings();

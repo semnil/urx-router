@@ -522,8 +522,9 @@ carries a one-line map of the same directories and points here.
   wording is chosen by `touch.fields.size === 1`: an entry that moved something else too says the whole step
   is held back, since naming only the rate leaves the collateral edits refused in silence. It is a deferral,
   not a discard: the refusal runs on a peeked entry before `take()`, and `deactivateLive` does not reset the
-  history), and for a patch whose RESULT the host refuses (`patchBlocked` — the +48V / HI-Z exclusion and
-  a wiring the unit cannot hold (`app/undo-refusal.ts`), asked of the state the patch would leave rather
+  history), and for a patch whose RESULT the host refuses (`patchBlocked` — the +48V / HI-Z exclusion,
+  a wiring the unit cannot hold and, while Live sync is up, an HPF frequency the control link cannot take
+  (`app/undo-refusal.ts`), asked of the state the patch would leave rather
   than of the keys it carries; `peekUndo` answers with the
   patch that would land, which is the entry's inverse). A text field / textarea / `contenteditable` keeps the chord (no `preventDefault`) — measured on
   macOS: the page receives `Cmd+Z` even with a native Edit menu installed, and `preventDefault` is what
@@ -737,7 +738,8 @@ carries a one-line map of the same directories and points here.
   the load, or a Fetch / Live-sync start that found the unit on NONE (see "A plan that names no STREAMING
   source") /
   `undo-refusal.ts` why an undo / redo entry is held back, judged on the plan it would leave: +48V and HI-Z
-  both on for a channel, an input that takes one source left with two, or STREAMING left with none. The
+  both on for a channel, an input that takes one source left with two, STREAMING left with none, or —
+  while Live sync is up — an HPF frequency outside the 40 … 120 Hz the control link writes. The
   states it refuses are ones no surface produces, so a case reaches them by handing it that plan
 
 - `src-tauri/` — Rust shell. Webview host + tauri-plugin-dialog + file IO commands
@@ -2789,6 +2791,7 @@ array address it wrote. So the silence is about the front panel, not about the a
 | microSD Rec Track Count (839) | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node 839 lands on, and the only address that read touches |
 | the FX delay time the unit computes (681 / 685, slot 6) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
 | a jack's +48V / A.Gain / Clip Safe / HI-Z (0 / 1 / 5 / 6) | no channel reads the jack, so the write leaves it out ([the input stage](#the-input-stage-on-the-jack-and-the-source)) | the **MIC/LINE node** — its scoped read re-reads both jacks, even for A.Gain, which a read jack follows directly |
+| a channel's HPF frequency (26) | while the plan holds a stop outside 40 … 120 Hz: the unit's knob sets 20 … 600 Hz and the broker refuses a write outside that window, so the emit sends nothing there (`hpfFreqSent`) | the **channel** — its scoped read re-reads `hpfFreq` |
 | STREAMING source select (705 / 706) | while the plan holds no STREAMING wire: its list on the unit has no None, so the emit sends nothing there rather than NONE (`leavesUnsourced`) | **`bus.stream`** — its scoped read takes the source back with the node's DELAY |
 
 The third is not a read-only ADDRESS at all, which is why the heading above says cases. Slot 6 is written like
@@ -2801,6 +2804,11 @@ one deriving it, which is what makes the emitted set and this one exact compleme
 The fourth has the third's shape: STREAMING's source is written whenever the plan holds a STREAMING wire and joins
 this list only while it holds none, so it too takes the plan as well as the model. The unit announces a source
 picked on its own panel there, as it announces a write (see "A plan that names no STREAMING source").
+
+The HPF frequency has that shape as well: it is written while the plan holds one of the twenty stops from 40 to
+118 Hz and joins this list only while it holds a stop outside them. The plan keeps that stop as the unit's knob
+set it; a write names the channels it left out on its status line (`hpfFreqLeftOut`), and during Live sync the
+Inspector offers only the stops the session can send.
 
 All of them are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside the emit decision they mirror, so the
 registration and the write suppression cannot drift apart; `live.ts` consumes that list the same way it consumes
@@ -3023,6 +3031,7 @@ the rate leaves that entry too.
 | An edit made while a Fetch's or Live-sync start's read carries a model switch | on the board, before it writes anything (`planTakesEdits`); everywhere else `markChanged`, which puts the plan back to the state the read began from; both say so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
 | A gesture still in progress on the plan a switch replaces | the surface holding it, as the plan is replaced — the board (`Graph.setModel` handed another plan), the inspector (rebuilt past its gate, its actions answering only for the plan the panel was built for), a tuning screen (`refresh`) and the CONSOLE (`render`, which hands keyboard focus on only across a rebuild of the same plan) | the plan the gesture began on is gone, so a pointer or a key still held writes nothing into the one that replaced it |
 | A `sampleRate` patch while the rate is locked (any device action but a live session that takes the rate — the whole device in scope, Follow USB off) | refused whole, with the wording naming what holds the rate (`rateHold`: a device action, the Scene only scope, Follow USB) and chosen by whether the entry touched anything else | a partial undo would leave a state no gesture produced |
+| An undo / redo whose result would put an HPF frequency outside 40 … 120 Hz while Live sync is up | `patchBlocked` on the peeked entry, over the state the patch would create (`hpfFreqLeftOut`, for a channel whose frequency the entry moves) | the session sends what the plan holds and the control link refuses a write there, so the plan and the unit would part; offline the plan keeps such a stop |
 | An undo / redo whose result would leave +48V and HI-Z both on for a jack | `patchBlocked` on the peeked entry, over the state the patch would create | the app never turns one of the two on while the other is on, and an undo turns one on as much as the gesture it reverses did |
 | An undo / redo whose result would leave an input that takes one source with two, or STREAMING with none | `patchBlocked` on the peeked entry (`wireShapeBroken`), over the state the patch would create | the board never draws either — a drop onto an occupied input replaces its wire — and replaying an entry after a device read moved that input's source under it would |
 | An ON of +48V / HI-Z made while a device read was in flight, on a jack where that read finds the other one on | `readIntoPlan`, after the merge (`readRefusedSwitches`): the switch and the keys the witness saw the same edit write go back to the read's values, and the edit leaves the undo stack (`PlanHistory.retract`). In a live session, an ON its flush already sent is on the unit and is not refused (`SwitchSession.holdsOn`), and an ON the flush held back that the merge replaced with the read's value is reported and retracted the same way (`unsentRefusedSwitches`) | the surface asked the rule of a plan that had not heard what the unit holds; the unit's own switch is what the read found, and it stays |
@@ -3400,6 +3409,9 @@ listed here so they are not proposed as gaps:
    different or cannot read joins the ones the restore has no command for — read before the sweep and
    written back after the restore, with an address that cannot be read then refusing the run (`diag.captureUnheld`
    lists them). **A head is not put back that way: the run refuses instead** (`refusal: "sideEffectUnheld"`).
+   **So does a unit holding an HPF frequency outside 40 … 120 Hz** (`refusal: "hpfFreqUnwritable"`): the
+   write carries no command for a stop the control link refuses, and the linked block has the unit copy a
+   pair's primary onto its secondary, so a pass could move it and nothing could write it back.
    When an address bound for that write-back is a `sideEffect` param — an insert-FX selector, Signal Type, a
    COMP/EQ order, an EQ 1-knob switch — on a node the capture could not read, writing it after the restore
    would refill or reset values that nothing then compares, so the run declines before the sweep, writes
@@ -4485,8 +4497,10 @@ An undo is refused, with the reason on the status line and **without spending th
   nothing but `sampleRate`). Either way the entry is held back, not lost — the refusal runs on a peeked
   entry and nothing consumes it, and once the action ends the same press works;
 - the host refuses the state the patch would leave behind (`patchBlocked`, decided in
-  `app/undo-refusal.ts`) — the +48V / HI-Z exclusion, and a wiring the unit cannot hold (an input that
-  takes one source left with two, or STREAMING with none; status `undoWireShape`). The +48V / HI-Z one
+  `app/undo-refusal.ts`) — the +48V / HI-Z exclusion, a wiring the unit cannot hold (an input that
+  takes one source left with two, or STREAMING with none; status `undoWireShape`), and, while Live sync
+  is up, an HPF frequency outside the 40 … 120 Hz the control link writes (status `undoHpfFreq`; offline
+  the plan keeps such a stop, so the same press works once the session has ended). The +48V / HI-Z one
   is the exclusion an entry can otherwise walk around, since its patch is applied whole and nothing
   between the edit that recorded it and this asks what the two switches end up at. Asked of the state
   rather than of the keys, because an undo turns a switch on as much as the gesture it reverses did,
@@ -4922,7 +4936,7 @@ the plan onto the bound. A node-param leaf has no `paramRangeAddrs` entry; its a
 whose value came from it (`planToCommandOrigins`), so a value the emit sends to every linked instance — a
 MIX bus's 1-knob level, a stereo channel's gain — is taken back only once each of them is confirmed. It is
 taken back only where holding the bound sends what was sent at those addresses, which a leaf the load bounds
-to a narrower window than its encoder does (a gain, the oscillator level, the HPF frequency) meets only where
+to a narrower window than its encoder does (a gain, the oscillator level) meets only where
 the encoder's clamp lands on the bound; elsewhere the unit holds the value the write let through
 (`app/adopt-writes.ts`).
 

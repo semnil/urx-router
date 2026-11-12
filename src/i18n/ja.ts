@@ -340,6 +340,8 @@ export const ja: Messages = {
     toSt: "TO ST",
     hpf: "HPF",
     hpfFreq: "HPF Freq",
+    hpfFreqLive:
+      "ライブ同期中にここで設定できるのは 40〜118 Hz です。デバイスの制御接続が 40〜120 Hz の外の値を受け付けないためです。20〜600 Hz は本体のノブで設定できます。",
     phantom: "+48V",
     phase: "Ф",
     phaseName: "フェーズ",
@@ -763,6 +765,8 @@ export const ja: Messages = {
     writeNoChanges: "デバイスは計画と一致しています — 書き込む変更はありません",
     writeNamesNotSent: (strips: string): string =>
       `書き込む変更はありません — ${strips} の名前は空のため送信せず、デバイスは自身の名前を保ちます`,
+    hpfFreqNotSent: (strips: string): string =>
+      `${strips} の HPF Freq は 40〜120 Hz の外のため送信せず、デバイスは自身の値を保ちます`,
     written: (n: number): string => `${n} 件の設定をデバイスに書き込みました`,
     writePartial: (n: number, failed: number): string => `${n} 件書き込み、${failed} 件失敗`,
     writeStopped: (n: number, notSent: number): string => `失敗のため書き込みを停止: ${n} 件送信、${notSent} 件未送信`,
@@ -780,6 +784,8 @@ export const ja: Messages = {
       "セルフテストを開始しませんでした — 復元に必要なパラメーターの一部を事前に読み取れませんでした。デバイスには何も書き込んでいません。",
     selfTestRefusedHead:
       "セルフテストを開始しませんでした — 書き込むと他の設定も変わる設定をデバイスから読み取れませんでした。デバイスには何も書き込んでいません。",
+    selfTestRefusedHpfFreq:
+      "セルフテストを開始しませんでした — HPF Freq が 40〜120 Hz の外にあるチャンネルがあり、制御接続からは書き込めないため、復元できません。先に本体でこの範囲に入れてください。デバイスには何も書き込んでいません。",
     selfTestModelMismatch: (device: string, model: string): string =>
       `セルフテストを開始しませんでした — 接続中のデバイスは ${device} で、${model} ではありません。デバイスには触れていません。`,
     selfTestCancelled: "セルフテストを中止しました — デバイスは無音状態です。元に戻すには再度取得してください",
@@ -848,6 +854,8 @@ export const ja: Messages = {
       `この操作は ${channels} で +48V と Hi-Z を両方オンにします — どちらかを切ってからやり直してください。操作は保留しました。破棄はしていません`,
     undoWireShape: (receivers: string): string =>
       `この操作は ${receivers} を本体が持てない結線にします — 1 本しか受けない入力に 2 本、または STREAMING のソースが無い状態です。操作は保留しました。破棄はしていません`,
+    undoHpfFreq: (channels: string): string =>
+      `この操作は ${channels} の HPF Freq を 40〜120 Hz の外にします — ライブ同期では送信できない値のため、操作は保留しました。破棄はしていません`,
     midiBusy: "本体との通信中またはファイル操作中です — 完了するまで MIDI 入力は無視されます",
     themeDark: "ダークモードに切り替えました",
     themeLight: "ライトモードに切り替えました",

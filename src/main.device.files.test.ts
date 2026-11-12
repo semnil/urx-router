@@ -10,6 +10,7 @@ import { $, bootApp, deviceCommands, statusText, unwrittenRead } from "./main.te
 import type { TauriShell } from "./main.test-util";
 import { PARAMS } from "./core/control/params";
 import { channelControl, sendControl } from "./core/control/translate";
+import { applySourceState } from "./core/control/readback";
 import { getModel } from "./models";
 import { defaultPlan } from "./models/initial-state";
 import type { Plan } from "./core/plan";
@@ -855,6 +856,51 @@ describe("importing a settings file", () => {
         [...g.querySelectorAll("text")].some((el) => el.textContent === "?"),
       );
       expect(flagged).toHaveLength(0);
+    });
+
+    // A file that carries an HPF frequency outside the 40 … 120 Hz the control link writes. The
+    // import is written to the unit as an edit, less that value: the plan takes it, the session
+    // sends nothing for it, and the import's line says which channel.
+    //
+    // The file answers every number the read of CH 1 asks for: the ids are collected from a read
+    // against a source that answers them all, so the list is the reader's own.
+    it("says which HPF frequency of the file it could not send", SLOW, async () => {
+      const model = getModel("URX44V");
+      const numbers = new Set<number>();
+      const strings = new Set<number>();
+      await applySourceState(model, defaultPlan("URX44V"), {
+        get: async (id, x) => (numbers.add(id + x), 0),
+        getStr: async (id, x) => (strings.add(id + x), ""),
+      });
+      const HPF = PARAMS.HPF_FREQ.id;
+      const fields: Field[] = [
+        ...[...numbers].map((id): Field => ({
+          id,
+          typecode: 1,
+          elemSize: 4,
+          // CH 1 at 250 Hz, a stop of the knob outside the window; CH 2 at 100 Hz, inside it;
+          // CH 3 at the 300 Hz the unit already holds, which the import therefore does not move.
+          values: Array.from({ length: 64 }, (_, y) => (id === HPF ? ([2500, 1000, 3000][y] ?? 800) : 0)),
+        })),
+        ...[...strings].map((id): Field => ({ id, typecode: 4, elemSize: 16, values: Array(64).fill("") })),
+      ];
+      let line = "";
+      const shell = await liveImport(
+        buildUrxf([{ chunk: "CURRENT", block: "CSF_BACKUP", label: "", fields }]),
+        { ...unit(false), [`${HPF}/0/2`]: 3000 },
+        (message) => {
+          if (message === t().confirm.deviceErrorExport) line = statusText();
+          return "Ok";
+        },
+      );
+      const from = await importNow(shell);
+      await imported();
+      if (!line) line = statusText();
+      // CH 1 alone: CH 3's frequency is outside the window too, and is the unit's own.
+      expect(line).toContain(t().status.hpfFreqNotSent("CH 1", 1));
+      expect(line).not.toContain("CH 3");
+      // CH 2's is inside the window and goes out; CH 1's never does.
+      await vi.waitFor(() => expect(written(shell, HPF, from)).toEqual([1000]), { timeout: 15_000 });
     });
   });
 

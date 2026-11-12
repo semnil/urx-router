@@ -463,6 +463,9 @@ export const en = {
     toSt: dev("TO ST"),
     hpf: dev("HPF"),
     hpfFreq: dev("HPF Freq"),
+    hpfFreqLive: tr(
+      "During Live sync this takes 40 to 118 Hz — the device's control connection refuses a value outside 40 to 120 Hz. The unit's own knob sets 20 to 600 Hz.",
+    ),
     phantom: dev("+48V"),
     phase: dev("Ф"),
     // What the Ф row is announced as.
@@ -998,6 +1001,10 @@ export const en = {
     writeNoChanges: tr("Device already matches the plan — nothing to write"),
     writeNamesNotSent: (strips: string, count: number): string =>
       `Nothing to write — ${count === 1 ? "the name of" : "the names of"} ${strips} ${count === 1 ? "is" : "are"} empty and not sent, so the device keeps its own`,
+    // Appended to a write's status: an HPF frequency the plan holds on a stop the control link
+    // refuses is left out of the write.
+    hpfFreqNotSent: (strips: string, count: number): string =>
+      `the HPF Freq of ${strips} ${count === 1 ? "is" : "are"} outside 40 to 120 Hz and not sent, so the device keeps its own`,
     written: (n: number): string => `Wrote ${n} setting${n === 1 ? "" : "s"} to the device`,
     writePartial: (n: number, failed: number): string => `Wrote ${n}, ${failed} failed`,
     writeStopped: (n: number, notSent: number): string =>
@@ -1018,6 +1025,9 @@ export const en = {
     ),
     selfTestRefusedHead: tr(
       "Self-test did not start — a setting whose write changes other settings could not be read from the device. The device was not touched.",
+    ),
+    selfTestRefusedHpfFreq: tr(
+      "Self-test did not start — a channel's HPF Freq is outside 40 to 120 Hz, which the control connection cannot write, so the run could not restore it. Set it inside that range on the unit first. The device was not touched.",
     ),
     selfTestModelMismatch: (device: string, model: string): string =>
       `Self-test did not start — the connected device is ${device}, not ${model}. The device was not touched.`,
@@ -1098,6 +1108,10 @@ export const en = {
       `This step would leave +48V and Hi-Z both on for ${channels} — turn one of them off there first; the step is held back, not lost`,
     undoWireShape: (receivers: string): string =>
       `This step would leave ${receivers} with a connection the unit cannot hold — two sources on one input, or STREAMING with none; the step is held back, not lost`,
+    // Only while Live sync is up: the session cannot send the value, so the plan and the unit
+    // would part. The same press works once the session has ended.
+    undoHpfFreq: (channels: string): string =>
+      `This step would set the HPF Freq of ${channels} outside 40 to 120 Hz, which Live sync cannot send — the step is held back, not lost`,
     midiBusy: tr("Busy with the device or a file — incoming MIDI is ignored until it finishes"),
     themeDark: tr("Switched to dark mode"),
     themeLight: tr("Switched to light mode"),

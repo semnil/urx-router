@@ -96,6 +96,32 @@ ends, and neither the CONSOLE's CUE chips, the inspector's CUE row nor a MIDI co
 assigned to a CUE switch one. A chip can still be armed for MIDI learn, so a control
 can be assigned to it.
 
+## An HPF frequency outside 40–120 Hz cannot be written to the device
+
+Since System firmware V1.5 the unit's own **[HPF Freq.]** knob sets 20.0 to 600 Hz, in sixty
+stops. The control connection is narrower than the knob: it refuses a write outside 40–120 Hz,
+and the range it publishes for the parameter is still 40–120 Hz.
+
+URX Router therefore holds any of the sixty stops in a plan and reads whatever the unit holds,
+but writes only the twenty stops from 40 to 118 Hz:
+
+- **Write to device** leaves an HPF frequency outside 40–120 Hz out of the write. The status
+  line names the channels, and the unit keeps its own value there.
+- **During Live sync** the Inspector's *HPF Freq* offers 40 to 118 Hz. A frequency the unit's
+  knob puts outside that range is shown and followed, and an undo that would put one back is
+  held until the session ends.
+- **120 Hz is not one of the stops** — the nearest are 118 and 125 Hz. A plan holding 120 Hz
+  opens on 118 Hz, and a unit still holding 120 Hz from the earlier firmware reads as 118 Hz;
+  a write then sets it to 118 Hz.
+- The device self-test (an `--experimental` launch) does not start while a channel's HPF
+  frequency is outside 40–120 Hz, since it could not put that value back.
+
+> Confirmed on a URX44V (System 1.5.0.1, Device Center 2.3.0) by turning the unit's knob
+> through its range while reading the parameter, and by writing values inside and outside the
+> window. The knob was read stop by stop over the whole range, turned without pushing and
+> turned while pushed in: the same sixty stops either way. A 42.5 Hz written over the control
+> connection reads 42.5 on the unit's screen. Not measured on the URX22 or the URX44.
+
 ## Live control is hardware-verified on the URX44V and the URX22
 
 Live device control was developed against a real **URX44V** and checked on a real
