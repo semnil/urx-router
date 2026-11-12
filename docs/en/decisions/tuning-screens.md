@@ -115,3 +115,27 @@ theme and from 72.8 to 74.2 in the dark one, against a floor of 60.
   the bound node, the `attachTo` host, and the node a KEY wire starts from (the ducker's KEY lane
   reads another node's Rec Point). **The full branch's `refresh()` is not guarded**: the two
   reconcile hooks add nothing to the dirty-node set, so an empty list is the normal case there.
+
+## Insert FX tuning screens
+
+**Decisions (2026-08-20, settled in conversation; not raised again).**
+
+- There is no TYPE segment inside the screen.
+- The CONSOLE's INS FX disclosure stays a popover.
+- The guitar amp is a grid of knobs with its columns reversed.
+- The head height is fixed, and was raised.
+- The Compander's W and T markers use `--plot-dim`.
+- There is no gain-reduction tile; the peak is written at the corner of the plot.
+- Every control but Pitch Fix's has a MIDI id.
+
+An eighth, "Pitch Fix's MIDI Control is read-only", was withdrawn by the operator on 2026-08-29.
+
+**M.B.Comp has four faces** (MAIN / LOW / MID / HIGH). Carrying over the guitar amp's single face
+was a mistake: the amp is one processor with fifteen values, and this is three processors plus
+values for the whole effect.
+
+## FX EFFECT tuning screen
+
+**Decision.** The design of this screen was written as decisions only. No parameter value was copied
+into it: what a specimen shows is computed from the factory defaults through the calibration, so a
+copied value cannot go stale.
