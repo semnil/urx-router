@@ -80,7 +80,7 @@ export const SENDS_TARGET_PATH = "ui.sendsTarget";
  *  the unit's cursor moves: `unitTookOwn`) and bank (until it moves onto a row one bank alone lists),
  *  the microSD folder and file, the User Defined Knobs
  *  bank on show. */
-const GLASS_OWN = new Set([
+export const GLASS_OWN = new Set([
   "sd.playing",
   "sd.playingFile",
   "setup.outputPatch.tab",
