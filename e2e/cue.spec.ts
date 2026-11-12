@@ -474,6 +474,30 @@ test("a switch of the CUE Mode in the app turns the cues it shows off, and the u
   await expect(mode(page, "last")).toHaveAttribute("aria-pressed", "true");
 });
 
+// The mode is read with the flags, so one that moved with no announcement heard is taken at the
+// next read of them — here the read behind a cue written from the app.
+test("a read of the flags takes the CUE Mode the unit holds", async ({ page }) => {
+  await goLive(page);
+  await expect(mode(page, "mix")).toHaveAttribute("aria-pressed", "true");
+  await setDeviceValue(page, CUE_MODE, 0, 1);
+  await page.click("#btn-view-console");
+  await chip(page, "ch1").click();
+  await expect(mode(page, "last")).toHaveAttribute("aria-pressed", "true");
+  await expect(readout(page)).toHaveText("CUE CH 1");
+  expect(await modeWrites(page)).toEqual([]);
+});
+
+// A switch on the unit is announced as the mode alone, so the flags are read back behind it:
+// what the unit holds afterwards is what is shown, whatever the app expected it to clear.
+test("the flags are read back behind a CUE Mode switched on the unit", async ({ page }) => {
+  await goLive(page);
+  await setDeviceValue(page, CUE_STEREO, 0, 1);
+  await setDeviceValue(page, CUE_MODE, 0, 1);
+  await notifyParam(page, CUE_MODE, 0, 1);
+  await expect(mode(page, "last")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#cue-bar-names")).toHaveText("CUE STEREO (MAIN)");
+});
+
 // The unit keeps [CUE Mode] on its MONITOR screen, so each MONITOR node's panel carries it too.
 const cueModeRow = (page: Page) => page.locator('#inspector .param[data-param-label="CUE Mode"]');
 

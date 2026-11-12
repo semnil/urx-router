@@ -1523,6 +1523,22 @@ describe("the unit's CUE Mode", () => {
     expect(errors(shell)).toEqual([]);
   });
 
+  // Two presses in a row: the unit's answer to the first arrives after the second was made, and
+  // is that write's answer rather than a switch back.
+  it("does not take the answer to an earlier switch of its own for a switch on the unit", SLOW, async () => {
+    const shell = await bootDevice();
+    await up();
+    $("cue-mode-last").click();
+    $("cue-mode-mix").click();
+    await vi.waitFor(() => expect(modeWrites(shell)).toEqual([1, 0]), { timeout: 25_000 });
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 1 }]);
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 0 }]);
+    await quiet(shell);
+    expect(barShows()).toBe("true/false");
+    expect(modeWrites(shell)).toEqual([1, 0]);
+    expect(errors(shell)).toEqual([]);
+  });
+
   // A switch turns every cue off on the unit and announces none of those flags, so the cue
   // shown here goes with the press, ahead of the read behind the write.
   it("turns the cues it shows off with a switch", SLOW, async () => {
