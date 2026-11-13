@@ -74,7 +74,7 @@ pub(crate) fn saved_window_state(app: &tauri::AppHandle, label: &str) -> Option<
     saved
 }
 
-// The display scale each remembered rectangle was measured at, kept beside the
+// The display scale each remembered rectangle was saved at, kept beside the
 // window-state plugin's file rather than in it.
 //
 // `.window-state.json` holds a rectangle in physical pixels and records NOTHING about
@@ -207,7 +207,7 @@ pub(crate) fn save_window_scales(app: &tauri::AppHandle) {
 //
 // BOTH windows opt out of the plugin's restore and keep its saving: it applies a
 // remembered rectangle as physical pixels, which is not a rectangle any more once the
-// display it was measured on and the one the window is born on disagree about scale
+// display it was saved on and the one the window is born on disagree about scale
 // (`restore_window` says why, `winfit`'s header has the measurement). What is left of
 // the plugin here is the half that works — the saving, which re-reads the live window
 // at each capture and is therefore always self-consistent.
