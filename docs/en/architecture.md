@@ -1132,7 +1132,7 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
   pair copies values onto its partner's unused side. That write-back is tried up to three times, each pass after
   the first writing only what the one before left different, since one value of the set can reset another and
   nothing converges behind it; what still differs then is counted in the restore's residual. On a URX44V the same
-  set also carries slot 1 of the Guitar Amp engine (`697:0:1`) when no input holds that effect before the run.
+  set also carries slot 1 of the Guitar Amp engine when no input holds that effect before the run.
   Slot 1 is the engine's ON: while an input holds the engine it follows that input's INS FX ON, which the restore
   writes, but a pass that selects the effect and releases it again leaves the engine held by nothing, and the
   release does not always turn slot 1 off. Writing it with nothing holding the engine is confirmed on the URX44V
@@ -1536,7 +1536,7 @@ bottom at the lowest real detent (−96 dB). The ladder is split into **three co
 **absolute dBFS** (not the lit height): green ≤ -18 dBFS / yellow -18 to -9 dBFS / red -9 to 0 dBFS. The boundaries
 match the EBU R68-2000 reference levels (alignment level -18 dBFS / permitted maximum level -9 dBFS); the threshold
 constants live in `core/meters.ts` (`METER_GREEN_TOP_DB` / `METER_YELLOW_TOP_DB`). A separate **OVER box** sits just
-above the 0 dB top (clipping ≠ the level ceiling); it lights red on a device clip (raw 32767) via a per-channel over latch and decays over ~1 s.
+above the 0 dB top (clipping ≠ the level ceiling); it lights red on a device clip via a per-channel over latch and decays over ~1 s.
 On a **stereo** tap (`isStereoTap` — the tap carries a second `r` meter address), the ladder and OVER frames stay undivided but each hold **two bar
 columns and two clip cells** (`.mtrcol.l/.r`, `.lit.l/.r`, a 2px centre gap between), so L and R meter and clip independently; a mono strip keeps a
 single column. The strip's meter state is a `MeterLane[]` (one entry mono, two stereo) that `paintMeters` steps by index (lane 0 = L, lane 1 = R). The scale
@@ -1556,8 +1556,8 @@ rest of the scribble, under the LED's, and the hidden side's number dims ("CH 5/
 shown). It arms no MIDI control. Below it sit two 2-column chip groups: (1) channel / input (HA) — **MUTE**, only on the strips that
 send to STEREO (channels, FX channels, MIX buses): it drives that fixed → STEREO send's ON/OFF — an **input /
 FX channel's → STEREO assign ON** (firmware V1.3, the post-fader SEND TO STEREO switch) or a **MIX bus's
-MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off) — never the node master (CH_ON / FX-channel ON /
-MIX 675), which is the scribble power LED. STEREO and the MONITOR buses have no → STEREO send, so they carry
+MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off) — never the node master (channel ON / FX-channel ON /
+MIX ON), which is the scribble power LED. STEREO and the MONITOR buses have no → STEREO send, so they carry
 no MUTE chip; their master ON is the power LED alone. A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
 `MONITOR_MONO`, ships OFF) chips. Every cuable strip (the channels, the FX channels, the MIX buses, STEREO and
@@ -1576,10 +1576,10 @@ strip's own master, and the one head chip whose value is a level down in the pla
 writes it itself rather than through the flat-key chip writer. An odd group gets an invisible spacer so its last chip never stretches to
 full width. At the bottom (knobs bottom-aligned) are rotary knobs (`addKnob`/`wireKnob`, drag / arrow keys)
 — channel **Gain** (A.GAIN of the jack, or D.GAIN of the source, the channel reads; none on no source — while the
-jack's Clip Safe is holding the gain down, as the unit announces at `864`, the A.GAIN label reads SAFE and the value
+jack's Clip Safe is holding the gain down, as the unit announces, the A.GAIN label reads SAFE and the value
 and the knob's rim take the warn colour, which the Inspector's Clip Safe ON takes too) **and
 PAN/BAL** (the CH→STEREO send's pan, L63–C–R63), the **master BALANCE** on the STEREO
-master and MIX buses (the bus output's L/R balance, `nodeParams.pan` → STEREO 583 / MIX 676; it keeps the
+master and MIX buses (the bus output's L/R balance, `nodeParams.pan`; it keeps the
 `BAL` label even under Pan Link), or the **PHONES level** (a 0–10 non-dB
 scale) on the monitor buses (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2, independent of the monitor fader, so no extra
 tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.angle`, left = -90° / right =
@@ -1715,7 +1715,7 @@ drag lands on the nearest.
   **SEND PAN popover** below it — the MIX sends' pan as rotary knobs (FX sends are mono; FIXED BUS Type
   locks a knob read-only, and under Pan Link turning one moves the strip's own PAN / BAL). Clicking any `SENDS` header collapses/expands every rack together (a `sends-collapsed` host
   class, persisted in `localStorage` `urx-sends-open`), showing one amber dot per active send when collapsed.
-  When any node's **master is off** (the power LED off — CH_ON / MIX 675 / STEREO 582 / MONITOR 723, all on
+  When any node's **master is off** (the power LED off — channel / MIX / STEREO / MONITOR, all on
   `np.on`, or the oscillator's `osc.on`), the strip **dims** — the shared `isNodeInactive` predicate the graph
   view uses, so both views dim the same nodes — with the unlit power LED, not a badge, marking why. The head
   MUTE and the rack sends stay operable (the → STEREO send ON/OFF and the node master are independent device
@@ -1923,11 +1923,11 @@ rather than naming this repository's commit.
   destination chosen on the LCD is written to the unit — FX 2 is refused above 96 kHz. With no session the LCD
   keeps a destination of its own, which reaches nothing.
 - **SETUP > Software Integration** is the unit's setting rather than the plan's (`daw-integration.ts`). The unit opens
-  it only while a compatible DAW (Cubase, Nuendo, MixKey) holds it, which `816` reads as anything but 0, and the LCD
+  it only while a compatible DAW (Cubase, Nuendo, MixKey) holds it, a state the unit publishes, and the LCD
   opens it only then and only while Live sync is up: during Live sync the session tells the LCD whether one does, and
   the LCD draws the entry as the unit does, out of reach with none and with nothing of the app's on it; with no session
-  the app holds it shut (below). A session reads `816` and the two Post Fader Send for FX values
-  (`879` for FX 1, `880` for FX 2), registers all three, reads them again once registered — a DAW that took or let
+  the app holds it shut (below). A session reads that state and the two Post Fader Send for FX values
+  (one for FX 1, one for FX 2), registers all three, reads them again once registered — a DAW that took or let
   go of the unit in between announced itself to nobody — and follows their announcements, an announcement or a pick made
   while that read is out standing over its answer for that one value, the read's answer taken for the others. The LCD shows the sends the session holds, and a send picked on it is
   written to the unit behind every unit write queued so far, unless no DAW holds the unit by its turn: it is then
@@ -1945,14 +1945,14 @@ rather than naming this repository's commit.
 - **The unit's own settings and states** are shown in place of the simulator's where the app knows them
   (`core/sim-map-setup.ts`): SETUP > GENERAL as the last reading of it — a session's start on an experimental launch,
   the Device setup screen, a SETUP edit on the LCD — kept until the model changes, Follow USB as the toolbar's
-  badge holds it and off while the badge does not know it, the operation mode (`817`) as a session read it, the unit's current scene (`781`, which a Recall and a Store move) and the row
-  its SCENE LIST cursor stands on (`863`) as a session read them — at its start, and again once it has registered for
+  badge holds it and off while the badge does not know it, the operation mode as a session read it, the unit's current scene (which a Recall and a Store move) and the row
+  its SCENE LIST cursor stands on as a session read them — at its start, and again once it has registered for
   their announcements — and the unit announced them since — by number with no title, the unit's titles not being
   readable, and on the tab that lists the cursor's row where only one does, the tab shown staying where both do; a
-  row picked on the glass shows until the unit's cursor moves — whether a card is in the microSD slot (`837`, on a
+  row picked on the glass shows until the unit's cursor moves — whether a card is in the microSD slot (on a
   model that has one) as a session read it — at its start, and again once it has registered for its announcements —
   and the unit announced it since, and each MIC/LINE jack's Clip Safe as holding its
-  gain down while the unit announces it (`864`, which every session registers, since the CONSOLE and the Inspector
+  gain down while the unit announces it (an announcement every session registers for, since the CONSOLE and the Inspector
   show it too). What a session read or was announced of the operation mode, the current scene, SCENE LIST's cursor
   and the card is dropped when it ends, and when it fails to start after its starting read, and the LCD shows the
   simulator's own again. A session on an experimental launch registers the others and reads SETUP again once
