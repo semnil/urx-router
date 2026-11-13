@@ -323,10 +323,8 @@ carries a one-line map of the same directories and points here.
       below. The layout heads (each FX channel's EFFECT TYPE, each insert-FX selector) are read off the unit
       even when announced: the family read checks its head a second time behind the values it lays out, and
       an answer from the announcement would make that check a constant / `settle.ts` the post-write settle: **a write is acked
-      before its value is readable**, and the boundary is that write's own device notify (measured on a
-      URX44V, 9-204 ms from the write's issue, 87 value-paired samples on six addresses, independent of the
-      parameter's class; on hardware a 1-knob drag ended at the notify 10/10, 42-203 ms, never at the
-      bound). The answer is **the value the device announced, never the value we sent** — an acked write the
+      before its value is readable**, and the boundary is that write's own device notify, independent of the
+      parameter's class. The answer is **the value the device announced, never the value we sent** — an acked write the
       unit silently discarded is indistinguishable from one it took, so answering from the send would record
       our value as device truth with no diff left to retry; a quantised or clamped write therefore needs no
       case of its own, and an address the unit said nothing about is simply read. `follow.ts` registers its
@@ -361,14 +359,14 @@ carries a one-line map of the same directories and points here.
       caller that skips them, and a dropped rename leaves no diff for a later flush because the plan and the
       name snapshot have both moved on. Nothing is withdrawn from the handle: the last announcement wins,
       so an address the operator moved on the board comes back carrying THEIR value. `sendConverging`'s
-      INTER-ROUND wait stays blind **deliberately** — no `sideEffect: "converge"` head's reset latency has
-      ever been measured, and a round sends whole groups the read diff never named — but its SEED read takes
-      the same `PendingWrites` handle and waits the flush's writes out (17-84 ms on hardware, so the bound is
-      the fallback and not the price). The NAME path is fixed by not reading at all: `readPass` skips names
+      INTER-ROUND wait stays blind **deliberately** — no `sideEffect: "converge"` head's reset latency is
+      known, and a round sends whole groups the read diff never named — but its SEED read takes
+      the same `PendingWrites` handle and waits the flush's writes out (the wait ends at the device's own notify,
+      so the bound is the fallback and not the price). The NAME path is fixed by not reading at all: `readPass` skips names
       whenever `pending` is present, because a name is written on the string path and enters no write ledger, so
       the overlay has
       nothing to answer from and a settle could only spend its bound — and a rename read back inside its own
-      81 ms window goes into the plan and `nameSnapshot` together, leaving no diff to retry. See "A write is
+      window goes into the plan and `nameSnapshot` together, leaving no diff to retry. See "A write is
       not readable when it is acked" / `params.ts` catalog of confirmed parameters
     - `preferred-numbers.ts` the ISO 3 (Renard) grade tables R40 and R20, and the lookup that reads one.
       The unit's frequency tables step in these rather than in octave divisions, and the two catalogues
@@ -438,8 +436,8 @@ carries a one-line map of the same directories and points here.
       screen is missing exactly when it is wanted. Latency, queue
       depth and feed rates are deliberately NOT in it: they measure how the link feels from this side, and a
       broker can answer promptly right up to the moment it stops answering. The share of notifies the
-      address filter drops is excluded for a stronger reason — registration and notify emission are
-      decoupled on this protocol (measured), so a registration accumulating at the broker is invisible in
+      address filter drops is excluded for a stronger reason — an address nobody moves emits nothing however
+      many times it is registered, so a registration accumulating at the broker is invisible in
       the inbound stream and that figure cannot measure what it appears to. `LINK_BAR_KEYS` /
       `LINK_LEDGER_KEYS` are exported as unions so `linkstats.spec.ts`'s expectation tables are `Record<…>`
       over them and a field added without an assertion fails `pnpm typecheck:e2e`. See "The link ledger"
@@ -1095,9 +1093,9 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
   writes it waits behind are a converge round's or a self-test write-back's own, and a live session's across its
   flushes, so an OFF opening the flush queued behind one that closed on an A.Gain waits too; a session's end
   drops them. When an A.Gain write and a Clip Safe OFF land together, the unit puts the A.Gain back to the value it
-  held before (`clipSafeOffAwaits` in `input-lock.ts`, applied by `ClipSafeHold` in `client.ts`). Measured on URX22 and URX44V, System 1.3.1.0: sent back to back the A.Gain was put
-  back in 21 of 21 rounds with the A.Gain first and 6 of 6 with Clip Safe first; A.Gain first and 50 ms apart it
-  still was in 6 of 11; held for the announcement it stayed in 12 of 12. Compare with device asks every jack and
+  held before (`clipSafeOffAwaits` in `input-lock.ts`, applied by `ClipSafeHold` in `client.ts`). Sent back to back,
+  the A.Gain is put back whichever of the two goes first; with the A.Gain first and 50 ms apart it can still be put
+  back; held for the announcement it stays. Compare with device asks every jack and
   source the plan holds instead (`everyInputHolder`).
 - **Read.** A device read reads every jack and every source onto its own node, whether a channel reads it or not.
   A jack no channel reads is registered for follow (`planToFollowOnlyAddrs`, `scoped`), so a panel move there takes
@@ -2316,11 +2314,10 @@ and address together** (`reply_for`), and each command keeps the verb it sent an
 one place so the two cannot drift. Notifies for a subscribed channel are absorbed into that channel's
 batch rather than dropped.
 
-**Measured on both platforms.** A difference in the endpoints or the
-reply shapes would mean the Windows build could not connect at all. On Windows 11 with a URX44V it is
-the same: the same endpoints, the same replies, the same handshake, and live sync plus a write both reaching
-the unit. One number differs — a sequential sweep of the broker's whole address space (7074 reads, 0
-unreadable on either platform) takes **≈1.9 s on Windows against ≈0.3 s on macOS**.
+**The same on both platforms.** A difference in the endpoints or the
+reply shapes would mean the Windows build could not connect at all. On Windows it is
+the same: the same endpoints, the same replies, the same handshake, and live sync and a write both reach
+the unit.
 
 **The shell has one connection slot, so "a second connection" is not what happens.** `VdState::install`
 stops the worker already installed before putting the new one in, and commands are addressed to whatever is
@@ -2366,7 +2363,7 @@ every await, so while a write holds the link every wholesale replacement — New
 plan, the model picker — is refused (`status.deviceLinkBusy`), at its entry, or at `loadPlan` for a flow
 that entered before the write took the link.
 Follow USB is the one exception in the other direction: a live **session** lends it the session's
-link (its handler writes over that link rather than opening one, and measured on a URX44V the session
+link (its handler writes over that link rather than opening one, and on a URX44V the session
 survives the re-clock), so it stays usable while live and greys for every other holder — including a live
 *start*, where the session is not up yet and the same handler would take the connecting branch.
 
@@ -2412,16 +2409,10 @@ written at all:
   patch (the source arbitration under `readback.ts` in "Source layout" is that parameter's other user). The
   device view still carries what the unit answered — that is what leaves the plan and the live
   snapshot disagreeing, and the ordinary outgoing diff is then what sends the effect back, selector first,
-  then the stored engine values, then the bypass intent. Measured on a URX44V on 2026-08-18: that re-send is
-  accepted at the rate that cleared the effect and survives the return, which is why the app does not wait
-  for the rate to come back before sending. The read-back compared the 64 slots of each of the three
-  engines in the run (Pitch Fix, the input Compander, the output MBC) with their values before the
-  transition and found them equal, but one slot per engine carried a non-default sentinel (Pitch Fix Speed
-  37, the Compander's Threshold -32.10 dB, the MBC's LOW Threshold -28 dB): the selector write refills the
-  array with the type's defaults, so on the other 63 slots of each a match cannot tell a re-send that
-  landed from the refill.
+  then the stored engine values, then the bypass intent. That re-send is accepted at the rate that cleared the
+  effect and survives the return, which is why the app does not wait for the rate to come back before sending.
   What separates it from the OTHER clearing — a Signal Type transition, which drops the effect on both
-  members of a pair — is the notify stream rather than the read's own values: measured on a URX44V, the
+  members of a pair — is the notify stream rather than the read's own values: the
   transition announces the selector and the bypass on both members while the excursion announces the rate and
   nothing else. That distinction has to come from the notifies because a read is not a snapshot — its
   addresses are answered hundreds of milliseconds apart, and the pair's Signal Type is read *before* the
@@ -2530,7 +2521,7 @@ written at all:
   CUE row are read-only, and a
   MIDI control assigned to a CUE is refused.
 
-Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
+Which case a parameter falls into is settled on the unit rather than assumed: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being
 operated — before either behavior is implemented.
 
@@ -2663,11 +2654,9 @@ over the operator's own move on the hardware.
 edit that schedules a flush until that flush, and any queued behind it, is done. A read taken earlier answers an
 edited address with the value the edit replaces — the flush has not sent it yet, or the unit still answers the
 pre-write value — and the merge takes a read's value wherever the plan holds what it held when the read was issued,
-which an edit made before the read does; what the merge protects is an edit made during the read. Measured with the
-race harness on 2026-09-24 (`t1b-overtake.spec.ts`, "an edit waiting in the flush window survives the re-read an
-ordinary device change takes"): a CH 1 PAN move made 250 ms after a device-side change to CH 1's HPF frequency, so
-still inside the flush's 120 ms window when the node's re-read fell due, was taken back to its old value on screen
-and never written, at `a94d0b28` as well. Once the wait ends every edit has been sent and acked, and the read's
+which an edit made before the read does; what the merge protects is an edit made during the read. An edit waiting in
+the flush window survives the re-read an ordinary device change takes (`t1b-overtake.spec.ts` pins it). Once the
+wait ends every edit has been sent and acked, and the read's
 settle waits out their announcements. A converge runs inside a flush, so the wait covers it too, for two further
 reasons: a converge rewrites the whole write scope round after round, so a read taken there is a read of a device
 the app is part-way through changing, and the two readers interleave on the link for as long as the round runs,
@@ -2679,17 +2668,12 @@ being downgraded by the timer that retries it.
 
 #### A write is not readable when it is acked
 
-The broker acks a write before the unit will answer for it. **Measured on a URX44V (System V1.3.1.0), and the
-window is not small**: a GET of a just-written address answers the value that write REPLACED until that write's own
-change notify arrives. Pairing each write with the notify carrying its value — strictly by value, since matching on
-the address alone during a drag picks up the PREVIOUS write's answer and manufactures a fresh-before-the-boundary
-reading that does not exist — produced no counterexample in either direction across **87 samples on six addresses**,
-53 of them taken during a real drag: not one fresh read before that notify, not one stale read after it. The notify
-is the boundary rather than an estimate of it. From the write's issue the window is **9-204 ms**, median ~101,
-polled every 4 ms; the ack tells nothing about it (one write acked in 2 ms stayed stale for another 31 ms), and it
-is always the ack that lands first. The parameter's class is
-irrelevant: the same behaviour was measured on a `sideEffect` head, a `follow: "direct"` scalar, plain storage and
-the PEQ band gains. Two consequences bound any repair. What a `sideEffect: "refetch"` head makes the unit recompute
+A write is acked before the unit will answer for it, **and the window is not small**: a GET of a just-written
+address answers the value that write REPLACED until that write's own change notify arrives. The notify is the
+boundary rather than an estimate of it — a read before it never answers the new value, and a read after it never
+answers the old one. The ack tells nothing about the window, and it is always the ack that lands first. The
+parameter's class is irrelevant: a `sideEffect` head, a `follow: "direct"` scalar, plain storage and the PEQ band
+gains behave the same. Two consequences bound any repair. What a `sideEffect: "refetch"` head makes the unit recompute
 goes readable within a few milliseconds of the head's own notify — **1-2 ms after** it for the EQ 1-knob LEVEL, 2-4 ms
 for the preset its TYPE loads, and announced behind the head within a millisecond for SSMCS Morphing, Sweet Spot Data,
 the COMP 1-knob and its Level, and the insert-FX drivers (the multi-band compressor's 1-knob and Level, Pitch Fix's
@@ -2718,12 +2702,10 @@ announces changes in the order it makes them: the follow layer does not put it i
 off the unit. The re-read is held until no write a notify in its window stands behind is still unannounced: until
 then the replaced value is the last thing the unit said about the address after the mark, so the settle would
 answer the address with it, and a read of the address answers the pre-write value. What keeps the merge right when
-the attribution is wrong is that held re-read; the mark buys one fewer spurious reconcile. Measured with the race
-harness on 2026-09-24 (`t1b-overtake.spec.ts`, "a device value our in-flight write replaces is neither shown nor
-written back", all three variants, and `t1d-name-window.spec.ts`, "a rename our own rename in flight replaces is
-neither shown nor written back"): the board keeps the operator's value throughout, and no flush sends the replaced
-value back. With the re-read not held, the `acked` variant — the write released 280 ms after the notify, so the
-re-read falls due between the write's ack and its announcement — showed the replaced value until the idle sweep.
+the attribution is wrong is that held re-read; the mark buys one fewer spurious reconcile. The board keeps the
+operator's value throughout, and no flush sends the replaced value back; `t1b-overtake.spec.ts` ("a device value our
+in-flight write replaces is neither shown nor written back") and `t1d-name-window.spec.ts` ("a rename our own rename
+in flight replaces is neither shown nor written back") pin it.
 
 Two ways the wait ends, and which one an address gets is decided by what the snapshot held:
 
@@ -2745,8 +2727,8 @@ the unit announced and **the last announcement wins**, so an address the operato
 comes back carrying THEIR value. A `capture()` landing inside the flush needs no answer either: it re-authors the
 snapshot from a device read, and a device read cannot contradict a later word from the same device.
 
-**The name path has the same window, and the numeric repair cannot reach it.** Measured on a URX44V: a channel
-name written and then polled every 4 ms answered the PREVIOUS name for 81 ms. `writeOverlay` answers an address
+**The name path has the same window, and the numeric repair cannot reach it.** A channel name read just after it
+is written answers the PREVIOUS name. `writeOverlay` answers an address
 out of what the unit ANNOUNCED for it, and no name announcement can reach it: names are not emitted by
 `planToCommands` but written on the string path (`vdSetStr`), and that loop records a NAME in nothing the
 overlay is built from — it records a mark for a catalog string write (the SSMCS preset, as `boundaryMarks`), and a
@@ -2780,7 +2762,7 @@ in SSMCS mode.
 reaches one only through a `sideEffect` param's converge or refetch epilogue — a COMP/EQ mode change does, and
 nothing without such a head does. So the flush also **compares the emitted set against the follow list before its
 first await**, and rebuilds the list (not the snapshot — nothing has been read) when they differ. That comparison
-has no reachable trigger today, and the measurement is why it exists rather than why it does not: `SEND_LEVEL` /
+has no reachable trigger today, and the inventory below is why it exists rather than why it does not: `SEND_LEVEL` /
 `SEND_PAN` / `SEND_ON` / `SEND_TAP` carry no `sideEffect`, so a wire edit is the shape that would move the set with
 no capture behind it — but **every connection the default plan carries is fixed routing the graph refuses to cut**,
 and of the **310 routes** the model would let an operator draw, the emitted set moves for **none**. The property
@@ -2812,8 +2794,8 @@ answered.
 
 **Follow-only cases join for the same reason as the names**: an address the app only READS is in no
 registration unless it is listed here, so the unit's announcement would reach nobody and the value would catch up
-only at the next full read. The first two were measured announcing a front-panel change on a URX44V
-(2026-08-11, System V1.3.1.0), which is what separates them from the addresses that genuinely stay silent — D.Gain
+only at the next full read. The first two announce a front-panel change, which is what separates them from the
+addresses that genuinely stay silent — D.Gain
 and the FX / insert-FX engine arrays emit nothing when the panel moves them, and for those a registration would be
 useless for that purpose. **A device-side RECOMPUTE is a different trigger and does announce**: writing an FX
 delay's Sync, Note or BPM makes the unit recalculate the delay time from BPM and the note value and notify the
@@ -2821,11 +2803,11 @@ array address it wrote. So the silence is about the front panel, not about the a
 
 | Address | When and why the app does not write it | Which node's scoped read repairs it |
 | --- | --- | --- |
-| CH → FX send tap | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
-| microSD Rec Track Count | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node Track Count lands on, and the only address that read touches |
+| CH → FX send tap | PRE cannot be written over the control link (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
+| microSD Rec Track Count | over the control link it can only be set to "two tracks" | **`out.sdrec`** — the node Track Count lands on, and the only address that read touches |
 | the FX delay time the unit computes (slot 6 of the FX effect's parameters) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
 | a jack's +48V / A.Gain / Clip Safe / HI-Z | no channel reads the jack, so the write leaves it out ([the input stage](#the-input-stage-on-the-jack-and-the-source)) | the **MIC/LINE node** — its scoped read re-reads both jacks, even for A.Gain, which a read jack follows directly |
-| a channel's HPF frequency | while the plan holds a stop outside 40 … 120 Hz: the unit's knob sets 20 … 600 Hz and the broker refuses a write outside that window, so the emit sends nothing there (`hpfFreqSent`) | the **channel** — its scoped read re-reads `hpfFreq` |
+| a channel's HPF frequency | while the plan holds a stop outside 40 … 120 Hz: the unit's knob sets 20 … 600 Hz, but a stop outside 40 … 120 Hz cannot be written over the control link, so the emit sends nothing there (`hpfFreqSent`) | the **channel** — its scoped read re-reads `hpfFreq` |
 | STREAMING source select | while the plan holds no STREAMING wire: its list on the unit has no None, so the emit sends nothing there rather than NONE (`leavesUnsourced`) | **`bus.stream`** — its scoped read takes the source back with the node's DELAY |
 
 The third is not a read-only ADDRESS at all, which is why the heading above says cases. Slot 6 is written like
@@ -2911,14 +2893,12 @@ as invariant 4 (channel-tuning.md, "FX EFFECT").
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
 the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
-has ever been measured — the figures above belong to the `refetch` heads, which never reach this loop. Its
+is known — the figures above belong to the `refetch` heads, which never reach this loop. Its
 round also sends `roundCommands`, whole groups, so a wait that ended at the read diff's own notifies would return
 while the rest of a group was still inside its window.
 
-**What the wait costs was measured on the unit, not estimated** (2026-08-02, URX44V V1.3.1.0, a throwaway build
-carrying the diagnostic instrumentation). A 1-knob LEVEL drag produced ten flush cycles, and the settle
-ended at the device's own notify in **10 of 10** — 42-203 ms after the write was issued, write to read-complete
-58-298 ms. **The 300 ms bound was never reached.** Two things follow. Lowering `SETTLE_TIMEOUT_MS` cannot make a
+**What the wait costs: the settle ends at the device's own notify, well inside the bound**, so the wait is not a
+flat cost on every flush. Two things follow. Lowering `SETTLE_TIMEOUT_MS` cannot make a
 drag faster, because what ends the wait is the announcement and not the bound — the constant governs class (b)
 alone. And the added latency IS the device's announcement window, so the only ways to remove it are not to read at
 all (which leaves the plan's band gains stale for the whole drag, and the EQ plot then draws a curve the unit is not
@@ -3232,7 +3212,7 @@ Some device parameters reset others when written. Emit order handles that for a 
 type selector before the array it types, and the EQ 1-knob before the values it discards — but a **converge round
 re-sends only what still differs**, and that is where order alone stops being enough.
 
-The measured case is the EQ 1-knob, on a URX44V. Writing ON discards the type back to Intensity; writing the
+The case in point is the EQ 1-knob, on a URX44V. Writing ON discards the type back to Intensity; writing the
 type discards the level to that type's neutral point (Intensity 50, the presets 0). Three links. When a
 COMP/EQ bank switch resets all three at once, a loop that re-sends only what differs walks the chain one link per
 round: round 2 re-sends ON and un-sets the type, round 3 re-sends the type and un-sets the level, and the level
@@ -3281,9 +3261,9 @@ the next save read what the plan holds. It counts an absent pan, send or main pa
 does not run on a device read or a `.urxf` import, which bring the unit's own values. None of these send pans is written
 while the link is on. Being ahead does not make the switch-off land first: it lands after the send pans written behind it in
 the same round, so a write whose plan turns Pan Link off while holding send pans of its own moves each of their
-sources to that send's value, and the round after reads the source back as a residual and puts it back. Measured on
-a URX44V, the source held the send's value when the round was read back 340-354 ms after it was sent, and a second
-round settled it. Writing BUS Type also resets the MIX's send bank, and that reset lands after the sends written behind
+sources to that send's value, and the round after reads the source back as a residual and puts it back: the source
+holds the send's value when the round is read back, and a second
+round settles it. Writing BUS Type also resets the MIX's send bank, and that reset lands after the sends written behind
 it in the same round, so being ahead of them does not spare the round after: the converge a BUS Type write takes
 reads the bank back and re-sends it there, which is where a Write that changes BUS Type settles.
 
@@ -3298,8 +3278,7 @@ plan as device truth with no diff left to retry.
 The flush therefore hands `sendConverging` the same `PendingWrites` handle the refetch gets, and the loop holds the
 seed read until the unit has spoken for **every** address it wrote — the whole set, not one node's worth, because
 the seed read asks about the whole write scope. The wait does not cost a flat +300 ms on every `sendConverging`:
-measured on hardware, it ends at the device's own notify, 17-84 ms across four probe runs on a URX44V, and the 300 ms
-bound is the fallback rather than the price. Callers that hand over `initialDiffs` — the Write button — never seed and are
+it ends at the device's own notify, and the 300 ms bound is the fallback rather than the price. Callers that hand over `initialDiffs` — the Write button — never seed and are
 untouched. The reads *between* rounds stay blind, for the two reasons in that section.
 
 Seeding the loop from the flush's own send list instead would be wrong — those values freeze at send time,
@@ -3407,15 +3386,13 @@ listed here so they are not proposed as gaps:
    the other COMP/EQ order. The first is handled by the restore asking for it (`EmitOptions`), the other two
    by reading them off the unit before the sweep and writing them back after — and whatever still differs
    joins `restoreResidual`, so a unit that insists on its own value is reported rather than passed over. Both
-   rest on measurement: a band written while 1-knob is on is accepted and still holds 1.5 s later, and what
+   rest on how the unit behaves: a band written while 1-knob is on is accepted and still holds 1.5 s later, and what
    matters is the order — the 1-knob chain before the bands, which is the emit order.
 
    **What it still cannot restore is what it cannot address.** A run also perturbs the unit's 1-knob base
    save-off — the block it copies a channel's PEQ into when 1-knob goes on — which has no entry in the
-   parameter catalogue, so the app can neither read nor write it. Measured on a URX44V (2026-08-10): 27
-   addresses, and nothing observed restores from them (1-knob off, a preset reload, a neutral level, and a
-   power cycle read back by eye on the unit's own screen). `diag` reports what a run could not send; the
-   save-off is outside even that, and the private reference tree carries the measurements.
+   parameter catalogue, so the app can neither read nor write it. `diag` reports what a run could not send; the
+   save-off is outside even that.
 
    **And what a pass writes is not only values.** Every MONO IN pair's Signal Type is swept: the run is
    two blocks, unlinked first and STEREO-linked second, because a linked pair is a different device state
@@ -3489,7 +3466,7 @@ second and later calls return early because `deactivateLive` clears that flag sy
 
 The sample rate is a plan value the device can accept and then undo by itself. With **SETUP > Follow USB**
 on, the URX slaves its clock to the USB host: a rate written then is accepted, re-clocks the hardware, and roughly
-0.4 s later the host's rate is reasserted (measured on a URX44V). Writing straight through would report success
+0.4 s later the host's rate is reasserted (on a URX44V). Writing straight through would report success
 for a change that did not last.
 
 Ahead of any of it, a plan holding +48V and HI-Z both on for a jack stops the write where it stands: whichever
@@ -3543,7 +3520,7 @@ that rate the Inspector holds the EQ Type and the GEQ screen holds every row, an
 **The rate settle also names what the change costs the microSD recorder**, which, with taking an insert off (the
 paragraph above), is a rate side effect the unit ACTS on rather than merely refuses: it lowers its own Track Count
 to fit a rate it cannot carry (16 tracks at 44.1 / 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz), lowering the
-rate again does not raise it, and Track Count refuses every value the app could write it back with. So this is not a
+rate again does not raise it, and Track Count cannot be raised back over the control link. So this is not a
 feature left out of one write like the >96 kHz family — it is destroyed, and the notice belongs in front of the
 decision. `trackCountCeiling` / `trackCountDrop` (`core/constraints.ts`) decide it and `client.ts`'s
 `readTrackCount` supplies the count, read from the DEVICE rather than the plan: an offline plan's count is whatever
@@ -3554,7 +3531,7 @@ RELEASE arm (its own element above the actions row, worded to name the release a
 costs nothing and the shared note speaks for both arms), and the Follow USB toggle, which gets the numberless form
 because the host's rate is not something this app can read. **URX22 has no recorder and is silent throughout.**
 Afterwards the write's own epilogue re-reads the recorder node: the unit does the lowering itself, and whether it
-announces one has not been measured here, so the plan is refreshed rather than left waiting for a notify that may
+announces one has not been checked here, so the plan is refreshed rather than left waiting for a notify that may
 never come. The epilogue is armed from the rate send as it RESOLVES — everything but an explicit refusal, since the
 shell sends before it waits and a write whose answer never came may have landed and taken the count down with it —
 rather than from the outcomes the call returns, which a cancel between two sends throws away.
@@ -3600,7 +3577,7 @@ connection the rate was written over kept answering reads, online, on a URX44V a
 toggling Follow USB only re-clocks when the host is on a different rate, and the connection survived it on a URX44V.
 
 Above 96 kHz the device drops whole features (stereo channel EQ, insert FX, the FX2 bus), but it still **accepts
-and holds writes to their parameters** — measured on a URX44V at 192 kHz for the stereo CH EQ, FX2's fader,
+and holds writes to their parameters** — on a URX44V at 192 kHz, for the stereo CH EQ, FX2's fader,
 send and effect type, and the insert FX selector. "The feature is unavailable" does not mean "the parameter
 is unwritable": only the DSP is gone, the stored value survives. So the write set is not gated by rate: a gate
 would prevent no non-convergence (there is none to prevent), it would only stop the plan
@@ -3703,18 +3680,17 @@ to tell that a `cmd` on the bar and the panel's `Sent` are one number.
 
 Round-trip latency, queue depth, notify and meter rates, and the share of notifies the address filter drops
 were all considered and **left out**. The first four measure how the link feels from this side, which is not
-evidence about the broker's internal state: it can answer promptly right up to the moment its own teardown
-deadlocks. The drop share is worse than merely weak — it cannot measure what it looks like it measures.
-Registration and notify emission are decoupled on this protocol (measured: a registered address can change and
-announce nothing), and an address nobody moves emits nothing however many times it is registered, so a
-registration piling up at the broker is invisible in the inbound stream.
+evidence about the broker's internal state: it can answer promptly right up to the moment it stops answering.
+The drop share is worse than merely weak — it cannot measure what it looks like it measures. An address nobody
+moves emits nothing however many times it is registered, so a registration piling up at the broker is invisible
+in the inbound stream.
 
 What is left is the set of quantities this side can count exactly and that describe what it *did*: causes,
 not symptoms.
 
 ### Why a file, and what its lines mean
 
-The symptom the ledger exists for shows up **after the app is gone**, so a reading that lives only in the
+A link problem can need reading **after the app is gone**, so a reading that lives only in the
 status bar is missing exactly when it is wanted. Each session appends JSONL to `link-ledger.jsonl` in the
 app's log directory (`append_link_log`): one line when the session opens, one a minute while it runs, and one
 as it ends carrying `end: "off"` or `end: "error"`.
@@ -4347,19 +4323,17 @@ identical on every model's page:
   unlike that row it does **not** read the switch — `sendlessNote` classifies a wire without the plan,
   by design, so the note states the mechanism rather than the current state.
 
-What the figure does **not** give is the MONO block's gain law, and that was measured on the unit
-(URX44V, System 1.3.1.0, 2026-08-13, reading `129:0/1` — the monitor's own meter, downstream of MONO
-on the same figure). It is a **power sum, (L+R)/√2**, and it takes two states to say so:
+What the figure does **not** give is the MONO block's gain law. It is a **power sum, (L+R)/√2**, and it
+takes two states to say so:
 
-| oscillator | MONO off | MONO on | delta |
+| input | MONO off | MONO on | delta |
 | --- | --- | --- | --- |
-| STEREO L alone, −30 dBFS | L −30.0, R at the floor | both lanes −33.0 | **−3.0 dB** |
-| both lanes in phase, −30 dBFS each | both −30.0 | both **−27.0** | **+3.0 dB** |
+| one side alone | that side at its level, the other silent | both sides 3 dB below that level | **−3 dB** |
+| both sides in phase at one level | both at that level | both **3 dB above** it | **+3 dB** |
 
-Switching back returned L to −30.0 exactly, so the reading is the switch rather than drift. The first
-row alone does **not** identify the law — an energy sum `√((L²+R²)/2)` produces the same −3.0 there —
-and the second is what separates them, since an energy sum would not have moved. What it rules out on
-the way: a straight `L+R` (0 dB on the first row), an average `(L+R)/2` (−6.0) and a plain copy of L.
+The first row alone does **not** identify the law — an energy sum `√((L²+R²)/2)` produces the same −3 dB
+there — and the second is what separates them, since an energy sum would not move. What it rules out on
+the way: a straight `L+R` (0 dB on the first row), an average `(L+R)/2` (−6 dB) and a plain copy of L.
 
 | material | when MONO engages |
 | --- | --- |
@@ -5025,8 +4999,8 @@ HI-Z is on — +48V to off and A.Gain to +40 dB (`input-lock.ts`) — counting e
 values. The same step rewrites a document's names and notes (`documentTextProblems`), and says so: a **node
 name** is cut to **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
 would lose a name for being long, and keeping one the unit could not have produced puts a label on
-the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: measured
-on a URX44V, the broker accepts a 20-character name and reads it back unchanged, and the settings
+the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: the control
+link takes a longer name and reads it back unchanged, and the settings
 file's 64-byte NUL-padded element is the container rather than the limit — reading that width as the
 limit would be a mistake. The name is also the one plan string the unit is sent as a string
 (`planToNameWrites`: the SSMCS Sweet Spot Data preset rides the same path, but the plan holds it as a numeric index,
@@ -5044,7 +5018,7 @@ The cut carries a second rule, and the order between them is load-bearing: **tra
 stripped after the cut**, never before. A leading space is kept — the unit right-aligns the numbers
 in its stereo pair labels, so the factory name really is ` 5/ 6`, and stripping both ends would write
 the shortened form back on the next sync. Trailing is stripped because the unit does not treat it as
-padding: measured on a URX44V (2026-08-14), a name written with a trailing space is stored and read
+padding: a name written with a trailing space is stored and read
 back with it, while every path that reads a name into the plan trims one off. A plan holding one is
 therefore never equal to what the device answers, and the name is re-sent on every sync — forever,
 and invisibly, since the two render identically and each round reports one write that then succeeds.
