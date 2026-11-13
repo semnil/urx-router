@@ -71,7 +71,7 @@ carries other values there beside a knob that is on is set to them.
 
 Pitch Fix's **MIDI Control** picks where the correction takes its target notes from. From
 **Setting** on they arrive on a USB-MIDI port of the unit's own, and a change of mode moves
-the Scale and the twelve-note mask the way the unit's own screen does (measured on a URX44V).
+the Scale and the twelve-note mask the way the unit's own screen does (confirmed on a URX44V).
 
 The selector itself is offered and written, and so is the Scale, from the list the unit's
 own screen offers in that mode: every scale but Chromatic under Setting, Custom and Single

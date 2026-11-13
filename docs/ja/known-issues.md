@@ -60,7 +60,7 @@ ON にすると Level を 0 に、固定値 (各バンドの Attack と Bypass�
 ## Pitch Fix の MIDI Control が ON の間、12 音は実機のものになる
 
 Pitch Fix の **MIDI Control** は、補正が狙う音をどこから取るかを選ぶ。**Setting** 以降はそれが実機自身の
-USB-MIDI ポートから届き、モードを変えると実機の画面と同じように Scale と 12 音マスクが動く (URX44V で実測)。
+USB-MIDI ポートから届き、モードを変えると実機の画面と同じように Scale と 12 音マスクが動く (URX44V で確認)。
 
 セレクタ自体は提供し、書き込む。Scale も、そのモードで実機の画面が出す一覧から選んで書き込む — Setting では
 Chromatic 以外、Real Time では Custom と Single。書き込まないのは、モードが Off 以外の間の 12 音である: それを
@@ -333,7 +333,7 @@ Bus (STEREO / MIX) 自身のメーターです。
 
 プランナーの **レート** 設定は実機へ書き込まれ、デバイスを再クロック
 します。この書き込みが残るのは、実機側の **Follow USB** が **OFF** のときだけです。
-Follow USB はどちらがクロックマスターかを決める設定で、両方向とも URX44V で実測
+Follow USB はどちらがクロックマスターかを決める設定で、両方向とも URX44V で確認
 済みです。
 
 | Follow USB | クロックマスター | レート書込の結果 |
