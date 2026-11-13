@@ -50,7 +50,7 @@ PR の前に走らせるもの、の 5 つで、それぞれ、決めるもと�
 ([#457](https://github.com/semnil/urx-router/pull/457)、
 [#458](https://github.com/semnil/urx-router/pull/458)、
 [#459](https://github.com/semnil/urx-router/pull/459)、
-[#460](https://github.com/semnil/urx-router/pull/460))。却下したものは無い。4 回の指摘は、測ると再現し、
+[#460](https://github.com/semnil/urx-router/pull/460))。却下したものは無い。4 回の指摘は、どれも再現し、
 実在の欠陥だった。順に並べると、層になっている。ミラーを足す。gang の書込の順が結果を決めるようになる。
 ロックを外す向きだけが直る。ロックが成立する向きが残る。ミラーで等価なものを畳む。畳み込みがアドレスの
 境界を越える。このうち 3 つは、直前の修正が作った。ミラーの追加が順序への依存を作り、畳み込みが境界

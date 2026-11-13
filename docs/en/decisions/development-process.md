@@ -58,8 +58,8 @@ was not reachable before.
 review ([#457](https://github.com/semnil/urx-router/pull/457),
 [#458](https://github.com/semnil/urx-router/pull/458),
 [#459](https://github.com/semnil/urx-router/pull/459),
-[#460](https://github.com/semnil/urx-router/pull/460)). None was turned down: each reproduced when
-measured and each was a real defect. In order they form layers — a mirror is added; the order of a
+[#460](https://github.com/semnil/urx-router/pull/460)). None was turned down: each reproduced and
+each was a real defect. In order they form layers — a mirror is added; the order of a
 gang's writes then decides the result; the unlocking direction alone is fixed; the locking
 direction remains; mirror equivalents are collapsed; the collapse crosses an address boundary.
 Three of them were made by the fix just before: adding the mirror created the dependence on order,

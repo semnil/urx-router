@@ -20,7 +20,7 @@ evidence.
   harness's wall clock is set by its slowest shard, so removing a redundant case moves machine time
   and nothing else. The number of cases is not reduced for speed. How the weights work is in
   live-race-harness.md, "How the shards are sized".
-- **Three changes were measured and turned down.**
+- **Three changes were turned down.**
   - Fusing the passes `scripts/race-shard-weights.mjs` makes over one log (`durations`,
     `skippedInLog`, `runShape`, `doubledInLog`) into a single pass. The script's wall clock is
     taken up by spawning `playwright --list`, so the passes are not where its time goes.

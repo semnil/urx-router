@@ -163,7 +163,7 @@ EQ, and the app took the whole of it in one pull request.
 - A boost reading carries no sign, as on the unit.
 - The plan document's version stays at 6: the last release shipped 5, and a version goes up by at most
   one between releases.
-- The URX44 was not measured. It takes the URX44V's addresses.
+- The URX44 is untested. It takes the URX44V's addresses.
 - The SIM view's GEQ is not part of this: the LCD simulator has no GEQ screen.
 
 **What would reopen it.** The unit's GEQ screen changing in a firmware update (a curve, another band
