@@ -505,8 +505,8 @@ if (isEntry(import.meta.url)) {
     if (names.length) firstCellSpans.set(i + 1, names);
   }
 
-  // Spans from the tables AND the surrounding paragraphs: the private probe index and
-  // the "ci.yml greps dist" claim live in prose.
+  // Spans from the tables AND the surrounding paragraphs: the `ls scripts/` instruction
+  // and the "ci.yml greps dist" claim live in prose.
   const spans = [];
   // A hook run about a docs/ file answers for that file only: the asset table belongs to
   // the edit that touched CLAUDE.md, and re-reporting it here would blame every docs edit
