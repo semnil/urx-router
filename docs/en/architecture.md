@@ -2173,9 +2173,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   otherwise keep showing wrong. Before it, what a pass would carry is not the unit's state but whatever the
   plan holds — a new document's defaults, a loaded file, a half-applied read — and putting that on the wire is
   not merely wrong for the controller: on a loopback or any shared bus, every other listener takes it for an
-  operator's gesture. A second instance of this app, launched while a live session runs, sends its own startup
-  values down the same bus, and the live instance applies them as incoming MIDI and writes them to the
-  unit. So opening the output
+  operator's gesture. This gate is what keeps a second instance of this app, launched while a live session
+  runs, from putting its startup plan values on the same bus — values the live instance would apply as
+  incoming MIDI and write to the unit. So opening the output
   port sends nothing on its own, a fetch and a `.urxf` import do not open it (neither says the plan is the
   unit's state), a readback that threw or was cancelled does not either — the re-send hangs off the session
   being up rather than off reaching the `finally` all three land in — and Live sync ending, or the plan being
