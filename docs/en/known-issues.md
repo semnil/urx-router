@@ -358,21 +358,20 @@ The URX runs in one of two operation modes, chosen during its initial setup or f
 SETUP > [Operation Mode]: **Standard** or **Simple**. Simple Mode visibly reduces
 what the unit offers — the channel and bus display is cut down and no longer scrolls.
 
-The unit does publish the mode: parameter `817:0:0` reads 0 in Standard Mode and
-moves to 1 when Simple Mode is entered and its preset applied, announcing each change
-with a notify. Switching back to Standard moves it back to 0, with no other parameter
-changing. This was verified on a real URX22 and URX44V (System 1.3.1.0) by entering
-Simple through SETUP > [Operation Mode] with the P02 preset; the Setup Assistant and
-Scene routes into Simple Mode and the other presets have not been measured. On an
+The unit does publish the mode, and announces each change with a notify: the value moves
+when Simple Mode is entered and its preset applied, and switching back to Standard moves it
+back, with no other parameter changing. Confirmed on a URX22 and a URX44V (System 1.3.1.0)
+for Simple Mode entered through SETUP > [Operation Mode] with one preset; the Setup
+Assistant and Scene routes into Simple Mode and the other presets are not covered. On an
 experimental launch the app reads it while Live sync is up and follows its notify, to show
 it on the SIM view's LCD (architecture.md, "SIM view (the unit's LCD)"). Nothing else reads it: the graph,
 the CONSOLE and the Inspector present the same controls either way, including for things
 Simple Mode has taken away on the unit itself.
 
-The current scene — or **preset** — is readable too (`781:0:0`, which a Recall and a Store move and which
-reads `0x8000` + n for the unit's `Pn`), but it is not the mode: it keeps the Simple preset's value after the unit is switched
-back to Standard. What Simple Mode does to a write the app sends for a control it has
-removed has not been measured.
+The current scene — or **preset** — is readable too (a Recall and a Store move it), but it
+is not the mode: it keeps the Simple preset's value after the unit is switched back to
+Standard. What Simple Mode does to a write the app sends for a control it has removed is
+not known.
 
 ## The STREAMING pre-DELAY meter is not readable
 
@@ -398,20 +397,18 @@ are confirmed on a URX44V:
 | **off** | the device | the rate sticks, and the computer follows the device onto it |
 | **on** | the computer | the device accepts the rate, re-clocks, and is pulled back |
 
-With Follow USB on, the device's front panel locks its rate buttons but the broker
-does **not** reject the write: it accepts the new rate, re-clocks (the LCD shows
-its switching dialog), and roughly 0.4 s later the host's rate is reasserted and
-the device returns to it — measured twice, at +53 ms accept / +374 ms revert and
-+38 ms / +398 ms. The audible result is a brief interruption for a change that
-does not last.
+With Follow USB on, the device's front panel locks its rate buttons but a software
+write is **not** refused: the device takes the new rate, re-clocks (the LCD shows
+its switching dialog), and shortly afterwards the host's rate is reasserted and
+the device returns to it. The audible result is a brief interruption for a change
+that does not last.
 
 The LCD's switching dialog belongs to that pulled-back re-clock specifically. A
-rate write with Follow USB **off** re-clocks the device without any dialog (three
-transitions observed), though it does interrupt audio just the same — the dialog
-and the interruption are separate things.
+rate write with Follow USB **off** re-clocks the device without any dialog, though
+it does interrupt audio just the same — the dialog and the interruption are
+separate things.
 
-Follow USB is exposed as a broker parameter (848) and can be both read and
-written; its factory default is on. The device ignores a write of the rate it is
+Follow USB can be both read and written; its factory default is on. The device ignores a write of the rate it is
 already running.
 
 ## The HDMI sample-rate ceiling depends on the audio mode

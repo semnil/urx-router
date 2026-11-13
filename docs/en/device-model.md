@@ -173,8 +173,8 @@ The scale is a **discrete, non-uniform grid** (wide steps in the tail, finer tow
 dB value: these are the values the unit's own screens offer, so e.g. -15.0 dB cannot be dialled in (adjacent
 detents jump -16 / -14). The sliders walk this grid **by index**, giving each detent equal travel so the
 dense steps near 0 dB are not cramped (`core/levels.ts`). **Written over the control link, though, the unit
-RETAINS an off-grid value rather than rounding it** — measured on a URX44V, 6/6 across two level parameters,
-each written value read back unchanged and announced by its own notify. So the grid is what the unit's own
+RETAINS an off-grid value rather than rounding it**: the written value reads back unchanged and is announced
+by its own notify. So the grid is what the unit's own
 UI offers, not what its storage accepts, and a readback is deliberately not snapped on the way in
 (architecture.md): the plan says what the unit actually holds.
 PAN/BAL uses the device scale **L63 – C – R63** (the UG shows C as the nominal centre; L63/R63 are the
