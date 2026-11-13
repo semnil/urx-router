@@ -3638,7 +3638,8 @@ lands while that read is out is the newer of the two, and the read is not taken 
   side, the Device setup screen, Follow USB, HOME's [Sends] destination, Software Integration — is refused with
   `status.consoleLockedNotSent`.
 - **What a flush had not sent when the lock arrived** is read back from the unit: `LiveSync.setLocked` cancels an
-  armed flush and stops a running one — its send loops and its converge alike — at its next command,
+  armed flush and stops a running one — its send loops and its converge alike — at its next command, a command
+  waiting on the unit before it goes (a Clip Safe OFF behind its A.Gain) included,
   `LiveSync.unsent` names the nodes whose writes the snapshot says the unit was not sent, and those nodes are
   reconciled (the whole unit, when a converge head went out without the converge behind it, and a node, when a head
   went out without the read of that node behind it). A hold taken as the lock arrives (`LiveSync.hold`) keeps every

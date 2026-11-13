@@ -4447,6 +4447,41 @@ describe("LiveSync: Console Lock", () => {
     live.end();
   });
 
+  // A Clip Safe OFF waits for the unit to announce the A.Gain sent ahead of it; the hold is asked
+  // again once that wait is over, so a lock that came and went during it stops the OFF.
+  it.each([
+    { locked: true, writes: 1 },
+    { locked: false, writes: 2 },
+  ])(
+    "stops a Clip Safe OFF at the end of its A.Gain wait (lock comes and goes: $locked)",
+    async ({ locked, writes }) => {
+      const plan = basePlan();
+      setExclusiveConnection(plan, "in.micline_1_2:out", "ch1:in", "source");
+      plan.nodeParams["in.micline_1_2"] = { gainL: -8, clipSafeL: true };
+      const live = liveFor(plan);
+      live.begin();
+      plan.nodeParams["in.micline_1_2"] = { gainL: -5, clipSafeL: false };
+      live.schedule();
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+      expect(
+        vi.mocked(vdSet).mock.calls.map((c) => c[0]),
+        "the premise: the OFF waits",
+      ).toEqual([PARAMS.HA_GAIN.id]);
+      let release = (): void => {};
+      if (locked) {
+        release = live.hold();
+        live.setLocked(true);
+        live.setLocked(false);
+      }
+      writeSettle.note({ paramId: PARAMS.HA_GAIN.id, x: 0, y: 0, value: -500 });
+      await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 2);
+      await live.idle();
+      expect(vi.mocked(vdSet).mock.calls).toHaveLength(writes);
+      release();
+      live.end();
+    },
+  );
+
   // A head the unit derives a node's values behind, stopped before the read of that node.
   it("names the node whose read the lock stopped a flush in front of", async () => {
     const plan = basePlan();

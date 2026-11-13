@@ -1290,6 +1290,12 @@ export class LiveSync {
         // the unit to announce that A.Gain.
         await this.clipSafeHold.before(c, value, signal);
         if (this.sessionGen !== gen) return;
+        // Asked again after the waits above: a lock that arrived during one stops this command
+        // as it stops the next, even when it has been taken off again by now.
+        if (this.held()) {
+          stoppedByLock();
+          return;
+        }
         // Taken before the send, not after it: a notify that lands while this very
         // vdSet is in flight cannot be placed on either side of it, and the safe
         // reading is that it is the answer to this write. Such a notify is also one

@@ -269,6 +269,39 @@ describe("Console Lock during a live session", () => {
       expect(errors(shell)).toEqual([]);
     },
   );
+
+  // A Clip Safe OFF waits for the unit to announce the A.Gain sent ahead of it. A lock that comes
+  // and goes during that wait stops it there, as it stops the next command.
+  it.each([
+    { locked: true, sent: [] },
+    { locked: false, sent: [0] },
+  ])("stops a Clip Safe OFF waiting on its A.Gain (lock comes and goes: $locked)", SLOW, async ({ locked, sent }) => {
+    const shell = await bootDevice({}, true, {
+      [`${PARAMS.HA_GAIN.id}/0/0`]: -800,
+      [`${PARAMS.CLIP_SAFE.id}/0/0`]: 1,
+    });
+    await up();
+    await quiet(shell);
+    pressNode("ch1");
+    const gain = paramRow(t().inspector.gainAnalog).querySelector<HTMLInputElement>('input[type="range"]')!;
+    gain.value = "-5";
+    gain.dispatchEvent(new Event("input", { bubbles: true }));
+    gain.dispatchEvent(new Event("change", { bubbles: true }));
+    [...paramRow(t().inspector.clipSafe).querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent === "OFF")!
+      .click();
+    await vi.waitFor(() => expect(writesTo(shell, PARAMS.HA_GAIN.id)).toEqual([-500]), { timeout: 5_000, interval: 5 });
+    expect(writesTo(shell, PARAMS.CLIP_SAFE.id), "the premise: the OFF waits").toEqual([]);
+    if (locked) {
+      announceLock(shell, 1);
+      announceLock(shell, 0);
+    }
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.HA_GAIN.id, x: 0, y: 0, value: -500 }]);
+    await quiet(shell);
+    expect(writesTo(shell, PARAMS.CLIP_SAFE.id)).toEqual(sent);
+    expect(errors(shell)).toEqual([]);
+  });
+
 });
 
 // The delay time tempo Sync drives is left out of the plan's writer and written to the unit on its
