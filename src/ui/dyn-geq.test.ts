@@ -83,6 +83,15 @@ describe("the faders", () => {
     expect(host!.patches.at(-1)?.written).toEqual(["geq.sides.0.bands.17.gain", "geq.sides.1.bands.17.gain"]);
   });
 
+  // The unit's own GEQ screen marks a cut and prints a boost with no sign.
+  it("print a cut with its sign and a boost without one, as the unit does", () => {
+    open("bus.stereo");
+    move(5, 3);
+    move(9, -4.5);
+    const reading = (x: number) => card(x).querySelector(".gt-val")?.textContent;
+    expect([reading(5), reading(9), reading(0)]).toEqual(["3.0", "-4.5", "0.0"]);
+  });
+
   it("show the other side when the side bar switches to it", () => {
     open("bus.stereo");
     host!.plan.nodeParams["bus.stereo"]!.geq!.sides![1].bands![5] = { gain: 4.5 };

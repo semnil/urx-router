@@ -206,8 +206,9 @@ export const GEQ_DYN: DynProcessor = {
     const x = bandOf(f.key);
     return x === null ? undefined : GEQ_BAND_LABELS[x];
   },
-  // A rack of thirty-one has no room for a unit on every cell; the screen's own heading says dB.
-  fieldText: (_f, v) => (v > 0 ? `+${v.toFixed(1)}` : v.toFixed(1)),
+  // A rack of thirty-one has no room for a unit on every cell; the screen's own heading says dB. A
+  // boost carries no sign, as on the unit's own GEQ screen: only a cut is marked.
+  fieldText: (_f, v) => v.toFixed(1),
 
   sections: ({ m, vals, states, set, nodeId, midi }) => {
     const g = m.dynTuning.geq;

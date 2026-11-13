@@ -60,7 +60,7 @@ test("the EQ Type picks the screen a bus's EQ opens, and a fader steps 0.5 dB", 
   await expect(card(page, 17).locator(".lbl")).toHaveText("1k");
 
   await step(page, 17, 2);
-  await expect(reading(page, 17)).toHaveText("+1.0");
+  await expect(reading(page, 17)).toHaveText("1.0");
   await expect(fader(page, 17), "the re-lock as the band left 0 dB kept the fader focused").toBeFocused();
   await expect(available(page)).toHaveText("11");
   await closeScreen(page);
@@ -69,7 +69,7 @@ test("the EQ Type picks the screen a bus's EQ opens, and a fader steps 0.5 dB", 
   await page.click("#btn-view-console");
   await page.locator('[data-dyn-node="bus.mix1"][data-dyn-open="geq"]').click();
   await expect(box(page)).toBeVisible();
-  await expect(reading(page, 17)).toHaveText("+1.0");
+  await expect(reading(page, 17)).toHaveText("1.0");
 });
 
 test("twelve bands away from 0 dB shut the rest until one returns", async ({ page }) => {
