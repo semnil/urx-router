@@ -261,8 +261,8 @@ rebuilt MIX strip re-opens ANOTHER strip's open SEND PAN popover the same way wh
 FIXED lock its knobs read has changed — a BUS Type switched at the unit announces only the MIX
 bus — and leaves it alone otherwise, since a re-open under a knob being dragged
 ends the drag. A knob the re-open locked hands the focus to the PAN ▾ button. Sends
-have no meters — the broker exposes no per-send meter addresses — so the rack contains no signal
-display by design.
+have no meters — no per-send meter can be read over the control connection — so the rack contains no
+signal display by design.
 
 ## Rejected alternatives (do not re-litigate without new evidence)
 

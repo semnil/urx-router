@@ -360,10 +360,10 @@ one (a file, a `?plan=` link) is refused at load.
   (slots beyond it are hidden). microSD playback is 2-track (stereo), represented as the single input
   source `microSD Playback`.
 
-> **Live control**: the per-track source assign is read and written over vd (param 736, one port ref
-> per track). **Track Count is read back but never written** — a write to param 839 does reach the
-> unit, but the broker caps it at one of the eight values, so software can only ever say "two
-> tracks" and could not raise it again (see [known-issues.md](known-issues.md)). The factory
+> **Live control**: the per-track source assign is read and written over vd (one port ref per
+> track). **Track Count is read back but never written** — over the control link it can only ever
+> be set to "two tracks", so software could not raise it again (see
+> [known-issues.md](known-issues.md)). The factory
 > assignment is tracks 1-12 = CH 1-12, tracks 13/14
 > = none, tracks 15/16 = STEREO, Track Count 16.
 

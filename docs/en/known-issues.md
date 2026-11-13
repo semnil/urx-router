@@ -313,12 +313,11 @@ over the control link; see [device-model.md](device-model.md)).
 
 The recorder's **Track Count** (2 … 16) is not written by the app, and the reason
 is narrower than "the device refuses it". The device does accept the write and
-act on it — what is missing is the range. Track Count rides param 839 as
-*value × 2*, so 2 … 16 tracks is a value of 1 … 8, but the broker publishes a
-maximum of **1** and enforces it: 2, 4 and 8 are all rejected. That leaves
-software two reachable values, 1 and 0. 1 means two tracks. 0 is outside the
-device's own range and leaves the unit's Track Count screen with nothing selected
-at all (verified on a real URX44V). A saved plan's Track Count is therefore not
+act on it — what is missing is the range. The broker publishes **two tracks** as
+the maximum and enforces it: four, eight and sixteen tracks are all rejected. That
+leaves software two reachable values. One means two tracks. The other is outside
+the device's own range and leaves the unit's Track Count screen with nothing
+selected at all (verified on a real URX44V). A saved plan's Track Count is therefore not
 written to the device — the only settings within reach are one that says "two
 tracks" and one the device has no meaning for.
 
