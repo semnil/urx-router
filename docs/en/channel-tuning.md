@@ -889,8 +889,11 @@ is the same assumption the shipped COMP curve carries.
   threshold parameter owns the corner and the drive slides it, both at 0.2 dB per step. Below it the
   corner is the drive's own: it runs from 0 dBFS at a drive of zero down to whatever the threshold
   asks for at 1.55, so the threshold keeps only `drive / 1.55` of its 0.2 dB per step there. **The
-  boundary is that one drive and not a curve across both parameters** — sweeping the drive with the
-  threshold held produces no kink at all, and from the boundary up the corner moves as a single line.
+  boundary is that one drive and not a curve across both parameters** — whatever the threshold, the
+  two regions meet at a drive of 1.55 and the corner is continuous there. From the boundary up the
+  corner moves as a single line, 0.2 dB per drive step at every threshold, down to its -54 dBFS floor;
+  below it the slope follows the threshold, so a drive swept across 1.55 shows a kink there at every
+  threshold but one.
   It also explains
   what a low drive looks like: the corner is then above any real signal, so the compressor reads as
   switched out rather than merely slack, and the reduction that is *drawn* stays with it. **A drive of
