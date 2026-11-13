@@ -1093,9 +1093,9 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
   writes it waits behind are a converge round's or a self-test write-back's own, and a live session's across its
   flushes, so an OFF opening the flush queued behind one that closed on an A.Gain waits too; a session's end
   drops them. When an A.Gain write and a Clip Safe OFF land together, the unit puts the A.Gain back to the value it
-  held before (`clipSafeOffAwaits` in `input-lock.ts`, applied by `ClipSafeHold` in `client.ts`). Measured on URX22 and URX44V, System 1.3.1.0: sent back to back the A.Gain was put
-  back in 21 of 21 rounds with the A.Gain first and 6 of 6 with Clip Safe first; A.Gain first and 50 ms apart it
-  still was in 6 of 11; held for the announcement it stayed in 12 of 12. Compare with device asks every jack and
+  held before (`clipSafeOffAwaits` in `input-lock.ts`, applied by `ClipSafeHold` in `client.ts`). Sent back to back,
+  the A.Gain is put back whichever of the two goes first; with the A.Gain first and 50 ms apart it can still be put
+  back; held for the announcement it stays. Compare with device asks every jack and
   source the plan holds instead (`everyInputHolder`).
 - **Read.** A device read reads every jack and every source onto its own node, whether a channel reads it or not.
   A jack no channel reads is registered for follow (`planToFollowOnlyAddrs`, `scoped`), so a panel move there takes
@@ -2410,16 +2410,10 @@ written at all:
   patch (the source arbitration under `readback.ts` in "Source layout" is that parameter's other user). The
   device view still carries what the unit answered — that is what leaves the plan and the live
   snapshot disagreeing, and the ordinary outgoing diff is then what sends the effect back, selector first,
-  then the stored engine values, then the bypass intent. Measured on a URX44V on 2026-08-18: that re-send is
-  accepted at the rate that cleared the effect and survives the return, which is why the app does not wait
-  for the rate to come back before sending. The read-back compared the 64 slots of each of the three
-  engines in the run (Pitch Fix, the input Compander, the output MBC) with their values before the
-  transition and found them equal, but one slot per engine carried a non-default sentinel (Pitch Fix Speed
-  37, the Compander's Threshold -32.10 dB, the MBC's LOW Threshold -28 dB): the selector write refills the
-  array with the type's defaults, so on the other 63 slots of each a match cannot tell a re-send that
-  landed from the refill.
+  then the stored engine values, then the bypass intent. That re-send is accepted at the rate that cleared the
+  effect and survives the return, which is why the app does not wait for the rate to come back before sending.
   What separates it from the OTHER clearing — a Signal Type transition, which drops the effect on both
-  members of a pair — is the notify stream rather than the read's own values: measured on a URX44V, the
+  members of a pair — is the notify stream rather than the read's own values: the
   transition announces the selector and the bypass on both members while the excursion announces the rate and
   nothing else. That distinction has to come from the notifies because a read is not a snapshot — its
   addresses are answered hundreds of milliseconds apart, and the pair's Signal Type is read *before* the
@@ -3223,7 +3217,7 @@ Some device parameters reset others when written. Emit order handles that for a 
 type selector before the array it types, and the EQ 1-knob before the values it discards — but a **converge round
 re-sends only what still differs**, and that is where order alone stops being enough.
 
-The measured case is the EQ 1-knob, on a URX44V. Writing ON discards the type back to Intensity; writing the
+The case in point is the EQ 1-knob, on a URX44V. Writing ON discards the type back to Intensity; writing the
 type discards the level to that type's neutral point (Intensity 50, the presets 0). Three links. When a
 COMP/EQ bank switch resets all three at once, a loop that re-sends only what differs walks the chain one link per
 round: round 2 re-sends ON and un-sets the type, round 3 re-sends the type and un-sets the level, and the level
@@ -3272,9 +3266,9 @@ the next save read what the plan holds. It counts an absent pan, send or main pa
 does not run on a device read or a `.urxf` import, which bring the unit's own values. None of these send pans is written
 while the link is on. Being ahead does not make the switch-off land first: it lands after the send pans written behind it in
 the same round, so a write whose plan turns Pan Link off while holding send pans of its own moves each of their
-sources to that send's value, and the round after reads the source back as a residual and puts it back. Measured on
-a URX44V, the source held the send's value when the round was read back 340-354 ms after it was sent, and a second
-round settled it. Writing BUS Type also resets the MIX's send bank, and that reset lands after the sends written behind
+sources to that send's value, and the round after reads the source back as a residual and puts it back: the source
+holds the send's value when the round is read back, and a second
+round settles it. Writing BUS Type also resets the MIX's send bank, and that reset lands after the sends written behind
 it in the same round, so being ahead of them does not spare the round after: the converge a BUS Type write takes
 reads the bank back and re-sends it there, which is where a Write that changes BUS Type settles.
 
@@ -3397,15 +3391,13 @@ listed here so they are not proposed as gaps:
    the other COMP/EQ order. The first is handled by the restore asking for it (`EmitOptions`), the other two
    by reading them off the unit before the sweep and writing them back after — and whatever still differs
    joins `restoreResidual`, so a unit that insists on its own value is reported rather than passed over. Both
-   rest on measurement: a band written while 1-knob is on is accepted and still holds 1.5 s later, and what
+   rest on how the unit behaves: a band written while 1-knob is on is accepted and still holds 1.5 s later, and what
    matters is the order — the 1-knob chain before the bands, which is the emit order.
 
    **What it still cannot restore is what it cannot address.** A run also perturbs the unit's 1-knob base
    save-off — the block it copies a channel's PEQ into when 1-knob goes on — which has no entry in the
-   parameter catalogue, so the app can neither read nor write it. Measured on a URX44V (2026-08-10): 27
-   addresses, and nothing observed restores from them (1-knob off, a preset reload, a neutral level, and a
-   power cycle read back by eye on the unit's own screen). `diag` reports what a run could not send; the
-   save-off is outside even that, and the private reference tree carries the measurements.
+   parameter catalogue, so the app can neither read nor write it. `diag` reports what a run could not send; the
+   save-off is outside even that.
 
    **And what a pass writes is not only values.** Every MONO IN pair's Signal Type is swept: the run is
    two blocks, unlinked first and STEREO-linked second, because a linked pair is a different device state
@@ -5034,7 +5026,7 @@ The cut carries a second rule, and the order between them is load-bearing: **tra
 stripped after the cut**, never before. A leading space is kept — the unit right-aligns the numbers
 in its stereo pair labels, so the factory name really is ` 5/ 6`, and stripping both ends would write
 the shortened form back on the next sync. Trailing is stripped because the unit does not treat it as
-padding: measured on a URX44V (2026-08-14), a name written with a trailing space is stored and read
+padding: a name written with a trailing space is stored and read
 back with it, while every path that reads a name into the plan trims one off. A plan holding one is
 therefore never equal to what the device answers, and the name is re-sent on every sync — forever,
 and invisibly, since the two render identically and each round reports one write that then succeeds.
