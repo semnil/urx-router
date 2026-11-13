@@ -436,8 +436,8 @@ carries a one-line map of the same directories and points here.
       screen is missing exactly when it is wanted. Latency, queue
       depth and feed rates are deliberately NOT in it: they measure how the link feels from this side, and a
       broker can answer promptly right up to the moment it stops answering. The share of notifies the
-      address filter drops is excluded for a stronger reason — registration and notify emission are
-      decoupled on this protocol (measured), so a registration accumulating at the broker is invisible in
+      address filter drops is excluded for a stronger reason — an address nobody moves emits nothing however
+      many times it is registered, so a registration accumulating at the broker is invisible in
       the inbound stream and that figure cannot measure what it appears to. `LINK_BAR_KEYS` /
       `LINK_LEDGER_KEYS` are exported as unions so `linkstats.spec.ts`'s expectation tables are `Record<…>`
       over them and a field added without an assertion fails `pnpm typecheck:e2e`. See "The link ledger"
@@ -2314,11 +2314,10 @@ and address together** (`reply_for`), and each command keeps the verb it sent an
 one place so the two cannot drift. Notifies for a subscribed channel are absorbed into that channel's
 batch rather than dropped.
 
-**Measured on both platforms.** A difference in the endpoints or the
-reply shapes would mean the Windows build could not connect at all. On Windows 11 with a URX44V it is
-the same: the same endpoints, the same replies, the same handshake, and live sync plus a write both reaching
-the unit. One number differs — a sequential sweep of the broker's whole address space (7074 reads, 0
-unreadable on either platform) takes **≈1.9 s on Windows against ≈0.3 s on macOS**.
+**The same on both platforms.** A difference in the endpoints or the
+reply shapes would mean the Windows build could not connect at all. On Windows it is
+the same: the same endpoints, the same replies, the same handshake, and live sync and a write both reach
+the unit.
 
 **The shell has one connection slot, so "a second connection" is not what happens.** `VdState::install`
 stops the worker already installed before putting the new one in, and commands are addressed to whatever is
@@ -3681,11 +3680,10 @@ to tell that a `cmd` on the bar and the panel's `Sent` are one number.
 
 Round-trip latency, queue depth, notify and meter rates, and the share of notifies the address filter drops
 were all considered and **left out**. The first four measure how the link feels from this side, which is not
-evidence about the broker's internal state: it can answer promptly right up to the moment its own teardown
-deadlocks. The drop share is worse than merely weak — it cannot measure what it looks like it measures.
-Registration and notify emission are decoupled on this protocol (measured: a registered address can change and
-announce nothing), and an address nobody moves emits nothing however many times it is registered, so a
-registration piling up at the broker is invisible in the inbound stream.
+evidence about the broker's internal state: it can answer promptly right up to the moment it stops answering.
+The drop share is worse than merely weak — it cannot measure what it looks like it measures. An address nobody
+moves emits nothing however many times it is registered, so a registration piling up at the broker is invisible
+in the inbound stream.
 
 What is left is the set of quantities this side can count exactly and that describe what it *did*: causes,
 not symptoms.
