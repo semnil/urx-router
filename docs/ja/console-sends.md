@@ -2,7 +2,7 @@
 
 > English version: [../en/console-sends.md](../en/console-sends.md)
 
-**ステータス: 実装済み (2026-07-12)。** CONSOLE ビューの「Send to」モードタブ (send-on-fader)
+**ステータス: 実装済み。** CONSOLE ビューの「Send to」モードタブ (send-on-fader)
 を置き換えたストリップ内 SENDS ラックの仕様。本書がラック挙動のリファレンスであり、
 [architecture.md](architecture.md) の CONSOLE 節はその要約。実装は `src/ui/console.ts`
 (ラックビルダー)・`src/style.css` (`.con-sends` / `.con-spop`)・`src/core/midi/controls.ts`

@@ -2,7 +2,7 @@
 
 > 日本語版: [../ja/console-sends.md](../ja/console-sends.md)
 
-**Status: implemented (2026-07-12).** This document specifies the per-strip SENDS rack that
+**Status: implemented.** This document specifies the per-strip SENDS rack that
 replaced the CONSOLE view's "Send to" mode tabs (send-on-fader). It is the behavioral reference
 for the rack; the CONSOLE section of [architecture.md](architecture.md) summarizes it. Implemented
 in `src/ui/console.ts` (rack builder), `src/style.css` (`.con-sends` / `.con-spop`),
