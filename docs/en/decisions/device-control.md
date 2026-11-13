@@ -151,11 +151,12 @@ as they are. Each entry's `howToSettle` is the procedure that settles it, used a
 
 **Decision (2026-11-12, the operator).** The unit takes writes over the link while it is under
 [Console Lock] (System firmware V1.5) — a self-test against a locked unit passes — so the app holds
-its own back. It reads the lock (`895`) and never writes it: no unlock from the app, and no lock from
-it either, since a 1 written over the link takes effect only while the unit shows its Console Lock
-menu and no write that moves the unit there has been found, while a 0 unlocks the unit whatever
-password is set. Which writes stop, and what happens to the rest, was decided once every path the
-app writes through was listed (`vdSet` and `vdSetStr`, fifteen call sites):
+its own back. It reads the lock and never writes it: no unlock from the app, and no lock from it
+either, since a lock written over the link takes effect only while the unit shows its Console Lock
+menu and no write that moves the unit there has been found, while an unlock written over the link
+unlocks the unit whatever password is set. Which writes stop, and what happens to the rest, was
+decided once every path the app writes through was listed (`vdSet` and `vdSetStr`, fifteen call
+sites):
 
 - **Edits to the plan during Live sync** — the board, the CONSOLE, the Inspector, MIDI, the SIM view,
   undo, a `.urxf` import, the rate — are refused while the lock stands, put back, and said on the
