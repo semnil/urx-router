@@ -23,6 +23,7 @@ import {
 import type { ParamSpec } from "./params";
 import {
   addrKey,
+  busGeq,
   channelDynamics,
   channelInputSlots,
   cmdAddr,
@@ -2380,6 +2381,18 @@ describe("Flex12GEQ (V1.5)", () => {
       "OUT_GEQ_BAND",
     ])
       expect(named(cmds, name), name).toEqual([]);
+  });
+
+  it("writes no band past the 31 a document's array may carry: a MIX's ids run on into other parameters", () => {
+    const p = withGeq();
+    const side = p.nodeParams["bus.mix1"]!.geq!.sides![0];
+    side.bands = Array.from({ length: 40 }, () => ({ gain: -1 }));
+    const ids = planToCommandsUncollapsed(model, p)
+      .filter((c) => c.name === "OUT_GEQ_BAND")
+      .map((c) => c.paramId);
+    expect(Math.max(...ids)).toBe(668);
+    expect(() => busGeq("bus.mix1")!.band(31)).toThrow(RangeError);
+    expect(() => busGeq("bus.stereo")!.band(-1)).toThrow(RangeError);
   });
 
   it("registers STEREO's thirty unwritable bands, both sides, for the unit's own changes", () => {

@@ -838,7 +838,9 @@ interface GeqParamRef {
  * An output bus's Flex12GEQ addresses (core/geq.ts holds the plan's side of it). `sides` are the
  * bus's L / R instances, which every per-side number is addressed at; the type and the link move
  * both instances together and are written at L. `band(x)` is where band x lives: STEREO keeps the
- * band on x of one param, a MIX gives each band a param of its own.
+ * band on x of one param, a MIX gives each band a param of its own. It refuses a band outside the
+ * 31: a MIX's band ids run on into other parameters' (669 is not a band), so an index taken from a
+ * document must never reach an address unchecked.
  */
 export interface GeqControl {
   type: GeqParamRef;
@@ -856,7 +858,7 @@ export function busGeq(nodeId: string): GeqControl | null {
       on: { name: "STEREO_GEQ_ON", param: PARAMS.STEREO_GEQ_ON.id },
       link: { name: "STEREO_GEQ_LINK", param: PARAMS.STEREO_GEQ_LINK.id },
       limit: { name: "STEREO_GEQ_LIMIT", param: PARAMS.STEREO_GEQ_LIMIT.id },
-      band: (x) => ({ name: "STEREO_GEQ_BAND", param: PARAMS.STEREO_GEQ_BAND.id, x }),
+      band: (x) => ({ name: "STEREO_GEQ_BAND", param: PARAMS.STEREO_GEQ_BAND.id, x: geqBandIndex(x) }),
       sides: [0, 1],
     };
   const mix = MIX_FADER_INSTANCES[nodeId];
@@ -866,9 +868,16 @@ export function busGeq(nodeId: string): GeqControl | null {
     on: { name: "OUT_GEQ_ON", param: PARAMS.OUT_GEQ_ON.id },
     link: { name: "OUT_GEQ_LINK", param: PARAMS.OUT_GEQ_LINK.id },
     limit: { name: "OUT_GEQ_LIMIT", param: PARAMS.OUT_GEQ_LIMIT.id },
-    band: (x) => ({ name: "OUT_GEQ_BAND", param: PARAMS.OUT_GEQ_BAND.id + x, x: 0 }),
+    band: (x) => ({ name: "OUT_GEQ_BAND", param: PARAMS.OUT_GEQ_BAND.id + geqBandIndex(x), x: 0 }),
     sides: [mix[0], mix[1]],
   };
+}
+
+/** A band index, refused unless it names one of the 31. */
+function geqBandIndex(x: number): number {
+  if (!Number.isInteger(x) || x < 0 || x >= GEQ_BAND_COUNT)
+    throw new RangeError(`GEQ band ${x} is outside 0..${GEQ_BAND_COUNT - 1}`);
+  return x;
 }
 
 /** Whether a band of this bus takes a write over the link. STEREO's take one only at x 0 (20 Hz):
@@ -2809,11 +2818,14 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       if (side.on !== undefined) out.push(rawCommand(geq.on.name, geq.on.param, "bool", inst, side.on ? 1 : 0));
       if (side.limit !== undefined)
         out.push(rawCommand(geq.limit.name, geq.limit.param, "enum", inst, admitLeaf(limitRule, side.limit)));
-      side.bands?.forEach((b, x) => {
-        if (b?.gain === undefined || !geqBandWritable(node.id, x)) return;
+      // Walked by the 31 bands rather than by the document's array: an entry past the 31 names
+      // no band, and on a MIX its index would run into another parameter's id.
+      for (let x = 0; x < GEQ_BAND_COUNT; x++) {
+        const gain = side.bands?.[x]?.gain;
+        if (gain === undefined || !geqBandWritable(node.id, x)) continue;
         const at = geq.band(x);
-        out.push(rawCommand(at.name, at.param, "centiDb", inst, admitLeaf(GEQ_GAIN_RULE, b.gain)));
-      });
+        out.push(rawCommand(at.name, at.param, "centiDb", inst, admitLeaf(GEQ_GAIN_RULE, gain)));
+      }
     });
     own(node.id);
   }
