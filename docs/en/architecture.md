@@ -2020,18 +2020,17 @@ the window's life, written in place only when its text changes. The hint beside 
 it can show in one grid cell — the idle and learn ones always, the armed one while a control is armed — so it is as
 tall as the tallest of them and turning learn on or off, or arming a control, moves nothing below it; only the
 current wording is painted, and the others are `aria-hidden` as well as hidden from sight. An armed wording taller
-than both would still grow it. Measured 2026-10-04 in Playwright's Chromium and WebKit builds, in both languages, at
-the 440 px the window opens at and its 360 px minimum: of the 3,378 distinct armed wordings per language — every
-control id the three models' default plans list, plus every insert-FX slot and FX parameter on every node — none
-is taller than the idle one. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
+than both would still grow it, and none is: in Chromium and WebKit, in either language, at the width the window
+opens at and at its minimum, no armed wording — for every control id the three models' default plans list, plus
+every insert-FX slot and FX parameter on every node — is taller than the idle one. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond the relay pair — its capability grants those two commands
 and, of core, only a debug build's devtools hotkey, so it cannot emit an event the main window listens for. A file dropped onto it
 opens nothing: the shell raises the drag events for the window the file was dropped on, and the main window takes only those
 raised for itself (see "Opening files: drag & drop, and settings files"). Where it sits is the shell's to remember (see
 "Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by platform —
-a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where an AppKit parent was measured
-and is not used. Closing the main window closes it; closing it drops learn mode, which would
+a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where an AppKit parent costs more than
+it gives and is not used. Closing the main window closes it; closing it drops learn mode, which would
 otherwise stay armed against a control nothing on screen names.
 
 Because it is a window rather than an overlay it can drift behind another application — and on macOS, where
@@ -2041,12 +2040,12 @@ bring the binding back to where the operator is looking: it **raises itself when
 would cover the app to solve a problem lasting a gesture), and every bound control carries **its address as
 a tooltip** (`CH 1 CC 21`), which costs no layout and is readable with the window closed.
 
-It deliberately does **not** raise itself when a binding lands, which is measured rather than assumed (macOS,
-2026-08-01). A click on a window that is not active does not reach the webview: wry's `acceptsFirstMouse:`
+It deliberately does **not** raise itself when a binding lands. On macOS a click on a window that is not active
+does not reach the webview: wry's `acceptsFirstMouse:`
 returns the `accept_first_mouse` attribute, and Tauri's default for it is `false`
-(`tauri-runtime/src/webview.rs`; the `tauri.conf.json` window key is `acceptFirstMouse`). Measured both ways —
-with the MIDI window focused a single click on a console fader neither armed it nor moved it, and with the main
-window focused the same click armed it. Raising on every binding would therefore turn each following assignment
+(`tauri-runtime/src/webview.rs`; the `tauri.conf.json` window key is `acceptFirstMouse`). It holds both ways —
+with the MIDI window focused a single click on a console fader neither arms it nor moves it, and with the main
+window focused the same click arms it. Raising on every binding would therefore turn each following assignment
 into two clicks, one to activate and one to arm, right in the middle of the run of gestures that assigning a
 bank of controls is. Turning `acceptFirstMouse` on would buy the click back at the price of a focus-click
 moving whatever control is under the pointer, which on a mixer is a fader jumping.
@@ -2174,9 +2173,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   otherwise keep showing wrong. Before it, what a pass would carry is not the unit's state but whatever the
   plan holds — a new document's defaults, a loaded file, a half-applied read — and putting that on the wire is
   not merely wrong for the controller: on a loopback or any shared bus, every other listener takes it for an
-  operator's gesture. Measured 2026-08-16: a second instance of this app, launched while a live session ran,
-  sent its own startup values down the same IAC bus, and the live instance applied them as incoming MIDI and
-  wrote them to the unit — CH 1 from +66 dB to its minimum, with the channel unmuted. So opening the output
+  operator's gesture. A second instance of this app, launched while a live session runs, sends its own startup
+  values down the same bus, and the live instance applies them as incoming MIDI and writes them to the
+  unit. So opening the output
   port sends nothing on its own, a fetch and a `.urxf` import do not open it (neither says the plan is the
   unit's state), a readback that threw or was cancelled does not either — the re-send hangs off the session
   being up rather than off reaching the `finally` all three land in — and Live sync ending, or the plan being
@@ -2205,19 +2204,18 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   and, while live, write to the unit (`core/midi/controls.test.ts` drives it through the engine on the continuous
   controls the factory plan lists, the morphing bank's, and those of each insert effect and each FX type). Only a pass that actually sends records the
   pair: one that delivers nothing tells the controller nothing. At 7 bits the codecs alone would not hold
-  the value either (measured 2026-10-04, 93 of 311 controls on a URX44V do not round-trip — the tuning
-  screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack. COMP
+  the value either: not every control round-trips — the tuning screens' EQ frequency and Q, GATE attack /
+  hold / decay, COMP attack / release and DUCKER attack do not. COMP
   **ratio** and DUCKER **decay** are not on that list because each field is a stop table of the unit's that
   holds fewer stops than the wire holds positions, so a 7-bit echo decodes onto the stop it left from; the
-  attack, hold and decay / release tables hold more).
+  attack, hold and decay / release tables hold more.
   Setting `localStorage["urx-midi-log"]` traces every rx/tx
   byte string and the engine's per-message decision (drop/ignore/apply) to the console; a dev build also
   carries `window.__urxMidiProbe` (`ui/midi-probe.ts`), which records the same stream **with timestamps** on
   the engine's own clock plus the live-sync marks, because the question a console trace cannot answer is a
   gap — how long after a burst goes out the controller answers, and whether that answer lands before or
   after incoming MIDI stops being refused. **That clock has a floor in the shipping engine**: WKWebView
-  clamps `performance.now()` to whole milliseconds (measured on macOS, 2026-08-16 — 419 records over five
-  launches, not one carrying a fraction), while jsdom and Chromium keep sub-millisecond values. `report()`
+  clamps `performance.now()` to whole milliseconds, while jsdom and Chromium keep sub-millisecond values. `report()`
   therefore takes its decimals from the records it is printing and, when they carry none, says how many it
   counted — a gap shown as 0 ms there is *below the clock* rather than simultaneous, and one integral
   timestamp is not evidence about an engine. It follows that **no sub-millisecond figure in this document was
@@ -2233,14 +2231,12 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   best-effort, for the reason the shell's own teardown is native, so what bounds a reload's lost tail is the
   batch window and not that flush. It is a **dev build's** diagnostic on both sides — `import.meta.env.DEV`
   drops the recorder from the bundle, and `debug_assertions` makes the `append_midi_log` command refuse — so
-  an installed app neither writes it nor can be asked to. Measured on macOS with a Stream Deck+ over one IAC bus
-  (2026-08-09): the whole 8-address resync goes out inside 1 ms, the refusal window ends in the same
-  millisecond, and the loopback returns 5 ms later — so that window protected none of it, and one sized to
-  cover it would only discard genuine input for as long as it lasted. That measurement is why the resync is
+  an installed app neither writes it nor can be asked to. A refusal window timed by a clock protects nothing
+  here: the whole resync goes out, and the window closes, before the loopback returns, and a window long
+  enough to cover the loopback would only discard genuine input for as long as it lasted. That is why the resync is
   **not** kept inside the window: it goes out from `MidiControl.liveReadSettled`, which the Live-sync start calls once
   the session is up, after the latch clears. What protects the plan is the echo guard above, which
-  decides by value and so does not depend on that latency at all. The same run recorded no `vd_set` reaching
-  the unit.
+  decides by value and so does not depend on that latency at all.
 - **Gating** — an incoming message is refused while a device read holds the plan (`deviceReadInFlight`:
   Fetch, the Live-sync starting readback), while a file flow does (`fileFlowBusy`: New / Open / Save /
   drop / `.urxf` import), or while a destructive round-trip run holds the **device link**
