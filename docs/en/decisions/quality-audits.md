@@ -153,9 +153,28 @@ two port selects: what a second and a third choice do while the first port is st
     and "still says a failed open that is the latest choice, after an earlier one was replaced".
 - **Turned down: reporting that failure and taking it down when a later port opens.** The line
   would still show a failure for a port the operator had left, for as long as the next open takes.
-- **Not established.** The queue orders what the page sends, and every test above stands a stub
-  where the shell is. Whether the shell receives two commands in the order the page sent them was
-  not examined, and the Rust side of the ports (`src-tauri/src/midi.rs`) has no test of its own.
+- **Not established: that the shell takes two commands in the order the page sent them.** The
+  queue orders what the page sends, every test above stands a stub where the shell is, and the Rust
+  side of the ports (`src-tauri/src/midi.rs`) has no test of its own. What is known about the order
+  is this. The MIDI commands are all synchronous, and the shell enters synchronous commands one at
+  a time, in the order the webview hands them over. That the webview hands two requests over in the
+  order the page issued them, when the page does not await the first, is not guaranteed by Tauri's
+  documentation. It was observed to hold in the macOS webview (WKWebView). The Windows webview
+  (WebView2) is unconfirmed.
+- **Known and left unguarded: three places where the result depends on the order two commands
+  are taken in.** The first two go wrong only if the shell takes the two commands in the reverse
+  of the order sent; the third goes wrong in the order sent.
+  - A close is not awaited inside the port queue. "None" sends the close and the queue moves on
+    (`applyInputPort`, `closeOutput`), so that close and the next open of the same direction can be
+    in flight together. Taken in reverse, the shell opens the new port and then closes it, and the
+    page goes on showing it as open.
+  - A close followed by the question about open ports (`reconcileOpenPorts`, which `refreshPorts`
+    runs). The close is counted when it is sent, so a question sent after it is not discarded.
+    Taken in reverse, the answer still names the port being closed and the page puts it back.
+  - Giving up a stalled output (`abandonOutput`) sends its close from outside the queue. If the
+    open of the next output is in flight at that moment, the close reaches the shell after that
+    open and closes the port it has just opened, while the page shows it as open. This one was
+    found by reading the code and has not been reproduced.
 
 ## Abort on failure is the operator's decision
 
