@@ -28,6 +28,11 @@ among the options for each.
 ([#345](https://github.com/semnil/urx-router/pull/345)): the MIDI window is an independent window
 there and is kept in front only while a learn is armed. The relation remains on Windows.
 
+**Where the code for that store is (2026-11-12).** What reads the plugin's file, keeps the scale file
+beside it (#291) and registers the two plugins that save and clear both is one module,
+`src-tauri/src/winstate.rs`. The operator decided to separate it; it was moved out of `lib.rs` as it
+stood, with no change in behaviour.
+
 ## The two restores are not unified
 
 **Decision.** The main window and the MIDI window are corrected in two places, in two ways, and they

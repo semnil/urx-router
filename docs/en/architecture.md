@@ -770,7 +770,8 @@ carries a one-line map of the same directories and points here.
   purpose, since building a webview from a blocking command deadlocks on Windows — `close_midi_window`,
   `focus_midi_window`, `pin_midi_window`, `midi_window_open`, and four Channel relay commands; the main window's
   destruction closes it, and its own closing drops learn mode) + where each window was and whether it is
-  still on a display (`winfit.rs` + `tauri-plugin-window-state`; see "Window geometry") + MIDI bridge commands
+  still on a display (`winfit.rs` + `tauri-plugin-window-state`, with the files on disk read and written in
+  `winstate.rs`; see "Window geometry") + MIDI bridge commands
   (`midi_list_inputs/outputs`; `midi_open_input` delivers received bursts over a Tauri Channel;
   `midi_close_input`; `midi_open_output/midi_close_output`; `midi_send`; `midi_open_ports` answers which
   ports are open, since a native close cannot be reported to the page it happens to. Uses midir;
