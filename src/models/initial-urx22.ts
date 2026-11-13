@@ -17,6 +17,7 @@
 
 import type { NodeParams, PlanConnection } from "../core/plan";
 import { SSMCS_INITIAL } from "../core/plan";
+import { EQ_TYPE_PEQ, geqFactory } from "../core/geq";
 
 const EQ_FLAT = (): NodeParams["eqBands"] => [
   { on: true, q: 0.71, freq: 125, gain: 0, type: 1 },
@@ -106,9 +107,23 @@ export const URX22_NODE_PARAMS: Record<string, NodeParams> = {
   ch_5_6: stereoChannel(),
   ch_7_8: stereoChannel(),
   ch_9_10: stereoChannel(),
-  "bus.stereo": { ...outputBus(), on: true },
-  "bus.mix1": { ...outputBus(), busType: 0, on: true, panLink: false },
-  "bus.mix2": { ...outputBus(), busType: 0, on: true, panLink: false },
+  "bus.stereo": { ...outputBus(), on: true, eqType: EQ_TYPE_PEQ, geq: geqFactory("bus.stereo") },
+  "bus.mix1": {
+    ...outputBus(),
+    busType: 0,
+    on: true,
+    panLink: false,
+    eqType: EQ_TYPE_PEQ,
+    geq: geqFactory("bus.mix1"),
+  },
+  "bus.mix2": {
+    ...outputBus(),
+    busType: 0,
+    on: true,
+    panLink: false,
+    eqType: EQ_TYPE_PEQ,
+    geq: geqFactory("bus.mix2"),
+  },
   // FX channels ship ON at the factory (param 338, def 1) with their factory
   // effect program (FX1 = Rev-X Hall, FX2 = Mono Delay) — the FX channels are
   // identical across models.

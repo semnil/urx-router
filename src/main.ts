@@ -4427,17 +4427,22 @@ function writeMovedHeld(id: string, before: readonly { param: number; y: number;
 function chooseSampleRate(rate: number): void {
   // The recorder's Track Count and the inserts the rate rules out go with the rate, one way:
   // see changePlanSampleRate.
-  const off = changePlanSampleRate(plan, rate);
+  const { inserts, geq } = changePlanSampleRate(plan, rate);
   // Same change funnel as every other edit: dirty + (in Live sync) push the new
   // rate to the device. Re-clocking glitches audio, but that is inherent to a
   // deliberate rate change and keeps Live sync from deferring it onto a later edit.
   markChanged();
   syncRateUi();
-  setStatus(
-    off.length
-      ? t().status.insertsOffAtRate(formatRate(plan.sampleRate), insertNames(off))
-      : t().status.sampleRate(formatRate(plan.sampleRate)),
-  );
+  const at = formatRate(plan.sampleRate);
+  const buses = geq.map((id) => graph.labelOf(id)).join(", ");
+  if (inserts.length)
+    setStatus(
+      [
+        t().status.insertsOffAtRate(at, insertNames(inserts)),
+        ...(geq.length ? [t().status.geqOffAtRateToo(buses)] : []),
+      ].join(" "),
+    );
+  else setStatus(geq.length ? t().status.geqOffAtRate(at, buses) : t().status.sampleRate(at));
 }
 
 ratePicker.addEventListener("change", () => pickSampleRate(Number(ratePicker.value)));

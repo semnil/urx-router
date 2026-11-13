@@ -1728,6 +1728,7 @@ describe("booleanParamProblems", () => {
         "eqOn",
         "eqOneKnob.on",
         "eqBands[].on",
+        "geq.sides[].on",
         "comp.autoMakeup",
         "comp.oneKnob",
         "ssmcs.on",

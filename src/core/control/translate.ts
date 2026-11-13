@@ -47,6 +47,20 @@ import {
 } from "./insert-fx-effect";
 import { isFixedConnection, monoPairOf, requiresSource, sendTapWritable } from "../routing";
 import { jackGainRange } from "../input-lock";
+import {
+  EQ_TYPE_OPTIONS,
+  EQ_TYPE_PEQ,
+  GEQ_BAND_COUNT,
+  GEQ_BUSES,
+  GEQ_GAIN_MAX_DB,
+  GEQ_GAIN_MIN_DB,
+  GEQ_LIMIT_15,
+  GEQ_LIMIT_OPTIONS,
+  GEQ_LINK_OFF,
+  GEQ_LINK_OPTIONS,
+  GEQ_STEP_DB,
+  geqUnavailable,
+} from "../geq";
 import type { InsertFxOption, ParamName, ParamSpec } from "./params";
 import {
   D_GAIN_SOURCES,
@@ -814,6 +828,56 @@ export function outputEq(nodeId: string): EqControl | null {
   return eq ? eqBandsFrom(eq.param, eq.instances) : null;
 }
 
+/** One Flex12GEQ number of a bus: the catalog entry that names it and its param id. */
+interface GeqParamRef {
+  name: ParamName;
+  param: number;
+}
+
+/**
+ * An output bus's Flex12GEQ addresses (core/geq.ts holds the plan's side of it). `sides` are the
+ * bus's L / R instances, which every per-side number is addressed at; the type and the link move
+ * both instances together and are written at L. `band(x)` is where band x lives: STEREO keeps the
+ * band on x of one param, a MIX gives each band a param of its own.
+ */
+export interface GeqControl {
+  type: GeqParamRef;
+  on: GeqParamRef;
+  link: GeqParamRef;
+  limit: GeqParamRef;
+  band: (x: number) => { name: ParamName; param: number; x: number };
+  sides: readonly [number, number];
+}
+
+export function busGeq(nodeId: string): GeqControl | null {
+  if (nodeId === "bus.stereo")
+    return {
+      type: { name: "STEREO_EQ_TYPE", param: PARAMS.STEREO_EQ_TYPE.id },
+      on: { name: "STEREO_GEQ_ON", param: PARAMS.STEREO_GEQ_ON.id },
+      link: { name: "STEREO_GEQ_LINK", param: PARAMS.STEREO_GEQ_LINK.id },
+      limit: { name: "STEREO_GEQ_LIMIT", param: PARAMS.STEREO_GEQ_LIMIT.id },
+      band: (x) => ({ name: "STEREO_GEQ_BAND", param: PARAMS.STEREO_GEQ_BAND.id, x }),
+      sides: [0, 1],
+    };
+  const mix = MIX_FADER_INSTANCES[nodeId];
+  if (!mix) return null;
+  return {
+    type: { name: "OUT_EQ_TYPE", param: PARAMS.OUT_EQ_TYPE.id },
+    on: { name: "OUT_GEQ_ON", param: PARAMS.OUT_GEQ_ON.id },
+    link: { name: "OUT_GEQ_LINK", param: PARAMS.OUT_GEQ_LINK.id },
+    limit: { name: "OUT_GEQ_LIMIT", param: PARAMS.OUT_GEQ_LIMIT.id },
+    band: (x) => ({ name: "OUT_GEQ_BAND", param: PARAMS.OUT_GEQ_BAND.id + x, x: 0 }),
+    sides: [mix[0], mix[1]],
+  };
+}
+
+/** Whether a band of this bus takes a write over the link. STEREO's take one only at x 0 (20 Hz):
+ *  the other thirty answer 400 whatever the value, so the plan holds them, the emit leaves them
+ *  out, and they are read and followed instead. */
+export function geqBandWritable(nodeId: string, x: number): boolean {
+  return nodeId !== "bus.stereo" || x === 0;
+}
+
 /**
  * Resolve an input channel 4-band PEQ, or null if it has none. Shares the
  * output structure (band block 5 params after the EQ-ON anchor): mono COMP->EQ
@@ -1361,6 +1425,10 @@ export function recPointRule(stereo: boolean, ssmcs: boolean): BoundRule {
 const dynRule = (f: DynField): BoundRule => ({ min: f.min, max: f.max, ...(f.steps ? { steps: f.steps } : {}) });
 const rawRule = (min: number, max: number): BoundRule => ({ min, max, integer: true });
 
+/** A Flex12GEQ band gain as the write sends it: inside the widest window any limit allows, on the
+ *  unit's 0.5 dB steps. The side's own limit narrows it further at the edit (core/geq.ts). */
+const GEQ_GAIN_RULE: BoundRule = { min: GEQ_GAIN_MIN_DB, max: GEQ_GAIN_MAX_DB, grid: GEQ_STEP_DB };
+
 /** An insert-FX engine key's family and slot: the family its own key names, or — for a bare
  *  slot number — the family the node's selector names. Null for a key that is neither. */
 function insertFxKeySlot(
@@ -1474,6 +1542,14 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
     out.push(["eqOneKnob.level", rawRule(EQ_ONE_KNOB_LEVEL_MIN, EQ_ONE_KNOB_LEVEL_MAX)]);
   }
   if (MIX_FADER_INSTANCES[nodeId]) out.push(["busType", menuRule(BUS_TYPE_OPTIONS, BUS_TYPE_VARI)]);
+  if (busGeq(nodeId)) {
+    out.push(["eqType", menuRule(EQ_TYPE_OPTIONS, EQ_TYPE_PEQ)]);
+    out.push(["geq.link", menuRule(GEQ_LINK_OPTIONS, GEQ_BUSES[nodeId]?.linkFactory ?? GEQ_LINK_OFF)]);
+    for (const s of [0, 1]) {
+      out.push([`geq.sides.${s}.limit`, menuRule(GEQ_LIMIT_OPTIONS, GEQ_LIMIT_15)]);
+      for (let x = 0; x < GEQ_BAND_COUNT; x++) out.push([`geq.sides.${s}.bands.${x}.gain`, GEQ_GAIN_RULE]);
+    }
+  }
   if (duckerControl(model, nodeId)) for (const f of DUCKER_FIELDS) out.push([`ducker.${f.key}`, dynRule(f)]);
   if (nodeId === "bus.osc") {
     out.push(["osc.level", { min: OSC_LEVEL_MIN_DB, max: OSC_LEVEL_MAX_DB }]);
@@ -2673,6 +2749,19 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     own(node.id);
   }
 
+  // Output bus EQ Type (V1.5), ahead of EQ ON: switching to Flex12GEQ turns the unit's EQ ON on,
+  // and the write below puts the plan's back. Read from the plan whatever the rate: above 48 kHz
+  // the plan holds 4band PEQ (core/geq.ts `geqOffAtRate`).
+  for (const node of model.nodes) {
+    if (node.kind !== "bus") continue;
+    const geq = busGeq(node.id);
+    const type = plan.nodeParams[node.id]?.eqType;
+    if (!geq || type === undefined) continue;
+    const v = admitLeaf(menuRule(EQ_TYPE_OPTIONS, EQ_TYPE_PEQ), type);
+    for (const inst of geq.sides) out.push(rawCommand(geq.type.name, geq.type.param, "enum", inst, v));
+    own(node.id);
+  }
+
   // Output bus EQ ON: STEREO (498, single) and MIX (591, L/R-linked).
   for (const node of model.nodes) {
     if (node.kind !== "bus") continue;
@@ -2699,6 +2788,33 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     const np = plan.nodeParams[node.id];
     const oeq = outputEq(node.id);
     if (oeq && np?.eqBands && (emit.includeDeviceDriven || !np.eqOneKnob?.on)) pushEqBandCommands(out, oeq, np.eqBands);
+    own(node.id);
+  }
+
+  // Output bus Flex12GEQ: the link first (turning it on copies a side on the unit, which the plan
+  // already holds), then per side the [GEQ] button, the limit (it clamps the bands) and the bands.
+  // Left out above 48 kHz, where the unit offers no Flex12GEQ.
+  for (const node of model.nodes) {
+    if (node.kind !== "bus") continue;
+    const geq = busGeq(node.id);
+    const np = plan.nodeParams[node.id];
+    if (!geq || !np?.geq || geqUnavailable(plan.sampleRate)) continue;
+    const linkRule = menuRule(GEQ_LINK_OPTIONS, GEQ_BUSES[node.id]?.linkFactory ?? GEQ_LINK_OFF);
+    const limitRule = menuRule(GEQ_LIMIT_OPTIONS, GEQ_LIMIT_15);
+    if (np.geq.link !== undefined)
+      out.push(rawCommand(geq.link.name, geq.link.param, "enum", geq.sides[0], admitLeaf(linkRule, np.geq.link)));
+    geq.sides.forEach((inst, s) => {
+      const side = np.geq?.sides?.[s];
+      if (!side) return;
+      if (side.on !== undefined) out.push(rawCommand(geq.on.name, geq.on.param, "bool", inst, side.on ? 1 : 0));
+      if (side.limit !== undefined)
+        out.push(rawCommand(geq.limit.name, geq.limit.param, "enum", inst, admitLeaf(limitRule, side.limit)));
+      side.bands?.forEach((b, x) => {
+        if (b?.gain === undefined || !geqBandWritable(node.id, x)) return;
+        const at = geq.band(x);
+        out.push(rawCommand(at.name, at.param, "centiDb", inst, admitLeaf(GEQ_GAIN_RULE, b.gain)));
+      });
+    });
     own(node.id);
   }
 
@@ -3009,6 +3125,18 @@ export function planToFollowOnlyAddrs(model: DeviceModel, plan: Plan, scope: Wri
       if (!sc || sendTapWritable(model, ref(node.id, "out"), ref(bus.id, "in"))) continue;
       out.push({ param: sc.tap, x: 0, y: sc.y, name: "SEND_TAP", node: node.id });
     }
+  }
+  // STEREO's Flex12GEQ bands above 20 Hz: the link refuses a write there, so the emit leaves them
+  // out and the unit's own changes reach the plan through this registration.
+  for (const node of model.nodes) {
+    const geq = busGeq(node.id);
+    if (!geq) continue;
+    for (const inst of geq.sides)
+      for (let x = 0; x < GEQ_BAND_COUNT; x++) {
+        if (geqBandWritable(node.id, x)) continue;
+        const at = geq.band(x);
+        out.push({ param: at.param, x: at.x, y: inst, name: at.name, node: node.id });
+      }
   }
   // An HPF frequency the plan holds outside the link's write window: the emit leaves it out
   // (`hpfFreqSent`), and the unit announces a move of its own knob there.

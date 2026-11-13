@@ -21,6 +21,7 @@ import {
 } from "./control/params";
 import { LEVEL_MAX_DB, LEVEL_MIN_DB, LEVEL_OFF_DB } from "./control/vd";
 import { SCENE_BOUNDARY, stripSceneExternal, type SceneBoundary } from "./scene-scope";
+import { geqOffAtRate } from "./geq";
 
 /**
  * Move `plan` onto `rate`, and with it the recorder's Track Count.
@@ -58,20 +59,29 @@ export function insertsAboveRate(plan: Plan, rate: number): InsertOffAtRate[] {
   return out;
 }
 
+/** What a rate change took off a plan: the inserts it put on [No Effect], and the buses it took
+ *  from Flex12GEQ back to 4band PEQ. */
+export interface RateChange {
+  inserts: InsertOffAtRate[];
+  geq: string[];
+}
+
 /**
  * Move `plan` onto `rate` as an edit does — the picker, adopting the unit's rate — taking the
  * same insert effects off that the unit takes off: above an effect's own ceiling the unit puts
  * that channel or bus on [No Effect], and lowering the rate again does not put the effect back.
- * The Track Count moves as in `setPlanSampleRate`. Returns the inserts it took off.
+ * A bus on Flex12GEQ goes back to 4band PEQ above 48 kHz the same way (`geqOffAtRate`). The Track
+ * Count moves as in `setPlanSampleRate`. Returns what it took off.
  *
  * A load and a device read take `setPlanSampleRate` instead: neither moves the rate, a read
  * brings the unit's own selectors, and a loaded document's inserts stay as written.
  */
-export function changePlanSampleRate(plan: Plan, rate: number): InsertOffAtRate[] {
-  const off = insertsAboveRate(plan, rate);
-  for (const { node } of off) plan.nodeParams[node] = { ...plan.nodeParams[node], insertFx: INSERT_FX_NONE };
+export function changePlanSampleRate(plan: Plan, rate: number): RateChange {
+  const inserts = insertsAboveRate(plan, rate);
+  for (const { node } of inserts) plan.nodeParams[node] = { ...plan.nodeParams[node], insertFx: INSERT_FX_NONE };
+  const geq = geqOffAtRate(plan, rate);
   setPlanSampleRate(plan, rate);
-  return off;
+  return { inserts, geq };
 }
 
 /** The microSD recorder's node. Spelled once: the count, the slots and the scene scope all
@@ -145,6 +155,30 @@ export interface EqBand {
   freq?: number;
   q?: number;
   gain?: number;
+}
+
+// One band of an output bus's Flex12GEQ: its gain in dB, on 0.5 dB steps, inside the side's
+// GEQ Limit. A record rather than a bare number so an array of them survives the load-time
+// sanitiser, which drops an array holding anything but records. Absent = 0 dB.
+export interface GeqBand {
+  gain?: number;
+}
+
+// One side (L or R) of an output bus's Flex12GEQ. `on` is the side's [GEQ] button (absent = on),
+// `limit` its GEQ Limit (0 = ±15 dB, 1 = ±12 dB, 2 = ±6 dB, 3 = -24 dB; absent = ±15 dB), `bands`
+// the 31 gains from 20 Hz to 20 kHz (core/geq.ts names them).
+export interface GeqSide {
+  on?: boolean;
+  limit?: number;
+  bands?: GeqBand[];
+}
+
+// An output bus's Flex12GEQ: the GEQ Link (0 = off, 1 = L → R, 2 = R → L; absent = the bus's
+// factory value, off on STEREO and L → R on a MIX) and the two sides, L then R. Kept whichever EQ
+// Type the bus has selected, as the unit keeps them.
+export interface GeqParams {
+  link?: number;
+  sides?: GeqSide[];
 }
 
 // Input GATE detail values (MONO IN channels). threshold/range in dB,
@@ -342,6 +376,10 @@ export interface NodeParams {
   eqOneKnob?: EqOneKnobParams;
   /** Output bus 4-band PEQ band values, indexed 0..3 (LOW … HIGH). */
   eqBands?: EqBand[];
+  /** EQ Type for an output bus (STEREO / MIX): 0 = 4band PEQ, 2 = Flex12GEQ. Absent = 4band PEQ. */
+  eqType?: number;
+  /** Flex12GEQ values for an output bus (core/geq.ts). */
+  geq?: GeqParams;
   /** Input GATE detail values (MONO IN channels). */
   gate?: GateParams;
   /** Input COMP detail values (MONO IN channels, COMP->EQ mode). */
@@ -504,6 +542,9 @@ export const PLAN_FORMAT = "urx-router-plan";
 // screen. The version is also what tells the two kinds of scene-scoped document apart on the
 // way in: one of version 5 or earlier was cut along the earlier boundary and carries none of
 // those, and is opened along that boundary (`sceneBoundary` below).
+//
+// Flex12GEQ (an output bus's `eqType` and `geq`) arrived under 6 as well, before any version-6
+// writer shipped: a version-5 build already refuses every document this build writes.
 export const PLAN_VERSION = 6;
 
 /** The first document version whose scene-scoped form is cut along today's boundary. */

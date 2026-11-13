@@ -178,7 +178,10 @@ flowchart TD
   モーダルのバッキングストア。検証済みの localStorage レコード `urx-settings` 1 本で、`?reset` のクリアが先に
   走るよう遅延読み込みする) / `scene-scope.ts` プラン用語で表した URX のシーン境界 (シーンスコープの取得 /
   保存のための capture / apply / strip。書込側の対応物は `control/params.ts` の `sceneExternal` フラグであり、
-  `scene-scope.test.ts` が 2 つのエンコードを互いにピン留めする) / `input-lock.ts` 全ての面が読む +48V / HI-Z の
+  `scene-scope.test.ts` が 2 つのエンコードを互いにピン留めする) / `geq.ts` 出力バスが 4-band PEQ の代わりに使える Flex12GEQ。
+  その値と、本体が自分で行う変更 — GEQ Limit を狭めるとバンドを範囲へ寄せる、GEQ Link を入れると片側を写す、0 dB から離せる
+  バンドは 12 個まで、48 kHz より上では 4band PEQ に戻す — を持ち、ここでの編集は、本体で同じ操作をしたあとの状態にプランを置く
+  / `input-lock.ts` 全ての面が読む +48V / HI-Z の
   規則 (片方がオンの間にもう片方をオンにする操作は拒否し、HI-Z がオンの間 A.Gain は +40 dB で止まる — known-issues.md
   「本体は +48V と HI-Z を同時にオンにできるが、アプリはしない」)。編集を経ずにプランへ届く 2 つの経路は、
   動かすキーではなく**作り出す状態**をこの規則に問う — `phantomHiZNewlyBothOn` はプランが既に持つ分を

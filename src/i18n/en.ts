@@ -915,6 +915,12 @@ export const en = {
     // The inserts a rate change took off, behind the line above: each effect stops at its own rate.
     insertsOffAtRate: (rate: string, list: string): string =>
       `Sample rate: ${rate} — ${list} came off, as the unit takes an insert off above its own rate limit. Lowering the rate does not put it back.`,
+    // The buses a rate above 48 kHz took from Flex12GEQ back to 4band PEQ: alone, and behind the
+    // inserts line when the same change took both.
+    geqOffAtRate: (rate: string, list: string): string =>
+      `Sample rate: ${rate} — ${list} went back to 4band PEQ with every GEQ band at 0 dB, as the unit does above 48 kHz. Lowering the rate does not bring Flex12GEQ back.`,
+    geqOffAtRateToo: (list: string): string =>
+      `${list} went back to 4band PEQ with every GEQ band at 0 dB, as the unit does above 48 kHz.`,
     followUsbOn: tr("Follow USB on — the device now clocks from the USB host"),
     followUsbOff: tr("Follow USB off — the device now holds its own clock"),
     newPlan: tr("Created a new plan"),

@@ -691,6 +691,10 @@ export const ja: Messages = {
     sampleRate: (rate: string): string => `サンプルレート: ${rate}`,
     insertsOffAtRate: (rate: string, list: string): string =>
       `サンプルレート: ${rate} — ${list} を外しました。デバイスはエフェクトごとの上限を超えたレートでインサートを外します。レートを下げても元には戻りません。`,
+    geqOffAtRate: (rate: string, list: string): string =>
+      `サンプルレート: ${rate} — ${list} を 4band PEQ に戻し、GEQ のバンドをすべて 0 dB にしました。デバイスは 48 kHz より上でこうします。レートを下げても Flex12GEQ には戻りません。`,
+    geqOffAtRateToo: (list: string): string =>
+      `${list} を 4band PEQ に戻し、GEQ のバンドをすべて 0 dB にしました。デバイスは 48 kHz より上でこうします。`,
     followUsbOn: "Follow USB ON — デバイスは USB ホストのクロックで動作します",
     followUsbOff: "Follow USB OFF — デバイスは自身のクロックで動作します",
     newPlan: "新規計画を作成しました",

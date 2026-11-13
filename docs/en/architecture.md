@@ -193,7 +193,10 @@ carries a one-line map of the same directories and points here.
   backing store: one validated localStorage record `urx-settings`, loaded lazily so the `?reset` clear runs
   first) / `scene-scope.ts` the URX scene boundary in plan terms (capture/apply/strip for scene-scoped
   fetch/save; the write-side mirror is the `sceneExternal` flags in `control/params.ts`, and
-  `scene-scope.test.ts` pins the two encodings together) / `input-lock.ts` the +48V / HI-Z rule every surface reads (turning
+  `scene-scope.test.ts` pins the two encodings together) / `geq.ts` the Flex12GEQ an output bus can run instead of its 4-band
+  PEQ: its values, and the edits the unit makes to them on its own — a narrower GEQ Limit pulls the bands in, turning the
+  GEQ Link on copies a side, at most twelve bands leave 0 dB, and above 48 kHz the bus goes back to 4band PEQ — so an edit
+  here leaves the plan where the unit would be after the same operation / `input-lock.ts` the +48V / HI-Z rule every surface reads (turning
   one on while the other is on is refused, and A.Gain stops at +40 dB while HI-Z is on — known-issues.md
   "The unit lets +48V and HI-Z be on together; the app does not"). The two paths that reach the plan
   without being an edit ask it about the STATE they would create rather than the key they move —
