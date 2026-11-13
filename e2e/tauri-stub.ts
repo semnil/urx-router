@@ -195,6 +195,11 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         "plugin:updater|check": null,
         vd_disconnect: null,
         vd_get_str: "",
+        // Every write registers for the unit's Console Lock notify while it runs, a session or
+        // not (core/control/console-lock.ts), so the registration is answered for every spec;
+        // a session still needs the rest of LIVE_COMMANDS to come up.
+        vd_params_subscribe: null,
+        vd_params_unsubscribe: null,
         ...(o.commands ?? {}),
       };
       const dialogs: string[] = [];

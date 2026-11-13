@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   vdConnect: vi.fn<() => Promise<{ model: string; epoch: number }>>(),
   vdDisconnect: vi.fn<(epoch: number) => Promise<void>>(),
   vdSet: vi.fn<(id: number, x: number, y: number, v: number) => Promise<void>>(),
+  // The unit's Console Lock, read before the run writes (console-lock.ts watchRun), and the
+  // notify registration the run holds while it writes; `lock.deliver` drives that notify.
+  vdGet: vi.fn<(id: number, x: number, y: number) => Promise<number>>(),
+  vdParamsSubscribe: vi.fn(),
+  lock: { deliver: null as ((p: { paramId: number; x: number; y: number; value: number }) => void) | null },
   captureDeviceState: vi.fn(),
 }));
 
@@ -22,6 +27,8 @@ vi.mock("../platform", async (importOriginal) => ({
   vdConnect: mocks.vdConnect,
   vdDisconnect: mocks.vdDisconnect,
   vdSet: mocks.vdSet,
+  vdGet: mocks.vdGet,
+  vdParamsSubscribe: mocks.vdParamsSubscribe,
 }));
 
 vi.mock("./selftest", async (importOriginal) => ({
@@ -206,6 +213,14 @@ describe("runPrepareModified", () => {
     mocks.vdConnect.mockReset().mockResolvedValue({ model: "URX44V", epoch: 3 });
     mocks.vdDisconnect.mockReset().mockResolvedValue(undefined);
     mocks.vdSet.mockReset().mockResolvedValue(undefined);
+    mocks.vdGet.mockReset().mockResolvedValue(0);
+    mocks.lock.deliver = null;
+    mocks.vdParamsSubscribe.mockReset().mockImplementation(async (_addrs: unknown, onUpdate: never) => {
+      mocks.lock.deliver = onUpdate;
+      return () => {
+        mocks.lock.deliver = null;
+      };
+    });
     mocks.captureDeviceState.mockReset();
   });
 
@@ -344,6 +359,29 @@ describe("runPrepareModified", () => {
   it("rethrows a non-cancel failure and still disconnects", async () => {
     mocks.captureDeviceState.mockRejectedValue(new Error("link down"));
     await expect(runPrepareModified(model)).rejects.toThrow("link down");
+    expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+  });
+
+  it("refuses a locked unit once the capture has read it, and writes nothing", async () => {
+    captureOk();
+    mocks.vdGet.mockResolvedValue(1);
+    const report = await runPrepareModified(model);
+    expect(report.locked).toBe(true);
+    expect(report.errors).toEqual(["refusing to write: the unit is under Console Lock"]);
+    expect(report.written).toBe(0);
+    expect(mocks.vdSet).not.toHaveBeenCalled();
+    expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+  });
+
+  it("stops at the next command when the unit is locked under it", async () => {
+    captureOk();
+    let sent = 0;
+    mocks.vdSet.mockImplementation(async () => {
+      if (++sent === 3) mocks.lock.deliver?.({ paramId: PARAMS.CONSOLE_LOCK.id, x: 0, y: 0, value: 1 });
+    });
+    const report = await runPrepareModified(model);
+    expect(report).toMatchObject({ aborted: true, locked: true });
+    expect(sent, "the write on the wire lands; nothing after it goes").toBe(3);
     expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
   });
 

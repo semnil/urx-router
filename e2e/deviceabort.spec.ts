@@ -29,12 +29,13 @@ interface StubOptions {
   failReads?: boolean;
 }
 
-// The write reads the device's clock state (sample rate 766 / Follow USB 848)
-// before the diff, so those two are answered even under failReads: this file is
-// about the DIFF read failing, and the clock read's own abort is samplerate.spec.
-// 48 kHz matches the plan and Follow USB off means there is nothing to settle.
+// The write reads the unit's Console Lock (895) right after connecting and its clock state
+// (sample rate 766 / Follow USB 848) before the diff, so those three are answered even under
+// failReads: this file is about the DIFF read failing, and the clock read's own abort is
+// samplerate.spec. Unlocked, 48 kHz matches the plan and Follow USB off means there is nothing
+// to settle.
 function stubDevice(page: Page, opts: StubOptions = {}): Promise<void> {
-  return stubTauriDevice(page, { ...opts, values: { 766: 48000, 848: 0 } });
+  return stubTauriDevice(page, { ...opts, values: { 895: 0, 766: 48000, 848: 0 } });
 }
 
 const setsOf = async (page: Page): Promise<number> => (await writesOf(page)).length;

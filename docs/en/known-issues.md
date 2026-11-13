@@ -132,6 +132,31 @@ but writes only the twenty stops from 40 to 118 Hz:
 > turned while pushed in: the same sixty stops either way. A 42.5 Hz written over the control
 > connection reads 42.5 on the unit's screen. Not measured on the URX22 or the URX44.
 
+## Nothing is written while the unit is under Console Lock
+
+System firmware V1.5 adds **[Console Lock]** to the unit's SETUP menu. The unit goes on taking
+writes over the control connection while it is locked, so URX Router holds its own writes back
+for as long as the lock stands, and never locks or unlocks the unit itself:
+
+- **During Live sync** a strip above the board says the unit is locked. An edit that would
+  change what the session writes is put back with nothing sent, and an operation outside the
+  plan that would write — a cue, CUE Mode, a stereo channel's displayed side, Device setup,
+  Follow USB — is refused; both say so on the status line. An edit that writes nothing (a node
+  moved, a note, a colour) stands. What had not been sent when the lock arrived is read back
+  from the unit, and nothing is sent once the unit is unlocked: edit again to send.
+- **Outside a session**, Write to device, Device setup's Apply and the Follow USB badge refuse a
+  locked unit. A lock that arrives while one of them is writing stops it at the next command;
+  Write to device says how much it sent, and writing again once the unit is unlocked sends the
+  rest.
+- The device self-test (an `--experimental` launch) does not start on a locked unit. One the lock
+  stops after it has written leaves the unit changed, and **Restore after self-test** in the
+  Device menu puts it back once the unit is unlocked. Quitting the app before that loses what
+  the restore needs.
+
+> Confirmed on a URX44V (System 1.5.0.1) by locking and unlocking the unit during Live sync and
+> before one: the strip, an edit put back, CUE Mode refused and Write to device refused, with
+> nothing written. Not measured on the URX22 or the URX44.
+
 ## Live control is hardware-verified on the URX44V and the URX22
 
 Live device control was developed against a real **URX44V** and checked on a real

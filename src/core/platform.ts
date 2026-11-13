@@ -281,8 +281,31 @@ export function vdConnect(model: string): Promise<Connection> {
   return invoke<Connection>("vd_connect", { model });
 }
 
+/** The code a write refused by `holdDeviceWrites` rejects with. A prefix, as the shell's own
+ *  codes are, so a reader of an error message tells it apart without holding the error. */
+export const WRITES_HELD = "writes-held";
+
+// Whether every write is refused before it reaches the link: set while the app knows the unit is
+// under Console Lock (core/control/console-lock.ts). The one place every write passes, so a
+// writer the lock handling does not name still sends nothing.
+let writesHeld = false;
+
+/** Refuse every vdSet / vdSetStr from here (true) or let them through again (false). */
+export function holdDeviceWrites(held: boolean): void {
+  writesHeld = held;
+}
+
+/** Whether writes are being refused (`holdDeviceWrites`). */
+export function deviceWritesHeld(): boolean {
+  return writesHeld;
+}
+
+const heldWrite = (): Promise<never> =>
+  Promise.reject(new Error(`${WRITES_HELD}: the unit is under Console Lock, so the app sends it nothing`));
+
 /** Set one parameter instance to an absolute broker value. */
 export function vdSet(paramId: number, x: number, y: number, value: number): Promise<void> {
+  if (writesHeld) return heldWrite();
   return invoke<void>("vd_set", { paramId, x, y, value });
 }
 
@@ -293,6 +316,7 @@ export function vdGet(paramId: number, x: number, y: number): Promise<number> {
 
 /** Set one string-valued parameter instance (e.g. a CH SETTING name). */
 export function vdSetStr(paramId: number, x: number, y: number, value: string): Promise<void> {
+  if (writesHeld) return heldWrite();
   return invoke<void>("vd_set_str", { paramId, x, y, value });
 }
 

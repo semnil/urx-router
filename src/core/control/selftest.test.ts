@@ -12,9 +12,15 @@ vi.mock("../platform", () => ({
   vdSet: vi.fn(),
   vdGetStr: vi.fn(),
   vdSetStr: vi.fn(),
+  // The run registers for the unit's Console Lock and reads it before it writes
+  // (console-lock.ts watchRun): a registration that delivers nothing unless a case drives it.
+  vdParamsSubscribe: vi.fn(async () => () => {}),
+  holdDeviceWrites: vi.fn(),
+  WRITES_HELD: "writes-held",
 }));
 
-import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
+import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdParamsSubscribe, vdSet, vdSetStr } from "../platform";
+import type { ParamUpdate } from "../platform";
 import {
   auditUnverified,
   channelControl,
@@ -53,6 +59,7 @@ import {
   passesFor,
   PASSES,
   perturbedPlan,
+  restoreSelfTest,
   runSelfTest,
   stereoLinkedPass,
   summarizeVerdicts,
@@ -2085,5 +2092,149 @@ describe("unverified-guess workflow (URX44)", () => {
     const slots = [...unverifiedAddresses(m)].filter(([, key]) => key === "input-ports").map(([addr]) => addr);
     expect(slots.length).toBeGreaterThan(0);
     expect(slots.filter((addr) => !written.has(addr))).toEqual([]);
+  });
+});
+
+// The unit's Console Lock (console-lock.ts). The unit goes on taking writes while it is locked, so
+// the run holds its own back: it does not start on a locked unit, and one locked under it stops at
+// the next command. Stopped once it has written, it keeps what the restore needs, and the restore
+// runs alone (`restoreSelfTest`) once the unit is unlocked — the sweep is not run again.
+describe("runSelfTest and Console Lock", () => {
+  const LOCK = `${PARAMS.CONSOLE_LOCK.id}:0:0`;
+  // The registration the run makes to watch for the lock, and a way to announce one through it.
+  const lockStream = (): { announce: (value: number) => void } => {
+    let deliver: ((p: ParamUpdate) => void) | null = null;
+    vi.mocked(vdParamsSubscribe).mockImplementation(async (_addrs, onUpdate) => {
+      deliver = onUpdate;
+      return () => {
+        deliver = null;
+      };
+    });
+    return { announce: (value) => deliver?.({ paramId: PARAMS.CONSOLE_LOCK.id, x: 0, y: 0, value }) };
+  };
+
+  it("does not start on a locked unit, and writes nothing", async () => {
+    const table = installMockDevice(populatedPlan());
+    table.set(LOCK, 1);
+    lockStream();
+    const report = await runSelfTest(model, 0);
+    expect(report.phase).toBe("refused");
+    expect(report.refusal).toBe("consoleLock");
+    expect(report.pendingRestore).toBeUndefined();
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect(formatSelfTestReport(report)).toContain("the unit is under Console Lock");
+  });
+
+  it("stops at the next command when the unit is locked under it, and keeps what the restore needs", async () => {
+    const seed = populatedPlan();
+    const table = installMockDevice(seed);
+    const before = new Map(table);
+    const stream = lockStream();
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let writes = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      writes++;
+      if (writes === 5) stream.announce(1);
+      return realSet(id, x, y, v);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.locked).toBe(true);
+    expect(report.aborted, "stopped the way a cancel stops").toBe(true);
+    expect(writes, "the write on the wire lands; nothing after it goes").toBe(5);
+    expect(report.restored).toBe(false);
+    expect(report.pendingRestore?.model).toBe("URX44V");
+    expect(formatSelfTestReport(report)).toContain(
+      "- Stopped: the unit went into Console Lock; the unit is left changed, and what the restore needs is kept for Restore after self-test",
+    );
+    const changed = [...table].filter(([k, v]) => before.has(k) && before.get(k) !== v);
+    expect(changed.length, "the premise: the run left the unit changed").toBeGreaterThan(0);
+
+    // Unlocked again: the restore alone puts the unit back, and sends no sweep.
+    table.set(LOCK, 0);
+    vi.mocked(vdSet).mockImplementation(realSet);
+    const restore = await restoreSelfTest(model, report.pendingRestore!, 0);
+    expect(restore.restored).toBe(true);
+    expect(restore.pendingRestore).toBeUndefined();
+    expect(restore.passes).toBe(0);
+    for (const [k, v] of before) if (k !== LOCK) expect(table.get(k), k).toBe(v);
+  });
+
+  it("stops before writing when the lock arrives during the reads, and keeps nothing", async () => {
+    const table = installMockDevice(populatedPlan());
+    const stream = lockStream();
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    let reads = 0;
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      if (++reads === 40) stream.announce(1);
+      return realGet(id, x, y);
+    });
+    const report = await runSelfTest(model, 0);
+    expect(report.locked).toBe(true);
+    expect(report.pendingRestore).toBeUndefined();
+    expect(formatSelfTestReport(report).split("\n")).toContain("- Stopped: the unit went into Console Lock");
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect(table.size).toBeGreaterThan(0);
+  });
+
+  it("keeps the restore for another try when the unit is still locked, or is another model", async () => {
+    const seed = populatedPlan();
+    const table = installMockDevice(seed);
+    const stream = lockStream();
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let writes = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (++writes === 3) stream.announce(1);
+      return realSet(id, x, y, v);
+    });
+    const report = await runSelfTest(model, 0);
+    const pending = report.pendingRestore!;
+    expect(pending, "the premise").toBeDefined();
+    vi.mocked(vdSet).mockClear();
+
+    table.set(LOCK, 1);
+    const locked = await restoreSelfTest(model, pending, 0);
+    expect(locked.refusal).toBe("consoleLock");
+    expect(locked.pendingRestore).toBe(pending);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+
+    table.set(LOCK, 0);
+    vi.mocked(vdConnect).mockResolvedValueOnce({ model: "URX22", label: "URX22", firmware: "", epoch: 2 });
+    const other = await restoreSelfTest(model, pending, 0);
+    expect(other.refusal).toBe("modelMismatch");
+    expect(other.pendingRestore).toBe(pending);
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+
+  // A restore can run to its end and still not put the unit back — its writes refused, a read
+  // failed — and what the run read before the sweep is then still the only record of the unit.
+  it("keeps the restore for another try when one runs to its end without putting the unit back", async () => {
+    const seed = populatedPlan();
+    const table = installMockDevice(seed);
+    const before = new Map(table);
+    const stream = lockStream();
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let writes = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (++writes === 5) stream.announce(1);
+      return realSet(id, x, y, v);
+    });
+    const report = await runSelfTest(model, 0);
+    const pending = report.pendingRestore!;
+    expect(pending, "the premise").toBeDefined();
+
+    table.set(LOCK, 0);
+    vi.mocked(vdSet).mockRejectedValue(new Error("broker-rejected: refused"));
+    const refused = await restoreSelfTest(model, pending, 0);
+    expect(refused.phase, "the premise: the restore ran to its end").toBe("done");
+    expect(refused.restored).toBe(false);
+    expect(refused.pendingRestore).toBe(pending);
+
+    vi.mocked(vdSet).mockImplementation(realSet);
+    const retried = await restoreSelfTest(model, pending, 0);
+    expect(retried.restored).toBe(true);
+    expect(retried.pendingRestore).toBeUndefined();
+    for (const [k, v] of before) if (k !== LOCK) expect(table.get(k), k).toBe(v);
   });
 });

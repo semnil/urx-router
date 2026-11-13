@@ -43,6 +43,7 @@ export const ja: Messages = {
     compareCancel: "照合を中止",
     selfTest: "セルフテスト (実験的)",
     selfTestCancel: "セルフテストを中止",
+    selfTestRestore: "セルフテストの書き戻し",
     liveSync: "ライブ同期",
     liveSyncHint: "編集を接続中のデバイスへ即時反映する",
     liveTag: "LIVE",
@@ -779,6 +780,15 @@ export const ja: Messages = {
       `${n} 件の設定を書き込みましたが、${unread} 件を読み戻せず、デバイスの状態を確認できていません`,
     writeReadFailed: (n: number): string => `書き込みを中止しました: ${n} 件の設定をデバイスから読み取れません`,
     writeError: (message: string): string => `デバイスへの書き込みに失敗しました: ${message}`,
+    writeLocked: (sent: number, total: number): string =>
+      `本体が Console Lock になったため、書き込みを止めました: ${total} 件中 ${sent} 件を送りました。ロックを外してからもう一度書き込むと、残りが送られます`,
+    consoleLocked: "本体が Console Lock 中です — 本体でロックを外すまで、アプリからは何も送りません",
+    consoleUnlocked: "本体の Console Lock が外れました — 編集はまた本体へ送られます",
+    consoleLockedNotSent: "本体が Console Lock 中のため、送りませんでした",
+    consoleLockedEditPutBack: "本体が Console Lock 中のため、この編集は送らずに元に戻しました",
+    consoleLockedPutBack: "すべての編集を送る前に本体が Console Lock になりました — プランを本体の値に戻しました",
+    consoleLockedUndo: "本体が Console Lock 中のため、送れません — 元に戻す・やり直すは行いませんでした",
+    consoleLockedStopped: "本体が Console Lock になったため、操作を止めました",
     deviceSetupReading: "本体の設定を読み込んでいます…",
     deviceSetupRead: "本体の設定を読み込みました",
     deviceSetupApplying: "本体へ設定を適用しています…",
@@ -799,6 +809,19 @@ export const ja: Messages = {
     selfTestIncomplete: (n: number): string =>
       `セルフテスト中断: 停止した時点で ${n} 件が差分のままです — レポートを確認してください`,
     selfTestRestoreFail: "セルフテスト: デバイスが復元されていない可能性があります — 再度取得して確認してください",
+    selfTestRefusedLock: "セルフテストを開始しませんでした — 本体が Console Lock 中です。デバイスには触れていません。",
+    selfTestLockedUntouched:
+      "セルフテストを止めました — 書き込む前に本体が Console Lock になりました。デバイスには触れていません。",
+    selfTestLocked:
+      "セルフテストを止めました — 本体が Console Lock になりました。本体は書き換わったままです。ロックを外したら、デバイスメニューの「セルフテストの書き戻し」を選んでください",
+    selfTestRestorePending:
+      "Console Lock で止まったセルフテストを、まだ書き戻していません — 先にデバイスメニューの「セルフテストの書き戻し」を選んでください",
+    selfTestRestoring: "本体をセルフテストの前の状態に書き戻しています…",
+    selfTestRestored: "本体をセルフテストの前の状態に書き戻しました",
+    selfTestRestoreRefusedLock:
+      "本体がまだ Console Lock 中のため、書き込みませんでした。本体でロックを外してから、もう一度書き戻してください",
+    selfTestRestoreModelMismatch: (device: string, model: string): string =>
+      `書き戻しませんでした — セルフテストを走らせたのは ${model} で、つながっているのは ${device} です`,
     selfTestUnverified: (confirmed: number, roundTripped: number, refuted: number, untestable: number): string =>
       `セルフテストの推測: 確認 ${confirmed} 件・往復のみ ${roundTripped} 件・否定 ${refuted} 件・検証不能 ${untestable} 件`,
     selfTestError: (message: string): string => `セルフテストのエラー: ${message}`,
@@ -962,6 +985,10 @@ export const ja: Messages = {
     label: (names: string): string => `CUE ${names}`,
     clear: "Clear CUE",
   },
+  lock: {
+    title: "Console Lock",
+    body: "本体がロックされています。本体でロックを外すまで、アプリからは書き込みません。ここでの編集は元に戻ります。",
+  },
   linkStats: {
     title: "Device Center リンク",
     row: {
@@ -1074,6 +1101,8 @@ export const ja: Messages = {
     trackCountReread: (message: string): string =>
       `サンプルレートの書き込みを送信しましたが、その後 microSD レコーダーの Track Count を読み戻せませんでした: ${message}。レートが運べない本数は実機が自分で下げるため、画面の表示は変更前の値である可能性があります。実機を読み取って確認してください。`,
     deviceSetupRead: (message: string): string => `本体の設定を読み込めませんでした: ${message}`,
+    consoleLocked:
+      "本体が Console Lock 中のため、書き込みませんでした。本体でロックを外してから、もう一度お試しください。",
     followUsbRead: (message: string): string => `本体の Follow USB の設定を読み込めませんでした: ${message}`,
     deviceSetupWrite: (message: string): string => `設定を適用できませんでした: ${message}`,
     noRule: "この経路は接続できません",

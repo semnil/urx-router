@@ -693,6 +693,12 @@ export const PARAMS = {
    *  the link, turns every cue off without announcing the cleared flags. Like the flags it
    *  governs it is state of the live session rather than of a plan (`cue.ts`). */
   CUE_MODE: { id: 897, encoding: "bool", sceneExternal: true, planExternal: true },
+  /** [Console Lock], System firmware V1.5: 0 = unlocked, 1 = locked. A lock or an unlock on the
+   *  unit's panel is announced. The unit still takes writes over the link while it is locked, so
+   *  the app holds its own writes back (`console-lock.ts`). Read only: the app never writes it —
+   *  a 0 written over the link unlocks the unit whatever password is set. The password beside it
+   *  (896) is stored as plain text and is never read. */
+  CONSOLE_LOCK: { id: 895, encoding: "bool", sceneExternal: true, planExternal: true },
   /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
    *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
    *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.

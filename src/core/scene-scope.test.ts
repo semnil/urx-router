@@ -99,12 +99,17 @@ const CUE_SCENE_EXTERNAL = ["CUE_MONO", "CUE_STEREO_CH", "CUE_FX", "CUE_STEREO",
 // a scene stored on that firmware does not hold it.
 const CUE_MODE_SCENE_EXTERNAL = ["CUE_MODE"];
 
+// [Console Lock], System 1.5: no chunk of the settings file carries it, a scene included, and the
+// unit comes up unlocked after a power cycle.
+const CONSOLE_LOCK_SCENE_EXTERNAL = ["CONSOLE_LOCK"];
+
 const SCENE_EXTERNAL_NAMES = [
   ...AUDITED_SCENE_EXTERNAL,
   ...SETUP_SCENE_EXTERNAL,
   ...UI_STATE_SCENE_EXTERNAL,
   ...CUE_SCENE_EXTERNAL,
   ...CUE_MODE_SCENE_EXTERNAL,
+  ...CONSOLE_LOCK_SCENE_EXTERNAL,
 ].sort();
 
 describe("scene boundary contract", () => {
