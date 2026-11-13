@@ -207,7 +207,7 @@ flowchart TD
     **チャンネル調整画面が編集する全パラメータ**を対象とし、それらの画面が使うのと同じグリッドへスナップする
     正規化 (0..1) の get/set を持つ (調整画面の値は、スライダーが組まれるのと同じ `DynField` 表から
     グリッドを取る。両者がそのグリッドへどの道で到達し、どこで分かれるかは channel-tuning.md の
-    「MIDI 割り当て」が持つ)。id の第 3 要素は**スコープ**である: send 先 Bus (`@bus.mix1`) か、プロセッサ / バンド
+    「MIDI 割り当て」が持つ)。id の第 3 要素は**スコープ**である: Send 先 Bus (`@bus.mix1`) か、プロセッサ / バンド
     (`@gate`、`@comp`、`@eq.low`) — 1 つのノードはフェーダーを 1 つ持つがしきい値は 3 つ持ち、バンドがカーソル
     ではなくスコープなのは、割当が画面を閉じたままでも働かなければならないからである。実機のロックは書込を
     拒否する (FIXED Bus send のレベル / パン / タップ、Pan Link の send パン、レート制限されたステレオ CH EQ、1-knob 下で実機が駆動する
@@ -365,12 +365,12 @@ flowchart TD
       符号化・復号 (ステレオ位置 × 2、R なら +1) と、アプリ自身の書込への実機の応答をパネルでの選択と見分ける
       `LcdEchoes`。`main.ts` がライブ同期の開始時に選択を読み、その通知を follow の `intercept` で受け、
       `switchSide` から書く
-    - `sends-target.ts` HOME の [Sends] の send 先 (763)。本体のサイドメニューが表示する send 先: 詰めた値の
+    - `sends-target.ts` HOME の [Sends] の Send 先 (763)。本体のサイドメニューが表示する Send 先: 詰めた値の
       符号化・復号 (STEREO 0・FX 1 16・FX 2 17・MIX 1 32・MIX 2 34) と、その読み書き。`encodeSendsTarget` は
       96 kHz を超えるレートの FX 2 には値を返さない (本体は接続越しの書込を受け付けるが、本体自身の一覧はその
       レートで FX 2 を出さない)。SIM ビューが表示する実験的起動のときだけ、`main.ts` がライブ同期の
       開始時に読み、その通知を follow の `intercept` で受け、96 kHz を超えるレートを本体が知らせた 1 秒後に
-      読み直し (本体はそのとき FX 2 を FX 1 に替え、知らせない)、SIM ビューの LCD が選んだ send 先を書く
+      読み直し (本体はそのとき FX 2 を FX 1 に替え、知らせない)、SIM ビューの LCD が選んだ Send 先を書く
     - `daw-integration.ts` SETUP > Software Integration。対応 DAW が本体とつながっているか (816。読むだけで、
       つながっている間は 0 以外) と Post Fader Send for FX (879 / 880。MIX 1 は 288、MIX 2 は 290) と、その読み書き。
       実験的起動のときだけ、`main.ts` がライブ同期の開始時に 3 つとも読み、その通知を follow の
@@ -1370,7 +1370,7 @@ CONSOLE のフェーダーとインスペクタの Level スライダー (バス
   全チャンネルで固定**し (画面外で組んで計測する `mainHeadHeight`・機種＋非表示集合でキャッシュ)、その下に
   固定高の SENDS ラックが座り、残りのウィンドウ高さをフェーダー/レベルメーターのゾーン (`flex: 1`) が占める。
   よってフェーダーとメーターの高さは開いている画面の高さにフィットする。
-- **読み値** — 各ストリップ最下段に send 先の行は無い (FADER / ライブ METER セルは上述)。send 先はラック列で、
+- **読み値** — 各ストリップ最下段に Send 先の行は無い (FADER / ライブ METER セルは上述)。Send 先はラック列で、
   send ごとのレベルは列操作時のラックヘッダ読み値で判別する。モノフォントの `∞` は x-height で描かれ数字より小さく見えるため、`-∞` 表示は
   `∞` を拡大して数字と同じ高さに揃える (`setLevelText` が `∞` を `.glyph-inf` span で包む。CONSOLE の読み値・dB スケールと
   インスペクタの値表示で共通の `src/ui/glyph.ts`)。
@@ -1526,10 +1526,10 @@ SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-s
   Track Count) は断る。表にも下の本体の値にも無い
   パス (シーンの中身とタイトル、カードの中身・名前・空き容量) はシミュレーターの値を表示し、
   編集は受け付けない (シミュレーターが元に戻す)。
-- **HOME の [Sends] の send 先**はプランではなく本体の UI の状態 (`sends-target.ts`)。SIM ビューは実験的起動の判定が
-  有効と決まってから作るので、ほかの起動では作らず、send 先も読まない。ライブ同期中は、LCD が本体の持つ
-  send 先を表示し、本体のパネルで選んだ send 先に追従し、LCD で選んだ send 先を本体に書く (96 kHz を超えるレートの FX 2 は
-  断る)。セッションが無いときは、LCD は自分の send 先を持ち、それはどこにも届かない。
+- **HOME の [Sends] の Send 先**はプランではなく本体の UI の状態 (`sends-target.ts`)。SIM ビューは実験的起動の判定が
+  有効と決まってから作るので、ほかの起動では作らず、Send 先も読まない。ライブ同期中は、LCD が本体の持つ
+  Send 先を表示し、本体のパネルで選んだ Send 先に追従し、LCD で選んだ Send 先を本体に書く (96 kHz を超えるレートの FX 2 は
+  断る)。セッションが無いときは、LCD は自分の Send 先を持ち、それはどこにも届かない。
 - **SETUP > Software Integration** はプランではなく本体の設定 (`daw-integration.ts`)。本体は対応 DAW (Cubase・Nuendo・
   MixKey) がつながっている間だけこの画面を開き、その状態を `816` が 0 以外として読む。LCD もその間だけ、かつライブ同期中
   だけ開く。ライブ同期中は、DAW がつながっているかをセッションが LCD に伝え、LCD は本体と同じく入口を描く (つながって
@@ -2150,8 +2150,8 @@ sequenceDiagram
     Note over F: settle の窓を開かない — このアドレスはオーナーノードを持たず<br/>通すとあらゆる変更が全体再読み出しへ昇格してしまう
   else LCD 選択、アドレス 762
     F->>H: intercept が自分の書込への応答を消費するか、選択中のステレオチャンネルの側を表示する
-  else HOME の Sends の send 先、アドレス 763
-    F->>H: intercept が自分の書込への応答を消費するか、本体で選んだ send 先を SIM ビューに表示する
+  else HOME の Sends の Send 先、アドレス 763
+    F->>H: intercept が自分の書込への応答を消費するか、本体で選んだ Send 先を SIM ビューに表示する
   else CUE のフラグ、または実機がその横に立てるインスタンス
     F->>H: intercept が自分の書込への応答と連動先を消費するか、実機での押下を CUE の状態に当てて 300 ms 後にフラグを読み直す
   else 値がスナップショットと一致
@@ -2342,7 +2342,7 @@ source を上書きし合う。ハンドルの上書きは費用ゼロ (`vd_para
 
 | アドレス | アプリが書かない条件と理由 | どのノードの scoped read が修復するか |
 | --- | --- | --- |
-| CH → FX send の tap (193 / 197 / 320 / 324) | broker が `max_value` 0 を公開しており PRE を書けない (`sendTapWritable`) | **チャンネル** — その scoped read が、send 先の全 Bus について `params.tap` を読み直す |
+| CH → FX send の tap (193 / 197 / 320 / 324) | broker が `max_value` 0 を公開しており PRE を書けない (`sendTapWritable`) | **チャンネル** — その scoped read が、Send 先の全 Bus について `params.tap` を読み直す |
 | microSD Rec Track Count (839) | broker が上限 1 を強制し、届くのは「2 トラック」と実機にとって無意味な値だけ | **`out.sdrec`** — 839 が載るノードで、その読みが触れる唯一のアドレス |
 | 実機が計算する FX のディレイタイム (681 / 685 の slot 6) | tempo Sync が入っている間は実機が BPM と音価から導いており、書くとディレイタイムが音価から外れる (`fxRowOwners` の `computed`) | **その FX チャンネル** — scoped read が EFFECT TYPE とパラメータ配列を丸ごと読み直す |
 | ジャックの +48V / A.Gain / Clip Safe / HI-Z (0 / 1 / 5 / 6) | どのチャンネルもそのジャックを読まないので書込から外れる (「入力段: ジャックとソースに置く」) | **MIC/LINE ノード** — その scoped read が両ジャックを読み直す。読まれているジャックなら direct に追従する A.Gain も含む |
