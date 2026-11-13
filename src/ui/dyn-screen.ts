@@ -15,7 +15,7 @@
 // share one modal host and two instances would fight over its DOM.
 //
 // What the meters can and cannot show (measured on a URX44V, 2026-07-29 — see
-// reference/work/vd/vd-meters.md):
+// the project's private notes):
 //   - the feed is exactly 100 ms and each frame is an instantaneous sample, not a
 //     window extreme, so nothing is gained by painting faster;
 //   - the level meters are peak detectors with a ~30 dB/s release, so they hold
@@ -2362,7 +2362,7 @@ export class DynScreen {
     ctl.append(input, val);
     // The device's push-and-turn fine grid is confirmed for a few values only (the
     // COMP makeup gain, the EQ band gains), so the field table says which (see
-    // reference/work/vd/vd-params.md). The legend goes in as the row's `legend`, which
+    // the project's private notes). The legend goes in as the row's `legend`, which
     // pins it beside the static label rather than the readout — the readout's width
     // changes with the value's digits — and orders it ahead of the row's own tag pill,
     // so a row the device takes over prints `Gain FINE Device-driven` and the legend

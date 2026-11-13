@@ -297,7 +297,7 @@ jobs:
     # Split across runners rather than across workers on one. Playwright's default takes
     # half the runner's cores, so raising `workers` is the cheaper-looking move — and it
     # raises the CPU pressure every case runs under, which is the one variable this
-    # suite's load-dependent failures are known to follow (reference/work/e2e-flakes.md).
+    # suite's load-dependent failures are known to follow (the project's private notes).
     # Shards keep the same two workers apiece and add machines instead.
     #
     # Three because the per-job floor stops paying: container pull, checkout, install and

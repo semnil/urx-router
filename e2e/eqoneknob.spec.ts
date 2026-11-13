@@ -3,7 +3,7 @@ import { pickPlot, screenBox } from "./dyn-helpers";
 
 // The EQ 1-knob, on the tuning screen where it lives (the inspector keeps the section's
 // ON toggle and a launcher). What it does on the device is measured and recorded in
-// reference/work/vd: writing a TYPE loads a preset and initialises LEVEL to that type's
+// the project's private notes: writing a TYPE loads a preset and initialises LEVEL to that type's
 // neutral point, and while 1-knob is on the device computes all four bands and announces
 // every recomputation — so the band rows stay in the document and are not shown, and a
 // note in their place says why.

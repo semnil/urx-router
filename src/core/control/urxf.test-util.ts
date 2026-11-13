@@ -7,13 +7,13 @@
 // its offsets and its endianness flags, and a builder taking those from the reader would
 // agree with it however wrong both were — the suite would pass on a byte layout no unit
 // writes. Every offset and every endianness flag below is therefore a duplicate on
-// purpose, and the format notes in the private reference repository
-// (`reference/work/urxf/urxf-file-format.md`) are what they are duplicated FROM.
+// purpose, and the format notes in the private reference repository are
+// what they are duplicated FROM.
 //
 // It also builds files no unit ever writes — `buildUrxf` takes the chunk list it is
 // handed, so a caller can ask for one with no CURRENT chunk. Real samples cannot supply
 // that: every file the hardware writes leads with CURRENT, which is what
-// `urxf.local.test.ts` asserts over the private samples in `reference/work/urxf/samples`.
+// `urxf.local.test.ts` asserts over the private samples.
 // (A truncated file needs no builder support — a caller slices the bytes.)
 //
 // Shared rather than private to `urxf.test.ts` because the app entry's settings-import

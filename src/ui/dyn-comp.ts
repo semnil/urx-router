@@ -45,7 +45,7 @@ const OUT_TICKS = [18, 6, -6, -18, -30, -42, -54];
 
 /**
  * Knee width in dB by selector value (0 Soft / 1 Medium / 2 Hard), from the
- * threshold-departure measurement in reference/work/vd/vd-params.md: with the
+ * threshold-departure measurement in the project's private notes: with the
  * signal held still, the threshold was walked upward until the reduction stopped,
  * which is where the knee's lower edge leaves the detector behind. Hard stopped
  * immediately, Medium ~8 dB later, Soft ~20 dB later — so these are twice the

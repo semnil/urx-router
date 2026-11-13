@@ -954,7 +954,7 @@ test("assignment rows form aligned columns whatever each row's option is", async
   // rect every dump showed. `setLearn` now waits for that push, which is the fix.
   // The dump stays because it is what settled it, and because a null that survives
   // the ordering is a different mechanism and has to say so. The reproduction and
-  // the five occurrences are in reference/work/e2e-flakes.md; read it first.
+  // the five occurrences are in the project's private notes; read them first.
   const boxOf = async (cell: ReturnType<typeof mapRow>, control: string, what: string) => {
     const box = await cell.boundingBox();
     if (box) return box;

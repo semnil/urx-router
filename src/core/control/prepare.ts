@@ -2,7 +2,7 @@
 // WITHOUT restoring it — the no-write-back sibling of selftest.ts. It captures the
 // device, spreads every writable plan scalar to a distinctive value well inside
 // its legal range, and sends the result, leaving that state on the device so a
-// scene SAVE/RECALL audit can save it and diff it (see reference/work/urxf).
+// scene SAVE/RECALL audit can save it and diff it (see the project's private notes).
 //
 // SAFETY: the written state is silent by construction, exactly like the self-test
 // — every output/send level is floored to -inf, the oscillator generator is off,
