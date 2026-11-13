@@ -618,9 +618,9 @@ values while the bus runs the other, and neither reaches the signal then — so 
 and the CONSOLE strip's EQ opener open the screen of the type the bus runs.
 
 **The display column is thirty-one vertical faders**, one per band from 20 Hz to 20 kHz on the
-1/3-octave series, named as the unit labels them. There is no response curve: the unit draws its GEQ as
-faders too, and the faders together draw the curve, since each one's fill runs from 0 dB to its value
-and a cut and a boost read in opposite directions. A reading and a name each reach five characters,
+1/3-octave series, named as the unit labels them. There is no response curve — the operator chose the
+faders over two designs with one (decisions/tuning-screens.md). Each fader's fill runs from 0 dB to its
+value, so a cut and a boost read in opposite directions. A reading and a name each reach five characters,
 wider than a column, so neighbouring faders put them on alternate lines. The level lanes stay beside the
 rack — PRE EQ in, PRE FADER out — as on the 4-band screen.
 
@@ -2390,6 +2390,8 @@ panel IS takes `set`.
 | Out Gain on all three SSMCS faces, as the unit's status bar shows it | The unit repeats it because it is what the encoder is assigned to. Repeating it here only adds occasions for the same value to look different on two faces |
 | Locking the SSMCS COMP / EQ rows while Morphing is engaged | Morphing is a recomputation, not a continuing drive: ownership returns to the operator the moment it is written, and the unit's own screen accepts an edit immediately. Locking would forbid what the hardware allows |
 | Drawing the SSMCS plots from the 4-band EQ's measured model | Extrapolation to a different DSP block. The 4-band model needs three corrections that only come out of measuring, which is the whole argument against drawing one unmeasured |
+| A GEQ response curve with band markers and one gain slider | Drawn in the same frame as the fader rack and put to the operator beside it; the operator chose the faders (2026-11-13, [decisions/tuning-screens.md](decisions/tuning-screens.md)) |
+| A GEQ response curve above the faders | The same: drawn in the same frame and not chosen |
 
 ## Accepted trade-offs / watch items
 
