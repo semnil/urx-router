@@ -1096,14 +1096,8 @@ function queueLockedEdit(source: WriteSource, written?: Iterable<string>): void 
  * taken back to the baseline and the status line says why.
  */
 function settleLockedEdit(source: WriteSource, written?: Iterable<string>): void {
-  const model = getModel(modelId);
   const before = planHistory?.baselineState();
-  if (
-    !planHistory ||
-    !before ||
-    !consoleLockHolds() ||
-    sameDeviceWrites(model, before, plan, getSettings().deviceScope)
-  ) {
+  if (!planHistory || !before || !consoleLockHolds() || sameSessionWrites(before, plan)) {
     applyEdit(source, written);
     return;
   }
@@ -1114,6 +1108,21 @@ function settleLockedEdit(source: WriteSource, written?: Iterable<string>): void
     simView?.planChanged();
   }
   setStatus(t().status.consoleLockedEditPutBack);
+}
+
+/**
+ * Whether two states of the plan put the same values on the unit during a session: what the
+ * session writes (sameDeviceWrites), and the values of the rows the unit drives that an edit
+ * writes on its own (the delay time under tempo Sync — fxHeldWrites, writeMovedHeld), which the
+ * plan's writer leaves out.
+ */
+function sameSessionWrites(a: Plan, b: Plan): boolean {
+  if (!sameDeviceWrites(getModel(modelId), a, b, getSettings().deviceScope)) return false;
+  const held = (p: Plan): string =>
+    Object.keys(FX_CHANNEL_NODE_INDEX)
+      .flatMap((id) => fxHeldWrites(p, id).map((w) => `${w.param}/${w.y}=${w.value}`))
+      .join(",");
+  return held(a) === held(b);
 }
 
 /** Paint the strip that says Console Lock holds the session. */
@@ -4693,8 +4702,7 @@ planHistory = new PlanHistory({
     applyPatch(after, patch);
     // Console Lock: an entry that would change what the session writes is held back, as an edit
     // is put back. One that writes nothing — a node moved, a note — goes ahead.
-    if (consoleLockHolds() && !sameDeviceWrites(getModel(modelId), plan, after, getSettings().deviceScope))
-      return t().status.consoleLockedUndo;
+    if (consoleLockHolds() && !sameSessionWrites(plan, after)) return t().status.consoleLockedUndo;
     return undoRefusal(getModel(modelId), plan, after, (id) => graph.labelOf(id), liveSessionUp);
   },
   // The macOS application menu's Undo / Redo render this state (a no-op elsewhere).

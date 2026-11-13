@@ -10,6 +10,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { $, bootApp, deviceCommands, statusText, unwrittenRead } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
+import { FX_EFFECT_ARRAY_PARAM } from "./core/control/fx-effect";
 import { DEBOUNCE_MS } from "./core/control/live";
 import { PARAMS } from "./core/control/params";
 import { t } from "./i18n";
@@ -25,9 +26,11 @@ import {
   oscFace,
   oscOn,
   paramRow,
+  pressNode,
   pressOscOn,
   quiet,
   turnOscOn,
+  undoEdit,
   WRITE_ASK,
 } from "./main.device.test-util";
 
@@ -266,6 +269,69 @@ describe("Console Lock during a live session", () => {
       expect(errors(shell)).toEqual([]);
     },
   );
+});
+
+// The delay time tempo Sync drives is left out of the plan's writer and written to the unit on its
+// own when it is turned (main.device.fx.test.ts), so Console Lock asks about it as well.
+describe("Console Lock and a value the unit drives", () => {
+  const FX1 = FX_EFFECT_ARRAY_PARAM[0];
+  const seed = { [`${PARAMS.FX_EFFECT_TYPE.id}/0/0`]: 1024, [`${FX1}/0/4`]: 1, [`${FX1}/0/6`]: 5000 };
+  const delaysSent = (shell: TauriShell): number[] =>
+    shell.invokes.flatMap((cmd, i) => {
+      const a = shell.args[i] as Record<string, number>;
+      return cmd === "vd_set" && a.paramId === FX1 && a.y === 6 ? [a.value] : [];
+    });
+  /** The FX 1 screen's delay time row, open on the screen. */
+  const delayRow = (): HTMLInputElement => {
+    pressNode("bus.fx1");
+    $<HTMLButtonElement>("btn-fx-screen").click();
+    const row = $("dyn-screen-box").querySelector<HTMLInputElement>('input[data-dyn="fx:delay"]');
+    if (!row) throw new Error("the FX 1 screen draws no delay time");
+    return row;
+  };
+  const close = (): void => $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions button")!.click();
+  const turn = (row: HTMLInputElement, value: number): void => {
+    row.value = String(value);
+    row.dispatchEvent(new Event("input", { bubbles: true }));
+    row.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  it.each([
+    { locked: 1, sent: [], shown: "5000" },
+    { locked: 0, sent: [4500], shown: "4500" },
+  ])("puts a turned delay time back on a locked unit (locked: $locked)", SLOW, async ({ locked, sent, shown }) => {
+    const shell = await bootDevice({}, true, { ...seed, [LOCK]: locked });
+    await up();
+    await quiet(shell);
+    const row = delayRow();
+    expect(row.value, "the premise").toBe("5000");
+    turn(row, 4500);
+    await quiet(shell);
+    expect(delaysSent(shell)).toEqual(sent);
+    expect(delayRow().value).toBe(shown);
+    if (locked) expect(statusText()).toBe(t().status.consoleLockedEditPutBack);
+    close();
+    expect(errors(shell)).toEqual([]);
+  });
+
+  it("holds back an undo of a turned delay time while the unit is locked", SLOW, async () => {
+    const shell = await bootDevice({}, true, seed);
+    await up();
+    await quiet(shell);
+    turn(delayRow(), 4500);
+    close();
+    await vi.waitFor(() => expect(delaysSent(shell)).toEqual([4500]), { timeout: 10_000 });
+    announceLock(shell, 1);
+    await vi.waitFor(() => expect(strip().hidden).toBe(false));
+    await quiet(shell);
+    undoEdit(shell);
+    expect(statusText()).toBe(t().status.consoleLockedUndo);
+    await quiet(shell);
+    expect(delayRow().value).toBe("4500");
+    close();
+    expect(delaysSent(shell)).toEqual([4500]);
+    expect(errors(shell)).toEqual([]);
+  });
 });
 
 describe("Console Lock and a write outside a session", () => {

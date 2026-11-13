@@ -3624,7 +3624,9 @@ lands while that read is out is the newer of the two, and the read is not taken 
 - The strip above the board (`#lock-strip`) says the unit is locked and that edits are put back.
 - **An edit that would change what the session writes is put back** with nothing sent, and the status line says so
   (`status.consoleLockedEditPutBack`). It is decided in `markChanged` once the funnel that called it is done —
-  `sameDeviceWrites` compares the session's writes, names included, between the undo baseline and the plan — so
+  the session's writes, names included, are compared between the undo baseline and the plan (`sameDeviceWrites`),
+  and so are the values of the rows the unit drives that an edit writes on its own — the delay time under tempo
+  Sync (`fxHeldWrites`), which the plan's writer leaves out — so
   every surface is covered at once: the board, the CONSOLE, the Inspector, an incoming MIDI message, the SIM view,
   undo and redo, a `.urxf` import and the rate. What is put back is the open entry, taken back to the history
   baseline (`PlanHistory.discardOpen`); a value the unit put into the plan is in that baseline already, since every
