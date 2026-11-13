@@ -2803,11 +2803,11 @@ array address it wrote. So the silence is about the front panel, not about the a
 
 | Address | When and why the app does not write it | Which node's scoped read repairs it |
 | --- | --- | --- |
-| CH → FX send tap | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
-| microSD Rec Track Count | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node Track Count lands on, and the only address that read touches |
+| CH → FX send tap | PRE cannot be written over the control link (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
+| microSD Rec Track Count | over the control link it can only be set to "two tracks" | **`out.sdrec`** — the node Track Count lands on, and the only address that read touches |
 | the FX delay time the unit computes (slot 6 of the FX effect's parameters) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
 | a jack's +48V / A.Gain / Clip Safe / HI-Z | no channel reads the jack, so the write leaves it out ([the input stage](#the-input-stage-on-the-jack-and-the-source)) | the **MIC/LINE node** — its scoped read re-reads both jacks, even for A.Gain, which a read jack follows directly |
-| a channel's HPF frequency | while the plan holds a stop outside 40 … 120 Hz: the unit's knob sets 20 … 600 Hz and the broker refuses a write outside that window, so the emit sends nothing there (`hpfFreqSent`) | the **channel** — its scoped read re-reads `hpfFreq` |
+| a channel's HPF frequency | while the plan holds a stop outside 40 … 120 Hz: the unit's knob sets 20 … 600 Hz, but a stop outside 40 … 120 Hz cannot be written over the control link, so the emit sends nothing there (`hpfFreqSent`) | the **channel** — its scoped read re-reads `hpfFreq` |
 | STREAMING source select | while the plan holds no STREAMING wire: its list on the unit has no None, so the emit sends nothing there rather than NONE (`leavesUnsourced`) | **`bus.stream`** — its scoped read takes the source back with the node's DELAY |
 
 The third is not a read-only ADDRESS at all, which is why the heading above says cases. Slot 6 is written like
@@ -3520,7 +3520,7 @@ that rate the Inspector holds the EQ Type and the GEQ screen holds every row, an
 **The rate settle also names what the change costs the microSD recorder**, which, with taking an insert off (the
 paragraph above), is a rate side effect the unit ACTS on rather than merely refuses: it lowers its own Track Count
 to fit a rate it cannot carry (16 tracks at 44.1 / 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz), lowering the
-rate again does not raise it, and Track Count refuses every value the app could write it back with. So this is not a
+rate again does not raise it, and Track Count cannot be raised back over the control link. So this is not a
 feature left out of one write like the >96 kHz family — it is destroyed, and the notice belongs in front of the
 decision. `trackCountCeiling` / `trackCountDrop` (`core/constraints.ts`) decide it and `client.ts`'s
 `readTrackCount` supplies the count, read from the DEVICE rather than the plan: an offline plan's count is whatever
@@ -5001,8 +5001,8 @@ HI-Z is on — +48V to off and A.Gain to +40 dB (`input-lock.ts`) — counting e
 values. The same step rewrites a document's names and notes (`documentTextProblems`), and says so: a **node
 name** is cut to **8 characters**, which is what the unit's own CH SETTING name screen takes (`ch 1xxxx`). Dropping
 would lose a name for being long, and keeping one the unit could not have produced puts a label on
-the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: measured
-on a URX44V, the broker accepts a 20-character name and reads it back unchanged, and the settings
+the canvas that runs across its neighbouring nodes. Nothing else in the stack enforces it: the control
+link takes a longer name and reads it back unchanged, and the settings
 file's 64-byte NUL-padded element is the container rather than the limit — reading that width as the
 limit would be a mistake. The name is also the one plan string the unit is sent as a string
 (`planToNameWrites`: the SSMCS Sweet Spot Data preset rides the same path, but the plan holds it as a numeric index,
