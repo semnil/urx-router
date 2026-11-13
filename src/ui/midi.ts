@@ -666,7 +666,7 @@ export class MidiControl {
       this.closeInput = null;
       this.inputPort = null;
     }
-    this.savePorts();
+    this.savePort("in");
     // Push either way: a failed open (exclusive / unplugged port) left no input, and
     // the window's select has to fall back to "none" rather than keep showing a dead
     // choice. It renders from this state, so re-sending it is the correction.
@@ -680,7 +680,7 @@ export class MidiControl {
   private async applyOutputPort(port: string | null): Promise<void> {
     if (port) await this.openOutput(port);
     else this.closeOutput();
-    this.savePorts();
+    this.savePort("out");
     this.pushState();
   }
 
@@ -946,12 +946,16 @@ export class MidiControl {
     return optionOf(this.resolve(control)?.kind ?? "toggle", m, this.mixedGangs(all).has(addrKey(m.addr)));
   }
 
-  private savePorts(): void {
+  /** Store what `dir` holds now — its port, or nothing for "None" and for an open that
+   *  failed. The other direction's entry is left as it is: it may name a port this session
+   *  does not hold — one whose boot restore failed or is still in flight, an output given
+   *  up as stalled — and that entry is what the next boot tries again. */
+  private savePort(dir: "in" | "out"): void {
     const s = this.store();
-    if (this.inputPort) s.input = this.inputPort;
-    else delete s.input;
-    if (this.outputPort) s.output = this.outputPort;
-    else delete s.output;
+    const key = dir === "in" ? "input" : "output";
+    const port = dir === "in" ? this.inputPort : this.outputPort;
+    if (port) s[key] = port;
+    else delete s[key];
     saveJson(STORE_KEY, s);
   }
 
