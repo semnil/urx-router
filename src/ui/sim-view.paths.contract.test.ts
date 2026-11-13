@@ -202,6 +202,11 @@ const RUN_ENDS = 2;
  *  covers. */
 const OTHER_STRIP = /^ui\.(selectedStrip|lane\.)/;
 
+/** A value that only changes what the screen shows next: the screens' own, and the tab a screen
+ *  of the simulator's own stands on. A press that writes nothing else is carried into the next
+ *  survey of the same screen, so the controls behind a tab are pressed too. */
+const shows = (path: string): boolean => path.startsWith("ui.") || (GLASS_OWN.has(path) && path.endsWith(".tab"));
+
 /** The controls in reach on the glass, in the order the screen draws them. */
 const controls = (root: HTMLElement): HTMLElement[] =>
   [...root.getElementsByTagName("*")].filter(
@@ -356,7 +361,7 @@ async function survey(route: Route, state: string, seed: Seed): Promise<void> {
       note(at, where);
       const paths = [...new Set(at.edits.map((e) => e.path))];
       const sameScreen = root.dataset["screen"] === route.id;
-      const shownOnly = paths.every((p) => p.startsWith("ui."));
+      const shownOnly = paths.every(shows);
       if (sameScreen && shownOnly && paths.length && !paths.some((p) => OTHER_STRIP.test(p))) {
         const next: Edit[] = [
           ...shown.filter(([p]) => !paths.includes(p)),
@@ -419,6 +424,18 @@ describe("the paths a press on the LCD writes", () => {
 
   // The walk reaches the writes the view already keeps: one it has stopped seeing is either a
   // path the simulator no longer writes or a press the walk no longer makes.
+  it("reach the controls behind a tab of the simulator's own: the USB outputs and the HDMI settings", () => {
+    const behind = [
+      "setup.outputPatch.usbMainA",
+      "setup.outputPatch.usbMainB",
+      "setup.outputPatch.usbMainC",
+      "setup.outputPatch.usbSub",
+      "setup.peripheral.hdmiChannels",
+      "setup.peripheral.hdmiEnable",
+    ];
+    expect(behind.filter((path) => !written.has(path))).toEqual([]);
+  });
+
   it("include every path GLASS_OWN names, and a linked pair's compressor split", () => {
     expect([...GLASS_OWN].filter((path) => !written.has(path))).toEqual([]);
     expect([...written.keys()].filter((path) => /^pair\.[^.]+\.compSplit$/.test(path))).not.toEqual([]);
