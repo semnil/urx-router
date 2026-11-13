@@ -374,7 +374,7 @@ flowchart TD
     - `daw-integration.ts` SETUP > Software Integration。対応 DAW が本体とつながっているか (816。読むだけで、
       つながっている間は 0 以外) と Post Fader Send for FX (879 / 880。MIX 1 は 288、MIX 2 は 290) と、その読み書き。
       実験的起動のときだけ、`main.ts` がライブ同期の開始時に 3 つとも読み、その通知を follow の
-      `intercept` で受け、DAW がつながっている間に SIM ビューの LCD が選んだ Send 元を書く
+      `intercept` で受け、DAW がつながっている間に SIM ビューの LCD が選んだ Post Fader Send for FX を書く
     - `cue.ts` 実機の [CUE] のフラグを、プランの外にライブ同期中の状態として持つ (「アプリがモデル化するもの・
       実機に任せるもの」の「CUE」): `CueSet` はどちらの側から来た変化にも実機の決まりを当て、`CueEchoes`
       はアプリ自身の書込への実機の応答をパネルでの押下と見分け、`readCues` は全フラグを読み、`writeCueFlag` は 1 本を書いて実機がそれを告知したときに終わる。
@@ -1536,9 +1536,9 @@ SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-s
   いなければ押せない形で、アプリの印は付けない)。セッションが無いときはアプリが止める (下記)。セッションは `816` と Post Fader Send for FX の 2 つの値 (FX 1 は `879`、FX 2 は `880`) を読み、3 つとも
   登録し、登録した後にもう一度読み (その間に DAW がつながる・離れると、その告知は誰にも届かない)、告知に追従する。
   その読み取りの最中に届いた告知や LCD での選択は、その値についてだけ読み取りの答えより優先し、ほかの値は読み取りの
-  答えを採る。LCD はセッションの持つ Send 元を表示し、LCD で選んだ
-  Send 元を、それまでに並んだ本体への書込の後ろで本体に書く。ただし順番が来た時点で DAW が本体から離れていれば、
-  その書込は捨てて Send 元を読み直す。
+  答えを採る。LCD はセッションの持つ Post Fader Send for FX を表示し、LCD で選んだ
+  Post Fader Send for FX を、それまでに並んだ本体への書込の後ろで本体に書く。ただし順番が来た時点で DAW が本体から離れていれば、
+  その書込は捨てて Post Fader Send for FX を読み直す。
 - **[CUE] のフラグ**はプランではなくライブセッションの状態 (`cue.ts`。「アプリがモデル化するもの・実機に任せるもの」の
   「CUE」を参照)。ライブ同期中は、LCD がセッションの持つ全ストリップのフラグを表示し、どの面や本体のパネルからの変更にも
   追従する。LCD で押した [CUE] は CONSOLE のチップと同じ入口へ渡る。LCD は CUE の組の決まりを自分で当て、動かした
@@ -1577,7 +1577,7 @@ SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-s
   シミュレーターに任せる: 1-knob が決める COMP や M.B.Comp の値、MIDI Control 中の Pitch Fix の音、FX 2 を外すレートでの
   FX 2 への send、Follow USB がオンの間のレート、ライブ同期中に対応 DAW がつながっていないときの Software Integration。止めるのは、アプリが書かない SETUP > GENERAL の画面 (セッションが読んで表示する動作モード・本体の時計。
   「本体で変更してください」)、ライブ同期が切れている間の、アプリが書く SETUP > GENERAL の画面とその値 (アプリは
-  セッションでしか書かないため。開いている画面では位置を変えずに止める。「ライブ同期中に使えます」)、ライブ同期が切れている間の Software Integration とその 2 つの Send 元 (対応 DAW が本体と
+  セッションでしか書かないため。開いている画面では位置を変えずに止める。「ライブ同期中に使えます」)、ライブ同期が切れている間の Software Integration とその 2 つの Post Fader Send for FX (対応 DAW が本体と
   つながっているかはセッション中にしか読めないため。開いている画面では位置を変えずに止める。「ライブ同期中、
   Cubase・Nuendo・MixKey が本体とつながっている間に使えます」)、本体自身の操作と USB Storage Mode (「本体で操作してください」)、
   ライブ同期中の FX バスへのチャンネルの PRE / POST (CONSOLE と Inspector と同じく。同じ文言)、実機との接続中で、本体の
