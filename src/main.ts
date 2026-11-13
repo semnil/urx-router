@@ -974,6 +974,9 @@ function resetCues(): void {
 // lock arrived is read back from the unit. Reading goes on: the session follows the unit, and the
 // meters run.
 let consoleLocked = false;
+// Bumped by every [Console Lock] notify, so a read of the lock that a notify overtook is not taken
+// over it.
+let lockSeq = 0;
 
 /** Whether Console Lock holds the session: the unit is locked and a session is sending. */
 function consoleLockHolds(): boolean {
@@ -1003,6 +1006,9 @@ function takeConsoleLock(locked: boolean): void {
   if (locked === consoleLocked) return;
   consoleLocked = locked;
   holdDeviceWrites(locked);
+  // Held before the lock is noted, so the flush the lock stops cannot be let through again by an
+  // unlock: the session sends nothing until what it left unsent has been read back.
+  const release = locked ? live?.hold() : undefined;
   live?.setLocked(locked);
   renderConsoleLock();
   if (!locked) {
@@ -1014,7 +1020,7 @@ function takeConsoleLock(locked: boolean): void {
   // already be on the unit.
   planHistory?.commit();
   setStatus(t().status.consoleLocked);
-  void putBackUnsent();
+  if (live && release) void putBackUnsent(live.unsent(), release);
 }
 
 /** Forget the lock: the session that knew it ended. */
@@ -1025,16 +1031,32 @@ function resetConsoleLock(): void {
   renderConsoleLock();
 }
 
+// The read-backs the locks of a session asked for, one after another: a lock that arrives again
+// while one is being read back is read back behind it.
+let putBackTail: Promise<void> = Promise.resolve();
+
 /**
  * Read back from the unit what the plan holds and the session had not sent when the lock arrived —
  * a flush the lock stopped part-way, or one that was waiting to go — so the plan shows what the
- * unit holds. The edits behind it are not sent once the lock is taken off.
+ * unit holds, then let the session send again (`release`, the hold taken as the lock arrived). The
+ * edits behind it are not sent, whether or not the lock is taken off before the read is done.
+ * `atLock` is what was unsent as the lock arrived: an edit made once it has been taken off is the
+ * operator's, and is sent rather than read back.
  */
-async function putBackUnsent(): Promise<void> {
-  if (!live) return;
-  await live.idle();
-  if (!consoleLockHolds()) return;
-  const { nodes, whole } = live.unsent();
+function putBackUnsent(atLock: { nodes: Set<string>; whole: boolean }, release: () => void): Promise<void> {
+  const run = putBackTail.then(() => readBackUnsent(atLock)).finally(release);
+  putBackTail = run.catch(() => undefined);
+  return run;
+}
+
+async function readBackUnsent(atLock: { nodes: Set<string>; whole: boolean }): Promise<void> {
+  const session = live;
+  if (!session) return;
+  await session.idle();
+  if (!session.isActive()) return;
+  const now = session.unsent();
+  const nodes = new Set([...now.nodes].filter((n) => atLock.nodes.has(n)));
+  const whole = now.drift || (atLock.whole && now.whole);
   if (!whole && !nodes.size) return;
   try {
     if (whole) await reconcileAllNow();
@@ -1043,7 +1065,7 @@ async function putBackUnsent(): Promise<void> {
     stopLiveOnError(errorText(err));
     return;
   }
-  if (consoleLockHolds()) setStatus(t().status.consoleLockedPutBack);
+  if (session.isActive()) setStatus(t().status.consoleLockedPutBack);
 }
 
 // One check of the edits made while Console Lock holds the session, queued behind the funnel that
@@ -2251,6 +2273,7 @@ const follow =
           // [Console Lock], locked or unlocked on the unit's panel. The app never writes it, so
           // every notify is the unit's own.
           if (isConsoleLockAddr(p)) {
+            lockSeq++;
             takeConsoleLock(consoleLockedOf(p.value));
             return true;
           }
@@ -5876,6 +5899,10 @@ if (!DEMO) {
         // The copy the starting read ran against: without it an edit made during the
         // multi-second read is snapshotted as a value the device was already given.
         live.begin(merged.deviceView);
+        // Nothing is sent until the lock has been read again behind the notify registration
+        // (below): a lock that arrived between the starting read and the registration announced
+        // itself to nobody.
+        const lockKnown = live.hold();
         // Before anything can schedule a send: an edit made while the starting read ran is then
         // read back from the unit rather than sent (putBackUnsent).
         takeConsoleLock(lockRead);
@@ -5886,16 +5913,24 @@ if (!DEMO) {
         // failLive rather than starting a session that cannot do its job.
         await follow?.begin();
         await vdWatchLink(() => stopLiveOnError(t().error.shell.deviceLost));
-        // …and follow is still following. A structural edit can flush between `live.begin`
-        // above and this line; that flush asks the follow layer to re-register, and a
-        // refusal there stops follow and reports through `stopLiveOnError`, which returns
-        // without doing anything while `liveSessionUp` is false. The lines below are what
-        // would declare the session up, so the check belongs in front of them: otherwise
-        // the app says "Live sync on" over a follow that discards every notify, and
-        // nothing restarts it.
+        // The lock as it stands now that its notify is registered. A notify that lands while this
+        // read is out is the newer of the two, and the read is not taken over it.
+        const lockAt = lockSeq;
+        const lockNow = await readConsoleLock();
+        if (lockAt === lockSeq) takeConsoleLock(lockNow);
+        lockKnown();
+        // …and follow is still following. Sends are held from `live.begin` above until the
+        // lock has been read again, so no flush — and no re-registration a flush asks for —
+        // runs before this line; the edit that would have flushed here is sent once the
+        // session is up. Anything else that stops follow in this window reports through
+        // `stopLiveOnError`, which returns without doing anything while `liveSessionUp` is
+        // false. The lines below are what would declare the session up, so the check belongs
+        // in front of them: otherwise the app says "Live sync on" over a follow that discards
+        // every notify, and nothing restarts it.
         if (follow && !follow.isActive()) throw new Error(t().error.liveFollowStopped);
-        // …and the live half is still sending: a flush that failed in the same window, or a
-        // read in front of a write that failed there, recorded its cause and ended it.
+        // …and the live half is still sending: a read made in the same window that failed — a
+        // reconcile a notify set off, or the read-back a lock asked for — recorded its cause and
+        // ended it.
         if (liveStartFailure !== null || !live.isActive())
           throw new Error(liveStartFailure ?? t().error.liveSyncStopped);
         // Remember which generation the session holds, so deactivateLive releases

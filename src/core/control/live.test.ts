@@ -4283,4 +4283,193 @@ describe("LiveSync: Console Lock", () => {
     expect(sent()).toHaveLength(1);
     live.end();
   });
+
+  it("sends nothing while a hold stands, and what an edit asked for once the last one is released", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    const first = live.hold();
+    const second = live.hold();
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    expect(sent()).toEqual([]);
+    first();
+    // A release is spent by its first call.
+    first();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    expect(sent(), "the other hold still stands").toEqual([]);
+    second();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    expect(sent()).toHaveLength(1);
+    live.end();
+  });
+
+  // A release that nothing asked for while it stood arms nothing: an edit right after it waits its
+  // own full window rather than riding one the release opened.
+  it("arms no flush at a release nothing asked for", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    live.hold()();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS - 20);
+    setCh1Fader(plan, -6);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(40);
+    expect(sent(), "the edit waits its own window").toEqual([]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(sent()).toHaveLength(1);
+    live.end();
+  });
+
+  it("sends nothing at a release while the unit is locked, and a release outlives no session", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    const release = live.hold();
+    live.setLocked(true);
+    setCh1Fader(plan, -6);
+    release();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    expect(sent()).toEqual([]);
+    const stale = live.hold();
+    live.end();
+    live.begin();
+    const fresh = live.hold();
+    setCh1Fader(plan, -12);
+    live.schedule();
+    // The ended session's release leaves the next session's own hold standing.
+    stale();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    expect(sent()).toEqual([]);
+    fresh();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    expect(sent()).toHaveLength(1);
+    live.end();
+  });
+
+  // The caller holds the session from the lock until it has read back what the lock stopped, so a
+  // lock lifted while a command is on the wire does not let the rest of that flush go.
+  it("stops a running flush at its next command when the lock comes and goes under a hold", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    setCh1Fader(plan, -6);
+    const ch2 = plan.connections.find((c) => c.from === "ch2:out")!;
+    ch2.params = { ...ch2.params, level: -9 };
+    let release = (): void => {};
+    vi.mocked(vdSet).mockImplementationOnce(async () => {
+      release = live.hold();
+      live.setLocked(true);
+      live.setLocked(false);
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await live.idle();
+    expect(sent(), "the write on the wire lands; nothing after it goes").toHaveLength(1);
+    expect(live.unsent().nodes.size).toBe(1);
+    // What the hold kept back is the caller's to read back before it releases. The release sends
+    // only what an edit asked for while it stood, so the rest waits for the next edit's flush.
+    release();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    expect(sent()).toHaveLength(1);
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    expect(sent()).toHaveLength(2);
+    live.end();
+  });
+
+  // A head the unit resets dependents behind, stopped right after it: the converge that would put
+  // them back never runs, and only a read of the whole unit finds what it holds.
+  it("asks for the whole unit when the lock stops a flush right behind a head that resets", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: 1 };
+    vi.mocked(vdSet).mockImplementation(async (id) => {
+      if (id === PARAMS.COMP_EQ_TYPE.id) live.setLocked(true);
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await live.idle();
+    expect(
+      vi.mocked(vdSet).mock.calls.map((c) => c[0]),
+      "the premise: the head alone went out",
+    ).toEqual([PARAMS.COMP_EQ_TYPE.id]);
+    const unsent = live.unsent();
+    expect(unsent.drift).toBe(true);
+    expect(unsent.whole).toBe(true);
+    // A capture of the whole unit describes what the lock left.
+    live.resync();
+    expect(live.unsent().drift).toBe(false);
+    live.end();
+  });
+
+  it("stops a converge at its next command when the lock comes and goes under a hold", async () => {
+    const plan = basePlan();
+    const onError = vi.fn();
+    const live = new LiveSync({
+      getModel: () => model,
+      getPlan: () => plan,
+      onError,
+      onSent: () => {},
+      onCollapsed: () => {},
+    });
+    const key = (id: number, x: number, y: number): string => `${id}:${x}:${y}`;
+    const table = new Map(planToCommands(model, plan).map((c) => [key(c.paramId, c.x, c.y), c.vdValue]));
+    vi.mocked(vdGet).mockImplementation(async (id, x, y) => table.get(key(id, x, y)) ?? 0);
+    live.begin();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: 1 };
+    // The unit moves two of the plan's values behind the head, which the converge puts back.
+    const moved = planToCommands(model, plan)
+      .filter((c) => c.name === "CH_FADER")
+      .slice(0, 2);
+    expect(moved, "the premise").toHaveLength(2);
+    let release = (): void => {};
+    let converging = 0;
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      table.set(key(id, x, y), v);
+      if (id === PARAMS.COMP_EQ_TYPE.id) for (const c of moved) table.set(key(c.paramId, c.x, c.y), c.vdValue + 1);
+      else if (++converging === 1) {
+        release = live.hold();
+        live.setLocked(true);
+        live.setLocked(false);
+      }
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 4);
+    await live.idle();
+    expect(converging, "the write on the wire lands; nothing after it goes").toBe(1);
+    expect(onError).not.toHaveBeenCalled();
+    expect(live.isActive()).toBe(true);
+    expect(live.unsent().drift).toBe(true);
+    release();
+    live.end();
+  });
+
+  // A head the unit derives a node's values behind, stopped before the read of that node.
+  it("names the node whose read the lock stopped a flush in front of", async () => {
+    const plan = basePlan();
+    const refetchNodes = vi.fn(async () => null);
+    const live = liveFor(plan, refetchNodes);
+    setCh1OneKnob(plan, { on: false, level: 50 });
+    live.begin();
+    setCh1OneKnob(plan, { on: true });
+    vi.mocked(vdSet).mockImplementation(async (id) => {
+      if (id === PARAMS.EQ_ONE_KNOB_ON.id) live.setLocked(true);
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await live.idle();
+    expect(
+      vi.mocked(vdSet).mock.calls.map((c) => c[0]),
+      "the premise: the head alone went out",
+    ).toEqual([PARAMS.EQ_ONE_KNOB_ON.id]);
+    expect(refetchNodes).not.toHaveBeenCalled();
+    expect(live.unsent()).toEqual({ nodes: new Set(["ch1"]), whole: false, drift: false });
+    // A capture of that node describes it again.
+    live.resync(undefined, undefined, new Set(["ch1"]));
+    expect(live.unsent().nodes).toEqual(new Set());
+    live.end();
+  });
 });

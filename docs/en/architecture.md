@@ -3617,7 +3617,9 @@ never writes it: a 0 written over the link unlocks the unit whatever password is
 while the unit shows its Console Lock menu. The password beside it (`896`) is stored as plain text and is never read.
 
 **During Live sync** the starting read takes `895` with the cues, and its notify is registered with the session's
-follow set. While it reads 1:
+follow set. A lock that arrives between that read and the registration is announced to nobody, so `895` is read
+again once the registration is made, and the session sends nothing until it has (`LiveSync.hold`); a notify that
+lands while that read is out is the newer of the two, and the read is not taken over it. While it reads 1:
 
 - The strip above the board (`#lock-strip`) says the unit is locked and that edits are put back.
 - **An edit that would change what the session writes is put back** with nothing sent, and the status line says so
@@ -3634,9 +3636,13 @@ follow set. While it reads 1:
   side, the Device setup screen, Follow USB, HOME's [Sends] destination, Software Integration — is refused with
   `status.consoleLockedNotSent`.
 - **What a flush had not sent when the lock arrived** is read back from the unit: `LiveSync.setLocked` cancels an
-  armed flush and stops a running one at its next command, `LiveSync.unsent` names the nodes whose writes the
-  snapshot says the unit was not sent, and those nodes are reconciled (the whole unit, when a converge head went
-  out without the converge behind it). The edits behind them are not sent once the lock is taken off.
+  armed flush and stops a running one — its send loops and its converge alike — at its next command,
+  `LiveSync.unsent` names the nodes whose writes the snapshot says the unit was not sent, and those nodes are
+  reconciled (the whole unit, when a converge head went out without the converge behind it, and a node, when a head
+  went out without the read of that node behind it). A hold taken as the lock arrives (`LiveSync.hold`) keeps every
+  send back until that read is done, so a lock taken off before it ends sends none of the edits behind it; an edit
+  made once the lock is off is not read back, and goes out when the hold is let go. Read-backs that a lock coming
+  again asks for run one after another.
 - Reading goes on: the session follows the unit, and the meters run.
 
 **Outside a session**, a write — Write to device, Device setup's Apply, the Follow USB badge — reads `895` right

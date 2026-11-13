@@ -9,6 +9,8 @@ import { describe, expect, it, vi } from "vitest";
 import { $, bootApp, deviceCommands, statusText, unwrittenRead } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { levelToVd } from "./core/control/vd";
+import { FX_EFFECT_ARRAY_PARAM } from "./core/control/fx-effect";
+import { DEBOUNCE_MS } from "./core/control/live";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, PARAMS } from "./core/control/params";
 import { nameControl } from "./core/control/translate";
 import { getModel } from "./models";
@@ -113,39 +115,31 @@ describe("the live session", () => {
     expect(reads838()).toBe(after);
   });
 
-  // A re-registration that fails while the session is still STARTING.
-  //
-  // `live.begin()` runs before `follow.begin()`, so a structural edit can flush inside the
-  // window where the first registration is still on the wire; that flush captures and asks
-  // the follow layer to re-register, and the ask can be refused. `stopLiveOnError` returns
-  // without doing anything while `liveSessionUp` is false, so the report is dropped — and
-  // the lines that follow would go on to say "Live sync on" over a DeviceFollow that has
-  // already stopped, with `onNotify` discarding every notify for the rest of the session.
-  it("refuses to start a session whose follow stopped on the way up", SLOW, async () => {
+  // An edit made while the session is still STARTING. `live.begin()` runs before `follow.begin()`,
+  // and nothing is sent from there until the session has read the unit's Console Lock again behind
+  // its registration (a lock in between is announced to nobody), so the flush the edit asks for
+  // runs once the session is up. A structural edit's flush asks the follow layer to re-register,
+  // and a refusal there ends the session through the machinery that covers any session that is up
+  // — never one declared up over a follow that has already stopped.
+  it("sends nothing an edit asks for while the session starts, and sends it once it is up", SLOW, async () => {
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
     let calls = 0;
     const shell = await bootDevice({
       vd_params_subscribe: async () => {
         calls++;
-        // The session's own registration is held open, not failed: what is under test is a
-        // LATER refusal landing inside the start-up window.
+        // The session's own registration is held open; the re-registration the edit's flush
+        // asks for is refused.
         if (calls === 1) {
           await held;
           return null;
         }
         throw new Error("subscribe rejected");
       },
-      // The last await before the session is declared up, stretched so the window this
-      // case is about is wide enough to land in: the flush's ask runs as soon as the
-      // registration it queued behind lands, and its refusal has to arrive while
-      // `liveSessionUp` is still false for `stopLiveOnError` to be the one that drops it.
-      vd_watch_link: async () => new Promise((r) => setTimeout(r, 2_000)),
     });
 
     $("btn-live").click();
-    // Parked inside `follow.begin()`, which is after `live.begin()` — so the flush below
-    // belongs to a live session that has not been declared up yet.
+    // Parked inside `follow.begin()`, which is after `live.begin()`.
     await vi.waitFor(() => expect(calls).toBe(1), { timeout: 25_000 });
 
     // A converge param: its flush captures, and a flush that captured asks.
@@ -153,29 +147,14 @@ describe("the live session", () => {
     const type = row(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
     type.value = String(COMP_EQ_SSMCS);
     type.dispatchEvent(new Event("change", { bubbles: true }));
-    // The ask is made at the END of the flush, and this flush carries a converge — some
-    // 700 reads through the stub. Released before it gets there, the refusal lands after
-    // the session is already up, which is a window the existing machinery already covers.
-    // So: wait for the converge to stop reading, THEN release.
-    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(0), { timeout: 25_000 });
-    let quiet = 0;
-    let last = -1;
-    await vi.waitFor(
-      () => {
-        const now = shell.count("vd_get");
-        quiet = now === last ? quiet + 1 : 0;
-        last = now;
-        if (quiet < 5) throw new Error(`still reading (${now})`);
-      },
-      { timeout: 25_000, interval: 40 },
-    );
-    release();
-    await vi.waitFor(() => expect(calls).toBeGreaterThan(1), { timeout: 25_000 });
+    await new Promise((r) => setTimeout(r, DEBOUNCE_MS * 3));
+    expect(shell.count("vd_set"), "nothing goes out while the session starts").toBe(0);
 
-    // The session is not up, and it said WHY — the follow's own refusal rather than any
-    // failure the read path can raise, which is what separates this from a failed readback.
+    release();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(0), { timeout: 25_000 });
+    await vi.waitFor(() => expect(calls).toBeGreaterThan(1), { timeout: 25_000 });
     await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
-    expect(errors(shell).some((e) => e.includes(t().error.liveFollowStopped))).toBe(true);
     expect(live().getAttribute("aria-checked")).not.toBe("true");
   });
 
@@ -276,11 +255,9 @@ describe("the live session", () => {
     await invoked(shell, "vd_disconnect", disconnects + 1);
   });
 
-  // The LIVE half of the same window. A flush the operator's edit started inside it fails, and
-  // its report reaches `stopLiveOnError` while the session is not up yet: recorded there and
-  // thrown by the start, rather than dropped with the session declared up over a sync that
-  // has stopped.
-  it("refuses to start a session whose first flush failed on the way up", SLOW, async () => {
+  // The LIVE half of the same window. A flush the operator's edit asked for while the session was
+  // starting runs once it is up, and its failure ends the session as any flush's does.
+  it("ends the session when the flush an edit asked for while it started fails", SLOW, async () => {
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
     let calls = 0;
@@ -311,61 +288,73 @@ describe("the live session", () => {
     const fader = row(t().inspector.level).querySelector<HTMLInputElement>("input[type=range]")!;
     fader.value = String(Number(fader.value) - 3);
     fader.dispatchEvent(new Event("input", { bubbles: true }));
-    await invoked(shell, "vd_set", sets + 1);
+    await new Promise((r) => setTimeout(r, DEBOUNCE_MS * 3));
+    expect(shell.count("vd_set"), "nothing goes out while the session starts").toBe(sets);
     release();
 
+    await invoked(shell, "vd_set", sets + 1);
     await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
     expect(errors(shell)).toContain(t().status.liveError("write refused"));
     expect(live().getAttribute("aria-checked")).not.toBe("true");
   });
 
-  // A head write's park read that fails in the same window: the head it was in front of must
-  // not go out, and the start reports the read's failure.
-  it("sends no effect type behind a park read that failed on the way up", SLOW, async () => {
-    let release!: () => void;
-    const held = new Promise<void>((r) => (release = r));
-    let calls = 0;
-    let refuse = false;
-    const table = deviceCommands({
-      "plugin:dialog|message": "Ok",
-      vd_params_subscribe: async () => {
-        if (++calls === 1) await held;
-        return null;
-      },
-    });
-    const get = table.vd_get as (a: Record<string, unknown>) => unknown;
-    const shell = (await bootApp({
-      tauri: {
-        ...table,
-        vd_get: (a: Record<string, unknown>) => {
-          if (refuse) throw new Error("read refused");
-          return get(a);
+  // A head write's park read that fails, for an edit made in the same window: the read runs once
+  // the session is up, the head it was in front of must not go out, and the session ends saying
+  // why.
+  it(
+    "sends no effect type behind a park read that failed, for an edit made while the session started",
+    SLOW,
+    async () => {
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      let calls = 0;
+      let refuse = false;
+      let refused = 0;
+      const table = deviceCommands({
+        "plugin:dialog|message": "Ok",
+        vd_params_subscribe: async () => {
+          if (++calls === 1) await held;
+          return null;
         },
-      },
-    }))!;
-    $("btn-live").click();
-    await vi.waitFor(() => expect(calls).toBe(1), { timeout: 25_000 });
+      });
+      const get = table.vd_get as (a: Record<string, unknown>) => unknown;
+      const shell = (await bootApp({
+        tauri: {
+          ...table,
+          // The FX engine arrays, which the park reads and nothing else after the start does.
+          vd_get: (a: Record<string, unknown>) => {
+            if (refuse && (FX_EFFECT_ARRAY_PARAM as readonly unknown[]).includes(a.paramId)) {
+              refused++;
+              throw new Error("read refused");
+            }
+            return get(a);
+          },
+        },
+      }))!;
+      $("btn-live").click();
+      await vi.waitFor(() => expect(calls).toBe(1), { timeout: 25_000 });
 
-    refuse = true;
-    const at = shell.invokes.length;
-    const reads = shell.count("vd_get");
-    pressNode("bus.fx1");
-    const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
-    sel.value = String([...sel.options].map((o) => o.value).find((v) => v !== sel.value));
-    sel.dispatchEvent(new Event("input", { bubbles: true }));
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
-    // The park asked the unit, and was refused.
-    await invoked(shell, "vd_get", reads + 1);
-    await new Promise((r) => setTimeout(r, 300));
-    release();
+      refuse = true;
+      const at = shell.invokes.length;
+      pressNode("bus.fx1");
+      const sel = paramRow(t().inspector.fxEffect.effectType).querySelector("select")!;
+      sel.value = String([...sel.options].map((o) => o.value).find((v) => v !== sel.value));
+      sel.dispatchEvent(new Event("input", { bubbles: true }));
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 300));
+      expect(refused, "nothing is read for the edit while the session starts").toBe(0);
+      release();
 
-    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
-    expect(live().getAttribute("aria-checked")).not.toBe("true");
-    const typeWrites = shell.invokes
-      .slice(at)
-      .filter((cmd, i) => cmd === "vd_set" && shell.args[at + i]?.paramId === PARAMS.FX_EFFECT_TYPE.id);
-    expect(typeWrites).toEqual([]);
-  });
+      await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+      expect(refused, "the park asked the unit, and was refused").toBeGreaterThan(0);
+      expect(errors(shell)).toEqual([t().status.liveError(t().error.followReadIncomplete(1))]);
+      expect(live().getAttribute("aria-checked")).not.toBe("true");
+      const typeWrites = shell.invokes
+        .slice(at)
+        .filter((cmd, i) => cmd === "vd_set" && shell.args[at + i]?.paramId === PARAMS.FX_EFFECT_TYPE.id);
+      expect(typeWrites).toEqual([]);
+    },
+  );
 
   // The undo history survives a reconcile that authored nothing.
   //
