@@ -800,7 +800,7 @@ export class Graph {
     // `pointercancel` and keeps the pointer capture, so a node drag went on writing
     // positions while another application was frontmost — into a second undo entry at
     // that, since history.ts ends its press at the same blur. docs/en/channel-tuning.md,
-    // "A gesture the window is taken away from", carries the readings; the CONSOLE and
+    // "A gesture the window is taken away from", states the rule; the CONSOLE and
     // tuning-screen drags end at this event too.
     // Window-lifetime, like the view itself: the app builds one Graph and never takes it
     // down. A suite that builds several takes them back through `recordWindowListeners`.

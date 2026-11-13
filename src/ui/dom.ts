@@ -475,7 +475,7 @@ export function trackDrag(
   // no `pointercancel`, and KEEPS the capture, in Chromium and in the shipping WKWebView —
   // so without this a fader went on following the pointer while another app was frontmost,
   // writing levels to the plan and out to the unit the whole time. Ended here, the drag
-  // leaves the value where the window was lost. The readings are in
+  // leaves the value where the window was lost. The rule is stated in
   // docs/en/channel-tuning.md, "A gesture the window is taken away from".
   //
   // No E2E tier caught it and none can reproduce it: Playwright emulates focus, so a page

@@ -164,8 +164,7 @@ function inSsmcsMode(ctx: DynCtx): boolean {
  * Hard is a pair of zeroes, which is what keeps the cubic below out of it: there is no
  * knee to interpolate across, and the legs meet at the corner.
  *
- * Where the numbers come from, and what they replaced, is in
- * docs/{en,ja}/channel-tuning.md "The two curves".
+ * How the curve uses them is in docs/{en,ja}/channel-tuning.md "The two curves".
  */
 const KNEE_REACH_DB: readonly (readonly [number, number])[] = [
   [26.3, 24.3],
@@ -202,7 +201,7 @@ const CORNER_FLOOR_DB = -54;
  * across the two parameters: the two forms meet here whatever the threshold is, which is
  * the property a change to either of them has to keep.
  *
- * The readings behind it are in docs/{en,ja}/channel-tuning.md, "The two curves".
+ * docs/{en,ja}/channel-tuning.md, "The two curves", states the law.
  */
 const CORNER_RAMP_RAW = 31;
 
