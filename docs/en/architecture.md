@@ -1832,10 +1832,8 @@ space the operator has just typed. Through the composition gate, at the same rep
 compositionstart, one compositionend, `日本語` intact**, with the repaints that fall inside the composition
 deferred to the commit.
 
-Confirmed on the device path the synthetic repaint stands in for, with a URX attached and Live sync up: sweeping
-the A.Gain of jack 1, which CH 1 reads (`HA_GAIN`, a direct follow), with that channel selected repaints the panel **6 times**. With a
-composition open, **all 6 are held and exactly one runs, at the commit** — one compositionstart, one
-compositionend, the name whole.
+The device-driven repaint behaves the same as the synthetic one it stands in for: while a composition is open,
+**the repaints a device change causes are held and exactly one runs, at the commit**, so the name arrives whole.
 
 The gate's own backstop is worth little: a rebuild that takes the composing field away delivers **no
 compositionend and no focusout to the host**. `focusout` backstops a field that loses
@@ -4082,17 +4080,9 @@ issues the move. That holds for a drag's own message sequence as well as for a p
 The macOS column is what the relationship costs; how the independent panel behaves on that platform is
 not covered here.
 
-The top row is an operator's click rather than a probe's call, because **a probe cannot activate a window
-across processes**: the foreground lock makes `SetForegroundWindow` a silent no-op. Two programmatic
-attempts to break the order from the other side back it up, and one of them carries its own control:
-`SetWindowPos(midi, HWND_BOTTOM)` **did** move the pair down the global z-order — so a call against that
-window was not inert — and left the panel above the main window all the same. `SetWindowPos(midi, main)`
-left it above too, and inherits that control by acting on the same window. The symmetric attempt,
-`SetWindowPos(main, HWND_TOP, SWP_NOACTIVATE)`, left the order alone too, but that reading is **not**
-evidence: an earlier run recorded the same call moving nothing at all, so "the panel stayed above" and "the
-call did nothing" are not separated there. `pin_midi_window` composes with the ownership rather than
-replacing it: arming the learn from the panel's own button turned on `WS_EX_TOPMOST` (bit 0x8; the extended
-style went 0x110 → 0x118) and disarming turned it back off, with the owner order unchanged either way.
+On Windows the panel stays above its owner even when a program moves it down the z-order, and
+`pin_midi_window` composes with that ownership rather than replacing it: the learn pin turns always-on-top on
+and off without changing the order between the two windows.
 
 `--reset-storage` clears the remembered geometry as well as `localStorage` — both files, since a scale left
 behind for a rectangle that no longer exists would be read against the next rectangle written under that
