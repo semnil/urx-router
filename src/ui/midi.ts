@@ -610,9 +610,9 @@ export class MidiControl {
    * turns that silence into a port that visibly falls back to "none".
    *
    * Stood down for anything that opens a port, because the answer describes a moment
-   * rather than the present: the two commands are answered on separate threads, so one
-   * that raced ahead of the open it was meant to describe would clear a port that is
-   * being connected right now — the same symptom, caused here. In flight when it starts
+   * rather than the present, and does not say which side of an open that moment was on:
+   * one taken before an open that has since landed would clear a port that is being
+   * connected right now — the same symptom, caused here. In flight when it starts
    * is not enough on its own. An open that BEGINS and COMPLETES inside the round trip
    * leaves the counter back at zero, and the answer is stale by then; `portChanges` is
    * what makes that case visible, so the two are checked together.
@@ -621,6 +621,13 @@ export class MidiControl {
    * it after "None" or a give-up has closed it, and adopting that one puts back a
    * selection the shell no longer holds — on the output side, a place feedback is then
    * sent to.
+   *
+   * Both counts see a change made AFTER the query was sent. A close sent before it is
+   * already counted when the query leaves, so that case rests on order instead: the
+   * shell's MIDI commands are synchronous and it enters them one at a time on one thread,
+   * in the order the webview hands them over, and the answer is the present one only if
+   * the close was handed over first. Nothing in Tauri's documentation says the webview keeps
+   * the order two requests were issued in when the first is not awaited.
    */
   private async reconcileOpenPorts(): Promise<void> {
     if (!isTauri() || this.opensInFlight > 0) return;
