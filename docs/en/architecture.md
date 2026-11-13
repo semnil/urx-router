@@ -2363,7 +2363,7 @@ every await, so while a write holds the link every wholesale replacement — New
 plan, the model picker — is refused (`status.deviceLinkBusy`), at its entry, or at `loadPlan` for a flow
 that entered before the write took the link.
 Follow USB is the one exception in the other direction: a live **session** lends it the session's
-link (its handler writes over that link rather than opening one, and measured on a URX44V the session
+link (its handler writes over that link rather than opening one, and on a URX44V the session
 survives the re-clock), so it stays usable while live and greys for every other holder — including a live
 *start*, where the session is not up yet and the same handler would take the connecting branch.
 
@@ -2521,7 +2521,7 @@ written at all:
   CUE row are read-only, and a
   MIDI control assigned to a CUE is refused.
 
-Which case a parameter falls into is settled by measurement rather than assumption: the change is made on the
+Which case a parameter falls into is settled on the unit rather than assumed: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being
 operated — before either behavior is implemented.
 
@@ -3466,7 +3466,7 @@ second and later calls return early because `deactivateLive` clears that flag sy
 
 The sample rate is a plan value the device can accept and then undo by itself. With **SETUP > Follow USB**
 on, the URX slaves its clock to the USB host: a rate written then is accepted, re-clocks the hardware, and roughly
-0.4 s later the host's rate is reasserted (measured on a URX44V). Writing straight through would report success
+0.4 s later the host's rate is reasserted (on a URX44V). Writing straight through would report success
 for a change that did not last.
 
 Ahead of any of it, a plan holding +48V and HI-Z both on for a jack stops the write where it stands: whichever
@@ -3531,7 +3531,7 @@ RELEASE arm (its own element above the actions row, worded to name the release a
 costs nothing and the shared note speaks for both arms), and the Follow USB toggle, which gets the numberless form
 because the host's rate is not something this app can read. **URX22 has no recorder and is silent throughout.**
 Afterwards the write's own epilogue re-reads the recorder node: the unit does the lowering itself, and whether it
-announces one has not been measured here, so the plan is refreshed rather than left waiting for a notify that may
+announces one has not been checked here, so the plan is refreshed rather than left waiting for a notify that may
 never come. The epilogue is armed from the rate send as it RESOLVES — everything but an explicit refusal, since the
 shell sends before it waits and a write whose answer never came may have landed and taken the count down with it —
 rather than from the outcomes the call returns, which a cancel between two sends throws away.
@@ -3577,7 +3577,7 @@ connection the rate was written over kept answering reads, online, on a URX44V a
 toggling Follow USB only re-clocks when the host is on a different rate, and the connection survived it on a URX44V.
 
 Above 96 kHz the device drops whole features (stereo channel EQ, insert FX, the FX2 bus), but it still **accepts
-and holds writes to their parameters** — measured on a URX44V at 192 kHz for the stereo CH EQ, FX2's fader,
+and holds writes to their parameters** — on a URX44V at 192 kHz, for the stereo CH EQ, FX2's fader,
 send and effect type, and the insert FX selector. "The feature is unavailable" does not mean "the parameter
 is unwritable": only the DSP is gone, the stored value survives. So the write set is not gated by rate: a gate
 would prevent no non-convergence (there is none to prevent), it would only stop the plan
