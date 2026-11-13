@@ -2655,11 +2655,9 @@ over the operator's own move on the hardware.
 edit that schedules a flush until that flush, and any queued behind it, is done. A read taken earlier answers an
 edited address with the value the edit replaces — the flush has not sent it yet, or the unit still answers the
 pre-write value — and the merge takes a read's value wherever the plan holds what it held when the read was issued,
-which an edit made before the read does; what the merge protects is an edit made during the read. Measured with the
-race harness on 2026-09-24 (`t1b-overtake.spec.ts`, "an edit waiting in the flush window survives the re-read an
-ordinary device change takes"): a CH 1 PAN move made 250 ms after a device-side change to CH 1's HPF frequency, so
-still inside the flush's 120 ms window when the node's re-read fell due, was taken back to its old value on screen
-and never written, at `a94d0b28` as well. Once the wait ends every edit has been sent and acked, and the read's
+which an edit made before the read does; what the merge protects is an edit made during the read. An edit waiting in
+the flush window survives the re-read an ordinary device change takes (`t1b-overtake.spec.ts` pins it). Once the
+wait ends every edit has been sent and acked, and the read's
 settle waits out their announcements. A converge runs inside a flush, so the wait covers it too, for two further
 reasons: a converge rewrites the whole write scope round after round, so a read taken there is a read of a device
 the app is part-way through changing, and the two readers interleave on the link for as long as the round runs,
@@ -2705,12 +2703,10 @@ announces changes in the order it makes them: the follow layer does not put it i
 off the unit. The re-read is held until no write a notify in its window stands behind is still unannounced: until
 then the replaced value is the last thing the unit said about the address after the mark, so the settle would
 answer the address with it, and a read of the address answers the pre-write value. What keeps the merge right when
-the attribution is wrong is that held re-read; the mark buys one fewer spurious reconcile. Measured with the race
-harness on 2026-09-24 (`t1b-overtake.spec.ts`, "a device value our in-flight write replaces is neither shown nor
-written back", all three variants, and `t1d-name-window.spec.ts`, "a rename our own rename in flight replaces is
-neither shown nor written back"): the board keeps the operator's value throughout, and no flush sends the replaced
-value back. With the re-read not held, the `acked` variant — the write released 280 ms after the notify, so the
-re-read falls due between the write's ack and its announcement — showed the replaced value until the idle sweep.
+the attribution is wrong is that held re-read; the mark buys one fewer spurious reconcile. The board keeps the
+operator's value throughout, and no flush sends the replaced value back; `t1b-overtake.spec.ts` ("a device value our
+in-flight write replaces is neither shown nor written back") and `t1d-name-window.spec.ts` ("a rename our own rename
+in flight replaces is neither shown nor written back") pin it.
 
 Two ways the wait ends, and which one an address gets is decided by what the snapshot held:
 

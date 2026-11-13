@@ -2193,11 +2193,8 @@ reconcile は、実機が持っていない値を plan に主張させたまま�
 flush を予約した時点から、その flush とその後ろに積まれた flush が終わるまで。それより前に取る読みは、編集された
 アドレスに編集が置き換える側の値で答える — flush がまだ送っていないか、実機がまだ書込前の値を答えている — そして
 マージは、読みを発行した時点の値をプランが保っているキーに読みの値を入れるので、読みより前の編集はそこで
-取り消される。マージが守るのは読みの最中の編集である。2026-09-24 にレース診断ハーネスで実測
-(`t1b-overtake.spec.ts` の「an edit waiting in the flush window survives the re-read an ordinary device change
-takes」): CH 1 の HPF 周波数を実機側で変えた 250 ms 後に CH 1 の PAN を動かし、ノードの読み直しの期限が来た時点で
-まだ flush の 120 ms 窓の中にあった形で、PAN は画面上で元の値へ戻され、一度も書き込まれなかった。`a94d0b28`
-でも同じである。待ちが終わった時点ではどの編集も送信済み・ACK 済みで、読みの settle がその告知を待つ。converge
+取り消される。マージが守るのは読みの最中の編集である。flush の窓で待っている編集は、通常の実機側の変更が
+起こす読み直しを越えて残る (`t1b-overtake.spec.ts` がこれを固定している)。待ちが終わった時点ではどの編集も送信済み・ACK 済みで、読みの settle がその告知を待つ。converge
 は flush の中で走るので待ちはそれも覆い、そこにはさらに 2 つの理由がある: converge は書込スコープ全体をラウンド
 ごとに書き直しており、そこで取る読みはアプリ自身が変えている最中のデバイスの読みになる。またラウンドが走る間、
 2 つの読み手が 1 本のリンク上で交錯し、レースハーネスはこれを不変条件 4 として報告する。編集の時点で既に
@@ -2239,11 +2236,9 @@ notify は、実機が変化を行った順に告知する以上、書込が上�
 notify が背後に持つ書込がどれも告知済みになるまで保留する: それまではマーク以降にそのアドレスについて実機が
 最後に言ったのが上書きされる側の値なので、settle がその値で答えてしまい、アドレスを読めば書込前の値が返る。
 帰属を誤ったときにマージを正しく保つのはこの保留した読み直しで、マークが減らすのは無駄な照合 1 回である。
-2026-09-24 にレース診断ハーネスで実測 (`t1b-overtake.spec.ts` の「a device value our in-flight write replaces is
-neither shown nor written back」の 3 変種すべてと、`t1d-name-window.spec.ts` の「a rename our own rename in flight
-replaces is neither shown nor written back」): 盤面は操作者の値を保ち続け、上書きされる側の値を実機へ書き戻す
-フラッシュは出ない。読み直しを保留しない場合、`acked` 変種 (notify の 280 ms 後に書込を解放し、読み直しの期限が
-書込の ACK と告知の間に来る形) では idle の全体読み込みまで上書きされる側の値が表示された。
+盤面は操作者の値を保ち続け、上書きされる側の値を実機へ書き戻すフラッシュは出ない。`t1b-overtake.spec.ts` の
+「a device value our in-flight write replaces is neither shown nor written back」と、`t1d-name-window.spec.ts` の
+「a rename our own rename in flight replaces is neither shown nor written back」がこれを固定している。
 
 待ちの終わり方は 2 通りで、どちらになるかは**スナップショットが何を持っていたか**で決まる。
 
