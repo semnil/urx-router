@@ -43,7 +43,7 @@
     "scripts/release-tag.test.mjs": 1,
     "scripts/shard-weights.mjs": 3,
     "scripts/shard-weights.test.mjs": 2,
-    "src-tauri/src/lib.rs": 8,
+    "src-tauri/src/lib.rs": 6,
     "src-tauri/src/midiwin.rs": 1,
     "src-tauri/src/vd.rs": 8,
     "src-tauri/src/winfit.rs": 18,

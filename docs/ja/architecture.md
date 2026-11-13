@@ -703,7 +703,7 @@ flowchart TD
   構築するとデッドロックするので意図的に async — `close_midi_window`、`focus_midi_window`、
   `pin_midi_window`、`midi_window_open`、および 4 つの Channel リレーコマンド。メインウィンドウの破棄がこれを閉じ、これ自身の
   クローズが learn モードを落とす) + 各ウィンドウが前回どこにあったか、そして今もディスプレイ上にあるか
-  (`winfit.rs` + `tauri-plugin-window-state`。「ウィンドウの配置」を参照) + MIDI ブリッジのコマンド (`midi_list_inputs/outputs`。`midi_open_input` は
+  (`winfit.rs` + `tauri-plugin-window-state`。ディスク上のファイルの読み書きは `winstate.rs`。「ウィンドウの配置」を参照) + MIDI ブリッジのコマンド (`midi_list_inputs/outputs`。`midi_open_input` は
   受信バーストを Tauri Channel で届ける。`midi_close_input`。`midi_open_output/midi_close_output`。`midi_send`。
   `midi_open_ports` は開いているポートを答える — ネイティブ側のクローズは、それが起きるページには報告できない
   ため。midir を使用。ローカルの OS API に触れるだけなので同期コマンド) + スリープ抑止 (`set_keep_awake`、

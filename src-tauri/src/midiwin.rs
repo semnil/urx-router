@@ -187,7 +187,7 @@ fn build_midi_window(app: &AppHandle, title: String) -> Result<(), String> {
     // (architecture.md, "Window geometry", lists the places tried).
     //
     // This is the window's whole restore, not a correction of the plugin's — the
-    // plugin skips both windows now (`window_state_plugin` in lib.rs says why), so
+    // plugin skips both windows now (`window_state_plugin` in winstate.rs says why), so
     // there is nothing here to correct and the remembered rectangle is applied once,
     // from numbers, exactly as the main window's is. A window that cannot be placed is
     // not worth failing an open for: the panel is up and usable either way.

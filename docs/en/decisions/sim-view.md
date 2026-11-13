@@ -235,7 +235,11 @@ form).
   could not be changed from the SIM view; and Output Patch's tab, so the edit never reached the USB
   outputs. The last two were found only when tests were written for lines coverage showed as
   unreached. The view now owns such paths in `GLASS_OWN`
-  ([src/ui/sim-view.ts](../../../src/ui/sim-view.ts)).
+  ([src/ui/sim-view.ts](../../../src/ui/sim-view.ts)). A path the simulator starts writing when the
+  submodule's commit is raised is counted by
+  [src/ui/sim-view.paths.contract.test.ts](../../../src/ui/sim-view.paths.contract.test.ts), which
+  presses the simulator's controls on a URX44V and fails naming each path a press writes that the
+  view does not take.
 - **A re-read was run on a queue of its own.** The re-read of HOME's [Sends] destination ran beside
   the CUE re-read and broke the race harness's invariant on overlapping reads in thirteen cases.
   Reads from the unit go on the `cueWrites` queue and wait for the flush and for follow's reads. The local
