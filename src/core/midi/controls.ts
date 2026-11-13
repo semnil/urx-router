@@ -28,8 +28,8 @@ import {
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../levels";
 import {
   GEQ_BAND_COUNT,
-  GEQ_LIMIT_RANGES,
   GEQ_LINK_OFF,
+  geqLimitRange,
   GEQ_STEP_DB,
   geqBandMovable,
   geqLink,
@@ -1002,7 +1002,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
       const other = 1 - side;
       for (let x = 0; x < GEQ_BAND_COUNT; x++) {
         const codec = (): { get(g: number): number; set(v: number): number } => {
-          const [lo, hi] = GEQ_LIMIT_RANGES[geqSideState(plan.nodeParams[id], side).limit] ?? GEQ_LIMIT_RANGES[0];
+          const [lo, hi] = geqLimitRange(geqSideState(plan.nodeParams[id], side).limit);
           return linearCodec(lo, hi, GEQ_STEP_DB);
         };
         let carried: readonly string[] = [];

@@ -11,6 +11,7 @@ import {
   geqBandMovable,
   geqClamp,
   geqFactory,
+  geqLimitRange,
   geqLink,
   geqOffAtRate,
   geqSideState,
@@ -60,6 +61,8 @@ describe("a document that names less", () => {
     expect(geqLink(undefined, "bus.mix2")).toBe(GEQ_LINK_L_TO_R);
     expect(geqLink(undefined, "ch1"), "not a GEQ bus").toBe(GEQ_LINK_OFF);
     expect(geqClamp(20, 9), "a limit off the menu clamps as ±15 dB").toBe(15);
+    expect(geqLimitRange(9)).toEqual([-15, 15]);
+    expect(geqFactory("ch1").link, "a node with no GEQ ships with no link").toBe(GEQ_LINK_OFF);
   });
 });
 

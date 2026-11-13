@@ -17,7 +17,6 @@ import {
   flattenGeqSide,
   GEQ_BAND_LABELS,
   GEQ_LIMIT_OPTIONS,
-  GEQ_LIMIT_RANGES,
   GEQ_LINK_L_TO_R,
   GEQ_LINK_OFF,
   GEQ_LINK_R_TO_L,
@@ -26,6 +25,7 @@ import {
   eqTypeOf,
   EQ_TYPE_GEQ,
   geqBandMovable,
+  geqLimitRange,
   geqLink,
   geqSideState,
   geqUnavailable,
@@ -77,7 +77,7 @@ const np = (ctx: DynCtx): NodeParams | undefined => ctx.plan.nodeParams[ctx.node
 
 /** One band as a field, on the side's limit: the fader's travel is the range the unit allows. */
 function bandField(x: number, limit: number): DynField {
-  const [min, max] = GEQ_LIMIT_RANGES[limit] ?? GEQ_LIMIT_RANGES[0];
+  const [min, max] = geqLimitRange(limit);
   return { key: bandKey(x), min, max, step: GEQ_STEP_DB, def: 0, unit: "db" };
 }
 
@@ -183,9 +183,7 @@ export const GEQ_DYN: DynProcessor = {
       for (const k of [...GEQ_BAND_LABELS.map((_, x) => bandKey(x)), "on", "limit", "link", "flat"]) out.set(k, locked);
       return out;
     }
-    const gains = GEQ_BAND_LABELS.map((_, x) =>
-      typeof vals[bandKey(x)] === "number" ? (vals[bandKey(x)] as number) : 0,
-    );
+    const gains = GEQ_BAND_LABELS.map((_, x) => vals[bandKey(x)] as number);
     // Gain Flat writes every band of the side, and during Live sync the link takes none of
     // STEREO's above 20 Hz: run here it would flatten the plan's and leave the unit's as they are.
     if (ctx.liveSync && GEQ_BAND_LABELS.some((_, x) => !geqBandWritable(ctx.nodeId, x)))
@@ -218,9 +216,7 @@ export const GEQ_DYN: DynProcessor = {
   sections: ({ m, vals, states, set, nodeId, midi }) => {
     const g = m.dynTuning.geq;
     const sec = settingsSection(g.section);
-    const gains = GEQ_BAND_LABELS.map((_, x) =>
-      typeof vals[bandKey(x)] === "number" ? (vals[bandKey(x)] as number) : 0,
-    );
+    const gains = GEQ_BAND_LABELS.map((_, x) => vals[bandKey(x)] as number);
     const locked = (key: string): SettingsRowOptions => states.get(key) ?? {};
     sec.append(
       midi(

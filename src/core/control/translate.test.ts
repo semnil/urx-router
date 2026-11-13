@@ -2388,6 +2388,17 @@ describe("Flex12GEQ (V1.5)", () => {
       expect(named(cmds, name), name).toEqual([]);
   });
 
+  it("writes only what a side names, and nothing for a side the document leaves out", () => {
+    const p = withGeq();
+    p.nodeParams["bus.mix1"]!.geq = { sides: [{ bands: [{ gain: -2 }] }] };
+    const cmds = planToCommandsUncollapsed(model, p);
+    const mix1 = (name: string) => named(cmds, name).filter((c) => c.y < 2);
+    expect(mix1("OUT_GEQ_LINK")).toEqual([]);
+    expect(mix1("OUT_GEQ_ON")).toEqual([]);
+    expect(mix1("OUT_GEQ_LIMIT")).toEqual([]);
+    expect(mix1("OUT_GEQ_BAND").map((c) => [c.paramId, c.y, c.vdValue])).toEqual([[638, 0, -200]]);
+  });
+
   it("writes no GEQ value while a bus runs 4band PEQ, and its EQ Type all the same", () => {
     const p = withGeq();
     p.nodeParams["bus.mix2"]!.eqType = 0;

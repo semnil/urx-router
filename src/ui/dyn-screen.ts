@@ -2180,7 +2180,7 @@ export class DynScreen {
     for (const f of this.fields) {
       const v = vals[f.key];
       const label = proc.fieldLabel?.(f, ctx.m, ctx) ?? labels[f.key] ?? f.key;
-      rack.append(this.faderCard(f, label, typeof v === "number" ? v : f.def, this.states.get(f.key)));
+      rack.append(this.faderCard(f, label, v as number, this.states.get(f.key)));
     }
     return rack;
   }
@@ -2251,7 +2251,7 @@ export class DynScreen {
     const proc = this.p();
     this.states = proc.rowStates?.(this.ctx(), this.vals()) ?? NO_STATES;
     for (const card of this.box.querySelectorAll<HTMLElement>(".gt-fader")) {
-      const key = card.dataset.dynFader ?? "";
+      const key = String(card.dataset.dynFader);
       const state = this.states.get(key);
       const input = card.querySelector<HTMLInputElement>("input");
       card.classList.toggle("locked", state?.locked === true);

@@ -52,12 +52,11 @@ import {
   EQ_TYPE_OPTIONS,
   EQ_TYPE_PEQ,
   GEQ_BAND_COUNT,
-  GEQ_BUSES,
   GEQ_LIMIT_15,
   GEQ_LIMIT_OPTIONS,
-  GEQ_LIMIT_RANGES,
-  GEQ_LINK_OFF,
   GEQ_LINK_OPTIONS,
+  geqLimitRange,
+  geqLinkFactory,
   GEQ_STEP_DB,
   geqUnavailable,
 } from "../geq";
@@ -1444,7 +1443,7 @@ const rawRule = (min: number, max: number): BoundRule => ({ min, max, integer: t
 /** A Flex12GEQ band gain as the write sends it: inside its side's GEQ Limit, on the unit's 0.5 dB
  *  steps — the window the unit's own screen keeps a band in. */
 const geqGainRule = (limit: number): BoundRule => {
-  const [min, max] = GEQ_LIMIT_RANGES[limit] ?? GEQ_LIMIT_RANGES[GEQ_LIMIT_15];
+  const [min, max] = geqLimitRange(limit);
   return { min, max, grid: GEQ_STEP_DB };
 };
 const GEQ_LIMIT_RULE = menuRule(GEQ_LIMIT_OPTIONS, GEQ_LIMIT_15);
@@ -1567,7 +1566,7 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
   if (MIX_FADER_INSTANCES[nodeId]) out.push(["busType", menuRule(BUS_TYPE_OPTIONS, BUS_TYPE_VARI)]);
   if (busGeq(nodeId)) {
     out.push(["eqType", menuRule(EQ_TYPE_OPTIONS, EQ_TYPE_PEQ)]);
-    out.push(["geq.link", menuRule(GEQ_LINK_OPTIONS, GEQ_BUSES[nodeId]?.linkFactory ?? GEQ_LINK_OFF)]);
+    out.push(["geq.link", menuRule(GEQ_LINK_OPTIONS, geqLinkFactory(nodeId))]);
     for (const s of [0, 1]) {
       out.push([`geq.sides.${s}.limit`, GEQ_LIMIT_RULE]);
       const gain = geqGainRule(geqSideLimit(np, s));
@@ -2827,7 +2826,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     const geq = busGeq(node.id);
     const np = plan.nodeParams[node.id];
     if (!geq || !np?.geq || np.eqType !== EQ_TYPE_GEQ || geqUnavailable(plan.sampleRate)) continue;
-    const linkRule = menuRule(GEQ_LINK_OPTIONS, GEQ_BUSES[node.id]?.linkFactory ?? GEQ_LINK_OFF);
+    const linkRule = menuRule(GEQ_LINK_OPTIONS, geqLinkFactory(node.id));
     if (np.geq.link !== undefined)
       out.push(rawCommand(geq.link.name, geq.link.param, "enum", geq.sides[0], admitLeaf(linkRule, np.geq.link)));
     geq.sides.forEach((inst, s) => {

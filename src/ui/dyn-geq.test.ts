@@ -24,6 +24,7 @@ import { GEQ_DYN } from "./dyn-geq";
 import { dynHost } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import type { DynCtx } from "./dyn-screen";
+import type { DynField } from "../core/control/translate";
 import { EQ_TYPE_GEQ, EQ_TYPE_PEQ, GEQ_BAND_COUNT, geqFactory, geqSideState } from "../core/geq";
 import type { NodeParams } from "../core/plan";
 import { setLang, t } from "../i18n";
@@ -62,6 +63,10 @@ const move = (x: number, db: number): void => {
   fader(x).value = String(db);
   fader(x).dispatchEvent(new Event("input", { bubbles: true }));
 };
+const flatButton = (): HTMLButtonElement =>
+  [...host!.box.querySelectorAll<HTMLButtonElement>("button")].find(
+    (b) => b.textContent === t().dynTuning.geq.gainFlat,
+  )!;
 const gains = (nodeId: string, side: number): number[] => geqSideState(host!.plan.nodeParams[nodeId], side).gains;
 const available = (): string => {
   const row = [...host!.box.querySelectorAll<HTMLElement>(".prefs-row")].find((r) =>
@@ -220,6 +225,14 @@ describe("the rows beside the faders", () => {
     expect(written).toHaveLength(1 + 2 * (1 + GEQ_BAND_COUNT));
   });
 
+  it("name both sides as written when Gain Flat runs on a linked bus", () => {
+    open("bus.mix1", { gains: { 7: -3 } });
+    flatButton().click();
+    const written = host!.patches.at(-1)?.written ?? [];
+    expect(written).toHaveLength(2 * GEQ_BAND_COUNT);
+    expect(written).toContain("geq.sides.1.bands.30.gain");
+  });
+
   it("Gain Flat returns the shown side to 0 dB", () => {
     open("bus.stereo", { gains: { 7: -10, 17: 10 } });
     const flat = [...host!.box.querySelectorAll<HTMLButtonElement>("button")].find(
@@ -228,6 +241,35 @@ describe("the rows beside the faders", () => {
     flat.click();
     expect(gains("bus.stereo", 0).every((g) => g === 0)).toBe(true);
     expect(available()).toBe("12");
+  });
+});
+
+describe("the descriptor", () => {
+  const ctx = (): DynCtx => {
+    const h = (host = dynHost());
+    return { model: h.model, plan: h.plan, nodeId: "bus.stereo", sel: 1, m: t() };
+  };
+
+  it("leaves a band it refuses where it was", () => {
+    const c = ctx();
+    const full = geqFactory("bus.stereo");
+    full.sides![1].bands = full.sides![1].bands!.map((_, x) => ({ gain: x < 12 ? -1 : 0 }));
+    c.plan.nodeParams["bus.stereo"] = { ...c.plan.nodeParams["bus.stereo"], geq: full };
+    const patch = GEQ_DYN.patch!(c, { band20: 3 });
+    expect(geqSideState(patch, 1).gains[20]).toBe(0);
+  });
+
+  it("names a band's gain and the side's [GEQ] for MIDI, and nothing else", () => {
+    const c = ctx();
+    expect(GEQ_DYN.controlId!(c, "band17")).toBe("bus.stereo/gain@geq.r.17");
+    expect(GEQ_DYN.controlId!(c, "on")).toBe("bus.stereo/geqOn@geq.r");
+    expect(["link", "limit", "flat"].map((k) => GEQ_DYN.controlId!(c, k))).toEqual([null, null, null]);
+  });
+
+  it("labels a band as the unit does, and leaves any other field to the host", () => {
+    const field = (key: DynField["key"]): DynField => ({ key, min: -15, max: 15, step: 0.5, def: 0, unit: "db" });
+    expect(GEQ_DYN.fieldLabel!(field("band17"), t(), ctx())).toBe("1k");
+    expect(GEQ_DYN.fieldLabel!(field("on"), t(), ctx())).toBeUndefined();
   });
 });
 

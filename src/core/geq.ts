@@ -107,6 +107,13 @@ export const GEQ_BUSES: Readonly<Record<string, { linkFactory: number }>> = {
 
 export const hasGeq = (nodeId: string): boolean => nodeId in GEQ_BUSES;
 
+/** The GEQ Link a bus ships with; off for a node that carries no GEQ. */
+export const geqLinkFactory = (nodeId: string): number => GEQ_BUSES[nodeId]?.linkFactory ?? GEQ_LINK_OFF;
+
+/** The window a GEQ Limit allows a band (dB); a value off the menu reads as the factory ±15 dB. */
+export const geqLimitRange = (limit: number): readonly [number, number] =>
+  GEQ_LIMIT_RANGES[limit] ?? GEQ_LIMIT_RANGES[GEQ_LIMIT_15];
+
 /** Whether a rate leaves Flex12GEQ out of reach (the unit drops the EQ Type item above 48 kHz). */
 export const geqUnavailable = (sampleRate: number): boolean => sampleRate > GEQ_MAX_RATE;
 
@@ -120,7 +127,7 @@ export interface GeqSideState {
 /** The factory GEQ of a bus: no link on STEREO, L → R on a MIX, both sides on, ±15 dB, every band 0. */
 export function geqFactory(nodeId: string): GeqParams {
   const side = (): GeqSide => ({ on: true, limit: GEQ_LIMIT_15, bands: GEQ_BAND_LABELS.map(() => ({ gain: 0 })) });
-  return { link: GEQ_BUSES[nodeId]?.linkFactory ?? GEQ_LINK_OFF, sides: [side(), side()] };
+  return { link: geqLinkFactory(nodeId), sides: [side(), side()] };
 }
 
 export function geqSideState(np: NodeParams | undefined, side: number): GeqSideState {
@@ -132,8 +139,7 @@ export function geqSideState(np: NodeParams | undefined, side: number): GeqSideS
   };
 }
 
-export const geqLink = (np: NodeParams | undefined, nodeId: string): number =>
-  np?.geq?.link ?? GEQ_BUSES[nodeId]?.linkFactory ?? GEQ_LINK_OFF;
+export const geqLink = (np: NodeParams | undefined, nodeId: string): number => np?.geq?.link ?? geqLinkFactory(nodeId);
 
 export const eqTypeOf = (np: NodeParams | undefined): number => np?.eqType ?? EQ_TYPE_PEQ;
 
@@ -148,7 +154,7 @@ export function geqBandMovable(gains: readonly number[], x: number): boolean {
 
 /** A gain pulled into a limit's range and onto the unit's 0.5 dB steps. */
 export function geqClamp(db: number, limit: number): number {
-  const [lo, hi] = GEQ_LIMIT_RANGES[limit] ?? GEQ_LIMIT_RANGES[GEQ_LIMIT_15];
+  const [lo, hi] = geqLimitRange(limit);
   const stepped = Math.round(db / GEQ_STEP_DB) * GEQ_STEP_DB;
   return Math.min(hi, Math.max(lo, stepped)) + 0; // + 0 turns -0 into 0
 }

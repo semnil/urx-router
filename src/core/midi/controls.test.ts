@@ -830,10 +830,20 @@ describe("an output bus's Flex12GEQ", () => {
     expect(geqSideState(plan.nodeParams["bus.mix1"], 0).on).toBe(true);
   });
 
+  it("reads a GEQ scope's side and band, and refuses a band past the 31", () => {
+    expect(parseGeqScope("geq.r")).toEqual({ side: 1, band: null });
+    expect(parseGeqScope("geq.l.30")).toEqual({ side: 0, band: 30 });
+    expect(parseGeqScope("geq.l.31")).toBeNull();
+    expect(parseGeqScope("eq.low")).toBeNull();
+    expect(parseGeqScope(undefined)).toBeNull();
+  });
+
   it("switches one side's [GEQ] only, whatever the link", () => {
     expect(plan.nodeParams["bus.mix2"]?.geq?.link).toBe(GEQ_LINK_L_TO_R);
     const c = bindControl(model, plan, "bus.mix2/geqOn@geq.r")!;
+    expect(c.get()).toBe(1);
     expect(c.set(0)).toBe(true);
+    expect(c.get()).toBe(0);
     expect([geqSideState(plan.nodeParams["bus.mix2"], 0).on, geqSideState(plan.nodeParams["bus.mix2"], 1).on]).toEqual([
       true,
       false,
