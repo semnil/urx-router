@@ -616,16 +616,15 @@ export function renderInspector(
       const trackOptions = allowed.some((o) => o.value === count)
         ? allowed
         : [...allowed, { value: count, label: String(count) }].sort((a, b) => a.value - b.value);
-      host.append(
-        enumSelect(
-          m.inspector.sdRecTrackCount,
-          trackOptions,
-          count,
-          (v) => actions.onUpdateNodeParams(node.id, { sdRecTrackCount: v }),
-          liveActive,
-        ),
+      const trackRow = enumSelect(m.inspector.sdRecTrackCount, trackOptions, count, (v) =>
+        actions.onUpdateNodeParams(node.id, { sdRecTrackCount: v }),
       );
-      if (liveActive) host.append(hint(m.inspector.sdRecTrackCountLive));
+      host.append(trackRow);
+      // Held the way every row the session holds is: the reason on the row, and said beside it.
+      if (liveActive) {
+        holdRow(trackRow, m.inspector.sdRecTrackCountLive);
+        host.append(hint(m.inspector.sdRecTrackCountLive));
+      }
       // Why the menu is short. Without this the missing entries read as a defect, and the
       // one fact the operator needs — that going back down does not bring them back — has
       // nowhere else to appear on this panel.

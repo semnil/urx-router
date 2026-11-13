@@ -1459,6 +1459,16 @@ describe("node controls report their edits", () => {
     expect(panel.textContent).toContain(t().inspector.geqRateLocked);
   });
 
+  it("holds the microSD Rec Track Count during Live sync, and says why on the row", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("out.sdrec"), act, [], true);
+    const row = panel.querySelector<HTMLElement>(`[data-param-label="${t().inspector.sdRecTrackCount}"]`)!;
+    expect(row.querySelector("select")?.disabled).toBe(true);
+    expect(row.title).toBe(t().inspector.sdRecTrackCountLive);
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("out.sdrec"), act);
+    const free = panel.querySelector<HTMLElement>(`[data-param-label="${t().inspector.sdRecTrackCount}"]`)!;
+    expect([free.querySelector("select")?.disabled, free.title]).toEqual([false, ""]);
+  });
+
   it("offers no EQ Type on a channel", () => {
     renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
     expect(panel.querySelector('[data-param-label="EQ Type"]')).toBeNull();
