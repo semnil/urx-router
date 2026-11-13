@@ -367,7 +367,7 @@ closest equivalent for the pre-DELAY level.
 
 ## The sample rate only sticks when the device's Follow USB is off
 
-The planner's **Rate** setting is written to the device (param 766) and re-clocks
+The planner's **Rate** setting is written to the device and re-clocks
 it. That write only sticks while the device's own **Follow USB** setting is
 **off**. Follow USB decides which side is the clock master, and both directions
 are confirmed on a URX44V:
