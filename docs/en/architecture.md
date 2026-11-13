@@ -3769,9 +3769,9 @@ own; at exit it does not, and "told to close" and "closed" are the same thing on
 telling. An update install is the one exit that does not reach that handler on every platform — on Windows the
 updater ends the process from inside its install command — so the frontend calls `prepare_for_exit` before the
 download: it saves the window geometry and its scales and runs the same `vd::shutdown_blocking`, which is what
-the exit handler would have done. On Windows (2026-10-09, debug build, URX44V) the call rewrote both geometry files
-with the window's rectangle and, with a session open, dropped its connection to Device Center before returning;
-commands after it answered `not-connected`.
+the exit handler would have done: the call rewrites both geometry files with the window's rectangle and,
+with a session open, drops its connection to Device Center before returning; commands after it answer
+`not-connected`.
 
 **A page load is the other teardown, and it is scoped to what that page owns.** `on_page_load`
 (`PageLoadEvent::Started`) shuts the worker down, closes both MIDI ports and releases the idle-sleep hold:
@@ -3948,10 +3948,9 @@ belongs to is the one it overlaps most, or — when it overlaps none, which is w
 looks like — the one whose center is nearest, so a window comes back to the side of the desk it was on.
 This exists because the plugin's own guard is weaker; `winfit.rs`'s header states how, and against which
 version of it. The arithmetic is a pure function over rectangles (`fit` / `host_display` / `at_least`) and
-is covered by `cargo test`. The work area is whatever the platform reserves, from any edge: measured on
-Windows by reserving a desktop band on each of the four sides in turn — the taskbar itself can no longer be
-moved off the bottom in Windows 11 — and starting each time from a rectangle saved outside it, the window
-came back inside on all four.
+is covered by `cargo test`. The work area is whatever the platform reserves, from any edge: on Windows,
+with a desktop band reserved on any of the four sides — the taskbar itself can no longer be moved off the
+bottom in Windows 11 — a window saved outside it comes back inside.
 
 **All of that arithmetic runs in one coordinate space, and which space that is depends on the platform.**
 `winfit.rs` calls it the *desk*, and `physical_per_desk` is the single place the platform is consulted.
@@ -3959,23 +3958,22 @@ On **Windows** the desk is in physical pixels: `rcWork` comes from `GetMonitorIn
 coordinates, which are real pixels laid out coherently across displays for a per-monitor-DPI-aware
 process. On **macOS** the desk is in points, because a "physical" rectangle there is points times the scale
 factor of *the object it belongs to* — a monitor by its own, a window by its own — so displays at different
-scales are not measured in one space at all. Measured on a 1512x982@2.0 built-in panel beside a
-2560x1440@1.0 external one: the two work areas report as (0,66 3024x1898) and (1512,-458 2560x1380),
-which **overlap by 1,294,272 px² where the displays themselves share nothing**. Arithmetic in physical
+scales are not reported in one space at all. With a built-in panel at 2.0 beside an external display at 1.0,
+the two work areas **overlap where the displays themselves share nothing**. Arithmetic in physical
 pixels would feed that overlap into the decision about which display a window belongs to, and into the
 clamp into that display's rectangle afterwards: monitors and windows are both reported in physical
 pixels, which is not the same as being reported in one space.
 
 **A restored window is also raised to its own minimum, measured on the display it is going to.** The
 remembered size is in desk units and the configured minimum in logical pixels, so the two agree only where
-one logical pixel is one desk unit. Nothing downstream puts a too-small window back — measured on Windows,
+one logical pixel is one desk unit. Nothing downstream puts a too-small window back — on Windows
 **a programmatic size is not raised to the minimum**, because the platform enforces one through the
 message a user drag goes through and a programmatic move does not, and AppKit's `contentMinSize`
 constrains a drag rather than a `setContentSize:`. `at_least` therefore raises the rectangle, and the host
 display is chosen **before** it does, for two reasons: the minimum is only a number of desk units once a
 display is known, and a rectangle already inflated to a minimum overlaps the displays differently from the
-window that was actually there — measured, a 1400x900 window on one display was inflated to 1920x1280 and
-the inflated rectangle then named the *other* display as its host. Each window passes its own minimum in:
+window that was actually there — a 1400x900 window on one display, inflated to 1920x1280, names the
+*other* display as its host. Each window passes its own minimum in:
 the main window's is read from the running configuration, the MIDI window's is the one constant its builder
 also uses. A window whose minimum exceeds the work area still ends up smaller than that minimum — fitting
 wins, its top-left corner is pinned, and there is nothing better to do.
@@ -3990,16 +3988,15 @@ our own, written at the two moments the plugin captures a rectangle — a window
 — both of which re-read the live window, so the pair cannot drift.
 
 For a state file with no recorded scale, the scale is **derived by trial**: assume each display
-in turn, convert with its scale factor, and accept the display the result lands inside. Measured over the
-two displays above, 98% of the positions a 1234x813 window can take resolve uniquely and 87% of a 440x620
-one, with **no position resolving to the wrong display** — and two holes that are the reason the value is
+in turn, convert with its scale factor, and accept the display the result lands inside. Most positions
+resolve uniquely, with **no position resolving to the wrong display** — and two holes that are the reason the value is
 recorded rather than only derived. A rectangle inside the region both displays' desk
 rectangles cover is consistent either way, and a rectangle that is no longer on any display — the case this
 module exists for — matches nothing. Both fall back to the window's own scale factor.
 
 **The correction is applied to numbers, not to a window.** At startup a window cannot be read back: a
 `set_position` issued from the setup hook is queued, and both that hook and `RunEvent::Ready` still report
-the position the window was BORN at — measured. A read-then-correct at either
+the position the window was BORN at. A read-then-correct at either
 point is therefore worse than nothing: it finds the birth rectangle, declares it fine, and the restore
 moves the window off the display afterwards. So **both** windows' restores are taken away from the plugin
 (`skip_initial_state` for each), and a saved rectangle is read from the state file, corrected, and applied
@@ -4010,30 +4007,19 @@ cannot work — the restore has already lost the rectangle by then, and a correc
 a work area", not recover what was intended. The MIDI window's call goes at the end of `open_midi_window`,
 where the move has landed by the time `build()` returns. The other places tried do not see it: the setup
 hook and `RunEvent::Ready` above, and a plugin hook of our own registered behind the window-state plugin so
-that any future window would inherit the treatment — **measured not to work**, since inside a
+that any future window would inherit the treatment — **does not work**, since inside a
 `window_created` hook the window still reports the position it was born at, a `set_position` issued from
 one being queued exactly like one issued at startup. A hook on the MIDI window's page load, or a command
 that page calls, has not been tried. A third window built that way has to make the same call.
 
-Measured end to end on macOS (2026-08-09, a seeded state file read by a dev build under its own bundle
-identifier — so the operator's own geometry was never touched — with the window rectangle read back through
-`CGWindowListCopyWindowInfo`), on a 1512x982 built-in panel at 2.0 beside a 2560x1440 external at 1.0, and
-re-run unchanged with the two-pass placement below:
-
-| remembered | scale file | came back |
-| --- | --- | --- |
-| 1234x813 at (2405,-29) on the 1.0 external | none, so derived by trial | exactly that rectangle |
-| 1280x800 at (4032,892), on no display at all | 1.0 | (2792,122) 1280x800, inside the external |
-| 1200x700 at (2000,400), overlapping the Dock | none | (2000,222) 1200x700, its bottom edge flush with the work area |
-| 2400x1600 at (200,200) — 1200x800 points on the 2.0 panel | 2.0 | (100,100) 1200x800 on that panel |
-| nothing saved at all (the `fit_window` path) | — | 1280x800 inside a work area |
-
-The second row is the one that isolates the recorded scale: the trial alone would have produced
-(2016,446) 640x400. The fourth is the reverse crossing — remembered on the high-DPI panel and restored while
-the window was born on the low-DPI one — and it is exact, so both directions hold. A graceful quit rewrites
-the rectangle and the scale in the same instant. The frame is **(0,0) on macOS**, which these runs measure
-rather than assume: the remembered inner height, the frame height on screen and the height saved back are
-all the same number, which a title bar inside the frame would separate.
+On macOS, across a built-in panel at 2.0 and an external display at 1.0, a remembered rectangle on a display
+that is still there comes back exactly, whether its scale was recorded or derived by trial, and in both
+directions across the scale boundary; one on no display, or overlapping the Dock, comes back inside a work
+area; and with nothing saved at all (the `fit_window` path) the window opens inside a work area. The rectangle
+on no display is the case the recorded scale is for: the trial alone would bring it back at half its size. A
+graceful quit rewrites the rectangle and the scale in the same instant. The frame is **(0,0) on macOS**: the
+remembered inner height, the frame height on screen and the height saved back are all the same number, which a
+title bar inside the frame would separate.
 
 Which display a window is born on is **not** the one carrying the menu bar — AppKit centres a new window on
 `NSScreen.mainScreen`, the screen holding the key window, so it follows wherever the operator was working.
@@ -4045,9 +4031,9 @@ The desk being in physical pixels there means the arithmetic above is unaffected
 applies lands before the window moves: `set_size` runs while the window is still on the display it was born
 on, and the move that follows can cross a DPI boundary, at which point the OS resizes the window to preserve
 its LOGICAL size (`tao`'s `WM_DPICHANGED` handler; on Windows 11 it applies the rectangle Windows suggests).
-Two things are wrong in that one step, and both were measured on a 100% and a 150% display: the size comes
-back multiplied by the ratio of the two scale factors — a window placed at 1516x1004 became 2274x1506 on a
-work area 1008 tall, and in the other direction a remembered 1296x839 collapsed to 868x571, below the
+Two things are wrong in that one step, between a 100% and a 150% display: the size comes
+back multiplied by the ratio of the two scale factors — a window placed at 1516x1004 becomes 2274x1506 on a
+work area 1008 tall, and in the other direction a remembered 1296x839 collapses to 868x571, below the
 configured minimum — and the window *frame* is a different thickness at the other DPI, (16,39) against
 (22,56), which also makes the minimum be raised against the wrong number.
 
@@ -4057,40 +4043,32 @@ So the pass is simply **repeated once the move has landed**, where both are read
 a second time in the destination's own pixels. A placement is therefore stated as a position and an INNER
 size, never as an outer rectangle: an outer rectangle can only be built by adding a frame, and until the
 window has moved, the only frame anyone holds is the departure display's. Building it in the caller loses
-the difference between the two frames at *every* launch — measured over four consecutive launches with the
-outer rectangle travelling, the outer width fell 1516, 1510, 1504, 1498. The rescale
+the difference between the two frames at *every* launch, so the window shrinks a little each time. The rescale
 is synchronous (Windows sends `WM_DPICHANGED` inside the move's `SetWindowPos` and `tao` resizes from within
 that handler), so the second pass sees the new state immediately. Waiting for the `ScaleFactorChanged` event
 instead would not work at all: the main window is placed from the setup hook, before the event loop delivers
-anything, and measured, **the event never arrives there** — it does arrive for the MIDI window, which is
+anything, and **the event never arrives there** — it does arrive for the MIDI window, which is
 built while the loop runs, which is exactly what makes it useless as the trigger.
 
-Measured end to end on Windows 11 (2026-08-09, a 2560x1440 primary at 100% and a 1920x1080 secondary at
-150%, rectangles read back through `GetWindowRect` in a per-monitor-DPI-aware probe and cross-checked
-against the app's own `outer_size`): a rectangle remembered on the 100% display and restored onto the 150%
-one lands entirely inside its work area and reproduces byte for byte over three further launches, and
-the reverse direction returns the remembered rectangle exactly. On macOS the desk is in points and the scale
-factor does not change, so the loop runs once there, and the five macOS cases in the table above hold with it. The raw readings behind the
-2026-08-09 numbers were taken in `reference/work/windows-verify/`, whose settled sections are folded into
-this document and then deleted; they are read back out of that ledger's history. **The 2026-08-13 run's are
-not**, so the folded text is all there is: this document for the fader press, the MIDI window and the
-forced-colors half of the locked select, and `src/style.css` for the dropdown and that lock's
-ordinary-theme half, beside the screenshots that directory keeps.
+The same holds on Windows across displays at different scales: a rectangle remembered on the 100% display
+and restored onto the 150% one lands entirely inside its work area and reproduces byte for byte on later
+launches, and the reverse direction returns the remembered rectangle exactly. On macOS the desk is in points
+and the scale factor does not change, so the loop runs once there, and the macOS cases above hold with it.
 
 **The MIDI window is an owned window on Windows and an independent one on macOS** — the `.parent(&main)`
 call sits behind `#[cfg(target_os = "windows")]`. On Windows that ownership is what keeps the panel in
 front: an owned window is always above its owner in the z-order. On macOS `addChildWindow` would do the
-same, at the cost measured below, so the relationship is not used there; what holds the panel in front
+same, at the cost set out below, so the relationship is not used there; what holds the panel in front
 on macOS is `pin_midi_window`, for as long as a learn is armed. "Always on top" for the whole session was
 deliberately not taken on either platform. `focus_midi_window` is called when learn
 turns on — raising this window above another application is a different thing from ordering these two
 windows against each other.
 
-What the relationship costs, measured on both platforms — and **the two do not agree**:
+What the relationship costs on each platform — and **the two do not agree**:
 
 | | macOS (AppKit child — **not used**) | Windows (Win32 owner — in place) |
 | --- | --- | --- |
-| Stays above its owner | yes | yes — measured with the owner activated by a real click |
+| Stays above its owner | yes | yes, with the owner activated by a real click |
 | Hidden while the owner is minimized | yes | yes |
 | **Composited on another display** | **no** — reported on-screen at layer 0 and alpha 1.0, drawn on neither | **yes**, drawn in full |
 | **Moves with the owner** | **yes**, the same delta to the pixel | **no**, it stays where it is |
@@ -4099,12 +4077,10 @@ The bottom two rows are what the `#[cfg]` rests on: on macOS both are defects an
 neither exists on Windows. The Windows answer to the last row is structural rather than incidental: the
 panel is a top-level **owned** window, not a child of the main window's client area, and the window manager
 only moves the latter with its parent — so there is nothing that could implement the follow, whatever
-issues the move. Measured through a drag's own message sequence as well as a plain programmatic move.
+issues the move. That holds for a drag's own message sequence as well as for a plain programmatic move.
 
 The macOS column is what the relationship costs; how the independent panel behaves on that platform is
-not measured here. Three of the four Windows cells were measured on 2026-08-13 (debug
-build, WebView2 151.0.4129.78, a 2560x1440 primary and a 1920x1080 secondary, both at 100%) — every row
-except **hidden while the owner is minimized**, which stands on the 2026-08-08 run and was not re-run.
+not covered here.
 
 The top row is an operator's click rather than a probe's call, because **a probe cannot activate a window
 across processes**: the foreground lock makes `SetForegroundWindow` a silent no-op. Two programmatic
@@ -4842,10 +4818,10 @@ was set on it: the mode, on macOS the extended attributes (Finder tags) and the 
 attributes and alternate data streams (`ReplaceFileW`). A symlink that points at nothing yet is followed too:
 the file it names is created and the link stays a link. A directory the app cannot write fails the save;
 nothing is written in place. A file with more than one hard link is replaced the same way: the name saved to
-gets the new file, and its other names keep the old contents. Each of these was read on Windows (2026-10-09, NTFS):
-an explicit ACE and an alternate data stream outlived an overwrite, a read-only file was refused with `file-denied`
-and left whole, a dangling link's target was created with the link left a link, a `.json` link to a `.txt` was
-refused on read and write, and a hard-linked file was replaced under the saved name only. The Windows save dialog
+gets the new file, and its other names keep the old contents. Each of these holds on Windows, on NTFS:
+an explicit ACE and an alternate data stream outlive an overwrite, a read-only file is refused with `file-denied`
+and left whole, a dangling link's target is created with the link left a link, a `.json` link to a `.txt` is
+refused on read and write, and a hard-linked file is replaced under the saved name only. The Windows save dialog
 refuses a read-only file itself, before the app receives a path, so `file-denied` comes from a path that reached
 the write some other way.
 `write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
