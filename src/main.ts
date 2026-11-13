@@ -1930,10 +1930,10 @@ function withSwitchNotes(msg: string, merged?: MergedRead): string {
  *
  * Two kinds of lead, kept for different spans. A read's refusals (`fresh`, or carried) belong to
  * its burst: the full read device follow runs once a burst goes quiet lands on that line and keeps
- * them, while the next burst (`burst`: its "← device…") and a send say only what they did. What a
- * rate change took off the plan (`setLeadingStatus`) leads every one of them instead, until
- * anything else takes the line: the read after a re-clock reports on its own clock, at once, and
- * written plainly it would replace that note before anyone could read it. A line anything else has
+ * them, while the next burst (`burst`: its "← device…") and a send say only what they did. A rate
+ * change's own line (`setLeadingStatus`: the rate, and what it took off the plan) leads every one of
+ * them instead, until anything else takes the line: the rate's own send and the read after the
+ * re-clock report at once, and written plainly they would replace it before anyone could read it. A line anything else has
  * replaced since carries nothing forward.
  */
 function ledBy(msg: string, fresh: readonly string[] = [], burst = false): string {
@@ -4460,8 +4460,9 @@ function chooseSampleRate(rate: number): void {
   syncRateUi();
   const at = formatRate(plan.sampleRate);
   const buses = busNames(geq);
-  // What came off leads the session's statuses until something else takes the line: during Live
-  // sync the read that follows the re-clock reports at once, and would replace it unread.
+  // The rate's line leads the session's statuses until something else takes the line: during Live
+  // sync the rate's own send and the read that follows the re-clock report at once, and would
+  // replace it unread.
   if (inserts.length)
     setLeadingStatus(
       [
@@ -4469,8 +4470,7 @@ function chooseSampleRate(rate: number): void {
         ...(geq.length ? [t().status.geqOffAtRateToo(buses)] : []),
       ].join(" "),
     );
-  else if (geq.length) setLeadingStatus(t().status.geqOffAtRate(at, buses));
-  else setStatus(t().status.sampleRate(at));
+  else setLeadingStatus(geq.length ? t().status.geqOffAtRate(at, buses) : t().status.sampleRate(at));
 }
 
 ratePicker.addEventListener("change", () => pickSampleRate(Number(ratePicker.value)));

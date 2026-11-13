@@ -824,6 +824,9 @@ describe("the sample rate during Live sync", () => {
     expect(picker().disabled).toBe(false);
     chooseRate(96_000);
     await vi.waitFor(() => expect(rateWrites(shell)).toEqual([96_000]), { timeout: 10_000 });
+    // The rate's own line stays in front of the send's, which follows it at once.
+    await vi.waitFor(() => expect(statusText()).toMatch(/→ device \(\d+\)/), { timeout: 10_000 });
+    expect(statusText().startsWith(t().status.sampleRate(formatRate(96_000))), statusText()).toBe(true);
     const drop = trackCountDrop(16, 96_000)!;
     expect(confirms(shell)).toEqual([
       `${t().confirm.reclock(formatRate(48_000), formatRate(96_000))} ${t().confirm.trackCountDrop(drop.from, drop.to)}`,
