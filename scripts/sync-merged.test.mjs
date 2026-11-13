@@ -1585,7 +1585,6 @@ describe("sync-merged, the ignored-content split", () => {
     "*.mobileprovision",
     "/.agents",
     "/.codex",
-    "/AGENTS.md",
   ];
 
   // EVERY tracked .gitignore, not the root one: a nested file's patterns are ignore rules of

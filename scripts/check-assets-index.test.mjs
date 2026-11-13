@@ -99,7 +99,7 @@ describe("ENV_CORPUS", () => {
     // Not the whole tree: a corpus that reads the documents would be answered by the very
     // sentence making the claim, which is the shape this oracle exists to refuse.
     expect(ENV_CORPUS.test("docs/en/architecture.md")).toBe(false);
-    expect(ENV_CORPUS.test("CLAUDE.md")).toBe(false);
+    expect(ENV_CORPUS.test("AGENTS.md")).toBe(false);
     expect(ENV_CORPUS.test("package.json")).toBe(false);
     expect(ENV_CORPUS.test("src-tauri/src/lib.rs")).toBe(false);
     // The one a directory-shaped rule lets back in: a document that lives under .github/ and
