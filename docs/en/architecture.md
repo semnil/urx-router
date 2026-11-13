@@ -5277,13 +5277,13 @@ from the job name; it is a per-entry `cacheKey` in the two matrices, `release-ta
 `release` on Windows. On macOS the warm build goes through the same Tauri CLI the release does
 (`pnpm tauri build --no-bundle`): the CLI exports `MACOSX_DEPLOYMENT_TARGET` from
 `bundle.macOS.minimumSystemVersion`, and the build scripts of `objc2`, `objc2-exception-helper` and `ring`
-rerun when it changes. Measured locally on 2026-10-10: a release-shaped `tauri build` after a plain
-`cargo build --release` recompiled 35 crates, and after `pnpm tauri build --no-bundle` it recompiled
-`urx-router` alone. That build fills a key of its own because rust-cache saves nothing after a restore
+rerun when it changes. A release-shaped `tauri build` after a plain `cargo build --release` therefore
+recompiles those crates and everything that depends on them, and after `pnpm tauri build --no-bundle` it
+recompiles `urx-router` alone. That build fills a key of its own because rust-cache saves nothing after a restore
 that matched its key exactly, and the full key moves only with the lockfile, the manifests, the
-toolchain or the `CARGO*` / `RUST*` environment. Under `release`, the post-merge run of 2026-10-10
-restored the cache the plain `cargo build` had filled with `full match: true` and ended with
-`Cache up-to-date.`, and the v1.14.0 release, which restored that same key, recompiled 35 crates on macOS.
+toolchain or the `CARGO*` / `RUST*` environment. Under the key a plain `cargo build` fills, the post-merge
+run restores that cache with a full match and saves nothing, so a release restoring the same key still
+recompiles those crates on macOS.
 
 macOS signing and notarization are optional: when the signing secrets (`MACOS_SIGNING_CERT` /
 `MACOS_SIGNING_CERT_PASSWORD` / `MACOS_SIGNING_IDENTITY`) and notarization secrets
@@ -5451,10 +5451,7 @@ wired into CI as the reusable `licenses.yml` workflow, which runs `cargo about g
 dependency carries a license outside `about.toml`, so a dependency change can't silently drop a notice.
 `post-merge.yml` calls it as that gate; `release.yml` calls it once and hands the result to both platform
 builds as an artifact. Generating it once is safe because the output is host-independent — `about.toml`
-declares no `targets`, so cargo-about keeps every target's crates whatever the runner is (measured 2026-09-24
-at `a94d0b28` with cargo-about 0.9.1: the notice generated on macOS arm64 and the one the post-merge run
-generated on ubuntu-latest are byte-identical, and both list the Windows-only `windows-sys` and
-`webview2-com`, the macOS-only `objc2-app-kit` and the Linux-only `webkit2gtk`) — and it avoids building
+declares no `targets`, so cargo-about keeps every target's crates whatever the runner is — and it avoids building
 cargo-about from source on each one. The page
 also ships inside the desktop app: `bundle.resources` packages it as a Tauri resource — and `tauri-build`
 copies that resource at compile time, so even a bare `cargo build` of the crate needs the file present
@@ -5465,7 +5462,7 @@ renders it as app DOM (the entry is desktop-only; a plain browser and the demo h
 license families (name → text variants → their used-by crates) and rebuilds it with text nodes
 only as a collapsed family index — one header row per family, each unfolding its texts — released
 again on close.
-Deliberately no iframe: measured on the real engine (WKWebView), a sandboxed subframe scrolls
+Deliberately no iframe: in the real engine (WKWebView), a sandboxed subframe scrolls
 through a separate scroller code path that reserves an unpainted classic-scrollbar gutter, draws
 only a paint-only indicator with no thumb dragging, and colors that indicator by the app scheme
 rather than the page it indicates. Rendered natively, the notice scrolls as part of the main frame

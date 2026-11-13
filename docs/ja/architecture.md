@@ -4584,13 +4584,12 @@ Rust とプラットフォーム版 pnpm のキャッシュを温める — こ�
 値は 2 つのマトリクスのエントリごとの `cacheKey` で、macOS が `release-tauri`、Windows が `release`。
 macOS の warm build はリリースと同じ Tauri CLI を通す (`pnpm tauri build --no-bundle`): CLI は
 `bundle.macOS.minimumSystemVersion` から `MACOSX_DEPLOYMENT_TARGET` を渡し、`objc2`・`objc2-exception-helper`・`ring`
-の build script はこの値が変わると走り直す。2026-10-10 の手元の実測では、素の `cargo build --release` の後に
-リリースと同じ形の `tauri build` を走らせると 35 crate が再コンパイルされ、`pnpm tauri build --no-bundle` の後では
-`urx-router` 自身の 1 つだけだった。このビルドが専用のキーを埋めるのは、rust-cache がキーに完全一致した復元の
+の build script はこの値が変わると走り直す。そのため、素の `cargo build --release` の後に
+リリースと同じ形の `tauri build` を走らせると、それらの crate とそれに依存するものが再コンパイルされ、
+`pnpm tauri build --no-bundle` の後では `urx-router` 自身の 1 つだけになる。このビルドが専用のキーを埋めるのは、rust-cache がキーに完全一致した復元の
 後には何も保存せず、完全なキーが動くのは lockfile・マニフェスト・ツールチェーン・`CARGO*` / `RUST*` 環境変数が
-変わったときだけだから。`release` のままの 2026-10-10 の post-merge の走行は、素の `cargo build` が埋めた
-キャッシュを `full match: true` で復元して `Cache up-to-date.` で終わり、同じキーを復元した v1.14.0 のリリースは
-macOS で 35 crate を再コンパイルした。
+変わったときだけだから。素の `cargo build` が埋めるキーのままでは、post-merge はそのキャッシュを完全一致で
+復元して何も保存せず、同じキーを復元したリリースは macOS でそれらの crate を再コンパイルし続ける。
 
 macOS の署名・公証は任意で、署名 secret (`MACOS_SIGNING_CERT` / `MACOS_SIGNING_CERT_PASSWORD` /
 `MACOS_SIGNING_IDENTITY`) と公証 secret (`MACOS_NOTARIZATION_USERNAME` / `MACOS_NOTARIZATION_PASSWORD` /
@@ -4749,10 +4748,7 @@ cd src-tauri && cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
 混入すると失敗するため、通知が欠落しない。`post-merge.yml` はこれをそのゲートとして呼び、
 `release.yml` は 1 回だけ呼んで結果を artifact として両プラットフォームのビルドに渡す。1 回の生成で
 足りるのは出力がホスト非依存だからで (`about.toml` が `targets` を宣言しないため、cargo-about は
-ランナーに関係なく全ターゲットのクレートを残す。2026-09-24 に `a94d0b28`・cargo-about 0.9.1 で実測:
-macOS arm64 で生成した通知と post-merge の走行が ubuntu-latest で生成した通知はバイト一致し、どちらも
-Windows 専用の `windows-sys` と `webview2-com`、macOS 専用の `objc2-app-kit`、Linux 専用の `webkit2gtk` を
-含む)、ランナーごとに cargo-about をソースビルドせずに済む。
+ランナーに関係なく全ターゲットのクレートを残す)、ランナーごとに cargo-about をソースビルドせずに済む。
 このページはデスクトップアプリにも同梱される:
 `bundle.resources` が Tauri リソースとしてパッケージする。このリソースは `tauri-build` が
 コンパイル時にコピーするため、素の `cargo build` でもファイルの存在が必要になる (バンドルを
@@ -4761,7 +4757,7 @@ Windows 専用の `windows-sys` と `webview2-com`、macOS 専用の `objc2-app-
 描画する (項目はデスクトップのみ。素のブラウザとデモでは非表示)。`ui/licenses.ts` が DOMParser
 (スクリプトを実行しない不活性文書) でページをライセンスファミリ (名前 → 本文の変種 → 各変種の
 使用クレート) に解析し、テキストノードのみで再構築する — ファミリごとの折りたたみ見出し行が
-そのまま索引で、開いた見出しだけが本文を表示し、閉じると解放する。iframe を使わないのは意図的で、実機エンジン (WKWebView) の実測
+そのまま索引で、開いた見出しだけが本文を表示し、閉じると解放する。iframe を使わないのは意図的で、実機エンジン (WKWebView) の挙動
 による: サンドボックス subframe は別系統のスクローラーで、未描画の古典スクロールバーガターを
 確保し、表示専用のインジケーター (サムのドラッグ不可) をコンテンツ上に描き、その配色は指し示す
 ページではなくアプリ側スキームに従う。ネイティブ描画ならスクロールは他の画面と同じメイン
