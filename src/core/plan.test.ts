@@ -402,10 +402,10 @@ describe("an edit's rate change takes off the inserts the unit takes off", () =>
 
   it("takes off only the effects whose ceiling the new rate passes, and names them", () => {
     const p = holding();
-    expect(changePlanSampleRate(p, 88_200)).toEqual([{ node: "ch1", label: "Pitch Fix" }]);
+    expect(changePlanSampleRate(p, 88_200).inserts).toEqual([{ node: "ch1", label: "Pitch Fix" }]);
     expect(p.nodeParams.ch1?.insertFx).toBe(INSERT_FX_NONE);
     expect(p.nodeParams.ch2?.insertFx, "Clean runs to 96 kHz").toBe(effect("Clean"));
-    expect(changePlanSampleRate(p, 192_000).map((o) => o.label)).toEqual(["Clean", "M.B.Comp"]);
+    expect(changePlanSampleRate(p, 192_000).inserts.map((o) => o.label)).toEqual(["Clean", "M.B.Comp"]);
     expect(p.nodeParams["bus.stereo"]?.insertFx).toBe(INSERT_FX_NONE);
     expect(p.sampleRate).toBe(192_000);
   });
@@ -413,14 +413,14 @@ describe("an edit's rate change takes off the inserts the unit takes off", () =>
   it("does not put them back when the rate comes down", () => {
     const p = holding();
     changePlanSampleRate(p, 192_000);
-    expect(changePlanSampleRate(p, 48_000)).toEqual([]);
+    expect(changePlanSampleRate(p, 48_000)).toEqual({ inserts: [], geq: [] });
     expect(insertsAboveRate(p, 192_000)).toEqual([]);
     for (const node of ["ch1", "ch2", "bus.stereo"]) expect(p.nodeParams[node]?.insertFx, node).toBe(INSERT_FX_NONE);
   });
 
   it("leaves every insert alone at a rate they all run at", () => {
     const p = holding();
-    expect(changePlanSampleRate(p, 48_000)).toEqual([]);
+    expect(changePlanSampleRate(p, 48_000)).toEqual({ inserts: [], geq: [] });
     expect(p.nodeParams.ch1?.insertFx).toBe(effect("Pitch Fix"));
   });
 

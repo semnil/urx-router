@@ -1807,4 +1807,35 @@ describe("a rate the plan's inserts cannot run at", () => {
     await vi.waitFor(() => expect(picker.value).toBe("48000"), APP_SETTLE);
     expect(face(0).classList.contains("vacant"), "undo puts it back").toBe(false);
   });
+
+  // Above 48 kHz the unit runs no Flex12GEQ: a bus on it goes back to 4band PEQ with every band at
+  // 0 dB, in the plan as on the unit, and the status line names the bus.
+  it("puts a bus on Flex12GEQ back to 4band PEQ, says which, and undoes with the rate", async () => {
+    const { encodePlanParam } = await import("./core/plan");
+    const { defaultPlan } = await import("./models/initial-state");
+    const { EQ_TYPE_GEQ } = await import("./core/geq");
+    const plan = defaultPlan("URX44V");
+    const mix = plan.nodeParams["bus.mix1"]!;
+    plan.nodeParams["bus.mix1"] = { ...mix, eqType: EQ_TYPE_GEQ };
+    plan.nodeParams["bus.mix1"]!.geq!.sides![0].bands![17] = { gain: -6 };
+    history.replaceState(null, "", `/?plan=${encodeURIComponent(await encodePlanParam(plan, {}))}`);
+    await boot();
+    await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("48000"), APP_SETTLE);
+    const { t: tApp } = await import("./i18n");
+    // What the console's EQ opener opens says which EQ the bus runs.
+    $("btn-view-console").click();
+    const opener = (): string | undefined =>
+      $("console-host").querySelector<HTMLElement>('[data-dyn-node="bus.mix1"][data-dyn-open]')?.dataset.dynOpen;
+    await vi.waitFor(() => expect(opener(), "MIX 1 runs Flex12GEQ").toBe("geq"), APP_SETTLE);
+
+    const picker = $<HTMLSelectElement>("rate-picker");
+    picker.value = "88200";
+    picker.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(status()).toBe(tApp().status.geqOffAtRate("88.2 kHz", "MIX 1")), APP_SETTLE);
+    expect(opener()).toBe("eq");
+
+    chord("z", { ctrlKey: true });
+    await vi.waitFor(() => expect(picker.value).toBe("48000"), APP_SETTLE);
+    expect(opener(), "undo puts it back").toBe("geq");
+  });
 });

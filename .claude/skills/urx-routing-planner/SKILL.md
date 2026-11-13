@@ -101,7 +101,8 @@ stereo-channel EQ. Pitch Fix stops lower: it runs only up to 48 kHz, so it is
 unavailable at 88.2 / 96 kHz as well, where the guitar amps, the companders and the
 Multi-Band Compressor still run. Flag Pitch Fix (`insertFx` 512) with `sampleRate`
 88200 / 96000 too: neither the app's load notes nor `plan_tool.py` mention that one
-— only the node's own controls in the app show Pitch Fix forced off.
+— only the node's own controls in the app show Pitch Fix forced off. An output bus on Flex12GEQ (`eqType` 2) runs only up to
+48 kHz as well: above it, write the bus on 4band PEQ (`eqType` 0).
 
 **Building a plan.** Emit the plan JSON only once the requirements are settled.
 Vague requests usually leave gaps that change the routing — which model, which

@@ -6,6 +6,7 @@
 
 import type { NodeParams, PlanConnection } from "../core/plan";
 import { SSMCS_INITIAL } from "../core/plan";
+import { EQ_TYPE_PEQ, geqFactory } from "../core/geq";
 
 export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
   // The input stage the unit keeps per MIC/LINE jack and per digital source.
@@ -233,6 +234,8 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     ],
   },
   "bus.stereo": {
+    eqType: EQ_TYPE_PEQ,
+    geq: geqFactory("bus.stereo"),
     level: 0,
     pan: 0,
     insertFx: -1,
@@ -248,6 +251,8 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     on: true,
   },
   "bus.mix1": {
+    eqType: EQ_TYPE_PEQ,
+    geq: geqFactory("bus.mix1"),
     level: 0,
     pan: 0,
     busType: 0,
@@ -265,6 +270,8 @@ export const URX44V_NODE_PARAMS: Record<string, NodeParams> = {
     panLink: false,
   },
   "bus.mix2": {
+    eqType: EQ_TYPE_PEQ,
+    geq: geqFactory("bus.mix2"),
     level: 0,
     pan: 0,
     busType: 0,

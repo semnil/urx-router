@@ -66,6 +66,7 @@ import {
   DELAY_FRAME_RATE_DEFAULT,
   insertFxEngaged,
 } from "../core/control/params";
+import { EQ_TYPE_GEQ, EQ_TYPE_OPTIONS, eqTypeOf, geqUnavailable, hasGeq, setEqType } from "../core/geq";
 import {
   D_GAIN_MAX_DB,
   D_GAIN_MIN_DB,
@@ -615,16 +616,15 @@ export function renderInspector(
       const trackOptions = allowed.some((o) => o.value === count)
         ? allowed
         : [...allowed, { value: count, label: String(count) }].sort((a, b) => a.value - b.value);
-      host.append(
-        enumSelect(
-          m.inspector.sdRecTrackCount,
-          trackOptions,
-          count,
-          (v) => actions.onUpdateNodeParams(node.id, { sdRecTrackCount: v }),
-          liveActive,
-        ),
+      const trackRow = enumSelect(m.inspector.sdRecTrackCount, trackOptions, count, (v) =>
+        actions.onUpdateNodeParams(node.id, { sdRecTrackCount: v }),
       );
-      if (liveActive) host.append(hint(m.inspector.sdRecTrackCountLive));
+      host.append(trackRow);
+      // Held the way every row the session holds is: the reason on the row, and said beside it.
+      if (liveActive) {
+        holdRow(trackRow, m.inspector.sdRecTrackCountLive);
+        host.append(hint(m.inspector.sdRecTrackCountLive));
+      }
       // Why the menu is short. Without this the missing entries read as a defect, and the
       // one fact the operator needs — that going back down does not bring them back — has
       // nowhere else to appear on this panel.
@@ -896,7 +896,20 @@ export function renderInspector(
         const on = processorOn(np, "eqOn");
         const { el, body } = section(m.inspector.eqOn, { open: on, on, key: "eqOn" });
         body.append(sectionToggle(node.id, "eqOn", on, actions, m.inspector.eqOn));
-        body.append(dynLauncher("eq", node.id, actions, m));
+        // EQ Type (V1.5): which EQ the bus runs, and so which screen the launcher opens. The unit
+        // takes the item off its screen above 48 kHz, where only 4band PEQ runs.
+        if (hasGeq(node.id)) {
+          const row = enumSelect(m.inspector.eqType, [...EQ_TYPE_OPTIONS], eqTypeOf(np), (v) =>
+            actions.onUpdateNodeParams(node.id, setEqType(np, node.id, v)),
+          );
+          body.append(row);
+          // Held the way every row a rate takes is: the reason on the row, and said beside it.
+          if (geqUnavailable(plan.sampleRate)) {
+            holdRow(row, m.inspector.geqRateLocked);
+            body.append(hint(m.inspector.geqRateLocked));
+          }
+        }
+        body.append(dynLauncher(eqTypeOf(np) === EQ_TYPE_GEQ ? "geq" : "eq", node.id, actions, m));
         host.append(el);
       }
     }

@@ -291,6 +291,7 @@ def validate(plan, models):
             (model.get("factory") or {}).get("nodeParams"),
             model.get("leafRules"),
             version if is_number(version) else PLAN_VERSION,
+            model.get("geq"),
         )
     )
     warnings.extend(rate_warnings(view, model.get("rates")))
@@ -1809,6 +1810,56 @@ def hi_z_on(node_id, params, hi_z, side):
     )
 
 
+def geq_contexts(node_id, params, geq, rules):
+    """The contexts a Flex12GEQ bus's band rules are read under: `geqLimitL<n>` / `geqLimitR<n>`,
+    each side's GEQ Limit as the load admits it, where it is not the factory ±15 dB (0). `geq` is
+    the `geq` entry models.json carries."""
+    if not geq or node_id not in (geq.get("buses") or []):
+        return []
+    out = []
+    for s, side in ((0, "L"), (1, "R")):
+        rule = (rules or {}).get(f"geq.sides[{s}].limit")
+        if rule is None:
+            continue
+        value = value_at(params, ["geq", "sides", s, "limit"])
+        limit = admit(rule, value) if is_number(value) else rule["def"]
+        if limit != 0:
+            out.append(f"geqLimit{side}{int(limit)}")
+    return out
+
+
+def geq_active_bounds(node_id, params, geq, rules, contexts, bounded):
+    """A Flex12GEQ side with more than `maxActive` bands away from 0 dB, which the unit's own
+    screen never leaves (core/plan-validate.ts `geqActiveBounds`): the bands nearest 0 dB go to
+    0 dB until that many are left — between two equally far, the higher band first. Read after
+    the leaf bounds, so a band they moved counts where it lands and is reported once, at 0."""
+    if not geq or node_id not in (geq.get("buses") or []):
+        return
+    cap = geq.get("maxActive", 12)
+    for s in (0, 1):
+        away = []
+        x = 0
+        while f"geq.sides[{s}].bands[{x}].gain" in (rules or {}):
+            path = f"geq.sides[{s}].bands[{x}].gain"
+            rule = rules[path]
+            for context in contexts:
+                rule = rule.get(context, rule)
+            value = value_at(params, leaf_steps(path))
+            landed = admit(rule, value) if is_number(value) else 0
+            if landed != 0:
+                away.append((landed, x, value))
+            x += 1
+        if len(away) <= cap:
+            continue
+        away.sort(key=lambda a: (abs(a[0]), -a[1]))
+        for _landed, band, value in away[: len(away) - cap]:
+            path = f"{node_id}.geq.sides[{s}].bands[{band}].gain"
+            bounded[:] = [b for b in bounded if b[0] != path]
+            bounded.append(
+                (path, f"{value!r} is past the {cap} bands a side may hold away from 0 dB, so it is bounded to 0")
+            )
+
+
 def hi_z_bounds(node_id, params, hi_z, bounded):
     """A jack carrying HI-Z with HI-Z on: the load turns that jack's +48V off (HI-Z kept), the
     repair `paramRangeProblems` makes beside A.Gain's ceiling there, which is the `hiZL` /
@@ -1934,6 +1985,7 @@ def node_param_warnings(
     factory=None,
     leaf_rules=None,
     version=PLAN_VERSION,
+    geq=None,
 ):
     """Everything the app would quietly change about the plan's node params: values
     it drops on load, Ducker settings on the wrong node, the params that need care
@@ -1943,7 +1995,8 @@ def node_param_warnings(
     A finite FX value outside what its control admits, and a `type` the channel's menu does
     not offer, are covered too — by `fx_catalogue_warnings`, which reads the `fxChannels`
     entry models.json carries. What needs no catalogue at all is a value that is not a number,
-    which is fx_effect_warnings. +48V and A.Gain on a HI-Z jack with HI-Z on are hi_z_bounds."""
+    which is fx_effect_warnings. +48V and A.Gain on a HI-Z jack with HI-Z on are hi_z_bounds, and
+    a Flex12GEQ side past twelve bands away from 0 dB is geq_active_bounds."""
     out = []
     slot_holders = {}
     node_params = plan.get("nodeParams")
@@ -2002,7 +2055,7 @@ def node_param_warnings(
                 ("ssmcs", comp_eq_type(node_id, params, leaf_rules, factory) == COMP_EQ_SSMCS),
             )
             if on
-        ]
+        ] + geq_contexts(node_id, params, geq, (leaf_rules or {}).get(node_id))
         leaf_rule_bounds(
             node_id,
             params,
@@ -2014,6 +2067,7 @@ def node_param_warnings(
             bounded,
         )
         hi_z_bounds(node_id, params, hi_z, bounded)
+        geq_active_bounds(node_id, params, geq, (leaf_rules or {}).get(node_id), contexts, bounded)
         for path, why in dropped:
             out.append(f"node param {path}: the app drops this value on load — {why}")
         for path, why in bounded:

@@ -60,6 +60,7 @@ import {
   seedInsertFxParams,
 } from "./control/insert-fx-effect";
 import { hiZOn } from "./input-lock";
+import { GEQ_BAND_COUNT, GEQ_MAX_ACTIVE, hasGeq } from "./geq";
 import {
   INSERT_FX_PAIR_KEYS,
   isBalLinkedPair,
@@ -178,7 +179,10 @@ export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPa
  *  encoders clamp only to a wider window, so here the load moves what the write sends, onto a
  *  value the unit's own panel can set — and the HPF frequency to the nearest of the sixty stops
  *  of the unit's knob, 20..600 Hz, which is also what the write sends for it (a stop outside the
- *  40..120 Hz the control link takes is kept, and left out of the write). A device read keeps +48V and HI-Z both on where the unit holds
+ *  40..120 Hz the control link takes is kept, and left out of the write). A Flex12GEQ band is bounded
+ *  to its side's GEQ Limit, and a side with more than twelve bands away from 0 dB has the bands
+ *  nearest 0 dB taken there (`geqActiveBounds`): both are states the unit's own GEQ screen never
+ *  leaves. A device read keeps +48V and HI-Z both on where the unit holds
  *  them, so a file this build saved can carry that pair. A repair reaches the oscillator, which
  *  is scene-external: under the Scene-only device scope the write does not carry it, while the
  *  load still moves it and says so. */
@@ -331,8 +335,45 @@ export function paramRangeProblems(plan: Plan): ParamRangeProblem[] {
       if (bound !== stored)
         out.push({ reason: "paramRange", node, where: "node", key: path, stored, action: "bound", bound });
     }
+    if (hasGeq(node)) geqActiveBounds(node, np, out);
   }
   return out;
+}
+
+/**
+ * A Flex12GEQ side with more than twelve bands away from 0 dB, which the unit's own screen never
+ * leaves: the bands nearest 0 dB go to 0 dB until twelve are left, the smallest move that admits
+ * the side, and between two equally far the higher band goes first. Read after the leaf bounds
+ * above, so a band they moved is counted where it lands and moved again rather than reported twice.
+ */
+function geqActiveBounds(node: string, np: NodeParams, out: ParamRangeProblem[]): void {
+  for (const side of [0, 1]) {
+    const at = (x: number): string => `geq.sides.${side}.bands.${x}.gain`;
+    const stored = (x: number): unknown => np.geq?.sides?.[side]?.bands?.[x]?.gain;
+    const landed = Array.from({ length: GEQ_BAND_COUNT }, (_, x) => {
+      const moved = out.find((p) => p.node === node && p.where === "node" && p.key === at(x));
+      if (moved) return moved.action === "bound" ? Number(moved.bound) : 0;
+      const v = stored(x);
+      return typeof v === "number" && Number.isFinite(v) ? v : 0;
+    });
+    const away = landed.map((g, x) => ({ g, x })).filter(({ g }) => g !== 0);
+    if (away.length <= GEQ_MAX_ACTIVE) continue;
+    away.sort((a, b) => Math.abs(a.g) - Math.abs(b.g) || b.x - a.x);
+    for (const { x } of away.slice(0, away.length - GEQ_MAX_ACTIVE)) {
+      const moved = out.find((p) => p.node === node && p.where === "node" && p.key === at(x));
+      if (moved) moved.bound = 0;
+      else
+        out.push({
+          reason: "paramRange",
+          node,
+          where: "node",
+          key: at(x),
+          stored: stored(x),
+          action: "bound",
+          bound: 0,
+        });
+    }
+  }
 }
 
 /** The node-param keys whose shape the FX walk owns rather than the factory comparison. */

@@ -12,6 +12,8 @@ import { formatRate, trackCountDrop } from "./core/constraints";
 import { denormalizeInsertFx, INSERT_FX_NONE, INSERT_FX_OPTIONS, PARAMS } from "./core/control/params";
 import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { defaultPlan } from "./models/initial-state";
+import { EQ_TYPE_GEQ } from "./core/geq";
+import { serialize } from "./core/plan";
 import { EDIT_MENU_EVENT, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
 import {
@@ -693,6 +695,30 @@ describe("the sample rate a write happens at", () => {
     expect(document.querySelector(".con-strip .con-ifxface")?.classList.contains("vacant")).toBe(true);
   });
 
+  // A bus on Flex12GEQ goes back to 4band PEQ at a device rate above 48 kHz, as the unit already
+  // has it — said on the adopt arm's own line too.
+  it("names on the adopt arm the buses the device's rate takes off Flex12GEQ", SLOW, async () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.mix2"] = { ...plan.nodeParams["bus.mix2"], eqType: EQ_TYPE_GEQ };
+    // The uncompressed link form: this environment has no compression stream.
+    history.replaceState(null, "", `/?plan=${Buffer.from(serialize(plan), "utf8").toString("base64url")}`);
+    const shell = await bootDevice({ vd_get: clockReads(true, 96_000) });
+    $("btn-view-console").click();
+    await vi.waitFor(
+      () =>
+        expect(
+          document.querySelector<HTMLElement>('[data-dyn-node="bus.mix2"][data-dyn-open]')?.dataset.dynOpen,
+          "the link put MIX 2 on Flex12GEQ",
+        ).toBe("geq"),
+      { timeout: 10_000 },
+    );
+    await askedToChoose(shell);
+    const note = $("rate-choice-adopt-note");
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe(t().rateChoice.geqOffAtRate(formatRate(96_000), "MIX 2"));
+    $("rate-choice-cancel").click();
+  });
+
   // The other half: with nothing the device's rate rules out, the adopt arm has no line.
   it("draws no adopt-arm line when the plan holds no insert the device's rate rules out", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(true, 96_000) });
@@ -798,6 +824,9 @@ describe("the sample rate during Live sync", () => {
     expect(picker().disabled).toBe(false);
     chooseRate(96_000);
     await vi.waitFor(() => expect(rateWrites(shell)).toEqual([96_000]), { timeout: 10_000 });
+    // The rate's own line stays in front of the send's, which follows it at once.
+    await vi.waitFor(() => expect(statusText()).toMatch(/→ device \(\d+\)/), { timeout: 10_000 });
+    expect(statusText().startsWith(t().status.sampleRate(formatRate(96_000))), statusText()).toBe(true);
     const drop = trackCountDrop(16, 96_000)!;
     expect(confirms(shell)).toEqual([
       `${t().confirm.reclock(formatRate(48_000), formatRate(96_000))} ${t().confirm.trackCountDrop(drop.from, drop.to)}`,
@@ -833,6 +862,29 @@ describe("the sample rate during Live sync", () => {
       timeout: 10_000,
     });
     expect(document.querySelector(".con-strip .con-ifxface")?.classList.contains("vacant")).toBe(true);
+  });
+
+  // Above 48 kHz the unit runs no Flex12GEQ and puts a bus on it back to 4band PEQ with every band
+  // at 0 dB, which lowering the rate does not undo — so the bus is named in front of the decision.
+  it("names the buses a rate chosen during Live sync takes off Flex12GEQ, before writing it", SLOW, async () => {
+    const shell = await bootDevice({}, true, {
+      ...SEED,
+      [`${PARAMS.OUT_EQ_TYPE.id}/0/0`]: 2,
+      [`${PARAMS.OUT_EQ_TYPE.id}/0/1`]: 2,
+    });
+    await goLive();
+    chooseRate(88_200);
+    await vi.waitFor(() => expect(rateWrites(shell)).toEqual([88_200]), { timeout: 10_000 });
+    expect(confirms(shell).at(-1) ?? "").toContain(t().confirm.geqOffAtRate("MIX 1"));
+    expect(confirms(shell).at(-1) ?? "", "MIX 2 runs 4band PEQ").not.toContain("MIX 2");
+
+    // The session reports the read the unit's announcement sends on its own clock, at once after
+    // the re-clock; what the rate took off stays in front of it until something else takes the line.
+    const note = t().status.geqOffAtRate(formatRate(88_200), "MIX 1");
+    await vi.waitFor(() => expect(statusText()).toContain(note), { timeout: 10_000 });
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.OUT_EQ_ON.id, x: 0, y: 0, value: 1 }]);
+    await vi.waitFor(() => expect(statusText()).toMatch(/← device \(\d+\)$/), { timeout: 10_000 });
+    expect(statusText().startsWith(note), statusText()).toBe(true);
   });
 
   it("writes nothing when the operator declines, and shows the rate the plan holds", SLOW, async () => {

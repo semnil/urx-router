@@ -2,13 +2,21 @@ import { test, expect } from "./fixtures";
 import { allItems, composedKey, Inventory, itemsFor, itemsUnder, type ComposedEntry, type Item } from "./inventory";
 import { pickBand } from "./dyn-helpers";
 import { en } from "../src/i18n/en";
-import { LIVE_COMMANDS, answerTimingOf, installAnswerQueue, stubTauriBoot, stubTauriDevice } from "./tauri-stub";
+import {
+  LIVE_COMMANDS,
+  answerTimingOf,
+  installAnswerQueue,
+  notifyParam,
+  setDeviceValue,
+  stubTauriBoot,
+  stubTauriDevice,
+} from "./tauri-stub";
 import { planParam, planParamZ } from "./plan-param";
 import { listControls } from "../src/core/midi/controls";
 import { getModel } from "../src/models";
 import { defaultPlan } from "../src/models/initial-state";
 import { selectWire } from "./graph-helpers";
-import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS } from "../src/core/control/params";
+import { COMP_EQ_SSMCS, INSERT_FX_OPTIONS, PARAMS } from "../src/core/control/params";
 import { fxParams } from "../src/core/control/fx-effect";
 import { chooseOption } from "./choose-option";
 import { insertFxSection, openInsertFxSection } from "./insert-fx-section";
@@ -142,6 +150,9 @@ const SURFACES: Record<SurfaceName, Surface> = {
     // is not also a chip label anywhere: the strip's face reads EFFECT, since the scribble
     // above it already says which FX channel this is.
     composed: [{ key: "dynTuning.peakPrefix", sep: [" "] }, "dynTuning.insfx.title", "dynTuning.fx.title"],
+    // A GEQ fader is one card wide, so why it is shut has no room as a tag beside it: the card
+    // carries it as its tooltip and the fader as its description.
+    viaAttribute: ["dynTuning.geq.full", "dynTuning.geq.unwritable"],
   },
   prefs: {
     roots: ["prefs"],
@@ -488,6 +499,23 @@ test("the rate-choice modal shows all three answers and the high-rate note", asy
       modelId: "URX44V",
       connections: [],
       nodeParams: { ch1: { insertFx: 512, insertFxOn: true } },
+    })}`,
+  );
+  await expect(page.locator("#statusbar")).toContainText(en.status.planLoaded);
+  await page.click("#btn-device");
+  await page.click("#btn-write");
+  await expect(page.locator("#rate-choice-adopt-note")).toBeVisible();
+  await inv.take(page, "#rate-choice");
+
+  // …and its line for a bus on Flex12GEQ, which runs only up to 48 kHz: the device is on 96.
+  await stubTauriDevice(page, { values: { 766: 96000, 848: 1 } });
+  await page.goto(
+    `/?plan=${planParam({
+      format: "urx-router-plan",
+      version: 6,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { "bus.mix1": { eqType: 2 } },
     })}`,
   );
   await expect(page.locator("#statusbar")).toContainText(en.status.planLoaded);
@@ -860,6 +888,52 @@ test("the channel tuning screens show every processor, both displays and their n
     .getByRole("button")
     .first()
     .click();
+  await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+
+  // Flex12GEQ, on a MIX: chosen in the Inspector, which is where its launcher's wording appears.
+  // Its side's [GEQ] off for the note that says so, then twelve bands away from 0 dB for the tag
+  // that shuts the rest — which a fader one card wide carries as its tooltip and its description.
+  const eqSec = inspectorSection("eq");
+  await page.locator('#graph-host g.node[data-id="bus.mix1"]').click();
+  if (!(await eqSec.evaluate((el) => (el as HTMLDetailsElement).open))) await eqSec.locator("summary").click();
+  await chooseOption(eqSec.locator('.param[data-param-label="EQ Type"] select'), "2");
+  await inv.take(page, "#inspector");
+  await eqSec.locator("#btn-geq-screen").click();
+  await expect(box).toBeVisible();
+  await inv.take(page, "#dyn-screen-modal");
+  const geqButton = box.locator(".prefs-row").filter({ has: page.locator(".lbl", { hasText: /^GEQ$/ }) });
+  await geqButton.getByRole("button", { name: "OFF", exact: true }).click();
+  await inv.take(page, "#dyn-screen-modal");
+  await geqButton.getByRole("button", { name: "ON", exact: true }).click();
+  for (let x = 0; x < 12; x++) {
+    await box.locator(`.gt-fader[data-dyn-fader="band${x}"] input`).focus();
+    await page.keyboard.press("ArrowDown");
+  }
+  await expect(box.locator('.gt-fader[data-dyn-fader="band20"] input')).toBeDisabled();
+  await inv.take(page, "#dyn-screen-modal");
+  await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
+
+  // …and STEREO's during Live sync, where its bands above 20 Hz are the unit's alone, and where
+  // the unit can put the bus back on 4band PEQ under the open screen.
+  await stubTauriDevice(page, {
+    commands: LIVE_COMMANDS,
+    values: { 766: 48000, 848: 0, [PARAMS.STEREO_EQ_TYPE.id]: 2, [PARAMS.STEREO_EQ_ON.id]: 1 },
+  });
+  await page.addInitScript(() => localStorage.setItem("urx-disclaimer-accepted", "1"));
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await page.locator('#graph-host g.node[data-id="bus.stereo"]').click();
+  if (!(await eqSec.evaluate((el) => (el as HTMLDetailsElement).open))) await eqSec.locator("summary").click();
+  await eqSec.locator("#btn-geq-screen").click();
+  await expect(box.locator('.gt-fader[data-dyn-fader="band1"] input')).toBeDisabled();
+  await inv.take(page, "#dyn-screen-modal");
+  for (const y of [0, 1]) await setDeviceValue(page, PARAMS.STEREO_EQ_TYPE.id, y, 0);
+  await notifyParam(page, PARAMS.STEREO_EQ_TYPE.id, 0, 0);
+  await expect(box).toContainText(en.dynTuning.geq.notSelected);
   await inv.take(page, "#dyn-screen-modal");
   await page.locator("#dyn-screen-modal .consent-btn-secondary").click();
 

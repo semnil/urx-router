@@ -477,6 +477,34 @@ export const PARAMS = {
   OUT_EQ_ON: { id: 591, encoding: "bool" },
   /** STEREO master EQ ON (single). */
   STEREO_EQ_ON: { id: 498, encoding: "bool" },
+  // Flex12GEQ (System V1.5) on the output buses. STEREO's numbers carry L / R as y 0 / 1; a MIX's
+  // carry the out axis (MIX 1 = 0 / 1, MIX 2 = 2 / 3), and its bands are one param each, 638 + band.
+  // STEREO's bands are one param with the band on x, and the link takes a write only at x 0: the
+  // others are read and followed, never written (`geqBandWritable`).
+  /** STEREO EQ Type: 0 = 4band PEQ, 2 = Flex12GEQ. Switching to Flex12GEQ turns EQ ON (498) on;
+   *  the converge puts the plan's EQ ON back. */
+  STEREO_EQ_TYPE: { id: 497, encoding: "enum", sideEffect: "converge" },
+  /** MIX EQ Type, L / R together. Switching to Flex12GEQ turns EQ ON (591) on and the GEQ Link
+   *  (637) off; the converge puts the plan's back. */
+  OUT_EQ_TYPE: { id: 590, encoding: "enum", sideEffect: "converge" },
+  /** STEREO [GEQ] button, per side. */
+  STEREO_GEQ_ON: { id: 543, encoding: "bool" },
+  /** MIX [GEQ] button, per side. */
+  OUT_GEQ_ON: { id: 636, encoding: "bool" },
+  /** STEREO GEQ Link (0 off / 1 L → R / 2 R → L), both sides together. Turning it on copies the
+   *  source side's bands and limit; the plan makes the same copy at the edit (core/geq.ts). */
+  STEREO_GEQ_LINK: { id: 544, encoding: "enum" },
+  /** MIX GEQ Link, as STEREO's. */
+  OUT_GEQ_LINK: { id: 637, encoding: "enum" },
+  /** STEREO GEQ Limit, per side (0 ±15 / 1 ±12 / 2 ±6 / 3 -24 dB). Narrowing it pulls the bands into
+   *  the range; the plan makes the same clamp at the edit. */
+  STEREO_GEQ_LIMIT: { id: 893, encoding: "enum" },
+  /** MIX GEQ Limit, per side. */
+  OUT_GEQ_LIMIT: { id: 894, encoding: "enum" },
+  /** STEREO GEQ band gain, centi-dB, band on x (0 = 20 Hz … 30 = 20 kHz). Only x 0 takes a write. */
+  STEREO_GEQ_BAND: { id: 545, encoding: "centiDb" },
+  /** MIX GEQ band gain, centi-dB: band x is param 638 + x. This names the anchor (20 Hz). */
+  OUT_GEQ_BAND: { id: 638, encoding: "centiDb" },
   // Output 4-band PEQ band values. The per-band/per-bus ids are computed in
   // translate.ts (outputEq); these anchors are the STEREO LOW band and only name
   // the command + encoding.

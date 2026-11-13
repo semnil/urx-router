@@ -87,7 +87,7 @@ as it stands, and the limit is checked again whenever the firmware is updated.
 
 **Decision.** These are not implemented, and each for the reason beside it.
 
-- **Settings the unit's own screens do not have**: GEQ, a compressor on the outputs, Sound Pad,
+- **Settings the unit's own screens do not have**: a compressor on the outputs, Sound Pad,
   Monitor 3–4, MIX 3–8, a second PEQ block, and the on/off parameters that remain apart from the
   oscillator's Burst.
 - **The band values of an EQ whose 1-knob is on.** The unit recomputes them from the knob, so the

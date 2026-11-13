@@ -263,6 +263,12 @@ describe("MidiControl", () => {
     expect(said()).toBe(t().midi.hintLearn);
     control.arm("ch1/level");
     expect(said()).toBe(t().midi.hintArmed("CH 1 · Level"));
+    // A GEQ scope names its side, and a band's names the band as the unit labels it.
+    control.arm("bus.mix1/geqOn@geq.r");
+    expect(said()).toBe(t().midi.hintArmed("MIX 1 · GEQ R · GEQ"));
+    control.arm("bus.mix1/gain@geq.l.17");
+    expect(said()).toBe(t().midi.hintArmed("MIX 1 · GEQ L 1k · Gain"));
+    control.arm("ch1/level");
     // The window's own line is not the place for it: its hint already says the same.
     expect(lastState().status).toBe("");
     dispatch({ type: "learn", on: false });

@@ -2,7 +2,7 @@
 
 > 日本語版: [../../ja/decisions/tuning-screens.md](../../ja/decisions/tuning-screens.md)
 
-Closed decisions about the tuning screens (GATE, COMP, EQ, DUCKER, SSMCS, INS FX, FX EFFECT), and
+Closed decisions about the tuning screens (GATE, COMP, EQ, DUCKER, SSMCS, INS FX, FX EFFECT, GEQ), and
 what happened around them. How the screens work, and the designs that were turned down, are in
 [channel-tuning.md](../channel-tuning.md) — "Rejected alternatives (do not re-litigate without new
 evidence)" is the table to read first. This document holds the history that specification does not.
@@ -141,3 +141,31 @@ values for the whole effect.
 **Decision.** The design of this screen was written as decisions only. No parameter value was copied
 into it: what a specimen shows is computed from the factory defaults through the calibration, so a
 copied value cannot go stale.
+
+## Flex12GEQ screen
+
+**Decisions (2026-11-13, the operator).** System firmware V1.5 gave an output bus a 31-band graphic
+EQ, and the app took the whole of it in one pull request.
+
+- The screen is thirty-one vertical faders, centred on 0 dB, with no response curve. Two other designs
+  were drawn in the same frame and turned down: a curve with band markers and one gain slider, and a
+  curve above the faders.
+- At most twelve bands of one side are away from 0 dB, as on the unit's own screen. The app holds the
+  rule itself, on the screen and over MIDI, since the control link would take a thirteenth.
+- STEREO's bands above 20 Hz, which the control link does not write, are handled like the CH → FX send
+  Pre/Post (known-issues.md). Its 20 Hz band, which the link does write, is written.
+- Above 48 kHz a bus goes back to 4band PEQ with its bands at 0 dB, as the unit does, and stays there
+  when the rate comes back to 48 kHz.
+- MIDI reaches each side's [GEQ] and band gains. The EQ Type, the GEQ Link and the GEQ Limit are switched
+  on the screen only.
+- A value a document carries that the unit's screen cannot make (a gain past its side's limit, a
+  thirteenth band) is bounded on load, as the app bounds other out-of-range values.
+- A boost reading carries no sign, as on the unit.
+- The plan document's version stays at 6: the last release shipped 5, and a version goes up by at most
+  one between releases.
+- The URX44 was not measured. It takes the URX44V's addresses.
+- The SIM view's GEQ is not part of this: the LCD simulator has no GEQ screen.
+
+**What would reopen it.** The unit's GEQ screen changing in a firmware update (a curve, another band
+count, another limit on the bands away from 0 dB), or the control link starting to take STEREO's bands
+above 20 Hz.

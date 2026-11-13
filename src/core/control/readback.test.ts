@@ -370,6 +370,7 @@ describe("applyDeviceState round-trip", () => {
     const insertFx = 3 + 4; // STEREO + 2 MIX outputs + 4 mono channels
     const busEqOn = 3; // STEREO + MIX1 + MIX2
     const busEqBands = 3; // STEREO + MIX1 + MIX2
+    const busGeq = 3; // Flex12GEQ (V1.5): STEREO, MIX1, MIX2
     const duckers = 4;
     const master = 5; // bus master ON: STEREO + MIX1 + MIX2 + FX1 + FX2
     const monitors = 2;
@@ -395,6 +396,7 @@ describe("applyDeviceState round-trip", () => {
       insertFx +
       busEqOn +
       busEqBands +
+      busGeq +
       duckers +
       master +
       monitors +
