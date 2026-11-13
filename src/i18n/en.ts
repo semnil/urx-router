@@ -801,7 +801,8 @@ export const en = {
       limit: dev("GEQ Limit"),
       available: dev("Available Bands"),
       gainFlat: dev("Gain Flat"),
-      linkOff: dev("Off"),
+      // The link's off state: the unit's own wording for it was not read off its screen.
+      linkOff: tr("Off"),
       side: tr("Side"),
       hint: tr("Twelve bands at most can be away from 0 dB at once, as on the unit."),
       full: tr("Twelve bands are in use — return one to 0 dB to move this one"),
