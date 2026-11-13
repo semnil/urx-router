@@ -45,6 +45,7 @@ import {
   type LeafRule,
 } from "../core/control/translate";
 import { HI_Z_A_GAIN_MAX_DB } from "../core/control/vd";
+import { GEQ_BUSES, GEQ_MAX_ACTIVE, hasGeq } from "../core/geq";
 import {
   FX_CHANNEL_NODE_INDEX,
   fxEffectTypes,
@@ -141,6 +142,11 @@ export interface SkillModel {
    *  while it is on. With a jack's HI-Z on, the load turns that jack's +48V off and bounds its
    *  A.Gain to that value. */
   hiZ: { jacks: Record<string, string[]>; gainMaxDb: number };
+  /** The output buses that can run Flex12GEQ, and how many bands of one side may be away from
+   *  0 dB. A band's own bound is its side's GEQ Limit, which `leafRules` carries under the
+   *  `geqLimitL<n>` / `geqLimitR<n>` contexts; past the count, the load takes the bands nearest
+   *  0 dB to 0 dB — the higher band first between two equally far — after those bounds. */
+  geq: { buses: string[]; maxActive: number };
   /** Where the input stage lives on this model, for the load's move of a document's channel
    *  keys onto it (`migrateInputStage`): the jack index of each MIC/LINE node's first jack, the
    *  D.Gain sources the model carries, and the legacy maps that name where a document's
@@ -235,6 +241,10 @@ function skillModel(model: DeviceModel): SkillModel {
       ),
       gainMaxDb: HI_Z_A_GAIN_MAX_DB,
     },
+    geq: {
+      buses: Object.keys(GEQ_BUSES).filter((id) => model.nodes.some((n) => n.id === id)),
+      maxActive: GEQ_MAX_ACTIVE,
+    },
     inputStage: {
       jackBase: Object.fromEntries(
         model.nodes.filter((n) => MIC_LINE_JACK_BASE[n.id] !== undefined).map((n) => [n.id, MIC_LINE_JACK_BASE[n.id]]),
@@ -301,8 +311,9 @@ function leafRules(model: DeviceModel): SkillModel["leafRules"] {
   return out;
 }
 
-/** A node state a rule can depend on, by the name the validator asks it under. */
-type LeafContext = "hiZL" | "hiZR" | "linked" | "ssmcs";
+/** A node state a rule can depend on, by the name the validator asks it under. A GEQ side's
+ *  limit is `geqLimit<side><limit>`, for each limit but the factory ±15 dB. */
+type LeafContext = "hiZL" | "hiZR" | "linked" | "ssmcs" | `geqLimit${"L" | "R"}${1 | 2 | 3}`;
 
 /** The states that change a node's rules, each as the params that put the node in it. */
 function leafContexts(model: DeviceModel, nodeId: string): [LeafContext, NodeParams][] {
@@ -311,6 +322,10 @@ function leafContexts(model: DeviceModel, nodeId: string): [LeafContext, NodePar
     if (jackHasHiZ(model.id, { node: nodeId, side })) out.push([`hiZ${side}`, { [`hiZ${side}`]: true }]);
   if (model.channelPairs.some(([primary]) => primary === nodeId)) out.push(["linked", { stereoLink: true }]);
   if (channelControl(model, nodeId)?.hasMicStrip) out.push(["ssmcs", { compEqType: COMP_EQ_SSMCS }]);
+  if (hasGeq(nodeId))
+    for (const [s, side] of (["L", "R"] as const).entries())
+      for (const limit of [1, 2, 3] as const)
+        out.push([`geqLimit${side}${limit}`, { geq: { sides: s === 0 ? [{ limit }] : [{}, { limit }] } }]);
   return out;
 }
 

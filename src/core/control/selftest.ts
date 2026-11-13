@@ -394,6 +394,12 @@ const ENUM_SWEEP: Record<string, number[]> = {
 // meaningful while linked, which the generic "+1" would drive out of range.
 // comp.oneKnobLevel is a bounded 0..100 raw (not a small enum), so the "+1" nudge
 // runs it past 100 when captured at max; skip it (its round-trip is value-covered).
+//
+// eqType and geq (an output bus's Flex12GEQ) are written as captured. The EQ Type is structural
+// — switching it turns the bus's EQ ON on, zeroes the 1-knob base curve and, on a MIX, turns the
+// GEQ Link off — and the "+1" nudge would land on a type the unit never shows; over the GEQ it
+// would put all thirty-one bands away from 0 dB, a state the unit's own screen stops at twelve.
+// Their round trip is pinned by the translate and readback unit tests.
 const SKIP = new Set([
   "recPoint",
   "insertFx",
@@ -404,6 +410,8 @@ const SKIP = new Set([
   "fxEffect",
   "stereoLink",
   "panBal",
+  "eqType",
+  "geq",
 ]);
 
 // Enum-sweep floor: the max option-list length across every swept enum (today

@@ -4,6 +4,7 @@
 import { GATE_DYN } from "./dyn-gate";
 import { COMP_DYN } from "./dyn-comp";
 import { EQ_DYN } from "./dyn-eq";
+import { GEQ_DYN } from "./dyn-geq";
 import { DUCKER_DYN } from "./dyn-ducker";
 import { SSMCS_COMP_DYN, SSMCS_DYN, SSMCS_EQ_DYN } from "./dyn-ssmcs";
 import { INSFX_DYN } from "./insert-fx-screen";
@@ -15,6 +16,8 @@ export const DYN_PROCESSORS = {
   gate: GATE_DYN,
   comp: COMP_DYN,
   eq: EQ_DYN,
+  // A bus on Flex12GEQ opens this instead of the 4-band screen: the EQ Type decides which.
+  geq: GEQ_DYN,
   ducker: DUCKER_DYN,
   // Three faces of one bank rather than three processors: they open from three places
   // and move between each other from the title row. A launcher names the face it opens

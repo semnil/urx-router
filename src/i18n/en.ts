@@ -358,6 +358,7 @@ export const en = {
       morphing: dev("Morphing"),
       outGain: dev("Out Gain"),
       sideChain: dev("Side Chain"),
+      geqOn: dev("GEQ"),
     },
     // A param whose console caption does not fit a processor scope. `gain` is the
     // only one: the console shouts GAIN because that is what its knob caption says,
@@ -390,6 +391,8 @@ export const en = {
       "ssmcs.eq.low": tr("SSMCS EQ LOW"),
       "ssmcs.eq.mid": tr("SSMCS EQ MID"),
       "ssmcs.eq.high": tr("SSMCS EQ HIGH"),
+      "geq.l": tr("GEQ L"),
+      "geq.r": tr("GEQ R"),
     } as Record<string, Translatable>,
   },
   inspector: {
@@ -441,6 +444,8 @@ export const en = {
     prePost: tr("Pre/Post"),
     prePostLcdOnly: tr("Cannot be changed (the device does not accept it)"),
     eqRateLocked: tr("Stereo channel EQ is disabled at 176.4 / 192 kHz — forced off."),
+    eqType: dev("EQ Type"),
+    geqRateLocked: tr("Flex12GEQ runs at 48 kHz and below"),
     insFxRateLocked: tr("Insert FX is unavailable above 96 kHz — forced off."),
     // The effect the node HOLDS, named with its own ceiling: the ceilings differ per
     // effect (Pitch Fix stops at 48 kHz where the amps and companders reach 96), so the
@@ -785,6 +790,27 @@ export const en = {
       ),
       plotHint: tr("The curve is the EQ's response; each marker shows a band's frequency."),
     },
+    // Flex12GEQ (V1.5): the unit's own words for the screen and its items, and this app's for
+    // why a fader is shut.
+    geq: {
+      title: dev("GEQ"),
+      open: tr("GEQ screen"),
+      section: dev("Flex12GEQ"),
+      button: dev("GEQ"),
+      link: dev("GEQ Link"),
+      limit: dev("GEQ Limit"),
+      available: dev("Available Bands"),
+      gainFlat: dev("Gain Flat"),
+      // The link's off state: the unit's own wording for it was not read off its screen.
+      linkOff: tr("Off"),
+      side: tr("Side"),
+      hint: tr("Twelve bands at most can be away from 0 dB at once, as on the unit."),
+      full: tr("Twelve bands are in use — return one to 0 dB to move this one"),
+      unwritable: tr("The unit takes no write to this band over the link — move it on the unit"),
+      flatUnwritable: tr("The unit takes no write over the link to the bands above 20 Hz — use Gain Flat on the unit"),
+      notSelected: tr("EQ Type is 4band PEQ: these values are kept but do not reach the signal."),
+      sideOff: tr("This side's GEQ is off: its bands do not reach the signal."),
+    },
     // The morphing strip's three faces share one title and one launcher label; the
     // segment beside the title names the face. Its COMP face reuses the COMP screen's
     // tap names, hint and Knee row, and its EQ face the 4-band screen's plot hint and
@@ -915,6 +941,12 @@ export const en = {
     // The inserts a rate change took off, behind the line above: each effect stops at its own rate.
     insertsOffAtRate: (rate: string, list: string): string =>
       `Sample rate: ${rate} — ${list} came off, as the unit takes an insert off above its own rate limit. Lowering the rate does not put it back.`,
+    // The buses a rate above 48 kHz took from Flex12GEQ back to 4band PEQ: alone, and behind the
+    // inserts line when the same change took both.
+    geqOffAtRate: (rate: string, list: string): string =>
+      `Sample rate: ${rate} — ${list} went back to 4band PEQ with every GEQ band at 0 dB, as the unit does above 48 kHz. Lowering the rate does not bring Flex12GEQ back.`,
+    geqOffAtRateToo: (list: string): string =>
+      `${list} went back to 4band PEQ with every GEQ band at 0 dB, as the unit does above 48 kHz.`,
     followUsbOn: tr("Follow USB on — the device now clocks from the USB host"),
     followUsbOff: tr("Follow USB off — the device now holds its own clock"),
     newPlan: tr("Created a new plan"),
@@ -1209,6 +1241,8 @@ export const en = {
       `The settings file turns Follow USB off. Turn it off? The device stops taking its clock from the computer and runs at ${rate}.`,
     insertsOffAtRate: (list: string): string =>
       `This rate takes ${list} off: the unit runs no insert above its own rate limit and puts that channel or bus on No Effect. Lowering the rate again does not put it back.`,
+    geqOffAtRate: (list: string): string =>
+      `This rate puts ${list} back to 4band PEQ with every GEQ band at 0 dB: the unit runs no Flex12GEQ above 48 kHz. Lowering the rate again does not bring it back.`,
     trackCountDrop: (from: number, to: number): string =>
       `The microSD recorder is set to ${from} tracks and this rate allows ${to}, so the unit lowers it. Nothing this app can write raises it again — the way back is the unit's own microSD screen, RECORDER menu, [Track Count].`,
     trackCountMayDrop: tr(
@@ -1248,6 +1282,8 @@ export const en = {
     /** Named for its ARM, like the Track Count line: only adopting the device's rate takes these off. */
     insertsOffAtRate: (deviceRate: string, list: string): string =>
       `Writing at ${deviceRate} takes ${list} off the plan, as the unit already has: those effects do not run at that rate.`,
+    geqOffAtRate: (deviceRate: string, list: string): string =>
+      `Writing at ${deviceRate} puts ${list} back to 4band PEQ in the plan with every GEQ band at 0 dB, as the unit already has: Flex12GEQ does not run at that rate.`,
     adopt: (deviceRate: string): string => `Write at ${deviceRate}`,
     release: (planRate: string): string => `Turn Follow USB off and write at ${planRate}`,
     cancel: tr("Cancel"),

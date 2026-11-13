@@ -261,6 +261,7 @@ export const ja: Messages = {
       morphing: "Morphing",
       outGain: "Out Gain",
       sideChain: "Side Chain",
+      geqOn: "GEQ",
     },
     scopedParam: { gain: "Gain" } as Record<string, string>,
     paramSpoken: { phase: "フェーズ", phaseL: "フェーズ L", phaseR: "フェーズ R" } as Record<string, string>,
@@ -279,6 +280,8 @@ export const ja: Messages = {
       "ssmcs.eq.low": "SSMCS EQ LOW",
       "ssmcs.eq.mid": "SSMCS EQ MID",
       "ssmcs.eq.high": "SSMCS EQ HIGH",
+      "geq.l": "GEQ L",
+      "geq.r": "GEQ R",
     } as Record<string, string>,
   },
   inspector: {
@@ -328,6 +331,8 @@ export const ja: Messages = {
     prePost: "PRE/POST",
     prePostLcdOnly: "変更できません (本体が受け付けません)",
     eqRateLocked: "176.4 / 192 kHz ではステレオ ch の EQ は無効 — 強制的に OFF。",
+    eqType: "EQ Type",
+    geqRateLocked: "Flex12GEQ は 48 kHz 以下で使えます",
     insFxRateLocked: "96 kHz 超では Insert FX は使用不可 — 強制的に OFF。",
     insFxRateLockedAt: (effect: string, maxRate: string): string =>
       `${maxRate} 超では ${effect} は使用不可 — 強制的に OFF。`,
@@ -609,6 +614,25 @@ export const ja: Messages = {
       oneKnobDrives: "4 バンドは 1-knob のレベルからデバイスが計算します。カーブが追従するのはライブ同期中のみです。",
       plotHint: "曲線は EQ の周波数特性、各マーカーは各バンドの周波数を示します。",
     },
+    geq: {
+      title: "GEQ",
+      open: "GEQ 画面",
+      section: "Flex12GEQ",
+      button: "GEQ",
+      link: "GEQ Link",
+      limit: "GEQ Limit",
+      available: "Available Bands",
+      gainFlat: "Gain Flat",
+      linkOff: "Off",
+      side: "表示する側",
+      hint: "本体と同じく、0 dB から離せるバンドは同時に 12 個までです。",
+      full: "12 バンドを使用中 — どれかを 0 dB に戻すと動かせます",
+      unwritable: "本体はこのバンドへの制御リンクからの書き込みを受け付けません — 本体で動かしてください",
+      flatUnwritable:
+        "本体は 20 Hz より上のバンドへの制御リンクからの書き込みを受け付けません — 本体の Gain Flat を使ってください",
+      notSelected: "EQ Type が 4band PEQ です: この値は保持されますが、音には効きません。",
+      sideOff: "この側の GEQ がオフです: バンドは音に効きません。",
+    },
     ssmcs: {
       open: "SSMCS 画面",
       faceMain: "Main",
@@ -691,6 +715,10 @@ export const ja: Messages = {
     sampleRate: (rate: string): string => `サンプルレート: ${rate}`,
     insertsOffAtRate: (rate: string, list: string): string =>
       `サンプルレート: ${rate} — ${list} を外しました。デバイスはエフェクトごとの上限を超えたレートでインサートを外します。レートを下げても元には戻りません。`,
+    geqOffAtRate: (rate: string, list: string): string =>
+      `サンプルレート: ${rate} — ${list} を 4band PEQ に戻し、GEQ のバンドをすべて 0 dB にしました。デバイスは 48 kHz より上でこうします。レートを下げても Flex12GEQ には戻りません。`,
+    geqOffAtRateToo: (list: string): string =>
+      `${list} を 4band PEQ に戻し、GEQ のバンドをすべて 0 dB にしました。デバイスは 48 kHz より上でこうします。`,
     followUsbOn: "Follow USB ON — デバイスは USB ホストのクロックで動作します",
     followUsbOff: "Follow USB OFF — デバイスは自身のクロックで動作します",
     newPlan: "新規計画を作成しました",
@@ -930,6 +958,8 @@ export const ja: Messages = {
       `設定ファイルは Follow USB を OFF にします。OFF にしますか? デバイスはクロックをコンピューターから受け取るのをやめ、${rate} で動作します。`,
     insertsOffAtRate: (list: string): string =>
       `このレートでは ${list} が外れます。デバイスはエフェクトごとの上限を超えたレートではインサートを動かさず、そのチャンネルやバスを No Effect にします。レートを下げても元には戻りません。`,
+    geqOffAtRate: (list: string): string =>
+      `このレートでは ${list} が 4band PEQ に戻り、GEQ のバンドはすべて 0 dB になります。デバイスは 48 kHz より上では Flex12GEQ を動かしません。レートを下げても元には戻りません。`,
     trackCountDrop: (from: number, to: number): string =>
       `microSD レコーダーの Track Count が ${from} トラックに設定されており、このレートで使えるのは ${to} トラックです。デバイスが自動的に下げます。このアプリから書ける値では元に戻せません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。`,
     trackCountMayDrop:
@@ -960,6 +990,8 @@ export const ja: Messages = {
       `Follow USB を OFF にしてプランのレートで書き込むと、microSD レコーダーの Track Count が下がります: 現在 ${from} トラックで、そのレートで使えるのは ${to} トラックです。このアプリから書ける値では元に戻せません — 戻す手段はデバイス本体の microSD 画面 → RECORDER メニュー → [Track Count] です。`,
     insertsOffAtRate: (deviceRate: string, list: string): string =>
       `${deviceRate} で書き込むと、デバイスと同じく計画から ${list} が外れます。それらのエフェクトはそのレートでは動きません。`,
+    geqOffAtRate: (deviceRate: string, list: string): string =>
+      `${deviceRate} で書き込むと、デバイスと同じく計画の ${list} が 4band PEQ に戻り、GEQ のバンドはすべて 0 dB になります。Flex12GEQ はそのレートでは動きません。`,
     adopt: (deviceRate: string): string => `${deviceRate} で書き込む`,
     release: (planRate: string): string => `Follow USB を OFF にして ${planRate} で書き込む`,
     cancel: "キャンセル",

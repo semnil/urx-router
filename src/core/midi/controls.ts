@@ -27,6 +27,19 @@ import {
 } from "../plan";
 import { LEVEL_POS_MAX, levelToPos, posToLevel } from "../levels";
 import {
+  GEQ_BAND_COUNT,
+  GEQ_LINK_OFF,
+  geqLimitRange,
+  GEQ_STEP_DB,
+  geqBandMovable,
+  geqLink,
+  geqSideState,
+  geqUnavailable,
+  hasGeq,
+  setGeqGain,
+  setGeqOn,
+} from "../geq";
+import {
   FX_CHANNEL_NODE_INDEX,
   FX_EFFECT_ARRAY_PARAM,
   fxDescRawToSend,
@@ -56,6 +69,7 @@ import {
   ssmcsCompFields,
   ssmcsMainFields,
   effectiveInsertFx,
+  geqBandWritable,
 } from "../control/translate";
 import type { DynField, SsmcsEqBandName } from "../control/translate";
 import {
@@ -118,6 +132,20 @@ export const COMP_SCOPE = "comp";
 export const DUCKER_SCOPE = "ducker";
 export const EQ_SCOPE = "eq";
 export const eqBandScope = (index: number): string => `${EQ_SCOPE}.${EQ_BAND_NAMES[index]}`;
+
+/** An output bus's Flex12GEQ: one scope per side (`geq.l`, `geq.r`) for its [GEQ] button, and
+ *  one per side and band (`geq.l.17`) for a band's gain, so a mapping stays on the band it was
+ *  made on whichever side the screen shows. */
+export const GEQ_SCOPE = "geq";
+export const GEQ_SIDE_SCOPES = [`${GEQ_SCOPE}.l`, `${GEQ_SCOPE}.r`] as const;
+export const geqBandScope = (side: number, band: number): string => `${GEQ_SIDE_SCOPES[side]}.${band}`;
+/** The side and band a GEQ scope names (band null for a side's own scope), or null. */
+export function parseGeqScope(scope: string | undefined): { side: number; band: number | null } | null {
+  const m = /^geq\.(l|r)(?:\.(\d+))?$/.exec(scope ?? "");
+  if (!m) return null;
+  const band = m[2] === undefined ? null : Number(m[2]);
+  return band !== null && band >= GEQ_BAND_COUNT ? null : { side: m[1] === "l" ? 0 : 1, band };
+}
 
 /** The SSMCS strip's scopes, one per stage of the morphing bank. They mirror the plan's
  *  own nesting (`ssmcs`, `ssmcs.comp`, `ssmcs.sc`, `ssmcs.eq.<band>`), so a control id
@@ -192,6 +220,8 @@ export type ControlParam =
   | "morphing"
   | "outGain"
   | "sideChain"
+  // A Flex12GEQ side's [GEQ] button. Its band gains are `gain` under a `geq.<side>.<band>` scope.
+  | "geqOn"
   // The insert effect's own values. ONE token rather than a name per row: an insert-FX
   // value is a raw engine SLOT under a family the node can change, so the family and the
   // slot go in the SCOPE (`insfx.compander.6`) and the union stays closed. A mapping made
@@ -942,6 +972,64 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
     }
   };
 
+  // ---- an output bus's Flex12GEQ ------------------------------------------
+  // Each side's [GEQ] and its thirty-one band gains. A band refuses a write where the unit
+  // would not move it: above 48 kHz, where the unit offers no Flex12GEQ; at 0 dB while twelve
+  // others are away from it; and, while Live sync is up, on STEREO above 20 Hz, whose bands
+  // the control link does not take (the plan holds the unit's value there). A band's travel is
+  // its side's GEQ Limit, as the screen's fader is. The edits are core/geq.ts's, so a write
+  // carried across by the GEQ Link lands on the other side too and is named as written.
+  const pushGeq = (): void => {
+    if (!hasGeq(id)) return;
+    const gone = (): boolean => geqUnavailable(plan.sampleRate);
+    // `enabled` is the CUE access's answer to "is a Live-sync session up".
+    const live = (): boolean => cue?.enabled() === true;
+    for (const [side, sideScope] of GEQ_SIDE_SCOPES.entries()) {
+      out.push({
+        id: controlId(id, "geqOn", sideScope),
+        node: id,
+        param: "geqOn",
+        scope: sideScope,
+        writes: { kind: "node", path: `geq.sides.${side}.on` },
+        kind: "toggle",
+        get: () => (geqSideState(plan.nodeParams[id], side).on ? 1 : 0),
+        set: (v) => {
+          if (gone()) return false;
+          np().geq = setGeqOn(plan.nodeParams[id], id, side, v >= 0.5).geq;
+          return true;
+        },
+      });
+      const other = 1 - side;
+      for (let x = 0; x < GEQ_BAND_COUNT; x++) {
+        const codec = (): { get(g: number): number; set(v: number): number } => {
+          const [lo, hi] = geqLimitRange(geqSideState(plan.nodeParams[id], side).limit);
+          return linearCodec(lo, hi, GEQ_STEP_DB);
+        };
+        let carried: readonly string[] = [];
+        out.push({
+          id: controlId(id, "gain", geqBandScope(side, x)),
+          node: id,
+          param: "gain",
+          scope: geqBandScope(side, x),
+          writes: { kind: "node", path: `geq.sides.${side}.bands.${x}.gain` },
+          kind: "continuous",
+          get: () => codec().get(geqSideState(plan.nodeParams[id], side).gains[x]),
+          set: (v) => {
+            if (gone() || (live() && !geqBandWritable(id, x))) return false;
+            const cur = plan.nodeParams[id];
+            const carries = geqLink(cur, id) !== GEQ_LINK_OFF && geqBandMovable(geqSideState(cur, other).gains, x);
+            const next = setGeqGain(cur, id, side, x, codec().set(v));
+            if (!next) return false;
+            np().geq = next.geq;
+            carried = carries ? [`geq.sides.${other}.bands.${x}.gain`] : [];
+            return true;
+          },
+          alsoWrote: () => carried,
+        });
+      }
+    }
+  };
+
   if (node.kind === "ducker") {
     out.push(boolControl("duckerOn", false));
     for (const f of DUCKER_FIELDS) out.push(subDyn("ducker", DUCKER_SCOPE, f));
@@ -1324,6 +1412,7 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
   // The tuning screens' parameters come last, so the console's own controls keep
   // their order in the assignment list and in `listControls`.
   pushDynamics();
+  pushGeq();
   // The mirror identity, stamped ONCE over the finished list rather than at each site that
   // builds a control. What a mirror covers is a property of the NODE and the link mode, not of
   // any one parameter, and put at the sites it was the insert effect's alone while

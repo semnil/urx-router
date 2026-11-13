@@ -117,8 +117,10 @@ describe("a lit face that carries text uses --led-face, not --led or --seg", () 
     // a lane rack alone. Named rather than allowed for by a bare "skip what has no curve" —
     // the point of this list is that a NEW plot-less descriptor is a red line and not a
     // silent absence, and `insfx` is here to show that a descriptor whose plot is
-    // conditional still gets checked on the family that has one.
-    expect(skipped, "a processor that draws no plot has to be named here").toEqual(["fx"]);
+    // conditional still gets checked on the family that has one. `geq` draws none either: its
+    // thirty-one faders draw the curve themselves, as the unit's GEQ screen does, and its text is
+    // DOM rather than canvas.
+    expect(skipped, "a processor that draws no plot has to be named here").toEqual(["geq", "fx"]);
     // …and the seeding that gave the INS FX pass something to draw is itself asserted:
     // dropped, that pass runs against a node holding nothing, draws nothing, and covers
     // the screen not at all — while staying green. (A curve that only strokes paints no

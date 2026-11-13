@@ -9,6 +9,8 @@ import type {
   EqBand,
   EqOneKnobParams,
   FxEffectParams,
+  GeqBand,
+  GeqSide,
   NodeParams,
   Plan,
   PlanConnection,
@@ -68,12 +70,14 @@ import {
 } from "./insert-fx-effect";
 import { alignLinkedSendPans, monoPairOf, pairPrimary, requiresSource, ruleKind, sendPansToSources } from "../routing";
 import { isSceneExternalConnection } from "../scene-scope";
-import type { EmittedDynField, EqControl, EqOneKnobControl } from "./translate";
+import { GEQ_BAND_COUNT } from "../geq";
+import type { EmittedDynField, EqControl, EqOneKnobControl, GeqControl } from "./translate";
 import {
   addrKey,
   cmdAddr,
   busBalance,
   busEqOn,
+  busGeq,
   busFader,
   busMasterOn,
   channelControl,
@@ -1136,6 +1140,25 @@ async function readPass(
     }
   }
 
+  // Output bus Flex12GEQ (V1.5): the EQ Type and the link at the L instance (both move together),
+  // then each side's [GEQ] button, limit and 31 bands. STEREO's bands above 20 Hz are read here
+  // like the rest, although the write never sends them (`geqBandWritable`).
+  for (const node of model.nodes) {
+    signal?.throwIfAborted();
+    if (node.kind !== "bus") continue;
+    if (!want(node.id)) continue;
+    const geq = busGeq(node.id);
+    if (!geq) continue;
+    attempted.add(node.id);
+    try {
+      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...(await readGeq(source, geq)) };
+      applied++;
+    } catch (e) {
+      failed.add(node.id);
+      errors.push(`${node.label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   // Ducker on/off: one per stereo channel, read onto the ducker node.
   for (const node of model.nodes) {
     signal?.throwIfAborted();
@@ -2014,6 +2037,28 @@ async function readEqBands(source: ParamSource, ctrl: EqControl): Promise<EqBand
     eqBands[band.index] = v;
   }
   return eqBands;
+}
+
+// Read a bus's Flex12GEQ: the EQ Type and the link at the L instance, and each side in full.
+async function readGeq(source: ParamSource, ctrl: GeqControl): Promise<Pick<NodeParams, "eqType" | "geq">> {
+  const { vdGet } = readers(source);
+  const [l] = ctrl.sides;
+  const eqType = await vdGet(ctrl.type.param, 0, ctrl.typeAt[0]);
+  const link = await vdGet(ctrl.link.param, 0, l);
+  const sides: GeqSide[] = [];
+  for (const inst of ctrl.sides) {
+    const bands: GeqBand[] = [];
+    for (let x = 0; x < GEQ_BAND_COUNT; x++) {
+      const at = ctrl.band(x);
+      bands.push({ gain: vdToCentiDb(await vdGet(at.param, at.x, inst)) });
+    }
+    sides.push({
+      on: vdToBool(await vdGet(ctrl.on.param, 0, inst)),
+      limit: await vdGet(ctrl.limit.param, 0, inst),
+      bands,
+    });
+  }
+  return { eqType, geq: { link, sides } };
 }
 
 // Read an EQ 1-knob's ON / TYPE / LEVEL from the device (first instance; linked

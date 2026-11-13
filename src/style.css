@@ -3582,6 +3582,123 @@ input[type="range"]:focus-visible,
    comfortable knob size and no more, so the count follows the width instead of being set
    per breakpoint. `auto-fit` collapses the empty tracks, which is what keeps four values
    from being spread across the whole row. */
+/* A graphic EQ's bands: one vertical fader per field across the display column
+   (`DynBinding.faderRack`). The fill runs from 0 dB to the value (`--gt-zero` and `--gt-at`,
+   set per fader), so a cut and a boost read in opposite directions, and the faders together draw
+   the curve. Every second band's name sits a line lower: thirty-one names on one line overlap
+   at the width the display column has. */
+.gt-faders {
+  display: grid;
+  grid-template-columns: repeat(var(--gt-fader-cols, 31), minmax(0, 1fr));
+  gap: 2px;
+  padding: 6px 0 4px;
+}
+
+.gt-fader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The reading and the name both stagger: a reading reaches five characters (-24.0) and a name
+   five (1.25k), wider than one column, so neighbours take alternate lines and every card keeps
+   the same height. The reading's width is its text's, not the slider rows' fixed readout cell. */
+.gt-fader .param-val.gt-val {
+  width: auto;
+  min-width: 0;
+  padding-bottom: 11px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.gt-fader:nth-child(even) .param-val.gt-val {
+  padding: 11px 0 0;
+}
+
+.gt-fader .lbl {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.gt-fader:nth-child(even) .lbl {
+  margin-top: 11px;
+}
+
+/* The fader's box: what MIDI learn rings, sized to the fader alone. */
+.gt-faderctl {
+  display: flex;
+}
+
+/* A mapped fader carries the CONSOLE's own corner dot, on the box's top right: a vertical fader
+   leaves that corner clear at every value but its maximum, where the dot's panel ring still
+   separates it from the cap. The rows' gutter dot has no room here — a card is one fader wide. */
+#dyn-screen-box .gt-fader .midi-target.midi-mapped::before {
+  display: block;
+}
+
+.gt-fader input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 18px;
+  height: 200px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.gt-fader input[type="range"]::-webkit-slider-runnable-track {
+  width: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to top,
+    var(--ctl-border) min(var(--gt-zero), var(--gt-at)),
+    var(--led) min(var(--gt-zero), var(--gt-at)),
+    var(--led) max(var(--gt-zero), var(--gt-at)),
+    var(--ctl-border) max(var(--gt-zero), var(--gt-at))
+  );
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.gt-fader input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 11px;
+  margin-left: -7px;
+  border-radius: 3px;
+  background: var(--seg);
+  border: 1px solid #6b4a18;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.gt-fader input[type="range"]::-moz-range-track {
+  width: 4px;
+  border-radius: 2px;
+  background: var(--ctl-border);
+}
+
+.gt-fader input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 11px;
+  border-radius: 3px;
+  background: var(--seg);
+  border: 1px solid #6b4a18;
+}
+
+.gt-fader.locked input[type="range"] {
+  cursor: default;
+  opacity: 0.35;
+}
+
 /* Seven columns, then three, then two — the ladder the design gives, as counts rather than
    as an `auto-fit` that derives one. Derived, the count has no ceiling: `auto-fit` over a
    minimum track fits another column as soon as the panel is wide enough for one, so the
@@ -5501,12 +5618,14 @@ button.consent-btn-primary {
      already have without inventing one -- the same pair of rules the fader groove
      and its cap take, and for the same reason. */
   .param input[type="range"]::-webkit-slider-runnable-track,
-  .dev-slider input[type="range"]::-webkit-slider-runnable-track {
+  .dev-slider input[type="range"]::-webkit-slider-runnable-track,
+  .gt-fader input[type="range"]::-webkit-slider-runnable-track {
     background: none;
     border: 1px solid CanvasText;
   }
   .param input[type="range"]::-webkit-slider-thumb,
-  .dev-slider input[type="range"]::-webkit-slider-thumb {
+  .dev-slider input[type="range"]::-webkit-slider-thumb,
+  .gt-fader input[type="range"]::-webkit-slider-thumb {
     background: Canvas;
     border: 1px solid CanvasText;
   }

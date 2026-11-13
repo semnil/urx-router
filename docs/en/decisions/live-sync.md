@@ -279,6 +279,18 @@ the bar only on the operator's explicit instruction.**
 The E2E specs use that id to mean "the text of the status line", so the row was given the new name
 (`.statusbar-row`) and the id went back to the message.
 
+## A rate change's line is not replaced by the session's
+
+**Decision (2026-11-13, the operator).** A line shown to the operator must not be replaced before it can
+be read. During Live sync a rate change's own send and the read that follows the re-clock report at once,
+so the rate's line — the rate, and what it took off the plan — leads every sync and follow line until
+anything else takes the status line. A read's refusals keep the span they had: the full read of their
+own burst, and not the next burst or a send.
+
+**Left for a pull request of its own.** The same holds for every other line an operator's action writes,
+and the status line cuts a line too long for it with an ellipsis. Both were decided to be handled across
+the app in a separate pull request, after the Flex12GEQ one.
+
 ## Clip Safe OFF waits for the A.Gain announcement
 
 **Decision (2026-10-15, chosen by the operator;

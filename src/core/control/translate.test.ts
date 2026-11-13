@@ -23,6 +23,7 @@ import {
 import type { ParamSpec } from "./params";
 import {
   addrKey,
+  busGeq,
   channelDynamics,
   channelInputSlots,
   cmdAddr,
@@ -1953,6 +1954,10 @@ describe("reset chains (sideEffect heads vs converge groups)", () => {
     // while the knob is on).
     "COMP_ONE_KNOB",
     "COMP_ONE_KNOB_LEVEL",
+    // The bus EQ Type (V1.5). Switching to Flex12GEQ turns EQ ON on and, on a MIX, the GEQ Link
+    // off; the round puts the plan's back and nothing further moves, so the chain is two links.
+    "STEREO_EQ_TYPE",
+    "OUT_EQ_TYPE",
   ]);
 
   // ⚠️ This only sees what the DEFAULT plan emits. A sideEffect head that needs a
@@ -2301,5 +2306,139 @@ describe("input stage emit", () => {
     const follow = planToFollowOnlyAddrs(model, p).filter((f) => f.node === JACKS);
     expect(follow.every((f) => f.scoped && f.y === 3)).toBe(true);
     expect(new Set(follow.map((f) => f.name))).toEqual(new Set(["PHANTOM", "HA_GAIN", "CLIP_SAFE", "HI_Z"]));
+  });
+});
+
+describe("Flex12GEQ (V1.5)", () => {
+  const model = getModel("URX44V");
+  const withGeq = (rate = 48000): Plan => {
+    const p = defaultPlan("URX44V");
+    p.sampleRate = rate;
+    for (const id of ["bus.stereo", "bus.mix1", "bus.mix2"]) {
+      const np = p.nodeParams[id]!;
+      np.eqType = 2;
+      np.geq!.sides![0].bands![17] = { gain: -3 };
+      np.geq!.sides![1].limit = 2;
+    }
+    return p;
+  };
+  const named = (cmds: VdCommand[], name: string) => cmds.filter((c) => c.name === name);
+
+  // STEREO's EQ Type is one address, at its L instance: there is none at y1, and a write there
+  // is answered with no value, which stops a Live sync session.
+  it("writes each bus's EQ Type ahead of its EQ ON, where the unit holds it", () => {
+    const cmds = planToCommandsUncollapsed(model, withGeq());
+    for (const [type, on, ys] of [
+      ["STEREO_EQ_TYPE", "STEREO_EQ_ON", [0]],
+      ["OUT_EQ_TYPE", "OUT_EQ_ON", [0, 1, 2, 3]],
+    ] as const) {
+      const t = named(cmds, type);
+      expect(
+        t.map((c) => [c.y, c.vdValue]),
+        type,
+      ).toEqual(ys.map((y) => [y, 2]));
+      expect(Math.max(...t.map((c) => cmds.indexOf(c))), type).toBeLessThan(
+        Math.min(...named(cmds, on).map((c) => cmds.indexOf(c))),
+      );
+    }
+  });
+
+  it("writes STEREO's 20 Hz band only, and every band of a MIX, per side", () => {
+    const cmds = planToCommandsUncollapsed(model, withGeq());
+    expect(named(cmds, "STEREO_GEQ_BAND").map((c) => uri(c))).toEqual([
+      "/vd/parameters/545:0:0?operation=value",
+      "/vd/parameters/545:0:1?operation=value",
+    ]);
+    const mix = named(cmds, "OUT_GEQ_BAND");
+    expect(mix).toHaveLength(31 * 4);
+    expect(mix.find((c) => c.paramId === 655 && c.y === 0)?.vdValue, "MIX 1 L 1 kHz at -3 dB").toBe(-300);
+    expect(mix.find((c) => c.paramId === 655 && c.y === 2)?.vdValue, "MIX 2 L 1 kHz").toBe(-300);
+  });
+
+  it("writes the link at the L instance before the sides, and each side's limit before its bands", () => {
+    const cmds = planToCommandsUncollapsed(model, withGeq());
+    expect(named(cmds, "OUT_GEQ_LINK").map((c) => [c.y, c.vdValue])).toEqual([
+      [0, 1],
+      [2, 1],
+    ]);
+    const limitR = cmds.findIndex((c) => c.name === "OUT_GEQ_LIMIT" && c.y === 1);
+    expect(cmds[limitR].vdValue).toBe(2);
+    const firstBandR = cmds.findIndex((c) => c.name === "OUT_GEQ_BAND" && c.y === 1);
+    expect(limitR).toBeLessThan(firstBandR);
+    expect(cmds.findIndex((c) => c.name === "OUT_GEQ_LINK" && c.y === 0)).toBeLessThan(
+      cmds.findIndex((c) => c.name === "OUT_GEQ_ON" && c.y === 0),
+    );
+  });
+
+  it("writes no GEQ value above 48 kHz, where the unit offers no Flex12GEQ", () => {
+    const cmds = planToCommandsUncollapsed(model, withGeq(88_200));
+    for (const name of [
+      // …nor the type itself: a document loaded as written can name Flex12GEQ at that rate.
+      "STEREO_EQ_TYPE",
+      "OUT_EQ_TYPE",
+      "STEREO_GEQ_ON",
+      "STEREO_GEQ_LINK",
+      "STEREO_GEQ_LIMIT",
+      "STEREO_GEQ_BAND",
+      "OUT_GEQ_ON",
+      "OUT_GEQ_LINK",
+      "OUT_GEQ_LIMIT",
+      "OUT_GEQ_BAND",
+    ])
+      expect(named(cmds, name), name).toEqual([]);
+  });
+
+  it("writes only what a side names, and nothing for a side the document leaves out", () => {
+    const p = withGeq();
+    p.nodeParams["bus.mix1"]!.geq = { sides: [{ bands: [{ gain: -2 }] }] };
+    const cmds = planToCommandsUncollapsed(model, p);
+    const mix1 = (name: string) => named(cmds, name).filter((c) => c.y < 2);
+    expect(mix1("OUT_GEQ_LINK")).toEqual([]);
+    expect(mix1("OUT_GEQ_ON")).toEqual([]);
+    expect(mix1("OUT_GEQ_LIMIT")).toEqual([]);
+    expect(mix1("OUT_GEQ_BAND").map((c) => [c.paramId, c.y, c.vdValue])).toEqual([[638, 0, -200]]);
+  });
+
+  it("writes no GEQ value while a bus runs 4band PEQ, and its EQ Type all the same", () => {
+    const p = withGeq();
+    p.nodeParams["bus.mix2"]!.eqType = 0;
+    const cmds = planToCommandsUncollapsed(model, p);
+    expect(named(cmds, "OUT_EQ_TYPE").map((c) => [c.y, c.vdValue])).toEqual([
+      [0, 2],
+      [1, 2],
+      [2, 0],
+      [3, 0],
+    ]);
+    for (const name of ["OUT_GEQ_ON", "OUT_GEQ_LINK", "OUT_GEQ_LIMIT", "OUT_GEQ_BAND"])
+      expect(
+        named(cmds, name).filter((c) => c.y >= 2),
+        name,
+      ).toEqual([]);
+    expect(
+      named(cmds, "OUT_GEQ_BAND").filter((c) => c.y < 2),
+      "MIX 1 still runs it",
+    ).toHaveLength(62);
+  });
+
+  it("writes no band past the 31 a document's array may carry: a MIX's ids run on into other parameters", () => {
+    const p = withGeq();
+    const side = p.nodeParams["bus.mix1"]!.geq!.sides![0];
+    side.bands = Array.from({ length: 40 }, () => ({ gain: -1 }));
+    const ids = planToCommandsUncollapsed(model, p)
+      .filter((c) => c.name === "OUT_GEQ_BAND")
+      .map((c) => c.paramId);
+    expect(Math.max(...ids)).toBe(668);
+    expect(() => busGeq("bus.mix1")!.band(31)).toThrow(RangeError);
+    expect(() => busGeq("bus.stereo")!.band(-1)).toThrow(RangeError);
+  });
+
+  it("registers STEREO's thirty unwritable bands, both sides, for the unit's own changes", () => {
+    const follow = planToFollowOnlyAddrs(model, withGeq()).filter((a) => a.name === "STEREO_GEQ_BAND");
+    expect(follow).toHaveLength(60);
+    expect(
+      follow.every(
+        (a) => a.param === 545 && a.x >= 1 && a.x <= 30 && (a.y === 0 || a.y === 1) && a.node === "bus.stereo",
+      ),
+    ).toBe(true);
   });
 });

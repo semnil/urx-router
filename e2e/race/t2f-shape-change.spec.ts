@@ -269,9 +269,12 @@ test.describe("T2f shape-change", () => {
     // What the flush itself said it sent. The app names the command count of each
     // flush on the status line, so "these two left together" is readable without
     // measuring an interval.
+    // Read out of the line rather than off its start: a rate change's own line leads the session's
+    // lines that follow it (main.ts `setLeadingStatus`), the flush's included.
     const flushes = trace
-      .filter((e) => e.kind === "status" && e.t > rateAt && (e.detail ?? "").startsWith("→ device"))
-      .map((e) => e.detail);
+      .filter((e) => e.kind === "status" && e.t > rateAt)
+      .map((e) => /→ device \(\d+\)/.exec(e.detail ?? "")?.[0])
+      .filter((line): line is string => line !== undefined);
     const depthAfter = await depthOf(page);
     const readoutAfter = (await firstStripReadout(page).textContent())!;
 

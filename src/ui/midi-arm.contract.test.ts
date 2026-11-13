@@ -411,6 +411,7 @@ describe("a tuning screen the rate has taken", () => {
     ["fx", "bus.fx2", 192000, null],
     ["insfx", "ch1", 88200, "Pitch Fix"],
     ["insfx", "bus.mix1", 192000, "M.B.Comp"],
+    ["geq", "bus.stereo", 96000, null],
   ] as const)("the %s screen on %s at %d Hz", (kind, nodeId, rate, effect) => {
     const armed: string[] = [];
     let learning = true;
@@ -428,7 +429,9 @@ describe("a tuning screen the rate has taken", () => {
     const before = serialize(plan);
     // Every row that offers itself is a held one: the rate holds the whole screen, not a part.
     for (const target of box.querySelectorAll<HTMLElement>(".midi-target"))
-      expect(target.closest(".prefs-row, .gt-knob")?.classList.contains("locked"), target.outerHTML).toBe(true);
+      expect(target.closest(".prefs-row, .gt-knob, .gt-fader")?.classList.contains("locked"), target.outerHTML).toBe(
+        true,
+      );
     const { marked, ids } = armEverything(box, armed);
     expect(marked, "rows offer themselves").toBeGreaterThan(0);
     expect(ids.length).toBe(marked);
@@ -440,7 +443,7 @@ describe("a tuning screen the rate has taken", () => {
     expect(serialize(plan), "and arming edited nothing").toBe(before);
     learning = false;
     screen.refresh();
-    const rows = [...box.querySelectorAll<HTMLElement>(".prefs-row.locked, .gt-knob.locked")];
+    const rows = [...box.querySelectorAll<HTMLElement>(".prefs-row.locked, .gt-knob.locked, .gt-fader.locked")];
     expect(rows.length, "rows are held").toBeGreaterThan(0);
     for (const c of rows.flatMap((r) => [...r.querySelectorAll<HTMLInputElement>("button, select, input")]))
       expect(c.disabled, "a held control takes no edit").toBe(true);
