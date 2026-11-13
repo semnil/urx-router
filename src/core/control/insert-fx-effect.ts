@@ -490,7 +490,7 @@ const MBC_GLOBAL_PARAM: Record<
  * the knob, takes the fixed values into the plan at the switch (`mbcOneKnobSwitch`), and stops
  * emitting every slot the knob holds (`mbcDeviceDriven`).
  *
- * The readings behind this are in docs/{en,ja}/channel-tuning.md.
+ * docs/{en,ja}/channel-tuning.md, "1-knob is an operator control", lays this out.
  */
 export const MBC_ONE_KNOB = {
   on: { slot: MBC_GLOBAL.oneKnobOn, rawMin: 0, rawMax: 1 },
@@ -760,7 +760,8 @@ function guitarTypeParams(family: InsertFxFamily): InsertFxParamDesc[] {
  * shared table above can only carry one number per slot. It carried mid-scale ones (every
  * tone control 50, Output 64, SP Type 1), which is a shape no measurement produces: those
  * were placeholders, and the screen printed them wherever a device read had not filled the
- * plan yet. These are the unit's own; how they were read is in docs/{en,ja}/channel-tuning.md.
+ * plan yet. These are the unit's own, read from a factory-initialised unit
+ * (docs/{en,ja}/channel-tuning.md, "Where the catalogue's defaults come from").
  *
  * Only the slots that differ from the shared descriptor are listed. A slot absent here
  * keeps the table's value, which is then the measurement for all four (Gate 0, Gate Level
