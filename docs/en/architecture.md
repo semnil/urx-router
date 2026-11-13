@@ -182,7 +182,7 @@ carries a one-line map of the same directories and points here.
   (`NODE_TAPS_URX22` / `NODE_TAPS_URX44`), dBFS decoding, latest-value store; the gain-reduction meters live
   in their own table with their own decode (`grAddr(kind, node)` / `decodeGrDb`) because a reduction is not
   a level and `tapsFor` doubles as the CONSOLE meter-point selector's contract; the two idle values are
-  measured states (`0` = the processor is not engaged, OVER = engaged with nothing to reduce) and a GR
+  measured states (one for a processor not engaged, and OVER for one engaged with nothing to reduce) and a GR
   figure excludes any makeup gain; for the CONSOLE view. `tapsFor`/`tapFor`/`hasMeter`/`defaultTapKey` take
   an optional `modelId` and silently fall back to the URX44 table without it, so every resolution site must
   pass `getModel().id`) / `eq-response.ts` the 4-band PEQ's measured frequency response (RBJ biquads with
@@ -376,8 +376,8 @@ carries a one-line map of the same directories and points here.
       Every delay time (Mono / Ping Pong, Initial / ER-Rev Delay) prints to 0.1 ms across its range, and
       the REV-X Reverb Time to three significant figures
     - `insert-fx-effect.ts` effect parameter catalog for insert FX (Guitar Amp Classics/Pitch
-      Fix/Compander-H/S/Multi-Band Comp) — reads/writes the engine arrays bound by the selector (Guitar 697
-      / Pitch 701 / Compander 689 / output 693) via slot addressing; raw↔display uses values calibrated
+      Fix/Compander-H/S/Multi-Band Comp) — reads/writes the engine arrays bound by the selector (Guitar
+      / Pitch / Compander / output) via slot addressing; raw↔display uses values calibrated
       against the device LCD (Compander reuses the existing COMP-family encodings; MBC/Pitch/Guitar have
       dedicated tables and enums for SP Type/Amp Type/Scale etc.)
     - `urxf.ts` reader for the unit's microSD settings file (`.urxf`, written by SETUP > SAVE) — two-level
@@ -390,25 +390,25 @@ carries a one-line map of the same directories and points here.
     - `device-setup.ts` the unit's SETUP > GENERAL settings (brightness / auto power off / date-time formats
       + time zone / language / HDMI + USB Main / the 16 User Defined Knobs assignments) — catalogued in
       `params.ts` under the **`planExternal`** flag (the contract test derives "never emitted" from it): no
-      `translate.ts` emit, no `readback.ts` group, bare `vdGet`/`vdSet` in the Follow USB (848) shape. Read
+      `translate.ts` emit, no `readback.ts` group, bare `vdGet`/`vdSet` in the Follow USB shape. Read
       on open, edited locally, applied as a diff (`ui/device-setup.ts`, Device menu). `timezones.ts` holds
       the unit's 154-entry city list — fixed data, **not strictly alphabetical**, sorting it shifts every
       index from 76 on
     - `firmware.ts` validated System firmware version gate (matches against `SUPPORTED_SYSTEM_FIRMWARE` and
       warns before read/write/live-sync on a version mismatch; an empty version skips the check)
-    - `lcd-selection.ts` the unit's LCD selection (762) as a stereo channel's displayed side: the block-1
+    - `lcd-selection.ts` the unit's LCD selection as a stereo channel's displayed side: the block-1
       encode / decode (2 × the stereo position, plus 1 for R) and `LcdEchoes`, which tells the unit's answer
       to the app's own write from a selection made on the panel. `main.ts` reads the selection at a Live-sync
       start, takes its notifies through the follow `intercept`, and writes it from `switchSide`
-    - `sends-target.ts` HOME's [Sends] destination (763), the destination the unit's side menu shows: the
-      packed encode / decode (STEREO 0, FX 1 16, FX 2 17, MIX 1 32, MIX 2 34) and its read and write.
+    - `sends-target.ts` HOME's [Sends] destination, the destination the unit's side menu shows: the
+      packed encode / decode (STEREO, FX 1, FX 2, MIX 1, MIX 2) and its read and write.
       `encodeSendsTarget` answers nothing for FX 2 above 96 kHz, a value the unit takes over the link
       although its own list does not offer it there. On an experimental launch, where the SIM view shows
       it, `main.ts` reads it at a Live-sync start, takes its notifies through the follow `intercept`, reads
       it again 1 s after the unit announces a rate above 96 kHz — the unit moves FX 2 to FX 1 then and
       announces nothing — and writes the destination the SIM view's LCD chooses
-    - `daw-integration.ts` SETUP > Software Integration: whether a compatible DAW holds the unit (816, read
-      only, anything but 0 while one does) and Post Fader Send for FX (879 / 880, MIX 1 288, MIX 2 290), with
+    - `daw-integration.ts` SETUP > Software Integration: whether a compatible DAW holds the unit (read
+      only) and Post Fader Send for FX (MIX 1 or MIX 2 for each FX bus), with
       their read and write. On an experimental launch `main.ts` reads all three at a Live-sync start, takes their
       notifies through the follow `intercept`, and writes a send the SIM view's LCD picks while a DAW holds the
       unit
@@ -437,8 +437,8 @@ carries a one-line map of the same directories and points here.
       the inbound stream and that figure cannot measure what it appears to. `LINK_BAR_KEYS` /
       `LINK_LEDGER_KEYS` are exported as unions so `linkstats.spec.ts`'s expectation tables are `Record<…>`
       over them and a field added without an assertion fails `pnpm typecheck:e2e`. See "The link ledger"
-    - `client.ts` write sequence + dry-run + `readClockState`/`setFollowUsb` (the pre-write Follow USB (848)
-      + rate (766) check; 848 is deliberately outside the plan) + `diffPlan`/`diffNames` (device vs plan
+    - `client.ts` write sequence + dry-run + `readClockState`/`setFollowUsb` (the pre-write Follow USB
+      + rate check; Follow USB is deliberately outside the plan) + `diffPlan`/`diffNames` (device vs plan
       diff for write) + `sendConverging` (send the diff, re-read, re-send what still differs — but what a
       round SENDS is `roundCommands`, not the diff: a `VdCommand.group` is a **reset chain**, where writing
       one member makes the device discard the ones emitted after it, so a round re-sends every member of a
@@ -558,7 +558,7 @@ carries a one-line map of the same directories and points here.
   (the bare slot key) / `console.ts` CONSOLE view (mixer-style level overview. Switched via the
   GRAPH/CONSOLE tabs; an
   alternate view of the same plan; fader/MUTE/EQ edits go through `markChanged` for the same live sync as
-  the graph; per-strip SENDS rack; a scribble power LED toggles each node master (CH_ON / bus master ON /
+  the graph; per-strip SENDS rack; a scribble power LED toggles each node master (channel ON / bus master ON /
   osc.on) with the off-state dimmed via the shared `isNodeInactive`; live meters only during Live sync, ~10
   Hz) / `glyph.ts` wraps the `∞` glyph in a `.glyph-inf` span to compensate the reduced x-height of mono
   fonts (shared by console readouts and inspector values), and hands a screen reader the spoken form of a
@@ -842,7 +842,7 @@ carries a one-line map of the same directories and points here.
   checked against a factory-initialised unit: every address a new plan writes already holds the plan's value there.
   URX44 reuses the URX44V capture verbatim (it differs only by URX44V's HDMI input, which no default routes), and
   URX22 is that capture remapped to its channel layout (`models/initial-urx22.ts`). The one address that differs on
-  a factory-initialised URX22 is the sample rate (`766`), which follows the USB host while Follow USB is on (the
+  a factory-initialised URX22 is the sample rate, which follows the USB host while Follow USB is on (the
   factory setting). A device fetch instead starts from an empty plan (`emptyPlan` in
   `core/plan.ts`) and lets the readback (`core/control/`) fill in the live values.
   On startup the model selection is restored from the last choice (`localStorage("urx-model")`),
@@ -1132,7 +1132,7 @@ channel applies the input stage of the jack or source it reads. The plan keeps t
   pair copies values onto its partner's unused side. That write-back is tried up to three times, each pass after
   the first writing only what the one before left different, since one value of the set can reset another and
   nothing converges behind it; what still differs then is counted in the restore's residual. On a URX44V the same
-  set also carries slot 1 of the Guitar Amp engine (`697:0:1`) when no input holds that effect before the run.
+  set also carries slot 1 of the Guitar Amp engine when no input holds that effect before the run.
   Slot 1 is the engine's ON: while an input holds the engine it follows that input's INS FX ON, which the restore
   writes, but a pass that selects the effect and releases it again leaves the engine held by nothing, and the
   release does not always turn slot 1 off. Writing it with nothing holding the engine is confirmed on the URX44V
@@ -1536,7 +1536,7 @@ bottom at the lowest real detent (−96 dB). The ladder is split into **three co
 **absolute dBFS** (not the lit height): green ≤ -18 dBFS / yellow -18 to -9 dBFS / red -9 to 0 dBFS. The boundaries
 match the EBU R68-2000 reference levels (alignment level -18 dBFS / permitted maximum level -9 dBFS); the threshold
 constants live in `core/meters.ts` (`METER_GREEN_TOP_DB` / `METER_YELLOW_TOP_DB`). A separate **OVER box** sits just
-above the 0 dB top (clipping ≠ the level ceiling); it lights red on a device clip (raw 32767) via a per-channel over latch and decays over ~1 s.
+above the 0 dB top (clipping ≠ the level ceiling); it lights red on a device clip via a per-channel over latch and decays over ~1 s.
 On a **stereo** tap (`isStereoTap` — the tap carries a second `r` meter address), the ladder and OVER frames stay undivided but each hold **two bar
 columns and two clip cells** (`.mtrcol.l/.r`, `.lit.l/.r`, a 2px centre gap between), so L and R meter and clip independently; a mono strip keeps a
 single column. The strip's meter state is a `MeterLane[]` (one entry mono, two stereo) that `paintMeters` steps by index (lane 0 = L, lane 1 = R). The scale
@@ -1556,8 +1556,8 @@ rest of the scribble, under the LED's, and the hidden side's number dims ("CH 5/
 shown). It arms no MIDI control. Below it sit two 2-column chip groups: (1) channel / input (HA) — **MUTE**, only on the strips that
 send to STEREO (channels, FX channels, MIX buses): it drives that fixed → STEREO send's ON/OFF — an **input /
 FX channel's → STEREO assign ON** (firmware V1.3, the post-fader SEND TO STEREO switch) or a **MIX bus's
-MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off) — never the node master (CH_ON / FX-channel ON /
-MIX 675), which is the scribble power LED. STEREO and the MONITOR buses have no → STEREO send, so they carry
+MIX → STEREO TO ST switch** (`params.on`, muted = TO ST off) — never the node master (channel ON / FX-channel ON /
+MIX ON), which is the scribble power LED. STEREO and the MONITOR buses have no → STEREO send, so they carry
 no MUTE chip; their master ON is the power LED alone. A MONITOR
 bus also carries **CUE Int** (`cueInterrupt` → `MONITOR_CUE_INTERRUPT`, ships ON) and **MONO** (`mono` →
 `MONITOR_MONO`, ships OFF) chips. Every cuable strip (the channels, the FX channels, the MIX buses, STEREO and
@@ -1576,10 +1576,10 @@ strip's own master, and the one head chip whose value is a level down in the pla
 writes it itself rather than through the flat-key chip writer. An odd group gets an invisible spacer so its last chip never stretches to
 full width. At the bottom (knobs bottom-aligned) are rotary knobs (`addKnob`/`wireKnob`, drag / arrow keys)
 — channel **Gain** (A.GAIN of the jack, or D.GAIN of the source, the channel reads; none on no source — while the
-jack's Clip Safe is holding the gain down, as the unit announces at `864`, the A.GAIN label reads SAFE and the value
+jack's Clip Safe is holding the gain down, as the unit announces, the A.GAIN label reads SAFE and the value
 and the knob's rim take the warn colour, which the Inspector's Clip Safe ON takes too) **and
 PAN/BAL** (the CH→STEREO send's pan, L63–C–R63), the **master BALANCE** on the STEREO
-master and MIX buses (the bus output's L/R balance, `nodeParams.pan` → STEREO 583 / MIX 676; it keeps the
+master and MIX buses (the bus output's L/R balance, `nodeParams.pan`; it keeps the
 `BAL` label even under Pan Link), or the **PHONES level** (a 0–10 non-dB
 scale) on the monitor buses (PHONES 1 ↔ mon1, PHONES 2 ↔ mon2, independent of the monitor fader, so no extra
 tab). A knob's indicator can place specific values at the horizontal (`KnobSpec.angle`, left = -90° / right =
@@ -1715,7 +1715,7 @@ drag lands on the nearest.
   **SEND PAN popover** below it — the MIX sends' pan as rotary knobs (FX sends are mono; FIXED BUS Type
   locks a knob read-only, and under Pan Link turning one moves the strip's own PAN / BAL). Clicking any `SENDS` header collapses/expands every rack together (a `sends-collapsed` host
   class, persisted in `localStorage` `urx-sends-open`), showing one amber dot per active send when collapsed.
-  When any node's **master is off** (the power LED off — CH_ON / MIX 675 / STEREO 582 / MONITOR 723, all on
+  When any node's **master is off** (the power LED off — channel / MIX / STEREO / MONITOR, all on
   `np.on`, or the oscillator's `osc.on`), the strip **dims** — the shared `isNodeInactive` predicate the graph
   view uses, so both views dim the same nodes — with the unlit power LED, not a badge, marking why. The head
   MUTE and the rack sends stay operable (the → STEREO send ON/OFF and the node master are independent device
@@ -1739,24 +1739,23 @@ drag lands on the nearest.
   header readout on column touch. The mono font draws `∞` at x-height, smaller
   than the digits, so a `-∞` readout scales the `∞` up to digit height (`setLevelText` wraps each `∞` in a
   `.glyph-inf` span; shared `src/ui/glyph.ts` covers the CONSOLE readout, the dB scale, and the inspector values).
-- **Live meters** — the meter column is always shown; signal only flows while Live sync is on
-  (`console.setLive`; at rest it sits at the floor). `core/meters.ts` maps node ids to broker meter addresses
-  (`meterId:x`), decodes the raw value (deci-dBFS, 32767 = OVER) to dBFS, and holds the latest reading in a
-  `MeterStore`. The UI samples the readings on a `requestAnimationFrame` loop that paints only once 1000/30 ms
-  have passed since its last paint. On a 60 Hz display that lands on every second or third frame, so the loop
-  paints below 30 fps (22.2 fps in WebKit, `node scripts/meter-bench-run.mjs --seconds 20`, 2026-10-10); the device
-  updates at ~10 Hz, so painting faster gives no gain and renders with fast attack / slow release, peak hold,
-  and a per-channel OVER latch (the top OVER box), writing only the lanes (L/R on a stereo strip) that changed
-  (compared at integer-percent). **The paint is kept compositor-only**: the bars are driven by
-  `transform: scaleY` / `translateY` from typed (`@property`) 0..1 custom properties rather than an animated
-  `height` / `bottom`, so a moving meter never triggers per-frame style-recalc / layout / paint. Only the numeric
-  readout text is throttled to every few frames (a text change forces layout), and `will-change` is applied only
-  to strips with signal (`.live`) so idle strips drop their compositor layers. A tap that has streamed nothing
-  yet resolves to no reading at all (`readingTap` → null) and its cell holds "—": a stream that has not started
-  is not a measurement of silence, and printing the resting floor would claim one. Subscriptions are scoped to the
-  on-screen strips that have a meter in the current model (`startMeters` collects each visible strip's
-  selected tap and passes it through `tapAddrs` / `subscribeMeters`). Meter ids were confirmed on a real
-  URX44V; models without a mapping show no meter.
+- **Live meters** — the meter column is always shown; signal only flows while Live sync is on (`console.setLive`; at
+  rest it sits at the floor). `core/meters.ts` maps node ids to broker meter addresses (`meterId:x`), decodes the
+  raw value (deci-dBFS, whose top value reads OVER) to dBFS, and holds the latest reading in a `MeterStore`. The UI
+  samples the readings on a `requestAnimationFrame` loop that paints only once 1000/30 ms have passed since its last
+  paint. On a 60 Hz display that lands on every second or third frame, so the loop paints below 30 fps (22.2 fps in
+  WebKit, `node scripts/meter-bench-run.mjs --seconds 20`, 2026-10-10); the device updates at ~10 Hz, so painting
+  faster gives no gain and renders with fast attack / slow release, peak hold, and a per-channel OVER latch (the top
+  OVER box), writing only the lanes (L/R on a stereo strip) that changed (compared at integer-percent). **The paint
+  is kept compositor-only**: the bars are driven by `transform: scaleY` / `translateY` from typed (`@property`) 0..1
+  custom properties rather than an animated `height` / `bottom`, so a moving meter never triggers per-frame
+  style-recalc / layout / paint. Only the numeric readout text is throttled to every few frames (a text change
+  forces layout), and `will-change` is applied only to strips with signal (`.live`) so idle strips drop their
+  compositor layers. A tap that has streamed nothing yet resolves to no reading at all (`readingTap` → null) and its
+  cell holds "—": a stream that has not started is not a measurement of silence, and printing the resting floor
+  would claim one. Subscriptions are scoped to the on-screen strips that have a meter in the current model
+  (`startMeters` collects each visible strip's selected tap and passes it through `tapAddrs` / `subscribeMeters`).
+  Meter ids were confirmed on a real URX44V; models without a mapping show no meter.
 - **Streaming path** — the Rust side (`src-tauri/src/vd.rs`) handles a meter subscription
   (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
   `notify` frames to the frontend over a Tauri Channel during the socket drain (`pump` parses each frame with
@@ -1923,11 +1922,11 @@ rather than naming this repository's commit.
   destination chosen on the LCD is written to the unit — FX 2 is refused above 96 kHz. With no session the LCD
   keeps a destination of its own, which reaches nothing.
 - **SETUP > Software Integration** is the unit's setting rather than the plan's (`daw-integration.ts`). The unit opens
-  it only while a compatible DAW (Cubase, Nuendo, MixKey) holds it, which `816` reads as anything but 0, and the LCD
+  it only while a compatible DAW (Cubase, Nuendo, MixKey) holds it, a state the unit publishes, and the LCD
   opens it only then and only while Live sync is up: during Live sync the session tells the LCD whether one does, and
   the LCD draws the entry as the unit does, out of reach with none and with nothing of the app's on it; with no session
-  the app holds it shut (below). A session reads `816` and the two Post Fader Send for FX values
-  (`879` for FX 1, `880` for FX 2), registers all three, reads them again once registered — a DAW that took or let
+  the app holds it shut (below). A session reads that state and the two Post Fader Send for FX values
+  (one for FX 1, one for FX 2), registers all three, reads them again once registered — a DAW that took or let
   go of the unit in between announced itself to nobody — and follows their announcements, an announcement or a pick made
   while that read is out standing over its answer for that one value, the read's answer taken for the others. The LCD shows the sends the session holds, and a send picked on it is
   written to the unit behind every unit write queued so far, unless no DAW holds the unit by its turn: it is then
@@ -1945,14 +1944,14 @@ rather than naming this repository's commit.
 - **The unit's own settings and states** are shown in place of the simulator's where the app knows them
   (`core/sim-map-setup.ts`): SETUP > GENERAL as the last reading of it — a session's start on an experimental launch,
   the Device setup screen, a SETUP edit on the LCD — kept until the model changes, Follow USB as the toolbar's
-  badge holds it and off while the badge does not know it, the operation mode (`817`) as a session read it, the unit's current scene (`781`, which a Recall and a Store move) and the row
-  its SCENE LIST cursor stands on (`863`) as a session read them — at its start, and again once it has registered for
+  badge holds it and off while the badge does not know it, the operation mode as a session read it, the unit's current scene (which a Recall and a Store move) and the row
+  its SCENE LIST cursor stands on as a session read them — at its start, and again once it has registered for
   their announcements — and the unit announced them since — by number with no title, the unit's titles not being
   readable, and on the tab that lists the cursor's row where only one does, the tab shown staying where both do; a
-  row picked on the glass shows until the unit's cursor moves — whether a card is in the microSD slot (`837`, on a
+  row picked on the glass shows until the unit's cursor moves — whether a card is in the microSD slot (on a
   model that has one) as a session read it — at its start, and again once it has registered for its announcements —
   and the unit announced it since, and each MIC/LINE jack's Clip Safe as holding its
-  gain down while the unit announces it (`864`, which every session registers, since the CONSOLE and the Inspector
+  gain down while the unit announces it (an announcement every session registers for, since the CONSOLE and the Inspector
   show it too). What a session read or was announced of the operation mode, the current scene, SCENE LIST's cursor
   and the card is dropped when it ends, and when it fails to start after its starting read, and the LCD shows the
   simulator's own again. A session on an experimental launch registers the others and reads SETUP again once
@@ -2429,7 +2428,7 @@ written at all:
   for the rate to come back before sending. The read-back compared the 64 slots of each of the three
   engines in the run (Pitch Fix, the input Compander, the output MBC) with their values before the
   transition and found them equal, but one slot per engine carried a non-default sentinel (Pitch Fix Speed
-  37, the Compander's Threshold -32.10 dB, the MBC's LOW Threshold raw 99): the selector write refills the
+  37, the Compander's Threshold -32.10 dB, the MBC's LOW Threshold -28 dB): the selector write refills the
   array with the type's defaults, so on the other 63 slots of each a match cannot tell a re-send that
   landed from the refill.
   What separates it from the OTHER clearing — a Signal Type transition, which drops the effect on both
@@ -2490,10 +2489,10 @@ written at all:
   Effect and engages the bypass with the next selection whatever it held, so the write sends the selector alone (`translate.test.ts`, "the insert-FX bypass beside No Effect").
 
 - **The unit keeps a UI state per element and announces it for one.** The side a stereo channel shows: the unit
-  keeps one per stereo channel, but its LCD selection (762) carries the side of the selected channel only, and
+  keeps one per stereo channel, but its LCD selection carries the side of the selected channel only, and
   that is the only one it announces. The app keeps its own side per channel (`stereo-side.ts`) and links it to
-  the selection while live: a Live-sync start and each 762 notify show the selected channel's side, and a
-  switch made in the app writes 762 — which also moves the unit's selection frame to that channel. A notify
+  the selection while live: a Live-sync start and each notify of it show the selected channel's side, and a
+  switch made in the app writes the selection — which also moves the unit's selection frame to that channel. A notify
   carrying a value the app wrote moments earlier is the unit's answer to it and is consumed (`LcdEchoes`), so
   two switches in a row do not bounce. One write is on the wire at a time: the switches made while it is go
   out as one write of the latest side, and not at all when that is the side the write sent — the unit leaves
@@ -2524,8 +2523,8 @@ written at all:
   settle window has passed, for one that changed nothing): the unit acks a write before the flag is readable, a
   read in between answers the value the write replaced, and the flags the unit clears or puts back with the
   write become readable with that announcement (see "A write is not readable when it is acked"). A read is taken
-  only when no write is waiting and nothing changed while it ran. **[CUE Mode]** (System 1.5, `CUE_MODE` at
-  897: Mix CUE or Last CUE, one setting for the unit, kept in its settings file and in no scene) is read with
+  only when no write is waiting and nothing changed while it ran. **[CUE Mode]** (System 1.5:
+  Mix CUE or Last CUE, one setting for the unit, kept in its settings file and in no scene) is read with
   the flags at every one of those reads and registered for notify beside them. Under Last CUE a cue turned on
   also clears the other cues of its own group, so `CueSet.apply` does; the two groups still clear each other,
   and the one output cue an input cue cleared still comes back with the last input cue off. A switch of the
@@ -2621,12 +2620,12 @@ sequenceDiagram
   participant P as plan
 
   D->>F: param notify, address and value
-  alt Follow USB, address 848
+  alt Follow USB
     F->>H: intercept updates the badge and consumes the notify
     Note over F: no settle window — the address has no owner node,<br/>so letting it through would escalate every change to a full re-read
-  else LCD selection, address 762
+  else LCD selection
     F->>H: intercept consumes the answer to our own write, or shows the selected stereo channel's side
-  else HOME's Sends destination, address 763
+  else HOME's Sends destination
     F->>H: intercept consumes the answer to our own write, or shows the destination chosen on the unit on the SIM view
   else a CUE flag, or an instance the unit sets beside one
     F->>H: intercept consumes our own write's answer and a mirror, or applies a press on the unit to the cue set and re-reads the flags 300 ms later
@@ -2780,7 +2779,7 @@ model has, not from what the plan currently holds: a node the operator has not n
 same, and a stereo pair is registered at both of its `instances`, so both are real addresses rather than an
 extrapolation from a numeric sequence. `planToNameWrites` is the write side of that same identity and is
 deliberately not the same set — it skips a node the plan holds no name for, and it carries one string that is not
-a name at all: the SSMCS Sweet Spot preset (param 91). That one **is** registered, and separately, because it is a
+a name at all: the SSMCS Sweet Spot preset. That one **is** registered, and separately, because it is a
 catalog row rather than a name — it resolves through the numeric index to its owner node, so a preset changed on
 the unit takes that node's scoped read instead of a direct placement, and a write of it can end its settle on the
 unit's announcement. Not the write that PUTS it there: the mode change's own flush writes the preset on the string
@@ -2833,12 +2832,12 @@ array address it wrote. So the silence is about the front panel, not about the a
 
 | Address | When and why the app does not write it | Which node's scoped read repairs it |
 | --- | --- | --- |
-| CH → FX send tap (193 / 197 / 320 / 324) | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
-| microSD Rec Track Count (839) | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node 839 lands on, and the only address that read touches |
-| the FX delay time the unit computes (681 / 685, slot 6) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
-| a jack's +48V / A.Gain / Clip Safe / HI-Z (0 / 1 / 5 / 6) | no channel reads the jack, so the write leaves it out ([the input stage](#the-input-stage-on-the-jack-and-the-source)) | the **MIC/LINE node** — its scoped read re-reads both jacks, even for A.Gain, which a read jack follows directly |
-| a channel's HPF frequency (26) | while the plan holds a stop outside 40 … 120 Hz: the unit's knob sets 20 … 600 Hz and the broker refuses a write outside that window, so the emit sends nothing there (`hpfFreqSent`) | the **channel** — its scoped read re-reads `hpfFreq` |
-| STREAMING source select (705 / 706) | while the plan holds no STREAMING wire: its list on the unit has no None, so the emit sends nothing there rather than NONE (`leavesUnsourced`) | **`bus.stream`** — its scoped read takes the source back with the node's DELAY |
+| CH → FX send tap | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
+| microSD Rec Track Count | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node Track Count lands on, and the only address that read touches |
+| the FX delay time the unit computes (slot 6 of the FX effect's parameters) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
+| a jack's +48V / A.Gain / Clip Safe / HI-Z | no channel reads the jack, so the write leaves it out ([the input stage](#the-input-stage-on-the-jack-and-the-source)) | the **MIC/LINE node** — its scoped read re-reads both jacks, even for A.Gain, which a read jack follows directly |
+| a channel's HPF frequency | while the plan holds a stop outside 40 … 120 Hz: the unit's knob sets 20 … 600 Hz and the broker refuses a write outside that window, so the emit sends nothing there (`hpfFreqSent`) | the **channel** — its scoped read re-reads `hpfFreq` |
+| STREAMING source select | while the plan holds no STREAMING wire: its list on the unit has no None, so the emit sends nothing there rather than NONE (`leavesUnsourced`) | **`bus.stream`** — its scoped read takes the source back with the node's DELAY |
 
 The third is not a read-only ADDRESS at all, which is why the heading above says cases. Slot 6 is written like
 any other parameter while the operator owns the delay time; it moves to this list only while tempo Sync is on,
@@ -2860,13 +2859,13 @@ All of them are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside 
 registration and the write suppression cannot drift apart; `live.ts` consumes that list the same way it consumes
 `planToCommands`, **including its write scope**. That scope is not symmetry for its own sake: under *Scene only* a
 whole-device read puts the plan's scene-external values back after reading (`applyDeviceStateScoped` →
-`core/scene-scope.ts`, which names `sdRecTrackCount`), so a follow that pulled 839 in would be the one path where
+`core/scene-scope.ts`, which names `sdRecTrackCount`), so a follow that pulled Track Count in would be the one path where
 that preference does not hold — the notify-driven read and the full read would disagree about one value under one
 setting. Track Count is `sceneExternal` and drops out under *Scene only*; STREAMING's source and the send taps are scene state and stay. **The index entry and the readback gate are one decision, not two.** Naming an owner node is
-correct only while `readback` reads that address on a scoped read of that node — 839 is gated on
+correct only while `readback` reads that address on a scoped read of that node — Track Count is gated on
 `want("out.sdrec")` for exactly this reason, and the full-read behaviour is identical either way because `want` is
 `only === undefined || only.has(id)`. Were that gate `only === undefined`, every front-panel Track
-Count turn would take a scoped read that never touches 839: the follow runs, the read succeeds, and the value does
+Count turn would take a scoped read that never touches it: the follow runs, the read succeeds, and the value does
 not change. The opposite mistake — leaving the owner node off — works, at a whole-device read per turn. Sample
 rate keeps `only === undefined` because `plan.sampleRate` is a plan-level scalar no node owns, which is a
 difference in kind rather than a convention to copy.
@@ -3071,7 +3070,7 @@ the rate leaves that entry too.
 | A drag's intermediate values | the plan itself — the next step overwrites the key inside the window | only the final value of an address ever becomes a command |
 | An address whose value equals the snapshot | the flush's diff | the device already holds it |
 | A notify whose value equals the snapshot, a value an acked write is still waiting to hear announced, or the value a write still on the wire carries | `isEcho`, before the settle window | our own write coming back is not a change, whether it arrives after its ack or ahead of it, and whether the send loop or a converge round sent it — a converge sends from a copy frozen after the loop's writes, so it can carry a value the loop never sent; the match retires the writes queued before it, so the unit moving back to one of their values is still a change |
-| A notify for Follow USB, 848 | `intercept`, ahead of node resolution | host-owned and outside the plan; it would otherwise force a full re-read |
+| A notify for Follow USB | `intercept`, ahead of node resolution | host-owned and outside the plan; it would otherwise force a full re-read |
 | A device read whose plan was replaced | `readIntoPlan`'s identity guard, after the read resolves | its values belong to a document nothing shows |
 | An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |
 | An edit made while a Fetch's or Live-sync start's read carries a model switch | on the board, before it writes anything (`planTakesEdits`); everywhere else `markChanged`, which puts the plan back to the state the read began from; both say so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
@@ -3206,8 +3205,8 @@ can still read, with the unreadable ones listed as gaps that leave the compariso
 **Its scope is what the plan would write**, since it walks `planToCommands` (plus the names) — with the input
 stage of every jack and source the plan holds, read by a channel or not (`everyInputHolder`), where a write
 carries only the ones some channel reads ([the input stage](#the-input-stage-on-the-jack-and-the-source)). Two kinds of
-parameter fall outside it: the ones the app reads and never emits — the microSD Rec Track Count (839) and the CH →
-FX send tap (193) — and the device-wide settings that are not in the plan at all (`planExternal`: Follow USB and the
+parameter fall outside it: the ones the app reads and never emits — the microSD Rec Track Count and the CH →
+FX send tap — and the device-wide settings that are not in the plan at all (`planExternal`: Follow USB and the
 fourteen SETUP > GENERAL addresses, which the unit's own settings screen reads and, all but the knob bank,
 writes). Neither kind can ever be
 reported as a difference, and neither is in the compared count. That is a different silence from the read failures
@@ -3244,8 +3243,8 @@ Some device parameters reset others when written. Emit order handles that for a 
 type selector before the array it types, and the EQ 1-knob before the values it discards — but a **converge round
 re-sends only what still differs**, and that is where order alone stops being enough.
 
-The measured case is the EQ 1-knob, on a URX44V. Writing ON (`46`) discards the type back to Intensity; writing the
-type (`47`) discards the level (`48`) to that type's neutral point (Intensity 50, the presets 0). Three links. When a
+The measured case is the EQ 1-knob, on a URX44V. Writing ON discards the type back to Intensity; writing the
+type discards the level to that type's neutral point (Intensity 50, the presets 0). Three links. When a
 COMP/EQ bank switch resets all three at once, a loop that re-sends only what differs walks the chain one link per
 round: round 2 re-sends ON and un-sets the type, round 3 re-sends the type and un-sets the level, and the level
 lands only in a round of its own — each link spends a round of the budget, and a budget spent before the last link
@@ -3500,7 +3499,7 @@ second and later calls return early because `deactivateLive` clears that flag sy
 ### Sample rate and Follow USB
 
 The sample rate is a plan value the device can accept and then undo by itself. With **SETUP > Follow USB**
-on, the URX slaves its clock to the USB host: a write to 766 is accepted, re-clocks the hardware, and roughly
+on, the URX slaves its clock to the USB host: a rate written then is accepted, re-clocks the hardware, and roughly
 0.4 s later the host's rate is reasserted (measured on a URX44V). Writing straight through would report success
 for a change that did not last.
 
@@ -3516,7 +3515,7 @@ turned on at its panel and no read has brought in yet, with the other switch on 
 older OFF would otherwise go out over it. An announcement that arrives while the converge runs joins that set, and
 each later read and round send asks it again (`exclude`); a round whose sends were already chosen goes out as chosen.
 
-`Write to device` therefore reads the device's clock state — Follow USB (848) and the running rate (766) — before
+`Write to device` therefore reads the device's clock state — Follow USB and the running rate — before
 the diff, and settles the rate before anything is sent (`settleSampleRate` in `main.ts`, `readClockState` in
 `client.ts`). Matching rates proceed unchanged. With Follow USB **off**, a mismatch is a plain confirm, since the
 plan's rate is the one that sticks. With it **on**, a modal (`ui/rate-choice.ts`) offers the two real answers —
@@ -3547,36 +3546,36 @@ it on the ADOPT arm's own line (`#rate-choice-adopt-note`) and leaves the insert
 does, since that note says the plan keeps what the rate leaves out.
 
 **The rate settle also names what the change costs the microSD recorder**, which, with taking an insert off (the
-paragraph above), is a rate side effect the unit ACTS on rather than merely refuses: it lowers its own Track Count to fit a rate it cannot carry (16 tracks at
-44.1 / 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz), lowering the rate again does not raise it, and param 839
-refuses every value the app could write it back with. So this is not a feature left out of one write like the
->96 kHz family — it is destroyed, and the notice belongs in front of the decision. `trackCountCeiling` /
-`trackCountDrop` (`core/constraints.ts`) decide it and `client.ts`'s `readTrackCount` supplies the count, read from
-the DEVICE rather than the plan: an offline plan's count is whatever was last authored, which would both miss real
-drops and invent false ones. A count that already fits is silent, because a loss notice shown to someone losing
-nothing is how a notice stops being read, and a read that fails cancels the write, as a failed clock read does.
-Three paths carry it — the plain re-clock confirm, the three-way's RELEASE arm (its own
-element above the actions row, worded to name the release arm, since adopting the device's rate costs nothing
-and the shared note speaks for both arms), and the Follow USB toggle, which gets the numberless form because the host's rate is not something this app
-can read. **URX22 has no recorder and is silent throughout.** Afterwards the write's own epilogue re-reads the
-recorder node: the unit does the lowering itself, and whether it announces one has not been measured here, so the
-plan is refreshed rather than left waiting for a notify that may never come. The epilogue is armed from the rate
-send as it RESOLVES — everything but an explicit refusal, since the shell sends before it waits and a write whose
-answer never came may have landed and taken the count down with it — rather than from the outcomes the call
-returns, which a cancel between two sends throws away.
+paragraph above), is a rate side effect the unit ACTS on rather than merely refuses: it lowers its own Track Count
+to fit a rate it cannot carry (16 tracks at 44.1 / 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz), lowering the
+rate again does not raise it, and Track Count refuses every value the app could write it back with. So this is not a
+feature left out of one write like the >96 kHz family — it is destroyed, and the notice belongs in front of the
+decision. `trackCountCeiling` / `trackCountDrop` (`core/constraints.ts`) decide it and `client.ts`'s
+`readTrackCount` supplies the count, read from the DEVICE rather than the plan: an offline plan's count is whatever
+was last authored, which would both miss real drops and invent false ones. A count that already fits is silent,
+because a loss notice shown to someone losing nothing is how a notice stops being read, and a read that fails
+cancels the write, as a failed clock read does. Three paths carry it — the plain re-clock confirm, the three-way's
+RELEASE arm (its own element above the actions row, worded to name the release arm, since adopting the device's rate
+costs nothing and the shared note speaks for both arms), and the Follow USB toggle, which gets the numberless form
+because the host's rate is not something this app can read. **URX22 has no recorder and is silent throughout.**
+Afterwards the write's own epilogue re-reads the recorder node: the unit does the lowering itself, and whether it
+announces one has not been measured here, so the plan is refreshed rather than left waiting for a notify that may
+never come. The epilogue is armed from the rate send as it RESOLVES — everything but an explicit refusal, since the
+shell sends before it waits and a write whose answer never came may have landed and taken the count down with it —
+rather than from the outcomes the call returns, which a cancel between two sends throws away.
 
-**A rate is not written while the microSD recorder holds a file.** Param 836 reads 0 when the recorder is stopped, 1
-while it plays, 2 while a playback is paused, 3 while it records, 4 in record standby and 5 while a recording is
-paused, and while it is not 0 the unit keeps its own SETUP > GENERAL [Sampling Frequency] out of reach. A 766 written
+**A rate is not written while the microSD recorder holds a file.** The unit publishes the recorder's state — stopped,
+playing, playback paused, recording, record standby, recording paused — and while
+it is anything but stopped the unit keeps its own SETUP > GENERAL [Sampling Frequency] out of reach. A rate written
 over the link then is still accepted. During a playback the unit shows its Loading screen, the RECORDER screen comes
 back with no file names, and the playback stops; during a recording the RECORDER goes on showing the old rate and
-recording, and once it is stopped SETUP shows the new one. So the rate settle reads 836 (`readSdRecorderHold` in
+recording, and once it is stopped SETUP shows the new one. So the rate settle reads that state (`readSdRecorderHold` in
 `client.ts`, a model with a recorder only, which tells a playback from a recording) once it knows a rate would change,
 and both arms that write the plan's rate — the re-clock confirm and the three-way's RELEASE arm — stop the write with
 nothing sent, naming the playback or the recording the operator has to stop; ADOPT writes no rate and stays open. A
 read that fails stops the write, as the Track Count read does. While any other link is up the rate picker, the SIM
 view's rate and an undo that would move the rate are locked, and during Live sync with Follow USB off they ask first
-and are refused the same way while the recorder holds a file (`confirmLiveRate`), so no path reaches 766 then
+and are refused the same way while the recorder holds a file (`confirmLiveRate`), so no path writes the rate then
 without being stopped.
 
 The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen
@@ -3584,31 +3583,30 @@ with no device attached, so there is nothing to compare against until a connecti
 
 Follow USB is deliberately **not** part of the plan or `planToCommands`: it is a device-side clock policy rather
 than a routing choice, and emitting it would make every Live-sync flush re-assert it. It is read as a pre-check and
-written with a single `vdSet`. Live sync registers 848 for notifies alongside the plan's writable set and
-**intercepts** it ahead of node resolution (`DeviceFollow`'s `intercept` hook) — an address with no owner node
-would otherwise escalate every change to a full device re-read. The **FOLLOW USB** badge beside the Rate picker
-shows and toggles the state. Before any device has been read it is drawn as a dashed "unknown" (clicking it then
-reads the state rather than toggling), never as "off", and in the desktop build it is never hidden — hiding it until a device action
-would mean the warning only arrives once the operator has already committed to one. It is session-scoped rather than persisted, since a
-remembered value would be a claim about
-hardware that may not even be attached. For the same reason it goes back to unknown whenever the plan switches
-to another model, whichever entry switched it — the model picker, File > Open, a drop, a recent row, or the
-switch a Fetch or a Live-sync start offers. During Live sync the Rate picker locks while Follow USB is on: the unit
-accepts a rate written then and takes the computer's rate back about a third of a second later, so the rate would
-show and vanish. It stays locked as well for a session whose device scope is Scene only, which writes no rate.
-Wherever it is locked, the field it sits in shows why as its tooltip — the connection, for a link held by anything
-but a Live sync session, and during one the Scene only scope (naming the Preferences Scope that puts the rate back
-in) or Follow USB — the reason the SIM view's Sampling Frequency gives too (`rateHoldReason`).
-With Follow USB off and the whole device in scope it opens, and a rate chosen on the picker, on the SIM view or by an undo / redo
-goes through `confirmLiveRate` before the flush writes it — refused while the microSD recorder holds a file, and
-otherwise confirmed with the re-clock and what it costs the recorder's Track Count, the questions the write's settle
-asks. The held connection survives the re-clock: a connection written 766 over kept answering reads, online, on a
-URX44V and a URX22. The badge stays live:
+written with a single `vdSet`. Live sync registers Follow USB for notifies alongside the plan's writable set and
+**intercepts** it ahead of node resolution (`DeviceFollow`'s `intercept` hook) — an address with no owner node would
+otherwise escalate every change to a full device re-read. The **FOLLOW USB** badge beside the Rate picker shows and
+toggles the state. Before any device has been read it is drawn as a dashed "unknown" (clicking it then reads the
+state rather than toggling), never as "off", and in the desktop build it is never hidden — hiding it until a device
+action would mean the warning only arrives once the operator has already committed to one. It is session-scoped
+rather than persisted, since a remembered value would be a claim about hardware that may not even be attached. For
+the same reason it goes back to unknown whenever the plan switches to another model, whichever entry switched it —
+the model picker, File > Open, a drop, a recent row, or the switch a Fetch or a Live-sync start offers. During Live
+sync the Rate picker locks while Follow USB is on: the unit accepts a rate written then and takes the computer's
+rate back about a third of a second later, so the rate would show and vanish. It stays locked as well for a session
+whose device scope is Scene only, which writes no rate. Wherever it is locked, the field it sits in shows why as its
+tooltip — the connection, for a link held by anything but a Live sync session, and during one the Scene only scope
+(naming the Preferences Scope that puts the rate back in) or Follow USB — the reason the SIM view's Sampling
+Frequency gives too (`rateHoldReason`). With Follow USB off and the whole device in scope it opens, and a rate
+chosen on the picker, on the SIM view or by an undo / redo goes through `confirmLiveRate` before the flush writes it
+— refused while the microSD recorder holds a file, and otherwise confirmed with the re-clock and what it costs the
+recorder's Track Count, the questions the write's settle asks. The held connection survives the re-clock: a
+connection the rate was written over kept answering reads, online, on a URX44V and a URX22. The badge stays live:
 toggling Follow USB only re-clocks when the host is on a different rate, and the connection survived it on a URX44V.
 
 Above 96 kHz the device drops whole features (stereo channel EQ, insert FX, the FX2 bus), but it still **accepts
-and holds writes to their parameters** — measured on a URX44V at 192 kHz for the stereo CH EQ (213), FX2's fader,
-send and effect type, and the insert FX selector (135). "The feature is unavailable" does not mean "the parameter
+and holds writes to their parameters** — measured on a URX44V at 192 kHz for the stereo CH EQ, FX2's fader,
+send and effect type, and the insert FX selector. "The feature is unavailable" does not mean "the parameter
 is unwritable": only the DSP is gone, the stored value survives. So the write set is not gated by rate: a gate
 would prevent no non-convergence (there is none to prevent), it would only stop the plan
 from reaching the device, which would leave settings the plan never asked for in place once the rate came back
@@ -3622,16 +3620,16 @@ says. Confirmed on hardware: a rate-changing write completes, with the commands 
 ### Console Lock
 
 System firmware V1.5 adds **[Console Lock]** to the unit's SETUP menu: the panel locks until it is unlocked on
-the unit. Its state is `CONSOLE_LOCK` (`895:0:0`, 0 unlocked, 1 locked), and a lock or an unlock on the unit is
+the unit. The unit publishes whether it is locked, and a lock or an unlock on the unit is
 announced. **The unit goes on taking writes over the link while it is locked** — a self-test against a locked unit
-passes — so it is the app that holds its own writes back (`core/control/console-lock.ts`). The app reads `895` and
-never writes it: a 0 written over the link unlocks the unit whatever password is set, and a 1 takes effect only
-while the unit shows its Console Lock menu. The password beside it (`896`) is stored as plain text and is never read.
+passes — so it is the app that holds its own writes back (`core/control/console-lock.ts`). The app reads that state and
+never writes it: an unlock written over the link unlocks the unit whatever password is set, and a lock takes effect only
+while the unit shows its Console Lock menu. The password beside it is stored as plain text and is never read.
 
-**During Live sync** the starting read takes `895` with the cues, and its notify is registered with the session's
-follow set. A lock that arrives between that read and the registration is announced to nobody, so `895` is read
+**During Live sync** the starting read takes the lock state with the cues, and its notify is registered with the session's
+follow set. A lock that arrives between that read and the registration is announced to nobody, so the lock state is read
 again once the registration is made, and the session sends nothing until it has (`LiveSync.hold`); a notify that
-lands while that read is out is the newer of the two, and the read is not taken over it. While it reads 1:
+lands while that read is out is the newer of the two, and the read is not taken over it. While the unit is locked:
 
 - The strip above the board (`#lock-strip`) says the unit is locked and that edits are put back.
 - **An edit that would change what the session writes is put back** with nothing sent, and the status line says so
@@ -3662,9 +3660,9 @@ lands while that read is out is the newer of the two, and the read is not taken 
   for run one after another.
 - Reading goes on: the session follows the unit, and the meters run.
 
-**Outside a session**, a write — Write to device, Device setup's Apply, the Follow USB badge — reads `895` right
+**Outside a session**, a write — Write to device, Device setup's Apply, the Follow USB badge — reads the lock state right
 after connecting and refuses a locked unit with `error.consoleLocked` before it asks anything (`withDevice`'s
-`writes` option). While it runs it is registered for `895`'s notify (`watchConsoleLock`), and a lock that arrives
+`writes` option). While it runs it is registered for the lock state's notify (`watchConsoleLock`), and a lock that arrives
 aborts the write's controller with `consoleLockAbort`, which stops it at its next command the way a cancel does;
 the status line says how far a Write to device got (`status.writeLocked`), and writing again once the unit is
 unlocked sends the rest. The self-test and `--prepare-modified` connect on their own and take the same watch through
@@ -3798,9 +3796,7 @@ it properly removes it from the candidates, which is a different claim — see `
 
 A dev build (`pnpm tauri dev`) records a handful of parameters the app neither reads nor writes for as long as
 Live sync is up, so that an intermittent change on the unit can be put beside what the operator was doing when
-it happened. The subject is `838:0:0`, an unnamed runtime parameter (0–2) that the unit sets to 1 when its
-microSD screen is opened; `817:0:0` (the operation mode), `781:0:0` (the current scene, which a Recall and a
-Store move) and `863:0:0` (the row SCENE LIST's cursor stands on) are recorded beside it as context. The list is `WATCHED` in `src/ui/param-watch.ts`.
+it happened; the list is `WATCHED` in `src/ui/param-watch.ts`.
 
 - **A subscription of its own.** `vd_probe_subscribe` registers the addresses as a second parameter
   subscription in the worker, beside the one the follow layer reads, so the live-sync set stays exactly what the
@@ -3813,7 +3809,7 @@ Store move) and `863:0:0` (the row SCENE LIST's cursor stands on) are recorded b
   while the read was in flight, so a notify is never overwritten by a read that started before it. The reads
   queue on the session's link like any other command, behind a full readback when one is running, and show in
   the ledger's `Sent` row.
-- **The clock as liveness.** The clock parameters `789`–`794` are registered too and counted rather than
+- **The clock as liveness.** The unit's clock parameters are registered too and counted rather than
   recorded. That count is a liveness signal on the URX44V and URX44 only: the URX22's clock stays at
   2020-01-01 00:00:00 and announces nothing, so its count is 0 every minute.
 - **Read-only.** Nothing it does writes to the unit; `src/ui/param-watch.test.ts` holds the shell functions it
@@ -3865,7 +3861,7 @@ explanatory notes are translated.
 an address may be written down) and flags them **`planExternal`** — no `translate.ts` group emits them and
 no `readback.ts` group reads them, so `sceneExternal`'s write-scope filter is inert for them. The flag is
 what the contract test derives its "never emitted" guarantee from, rather than a hand-copied name list
-that fails nothing when someone forgets to extend it; Follow USB (848) carries it too.
+that fails nothing when someone forgets to extend it; Follow USB carries it too.
 `core/control/device-setup.ts` is their whole surface, in the same shape as Follow USB: bare
 `vdGet` / `vdSet`, no diff engine, no snapshot. The reason is that a plan travels — as
 a saved file, a recent-files entry and a `?plan=` link — and `planToCommands` writes absolute state, so
@@ -3924,7 +3920,7 @@ free-form strings (`Function` / `Parameter 1` / `Parameter 2`) that the device s
 validates, so the app owns the exact user-guide spelling: picking a function re-seeds both parameter
 columns from the catalog, and all three are always written together. A partial write is not reconciled by
 the device — it would leave the unit showing a triple no menu could have produced. The bank tabs open on the
-bank the unit is on (`769`, raw 0..3 = banks 1..4, read on every model with the rest of the set), and on bank
+bank the unit is on (read on every model with the rest of the set), and on bank
 1 for a reading that names none of the four. That address is read and never written: the catalog flags it
 **`readOnly`**, which keeps it out of `WritableParamName` and so out of every setup write, and moving between
 the tabs is the screen's own and changes nothing on the unit.
@@ -5200,8 +5196,8 @@ Two things a settings file cannot supply, both stated in the import confirm:
   they are rather than reset. (Scene names are the same kind of gap in reverse: they exist only in
   the file scaffolding, with no parameter behind them.)
 
-One parameter — the oscillator's ON state (710) — has no descriptor in the format at all: the unit
-does not persist it and loads with it off. So the source supplies off (0) rather than failing on it,
+One parameter — the oscillator's ON state — has no descriptor in the format at all: the unit
+does not persist it and loads with it off. So the source supplies off rather than failing on it,
 and a clean file imports with no failures and no unread nodes. This is a whitelisted gap; anything
 else genuinely absent surfaces as a read failure.
 
