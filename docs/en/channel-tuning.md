@@ -309,9 +309,9 @@ there rather than bringing the moving track back.
 ### Time values stop where the unit's controls stop
 
 The unit's time controls are tables of stops rather than ranges with one step. Attack is 227 stops from
-0.092 to 80 ms and is one table on GATE (`31`), COMP (`39`) and DUCKER (`262`); GATE Hold (`32`) is 214
-stops from 0.02 to 1960 ms; GATE Decay (`33`) and COMP Release (`40`) are one table of 277 stops from 9.3
-to 999 ms; DUCKER Decay (`263`) is 122 stops from 1.3 to 5000 ms. `core/control/dyn-time-stops.ts` holds
+0.092 to 80 ms and is one table on GATE, COMP and DUCKER; GATE Hold is 214 stops from 0.02 to 1960 ms;
+GATE Decay and COMP Release are one table of 277 stops from 9.3 to 999 ms; DUCKER Decay is 122 stops
+from 1.3 to 5000 ms. `core/control/dyn-time-stops.ts` holds
 the four whole, in each parameter's raw unit (µs, ms×100, ms×10), and hands the plan their milliseconds;
 the encoders' windows in `vd.ts` are the tables' ends. It is a module of its own for the reason
 `comp-ratio.ts` is: `vd.ts` and `translate.ts` both read it at module scope, and `translate.ts` sits inside an
@@ -341,13 +341,13 @@ the 1 dB grid — GATE Threshold and Range, COMP Threshold, DUCKER Threshold and
 dB, and one held between grid steps prints its whole-dB part, toward zero (-45.5 reads -45). A finer
 level — COMP Gain, an EQ band's Gain, the SSMCS gains — prints to one decimal. Neither carries a sign
 on a positive value. A frequency — an EQ band's, an output EQ band's, an SSMCS band's or its sidechain's — prints to three
-significant figures (31.5 Hz, 125 Hz, 1.00 kHz, 10.0 kHz), and an SSMCS one prints the R40 grade its
-raw names (raw 4 = 20.0 Hz, one grade per raw), which the continuous `ssmcsFreqHz` the curves are
-drawn from lands near but not on (raw 49 prints 265 Hz).
+significant figures (31.5 Hz, 125 Hz, 1.00 kHz, 10.0 kHz), and an SSMCS one prints the R40 grade the
+unit's value names (one grade per step), which the continuous `ssmcsFreqHz` the curves are drawn from
+lands near but not always on.
 
-**The SSMCS strip's Attack and Release are the channel tables**: Attack raw 57 + i is the Attack stop i
-and Release raw 24 + i the Release stop i (`ssmcsAttackMs` / `ssmcsReleaseMs`), so the strip shows the
-values the channel COMP shows.
+**The SSMCS strip's Attack and Release are the channel tables**: each strip value is a channel stop at
+a fixed offset (`ssmcsAttackMs` / `ssmcsReleaseMs`), so the strip shows the values the channel COMP
+shows.
 
 ## COMP
 
@@ -440,9 +440,9 @@ null, and neither entry point renders.
 
 The unit's Ratio is a ladder of detents rather than a range with one step: the spacing is 0.05 from
 1.00:1, widens in stages above 4.00:1 until the last stops are hundreds apart, and ends at 500:1 and
-then `INF:1`. The channel COMP (`36`) and the SSMCS strip's compressor (`98`) stop on the same ratios
-and write them differently — `98` carries the INDEX of the stop, which is what its 0…120 descriptor
-range counts, and `36` carries ratio×100. `core/control/comp-ratio.ts` holds the one table both read,
+then `INF:1`. The channel COMP and the SSMCS strip's compressor stop on the same ratios and write them
+differently — the strip's Ratio carries the INDEX of the stop, and the channel COMP's Ratio carries the
+ratio itself. `core/control/comp-ratio.ts` holds the one table both read,
 in a module of its own because `vd.ts` and `translate.ts` both read it at module scope and `translate.ts`
 sits inside an import cycle.
 
@@ -459,11 +459,11 @@ since writing the value the unit already holds announces nothing. `98` needs non
 the whole encoding.
 
 **What the plan carries for the top stop is 655.35, not `Infinity`.** A plan is JSON, and a non-finite
-leaf is one the loader drops — so the value is that raw in the parameter's own unit, and the ×100
-encoder turns it back into 65535 with no case of its own. It is the shape the GATE range's `-∞` notch
+leaf is one the loader drops — so the value is the widest the field holds, in the parameter's own unit,
+and the encoder turns it back with no case of its own. It is the shape the GATE range's `-∞` notch
 already has: a finite value standing for a sentinel the unit owns. The shared table keeps `Infinity` at
-its top for `98`, whose raw is an index and has no such number to carry, and `COMP_RATIO_CH_STEPS` is
-that table with the one substitution.
+its top for the strip's Ratio, which carries an index and has no such number to carry, and
+`COMP_RATIO_CH_STEPS` is that table with the one substitution.
 
 The two screens differ in one place: the strip's field fits three figures, so it prints `100:1` where
 the channel COMP prints `100.0:1`. Both print `INF:1` at the top, which is what the unit prints and
@@ -875,7 +875,7 @@ They then never meet, and the gap between them is the input's own headroom.
 
 **Every screen merges**, as the DUCKER does: GATE's reduction hangs on PRE COMP,
 COMP's and the SSMCS strip's on PRE EQ. The gain subtracted is the processor's own — the shipped
-compressor's makeup, the strip's `min(24, |corner| × makeup/200)` — and the gate subtracts nothing,
+compressor's makeup, and the strip's, a share of the corner's depth capped at 24 dB — and the gate subtracts nothing,
 because a gate has no makeup and so cannot overlap. `bindChannelStrip` carries **no column-of-its-own
 arrangement** and no per-lane scale: a rendering path no screen reaches is a second arrangement that has
 to be kept correct by reading rather than by running.
@@ -964,7 +964,7 @@ is the same assumption the shipped COMP curve carries.
   | HIGH −12 | −3.7 | −7.2 | −8.8 | −10.0 | −10.9 | −11.4 | −11.9 |
   | LOW +12 | 11.8 | 11.4 | 10.9 | 10.0 | 8.7 | 7.1 | 3.5 |
 
-  and at 8 kHz (raw 108) and the top of the HIGH range, 15.9 kHz (raw 120) and 20 kHz (raw 124), at tones
+  and at 8 kHz and the top of the HIGH range, 15.9 kHz and 20 kHz, at tones
   offset from the divisors of 48 kHz — the meters read sample peaks, and a tone that divides the rate
   lands on the same few phases each cycle, so after the filter's phase shift the post-EQ meter
   under-reads by up to 3 dB while a flat control shows nothing:
@@ -1126,7 +1126,7 @@ a slot rather than what is in it.
   output compander as on its input one. The catalogue carries the table (`rawStops`), and the slider and the
   MIDI mapping take it as a stop table: a position is a stop, so an arrow press, a wheel notch, a drag
   and a controller move one stop at a time. A written value is kept anywhere in the range — the unit
-  shows 65.4 ms for a raw 654, which is between two stops — so a plan holding a value between stops
+  shows 65.4 ms for one written between two stops — so a plan holding a value between stops
   opens unchanged and keeps it until the control moves. One click from such a value lands on the stop on
   the side it turns toward (65.4 ms down is 64.0 ms and up is 69.0 ms, 1.21 s down is 1.20 s), as the
   unit's knob does, so an arrow press and a wheel notch turn from the held value (`stopStep` in
@@ -1473,12 +1473,12 @@ reduction meter (`107`) reading -57 dB in the same runs as the positive control:
 
 | Effect on the channel | Its output | `132` on every band |
 | --- | --- | --- |
-| Drive amp, own noise gate at maximum | -16 dB → the floor | `0` throughout |
-| Pitch Fix, running | -54…-48 dB | `0` throughout |
-| Pitch Fix, shifted +12 semitones | -53…-45 dB | `0` throughout |
+| Drive amp, own noise gate at maximum | -16 dB → the floor | not engaged throughout |
+| Pitch Fix, running | -54…-48 dB | not engaged throughout |
+| Pitch Fix, shifted +12 semitones | -53…-45 dB | not engaged throughout |
 | Compander-S, -54 dB / 20:1 | reducing | -5.0 dB |
 
-`0` is the value that means the block is not engaged, so a lane on those faces is a bar that cannot
+The not-engaged value is all those faces would get, so a lane there is a bar that cannot
 move, which reads as "no reduction right now" rather than as "never" — the same trap as a per-channel
 `132` address returning a plausible number for the wrong channel. What decides the lane is therefore
 the family the unit METERS (`hasReduction`: the compander and the multi-band compressor). The first
@@ -2460,9 +2460,9 @@ seventeen values a morph does, and the preset is a 4-digit string, so it rides t
 path rather than the numeric one. A `NameWrite` carries its catalog name and its owner node, and
 the flush's name loop reads the flag off it — without them that path would walk past both sets, and
 the catalog could not simply declare it. What the preset does **not** do is move
-the morph position — it is announced with the burst whatever it holds, and parking Morphing at
-62 before the write showed it announced and read back as 62 — so `drives` names the seventeen
-and not `93`, or a converge would be stopped from restoring a morph the operator set.
+the morph position — it is announced with the burst whatever it holds, and a Morphing parked at a
+value before the write is announced and read back at that same value — so `drives` names the
+seventeen and not Morphing, or a converge would be stopped from restoring a morph the operator set.
 
 The first is the better one wherever it is available — an address the plan never sends cannot be
 pushed back by anything, and there is no list to keep correct. Morphing cannot take it: the inspector
