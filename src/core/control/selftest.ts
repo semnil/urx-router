@@ -1198,9 +1198,10 @@ export async function restoreSelfTest(
     return report;
   } finally {
     if (run && stoppedByConsoleLock(run.signal)) report.locked = true;
-    // A restore that did not run to its end — refused, stopped or cancelled — leaves `pending` the
-    // only record of what the unit held, so it is kept for another try.
-    if (report.phase !== "done") report.pendingRestore = pending;
+    // A restore that did not put the unit back — refused, stopped, cancelled, or run to its end with
+    // writes refused or a read failed — leaves `pending` the only record of what the unit held, so
+    // it is kept for another try.
+    if (!report.restored) report.pendingRestore = pending;
     run?.stop();
     await vdDisconnect(device.epoch);
   }

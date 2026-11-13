@@ -2202,4 +2202,35 @@ describe("runSelfTest and Console Lock", () => {
     expect(other.pendingRestore).toBe(pending);
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
   });
+
+  // A restore can run to its end and still not put the unit back — its writes refused, a read
+  // failed — and what the run read before the sweep is then still the only record of the unit.
+  it("keeps the restore for another try when one runs to its end without putting the unit back", async () => {
+    const seed = populatedPlan();
+    const table = installMockDevice(seed);
+    const before = new Map(table);
+    const stream = lockStream();
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let writes = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (++writes === 5) stream.announce(1);
+      return realSet(id, x, y, v);
+    });
+    const report = await runSelfTest(model, 0);
+    const pending = report.pendingRestore!;
+    expect(pending, "the premise").toBeDefined();
+
+    table.set(LOCK, 0);
+    vi.mocked(vdSet).mockRejectedValue(new Error("broker-rejected: refused"));
+    const refused = await restoreSelfTest(model, pending, 0);
+    expect(refused.phase, "the premise: the restore ran to its end").toBe("done");
+    expect(refused.restored).toBe(false);
+    expect(refused.pendingRestore).toBe(pending);
+
+    vi.mocked(vdSet).mockImplementation(realSet);
+    const retried = await restoreSelfTest(model, pending, 0);
+    expect(retried.restored).toBe(true);
+    expect(retried.pendingRestore).toBeUndefined();
+    for (const [k, v] of before) if (k !== LOCK) expect(table.get(k), k).toBe(v);
+  });
 });

@@ -3659,7 +3659,8 @@ unlocked sends the rest. The self-test and `--prepare-modified` connect on their
 plan and the addresses read before the sweep — is kept on the report as `pendingRestore`, the app holds it in
 memory, and the Device menu shows **Restore after self-test** while it does. That runs the restore alone
 (`restoreSelfTest`): it refuses a unit still locked or of another model, keeps `pendingRestore` for another try
-when it does not run to its end, and never runs the sweep again. A new self-test is refused while a restore is
+until a restore has put the unit back — one refused, stopped or cancelled, and one that ran to its end with writes
+refused or a read failed, alike — and never runs the sweep again. A new self-test is refused while a restore is
 waiting, since it would capture the state the stopped run left as the one to restore. Quitting the app drops it.
 
 **The write gate.** While the app knows the unit is locked, `holdDeviceWrites(true)` makes `vdSet` and `vdSetStr`
