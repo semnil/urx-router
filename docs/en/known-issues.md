@@ -496,14 +496,3 @@ saved by a later version, scene-scoped or not, is one URX Router 1.18.6 and earl
 open.
 
 > Confirmed in Standard Mode on a URX22 and a URX44V (System 1.5.0.1).
-
-## Device Center sometimes needs a force quit after a long session
-
-On macOS, after a long Live sync session, Device Center can stop closing through its normal
-quit and has to be force quit. The cause is **not established**.
-
-Short sessions do not reproduce it. Quitting URX Router with Live sync explicitly turned off,
-and quitting it with Live sync still running, were each tried, and neither was followed by a
-hang.
-
-> Not reproduced on demand.

@@ -382,7 +382,7 @@ struct LogSpec {
 ///
 /// Both caps are 2 MiB and neither is derived from the other, because the same byte count
 /// buys each a different span: the link ledger's records are per minute, so it holds over
-/// a hundred hours and the run before a force quit is still in the file; the MIDI trace's
+/// a hundred hours and a long session's run is still in the file; the MIDI trace's
 /// are around 60 bytes and arrive per MESSAGE, so it holds roughly thirty-five thousand
 /// events. Either can move without the other.
 const LINK_LEDGER: LogSpec = LogSpec {

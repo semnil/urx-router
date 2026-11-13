@@ -589,11 +589,9 @@ const EXIT_TEARDOWN_WAIT: Duration = Duration::from_millis(1500);
 /// Close the session and WAIT for the worker to have unregistered and closed the
 /// socket, or for the bound above. The other teardowns can be fire-and-forget
 /// because the worker outlives them; this one is called as the process is going
-/// away, and the frames only reach the broker if they are sent before it does.
-///
-/// Whether an abandoned session is what leaves Device Center needing a force quit is
-/// NOT established — this closes the session properly so that it stops being one of
-/// the candidates, which is a different claim. See docs/{en,ja}/known-issues.md.
+/// away, and the frames only reach the broker if they are sent before it does. So a
+/// quit closes the session as every other teardown does, instead of leaving the broker
+/// to find out from a socket that simply went away.
 pub fn shutdown_blocking(state: &VdState) {
     // The wait is the only thing this path adds; the teardown itself is `stop`, so a
     // step added there reaches app quit too — which is the one teardown with no second
