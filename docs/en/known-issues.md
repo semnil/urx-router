@@ -288,7 +288,7 @@ only the auto-measure trigger is out of scope.
 
 The microSD recorder's per-track source assignment is a normal, writable setting
 (each stereo track pair selects a source — a channel pair, STEREO or a MIX bus —
-over param 736; see [device-model.md](device-model.md)).
+over the control link; see [device-model.md](device-model.md)).
 
 The recorder's **Track Count** (2 … 16) is not written by the app, and the reason
 is narrower than "the device refuses it". The device does accept the write and
@@ -302,7 +302,7 @@ written to the device — the only settings within reach are one that says "two
 tracks" and one the device has no meaning for.
 
 A Track Count changed **on the unit while live sync is connected** does reach the
-app: the unit announces the change, and the app subscribes to param 839 even
+app: the unit announces the change, and the app subscribes to Track Count even
 though it never writes it. The plan's value and the record-track slots the graph
 gates by it follow. Under Preferences → device scope *Scene only* it does not:
 Track Count is one of the device-wide settings that scope leaves alone, in both
@@ -367,7 +367,7 @@ closest equivalent for the pre-DELAY level.
 
 ## The sample rate only sticks when the device's Follow USB is off
 
-The planner's **Rate** setting is written to the device (param 766) and re-clocks
+The planner's **Rate** setting is written to the device and re-clocks
 it. That write only sticks while the device's own **Follow USB** setting is
 **off**. Follow USB decides which side is the clock master, and both directions
 are confirmed on a URX44V:

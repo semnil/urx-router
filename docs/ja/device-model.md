@@ -153,7 +153,7 @@ MIC/LINE 1 入力に内部結線され、独立したソース選択肢として
 >
 > **新規プランの工場初期ソース**: `新規` 計画は各チャンネルにキャプチャ済みの工場ソースを結線する。
 > モノ CH は MIC/LINE (CH1/2 ← MIC/LINE 1/2・CH3/4 ← MIC/LINE 3/4)、ステレオ CH は CH5/6 = AUX・
-> CH7/8 = USB MAIN A・CH9/10 = USB MAIN B・CH11/12 = USB MAIN C (ステレオソースは param 209/210 から読み取り・
+> CH7/8 = USB MAIN A・CH9/10 = USB MAIN B・CH11/12 = USB MAIN C (ステレオソースはステレオチャンネルの入力ソースの選択から読み取り・
 > URX44V 実機確認・URX44 同一)。URX22 はステレオ位置で 1 ペア下げた CH3/4 = AUX・CH5/6 = USB MAIN A・
 > CH7/8 = USB MAIN B・CH9/10 = USB MAIN C (工場出荷時に初期化した URX22 で確認)。
 
@@ -231,8 +231,8 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
     で編集する — マスターがオフのとき MIX ストリップが減光する (チャンネルマスターの
     オフを示すのと同じ表示)。STEREO / MIX のインスペクタのトグルは FX チャンネルと同じ「チャンネル」
     ラベルで Parameters セクション最上部に並ぶ。
-  - STEREO マスターと各 MIX Bus は**マスター BALANCE** も持つ — Bus 出力の L/R バランス (±63・中央 0。STEREO
-    は param 583、MIX は 676 で Bus ごとに L/R instance 連動)。編集はグラフのインスペクタ (フェーダーの下) と
+  - STEREO マスターと各 MIX Bus は**マスター BALANCE** も持つ — Bus 出力の L/R バランス (±63・中央 0。
+    MIX は Bus ごとに L/R instance 連動)。編集はグラフのインスペクタ (フェーダーの下) と
     CONSOLE の master / MIX ストリップ (`BAL` ノブ)。**Pan Link を ON にしても実機は BALANCE ラベルのまま**:
     Pan Link は各 *Send* の pan をソースチャンネルに追従させるもので、Bus 出力バランスとは独立。
 - OSCILLATOR → STEREO / MIX 1–2 / FX 1–2 (`sendSwitch`、加算 Send ではなく ON/OFF
@@ -240,12 +240,12 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
   (`oscL` / `oscR`) を保持し、FX Bus はモノ)
 - MIX 1 / MIX 2 → STEREO (`sendSwitch`、ブロックダイアグラムの MIX 1–2 OUT 内「TO ST」。**固定** = 常時結線・
   削除不可。ON/OFF のみで独立した LEVEL/PAN は持たない。on/off は接続パラメーター `params.on` (TO ST スイッチ・
-  **工場出荷は OFF**) で保持し、off は盤面で減光表示する。実機反映: param `677`、ステレオ MIX の L インスタンス
-  (MIX1=0 / MIX2=2)。実機 param-notify で確定)
+  **工場出荷は OFF**) で保持し、off は盤面で減光表示する。実機反映: ステレオ MIX の L インスタンスの
+  TO ST スイッチ。実機 param-notify で確定)
 
 > **Post Fader Send for FX (DAW Integration メニュー、V1.2 以降)。** 各 FX Bus は MIX Bus から
 > **post-fader** で追加供給できる (FX 1 ← MIX n、FX 2 ← MIX n)。対応 DAW ソフト接続時のみ表示される
-> DAW Integration 専用の設定 (FX 1 は `879`、FX 2 は `880`) で、プランではモデル化**しない**。SIM ビューは
+> DAW Integration 専用の設定で、プランではモデル化**しない**。SIM ビューは
 > DAW Integration 中のライブ同期の間だけ、これを表示して書く (architecture.md の「SETUP > Software Integration」)。
 
 ### 4. ストリーミング / モニタソース (`source`, 受け口 1 本)
@@ -259,7 +259,7 @@ MIX 2 だけを出し、None を持たない (MONITOR のシートは None も�
 STREAMING のソースを記述しない文書は読み込み時にその結線を与えられてステータス行でその旨を伝え、別の
 ソースを STREAMING へ描画すると持っている結線を置き換え (アンドゥ 1 回分)、最後の結線は削除できない
 (インスペクタはその結線に削除ボタンを出さず、置き換え方を伝える)。書き込みが STREAMING のセレクタ
-(705 / 706) へ NONE を送ることは無い。それでも実機がそこに NONE を持つことはある (ソフトウェアの書き込みで
+へ NONE を送ることは無い。それでも実機がそこに NONE を持つことはある (ソフトウェアの書き込みで
 至るため): それを見つけた Fetch とライブ同期の開始は、代わりに STEREO をプランに与えてステータス行でその旨を
 伝え、次の書き込みが実機を STEREO にする (ライブセッションでは、操作者の次の編集が始める flush)。リストに無いソース (チャンネルの
 スロット) を見つけた読み出しはそれを取らず、STREAMING を未読み出しとし、ライブ同期は開始しない。それでも
