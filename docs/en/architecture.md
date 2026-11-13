@@ -3244,8 +3244,8 @@ Some device parameters reset others when written. Emit order handles that for a 
 type selector before the array it types, and the EQ 1-knob before the values it discards — but a **converge round
 re-sends only what still differs**, and that is where order alone stops being enough.
 
-The measured case is the EQ 1-knob, on a URX44V. Writing ON (`46`) discards the type back to Intensity; writing the
-type (`47`) discards the level (`48`) to that type's neutral point (Intensity 50, the presets 0). Three links. When a
+The measured case is the EQ 1-knob, on a URX44V. Writing ON discards the type back to Intensity; writing the
+type discards the level to that type's neutral point (Intensity 50, the presets 0). Three links. When a
 COMP/EQ bank switch resets all three at once, a loop that re-sends only what differs walks the chain one link per
 round: round 2 re-sends ON and un-sets the type, round 3 re-sends the type and un-sets the level, and the level
 lands only in a round of its own — each link spends a round of the budget, and a budget spent before the last link
@@ -3500,7 +3500,7 @@ second and later calls return early because `deactivateLive` clears that flag sy
 ### Sample rate and Follow USB
 
 The sample rate is a plan value the device can accept and then undo by itself. With **SETUP > Follow USB**
-on, the URX slaves its clock to the USB host: a write to 766 is accepted, re-clocks the hardware, and roughly
+on, the URX slaves its clock to the USB host: a rate written then is accepted, re-clocks the hardware, and roughly
 0.4 s later the host's rate is reasserted (measured on a URX44V). Writing straight through would report success
 for a change that did not last.
 
@@ -3547,23 +3547,23 @@ it on the ADOPT arm's own line (`#rate-choice-adopt-note`) and leaves the insert
 does, since that note says the plan keeps what the rate leaves out.
 
 **The rate settle also names what the change costs the microSD recorder**, which, with taking an insert off (the
-paragraph above), is a rate side effect the unit ACTS on rather than merely refuses: it lowers its own Track Count to fit a rate it cannot carry (16 tracks at
-44.1 / 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz), lowering the rate again does not raise it, and param 839
-refuses every value the app could write it back with. So this is not a feature left out of one write like the
->96 kHz family — it is destroyed, and the notice belongs in front of the decision. `trackCountCeiling` /
-`trackCountDrop` (`core/constraints.ts`) decide it and `client.ts`'s `readTrackCount` supplies the count, read from
-the DEVICE rather than the plan: an offline plan's count is whatever was last authored, which would both miss real
-drops and invent false ones. A count that already fits is silent, because a loss notice shown to someone losing
-nothing is how a notice stops being read, and a read that fails cancels the write, as a failed clock read does.
-Three paths carry it — the plain re-clock confirm, the three-way's RELEASE arm (its own
-element above the actions row, worded to name the release arm, since adopting the device's rate costs nothing
-and the shared note speaks for both arms), and the Follow USB toggle, which gets the numberless form because the host's rate is not something this app
-can read. **URX22 has no recorder and is silent throughout.** Afterwards the write's own epilogue re-reads the
-recorder node: the unit does the lowering itself, and whether it announces one has not been measured here, so the
-plan is refreshed rather than left waiting for a notify that may never come. The epilogue is armed from the rate
-send as it RESOLVES — everything but an explicit refusal, since the shell sends before it waits and a write whose
-answer never came may have landed and taken the count down with it — rather than from the outcomes the call
-returns, which a cancel between two sends throws away.
+paragraph above), is a rate side effect the unit ACTS on rather than merely refuses: it lowers its own Track Count
+to fit a rate it cannot carry (16 tracks at 44.1 / 48 kHz, 8 at 88.2 / 96 kHz, 2 at 176.4 / 192 kHz), lowering the
+rate again does not raise it, and Track Count refuses every value the app could write it back with. So this is not a
+feature left out of one write like the >96 kHz family — it is destroyed, and the notice belongs in front of the
+decision. `trackCountCeiling` / `trackCountDrop` (`core/constraints.ts`) decide it and `client.ts`'s
+`readTrackCount` supplies the count, read from the DEVICE rather than the plan: an offline plan's count is whatever
+was last authored, which would both miss real drops and invent false ones. A count that already fits is silent,
+because a loss notice shown to someone losing nothing is how a notice stops being read, and a read that fails
+cancels the write, as a failed clock read does. Three paths carry it — the plain re-clock confirm, the three-way's
+RELEASE arm (its own element above the actions row, worded to name the release arm, since adopting the device's rate
+costs nothing and the shared note speaks for both arms), and the Follow USB toggle, which gets the numberless form
+because the host's rate is not something this app can read. **URX22 has no recorder and is silent throughout.**
+Afterwards the write's own epilogue re-reads the recorder node: the unit does the lowering itself, and whether it
+announces one has not been measured here, so the plan is refreshed rather than left waiting for a notify that may
+never come. The epilogue is armed from the rate send as it RESOLVES — everything but an explicit refusal, since the
+shell sends before it waits and a write whose answer never came may have landed and taken the count down with it —
+rather than from the outcomes the call returns, which a cancel between two sends throws away.
 
 **A rate is not written while the microSD recorder holds a file.** The unit publishes the recorder's state — stopped,
 playing, playback paused, recording, record standby, recording paused — and while
@@ -3584,31 +3584,30 @@ with no device attached, so there is nothing to compare against until a connecti
 
 Follow USB is deliberately **not** part of the plan or `planToCommands`: it is a device-side clock policy rather
 than a routing choice, and emitting it would make every Live-sync flush re-assert it. It is read as a pre-check and
-written with a single `vdSet`. Live sync registers 848 for notifies alongside the plan's writable set and
-**intercepts** it ahead of node resolution (`DeviceFollow`'s `intercept` hook) — an address with no owner node
-would otherwise escalate every change to a full device re-read. The **FOLLOW USB** badge beside the Rate picker
-shows and toggles the state. Before any device has been read it is drawn as a dashed "unknown" (clicking it then
-reads the state rather than toggling), never as "off", and in the desktop build it is never hidden — hiding it until a device action
-would mean the warning only arrives once the operator has already committed to one. It is session-scoped rather than persisted, since a
-remembered value would be a claim about
-hardware that may not even be attached. For the same reason it goes back to unknown whenever the plan switches
-to another model, whichever entry switched it — the model picker, File > Open, a drop, a recent row, or the
-switch a Fetch or a Live-sync start offers. During Live sync the Rate picker locks while Follow USB is on: the unit
-accepts a rate written then and takes the computer's rate back about a third of a second later, so the rate would
-show and vanish. It stays locked as well for a session whose device scope is Scene only, which writes no rate.
-Wherever it is locked, the field it sits in shows why as its tooltip — the connection, for a link held by anything
-but a Live sync session, and during one the Scene only scope (naming the Preferences Scope that puts the rate back
-in) or Follow USB — the reason the SIM view's Sampling Frequency gives too (`rateHoldReason`).
-With Follow USB off and the whole device in scope it opens, and a rate chosen on the picker, on the SIM view or by an undo / redo
-goes through `confirmLiveRate` before the flush writes it — refused while the microSD recorder holds a file, and
-otherwise confirmed with the re-clock and what it costs the recorder's Track Count, the questions the write's settle
-asks. The held connection survives the re-clock: a connection written 766 over kept answering reads, online, on a
-URX44V and a URX22. The badge stays live:
+written with a single `vdSet`. Live sync registers Follow USB for notifies alongside the plan's writable set and
+**intercepts** it ahead of node resolution (`DeviceFollow`'s `intercept` hook) — an address with no owner node would
+otherwise escalate every change to a full device re-read. The **FOLLOW USB** badge beside the Rate picker shows and
+toggles the state. Before any device has been read it is drawn as a dashed "unknown" (clicking it then reads the
+state rather than toggling), never as "off", and in the desktop build it is never hidden — hiding it until a device
+action would mean the warning only arrives once the operator has already committed to one. It is session-scoped
+rather than persisted, since a remembered value would be a claim about hardware that may not even be attached. For
+the same reason it goes back to unknown whenever the plan switches to another model, whichever entry switched it —
+the model picker, File > Open, a drop, a recent row, or the switch a Fetch or a Live-sync start offers. During Live
+sync the Rate picker locks while Follow USB is on: the unit accepts a rate written then and takes the computer's
+rate back about a third of a second later, so the rate would show and vanish. It stays locked as well for a session
+whose device scope is Scene only, which writes no rate. Wherever it is locked, the field it sits in shows why as its
+tooltip — the connection, for a link held by anything but a Live sync session, and during one the Scene only scope
+(naming the Preferences Scope that puts the rate back in) or Follow USB — the reason the SIM view's Sampling
+Frequency gives too (`rateHoldReason`). With Follow USB off and the whole device in scope it opens, and a rate
+chosen on the picker, on the SIM view or by an undo / redo goes through `confirmLiveRate` before the flush writes it
+— refused while the microSD recorder holds a file, and otherwise confirmed with the re-clock and what it costs the
+recorder's Track Count, the questions the write's settle asks. The held connection survives the re-clock: a
+connection the rate was written over kept answering reads, online, on a URX44V and a URX22. The badge stays live:
 toggling Follow USB only re-clocks when the host is on a different rate, and the connection survived it on a URX44V.
 
 Above 96 kHz the device drops whole features (stereo channel EQ, insert FX, the FX2 bus), but it still **accepts
-and holds writes to their parameters** — measured on a URX44V at 192 kHz for the stereo CH EQ (213), FX2's fader,
-send and effect type, and the insert FX selector (135). "The feature is unavailable" does not mean "the parameter
+and holds writes to their parameters** — measured on a URX44V at 192 kHz for the stereo CH EQ, FX2's fader,
+send and effect type, and the insert FX selector. "The feature is unavailable" does not mean "the parameter
 is unwritable": only the DSP is gone, the stored value survives. So the write set is not gated by rate: a gate
 would prevent no non-convergence (there is none to prevent), it would only stop the plan
 from reaching the device, which would leave settings the plan never asked for in place once the rate came back
@@ -3811,7 +3810,7 @@ it happened; the list is `WATCHED` in `src/ui/param-watch.ts`.
   while the read was in flight, so a notify is never overwritten by a read that started before it. The reads
   queue on the session's link like any other command, behind a full readback when one is running, and show in
   the ledger's `Sent` row.
-- **The clock as liveness.** The clock parameters `789`–`794` are registered too and counted rather than
+- **The clock as liveness.** The unit's clock parameters are registered too and counted rather than
   recorded. That count is a liveness signal on the URX44V and URX44 only: the URX22's clock stays at
   2020-01-01 00:00:00 and announces nothing, so its count is 0 every minute.
 - **Read-only.** Nothing it does writes to the unit; `src/ui/param-watch.test.ts` holds the shell functions it
