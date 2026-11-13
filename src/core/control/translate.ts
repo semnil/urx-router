@@ -836,14 +836,16 @@ interface GeqParamRef {
 
 /**
  * An output bus's Flex12GEQ addresses (core/geq.ts holds the plan's side of it). `sides` are the
- * bus's L / R instances, which every per-side number is addressed at; the type and the link move
- * both instances together and are written at L. `band(x)` is where band x lives: STEREO keeps the
+ * bus's L / R instances, which every per-side number is addressed at; the link moves both instances
+ * together and is written at L. `typeAt` is where the EQ Type lives: STEREO has one, at its L
+ * instance alone, and a MIX one per side, the two moving together. `band(x)` is where band x lives: STEREO keeps the
  * band on x of one param, a MIX gives each band a param of its own. It refuses a band outside the
  * 31: a MIX's band ids run on into other parameters' (669 is not a band), so an index taken from a
  * document must never reach an address unchecked.
  */
 export interface GeqControl {
   type: GeqParamRef;
+  typeAt: readonly number[];
   on: GeqParamRef;
   link: GeqParamRef;
   limit: GeqParamRef;
@@ -855,6 +857,7 @@ export function busGeq(nodeId: string): GeqControl | null {
   if (nodeId === "bus.stereo")
     return {
       type: { name: "STEREO_EQ_TYPE", param: PARAMS.STEREO_EQ_TYPE.id },
+      typeAt: [0],
       on: { name: "STEREO_GEQ_ON", param: PARAMS.STEREO_GEQ_ON.id },
       link: { name: "STEREO_GEQ_LINK", param: PARAMS.STEREO_GEQ_LINK.id },
       limit: { name: "STEREO_GEQ_LIMIT", param: PARAMS.STEREO_GEQ_LIMIT.id },
@@ -865,6 +868,7 @@ export function busGeq(nodeId: string): GeqControl | null {
   if (!mix) return null;
   return {
     type: { name: "OUT_EQ_TYPE", param: PARAMS.OUT_EQ_TYPE.id },
+    typeAt: [mix[0], mix[1]],
     on: { name: "OUT_GEQ_ON", param: PARAMS.OUT_GEQ_ON.id },
     link: { name: "OUT_GEQ_LINK", param: PARAMS.OUT_GEQ_LINK.id },
     limit: { name: "OUT_GEQ_LIMIT", param: PARAMS.OUT_GEQ_LIMIT.id },
@@ -2780,7 +2784,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
     if (!geq || type === undefined) continue;
     if (type === EQ_TYPE_GEQ && geqUnavailable(plan.sampleRate)) continue;
     const v = admitLeaf(menuRule(EQ_TYPE_OPTIONS, EQ_TYPE_PEQ), type);
-    for (const inst of geq.sides) out.push(rawCommand(geq.type.name, geq.type.param, "enum", inst, v));
+    for (const inst of geq.typeAt) out.push(rawCommand(geq.type.name, geq.type.param, "enum", inst, v));
     own(node.id);
   }
 

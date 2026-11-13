@@ -2043,7 +2043,7 @@ async function readEqBands(source: ParamSource, ctrl: EqControl): Promise<EqBand
 async function readGeq(source: ParamSource, ctrl: GeqControl): Promise<Pick<NodeParams, "eqType" | "geq">> {
   const { vdGet } = readers(source);
   const [l] = ctrl.sides;
-  const eqType = await vdGet(ctrl.type.param, 0, l);
+  const eqType = await vdGet(ctrl.type.param, 0, ctrl.typeAt[0]);
   const link = await vdGet(ctrl.link.param, 0, l);
   const sides: GeqSide[] = [];
   for (const inst of ctrl.sides) {

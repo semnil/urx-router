@@ -2324,10 +2324,12 @@ describe("Flex12GEQ (V1.5)", () => {
   };
   const named = (cmds: VdCommand[], name: string) => cmds.filter((c) => c.name === name);
 
-  it("writes each bus's EQ Type ahead of its EQ ON, at both of its instances", () => {
+  // STEREO's EQ Type is one address, at its L instance: there is none at y1, and a write there
+  // is answered with no value, which stops a Live sync session.
+  it("writes each bus's EQ Type ahead of its EQ ON, where the unit holds it", () => {
     const cmds = planToCommandsUncollapsed(model, withGeq());
     for (const [type, on, ys] of [
-      ["STEREO_EQ_TYPE", "STEREO_EQ_ON", [0, 1]],
+      ["STEREO_EQ_TYPE", "STEREO_EQ_ON", [0]],
       ["OUT_EQ_TYPE", "OUT_EQ_ON", [0, 1, 2, 3]],
     ] as const) {
       const t = named(cmds, type);
