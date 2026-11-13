@@ -1,4 +1,6 @@
-// A watch over device parameters the app neither reads nor writes, dev builds only.
+// A watch over a few device parameters the app does not write, dev builds only. One is
+// its subject, which nothing else in the app reads; the other three are context, and
+// the SIM view reads those too (`unitStateNotifyAddrs` in main.ts).
 //
 // While Live sync holds the connection it registers a handful of addresses as a
 // subscription of its own (`vd_probe_subscribe` — never through the follow layer's set,
