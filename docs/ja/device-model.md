@@ -178,9 +178,9 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 - STEREO — チャンネルの主フェーダー経路。ブロックダイアグラムでは破線の SEND ブロックの
   *外側*にあり、LEVEL/PAN + **STEREO アサイン ON/OFF** を編集可。この ON はファーム V1.3 で追加された
   **フェーダー後段の SEND TO STEREO スイッチ** (`params.on`・既定 ON) で、**チャンネルマスター (CH_ON) とは独立**
-  (CH_ON はチャンネル全体を、この ON は STEREO への送りだけを切る)。**PRE/POST は持たない** (この経路が
+  (CH_ON はチャンネル全体を、この ON は STEREO への send だけを切る)。**PRE/POST は持たない** (この経路が
   PRE/POST の基準点のため)。初期レベルは **unity (0 dB)**。コンソールではヘッドの **MUTE チップ** がこの STEREO
-  アサインを切り替え (MIX ストリップの MUTE が TO ST 送りを切り替えるのと同じ)、チャンネルマスター (CH_ON) は
+  アサインを切り替え (MIX ストリップの MUTE が TO ST send を切り替えるのと同じ)、チャンネルマスター (CH_ON) は
   **スクリブル電源 LED** が担う (オフのときストリップが減光する・グラフの mute ノードと同じ)。
 - MIX 1 / MIX 2 — LEVEL/PAN/**PRE/POST** + **ON/OFF (SEND_ON)**。初期は **-∞ (オフ) ・ON**。
 - FX 1 / FX 2 — LEVEL/**PRE/POST** + **ON/OFF (SEND_ON)** (FX Bus への Send はモノで **PAN を持たない**)。初期は **-∞ (オフ) ・ON**。
@@ -196,15 +196,15 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
 > モデル化する挙動) か FIXED。FIXED の Bus では **Send が持つのは ON だけ**になる: 実機は Send 元の
 > フェーダーの後で固定レベルで取り出し、位置は Send 元自身の PAN / BAL に従うので、Send の LEVEL・PRE/POST・
 > PAN は効かない (3 つとも書込は受理され、読み戻しも書いた値を返す)。**Pan Link** は各 Send の
-> PAN を Send 元自身の PAN / BAL に追従させ、個別 PAN を編集不可にする: 実機はその MIX への送りのパンを送り元の
-> PAN / BAL にそろえ、送りのパンが書かれると送り元を動かすので、アプリはリンク中の MIX へ送りのパンを書かない。計画の送りの
-> パンは Pan Link が入ると送り元のパンになり、入の間は送り元に追従し、切ると実機でも計画でも送り元のパンのまま残る。計画は FIXED にしても Pan Link を保つ: 実機は
+> PAN を Send 元自身の PAN / BAL に追従させ、個別 PAN を編集不可にする: 実機はその MIX への send のパンを Send 元の
+> PAN / BAL にそろえ、send のパンが書かれると Send 元を動かすので、アプリはリンク中の MIX へ send のパンを書かない。計画の send の
+> パンは Pan Link が入ると Send 元のパンになり、入の間は Send 元に追従し、切ると実機でも計画でも Send 元のパンのまま残る。計画は FIXED にしても Pan Link を保つ: 実機は
 > BUS Type が FIXED になると Pan Link を切り、アプリは BUS Type の後に書き直す。どちらも MIX Bus ノードに保持し、接続パネルは
-> FIXED で LEVEL・PRE/POST・PAN を隠し、かかっているものごとに短い注記を表示する。Pan Link 中は PAN を残し、送りのパンを
-> 回すと実機の SEND TO 画面と同じく送り元自身の PAN / BAL が動き、リンク中の送りがそろう。CONSOLE も SENDS ラックで
+> FIXED で LEVEL・PRE/POST・PAN を隠し、かかっているものごとに短い注記を表示する。Pan Link 中は PAN を残し、send のパンを
+> 回すと実機の SEND TO 画面と同じく Send 元自身の PAN / BAL が動き、リンク中の send がそろう。CONSOLE も SENDS ラックで
 > 同じ規則を適用し、FIXED ではその MIX 列の PRE ボタン・ミニフェーダーと SEND PAN ノブを read-only にし、Pan Link 中は
 > SEND PAN ノブでストリップを動かす。MIDI も同じで、ロック中の値に割り当てたコントロールは何も書かない。
-> 盤面も鳴らない送りの判定で同じ規則に従う: FIXED の Bus への Send を減光・点線で描くのは ON が OFF のときだけで、
+> 盤面も鳴らない send の判定で同じ規則に従う: FIXED の Bus への Send を減光・点線で描くのは ON が OFF のときだけで、
 > 実機が使わない -∞ のレベルを保持しているだけでは点線にしない。
 
 > 盤面上では PRE の MIX/FX Send を **破線＋ソース直後の琥珀色「PRE」タップマーカー**で表示し、接続を選択せずに
@@ -224,7 +224,7 @@ STEREO 主フェーダー (= CH → STEREO のレベル) より前 (PRE) で取�
     (SEND_ON=1・レベル -∞) で、`新規` 計画にも ON でシードする。
   - 各 FX チャンネルは独自の**チャンネル ON/OFF** (ミュート) も持つ。入力チャンネルの CH_ON と同じ扱いで、
     **工場出荷状態は FX 1 / FX 2 とも ON**。これはコンソールの**スクリブル電源 LED** — ヘッド MUTE は
-    → STEREO アサインの ON/OFF を指す (送りごとの ON/OFF は SENDS ラックにある) ため、チャンネルマスターが
+    → STEREO アサインの ON/OFF を指す (send ごとの ON/OFF は SENDS ラックにある) ため、チャンネルマスターが
     オフのときはストリップが減光する (電源 LED 消灯)。盤面のノードも同様に減光し MUTE タグが付く。
   - MIX 1 / MIX 2 Bus も独自の**マスター ON/OFF** を持つ (STEREO マスターの ON と同じ Bus マスタースイッチ・
     工場 ON)。MIX → STEREO の TO ST スイッチとは独立。コンソールの**電源 LED** (またはグラフのインスペクタ)
@@ -379,7 +379,7 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
 - 各 Ducker は 1 つのステレオチャンネルに搭載されるため、Ducker 1–4 は機種のステレオペアに順番に対応する: URX22 = CH 3/4・5/6・7/8・9/10、URX44 / URX44V = CH 5/6・7/8・9/10・11/12。盤面のノードラベルは単に `Ducker` とし、搭載先ペアは副題 (`CH 5/6 · Source`) に表示する。1–4 の序数はブロックダイアグラム上の列挙であり、ぶら下げ位置で搭載先 CH が分かるためノードには重ねて表示しない。
 - 表示上、Ducker は独立した出力ではなく搭載先チャンネルに属するため、専用種別 `ducker` のノードとして対応ステレオチャンネルの真下にぶら下げて描く (配置・移動・非表示の挙動は [architecture.md](architecture.md) 参照)。
 - Ducker の ON/OFF (`duckerOn`、工場出荷は OFF) がオフのときは、ミュートしたチャンネルと同じくノードを減光し `OFF` タグを付ける (バイパスを示す。ミュートではないため `MUTE` ではなく `OFF`)。
-- Ducker はチャンネル主経路の **フェーダー後段** にあるため、STEREO 主経路と POST 送りはダック対象だが、**PRE (pre-fader) 送りはその手前でタップするためダックされない**。Ducker ON のチャンネルに PRE 送りがある場合、インスペクタが固定接続の注記の隣にその旨を表示する (盤面には表示せず情報過多を避ける)。
+- Ducker はチャンネル主経路の **フェーダー後段** にあるため、STEREO 主経路と POST send はダック対象だが、**PRE (pre-fader) send はその手前でタップするためダックされない**。Ducker ON のチャンネルに PRE send がある場合、インスペクタが固定接続の注記の隣にその旨を表示する (盤面には表示せず情報過多を避ける)。
 
 ## 固定 (結線不可) の要素
 

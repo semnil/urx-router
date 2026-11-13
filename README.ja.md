@@ -47,9 +47,9 @@ URX22 で実機検証済み**で、**URX44** は URX44V と同一と仮定して
 **デバイスと照合** が有効になる。
 
 コンソールビューは同じ計画をミキサー面として表示する — ストリップごとのフェーダー・ミュート・EQ・
-ダイナミクス・センド。ここでの編集も同様に実機へライブ同期され、ライブ同期中はライブメーターが動作する。
+ダイナミクス・send。ここでの編集も同様に実機へライブ同期され、ライブ同期中はライブメーターが動作する。
 
-![URX44V をストリップごとのフェーダー・ダイナミクス・EQ・センドを持つミキサー面として表示した URX Router のコンソールビュー](docs/assets/screenshot-console-ja.png)
+![URX44V をストリップごとのフェーダー・ダイナミクス・EQ・send を持つミキサー面として表示した URX Router のコンソールビュー](docs/assets/screenshot-console-ja.png)
 
 ## Claude Code スキル
 
@@ -137,7 +137,7 @@ URX Router を使用することで、このリスクを受諾したものとす
 
 - [docs/ja/architecture.md](docs/ja/architecture.md) — アプリ構成と設計判断
 - [docs/ja/device-model.md](docs/ja/device-model.md) — 装置のルーティングモデルと接続制約
-- [docs/ja/console-sends.md](docs/ja/console-sends.md) — CONSOLE ビューのストリップ内センドラック設計
+- [docs/ja/console-sends.md](docs/ja/console-sends.md) — CONSOLE ビューのストリップ内 SENDS ラック設計
 - [docs/ja/known-issues.md](docs/ja/known-issues.md) — 現時点の制限事項
 - [docs/ja/decisions/](docs/ja/decisions/) — 閉じた判断の記録 (何を決めたか・理由・却下した案)
 

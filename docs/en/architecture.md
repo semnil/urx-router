@@ -1245,6 +1245,9 @@ the inspector, and the open modal itself.
 > words a translated sentence may use, so this rule is the only thing that keeps a sentence and the
 > label above it in one spelling.
 > The rule reaches the Japanese documents for the same reason: they quote these labels.
+> Japanese text writes the audio send `send` and does not use the Japanese noun 「送り」 (for example
+> 「OFF send を隠す」); where "send" is a verb it writes 「Send できる」. 「縦送り」, a line feed in a layout, is a
+> different word and stays.
 > **A row that reproduces a control
 > on one of the unit's own screens keeps that screen's English label, in every app language** — the unit
 > is English there whichever of its three display languages is selected. That was **read off the hardware
