@@ -145,6 +145,17 @@ describe("watchRun", () => {
     canceled.stop();
   });
 
+  it("rejects when the watch cannot be registered, and lets the caller's cancel go", async () => {
+    const outer = new AbortController();
+    const removed = vi.spyOn(outer.signal, "removeEventListener");
+    const u = unit(0);
+    u.io.subscribe = async () => {
+      throw new Error("subscribe rejected");
+    };
+    await expect(watchRun(outer.signal, u.io)).rejects.toThrow("subscribe rejected");
+    expect(removed).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
   it("starts aborted for a caller that already canceled", async () => {
     const outer = new AbortController();
     outer.abort();

@@ -29,6 +29,7 @@ import {
   pressNode,
   pressOscOn,
   quiet,
+  selectNode,
   turnOscOn,
   undoEdit,
   WRITE_ASK,
@@ -375,6 +376,68 @@ describe("Console Lock during a live session", () => {
     expect(paramRow(t().inspector.oscLevel).querySelector<HTMLInputElement>('input[type="range"]')!.value).toBe("-20");
     expect(errors(shell)).toEqual([]);
   });
+
+  // A cue pressed just before the lock arrived: it passed the refusal, and the write it queued met
+  // the lock on its way out. That is the lock's stop rather than a failed write, so the session
+  // goes on and the cues are read back to show what the unit holds.
+  it("takes a cue the lock caught on its way out as not sent, and reads the cues back", SLOW, async () => {
+    const shell = await bootDevice();
+    await up();
+    await quiet(shell);
+    selectNode("ch1");
+    const cueReads = (): number =>
+      shell.invokes.filter((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === PARAMS.CUE_MONO.id).length;
+    const before = cueReads();
+    [...paramRow(t().inspector.cue).querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent === t().inspector.on)!
+      .click();
+    announceLock(shell, 1);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLockedNotSent), { timeout: 10_000 });
+    await quiet(shell);
+    expect(writesTo(shell, PARAMS.CUE_MONO.id)).toEqual([]);
+    expect(cueReads(), "the cues are read back").toBeGreaterThan(before);
+    expect(live().getAttribute("aria-checked")).toBe("true");
+    expect(errors(shell)).toEqual([]);
+  });
+
+  it("ends the session when the read-back the lock asked for fails", SLOW, async () => {
+    let refuse = false;
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        if (refuse && a.paramId === PARAMS.OSC_ON.id) throw new Error("read refused");
+        return unwrittenRead(a);
+      },
+    });
+    await up();
+    await quiet(shell);
+    expect(oscOn(), "the premise").toBe("OFF");
+    pressOscOn();
+    refuse = true;
+    announceLock(shell, 1);
+    await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
+    expect(live().getAttribute("aria-checked")).not.toBe("true");
+    expect(writesTo(shell, PARAMS.OSC_ON.id)).toEqual([]);
+  });
+
+  // Edits made in one task are checked as one, whichever of them names its keys: one that writes
+  // to the unit takes the others back with it.
+  it("puts back the edits made in one task under the lock together", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LOCK]: 1 });
+    await up();
+    await quiet(shell);
+    expect(oscOn(), "the premise").toBe("OFF");
+    pressOscOn();
+    $("btn-auto").click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLockedEditPutBack), { timeout: 10_000 });
+    expect(oscFace()).toBe("OFF");
+    $("btn-auto").click();
+    pressOscOn();
+    await vi.waitFor(() => expect(oscFace()).toBe("OFF"), { timeout: 10_000 });
+    expect(statusText()).toBe(t().status.consoleLockedEditPutBack);
+    await quiet(shell);
+    expect(writesTo(shell, PARAMS.OSC_ON.id)).toEqual([]);
+    expect(errors(shell)).toEqual([]);
+  });
 });
 
 // The delay time tempo Sync drives is left out of the plan's writer and written to the unit on its
@@ -487,5 +550,67 @@ describe("Console Lock and a write outside a session", () => {
     await invoked(shell, "vd_disconnect", 2);
     expect(errors(shell)).toEqual([t().error.consoleLocked]);
     expect(writesTo(shell, PARAMS.FOLLOW_USB.id)).toEqual([]);
+  });
+});
+
+// A self-test (an --experimental launch) the lock stops once it has written keeps what its restore
+// needs, and Restore after self-test in the Device menu puts the unit back.
+describe("Console Lock and the self-test", () => {
+  it("keeps a run the lock stopped for Restore after self-test until a restore puts the unit back", SLOW, async () => {
+    const table = deviceCommands({
+      "plugin:dialog|message": "Ok",
+      "plugin:dialog|save": null,
+      experimental_enabled: true,
+    });
+    const set = table.vd_set as (a: Record<string, unknown>) => unknown;
+    const connect = table.vd_connect as (a: Record<string, unknown>) => unknown;
+    const box = { shell: null as TauriShell | null, sent: 0, lockAt: 5, refuse: false, unreachable: false };
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        vd_set: (a: Record<string, unknown>) => {
+          if (box.refuse) throw new Error("broker-rejected: refused");
+          const result = set(a);
+          if (++box.sent === box.lockAt) announceLock(box.shell!, 1);
+          return result;
+        },
+        vd_connect: (a: Record<string, unknown>) => {
+          if (box.unreachable) throw new Error("no device");
+          return connect(a);
+        },
+      },
+    }))!;
+    box.shell = shell;
+    const run = $<HTMLButtonElement>("btn-selftest");
+    const restore = $<HTMLButtonElement>("btn-selftest-restore");
+    await vi.waitFor(() => expect(run.hidden).toBe(false), { timeout: 10_000 });
+    expect(restore.hidden, "the premise: nothing to restore yet").toBe(true);
+
+    run.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestLocked), { timeout: 25_000 });
+    await vi.waitFor(() => expect(restore.hidden).toBe(false), { timeout: 10_000 });
+    // A new run would capture the state the stopped one left as the one to restore.
+    const sets = shell.count("vd_set");
+    run.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestRestorePending), { timeout: 10_000 });
+    expect(shell.count("vd_set")).toBe(sets);
+
+    // A restore that cannot connect, and one whose writes are refused, keep it.
+    box.lockAt = -1;
+    box.unreachable = true;
+    restore.click();
+    await vi.waitFor(() => expect(errors(shell).length).toBe(1), { timeout: 25_000 });
+    expect(restore.hidden).toBe(false);
+    box.unreachable = false;
+    box.refuse = true;
+    restore.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestRestoreFail), { timeout: 25_000 });
+    expect(confirms(shell)).toContain(t().confirm.selfTestFailExport);
+    await vi.waitFor(() => expect(restore.hidden).toBe(false), { timeout: 10_000 });
+
+    box.refuse = false;
+    restore.click();
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.selfTestRestored), { timeout: 25_000 });
+    await vi.waitFor(() => expect(restore.hidden).toBe(true), { timeout: 10_000 });
   });
 });

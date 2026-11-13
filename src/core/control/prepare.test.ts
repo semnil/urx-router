@@ -362,6 +362,29 @@ describe("runPrepareModified", () => {
     expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
   });
 
+  it("refuses a locked unit once the capture has read it, and writes nothing", async () => {
+    captureOk();
+    mocks.vdGet.mockResolvedValue(1);
+    const report = await runPrepareModified(model);
+    expect(report.locked).toBe(true);
+    expect(report.errors).toEqual(["refusing to write: the unit is under Console Lock"]);
+    expect(report.written).toBe(0);
+    expect(mocks.vdSet).not.toHaveBeenCalled();
+    expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+  });
+
+  it("stops at the next command when the unit is locked under it", async () => {
+    captureOk();
+    let sent = 0;
+    mocks.vdSet.mockImplementation(async () => {
+      if (++sent === 3) mocks.lock.deliver?.({ paramId: PARAMS.CONSOLE_LOCK.id, x: 0, y: 0, value: 1 });
+    });
+    const report = await runPrepareModified(model);
+    expect(report).toMatchObject({ aborted: true, locked: true });
+    expect(sent, "the write on the wire lands; nothing after it goes").toBe(3);
+    expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+  });
+
   it("does not disconnect a link it never opened", async () => {
     mocks.vdConnect.mockRejectedValue(new Error("no device"));
     await expect(runPrepareModified(model)).rejects.toThrow("no device");

@@ -23,7 +23,7 @@ vi.mock("../platform", () => ({
 import { vdSet, vdSetStr, vdGet, vdGetStr, vdParamsSubscribe, type ParamUpdate } from "../platform";
 import { DeviceFollow } from "./follow";
 import { COMP_EQ_SSMCS, PARAMS, silentKey } from "./params";
-import { addrKey, cmdAddr, planToCommands } from "./translate";
+import { addrKey, cmdAddr, nameControl, planToCommands } from "./translate";
 import type { SharedOwners } from "./translate";
 import { CONVERGE_DEFER_MAX_MS, DEBOUNCE_MS, LiveSync } from "./live";
 import { MBC_ONE_KNOB, insertFxParamKey } from "./insert-fx-effect";
@@ -4481,6 +4481,87 @@ describe("LiveSync: Console Lock", () => {
       live.end();
     },
   );
+
+  it("stops before the names when the lock arrives on the last value", async () => {
+    const plan = basePlan();
+    plan.nodeNames = { ...plan.nodeNames, ch1: "Vox" };
+    const live = liveFor(plan);
+    live.begin();
+    plan.nodeNames = { ...plan.nodeNames, ch1: "Kick" };
+    // The plan's last command, set apart from what the session says the unit holds: the flush's
+    // only value write, and so its last, is the one the lock arrives on.
+    const last = planToCommands(model, plan).at(-1)!;
+    live.noteDirect(last.paramId, last.x, last.y, last.vdValue + 1);
+    vi.mocked(vdSet).mockImplementationOnce(async () => {
+      live.setLocked(true);
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await live.idle();
+    expect(
+      vi.mocked(vdSet).mock.calls.map((c) => c.slice(0, 3)),
+      "the premise: the last value alone went out",
+    ).toEqual([[last.paramId, last.x, last.y]]);
+    expect(vi.mocked(vdSetStr)).not.toHaveBeenCalled();
+    expect(live.unsent().nodes).toEqual(new Set(["ch1"]));
+    live.end();
+  });
+
+  // A head the unit resets values behind, with the lock arriving on the flush's last write — a
+  // name — so both loops have run to their end and only the converge is left.
+  it("asks for the whole unit when the lock arrives on the last name behind a head", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    live.begin();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: 1 };
+    plan.nodeNames = { ...plan.nodeNames, ch1: "Vox" };
+    const instances = nameControl(model, "ch1")!.instances.length;
+    let names = 0;
+    vi.mocked(vdSetStr).mockImplementation(async () => {
+      if (++names === instances) live.setLocked(true);
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 3);
+    await live.idle();
+    expect(names, "the premise: every name went out").toBe(instances);
+    expect(vi.mocked(vdSet).mock.calls.map((c) => c[0])).toContain(PARAMS.COMP_EQ_TYPE.id);
+    expect(vi.mocked(vdGet), "the converge does not start").not.toHaveBeenCalled();
+    expect(live.unsent().drift).toBe(true);
+    live.end();
+  });
+
+  // The converge's own writes all landed, and the lock arrived while it read them back.
+  it("asks for the whole unit when the lock arrives as a converge reads back", async () => {
+    const plan = basePlan();
+    const live = liveFor(plan);
+    const key = (id: number, x: number, y: number): string => `${id}:${x}:${y}`;
+    const table = new Map(planToCommands(model, plan).map((c) => [key(c.paramId, c.x, c.y), c.vdValue]));
+    let converging = 0;
+    let release: (() => void) | null = null;
+    vi.mocked(vdGet).mockImplementation(async (id, x, y) => {
+      if (converging === 2 && !release) release = live.hold();
+      return table.get(key(id, x, y)) ?? 0;
+    });
+    live.begin();
+    plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, compEqType: 1 };
+    const moved = planToCommands(model, plan)
+      .filter((c) => c.name === "CH_FADER")
+      .slice(0, 2);
+    vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
+      table.set(key(id, x, y), v);
+      if (id === PARAMS.COMP_EQ_TYPE.id) for (const c of moved) table.set(key(c.paramId, c.x, c.y), c.vdValue + 1);
+      else converging++;
+    });
+    live.schedule();
+    await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS * 4);
+    await live.idle();
+    expect(converging, "the premise: the converge sent both").toBe(2);
+    expect(release, "the premise: the lock arrived as it read back").not.toBeNull();
+    expect(live.isActive()).toBe(true);
+    expect(live.unsent().drift).toBe(true);
+    release!();
+    live.end();
+  });
 
   // A head the unit derives a node's values behind, stopped before the read of that node.
   it("names the node whose read the lock stopped a flush in front of", async () => {

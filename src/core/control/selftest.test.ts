@@ -2145,6 +2145,9 @@ describe("runSelfTest and Console Lock", () => {
     expect(writes, "the write on the wire lands; nothing after it goes").toBe(5);
     expect(report.restored).toBe(false);
     expect(report.pendingRestore?.model).toBe("URX44V");
+    expect(formatSelfTestReport(report)).toContain(
+      "- Stopped: the unit went into Console Lock; the unit is left changed, and what the restore needs is kept for Restore after self-test",
+    );
     const changed = [...table].filter(([k, v]) => before.has(k) && before.get(k) !== v);
     expect(changed.length, "the premise: the run left the unit changed").toBeGreaterThan(0);
 
@@ -2170,6 +2173,7 @@ describe("runSelfTest and Console Lock", () => {
     const report = await runSelfTest(model, 0);
     expect(report.locked).toBe(true);
     expect(report.pendingRestore).toBeUndefined();
+    expect(formatSelfTestReport(report).split("\n")).toContain("- Stopped: the unit went into Console Lock");
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(table.size).toBeGreaterThan(0);
   });
