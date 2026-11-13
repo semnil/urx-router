@@ -123,7 +123,7 @@ number of frames painted, not by the number of elements or by whether they are o
   strip could not be scrolled to at the app's own minimum window size. Not proposed again.
 
 Following from that last one, the layout invariants run in the shipping engine too
-([#442](https://github.com/semnil/urx-router/pull/442)); `CLAUDE.md` has the command.
+([#442](https://github.com/semnil/urx-router/pull/442)); `AGENTS.md` has the command.
 
 ## Following the unit
 

@@ -3,7 +3,7 @@
 > 日本語版: [../../ja/decisions/localization-and-documents.md](../../ja/decisions/localization-and-documents.md)
 
 Closed decisions about which language a string or a document is written in. The rules themselves
-are in `CLAUDE.md` "Conventions" and in [architecture.md](../architecture.md) "Localization (i18n)";
+are in `AGENTS.md` "Conventions" and in [architecture.md](../architecture.md) "Localization (i18n)";
 this document holds what was decided around them and what was turned down.
 
 ## Cross-links keep two forms

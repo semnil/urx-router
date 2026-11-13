@@ -592,7 +592,7 @@ undo は WebKit 自身が持ち、アプリは意図的に `preventDefault` し�
 | `--workers=4` で race ティア全体 | 約 6 分 (162 ケース。Apple silicon・分離実行での実測) |
 | 最も重いファイル (T2) 単体 | 約 2.5 分 |
 
-所要を書くのは**この表だけ**である。`CLAUDE.md` は 2 つ目の値を書かずにここを指す (2 か所に書けば
+所要を書くのは**この表だけ**である。`AGENTS.md` は 2 つ目の値を書かずにここを指す (2 か所に書けば
 必ず片方だけが古くなる)。
 
 遅いのは**全体照合 (約 800 回の逐次読み) を意図的に複数回起こすケース**で、測っている対象そのものの
@@ -657,7 +657,7 @@ undo は WebKit 自身が持ち、アプリは意図的に `preventDefault` し�
 
 | リストの内容 | 漏れていたもの | そのファイルが効く理由 |
 | --- | --- | --- |
-| `src/**` と `e2e/race/**` | `e2e/graph-helpers.ts` | `t0b-sweeps.spec.ts` と `t2b-shape-change.spec.ts` が import しており、CLAUDE.md のアセット表がハーネス側の集約先として名指ししている |
+| `src/**` と `e2e/race/**` | `e2e/graph-helpers.ts` | `t0b-sweeps.spec.ts` と `t2b-shape-change.spec.ts` が import しており、AGENTS.md のアセット表がハーネス側の集約先として名指ししている |
 | — | `playwright.config.ts` | `race` と `race-webkit` のプロジェクト定義がそこにしか無い |
 | + 上記 2 つ | `pnpm-lock.yaml` | Playwright のバージョンを固定し、それが両ハーネスジョブの `container:` イメージになる |
 | + `package.json` と lockfile | `race.yml` 自身・`.github/actions/install-browsers/`・`.env.trace`・`vite.config.ts`・`scripts/e2e-serve.mjs` | ジョブ定義・ブラウザ導入・trace ビルドフラグ・ティアが serve するバンドル・その serve 側 |
@@ -755,7 +755,7 @@ Playwright はそれをエラーではなく「重み無し」として扱うの
 `race-required` をマージ条件として成立させている: トリガーのフィルタでスキップされたワークフローは
 チェックランを 1 つも作らないため、ハーネスが走らない PR には、他の PR が待っているチェックが存在
 しないことになる。そちら側ではハーネスの 2 ジョブが自分の条件でスキップし、数秒で成功を報告する。
-この配置と「必須チェックはすべての PR で報告できなければならない」理由は CLAUDE.md の
+この配置と「必須チェックはすべての PR で報告できなければならない」理由は AGENTS.md の
 "What a merge waits for" にある。
 
 ブランチに対して手動で回す場合 ── 判定の前倒しと、再実行の経路:

@@ -101,7 +101,7 @@ URX44V で走るので、機種の id の配線が欠けていても、通って
   アプリ自身の最小のウィンドウの大きさで、ストリップの下端へスクロールで届かなくなった。もう提案しない。
 
 最後の件を受けて、レイアウトの不変条件は、出荷するエンジンでも走らせている
-([#442](https://github.com/semnil/urx-router/pull/442))。コマンドは `CLAUDE.md` にある。
+([#442](https://github.com/semnil/urx-router/pull/442))。コマンドは `AGENTS.md` にある。
 
 ## Following the unit
 

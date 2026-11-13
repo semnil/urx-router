@@ -2,7 +2,7 @@
 
 > English version: [../../en/decisions/localization-and-documents.md](../../en/decisions/localization-and-documents.md)
 
-文字列や文書をどの言語で書くかについて、閉じた判断を置く。規則そのものは `CLAUDE.md`「Conventions」と
+文字列や文書をどの言語で書くかについて、閉じた判断を置く。規則そのものは `AGENTS.md`「Conventions」と
 [architecture.md](../architecture.md)「多言語対応 (i18n)」にある。この文書は、その周りで決めたことと、
 却下した案を持つ。
 

@@ -3,14 +3,14 @@
 > English version: [../../en/decisions/test-suite.md](../../en/decisions/test-suite.md)
 
 テストの作り方と走らせ方について、閉じた判断を置く。何を決めたか、理由、却下した案、決めるもとになった
-出来事を書く。変更が守る決まりは `CLAUDE.md`「Development」と「Conventions」にあり、レースのハーネスには
+出来事を書く。変更が守る決まりは `AGENTS.md`「Development」と「Conventions」にあり、レースのハーネスには
 専用の文書 [live-race-harness.md](../live-race-harness.md) がある。この文書は、そこに無い理由だけを持つ。
 
 ## The displayed-item inventory
 
 **決定 (2026-08-06)。** `e2e/inventory.spec.ts` は、ダイアログ・ウィンドウ・メニュー・ポップオーバーが
 それぞれ何を表示しなければならないかを、メッセージのカタログから導き、それぞれの面を状態ごとに動かす。
-決まりそのものと、メッセージが取れる 4 つの逃げ道は、`CLAUDE.md`「Conventions」にある。
+決まりそのものと、メッセージが取れる 4 つの逃げ道は、`AGENTS.md`「Conventions」にある。
 
 **実害の記録。** MIDI コントロールを、オーバーレイのパネルから独立のウィンドウへ移したとき、Behavior の列の
 凡例のカードが、パネルと一緒に落ちた。そこに出ていた 2 つのメッセージ (`modeDesc` と `buttonModeDesc`) は、
@@ -96,7 +96,7 @@ MIDI のウィンドウ、メニュー 3、ポップオーバー 2 と、最初�
 ## The startup check
 
 **決定 (2026-10-10)。** dev アプリが上がったかどうかは、`node scripts/check-startup-wait.mjs --pid <tree>` が答える。
-ログで待つコマンドは、フックが断る。仕組みは `CLAUDE.md`「Development」にあり、変更は
+ログで待つコマンドは、フックが断る。仕組みは `AGENTS.md`「Development」にあり、変更は
 [#564](https://github.com/semnil/urx-router/pull/564)。その中の 2 つの決定:
 
 - **検査が見るのは、今のユーザーのプロセスだけ** (`pgrep -x -u <uid>`)。ほかのユーザーのプロセスの作業

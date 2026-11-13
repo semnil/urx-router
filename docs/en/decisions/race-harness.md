@@ -5,7 +5,7 @@
 Closed decisions about the live-sync race harness (`e2e/race/`), and what writing its cases has
 taught. The harness itself — its invariants, the fake device's contract, the tiers and the
 findings — is described in [live-race-harness.md](../live-race-harness.md), and the rules a change
-has to follow are in `CLAUDE.md` "Development" and "Conventions"; this document holds the reasoning
+has to follow are in `AGENTS.md` "Development" and "Conventions"; this document holds the reasoning
 those do not. "The operator" below is the person who directs this project's work and decides for
 it. Read this before adding or rewriting a case, before re-deriving the shard weights, and before
 proposing something the first section lists.
@@ -215,7 +215,7 @@ be a unit test.
 
 **Decision.** The array in the ledger is re-derived from a run's log whenever the corpus changes;
 subtracting the removed cases is a stopgap. The mechanism is in live-race-harness.md, "How the
-shards are sized", and the commands are in `CLAUDE.md`.
+shards are sized", and the commands are in `AGENTS.md`.
 
 - **The log has to measure the corpus this checkout collects.** A case's key is its file, line and
   title, so a comment moving one line in a spec while the branch is behind `main` shifts the keys
@@ -242,7 +242,7 @@ shards are sized", and the commands are in `CLAUDE.md`.
 - **The reason for a permanent skip lives in one place, the ledger in this repository
   (`e2e/race/skip-ledger.json`), and is not copied into another document** (2026-08-11). A copy
   goes unread when the reason expires, and the harness runs only on a version-bump pull request.
-  What the ledger's check does is in `CLAUDE.md`.
+  What the ledger's check does is in `AGENTS.md`.
 - **Merging on the plan side alone was a regression.** A read returns the copy it used, and a
   capture takes its shape from the live plan and its values from the copy.
 - **The three follow reads do not refuse file operations.** They start on their own, and File > New

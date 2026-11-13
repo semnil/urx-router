@@ -3,7 +3,7 @@
 > 日本語版: [../../ja/decisions/routing-planner-skill.md](../../ja/decisions/routing-planner-skill.md)
 
 Closed decisions about the skill bundled under `.claude/skills/urx-routing-planner/` and its two
-manifests. The rules for keeping the skill in step with the app are in `CLAUDE.md` "Conventions";
+manifests. The rules for keeping the skill in step with the app are in `AGENTS.md` "Conventions";
 this document points at where each of them was decided.
 
 ## The 2026-07-26 drift audit

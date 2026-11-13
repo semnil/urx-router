@@ -4,7 +4,7 @@
 
 Procedures for running the tests, the builds and one-off evaluations on a development machine. The
 commands themselves, the port rules, the rule for stopping a process and the dev app's startup
-check are in `CLAUDE.md` "Development"; this document holds the steps around them that are needed
+check are in `AGENTS.md` "Development"; this document holds the steps around them that are needed
 only now and then.
 
 ## Starting a Live sync session from an E2E spec
@@ -22,7 +22,7 @@ Two things about the button that starts it:
 
 ## Finding a server left on an E2E port
 
-`CLAUDE.md` "Development" says what a server left on port 4173 or 4174 does to the next run. To see
+`AGENTS.md` "Development" says what a server left on port 4173 or 4174 does to the next run. To see
 whether one is there, and whose bundle it serves, read the name of the chunk the port is serving
 and compare it with the build output on disk:
 
@@ -130,9 +130,9 @@ the experimental features).
   the directories of the Node version manager's shims, of Cargo's binaries and of the package
   manager in front of it.
 - **If the SIM view fails with `Failed to resolve import` naming the simulator's fonts**, the simulator is
-  not linked into `node_modules`. Run the set-up commands of CLAUDE.md "Development" (the submodule,
+  not linked into `node_modules`. Run the set-up commands of AGENTS.md "Development" (the submodule,
   then the install). No tracked file changes.
-- **Whether the app is up** is answered by the process, not by the log: CLAUDE.md "Development",
+- **Whether the app is up** is answered by the process, not by the log: AGENTS.md "Development",
   "The dev app being up is a process, not a log line".
 - **The app runs the simulator at the commit the submodule points at.** A change that is not merged
   in the simulator's repository is not in the app; say so when reporting what was seen.

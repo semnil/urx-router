@@ -19,7 +19,7 @@ async の Tauri コマンドから待つ形は、macOS で完了しなかった�
 ## The release is dispatched on the tag without a personal access token
 
 **決定。** `tag-release.yml` は `gh workflow run --ref <tag>` で `release.yml` を起動し、`release.yml` は
-渡された ref の種類で、その run が何かを決める。仕組みは `CLAUDE.md`「Development」にある。入れた変更は
+渡された ref の種類で、その run が何かを決める。仕組みは `AGENTS.md`「Development」にある。入れた変更は
 [#235](https://github.com/semnil/urx-router/pull/235)。
 
 **理由。** リポジトリ自身のトークンで push したタグは、ワークフローを起こさない。dispatch の形にしたのは、
@@ -59,7 +59,7 @@ personal access token を増やさずに済むため。
 ## The demo deploys when the draft is published
 
 **決定。** `pages.yml` は、人が draft のリリースを公開したときにデモを配る
-([#283](https://github.com/semnil/urx-router/pull/283))。仕組みは `CLAUDE.md`「Development」にある。
+([#283](https://github.com/semnil/urx-router/pull/283))。仕組みは `AGENTS.md`「Development」にある。
 次の 3 つは検討して、足さなかった: プレリリースを外すこと、新しいリリースの後で古いリリースが公開される
 場合の防ぎ、同じリリースがもう一度公開されたときの配り直し。
 
@@ -119,7 +119,7 @@ webview のストレージに無かったことによる。
 ## The format check verifies and never writes
 
 **決定 (2026-08-11)。** `format.yml` は整形を検査して、差分があれば失敗する。PR のブランチへは push
-しない。コミットの前に `pnpm format` を走らせることは必須。規則は `CLAUDE.md`「Conventions」に、理由は
+しない。コミットの前に `pnpm format` を走らせることは必須。規則は `AGENTS.md`「Conventions」に、理由は
 ワークフローのヘッダーにある。
 
 **却下した案。** 必須チェックと一緒に、自動の整形コミットの push を残す形。2 つあった: personal access

@@ -23,7 +23,7 @@ way the symptom was the same: Open and Save did nothing.
 
 **Decision.** `tag-release.yml` starts `release.yml` with `gh workflow run --ref <tag>`, and
 `release.yml` decides what the run is from the type of the ref it was given. The mechanism is in
-`CLAUDE.md` "Development"; the change that introduced it is
+`AGENTS.md` "Development"; the change that introduced it is
 [#235](https://github.com/semnil/urx-router/pull/235).
 
 **Why.** A tag pushed with the repository's own token starts no workflow. The dispatch form was
@@ -67,7 +67,7 @@ Which boxes the template holds, and why running the formatter is not one of them
 ## The demo deploys when the draft is published
 
 **Decision.** `pages.yml` deploys the demo when a person publishes the draft release
-([#283](https://github.com/semnil/urx-router/pull/283)); the mechanism is in `CLAUDE.md`
+([#283](https://github.com/semnil/urx-router/pull/283)); the mechanism is in `AGENTS.md`
 "Development". Three refinements were considered and not added: leaving prereleases out, guarding
 against an older release being published after a newer one, and deploying again when a release is
 published a second time.
@@ -133,7 +133,7 @@ that the consent flag was absent from the webview's storage.
 
 **Decision (2026-08-11).** `format.yml` verifies the formatting and fails on a difference. It never
 pushes to a pull request's branch, and running `pnpm format` before committing is required. The
-rule is in `CLAUDE.md` "Conventions"; the reasoning is the workflow's header.
+rule is in `AGENTS.md` "Conventions"; the reasoning is the workflow's header.
 
 **Turned down.** Keeping the automatic fix-up push alongside required checks, in two forms: pushing
 the fix-up with a personal access token or a GitHub App token so that it starts the workflows, and

@@ -5,7 +5,7 @@
 Closed decisions about how work on this repository is carried out — scratch files, the instruction
 file, release pull requests, estimating, and what is run before a pull request — with what happened
 that led to each.
-The rules themselves are in `CLAUDE.md` "Development" and "Conventions"; this document holds the
+The rules themselves are in `AGENTS.md` "Development" and "Conventions"; this document holds the
 reasoning those do not. "The operator" below is the person who directs this project's work and
 decides for it.
 
@@ -69,7 +69,7 @@ for being the next one.
 
 ## What to run before a pull request
 
-**Decision.** Two rules in `CLAUDE.md` "Conventions" came from the incidents below: a change that
+**Decision.** Two rules in `AGENTS.md` "Conventions" came from the incidents below: a change that
 adds a row or a toggle to a panel runs the whole of `pnpm test:e2e:app` before the pull request,
 and a change to behaviour the race harness pins runs the race specs that name it.
 

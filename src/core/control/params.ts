@@ -1,6 +1,6 @@
 // Catalog of the control parameters live control writes and reads. Each entry
 // binds a semantic name to the broker's numeric param_id and the value encoding
-// (see vd.ts). An address is listed under CLAUDE.md Conventions "Write only
+// (see vd.ts). An address is listed under AGENTS.md Conventions "Write only
 // confirmed parameters": a value written to it is read back from the unit. An
 // address the app only reads is flagged `readOnly`, which keeps it out of every
 // writer's name type, and is listed once its reading follows what the unit's own

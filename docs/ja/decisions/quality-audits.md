@@ -26,7 +26,7 @@
 
 **決定。** 下の挙動は、堅牢性の監査で見つかり、分かった上で、今のままにしている。`*.audit.test.ts` のケースが
 固定しているものは、そのファイルの名前を横に書いた。その挙動を変えるときは、pin も書き換える
-(`CLAUDE.md`「Conventions」)。
+(`AGENTS.md`「Conventions」)。
 
 - `src/core/constraints.ts` の `rateConstraints` は、サンプルレートを `> 96000` だけで分ける。表にあるレートか
   どうかは調べず、0 や負の値も断らない (`src/core/routing.audit.test.ts`)。
@@ -163,7 +163,7 @@
 ## Abort on failure is the operator's decision
 
 **決定。** device のリンクでは、失敗した操作は、その操作の全体を中断する。決まりと恒久の例外は
-[architecture.md](../architecture.md)「失敗時の中断」と `CLAUDE.md`「Conventions」にある。これは操作者が決めた。
+[architecture.md](../architecture.md)「失敗時の中断」と `AGENTS.md`「Conventions」にある。これは操作者が決めた。
 操作が失敗した後は、次の操作が頼る状態が分からなくなるので、どの操作も中断を基本にする、という決定。中断の
 範囲を「厳しすぎる」として緩める提案は、設計の調整ではなく、この決定を覆す提案になる。
 

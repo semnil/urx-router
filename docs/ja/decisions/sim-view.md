@@ -4,7 +4,7 @@
 
 SIM ビューについて、閉じた判断と、その周りで起きたことを置く。SIM ビューは、本体の LCD を、GRAPH と CONSOLE の
 隣に出す画面で、埋め込んだシミュレーター urx-lcd-sim が描く。仕組みは [architecture.md](../architecture.md) の
-「SIM ビュー (本体の LCD)」にある。書き込みを断るときの規則は、`CLAUDE.md` の「Conventions」(「A write is refused
+「SIM ビュー (本体の LCD)」にある。書き込みを断るときの規則は、`AGENTS.md` の「Conventions」(「A write is refused
 only for a reason the unit or the operator gives」) にある。下の中身の多くは、リンクした PR に既にある。そのため、
 ここの節は、見出しと結論とリンクだけのことが多い。`lcd-sim#N` と書いた PR は、
 [urx-lcd-sim](https://github.com/semnil/urx-lcd-sim) のもの。下の「操作者」は、このプロジェクトの作業を指示し、決める
@@ -23,7 +23,7 @@ only for a reason the unit or the operator gives」) にある。下の中身の
 | D4 | 表示倍率 | 既定は 100%。切り替えは View メニューの節に置き、どのビューでも出す (D11) |
 | D5 | Initialize | 出さない。File > New が、その役をする。却下した案: Device メニューか File メニューの節として置く |
 | D6 | シミュレーターの取り込み方 | 下の「How it is taken in」 |
-| D7 | 「外部依存ゼロ」 | 「外部」は、このプロジェクトの持ち主自身のリポジトリの外を指す。文言は `CLAUDE.md` の「Tech stack」にある |
+| D7 | 「外部依存ゼロ」 | 「外部」は、このプロジェクトの持ち主自身のリポジトリの外を指す。文言は `AGENTS.md` の「Tech stack」にある |
 | D8 | フォントのライセンス | 同梱する IBM Plex Sans (OFL) を、今あるライセンスの画面に 1 項目として足す |
 | D9 | 模擬の機能 | 軽くすることは、目的にしない。模擬の部分を、実機と共通の 1 つのインターフェース (パラメータ・レベル・操作・時計) に改めた。アンドゥに支障が無いことを条件に、承認された。下の「What undo requires of the embedding」 |
 | D10 | ガラスの後ろの盤面 | 2 つのテーマで同じ。ダークテーマの盤面に、`color-scheme: dark` を付ける。周りの枠は、テーマに従う |

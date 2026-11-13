@@ -27,7 +27,7 @@ The fixes themselves are in [#366](https://github.com/semnil/urx-router/pull/366
 
 **Decision.** The behaviors below were found in a robustness audit, are known, and are left as
 they are. Where an `*.audit.test.ts` case pins one, the file is named beside it, and a change to
-that behavior rewrites the pin (`CLAUDE.md` "Conventions").
+that behavior rewrites the pin (`AGENTS.md` "Conventions").
 
 - `rateConstraints` in `src/core/constraints.ts` classifies a sample rate by `> 96000` alone. It
   does not check that the rate is one of the table's, nor reject zero or a negative value
@@ -180,7 +180,7 @@ two port selects: what a second and a third choice do while the first port is st
 
 **Decision.** On the device link, a failed operation aborts the whole operation. The rule and its
 permanent exceptions are in [architecture.md](../architecture.md) "Aborting on failure" and in
-`CLAUDE.md` "Conventions". It was set by the operator: after an operation fails, the state the next
+`AGENTS.md` "Conventions". It was set by the operator: after an operation fails, the state the next
 one would rely on is no longer known, so every operation is aborted by default. A proposal to
 loosen how far the abort reaches because it looks too strict is therefore a proposal to overturn
 that decision, not a design adjustment.

@@ -521,7 +521,7 @@ function checkJob(workflow, id, job, context) {
   //    simply stops being mergeable. A group that cancels therefore has to be one that no
   //    OTHER run reporting the same context on the same commit can join, and the key that
   //    guarantees it is a per-run one. Keyed by the ref instead, a `workflow_dispatch` on
-  //    a pull request's branch joins that pull request's own run (CLAUDE.md tells the
+  //    a pull request's branch joins that pull request's own run (AGENTS.md tells the
   //    operator to make exactly that dispatch), and a push to the default branch joins the
   //    next push — which is how a cancelled CI run on main would leave tag-release.yml's
   //    `conclusion == 'success'` false and a version bump untagged.

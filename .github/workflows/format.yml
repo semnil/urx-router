@@ -14,7 +14,7 @@ name: Format
 # needed a human push or a close/reopen, and neither is discoverable from the symptom.
 #
 # So `pnpm format` before committing is now a real obligation rather than a courtesy, and
-# this is where it is enforced — see CLAUDE.md "Conventions" and CONTRIBUTING.
+# this is where it is enforced — see AGENTS.md "Conventions" and CONTRIBUTING.
 #
 # Formatting drift on main no longer self-heals, since nothing writes any more: the fix is
 # a commit like any other. No trigger filter, because this job reports `format`, one of

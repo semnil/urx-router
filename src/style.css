@@ -341,7 +341,7 @@ body {
    system's on both — a rgb(195,195,195) highlight backplate under rgb(48,46,43) text on
    Windows, which is why no contrast pair here is authored against it. Photographing
    this popup takes a different instrument from every other reading in this file;
-   CLAUDE.md's "Reading the REAL webview from outside" says which and why. */
+   AGENTS.md's "Reading the REAL webview from outside" says which and why. */
 select#model-picker,
 select#rate-picker,
 .prefs-select,
@@ -5127,7 +5127,7 @@ button.consent-btn-primary {
 /* One lane's bar column width. A capped lane wraps its slot so the cap can escape the
    slot's clip, and the wrapper stands in the rack in the slot's place — so both take this
    or a capped lane silently becomes a different width from an uncapped one. Scoped to the
-   screen: this file's only other `:root` block is the palette, which CLAUDE.md names as
+   screen: this file's only other `:root` block is the palette, which AGENTS.md names as
    the half that has to stay in sync with `PALETTES` in graph.ts. */
 #dyn-screen-box {
   --gt-slot-w: 46px;

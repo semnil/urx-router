@@ -624,7 +624,7 @@ re-measure logic Chromium already covers, at minutes a run. Same precedent as
 | The race tiers at `--workers=4` | ~6 min (162 cases; measured on Apple silicon, isolated) |
 | The heaviest file (T2) alone | ~2.5 min |
 
-This table is **the only place the harness's wall clock is stated**: `CLAUDE.md` points here rather
+This table is **the only place the harness's wall clock is stated**: `AGENTS.md` points here rather
 than repeating a second figure that drifts out of step with this one.
 
 The slow cases are the ones that deliberately provoke several whole-device readbacks (~800 sequential
@@ -696,7 +696,7 @@ stayed green:
 
 | the list said | what it left out | why that file matters |
 | --- | --- | --- |
-| `src/**` and `e2e/race/**` | `e2e/graph-helpers.ts` | `t0b-sweeps.spec.ts` and `t2b-shape-change.spec.ts` import it, and CLAUDE.md's asset table asks the harness to consolidate onto it |
+| `src/**` and `e2e/race/**` | `e2e/graph-helpers.ts` | `t0b-sweeps.spec.ts` and `t2b-shape-change.spec.ts` import it, and AGENTS.md's asset table asks the harness to consolidate onto it |
 | — | `playwright.config.ts` | the `race` and `race-webkit` projects are declared there and nowhere else |
 | + those two | `pnpm-lock.yaml` | it pins the Playwright version, which `.github/actions/playwright-version` turns into the container image both harness jobs run in |
 | + `package.json` and the lockfile | `race.yml` itself, `.github/actions/install-browsers/`, `.env.trace`, `vite.config.ts`, `scripts/e2e-serve.mjs` | the job definition, the browser install, the trace build flag, the bundle the tier serves, and the server that serves it |
@@ -804,7 +804,7 @@ its own table above, under the line that claims that table as its single home.
 makes `race-required` usable as a merge condition: a workflow skipped by a trigger filter reports no
 check run, so a pull request the harness does not run on could never carry the check the others wait
 for. On those the two harness jobs skip on their own condition, which reports success in seconds — the
-arrangement, and why a required check has to be able to report on every pull request, is in CLAUDE.md's
+arrangement, and why a required check has to be able to report on every pull request, is in AGENTS.md's
 "What a merge waits for".
 
 Against a branch, on demand — for pulling a verdict forward, or re-running one:
