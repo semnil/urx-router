@@ -575,7 +575,8 @@ Gain Flat が並ぶ。
 
 - 12 バンドの規則
 - ライブ同期中の、STEREO の 20 Hz より上のバンド。制御リンクが書かないので、本体の値を表示して追従する
-  ([known-issues.md](known-issues.md))
+  ([known-issues.md](known-issues.md))。そのときは STEREO の Gain Flat も選べなくなり、画面を開いている間に
+  セッションが始まる・終わると、行を描き直す
 - 48 kHz より上のサンプリング周波数。本体は Flex12GEQ を出さない。すべての行がロックされ、インスペクタの
   EQ Type もロックされる
 

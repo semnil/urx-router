@@ -413,6 +413,10 @@ export interface DynProcessor {
    *  in the layout without showing them). No row is ever removed, so the panel keeps its
    *  height whatever is selected. */
   rowStates?: (ctx: DynCtx, vals: Record<string, unknown>) => ReadonlyMap<string, SettingsRowOptions> | null;
+  /** `rowStates` reads `ctx.liveSync`, so a session starting or ending under the open screen
+   *  draws the rows again. Only such a screen is redrawn then: the others keep the frame they
+   *  have, and keep none queued once the meters stop. */
+  liveRows?: true;
   rows?: (ctx: DynRowCtx) => DynRows;
   /** Sections above the parameters. The 1-knob is one wherever a processor has one — COMP,
    *  the 4-band EQ and the multi-band compressor — because it decides whose the rows below
@@ -1127,15 +1131,18 @@ export class DynScreen {
    *  and their peaks to "—", and the plot is redrawn without its live overlay. */
   setLive(active: boolean): void {
     if (!this.isOpen()) return;
-    if (active) {
-      this.startMeters();
-      return;
+    if (active) this.startMeters();
+    else {
+      this.stopMeters();
+      this.readings.clear();
+      this.liveLast = [];
+      this.paintN = 0;
+      this.paint();
     }
-    this.stopMeters();
-    this.readings.clear();
-    this.liveLast = [];
-    this.paintN = 0;
-    this.paint();
+    // What a row allows can depend on the session (a GEQ band the link does not write), so such a
+    // screen's rows are drawn again for it. After the meters, so the rebuild finds the
+    // subscription it would otherwise take again already in place.
+    if (this.p().liveRows) this.refresh();
   }
 
   // ---------------------------------------------------------------- meters

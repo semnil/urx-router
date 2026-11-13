@@ -807,6 +807,7 @@ export const en = {
       hint: tr("Twelve bands at most can be away from 0 dB at once, as on the unit."),
       full: tr("Twelve bands are in use — return one to 0 dB to move this one"),
       unwritable: tr("The unit takes no write to this band over the link — move it on the unit"),
+      flatUnwritable: tr("The unit takes no write over the link to the bands above 20 Hz — use Gain Flat on the unit"),
       notSelected: tr("EQ Type is 4band PEQ: these values are kept but do not reach the signal."),
       sideOff: tr("This side's GEQ is off: its bands do not reach the signal."),
     },

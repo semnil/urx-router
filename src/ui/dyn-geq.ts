@@ -172,6 +172,7 @@ export const GEQ_DYN: DynProcessor = {
   },
   written: writtenPaths,
 
+  liveRows: true,
   rowStates: (ctx, vals) => {
     const out = new Map<string, SettingsRowOptions>();
     const m = ctx.m;
@@ -185,6 +186,10 @@ export const GEQ_DYN: DynProcessor = {
     const gains = GEQ_BAND_LABELS.map((_, x) =>
       typeof vals[bandKey(x)] === "number" ? (vals[bandKey(x)] as number) : 0,
     );
+    // Gain Flat writes every band of the side, and during Live sync the link takes none of
+    // STEREO's above 20 Hz: run here it would flatten the plan's and leave the unit's as they are.
+    if (ctx.liveSync && GEQ_BAND_LABELS.some((_, x) => !geqBandWritable(ctx.nodeId, x)))
+      out.set("flat", { tag: m.dynTuning.geq.flatUnwritable, locked: true });
     GEQ_BAND_LABELS.forEach((_, x) => {
       if (ctx.liveSync && !geqBandWritable(ctx.nodeId, x))
         out.set(bandKey(x), { tag: m.dynTuning.geq.unwritable, locked: true, assignable: true });
@@ -254,7 +259,7 @@ export const GEQ_DYN: DynProcessor = {
     flat.textContent = g.gainFlat;
     if (locked("flat").locked) flat.disabled = true;
     flat.addEventListener("click", () => set({ flat: true }));
-    sec.append(settingsRow("", flat));
+    sec.append(settingsRow("", flat, locked("flat")));
     return [sec];
   },
 

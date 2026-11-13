@@ -146,7 +146,8 @@ URX Router therefore treats those thirty bands the way it treats the CH → FX s
 - **During Live sync** their faders on STEREO's GEQ screen are read-only and show the unit's
   value. A change made on the unit's own GEQ screen reaches the app, since the unit announces it
   and the app subscribes to those bands although it never writes them. A MIDI control mapped to
-  one of them takes no value while the session is up.
+  one of them takes no value while the session is up, and Gain Flat on STEREO's screen is held,
+  since the bands it would flatten are those the link does not take.
 
 > Confirmed on a URX44V and a URX22 (System 1.5.0.1) by writing each band of each side over the
 > control connection and reading it back, and on the URX44V by moving the bands on the unit's own

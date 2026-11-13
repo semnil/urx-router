@@ -645,7 +645,8 @@ Inspector and MIDI make the same move:
 
 - the twelve-band rule;
 - during Live sync, STEREO's bands above 20 Hz, which the control link does not write: they show the
-  unit's value and follow it ([known-issues.md](known-issues.md));
+  unit's value and follow it ([known-issues.md](known-issues.md)). STEREO's Gain Flat is held then too,
+  and the rows are drawn again when a session starts or ends under the open screen;
 - a sample rate above 48 kHz, where the unit offers no Flex12GEQ. Every row locks, and so does the EQ
   Type in the Inspector.
 

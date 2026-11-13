@@ -7,9 +7,16 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const subscribed = vi.hoisted(() => ({ count: 0 }));
 vi.mock("../core/meters", async (importOriginal) => {
   const real = await importOriginal<typeof import("../core/meters")>();
-  return { ...real, subscribeMeters: () => Promise.resolve(() => {}) };
+  return {
+    ...real,
+    subscribeMeters: () => {
+      subscribed.count++;
+      return Promise.resolve(() => {});
+    },
+  };
 });
 
 import { DynScreen } from "./dyn-screen";
@@ -135,6 +142,43 @@ describe("what shuts a fader", () => {
     const selects = [...host!.box.querySelectorAll<HTMLSelectElement>(".prefs-row select")];
     expect(selects.length, "the Link and the Limit").toBe(2);
     expect(selects.every((s) => s.disabled)).toBe(true);
+  });
+});
+
+describe("a Live sync session under the screen", () => {
+  const flat = (): HTMLButtonElement =>
+    [...host!.box.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === t().dynTuning.geq.gainFlat,
+    )!;
+
+  // Gain Flat writes every band of the side; the link takes none of STEREO's above 20 Hz, so run
+  // during a session it would flatten the plan's and leave the unit's.
+  it("holds Gain Flat on STEREO, says why, and leaves a MIX's alone", () => {
+    open("bus.stereo", { gains: { 17: -6 }, live: true });
+    expect(flat().disabled).toBe(true);
+    expect(flat().closest(".prefs-row")?.textContent).toContain(t().dynTuning.geq.flatUnwritable);
+    flat().click();
+    expect(gains("bus.stereo", 0)[17], "nothing flattened").toBe(-6);
+    screen!.close();
+    host!.restore();
+    open("bus.mix1", { gains: { 17: -6 }, live: true });
+    expect(flat().disabled).toBe(false);
+    flat().click();
+    expect(gains("bus.mix1", 0)[17]).toBe(0);
+  });
+
+  it("draws what the faders allow again when a session starts or ends, on one subscription", () => {
+    open("bus.stereo");
+    expect([fader(1).disabled, flat().disabled], "no session").toEqual([false, false]);
+    subscribed.count = 0;
+    host!.setLive(true);
+    screen!.setLive(true);
+    expect([fader(1).disabled, fader(0).disabled, flat().disabled], "a session").toEqual([true, false, true]);
+    expect(subscribed.count, "the meters subscribed once").toBe(1);
+    host!.setLive(false);
+    screen!.setLive(false);
+    expect([fader(1).disabled, flat().disabled], "the session ended").toEqual([false, false]);
+    expect(subscribed.count).toBe(1);
   });
 });
 
