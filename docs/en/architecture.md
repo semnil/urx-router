@@ -2072,8 +2072,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   open, and every port refresh checks this side's record against it (`reconcileOpenPorts`), adopting the
   shell's answer. Without that the frontend would go on naming a port nothing is listening on and the window
   would go on offering it as chosen — with no way back, since re-picking the same entry fires no `change`. The
-  reconcile stands down for anything that opens a port: the two commands are answered on different threads,
-  and a reply that overtook the open it describes would clear a port that is being connected right now. In
+  reconcile stands down for anything that opens a port: the answer describes a moment and does not say which
+  side of an open that moment was on, and one taken before an open that has since landed would clear a port
+  that is being connected right now. In
   flight when it starts is not enough on its own — an open that begins and ends inside the round trip leaves
   that count back at zero — so finished opens are counted too and the count is compared across the trip.
   A close is counted with them: an answer taken while a port was open still names it after "None", or giving
