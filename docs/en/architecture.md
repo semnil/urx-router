@@ -3863,7 +3863,7 @@ explanatory notes are translated.
 an address may be written down) and flags them **`planExternal`** — no `translate.ts` group emits them and
 no `readback.ts` group reads them, so `sceneExternal`'s write-scope filter is inert for them. The flag is
 what the contract test derives its "never emitted" guarantee from, rather than a hand-copied name list
-that fails nothing when someone forgets to extend it; Follow USB (848) carries it too.
+that fails nothing when someone forgets to extend it; Follow USB carries it too.
 `core/control/device-setup.ts` is their whole surface, in the same shape as Follow USB: bare
 `vdGet` / `vdSet`, no diff engine, no snapshot. The reason is that a plan travels — as
 a saved file, a recent-files entry and a `?plan=` link — and `planToCommands` writes absolute state, so
@@ -3922,7 +3922,7 @@ free-form strings (`Function` / `Parameter 1` / `Parameter 2`) that the device s
 validates, so the app owns the exact user-guide spelling: picking a function re-seeds both parameter
 columns from the catalog, and all three are always written together. A partial write is not reconciled by
 the device — it would leave the unit showing a triple no menu could have produced. The bank tabs open on the
-bank the unit is on (`769`, raw 0..3 = banks 1..4, read on every model with the rest of the set), and on bank
+bank the unit is on (read on every model with the rest of the set), and on bank
 1 for a reading that names none of the four. That address is read and never written: the catalog flags it
 **`readOnly`**, which keeps it out of `WritableParamName` and so out of every setup write, and moving between
 the tabs is the screen's own and changes nothing on the unit.
@@ -5198,8 +5198,8 @@ Two things a settings file cannot supply, both stated in the import confirm:
   they are rather than reset. (Scene names are the same kind of gap in reverse: they exist only in
   the file scaffolding, with no parameter behind them.)
 
-One parameter — the oscillator's ON state (710) — has no descriptor in the format at all: the unit
-does not persist it and loads with it off. So the source supplies off (0) rather than failing on it,
+One parameter — the oscillator's ON state — has no descriptor in the format at all: the unit
+does not persist it and loads with it off. So the source supplies off rather than failing on it,
 and a clean file imports with no failures and no unread nodes. This is a whitelisted gap; anything
 else genuinely absent surfaces as a read failure.
 
