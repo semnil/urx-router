@@ -84,7 +84,7 @@ it has something to measure**, so this stage is dropped rather than deferred.
 | Undo entry state | none open / an entry with no boundary of its own / under a press / under a drag / with a text field focused / applying |
 | Model | URX44V / URX22 |
 
-Each phase-offset value sits on the edge of one of these measured constants.
+Each phase-offset value sits on the edge of one of these constants.
 
 | Constant | Value | Location |
 | --- | --- | --- |
@@ -211,7 +211,7 @@ A clean clause B is **not** "the emitted set is inside the registration". It can
 already in `planToCommands` but not yet flushed (that is invariant 2's subject), a window that has
 since closed, the string path (`vd_set_str` — channel names, Sweet Spot Data — which has neither a
 snapshot nor a registration entry), `planExternal` params, or anything at all with no session. The
-reverse difference is deliberately not judged: `FOLLOW_USB` (848), the LCD selection (762), HOME's [Sends] destination (763, on an experimental launch alone) and the [CUE] flags are appended
+reverse difference is deliberately not judged: `FOLLOW_USB` (the rate's Follow USB switch), the LCD selection, HOME's [Sends] destination (on an experimental launch alone) and the [CUE] flags are appended
 to the registration by hand and are in no snapshot, which is the harmless direction.
 
 The `addrs` argument of `vd_params_subscribe` is the registration set, so all of this can be read
@@ -407,10 +407,10 @@ windows above exists. The fake must provide the following.
 | l | The bridge's notify filter: a param notify is forwarded only while a subscription is installed and only for an address this session registered, plus the `BULK_CHANGE` sentinel — mirroring `Subs::absorb`, per ENTRY inside a batch |
 | m | The same filter on the meter half: a reading is forwarded only while the meter channel is installed and only for a `(meter_id, x)` this session registered — no sentinel, since every reading carries an address |
 | n | Post-write read staleness: `staleAfterWrite[addr] = n` makes the next `n` reads after EACH write to that address answer the value it held BEFORE that write, while `mem` stays truthful — the unit ACCEPTED the write and cannot yet report it. Numeric path only. What ENDS the window is not this setting's business: every value-changing write is announced (see below), and that announcement closes any window open on the address whether its scripted reads were spent or not |
-| o | The announcement itself, which is unconditional and needs no case to arm it: a write that CHANGES the value the unit reports is announced `cfg.announceMs` (100, the measured median) after its **ack**. Three silences, all from the one rule — a same-value write (measured: 18 acked in 0-1 ms, none announced), an `ignoreWrites` address (acked and never stored, so nothing it reports moved) and a `diverge`d address (the unit goes on asserting what it already held) |
-| p | The same window on the NAME path: `staleAfterWrite` applies to a string address too, so the next `n` reads of it after a `vd_set_str` answer the name it replaced. Measured on a URX44V — 81 ms, so the string path is not exempt and the fake modelled it as exempt for its whole life. **The announcement follows item o's rule too, and both halves of it are measured on this path rather than carried over**: a name write that changes the reported name is announced `announceMs` after its ack and closes the window (32 writes over two runs announced after their own ack, 32/32, at ack+1-102 ms — most of them 66-102, with 2 of the 32 under 10 ms, a low tail the numeric spread does not have and whose cause is not identified), and a same-value name write announces nothing (acked in 0 ms, silent for 2000 ms, bracketed by a changing write on each side so a dead stream could not pass for a silent device). The app hears it, because name addresses joined the registration set when the follow learned to carry a device-side rename; Sweet Spot Data (param 91) joined it too — the SSMCS mode change's own flush subscribes to it (`t2b-shape-change`). `t1d-name-window` is the case that needed the window |
+| o | The announcement itself, which is unconditional and needs no case to arm it: a write that CHANGES the value the unit reports is announced `cfg.announceMs` after its **ack** — 100 by default, the unit's median delay from a write's ISSUE to its notify, rounded, and counted here from the ack instead. Three silences, all from the one rule — a same-value write (acked in 0-1 ms and never announced), an `ignoreWrites` address (acked and never stored, so nothing it reports moved) and a `diverge`d address (the unit goes on asserting what it already held) |
+| p | The same window on the NAME path: `staleAfterWrite` applies to a string address too, so the next `n` reads of it after a `vd_set_str` answer the name it replaced. On a URX44V the name window is 81 ms, so the string path is not exempt, and the fake modelled it as exempt for its whole life. **The announcement follows item o's rule too, and both halves of it hold on this path in its own right rather than by analogy with the numeric one**: a name write that changes the reported name is announced `announceMs` after its ack and closes the window (the unit announces it after its own ack, 1-102 ms later and mostly 66-102, with a low tail under 10 ms that the numeric spread does not have and whose cause is not identified), and a same-value name write announces nothing. The app hears it, because name addresses joined the registration set when the follow learned to carry a device-side rename; Sweet Spot Data joined it too — the SSMCS mode change's own flush subscribes to it (`t2b-shape-change`). `t1d-name-window` is the case that needed the window |
 | q | Pan Link's silent rewrites, for the groups a case names (`installFake`'s `panLink: [{ link, source, sends }]`): writing the switch on sets every send pan in the group to its source's pan; while it is on, a source written carries the sends and a send written moves the source (and the other sends) to that value; writing it off leaves them where they are. None of it is announced — only the written address is, by item o's rule. The unit settles a send-pan write about 2 s after it; the fake settles it at the queue point, the stricter of the two for a case asking whether a send pan was written at all. Where the group names its MIX's BUS Type address (`busType`), a write of FIXED there turns the switch off, unannounced as well; a write of VARI leaves it. A `seedMem` of the switch is a state and rewrites nothing. `shape-pan-link-send-pans` is the case that needed it |
-| r | The state map's starting contents: every address a node-param leaf is written to holds the model's factory value — `defaultPlan`'s node params emitted through `planToCommands`, kept where `planToCommandOrigins` names a node-param leaf as the command's source — so a read there answers what a unit nobody has written holds, and the app finds nothing to bound. Every other address nothing wrote reads 0 — routing selectors, wire params (a channel's fader and pan are its STEREO send's), colours — except STREAMING's source (705 / 706), which starts on the factory STEREO. A case that needs another state seeds it (`setMemAt`, or a spec's own `seedMem`) |
+| r | The state map's starting contents: every address a node-param leaf is written to holds the model's factory value — `defaultPlan`'s node params emitted through `planToCommands`, kept where `planToCommandOrigins` names a node-param leaf as the command's source — so a read there answers what a unit nobody has written holds, and the app finds nothing to bound. Every other address nothing wrote reads 0 — routing selectors, wire params (a channel's fader and pan are its STEREO send's), colours — except STREAMING's source (its left and right selectors), which starts on the factory STEREO. A case that needs another state seeds it (`setMemAt`, or a spec's own `seedMem`) |
 | s | Answer timing: every answer settles on a later task than the one that sent the command, never in its microtasks, through the same queue the ordinary stubs settle through (`installAnswerQueue` in `e2e/tauri-stub.ts`) — and never ahead of an answer to a command asked before it that is already in. Latency, a barrier, a refusal and the device-lost latch all run their course before an answer joins that queue, and an answer still held back holds back nothing asked after it: a read held on the worker does not delay an answer from outside it. The `ipc-end` is traced, and a write's announcement armed (item o's ack), as the answer reaches the app. `baseline-fake-answer-timing` pins it |
 Plus a **barrier**: `blockAt({ cmd, nth })` holds a specific command, and `release()` lets it through.
 
@@ -422,16 +422,17 @@ write was acked and never stored, so it arms nothing; staleness says the unit ag
 repair path in the app is built on reading again.
 
 Item o is a **contract, not a knob**, and two things about it are load-bearing. The fake **owes** the announcement:
-a device that accepts a value-changing write and never announces it is not a device any URX measurement describes,
+a device that accepts a value-changing write and never announces it is not a device any URX behaves like,
 so an app that waits for the announcement before re-reading would otherwise be failed here for the fake's own
 contradiction. And it is anchored on the **ack**, not on the queue point — which is not a detail. Under a slow-link
 profile a queue-point announcement is delivered before the app has even been told its write succeeded, an ordering
-the unit never presents (acks land in 0-1 ms and the notify 9-204 ms after the write's issue, always after the ack).
+the unit never presents (the notify comes 9-204 ms after the write's issue and always after the ack, which lands in
+0-1 ms for a write of the value the unit already holds and has been seen at 2 ms and 11 ms for a value-changing one).
 T8-stress found this by going red and staying red through the fix; anchored on the ack it passes, with numbers
 matching main's arm exactly. The `announceMs` **default** stays BELOW live.ts's 120 ms flush window so the ordinary
 cases are not all measuring one thing: above it, an announcement is overtaken by the next write of a drag and
 arrives against a snapshot that has moved on. That overtake is a real device behaviour rather than an artefact of
-the fake — the measured ack+58-151 ms crosses 120 — and what used to happen next was the app's fault, not the
+the fake — the unit's ack-to-notify delay of 58-151 ms crosses 120 — and what used to happen next was the app's fault, not the
 announcement's: the echo test compared one value against the snapshot, so an overtaken announcement read as a
 device-side change, wrote a superseded value back into the plan, and the idle reconcile that followed wiped every
 undo entry. `live.ts` now keeps the writes it has been acked for but not yet seen announced, and the case that
@@ -439,19 +440,17 @@ deliberately raises `announceMs` above 120 is `late echo of an overtaken write` 
 
 And announcements **merge forward**. A write superseded by a later write to the same address *before its
 announcement went out* is never announced: the unit reports the value it ended up holding and says nothing about
-what it passed through, so a run of writes to one address is answered by ONE notify carrying the last of them
-(measured on a URX44V, `probe-overlap-announce{,2}.mjs`: 21 of 21 held overlaps across two encodings, and a triple
-announces once — a row whose later write did NOT beat the first announcement onto the wire is two serialised writes
-and is excluded rather than read as evidence). The fake models it by cancelling the pending timer, which is the same
+what it passed through, so a run of writes to one address is answered by ONE notify carrying the last of them. Two
+writes count as a run only when the later one goes onto the wire before the first announcement does; otherwise they
+are two serialised writes rather than a run. The fake models it by cancelling the pending timer, which is the same
 statement: a timer that has not fired is an announcement the device has not emitted, and one already out is past
 recall. Emitting one per write instead is how `settle.ts` came to ship a judge that expected an announcement per
 obliged write: a drag flushes more often than an announcement comes back, so every move but the last reported as a
-write that went nowhere and armed a whole-device sweep of its own, and the harness had no way to say so. What the
-measurement does NOT separate is which write the surviving announcement is anchored on: the delays that still held
-an overlap — the second write issued 0-32 ms after the first — are far smaller than the spread of the announcement
-delay itself, 1-172 ms (n = 44 across both runs, median 65), so the two anchors' distributions overlap. Every delay
-quoted here is measured from the ISSUE of the write it belongs to; mixing that origin with a burst-relative one
-makes a range that is neither.
+write that went nowhere and armed a whole-device sweep of its own, and the harness had no way to say so. What is
+NOT known is which write the surviving announcement is anchored on: the gap between two writes that still form a
+run is far smaller than the spread of the announcement delay itself, so the two anchors' distributions overlap. That
+spread is a delay from the ISSUE of the write the announcement belongs to; mixing that origin with a burst-relative
+one makes a range that is neither.
 
 This is also what the overtake above has to be spelled out about, because merging is what bounds it. An overtake is a
 WINDOW rather than merely a late announcement — between the superseding write's ISSUE, where the app's snapshot
@@ -465,14 +464,13 @@ assertion in it says nothing went wrong, and nothing going wrong is also what an
 reports has moved and there is nothing for it to announce; making it announce its asserted value instead would be a
 notify carrying a value the app never sent, which to the app is a DEVICE-SIDE CHANGE rather than a coercion, and it
 would silently change what `divergeAt` means in the dozen spec files already using it. Whether the unit ever coerces
-a write, or acks and silently discards one, is unmeasured — never observed across three instrumented hardware
-sessions — and it is not known whether it CAN be measured. So this is not a knob waiting on a measurement that
+a write, or acks and silently discards one, is not known — three instrumented hardware sessions never showed it —
+and neither is whether it CAN be measured. So this is not a knob waiting on a measurement that
 would settle it: one gets added if and when such a device behaviour is actually seen, and not before.
 
-**Why the filter has to exist at all was measured, not assumed (2026-07-31).** A client that connects
-to the broker and registers NOTHING still receives the whole push stream — meter frames and the
-free-running RTC fields (`789`-`794`) arrived on a connection with no subscription of any kind. The
-broker broadcasts; `Subs::absorb` is the only thing standing between that stream and the app, which is
+**Why the filter has to exist at all.** A client that connects to the broker and registers NOTHING
+still receives the whole push stream — meter frames and the unit's free-running clock fields arrive on
+a connection with no subscription of any kind. The broker broadcasts; `Subs::absorb` is the only thing standing between that stream and the app, which is
 why a fake that forwards unconditionally measures a device nobody ships.
 
 On (l): `vd_params_subscribe` replaces the registered set wholesale and `vd_params_unsubscribe` drops
@@ -602,7 +600,7 @@ red shard ran, prefix the run with the ledger's array:
 `PWTEST_SHARD_WEIGHTS=$(jq -r '.collect.shardWeights | join(":")' e2e/race/skip-ledger.json)`.
 
 The `race` project raises the per-test timeout to **120 s** and drops to **one** CI retry. The longest
-case measured 60 s on a two-worker CI runner — a barrier held across a converge round of ~800
+case takes 60 s on a two-worker CI runner — a barrier held across a converge round of ~800
 sequential reads — so at the 30 s default a passing case turns into a timeout that reads like a defect.
 Twice that worst case rather than three times it, because the handful needing more say so themselves
 (`test.setTimeout` in `tzb-tail` and `t8-stress`), and a project figure wide enough to cover them would
@@ -621,7 +619,7 @@ re-measure logic Chromium already covers, at minutes a run. Same precedent as
 
 | Condition | Wall clock |
 | --- | --- |
-| The race tiers at `--workers=4` | ~6 min (162 cases; measured on Apple silicon, isolated) |
+| The race tiers at `--workers=4` | ~6 min (162 cases; on Apple silicon, run in isolation) |
 | The heaviest file (T2) alone | ~2.5 min |
 
 This table is **the only place the harness's wall clock is stated**: `AGENTS.md` points here rather
@@ -713,15 +711,15 @@ generator and which therefore counts as code.
 
 `detect` reads `git diff --name-only` against the base rather than the API's file list — it already
 fetches the whole history for the version read, and a diff carries no truncation ceiling, which is a
-guard `ci.yml`'s `preflight` needs and this job does not. Two flags on that diff were measured rather
-than assumed, and since the question became an exclusion they no longer guard the same direction.
+guard `ci.yml`'s `preflight` needs and this job does not. Two flags on that diff matter, and since the
+question became an exclusion they no longer guard the same direction.
 **`--no-renames` is the one that still stops a silent skip**: rename detection prints a moved file at
 its destination alone, so moving a module into `docs/` would print one documentation path and the
 whole diff would read as documentation-only. **`-z` now fails the other way**: git C-quotes any path
 it cannot print literally — a non-ASCII byte, but also a `"`, a backslash or a control byte — and a
 quoted path matches neither `docs/*` nor `*.md`, so it reads as code and the harness runs. It is kept
-so the rule tests real paths rather than a rendering of them. Measured: `core.quotePath=false` closes
-only the non-ASCII third of the quoting, and `-z` does not imply `--no-renames`. `-z` costs a
+so the rule tests real paths rather than a rendering of them. `core.quotePath=false` closes only the
+non-ASCII third of the quoting, and `-z` does not imply `--no-renames`. `-z` costs a
 temporary file, since a NUL cannot survive a shell variable.
 
 **A comment-only diff is not excluded either.** That exclusion was measured before being dropped:
@@ -751,7 +749,7 @@ above the 8.1 minutes a third of the work would be.
 cuts to 8.3, 8.5 and 7.5. The cut points are chosen by minimising the worst shard's predicted wall under
 the model a shard actually runs at — two workers, each taking the next case in declaration order, plus
 about 9 s of worker startup — which reproduced that run's own three shards to 381 / 144 / 261 s against
-380 / 143 / 261 s observed.
+the 380 / 143 / 261 s they took.
 
 The array is `collect.shardWeights` in `e2e/race/skip-ledger.json`, which is the only place it is
 written: `race.yml` reads it there, and `pnpm check:skips` re-takes the collection under it. **What that
@@ -776,8 +774,8 @@ readings answer it, and they answer different amounts of it. The list reporter o
 not exactly one per shard is refused — that reads a log written at any time, every one that already
 exists included. `race.yml` then echoes the run id and attempt ahead of the tests, once per shard job,
 which refuses two ids, two attempts of one id, and one id on fewer lines than there are shards. That
-last is a fresh run stitched onto a log written before the echo, and it passes every other reading here
-— measured. Playwright emits nothing that identifies a run, and the timestamps a `gh run view --log`
+last is a fresh run stitched onto a log written before the echo, and it passes every other reading here.
+Playwright emits nothing that identifies a run, and the timestamps a `gh run view --log`
 carries cannot answer it either: a shard job can sit queued for as long as it takes, so no spread
 between two of them separates one run from two.
 
