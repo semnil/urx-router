@@ -2490,10 +2490,10 @@ written at all:
   Effect and engages the bypass with the next selection whatever it held, so the write sends the selector alone (`translate.test.ts`, "the insert-FX bypass beside No Effect").
 
 - **The unit keeps a UI state per element and announces it for one.** The side a stereo channel shows: the unit
-  keeps one per stereo channel, but its LCD selection (762) carries the side of the selected channel only, and
+  keeps one per stereo channel, but its LCD selection carries the side of the selected channel only, and
   that is the only one it announces. The app keeps its own side per channel (`stereo-side.ts`) and links it to
-  the selection while live: a Live-sync start and each 762 notify show the selected channel's side, and a
-  switch made in the app writes 762 — which also moves the unit's selection frame to that channel. A notify
+  the selection while live: a Live-sync start and each notify of it show the selected channel's side, and a
+  switch made in the app writes the selection — which also moves the unit's selection frame to that channel. A notify
   carrying a value the app wrote moments earlier is the unit's answer to it and is consumed (`LcdEchoes`), so
   two switches in a row do not bounce. One write is on the wire at a time: the switches made while it is go
   out as one write of the latest side, and not at all when that is the side the write sent — the unit leaves
@@ -2524,8 +2524,8 @@ written at all:
   settle window has passed, for one that changed nothing): the unit acks a write before the flag is readable, a
   read in between answers the value the write replaced, and the flags the unit clears or puts back with the
   write become readable with that announcement (see "A write is not readable when it is acked"). A read is taken
-  only when no write is waiting and nothing changed while it ran. **[CUE Mode]** (System 1.5, `CUE_MODE` at
-  897: Mix CUE or Last CUE, one setting for the unit, kept in its settings file and in no scene) is read with
+  only when no write is waiting and nothing changed while it ran. **[CUE Mode]** (System 1.5:
+  Mix CUE or Last CUE, one setting for the unit, kept in its settings file and in no scene) is read with
   the flags at every one of those reads and registered for notify beside them. Under Last CUE a cue turned on
   also clears the other cues of its own group, so `CueSet.apply` does; the two groups still clear each other,
   and the one output cue an input cue cleared still comes back with the last input cue off. A switch of the
@@ -2621,12 +2621,12 @@ sequenceDiagram
   participant P as plan
 
   D->>F: param notify, address and value
-  alt Follow USB, address 848
+  alt Follow USB
     F->>H: intercept updates the badge and consumes the notify
     Note over F: no settle window — the address has no owner node,<br/>so letting it through would escalate every change to a full re-read
-  else LCD selection, address 762
+  else LCD selection
     F->>H: intercept consumes the answer to our own write, or shows the selected stereo channel's side
-  else HOME's Sends destination, address 763
+  else HOME's Sends destination
     F->>H: intercept consumes the answer to our own write, or shows the destination chosen on the unit on the SIM view
   else a CUE flag, or an instance the unit sets beside one
     F->>H: intercept consumes our own write's answer and a mirror, or applies a press on the unit to the cue set and re-reads the flags 300 ms later
@@ -2780,7 +2780,7 @@ model has, not from what the plan currently holds: a node the operator has not n
 same, and a stereo pair is registered at both of its `instances`, so both are real addresses rather than an
 extrapolation from a numeric sequence. `planToNameWrites` is the write side of that same identity and is
 deliberately not the same set — it skips a node the plan holds no name for, and it carries one string that is not
-a name at all: the SSMCS Sweet Spot preset (param 91). That one **is** registered, and separately, because it is a
+a name at all: the SSMCS Sweet Spot preset. That one **is** registered, and separately, because it is a
 catalog row rather than a name — it resolves through the numeric index to its owner node, so a preset changed on
 the unit takes that node's scoped read instead of a direct placement, and a write of it can end its settle on the
 unit's announcement. Not the write that PUTS it there: the mode change's own flush writes the preset on the string
@@ -2835,10 +2835,10 @@ array address it wrote. So the silence is about the front panel, not about the a
 | --- | --- | --- |
 | CH → FX send tap (193 / 197 / 320 / 324) | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
 | microSD Rec Track Count (839) | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node 839 lands on, and the only address that read touches |
-| the FX delay time the unit computes (681 / 685, slot 6) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
-| a jack's +48V / A.Gain / Clip Safe / HI-Z (0 / 1 / 5 / 6) | no channel reads the jack, so the write leaves it out ([the input stage](#the-input-stage-on-the-jack-and-the-source)) | the **MIC/LINE node** — its scoped read re-reads both jacks, even for A.Gain, which a read jack follows directly |
+| the FX delay time the unit computes (slot 6 of the FX effect's parameters) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
+| a jack's +48V / A.Gain / Clip Safe / HI-Z | no channel reads the jack, so the write leaves it out ([the input stage](#the-input-stage-on-the-jack-and-the-source)) | the **MIC/LINE node** — its scoped read re-reads both jacks, even for A.Gain, which a read jack follows directly |
 | a channel's HPF frequency (26) | while the plan holds a stop outside 40 … 120 Hz: the unit's knob sets 20 … 600 Hz and the broker refuses a write outside that window, so the emit sends nothing there (`hpfFreqSent`) | the **channel** — its scoped read re-reads `hpfFreq` |
-| STREAMING source select (705 / 706) | while the plan holds no STREAMING wire: its list on the unit has no None, so the emit sends nothing there rather than NONE (`leavesUnsourced`) | **`bus.stream`** — its scoped read takes the source back with the node's DELAY |
+| STREAMING source select | while the plan holds no STREAMING wire: its list on the unit has no None, so the emit sends nothing there rather than NONE (`leavesUnsourced`) | **`bus.stream`** — its scoped read takes the source back with the node's DELAY |
 
 The third is not a read-only ADDRESS at all, which is why the heading above says cases. Slot 6 is written like
 any other parameter while the operator owns the delay time; it moves to this list only while tempo Sync is on,
@@ -2860,13 +2860,13 @@ All of them are enumerated by `planToFollowOnlyAddrs` in `translate.ts`, beside 
 registration and the write suppression cannot drift apart; `live.ts` consumes that list the same way it consumes
 `planToCommands`, **including its write scope**. That scope is not symmetry for its own sake: under *Scene only* a
 whole-device read puts the plan's scene-external values back after reading (`applyDeviceStateScoped` →
-`core/scene-scope.ts`, which names `sdRecTrackCount`), so a follow that pulled 839 in would be the one path where
+`core/scene-scope.ts`, which names `sdRecTrackCount`), so a follow that pulled Track Count in would be the one path where
 that preference does not hold — the notify-driven read and the full read would disagree about one value under one
 setting. Track Count is `sceneExternal` and drops out under *Scene only*; STREAMING's source and the send taps are scene state and stay. **The index entry and the readback gate are one decision, not two.** Naming an owner node is
-correct only while `readback` reads that address on a scoped read of that node — 839 is gated on
+correct only while `readback` reads that address on a scoped read of that node — Track Count is gated on
 `want("out.sdrec")` for exactly this reason, and the full-read behaviour is identical either way because `want` is
 `only === undefined || only.has(id)`. Were that gate `only === undefined`, every front-panel Track
-Count turn would take a scoped read that never touches 839: the follow runs, the read succeeds, and the value does
+Count turn would take a scoped read that never touches it: the follow runs, the read succeeds, and the value does
 not change. The opposite mistake — leaving the owner node off — works, at a whole-device read per turn. Sample
 rate keeps `only === undefined` because `plan.sampleRate` is a plan-level scalar no node owns, which is a
 difference in kind rather than a convention to copy.
@@ -3071,7 +3071,7 @@ the rate leaves that entry too.
 | A drag's intermediate values | the plan itself — the next step overwrites the key inside the window | only the final value of an address ever becomes a command |
 | An address whose value equals the snapshot | the flush's diff | the device already holds it |
 | A notify whose value equals the snapshot, a value an acked write is still waiting to hear announced, or the value a write still on the wire carries | `isEcho`, before the settle window | our own write coming back is not a change, whether it arrives after its ack or ahead of it, and whether the send loop or a converge round sent it — a converge sends from a copy frozen after the loop's writes, so it can carry a value the loop never sent; the match retires the writes queued before it, so the unit moving back to one of their values is still a change |
-| A notify for Follow USB, 848 | `intercept`, ahead of node resolution | host-owned and outside the plan; it would otherwise force a full re-read |
+| A notify for Follow USB | `intercept`, ahead of node resolution | host-owned and outside the plan; it would otherwise force a full re-read |
 | A device read whose plan was replaced | `readIntoPlan`'s identity guard, after the read resolves | its values belong to a document nothing shows |
 | An undo taken while a device read or a file flow holds the plan | `PlanHistory.blocked`, before the open entry is closed | it is deferred, not consumed, so the retry is exact |
 | An edit made while a Fetch's or Live-sync start's read carries a model switch | on the board, before it writes anything (`planTakesEdits`); everywhere else `markChanged`, which puts the plan back to the state the read began from; both say so (`busySwitchRead`) | the plan on screen is the one the switch discards ([Aborting on failure](#aborting-on-failure)) |
@@ -3206,8 +3206,8 @@ can still read, with the unreadable ones listed as gaps that leave the compariso
 **Its scope is what the plan would write**, since it walks `planToCommands` (plus the names) — with the input
 stage of every jack and source the plan holds, read by a channel or not (`everyInputHolder`), where a write
 carries only the ones some channel reads ([the input stage](#the-input-stage-on-the-jack-and-the-source)). Two kinds of
-parameter fall outside it: the ones the app reads and never emits — the microSD Rec Track Count (839) and the CH →
-FX send tap (193) — and the device-wide settings that are not in the plan at all (`planExternal`: Follow USB and the
+parameter fall outside it: the ones the app reads and never emits — the microSD Rec Track Count and the CH →
+FX send tap — and the device-wide settings that are not in the plan at all (`planExternal`: Follow USB and the
 fourteen SETUP > GENERAL addresses, which the unit's own settings screen reads and, all but the knob bank,
 writes). Neither kind can ever be
 reported as a difference, and neither is in the compared count. That is a different silence from the read failures
