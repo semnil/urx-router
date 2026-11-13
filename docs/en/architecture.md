@@ -786,7 +786,7 @@ carries a one-line map of the same directories and points here.
   rebuilds `Menu::default()` and swaps only the predefined pair, located by their own text; a click is
   emitted on `menu://edit` and the frontend routes it, and `set_edit_menu_state`/`set_edit_menu_labels` push
   the enabled state and the localized labels. Tauri's predefined `undo:` items reach AppKit, never the page
-  — measured: a click ran WebKit's field undo on the last edited field even after focus left it, silently
+  — a click runs WebKit's field undo on the last edited field even after focus has left it, silently
   changing the plan — and they cannot be enabled/disabled at runtime, so replacing them is the only way to
   make the menu agree with the chord. macOS only; no other platform installs a menu). The installer's
   consent page is `bundle.licenseFile` (`LICENSE.txt` = disclaimer + trademarks + MIT); exiting on
@@ -892,7 +892,7 @@ The constraint core (`core/routing.ts`):
   PRE-POST / ON; the Signal Type / PAN-BAL flags stay on the primary). `pairSharesNodeKey` answers which is which, and the
   mirror, the MIDI catalogue's mirror identity and each funnel's write witness all read it, so none of the
   three can claim a key the copy left with the partner. **The gate is Signal Type, not the
-  PAN/BAL mode**, which is what the unit does — the readings are in [device-model.md](device-model.md). What the
+  PAN/BAL mode**, which is what the unit does ([device-model.md](device-model.md)). What the
   mode decides is the one parameter on top: `isBalLinkedPair` gates the PAN, which is the pair's one shared
   balance in BAL and the member's own in PAN, and it is the same question the BALANCE label asks. Called from
   each edit funnel: `main.ts` `onUpdateParams` / `onUpdateNodeParams` for the graph / inspector, and
@@ -901,12 +901,12 @@ The constraint core (`core/routing.ts`):
   every level lane carries both members' addresses and the reduction lane stays one bar. The rule, the readings
   behind it and the one screen it does not reach (the DUCKER's KEY lane) are in
   [channel-tuning.md](channel-tuning.md), "A MONO IN pair whose Signal Type is STEREO".
-- **A Signal Type transition is the one thing that clears the pair's insert FX, and nothing else does.** Measured
-  on the unit: the transition itself — in **either** direction — clears the selector and its ON on **both**
+- **A Signal Type transition is the one thing that clears the pair's insert FX, and nothing else does.** On the
+  unit, the transition itself — in **either** direction — clears the selector and its ON on **both**
   members, whichever member was holding one, and the engine array keeps its values (only a selector write
   re-seeds it). While the pair *is* linked the selector mirrors both ways and both members point at one engine
   instance, so a linked pair holds one insert effect between them rather than one each. That mirror does **not**
-  depend on PAN/BAL: it was measured in both modes, and a PAN⇄BAL toggle on its own never clears the effect.
+  depend on PAN/BAL: it holds in both modes, and a PAN⇄BAL toggle on its own never clears the effect.
   It therefore takes a mirror pass of its own (`mirrorLinkedInsertFx`) beside the node mirror: the two share
   the `stereoLink` gate and write the same values, and the separate pass is what names the three pair keys as
   the edit's own writes whatever that edit touched.
@@ -919,14 +919,14 @@ The constraint core (`core/routing.ts`):
   `insertFxMenu` locks them as `"link"` on both members while the pair is linked. It is the second of the
   three lock kinds and it is asked SECOND, after the rate: a linked pair above every ceiling has to report
   the rate on every entry, or `insertFxAllRateLocked` stops answering for it and the rate warning and the
-  forced-off bypass go with it. Like the other two it is UI-only, and here that is a measurement rather than
+  forced-off bypass go with it. Like the other two it is UI-only, and here that is the unit's behaviour rather than
   a convention: the unit **accepts** a mono-only selector on a linked pair, mirrors it to both members and
   binds the engine, which is how the pair's mirror was established in the first place. Its panel does not allow
   selecting such an effect. On URX22 at 48 kHz, Clean, Crunch, Lead, Drive and Pitch Fix remain listed but
   dimmed on CH 1 and CH 2 in PAN and BAL alike, while Compander-H and Compander-S keep their normal appearance.
   The state is therefore one only software can put it in — and a plan that carries such a value
   (a file, a `?plan=` link, a device read of a unit some earlier build wrote to) still emits it, rather than
-  being silently rewritten on the way out. What the unit's DSP does with it is not measured.
+  being silently rewritten on the way out. What the unit's DSP does with it is not known.
   The transition also **names every key it wrote** to the edit funnel's write witness, because none of them
   has to move: the three deletions land on a member that carried no effect, and unlinking a BAL pair re-centres
   pans that are already centred. A device read in flight arbitrates by authorship for exactly that reason, and
@@ -1338,10 +1338,9 @@ those reports are diagnostics, where a stable code carries more than prose would
 
 What passing through resolves to depends on the value: `split()` takes `.message` from an `Error` and
 `String()`s anything else. A `DOMException` — what a cancel arrives as — therefore reports as
-`aborted` where it inherits from `Error`, and as `AbortError: aborted` where it does not. Every engine
-this has been measured in answers the first way (WebView2 on Windows, read from the running app;
-WebKit and bare V8 on macOS); jsdom builds it in another realm and is the only one that answers the
-second. That is why `error-text.test.ts` pins the property they share rather than either literal —
+`aborted` where it inherits from `Error`, and as `AbortError: aborted` where it does not. WebView2 on
+Windows (in the running app) and WebKit and bare V8 on macOS answer the first way; jsdom builds it in
+another realm and is the only one that answers the second. That is why `error-text.test.ts` pins the property they share rather than either literal —
 pinning a literal here would pin the environment instead of the app.
 
 ## Display themes
@@ -2272,10 +2271,10 @@ Every device action (fetch, write, live sync, self-test) opens a connection thro
 the Rust worker's `handshake`: it finds the unit, then confirms it is physically attached by reading
 `/vd/synchronize` — `sync_status` is `"online"` only while a URX is connected. Device Center keeps listing a
 unit after it is unplugged, and answers cached parameter reads for it, so the listing alone cannot tell a present device from a
-stale entry; the `sync_status` check is what distinguishes them. Measured on **both platforms** with the unit
-physically unplugged: the listing comes back unchanged, `/vd/synchronize` answers `"lost"`, and a parameter
+stale entry; the `sync_status` check is what distinguishes them. On **both platforms**, with the unit
+physically unplugged, the listing comes back unchanged, `/vd/synchronize` answers `"lost"`, and a parameter
 read still succeeds out of the broker's cache — so of the shapes `no-device` collapses (below), the empty
-list is the one that has never been observed to happen.
+list is the one not known to occur.
 
 **Which unit, when the list holds more than one.** A unit that was ever attached stays listed, and the entry
 that is not attached can be listed ahead of the one that is (a URX44V that was unplugged before a URX22 was
@@ -2572,8 +2571,8 @@ call schedules the MIDI feedback pass (120 ms, `FEEDBACK_DEBOUNCE_MS`) and opens
 at the next gesture boundary rather than here ([Undo / redo](#undo--redo)).
 
 One window costs a whole-plan translate plus a diff — 0.20 ms for the URX44V default plan, 782 commands — so
-flushing per window rather than per gesture is 0.2% of a core. A re-arming debounce was measured sending
-*nothing* while a drag was in motion: the device only ever heard the end of a move.
+flushing per window rather than per gesture is 0.2% of a core. A re-arming debounce sends *nothing* while
+a drag is in motion: the device only ever hears the end of a move.
 
 A snapshot entry is written after its own `vdSet` returned, so a flush that stops at a failure leaves every
 unsent address a diff. The failure itself ends the session ([Aborting on failure](#aborting-on-failure)).
@@ -2918,7 +2917,7 @@ sequenceDiagram
   L->>D: vdSet a param the unit answers by moving others
   alt converge: the unit reset values the plan authors
     L->>L: freeze a clone of the plan
-    Note over L,D: 300 ms blind between rounds<br/>no converge head's reset latency is measured, and a round re-sends whole groups
+    Note over L,D: 300 ms blind between rounds<br/>no converge head's reset latency is known, and a round re-sends whole groups
     L->>D: re-read the write scope, re-send what diverged, repeat until settled
     L->>L: capture from that frozen clone
     Note over L: an edit that arrived during the converge is still a diff<br/>baking it in here would drop it in silence
@@ -3098,9 +3097,9 @@ loader warns about a file that carries the collision and opens it on the operato
 `.urxf` import deliberately do not validate, so reading a unit in that state produces the two-owner plan — and a
 refusal at the loader would make Fetch → Save → reopen impossible for the app's own document.
 
-A **STEREO-linked MONO IN pair** is one holder, not two, and the census counts it as one: measured on the unit,
+A **STEREO-linked MONO IN pair** is one holder, not two, and the census counts it as one: on the unit,
 a linked pair's two members mirror the selector both ways and point at a single engine instance, and the link
-transition clears the effect on both. The census reads `stereoLink`, not PAN/BAL: the mirror was measured in
+transition clears the effect on both. The census reads `stereoLink`, not PAN/BAL: the mirror holds in
 both modes. Counting it as a collision would lock the pair's own menu against a selection the app itself
 authored (see the pair rules above).
 
@@ -4911,7 +4910,7 @@ A follow read and a `.urxf` import that find NONE leave the plan with no STREAMI
 would remove it — undoing a source drawn onto such a plan, or replaying an entry after a device read has
 moved STREAMING's source under it — is held back instead (`undoWireShape`). The emit then sends nothing to that selector (it never sends NONE there)
 and registers the address as a follow-only one (`planToFollowOnlyAddrs`). The unit announces a source picked
-on its own panel at that address, one notify per half, as it announces a write there (measured on the unit),
+on its own panel at that address, one notify per half, as it announces a write there,
 so that source reaches the plan through the registration.
 
 ### Taking back a value the write path normalised
