@@ -341,8 +341,8 @@ flowchart TD
       FX1 は 1 kHz 未満が整数、FX2 は全域が有効数字 3 桁、1 kHz 以上は両者とも 3 桁。遅延時間 (Mono /
       Ping Pong、Initial / ER-Rev Delay) は全域 0.1 ms 単位、REV-X の Reverb Time は有効数字 3 桁で表示する
     - `insert-fx-effect.ts` Insert FX のエフェクトパラメータカタログ (Guitar Amp Classics / Pitch Fix /
-      Compander-H/S / Multi-Band Comp) — セレクタが束縛するエンジン配列 (Guitar 697 / Pitch 701 /
-      Compander 689 / 出力 693) をスロットアドレッシングで読み書きする。raw↔表示は実機 LCD に対して較正した値を
+      Compander-H/S / Multi-Band Comp) — セレクタが束縛するエンジン配列 (Guitar / Pitch /
+      Compander / 出力) をスロットアドレッシングで読み書きする。raw↔表示は実機 LCD に対して較正した値を
       使う (Compander は既存の COMP 系のエンコードを再利用。MBC / Pitch / Guitar は SP Type / Amp Type / Scale 等の
       専用の表と enum を持つ)
     - `urxf.ts` 実機の microSD 設定ファイル (`.urxf`、SETUP > SAVE が書く) のリーダ — 2 層のエンディアン
@@ -355,24 +355,24 @@ flowchart TD
     - `device-setup.ts` 実機の SETUP > GENERAL 設定 (輝度 / オートパワーオフ / 日付時刻の書式 + タイムゾーン /
       言語 / HDMI + USB Main / 16 個の User Defined Knobs の割当) — `params.ts` に **`planExternal`** フラグつきで
       カタログしている (契約テストは「決して emit されない」をこのフラグから導く): `translate.ts` の emit 無し、
-      `readback.ts` のグループ無し、Follow USB (848) と同じ形の素の `vdGet` / `vdSet`。開いたときに読み、
+      `readback.ts` のグループ無し、Follow USB と同じ形の素の `vdGet` / `vdSet`。開いたときに読み、
       ローカルで編集し、差分として適用する (`ui/device-setup.ts`、Device メニュー)。`timezones.ts` が実機の 154
       件の都市リストを持つ — 固定データであり、**厳密なアルファベット順ではない**ので、並べ替えると 76 番以降の
       index が全部ずれる
     - `firmware.ts` 検証済み System ファームウェアのバージョンゲート (`SUPPORTED_SYSTEM_FIRMWARE` と照合し、
       不一致なら読み / 書き / ライブ同期の前に警告する。バージョンが空なら検査を飛ばす)
-    - `lcd-selection.ts` 実機の LCD 選択 (762) をステレオのチャンネルの表示する側として扱う: ブロック 1 の
+    - `lcd-selection.ts` 実機の LCD 選択をステレオのチャンネルの表示する側として扱う: ブロック 1 の
       符号化・復号 (ステレオ位置 × 2、R なら +1) と、アプリ自身の書込への実機の応答をパネルでの選択と見分ける
       `LcdEchoes`。`main.ts` がライブ同期の開始時に選択を読み、その通知を follow の `intercept` で受け、
       `switchSide` から書く
-    - `sends-target.ts` HOME の [Sends] の Send 先 (763)。本体のサイドメニューが表示する Send 先: 詰めた値の
-      符号化・復号 (STEREO 0・FX 1 16・FX 2 17・MIX 1 32・MIX 2 34) と、その読み書き。`encodeSendsTarget` は
+    - `sends-target.ts` HOME の [Sends] の Send 先。本体のサイドメニューが表示する Send 先: 詰めた値の
+      符号化・復号 (STEREO・FX 1・FX 2・MIX 1・MIX 2) と、その読み書き。`encodeSendsTarget` は
       96 kHz を超えるレートの FX 2 には値を返さない (本体は接続越しの書込を受け付けるが、本体自身の一覧はその
       レートで FX 2 を出さない)。SIM ビューが表示する実験的起動のときだけ、`main.ts` がライブ同期の
       開始時に読み、その通知を follow の `intercept` で受け、96 kHz を超えるレートを本体が知らせた 1 秒後に
       読み直し (本体はそのとき FX 2 を FX 1 に替え、知らせない)、SIM ビューの LCD が選んだ Send 先を書く
-    - `daw-integration.ts` SETUP > Software Integration。対応 DAW が本体とつながっているか (816。読むだけで、
-      つながっている間は 0 以外) と Post Fader Send for FX (879 / 880。MIX 1 は 288、MIX 2 は 290) と、その読み書き。
+    - `daw-integration.ts` SETUP > Software Integration。対応 DAW が本体とつながっているか (読むだけ) と
+      Post Fader Send for FX (FX の Bus ごとに MIX 1 か MIX 2) と、その読み書き。
       実験的起動のときだけ、`main.ts` がライブ同期の開始時に 3 つとも読み、その通知を follow の
       `intercept` で受け、DAW がつながっている間に SIM ビューの LCD が選んだ Post Fader Send for FX を書く
     - `cue.ts` 実機の [CUE] のフラグを、プランの外にライブ同期中の状態として持つ (「アプリがモデル化するもの・
@@ -398,8 +398,8 @@ flowchart TD
       `LINK_BAR_KEYS` / `LINK_LEDGER_KEYS` はユニオンとして export しているので、`linkstats.spec.ts` の期待値表は
       それらの上の `Record<…>` になり、アサーション無しに足されたフィールドは `pnpm typecheck:e2e` で落ちる。
       「リンク台帳」を参照
-    - `client.ts` 書込シーケンス + ドライラン + `readClockState` / `setFollowUsb` (書込前の Follow USB (848) +
-      レート (766) 検査。848 は意図的にプランの外) + `diffPlan` / `diffNames` (書込のためのデバイス対プラン差分) +
+    - `client.ts` 書込シーケンス + ドライラン + `readClockState` / `setFollowUsb` (書込前の Follow USB +
+      レート検査。Follow USB は意図的にプランの外) + `diffPlan` / `diffNames` (書込のためのデバイス対プラン差分) +
       `sendConverging` (差分を送り、読み直し、まだ違うものを送り直す — ただし 1 ラウンドが**送る**のは差分では
       なく `roundCommands` である: `VdCommand.group` は**リセット連鎖**であり、あるメンバーを書くと実機はその後に
       emit されたものを捨てるので、1 ラウンドは差分に残ったコマンドが属するグループの全メンバーを送り直す。
@@ -767,7 +767,7 @@ flowchart TD
   照合済みで、新規プランが書き込む全アドレスに、実機は既にプランと同じ値を持っている。URX44 は URX44V のキャプチャを
   そのまま流用する (差分は URX44V の HDMI 入力のみで、初期接続はこれを経路に使わない)。URX22 はそのキャプチャを
   URX22 のチャンネル構成へ位置対応で並べ替えたもの (`models/initial-urx22.ts`)。工場出荷時に初期化した URX22 で
-  値が違うアドレスはサンプルレート (`766`) だけで、これは Follow USB が ON (工場出荷時の設定) の間は USB ホストに従う。
+  値が違うアドレスはサンプルレートだけで、これは Follow USB が ON (工場出荷時の設定) の間は USB ホストに従う。
   デバイス取得時のみ `emptyPlan` から始め、読み戻し (`core/control/`) が実機値で埋める。
   起動時の機種選択は前回の選択 (`localStorage("urx-model")`) を復元し、無効/未保存なら URX44V に
   フォールバックする (テーマ・言語と同じ「保存値 → フォールバック」)。

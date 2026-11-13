@@ -376,8 +376,8 @@ carries a one-line map of the same directories and points here.
       Every delay time (Mono / Ping Pong, Initial / ER-Rev Delay) prints to 0.1 ms across its range, and
       the REV-X Reverb Time to three significant figures
     - `insert-fx-effect.ts` effect parameter catalog for insert FX (Guitar Amp Classics/Pitch
-      Fix/Compander-H/S/Multi-Band Comp) — reads/writes the engine arrays bound by the selector (Guitar 697
-      / Pitch 701 / Compander 689 / output 693) via slot addressing; raw↔display uses values calibrated
+      Fix/Compander-H/S/Multi-Band Comp) — reads/writes the engine arrays bound by the selector (Guitar
+      / Pitch / Compander / output) via slot addressing; raw↔display uses values calibrated
       against the device LCD (Compander reuses the existing COMP-family encodings; MBC/Pitch/Guitar have
       dedicated tables and enums for SP Type/Amp Type/Scale etc.)
     - `urxf.ts` reader for the unit's microSD settings file (`.urxf`, written by SETUP > SAVE) — two-level
@@ -390,25 +390,25 @@ carries a one-line map of the same directories and points here.
     - `device-setup.ts` the unit's SETUP > GENERAL settings (brightness / auto power off / date-time formats
       + time zone / language / HDMI + USB Main / the 16 User Defined Knobs assignments) — catalogued in
       `params.ts` under the **`planExternal`** flag (the contract test derives "never emitted" from it): no
-      `translate.ts` emit, no `readback.ts` group, bare `vdGet`/`vdSet` in the Follow USB (848) shape. Read
+      `translate.ts` emit, no `readback.ts` group, bare `vdGet`/`vdSet` in the Follow USB shape. Read
       on open, edited locally, applied as a diff (`ui/device-setup.ts`, Device menu). `timezones.ts` holds
       the unit's 154-entry city list — fixed data, **not strictly alphabetical**, sorting it shifts every
       index from 76 on
     - `firmware.ts` validated System firmware version gate (matches against `SUPPORTED_SYSTEM_FIRMWARE` and
       warns before read/write/live-sync on a version mismatch; an empty version skips the check)
-    - `lcd-selection.ts` the unit's LCD selection (762) as a stereo channel's displayed side: the block-1
+    - `lcd-selection.ts` the unit's LCD selection as a stereo channel's displayed side: the block-1
       encode / decode (2 × the stereo position, plus 1 for R) and `LcdEchoes`, which tells the unit's answer
       to the app's own write from a selection made on the panel. `main.ts` reads the selection at a Live-sync
       start, takes its notifies through the follow `intercept`, and writes it from `switchSide`
-    - `sends-target.ts` HOME's [Sends] destination (763), the destination the unit's side menu shows: the
-      packed encode / decode (STEREO 0, FX 1 16, FX 2 17, MIX 1 32, MIX 2 34) and its read and write.
+    - `sends-target.ts` HOME's [Sends] destination, the destination the unit's side menu shows: the
+      packed encode / decode (STEREO, FX 1, FX 2, MIX 1, MIX 2) and its read and write.
       `encodeSendsTarget` answers nothing for FX 2 above 96 kHz, a value the unit takes over the link
       although its own list does not offer it there. On an experimental launch, where the SIM view shows
       it, `main.ts` reads it at a Live-sync start, takes its notifies through the follow `intercept`, reads
       it again 1 s after the unit announces a rate above 96 kHz — the unit moves FX 2 to FX 1 then and
       announces nothing — and writes the destination the SIM view's LCD chooses
-    - `daw-integration.ts` SETUP > Software Integration: whether a compatible DAW holds the unit (816, read
-      only, anything but 0 while one does) and Post Fader Send for FX (879 / 880, MIX 1 288, MIX 2 290), with
+    - `daw-integration.ts` SETUP > Software Integration: whether a compatible DAW holds the unit (read
+      only) and Post Fader Send for FX (MIX 1 or MIX 2 for each FX bus), with
       their read and write. On an experimental launch `main.ts` reads all three at a Live-sync start, takes their
       notifies through the follow `intercept`, and writes a send the SIM view's LCD picks while a DAW holds the
       unit
@@ -437,8 +437,8 @@ carries a one-line map of the same directories and points here.
       the inbound stream and that figure cannot measure what it appears to. `LINK_BAR_KEYS` /
       `LINK_LEDGER_KEYS` are exported as unions so `linkstats.spec.ts`'s expectation tables are `Record<…>`
       over them and a field added without an assertion fails `pnpm typecheck:e2e`. See "The link ledger"
-    - `client.ts` write sequence + dry-run + `readClockState`/`setFollowUsb` (the pre-write Follow USB (848)
-      + rate (766) check; 848 is deliberately outside the plan) + `diffPlan`/`diffNames` (device vs plan
+    - `client.ts` write sequence + dry-run + `readClockState`/`setFollowUsb` (the pre-write Follow USB
+      + rate check; Follow USB is deliberately outside the plan) + `diffPlan`/`diffNames` (device vs plan
       diff for write) + `sendConverging` (send the diff, re-read, re-send what still differs — but what a
       round SENDS is `roundCommands`, not the diff: a `VdCommand.group` is a **reset chain**, where writing
       one member makes the device discard the ones emitted after it, so a round re-sends every member of a
@@ -842,7 +842,7 @@ carries a one-line map of the same directories and points here.
   checked against a factory-initialised unit: every address a new plan writes already holds the plan's value there.
   URX44 reuses the URX44V capture verbatim (it differs only by URX44V's HDMI input, which no default routes), and
   URX22 is that capture remapped to its channel layout (`models/initial-urx22.ts`). The one address that differs on
-  a factory-initialised URX22 is the sample rate (`766`), which follows the USB host while Follow USB is on (the
+  a factory-initialised URX22 is the sample rate, which follows the USB host while Follow USB is on (the
   factory setting). A device fetch instead starts from an empty plan (`emptyPlan` in
   `core/plan.ts`) and lets the readback (`core/control/`) fill in the live values.
   On startup the model selection is restored from the last choice (`localStorage("urx-model")`),
