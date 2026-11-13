@@ -46,11 +46,9 @@ on the COMP and EQ screens.
 
 Switching it on is not an edit but a preset: the unit refills every other value of the
 effect with the type's own — the three bands' Bypasses among them, which it clears — and
-switching it off leaves them there rather than putting back what was set. Measured on a
-URX44V with every other value armed away from where it had been
-and away from its neighbours, the ON transition moved all of them — the three bands'
-Threshold, Ratio, Gain, Attack and Bypass, the shared Release, both crossovers and the
-output gain.
+switching it off leaves them there rather than putting back what was set. The ON transition
+sets every one of them — the three bands' Threshold, Ratio, Gain, Attack and Bypass, the
+shared Release, both crossovers and the output gain (confirmed on a URX44V).
 
 Every Level change afterwards reasserts all but one of them: nine are recomputed from the
 Level (**Threshold, Ratio and Gain in each band**) and nine are pinned straight back to fixed
@@ -59,10 +57,10 @@ Release and both crossovers**). The planner stops writing those eighteen while t
 on, and the tuning screen locks the same rows.
 
 **The output gain is set at the switch and then left alone** — a Level change does not move
-it, but the unit's own screen does not let it be turned while the knob is on either. Measured
-on a URX44V by writing all seven of the non-recomputed values away from the preset AFTER
-switching the knob on: every one took the value and held it through 3.2 s of polling, and then
-a Level change put six of them back while the output gain kept what was written. The planner
+it, but the unit's own screen does not let it be turned while the knob is on either. Written
+away from the preset AFTER the knob is switched on, each of the seven values the Level does not
+recompute takes the value and holds it, and the next Level change puts six of them back while
+the output gain keeps what was written (confirmed on a URX44V). The planner
 treats it as the unit does: it stops writing the output gain while the knob is on and locks
 its row, and switching the knob on in the planner sets the Level to 0 and the fixed values —
 each band's Attack and Bypass, the Release, both crossovers and the output gain — to the
@@ -73,7 +71,7 @@ carries other values there beside a knob that is on is set to them.
 
 Pitch Fix's **MIDI Control** picks where the correction takes its target notes from. From
 **Setting** on they arrive on a USB-MIDI port of the unit's own, and a change of mode moves
-the Scale and the twelve-note mask the way the unit's own screen does (measured on a URX44V).
+the Scale and the twelve-note mask the way the unit's own screen does (confirmed on a URX44V).
 
 The selector itself is offered and written, and so is the Scale, from the list the unit's
 own screen offers in that mode: every scale but Chromatic under Setting, Custom and Single
@@ -104,12 +102,12 @@ cue off — the unit does, and the app with it. The mode is not part of the plan
 sync off it is not shown on the status bar, and the MONITOR panel's row is read-only.
 
 > Confirmed on a URX22 and a URX44V (System 1.5.0.1): the Last CUE rule on both, and on
-> the URX44V a mode written over the control connection, read on the unit's screen.
+> the URX44V a mode written over the control connection.
 
 ## An HPF frequency outside 40–120 Hz cannot be written to the device
 
 Since System firmware V1.5 the unit's own **[HPF Freq.]** knob sets 20.0 to 600 Hz, in sixty
-stops. The control connection is narrower than the knob: it refuses a write outside 40–120 Hz,
+stops, the same sixty whether it is turned pushed in or not. The control connection is narrower than the knob: it refuses a write outside 40–120 Hz,
 and the range it publishes for the parameter is still 40–120 Hz.
 
 URX Router therefore holds any of the sixty stops in a plan and reads whatever the unit holds,
@@ -126,11 +124,8 @@ but writes only the twenty stops from 40 to 118 Hz:
 - The device self-test (an `--experimental` launch) does not start while a channel's HPF
   frequency is outside 40–120 Hz, since it could not put that value back.
 
-> Confirmed on a URX44V (System 1.5.0.1, Device Center 2.3.0) by turning the unit's knob
-> through its range while reading the parameter, and by writing values inside and outside the
-> window. The knob was read stop by stop over the whole range, turned without pushing and
-> turned while pushed in: the same sixty stops either way. A 42.5 Hz written over the control
-> connection reads 42.5 on the unit's screen. Not measured on the URX22 or the URX44.
+> Confirmed on a URX44V (System 1.5.0.1, Device Center 2.3.0). Not confirmed on the URX22 or
+> the URX44.
 
 ## STEREO's Flex12GEQ bands above 20 Hz cannot be written to the device
 
@@ -149,9 +144,8 @@ URX Router therefore treats those thirty bands the way it treats the CH → FX s
   one of them takes no value while the session is up, and Gain Flat on STEREO's screen is held,
   since the bands it would flatten are those the link does not take.
 
-> Confirmed on a URX44V and a URX22 (System 1.5.0.1) by writing each band of each side over the
-> control connection and reading it back, and on the URX44V by moving the bands on the unit's own
-> GEQ screen while watching the announcements. Not measured on the URX44.
+> Confirmed on a URX44V and a URX22 (System 1.5.0.1), and on the URX44V that a change made on
+> the unit's own GEQ screen is announced. Not confirmed on the URX44.
 
 ## Nothing is written while the unit is under Console Lock
 
@@ -174,9 +168,7 @@ for as long as the lock stands, and never locks or unlocks the unit itself:
   Device menu puts it back once the unit is unlocked. Quitting the app before that loses what
   the restore needs.
 
-> Confirmed on a URX44V (System 1.5.0.1) by locking and unlocking the unit during Live sync and
-> before one: the strip, an edit put back, CUE Mode refused and Write to device refused, with
-> nothing written. Not measured on the URX22 or the URX44.
+> Confirmed on a URX44V (System 1.5.0.1). Not confirmed on the URX22 or the URX44.
 
 ## Live control is hardware-verified on the URX44V and the URX22
 
@@ -313,12 +305,11 @@ over the control link; see [device-model.md](device-model.md)).
 
 The recorder's **Track Count** (2 … 16) is not written by the app, and the reason
 is narrower than "the device refuses it". The device does accept the write and
-act on it — what is missing is the range. Track Count rides param 839 as
-*value × 2*, so 2 … 16 tracks is a value of 1 … 8, but the broker publishes a
-maximum of **1** and enforces it: 2, 4 and 8 are all rejected. That leaves
-software two reachable values, 1 and 0. 1 means two tracks. 0 is outside the
-device's own range and leaves the unit's Track Count screen with nothing selected
-at all (verified on a real URX44V). A saved plan's Track Count is therefore not
+act on it — what is missing is the range. The broker publishes **two tracks** as
+the maximum and enforces it: four, eight and sixteen tracks are all rejected. That
+leaves software two reachable values. One means two tracks. The other is outside
+the device's own range and leaves the unit's Track Count screen with nothing
+selected at all (verified on a real URX44V). A saved plan's Track Count is therefore not
 written to the device — the only settings within reach are one that says "two
 tracks" and one the device has no meaning for.
 
@@ -358,21 +349,20 @@ The URX runs in one of two operation modes, chosen during its initial setup or f
 SETUP > [Operation Mode]: **Standard** or **Simple**. Simple Mode visibly reduces
 what the unit offers — the channel and bus display is cut down and no longer scrolls.
 
-The unit does publish the mode: parameter `817:0:0` reads 0 in Standard Mode and
-moves to 1 when Simple Mode is entered and its preset applied, announcing each change
-with a notify. Switching back to Standard moves it back to 0, with no other parameter
-changing. This was verified on a real URX22 and URX44V (System 1.3.1.0) by entering
-Simple through SETUP > [Operation Mode] with the P02 preset; the Setup Assistant and
-Scene routes into Simple Mode and the other presets have not been measured. On an
+The unit does publish the mode, and announces each change with a notify: the value moves
+when Simple Mode is entered and its preset applied, and switching back to Standard moves it
+back, with no other parameter changing. Confirmed on a URX22 and a URX44V (System 1.3.1.0)
+for Simple Mode entered through SETUP > [Operation Mode] with one preset; the Setup
+Assistant and Scene routes into Simple Mode and the other presets are not covered. On an
 experimental launch the app reads it while Live sync is up and follows its notify, to show
 it on the SIM view's LCD (architecture.md, "SIM view (the unit's LCD)"). Nothing else reads it: the graph,
 the CONSOLE and the Inspector present the same controls either way, including for things
 Simple Mode has taken away on the unit itself.
 
-The current scene — or **preset** — is readable too (`781:0:0`, which a Recall and a Store move and which
-reads `0x8000` + n for the unit's `Pn`), but it is not the mode: it keeps the Simple preset's value after the unit is switched
-back to Standard. What Simple Mode does to a write the app sends for a control it has
-removed has not been measured.
+The current scene — or **preset** — is readable too (a Recall and a Store move it), but it
+is not the mode: it keeps the Simple preset's value after the unit is switched back to
+Standard. What Simple Mode does to a write the app sends for a control it has removed is
+not known.
 
 ## The STREAMING pre-DELAY meter is not readable
 
@@ -398,20 +388,18 @@ are confirmed on a URX44V:
 | **off** | the device | the rate sticks, and the computer follows the device onto it |
 | **on** | the computer | the device accepts the rate, re-clocks, and is pulled back |
 
-With Follow USB on, the device's front panel locks its rate buttons but the broker
-does **not** reject the write: it accepts the new rate, re-clocks (the LCD shows
-its switching dialog), and roughly 0.4 s later the host's rate is reasserted and
-the device returns to it — measured twice, at +53 ms accept / +374 ms revert and
-+38 ms / +398 ms. The audible result is a brief interruption for a change that
-does not last.
+With Follow USB on, the device's front panel locks its rate buttons but a software
+write is **not** refused: the device takes the new rate, re-clocks (the LCD shows
+its switching dialog), and shortly afterwards the host's rate is reasserted and
+the device returns to it. The audible result is a brief interruption for a change
+that does not last.
 
 The LCD's switching dialog belongs to that pulled-back re-clock specifically. A
-rate write with Follow USB **off** re-clocks the device without any dialog (three
-transitions observed), though it does interrupt audio just the same — the dialog
-and the interruption are separate things.
+rate write with Follow USB **off** re-clocks the device without any dialog, though
+it does interrupt audio just the same — the dialog and the interruption are
+separate things.
 
-Follow USB is exposed as a broker parameter (848) and can be both read and
-written; its factory default is on. The device ignores a write of the rate it is
+Follow USB can be both read and written; its factory default is on. The device ignores a write of the rate it is
 already running.
 
 ## The HDMI sample-rate ceiling depends on the audio mode
@@ -507,16 +495,4 @@ settings of the plan on screen are kept, as they were when the file was saved. A
 saved by a later version, scene-scoped or not, is one URX Router 1.18.6 and earlier refuse to
 open.
 
-> Confirmed in Standard Mode on System 1.5.0.1, on a URX22 and a URX44V, by storing a scene,
-> changing the settings back and recalling it, and by the settings file the URX44V writes.
-
-## Device Center sometimes needs a force quit after a long session
-
-On macOS, after a long Live sync session, Device Center can stop closing through its normal
-quit and has to be force quit. The cause is **not established**.
-
-Short sessions do not reproduce it. Quitting URX Router with Live sync explicitly turned off,
-and quitting it with Live sync still running, were each tried, and neither was followed by a
-hang.
-
-> Not reproduced on demand.
+> Confirmed in Standard Mode on a URX22 and a URX44V (System 1.5.0.1).

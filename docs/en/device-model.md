@@ -173,8 +173,8 @@ The scale is a **discrete, non-uniform grid** (wide steps in the tail, finer tow
 dB value: these are the values the unit's own screens offer, so e.g. -15.0 dB cannot be dialled in (adjacent
 detents jump -16 / -14). The sliders walk this grid **by index**, giving each detent equal travel so the
 dense steps near 0 dB are not cramped (`core/levels.ts`). **Written over the control link, though, the unit
-RETAINS an off-grid value rather than rounding it** — measured on a URX44V, 6/6 across two level parameters,
-each written value read back unchanged and announced by its own notify. So the grid is what the unit's own
+RETAINS an off-grid value rather than rounding it**: the written value reads back unchanged and is announced
+by its own notify. So the grid is what the unit's own
 UI offers, not what its storage accepts, and a readback is deliberately not snapped on the way in
 (architecture.md): the plan says what the unit actually holds.
 PAN/BAL uses the device scale **L63 – C – R63** (the UG shows C as the nominal centre; L63/R63 are the
@@ -320,26 +320,27 @@ one (a file, a `?plan=` link) is refused at load.
 
 - **What is written.** The source select has an L and an R half. A single source writes its own L / R
   ports — a single mono channel is its one input slot on both halves — and a pair writes **L = the
-  primary (odd) channel's slot, R = the partner's**, whatever order the two wires sit in. Measured on a
-  URX44V (System 1.3.1.0), CH 3's slot on L and CH 4's on R, written over the control link, shows on the
-  unit's own screen as `CH3/4`, and choosing `CH 1/2` on the unit's own screen announces CH 1's slot on L
-  and CH 2's on R. Any other set of wires into a USB output is written as its first wire
+  primary (odd) channel's slot, R = the partner's**, whatever order the two wires sit in. A pair
+  written that way over the control link shows on the unit's own screen as that pair (`CH3/4`), and a
+  pair chosen on the unit's own screen (`CH 1/2`) is announced in the same layout, the primary's slot on
+  L and the partner's on R. Any other set of wires into a USB output is written as its first wire
   alone, so what the unit holds once a write ends is always a selection its list offers.
 - **What is read back.** The primary's slot on L and the partner's on R reads as the pair's two wires;
   one mono slot on both halves reads as that one channel, dropping a partner wire the plan held. Halves
   that name neither one source nor a pair stay **unread** — the pair the wrong way round, two channels
   of different pairs, one half selected and the other clear: the node keeps the plan's own wires and
   carries the unread badge, and the read report names both halves. The unit's list offers none of
-  these. Measured on the same unit, CH 4 on L with CH 3 on R, CH 2 on L with CH 3 on R, and CH 3 on L
-  with R clear, each written over the control link, are all accepted and held; the first, read on the
-  unit's own screen, leaves its source field **blank**. There is no selection there for the plan to
-  take, and the app writes none of them.
-- **The pair's Signal Type does not reach the USB outputs.** Measured on the same unit: linking and
-  unlinking the pair (Signal Type STEREO / MONO × 2, see "Fixed (non-wireable) elements") left a USB
-  output's source where it was, and while the pair was linked the list still offered each of its channels
-  alone. So a link transition writes no USB output, and a linked pair's channel may feed one on its own.
+  these, yet each of them, written over the control link, is accepted and held, and the pair the
+  wrong way round leaves the source field on the unit's own screen **blank**. There is no selection
+  there for the plan to take, and the app writes none of them.
+- **The pair's Signal Type does not reach the USB outputs.** Linking and unlinking the pair (Signal
+  Type STEREO / MONO × 2, see "Fixed (non-wireable) elements") leaves a USB output's source where it
+  is, and while the pair is linked the unit's list still offers each of its channels alone. So a link
+  transition writes no USB output, and a linked pair's channel may feed one on its own.
   On the canvas, drawing a channel of a linked pair puts the pair on the output
   ([architecture.md](architecture.md)).
+
+> The three items above were confirmed on a URX44V (System 1.3.1.0).
 
 ### 7. DAW Rec Signal Assign (fixed, no node)
 
@@ -360,10 +361,10 @@ one (a file, a `?plan=` link) is refused at load.
   (slots beyond it are hidden). microSD playback is 2-track (stereo), represented as the single input
   source `microSD Playback`.
 
-> **Live control**: the per-track source assign is read and written over vd (param 736, one port ref
-> per track). **Track Count is read back but never written** — a write to param 839 does reach the
-> unit, but the broker caps it at one of the eight values, so software can only ever say "two
-> tracks" and could not raise it again (see [known-issues.md](known-issues.md)). The factory
+> **Live control**: the per-track source assign is read and written over vd (one port ref per
+> track). **Track Count is read back but never written** — over the control link it can only ever
+> be set to "two tracks", so software could not raise it again (see
+> [known-issues.md](known-issues.md)). The factory
 > assignment is tracks 1-12 = CH 1-12, tracks 13/14
 > = none, tracks 15/16 = STEREO, Track Count 16.
 
@@ -388,11 +389,11 @@ one (a file, a `?plan=` link) is refused at load.
   key wire in the inspector.
 - **A stereo key is summed to mono before the detector — a sum, not an average and not a louder-side
   pick.** The block diagram puts a `MONO` block between the stereo sources (CH 5/6-11/12 OUT, STEREO
-  OUT, MIX 1-2 OUT) and the Ducker Source select; measurement settles what it does with the two sides.
+  OUT, MIX 1-2 OUT) and the Ducker Source select, and what it does with the two sides is add them.
   So for correlated material the level the ducker compares against its threshold sits **6 dB above
   either side alone** — a centred source triggers a ducker that the same source hard-panned would not.
   For uncorrelated sides there is **no fixed offset**: where the trigger lands relative to either
-  side's level depends on the material, not on a constant (the measured case is in
+  side's level depends on the material, not on a constant (see
   [channel-tuning.md](channel-tuning.md), "Four lanes in three slots"). Only the MONO IN channels
   bypass the block.
 - Each ducker lives on one stereo channel, so Ducker 1–4 map in order to the model's stereo pairs: URX22 = CH 3/4, 5/6, 7/8, 9/10; URX44 / URX44V = CH 5/6, 7/8, 9/10, 11/12. The on-canvas node is labeled simply `Ducker` with the host pair in its sublabel (`CH 5/6 · Source`); the 1–4 ordinal is the block-diagram enumeration only — the hung position already names the channel, so it is not repeated on the node.
@@ -457,16 +458,16 @@ one (a file, a `?plan=` link) is refused at load.
   centre both (C = 0), and the send pan then reads as a BALANCE (as a native stereo channel does — shown
   identically in both GRAPH and CONSOLE). **A linked pair holds one set of values whatever the mode**: an edit
   to either channel is auto-mirrored to the other (the node params except the polarity invert below, plus each
-  send's LEVEL / PRE-POST / ON), because that is what the unit does. Measured on it with the pair in PAN: writing one member's gate
-  threshold, gate ON, compressor threshold, HPF frequency, CH fader, CH ON, STEREO-assign ON, MIX send level,
-  MIX send ON or MIX send PRE-POST moved the other member's with it. **What the mode decides is the pan.**
-  In BAL it is the pair's single shared balance, so both channels read the same value (the re-init above
-  seeds it centred) and it mirrors with everything else; in PAN each channel keeps its own CH PAN and send
-  pans, and writing one member's left the other where the transition had put it. The Signal Type / PAN-BAL
-  flags live on the primary alone. **The head amp is each member's own — A.Gain, Clip Safe, the polarity
-  invert, +48V and Hi-Z**: with the pair linked, writing one member's left the partner's where it was, in
-  BAL as well as in PAN, and LINKING an unlinked pair left both members theirs rather than copying the
-  secondary's from the primary. The polarity invert is the channel's and the app's mirror leaves it with the
+  send's LEVEL / PRE-POST / ON), because that is what the unit does: with the pair in PAN, a write to one
+  member's gate threshold, gate ON, compressor threshold, HPF frequency, CH fader, CH ON, STEREO-assign ON,
+  MIX send level, MIX send ON or MIX send PRE-POST moves the other member's with it. **What the mode decides
+  is the pan.** In BAL it is the pair's single shared balance, so both channels read the same value (the
+  re-init above seeds it centred) and it mirrors with everything else; in PAN each channel keeps its own CH
+  PAN and send pans, and a write to one member's leaves the other where the transition put it. The Signal
+  Type / PAN-BAL flags live on the primary alone. **The head amp is each member's own — A.Gain, Clip Safe,
+  the polarity invert, +48V and Hi-Z**: with the pair linked, a write to one member's leaves the partner's
+  where it is, in BAL as well as in PAN, and LINKING an unlinked pair leaves both members theirs rather than
+  copying the secondary's from the primary. The polarity invert is the channel's and the app's mirror leaves it with the
   partner; the other four are the jack's each member reads (§1), outside the pair's node params, so the mirror
   never reaches them and the link transition writes none of them — a pair fed by two different jacks keeps two
   preamps. The metering answers to Signal

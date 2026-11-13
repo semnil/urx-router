@@ -1,14 +1,12 @@
 // The link ledger: what one Live sync session asked of the Device Center broker,
 // and what the broker failed to answer.
 //
-// Why these values and not the obvious ones. The symptom this exists for is Device
-// Center needing a force quit after a long session, and nothing about that is visible
-// as a slowdown — a broker can answer promptly right up to the moment its own teardown
-// deadlocks. So round-trip latency, queue depth and feed rates are deliberately absent:
-// they measure how the link FEELS from this side, which is not evidence about the
-// broker's state. What is here is what this side DID to the broker, counted exactly:
-// commands, subscription replacements, registration frames, full reads. Causes, not
-// symptoms.
+// Why these values and not the obvious ones. Round-trip latency, queue depth and feed
+// rates are deliberately absent: they measure how the link FEELS from this side, which
+// is not evidence about the broker's state — a broker can answer promptly right up to
+// the moment it stops answering. What is here is what this side DID to the
+// broker, counted exactly: commands, subscription replacements, registration frames,
+// full reads. Causes, not symptoms.
 //
 // The share of notifies the address filter drops was proposed for this and rejected,
 // because it cannot measure what it looks like it measures. Registration and notify
@@ -17,10 +15,10 @@
 // it is registered — so a registration piling up at the broker is invisible in the
 // inbound stream. See docs/{en,ja}/architecture.md "The link ledger".
 //
-// The ledger is written to a FILE as well as shown, and the file is the point: the
-// symptom appears after the app is gone, so a reading that lives only in the status
-// bar is gone exactly when it is wanted. It also outlives this one investigation —
-// a later change in Device Center's behaviour shows up as a change in these numbers.
+// The ledger is written to a FILE as well as shown, and the file is the point: trouble
+// at the broker can show only after the app is gone, so a reading that lives only in
+// the status bar is gone exactly when it is wanted. A later change in Device Center's
+// behaviour also shows up as a change in these numbers.
 
 import { appBuildKind, appendLinkLog, vdLinkStats, type LinkStats } from "../platform";
 

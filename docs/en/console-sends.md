@@ -2,7 +2,7 @@
 
 > 日本語版: [../ja/console-sends.md](../ja/console-sends.md)
 
-**Status: implemented (2026-07-12).** This document specifies the per-strip SENDS rack that
+**Status: implemented.** This document specifies the per-strip SENDS rack that
 replaced the CONSOLE view's "Send to" mode tabs (send-on-fader). It is the behavioral reference
 for the rack; the CONSOLE section of [architecture.md](architecture.md) summarizes it. Implemented
 in `src/ui/console.ts` (rack builder), `src/style.css` (`.con-sends` / `.con-spop`),
@@ -199,9 +199,9 @@ still claims is given back — and that is the state an operator most needs to r
   open, and the re-open after a strip rebuild, leave the focus where it is. A focus that then moves
   to an element outside both the popover and its trigger closes the popover without handing the
   focus back. A focusout naming no new element is not that: the window losing the OS foreground
-  (`document.hasFocus()` false — WKWebView blurs on deactivation, and WebView2 does the same: measured
-  2026-10-09 across an Alt+Tab, it fires `blur` and a `focusout` naming no target, reports `hasFocus()` false
-  until the window is active again, and the popover stays open), and a press on a part of the
+  (`document.hasFocus()` false — WKWebView blurs on deactivation, and WebView2 does the same: it fires
+  `blur` and a `focusout` naming no target, reports `hasFocus()` false until the window is active again,
+  and the popover stays open), and a press on a part of the
   popover that takes no focus, both leave it open.
 - **Tab leaves a popover at its trigger's place in the tab order.** Left to the browser, a Tab past
   the popover's last control would continue from the end of the document and a Shift+Tab before
@@ -261,8 +261,8 @@ rebuilt MIX strip re-opens ANOTHER strip's open SEND PAN popover the same way wh
 FIXED lock its knobs read has changed — a BUS Type switched at the unit announces only the MIX
 bus — and leaves it alone otherwise, since a re-open under a knob being dragged
 ends the drag. A knob the re-open locked hands the focus to the PAN ▾ button. Sends
-have no meters — the broker exposes no per-send meter addresses — so the rack contains no signal
-display by design.
+have no meters — no per-send meter can be read over the control connection — so the rack contains no
+signal display by design.
 
 ## Rejected alternatives (do not re-litigate without new evidence)
 

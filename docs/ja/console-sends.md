@@ -2,7 +2,7 @@
 
 > English version: [../en/console-sends.md](../en/console-sends.md)
 
-**ステータス: 実装済み (2026-07-12)。** CONSOLE ビューの「Send to」モードタブ (send-on-fader)
+**ステータス: 実装済み。** CONSOLE ビューの「Send to」モードタブ (send-on-fader)
 を置き換えたストリップ内 SENDS ラックの仕様。本書がラック挙動のリファレンスであり、
 [architecture.md](architecture.md) の CONSOLE 節はその要約。実装は `src/ui/console.ts`
 (ラックビルダー)・`src/style.css` (`.con-sends` / `.con-spop`)・`src/core/midi/controls.ts`
@@ -194,7 +194,7 @@ STEREO と MONITOR Bus は → STEREO send を持たないため MUTE チップ�
   開いた場合とストリップ再構築後の開き直しではフォーカスを動かさない。その後フォーカスがポップオーバーと
   トリガーのどちらでもない要素へ移ると、フォーカスを返さずにポップオーバーを閉じる。移り先の要素を
   持たない focusout はこれに当たらない: OS の前面を失ったウィンドウ (`document.hasFocus()` が false —
-  WKWebView は非アクティブ化で blur し、WebView2 も同じ — 2026-10-09 に Alt+Tab をまたいで測ると、`blur` と
+  WKWebView は非アクティブ化で blur し、WebView2 も同じ — `blur` と
   移り先の無い `focusout` を出し、窓がアクティブに戻るまで `hasFocus()` は false で、ポップオーバーは開いたまま) と、ポップオーバー内のフォーカスを取らない部分の押下では
   開いたまま。
 - **Tab でポップオーバーを抜けると、トリガーのタブ順の位置に出る。**ブラウザに任せると、ポップオーバーは
@@ -254,7 +254,7 @@ plan を読み直し、トリガーの open 表示も維持される (デバイ�
 FIXED のロックが変わっていた場合に限り同じように開き直す (実機で BUS Type を切り替えると
 MIX バスしか告知されないため)。変わっていなければ触らない — ドラッグ中のノブの下で
 開き直すとドラッグが終わるため。開き直しでロックされたノブにあったフォーカスは PAN ▾ ボタンへ返す。
-send にメーターは存在しない — ブローカーは send 単位のメーターアドレスを公開していないため、
+send にメーターは存在しない — 制御接続から send 単位のメーターは読めないため、
 ラックに信号表示が無いのは仕様である。
 
 ## 不採用案 (新しい根拠なしに再検討しない)
