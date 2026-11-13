@@ -2349,11 +2349,11 @@ source を上書きし合う。ハンドルの上書きは費用ゼロ (`vd_para
 
 | アドレス | アプリが書かない条件と理由 | どのノードの scoped read が修復するか |
 | --- | --- | --- |
-| CH → FX send の tap (193 / 197 / 320 / 324) | broker が `max_value` 0 を公開しており PRE を書けない (`sendTapWritable`) | **チャンネル** — その scoped read が、Send 先の全 Bus について `params.tap` を読み直す |
-| microSD Rec Track Count (839) | broker が上限 1 を強制し、届くのは「2 トラック」と実機にとって無意味な値だけ | **`out.sdrec`** — 839 が載るノードで、その読みが触れる唯一のアドレス |
+| CH → FX send の tap | broker が `max_value` 0 を公開しており PRE を書けない (`sendTapWritable`) | **チャンネル** — その scoped read が、Send 先の全 Bus について `params.tap` を読み直す |
+| microSD Rec Track Count | broker が上限 1 を強制し、届くのは「2 トラック」と実機にとって無意味な値だけ | **`out.sdrec`** — Track Count が載るノードで、その読みが触れる唯一のアドレス |
 | 実機が計算する FX のディレイタイム (FX のエフェクトのパラメータの slot 6) | tempo Sync が入っている間は実機が BPM と音価から導いており、書くとディレイタイムが音価から外れる (`fxRowOwners` の `computed`) | **その FX チャンネル** — scoped read が EFFECT TYPE とパラメータ配列を丸ごと読み直す |
 | ジャックの +48V / A.Gain / Clip Safe / HI-Z | どのチャンネルもそのジャックを読まないので書込から外れる (「入力段: ジャックとソースに置く」) | **MIC/LINE ノード** — その scoped read が両ジャックを読み直す。読まれているジャックなら direct に追従する A.Gain も含む |
-| チャンネルの HPF 周波数 (26) | プランが 40〜120 Hz の外の段を持つ間: 本体のノブは 20〜600 Hz を設定でき、broker はこの範囲の外への書込を拒否するため、emit はそこへ何も送らない (`hpfFreqSent`) | **チャンネル** — その scoped read が `hpfFreq` を読み直す |
+| チャンネルの HPF 周波数 | プランが 40〜120 Hz の外の段を持つ間: 本体のノブは 20〜600 Hz を設定でき、broker はこの範囲の外への書込を拒否するため、emit はそこへ何も送らない (`hpfFreqSent`) | **チャンネル** — その scoped read が `hpfFreq` を読み直す |
 | STREAMING のソース選択 | プランが STREAMING の結線を持たない間: 本体のリストに None が無いため、emit はそこへ NONE ではなく何も送らない (`leavesUnsourced`) | **`bus.stream`** — その scoped read がノードの DELAY とともにソースを読み直す |
 
 3 種類目は**読取専用のアドレスではない**。見出しが「ケース」と言っているのはそのためで、ディレイタイムが

@@ -2833,11 +2833,11 @@ array address it wrote. So the silence is about the front panel, not about the a
 
 | Address | When and why the app does not write it | Which node's scoped read repairs it |
 | --- | --- | --- |
-| CH → FX send tap (193 / 197 / 320 / 324) | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
-| microSD Rec Track Count (839) | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node 839 lands on, and the only address that read touches |
+| CH → FX send tap | the broker publishes `max_value` 0, so PRE cannot be written (`sendTapWritable`) | the **channel** — its scoped read re-reads `params.tap` for every bus it sends to |
+| microSD Rec Track Count | the broker caps the value at 1, leaving only "two tracks" and a value the unit has no meaning for | **`out.sdrec`** — the node Track Count lands on, and the only address that read touches |
 | the FX delay time the unit computes (slot 6 of the FX effect's parameters) | while tempo Sync is on the unit derives it from the BPM and the note value, and a write takes the delay time off the note (`fxRowOwners`'s `computed`) | the **FX channel** — its scoped read takes the EFFECT TYPE and the whole parameter array back |
 | a jack's +48V / A.Gain / Clip Safe / HI-Z | no channel reads the jack, so the write leaves it out ([the input stage](#the-input-stage-on-the-jack-and-the-source)) | the **MIC/LINE node** — its scoped read re-reads both jacks, even for A.Gain, which a read jack follows directly |
-| a channel's HPF frequency (26) | while the plan holds a stop outside 40 … 120 Hz: the unit's knob sets 20 … 600 Hz and the broker refuses a write outside that window, so the emit sends nothing there (`hpfFreqSent`) | the **channel** — its scoped read re-reads `hpfFreq` |
+| a channel's HPF frequency | while the plan holds a stop outside 40 … 120 Hz: the unit's knob sets 20 … 600 Hz and the broker refuses a write outside that window, so the emit sends nothing there (`hpfFreqSent`) | the **channel** — its scoped read re-reads `hpfFreq` |
 | STREAMING source select | while the plan holds no STREAMING wire: its list on the unit has no None, so the emit sends nothing there rather than NONE (`leavesUnsourced`) | **`bus.stream`** — its scoped read takes the source back with the node's DELAY |
 
 The third is not a read-only ADDRESS at all, which is why the heading above says cases. Slot 6 is written like
