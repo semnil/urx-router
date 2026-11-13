@@ -105,6 +105,61 @@
 プラグインの確認には、既定の時間切れが無い。設定してあるので、応答が失われたときは、確認が待ったままに
 ならず、失敗の状態で終わる。
 
+**MIDI ポートを続けて素早く切り替える操作。** MIDI ウィンドウの 2 つのポートの選択にも、同じ問いを当てた。
+1 つ目のポートを開いている途中で、2 つ目・3 つ目の選択が何をするか、である。
+
+- **開く・閉じるの順は、今のままにする。** ポートの選択は向き (入力・出力) ごとに 1 件ずつ走り
+  (`src/ui/midi.ts` の `queuePort`)、順番が来る前に後の選択で置き換えられたものは飛ばされる。
+  `src/ui/midi.test.ts` が、スタブのシェルに対してこれを固定している。1 つ目を開いている途中での 3 連続の
+  選択 — A・B・C、A・B・A、ポート・なし・ポート (「runs … as the first choice and the last, one open at a
+  time」) — と、開く処理の完了順を交差させた入力と出力の同時切り替え (「ends each direction on its own
+  last choice when both are switched at once」) である。どれも、同時に開いている途中のものは 1 つだけで、
+  置き換えられた選択はシェルに届かず、最後の選択が、開いていて・表示されていて・保存されている。
+- **その待ち行列の外側にあった 3 件の欠陥を直した** (操作者の決定、2026-11-13)。どれにも、直す前は
+  落ちていたテストがある。
+  - こちら側の記録とシェルが持つポートの突き合わせ (`reconcileOpenPorts`) は、開く処理に追い越された
+    答えは捨てていたが、閉じる処理に追い越された答えは捨てていなかった。答えが届く前に「なし」を選ぶと、
+    その答えで選択が戻り、出力側では、閉じたポートに向けてフィードバックを送っていた。閉じる処理も、
+    開く処理と同じように数える。`src/ui/midi.test.ts`: 「keeps None when it is chosen while the shell's
+    answer about open ports is on its way」「keeps the output at None the same way, and sends nothing at
+    the port it closed」。`e2e/midi.spec.ts`: 「None chosen while the shell is being asked survives the
+    answer」。
+  - ポートの選択の保存は、その時点で開いているものから両方の向きのエントリを書き直していた。そのため、
+    このセッションがもう一方の向きのポートを開いていないと、そのエントリが消えた。向きごとに自分の
+    エントリだけを書くようにし、「なし」は、選んだ向きのエントリを消す。`src/ui/midi-feedback.test.ts`:
+    「keeps a saved input whose restore failed when an output is chosen」「keeps a saved input still being
+    restored when an output is chosen meanwhile」「keeps the stored output it gave up on when an input is
+    chosen afterwards」「stores None for the direction it was chosen on, and leaves the other entry」。
+  - 操作者が別のポートに乗り換えたあとで前のポートを開く処理が失敗すると、その失敗がステータス行に
+    出ていた。文言にポート名が入らず、乗り換え先のポートが開いたあとも残った。失敗を出すのは、その
+    ポートがその向きの最新の選択である間だけにした (操作者の決定、2026-11-13)。`src/ui/midi.test.ts`:
+    「says nothing about a failed input open the operator has already chosen away from」、出力側の同じ
+    テスト、「still says a failed open that is the latest choice, after an earlier one was replaced」。
+- **却下した案: その失敗を出しておき、後のポートが開いたときに消す。** 次のポートが開くまでの間、
+  操作者が離れたポートの失敗が、ステータス行に出たままになる。
+- **確かめきれていないこと: ページが送った 2 つのコマンドを、シェルがその順で受け取るか。**
+  待ち行列が順番を付けるのは、ページが送る側である。上のテストはどれも、シェルの位置にスタブを置いて
+  おり、ポートの Rust 側 (`src-tauri/src/midi.rs`) には、それ自体のテストが無い。順について分かって
+  いるのは次のとおり。MIDI のコマンドはすべて同期コマンドで、シェルは同期コマンドを、webview が渡して
+  きた順に 1 つずつ処理する。ページが 1 つ目の応答を待たずに 2 つの要求を出したとき、webview がそれを
+  出した順でシェルに渡すことは、Tauri の文書では保証されていない。macOS の webview (WKWebView) では、
+  出した順で渡ることを観測した。Windows の webview (WebView2) では未確認である。
+- **分かっていて、ガードを置いていないこと: 2 つのコマンドが処理される順で結果が変わる場所が 3 つ
+  ある。** 1 つ目と 2 つ目は、シェルが 2 つのコマンドを送った順と逆に処理したときだけ誤る。3 つ目は、
+  送った順のまま処理されたときに誤る。
+  - 閉じる処理は、ポートの待ち行列の中で応答を待たない。「なし」は閉じるコマンドを送り、待ち行列は
+    そのまま次へ進む (`applyInputPort`・`closeOutput`)。そのため、その閉じるコマンドと、同じ向きの次の
+    開くコマンドが、同時に飛んでいることがある。逆の順で処理されると、シェルは新しいポートを開いた
+    あとでそれを閉じ、ページはそのポートを開いていると表示し続ける。
+  - 閉じるコマンドのあとに、開いているポートの問い合わせ (`refreshPorts` が走らせる
+    `reconcileOpenPorts`) が続く場合。閉じる処理は送った時点で数えるので、そのあとに送った問い合わせの
+    答えは捨てられない。逆の順で処理されると、答えは閉じている途中のポートの名前を返し、ページは
+    その選択を戻してしまう。
+  - 止まった出力の見切り (`abandonOutput`) は、閉じるコマンドを待ち行列の外から送る。その時点で次の
+    出力を開くコマンドが飛んでいると、閉じるコマンドはその開く処理のあとにシェルへ届き、開いたばかりの
+    ポートを閉じる。ページは、そのポートを開いていると表示する。これはコードを読んで見つけたもので、
+    再現はしていない。
+
 ## Abort on failure is the operator's decision
 
 **決定。** device のリンクでは、失敗した操作は、その操作の全体を中断する。決まりと恒久の例外は

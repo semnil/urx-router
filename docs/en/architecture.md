@@ -2065,16 +2065,21 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   (Boddlnagg/midir#160), and 0.11.1 ends such a message at the packet's end. The frontend's decoder already ignores a message shorter than three bytes. midir has no hot-plug notification, so the port lists are
   re-enumerated every time the MIDI window announces itself. A port that fails to open reports the error on the
   status line — the app's and the window's own — and drops the select back to "None" (the stored port entry is
-  removed too). The reverse direction — a port closed from the NATIVE side, which the page-load teardown
+  removed too). The error is reported only while that port is still the latest choice for its direction: the
+  wording names no port, so a failure of a choice the operator has already replaced is not said. The reverse direction — a port closed from the NATIVE side, which the page-load teardown
   under "Session teardown" does — cannot be reported, because the side that closes it is talking about a page
   that is going away. So it is **read instead of pushed**: `midi_open_ports` answers which ports are actually
   open, and every port refresh checks this side's record against it (`reconcileOpenPorts`), adopting the
   shell's answer. Without that the frontend would go on naming a port nothing is listening on and the window
   would go on offering it as chosen — with no way back, since re-picking the same entry fires no `change`. The
-  reconcile stands down for anything that opens a port: the two commands are answered on different threads,
-  and a reply that overtook the open it describes would clear a port that is being connected right now. In
+  reconcile stands down for anything that opens a port: the answer describes a moment and does not say which
+  side of an open that moment was on, and one taken before an open that has since landed would clear a port
+  that is being connected right now. In
   flight when it starts is not enough on its own — an open that begins and ends inside the round trip leaves
   that count back at zero — so finished opens are counted too and the count is compared across the trip.
+  A close is counted with them: an answer taken while a port was open still names it after "None", or giving
+  up a stalled output, has closed it, and adopting that answer would put back a selection the shell no longer
+  holds.
   `src-tauri/src/midiwin.rs` adds the window itself: `open_midi_window` (async on purpose —
   building a webview from a blocking command deadlocks on Windows), `close_midi_window`, `focus_midi_window`,
   `midi_window_open`, `pin_midi_window`, and the four relay commands; see "Window geometry".
@@ -2267,7 +2272,10 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   (`requestReflect`) repaints the touched strips / nodes.
 - **Persistence** — one `localStorage` key (`urx-midi`) holds the port choice (hardware-specific, shared
   across models) and the mapping list per model (control ids depend on the model's node set). Saved ports are
-  reopened best-effort on boot.
+  reopened best-effort on boot. A port choice writes the entry of its own direction and leaves the other one
+  as it is, so an entry naming a port this session does not hold — one whose restore failed or has not
+  finished, an output given up after repeated failed sends — is still there for the next boot. "None" removes
+  the entry of the direction it was chosen on.
 - **Scope** — the browser / demo builds are out of scope (`isTauri` gate; the demo build dead-code-eliminates
   the feature). E2E stubs the Tauri IPC bridge to inject incoming messages and capture `midi_send` bytes
   (`e2e/midi.spec.ts`).

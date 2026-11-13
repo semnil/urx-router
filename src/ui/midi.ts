@@ -172,14 +172,14 @@ export class MidiControl {
   /** Opens that have been asked for but not answered — what `reconcileOpenPorts`
    *  stands down for, since the shell cannot describe a connection it is still making. */
   private opensInFlight = 0;
-  /** Opens that have finished, counted so `reconcileOpenPorts` can tell whether one
-   *  began and ended inside its own round trip — where the in-flight count is back to
-   *  zero and the answer it is holding is already out of date. */
-  private opensDone = 0;
+  /** Opens that have finished and closes that were made, counted so `reconcileOpenPorts`
+   *  can tell whether the shell's slots changed inside its own round trip — where the
+   *  in-flight count is at zero and the answer it is holding is already out of date. */
+  private portChanges = 0;
   /** Which port choice, per direction, an in-flight open belongs to — bumped by every
-   *  selection. `opensInFlight` / `opensDone` count opens for the reconcile's benefit
-   *  and cannot answer this: they say whether one is happening, not whether the one
-   *  that just finished is still the one the operator asked for. */
+   *  selection. `opensInFlight` / `portChanges` count for the reconcile's benefit and
+   *  cannot answer this: they say whether a slot is changing or has changed, not whether
+   *  the open that just finished is still the one the operator asked for. */
   private portGen = { in: 0, out: 0 };
   /** The tail of each direction's intent chain (see `queuePort`). */
   private portQueue = { in: Promise.resolve(), out: Promise.resolve() };
@@ -544,6 +544,8 @@ export class MidiControl {
   }
 
   private async openInput(port: string): Promise<void> {
+    // The choice this open belongs to — it is called in that choice's turn of the queue.
+    const gen = this.portGen.in;
     this.opensInFlight++;
     try {
       // The Rust side replaces any prior input, so no explicit close first.
@@ -562,14 +564,18 @@ export class MidiControl {
     } catch (err) {
       this.closeInput = null;
       this.inputPort = null;
-      this.say(midiErrorStatus(err, t().midi.inputError));
+      // Said only while this is still the operator's latest choice for the input. The
+      // wording names no port, so said after a later choice it reads as that one's
+      // failure, and nothing takes it down again when that one opens.
+      if (gen === this.portGen.in) this.say(midiErrorStatus(err, t().midi.inputError));
     } finally {
       this.opensInFlight--;
-      this.opensDone++;
+      this.portChanges++;
     }
   }
 
   private async openOutput(port: string): Promise<void> {
+    const gen = this.portGen.out;
     this.opensInFlight++;
     try {
       await midiOpenOutput(port);
@@ -586,10 +592,11 @@ export class MidiControl {
       this.runFeedback("port-open"); // align motor faders / LEDs with the plan at once
     } catch (err) {
       this.outputPort = null;
-      this.say(midiErrorStatus(err, t().midi.outputError));
+      // As for the input: a failure of a choice a later one has replaced is not said.
+      if (gen === this.portGen.out) this.say(midiErrorStatus(err, t().midi.outputError));
     } finally {
       this.opensInFlight--;
-      this.opensDone++;
+      this.portChanges++;
     }
   }
 
@@ -603,18 +610,30 @@ export class MidiControl {
    * turns that silence into a port that visibly falls back to "none".
    *
    * Stood down for anything that opens a port, because the answer describes a moment
-   * rather than the present: the two commands are answered on separate threads, so one
-   * that raced ahead of the open it was meant to describe would clear a port that is
-   * being connected right now — the same symptom, caused here. In flight when it starts
+   * rather than the present, and does not say which side of an open that moment was on:
+   * one taken before an open that has since landed would clear a port that is being
+   * connected right now — the same symptom, caused here. In flight when it starts
    * is not enough on its own. An open that BEGINS and COMPLETES inside the round trip
-   * leaves the counter back at zero, and the answer is stale by then; `opensDone` is
+   * leaves the counter back at zero, and the answer is stale by then; `portChanges` is
    * what makes that case visible, so the two are checked together.
+   *
+   * A close counts as a change as well. An answer taken while a port was open still names
+   * it after "None" or a give-up has closed it, and adopting that one puts back a
+   * selection the shell no longer holds — on the output side, a place feedback is then
+   * sent to.
+   *
+   * Both counts see a change made AFTER the query was sent. A close sent before it is
+   * already counted when the query leaves, so that case rests on order instead: the
+   * shell's MIDI commands are synchronous and it enters them one at a time on one thread,
+   * in the order the webview hands them over, and the answer is the present one only if
+   * the close was handed over first. Nothing in Tauri's documentation says the webview keeps
+   * the order two requests were issued in when the first is not awaited.
    */
   private async reconcileOpenPorts(): Promise<void> {
     if (!isTauri() || this.opensInFlight > 0) return;
-    const generation = this.opensDone;
+    const generation = this.portChanges;
     const [input, output] = await midiOpenPorts().catch(() => [this.inputPort, this.outputPort]);
-    if (this.opensInFlight > 0 || this.opensDone !== generation) return; // an open landed under it
+    if (this.opensInFlight > 0 || this.portChanges !== generation) return; // a slot changed under it
     if (input !== this.inputPort) {
       this.inputPort = input;
       this.closeInput = null; // whatever it would have closed is already gone
@@ -665,8 +684,9 @@ export class MidiControl {
       else midiCloseInput();
       this.closeInput = null;
       this.inputPort = null;
+      this.portChanges++;
     }
-    this.savePorts();
+    this.savePort("in");
     // Push either way: a failed open (exclusive / unplugged port) left no input, and
     // the window's select has to fall back to "none" rather than keep showing a dead
     // choice. It renders from this state, so re-sending it is the correction.
@@ -680,7 +700,7 @@ export class MidiControl {
   private async applyOutputPort(port: string | null): Promise<void> {
     if (port) await this.openOutput(port);
     else this.closeOutput();
-    this.savePorts();
+    this.savePort("out");
     this.pushState();
   }
 
@@ -701,6 +721,7 @@ export class MidiControl {
     window.clearTimeout(this.settleTimer);
     this.settleTimer = 0;
     this.outputPort = null;
+    this.portChanges++;
     void midiCloseOutput().catch(() => {});
   }
 
@@ -946,12 +967,16 @@ export class MidiControl {
     return optionOf(this.resolve(control)?.kind ?? "toggle", m, this.mixedGangs(all).has(addrKey(m.addr)));
   }
 
-  private savePorts(): void {
+  /** Store what `dir` holds now — its port, or nothing for "None" and for an open that
+   *  failed. The other direction's entry is left as it is: it may name a port this session
+   *  does not hold — one whose boot restore failed or is still in flight, an output given
+   *  up as stalled — and that entry is what the next boot tries again. */
+  private savePort(dir: "in" | "out"): void {
     const s = this.store();
-    if (this.inputPort) s.input = this.inputPort;
-    else delete s.input;
-    if (this.outputPort) s.output = this.outputPort;
-    else delete s.output;
+    const key = dir === "in" ? "input" : "output";
+    const port = dir === "in" ? this.inputPort : this.outputPort;
+    if (port) s[key] = port;
+    else delete s[key];
     saveJson(STORE_KEY, s);
   }
 

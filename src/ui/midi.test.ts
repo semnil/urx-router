@@ -634,6 +634,93 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     expect(JSON.parse(localStorage.getItem("urx-midi")!).input).toBe("B");
   });
 
+  // Runs of three, each with the first open still in flight when the other two are chosen.
+  // One open is in flight at a time, the choice in the middle is replaced before its turn
+  // and never reaches the shell — neither as an open nor, for None, as a close — and the
+  // last one is what is open, shown and stored.
+  it.each([
+    { name: "A, B, C", then: ["B", "C"], opens: ["A", "C"] },
+    { name: "A, B, A", then: ["B", "A"], opens: ["A", "A"] },
+    { name: "A, None, B", then: [null, "B"], opens: ["A", "B"] },
+  ])("runs $name as the first choice and the last, one open at a time", async ({ then, opens }) => {
+    mocks.midiListInputs.mockResolvedValue(["A", "B", "C"]);
+    install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["A", "B", "C"]));
+
+    const begun: string[] = [];
+    const land: (() => void)[] = [];
+    let inFlight = 0;
+    let mostInFlight = 0;
+    mocks.midiOpenInput.mockImplementation(async (port: string, onMessage: (bytes: number[]) => void) => {
+      mocks.inputReceiver = onMessage;
+      begun.push(port);
+      mostInFlight = Math.max(mostInFlight, ++inFlight);
+      await new Promise<void>((r) => land.push(r));
+      inFlight--;
+      return mocks.closeInput;
+    });
+
+    dispatch({ type: "port", dir: "in", name: "A" });
+    await vi.waitFor(() => expect(begun).toEqual(["A"]));
+    for (const name of then) dispatch({ type: "port", dir: "in", name });
+    land[0]();
+    await vi.waitFor(() => expect(begun).toEqual(opens));
+    land[1]();
+
+    const last = opens[1];
+    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem("urx-midi")!).input).toBe(last));
+    expect(lastState().input).toBe(last);
+    expect(begun).toEqual(opens);
+    expect(mostInFlight).toBe(1);
+    expect(mocks.closeInput).not.toHaveBeenCalled();
+    expect(mocks.midiCloseInput).not.toHaveBeenCalled();
+  });
+
+  // The two directions are queued apart, so a switch of both at once is two runs like the
+  // ones above, whatever order their opens finish in.
+  it("ends each direction on its own last choice when both are switched at once", async () => {
+    mocks.midiListInputs.mockResolvedValue(["A", "B"]);
+    mocks.midiListOutputs.mockResolvedValue(["X", "Y"]);
+    install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["X", "Y"]));
+
+    const begun: string[] = [];
+    const land = new Map<string, () => void>();
+    mocks.midiOpenInput.mockImplementation(async (port: string, onMessage: (bytes: number[]) => void) => {
+      mocks.inputReceiver = onMessage;
+      begun.push(port);
+      await new Promise<void>((r) => land.set(port, r));
+      return mocks.closeInput;
+    });
+    mocks.midiOpenOutput.mockImplementation(async (...args: unknown[]) => {
+      const port = args[0] as string;
+      begun.push(port);
+      await new Promise<void>((r) => land.set(port, r));
+    });
+
+    dispatch({ type: "port", dir: "in", name: "A" });
+    dispatch({ type: "port", dir: "out", name: "X" });
+    await vi.waitFor(() => expect(begun).toEqual(["A", "X"]));
+    dispatch({ type: "port", dir: "in", name: "B" });
+    dispatch({ type: "port", dir: "out", name: "Y" });
+
+    // The output's two opens finish before the input's first.
+    land.get("X")!();
+    await vi.waitFor(() => expect(begun).toEqual(["A", "X", "Y"]));
+    land.get("Y")!();
+    await vi.waitFor(() => expect(lastState().output).toBe("Y"));
+    land.get("A")!();
+    await vi.waitFor(() => expect(begun).toEqual(["A", "X", "Y", "B"]));
+    land.get("B")!();
+
+    await vi.waitFor(() => expect(lastState()).toMatchObject({ input: "B", output: "Y" }));
+    expect(JSON.parse(localStorage.getItem("urx-midi")!)).toMatchObject({ input: "B", output: "Y" });
+  });
+
   // The boot restore is the third writer of the port slots, after the two intents, and
   // the window is usable while it is still in flight — a saved port that opens slowly is
   // exactly the wedged one the operator is re-picking away from. Outside the queue it
@@ -706,6 +793,143 @@ describe("MidiControl, the races and vocabularies around a port", () => {
 
     dispatch({ type: "port", dir: "in", name: null });
     await vi.waitFor(() => expect(mocks.midiCloseInput).toHaveBeenCalled());
+    expect(lastState().input).toBeNull();
+  });
+
+  // The shell's answer about open ports describes the moment it was taken. A close inside
+  // that round trip leaves an answer that still names the port, and adopting it put the
+  // selection back: the window showed the port as chosen while the shell held nothing, with
+  // no way back through the select, since picking the same entry again fires no `change`.
+  it("keeps None when it is chosen while the shell's answer about open ports is on its way", async () => {
+    install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["Controller In"]));
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(lastState().input).toBe("Controller In"));
+
+    let answer: ((held: [string | null, string | null]) => void) | undefined;
+    mocks.midiOpenPorts.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    dispatch({ type: "ready" }); // the window announcing itself is what asks
+    await vi.waitFor(() => expect(answer).toBeDefined());
+
+    dispatch({ type: "port", dir: "in", name: null });
+    await vi.waitFor(() => expect(mocks.closeInput).toHaveBeenCalledOnce());
+    expect(lastState().input).toBeNull();
+
+    const pushes = mocks.midiUiToWindow.mock.calls.length;
+    answer!(["Controller In", null]); // what the shell held when it took the question
+    // The refresh that asked pushes once its answer is in, adopted or not.
+    await vi.waitFor(() => expect(mocks.midiUiToWindow.mock.calls.length).toBeGreaterThan(pushes));
+    expect(lastState().input).toBeNull();
+  });
+
+  // The output's half, where the adopted name is also a place to send: feedback went to
+  // a slot the shell had emptied, failed, and ended in the stalled wording.
+  it("keeps the output at None the same way, and sends nothing at the port it closed", async () => {
+    seedMappings();
+    const { control } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["Controller Out"]));
+    dispatch({ type: "port", dir: "out", name: "Controller Out" });
+    await vi.waitFor(() => expect(lastState().output).toBe("Controller Out"));
+
+    let answer: ((held: [string | null, string | null]) => void) | undefined;
+    mocks.midiOpenPorts.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(answer).toBeDefined());
+
+    dispatch({ type: "port", dir: "out", name: null });
+    await vi.waitFor(() => expect(mocks.midiCloseOutput).toHaveBeenCalledOnce());
+
+    const pushes = mocks.midiUiToWindow.mock.calls.length;
+    answer!([null, "Controller Out"]);
+    await vi.waitFor(() => expect(mocks.midiUiToWindow.mock.calls.length).toBeGreaterThan(pushes));
+    expect(lastState().output).toBeNull();
+
+    control.liveReadSettled(); // a readback settling is what sends every mapped value
+    await Promise.resolve();
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+  });
+
+  // A failed open is said on the status line, and the wording names no port. Said for an
+  // attempt the operator has already chosen away from, it arrives after their new choice
+  // and reads as that port's failure — and stays there once that port is open.
+  it("says nothing about a failed input open the operator has already chosen away from", async () => {
+    mocks.midiListInputs.mockResolvedValue(["A", "B"]);
+    const { hooks } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["A", "B"]));
+
+    let fail!: (err: Error) => void;
+    const stalled = new Promise<never>((_, reject) => (fail = reject));
+    mocks.midiOpenInput.mockImplementation(async (port: string, onMessage: (bytes: number[]) => void) => {
+      mocks.inputReceiver = onMessage;
+      if (port === "A") await stalled;
+      return mocks.closeInput;
+    });
+
+    dispatch({ type: "port", dir: "in", name: "A" });
+    await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalledWith("A", expect.any(Function)));
+    dispatch({ type: "port", dir: "in", name: "B" });
+    fail(new Error("midi-open-failed: busy"));
+
+    await vi.waitFor(() => expect(lastState().input).toBe("B"));
+    expect(hooks.onStatus).not.toHaveBeenCalled();
+    expect(lastState().status).toBe("");
+  });
+
+  it("says nothing about a failed output open the operator has already chosen away from", async () => {
+    mocks.midiListOutputs.mockResolvedValue(["X", "Y"]);
+    const { hooks } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["X", "Y"]));
+
+    let fail!: (err: Error) => void;
+    const stalled = new Promise<never>((_, reject) => (fail = reject));
+    mocks.midiOpenOutput.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "X") await stalled;
+    });
+
+    dispatch({ type: "port", dir: "out", name: "X" });
+    await vi.waitFor(() => expect(mocks.midiOpenOutput).toHaveBeenCalledWith("X"));
+    dispatch({ type: "port", dir: "out", name: "Y" });
+    fail(new Error("midi-open-failed: busy"));
+
+    await vi.waitFor(() => expect(lastState().output).toBe("Y"));
+    expect(hooks.onStatus).not.toHaveBeenCalled();
+    expect(lastState().status).toBe("");
+  });
+
+  // The same failure with no later choice behind it is the operator's current one, and
+  // it is said.
+  it("still says a failed open that is the latest choice, after an earlier one was replaced", async () => {
+    mocks.midiListInputs.mockResolvedValue(["A", "B"]);
+    const { hooks } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["A", "B"]));
+
+    let land!: () => void;
+    const stalled = new Promise<void>((r) => (land = r));
+    mocks.midiOpenInput.mockImplementation(async (port: string, onMessage: (bytes: number[]) => void) => {
+      mocks.inputReceiver = onMessage;
+      if (port === "A") await stalled;
+      else throw new Error("midi-open-failed: busy");
+      return mocks.closeInput;
+    });
+
+    dispatch({ type: "port", dir: "in", name: "A" });
+    await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalledWith("A", expect.any(Function)));
+    dispatch({ type: "port", dir: "in", name: "B" });
+    land();
+
+    await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalledWith("B", expect.any(Function)));
+    await vi.waitFor(() => expect(hooks.onStatus).toHaveBeenCalledOnce());
+    expect(lastState().status.startsWith(t().midi.inputError(""))).toBe(true);
     expect(lastState().input).toBeNull();
   });
 

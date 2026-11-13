@@ -90,6 +90,10 @@ function install(): { control: MidiControl; hooks: MidiHooks } {
   return { control: new MidiControl(hooks), hooks };
 }
 
+/** The port entries of the persisted record, as the next boot's restore reads them. */
+const storedPorts = (): { input?: string; output?: string } =>
+  JSON.parse(localStorage.getItem("urx-midi") ?? "{}") as { input?: string; output?: string };
+
 /** Wait for the relay attach the constructor kicks off. */
 async function attached(): Promise<void> {
   await vi.waitFor(() => expect(mocks.receiver).toBeDefined());
@@ -487,6 +491,29 @@ describe("feedback to the controller", () => {
     expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.outputStalled);
   });
 
+  // Giving up leaves the stored output alone, so the next boot tries it again. Choosing an
+  // input afterwards is a statement about the input: it used to write both entries from
+  // what was open, and the output given up a moment ago was erased by it.
+  it("keeps the stored output it gave up on when an input is chosen afterwards", async () => {
+    seedMappings();
+    const { control, hooks } = install();
+    await attached();
+    await openOutput();
+    expect(storedPorts().output).toBe("Controller Out");
+
+    vi.useFakeTimers();
+    mocks.midiSend.mockRejectedValue(new Error("port gone"));
+    control.liveReadSettled();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(hooks.onStatus).toHaveBeenCalledWith(t().midi.outputStalled);
+    expect(storedPorts().output).toBe("Controller Out"); // the give-up itself stores nothing
+    vi.useRealTimers();
+
+    await openInput();
+    await vi.waitFor(() => expect(storedPorts().input).toBe("Controller In"));
+    expect(storedPorts().output).toBe("Controller Out");
+  });
+
   // Giving up says so; opening a port again must un-say it. The message is stored and
   // mirrored into the MIDI window, so a stale one keeps reporting that feedback is
   // stopped while it is running again.
@@ -626,6 +653,58 @@ describe("the port restore at boot", () => {
     const { control } = install();
     await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalled());
     expect(control.learnActive()).toBe(false); // still usable
+  });
+
+  // The restore stores nothing, so a saved port that is unplugged right now is tried again
+  // at the next boot. Choosing a port for the OTHER direction must leave that entry as it
+  // is: each direction writes its own entry and no other.
+  it("keeps a saved input whose restore failed when an output is chosen", async () => {
+    localStorage.setItem("urx-midi", JSON.stringify({ input: "Unplugged" }));
+    mocks.midiOpenInput.mockRejectedValueOnce(new Error("midi-port-not-found"));
+    const { hooks } = install();
+    await attached();
+    await vi.waitFor(() => expect(hooks.onStatus).toHaveBeenCalledWith(t().error.shell.midiPortNotFound));
+    expect(storedPorts().input).toBe("Unplugged"); // the failed restore alone erased nothing
+
+    await openOutput();
+    await vi.waitFor(() => expect(storedPorts().output).toBe("Controller Out"));
+    expect(storedPorts().input).toBe("Unplugged");
+  });
+
+  // The same with the restore still in flight: the input is not open YET, and an output
+  // chosen in that window stored "no input" over a port that opened a moment later.
+  it("keeps a saved input still being restored when an output is chosen meanwhile", async () => {
+    localStorage.setItem("urx-midi", JSON.stringify({ input: "Controller In" }));
+    let land!: () => void;
+    const stalled = new Promise<void>((r) => (land = r));
+    const opened: string[] = [];
+    mocks.midiOpenInput.mockImplementationOnce(async (port: string) => {
+      await stalled;
+      opened.push(port);
+      return mocks.closeInput;
+    });
+    install();
+    await attached();
+    await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalledWith("Controller In", expect.any(Function)));
+
+    await openOutput();
+    await vi.waitFor(() => expect(storedPorts().output).toBe("Controller Out"));
+    land();
+    await vi.waitFor(() => expect(opened).toEqual(["Controller In"]));
+    expect(storedPorts().input).toBe("Controller In");
+  });
+
+  // Writing only its own entry is not the same as never clearing it: None is a choice, and
+  // it is stored as one for that direction while the other entry stays.
+  it("stores None for the direction it was chosen on, and leaves the other entry", async () => {
+    localStorage.setItem("urx-midi", JSON.stringify({ input: "Controller In", output: "Controller Out" }));
+    install();
+    await attached();
+    await vi.waitFor(() => expect(mocks.midiOpenOutput).toHaveBeenCalledWith("Controller Out"));
+
+    dispatch({ type: "port", dir: "out", name: null });
+    await vi.waitFor(() => expect(mocks.midiCloseOutput).toHaveBeenCalled());
+    expect(storedPorts()).toEqual({ input: "Controller In" });
   });
 
   it("opens nothing outside the desktop shell", async () => {

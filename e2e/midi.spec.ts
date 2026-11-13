@@ -1433,6 +1433,40 @@ test("a port opened while the shell is being asked survives the answer", async (
   await sendMidi(page, [0xb0, 7, 100]); // and it is still a port that delivers
 });
 
+test("None chosen while the shell is being asked survives the answer", async ({ page }) => {
+  // The other half of the case above. The answer held here was taken while the port was
+  // open, and the operator closes the port before it arrives: adopted, it puts the port
+  // back as the chosen one in a window whose shell holds nothing.
+  const answeredAtOpen = await page.evaluate(() => window.__midiTest.openPortsAnswered);
+  const win = await openMidiWindow(page);
+  await pickInputPort(page, win);
+  await expect.poll(() => page.evaluate(() => window.__midiTest.openPortsAnswered)).toBeGreaterThan(answeredAtOpen);
+  await page.evaluate(() => {
+    window.__midiTest.openPortsDelayMs = 600;
+  });
+
+  // Provoke a refresh with the answer held: the window announcing itself is what asks.
+  await win.close();
+  const answeredBefore = await page.evaluate(() => window.__midiTest.openPortsAnswered);
+  const again = await openMidiWindow(page);
+  await expect(again.locator(".mw-in")).toHaveValue("Stub In");
+
+  // Choose None while it is held.
+  await chooseOption(again.locator(".mw-in"), "");
+  await expect.poll(() => page.evaluate(() => window.__midiTest.inputPort)).toBe(null);
+  await expect(again.locator(".mw-in")).toHaveValue("");
+  // The hold really did still contain the choice — the same guard as the case above.
+  expect(await page.evaluate(() => window.__midiTest.openPortsAnswered)).toBe(answeredBefore);
+
+  await expect.poll(() => page.evaluate(() => window.__midiTest.openPortsAnswered)).toBeGreaterThan(answeredBefore);
+  // The stub counts the answer ahead of the app's own continuation, and the push that
+  // continuation sends is what would put the port back. A learn round trip is sent after
+  // that push and rendered after it, so the select is read once it has come back.
+  await setLearn(page, again, true);
+  await expect(again.locator(".mw-in")).toHaveValue("");
+  expect(await page.evaluate(() => window.__midiTest.inputPort)).toBe(null);
+});
+
 test("removing an assignment stops the control from responding", async ({ page }) => {
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
