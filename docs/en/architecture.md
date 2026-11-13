@@ -3690,7 +3690,7 @@ not symptoms.
 
 ### Why a file, and what its lines mean
 
-The symptom the ledger exists for shows up **after the app is gone**, so a reading that lives only in the
+A link problem can need reading **after the app is gone**, so a reading that lives only in the
 status bar is missing exactly when it is wanted. Each session appends JSONL to `link-ledger.jsonl` in the
 app's log directory (`append_link_log`): one line when the session opens, one a minute while it runs, and one
 as it ends carrying `end: "off"` or `end: "error"`.
