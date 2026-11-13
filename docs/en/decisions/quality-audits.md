@@ -159,7 +159,7 @@ two port selects: what a second and a third choice do while the first port is st
   is this. The MIDI commands are all synchronous, and the shell enters synchronous commands one at
   a time, in the order the webview hands them over. That the webview hands two requests over in the
   order the page issued them, when the page does not await the first, is not guaranteed by Tauri's
-  documentation. It was observed to hold in the macOS webview (WKWebView). The Windows webview
+  documentation. It holds in the macOS webview (WKWebView). The Windows webview
   (WebView2) is unconfirmed.
 - **Known and left unguarded: three places where the result depends on the order two commands
   are taken in.** The first two go wrong only if the shell takes the two commands in the reverse

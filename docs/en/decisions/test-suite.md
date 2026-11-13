@@ -19,8 +19,8 @@ card of its Behavior column was dropped together with the panel. The two message
 (`modeDesc` and `buttonModeDesc`) stayed in the message catalogs, read by nothing, through several
 later revisions. Every test was green throughout.
 
-**Why.** Measured on the ordinary E2E tier before the work started: 76 of the 202 strings a dialog
-shows were asserted by some case (37.6%). No spec covered the consent gate, since every spec skips
+**Why.** Before the work started, 76 of the 202 strings a dialog shows were asserted by some case
+on the ordinary E2E tier (37.6%). No spec covered the consent gate, since every spec skips
 it through `localStorage`, and the File and View menus were opened and closed without their items
 being read. The 173 `toBeVisible` assertions that existed looked at behaviour — a lock, a value,
 something opening — and none of them at an item being listed.
@@ -141,6 +141,6 @@ other in a cycle, a table built at module scope from a binding that is not initi
 only a unit test entering the cycle in the order that exposes it. `src/core/control/vd.ts` became
 a leaf, and `pnpm test module-order.contract` guards it.
 
-**Measured.** Before the fix, 21 table entries differed, and only in the order that enters through
+**What the fix changed.** Before the fix, 21 table entries differed, and only in the order that enters through
 `vd.ts`. After it, there is no difference in any of the seven entry orders — the six modules left
 in the cycle, and `vd.ts`. With the fix reverted, the guard fails on 22 entries.
