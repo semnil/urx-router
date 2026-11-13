@@ -434,10 +434,10 @@ carries a one-line map of the same directories and points here.
       app log directory a line a minute (path from the bundle identifier, so `tauri dev` and the installed
       app share ONE file — hence the `build` / `version` stamp on every line; rotated at 2 MiB keeping one
       generation, so the record is bounded at ~4 MiB and nothing in the app deletes it), which is the
-      **point** — the symptom it exists for (Device Center needing a force quit) appears after the app is
-      gone, so a reading that lives only on screen is missing exactly when it is wanted. Latency, queue
+      **point** — a link problem can need reading after the app is gone, so a reading that lives only on
+      screen is missing exactly when it is wanted. Latency, queue
       depth and feed rates are deliberately NOT in it: they measure how the link feels from this side, and a
-      broker answers promptly right up to the moment its own teardown deadlocks. The share of notifies the
+      broker can answer promptly right up to the moment it stops answering. The share of notifies the
       address filter drops is excluded for a stronger reason — registration and notify emission are
       decoupled on this protocol (measured), so a registration accumulating at the broker is invisible in
       the inbound stream and that figure cannot measure what it appears to. `LINK_BAR_KEYS` /
@@ -773,9 +773,7 @@ carries a one-line map of the same directories and points here.
   the socket's write half) — a replaced connection, an explicit disconnect, a dropped channel, the pump's own error and the
   app's quit all leave the same way, and the drain stops at the socket's first read timeout rather than
   spending the Quit on a quiet broker; the app is `build`+`run` rather than `run` so a `RunEvent::Exit`
-  handler can call `vd::shutdown_blocking`, which WAITS, bounded, for those frames to reach the wire.
-  Whether an abandoned session is what leaves Device Center needing a force quit is **not established** —
-  tearing it down on quit removes it from the candidates, which is a different claim; see `docs/{en,ja}/known-issues.md`) + the MIDI
+  handler can call `vd::shutdown_blocking`, which WAITS, bounded, for those frames to reach the wire.) + the MIDI
   control window and the relay between it and the main window (`midiwin.rs`: `open_midi_window` — async on
   purpose, since building a webview from a blocking command deadlocks on Windows — `close_midi_window`,
   `focus_midi_window`, `pin_midi_window`, `midi_window_open`, and four Channel relay commands; the main window's
@@ -3804,9 +3802,6 @@ would tell the frontend: the port would go on showing as selected, and re-pickin
 `change`, so the only way back would be picking "none" and the port again. Opening MIDI control would then
 leave MIDI learn unable to receive anything at all, which is what a control window is opened to do.
 A third window inherits the right behaviour without anyone remembering to add it to a list.
-
-Whether an abandoned session is what leaves Device Center needing a force quit is **not established**. Closing
-it properly removes it from the candidates, which is a different claim — see `docs/en/known-issues.md`.
 
 ### The parameter watch (dev builds)
 

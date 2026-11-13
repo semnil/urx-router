@@ -70,7 +70,7 @@ pub struct Connection {
 /// What is deliberately NOT here: round-trip latency, queue depth, notify rates, the
 /// share of notifies the address filter drops. Those measure how the link FEELS from
 /// this side, and that is not evidence about the broker's internal state — it can
-/// answer promptly right up to the moment its own teardown deadlocks. The drop share
+/// answer promptly right up to the moment it stops answering. The drop share
 /// in particular cannot measure registration accumulation at all: registration and
 /// notify emission are decoupled on this protocol (measured — a registered address
 /// can change and announce nothing), and an address nobody moves emits nothing however

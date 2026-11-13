@@ -4,7 +4,7 @@
 // Why these values and not the obvious ones. Round-trip latency, queue depth and feed
 // rates are deliberately absent: they measure how the link FEELS from this side, which
 // is not evidence about the broker's state — a broker can answer promptly right up to
-// the moment its own teardown deadlocks. What is here is what this side DID to the
+// the moment it stops answering. What is here is what this side DID to the
 // broker, counted exactly: commands, subscription replacements, registration frames,
 // full reads. Causes, not symptoms.
 //
