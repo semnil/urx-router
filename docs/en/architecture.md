@@ -1601,17 +1601,13 @@ the same way, so a pixel dragged is the same share of the level on both faders. 
 
 The ordinary tier pins this in Playwright's Chromium (`e2e/console.spec.ts`) and **nothing pins it in
 WebKit** — every `@webkit` case in the race tier is about a strip rebuilt under a live pointer or about the
-chord/focus matrix, not about the press. **The shipping WebView2 was measured separately** (2026-08-13,
-debug build, runtime 151.0.4129.78, 1280x800 viewport, URX44V), because that engine is not the one any
-tier runs. From two detents above the factory value, so a stray reset could not read as "the press changed
-nothing": presses at the cap's top edge, centre and bottom edge left the readout unchanged; a press at 80%
-of the fader's height (164 px there) put the cap centre **0.013 px** from the pointer against a half-detent
-tolerance of 2.05 px; and a three-detent drag from a grab moved the cap 12.313 px for the 12.3 px asked.
-Identical for the `mouse`, `pen` and `touch` pointer types — the tiers only exercise the first. One thing
+chord/focus matrix, not about the press. No tier runs the shipping WebView2, and **it behaves the same
+way**: a press on the cap leaves the readout unchanged, a press on the bare track puts the cap centre under
+the pointer, and a drag from a grab moves the cap by the distance dragged — for the `mouse`, `pen` and
+`touch` pointer types alike, where the tiers only exercise the first. One thing
 belongs to touch alone: a **double-tap is a `dblclick` there**, so two taps on the cap inside the
-double-click interval hit the factory reset above. Measured with its control (two taps 150 ms apart reset a
--3.2 dB fader to 0.0; the same two 700 ms apart left it at -3.2), which is what separates it from "any two
-taps reset it".
+double-click interval hit the factory reset above, while the same two taps further apart than that interval
+leave the fader where it is.
 
 **Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
 step while Shift is held, mirroring the hardware's push-and-turn fine mode (the V1.5 user guide describes it as Coarse / Fine operations, without naming the parameters that take it): the tuning screens'
@@ -1684,7 +1680,7 @@ drag lands on the nearest.
   refill are one task, so the empty rack is never laid out and the offset is never clipped, and the restored
   focus passes `preventScroll` so it does not drag an off-screen control into view. Rewriting the offset around
   the rebuild instead reads and writes `scrollLeft` against a dirty tree, forcing a synchronous layout of the
-  whole rack — measured at ~25 ms per render on WKWebView (against ~2 ms on WebView2) where a full render is
+  whole rack — ~25 ms per render on WKWebView (against ~2 ms on WebView2) where a full render is
   ~6 ms without it — on the path Live sync takes for every read-back reflect. Both halves are engine behaviour
   rather than app logic, so the bench's `scrollCheck` (`scripts/meter-bench.mjs`) re-checks them on WKWebView
   each run; the E2E suite pins the same contract in Chromium. The rebuilt meters are then redrawn in the same
@@ -1743,8 +1739,8 @@ drag lands on the nearest.
   rest it sits at the floor). `core/meters.ts` maps node ids to broker meter addresses (`meterId:x`), decodes the
   raw value (deci-dBFS, whose top value reads OVER) to dBFS, and holds the latest reading in a `MeterStore`. The UI
   samples the readings on a `requestAnimationFrame` loop that paints only once 1000/30 ms have passed since its last
-  paint. On a 60 Hz display that lands on every second or third frame, so the loop paints below 30 fps (22.2 fps in
-  WebKit, `node scripts/meter-bench-run.mjs --seconds 20`, 2026-10-10); the device updates at ~10 Hz, so painting
+  paint. On a 60 Hz display that lands on every second or third frame, so the loop paints below 30 fps; the
+  device updates at ~10 Hz, so painting
   faster gives no gain and renders with fast attack / slow release, peak hold, and a per-channel OVER latch (the top
   OVER box), writing only the lanes (L/R on a stereo strip) that changed (compared at integer-percent). **The paint
   is kept compositor-only**: the bars are driven by `transform: scaleY` / `translateY` from typed (`@property`) 0..1
@@ -1765,8 +1761,8 @@ drag lands on the nearest.
   behind it) nor delays the batch; while a subscription streams the worker also polls commands on a shorter
   interval so the bounded pump runs back-to-back and keeps up with the feed. That budget bounds the wait only
   while the feed is running: on a QUIET link the drain ends at the socket's own read timeout instead, and the
-  worker is not looking at the command channel until it does — measured on a URX44V, the first live write after
-  a quiet gap waited 152 ms against a 200 ms timeout, which is why that timeout is 50 ms (`READ_TIMEOUT`), not
+  worker is not looking at the command channel until it does — on a URX44V, with a 200 ms timeout, the first live
+  write after a quiet gap waits 152 ms, which is why that timeout is 50 ms (`READ_TIMEOUT`), not
   the 30 ms budget. Changing the budget does not move it: on a quiet link the loop leaves at the drained
   branch and never reaches the budget check.
   A subscribed notify that lands while a command awaits its response (the `do_set` / `do_get_value` loops) is
