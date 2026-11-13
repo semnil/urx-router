@@ -57,7 +57,7 @@ export function sidechainTap(nodeId: string, modelId?: string): MeterTap | undef
 }
 
 // Mono input channel CH1-4 (x = channel index 0..3): the full processing chain.
-// meter_id per tap confirmed on URX44V (reference/work/vd vd-meters.md stage probe).
+// meter_id per tap confirmed on URX44V (the project's private notes, stage probe).
 const monoTaps = (i: number): MeterTap[] => [
   { key: "input", label: "INPUT", l: [100, i] },
   { key: "pregate", label: "PRE GATE", l: [106, i] },

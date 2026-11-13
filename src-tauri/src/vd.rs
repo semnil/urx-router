@@ -1,6 +1,6 @@
 // Live hardware control transport: a client for the Device Center broker's "vd"
 // protocol. Device Center must be running with a URX connected; it bridges the
-// broker to the unit's CDC serial. See reference/work/vd/vd-protocol.md.
+// broker to the unit's CDC serial. See the project's private notes.
 //
 // The link runs over the per-session port Device Center advertises on :51770 —
 // newline-delimited JSON over a plain socket, one socket per unit.

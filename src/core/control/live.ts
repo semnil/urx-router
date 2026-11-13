@@ -285,7 +285,7 @@ export class LiveSync {
   // it past the first, and when the first write's announcement finally arrives it no
   // longer equals anything the snapshot holds — and is applied as a device-side change,
   // writing a value the operator has already replaced back onto the board. The unit
-  // announces a numeric write ack+58-151 ms after the ack (reference/work/vd) against a
+  // announces a numeric write ack+58-151 ms after the ack (the project's private notes) against a
   // 120 ms flush window, so a drag reaches that overlap on real hardware. One queue per
   // address, oldest first, retained for the same window a settle waits (settle.ts).
   //

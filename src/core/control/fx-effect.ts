@@ -5,7 +5,7 @@
 // param per FX channel (681 for FX1, 685 for FX2), addressed by a SLOT on the y
 // axis, and the slot's meaning depends on the selected effect type. This module
 // isolates that addressing oddity plus the raw↔display encodings (all established
-// by live LCD calibration; see reference/work/vd/vd-params.md "FX channel EFFECT").
+// by live LCD calibration; see the project's private notes, "FX channel EFFECT").
 //
 // Plan storage mirrors SSMCS: raw broker integers are kept in the plan and turned
 // into the device's display units here, so a captured plan round-trips exactly and
@@ -642,7 +642,7 @@ const PINGPONG_TYPE = 1025;
  * Ping Pong sent Mono Delay's four filter and feedback values to the hardware.
  *
  * Captured off a factory unit by cycling the selector through all five types per FX
- * channel; `reference/work/device-tests/fx-cycle-capture.json` is the capture and this
+ * channel; the capture is a file in the project's private notes and this
  * is its transcription. Keyed by SLOT so a row reads against that file directly.
  *
  * The same shape the insert-FX catalogue already takes for the two companders, whose

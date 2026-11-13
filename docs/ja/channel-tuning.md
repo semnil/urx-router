@@ -1468,9 +1468,6 @@ Speed と Depth はタグを持つだけで書き込み可能である (理由�
 混合であり、両者が一致する箇所では区別できない。sentinel 2 種で 2 回行い、**両パスが同じ値に着地した
 スロットだけ**を既定として採り、残りは推測せず undecided として報告する。10 タイプ・undecided 0・残差 0。
 
-走行は非公開の `reference/work/device-tests/probe-insfx-factory-defaults.mjs`、読みは
-`reference/work/device-tests/insfx-factory-results.json`。
-
 **パスごとにセレクタを None へ解放してから arm する。**同値書込では再投入されない — 実機が再投入するのは
 タイプへの**遷移**である — ので、セレクタが既にそのタイプになっているパスは何も測れず、走行は sentinel を
 既定として報告せずそう言う。

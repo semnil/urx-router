@@ -614,7 +614,8 @@ carries a one-line map of the same directories and points here.
   `__urxConsole`), bindings pinned by `keyprobe.test.ts`; installed from `main.ts` **after** the app's own
   keydown handler, which is what lets the chord log report whether the app claimed the chord /
   `param-watch.ts` the parameter watch, **dev builds only**: a wall-clock record of a few parameters the app
-  neither reads nor writes, kept while Live sync is up and published as `window.__urxParamWatch`
+  does not write — one that only the watch reads, and three the SIM view reads as well — kept while Live sync
+  is up and published as `window.__urxParamWatch`
   ([The parameter watch (dev builds)](#the-parameter-watch-dev-builds)) / `trace-sink.ts` the JSONL trace file
   `midi-probe.ts` and the parameter watch both write through: records batched behind a timer, flushed on
   `pagehide`, and the file given up for good — the queue cleared — on the first batch the shell refuses, which
@@ -3794,13 +3795,17 @@ it properly removes it from the candidates, which is a different claim — see `
 
 ### The parameter watch (dev builds)
 
-A dev build (`pnpm tauri dev`) records a handful of parameters the app neither reads nor writes for as long as
+A dev build (`pnpm tauri dev`) records a handful of parameters the app does not write for as long as
 Live sync is up, so that an intermittent change on the unit can be put beside what the operator was doing when
-it happened; the list is `WATCHED` in `src/ui/param-watch.ts`.
+it happened; the list is `WATCHED` in `src/ui/param-watch.ts`. The watch reads every one of them itself, as the
+items below describe. One is the subject, and nothing else in the app reads it; the other three — the operation
+mode, the current scene and the row the SCENE LIST cursor stands on — are its context, and the SIM view reads
+them as well.
 
 - **A subscription of its own.** `vd_probe_subscribe` registers the addresses as a second parameter
   subscription in the worker, beside the one the follow layer reads, so the live-sync set stays exactly what the
-  plan names and a notify on a watched address reaches the watch's channel only. Registration is per address,
+  plan names. A notify goes to the channel of each subscription that holds its address: to the watch's channel
+  only for an address the live-sync set does not hold, and to both for one it does. Registration is per address,
   never a namespace-wide post. An address both subscriptions hold is registered once and stays registered while
   either holds it, across the live-sync set being replaced.
 - **A read once a second.** Each watched address is also read with a GET, one round of reads a second after the
@@ -5170,7 +5175,7 @@ while any other device action holds the link (a Live sync still connecting holds
 asks again once its confirms are answered, going ahead only in the state the confirm asked about, since the
 window keeps running behind them.
 
-Format notes that shape the reader (full spec: the private reference repository):
+Format notes that shape the reader:
 
 - **Endianness alternates by level.** Record headers and the F descriptor records are big-endian;
   block headers and every value in the D block are little-endian.

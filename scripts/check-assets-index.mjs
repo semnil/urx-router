@@ -92,8 +92,6 @@ const PROSE_TOKENS = new Map([
   ["?plan=", "the deep-link query prefix"],
   ["*.audit.test.ts", "a glob naming a family; the family is checked by reverse rule F"],
   ["*.test-util.ts", "a glob naming a family; every member is checked by reverse rule E2"],
-  ["probe-*.mjs", "a glob over the private reference repo, absent from this checkout"],
-  ["PLAN.md", "lives in the private reference repo, absent from this checkout"],
   ["dist", "the build output directory, named as the thing ci.yml greps"],
   ["ci.yml", "named as the workflow that greps; the grep itself is asserted per handle"],
   ["ls scripts/", "an instruction to the reader, not a path"],
@@ -507,8 +505,8 @@ if (isEntry(import.meta.url)) {
     if (names.length) firstCellSpans.set(i + 1, names);
   }
 
-  // Spans from the tables AND the surrounding paragraphs: the private probe index and
-  // the "ci.yml greps dist" claim live in prose.
+  // Spans from the tables AND the surrounding paragraphs: the `ls scripts/` instruction
+  // and the "ci.yml greps dist" claim live in prose.
   const spans = [];
   // A hook run about a docs/ file answers for that file only: the asset table belongs to
   // the edit that touched CLAUDE.md, and re-reporting it here would blame every docs edit
