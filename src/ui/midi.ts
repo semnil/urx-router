@@ -172,14 +172,14 @@ export class MidiControl {
   /** Opens that have been asked for but not answered — what `reconcileOpenPorts`
    *  stands down for, since the shell cannot describe a connection it is still making. */
   private opensInFlight = 0;
-  /** Opens that have finished, counted so `reconcileOpenPorts` can tell whether one
-   *  began and ended inside its own round trip — where the in-flight count is back to
-   *  zero and the answer it is holding is already out of date. */
-  private opensDone = 0;
+  /** Opens that have finished and closes that were made, counted so `reconcileOpenPorts`
+   *  can tell whether the shell's slots changed inside its own round trip — where the
+   *  in-flight count is at zero and the answer it is holding is already out of date. */
+  private portChanges = 0;
   /** Which port choice, per direction, an in-flight open belongs to — bumped by every
-   *  selection. `opensInFlight` / `opensDone` count opens for the reconcile's benefit
-   *  and cannot answer this: they say whether one is happening, not whether the one
-   *  that just finished is still the one the operator asked for. */
+   *  selection. `opensInFlight` / `portChanges` count for the reconcile's benefit and
+   *  cannot answer this: they say whether a slot is changing or has changed, not whether
+   *  the open that just finished is still the one the operator asked for. */
   private portGen = { in: 0, out: 0 };
   /** The tail of each direction's intent chain (see `queuePort`). */
   private portQueue = { in: Promise.resolve(), out: Promise.resolve() };
@@ -565,7 +565,7 @@ export class MidiControl {
       this.say(midiErrorStatus(err, t().midi.inputError));
     } finally {
       this.opensInFlight--;
-      this.opensDone++;
+      this.portChanges++;
     }
   }
 
@@ -589,7 +589,7 @@ export class MidiControl {
       this.say(midiErrorStatus(err, t().midi.outputError));
     } finally {
       this.opensInFlight--;
-      this.opensDone++;
+      this.portChanges++;
     }
   }
 
@@ -607,14 +607,19 @@ export class MidiControl {
    * that raced ahead of the open it was meant to describe would clear a port that is
    * being connected right now — the same symptom, caused here. In flight when it starts
    * is not enough on its own. An open that BEGINS and COMPLETES inside the round trip
-   * leaves the counter back at zero, and the answer is stale by then; `opensDone` is
+   * leaves the counter back at zero, and the answer is stale by then; `portChanges` is
    * what makes that case visible, so the two are checked together.
+   *
+   * A close counts as a change as well. An answer taken while a port was open still names
+   * it after "None" or a give-up has closed it, and adopting that one puts back a
+   * selection the shell no longer holds — on the output side, a place feedback is then
+   * sent to.
    */
   private async reconcileOpenPorts(): Promise<void> {
     if (!isTauri() || this.opensInFlight > 0) return;
-    const generation = this.opensDone;
+    const generation = this.portChanges;
     const [input, output] = await midiOpenPorts().catch(() => [this.inputPort, this.outputPort]);
-    if (this.opensInFlight > 0 || this.opensDone !== generation) return; // an open landed under it
+    if (this.opensInFlight > 0 || this.portChanges !== generation) return; // a slot changed under it
     if (input !== this.inputPort) {
       this.inputPort = input;
       this.closeInput = null; // whatever it would have closed is already gone
@@ -665,6 +670,7 @@ export class MidiControl {
       else midiCloseInput();
       this.closeInput = null;
       this.inputPort = null;
+      this.portChanges++;
     }
     this.savePort("in");
     // Push either way: a failed open (exclusive / unplugged port) left no input, and
@@ -701,6 +707,7 @@ export class MidiControl {
     window.clearTimeout(this.settleTimer);
     this.settleTimer = 0;
     this.outputPort = null;
+    this.portChanges++;
     void midiCloseOutput().catch(() => {});
   }
 

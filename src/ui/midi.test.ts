@@ -709,6 +709,63 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     expect(lastState().input).toBeNull();
   });
 
+  // The shell's answer about open ports describes the moment it was taken. A close inside
+  // that round trip leaves an answer that still names the port, and adopting it put the
+  // selection back: the window showed the port as chosen while the shell held nothing, with
+  // no way back through the select, since picking the same entry again fires no `change`.
+  it("keeps None when it is chosen while the shell's answer about open ports is on its way", async () => {
+    install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["Controller In"]));
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(lastState().input).toBe("Controller In"));
+
+    let answer: ((held: [string | null, string | null]) => void) | undefined;
+    mocks.midiOpenPorts.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    dispatch({ type: "ready" }); // the window announcing itself is what asks
+    await vi.waitFor(() => expect(answer).toBeDefined());
+
+    dispatch({ type: "port", dir: "in", name: null });
+    await vi.waitFor(() => expect(mocks.closeInput).toHaveBeenCalledOnce());
+    expect(lastState().input).toBeNull();
+
+    const pushes = mocks.midiUiToWindow.mock.calls.length;
+    answer!(["Controller In", null]); // what the shell held when it took the question
+    // The refresh that asked pushes once its answer is in, adopted or not.
+    await vi.waitFor(() => expect(mocks.midiUiToWindow.mock.calls.length).toBeGreaterThan(pushes));
+    expect(lastState().input).toBeNull();
+  });
+
+  // The output's half, where the adopted name is also a place to send: feedback went to
+  // a slot the shell had emptied, failed, and ended in the stalled wording.
+  it("keeps the output at None the same way, and sends nothing at the port it closed", async () => {
+    seedMappings();
+    const { control } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["Controller Out"]));
+    dispatch({ type: "port", dir: "out", name: "Controller Out" });
+    await vi.waitFor(() => expect(lastState().output).toBe("Controller Out"));
+
+    let answer: ((held: [string | null, string | null]) => void) | undefined;
+    mocks.midiOpenPorts.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(answer).toBeDefined());
+
+    dispatch({ type: "port", dir: "out", name: null });
+    await vi.waitFor(() => expect(mocks.midiCloseOutput).toHaveBeenCalledOnce());
+
+    const pushes = mocks.midiUiToWindow.mock.calls.length;
+    answer!([null, "Controller Out"]);
+    await vi.waitFor(() => expect(mocks.midiUiToWindow.mock.calls.length).toBeGreaterThan(pushes));
+    expect(lastState().output).toBeNull();
+
+    control.liveReadSettled(); // a readback settling is what sends every mapped value
+    await Promise.resolve();
+    expect(mocks.midiSend).not.toHaveBeenCalled();
+  });
+
   // The relay's own header says it can deliver a previous session's messages, and
   // `parseRelay` checks the envelope rather than the field vocabulary. The engine reads
   // any non-"pickup" mode as absolute, so an unknown value looked fine for the session

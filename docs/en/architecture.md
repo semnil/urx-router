@@ -2075,6 +2075,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   and a reply that overtook the open it describes would clear a port that is being connected right now. In
   flight when it starts is not enough on its own — an open that begins and ends inside the round trip leaves
   that count back at zero — so finished opens are counted too and the count is compared across the trip.
+  A close is counted with them: an answer taken while a port was open still names it after "None", or giving
+  up a stalled output, has closed it, and adopting that answer would put back a selection the shell no longer
+  holds.
   `src-tauri/src/midiwin.rs` adds the window itself: `open_midi_window` (async on purpose —
   building a webview from a blocking command deadlocks on Windows), `close_midi_window`, `focus_midi_window`,
   `midi_window_open`, `pin_midi_window`, and the four relay commands; see "Window geometry".
