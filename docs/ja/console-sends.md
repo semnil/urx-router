@@ -18,7 +18,7 @@
 ラックは全ストリップに全 send の常設コントロールを与える。そのため CONSOLE は「Send to」タブ、
 send-on-fader モード、コンソールのモードバー (`Output [MAIN]` / `Send to [...]`) を持たない。
 ヘッドの MUTE チップは → STEREO 主経路を制御し (その send を持つストリップ = チャンネル・FX
-チャンネル・MIX Bus のみ)、ラックは主経路に触れない。ノード master ON/OFF (CH_ON / MIX 675 / STEREO /
+チャンネル・MIX Bus のみ)、ラックは主経路に触れない。ノード master ON/OFF (チャンネル / MIX / STEREO /
 MONITOR、いずれも `np.on`、および OSC の `osc.on`) はスクリブル上の**電源 LED** — LED がそのボタンで (当たり判定はストリップの角まで広い)、
 オフのときストリップは溝・メーター・ノブの面・スクリブルの地を減光し (グラフと共有の `isNodeInactive` 述語)、
 ラベルとフェーダーキャップは減光しない。このため赤い「CH MUTE」バッジは別に持たない。

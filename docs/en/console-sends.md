@@ -18,7 +18,7 @@ A tabbed "Send to" design has two structural problems:
 The rack gives every strip always-available controls for all of its sends, so the CONSOLE has no "Send to"
 tabs, no send-on-fader mode and no console mode bar (`Output [MAIN]` / `Send to [...]`).
 The head MUTE chip controls the → STEREO main path (on the strips that have that send: channels,
-FX channels, MIX buses); the rack never touches the main path. The node master ON/OFF (CH_ON / MIX 675 /
+FX channels, MIX buses); the rack never touches the main path. The node master ON/OFF (channel / MIX /
 STEREO / MONITOR, all `np.on`, and the oscillator's `osc.on`) is a **power LED** on the scribble — the LED is
 its button, with a hit area reaching to the strip's corner; when off the strip dims its grooves, meter, knob faces and scribble ground (the shared
 `isNodeInactive` predicate, matching the graph) while its labels and fader caps keep their strength,
