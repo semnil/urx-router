@@ -910,17 +910,14 @@ is the same assumption the shipped COMP curve carries.
   through the unit's own macro. At the factory threshold the two regions above give the same corner
   at every drive, so on a new plan the two-region law changes nothing in the picture; it shows only
   on a plan read from a unit whose threshold has been moved.
-- **The makeup is one gain over the whole curve**, as the shipped COMP screen applies its own. What was
-  measured is what the unit does WHILE COMPRESSING — five raw points, linear, ±6 dB, with the GR meter
-  unmoved. The same run's reading below the threshold is a null result at one threshold setting, and it
-  does not separate "the makeup is off here" from "the block was not engaged here". Both cannot shape
-  one curve: a gain present on one leg and absent on the other is a step at the corner whatever is
-  drawn between the edges, and a Hard knee is 0 dB wide, so there is nothing to draw it across. Carried
-  on the compressed leg alone it puts a **step** on Hard and a **peak above the plateau** on Medium —
-  22.97 px and 1.30 px between adjacent samples on a 320 px canvas at 4.44 px/dB, over a sweep where
-  515 of 2100 settings folded and every one of them needed a makeup away from 0 dB. A compressor's
-  transfer curve does neither. Which leg the unit puts it on is the open question; what settles it is
-  walking the input across the corner and reading `111 - 108` on both sides.
+- **The makeup is one gain over the whole curve**, as the shipped COMP screen applies its own, and that
+  is where the unit puts it: on the compressed leg and on the leg below the corner alike, with the GR
+  meter unmoved. It is not a number of dB but a share of the corner's depth — at the top of its range it
+  lifts the corner to 0 dBFS — capped at 24 dB. Carried on one leg only it could not shape one curve: a
+  gain present on one leg and absent on the other is a step at the corner whatever is drawn between the
+  edges, and a Hard knee is 0 dB wide, so there is nothing to draw it across. Carried on the compressed
+  leg alone it puts a **step** on Hard and a **peak above the plateau** on Medium, and a makeup away
+  from 0 dB is what folds the curve that way. A compressor's transfer curve does neither.
 - **The knee's shape** is a cubic through both measured edges carrying each leg's own slope — 1 below,
   1/ratio above — with the two slopes limited to the cubic's monotone region first. A quadratic cannot
   do it at all: its endpoint is fixed by its two slopes, so on an asymmetric knee it lands
