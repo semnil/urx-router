@@ -159,7 +159,7 @@ The front mini jack is wired into the MIC/LINE 1 input and is not a separate sou
 >
 > **New-plan factory sources**: a `new` plan seeds each channel's captured factory source — mono channels
 > from MIC/LINE (CH1/2 ← MIC/LINE 1/2, CH3/4 ← MIC/LINE 3/4), stereo channels CH5/6 = AUX, CH7/8 = USB MAIN A,
-> CH9/10 = USB MAIN B, CH11/12 = USB MAIN C (stereo sources read from param 209/210, confirmed on URX44V;
+> CH9/10 = USB MAIN B, CH11/12 = USB MAIN C (stereo sources read from the stereo channels' input source selection, confirmed on URX44V;
 > URX44 identical; URX22 is the same set shifted down one stereo pair — CH3/4 = AUX, CH5/6 = USB MAIN A,
 > CH7/8 = USB MAIN B, CH9/10 = USB MAIN C — confirmed on a factory-initialised URX22).
 
@@ -242,7 +242,7 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
     off). The STEREO / MIX inspector toggles sit at the
     top of the Parameters section under the same "Channel" label as an FX channel.
   - The STEREO master and each MIX bus also carry a **master BALANCE** — the bus output's L/R balance
-    (±63, centre 0; STEREO param 583, MIX 676 with the L/R instances linked per bus). It is edited in the
+    (±63, centre 0; a MIX bus's L/R instances are linked). It is edited in the
     graph inspector (below the fader) and on the CONSOLE master / MIX strip (a `BAL` knob). The device keeps
     the **BALANCE** label even with Pan Link on: Pan Link ties each *send's* pan to its source channel, which
     is independent of the bus output balance.
@@ -251,12 +251,12 @@ dotted line** so the live routing stands out, and a toolbar **"Hide off sends"**
   independent L/R in the wire (`oscL` / `oscR`); FX buses are mono)
 - MIX 1 / MIX 2 → STEREO (`sendSwitch`; the "TO ST" send inside the MIX 1–2 OUT block — **fixed**, always
   wired and non-removable. ON/OFF only, no independent LEVEL/PAN; the on/off is the TO ST switch held in
-  `params.on` (**off at the factory**), and off is dimmed on the canvas. Pushed to the device as param `677`
-  at the stereo MIX's L instance (MIX1 = 0 / MIX2 = 2); confirmed by live param-notify)
+  `params.on` (**off at the factory**), and off is dimmed on the canvas. Pushed to the device as the TO ST switch
+  of the stereo MIX's L instance; confirmed by live param-notify)
 
 > **Post Fader Send for FX (DAW Integration menu, V1.2+).** Each FX bus can additionally be fed by a
 > MIX bus **post-fader** (FX 1 ← MIX n, FX 2 ← MIX n). This appears only when compatible DAW software
-> is connected — a DAW-Integration-only setting (`879` for FX 1, `880` for FX 2), so the plan does **not**
+> is connected — a DAW-Integration-only setting, so the plan does **not**
 > model it; the SIM view shows and writes it during Live sync while DAW Integration is on (architecture.md,
 > "SETUP > Software Integration").
 
@@ -271,7 +271,7 @@ way (`DeviceModel.requiredSources`, STEREO being the factory selection): a new p
 STREAMING; a document that names no STREAMING source is given that wire at load, and the status line
 says so; drawing another source onto STREAMING replaces the wire it holds, as one undo step; and its
 last wire cannot be deleted — the Inspector offers no delete for it and says how it is replaced. The
-write never sends NONE to the STREAMING selector (705 / 706). A unit can still hold NONE there, since a
+write never sends NONE to the STREAMING selector. A unit can still hold NONE there, since a
 software write reaches it: a Fetch or a Live-sync start that finds it gives the plan STEREO in its place
 and says so on the status line, and the next write brings the unit to STEREO (in a Live session, the flush
 the operator's next edit starts). A read that finds a source the list does not offer (a channel's slot) does not take it —
