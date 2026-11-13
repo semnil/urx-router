@@ -48,14 +48,14 @@ import {
 import { isFixedConnection, monoPairOf, requiresSource, sendTapWritable } from "../routing";
 import { jackGainRange } from "../input-lock";
 import {
+  EQ_TYPE_GEQ,
   EQ_TYPE_OPTIONS,
   EQ_TYPE_PEQ,
   GEQ_BAND_COUNT,
   GEQ_BUSES,
-  GEQ_GAIN_MAX_DB,
-  GEQ_GAIN_MIN_DB,
   GEQ_LIMIT_15,
   GEQ_LIMIT_OPTIONS,
+  GEQ_LIMIT_RANGES,
   GEQ_LINK_OFF,
   GEQ_LINK_OPTIONS,
   GEQ_STEP_DB,
@@ -873,6 +873,9 @@ export function busGeq(nodeId: string): GeqControl | null {
   };
 }
 
+/** A Flex12GEQ band's key on the tuning screen: `band0` (20 Hz) … `band30` (20 kHz). */
+export type GeqFieldKey = `band${number}`;
+
 /** A band index, refused unless it names one of the 31. */
 function geqBandIndex(x: number): number {
   if (!Number.isInteger(x) || x < 0 || x >= GEQ_BAND_COUNT)
@@ -939,7 +942,7 @@ export function eqOneKnob(model: DeviceModel, nodeId: string, compEqType: number
 export interface DynField {
   /** The GateParams / CompParams / EqBand sub-field this controls, or one of the SSMCS
    *  keys the descriptor flattens its nested sub-objects onto. */
-  key: keyof GateParams | keyof CompParams | keyof EqBand | SsmcsFieldKey | InsertFxFieldKey | FxFieldKey;
+  key: keyof GateParams | keyof CompParams | keyof EqBand | SsmcsFieldKey | InsertFxFieldKey | FxFieldKey | GeqFieldKey;
   /** The catalog row the numeric writer emits this value through. Absent for the SSMCS
    *  strip, whose commands are built from the plan's own nested shape
    *  (`pushSsmcsCommands`) rather than from a field table — a name here would be a
@@ -1434,9 +1437,16 @@ export function recPointRule(stereo: boolean, ssmcs: boolean): BoundRule {
 const dynRule = (f: DynField): BoundRule => ({ min: f.min, max: f.max, ...(f.steps ? { steps: f.steps } : {}) });
 const rawRule = (min: number, max: number): BoundRule => ({ min, max, integer: true });
 
-/** A Flex12GEQ band gain as the write sends it: inside the widest window any limit allows, on the
- *  unit's 0.5 dB steps. The side's own limit narrows it further at the edit (core/geq.ts). */
-const GEQ_GAIN_RULE: BoundRule = { min: GEQ_GAIN_MIN_DB, max: GEQ_GAIN_MAX_DB, grid: GEQ_STEP_DB };
+/** A Flex12GEQ band gain as the write sends it: inside its side's GEQ Limit, on the unit's 0.5 dB
+ *  steps — the window the unit's own screen keeps a band in. */
+const geqGainRule = (limit: number): BoundRule => {
+  const [min, max] = GEQ_LIMIT_RANGES[limit] ?? GEQ_LIMIT_RANGES[GEQ_LIMIT_15];
+  return { min, max, grid: GEQ_STEP_DB };
+};
+const GEQ_LIMIT_RULE = menuRule(GEQ_LIMIT_OPTIONS, GEQ_LIMIT_15);
+/** The GEQ Limit a side is bounded by: the plan's, as the write sends it. */
+export const geqSideLimit = (np: NodeParams | undefined, side: number): number =>
+  admitLeaf(GEQ_LIMIT_RULE, np?.geq?.sides?.[side]?.limit ?? GEQ_LIMIT_15);
 
 /** An insert-FX engine key's family and slot: the family its own key names, or — for a bare
  *  slot number — the family the node's selector names. Null for a key that is neither. */
@@ -1555,8 +1565,9 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
     out.push(["eqType", menuRule(EQ_TYPE_OPTIONS, EQ_TYPE_PEQ)]);
     out.push(["geq.link", menuRule(GEQ_LINK_OPTIONS, GEQ_BUSES[nodeId]?.linkFactory ?? GEQ_LINK_OFF)]);
     for (const s of [0, 1]) {
-      out.push([`geq.sides.${s}.limit`, menuRule(GEQ_LIMIT_OPTIONS, GEQ_LIMIT_15)]);
-      for (let x = 0; x < GEQ_BAND_COUNT; x++) out.push([`geq.sides.${s}.bands.${x}.gain`, GEQ_GAIN_RULE]);
+      out.push([`geq.sides.${s}.limit`, GEQ_LIMIT_RULE]);
+      const gain = geqGainRule(geqSideLimit(np, s));
+      for (let x = 0; x < GEQ_BAND_COUNT; x++) out.push([`geq.sides.${s}.bands.${x}.gain`, gain]);
     }
   }
   if (duckerControl(model, nodeId)) for (const f of DUCKER_FIELDS) out.push([`ducker.${f.key}`, dynRule(f)]);
@@ -2759,13 +2770,15 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   }
 
   // Output bus EQ Type (V1.5), ahead of EQ ON: switching to Flex12GEQ turns the unit's EQ ON on,
-  // and the write below puts the plan's back. Read from the plan whatever the rate: above 48 kHz
-  // the plan holds 4band PEQ (core/geq.ts `geqOffAtRate`).
+  // and the write below puts the plan's back. Above 48 kHz the unit offers no Flex12GEQ and holds
+  // 4band PEQ, so a plan that still names Flex12GEQ there — a document loaded as written, where an
+  // edit of the rate would have moved it (core/geq.ts `geqOffAtRate`) — writes no type at all.
   for (const node of model.nodes) {
     if (node.kind !== "bus") continue;
     const geq = busGeq(node.id);
     const type = plan.nodeParams[node.id]?.eqType;
     if (!geq || type === undefined) continue;
+    if (type === EQ_TYPE_GEQ && geqUnavailable(plan.sampleRate)) continue;
     const v = admitLeaf(menuRule(EQ_TYPE_OPTIONS, EQ_TYPE_PEQ), type);
     for (const inst of geq.sides) out.push(rawCommand(geq.type.name, geq.type.param, "enum", inst, v));
     own(node.id);
@@ -2802,14 +2815,15 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
 
   // Output bus Flex12GEQ: the link first (turning it on copies a side on the unit, which the plan
   // already holds), then per side the [GEQ] button, the limit (it clamps the bands) and the bands.
-  // Left out above 48 kHz, where the unit offers no Flex12GEQ.
+  // Sent only while the bus is on Flex12GEQ — every write of them the unit was seen to take was
+  // made in that state — so a bus on 4band PEQ keeps the unit's own, and a switch sends the plan's
+  // after the type. Left out above 48 kHz, where the unit offers no Flex12GEQ.
   for (const node of model.nodes) {
     if (node.kind !== "bus") continue;
     const geq = busGeq(node.id);
     const np = plan.nodeParams[node.id];
-    if (!geq || !np?.geq || geqUnavailable(plan.sampleRate)) continue;
+    if (!geq || !np?.geq || np.eqType !== EQ_TYPE_GEQ || geqUnavailable(plan.sampleRate)) continue;
     const linkRule = menuRule(GEQ_LINK_OPTIONS, GEQ_BUSES[node.id]?.linkFactory ?? GEQ_LINK_OFF);
-    const limitRule = menuRule(GEQ_LIMIT_OPTIONS, GEQ_LIMIT_15);
     if (np.geq.link !== undefined)
       out.push(rawCommand(geq.link.name, geq.link.param, "enum", geq.sides[0], admitLeaf(linkRule, np.geq.link)));
     geq.sides.forEach((inst, s) => {
@@ -2817,14 +2831,15 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       if (!side) return;
       if (side.on !== undefined) out.push(rawCommand(geq.on.name, geq.on.param, "bool", inst, side.on ? 1 : 0));
       if (side.limit !== undefined)
-        out.push(rawCommand(geq.limit.name, geq.limit.param, "enum", inst, admitLeaf(limitRule, side.limit)));
+        out.push(rawCommand(geq.limit.name, geq.limit.param, "enum", inst, geqSideLimit(np, s)));
+      const gainRule = geqGainRule(geqSideLimit(np, s));
       // Walked by the 31 bands rather than by the document's array: an entry past the 31 names
       // no band, and on a MIX its index would run into another parameter's id.
       for (let x = 0; x < GEQ_BAND_COUNT; x++) {
         const gain = side.bands?.[x]?.gain;
         if (gain === undefined || !geqBandWritable(node.id, x)) continue;
         const at = geq.band(x);
-        out.push(rawCommand(at.name, at.param, "centiDb", inst, admitLeaf(GEQ_GAIN_RULE, gain)));
+        out.push(rawCommand(at.name, at.param, "centiDb", inst, admitLeaf(gainRule, gain)));
       }
     });
     own(node.id);

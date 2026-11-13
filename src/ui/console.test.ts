@@ -7,6 +7,7 @@ import { defaultPlan } from "../models/initial-state";
 import { BUS_TYPE_FIXED, COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/control/params";
 import { setExclusiveConnection, type Plan } from "../core/plan";
 import { t } from "../i18n";
+import { EQ_TYPE_GEQ } from "../core/geq";
 
 /** The EFFECT TYPE action of a host whose cases choose none. */
 const noTypeChoice = (): never => {
@@ -608,5 +609,30 @@ describe("the SSMCS chip", () => {
     h.view.focusOpener("ducker", "out.ducker1");
     expect(focusedLabel()).toBe(t().dynTuning.ducker.open);
     expect(h.strip("ch_5_6").root.contains(document.activeElement)).toBe(true);
+  });
+});
+
+describe("a bus's EQ opener", () => {
+  let h: ConsoleHost | undefined;
+  afterEach(() => {
+    h?.restore();
+    h = undefined;
+  });
+
+  // The 4-band screen's values are kept on a bus that runs Flex12GEQ but do not reach the
+  // signal, so the opener goes to the screen of the EQ the bus runs.
+  it("opens the GEQ screen while the bus runs Flex12GEQ, and the 4-band screen otherwise", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.mix2"] = { ...plan.nodeParams["bus.mix2"], eqType: EQ_TYPE_GEQ };
+    h = consoleHost({ plan });
+    const opener = (id: string): HTMLElement =>
+      h!.strip(id).root.querySelector<HTMLElement>('[data-dyn-open="eq"], [data-dyn-open="geq"]')!;
+    for (const id of ["bus.mix1", "bus.mix2", "bus.stereo"]) opener(id).click();
+    expect(h.opened).toEqual([
+      { kind: "eq", id: "bus.mix1" },
+      { kind: "geq", id: "bus.mix2" },
+      { kind: "eq", id: "bus.stereo" },
+    ]);
+    expect(opener("bus.mix2").getAttribute("aria-label")).toBe(t().dynTuning.geq.open);
   });
 });

@@ -6,6 +6,7 @@ import { resetSectionCache } from "./inspector-sections";
 import type { Selection } from "./graph";
 import { getModel, MODEL_IDS } from "../models";
 import { defaultPlan } from "../models/initial-state";
+import { EQ_TYPE_GEQ, GEQ_LINK_OFF } from "../core/geq";
 import { emptyPlan, setExclusiveConnection } from "../core/plan";
 import type { Plan } from "../core/plan";
 import { resetSettingsCache, updateSettings } from "../core/settings";
@@ -1422,6 +1423,42 @@ describe("node controls report their edits", () => {
     if (!gate) throw new Error("the GATE launcher is the reason this channel has a tuning screen");
     gate.click();
     expect(act.onOpenDynScreen).toHaveBeenCalledWith("gate", "ch1");
+  });
+
+  it("offers a bus's EQ Type, and opens the screen of the EQ it runs", () => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], eqOn: false };
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("bus.mix1"), act);
+    const type = panel.querySelector<HTMLSelectElement>('[data-param-label="EQ Type"] select');
+    if (!type) throw new Error("an output bus carries the EQ Type");
+    expect([...type.options].map((o) => o.text)).toEqual(["4band PEQ", "Flex12GEQ"]);
+    panel.querySelector<HTMLButtonElement>("#btn-eq-screen")!.click();
+    expect(act.onOpenDynScreen).toHaveBeenLastCalledWith("eq", "bus.mix1");
+    type.value = String(EQ_TYPE_GEQ);
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+    // The unit turns EQ ON on and, on a MIX, the GEQ Link off when the type goes to Flex12GEQ.
+    const sent = vi.mocked(act.onUpdateNodeParams).mock.calls.at(-1)!;
+    expect(sent[0]).toBe("bus.mix1");
+    expect([sent[1].eqType, sent[1].eqOn, sent[1].geq?.link]).toEqual([EQ_TYPE_GEQ, true, GEQ_LINK_OFF]);
+
+    plan.nodeParams["bus.mix1"] = { ...plan.nodeParams["bus.mix1"], ...sent[1] };
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("bus.mix1"), act);
+    expect(panel.querySelector("#btn-eq-screen")).toBeNull();
+    panel.querySelector<HTMLButtonElement>("#btn-geq-screen")!.click();
+    expect(act.onOpenDynScreen).toHaveBeenLastCalledWith("geq", "bus.mix1");
+  });
+
+  it("holds the EQ Type above 48 kHz, and says why", () => {
+    const plan = defaultPlan("URX44V");
+    plan.sampleRate = 96000;
+    renderInspector(panel, getModel("URX44V"), plan, nodeSel("bus.stereo"), act);
+    expect(panel.querySelector<HTMLSelectElement>('[data-param-label="EQ Type"] select')?.disabled).toBe(true);
+    expect(panel.textContent).toContain(t().inspector.geqRateLocked);
+  });
+
+  it("offers no EQ Type on a channel", () => {
+    renderInspector(panel, getModel("URX44V"), defaultPlan("URX44V"), nodeSel("ch1"), act);
+    expect(panel.querySelector('[data-param-label="EQ Type"]')).toBeNull();
   });
 
   it("deletes a deletable connection and refuses a fixed one", () => {

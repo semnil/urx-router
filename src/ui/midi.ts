@@ -33,7 +33,9 @@ import {
 import { MidiEngine } from "../core/midi/engine";
 import {
   bindControl,
+  GEQ_SIDE_SCOPES,
   parseControlId,
+  parseGeqScope,
   type BoundControl,
   type ControlKind,
   type CueAccess,
@@ -58,6 +60,7 @@ import {
   partnerChannel,
 } from "../core/routing";
 import { connParamContestKey, nodeParamContestPath } from "../core/plan-history";
+import { GEQ_BAND_LABELS } from "../core/geq";
 import { isPlainRecord, sendConnection } from "../core/plan";
 import { insertFxControlLabel } from "./insert-fx-screen";
 import { fxControlLabel } from "./fx-effect-screen";
@@ -1013,7 +1016,16 @@ export class MidiControl {
     }
     const target = parsed.scope ? byId(parsed.scope) : undefined;
     const processor = parsed.scope !== undefined && target === undefined;
-    const scope = !parsed.scope ? "" : target ? ` → ${target.label}` : ` · ${m.scope[parsed.scope] ?? parsed.scope}`;
+    // A GEQ band's scope carries the band as an index, printed as the band the unit labels it.
+    const geq = parseGeqScope(parsed.scope);
+    const geqText = geq
+      ? `${m.scope[GEQ_SIDE_SCOPES[geq.side]]}${geq.band === null ? "" : ` ${GEQ_BAND_LABELS[geq.band]}`}`
+      : undefined;
+    const scope = !parsed.scope
+      ? ""
+      : target
+        ? ` → ${target.label}`
+        : ` · ${geqText ?? m.scope[parsed.scope] ?? parsed.scope}`;
     // Inside a processor scope a param is read on a tuning screen, which prints
     // sentence-case labels; the console's own captions stay as they are.
     const param =

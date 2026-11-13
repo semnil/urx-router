@@ -66,6 +66,7 @@ import {
   DELAY_FRAME_RATE_DEFAULT,
   insertFxEngaged,
 } from "../core/control/params";
+import { EQ_TYPE_GEQ, EQ_TYPE_OPTIONS, eqTypeOf, geqUnavailable, hasGeq, setEqType } from "../core/geq";
 import {
   D_GAIN_MAX_DB,
   D_GAIN_MIN_DB,
@@ -896,7 +897,22 @@ export function renderInspector(
         const on = processorOn(np, "eqOn");
         const { el, body } = section(m.inspector.eqOn, { open: on, on, key: "eqOn" });
         body.append(sectionToggle(node.id, "eqOn", on, actions, m.inspector.eqOn));
-        body.append(dynLauncher("eq", node.id, actions, m));
+        // EQ Type (V1.5): which EQ the bus runs, and so which screen the launcher opens. The unit
+        // takes the item off its screen above 48 kHz, where only 4band PEQ runs.
+        if (hasGeq(node.id)) {
+          const rateLocked = geqUnavailable(plan.sampleRate);
+          body.append(
+            enumSelect(
+              m.inspector.eqType,
+              [...EQ_TYPE_OPTIONS],
+              eqTypeOf(np),
+              (v) => actions.onUpdateNodeParams(node.id, setEqType(np, node.id, v)),
+              rateLocked,
+            ),
+          );
+          if (rateLocked) body.append(hint(m.inspector.geqRateLocked));
+        }
+        body.append(dynLauncher(eqTypeOf(np) === EQ_TYPE_GEQ ? "geq" : "eq", node.id, actions, m));
         host.append(el);
       }
     }

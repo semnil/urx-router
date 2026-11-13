@@ -45,6 +45,7 @@ import {
   SSMCS_INITIAL,
   supplyRequiredSources,
 } from "./core/plan";
+import { geqAboveRate } from "./core/geq";
 import {
   applySceneExternal,
   captureSceneExternal,
@@ -4317,7 +4318,9 @@ async function askLiveRate(rate: number, refusals: RecorderRefusals): Promise<bo
   const drop = cost ? t().confirm.trackCountDrop(cost.from, cost.to) : "";
   const off = insertsAboveRate(plan, rate);
   const offNote = off.length ? t().confirm.insertsOffAtRate(insertNames(off)) : "";
-  const ask = [t().confirm.reclock(formatRate(plan.sampleRate), formatRate(rate)), offNote, drop]
+  const geqOff = geqAboveRate(plan, rate);
+  const geqNote = geqOff.length ? t().confirm.geqOffAtRate(busNames(geqOff)) : "";
+  const ask = [t().confirm.reclock(formatRate(plan.sampleRate), formatRate(rate)), offNote, geqNote, drop]
     .filter(Boolean)
     .join(" ");
   if (await confirmDialog(ask)) return true;
@@ -4424,6 +4427,11 @@ function writeMovedHeld(id: string, before: readonly { param: number; y: number;
   }
 }
 
+/** The buses a rate takes from Flex12GEQ back to 4band PEQ, by the names the board gives them. */
+function busNames(ids: readonly string[]): string {
+  return ids.map((id) => graph.labelOf(id)).join(", ");
+}
+
 function chooseSampleRate(rate: number): void {
   // The recorder's Track Count and the inserts the rate rules out go with the rate, one way:
   // see changePlanSampleRate.
@@ -4434,7 +4442,7 @@ function chooseSampleRate(rate: number): void {
   markChanged();
   syncRateUi();
   const at = formatRate(plan.sampleRate);
-  const buses = geq.map((id) => graph.labelOf(id)).join(", ");
+  const buses = busNames(geq);
   if (inserts.length)
     setStatus(
       [
@@ -5299,7 +5307,13 @@ if (!DEMO) {
     // has to say which one it is about. `trackCost` decides WHETHER, the message decides
     // how it reads here.
     const releaseNote = trackCost ? t().rateChoice.trackCountDrop(trackCost.from, trackCost.to) : "";
-    const adoptNote = adoptOff.length ? t().rateChoice.insertsOffAtRate(deviceRate, insertNames(adoptOff)) : "";
+    const adoptGeqOff = geqAboveRate(plan, clock.sampleRate);
+    const adoptNote = [
+      adoptOff.length ? t().rateChoice.insertsOffAtRate(deviceRate, insertNames(adoptOff)) : "",
+      adoptGeqOff.length ? t().rateChoice.geqOffAtRate(deviceRate, busNames(adoptGeqOff)) : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
     const choice = await askRateChoice(planRate, deviceRate, note, releaseNote, adoptNote);
     if (choice === "cancel") {
       setStatus(t().status.canceled);

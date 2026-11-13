@@ -21,7 +21,8 @@ import {
   PAN_BAL_BAL,
   PAN_BAL_PAN,
 } from "../control/params";
-import { channelDynamics, insertFxControl, planToCommands, DUCKER_FIELDS } from "../control/translate";
+import { channelDynamics, geqBandWritable, insertFxControl, planToCommands, DUCKER_FIELDS } from "../control/translate";
+import { EQ_TYPE_GEQ, GEQ_BUSES, GEQ_LINK_L_TO_R, GEQ_LINK_OFF, geqSideState } from "../geq";
 import type { DynField } from "../control/translate";
 import {
   bindControl,
@@ -35,7 +36,9 @@ import {
   FX_SCOPE,
   GATE_SCOPE,
   INSFX_SCOPE,
+  parseGeqScope,
   type ControlParam,
+  type CueAccess,
 } from "./controls";
 import { MidiEngine } from "./engine";
 import { mirrorLinkedPair, mirrorLinkedInsertFx } from "../routing";
@@ -741,10 +744,21 @@ describe("every writable control reaches the device", () => {
     // One mono channel into the morphing bank, so both banks' controls are listed: a
     // plan carrying only one of them leaves the other's half of this unasked.
     p.nodeParams.ch1 = { ...p.nodeParams.ch1, compEqType: COMP_EQ_SSMCS };
+    // Every output bus on Flex12GEQ: on 4band PEQ a bus keeps its GEQ values off the wire by
+    // design, and each of them would read as inert here.
+    for (const id of Object.keys(GEQ_BUSES)) p.nodeParams[id] = { ...p.nodeParams[id], eqType: EQ_TYPE_GEQ };
 
     const inert: string[] = [];
     let moved = 0;
+    let planOnly = 0;
     for (const desc of listControls(m, p)) {
+      // A STEREO GEQ band above 20 Hz is the plan's alone: the control link takes no write to it
+      // (known-issues.md), so a move of it reaches no command by design.
+      const geq = parseGeqScope(desc.scope);
+      if (geq?.band != null && !geqBandWritable(desc.node, geq.band)) {
+        planOnly++;
+        continue;
+      }
       const c = bindControl(m, p, desc.id)!;
       const before = shape(planToCommands(m, p));
       // A control the device owns refuses the write outright; that refusal is its own
@@ -757,6 +771,73 @@ describe("every writable control reaches the device", () => {
     // either, and read exactly like a pass.
     expect(moved).toBeGreaterThan(0);
     expect(inert).toEqual([]);
+    expect(planOnly, "STEREO's thirty bands above 20 Hz, on each side").toBe(60);
+  });
+});
+
+describe("an output bus's Flex12GEQ", () => {
+  const live = (on: boolean): CueAccess => ({ has: () => false, set: () => {}, enabled: () => on });
+  const gain = (id: string, side: number, x: number): number => geqSideState(plan.nodeParams[id], side).gains[x];
+
+  it("offers each side's [GEQ] and thirty-one band gains on the three buses, and nothing elsewhere", () => {
+    const ids = listControls(model, plan).map((c) => c.id);
+    for (const bus of ["bus.stereo", "bus.mix1", "bus.mix2"]) {
+      for (const side of ["l", "r"]) {
+        expect(ids).toContain(`${bus}/geqOn@geq.${side}`);
+        expect(ids.filter((id) => id.startsWith(`${bus}/gain@geq.${side}.`))).toHaveLength(31);
+      }
+    }
+    expect(ids.filter((id) => id.includes("@geq.") && !/^bus\.(stereo|mix[12])\//.test(id))).toEqual([]);
+    expect(bindControl(model, plan, "bus.stereo/gain@geq.l.31"), "no 32nd band").toBeNull();
+  });
+
+  it("moves a band on 0.5 dB steps across its side's limit, and takes the other side along while linked", () => {
+    const c = bindControl(model, plan, "bus.mix1/gain@geq.l.17")!;
+    expect(c.get()).toBe(0.5);
+    expect(c.set(1)).toBe(true);
+    expect([gain("bus.mix1", 0, 17), gain("bus.mix1", 1, 17)], "MIX ships linked L → R").toEqual([15, 15]);
+    expect(c.alsoWrote?.()).toEqual(["geq.sides.1.bands.17.gain"]);
+    plan.nodeParams["bus.mix1"]!.geq!.link = GEQ_LINK_OFF;
+    expect(c.set(0.25)).toBe(true);
+    expect([gain("bus.mix1", 0, 17), gain("bus.mix1", 1, 17)]).toEqual([-7.5, 15]);
+    expect(c.alsoWrote?.()).toEqual([]);
+    plan.nodeParams["bus.mix1"]!.geq!.sides![0].limit = 3; // -24 dB
+    expect(c.set(0)).toBe(true);
+    expect(gain("bus.mix1", 0, 17)).toBe(-24);
+  });
+
+  it("refuses a thirteenth band away from 0 dB, and frees one when a band returns", () => {
+    for (let x = 0; x < 12; x++) expect(bindControl(model, plan, `bus.stereo/gain@geq.r.${x}`)!.set(0.25)).toBe(true);
+    const thirteenth = bindControl(model, plan, "bus.stereo/gain@geq.r.20")!;
+    expect(thirteenth.set(0.25)).toBe(false);
+    expect(gain("bus.stereo", 1, 20)).toBe(0);
+    expect(bindControl(model, plan, "bus.stereo/gain@geq.r.3")!.set(0.5)).toBe(true);
+    expect(thirteenth.set(0.25)).toBe(true);
+  });
+
+  it("refuses STEREO's bands above 20 Hz while Live sync is up, and no other band", () => {
+    const at = (id: string, on: boolean) => bindControl(model, plan, id, live(on))!;
+    expect(at("bus.stereo/gain@geq.l.1", true).set(0.75)).toBe(false);
+    expect(at("bus.stereo/gain@geq.l.0", true).set(0.75)).toBe(true);
+    expect(at("bus.mix2/gain@geq.l.30", true).set(0.75)).toBe(true);
+    expect(at("bus.stereo/gain@geq.l.1", false).set(0.75), "offline it is a plan edit").toBe(true);
+  });
+
+  it("refuses every GEQ write above 48 kHz", () => {
+    plan.sampleRate = 96000;
+    expect(bindControl(model, plan, "bus.mix1/gain@geq.l.0")!.set(1)).toBe(false);
+    expect(bindControl(model, plan, "bus.mix1/geqOn@geq.l")!.set(0)).toBe(false);
+    expect(geqSideState(plan.nodeParams["bus.mix1"], 0).on).toBe(true);
+  });
+
+  it("switches one side's [GEQ] only, whatever the link", () => {
+    expect(plan.nodeParams["bus.mix2"]?.geq?.link).toBe(GEQ_LINK_L_TO_R);
+    const c = bindControl(model, plan, "bus.mix2/geqOn@geq.r")!;
+    expect(c.set(0)).toBe(true);
+    expect([geqSideState(plan.nodeParams["bus.mix2"], 0).on, geqSideState(plan.nodeParams["bus.mix2"], 1).on]).toEqual([
+      true,
+      false,
+    ]);
   });
 });
 

@@ -2371,6 +2371,9 @@ describe("Flex12GEQ (V1.5)", () => {
   it("writes no GEQ value above 48 kHz, where the unit offers no Flex12GEQ", () => {
     const cmds = planToCommandsUncollapsed(model, withGeq(88_200));
     for (const name of [
+      // …nor the type itself: a document loaded as written can name Flex12GEQ at that rate.
+      "STEREO_EQ_TYPE",
+      "OUT_EQ_TYPE",
       "STEREO_GEQ_ON",
       "STEREO_GEQ_LINK",
       "STEREO_GEQ_LIMIT",
@@ -2381,6 +2384,27 @@ describe("Flex12GEQ (V1.5)", () => {
       "OUT_GEQ_BAND",
     ])
       expect(named(cmds, name), name).toEqual([]);
+  });
+
+  it("writes no GEQ value while a bus runs 4band PEQ, and its EQ Type all the same", () => {
+    const p = withGeq();
+    p.nodeParams["bus.mix2"]!.eqType = 0;
+    const cmds = planToCommandsUncollapsed(model, p);
+    expect(named(cmds, "OUT_EQ_TYPE").map((c) => [c.y, c.vdValue])).toEqual([
+      [0, 2],
+      [1, 2],
+      [2, 0],
+      [3, 0],
+    ]);
+    for (const name of ["OUT_GEQ_ON", "OUT_GEQ_LINK", "OUT_GEQ_LIMIT", "OUT_GEQ_BAND"])
+      expect(
+        named(cmds, name).filter((c) => c.y >= 2),
+        name,
+      ).toEqual([]);
+    expect(
+      named(cmds, "OUT_GEQ_BAND").filter((c) => c.y < 2),
+      "MIX 1 still runs it",
+    ).toHaveLength(62);
   });
 
   it("writes no band past the 31 a document's array may carry: a MIX's ids run on into other parameters", () => {

@@ -814,6 +814,51 @@ describe("paramRangeProblems — the node-param leaves the write bounds", () => 
     );
   });
 
+  // The unit's own GEQ screen keeps a band inside its side's GEQ Limit and stops at twelve bands
+  // away from 0 dB; a document can say otherwise, and the load takes it to the nearest state the
+  // screen can leave.
+  it("bounds a Flex12GEQ band to its side's limit, and takes a side past twelve bands back to twelve", () => {
+    const bands = (gains: Record<number, number>) => Array.from({ length: 31 }, (_, x) => ({ gain: gains[x] ?? 0 }));
+    const plan = load({
+      "bus.mix1": {
+        eqType: 2,
+        geq: {
+          link: 0,
+          sides: [
+            { limit: 2, bands: bands({ 3: 10, 7: -6.2 }) },
+            // Fourteen away from 0 dB: the two nearest it go, and of the two at 1 dB the higher band.
+            {
+              limit: 0,
+              bands: bands({ 0: 1, 1: 3, 2: 3, 3: 3, 4: 3, 5: 3, 6: 3, 7: 3, 8: 3, 9: 3, 10: 3, 11: 3, 12: 1, 13: 20 }),
+            },
+          ],
+        },
+      },
+    });
+    expect(
+      paramRangeProblems(plan)
+        .map((p) => `${p.node}.${p.key} ${String(p.stored)} -> ${String(p.bound)}`)
+        .sort(),
+    ).toEqual(
+      [
+        "bus.mix1.geq.sides.0.bands.3.gain 10 -> 6",
+        "bus.mix1.geq.sides.0.bands.7.gain -6.2 -> -6",
+        "bus.mix1.geq.sides.1.bands.13.gain 20 -> 15",
+        "bus.mix1.geq.sides.1.bands.12.gain 1 -> 0",
+        "bus.mix1.geq.sides.1.bands.0.gain 1 -> 0",
+      ].sort(),
+    );
+    // A band the limit moved and the twelve-band rule then takes is reported once, at 0 dB.
+    const once = load({
+      "bus.stereo": { geq: { sides: [{ limit: 2, bands: Array.from({ length: 31 }, () => ({ gain: 9 })) }] } },
+    });
+    const side = paramRangeProblems(once).filter((p) => p.key.startsWith("geq.sides.0.bands."));
+    expect(side).toHaveLength(31);
+    expect(side.filter((p) => p.bound === 6).map((p) => p.key)).toEqual(
+      Array.from({ length: 12 }, (_, x) => `geq.sides.0.bands.${x}.gain`),
+    );
+  });
+
   it("bounds a raw to an integer inside its window, and an insert-FX slot by the family its key names", () => {
     const plan = load({
       ch1: { compEqType: 1, ssmcs: { compDrive: 10.5, comp: { ratio: 999 } }, gate: { threshold: -90 } },

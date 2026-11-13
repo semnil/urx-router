@@ -48,6 +48,7 @@ import { loadJson, saveJson } from "../core/storage";
 import { COMP_EQ_COMP_FIRST, planColorHex } from "../core/control/params";
 import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, resolveFxEffectType } from "../core/control/fx-effect";
 import { dynOpenLabel } from "./dyn-registry";
+import { EQ_TYPE_GEQ, eqTypeOf, hasGeq } from "../core/geq";
 import type { DynKind } from "./dyn-registry";
 import { markMidi } from "./midi-learn";
 import type { MidiLearnHooks } from "./midi-learn";
@@ -3026,7 +3027,10 @@ export class Console {
         // The tuning screen's opener, as GATE and COMP have. Not offered in SSMCS mode,
         // where the EQ chip toggles the morphing strip's band section and the face segment
         // inside the SSMCS screen is what reaches its EQ face.
-        if (hasEq(model, m.id, eqType)) this.appendOpener(proc, this.dynOpenChip("eq", m.id));
+        // A bus on Flex12GEQ opens the GEQ screen instead: the 4-band screen's values are kept
+        // there but do not reach the signal.
+        const eqKind = hasGeq(m.id) && eqTypeOf(this.hooks.getPlan().nodeParams[m.id]) === EQ_TYPE_GEQ ? "geq" : "eq";
+        if (hasEq(model, m.id, eqType)) this.appendOpener(proc, this.dynOpenChip(eqKind, m.id));
       }
     }
     if (insertFxControl(model, m.id)) {

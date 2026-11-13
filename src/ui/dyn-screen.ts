@@ -211,6 +211,12 @@ export interface DynBinding {
    *  continuous (a type selector, an on/off) keep their own shape and span the grid, so
    *  the order the signal meets them survives. */
   knobGrid?: true;
+  /** Lay the continuous values out as a rack of VERTICAL faders across the display column, one
+   *  per field, and leave the control column to the rows and sections. A graphic EQ is the
+   *  case: thirty-one gains of one kind, read against each other as a curve the faders draw
+   *  themselves, which a column of horizontal sliders cannot show. The display composes the
+   *  rack through `parts.faders()`. */
+  faderRack?: true;
   /** How many cards a `knobGrid` row holds, where the stylesheet's own number is not the
    *  right one. Declared rather than derived from the count, because what decides it is what
    *  the cards MEAN: a guitar amp is one run of values and its rows fall wherever they fall,
@@ -228,6 +234,9 @@ export interface DynCtx {
   nodeId: string;
   sel: number;
   m: Messages;
+  /** A Live sync session is up. Read where a value takes edits offline and none during a
+   *  session (a value the unit refuses a write to over the link). Absent = not live. */
+  liveSync?: boolean;
 }
 
 /** The pieces the host builds, for a descriptor to arrange. */
@@ -236,6 +245,8 @@ export interface DynParts {
   lanes: () => HTMLElement;
   /** The plot the descriptor draws on. */
   plot: () => HTMLElement;
+  /** The fields as a rack of vertical faders (`DynBinding.faderRack`). */
+  faders: () => HTMLElement;
 }
 
 /** The segmented bar above the display and what it selects. */
@@ -703,6 +714,8 @@ export class DynScreen {
   private readoutCols = 0;
   private paramsFirst = false;
   private knobGrid = false;
+  /** `DynBinding.faderRack`: the fields are a rack of vertical faders in the display column. */
+  private faderRack = false;
   /** The knob grid's column count, as the binding asked for it. 0 = the stylesheet's own. */
   private knobCols = 0;
   private faceReserve: number | null = null;
@@ -856,6 +869,7 @@ export class DynScreen {
       nodeId: this.nodeId,
       sel: this.sel,
       m: t(),
+      liveSync: this.hooks.isLive(),
     };
   }
 
@@ -869,6 +883,7 @@ export class DynScreen {
     this.paramsFirst = bound.paramsFirst === true;
     this.knobGrid = bound.knobGrid === true;
     this.knobCols = bound.knobCols ?? 0;
+    this.faderRack = bound.faderRack === true;
     this.faceReserve = bound.faceReserve ?? null;
     this.scratch = bound.lanes.map((l) => new Array<number | null>(laneSideCount(l)).fill(null));
   }
@@ -1622,7 +1637,9 @@ export class DynScreen {
     // what keeps every display starting at the same height, and the bar itself is what
     // moved — not the room it takes.
     col.append(bar ? this.displayBar(bar) : this.reservedBar());
-    col.append(proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox() }, ctx));
+    col.append(
+      proc.display({ lanes: () => this.laneRack(), plot: () => this.plotBox(), faders: () => this.faderRackEl() }, ctx),
+    );
     col.append(this.hintLine(proc, ctx));
     return col;
   }
@@ -2114,7 +2131,8 @@ export class DynScreen {
     // would take a processor's only knee selector off the panel with nothing to see, so
     // what no field claimed is appended instead.
     const unclaimed = new Set(Object.keys(extra?.before ?? {}));
-    for (const f of this.fields) {
+    // In a fader rack the fields are the display's, so this column carries none of them.
+    for (const f of this.faderRack ? [] : this.fields) {
       const before = extra?.before?.[f.key];
       if (before) {
         unclaimed.delete(f.key);
@@ -2138,8 +2156,109 @@ export class DynScreen {
     for (const lane of this.lanes) cells.append(this.readoutCell(lane));
     ro.append(cells);
 
-    col.append(...(proc.sections?.(rowCtx) ?? []), params, ro);
+    // A rack's parameters section would be a heading over nothing, unless rows were put in it.
+    const showParams = !this.faderRack || params.childElementCount > 1;
+    col.append(...(proc.sections?.(rowCtx) ?? []), ...(showParams ? [params] : []), ro);
     return col;
+  }
+
+  /** The fields as a rack of vertical faders, in field order (`DynBinding.faderRack`). */
+  private faderRackEl(): HTMLElement {
+    const rack = el("div", "gt-faders");
+    rack.style.setProperty("--gt-fader-cols", String(this.fields.length));
+    const proc = this.p();
+    const ctx = this.ctx();
+    const vals = this.vals();
+    const labels = t().inspector.dyn as Record<string, string>;
+    for (const f of this.fields) {
+      const v = vals[f.key];
+      const label = proc.fieldLabel?.(f, ctx.m, ctx) ?? labels[f.key] ?? f.key;
+      rack.append(this.faderCard(f, label, typeof v === "number" ? v : f.def, this.states.get(f.key)));
+    }
+    return rack;
+  }
+
+  /**
+   * One continuous value as a vertical fader: its reading on top, the fader, its name under
+   * it. The fader is the same `<input type="range">` every row carries, turned upright, so
+   * the value, the step, the keyboard and the wheel stay the range's own contract.
+   *
+   * A value whose move changes which OTHER faders take edits (a graphic EQ's band leaving or
+   * reaching 0 dB, against its twelve-band rule) re-reads the row states and re-locks the rack
+   * in place rather than rebuilding it, which would drop the pointer capture of a drag still
+   * in flight.
+   */
+  private faderCard(f: DynField, label: string, value: number, opts: SettingsRowOptions | undefined): HTMLElement {
+    const card = el("div", "gt-fader" + (opts?.locked ? " locked" : ""));
+    card.dataset.dynFader = f.key;
+    const val = el("span", "param-val gt-val");
+    val.dataset.dynVal = f.key;
+    const input = document.createElement("input");
+    input.type = "range";
+    const range = dynPosRange(f);
+    input.min = String(range.min);
+    input.max = String(range.max);
+    input.step = String(range.step);
+    input.value = String(dynToPos(f, value));
+    input.dataset.dyn = f.key;
+    input.setAttribute("aria-label", spoken(label));
+    input.setAttribute("aria-orientation", "vertical");
+    const name = el("span", "lbl");
+    name.textContent = label;
+    const paint = (v: number): void => {
+      const text = this.valueText(f, v);
+      setLevelText(val, text);
+      input.setAttribute("aria-valuetext", text);
+      // The fill runs from 0 to the value, so a cut and a boost read as opposite directions.
+      const at = (x: number): string => `${(((x - f.min) / (f.max - f.min)) * 100).toFixed(2)}%`;
+      input.style.setProperty("--gt-zero", at(Math.min(Math.max(0, f.min), f.max)));
+      input.style.setProperty("--gt-at", at(v));
+    };
+    paint(value);
+    input.addEventListener("input", () => {
+      const before = this.val(f.key);
+      const v = dynFromPos(f, Number(input.value));
+      paint(v);
+      this.setVals({ [f.key]: v });
+      this.syncReadouts();
+      if ((before === 0) !== (v === 0)) this.relockRack();
+    });
+    wheelStep(input, () => this.hooks.midi?.learnActive());
+    holdInertOnBlur(input, { live: () => this.box.querySelector<HTMLInputElement>(`input[data-dyn="${f.key}"]`) });
+    if (opts?.locked) input.disabled = true;
+    // Why the fader is shut, on the card for a pointer and on the fader for a screen reader: a
+    // card one fader wide has no room for the tag the rows print.
+    if (opts?.tag) {
+      card.title = opts.tag;
+      input.setAttribute("aria-description", opts.tag);
+    }
+    // The fader sits in a `ctl` box, the shape `armable` looks for, so a learn ring goes on it.
+    const ctl = el("span", "ctl gt-faderctl");
+    ctl.append(input);
+    card.append(val, ctl, name);
+    return this.armable(card, f.key, this.ctx());
+  }
+
+  /** Re-read the row states and apply them to the fader rack on screen, without a rebuild. */
+  private relockRack(): void {
+    const proc = this.p();
+    this.states = proc.rowStates?.(this.ctx(), this.vals()) ?? NO_STATES;
+    for (const card of this.box.querySelectorAll<HTMLElement>(".gt-fader")) {
+      const key = card.dataset.dynFader ?? "";
+      const state = this.states.get(key);
+      const input = card.querySelector<HTMLInputElement>("input");
+      card.classList.toggle("locked", state?.locked === true);
+      card.title = state?.tag ?? "";
+      if (state?.tag) input?.setAttribute("aria-description", state.tag);
+      else input?.removeAttribute("aria-description");
+      // A lock that keeps the fader assignable leaves it enabled while learn mode is on, as
+      // `armable` left it.
+      const held = state?.locked === true && !(state.assignable && this.hooks.midi?.learnActive());
+      if (input && document.activeElement !== input) input.disabled = held;
+    }
+    // The control column prints what the change moved (a graphic EQ's count of free bands);
+    // `refresh` redraws it now, or once the press in flight is released.
+    this.refresh();
   }
 
   /**

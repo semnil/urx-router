@@ -52,7 +52,7 @@ the unit and edit that.
   Pitch Fix stops lower: it runs only up to 48 kHz, so it is unavailable at 88.2 /
   96 kHz too, while the other insert effects run up to 96 kHz. No load note and no
   validator warning says so; only the node's own controls in the app show it forced
-  off.
+  off. Flex12GEQ (`eqType` 2) runs only up to 48 kHz as well — see `eqType` below.
 - `scope` — **never author it**; it appears only on a plan the user saved
   scene-scoped (Preferences → *Plan files* → *Save scope*, which also applies to
   the share URL and the JSON download). Such a document carries `"scope": "scene"`
@@ -201,6 +201,27 @@ or inside a group — is written `true` / `false`: a number there loads converte
 - `eqOneKnob` — `{ on, type, level }` (type 0 Intensity / 1 Vocal / 2 Loudness;
   level 0–100). When on, the device drives the 4 bands, so do not also set
   `eqBands`.
+- `eqType` — an output bus only (`bus.stereo`, `bus.mix1`, `bus.mix2`; System firmware
+  V1.5): 0 = 4band PEQ, 2 = Flex12GEQ. Absent = 4band PEQ. **Flex12GEQ runs at 48 kHz and
+  below**: keep 0 in a plan whose `sampleRate` is higher — the unit offers no Flex12GEQ there,
+  the app holds the type read-only and writes no type, and a rate raised in the app puts the
+  bus back to 0 with every `geq` band at 0. Switching the type to 2 on the unit or in the app
+  also turns `eqOn` on and, on a MIX, `geq.link` to 0, so a plan meant to match the unit
+  writes those too. While a bus runs one type, the other type's values stay in the plan and
+  do not reach the signal; `eqBands` / `eqOneKnob` are the 4band PEQ's.
+- `geq` — that bus's Flex12GEQ: `{ link, sides: [L, R] }`, each side `{ on, limit, bands }`
+  and `bands` 31 `{ gain }` from 20 Hz to 20 kHz on the 1/3-octave series (20, 25, 31.5, 40,
+  50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1k, 1.25k, 1.6k, 2k, 2.5k,
+  3.15k, 4k, 5k, 6.3k, 8k, 10k, 12.5k, 16k, 20k). `link` 0 off / 1 L → R / 2 R → L (factory
+  0 on STEREO, 1 on a MIX): while it is on, the unit keeps the two sides' bands and limits
+  equal, so write them equal. `on` is the side's [GEQ] (bool). `limit` 0 = ±15 dB / 1 =
+  ±12 dB / 2 = ±6 dB / 3 = −24 … 0 dB. `gain` in dB on 0.5 dB steps inside the side's
+  limit. **At most twelve bands of a side away from 0 dB**, as on the unit's own screen. The
+  load bounds a gain to its side's limit, and past twelve it takes the bands nearest 0 dB to
+  0 dB (the higher band first between two equally far); `plan_tool.py` warns about each. The
+  values are sent only while `eqType` is 2. **On `bus.stereo` only the 20 Hz band
+  (`bands[0]`) reaches the unit**: the device connection takes no write to the other thirty,
+  so they stay in the plan, the write leaves them out and the unit keeps its own.
 - `gate` — `{ threshold, range (dB), attack, hold, decay (ms) }`; `gateOn` (bool).
   Every time value — the `gate`'s `attack`, `hold` and `decay`, the `comp`'s
   `attack` and `release`, the `ducker`'s `attack` and `decay` — is a stop of the

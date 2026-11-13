@@ -78,7 +78,7 @@ export const GEQ_LINK_OFF = 0;
 export const GEQ_LINK_L_TO_R = 1;
 export const GEQ_LINK_R_TO_L = 2;
 
-/** The menus each number takes, and the window a band gain takes on any limit (dB). */
+/** The menus each number takes. */
 export const EQ_TYPE_OPTIONS = [
   { value: EQ_TYPE_PEQ, label: "4band PEQ" },
   { value: EQ_TYPE_GEQ, label: "Flex12GEQ" },
@@ -94,8 +94,6 @@ export const GEQ_LINK_OPTIONS = [
   { value: GEQ_LINK_L_TO_R },
   { value: GEQ_LINK_R_TO_L },
 ] as const;
-export const GEQ_GAIN_MIN_DB = -24;
-export const GEQ_GAIN_MAX_DB = 15;
 
 /** The highest sample rate a bus can run Flex12GEQ at. */
 export const GEQ_MAX_RATE = 48000;
@@ -241,20 +239,24 @@ export function setEqType(np: NodeParams | undefined, nodeId: string, type: numb
   return nodeId === "bus.stereo" ? next : { ...next, geq: { ...next.geq, link: GEQ_LINK_OFF } };
 }
 
+/** The buses a move to `rate` would take from Flex12GEQ back to 4band PEQ — what `geqOffAtRate`
+ *  changes, asked without changing anything, for a question put before the move. */
+export function geqAboveRate(plan: Plan, rate: number): string[] {
+  if (!geqUnavailable(rate)) return [];
+  return Object.keys(GEQ_BUSES).filter((nodeId) => eqTypeOf(plan.nodeParams[nodeId]) === EQ_TYPE_GEQ);
+}
+
 /**
  * What a rate above 48 kHz does to the plan's buses: each one on Flex12GEQ goes back to 4band PEQ
  * with every band at 0 dB, as the unit does, and stays there at a lower rate. Returns the buses it
  * changed.
  */
 export function geqOffAtRate(plan: Plan, rate: number): string[] {
-  if (!geqUnavailable(rate)) return [];
-  const off: string[] = [];
-  for (const nodeId of Object.keys(GEQ_BUSES)) {
+  const off = geqAboveRate(plan, rate);
+  for (const nodeId of off) {
     const np = plan.nodeParams[nodeId];
-    if (eqTypeOf(np) !== EQ_TYPE_GEQ) continue;
     const sides = bothSides(np).map((s) => ({ ...s, gains: s.gains.map(() => 0) }));
     plan.nodeParams[nodeId] = { ...withSides(np, nodeId, sides), eqType: EQ_TYPE_PEQ };
-    off.push(nodeId);
   }
   return off;
 }
