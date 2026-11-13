@@ -302,6 +302,79 @@ describe("Console Lock during a live session", () => {
     expect(errors(shell)).toEqual([]);
   });
 
+  // The read-back takes the unit's values for what the lock stopped, and leaves an edit made once
+  // the lock is off as the operator left it — on the same node, and on a node only a read of the
+  // whole unit covers.
+  it("keeps an edit made once the lock is off on a node the read-back covers", SLOW, async () => {
+    const shell = await bootDevice();
+    await up();
+    await quiet(shell);
+    expect(oscOn(), "the premise").toBe("OFF");
+    pressOscOn();
+    announceLock(shell, 1);
+    announceLock(shell, 0);
+    const level = (): HTMLInputElement =>
+      paramRow(t().inspector.oscLevel).querySelector<HTMLInputElement>('input[type="range"]')!;
+    level().value = "-10";
+    level().dispatchEvent(new Event("input", { bubbles: true }));
+    level().dispatchEvent(new Event("change", { bubbles: true }));
+    await quiet(shell);
+    expect(writesTo(shell, PARAMS.OSC_ON.id), "what the lock stopped is not sent").toEqual([]);
+    expect(oscFace()).toBe("OFF");
+    expect(writesTo(shell, PARAMS.OSC_LEVEL.id)).toEqual([-1000]);
+    expect(level().value).toBe("-10");
+    expect(errors(shell)).toEqual([]);
+  });
+
+  it("keeps an edit made once the lock is off through a read of the whole unit", SLOW, async () => {
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" });
+    const set = table.vd_set as (a: Record<string, unknown>) => unknown;
+    let answer!: () => void;
+    const answered = new Promise<void>((r) => (answer = r));
+    let onWire!: () => void;
+    const wire = new Promise<void>((r) => (onWire = r));
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        // A head the unit resets values behind, held on the wire until the lock has come and gone:
+        // the read-back is then a read of the whole unit.
+        vd_set: async (a: Record<string, unknown>) => {
+          const result = set(a);
+          if (a.paramId === PARAMS.COMP_EQ_TYPE.id) {
+            onWire();
+            await answered;
+          }
+          return result;
+        },
+      },
+    }))!;
+    await up();
+    await quiet(shell);
+    pressNode("ch1");
+    const type = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
+    type.value = "1";
+    type.dispatchEvent(new Event("change", { bubbles: true }));
+    try {
+      await wire;
+      announceLock(shell, 1);
+      await Promise.resolve();
+      announceLock(shell, 0);
+      await Promise.resolve();
+      oscOn();
+      const level = paramRow(t().inspector.oscLevel).querySelector<HTMLInputElement>('input[type="range"]')!;
+      level.value = "-20";
+      level.dispatchEvent(new Event("input", { bubbles: true }));
+      level.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    } finally {
+      answer();
+    }
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLockedPutBack), { timeout: 25_000 });
+    await quiet(shell);
+    expect(writesTo(shell, PARAMS.OSC_LEVEL.id)).toEqual([-2000]);
+    expect(paramRow(t().inspector.oscLevel).querySelector<HTMLInputElement>('input[type="range"]')!.value).toBe("-20");
+    expect(errors(shell)).toEqual([]);
+  });
 });
 
 // The delay time tempo Sync drives is left out of the plan's writer and written to the unit on its

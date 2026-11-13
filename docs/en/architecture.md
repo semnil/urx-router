@@ -3643,9 +3643,11 @@ lands while that read is out is the newer of the two, and the read is not taken 
   `LiveSync.unsent` names the nodes whose writes the snapshot says the unit was not sent, and those nodes are
   reconciled (the whole unit, when a converge head went out without the converge behind it, and a node, when a head
   went out without the read of that node behind it). A hold taken as the lock arrives (`LiveSync.hold`) keeps every
-  send back until that read is done, so a lock taken off before it ends sends none of the edits behind it; an edit
-  made once the lock is off is not read back, and goes out when the hold is let go. Read-backs that a lock coming
-  again asks for run one after another.
+  send back until that read is done, so a lock taken off before it ends sends none of the edits behind it. An edit
+  made once the lock is off is not read back, and goes out when the hold is let go — on a node the read covers as
+  well, since the keys written from the lock on are watched (`PlanWriteWitness.watch`) and the read leaves them as
+  the plan holds them; an edit the lock put back has moved nothing by then. Read-backs that a lock coming again asks
+  for run one after another.
 - Reading goes on: the session follows the unit, and the meters run.
 
 **Outside a session**, a write — Write to device, Device setup's Apply, the Follow USB badge — reads `895` right

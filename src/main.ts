@@ -1041,15 +1041,23 @@ let putBackTail: Promise<void> = Promise.resolve();
  * unit holds, then let the session send again (`release`, the hold taken as the lock arrived). The
  * edits behind it are not sent, whether or not the lock is taken off before the read is done.
  * `atLock` is what was unsent as the lock arrived: an edit made once it has been taken off is the
- * operator's, and is sent rather than read back.
+ * operator's, and is sent rather than read back — on a node of its own, and on a node the read
+ * covers alike, since the keys written from the lock on are watched (`edits`) and the read takes
+ * none of them. An edit the lock put back moved nothing by the time the watch samples it.
  */
 function putBackUnsent(atLock: { nodes: Set<string>; whole: boolean }, release: () => void): Promise<void> {
-  const run = putBackTail.then(() => readBackUnsent(atLock)).finally(release);
+  const edits = planWrites.watch();
+  const run = putBackTail
+    .then(() => readBackUnsent(atLock, edits))
+    .finally(() => {
+      edits.close();
+      release();
+    });
   putBackTail = run.catch(() => undefined);
   return run;
 }
 
-async function readBackUnsent(atLock: { nodes: Set<string>; whole: boolean }): Promise<void> {
+async function readBackUnsent(atLock: { nodes: Set<string>; whole: boolean }, edits: PlanWriteWatch): Promise<void> {
   const session = live;
   if (!session) return;
   await session.idle();
@@ -1059,8 +1067,8 @@ async function readBackUnsent(atLock: { nodes: Set<string>; whole: boolean }): P
   const whole = now.drift || (atLock.whole && now.whole);
   if (!whole && !nodes.size) return;
   try {
-    if (whole) await reconcileAllNow();
-    else await reconcileNodesNow(nodes);
+    if (whole) await reconcileAllNow(edits);
+    else await reconcileNodesNow(nodes, edits);
   } catch (err) {
     stopLiveOnError(errorText(err));
     return;
@@ -2374,7 +2382,7 @@ const follow =
 
 /** Device follow's scoped reconcile, and the read Console Lock takes back unsent nodes with: re-read
  *  the nodes, reflect them, and re-base the live snapshot. A read that fails rejects. */
-async function reconcileNodesNow(nodeIds: ReadonlySet<string>): Promise<void> {
+async function reconcileNodesNow(nodeIds: ReadonlySet<string>, edits?: PlanWriteWatch): Promise<void> {
   // Taken before the read is issued: a direct notify landing while it is in
   // flight is device truth the read's private copy predates, and the re-base
   // below rebuilds the whole snapshot from that copy.
@@ -2386,8 +2394,10 @@ async function reconcileNodesNow(nodeIds: ReadonlySet<string>): Promise<void> {
   // operator's toggle flips back on screen, and plan and snapshot agree on a
   // value the device does not hold until the idle sweep re-reads past it.
   const pending = live?.recentPending(nodeIds);
-  const merged = await followRead("device-follow scoped readback", (into, signal) =>
-    applyNodeStateScoped(into, nodeIds, signal, pending),
+  const merged = await followRead(
+    "device-follow scoped readback",
+    (into, signal) => applyNodeStateScoped(into, nodeIds, signal, pending),
+    edits,
   );
   if (!merged) return;
   // A Signal Type moved on the unit's own panel reaches the plan here, with no edit
@@ -2410,8 +2420,9 @@ async function reconcileNodesNow(nodeIds: ReadonlySet<string>): Promise<void> {
 }
 
 /** Device follow's full reconcile, and the read Console Lock takes back what a stopped converge
- *  left with: re-read the whole unit, its [CUE] flags with it. A read that fails rejects. */
-async function reconcileAllNow(): Promise<void> {
+ *  left with: re-read the whole unit, its [CUE] flags with it. A read that fails rejects. `edits`
+ *  is a watch opened before the read, whose keys the read leaves as the plan holds them (followRead). */
+async function reconcileAllNow(edits?: PlanWriteWatch): Promise<void> {
   const since = live?.directMark();
   // Unscoped: a whole-device read covers every address, so every recent write is
   // one it must settle before reading (the scoped case above says why).
@@ -2422,11 +2433,15 @@ async function reconcileAllNow(): Promise<void> {
   const cueSet = cues;
   const cueSince = cueSet.version;
   let cueGot: { nodes: string[]; mode: CueMode } | null = null;
-  const merged = await followRead("device-follow readback", async (into, signal) => {
-    const result = await applyDeviceStateScoped(into, signal, pending);
-    if (!result.errors.length) cueGot = { mode: await readCueMode(), nodes: await readCues(getModel(modelId)) };
-    return result;
-  });
+  const merged = await followRead(
+    "device-follow readback",
+    async (into, signal) => {
+      const result = await applyDeviceStateScoped(into, signal, pending);
+      if (!result.errors.length) cueGot = { mode: await readCueMode(), nodes: await readCues(getModel(modelId)) };
+      return result;
+    },
+    edits,
+  );
   if (!merged) return;
   // Same as the scoped reconcile above: a link the whole-device read brought in gets
   // its partner snapped. This is the hook a scene or preset recall on the unit takes,
