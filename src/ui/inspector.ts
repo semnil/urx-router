@@ -900,17 +900,15 @@ export function renderInspector(
         // EQ Type (V1.5): which EQ the bus runs, and so which screen the launcher opens. The unit
         // takes the item off its screen above 48 kHz, where only 4band PEQ runs.
         if (hasGeq(node.id)) {
-          const rateLocked = geqUnavailable(plan.sampleRate);
-          body.append(
-            enumSelect(
-              m.inspector.eqType,
-              [...EQ_TYPE_OPTIONS],
-              eqTypeOf(np),
-              (v) => actions.onUpdateNodeParams(node.id, setEqType(np, node.id, v)),
-              rateLocked,
-            ),
+          const row = enumSelect(m.inspector.eqType, [...EQ_TYPE_OPTIONS], eqTypeOf(np), (v) =>
+            actions.onUpdateNodeParams(node.id, setEqType(np, node.id, v)),
           );
-          if (rateLocked) body.append(hint(m.inspector.geqRateLocked));
+          body.append(row);
+          // Held the way every row a rate takes is: the reason on the row, and said beside it.
+          if (geqUnavailable(plan.sampleRate)) {
+            holdRow(row, m.inspector.geqRateLocked);
+            body.append(hint(m.inspector.geqRateLocked));
+          }
         }
         body.append(dynLauncher(eqTypeOf(np) === EQ_TYPE_GEQ ? "geq" : "eq", node.id, actions, m));
         host.append(el);

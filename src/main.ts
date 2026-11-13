@@ -656,7 +656,7 @@ const live = DEMO
         liveAdopted = 0;
         const notes = flushReadNotes;
         flushReadNotes = [];
-        setStatus([...notes, t().status.liveSynced(n) + takeBoundedNote(taken)].join(" — "));
+        setStatus(ledBy([...notes, t().status.liveSynced(n) + takeBoundedNote(taken)].join(" — "), [], true));
       },
       onConfirmed: (confirmed, sent) => {
         liveAdopted += adoptConfirmedWrites(confirmed, sent);
@@ -1919,22 +1919,39 @@ function bothOnLabels(): string {
 }
 /** A device read's status line, led by what it did about +48V / HI-Z: the ONs it refused
  *  (`merged`, when the read is one that can refuse), then the channels it left with both on.
- *  The plan keeps what the unit holds; the app writes nothing for either.
- *
- *  A line that replaces one still leading with a read's refusals goes on leading with them:
- *  the full read device follow runs once a burst goes quiet lands on that line, and a line
- *  anything else has replaced since carries nothing forward. */
+ *  The plan keeps what the unit holds; the app writes nothing for either. */
 function withSwitchNotes(msg: string, merged?: MergedRead): string {
   bothOnNoted = bothOnLabels();
   const both = bothOnNoted ? [t().status.phantomHiZBothOn(bothOnNoted)] : [];
-  let notes = refusalNotes(merged);
-  if (!notes.length && refusalLine && statusbar.textContent === refusalLine.line) notes = refusalLine.notes;
-  const line = [...notes, ...both, msg].join(" — ");
-  refusalLine = notes.length ? { line, notes } : null;
+  return ledBy([...both, msg].join(" — "), refusalNotes(merged));
+}
+/**
+ * `msg` as a session's sync or follow status, led by what the line on screen still leads with.
+ *
+ * Two kinds of lead, kept for different spans. A read's refusals (`fresh`, or carried) belong to
+ * its burst: the full read device follow runs once a burst goes quiet lands on that line and keeps
+ * them, while the next burst (`burst`: its "← device…") and a send say only what they did. What a
+ * rate change took off the plan (`setLeadingStatus`) leads every one of them instead, until
+ * anything else takes the line: the read after a re-clock reports on its own clock, at once, and
+ * written plainly it would replace that note before anyone could read it. A line anything else has
+ * replaced since carries nothing forward.
+ */
+function ledBy(msg: string, fresh: readonly string[] = [], burst = false): string {
+  const shown = ledLine && statusbar.textContent === ledLine.line ? ledLine : null;
+  const sticky = shown?.sticky ?? [];
+  const carried = fresh.length ? [...fresh] : burst ? [] : (shown?.notes ?? []);
+  const line = [...sticky, ...carried, msg].join(" — ");
+  ledLine = sticky.length || carried.length ? { line, sticky, notes: carried } : null;
   return line;
 }
-/** The last status line that led with a read's refusals, and those refusals. */
-let refusalLine: { line: string; notes: string[] } | null = null;
+/** Put `line` on the status line as one the session's own statuses go on leading with. */
+function setLeadingStatus(line: string): void {
+  setStatus(line);
+  ledLine = { line, sticky: [line], notes: [] };
+}
+/** The last status line that led with notes the session's statuses carry forward: the ones kept
+ *  until something else takes the line (`sticky`), and a read's refusals (`notes`). */
+let ledLine: { line: string; sticky: string[]; notes: string[] } | null = null;
 /** One sentence per switch a read refused (`MergedRead.refusedOn`), channels in model order. */
 function refusalNotes(merged: MergedRead | undefined): string[] {
   if (!merged?.refusedOn.length) return [];
@@ -2377,7 +2394,7 @@ const follow =
         reconcileNodes: (nodeIds) => reconcileNodesNow(nodeIds),
         // Escalation / idle safety net: pull the whole device into the plan.
         reconcileAll: () => reconcileAllNow(),
-        onFollow: () => setStatus(t().status.liveFollowing),
+        onFollow: () => setStatus(ledBy(t().status.liveFollowing, [], true)),
         onError: (message) => stopLiveOnError(errorText(message)),
       });
 
@@ -4443,14 +4460,17 @@ function chooseSampleRate(rate: number): void {
   syncRateUi();
   const at = formatRate(plan.sampleRate);
   const buses = busNames(geq);
+  // What came off leads the session's statuses until something else takes the line: during Live
+  // sync the read that follows the re-clock reports at once, and would replace it unread.
   if (inserts.length)
-    setStatus(
+    setLeadingStatus(
       [
         t().status.insertsOffAtRate(at, insertNames(inserts)),
         ...(geq.length ? [t().status.geqOffAtRateToo(buses)] : []),
       ].join(" "),
     );
-  else setStatus(geq.length ? t().status.geqOffAtRate(at, buses) : t().status.sampleRate(at));
+  else if (geq.length) setLeadingStatus(t().status.geqOffAtRate(at, buses));
+  else setStatus(t().status.sampleRate(at));
 }
 
 ratePicker.addEventListener("change", () => pickSampleRate(Number(ratePicker.value)));

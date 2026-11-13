@@ -216,8 +216,10 @@ carries a one-line map of the same directories and points here.
   with it (`carrierOf`), and its converge leaves a switch the unit announced it turned on at its panel, with
   the other one on that channel, to the follow read that announcement scheduled. A read's status line leads
   with the ONs it refused, and a later read's line keeps leading with them while the line it replaces still
-  does (`withSwitchNotes` in `main.ts`) — the full read device follow runs once a burst goes quiet lands
-  there / `stereo-side.ts` the side each stereo channel shows (L until switched): which jack's input stage
+  does (`withSwitchNotes` and `ledBy` in `main.ts`) — the full read device follow runs once a burst goes quiet
+  lands there, while the next burst and a send say only what they did. What a rate change took off the plan
+  (an insert, a bus's Flex12GEQ) leads every sync and follow line instead, until anything else takes the
+  line: the read that follows the re-clock reports at once, and would replace it before it could be read / `stereo-side.ts` the side each stereo channel shows (L until switched): which jack's input stage
   the CONSOLE strip, the Inspector and a bound MIDI control show and edit, and which side's polarity the one
   Ф inverts. UI state rather than plan state — not saved, not undoable, not in a `?plan=` link — reset on
   a model switch, and DOM-free so `core/midi` reads it. Both views' switches reach it through one funnel in

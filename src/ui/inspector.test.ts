@@ -1452,7 +1452,10 @@ describe("node controls report their edits", () => {
     const plan = defaultPlan("URX44V");
     plan.sampleRate = 96000;
     renderInspector(panel, getModel("URX44V"), plan, nodeSel("bus.stereo"), act);
-    expect(panel.querySelector<HTMLSelectElement>('[data-param-label="EQ Type"] select')?.disabled).toBe(true);
+    const row = panel.querySelector<HTMLElement>('[data-param-label="EQ Type"]')!;
+    expect(row.querySelector("select")?.disabled).toBe(true);
+    // The reason on the row, as every row a rate holds carries it, and said beside it.
+    expect(row.title).toBe(t().inspector.geqRateLocked);
     expect(panel.textContent).toContain(t().inspector.geqRateLocked);
   });
 

@@ -874,6 +874,14 @@ describe("the sample rate during Live sync", () => {
     await vi.waitFor(() => expect(rateWrites(shell)).toEqual([88_200]), { timeout: 10_000 });
     expect(confirms(shell).at(-1) ?? "").toContain(t().confirm.geqOffAtRate("MIX 1"));
     expect(confirms(shell).at(-1) ?? "", "MIX 2 runs 4band PEQ").not.toContain("MIX 2");
+
+    // The session reports the read the unit's announcement sends on its own clock, at once after
+    // the re-clock; what the rate took off stays in front of it until something else takes the line.
+    const note = t().status.geqOffAtRate(formatRate(88_200), "MIX 1");
+    await vi.waitFor(() => expect(statusText()).toContain(note), { timeout: 10_000 });
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.OUT_EQ_ON.id, x: 0, y: 0, value: 1 }]);
+    await vi.waitFor(() => expect(statusText()).toMatch(/← device \(\d+\)$/), { timeout: 10_000 });
+    expect(statusText().startsWith(note), statusText()).toBe(true);
   });
 
   it("writes nothing when the operator declines, and shows the rate the plan holds", SLOW, async () => {
