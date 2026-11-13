@@ -5170,7 +5170,7 @@ while any other device action holds the link (a Live sync still connecting holds
 asks again once its confirms are answered, going ahead only in the state the confirm asked about, since the
 window keeps running behind them.
 
-Format notes that shape the reader (full spec: the private reference repository):
+Format notes that shape the reader:
 
 - **Endianness alternates by level.** Record headers and the F descriptor records are big-endian;
   block headers and every value in the D block are little-endian.
