@@ -2346,9 +2346,14 @@ panel IS takes `set`.
 - **Gate actions shorter than 100 ms are invisible on GR** and no UI can recover them. The screen
   does not claim otherwise; it is for reading steady-state level relationships and setting the
   threshold against them, not for tuning attack / hold / decay.
-- **Fine-tuning on the gains only.** The device's push-and-turn fine adjustment is confirmed *inactive*
-  for every GATE parameter and *active* (0.1 dB) for COMP Gain (make-up) and each EQ band's Gain. The FINE
-  legend therefore shows on those rows alone — a per-parameter measurement, not a class rule.
+- **The FINE legend on the gains only.** The device's push-and-turn fine adjustment is *active* (0.1 dB) for
+  COMP Gain (make-up) and each EQ band's Gain. On System firmware V1.3 it was confirmed *inactive* for every GATE
+  parameter; since V1.5 the time controls take it too — GATE Attack / Hold / Decay, COMP Attack / Release, SSMCS
+  Attack / Release and DUCKER Attack / Decay. Pushed, one click is one stop of the table the app's slider steps
+  through (`core/control/dyn-time-stops.ts`, or the SSMCS raw value itself); unpushed, COMP Attack — the one
+  control turned that way so far — moves through a coarser subset of the same table. The app's slider already steps every stop, so the unit's fine step is its ordinary
+  step and these rows carry no legend. The FINE legend therefore shows on the gain rows alone — a per-parameter
+  measurement, not a class rule.
 
 ## Edit → device data path
 
