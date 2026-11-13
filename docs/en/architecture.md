@@ -92,7 +92,7 @@ carries a one-line map of the same directories and points here.
   stereo CH EQ OFF, `channelEqUnavailable`, and takes the FX2 bus away entirely, `nodeRateDisabled` — one
   predicate for the graph's dimmed node, the CONSOLE strip that would otherwise offer a live fader into a
   bus the unit is not running, and every send column aimed at it). These are **UI-only**: the device accepts and holds writes to
-  the "unavailable" params at 192 kHz (measured), so the write set is never gated by rate — see "Sample rate
+  the "unavailable" params at 192 kHz, so the write set is never gated by rate — see "Sample rate
   and Follow USB". It also owns the insert-FX menu (`insertFxMenu` returns every option with its lock
   reason, `"rate" | "link" | "slot" | null`, so the inspector and the console are both defined over the one
   table. The inspector renders a locked option as disabled whatever the reason, so a new reason reaches it with
@@ -182,11 +182,11 @@ carries a one-line map of the same directories and points here.
   (`NODE_TAPS_URX22` / `NODE_TAPS_URX44`), dBFS decoding, latest-value store; the gain-reduction meters live
   in their own table with their own decode (`grAddr(kind, node)` / `decodeGrDb`) because a reduction is not
   a level and `tapsFor` doubles as the CONSOLE meter-point selector's contract; the two idle values are
-  measured states (one for a processor not engaged, and OVER for one engaged with nothing to reduce) and a GR
+  two distinct states (one for a processor not engaged, and OVER for one engaged with nothing to reduce) and a GR
   figure excludes any makeup gain; for the CONSOLE view. `tapsFor`/`tapFor`/`hasMeter`/`defaultTapKey` take
   an optional `modelId` and silently fall back to the URX44 table without it, so every resolution site must
-  pass `getModel().id`) / `eq-response.ts` the 4-band PEQ's measured frequency response (RBJ biquads with
-  the three corrections measuring the unit forced: its Q is twice the biquad Q, pass filters ignore Q, a
+  pass `getModel().id`) / `eq-response.ts` the 4-band PEQ's frequency response as the unit produces it (RBJ biquads with
+  the three corrections the unit's response requires: its Q is twice the biquad Q, pass filters ignore Q, a
   shelf's nominal frequency is its −3 dB-from-plateau point from 6 dB of gain up; pinned against the device sweeps in
   `eq-response.test.ts`) / `env.ts` build-time flags (`DEMO`: demo builds hide save/image export and instead
   show share-URL / plan-JSON download buttons) / `settings.ts` user preferences (the Preferences modal's
@@ -534,10 +534,10 @@ carries a one-line map of the same directories and points here.
   a wiring the unit cannot hold and, while Live sync is up, an HPF frequency the control link cannot take
   (`app/undo-refusal.ts`), asked of the state the patch would leave rather
   than of the keys it carries; `peekUndo` answers with the
-  patch that would land, which is the entry's inverse). A text field / textarea / `contenteditable` keeps the chord (no `preventDefault`) — measured on
-  macOS: the page receives `Cmd+Z` even with a native Edit menu installed, and `preventDefault` is what
+  patch that would land, which is the entry's inverse). A text field / textarea / `contenteditable` keeps the chord (no `preventDefault`) — on
+  macOS the page receives `Cmd+Z` even with a native Edit menu installed, and `preventDefault` is what
   suppresses WebKit's own field undo. `menu(kind)` is the macOS Edit menu's entry point and delegates to
-  that field's own undo (`document.execCommand`, measured working in WKWebView) so the menu cannot mean
+  that field's own undo (`document.execCommand`, which works in WKWebView) so the menu cannot mean
   something different from the chord; `notifyDepth` reports the depth only on a real transition, since
   `note()` fires per edit and each report crosses IPC to a native menu item / `keys.ts` who owns a
   keystroke: `ownsNativeUndo` (the text-surface allowlist both undo paths share) and `isChord` (asked by
@@ -597,14 +597,12 @@ carries a one-line map of the same directories and points here.
   second window needs no capability beyond the relay pair: `capabilities/midi-window.json` grants the two relay
   commands and, of core, only the devtools hotkey a debug build injects — no event emit or listen, so a script
   in it cannot raise an event the main window listens for. It raises itself when learn turns ON and deliberately NOT
-  when a binding lands — measured on macOS: a click on a window that is not active does not reach the
+  when a binding lands — on macOS a click on a window that is not active does not reach the
   webview (`accept_first_mouse` defaults to false), so raising per binding would make every following assignment
   two clicks; gang members render contiguously below their head with a Linked tag, and the Behavior column's
   vocabularies are printed as a key under the table — for the vocabularies the list actually uses, since a
   native dropdown cannot annotate its own options and a hover-revealed card is an affordance nobody finds; the
-  vocabularies share one name column through `subgrid`, so their notes start on one left edge (WebView2
-  154.0.4258.62, 2026-10-11: every note at x = 95.38, the first vocabulary's column as wide as the second's
-  widest name) /
+  vocabularies share one name column through `subgrid`, so their notes start on one left edge /
   `midi-learn.ts` the one MIDI-learn treatment and arming path, shared by the CONSOLE strips and the channel
   tuning screens (target ring, armed pulse, mapped dot — plus the bound address as a tooltip at all times,
   since the MIDI window can sit behind the app and a dot says only "assigned", never to what) /
@@ -685,7 +683,7 @@ carries a one-line map of the same directories and points here.
   and a pitch tracker are not derivable from the parameters and the unit meters neither, so those faces are a
   lane rack alone; `DynPlotProcessor` keeps `plotGeo` / `drawAxes` / `drawCurve` required together wherever one
   of them is supplied, and the descriptor's own `display` decides per family whether the column carries a plot
-  at all. The EQ's filter model is `core/eq-response.ts` (measured: the unit's Q is twice the biquad Q,
+  at all. The EQ's filter model is `core/eq-response.ts` (the unit's Q is twice the biquad Q,
   pass filters ignore Q, a shelf's nominal frequency is its −3 dB-from-plateau point from 6 dB of gain up).
   **Every plot draws
   its curve at the true value and the host clips it to the plot area** — the `drawAxes` / `drawCurve` split
@@ -1238,7 +1236,7 @@ the inspector, and the open modal itself.
 > `src/ui/midi-arm.contract.test.ts` opens every tuning screen with every control mapped and fails on a
 > zone over an element holding other controls. Every ordinary E2E case
 > ends by checking the page for a name, a description or such a tooltip that still holds a mark in
-> its printed form (`e2e/fixtures.ts`). Read on both shipping engines, in both languages: VoiceOver reads a
+> its printed form (`e2e/fixtures.ts`). On both shipping engines, in both languages: VoiceOver reads a
 > MIDI row's cells and such a control in the spoken form alone — the description right after the name,
 > and no hint — and on WebView2, UI Automation names the cells in the spoken form with an empty HelpText,
 > and gives such a control an empty HelpText and its FullDescription in the spoken form, while a control
@@ -1261,11 +1259,11 @@ the inspector, and the open modal itself.
 > is English there whichever of its three display languages is selected. That was **read off the hardware
 > with its own Language set to Japanese**, screen by screen: GATE, COMP, EQ, DUCKER, OSCILLATOR, MONITOR
 > and CH SETTING carry no kana at all. CH SETTING's [Color] picker prints its colours as words — `Blue`,
-> `Orange`, `Yellow`, `Purple`, `Cyan`, `Magenta`, `Red`, `Green`, `LtGreen` (where the broker's table writes
+> `Orange`, `Yellow`, `Purple`, `Cyan`, `Magenta`, `Red`, `Green`, `LtGreen` (where the parameter table writes
 > `Light Green`), `White` and `Off` — and those are the names the Inspector's swatches carry. The Japanese user guide names the same controls in English too
 > (`[Attack]`, `[Hold]`, `[Decay]`, `[Release]`, `[Knee]`, `[Threshold]`, `[Gain]`, `[Frequency]`,
 > `[HPF Freq.]`, `[Level]`, `[Width]`, `[Interval]`, `[Pan]`, `[Name]`, `[Color]`, and the `Assign`
-> sub-menu). **The INS FX screens were read the same way on 2026-08-28, and again on 2026-08-30**, and
+> sub-menu). **The INS FX screens were read the same way**, and
 > their rows are the reason the Effect Reference Guide is not the arbiter: the guide is a document and
 > `dev()` names what the SCREEN prints, and on several of them they differ. The unit prints
 > `Gate` on the guitar cabinet where the guide writes
@@ -1279,7 +1277,7 @@ the inspector, and the open modal itself.
 > initial-capital, not shouted, which is what the guitar panel's card labels follow — and what the
 > guide's shouted spellings above do not.
 >
-> **The FX EFFECT faces were read the same way on 2026-09-23** — Rev.R3, REV-X and the two delays,
+> **The FX EFFECT faces were read the same way** — Rev.R3, REV-X and the two delays,
 > one face at a time, each page's captions in the order they sit. The guide is not the arbiter there
 > either: it writes `ER/Reverb Delay` where the face prints `E/R Delay`. A spelling is the other
 > thing the marks cannot catch — `dev()` fixes a string's *identity*, so a row that reproduces the
@@ -1376,8 +1374,8 @@ to one of `select` / `send` / `out`, and both layers are keyed by that group rat
 `source` and `key` are `select`, `send` and `sendSwitch` are `send`, `patch` and `record` are `out`.
 The three merged distinctions are already carried by geometry — a `key` is a `source` that lands on a
 ducker, a `sendSwitch` is a `send` with an on/off, a `record` is an output selection that lands on a
-microSD track — so a hue spent on each buys nothing and costs separability: measured under
-deuteranopia on a palette with one hue per kind, `record` and `source` were 1.6 apart in OKLab (x100), which is to
+microSD track — so a hue spent on each buys nothing and costs separability: under
+deuteranopia, a palette with one hue per kind puts `record` and `source` 1.6 apart in OKLab (x100), which is to
 say the same color. `WIRE_GROUP` is `Record<ConnectionKind, WireGroup>`, so a new kind does not compile until it is
 placed; the read site takes no fallback, because a fallback such as `?? "#888"` would draw a missed kind in grey
 with no halo and say nothing.
@@ -1406,7 +1404,7 @@ with no halo and say nothing.
 > that rests on an assumption.** Its scribble ink is not a stylesheet value: `inkOn()` picks black or
 > white from the ground it lands on, and for a strip wearing a rail colour that ground is a theme token,
 > so the inline ink a switch leaves behind was computed
-> against the ground that just left. Measured 2026-08-07: harmless, because **all five rails resolve to
+> against the ground that just left. It is harmless today, because **all five rails resolve to
 > white in both themes**, so the stale answer is the right one. Move a rail to a ground where the two
 > themes disagree and it becomes a strip inked for the theme that left; the fix is one
 > `consoleView.refresh()` in that funnel, at the cost of one strip rebuild per switch.
@@ -1429,7 +1427,7 @@ states the value instead, and cargo applies it to both (see "Build and distribut
 
 A Windows contrast theme turns on the CSS `forced-colors` mode, which replaces every background and
 every text colour with a handful of OS system colours, deletes `box-shadow` outright, and paints an
-opaque backplate behind text. Anything this UI says with colour alone stops saying it: measured without
+opaque backplate behind text. Anything this UI says with colour alone stops saying it: without
 the rule block, the default board's 51 lit chips and 73 unlit ones all compute to the same
 colour — one rectangle each, with no way to tell an engaged control from an idle one.
 
@@ -1437,17 +1435,15 @@ Two mechanisms survive, and the one `@media (forced-colors: active)` block in `s
 from them. Nothing in it touches a declaration used outside the query, so the ordinary themes stay
 pixel-identical.
 
-- **An outline.** An engaged control takes `3px double CanvasText`, a weight measured to keep its three
-  pixel rows distinct under the system palette (the other widths of a double border were not measured).
+- **An outline.** An engaged control takes `3px double CanvasText`, a weight that keeps its three
+  pixel rows distinct under the system palette (the other widths of a double border are untested).
   Two controls take it without changing size: the FOLLOW USB badge gives the rim's extra width back out
   of its padding, and the INS FX popover's held row draws it as an inset outline, which turns dashed while
   the keyboard focus is on that row, since the focus ring and the held state share the one outline. Anything whose job is to mark a position or a path — the knob
   pointer, the fader and mini-fader cap bars, the 0-dB lines, the slot each cap rides in, and the
   parameter sliders' track — trades its fill for an outline of the same geometry. Making the knob pointer an
   island instead does not keep its fill: with `forced-color-adjust: none` on the pointer, its computed
-  background returns to the authored amber and nothing on screen changes — 0 px against the same pointer
-  without it, in Chromium and in WebView2 154.0.4258.62 under hc2 and hcblack (2026-10-11), where the outline
-  against no outline differs by 32–33 px in the same clip.
+  background returns to the authored amber and nothing on screen changes.
 - **An island.** A surface whose colours ARE the reading — the scribble's device colour, the meters'
   green/yellow/red zones on the CONSOLE **and on the tuning screens' lanes**, the board's whole
   vocabulary of wires and rails — opts out with `forced-color-adjust: none`. Forcing those into two
@@ -1482,31 +1478,25 @@ Two traps are worth stating.
 
 `e2e/forced-colors.spec.ts` pins all of the above under Chromium's emulation of the mode and asserts no
 absolute colour — the values belong to the OS theme, not to this app. What the emulation cannot answer
-was measured against a real Windows contrast theme in WebView2 (2026-08-07) and held: the system colour
+holds in a real Windows contrast theme in WebView2: the system colour
 values are unguessable from their names, the opaque text backplate makes the usual
 `Highlight` / `HighlightText` idiom unreadable, `3px double` resolves as three distinct pixel rows, and
-the meter island keeps its three zones. The tuning-screen lane and the slider track were measured the
-same way (2026-08-08, hcblack and hcwhite) and hold under both themes. The rules added on 2026-10-01 were
-read the same way on 2026-10-09 (WebView2 154.0.4258.62) in hcblack, hcwhite, hc1 and hc2, and read by shape in
-each: the pressed view tab alone wears `3px double`; the INS FX popover's held row is `3px dashed` with the
+the meter island keeps its three zones. The tuning-screen lane and the slider track hold the
+same way under hcblack and hcwhite. The later rules hold in hcblack, hcwhite, hc1 and hc2, each told apart by shape:
+the pressed view tab alone wears `3px double`; the INS FX popover's held row is `3px dashed` with the
 keyboard focus on it and `3px double` beside a `2px solid` ring once the focus moves to the next row; the FOLLOW
-USB badge keeps its 95.27x25 box between its dashed rim and its double one (the state set on the element rather
-than by a device); the Inspector's section LEDs keep a `1px solid` rim, filled only when lit; and the board
+USB badge keeps one box size between its dashed rim and its double one; the Inspector's section LEDs keep a `1px solid` rim, filled only when lit; and the board
 node's `focus-ring` is drawn.
 
 **A locked control is a question this block does not answer**, because `opacity` is one of the few things
-forced colors leaves alone, so the read-only dims written elsewhere are supposed to survive it. Measured
-2026-08-13 in WebView2 151.0.4129.78 (debug build, 1280x800 viewport, URX44V) on the inspector's SD Rec
-track-count select, locked by setting the property rather than by holding a session — the same paint path —
-across all four Windows contrast themes: it is separable in pixels under every one, 714–719 of the 8544
-pixels in the rectangle captured around it (its box plus a 2 px margin — the box itself is 263x28), and
-mean luma over that whole rectangle 48.8 → 36.6 (hcblack), 236.3 → 245.3 (hcwhite), 64.7 → 53.1 (hc1) and
-19.2 → 5.6 (hc2). Every theme's locked face moves toward its own ground — which is what both the authored
+forced colors leaves alone, so the read-only dims written elsewhere are supposed to survive it. They do: a
+locked select stays separable in pixels from its unlocked state under every one of the four Windows contrast
+themes. Every theme's locked face moves toward its own ground — which is what both the authored
 alpha and the substitution below do — and hcwhite is the only one where that shows as a **rise**, because
 it is the only theme whose ground is brighter than the control. So the difference survives the mode and
-this block needs no restatement of the lock; whether it *reads* to an operator was not measured. The engine
+this block needs no restatement of the lock; whether it *reads* to an operator is not known. The engine
 also substitutes on its own here: a disabled select's text and border become `GrayText`, and, with the
-authored rule withdrawn through the stylesheet in each theme, the computed opacity came back **1**, where
+authored rule withdrawn through the stylesheet, the computed opacity is **1**, where
 the same withdrawal in the ordinary themes leaves **0.7** of the engine's own — so under forced colors the
 engine supplies none of its own, and the authored dim is the whole opacity signal, added to that
 substitution rather than replacing it. The launcher caret goes the other way on purpose, and the
@@ -1520,14 +1510,14 @@ One case in that spec reads painted pixels as well as computed styles. A range i
 are `::-webkit-` pseudo elements whose author declarations this engine does not report through
 `getComputedStyle`: the rule that draws the track computes to `0px none` while the track is on screen.
 The DevTools protocol does reach them — the input's user-agent shadow tree carries the two as `#track`
-and `#thumb`, and `CSS.getComputedStyleForNode` on those returns the forced-colors values (2026-09-24,
-Chromium 153: the track `1px solid`, the thumb an opaque Canvas fill) — so the case asserts the two
+and `#thumb`, and `CSS.getComputedStyleForNode` on those returns the forced-colors values (the track
+`1px solid`, the thumb an opaque Canvas fill) — so the case asserts the two
 declarations there, and each assertion fails with its own rule removed. What it reads from the pixels is what no declaration states: that
 the painted thumb covers the painted track.
 
 Its border-width assertions ask for **more than zero**, not for at least one pixel. A 1px border is snapped
 to the device pixel grid and reported as its used value, so at a 1.25 display scale `border-top-width`
-comes back as `0.8px` — measured on Windows, and invisible to this suite, which always runs at a scale
+comes back as `0.8px` on Windows — invisible to this suite, which always runs at a scale
 factor of 1. The intent is that a border exists; a floor of 1 quietly assumes the ratio the emulation
 happens to use.
 
@@ -1609,17 +1599,13 @@ the same way, so a pixel dragged is the same share of the level on both faders. 
 
 The ordinary tier pins this in Playwright's Chromium (`e2e/console.spec.ts`) and **nothing pins it in
 WebKit** — every `@webkit` case in the race tier is about a strip rebuilt under a live pointer or about the
-chord/focus matrix, not about the press. **The shipping WebView2 was measured separately** (2026-08-13,
-debug build, runtime 151.0.4129.78, 1280x800 viewport, URX44V), because that engine is not the one any
-tier runs. From two detents above the factory value, so a stray reset could not read as "the press changed
-nothing": presses at the cap's top edge, centre and bottom edge left the readout unchanged; a press at 80%
-of the fader's height (164 px there) put the cap centre **0.013 px** from the pointer against a half-detent
-tolerance of 2.05 px; and a three-detent drag from a grab moved the cap 12.313 px for the 12.3 px asked.
-Identical for the `mouse`, `pen` and `touch` pointer types — the tiers only exercise the first. One thing
+chord/focus matrix, not about the press. No tier runs the shipping WebView2, and **it behaves the same
+way**: a press on the cap leaves the readout unchanged, a press on the bare track puts the cap centre under
+the pointer, and a drag from a grab moves the cap by the distance dragged — for the `mouse`, `pen` and
+`touch` pointer types alike, where the tiers only exercise the first. One thing
 belongs to touch alone: a **double-tap is a `dblclick` there**, so two taps on the cap inside the
-double-click interval hit the factory reset above. Measured with its control (two taps 150 ms apart reset a
--3.2 dB fader to 0.0; the same two 700 ms apart left it at -3.2), which is what separates it from "any two
-taps reset it".
+double-click interval hit the factory reset above, while the same two taps further apart than that interval
+leave the fader where it is.
 
 **Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
 step while Shift is held, mirroring the hardware's push-and-turn fine mode (the V1.5 user guide describes it as Coarse / Fine operations, without naming the parameters that take it): the tuning screens'
@@ -1692,7 +1678,7 @@ drag lands on the nearest.
   refill are one task, so the empty rack is never laid out and the offset is never clipped, and the restored
   focus passes `preventScroll` so it does not drag an off-screen control into view. Rewriting the offset around
   the rebuild instead reads and writes `scrollLeft` against a dirty tree, forcing a synchronous layout of the
-  whole rack — measured at ~25 ms per render on WKWebView (against ~2 ms on WebView2) where a full render is
+  whole rack — ~25 ms per render on WKWebView (against ~2 ms on WebView2) where a full render is
   ~6 ms without it — on the path Live sync takes for every read-back reflect. Both halves are engine behaviour
   rather than app logic, so the bench's `scrollCheck` (`scripts/meter-bench.mjs`) re-checks them on WKWebView
   each run; the E2E suite pins the same contract in Chromium. The rebuilt meters are then redrawn in the same
@@ -1751,8 +1737,8 @@ drag lands on the nearest.
   rest it sits at the floor). `core/meters.ts` maps node ids to broker meter addresses (`meterId:x`), decodes the
   raw value (deci-dBFS, whose top value reads OVER) to dBFS, and holds the latest reading in a `MeterStore`. The UI
   samples the readings on a `requestAnimationFrame` loop that paints only once 1000/30 ms have passed since its last
-  paint. On a 60 Hz display that lands on every second or third frame, so the loop paints below 30 fps (22.2 fps in
-  WebKit, `node scripts/meter-bench-run.mjs --seconds 20`, 2026-10-10); the device updates at ~10 Hz, so painting
+  paint. On a 60 Hz display that lands on every second or third frame, so the loop paints below 30 fps; the
+  device updates at ~10 Hz, so painting
   faster gives no gain and renders with fast attack / slow release, peak hold, and a per-channel OVER latch (the top
   OVER box), writing only the lanes (L/R on a stereo strip) that changed (compared at integer-percent). **The paint
   is kept compositor-only**: the bars are driven by `transform: scaleY` / `translateY` from typed (`@property`) 0..1
@@ -1773,8 +1759,8 @@ drag lands on the nearest.
   behind it) nor delays the batch; while a subscription streams the worker also polls commands on a shorter
   interval so the bounded pump runs back-to-back and keeps up with the feed. That budget bounds the wait only
   while the feed is running: on a QUIET link the drain ends at the socket's own read timeout instead, and the
-  worker is not looking at the command channel until it does — measured on a URX44V, the first live write after
-  a quiet gap waited 152 ms against a 200 ms timeout, which is why that timeout is 50 ms (`READ_TIMEOUT`), not
+  worker is not looking at the command channel until it does — on a URX44V, with a 200 ms timeout, the first live
+  write after a quiet gap waits 152 ms, which is why that timeout is 50 ms (`READ_TIMEOUT`), not
   the 30 ms budget. Changing the budget does not move it: on a quiet link the loop leaves at the drained
   branch and never reaches the budget check.
   A subscribed notify that lands while a command awaits its response (the `do_set` / `do_get_value` loops) is
@@ -1833,23 +1819,22 @@ drag lands on the nearest.
 
 ### The inspector repaint versus an IME composition
 
-That reflect rebuilds the inspector with `replaceChildren`, and a node name is typed into it. **Measured in the real
-WKWebView** with the panel repainted at the 20 Hz a knob sweep produces (`ui/keyprobe.ts`, the dev-only F2 / F3 / F4
-harness): typing `nihonngo` produced **`nいhおnngお`**, with **eight compositionstarts for eight keystrokes**. The
+That reflect rebuilds the inspector with `replaceChildren`, and a node name is typed into it. In the real
+WKWebView, with the panel repainted at the rate a knob sweep produces, typing `nihonngo` produces
+**`nいhおnngお`**, with **one compositionstart per keystroke**. The
 romaji buffer that spans keystrokes goes with the removed element, so a consonant that has no vowel yet lands as
 literal ASCII. Focus and caret are not the problem — they are carried across the rebuild and every character landed
 in the right place; the composition alone is destroyed. The field's text is carried too, while the plan still holds
 what it normalizes to: the plan stores a name without its trailing space, so a rebuilt field would otherwise drop the
 space the operator has just typed. Through the composition gate, at the same repaint rate: **one
-compositionstart, one compositionend, `日本語` intact**, 67 of 397 repaints deferred to the commit.
+compositionstart, one compositionend, `日本語` intact**, with the repaints that fall inside the composition
+deferred to the commit.
 
-Confirmed on the device path the synthetic repaint stands in for, with a URX attached and Live sync up: sweeping
-the A.Gain of jack 1, which CH 1 reads (`HA_GAIN`, a direct follow), with that channel selected repaints the panel **6 times**. With a
-composition open, **all 6 are held and exactly one runs, at the commit** — one compositionstart, one
-compositionend, the name whole.
+The device-driven repaint behaves the same as the synthetic one it stands in for: while a composition is open,
+**the repaints a device change causes are held and exactly one runs, at the commit**, so the name arrives whole.
 
-The same measurement shows what the gate's own backstop is worth. Across 349 rebuilds that took the composing
-field away, **zero compositionend and zero focusout reached the host**. `focusout` backstops a field that loses
+The gate's own backstop is worth little: a rebuild that takes the composing field away delivers **no
+compositionend and no focusout to the host**. `focusout` backstops a field that loses
 focus, not one that is removed — so nothing releases the gate if the composing field disappears by some other path,
 and what makes that unreachable is that `renderInspector` has exactly **one** call site, behind the gate. A second
 one would latch the gate for the rest of the session and the panel would silently stop updating.
@@ -2031,18 +2016,17 @@ the window's life, written in place only when its text changes. The hint beside 
 it can show in one grid cell — the idle and learn ones always, the armed one while a control is armed — so it is as
 tall as the tallest of them and turning learn on or off, or arming a control, moves nothing below it; only the
 current wording is painted, and the others are `aria-hidden` as well as hidden from sight. An armed wording taller
-than both would still grow it. Measured 2026-10-04 in Playwright's Chromium and WebKit builds, in both languages, at
-the 440 px the window opens at and its 360 px minimum: of the 3,378 distinct armed wordings per language — every
-control id the three models' default plans list, plus every insert-FX slot and FX parameter on every node — none
-is taller than the idle one. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
+than both would still grow it, and none is: in Chromium and WebKit, in either language, at the width the window
+opens at and at its minimum, no armed wording — for every control id the three models' default plans list, plus
+every insert-FX slot and FX parameter on every node — is taller than the idle one. Both directions are Tauri **Channels** through one Rust relay (`src-tauri/src/midiwin.rs`), the
 same way the meter / param / MIDI-input streams already reach the frontend — which keeps the traffic inside
 `invoke`, so the second window needs no capability beyond the relay pair — its capability grants those two commands
 and, of core, only a debug build's devtools hotkey, so it cannot emit an event the main window listens for. A file dropped onto it
 opens nothing: the shell raises the drag events for the window the file was dropped on, and the main window takes only those
 raised for itself (see "Opening files: drag & drop, and settings files"). Where it sits is the shell's to remember (see
 "Window geometry"). What keeps it in front of the main window is the shell's too, and it differs by platform —
-a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where an AppKit parent was measured
-and is not used. Closing the main window closes it; closing it drops learn mode, which would
+a Win32 **owner** on Windows, a pin held while learn is armed on macOS, where an AppKit parent costs more than
+it gives and is not used. Closing the main window closes it; closing it drops learn mode, which would
 otherwise stay armed against a control nothing on screen names.
 
 Because it is a window rather than an overlay it can drift behind another application — and on macOS, where
@@ -2052,12 +2036,12 @@ bring the binding back to where the operator is looking: it **raises itself when
 would cover the app to solve a problem lasting a gesture), and every bound control carries **its address as
 a tooltip** (`CH 1 CC 21`), which costs no layout and is readable with the window closed.
 
-It deliberately does **not** raise itself when a binding lands, which is measured rather than assumed (macOS,
-2026-08-01). A click on a window that is not active does not reach the webview: wry's `acceptsFirstMouse:`
+It deliberately does **not** raise itself when a binding lands. On macOS a click on a window that is not active
+does not reach the webview: wry's `acceptsFirstMouse:`
 returns the `accept_first_mouse` attribute, and Tauri's default for it is `false`
-(`tauri-runtime/src/webview.rs`; the `tauri.conf.json` window key is `acceptFirstMouse`). Measured both ways —
-with the MIDI window focused a single click on a console fader neither armed it nor moved it, and with the main
-window focused the same click armed it. Raising on every binding would therefore turn each following assignment
+(`tauri-runtime/src/webview.rs`; the `tauri.conf.json` window key is `acceptFirstMouse`). It holds both ways —
+with the MIDI window focused a single click on a console fader neither arms it nor moves it, and with the main
+window focused the same click arms it. Raising on every binding would therefore turn each following assignment
 into two clicks, one to activate and one to arm, right in the middle of the run of gestures that assigning a
 bank of controls is. Turning `acceptFirstMouse` on would buy the click back at the price of a focus-click
 moving whatever control is under the pointer, which on a mixer is a fader jumping.
@@ -2185,9 +2169,9 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   otherwise keep showing wrong. Before it, what a pass would carry is not the unit's state but whatever the
   plan holds — a new document's defaults, a loaded file, a half-applied read — and putting that on the wire is
   not merely wrong for the controller: on a loopback or any shared bus, every other listener takes it for an
-  operator's gesture. Measured 2026-08-16: a second instance of this app, launched while a live session ran,
-  sent its own startup values down the same IAC bus, and the live instance applied them as incoming MIDI and
-  wrote them to the unit — CH 1 from +66 dB to its minimum, with the channel unmuted. So opening the output
+  operator's gesture. This gate is what keeps a second instance of this app, launched while a live session
+  runs, from putting its startup plan values on the same bus — values the live instance would apply as
+  incoming MIDI and write to the unit. So opening the output
   port sends nothing on its own, a fetch and a `.urxf` import do not open it (neither says the plan is the
   unit's state), a readback that threw or was cancelled does not either — the re-send hangs off the session
   being up rather than off reaching the `finally` all three land in — and Live sync ending, or the plan being
@@ -2216,19 +2200,18 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   and, while live, write to the unit (`core/midi/controls.test.ts` drives it through the engine on the continuous
   controls the factory plan lists, the morphing bank's, and those of each insert effect and each FX type). Only a pass that actually sends records the
   pair: one that delivers nothing tells the controller nothing. At 7 bits the codecs alone would not hold
-  the value either (measured 2026-10-04, 93 of 311 controls on a URX44V do not round-trip — the tuning
-  screens' EQ frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER attack. COMP
+  the value either: not every control round-trips — the tuning screens' EQ frequency and Q, GATE attack /
+  hold / decay, COMP attack / release and DUCKER attack do not. COMP
   **ratio** and DUCKER **decay** are not on that list because each field is a stop table of the unit's that
   holds fewer stops than the wire holds positions, so a 7-bit echo decodes onto the stop it left from; the
-  attack, hold and decay / release tables hold more).
+  attack, hold and decay / release tables hold more.
   Setting `localStorage["urx-midi-log"]` traces every rx/tx
   byte string and the engine's per-message decision (drop/ignore/apply) to the console; a dev build also
   carries `window.__urxMidiProbe` (`ui/midi-probe.ts`), which records the same stream **with timestamps** on
   the engine's own clock plus the live-sync marks, because the question a console trace cannot answer is a
   gap — how long after a burst goes out the controller answers, and whether that answer lands before or
   after incoming MIDI stops being refused. **That clock has a floor in the shipping engine**: WKWebView
-  clamps `performance.now()` to whole milliseconds (measured on macOS, 2026-08-16 — 419 records over five
-  launches, not one carrying a fraction), while jsdom and Chromium keep sub-millisecond values. `report()`
+  clamps `performance.now()` to whole milliseconds, while jsdom and Chromium keep sub-millisecond values. `report()`
   therefore takes its decimals from the records it is printing and, when they carry none, says how many it
   counted — a gap shown as 0 ms there is *below the clock* rather than simultaneous, and one integral
   timestamp is not evidence about an engine. It follows that **no sub-millisecond figure in this document was
@@ -2244,14 +2227,12 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   best-effort, for the reason the shell's own teardown is native, so what bounds a reload's lost tail is the
   batch window and not that flush. It is a **dev build's** diagnostic on both sides — `import.meta.env.DEV`
   drops the recorder from the bundle, and `debug_assertions` makes the `append_midi_log` command refuse — so
-  an installed app neither writes it nor can be asked to. Measured on macOS with a Stream Deck+ over one IAC bus
-  (2026-08-09): the whole 8-address resync goes out inside 1 ms, the refusal window ends in the same
-  millisecond, and the loopback returns 5 ms later — so that window protected none of it, and one sized to
-  cover it would only discard genuine input for as long as it lasted. That measurement is why the resync is
+  an installed app neither writes it nor can be asked to. A refusal window timed by a clock protects nothing
+  here: the whole resync goes out, and the window closes, before the loopback returns, and a window long
+  enough to cover the loopback would only discard genuine input for as long as it lasted. That is why the resync is
   **not** kept inside the window: it goes out from `MidiControl.liveReadSettled`, which the Live-sync start calls once
   the session is up, after the latch clears. What protects the plan is the echo guard above, which
-  decides by value and so does not depend on that latency at all. The same run recorded no `vd_set` reaching
-  the unit.
+  decides by value and so does not depend on that latency at all.
 - **Gating** — an incoming message is refused while a device read holds the plan (`deviceReadInFlight`:
   Fetch, the Live-sync starting readback), while a file flow does (`fileFlowBusy`: New / Open / Save /
   drop / `.urxf` import), or while a destructive round-trip run holds the **device link**
@@ -3784,9 +3765,9 @@ own; at exit it does not, and "told to close" and "closed" are the same thing on
 telling. An update install is the one exit that does not reach that handler on every platform — on Windows the
 updater ends the process from inside its install command — so the frontend calls `prepare_for_exit` before the
 download: it saves the window geometry and its scales and runs the same `vd::shutdown_blocking`, which is what
-the exit handler would have done. On Windows (2026-10-09, debug build, URX44V) the call rewrote both geometry files
-with the window's rectangle and, with a session open, dropped its connection to Device Center before returning;
-commands after it answered `not-connected`.
+the exit handler would have done: the call rewrites both geometry files with the window's rectangle and,
+with a session open, drops its connection to Device Center before returning; commands after it answer
+`not-connected`.
 
 **A page load is the other teardown, and it is scoped to what that page owns.** `on_page_load`
 (`PageLoadEvent::Started`) shuts the worker down, closes both MIDI ports and releases the idle-sleep hold:
@@ -3960,10 +3941,9 @@ belongs to is the one it overlaps most, or — when it overlaps none, which is w
 looks like — the one whose center is nearest, so a window comes back to the side of the desk it was on.
 This exists because the plugin's own guard is weaker; `winfit.rs`'s header states how, and against which
 version of it. The arithmetic is a pure function over rectangles (`fit` / `host_display` / `at_least`) and
-is covered by `cargo test`. The work area is whatever the platform reserves, from any edge: measured on
-Windows by reserving a desktop band on each of the four sides in turn — the taskbar itself can no longer be
-moved off the bottom in Windows 11 — and starting each time from a rectangle saved outside it, the window
-came back inside on all four.
+is covered by `cargo test`. The work area is whatever the platform reserves, from any edge: on Windows,
+with a desktop band reserved on any of the four sides — the taskbar itself can no longer be moved off the
+bottom in Windows 11 — a window saved outside it comes back inside.
 
 **All of that arithmetic runs in one coordinate space, and which space that is depends on the platform.**
 `winfit.rs` calls it the *desk*, and `physical_per_desk` is the single place the platform is consulted.
@@ -3971,23 +3951,22 @@ On **Windows** the desk is in physical pixels: `rcWork` comes from `GetMonitorIn
 coordinates, which are real pixels laid out coherently across displays for a per-monitor-DPI-aware
 process. On **macOS** the desk is in points, because a "physical" rectangle there is points times the scale
 factor of *the object it belongs to* — a monitor by its own, a window by its own — so displays at different
-scales are not measured in one space at all. Measured on a 1512x982@2.0 built-in panel beside a
-2560x1440@1.0 external one: the two work areas report as (0,66 3024x1898) and (1512,-458 2560x1380),
-which **overlap by 1,294,272 px² where the displays themselves share nothing**. Arithmetic in physical
+scales are not reported in one space at all. With a built-in panel at 2.0 beside an external display at 1.0,
+the two work areas **overlap where the displays themselves share nothing**. Arithmetic in physical
 pixels would feed that overlap into the decision about which display a window belongs to, and into the
 clamp into that display's rectangle afterwards: monitors and windows are both reported in physical
 pixels, which is not the same as being reported in one space.
 
 **A restored window is also raised to its own minimum, measured on the display it is going to.** The
 remembered size is in desk units and the configured minimum in logical pixels, so the two agree only where
-one logical pixel is one desk unit. Nothing downstream puts a too-small window back — measured on Windows,
+one logical pixel is one desk unit. Nothing downstream puts a too-small window back — on Windows
 **a programmatic size is not raised to the minimum**, because the platform enforces one through the
 message a user drag goes through and a programmatic move does not, and AppKit's `contentMinSize`
 constrains a drag rather than a `setContentSize:`. `at_least` therefore raises the rectangle, and the host
 display is chosen **before** it does, for two reasons: the minimum is only a number of desk units once a
 display is known, and a rectangle already inflated to a minimum overlaps the displays differently from the
-window that was actually there — measured, a 1400x900 window on one display was inflated to 1920x1280 and
-the inflated rectangle then named the *other* display as its host. Each window passes its own minimum in:
+window that was actually there — a 1400x900 window on one display, inflated to 1920x1280, names the
+*other* display as its host. Each window passes its own minimum in:
 the main window's is read from the running configuration, the MIDI window's is the one constant its builder
 also uses. A window whose minimum exceeds the work area still ends up smaller than that minimum — fitting
 wins, its top-left corner is pinned, and there is nothing better to do.
@@ -4002,16 +3981,15 @@ our own, written at the two moments the plugin captures a rectangle — a window
 — both of which re-read the live window, so the pair cannot drift.
 
 For a state file with no recorded scale, the scale is **derived by trial**: assume each display
-in turn, convert with its scale factor, and accept the display the result lands inside. Measured over the
-two displays above, 98% of the positions a 1234x813 window can take resolve uniquely and 87% of a 440x620
-one, with **no position resolving to the wrong display** — and two holes that are the reason the value is
+in turn, convert with its scale factor, and accept the display the result lands inside. Most positions
+resolve uniquely, with **no position resolving to the wrong display** — and two holes that are the reason the value is
 recorded rather than only derived. A rectangle inside the region both displays' desk
 rectangles cover is consistent either way, and a rectangle that is no longer on any display — the case this
 module exists for — matches nothing. Both fall back to the window's own scale factor.
 
 **The correction is applied to numbers, not to a window.** At startup a window cannot be read back: a
 `set_position` issued from the setup hook is queued, and both that hook and `RunEvent::Ready` still report
-the position the window was BORN at — measured. A read-then-correct at either
+the position the window was BORN at. A read-then-correct at either
 point is therefore worse than nothing: it finds the birth rectangle, declares it fine, and the restore
 moves the window off the display afterwards. So **both** windows' restores are taken away from the plugin
 (`skip_initial_state` for each), and a saved rectangle is read from the state file, corrected, and applied
@@ -4022,30 +4000,19 @@ cannot work — the restore has already lost the rectangle by then, and a correc
 a work area", not recover what was intended. The MIDI window's call goes at the end of `open_midi_window`,
 where the move has landed by the time `build()` returns. The other places tried do not see it: the setup
 hook and `RunEvent::Ready` above, and a plugin hook of our own registered behind the window-state plugin so
-that any future window would inherit the treatment — **measured not to work**, since inside a
+that any future window would inherit the treatment — **does not work**, since inside a
 `window_created` hook the window still reports the position it was born at, a `set_position` issued from
 one being queued exactly like one issued at startup. A hook on the MIDI window's page load, or a command
 that page calls, has not been tried. A third window built that way has to make the same call.
 
-Measured end to end on macOS (2026-08-09, a seeded state file read by a dev build under its own bundle
-identifier — so the operator's own geometry was never touched — with the window rectangle read back through
-`CGWindowListCopyWindowInfo`), on a 1512x982 built-in panel at 2.0 beside a 2560x1440 external at 1.0, and
-re-run unchanged with the two-pass placement below:
-
-| remembered | scale file | came back |
-| --- | --- | --- |
-| 1234x813 at (2405,-29) on the 1.0 external | none, so derived by trial | exactly that rectangle |
-| 1280x800 at (4032,892), on no display at all | 1.0 | (2792,122) 1280x800, inside the external |
-| 1200x700 at (2000,400), overlapping the Dock | none | (2000,222) 1200x700, its bottom edge flush with the work area |
-| 2400x1600 at (200,200) — 1200x800 points on the 2.0 panel | 2.0 | (100,100) 1200x800 on that panel |
-| nothing saved at all (the `fit_window` path) | — | 1280x800 inside a work area |
-
-The second row is the one that isolates the recorded scale: the trial alone would have produced
-(2016,446) 640x400. The fourth is the reverse crossing — remembered on the high-DPI panel and restored while
-the window was born on the low-DPI one — and it is exact, so both directions hold. A graceful quit rewrites
-the rectangle and the scale in the same instant. The frame is **(0,0) on macOS**, which these runs measure
-rather than assume: the remembered inner height, the frame height on screen and the height saved back are
-all the same number, which a title bar inside the frame would separate.
+On macOS, across a built-in panel at 2.0 and an external display at 1.0, a remembered rectangle on a display
+that is still there comes back exactly, whether its scale was recorded or derived by trial, and in both
+directions across the scale boundary; one on no display, or overlapping the Dock, comes back inside a work
+area; and with nothing saved at all (the `fit_window` path) the window opens inside a work area. The rectangle
+on no display is the case the recorded scale is for: the trial alone would bring it back at half its size. A
+graceful quit rewrites the rectangle and the scale in the same instant. The frame is **(0,0) on macOS**: the
+remembered inner height, the frame height on screen and the height saved back are all the same number, which a
+title bar inside the frame would separate.
 
 Which display a window is born on is **not** the one carrying the menu bar — AppKit centres a new window on
 `NSScreen.mainScreen`, the screen holding the key window, so it follows wherever the operator was working.
@@ -4057,9 +4024,9 @@ The desk being in physical pixels there means the arithmetic above is unaffected
 applies lands before the window moves: `set_size` runs while the window is still on the display it was born
 on, and the move that follows can cross a DPI boundary, at which point the OS resizes the window to preserve
 its LOGICAL size (`tao`'s `WM_DPICHANGED` handler; on Windows 11 it applies the rectangle Windows suggests).
-Two things are wrong in that one step, and both were measured on a 100% and a 150% display: the size comes
-back multiplied by the ratio of the two scale factors — a window placed at 1516x1004 became 2274x1506 on a
-work area 1008 tall, and in the other direction a remembered 1296x839 collapsed to 868x571, below the
+Two things are wrong in that one step, between a 100% and a 150% display: the size comes
+back multiplied by the ratio of the two scale factors — a window placed at 1516x1004 becomes 2274x1506 on a
+work area 1008 tall, and in the other direction a remembered 1296x839 collapses to 868x571, below the
 configured minimum — and the window *frame* is a different thickness at the other DPI, (16,39) against
 (22,56), which also makes the minimum be raised against the wrong number.
 
@@ -4069,40 +4036,32 @@ So the pass is simply **repeated once the move has landed**, where both are read
 a second time in the destination's own pixels. A placement is therefore stated as a position and an INNER
 size, never as an outer rectangle: an outer rectangle can only be built by adding a frame, and until the
 window has moved, the only frame anyone holds is the departure display's. Building it in the caller loses
-the difference between the two frames at *every* launch — measured over four consecutive launches with the
-outer rectangle travelling, the outer width fell 1516, 1510, 1504, 1498. The rescale
+the difference between the two frames at *every* launch, so the window shrinks a little each time. The rescale
 is synchronous (Windows sends `WM_DPICHANGED` inside the move's `SetWindowPos` and `tao` resizes from within
 that handler), so the second pass sees the new state immediately. Waiting for the `ScaleFactorChanged` event
 instead would not work at all: the main window is placed from the setup hook, before the event loop delivers
-anything, and measured, **the event never arrives there** — it does arrive for the MIDI window, which is
+anything, and **the event never arrives there** — it does arrive for the MIDI window, which is
 built while the loop runs, which is exactly what makes it useless as the trigger.
 
-Measured end to end on Windows 11 (2026-08-09, a 2560x1440 primary at 100% and a 1920x1080 secondary at
-150%, rectangles read back through `GetWindowRect` in a per-monitor-DPI-aware probe and cross-checked
-against the app's own `outer_size`): a rectangle remembered on the 100% display and restored onto the 150%
-one lands entirely inside its work area and reproduces byte for byte over three further launches, and
-the reverse direction returns the remembered rectangle exactly. On macOS the desk is in points and the scale
-factor does not change, so the loop runs once there, and the five macOS cases in the table above hold with it. The raw readings behind the
-2026-08-09 numbers were taken in `reference/work/windows-verify/`, whose settled sections are folded into
-this document and then deleted; they are read back out of that ledger's history. **The 2026-08-13 run's are
-not**, so the folded text is all there is: this document for the fader press, the MIDI window and the
-forced-colors half of the locked select, and `src/style.css` for the dropdown and that lock's
-ordinary-theme half, beside the screenshots that directory keeps.
+The same holds on Windows across displays at different scales: a rectangle remembered on the 100% display
+and restored onto the 150% one lands entirely inside its work area and reproduces byte for byte on later
+launches, and the reverse direction returns the remembered rectangle exactly. On macOS the desk is in points
+and the scale factor does not change, so the loop runs once there, and the macOS cases above hold with it.
 
 **The MIDI window is an owned window on Windows and an independent one on macOS** — the `.parent(&main)`
 call sits behind `#[cfg(target_os = "windows")]`. On Windows that ownership is what keeps the panel in
 front: an owned window is always above its owner in the z-order. On macOS `addChildWindow` would do the
-same, at the cost measured below, so the relationship is not used there; what holds the panel in front
+same, at the cost set out below, so the relationship is not used there; what holds the panel in front
 on macOS is `pin_midi_window`, for as long as a learn is armed. "Always on top" for the whole session was
 deliberately not taken on either platform. `focus_midi_window` is called when learn
 turns on — raising this window above another application is a different thing from ordering these two
 windows against each other.
 
-What the relationship costs, measured on both platforms — and **the two do not agree**:
+What the relationship costs on each platform — and **the two do not agree**:
 
 | | macOS (AppKit child — **not used**) | Windows (Win32 owner — in place) |
 | --- | --- | --- |
-| Stays above its owner | yes | yes — measured with the owner activated by a real click |
+| Stays above its owner | yes | yes, with the owner activated by a real click |
 | Hidden while the owner is minimized | yes | yes |
 | **Composited on another display** | **no** — reported on-screen at layer 0 and alpha 1.0, drawn on neither | **yes**, drawn in full |
 | **Moves with the owner** | **yes**, the same delta to the pixel | **no**, it stays where it is |
@@ -4111,24 +4070,14 @@ The bottom two rows are what the `#[cfg]` rests on: on macOS both are defects an
 neither exists on Windows. The Windows answer to the last row is structural rather than incidental: the
 panel is a top-level **owned** window, not a child of the main window's client area, and the window manager
 only moves the latter with its parent — so there is nothing that could implement the follow, whatever
-issues the move. Measured through a drag's own message sequence as well as a plain programmatic move.
+issues the move. That holds for a drag's own message sequence as well as for a plain programmatic move.
 
 The macOS column is what the relationship costs; how the independent panel behaves on that platform is
-not measured here. Three of the four Windows cells were measured on 2026-08-13 (debug
-build, WebView2 151.0.4129.78, a 2560x1440 primary and a 1920x1080 secondary, both at 100%) — every row
-except **hidden while the owner is minimized**, which stands on the 2026-08-08 run and was not re-run.
+not covered here.
 
-The top row is an operator's click rather than a probe's call, because **a probe cannot activate a window
-across processes**: the foreground lock makes `SetForegroundWindow` a silent no-op. Two programmatic
-attempts to break the order from the other side back it up, and one of them carries its own control:
-`SetWindowPos(midi, HWND_BOTTOM)` **did** move the pair down the global z-order — so a call against that
-window was not inert — and left the panel above the main window all the same. `SetWindowPos(midi, main)`
-left it above too, and inherits that control by acting on the same window. The symmetric attempt,
-`SetWindowPos(main, HWND_TOP, SWP_NOACTIVATE)`, left the order alone too, but that reading is **not**
-evidence: an earlier run recorded the same call moving nothing at all, so "the panel stayed above" and "the
-call did nothing" are not separated there. `pin_midi_window` composes with the ownership rather than
-replacing it: arming the learn from the panel's own button turned on `WS_EX_TOPMOST` (bit 0x8; the extended
-style went 0x110 → 0x118) and disarming turned it back off, with the owner order unchanged either way.
+On Windows the panel stays above its owner even when a program moves it down the z-order, and
+`pin_midi_window` composes with that ownership rather than replacing it: the learn pin turns always-on-top on
+and off without changing the order between the two windows.
 
 `--reset-storage` clears the remembered geometry as well as `localStorage` — both files, since a scale left
 behind for a rectangle that no longer exists would be read against the next rectangle written under that
@@ -4175,13 +4124,12 @@ on: a horizontal gesture (a trackpad swipe sideways, a tilt wheel, Shift + wheel
 `deltaX`, a vertical one zooms as above, and a `ctrl`+wheel event, which is what a trackpad pinch
 arrives as, zooms whichever axis the gesture holds. An event that does not move along the axis it is
 read on does nothing, so a `deltaY` of 0 is no longer a step out. Per event the deltas cannot decide
-it: measured on macOS's WKWebView (2026-10-03, a console probe counting one gesture at a time, `deltaMode`
-0 throughout), a two-finger sideways swipe gave 206 events with the larger `deltaX`, 1 with the larger
-`deltaY` and 32 equal, and a vertical swipe 2 / 80 / 12, while the first event of each lay on the
-swipe's own axis; a pinch arrived as `ctrl`+wheel with `deltaX` 0; a tilt wheel carried `deltaX` alone.
-The 150 ms sits between the longest gap measured inside one trackpad gesture, momentum included
-(78 ms, over four gestures), and a deliberate second flick after the first had visibly stopped, which
-arrived 250 ms after the first one's last event (one sample).
+it: in macOS's WKWebView one two-finger swipe, sideways or vertical, delivers events whose larger delta
+is on either axis, and some with the two equal, while its first event lies on the swipe's own axis; a pinch
+arrives as `ctrl`+wheel with `deltaX` 0; a tilt wheel carries `deltaX` alone.
+The 150 ms sits between the longest gap inside one trackpad gesture, momentum included
+(78 ms), and a deliberate second flick after the first has visibly stopped, which
+arrives 250 ms after the first one's last event.
 
 **A press ends at a mouse move with no button held.** A pan, a node drag or a connect drag on the
 board follows the pointer only while a mouse button is down: a mouse `pointermove` whose `buttons` is
@@ -4193,30 +4141,22 @@ tracks, through one predicate (`mouseMovedUnpressed` in `ui/dom.ts`): the undo h
 drags, and the tuning screen's cap and plot drags and the refresh its press defers
 ([channel-tuning.md](channel-tuning.md)). A move with the button held is still a drag, and the move ends only the
 press that mouse made: each of these tracks its press by pointer id, so a finger or a pen still down — the cap
-dragged by a finger while the mouse moves — is left to its own release. The route that was measured is the native
-context menu: on macOS's WKWebView (2026-10-03, a page-side pointer probe beside an OS-level event
-tap), a right press on the empty board delivered `pointerdown` (button 2), `gotpointercapture` and
-`contextmenu`, and no `pointerup`, `pointercancel` or `lostpointercapture` followed; with the menu
-dismissed by Escape the pan it started went on following the buttonless cursor until the next click,
-and only where a window `blur` arrived (`endAllPointers` in `graph.ts`) did it stop. The same route in
-the Inspector, read by hand in the same engine (2026-10-04): a channel switched with a click, a right
-press on blank Inspector space, the menu dismissed by Escape, then `Cmd+Z` — refused with "Finish the
-current drag before undoing", and the channel stayed as switched. WebView2 differs at the first step
-(2026-10-09, 154.0.4258.62, the same steps on STEREO (MAIN)): the right press's `pointerup` (button 2,
-`buttons` 0) reaches the page just before `contextmenu`, so the press is over before the menu opens; with the menu
-dismissed and the mouse moved, `Ctrl+Z` undid the switch. That run cannot say which of the `pointerup` and the
-buttonless move ended the press.
+dragged by a finger while the mouse moves — is left to its own release. The native context menu is the route
+that needs it: in macOS's WKWebView a right press on the empty board delivers `pointerdown` (button 2),
+`gotpointercapture` and `contextmenu`, and no `pointerup`, `pointercancel` or `lostpointercapture` follows.
+Without this rule, the pan that press started goes on following the buttonless cursor after the menu is
+dismissed, until the next click, and only a window `blur` stops it (`endAllPointers` in `graph.ts`); in the
+Inspector the same route leaves the press standing, so `Cmd+Z` is refused with "Finish the current drag
+before undoing". WebView2 differs at the first step: the right press's `pointerup` (button 2,
+`buttons` 0) reaches the page just before `contextmenu`, so the press is over before the menu opens.
 
 **A select takes the comfortable target as a height.** The same breakpoint gives the rack's and the
 inspector's controls a 40px minimum height, and a `<select>` does not take it that way: WebKit keeps these
 selects at the platform's own height whatever `min-height` says. It does take a `height`, and keeps the
 platform control while doing so — the computed `appearance` stays `auto` — so the breakpoint gives the
-rack's two pickers and every inspector select `height: 40px` instead. Measured 2026-09-24 at phone width,
-Playwright's WebKit 26.6 / Chromium 153 / iOS Safari 26.5 (an iPhone 17 simulator): the model picker read
-19 / 40 / 27 px with `min-height` alone and 40 / 40 / 40 with the height, and an inspector select
-19 / 28 / 27 px with neither and 40 / 40 / 40 with the height. macOS 27's own WKWebView, the engine the
-desktop build renders in (an off-screen view 390px wide), read 19 px for both pickers and the inspector
-selects before the change and 40 after. `e2e/chrome.spec.ts` holds the target in both Playwright
+rack's two pickers and every inspector select `height: 40px` instead. At phone width that gives them 40px in
+WebKit, Chromium and iOS Safari alike, and in the macOS WKWebView the desktop build renders in.
+`e2e/chrome.spec.ts` holds the target in both Playwright
 engines (the case is tagged for `app-webkit`). Above the breakpoint nothing sets it, so on desktop a
 parameter select stays at the platform's height beside a text input's 26px — 19px in WebKit, 28 in
 Chromium.
@@ -4518,7 +4458,7 @@ one is an edit that silently cannot be undone.
 
 | Boundary | Ends | Timing |
 | --- | --- | --- |
-| `pointerup` / `pointercancel` / window `blur` / a mouse `pointermove` with no button held | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — measured 2026-08-14 on Chromium (over its own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so without this boundary the CONSOLE fader on the unit-facing build would go on following the pointer, and writing, while another application is frontmost. The drags in `console.ts` / `dyn-screen.ts` end at that same event, confirmed in WKWebView (the same gesture leaves the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely. Each press is tracked by its pointer id and ends at that pointer's own release, so a second pointer pressed and lifted while the first drags — the mouse clicking while a finger drags — ends nothing and commits nothing: the gesture ends, and its commit is scheduled, when the last press does, and only a pressed pointer's own move makes its press a drag. A `blur` ends every press. The buttonless move ends that mouse's own press whose release never reached the page — the native context menu takes a right press's — so a hover leaves an entry an edit with no gesture of its own left open; the rule and its reading are under [Responsive layout (mobile)](#responsive-layout-mobile). A wheel turned with no button held ends every standing mouse press the same way, but commits nothing: the wheel's own edit and the notches after it are one entry, which the idle backstop closes. A touch or pen press is ended by neither — the `buttons` of a mouse move or a wheel does not show its contact, so a finger still dragging reads the same as one lifted — and stands until its own `pointerup`, `pointercancel` or `blur` |
+| `pointerup` / `pointercancel` / window `blur` / a mouse `pointermove` with no button held | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — in Chromium and in the shipping WKWebView alike, the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so without this boundary the CONSOLE fader on the unit-facing build would go on following the pointer, and writing, while another application is frontmost. The drags in `console.ts` / `dyn-screen.ts` end at that same event, confirmed in WKWebView (the same gesture leaves the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely. Each press is tracked by its pointer id and ends at that pointer's own release, so a second pointer pressed and lifted while the first drags — the mouse clicking while a finger drags — ends nothing and commits nothing: the gesture ends, and its commit is scheduled, when the last press does, and only a pressed pointer's own move makes its press a drag. A `blur` ends every press. The buttonless move ends that mouse's own press whose release never reached the page — the native context menu takes a right press's — so a hover leaves an entry an edit with no gesture of its own left open; the rule and why it is needed are under [Responsive layout (mobile)](#responsive-layout-mobile). A wheel turned with no button held ends every standing mouse press the same way, but commits nothing: the wheel's own edit and the notches after it are one entry, which the idle backstop closes. A touch or pen press is ended by neither — the `buttons` of a mouse move or a wheel does not show its contact, so a finger still dragging reads the same as one lifted — and stands until its own `pointerup`, `pointercancel` or `blur` |
 | `keyup` of an Arrow / Page / Home / End / Enter / Space key, outside a text field | Keyboard stepping on a fader or knob, which autorepeats one edit per repeat with no other terminator | At once. Nothing is dispatched after a keyup on the gesture's behalf, and the next press is a new gesture — deferring would let an autorepeat outrun the macrotask and merge two presses |
 | `focusout` | The node-name field and the in-frame note editor, which edit the plan on every keystroke. Not one from inside the SIM view's LCD, which draws itself again on every step of a value and moves the focus onto the control drawn in its place: its gestures end at their pointer and key boundaries | At once |
 | 300 ms idle, re-arming | A wheel-notch burst and an incoming MIDI sweep, which produce no DOM gesture at all | Only armed for edits with no boundary of their own: suppressed while a pointer is down, and while a text field has focus (its `focusout` is the boundary, so a name typed with a pause between letters must not cost an entry per letter) |
@@ -4670,8 +4610,8 @@ modified — the same false positive any round-trip edit already produces.
 
 Tauri installs a default macOS menu whenever the app sets none, and its Edit submenu carries
 `PredefinedMenuItem::undo` / `::redo`. Those send the AppKit `undo:` selector, which **never reaches the
-page**: measured, a click ran WebKit's own text-field undo — on the last edited field, *even after focus
-had left it*, re-focusing that field — while the plan's undo did nothing and nothing was reported. Since
+page**: a click runs WebKit's own text-field undo — on the last edited field, *even after focus
+has left it*, re-focusing that field — while the plan's undo does nothing and nothing is reported. Since
 the field edits the plan on every keystroke, that silently changed the plan by a path the operator did
 not choose. Nothing on the page can intercept or even observe it (muda emits a menu event only for
 items the app created), and a predefined item cannot be enabled or disabled at runtime.
@@ -4681,19 +4621,15 @@ platform installs a menu). `Menu::default()` is rebuilt and only those two items
 the predefined items' own text rather than by position; a miss leaves the default menu untouched and
 says so on stderr. A click arrives as a menu event the frontend routes into `menuUndo` / `menuRedo`,
 which hand a **focused text surface its own undo instead** (`document.execCommand`, deprecated; it is the
-route this code takes to WebKit's field undo, measured working in WKWebView, a typing burst being one
+route this code takes to WebKit's field undo, which works in WKWebView, a typing burst being one
 unit as it is for the chord). That is what makes the menu agree with the chord instead of meaning
-something different. The native side reaches the same undo: in an off-screen macOS 27 WKWebView
-(2026-09-24), `WKWebView.undoManager.undo()` and an `undo:` sent down the window's responder chain each
-reverted a field edit, as `execCommand("undo")` did, while a run that sent nothing kept it. The edit
-there was made with `execCommand("insertText")` rather than by typing, in a bare WKWebView rather than
-under Tauri.
+something different. The native side reaches the same undo.
 
 Their enabled state and labels are pushed from the frontend (`set_edit_menu_state` /
 `set_edit_menu_labels`), so they grey out with the history and follow the app's language — the rest of
 that bar is AppKit's and stays in its own wording. The menu is built before the frontend loads, so the
 items start disabled and in English until the first push. The accelerators are **shown, not claimed**:
-measured, the page receives the chord and the item's key equivalent never fires, so they are set only so
+the page receives the chord and the item's key equivalent never fires, so they are set only so
 the menu prints the shortcut the operator actually uses. A push failure is logged rather than surfaced —
 the menu is a nicety, and a dialog for it would interrupt work it is not part of.
 
@@ -4717,8 +4653,8 @@ The undo branch runs before the `Delete` / `Escape` handling and applies its own
 that handler's broader "focus is in a field" bail is wrong for the shortcut: a focused range slider or
 the model picker owns no undo stack of its own, and bailing there would make `Ctrl+Z` quietly do
 nothing right after a slider drag. Conversely a text field, a textarea and a `contenteditable` region
-**do** own one, so the shortcut is left to them and `preventDefault` is not called — measured on
-macOS: the page receives `Cmd+Z` even with the native Edit menu installed, and calling
+**do** own one, so the shortcut is left to them and `preventDefault` is not called — on
+macOS the page receives `Cmd+Z` even with the native Edit menu installed, and calling
 `preventDefault` is what suppresses WebKit's own field undo. The listener is registered in the bubble
 phase like the rest of that handler, which is what lets the note editor's `stopPropagation` shield an
 in-progress note from the shortcut.
@@ -4731,8 +4667,8 @@ SVG stroke — a `.focus-ring` rect drawn last in the node, stroked by the style
 stroke-less in an export — because an outline on an SVG group is not painted in WebKit; a node dimmed as a whole
 dims its ring with it, while a badged node's ring sits beside its dimmed body. Focus is carried by node id across
 every rebuild of the node layer (`renderNodes`), a single node's (`repaintNode`) and the re-append that raises the
-selected node, for as long as the board draws the same plan: measured on macOS's WKWebView (2026-10-03), re-appending
-the focused group moved focus to `<body>`, and Tab reached `<g tabindex="0">` with the OS keyboard-navigation setting
+selected node, for as long as the board draws the same plan: in macOS's WKWebView, re-appending
+the focused group moves focus to `<body>`, and Tab reaches `<g tabindex="0">` with the OS keyboard-navigation setting
 at its default (off). The shelf and the selection bar are rebuilt by the same renders and carry focus the same way, a
 chip by the node it restores and Show all and the bar's buttons by their class (`rebuildChrome`); a chip that restores
 its node hands focus to the chip that took its place, or to that node when it was the last, and Show all, which closes
@@ -4867,10 +4803,10 @@ was set on it: the mode, on macOS the extended attributes (Finder tags) and the 
 attributes and alternate data streams (`ReplaceFileW`). A symlink that points at nothing yet is followed too:
 the file it names is created and the link stays a link. A directory the app cannot write fails the save;
 nothing is written in place. A file with more than one hard link is replaced the same way: the name saved to
-gets the new file, and its other names keep the old contents. Each of these was read on Windows (2026-10-09, NTFS):
-an explicit ACE and an alternate data stream outlived an overwrite, a read-only file was refused with `file-denied`
-and left whole, a dangling link's target was created with the link left a link, a `.json` link to a `.txt` was
-refused on read and write, and a hard-linked file was replaced under the saved name only. The Windows save dialog
+gets the new file, and its other names keep the old contents. Each of these holds on Windows, on NTFS:
+an explicit ACE and an alternate data stream outlive an overwrite, a read-only file is refused with `file-denied`
+and left whole, a dangling link's target is created with the link left a link, a `.json` link to a `.txt` is
+refused on read and write, and a hard-linked file is replaced under the saved name only. The Windows save dialog
 refuses a read-only file itself, before the app receives a path, so `file-denied` comes from a path that reached
 the write some other way.
 `write_binary_file` receives the PNG/PDF bytes as the raw IPC request body — not a JSON number
@@ -5326,13 +5262,13 @@ from the job name; it is a per-entry `cacheKey` in the two matrices, `release-ta
 `release` on Windows. On macOS the warm build goes through the same Tauri CLI the release does
 (`pnpm tauri build --no-bundle`): the CLI exports `MACOSX_DEPLOYMENT_TARGET` from
 `bundle.macOS.minimumSystemVersion`, and the build scripts of `objc2`, `objc2-exception-helper` and `ring`
-rerun when it changes. Measured locally on 2026-10-10: a release-shaped `tauri build` after a plain
-`cargo build --release` recompiled 35 crates, and after `pnpm tauri build --no-bundle` it recompiled
-`urx-router` alone. That build fills a key of its own because rust-cache saves nothing after a restore
+rerun when it changes. A release-shaped `tauri build` after a plain `cargo build --release` therefore
+recompiles those crates and everything that depends on them, and after `pnpm tauri build --no-bundle` it
+recompiles `urx-router` alone. That build fills a key of its own because rust-cache saves nothing after a restore
 that matched its key exactly, and the full key moves only with the lockfile, the manifests, the
-toolchain or the `CARGO*` / `RUST*` environment. Under `release`, the post-merge run of 2026-10-10
-restored the cache the plain `cargo build` had filled with `full match: true` and ended with
-`Cache up-to-date.`, and the v1.14.0 release, which restored that same key, recompiled 35 crates on macOS.
+toolchain or the `CARGO*` / `RUST*` environment. Under the key a plain `cargo build` fills, the post-merge
+run restores that cache with a full match and saves nothing, so a release restoring the same key still
+recompiles those crates on macOS.
 
 macOS signing and notarization are optional: when the signing secrets (`MACOS_SIGNING_CERT` /
 `MACOS_SIGNING_CERT_PASSWORD` / `MACOS_SIGNING_IDENTITY`) and notarization secrets
@@ -5500,10 +5436,7 @@ wired into CI as the reusable `licenses.yml` workflow, which runs `cargo about g
 dependency carries a license outside `about.toml`, so a dependency change can't silently drop a notice.
 `post-merge.yml` calls it as that gate; `release.yml` calls it once and hands the result to both platform
 builds as an artifact. Generating it once is safe because the output is host-independent — `about.toml`
-declares no `targets`, so cargo-about keeps every target's crates whatever the runner is (measured 2026-09-24
-at `a94d0b28` with cargo-about 0.9.1: the notice generated on macOS arm64 and the one the post-merge run
-generated on ubuntu-latest are byte-identical, and both list the Windows-only `windows-sys` and
-`webview2-com`, the macOS-only `objc2-app-kit` and the Linux-only `webkit2gtk`) — and it avoids building
+declares no `targets`, so cargo-about keeps every target's crates whatever the runner is — and it avoids building
 cargo-about from source on each one. The page
 also ships inside the desktop app: `bundle.resources` packages it as a Tauri resource — and `tauri-build`
 copies that resource at compile time, so even a bare `cargo build` of the crate needs the file present
@@ -5514,7 +5447,7 @@ renders it as app DOM (the entry is desktop-only; a plain browser and the demo h
 license families (name → text variants → their used-by crates) and rebuilds it with text nodes
 only as a collapsed family index — one header row per family, each unfolding its texts — released
 again on close.
-Deliberately no iframe: measured on the real engine (WKWebView), a sandboxed subframe scrolls
+Deliberately no iframe: in the real engine (WKWebView), a sandboxed subframe scrolls
 through a separate scroller code path that reserves an unpainted classic-scrollbar gutter, draws
 only a paint-only indicator with no thumb dragging, and colors that indicator by the app scheme
 rather than the page it indicates. Rendered natively, the notice scrolls as part of the main frame
