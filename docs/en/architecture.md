@@ -1614,7 +1614,7 @@ double-click interval hit the factory reset above. Measured with its control (tw
 taps reset it".
 
 **Fine-tuning (hold Shift)** — the controls whose device parameter has a verified fine grid tighten their
-step while Shift is held, mirroring the hardware's (undocumented) push-and-turn fine mode: the tuning screens'
+step while Shift is held, mirroring the hardware's push-and-turn fine mode (the V1.5 user guide describes it as Coarse / Fine operations, without naming the parameters that take it): the tuning screens'
 EQ band Gain and COMP Gain sliders step 0.1 dB (coarse 0.5 dB), and the STREAMING TIME knob steps 0.02 ms
 (coarse 1.00 ms; the fine step is fixed — it does not follow the sample rate, matching the device). Every
 fine-eligible control carries a printed `FINE` legend at all times — silkscreen-dim, so eligibility reads
