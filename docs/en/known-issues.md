@@ -46,11 +46,9 @@ on the COMP and EQ screens.
 
 Switching it on is not an edit but a preset: the unit refills every other value of the
 effect with the type's own — the three bands' Bypasses among them, which it clears — and
-switching it off leaves them there rather than putting back what was set. Measured on a
-URX44V with every other value armed away from where it had been
-and away from its neighbours, the ON transition moved all of them — the three bands'
-Threshold, Ratio, Gain, Attack and Bypass, the shared Release, both crossovers and the
-output gain.
+switching it off leaves them there rather than putting back what was set. The ON transition
+sets every one of them — the three bands' Threshold, Ratio, Gain, Attack and Bypass, the
+shared Release, both crossovers and the output gain (confirmed on a URX44V).
 
 Every Level change afterwards reasserts all but one of them: nine are recomputed from the
 Level (**Threshold, Ratio and Gain in each band**) and nine are pinned straight back to fixed
@@ -59,10 +57,10 @@ Release and both crossovers**). The planner stops writing those eighteen while t
 on, and the tuning screen locks the same rows.
 
 **The output gain is set at the switch and then left alone** — a Level change does not move
-it, but the unit's own screen does not let it be turned while the knob is on either. Measured
-on a URX44V by writing all seven of the non-recomputed values away from the preset AFTER
-switching the knob on: every one took the value and held it through 3.2 s of polling, and then
-a Level change put six of them back while the output gain kept what was written. The planner
+it, but the unit's own screen does not let it be turned while the knob is on either. Written
+away from the preset AFTER the knob is switched on, each of the seven values the Level does not
+recompute takes the value and holds it, and the next Level change puts six of them back while
+the output gain keeps what was written (confirmed on a URX44V). The planner
 treats it as the unit does: it stops writing the output gain while the knob is on and locks
 its row, and switching the knob on in the planner sets the Level to 0 and the fixed values —
 each band's Attack and Bypass, the Release, both crossovers and the output gain — to the
@@ -104,12 +102,12 @@ cue off — the unit does, and the app with it. The mode is not part of the plan
 sync off it is not shown on the status bar, and the MONITOR panel's row is read-only.
 
 > Confirmed on a URX22 and a URX44V (System 1.5.0.1): the Last CUE rule on both, and on
-> the URX44V a mode written over the control connection, read on the unit's screen.
+> the URX44V a mode written over the control connection.
 
 ## An HPF frequency outside 40–120 Hz cannot be written to the device
 
 Since System firmware V1.5 the unit's own **[HPF Freq.]** knob sets 20.0 to 600 Hz, in sixty
-stops. The control connection is narrower than the knob: it refuses a write outside 40–120 Hz,
+stops, the same sixty whether it is turned pushed in or not. The control connection is narrower than the knob: it refuses a write outside 40–120 Hz,
 and the range it publishes for the parameter is still 40–120 Hz.
 
 URX Router therefore holds any of the sixty stops in a plan and reads whatever the unit holds,
@@ -126,11 +124,8 @@ but writes only the twenty stops from 40 to 118 Hz:
 - The device self-test (an `--experimental` launch) does not start while a channel's HPF
   frequency is outside 40–120 Hz, since it could not put that value back.
 
-> Confirmed on a URX44V (System 1.5.0.1, Device Center 2.3.0) by turning the unit's knob
-> through its range while reading the parameter, and by writing values inside and outside the
-> window. The knob was read stop by stop over the whole range, turned without pushing and
-> turned while pushed in: the same sixty stops either way. A 42.5 Hz written over the control
-> connection reads 42.5 on the unit's screen. Not measured on the URX22 or the URX44.
+> Confirmed on a URX44V (System 1.5.0.1, Device Center 2.3.0). Not confirmed on the URX22 or
+> the URX44.
 
 ## STEREO's Flex12GEQ bands above 20 Hz cannot be written to the device
 
@@ -149,9 +144,8 @@ URX Router therefore treats those thirty bands the way it treats the CH → FX s
   one of them takes no value while the session is up, and Gain Flat on STEREO's screen is held,
   since the bands it would flatten are those the link does not take.
 
-> Confirmed on a URX44V and a URX22 (System 1.5.0.1) by writing each band of each side over the
-> control connection and reading it back, and on the URX44V by moving the bands on the unit's own
-> GEQ screen while watching the announcements. Not measured on the URX44.
+> Confirmed on a URX44V and a URX22 (System 1.5.0.1), and on the URX44V that a change made on
+> the unit's own GEQ screen is announced. Not confirmed on the URX44.
 
 ## Nothing is written while the unit is under Console Lock
 
@@ -174,9 +168,7 @@ for as long as the lock stands, and never locks or unlocks the unit itself:
   Device menu puts it back once the unit is unlocked. Quitting the app before that loses what
   the restore needs.
 
-> Confirmed on a URX44V (System 1.5.0.1) by locking and unlocking the unit during Live sync and
-> before one: the strip, an edit put back, CUE Mode refused and Write to device refused, with
-> nothing written. Not measured on the URX22 or the URX44.
+> Confirmed on a URX44V (System 1.5.0.1). Not confirmed on the URX22 or the URX44.
 
 ## Live control is hardware-verified on the URX44V and the URX22
 
@@ -503,8 +495,7 @@ settings of the plan on screen are kept, as they were when the file was saved. A
 saved by a later version, scene-scoped or not, is one URX Router 1.18.6 and earlier refuse to
 open.
 
-> Confirmed in Standard Mode on System 1.5.0.1, on a URX22 and a URX44V, by storing a scene,
-> changing the settings back and recalling it, and by the settings file the URX44V writes.
+> Confirmed in Standard Mode on a URX22 and a URX44V (System 1.5.0.1).
 
 ## Device Center sometimes needs a force quit after a long session
 
