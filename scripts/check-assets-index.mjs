@@ -92,8 +92,6 @@ const PROSE_TOKENS = new Map([
   ["?plan=", "the deep-link query prefix"],
   ["*.audit.test.ts", "a glob naming a family; the family is checked by reverse rule F"],
   ["*.test-util.ts", "a glob naming a family; every member is checked by reverse rule E2"],
-  ["probe-*.mjs", "a glob over the private reference repo, absent from this checkout"],
-  ["PLAN.md", "lives in the private reference repo, absent from this checkout"],
   ["dist", "the build output directory, named as the thing ci.yml greps"],
   ["ci.yml", "named as the workflow that greps; the grep itself is asserted per handle"],
   ["ls scripts/", "an instruction to the reader, not a path"],
