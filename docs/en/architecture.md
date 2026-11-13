@@ -3804,7 +3804,8 @@ them as well.
 
 - **A subscription of its own.** `vd_probe_subscribe` registers the addresses as a second parameter
   subscription in the worker, beside the one the follow layer reads, so the live-sync set stays exactly what the
-  plan names and a notify on a watched address reaches the watch's channel only. Registration is per address,
+  plan names. A notify goes to the channel of each subscription that holds its address: to the watch's channel
+  only for an address the live-sync set does not hold, and to both for one it does. Registration is per address,
   never a namespace-wide post. An address both subscriptions hold is registered once and stays registered while
   either holds it, across the live-sync set being replaced.
 - **A read once a second.** Each watched address is also read with a GET, one round of reads a second after the
