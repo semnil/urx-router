@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Verifies the "## Reusable assets" table in CLAUDE.md, and the file references the
+// Verifies the "## Reusable assets" table in AGENTS.md, and the file references the
 // design documents make, against the repo.
 //
 // The prose is judgement and is not generatable, so this checks the ANCHORS:
@@ -9,7 +9,7 @@
 // docs/{en,ja}/*.md gets the forward half of that treatment — see the docs section.
 //
 //   node scripts/check-assets-index.mjs        check
-//   node scripts/check-assets-index.mjs --hook check after a CLAUDE.md edit (forward half only)
+//   node scripts/check-assets-index.mjs --hook check after an AGENTS.md edit (forward half only)
 //
 // Exits 1 on findings; --hook exits 2 so the message is fed back to Claude.
 //
@@ -59,7 +59,7 @@ export function isEntry(url) {
   }
 }
 
-const DOC = "CLAUDE.md";
+const DOC = "AGENTS.md";
 const SECTION = "## Reusable assets";
 const DOC_DIRS = ["docs/en", "docs/ja"];
 // Derived, not spelled: a renamed checker must not quietly re-enter its own corpus.
@@ -252,6 +252,11 @@ const DOC_MENTIONS = new Map([
     "architecture.md|latest.json",
     "the updater manifest tauri-action publishes to a GitHub Release, served from a URL and never a file in the tree",
   ],
+  [
+    "development-process.md|CLAUDE.md",
+    "the name the project instructions had before AGENTS.md; the decision that renamed them names the old file",
+  ],
+  ["midi-control.md|CLAUDE.md", "the name the project instructions had when the incident the record narrates happened"],
 ]);
 
 const SOURCE_EXT = /\.(ts|mjs|js|py|rs|json|sh|yml|yaml|html|css|png|svg)$/;
@@ -375,14 +380,14 @@ if (isEntry(import.meta.url)) {
   });
 
   // Which edit this hook run is about. Resolved against the cwd rather than matched on a
-  // basename: a basename gate fires for ANY file called CLAUDE.md — `~/.claude/CLAUDE.md`
+  // basename: a basename gate fires for ANY file called AGENTS.md — another repository's
   // among them — and then checks THIS repository's copy, which the edit never touched.
   // What this run covers. One decision, taken at the gate, instead of the same question
   // re-derived at each section: the sections below read a field rather than re-testing
   // HOOK. A later mode is a new row here, not a fifth condition somewhere downstream —
   // which is what the previous shape's failure looked like, since a section that forgot
   // the guard fails by checking the wrong corpus rather than by erroring.
-  let scope = { claudeMd: true, docFiles: null }; // null = walk DOC_DIRS
+  let scope = { instructionFile: true, docFiles: null }; // null = walk DOC_DIRS
   if (HOOK) {
     let edited;
     try {
@@ -398,9 +403,9 @@ if (isEntry(import.meta.url)) {
     // the hook's budget.
     const isDocsMd = DOC_DIRS.some((d) => rel.startsWith(`${d}/`)) && rel.endsWith(".md");
     if (rel !== DOC && !isDocsMd) process.exit(0);
-    // A CLAUDE.md edit answers for the asset table; a docs edit answers for that one
+    // An AGENTS.md edit answers for the asset table; a docs edit answers for that one
     // document. Neither answers for the other.
-    scope = isDocsMd ? { claudeMd: false, docFiles: [rel] } : { claudeMd: true, docFiles: [] };
+    scope = isDocsMd ? { instructionFile: false, docFiles: [rel] } : { instructionFile: true, docFiles: [] };
   }
 
   // Kept structured so the report can be read in file order: findings are produced in
@@ -424,7 +429,7 @@ if (isEntry(import.meta.url)) {
 
   // Memoized. The environment-variable corpus and the three per-directory texts name 320 of the
   // same files, and reading them a second time cost 9.7 ms against 0.8 ms — on a ~170 ms run
-  // that the tracked hook pays on every CLAUDE.md and docs edit. Nothing here writes, so a file
+  // that the tracked hook pays on every AGENTS.md and docs edit. Nothing here writes, so a file
   // this process reads twice is the same file both times.
   const readCache = new Map();
   const read = (path) => {
@@ -509,9 +514,9 @@ if (isEntry(import.meta.url)) {
   // and the "ci.yml greps dist" claim live in prose.
   const spans = [];
   // A hook run about a docs/ file answers for that file only: the asset table belongs to
-  // the edit that touched CLAUDE.md, and re-reporting it here would blame every docs edit
+  // the edit that touched AGENTS.md, and re-reporting it here would blame every docs edit
   // for a row somebody else broke.
-  if (scope.claudeMd)
+  if (scope.instructionFile)
     for (let i = start; i < end; i++) {
       for (const m of lines[i].matchAll(/`([^`]+)`/g)) spans.push({ raw: m[1], line: i + 1 });
     }
@@ -641,7 +646,7 @@ if (isEntry(import.meta.url)) {
   const SETTINGS = ".claude/settings.json";
   const ciText = read(CI_WORKFLOW);
   const settingsText = read(SETTINGS);
-  // Not in the hook: it fires on every CLAUDE.md edit, and a missing input is the repo's
+  // Not in the hook: it fires on every AGENTS.md edit, and a missing input is the repo's
   // problem to report on a full run, not a reason to block the operator mid-edit.
   if (!HOOK && !ciText)
     finding(CI_WORKFLOW, "does not exist, so the per-handle bundle-grep assertion has nothing to read");
@@ -931,8 +936,8 @@ if (isEntry(import.meta.url)) {
   // answer. The gate is now the resolved path, and a docs/{en,ja} edit runs the docs half
   // against THAT ONE FILE. The reverse half stays off for the hook whatever was edited
   // (`forwardOnly` below), and that boundary really is a judgement rather than a rule: rule
-  // H reads CLAUDE.md as one side of a map whose other side is architecture.md, so a
-  // CLAUDE.md edit CAN create a finding about a document it did not touch. docs.yml runs
+  // H reads AGENTS.md as one side of a map whose other side is architecture.md, so an
+  // AGENTS.md edit CAN create a finding about a document it did not touch. docs.yml runs
   // the whole file on every pull request and every push, external pull requests included,
   // so nothing escapes permanently — the hook buys the report at the edit, not the gate.
 
@@ -1128,7 +1133,7 @@ if (isEntry(import.meta.url)) {
     if (i + 1 < end && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) continue; // header
     rows.push(i + 1);
   }
-  for (const row of scope.claudeMd ? rows : []) {
+  for (const row of scope.instructionFile ? rows : []) {
     const label = () => (lines[row - 1].split("|")[1] ?? "").trim().replace(/`/g, "");
     if (!asserted.has(row)) {
       finding(`${DOC}:${row}`, `row "${label()}" carries no checkable anchor — name the module or file it lives in`);
@@ -1158,14 +1163,14 @@ if (isEntry(import.meta.url)) {
     // prefix of another's would otherwise stay "documented" after its own line is cut.
     const named = (name) => new RegExp(`pnpm ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w:.-])`).test(doc);
 
-    // A. every package.json script is named somewhere in CLAUDE.md (the ## Development
+    // A. every package.json script is named somewhere in AGENTS.md (the ## Development
     //    fence is the everyday list; this section is the rest).
     for (const name of Object.keys(scripts)) {
       if (!named(name)) finding("package.json", `script "${name}" is named nowhere in ${DOC}`);
     }
 
     // B. every file in scripts/ is reachable from the docs: named directly, run by a
-    //    pnpm script CLAUDE.md names, wired into the tracked hook, or — for a test —
+    //    pnpm script AGENTS.md names, wired into the tracked hook, or — for a test —
     //    selected by a `pnpm test <filter>` row, which is how the pin table names one
     //    without spelling the path. All four are required: e2e-worktree.mjs /
     //    reset-storage.mjs are reached only through their pnpm scripts, md-hook.sh only
@@ -1252,13 +1257,13 @@ if (isEntry(import.meta.url)) {
     }
 
     // H. every source file the map documents undertake to describe is named by one of them:
-    //    CLAUDE.md's one-line directory map, or BOTH architecture.md translations, whose
+    //    AGENTS.md's one-line directory map, or BOTH architecture.md translations, whose
     //    "Source layout" says outright that it is "what each file is for".
     //    Nothing looked this way round before. The docs half above only checks that a path a
     //    document NAMES exists, so a file no document mentions at all was invisible to every
     //    assertion here — which is how five modules extracted out of graph.ts and
     //    inspector.ts in one afternoon, and the DUCKER screen for three days, stayed outside
-    //    the map while every check stayed green and CLAUDE.md still called DUCKER "to
+    //    the map while every check stayed green and AGENTS.md still called DUCKER "to
     //    follow".
     //    Matched by BASENAME, because that is how these documents write a file inside a
     //    directory-scoped bullet ("`plan.ts` plan state", under `src/core/`) — and matched

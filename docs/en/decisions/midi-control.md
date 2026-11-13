@@ -82,7 +82,7 @@ closes it. Closed with it:
 behind a build flag was turned down. What follows from that: a packaged build cannot be watched with
 this log, since the recorder and its commands are both compiled out. Whether something seen in a dev
 build also applies to a packaged one is answered from the code, once the mechanism is known. Where
-the instrumentation is and how to use it is in `CLAUDE.md`, "Reusable assets".
+the instrumentation is and how to use it is in `AGENTS.md`, "Reusable assets".
 
 ## A window of its own
 
@@ -97,7 +97,7 @@ has no history.
 
 **Incident: the race specs.** The panel is driven from four race specs. After the surface moved, the
 change was reported green on one browser project and failed seven cases across the three. A change
-that moves or renames a UI surface checks `e2e/race/` as well; `CLAUDE.md` has the rule under
+that moves or renames a UI surface checks `e2e/race/` as well; `AGENTS.md` has the rule under
 "Conventions".
 
 ## Scope

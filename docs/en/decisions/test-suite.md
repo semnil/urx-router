@@ -3,7 +3,7 @@
 > 日本語版: [../../ja/decisions/test-suite.md](../../ja/decisions/test-suite.md)
 
 Closed decisions about how the tests are built and run: what was decided, why, what was turned
-down, and what happened that led to it. The rules a change has to follow are in `CLAUDE.md`
+down, and what happened that led to it. The rules a change has to follow are in `AGENTS.md`
 "Development" and "Conventions", and the race harness has its own document,
 [live-race-harness.md](../live-race-harness.md); this document holds only the reasoning that
 those do not.
@@ -12,7 +12,7 @@ those do not.
 
 **Decision (2026-08-06).** `e2e/inventory.spec.ts` derives what each dialog, window, menu and
 popover must show from the message catalog, and drives each surface through its states. The rule
-itself, and the four escapes a message can take, are in `CLAUDE.md` "Conventions".
+itself, and the four escapes a message can take, are in `AGENTS.md` "Conventions".
 
 **Incident.** When MIDI control moved out of an overlay panel into a window of its own, the legend
 card of its Behavior column was dropped together with the panel. The two messages it showed
@@ -113,7 +113,7 @@ the page after it optimised dependencies.
 
 **Decision (2026-10-10).** Whether the dev app is up is answered by
 `node scripts/check-startup-wait.mjs --pid <tree>`, and a hook refuses a command that waits on the
-log instead. How it works is in `CLAUDE.md` "Development"; the change is
+log instead. How it works is in `AGENTS.md` "Development"; the change is
 [#564](https://github.com/semnil/urx-router/pull/564). Two decisions inside it:
 
 - **The check looks only at processes of the current user** (`pgrep -x -u <uid>`). The working

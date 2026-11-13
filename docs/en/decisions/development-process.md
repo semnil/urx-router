@@ -2,9 +2,10 @@
 
 > 日本語版: [../../ja/decisions/development-process.md](../../ja/decisions/development-process.md)
 
-Closed decisions about how work on this repository is carried out — scratch files, release pull
-requests, estimating, and what is run before a pull request — with what happened that led to each.
-The rules themselves are in `CLAUDE.md` "Development" and "Conventions"; this document holds the
+Closed decisions about how work on this repository is carried out — scratch files, the instruction
+file, release pull requests, estimating, and what is run before a pull request — with what happened
+that led to each.
+The rules themselves are in `AGENTS.md` "Development" and "Conventions"; this document holds the
 reasoning those do not. "The operator" below is the person who directs this project's work and
 decides for it.
 
@@ -13,6 +14,14 @@ decides for it.
 **Decision (2026-09-04).** `work/` is not added to `.gitignore`; its contents are deleted instead.
 The operator decided this, and adding the line is not proposed again. Where a scratch file goes instead is in [local-runs.md](../local-runs.md), "Scratch files
 under `work/`".
+
+## The instruction file is tracked as `AGENTS.md`
+
+**Decision (2026-11-13).** The project instructions are one tracked file, `AGENTS.md`, and no
+`CLAUDE.md` is kept beside it. The operator decided this. It reopens the entry of 2026-08-21 that
+kept `/AGENTS.md` in `.gitignore`: that file was then a per-machine rendering of `CLAUDE.md` for
+another tool, and tracking it would have made one rule two texts. With a single file there is one
+text, so the ignore entry is removed.
 
 ## Release pull requests
 
@@ -60,7 +69,7 @@ for being the next one.
 
 ## What to run before a pull request
 
-**Decision.** Two rules in `CLAUDE.md` "Conventions" came from the incidents below: a change that
+**Decision.** Two rules in `AGENTS.md` "Conventions" came from the incidents below: a change that
 adds a row or a toggle to a panel runs the whole of `pnpm test:e2e:app` before the pull request,
 and a change to behaviour the race harness pins runs the race specs that name it.
 

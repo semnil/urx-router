@@ -1,7 +1,7 @@
 name: Tag release
 
 # Turns a merged version bump into a release. The app version lives in package.json
-# alone (see CLAUDE.md), a version bump is its own pull request carrying nothing else,
+# alone (see AGENTS.md), a version bump is its own pull request carrying nothing else,
 # and merging that PR is the whole release gesture — this workflow is what makes that
 # true, by tagging the merge commit and starting the installer build on that tag.
 #

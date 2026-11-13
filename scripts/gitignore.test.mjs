@@ -66,9 +66,9 @@ const symlinksWork = (() => {
 describe("what .gitignore covers", () => {
   // What the rules below are asked ABOUT comes from the file itself, which is what lets them
   // reach a pattern added later — and is also why they cannot see one that is removed: the
-  // rule and the check would go together. So the three this exists for are named.
-  it("names the three entries the agent tooling writes into a checkout", () => {
-    expect(ignores).toEqual(expect.arrayContaining(["/.agents", "/.codex", "/AGENTS.md"]));
+  // rule and the check would go together. So the two this exists for are named.
+  it("names the two entries the agent tooling writes into a checkout", () => {
+    expect(ignores).toEqual(expect.arrayContaining(["/.agents", "/.codex"]));
   });
 
   it("narrows no ignore rule to a real directory", () => {

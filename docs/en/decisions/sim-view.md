@@ -5,7 +5,7 @@
 Closed decisions about the SIM view — the unit's LCD, drawn by the urx-lcd-sim simulator embedded
 beside GRAPH and CONSOLE — and what happened around them. How the view works is in
 [architecture.md](../architecture.md), "SIM view (the unit's LCD)"; the rule on refusing a write is in
-`CLAUDE.md`, "Conventions" ("A write is refused only for a reason the unit or the operator gives").
+`AGENTS.md`, "Conventions" ("A write is refused only for a reason the unit or the operator gives").
 Most of what follows is already in the pull requests it links, so a section here is often a
 heading, the conclusion and the links. Pull requests written `lcd-sim#N` belong to
 [urx-lcd-sim](https://github.com/semnil/urx-lcd-sim). "The operator" below is the person who directs
@@ -26,7 +26,7 @@ the only one.
 | D4 | Scale | 100% by default. The switch is a section of the View menu, shown on every view (D11) |
 | D5 | Initialize | Not offered. File > New does that job. Turned down: adding it as a section of the Device or File menu |
 | D6 | How the simulator is taken in | See "How it is taken in" below |
-| D7 | "No external dependencies" | "External" means outside this project owner's own repositories. `CLAUDE.md`, "Tech stack", has the wording |
+| D7 | "No external dependencies" | "External" means outside this project owner's own repositories. `AGENTS.md`, "Tech stack", has the wording |
 | D8 | The font's licence | The bundled IBM Plex Sans (OFL) is one more entry on the existing licences screen |
 | D9 | The simulated functions | Making the bundle lighter is not a goal. The simulation was reshaped into one interface shared with a real unit (parameters, levels, actions, clock), approved on the condition that undo is not harmed; see "What undo requires of the embedding" |
 | D10 | The board behind the glass | The same in both themes: the dark theme's board, with `color-scheme: dark`. The frame around it follows the theme |

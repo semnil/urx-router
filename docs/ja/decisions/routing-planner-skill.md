@@ -3,7 +3,7 @@
 > English version: [../../en/decisions/routing-planner-skill.md](../../en/decisions/routing-planner-skill.md)
 
 `.claude/skills/urx-routing-planner/` に同梱しているスキルと、その 2 つのマニフェストについて、閉じた判断を
-置く。スキルをアプリとそろえておく規則は `CLAUDE.md`「Conventions」にある。この文書は、それぞれがどこで
+置く。スキルをアプリとそろえておく規則は `AGENTS.md`「Conventions」にある。この文書は、それぞれがどこで
 決まったかを指す。
 
 ## The 2026-07-26 drift audit

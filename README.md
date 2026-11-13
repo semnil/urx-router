@@ -75,7 +75,7 @@ Install it as a plugin from this repo's marketplace:
 
 The skill's routing data is generated from the same device model the app uses
 (`src/models/`), so it stays in lock-step with the app — see `UPDATE_SKILL` in
-[CLAUDE.md](CLAUDE.md).
+[AGENTS.md](AGENTS.md).
 
 ## Tech stack
 
@@ -103,7 +103,7 @@ even without Rust installed. Desktop builds (`pnpm tauri dev` / `pnpm tauri buil
 locally (what <https://urx-router.semnil.com> serves), use `pnpm build:demo` then `pnpm preview`.
 
 The full command list (unit/e2e tests, formatting, cache cleaning) and development notes live in
-[CLAUDE.md](CLAUDE.md).
+[AGENTS.md](AGENTS.md).
 
 The UI is English-first with a Japanese translation, and **a control reproduced from one of the
 unit's own screens is not translated** — the URX is English on those screens whichever of its three

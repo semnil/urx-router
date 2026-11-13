@@ -66,7 +66,7 @@ URX22 で実機検証済み**で、**URX44** は URX44V と同一と仮定して
 ```
 
 スキルのルーティングデータはアプリと同じ機種定義（`src/models/`）から生成されるため、アプリと常に
-一致します（`UPDATE_SKILL` の項目は [CLAUDE.md](CLAUDE.md) を参照）。
+一致します（`UPDATE_SKILL` の項目は [AGENTS.md](AGENTS.md) を参照）。
 
 ## 技術スタック
 
@@ -93,7 +93,7 @@ pnpm preview        # デモ版を http://localhost:4173 で配信 — 公開デ
 `pnpm dev` は通常ビルド。機能を絞った **デモ版**（<https://urx-router.semnil.com> と同じもの）を
 ローカルで見るには `pnpm build:demo` の後に `pnpm preview` を実行する。
 
-全コマンド一覧（単体/E2E テスト・整形・キャッシュ削除）と開発上の注意は [CLAUDE.md](CLAUDE.md) にある。
+全コマンド一覧（単体/E2E テスト・整形・キャッシュ削除）と開発上の注意は [AGENTS.md](AGENTS.md) にある。
 
 UI は英語を基準に日本語ローカライズを持つが、**本体の画面にあるコントロールを写した行は翻訳しない** —
 URX は 3 つの表示言語のどれを選んでも当該画面が英語のままなので、`Threshold` / `Attack` / `Freq` /

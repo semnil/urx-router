@@ -3,7 +3,7 @@
 > English version: [../en/local-runs.md](../en/local-runs.md)
 
 開発のマシンで、テスト・ビルド・1 回だけの評価を走らせるときの手順。コマンドそのもの、ポートの決まり、
-プロセスを止めるときの決まり、dev アプリの起動の確かめ方は `CLAUDE.md`「Development」にある。この文書は、
+プロセスを止めるときの決まり、dev アプリの起動の確かめ方は `AGENTS.md`「Development」にある。この文書は、
 その周りの、ときどきしか要らない手順を持つ。
 
 ## E2E の spec からライブ同期のセッションを始める
@@ -21,7 +21,7 @@
 
 ## E2E のポートに残ったサーバーを見つける
 
-ポート 4173 か 4174 に残ったサーバーが、次の走行に何をするかは、`CLAUDE.md`「Development」にある。残っているか、
+ポート 4173 か 4174 に残ったサーバーが、次の走行に何をするかは、`AGENTS.md`「Development」にある。残っているか、
 どのバンドルを配っているかは、そのポートが配っているチャンクの名前を読み、ディスクのビルドの出力と比べる。
 
 ```sh
@@ -116,9 +116,9 @@ git worktree add --detach <dir> <sha>
 - **ログインのプロファイルを読んでいないサブシェルの `PATH` には、Node も Cargo も無い。** Node の版を
   切り替える道具の shims、Cargo のバイナリ、パッケージマネージャーのディレクトリを、前に足す。
 - **SIM ビューが、シミュレーターのフォントを名指す `Failed to resolve import` で読めないとき**は、シミュレーターが
-  `node_modules` につながっていない。CLAUDE.md「Development」の準備のコマンド (submodule、その後に
+  `node_modules` につながっていない。AGENTS.md「Development」の準備のコマンド (submodule、その後に
   インストール) を走らせる。追跡しているファイルは変わらない。
-- **アプリが上がったかどうか**は、ログではなく、プロセスで答える。CLAUDE.md「Development」の
+- **アプリが上がったかどうか**は、ログではなく、プロセスで答える。AGENTS.md「Development」の
   「The dev app being up is a process, not a log line」。
 - **アプリは、submodule が指すコミットのシミュレーターを動かす。** シミュレーターのリポジトリでまだ
   マージされていない変更は、アプリに入っていない。見たことを報告するときに、そう書く。

@@ -2,8 +2,8 @@
 
 > English version: [../../en/decisions/development-process.md](../../en/decisions/development-process.md)
 
-このリポジトリの作業の進め方について、閉じた判断を置く。一時のファイル、リリースの PR、見積もり、PR の前に
-走らせるもの、の 4 つで、それぞれ、決めるもとになった出来事を添える。決まりそのものは `CLAUDE.md`
+このリポジトリの作業の進め方について、閉じた判断を置く。一時のファイル、指示ファイル、リリースの PR、見積もり、
+PR の前に走らせるもの、の 5 つで、それぞれ、決めるもとになった出来事を添える。決まりそのものは `AGENTS.md`
 「Development」と「Conventions」にある。この文書は、そこに無い理由を持つ。下の「操作者」は、このプロジェクトの
 作業を指示し、決める人のこと。
 
@@ -12,6 +12,13 @@
 **決定 (2026-09-04)。** `work/` は `.gitignore` に足さない。代わりに、中身を消す。操作者が決めたことで、
 この行を足す提案は、もう一度はしない。一時のファイルの置き場は [local-runs.md](../local-runs.md) の
 「`work/` の下の作業用のファイル」にある。
+
+## The instruction file is tracked as `AGENTS.md`
+
+**決定 (2026-11-13)。** プロジェクトの指示は、追跡する 1 つのファイル `AGENTS.md` に置く。その横に `CLAUDE.md` は
+置かない。操作者が決めた。これは、`/AGENTS.md` を `.gitignore` に入れた 2026-08-21 の項目を開け直したもの。
+当時の `AGENTS.md` は、別の道具のために `CLAUDE.md` をマシンごとに写したもので、追跡すると 1 つの規則が 2 つの
+文になった。ファイルが 1 つなら文は 1 つなので、無視の行を消した。
 
 ## Release pull requests
 
@@ -52,7 +59,7 @@
 
 ## What to run before a pull request
 
-**決定。** `CLAUDE.md`「Conventions」の 2 つの決まりは、下の出来事から来た。パネルに行やトグルを足す変更は、
+**決定。** `AGENTS.md`「Conventions」の 2 つの決まりは、下の出来事から来た。パネルに行やトグルを足す変更は、
 PR の前に `pnpm test:e2e:app` の全体を走らせる。レースのハーネスが固定している挙動を変える変更は、それを
 名指すレースの spec を走らせる。
 

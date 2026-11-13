@@ -69,7 +69,7 @@ flowchart TD
 
 ## Source layout
 
-The diagram above is the shape. This is what each file is for and why it is that way; `CLAUDE.md`
+The diagram above is the shape. This is what each file is for and why it is that way; `AGENTS.md`
 carries a one-line map of the same directories and points here.
 
 - `src/core/` — `plan-history.ts` the reversible plan patch behind undo / redo (a **diff, not a snapshot**,
