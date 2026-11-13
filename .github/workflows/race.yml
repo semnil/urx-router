@@ -2,8 +2,8 @@ name: Race harness
 
 # The live-sync race-diagnosis harness (e2e/race; design in
 # docs/{en,ja}/live-race-harness.md), split out of the ordinary E2E tier because it takes
-# the great majority of that tier's machine time on its own. The measurement that cut the
-# boundary is in that document ("Where each tier runs") and stated nowhere else — a copy
+# the great majority of that tier's machine time on its own. Why that cuts the boundary is
+# in that document ("Where each tier runs") and stated nowhere else — a copy of the figures
 # in a comment is exactly what went stale elsewhere in this repository. That cost is what
 # is being measured rather than overhead — several cases provoke whole-device readbacks of
 # ~800 sequential commands — so it stays its own workflow rather than being folded into
@@ -24,8 +24,8 @@ name: Race harness
 # installs, and because it is what survives anyone narrowing the first clause. In front of
 # the tag rather than behind it, where a red result would arrive after the tag exists.
 #
-# The cost is taken deliberately and measured: Dependabot's npm ecosystem runs daily and
-# every one of its pull requests now spends a harness run. The frequency, against the two
+# The cost is taken deliberately: Dependabot's npm ecosystem runs daily and every one of
+# its pull requests now spends a harness run. How often the trigger fires, against the two
 # narrower rules this replaced, is in docs/{en,ja}/live-race-harness.md.
 #
 # `paths-ignore:` on the trigger would express the first clause and nothing else, and it
@@ -233,8 +233,8 @@ jobs:
     # rather than two.
     container: mcr.microsoft.com/playwright:v${{ needs.detect.outputs.playwright }}-noble
     # Several times what the slowest shard takes — and it is the SLOWEST that has to fit,
-    # which the weights below level out rather than remove (docs/{en,ja}/live-race-harness.md
-    # carries that reading, and every other figure about this tier). Left where it was when
+    # which the weights below level out rather than remove (docs/{en,ja}/live-race-harness.md,
+    # "How the shards are sized", carries that reading). Left where it was when
     # one shard ran three times another: this is a backstop against a wedged run holding a
     # runner for the 6-hour job default, not a budget, and a re-balancing is no reason to
     # narrow it.
@@ -323,7 +323,7 @@ jobs:
 
   # The cases tagged @webkit, in the engine the macOS build actually renders in. Its own
   # job rather than a fourth shard: WebKit is a separate download, and paying for it in
-  # all three shards would cost more than this handful of cases does — the figures are in
+  # all three shards would cost more than this handful of cases does — the reasoning is in
   # docs/{en,ja}/live-race-harness.md, not here.
   race-webkit:
     needs: detect

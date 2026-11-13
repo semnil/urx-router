@@ -36,9 +36,9 @@ const SERVER_URL = `http://localhost:${PORT}`;
 //
 // That split is also the CI tiering: the ordinary suite runs per-PR from ci.yml, and the
 // harness — which takes the great majority of the E2E machine time — runs from its own
-// race.yml, sharded, on demand and alongside a release build. The measurements that cut the
-// boundary there are in docs/{en,ja}/live-race-harness.md ("Where each tier runs") and
-// stated nowhere else; this comment used to restate them, and the copy went stale. Nothing
+// race.yml, sharded, on demand and alongside a release build. Why the boundary is cut there
+// is in docs/{en,ja}/live-race-harness.md ("Where each tier runs") and stated nowhere else;
+// this comment used to restate the figures, and the copy went stale. Nothing
 // about the tiers lives in this file beyond the project boundary they are cut along.
 const TRACE_URL = `http://localhost:${TRACE_PORT}`;
 const COVERAGE = process.env.E2E_COVERAGE === "1";

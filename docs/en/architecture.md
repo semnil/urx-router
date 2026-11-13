@@ -103,7 +103,7 @@ carries a one-line map of the same directories and points here.
   (`channelDuckerOn` = PRE-send notes, `duckerBypassWarnings` = pre-fader tap warnings for USB direct outs;
   microSD Rec intentionally excluded; `duckerBypassCandidates` is that warning's own predicate without the
   on-state, exported so the inspector's repaint footprint asks the tap question the card asks rather than a
-  second copy of it — see live-race-harness.md §4), and what an analog output's MONO reads as (`outputMono` /
+  second copy of it), and what an analog output's MONO reads as (`outputMono` /
   `canPatchFromMonitor` — see "MONO on the analog outputs", which states rather than warns and says why)
   / `plan-validate.ts` the plan loader's single validation funnel,
   `planProblems` (split out of `constraints.ts`, which is rate limits and nothing else: a rate limit warns
