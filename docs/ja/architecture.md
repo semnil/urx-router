@@ -98,7 +98,7 @@ flowchart TD
   (`channelDuckerOn` = PRE send の注記、`duckerBypassWarnings` = USB ダイレクトアウトの pre-fader タップ警告。
   microSD Rec は意図的に除外。`duckerBypassCandidates` はその警告自身の判定式から on 状態を外したもので、
   インスペクタの再描画フットプリントがタップの判定を写しではなくカードと同じ式に問えるよう export して
-  ある。live-race-harness.md §4 を参照)、およびアナログ出力の MONO が何を示すか (`outputMono` / `canPatchFromMonitor`。
+  ある)、およびアナログ出力の MONO が何を示すか (`outputMono` / `canPatchFromMonitor`。
   警告ではなく提示にした理由も含め「アナログ出力の MONO」を参照)
   / `plan-validate.ts` プラン読み込みの単一検証ファネル `planProblems`
   (`constraints.ts` から分離した。あちらはレート制限だけであり、レート制限が警告するのはアプリが著作した

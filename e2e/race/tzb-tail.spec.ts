@@ -398,7 +398,7 @@ test.describe("Tzb tail", () => {
       // Placing the edit exactly, the way T1 does with `blockAt`, would decide it — but
       // this case's variable is already D, where the recall falls inside the gesture,
       // and holding the sweep would replace that variable rather than add to it. Logged
-      // here and recorded under the harness's known gaps.
+      // here rather than asserted.
       //
       console.log(
         `sweep began at ${sweepStart.toFixed(0)} ms and landed at ${landedAt!.toFixed(0)} ms, ${landedInDrag ? "inside" : "after"} the drag; ` +

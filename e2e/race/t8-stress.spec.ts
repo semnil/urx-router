@@ -85,8 +85,8 @@ const overlapKinds = (findings: Finding[]): string[] =>
 // takes the next, and fake-device.ts now serializes the same way, so responses resolve
 // strictly in issue order whatever the per-command delay is: the count is structurally 0
 // under every profile, and hardware cannot produce a non-zero one either. It was
-// therefore a property of the old per-command-setTimeout fake, which is exactly what
-// docs/{en,ja}/live-race-harness.md forbids reporting as a run result. Redefined, not
+// therefore a property of the old per-command-setTimeout fake, and a property of the
+// fake says nothing about the app, so it is no run result. Redefined, not
 // deleted: what the arm was really establishing is that the app had TWO CHAINS ON THE
 // LINK AT ONCE (otherwise the convergence verdict below is about a single sequential
 // chain and says nothing about contention), and on a serial worker that survives as
@@ -774,6 +774,6 @@ test.describe("T8 stress", () => {
   // harness has (DOM, status line, localStorage, the fake's IPC). Subscription
   // counters alone would pin one of the four assertions and silently pass the rest.
   // It needs the VITE_TRACE build's module-scope probe (docs/{en,ja}/live-race-harness.md,
-  // "Known gaps"); the 30-minute duration is the smaller obstacle.
+  // "Observables"); the 30-minute duration is the smaller obstacle.
   test.skip("a thirty-minute session leaks no subscription, timer or plan", async () => {});
 });

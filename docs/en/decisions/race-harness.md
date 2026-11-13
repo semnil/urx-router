@@ -3,8 +3,8 @@
 > 日本語版: [../../ja/decisions/race-harness.md](../../ja/decisions/race-harness.md)
 
 Closed decisions about the live-sync race harness (`e2e/race/`), and what writing its cases has
-taught. The harness itself — its invariants, the fake device's contract, the tiers and the
-findings — is described in [live-race-harness.md](../live-race-harness.md), and the rules a change
+taught. The harness itself — its invariants, the fake device's contract and the tiers — is
+described in [live-race-harness.md](../live-race-harness.md), and the rules a change
 has to follow are in `AGENTS.md` "Development" and "Conventions"; this document holds the reasoning
 those do not. "The operator" below is the person who directs this project's work and decides for
 it. Read this before adding or rewriting a case, before re-deriving the shard weights, and before
@@ -43,8 +43,9 @@ evidence.
 - **No standing check scans every route by which a callback crosses into the page** — `evaluate`,
   `evaluateHandle`, `waitForFunction`, `locator.evaluate`, `evaluateAll` (2026-08-13). The scan made
   that day was by hand, over `e2e/` and `scripts/` and over the serialized side only; it found no
-  further reference to a module binding. The trap itself is in live-race-harness.md, "What the
-  harness itself got wrong".
+  further reference to a module binding. The trap itself: a callback handed to the page is
+  serialised and runs there without the module it was written in, so anything it needs has to
+  arrive through its argument list.
 
 **Reopen when.** For the standing check: a proposal to add it comes with what has changed since.
 
@@ -135,8 +136,7 @@ cannot fail is deleted and rebuilt there.
 ## Writing a verdict
 
 **Decision.** After a verdict is written, a separate round tries to refute it. Two such rounds found
-verdicts that could not fail and claims wider than the evidence, and each was fixed or withdrawn;
-the counts are in live-race-harness.md, "What the harness itself got wrong".
+verdicts that could not fail and claims wider than the evidence, and each was fixed or withdrawn.
 
 What those rounds and later fixes showed:
 
@@ -272,8 +272,7 @@ Three shapes the refutation rounds found that had been missed:
 
 **Incident.** A verification audit of the harness raised 60 findings; an adversarial check confirmed
 28, downgraded 7 and refuted 4. The eight findings graded S2 each had the form of something
-breaking in silence. What changed in the harness is in live-race-harness.md, "What the harness
-itself got wrong". What that document does not say:
+breaking in silence. Besides what changed in the harness itself:
 
 - **The fixes turned three pins over** — `pushedBack` in the stress tier, `unreported` in the
   baseline sweeps, and a sweep in the undo tier. Each was rewritten as a set and kept its power to
