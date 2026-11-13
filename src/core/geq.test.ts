@@ -11,6 +11,7 @@ import {
   geqBandMovable,
   geqClamp,
   geqFactory,
+  geqLink,
   geqOffAtRate,
   geqSideState,
   setEqType,
@@ -52,6 +53,16 @@ describe("geqClamp", () => {
   });
 });
 
+describe("a document that names less", () => {
+  it("reads a side, a link and a limit it does not carry as the unit's factory values", () => {
+    expect(geqSideState(undefined, 1)).toEqual({ on: true, limit: 0, gains: Array(GEQ_BAND_COUNT).fill(0) });
+    expect(geqSideState({ geq: { sides: [{ bands: [{ gain: -2 }] }] } }, 0).gains.slice(0, 2)).toEqual([-2, 0]);
+    expect(geqLink(undefined, "bus.mix2")).toBe(GEQ_LINK_L_TO_R);
+    expect(geqLink(undefined, "ch1"), "not a GEQ bus").toBe(GEQ_LINK_OFF);
+    expect(geqClamp(20, 9), "a limit off the menu clamps as ±15 dB").toBe(15);
+  });
+});
+
 describe("the factory GEQ", () => {
   it("is off on STEREO and L → R on a MIX, both sides on, ±15 dB, 31 bands at 0", () => {
     expect(geqFactory("bus.stereo").link).toBe(GEQ_LINK_OFF);
@@ -83,6 +94,12 @@ describe("setGeqGain", () => {
   it("writes the other side too while the link is on", () => {
     const np = setGeqGain(bus("bus.mix1", {}, {}, { link: GEQ_LINK_L_TO_R }), "bus.mix1", 0, 7, -3);
     expect([gains(np, 0)[7], gains(np, 1)[7]]).toEqual([-3, -3]);
+  });
+
+  it("moves the shown side alone where the linked side has twelve away and that band at 0 dB", () => {
+    const np = bus("bus.mix1", {}, twelve, { link: GEQ_LINK_L_TO_R });
+    const moved = setGeqGain(np, "bus.mix1", 0, 20, -2)!;
+    expect([gains(moved, 0)[20], gains(moved, 1)[20]]).toEqual([-2, 0]);
   });
 
   it("refuses a band at 0 dB once twelve are away from it, and lets a used band move", () => {

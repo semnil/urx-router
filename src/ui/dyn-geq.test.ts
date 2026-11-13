@@ -194,6 +194,32 @@ describe("the rows beside the faders", () => {
     expect([fader(0).min, fader(0).max]).toEqual(["-6", "6"]);
   });
 
+  it("switch the shown side's [GEQ] alone, and the GEQ Link copies a side across and names both", () => {
+    open("bus.stereo", { gains: { 7: -3 } });
+    const row = (label: string): HTMLElement =>
+      [...host!.box.querySelectorAll<HTMLElement>(".prefs-row")].find(
+        (r) => r.querySelector(".lbl")?.textContent === label,
+      )!;
+    [...row(t().dynTuning.geq.button).querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent === "OFF")!
+      .click();
+    expect([
+      geqSideState(host!.plan.nodeParams["bus.stereo"], 0).on,
+      geqSideState(host!.plan.nodeParams["bus.stereo"], 1).on,
+    ]).toEqual([false, true]);
+    expect(host!.patches.at(-1)?.written).toEqual(["geq.sides.0.on"]);
+
+    const link = row(t().dynTuning.geq.link).querySelector<HTMLSelectElement>("select")!;
+    link.value = "1"; // ST L → ST R
+    link.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(gains("bus.stereo", 1)[7], "R took L's bands").toBe(-3);
+    const written = host!.patches.at(-1)?.written ?? [];
+    expect(written[0]).toBe("geq.link");
+    expect(written).toContain("geq.sides.1.limit");
+    expect(written).toContain("geq.sides.1.bands.7.gain");
+    expect(written).toHaveLength(1 + 2 * (1 + GEQ_BAND_COUNT));
+  });
+
   it("Gain Flat returns the shown side to 0 dB", () => {
     open("bus.stereo", { gains: { 7: -10, 17: 10 } });
     const flat = [...host!.box.querySelectorAll<HTMLButtonElement>("button")].find(
