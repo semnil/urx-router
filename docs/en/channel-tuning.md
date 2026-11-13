@@ -34,9 +34,8 @@ selectable as a strip meter and drawn on the dBFS ladder with its signal color z
 Two device facts make a dedicated screen worth building (stated for GATE; the COMP section below
 gives the same two for the compressor):
 
-1. A GATE threshold in dB is directly comparable with the PRE GATE meter's dBFS. Measured: CH1's
-   -54 dBFS noise floor sat below a -52 dB threshold and the gate stayed shut, so nothing reached
-   COMP. The threshold and the meter share one coordinate.
+1. A GATE threshold in dB is directly comparable with the PRE GATE meter's dBFS: the threshold and
+   the meter share one coordinate.
 2. All three points of interest are metered — PRE GATE (106) in, GATE GR (107), PRE COMP (108) out —
    on the same mono-channel axis.
 
@@ -48,8 +47,7 @@ which carries the reasoning and the measurements for both.
 
 ## What the meters can and cannot show
 
-Measured on a URX44V, System firmware 1.3.1.0, 2026-07-29. The full measurement is in the private
-reference notes; the parts that constrain this design:
+The parts of the meters' behaviour that constrain this design:
 
 | Fact | Consequence for the screen |
 | --- | --- |
@@ -57,8 +55,8 @@ reference notes; the parts that constrain this design:
 | Each frame is an **instantaneous sample**, not a window extreme | An event shorter than 100 ms is missed with probability (1 − width / 100 ms) |
 | The **level** meters (106 / 108) are peak detectors with a release of about 30 dB/s | They hold transients themselves. An app-side release would double what the device already does, so none is added; the peak hold on those lanes is cosmetic |
 | The **GR** meter (107) has no ballistics at all — it carries the applied gain | Its peak hold is the only thing that makes a caught gate action readable, and it cannot recover one that was never sampled |
-| GR idles at **two** values, and which one is not arbitrary: `0` means the processor is **not engaged** (gate off, comp off), the OVER sentinel `32767` means it **is** engaged with no reduction to report | Both decode as "no reduction", and neither may raise a clip flag. Measured across all three states on the compressor, which is the only processor whose engagement can be toggled without changing what it would report |
-| A GR meter carries the **reduction alone**. Sweeping the COMP makeup gain 0 → +18 → 0 dB moved the downstream level tap by exactly 18 dB and left the GR meter at -3.0 dB throughout, with no OVER frames | The lane is readable at any makeup setting, and needs no caveat about makeup hiding the compressor's work. This was measured because the opposite (a net-gain reading) would have made the lane useless above modest makeup values |
+| GR idles at **two** values, and which one is not arbitrary: one means the processor is **not engaged** (gate off, comp off), the other — the OVER sentinel — means it **is** engaged with no reduction to report | Both decode as "no reduction", and neither may raise a clip flag. The compressor is the processor that tells the two apart, being the only one whose engagement can be toggled without changing what it would report |
+| A GR meter carries the **reduction alone**: the makeup gain moves the downstream level tap and leaves the GR meter where it was | The lane is readable at any makeup setting, and needs no caveat about makeup hiding the compressor's work. The opposite (a net-gain reading) would have made the lane useless above modest makeup values |
 
 The asymmetry in the last two rows is visible in use: an input transient can show on the IN and OUT
 lanes with no matching GR, because the GR sample missed it. That is the device, not a defect.
@@ -70,17 +68,16 @@ the reduction**, and either member opens the same screen with the same parameter
 that, so a level lane carries the primary member's address as L and the partner's as R — in that order
 whichever member the screen was opened on — while the reduction lane stays a single bar.
 
-Measured on a URX44V, System firmware 1.3.1.0, 2026-09-11, with CH1/2 sourced from USB MAIN A so each
-side could be driven alone at a level this end set:
+On a linked pair the unit behaves as follows:
 
-| Reading | Consequence for the screen |
+| Fact | Consequence for the screen |
 | --- | --- |
-| With the pair linked, a 1 kHz tone in one side alone moved that member's whole strip (`100` / `106` / `108` / `109` / `111` / `112` / `113` / `115` at its own x) and left the other member's at the floor; two sides 12 dB apart read 12 dB apart | The two bars are the two members' own taps at one stage — not one value drawn twice, and not a separate address family that only a linked pair lights. A sweep of all 161 meter addresses the unit declares found no other address following the pair |
-| The **gate's** reduction meter went from -128 (shut) to the OVER sentinel on **both** members when **either** side alone carried the tone | One detector for the pair, so both members' GR addresses carry one figure |
-| The **compressor's** reduction read the same figure on both members with one side driven, both members having been given identical compressor values first | The same, and it is why the reduction lane is not widened with the level lanes |
-| Switching PAN/BAL to PAN left the unit drawing four bars | The rule keys on Signal Type alone, not on the pair's PAN/BAL mode |
-| A ducker keyed off one member ducked when that member was driven and not when its partner was | The DUCKER screen's KEY lane is **unaffected**: it reads the key source channel's own tap, and the sum-the-sides rule that a stereo key gets does not extend to a linked MONO IN pair |
-| The gate opens at the same threshold with one side driven and with both driven at that same level, correlated — no shift, where a sum would move it about 6 dB | The pair's detector takes the **louder side**, which is the fold the rack already applies to a two-sided lane's readout. So the threshold cap the GATE and COMP screens hang on the input lane keeps its coordinate on a linked pair, and neither lane needs a `foldSides` |
+| With the pair linked, a signal in one side alone moves that member's whole strip (`100` / `106` / `108` / `109` / `111` / `112` / `113` / `115` at its own x) and leaves the other member's at the floor; two sides at different levels read at their own levels | The two bars are the two members' own taps at one stage — not one value drawn twice, and not a separate address family that only a linked pair lights. No other meter address the unit declares follows the pair |
+| The **gate's** reduction meter goes from shut to the OVER sentinel on **both** members when **either** side alone carries signal | One detector for the pair, so both members' GR addresses carry one figure |
+| The **compressor's** reduction reads the same figure on both members with one side driven | The same, and it is why the reduction lane is not widened with the level lanes |
+| With PAN/BAL switched to PAN the unit still draws four bars | The rule keys on Signal Type alone, not on the pair's PAN/BAL mode |
+| A ducker keyed off one member ducks when that member is driven and not when its partner is | The DUCKER screen's KEY lane is **unaffected**: it reads the key source channel's own tap, and the sum-the-sides rule that a stereo key gets does not extend to a linked MONO IN pair |
+| The gate opens at the same threshold with one side driven and with both driven at that same level, correlated — where a sum would have moved it | The pair's detector takes the **louder side**, which is the fold the rack already applies to a two-sided lane's readout. So the threshold cap the GATE and COMP screens hang on the input lane keeps its coordinate on a linked pair, and neither lane needs a `foldSides` |
 
 The resolver is `pairTap` in `src/ui/dyn-chan.ts`, and every level lane on GATE / COMP / EQ / the
 SSMCS bank / INS FX goes through it.
@@ -296,10 +293,9 @@ characters, such as `20.17 ms`, `1.00 kHz` and `-18.0 dB` (`.dev-slider .param-v
 whatever the text did not take, and the track's length moved with the value. A range turns a pointer
 position into a value through the track's length, so a drag across a reading of another width read two
 values at one pointer position, in turn: on DUCKER Decay the value alternated between `1.0 s` and
-`510.0 ms` at each move of a pointer inside a band about 16 px wide, the compander's Threshold did the
-same between `-9 dB` and `-11 dB`, and an EQ band's Freq between `100 Hz` and `94.0 Hz`, in Chromium and
-in WebKit alike (Playwright, the pointer moved 0.25 px at a time, 2026-10-16). With the one cell width a
-screen has one track length, and a pointer position reads one value.
+`510.0 ms` as the pointer moved, the compander's Threshold did the same between `-9 dB` and `-11 dB`,
+and an EQ band's Freq between `100 Hz` and `94.0 Hz`. With the one cell width a screen has one track
+length, and a pointer position reads one value.
 
 `e2e/dyntuning.spec.ts`, `e2e/ssmcs.spec.ts` and `e2e/insertfx.spec.ts` drive each slider row through
 each of its positions (`sweepSliderRows` in `e2e/dyn-helpers.ts`) and hold one track width across the
@@ -450,12 +446,10 @@ The field carries the ladder as a `steps` table, so the slider's position is an 
 position it can take is a stop the unit has — a linear range would offer values the unit stops on
 nowhere (5.1:1, 7.3:1).
 
-**Both banks reach the top stop.** `36` keeps ratio×100 at every stop — 500.0:1 is 50000 — and puts
-`INF:1` on 65535, the widest raw the field holds. The unit announced one raw per stop while its own
-control was walked one detent at a time from `INF:1` down to `1.00:1`, and the 121 announcements equal
-the ladder's ratio×100 element for element. The other direction holds at every stop too: each stop's
-raw, written in turn, is announced back unchanged — and an announcement is a change of state here,
-since writing the value the unit already holds announces nothing. `98` needs none of that: the index is
+**Both banks reach the top stop.** The channel COMP's Ratio puts `INF:1` on the widest value its field
+holds. Every stop the unit's own control steps through is announced as the ladder's value, and every
+stop written is announced back unchanged — an announcement being a change of state here, since writing
+the value the unit already holds announces nothing. The strip's Ratio needs none of that: the index is
 the whole encoding.
 
 **What the plan carries for the top stop is 655.35, not `Infinity`.** A plan is JSON, and a non-finite
@@ -527,26 +521,21 @@ way the plot could honestly show.
 
 ### The response model
 
-Measured on a URX44V by driving the oscillator into MIX 1 and reading the difference between the two
-meters bracketing the EQ, then repeated on the STEREO master block and — with the host's USB output
-as the source — on a stereo channel. 19 datasets, 108 points, worst case **1.3 dB**, which is the
-resolution of a difference between two 1 dB-quantized peak meters. The filters are RBJ cookbook
-biquads with three corrections that only come out of measuring, each of which draws a visibly
-wrong curve without it:
+The unit's filters differ from textbook biquads in three ways, and `src/core/eq-response.ts` models
+each: the filters are RBJ cookbook biquads with three corrections, each of which draws a visibly wrong
+curve without it:
 
 | Shape | Correction |
 | --- | --- |
-| Peaking | **The unit's Q is twice the biquad Q.** A "Q 1.00" +12 dB bell measured +12/+10/+7/+3 dB at 1k/700/500/300 Hz — a biquad Q of 0.5. Taking the number at face value draws every bell half as wide as the device's. |
-| HPF / LPF | Fixed 2nd-order Butterworth: -3.0 dB exactly at the nominal frequency, 12 dB/octave beyond. **The band's Q slot is ignored** — Q 0.71 and Q 4.00 measured identical, with no corner resonance. Honouring it draws a +12 dB peak that is not there. |
-| Shelving | The S = 1 shape, but **the nominal frequency is the point 3 dB below the plateau**, not the midpoint: a +18 dB shelf at 1 kHz measured +15 dB there and reached +18 dB by 4 kHz. So the design frequency is solved for, and the search direction flips with the gain's sign — reusing the boost direction for a cut is 4.2 dB out. **Under 6 dB of gain the shelf stays designed at its nominal frequency**: there the rule would move the design frequency inside the nominal one, and the unit does not — at 1 kHz, +4 / +5 / −4 dB high shelves and a +4 dB low shelf measured +2.4 / +3.1 / −2.5 / +2.4 dB, against +2.0 / +2.5 / −2.0 / +2.0 for a nominal-frequency design and +1.0 / +2.0 / −1.0 / +1.0 for the moved one. |
+| Peaking | **The unit's Q is twice the biquad Q**: a "Q 1.00" bell is a biquad Q of 0.5. Taking the number at face value draws every bell half as wide as the device's. |
+| HPF / LPF | Fixed 2nd-order Butterworth: -3.0 dB exactly at the nominal frequency, 12 dB/octave beyond. **The band's Q slot is ignored**: every Q gives the same response, with no corner resonance. Honouring it draws a peak that is not there. |
+| Shelving | The S = 1 shape, but **the nominal frequency is the point 3 dB below the plateau**, not the midpoint. So the design frequency is solved for, and the search direction flips with the gain's sign — reusing the boost direction for a cut draws the wrong curve. **Under 6 dB of gain the shelf stays designed at its nominal frequency**: there the rule would move the design frequency inside the nominal one, and the unit does not. |
 
-Two further measurements bound what the model is worth: **bands sum in dB** (a LOW shelf +12 and a
-HIGH-MID peaking -9 measured together matched the sum of the two measured separately, within the
-meters' own ±2 dB), and **the sample rate moves a high bell by at most 2 dB** across 44.1 … 176.4
-kHz — so the drawing is computed at 48 kHz whatever the plan's rate, and says so rather than
-pretending otherwise. The model lives in `src/core/eq-response.ts` and every table above is a test
-in `src/core/eq-response.test.ts`, with a 2.0 dB tolerance: enough to leave the measurement its
-resolution, tight enough that each of the three corrections fails without it.
+Two further properties bound what the model is worth: **bands sum in dB**, and **the sample rate
+moves a high bell only slightly** — so the drawing is computed at 48 kHz whatever the plan's rate, and
+says so rather than pretending otherwise. Every rule above is a test in `src/core/eq-response.test.ts`,
+with a 2.0 dB tolerance: loose enough for the meters' resolution, tight enough that each of the three
+corrections fails without it.
 
 ### The panel keeps its height
 
@@ -696,12 +685,12 @@ trigger. A bus key is the bus's own OUT, after its output insert FX. Read at PRE
 channel source instead, the lane would show, for a source set to any other Rec Point, a signal the
 detector is not listening to, off by whatever the stages in between are doing.
 
-**Why the key lane is one bar.** Measured on a URX44V: the unit sums a stereo key's two sides before
-its detector — a correlated pair reads 6.02 dB above either side alone, not 3 dB (a power sum) and
-not 0 dB (a louder-side pick). The cap can only ride a ruler in its own coordinate, and against a
-summed display the threshold's onset held to -3.0 ±0.5 dB where against `max(L,R)` it spread 7 dB.
-So the lane folds to what the detector reads (`duckerKeyDb`), the cap sits on it unmodified, and the
--3.0 dB is a sine's peak-to-RMS: these meters read peak and the detector reads RMS.
+**Why the key lane is one bar.** The unit sums a stereo key's two sides before its detector, so a
+correlated pair reads above either side alone — the sum is neither a power sum nor a louder-side pick.
+The cap can only ride a ruler in its own coordinate, and against a summed display the threshold's
+onset holds at -3.0 dB where against `max(L,R)` it spreads. So the lane folds to what the detector
+reads (`duckerKeyDb`), the cap sits on it unmodified, and the -3.0 dB is a sine's peak-to-RMS: these
+meters read peak and the detector reads RMS.
 
 **That sum is a STEREO node's rule and it stops there.** A MONO IN pair whose Signal Type is STEREO
 is metered as one channel by every other screen, and this one is the exception: keyed off one member,
@@ -709,14 +698,11 @@ the ducker fired on that member's signal and not at all on its partner's. So the
 reading the key source node's own tap, with no side to fold in.
 
 **The cap is a guide, not a calibrated marker,** and the reason is that -3.0 is a sine's figure
-rather than a constant. Measured with a tone on one side and preamp noise on the other, the onset
-sat 8.5 dB below the summed display instead of 3.5 — because a noise-like key's peak-to-RMS is
-nearer 10 dB than 3. So programme material engages at a **higher** bar reading than the cap marks:
-the bar can pass the cap with the ducker not yet engaged. In that case the sides read -27 and -20, the
-lane -19.8 and the onset -25.3, so at the onset the bar stood 5.5 dB above the cap. No
-correction is applied for it: the app has no measurement of the key's crest factor to correct with,
-and -3.0 is simply the better of the two available constants (no correction at all puts the tone
-cases 3 dB out).
+rather than a constant: a noise-like key's peak-to-RMS is nearer 10 dB than 3. So programme material
+engages at a **higher** bar reading than the cap marks: the bar can pass the cap with the ducker not
+yet engaged. No correction is applied for it: nothing in the app reads the key's crest factor to
+correct with, and -3.0 is simply the better of the two available constants (no correction at all puts
+the tone cases 3 dB out).
 
 **Why the reduction is on POST.** A reduction grows down from 0 and a level grows up from the floor,
 so they collide when `level + |reduction| > 0 dBFS`. On an input lane that is the normal case — at
@@ -826,9 +812,9 @@ else it could be held.
 SIDE CHAIN adds `109`, which MAIN does not carry, so a face change narrows, widens or swaps the registration;
 the same comparison the DUCKER's moving key tap needs (below, "Scope") carries it.
 
-**The internal stages are the taps that already exist.** Measured on a URX44V: 108 into the compressor,
-110 its reduction, 111 between the compressor and the EQ, 112 after the EQ. 111 is a live tap in this
-mode — driving the SSMCS Mid band to +18 dB moved 112 by 7 dB and left 108 and 111 where they were.
+**The internal stages are the taps that already exist**: 108 into the compressor, 110 its reduction,
+111 between the compressor and the EQ, 112 after the EQ. 111 is a live tap in this mode — the SSMCS
+Mid band moves 112 and leaves 108 and 111 where they are.
 That is why MAIN carries four lanes rather than three: the transfer curve's live dot has to point at
 the compressor's own output, and 112 would put the EQ's gain on the compressor's curve.
 
@@ -849,9 +835,9 @@ the unit's own COMP screen that moves only while the side chain is on. It stands
 the reduction, which is the causal order: the level arrives, the detector hears its own version of it,
 the reduction follows, the level leaves.
 
-**It is not a stage the audio passes through**, and the arrangement must not be read as a chain. Measured
-on a URX44V (2026-08-15): with the compressor held off its knee, sweeping the filter over 36 dB moved
-`109` against `108` by the full ±18 dB while `111` against `108` held at 5.0 dB throughout. The filter is
+**It is not a stage the audio passes through**, and the arrangement must not be read as a chain: with
+the compressor held off its knee, sweeping the filter moves `109` against `108` by the filter's whole
+gain while `111` against `108` stays where it was. The filter is
 a branch off the compressor's input, so `108` is both PRE COMP and the filter's input — they are one tap,
 not two — and `109` is a key signal rather than audio.
 
@@ -899,26 +885,22 @@ is the same assumption the shipped COMP curve carries.
 
 - **The compressor.** Its threshold is an internal value driven by Comp Drive, and the drive adds gain
   of its own — so that one knob moves the corner *and* lifts the output, which is what the operator
-  sees on the OUT lane. **Comp Drive has two regions, meeting at raw 31.** At and above it the
-  threshold parameter owns the corner and the drive slides it, both at 0.2 dB per raw. Below it the
+  sees on the OUT lane. **Comp Drive has two regions, meeting at a drive of 1.55.** At and above it the
+  threshold parameter owns the corner and the drive slides it, both at 0.2 dB per step. Below it the
   corner is the drive's own: it runs from 0 dBFS at a drive of zero down to whatever the threshold
-  asks for at raw 31, so the threshold keeps only `drive / 31` of its 0.2 dB per raw there. Measured
-  on a URX44V (System 1.3.1.0) off the host's recording of the compressor's own output: the corner
-  falls 0.8468 dB per drive step below raw 31 against 0.2004 above it, the threshold moves it 0.1616 /
-  0.1745 / 0.1938 dB per raw at drives 25 / 27 / 30 against 0.2004 at drive 60, and the two regions
-  meet at drive 30.998. **The boundary is that one drive and not a curve across both parameters** —
-  sweeping the drive with the threshold held at raw 30 produces no kink at all, and the corner starts
-  at drive 31 as a single line of slope 0.2006 dB per step (RMS 0.0022 dB over 22 points). It also explains
+  asks for at 1.55, so the threshold keeps only `drive / 1.55` of its 0.2 dB per step there. **The
+  boundary is that one drive and not a curve across both parameters** — sweeping the drive with the
+  threshold held produces no kink at all, and from the boundary up the corner moves as a single line.
+  It also explains
   what a low drive looks like: the corner is then above any real signal, so the compressor reads as
   switched out rather than merely slack, and the reduction that is *drawn* stays with it. **A drive of
   zero is still its own behaviour** rather than the ramp's bottom end — the ramp would leave the corner
-  at 0 dBFS, where a Soft knee reaches far enough down to draw 0.2 dB on a -19.9 dBFS tone, and the
-  unit produces none at any knee while the same tone at drive 10 already gets 1.9 dB. Corner and knee
-  together were then checked against the unit at Soft, Medium and Hard, at drives 10, 20, 24 and 28:
-  the drawn reduction and the measured one agree to 0.107 dB at worst over those twelve. The knee is
+  at 0 dBFS, where a Soft knee reaches far enough down to draw a reduction on a loud tone, and the
+  unit produces none at any knee while the same tone at a low drive already gets one. Corner and knee
+  together match the unit at Soft, Medium and Hard. The knee is
   **asymmetric**, opening further above the threshold than below. **The knee
   model is one function for both banks** (`kneeResponse` in `dyn-plot.ts`), taking the two reaches as a
-  pair; what stays per-bank is the DATA. `dyn-comp.ts`'s `KNEE_WIDTH_DB` is a measurement fitted as one
+  pair; what stays per-bank is the DATA. `dyn-comp.ts`'s `KNEE_WIDTH_DB` is fitted as one
   symmetric width, so that bank passes `up = down = width/2` — and on a symmetric pair the cubic is the
   same polynomial as the standard quadratic, satisfying the same four constraints (both edges, both
   slopes). The full-scale reduction annotation is read off the drawn curve with the gain terms taken
@@ -978,21 +960,20 @@ is the same assumption the shipped COMP curve carries.
   | HIGH +12 at 20 kHz | 0.1 | 0.5 | 1.8 | 4.0 | 6.8 | 10.0 |
   | HIGH +4 at 20 kHz | 0.0 | 0.1 | 0.4 | 1.0 | 1.9 | 3.2 |
 
-  The law fits all 67 readings, the single ones at a 1 kHz nominal included, to 0.05 dB RMS and 0.18 dB
-  at worst — the 8 kHz rows and the +4 dB row at 20 kHz among them, which were read after the law was
-  fitted, against predictions made from it. Each piece of it is what separates the readings: a
+  The law fits the unit across the range, the single readings at a 1 kHz nominal included — the 8 kHz
+  rows and the +4 dB row at 20 kHz among them, which the law predicted. Each piece of it is what
+  separates the readings: a
   second-order shelf fits none of the 1 kHz rows at any slope but S ≈ 0.5, which is the first-order
   shape; a half-gain point at a fixed ratio of the nominal frequency itself fits 1 kHz and misses the
-  20 kHz rows by up to 5.4 dB; and one factor for every gain is 0.6 dB out at its best. Drawn the 4-band way, the ±12 dB shelves at 1 kHz were 4.7 dB out an octave from the nominal
+  20 kHz rows by up to 5.4 dB; and one factor for every gain is 0.6 dB out at its best. Drawn the 4-band way, the ±12 dB shelves at 1 kHz are 4.7 dB out an octave from the nominal
   frequency. The peaking Q is not the 4-band's either: the 4-band's "the unit's Q is
   twice the biquad Q" does not hold here. MID takes the same
   gain-dependent law as the side-chain filter below, because the two are the same filter; the 4-band's
   constant sits adjacent to it in `eq-response.ts` so neither block's can be carried to the other by
   accident. A band switched off leaves the response and keeps its marker, which sits on the composite
   curve at its own frequency: selected-but-not-contributing is two states, and one picture reads both.
-- **Out Gain is drawn on the COMPRESSOR's baseline, and the unit applies it after the EQ.** Where the
-  unit applies it was measured: stepping `117` between +18 and -18 dB moved tap `112` one-for-one and
-  left `108` and `111` where they were (URX44V, 2026-08-15), so the strip runs
+- **Out Gain is drawn on the COMPRESSOR's baseline, and the unit applies it after the EQ**: Out Gain
+  moves tap `112` one-for-one and leaves `108` and `111` where they are, so the strip runs
   `108 → compressor → 111 → 3-band EQ → Out Gain → 112`. It is drawn on the other plot anyway, and the
   reason is the axis: this one's gain scale IS the band gain range, so an offset of up to 18 dB pushes
   the response off the frame and takes the shape the operator opened the screen for with it. The
@@ -1014,19 +995,16 @@ has an input that one does not: a filter in front of its **detector**. Its respo
 draws, from the three rows underneath it — the compressor's own sliders are on the other segment, since
 a slider whose curve is not the one drawn moves nothing the operator can see.
 
-**It is the same bell as the strip's MID band — one law draws both**, measured on a URX44V through two instruments that
-share the filter and nothing else — the compressor's own reduction with ratio at infinity and a Hard
-knee (where GR is the detector minus the threshold, and the threshold is a 0.2 dB-per-step ruler), and
-meter `109`, which carries the filter's output. The two agreed at a median of 0.00 dB over 488 paired
-readings, and the MID band read through the audio path came out identical to the side chain read
-through the detector path at 60 of 61 frequencies. Peak gain and centre frequency are exactly what is
-set; 0 dB is an exact bypass.
+**It is the same bell as the strip's MID band — one law draws both.** The compressor's own reduction
+and meter `109`, which carries the filter's output, read the side-chain filter alike, and the MID band
+read through the audio path is identical to the side chain read through the detector path. Peak gain
+and centre frequency are exactly what is set; 0 dB is an exact bypass.
 
 **The Q the unit prints is not the biquad's, and the factor is not a constant** — the bell narrows as
-the gain grows: `Q(biquad) = 0.238 × Q(displayed) × A^0.39`, with `A = 10^(|gain|/40)`. Measured
-0.3585 / 0.3085 / 0.2750 / 0.2615 at 18 / 12 / 6 / 3 dB, symmetric in the gain's sign, independent of
-the Q set across a 16:1 range and of the centre frequency. A single ratio costs 0.160 dB RMS against
-0.064 dB for the law, which is what fitting each gain separately leaves.
+the gain grows: `Q(biquad) = 0.238 × Q(displayed) × A^0.39`, with `A = 10^(|gain|/40)`, symmetric in
+the gain's sign, independent of the Q set across a 16:1 range and of the centre frequency. A single
+ratio costs 0.160 dB RMS against 0.064 dB for the law, which is what fitting each gain separately
+leaves.
 
 The MID band is drawn from this law and not from a CONSTANT ratio. A sweep that reads the width between
 the points 3 dB below the PEAK gives a constant of 0.82, but a biquad's Q is the width at half the gain
@@ -1146,11 +1124,10 @@ a slot rather than what is in it.
 - **On an output bus the two sides share one detector, and the app leaves that alone.** The engine
   carries a stereo-link flag the unit sets for itself — on by default where the compander binds a
   stereo bus, off where it binds a mono channel — and it is in neither the effect guide's parameter
-  table nor the unit's own screens. The app does not write it, which is what keeps the link: measured
-  by feeding one side and watching the other pass at 1 and be expanded to the meter floor at 0, with
-  a loud signal on that side reading the same under both, which is what separates a shared detector
-  from a second channel being switched off. The run is the private
-  `reference/work/device-tests/probe-compander-slot13-link.mjs`.
+  table nor the unit's own screens. The app does not write it, which is what keeps the link: linked, a
+  signal on one side opens the expander for the other side too; unlinked, the quiet side is expanded
+  on its own — and a loud signal on that side reads the same either way, so the flag shares the
+  detector rather than switching the second channel off.
 
 **The note under the display says when nothing reaches the signal**, in either of the two ways
 that happens. Above the held effect's own ceiling it names the effect and the ceiling, in the same
@@ -1282,10 +1259,10 @@ press alone moves nothing. The value itself is the range input every other row c
 the face with `pointer-events: none`, where it keeps the step, the keyboard and the wheel. It does
 not take the pointer because a range is a horizontal slider: while it did, a press at the face's
 centre took Clean's Volume from 1.9 to 5.0 — at the press in Chromium, at the first movement in
-WebKit — and the vertical drag the face's cursor offers moved nothing. WebView2 behaves the same way
-(154.0.4258.62, the Windows build driven over its DevTools socket, 2026-10-11): a press at the centre
-left Volume at 1.9, a 30 px upward drag took it to 3.9, a sideways one left it, and one wheel notch
-and one ArrowUp each stepped it by 0.1; before this change the same press took it to 5.0 there too.
+WebKit — and the vertical drag the face's cursor offers moved nothing. WebView2 behaves the same way:
+a press at the centre leaves the value, an upward drag raises it, a sideways one leaves it, and one
+wheel notch and one ArrowUp each step it once; with the range taking the pointer, the same press
+jumped it there too.
 
 **A card prints its tag beside the name.** On a knob card the tag qualifies the name, and under the
 knob it would read as a second value. The only other card that carries one is **the twelve-note
@@ -1312,8 +1289,8 @@ heading), which is a different thing from a row's tag.
 
 **The card labels are not shouted.** The design-system artifact's `.lbl` recipe carries no
 `text-transform` and the INS FX artifact's specimen uppercases them, so the two documents disagree;
-the unit settles it, and every insert-FX row it names is initial-capital (read 2026-08-28,
-architecture.md "Localization" carries that reading with the three other rows it decided). The
+the unit settles it, and every insert-FX row it names is initial-capital (architecture.md
+"Localization" carries that reading with the three other rows it decided). The
 labels are the catalogue's own strings, printed as the unit prints them.
 
 **Slot 7 is Volume on Clean and Gain on the other three**, which is what the unit prints. The
@@ -1385,12 +1362,9 @@ the label takes, softened.
 **The INS FX screen declares one reserved height for every family, 548px.** A reserve exists so
 the controls start at the same place whatever the screen shows, and this screen changes family
 without closing: a device follow that replaces the effect re-lays the same modal. The shared 520px is
-below some families' grids in Japanese — with macOS fonts at 1440x900, in Chromium and WebKit, the
-guitar amps' grid is 522.4-523.4px and the multi-band compressor's 525.4px on every face, against
-516.4px for Pitch Fix and 493.4px for the companders. 548px leaves 22.6px over the tallest of them for
-a wider font stack. With Windows fonts in WebView2 (2026-10-09, 154.0.4258.62, 1280x900, Japanese) the grids
-read 493.4-517.4px for the single-face families and 520.4px on the multi-band compressor's LOW, MID and HIGH
-faces, and the modal kept one height, 689px, across every type and face read. `e2e/insertfx.spec.ts` opens every family and every multi-band face in Japanese
+below some families' grids in Japanese, so this screen's reserve sits above the tallest face with room
+for a wider font stack, Windows fonts included, and the modal keeps one height across every type and
+face. `e2e/insertfx.spec.ts` opens every family and every multi-band face in Japanese
 and holds them to one height.
 
 **A gesture reads the Key the plan holds, not the one the row was drawn with.** A row's handlers
@@ -1437,26 +1411,19 @@ Scale is written.
 | Output bus | PRE INS FX (post-fader) | POST (post-insert) | `133:band` — x is the effect's BAND |
 
 `133` takes no node at all: one output insert effect runs device-wide (the `out-dyn` 1-of slot), so
-which bus holds it does not enter the address. A single-band effect reads band 0. Measured on a
-URX44V (2026-07-28): the multi-band compressor at full reduction read `133:0/1/2` as LOW / MID /
-HIGH with `133:3` unused, and a single-band output compander read `133:0` alone.
+which bus holds it does not enter the address. The multi-band compressor reads LOW / MID / HIGH on
+`133:0/1/2` and leaves `133:3` unused; a single-band effect reads band 0.
 
-`132` takes no node either, though its catalogue entry (`x_type: "mono"`, `x0..x3`) says it does.
-Measured on a URX44V (2026-08-27, CH 3 and CH 4, preamp noise at +70 / +65 dB
-head-amp gain into a Compander-S at -54 dB / 20:1): a compander engaged on CH 4 alone reported at
-`132:0`, one on CH 3 alone reported at `132:0`, and both engaged at once still produced one value
-there. `132:1`, `132:2` and `132:3` held `0` — the not-engaged value — in every configuration,
-including ones where the channel they would name was reducing. So a per-channel table addresses three
-meters that can never move and one that shows CH 1 whatever another channel is doing.
+`132` takes no node either, though its catalogue entry (`x_type: "mono"`, `x0..x3`) says it does: a
+compander engaged on any one channel reports at `132:0`, and two engaged at once still produce one
+value there. `132:1`, `132:2` and `132:3` hold the not-engaged value in every configuration, including
+ones where the channel they would name is reducing. So a per-channel table addresses three meters
+that can never move and one that shows CH 1 whatever another channel is doing.
 
-**With two holders it carries one of them, and not the other.** Measured on a URX44V (2026-08-28) by
-holding one channel's head amp fixed while stepping the other's through +70 / +65 / +60 / +70 dB, then
-swapping the roles: `132:0` moved with CH 4 across its four steps (-5.0 dB at -44 dBFS in, -1.0 at
--53) and did not move at all across CH 3's (-1.0 dB throughout, which is CH 4's held value). CH 3's
-reduction is reported nowhere. Which of "the higher-numbered holder" and "the most recently selected"
-that is has not been separated, and an earlier static pair of readings is consistent with neither, so
-the rule behind it is open — but the app does not need it, because it does not draw the lane in that
-state at all.
+**With two holders it carries one of them, and not the other**: `132:0` follows one holder's reduction,
+and the other's is reported nowhere. Which of "the higher-numbered holder" and "the most recently
+selected" that is has not been separated, so the rule behind it is open — but the app does not need
+it, because it does not draw the lane in that state at all.
 
 **The app's own menu makes one holder the ordinary case**: the input compander is a device-wide slot
 (`slot: "compander"`), so `insertFxMenu` locks every other node out of it and no plan the app authors
@@ -1467,9 +1434,7 @@ than one, rather than drawing the neighbour's number on this node's screen.
 ### Only the compander has a reduction to draw
 
 The guitar and Pitch Fix faces show two lanes, not three. This is not a display choice about a value
-the app could show: the unit reports no reduction for either. Measured on a URX44V (2026-08-27,
-re-taken 2026-08-28) on a channel driven by its own head amp at +70 dB, with the channel's GATE
-reduction meter (`107`) reading -57 dB in the same runs as the positive control:
+the app could show: the unit reports no reduction for either.
 
 | Effect on the channel | Its output | `132` on every band |
 | --- | --- | --- |
@@ -1517,8 +1482,7 @@ so MAIN carries none of them.
 
 **A bypassed band passes through at unity**, with neither its compression nor its make-up, so its
 figure is a straight line and its step on MAIN sits at 0 — not at the level the panel beside it still
-holds. Measured on a URX44V by silencing the other two bands so the post meter read this one alone:
-bypassed, it sat on its unity level and 92 dB above silence. The values stay editable and the line
+holds. The values stay editable and the line
 under the display says why the figure is flat.
 
 **A band's Gain is on two faces and is ONE value.** The two faces ask different questions of it: MAIN
@@ -1577,24 +1541,19 @@ drawn from.
 
 #### 1-knob is an operator control
 
-**Switching it on is not an edit but a preset.** Measured on a URX44V (2026-08-28) by arming every
-other value of the effect away from where the previous run left it and away from its neighbours, with
-the three band Thresholds as the positive control:
+**Switching it on is not an edit but a preset**: it moves every other value of the effect.
 
 | Value | At the ON transition | On a Level change |
 | --- | --- | --- |
-| Threshold / Ratio / Gain, per band | 121 / 0 / 37 | recomputed, to one value the three bands share |
-| Attack, per band | 17 / 19 / 9 | unchanged |
-| Bypass, per band | 0 — all three cleared | cleared again, over anything written in between |
-| Release | 7 | unchanged |
-| L-M / M-H Xover | 37 / 94 | unchanged |
-| Out Gain | 68 | unchanged |
+| Threshold / Ratio / Gain, per band | set to the preset | recomputed, to one value the three bands share |
+| Attack, per band | set to the preset, one value per band | unchanged |
+| Bypass, per band | all three cleared | cleared again, over anything written in between |
+| Release | set to the preset | unchanged |
+| L-M / M-H Xover | set to the preset | unchanged |
+| Out Gain | set to the preset | unchanged |
 
-Every armed value moved at the transition, and switching 1-knob off again left them where the preset
-had put them rather than restoring what they had been. The Bypass row is a separate reading, taken on
-2026-08-30: the same rig, LOW's Threshold as the positive
-control (121 → 81 across the Level change), and a write between the two samples to separate "cleared
-again" from "never moved".
+Every value moves at the transition, and switching 1-knob off again leaves them where the preset put
+them rather than restoring what they had been.
 
 **The knob is written, like the COMP and EQ knobs it is the third of.** Both of those have the same
 property — the COMP knob's ON resets its level to 0 and its detail to uncompressed — and both are
@@ -1621,14 +1580,12 @@ that carries other fixed values beside a knob that is on is set to them (archite
 layout", `plan-validate.ts`).
 
 **Arming before the knob goes on reads as a silence**, the trap the COMP knee sets too: a parameter
-driven to the value it already holds looks exactly like one nothing touched. `probe-mbc-fixed-scope`
-arms every value away from its neighbours BEFORE switching the knob on, so the ON transition puts the
-preset there and the Level change that follows writes the same preset value again — which is
-indistinguishable from not touching it. `probe-mbc-write-under-oneknob`
-separates them by writing the six away from the preset AFTER the transition: all six take the value,
-hold it through 3.2 s of polling, and go back to 17/19/9, 7 and 37/94 the moment the Level moves,
-while Out Gain keeps what was written. The control that makes the clean half mean anything is in the
-same run — the nine driven slots follow that Level change, so the knob was demonstrably computing.
+driven to the value it already holds looks exactly like one nothing touched. A value armed away from
+its neighbours BEFORE the knob is switched on gets the preset at the ON transition, and the Level
+change that follows writes the same preset value again — which is indistinguishable from not touching
+it. Writing the six away from the preset AFTER the transition separates the two: all six take the
+value, hold it, and go back to the preset the moment the Level moves, while Out Gain keeps what was
+written.
 
 **The Level row is locked while the knob is off**, which is the COMP knob's own treatment: it drives
 nothing there, and the row stays rather than being dropped so the section does not change height on a
@@ -1710,18 +1667,12 @@ unit's own number or it is a guess — and a guess has a shape no measurement pr
 round numbers, or one value repeated where the unit gives each band its own. The defaults here are
 the unit's.
 
-**Measured on a factory-initialised URX44V** (2026-08-29, 48 kHz, Standard mode): every engine
-slot armed to a sentinel, the selector released to None, then the type selected and the array
-read. Arming is what makes it a reading — the unit repopulates only the slots a type USES, so a
-dump after one selection is that type's defaults mixed with whatever the previous type left, and
-the two are indistinguishable wherever they agree. Twice, from two sentinels, with a slot
-counted only where both passes landed on the same value; the rest are reported as undecided
-rather than guessed. Ten types, no undecided slot, residual 0.
+**The defaults are the unit's own, read from a factory-initialised unit.** The unit repopulates only
+the slots a type USES, so a dump after one selection is that type's defaults mixed with whatever the
+previous type left, and the two are indistinguishable wherever they agree.
 
-**Each pass releases the selector to None first**: a same-value write does not repopulate — the
-unit does that on the transition INTO a type — so a pass that starts with the selector already at
-the target type measures nothing, and the run says so rather than reporting the sentinel as a
-default.
+**A same-value write does not repopulate** — the unit does that on the transition INTO a type — so a
+read taken with the selector already at the target type says nothing about that type's defaults.
 
 **Two of the defaults are not one number.** The multi-band compressor's Attack belongs to the
 band, not to the parameter, and the two companders are one family whose types come up at
@@ -2051,10 +2002,8 @@ open, so it sits above the gates rather than behind the thing it interrupts.
 
 The four drags this screen runs itself — the threshold cap, the plot, a knob card's face, and the value rows — end when the
 window loses focus, because no engine ends them for you: taking the OS foreground away with the button
-down fires `blur`, fires **no** `pointercancel`, and keeps the pointer capture (measured 2026-08-14 on
-Chromium and on the shipping WKWebView). WebView2 fires `blur` and no `pointercancel` the same way
-(154.0.4258.62, 2026-10-11): with a CONSOLE fader held through Alt+Tab, the pointer moves that went on
-reaching the page left its value where the window was lost. Without it, a press held through an app switch would go on
+down fires `blur`, fires **no** `pointercancel`, and keeps the pointer capture, in Chromium, WKWebView
+and WebView2 alike. Without it, a press held through an app switch would go on
 writing into the plan and out to the unit while another application is frontmost, and — since
 `history.ts` also ends its press at a `blur` — the remainder would land in a *new* undo entry. The cap,
 the plot and a knob card's face also end at their own mouse moving with no button held, the release the native context menu
@@ -2092,9 +2041,9 @@ every `<input type="range">` goes through it — the tuning rows, both of the in
 the shared `sliderRow`, and Device setup's brightness — for the same reason `wheelStep` is shared. A knob
 card's range goes through it too, with the hold started by a press on the face (`pressOn`), since the range
 takes no pointer of its own: its drag already ends at the blur, and the hold is what keeps a wheel notch
-from moving it while the window is away and the button still down. In WebView2 (2026-10-11), with the
-Volume face held and another application frontmost, a wheel notch over the knob reached the page —
-Windows delivers the wheel to an inactive window — and left the value where it was. What
+from moving it while the window is away and the button still down: in WebView2 a wheel notch over the
+knob reaches the page while another application is frontmost — Windows delivers the wheel to an
+inactive window — which is what the hold is for. What
 this screen adds is where a deferred refresh lands. The blur ends the gestures this view runs itself but
 leaves `grabbed` set, because the press is still in flight and a rebuild under it would hand the
 still-held pointer a live control — the state the hold exists to prevent. So the deferral outlives the
@@ -2141,7 +2090,7 @@ device limit.** The wire carries no subscription object at all — `reg_meter` s
 `src-tauri/src/vd.rs` unregisters `subs.meter_addrs` entry by entry and then registers the new
 addresses, so `vd_meters_subscribe` replaces rather than adds, and `vd_meters_unsubscribe` takes no
 address because there is only ever one set to drop. The device constraint recorded beside it is a
-different one: never bulk-post to `/vd/meters`, which has been seen to crash Device Center.
+different one: never bulk-post to `/vd/meters`.
 
 The replacement is silent and the CONSOLE does not self-heal, so an unannounced takeover would leave
 its bars frozen on the floor — indistinguishable from silence.
@@ -2404,13 +2353,12 @@ panel IS takes `set`.
   does not claim otherwise; it is for reading steady-state level relationships and setting the
   threshold against them, not for tuning attack / hold / decay.
 - **The FINE legend on the gains only.** The device's push-and-turn fine adjustment is *active* (0.1 dB) for
-  COMP Gain (make-up) and each EQ band's Gain. On System firmware V1.3 it was confirmed *inactive* for every GATE
-  parameter; since V1.5 the time controls take it too — GATE Attack / Hold / Decay, COMP Attack / Release, SSMCS
+  COMP Gain (make-up) and each EQ band's Gain; since System firmware V1.5 the time controls take it too — GATE Attack / Hold / Decay, COMP Attack / Release, SSMCS
   Attack / Release and DUCKER Attack / Decay. Pushed, one click is one stop of the table the app's slider steps
   through (`core/control/dyn-time-stops.ts`, or the SSMCS raw value itself); unpushed, COMP Attack — the one
   control turned that way so far — moves through a coarser subset of the same table. The app's slider already steps every stop, so the unit's fine step is its ordinary
   step and these rows carry no legend. The FINE legend therefore shows on the gain rows alone — a per-parameter
-  measurement, not a class rule.
+  fact, not a class rule.
 
 ## Edit → device data path
 
@@ -2487,10 +2435,8 @@ windows). The control arm in the same case, a LOW band gain
 drag with no `sideEffect`, is unchanged at 205/200 ms: only a drag that makes the unit recompute
 pays.
 
-**Measured on the unit, not inferred from that** (2026-08-02, URX44V V1.3.1.0, a throwaway build of
-the fix carrying the diagnostic instrumentation). A 1-knob LEVEL drag produced ten flush cycles and
-the settle ended at the device's own notify in **10 of 10** — 42-203 ms after the write was issued,
-write to read-complete 58-298 ms, and the 300 ms bound never reached. So the cost is the device's
+**On the unit, the settle of a 1-knob LEVEL drag ends at the device's own notify**, not at the
+bound. So the cost is the device's
 announcement window and nothing else, and it cannot be tuned away: lowering the bound does not touch
 a drag, and the alternative — deferring the read to pointer-up — leaves the band gains stale for the
 whole gesture, so the plot draws a curve the unit is not producing. Several flushes still reach the
