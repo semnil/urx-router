@@ -92,7 +92,7 @@ carries a one-line map of the same directories and points here.
   stereo CH EQ OFF, `channelEqUnavailable`, and takes the FX2 bus away entirely, `nodeRateDisabled` — one
   predicate for the graph's dimmed node, the CONSOLE strip that would otherwise offer a live fader into a
   bus the unit is not running, and every send column aimed at it). These are **UI-only**: the device accepts and holds writes to
-  the "unavailable" params at 192 kHz (measured), so the write set is never gated by rate — see "Sample rate
+  the "unavailable" params at 192 kHz, so the write set is never gated by rate — see "Sample rate
   and Follow USB". It also owns the insert-FX menu (`insertFxMenu` returns every option with its lock
   reason, `"rate" | "link" | "slot" | null`, so the inspector and the console are both defined over the one
   table. The inspector renders a locked option as disabled whatever the reason, so a new reason reaches it with
@@ -182,11 +182,11 @@ carries a one-line map of the same directories and points here.
   (`NODE_TAPS_URX22` / `NODE_TAPS_URX44`), dBFS decoding, latest-value store; the gain-reduction meters live
   in their own table with their own decode (`grAddr(kind, node)` / `decodeGrDb`) because a reduction is not
   a level and `tapsFor` doubles as the CONSOLE meter-point selector's contract; the two idle values are
-  measured states (one for a processor not engaged, and OVER for one engaged with nothing to reduce) and a GR
+  two distinct states (one for a processor not engaged, and OVER for one engaged with nothing to reduce) and a GR
   figure excludes any makeup gain; for the CONSOLE view. `tapsFor`/`tapFor`/`hasMeter`/`defaultTapKey` take
   an optional `modelId` and silently fall back to the URX44 table without it, so every resolution site must
-  pass `getModel().id`) / `eq-response.ts` the 4-band PEQ's measured frequency response (RBJ biquads with
-  the three corrections measuring the unit forced: its Q is twice the biquad Q, pass filters ignore Q, a
+  pass `getModel().id`) / `eq-response.ts` the 4-band PEQ's frequency response as the unit produces it (RBJ biquads with
+  the three corrections the unit's response requires: its Q is twice the biquad Q, pass filters ignore Q, a
   shelf's nominal frequency is its −3 dB-from-plateau point from 6 dB of gain up; pinned against the device sweeps in
   `eq-response.test.ts`) / `env.ts` build-time flags (`DEMO`: demo builds hide save/image export and instead
   show share-URL / plan-JSON download buttons) / `settings.ts` user preferences (the Preferences modal's
@@ -534,10 +534,10 @@ carries a one-line map of the same directories and points here.
   a wiring the unit cannot hold and, while Live sync is up, an HPF frequency the control link cannot take
   (`app/undo-refusal.ts`), asked of the state the patch would leave rather
   than of the keys it carries; `peekUndo` answers with the
-  patch that would land, which is the entry's inverse). A text field / textarea / `contenteditable` keeps the chord (no `preventDefault`) — measured on
-  macOS: the page receives `Cmd+Z` even with a native Edit menu installed, and `preventDefault` is what
+  patch that would land, which is the entry's inverse). A text field / textarea / `contenteditable` keeps the chord (no `preventDefault`) — on
+  macOS the page receives `Cmd+Z` even with a native Edit menu installed, and `preventDefault` is what
   suppresses WebKit's own field undo. `menu(kind)` is the macOS Edit menu's entry point and delegates to
-  that field's own undo (`document.execCommand`, measured working in WKWebView) so the menu cannot mean
+  that field's own undo (`document.execCommand`, which works in WKWebView) so the menu cannot mean
   something different from the chord; `notifyDepth` reports the depth only on a real transition, since
   `note()` fires per edit and each report crosses IPC to a native menu item / `keys.ts` who owns a
   keystroke: `ownsNativeUndo` (the text-surface allowlist both undo paths share) and `isChord` (asked by
@@ -597,7 +597,7 @@ carries a one-line map of the same directories and points here.
   second window needs no capability beyond the relay pair: `capabilities/midi-window.json` grants the two relay
   commands and, of core, only the devtools hotkey a debug build injects — no event emit or listen, so a script
   in it cannot raise an event the main window listens for. It raises itself when learn turns ON and deliberately NOT
-  when a binding lands — measured on macOS: a click on a window that is not active does not reach the
+  when a binding lands — on macOS a click on a window that is not active does not reach the
   webview (`accept_first_mouse` defaults to false), so raising per binding would make every following assignment
   two clicks; gang members render contiguously below their head with a Linked tag, and the Behavior column's
   vocabularies are printed as a key under the table — for the vocabularies the list actually uses, since a
@@ -683,7 +683,7 @@ carries a one-line map of the same directories and points here.
   and a pitch tracker are not derivable from the parameters and the unit meters neither, so those faces are a
   lane rack alone; `DynPlotProcessor` keeps `plotGeo` / `drawAxes` / `drawCurve` required together wherever one
   of them is supplied, and the descriptor's own `display` decides per family whether the column carries a plot
-  at all. The EQ's filter model is `core/eq-response.ts` (measured: the unit's Q is twice the biquad Q,
+  at all. The EQ's filter model is `core/eq-response.ts` (the unit's Q is twice the biquad Q,
   pass filters ignore Q, a shelf's nominal frequency is its −3 dB-from-plateau point from 6 dB of gain up).
   **Every plot draws
   its curve at the true value and the host clips it to the plot area** — the `drawAxes` / `drawCurve` split
