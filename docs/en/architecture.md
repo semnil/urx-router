@@ -647,7 +647,10 @@ carries a one-line map of the same directories and points here.
   the one whose node is not the node it tunes, since a ducker hangs under a stereo channel keyed by a wire
   from somewhere else, so its lanes are gathered from three places instead of read off the node the screen
   opened on — and `dyn-ssmcs.ts` the one that is three faces of one bank rather than one processor, moved between from
-  the bar over the display without closing. `insert-fx-screen.ts` is the one that stands for several effects
+  the bar over the display without closing. `dyn-geq.ts` is an output bus's Flex12GEQ: its display column is the
+  thirty-one band gains as vertical faders (`parts.faders()`, which the host lays out from the bound fields when a
+  binding asks for a rack), one side at a time from the bar, and a band's move that leaves or reaches 0 dB re-locks
+  the rack in place against the twelve-band rule rather than rebuilding it under the pointer. `insert-fx-screen.ts` is the one that stands for several effects
   rather than one: what it shows is the insert effect the node HOLDS, which is a plan value another surface
   changes, so it resolves the family on every call and a device follow re-binds the same modal instead of
   closing one screen and opening another. It carries no EFFECT TYPE row deliberately — a selector write refills
@@ -3548,6 +3551,12 @@ at that rate; a read brings the unit's own selectors. The picker names what came
 it back with the rate; during Live sync the re-clock confirm names it before anything is written; the three-way names
 it on the ADOPT arm's own line (`#rate-choice-adopt-note`) and leaves the insert line out of the shared note while it
 does, since that note says the plan keeps what the rate leaves out.
+
+**A bus on Flex12GEQ goes back to 4band PEQ the same way.** Above 48 kHz the unit offers no Flex12GEQ: it puts a bus
+running one back to 4band PEQ with every GEQ band at 0 dB, and returning to 48 kHz leaves it there. The same
+`changePlanSampleRate` does that to the plan (`geqOffAtRate`, `core/geq.ts`), and the same three places name the
+buses before or after the change, from `geqAboveRate`. A load and a device read leave the type as written or read; at
+that rate the Inspector holds the EQ Type and the GEQ screen holds every row, and the write sends no GEQ value.
 
 **The rate settle also names what the change costs the microSD recorder**, which, with taking an insert off (the
 paragraph above), is a rate side effect the unit ACTS on rather than merely refuses: it lowers its own Track Count

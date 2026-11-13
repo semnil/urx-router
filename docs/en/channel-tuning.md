@@ -610,6 +610,53 @@ that cuts -13 dB at 500 Hz passes it untouched at both rates, while the paramete
 and returned. The rows lock with the rate's own sentence rather than the device-driven one, and the
 response is drawn sunk instead of left looking effective.
 
+## GEQ
+
+**An output bus's Flex12GEQ** (STEREO, MIX 1, MIX 2; System firmware V1.5), the 31-band graphic EQ a
+bus runs in place of its 4-band PEQ when the Inspector's EQ Type says Flex12GEQ. Each type keeps its
+values while the bus runs the other, and neither reaches the signal then — so the EQ section's launcher
+and the CONSOLE strip's EQ opener open the screen of the type the bus runs.
+
+**The display column is thirty-one vertical faders**, one per band from 20 Hz to 20 kHz on the
+1/3-octave series, named as the unit labels them. There is no response curve: the unit draws its GEQ as
+faders too, and the faders together draw the curve, since each one's fill runs from 0 dB to its value
+and a cut and a boost read in opposite directions. A reading and a name each reach five characters,
+wider than a column, so neighbouring faders put them on alternate lines. The level lanes stay beside the
+rack — PRE EQ in, PRE FADER out — as on the 4-band screen.
+
+**One side at a time.** The bar over the display switches between the two sides (ST L / ST R on STEREO,
+MIX *n* L / R on a MIX), as the unit's screen does. Beside the rack are the shown side's [GEQ] button,
+the GEQ Link, the side's GEQ Limit, Available Bands and Gain Flat.
+
+**What the unit does to the values, the app does at the edit** (`core/geq.ts`), so the screen, the
+Inspector and MIDI make the same move:
+
+- A band moves on 0.5 dB steps inside its side's GEQ Limit (±15, ±12 or ±6 dB, or −24 to 0 dB).
+  Narrowing the limit pulls that side's bands in, and widening it again does not restore them.
+- At most twelve bands of one side are away from 0 dB. Once twelve are, every fader at 0 dB locks and
+  Available Bands reads 0; a band returned to 0 dB frees the rest at once. The rack re-locks in place
+  rather than rebuilding, so a drag in flight keeps its pointer.
+- Turning the GEQ Link on copies the source side's bands and limit onto the other side, and while it is
+  on, a band, the limit and Gain Flat on one side reach the other too. The [GEQ] button is per side and
+  the link does not carry it.
+- Switching the EQ Type to Flex12GEQ turns the bus's EQ ON on, and on a MIX turns the GEQ Link off.
+
+**Three things lock a fader**, each with its own tag:
+
+- the twelve-band rule;
+- during Live sync, STEREO's bands above 20 Hz, which the control link does not write: they show the
+  unit's value and follow it ([known-issues.md](known-issues.md));
+- a sample rate above 48 kHz, where the unit offers no Flex12GEQ. Every row locks, and so does the EQ
+  Type in the Inspector.
+
+**Above 48 kHz** a bus on Flex12GEQ goes back to 4band PEQ with every GEQ band at 0 dB, in the plan as on
+the unit, and returning to 48 kHz leaves it there. The rate change names the buses it moved: in the
+status line, in the confirm a rate chosen during Live sync raises, and on the adopt arm of the rate
+dialog.
+
+**The note over the screen** says, first matching first, that the bus's EQ ON is off, that the bus runs
+4band PEQ, or that the shown side's [GEQ] is off.
+
 ## DUCKER
 
 **The one screen that does not tune the node it opens on.** GATE / COMP / EQ live inside a channel;
@@ -2130,6 +2177,9 @@ per address, so a batch carrying more than one frame for an address keeps only t
 | CONSOLE FX strip | A face reading `EFFECT` and a `▸` beside it. The face is drawn lit and cannot be pressed: the unit has no on/off for an FX channel's effect, which is always in, and the face's tooltip says so. The `▸` opens the EFFECT TYPE popover, whose footer carries the launcher and whose rows open the screen on what they choose |
 | GRAPH inspector, FX Effect | The same full-width button, below the EFFECT TYPE selector. Never inert — an FX channel always holds an effect |
 
+On an output bus the EQ section's launcher and the CONSOLE strip's EQ opener follow the bus's EQ Type:
+while the bus runs Flex12GEQ they open the [GEQ](#geq) screen instead of the 4-band one.
+
 In SSMCS mode the inspector keeps all four sections and hands each launcher over: the SSMCS section
 opens the MAIN face, and the COMP and EQ sections open the COMP and EQ faces of the same bank. They
 keep the shipped screens' own labels ("Comp screen", "EQ screen") rather than gaining their own: the
@@ -2205,6 +2255,13 @@ and the same learn gesture the CONSOLE strips use (`ui/midi-learn.ts`; the catal
   enum selector.
 - **The DUCKER's scope is `@ducker`, and every key it draws is assignable** — it has no locked row and
   no enum selector.
+- **A GEQ band binds to that side and that band.** `@geq.l.17` is the L side's 1 kHz band whichever side
+  the bar shows, and `@geq.l` / `@geq.r` carry each side's [GEQ] button. The GEQ Link, the GEQ Limit and
+  Gain Flat are not offered — two enum selectors and a one-shot action. A band's travel is its side's GEQ
+  Limit, as the fader's is. It refuses a write wherever the fader is locked, and every one of those locks
+  keeps the fader assignable, since each is a state the value is in now and a mapping outlives it. A
+  mapped fader carries the CONSOLE's corner dot on its top right rather than the rows' gutter dot: a
+  card is one fader wide and has no gutter.
 - **The grid is the field table's, and each side reaches it its own way.** The **slider** is a native
   range built from the field: a linear one carries its own `min` / `max` / `step` and its value, a
   logarithmic one or one with a stop table carries positions (`0..logSteps`, or the table's indices, by 1)

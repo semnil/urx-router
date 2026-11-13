@@ -132,6 +132,26 @@ but writes only the twenty stops from 40 to 118 Hz:
 > turned while pushed in: the same sixty stops either way. A 42.5 Hz written over the control
 > connection reads 42.5 on the unit's screen. Not measured on the URX22 or the URX44.
 
+## STEREO's Flex12GEQ bands above 20 Hz cannot be written to the device
+
+Since System firmware V1.5 an output bus (STEREO, MIX 1, MIX 2) can run **Flex12GEQ**, a 31-band
+graphic EQ, in place of its 4band PEQ. Every band of MIX 1 and MIX 2 can be written over the
+control connection. On STEREO only the 20 Hz band can: the control connection refuses a write to
+the other thirty bands, on either side.
+
+URX Router therefore treats those thirty bands the way it treats the CH → FX send Pre/Post:
+
+- The plan records any value for them, and the GEQ screen edits them while no session is up.
+- **Write to device** leaves them out, and the unit keeps its own values there.
+- **During Live sync** their faders on STEREO's GEQ screen are read-only and show the unit's
+  value. A change made on the unit's own GEQ screen reaches the app, since the unit announces it
+  and the app subscribes to those bands although it never writes them. A MIDI control mapped to
+  one of them takes no value while the session is up.
+
+> Confirmed on a URX44V and a URX22 (System 1.5.0.1) by writing each band of each side over the
+> control connection and reading it back, and on the URX44V by moving the bands on the unit's own
+> GEQ screen while watching the announcements. Not measured on the URX44.
+
 ## Nothing is written while the unit is under Console Lock
 
 System firmware V1.5 adds **[Console Lock]** to the unit's SETUP menu. The unit goes on taking
