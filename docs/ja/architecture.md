@@ -167,7 +167,7 @@ flowchart TD
   ブローカーのメーターアドレス表 (`NODE_TAPS_URX22` / `NODE_TAPS_URX44`)、dBFS デコード、最新値ストア。
   ゲインリダクションのメーターは専用の表と専用のデコード (`grAddr(kind, node)` / `decodeGrDb`) を持つ —
   リダクションはレベルではないため — また `tapsFor` は CONSOLE のメーターポイント選択の契約も兼ねる。2 つの
-  アイドル値は実測された状態であり (`0` = プロセッサが動作していない、OVER = 動作していて減らすものが無い)、
+  アイドル値は実測された状態であり (一方はプロセッサが動作していない、OVER のほうは動作していて減らすものが無い)、
   GR の数値はメイクアップゲインを含まない。CONSOLE ビュー向け。`tapsFor` / `tapFor` / `hasMeter` /
   `defaultTapKey` は省略可能な `modelId` を取り、渡さないと黙って URX44 の表へフォールバックするので、
   すべての解決地点で `getModel().id` を渡さなければならない) / `eq-response.ts` 4 バンド PEQ の実測周波数特性
@@ -507,7 +507,7 @@ flowchart TD
   出ていくエフェクトの値へ何をしなければならないか。ここは描画済み DOM の検査がちょうど素通りしてしまう段
   (裸のスロットキー) である / `console.ts` CONSOLE ビュー (ミキサー型のレベル一覧。GRAPH/CONSOLE タブで
   切り替える、同じプランの別ビュー。フェーダー / MUTE / EQ の編集はグラフと同じライブ同期のために
-  `markChanged` を通る。ストリップごとの SENDS ラック。スクリブルの電源 LED が各ノードマスタ (CH_ON / Bus
+  `markChanged` を通る。ストリップごとの SENDS ラック。スクリブルの電源 LED が各ノードマスタ (チャンネル ON / Bus
   マスタ ON / osc.on) をトグルし、OFF 状態は共有の `isNodeInactive` で減光する。ライブメーターはライブ同期中
   だけ、約 10 Hz) / `glyph.ts` `∞` グリフを `.glyph-inf` span で包み、等幅フォントの小さい x ハイトを補正する
   (コンソールの読み値とインスペクタの値が共有)。名前・状態行・案内の行・ツールチップの読み上げの形を画面読み上げに
@@ -1374,22 +1374,21 @@ CONSOLE のフェーダーとインスペクタの Level スライダー (バス
   send ごとのレベルは列操作時のラックヘッダ読み値で判別する。モノフォントの `∞` は x-height で描かれ数字より小さく見えるため、`-∞` 表示は
   `∞` を拡大して数字と同じ高さに揃える (`setLevelText` が `∞` を `.glyph-inf` span で包む。CONSOLE の読み値・dB スケールと
   インスペクタの値表示で共通の `src/ui/glyph.ts`)。
-- **ライブメーター** — メーター列は常時表示し、信号が流れるのはライブ同期中のみ (`console.setLive`・待機時は底=空)。
-  `core/meters.ts` がノード id を broker のメーターアドレス (`meterId:x`) へ写像し、生値 (deci-dBFS、
-  32767 = OVER) を dBFS へデコードして `MeterStore` に保持する。UI は前回の描画から 1000/30 ms 経ったときだけ描く
-  `requestAnimationFrame` ループでサンプリングする。60 Hz の画面では 2 フレームか 3 フレームに 1 回の描画になるので、
-  30 fps を下回る (WebKit で 22.2 fps、`node scripts/meter-bench-run.mjs --seconds 20`、2026-10-10)。実機の更新は約 10 Hz なので
-  これ以上速く描いても利得が無い。速いアタック・遅いリリースと
-  ピークホールド、チャンネル別 OVER ラッチ (上部の OVER 枠) で描画する
-  (前回値と整数% で比較し、変化したレーン (ステレオは L/R) だけ書き込む)。**描画は合成のみ (compositor-only) に保つ**: バーは
-  `height`/`bottom` ではなく `transform: scaleY`/`translateY` を 0..1 の型付き (`@property`) カスタムプロパティで
-  駆動し、毎フレームの style 再計算・レイアウト・ペイントを避ける。数値読み値のテキストだけは数フレームに 1 回に
-  間引き (テキスト変更はレイアウトを起こすため)、`will-change` は信号のあるストリップ (`.live`) にのみ付けて無音
-  ストリップの合成層を解放する。まだ 1 度も流れていないタップは読み値そのものを返さず (`readingTap` → null)、
-  セルは "—" のままにする — 開始していないストリームは無音の測定ではなく、静止値を表示すると測定したことに
-  なってしまうため。購読は画面に出ているストリップかつ現機種に存在する
-  メーターだけに絞る (`startMeters` が各ストリップの選択タップを集めて `tapAddrs` / `subscribeMeters` へ渡す)。
-  メーター id は実機 URX44V で確認した値で、写像の無い機種は表示しない。
+- **ライブメーター** — メーター列は常時表示し、信号が流れるのはライブ同期中のみ (`console.setLive`・待機時は
+  底=空)。`core/meters.ts` がノード id を broker のメーターアドレス (`meterId:x`) へ写像し、生値 (deci-dBFS、
+  最大値は OVER を表す) を dBFS へデコードして `MeterStore` に保持する。UI は前回の描画から 1000/30 ms
+  経ったときだけ描く `requestAnimationFrame` ループでサンプリングする。60 Hz の画面では 2 フレームか 3 フレームに
+  1 回の描画になるので、30 fps を下回る (WebKit で 22.2 fps、`node scripts/meter-bench-run.mjs --seconds 20`、
+  2026-10-10)。実機の更新は約 10 Hz なのでこれ以上速く描いても利得が無い。速いアタック・遅いリリースと
+  ピークホールド、チャンネル別 OVER ラッチ (上部の OVER 枠) で描画する (前回値と整数% で比較し、変化したレーン
+  (ステレオは L/R) だけ書き込む)。**描画は合成のみ (compositor-only) に保つ**: バーは `height`/`bottom` ではなく
+  `transform: scaleY`/`translateY` を 0..1 の型付き (`@property`) カスタムプロパティで駆動し、毎フレームの style
+  再計算・レイアウト・ペイントを避ける。数値読み値のテキストだけは数フレームに 1 回に間引き (テキスト変更は
+  レイアウトを起こすため)、`will-change` は信号のあるストリップ (`.live`) にのみ付けて無音ストリップの合成層を
+  解放する。まだ 1 度も流れていないタップは読み値そのものを返さず (`readingTap` → null)、セルは "—" のままにする —
+  開始していないストリームは無音の測定ではなく、静止値を表示すると測定したことになってしまうため。購読は画面に
+  出ているストリップかつ現機種に存在するメーターだけに絞る (`startMeters` が各ストリップの選択タップを集めて
+  `tapAddrs` / `subscribeMeters` へ渡す)。メーター id は実機 URX44V で確認した値で、写像の無い機種は表示しない。
 - **配信経路** — Rust 側 (`src-tauri/src/vd.rs`) はメーター購読 (`MetersSubscribe`/`MetersUnsubscribe`) を
   受けると各アドレスを broker に登録し、ソケット排出 (`pump`) でメーター `notify` フレームを Tauri Channel 経由で
   フロントへ転送する (`pump` が各フレームを `parse_meter` で解析し、排出 1 サイクル分を `Vec<MeterUpdate>` の
@@ -1977,7 +1976,7 @@ MIDI パネルの `midiErrorStatus` が同じ役回りで、`midi-port-not-found
   この再送は消去を起こしたレートのままでも受理され、対応レートへ戻しても保持される。レートが戻るのを待たずに
   送るのはこのため。読み戻しは走行した 3 エンジン (Pitch Fix・入力 Compander・出力 MBC) の各 64 スロットを
   遷移前の値と比べて一致したが、非既定の sentinel を置いたのはエンジンごとに 1 スロット (Pitch Fix の
-  Speed 37・Compander の Threshold -32.10 dB・MBC の LOW Threshold raw 99) で、セレクタ書込は配列を型の
+  Speed 37・Compander の Threshold -32.10 dB・MBC の LOW Threshold -28 dB) で、セレクタ書込は配列を型の
   既定値で埋め直すため、各エンジンの残り 63 スロットの一致は再送の着地と埋め直しを区別しない。**もう一方の消去** —
   ペア両メンバーのエフェクトを落とす Signal Type 遷移 — と分けるのは、読み出しの値ではなく notify の
   流れである。URX44V 実測: 遷移は両メンバーのセレクタと ON を告知し、レート逸脱はレートだけを告知して

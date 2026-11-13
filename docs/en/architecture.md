@@ -182,7 +182,7 @@ carries a one-line map of the same directories and points here.
   (`NODE_TAPS_URX22` / `NODE_TAPS_URX44`), dBFS decoding, latest-value store; the gain-reduction meters live
   in their own table with their own decode (`grAddr(kind, node)` / `decodeGrDb`) because a reduction is not
   a level and `tapsFor` doubles as the CONSOLE meter-point selector's contract; the two idle values are
-  measured states (`0` = the processor is not engaged, OVER = engaged with nothing to reduce) and a GR
+  measured states (one for a processor not engaged, and OVER for one engaged with nothing to reduce) and a GR
   figure excludes any makeup gain; for the CONSOLE view. `tapsFor`/`tapFor`/`hasMeter`/`defaultTapKey` take
   an optional `modelId` and silently fall back to the URX44 table without it, so every resolution site must
   pass `getModel().id`) / `eq-response.ts` the 4-band PEQ's measured frequency response (RBJ biquads with
@@ -558,7 +558,7 @@ carries a one-line map of the same directories and points here.
   (the bare slot key) / `console.ts` CONSOLE view (mixer-style level overview. Switched via the
   GRAPH/CONSOLE tabs; an
   alternate view of the same plan; fader/MUTE/EQ edits go through `markChanged` for the same live sync as
-  the graph; per-strip SENDS rack; a scribble power LED toggles each node master (CH_ON / bus master ON /
+  the graph; per-strip SENDS rack; a scribble power LED toggles each node master (channel ON / bus master ON /
   osc.on) with the off-state dimmed via the shared `isNodeInactive`; live meters only during Live sync, ~10
   Hz) / `glyph.ts` wraps the `∞` glyph in a `.glyph-inf` span to compensate the reduced x-height of mono
   fonts (shared by console readouts and inspector values), and hands a screen reader the spoken form of a
@@ -1739,24 +1739,23 @@ drag lands on the nearest.
   header readout on column touch. The mono font draws `∞` at x-height, smaller
   than the digits, so a `-∞` readout scales the `∞` up to digit height (`setLevelText` wraps each `∞` in a
   `.glyph-inf` span; shared `src/ui/glyph.ts` covers the CONSOLE readout, the dB scale, and the inspector values).
-- **Live meters** — the meter column is always shown; signal only flows while Live sync is on
-  (`console.setLive`; at rest it sits at the floor). `core/meters.ts` maps node ids to broker meter addresses
-  (`meterId:x`), decodes the raw value (deci-dBFS, 32767 = OVER) to dBFS, and holds the latest reading in a
-  `MeterStore`. The UI samples the readings on a `requestAnimationFrame` loop that paints only once 1000/30 ms
-  have passed since its last paint. On a 60 Hz display that lands on every second or third frame, so the loop
-  paints below 30 fps (22.2 fps in WebKit, `node scripts/meter-bench-run.mjs --seconds 20`, 2026-10-10); the device
-  updates at ~10 Hz, so painting faster gives no gain and renders with fast attack / slow release, peak hold,
-  and a per-channel OVER latch (the top OVER box), writing only the lanes (L/R on a stereo strip) that changed
-  (compared at integer-percent). **The paint is kept compositor-only**: the bars are driven by
-  `transform: scaleY` / `translateY` from typed (`@property`) 0..1 custom properties rather than an animated
-  `height` / `bottom`, so a moving meter never triggers per-frame style-recalc / layout / paint. Only the numeric
-  readout text is throttled to every few frames (a text change forces layout), and `will-change` is applied only
-  to strips with signal (`.live`) so idle strips drop their compositor layers. A tap that has streamed nothing
-  yet resolves to no reading at all (`readingTap` → null) and its cell holds "—": a stream that has not started
-  is not a measurement of silence, and printing the resting floor would claim one. Subscriptions are scoped to the
-  on-screen strips that have a meter in the current model (`startMeters` collects each visible strip's
-  selected tap and passes it through `tapAddrs` / `subscribeMeters`). Meter ids were confirmed on a real
-  URX44V; models without a mapping show no meter.
+- **Live meters** — the meter column is always shown; signal only flows while Live sync is on (`console.setLive`; at
+  rest it sits at the floor). `core/meters.ts` maps node ids to broker meter addresses (`meterId:x`), decodes the
+  raw value (deci-dBFS, whose top value reads OVER) to dBFS, and holds the latest reading in a `MeterStore`. The UI
+  samples the readings on a `requestAnimationFrame` loop that paints only once 1000/30 ms have passed since its last
+  paint. On a 60 Hz display that lands on every second or third frame, so the loop paints below 30 fps (22.2 fps in
+  WebKit, `node scripts/meter-bench-run.mjs --seconds 20`, 2026-10-10); the device updates at ~10 Hz, so painting
+  faster gives no gain and renders with fast attack / slow release, peak hold, and a per-channel OVER latch (the top
+  OVER box), writing only the lanes (L/R on a stereo strip) that changed (compared at integer-percent). **The paint
+  is kept compositor-only**: the bars are driven by `transform: scaleY` / `translateY` from typed (`@property`) 0..1
+  custom properties rather than an animated `height` / `bottom`, so a moving meter never triggers per-frame
+  style-recalc / layout / paint. Only the numeric readout text is throttled to every few frames (a text change
+  forces layout), and `will-change` is applied only to strips with signal (`.live`) so idle strips drop their
+  compositor layers. A tap that has streamed nothing yet resolves to no reading at all (`readingTap` → null) and its
+  cell holds "—": a stream that has not started is not a measurement of silence, and printing the resting floor
+  would claim one. Subscriptions are scoped to the on-screen strips that have a meter in the current model
+  (`startMeters` collects each visible strip's selected tap and passes it through `tapAddrs` / `subscribeMeters`).
+  Meter ids were confirmed on a real URX44V; models without a mapping show no meter.
 - **Streaming path** — the Rust side (`src-tauri/src/vd.rs`) handles a meter subscription
   (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
   `notify` frames to the frontend over a Tauri Channel during the socket drain (`pump` parses each frame with
@@ -2429,7 +2428,7 @@ written at all:
   for the rate to come back before sending. The read-back compared the 64 slots of each of the three
   engines in the run (Pitch Fix, the input Compander, the output MBC) with their values before the
   transition and found them equal, but one slot per engine carried a non-default sentinel (Pitch Fix Speed
-  37, the Compander's Threshold -32.10 dB, the MBC's LOW Threshold raw 99): the selector write refills the
+  37, the Compander's Threshold -32.10 dB, the MBC's LOW Threshold -28 dB): the selector write refills the
   array with the type's defaults, so on the other 63 slots of each a match cannot tell a re-send that
   landed from the refill.
   What separates it from the OTHER clearing — a Signal Type transition, which drops the effect on both
