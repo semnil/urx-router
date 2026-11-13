@@ -1670,9 +1670,6 @@ the two are indistinguishable wherever they agree. Twice, from two sentinels, wi
 counted only where both passes landed on the same value; the rest are reported as undecided
 rather than guessed. Ten types, no undecided slot, residual 0.
 
-The private `reference/work/device-tests/probe-insfx-factory-defaults.mjs` is the run and
-`reference/work/device-tests/insfx-factory-results.json` the readings.
-
 **Each pass releases the selector to None first**: a same-value write does not repopulate — the
 unit does that on the transition INTO a type — so a pass that starts with the selector already at
 the target type measures nothing, and the run says so rather than reporting the sentinel as a
