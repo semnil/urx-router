@@ -641,21 +641,18 @@ rejects the wire before adoption, so what would be measured is the load report, 
 
 ### Where each tier runs
 
-The project boundary is also the CI tiering, and these are the numbers that cut it there. **Measured
-2026-08-11 on `d85af81`**, from the logs of one `ci.yml` run and one on-demand `race.yml` run — two
-workers per job, `ubuntu-latest`, inside the Playwright container. Machine time is the sum of the
-per-test durations the reporter prints, so it is the work rather than the wall clock the shards divide
-it into:
+The project boundary is also the CI tiering, and what cut it there is each tier's machine time — the
+sum of the per-test durations the reporter prints, so the work rather than the wall clock the shards
+divide it into:
 
-| Tier | Machine time | Slowest test | Runs from |
-| --- | --- | --- | --- |
-| `chromium` — the ordinary suite | 6.5 min | 5.8 s | `ci.yml`, sharded three ways, on every PR and push to main; and once more on `windows-latest`, also sharded three ways, on every one except Markdown/docs-only ones (the generated `model-*.md` aside) |
-| `race` — the harness | 24.6 min | 60 s | `race.yml`, sharded three ways by measured duration (below), on every PR except a documentation-only one, and on the version bump |
-| `race-webkit` | 2.1 min | 48 s | `race.yml`, its own job, on the same condition |
-| `app-webkit` — the app tier's layout invariants | — | — | `ci.yml`, its own job, on the same condition as the `windows-latest` run |
+| Tier | Runs from |
+| --- | --- |
+| `chromium` — the ordinary suite | `ci.yml`, sharded three ways, on every PR and push to main; and once more on `windows-latest`, also sharded three ways, on every one except Markdown/docs-only ones (the generated `model-*.md` aside) |
+| `race` — the harness | `race.yml`, sharded three ways by per-test duration (below), on every PR except a documentation-only one, and on the version bump |
+| `race-webkit` | `race.yml`, its own job, on the same condition |
+| `app-webkit` — the app tier's layout invariants | `ci.yml`, its own job, on the same condition as the `windows-latest` run |
 
-`app-webkit` carries no figure because no figure cuts it. Its boundary is the **engine**, not the
-time: the cases in it are the ordinary tier's own, re-run in the engine the macOS build renders in
+`app-webkit`'s boundary is the **engine**, not the time: the cases in it are the ordinary tier's own, re-run in the engine the macOS build renders in
 because their verdict is about a layout rule the two engines do not implement alike — the app chrome
 must not scroll, a named inner container must own the overflow, and what has to stay reachable must
 stay reachable. A rule that makes a strip clip its own overflow rather than hand it to the rack takes
@@ -664,23 +661,21 @@ no verdict on what ships. What the job spends is its fixed half — the image, t
 builds — rather than its handful of cases, which is also why it is not a fourth shard of the ordinary
 tier: WebKit is a separate browser download and each shard would pay for it to run nothing in it.
 
-**Read the ordinary tier's figure as a range rather than a budget.** The same 428 cases measured 5.2
-minutes in another run the same day, a fifth under the reading above — runner variance, not a change in
-the suite. The harness is steadier (12.5 against 12.3 minutes for shard 1 across two runs), which is
-what lets the comparison between the tiers survive noise neither figure is free of. The ordinary tier is
-also measured **as CI runs it**: since the coverage upload landed that means `pnpm test:e2e:coverage`, an
+**Read the ordinary tier's machine time as a range rather than a budget.** Runner variance moves it
+from run to run with no change in the suite. The harness's is steadier, which is what lets the
+comparison between the tiers survive noise neither figure is free of. The ordinary tier's time is also
+taken **as CI runs it**: since the coverage upload landed that means `pnpm test:e2e:coverage`, an
 unminified bundle and a native V8 collector, and that overhead is part of what a per-PR run costs.
 
 Case counts are deliberately not a column here. They move with every pull request that adds a test —
 the ordinary tier's had drifted 45 cases past what this table claimed before anyone noticed — and
 nothing about the tiering follows from them. What cut the boundary is the time.
 
-The harness is **about four fifths of the E2E machine time on its own** (79% of the ordinary-plus-race
-readings above), which is why it is a workflow of its own with a condition in front of it rather than
-three more shards in `ci.yml`: at six and a half minutes the ordinary suite is cheaper to run on every
-pull request than to run after the merge, and at twenty-five it is worth asking first whether this
-pull request can break it. Both figures have grown since the tiering was cut and the ratio has barely
-moved, which is the part the boundary actually rests on.
+The harness is **about four fifths of the E2E machine time on its own**, which is why it is a workflow
+of its own with a condition in front of it rather than three more shards in `ci.yml`: the ordinary
+suite is cheaper to run on every pull request than to run after the merge, and at about four times its
+cost the harness is worth asking first whether this pull request can break it. Both have grown since
+the tiering was cut and the ratio has barely moved, which is the part the boundary actually rests on.
 
 Where it runs is **every pull request except one whose diff is documentation alone, and the one that
 changes the app version**. Two clauses, and `detect` evaluates and prints both rather than returning
@@ -727,24 +722,23 @@ so the rule tests real paths rather than a rendering of them. `core.quotePath=fa
 non-ASCII third of the quoting, and `-z` does not imply `--no-renames`. `-z` costs a
 temporary file, since a NUL cannot survive a shell variable.
 
-**A comment-only diff is not excluded either.** That exclusion was measured before being dropped:
-over the 80 most recent first-parent merges on `main` (measured 2026-08-14), 42 touched `src/**`, and
-normalizing each changed file through esbuild with comments and whitespace stripped left 3 of those 42
-identical on both sides. It would have saved 3 runs, in exchange for a normalizer whose verdict has to
-be correct in the direction that skips.
+**A comment-only diff is not excluded either.** Normalizing each changed file through esbuild with
+comments and whitespace stripped leaves very few of the merges that touch `src/**` identical on both
+sides, so the exclusion would save very few runs, in exchange for a normalizer whose verdict has to be
+correct in the direction that skips.
 
-**How often the trigger fires.** Over the same 80 merges, **75** — the 5 it skips are the
-documentation-only ones. The two watch lists this replaced would have run on 52 and on 61 of them, and
-the four merges between those two figures and 75 are what the third leak above would have cost.
+**How often the trigger fires.** On every merge except a documentation-only one. The two watch lists
+this replaced would have run on fewer, and part of the difference is what the third leak above would
+have cost.
 
-The required workflows run in parallel, so a merge waits for the slowest of them, which on those 75 is
-this one. Its wall clock is the **slowest shard's** rather than a third of the machine time above, so
-how the tier is cut decides most of it.
+The required workflows run in parallel, so a merge waits for the slowest of them, and on a merge this
+one runs on, that is this one. Its wall clock is the **slowest shard's** rather than a third of the tier's machine
+time, so how the tier is cut decides most of it.
 
 **How the shards are sized.** Playwright's own sharding takes a contiguous slice of the collected order
 and sizes it by case COUNT (`filterForShard` walks the groups in path order and cuts on a cumulative
 count). What it counts is the cases that will RUN: a declared skip counts for nothing and lands in the
-shard holding the case in front of it, so the weights below sum to the runnable cases, not to everything
+shard holding the case in front of it, so the weights sum to the runnable cases, not to everything
 collected — unless nothing at all will run, in which case every collected case is counted. Equal counts are not equal times here: `t2-shape-change` through `t2f-shape-change` are six
 adjacent files in that order and are among the expensive ones, so one slice inherits them together — on
 the run this was derived from, shard 1 held `t2`, `t2b`, `t2c`, `t2d`, `t2e` and `t2f`. That run's three
@@ -766,10 +760,8 @@ can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
 
-**The current array.** `[53, 59, 70]` is the array derived from the race run of the 189-case corpus
-(2026-10-14), whose 182 runnable cases it splits. That run timed all 182 and the 7 declared skips are left
-out of the cut. Measured against its durations, under the two-worker model, its three shards run 277 / 278
-/ 282 s, against 271 s if the work divided evenly, and the runner reproduced the plan case for case.
+**The current array** is derived from a whole race run's per-test durations, and the run's declared
+skips are left out of the cut.
 
 A log assembled from two runs is the case none of that reaches on its own: where the halves overlap, a
 case timed twice with no retry between them gives it away, but halves that do not overlap cover the

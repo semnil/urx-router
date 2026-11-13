@@ -278,10 +278,11 @@ jobs:
 
   # The ordinary E2E suite (--project=chromium). It is cheap enough on a two-worker runner
   # that the alternative — a net firing only once the change is already on main — costs more
-  # than it saves. What it costs, and what the harness costs beside it, is measured once in
-  # docs/{en,ja}/live-race-harness.md ("Where each tier runs") and stated nowhere else: the
-  # copy that used to sit in this comment went stale without anyone noticing, which is the
-  # whole reason for the rule. The race harness is deliberately NOT here; see race.yml.
+  # than it saves. How its cost compares with the harness's, and why that puts the boundary
+  # here, is in docs/{en,ja}/live-race-harness.md ("Where each tier runs") and stated nowhere
+  # else: the copy of the figures that used to sit in this comment went stale without anyone
+  # noticing, which is the whole reason for the rule. The race harness is deliberately NOT
+  # here; see race.yml.
   e2e:
     needs: preflight
     runs-on: ubuntu-26.04
@@ -302,7 +303,7 @@ jobs:
     #
     # Three because the per-job floor stops paying: container pull, checkout, install and
     # the two vite builds are a fixed cost per shard, and past three the split buys less
-    # than that floor costs. The tier's own cost, and the fact that its equal-count split
+    # than that floor costs. Where the tier is cut, and the fact that its equal-count split
     # divides evenly where the harness's does not, belong to
     # docs/{en,ja}/live-race-harness.md ("Where each tier runs") and are not restated here.
     strategy:

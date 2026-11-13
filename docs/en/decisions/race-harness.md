@@ -221,9 +221,9 @@ shards are sized", and the commands are in `AGENTS.md`.
   title, so a comment moving one line in a spec while the branch is behind `main` shifts the keys
   and the derivation refuses the log. The order is: take `main` in, push, run the script on that
   push's run, paste the array into the ledger, push again. The script writes nothing.
-- **The paragraph in live-race-harness.md that states the current array has no check.** It was once
-  left two generations old. A commit that moves the array corrects the English and the Japanese
-  paragraph with it.
+- **The current array is written in the ledger alone.** live-race-harness.md once stated it in a
+  paragraph no check covered, and that paragraph was once left two generations old; the document now
+  says how the array is derived and leaves its value to the ledger.
 - **No pin refers to the ledger's array as a literal.** A fixture in
   `scripts/shard-weights.test.mjs` once held the old array and failed on a re-derivation that had
   nothing to do with it.
