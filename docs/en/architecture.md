@@ -3516,7 +3516,7 @@ turned on at its panel and no read has brought in yet, with the other switch on 
 older OFF would otherwise go out over it. An announcement that arrives while the converge runs joins that set, and
 each later read and round send asks it again (`exclude`); a round whose sends were already chosen goes out as chosen.
 
-`Write to device` therefore reads the device's clock state — Follow USB (848) and the running rate (766) — before
+`Write to device` therefore reads the device's clock state — Follow USB and the running rate — before
 the diff, and settles the rate before anything is sent (`settleSampleRate` in `main.ts`, `readClockState` in
 `client.ts`). Matching rates proceed unchanged. With Follow USB **off**, a mismatch is a plain confirm, since the
 plan's rate is the one that sticks. With it **on**, a modal (`ui/rate-choice.ts`) offers the two real answers —
@@ -3565,18 +3565,18 @@ send as it RESOLVES — everything but an explicit refusal, since the shell send
 answer never came may have landed and taken the count down with it — rather than from the outcomes the call
 returns, which a cancel between two sends throws away.
 
-**A rate is not written while the microSD recorder holds a file.** Param 836 reads 0 when the recorder is stopped, 1
-while it plays, 2 while a playback is paused, 3 while it records, 4 in record standby and 5 while a recording is
-paused, and while it is not 0 the unit keeps its own SETUP > GENERAL [Sampling Frequency] out of reach. A 766 written
+**A rate is not written while the microSD recorder holds a file.** The unit publishes the recorder's state — stopped,
+playing, playback paused, recording, record standby, recording paused — and while
+it is anything but stopped the unit keeps its own SETUP > GENERAL [Sampling Frequency] out of reach. A rate written
 over the link then is still accepted. During a playback the unit shows its Loading screen, the RECORDER screen comes
 back with no file names, and the playback stops; during a recording the RECORDER goes on showing the old rate and
-recording, and once it is stopped SETUP shows the new one. So the rate settle reads 836 (`readSdRecorderHold` in
+recording, and once it is stopped SETUP shows the new one. So the rate settle reads that state (`readSdRecorderHold` in
 `client.ts`, a model with a recorder only, which tells a playback from a recording) once it knows a rate would change,
 and both arms that write the plan's rate — the re-clock confirm and the three-way's RELEASE arm — stop the write with
 nothing sent, naming the playback or the recording the operator has to stop; ADOPT writes no rate and stays open. A
 read that fails stops the write, as the Track Count read does. While any other link is up the rate picker, the SIM
 view's rate and an undo that would move the rate are locked, and during Live sync with Follow USB off they ask first
-and are refused the same way while the recorder holds a file (`confirmLiveRate`), so no path reaches 766 then
+and are refused the same way while the recorder holds a file (`confirmLiveRate`), so no path writes the rate then
 without being stopped.
 
 The check lives at the **write boundary**, not where the rate is chosen. The picker and plan loading both happen
