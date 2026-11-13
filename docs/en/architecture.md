@@ -3622,16 +3622,16 @@ says. Confirmed on hardware: a rate-changing write completes, with the commands 
 ### Console Lock
 
 System firmware V1.5 adds **[Console Lock]** to the unit's SETUP menu: the panel locks until it is unlocked on
-the unit. Its state is `CONSOLE_LOCK` (`895:0:0`, 0 unlocked, 1 locked), and a lock or an unlock on the unit is
+the unit. The unit publishes whether it is locked, and a lock or an unlock on the unit is
 announced. **The unit goes on taking writes over the link while it is locked** — a self-test against a locked unit
-passes — so it is the app that holds its own writes back (`core/control/console-lock.ts`). The app reads `895` and
-never writes it: a 0 written over the link unlocks the unit whatever password is set, and a 1 takes effect only
-while the unit shows its Console Lock menu. The password beside it (`896`) is stored as plain text and is never read.
+passes — so it is the app that holds its own writes back (`core/control/console-lock.ts`). The app reads that state and
+never writes it: an unlock written over the link unlocks the unit whatever password is set, and a lock takes effect only
+while the unit shows its Console Lock menu. The password beside it is stored as plain text and is never read.
 
-**During Live sync** the starting read takes `895` with the cues, and its notify is registered with the session's
-follow set. A lock that arrives between that read and the registration is announced to nobody, so `895` is read
+**During Live sync** the starting read takes the lock state with the cues, and its notify is registered with the session's
+follow set. A lock that arrives between that read and the registration is announced to nobody, so the lock state is read
 again once the registration is made, and the session sends nothing until it has (`LiveSync.hold`); a notify that
-lands while that read is out is the newer of the two, and the read is not taken over it. While it reads 1:
+lands while that read is out is the newer of the two, and the read is not taken over it. While the unit is locked:
 
 - The strip above the board (`#lock-strip`) says the unit is locked and that edits are put back.
 - **An edit that would change what the session writes is put back** with nothing sent, and the status line says so
@@ -3662,9 +3662,9 @@ lands while that read is out is the newer of the two, and the read is not taken 
   for run one after another.
 - Reading goes on: the session follows the unit, and the meters run.
 
-**Outside a session**, a write — Write to device, Device setup's Apply, the Follow USB badge — reads `895` right
+**Outside a session**, a write — Write to device, Device setup's Apply, the Follow USB badge — reads the lock state right
 after connecting and refuses a locked unit with `error.consoleLocked` before it asks anything (`withDevice`'s
-`writes` option). While it runs it is registered for `895`'s notify (`watchConsoleLock`), and a lock that arrives
+`writes` option). While it runs it is registered for the lock state's notify (`watchConsoleLock`), and a lock that arrives
 aborts the write's controller with `consoleLockAbort`, which stops it at its next command the way a cancel does;
 the status line says how far a Write to device got (`status.writeLocked`), and writing again once the unit is
 unlocked sends the rest. The self-test and `--prepare-modified` connect on their own and take the same watch through
