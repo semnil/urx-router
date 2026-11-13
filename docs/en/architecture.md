@@ -1240,7 +1240,7 @@ the inspector, and the open modal itself.
 > `src/ui/midi-arm.contract.test.ts` opens every tuning screen with every control mapped and fails on a
 > zone over an element holding other controls. Every ordinary E2E case
 > ends by checking the page for a name, a description or such a tooltip that still holds a mark in
-> its printed form (`e2e/fixtures.ts`). Read on both shipping engines, in both languages: VoiceOver reads a
+> its printed form (`e2e/fixtures.ts`). On both shipping engines, in both languages: VoiceOver reads a
 > MIDI row's cells and such a control in the spoken form alone — the description right after the name,
 > and no hint — and on WebView2, UI Automation names the cells in the spoken form with an empty HelpText,
 > and gives such a control an empty HelpText and its FullDescription in the spoken form, while a control
@@ -1263,11 +1263,11 @@ the inspector, and the open modal itself.
 > is English there whichever of its three display languages is selected. That was **read off the hardware
 > with its own Language set to Japanese**, screen by screen: GATE, COMP, EQ, DUCKER, OSCILLATOR, MONITOR
 > and CH SETTING carry no kana at all. CH SETTING's [Color] picker prints its colours as words — `Blue`,
-> `Orange`, `Yellow`, `Purple`, `Cyan`, `Magenta`, `Red`, `Green`, `LtGreen` (where the broker's table writes
+> `Orange`, `Yellow`, `Purple`, `Cyan`, `Magenta`, `Red`, `Green`, `LtGreen` (where the parameter table writes
 > `Light Green`), `White` and `Off` — and those are the names the Inspector's swatches carry. The Japanese user guide names the same controls in English too
 > (`[Attack]`, `[Hold]`, `[Decay]`, `[Release]`, `[Knee]`, `[Threshold]`, `[Gain]`, `[Frequency]`,
 > `[HPF Freq.]`, `[Level]`, `[Width]`, `[Interval]`, `[Pan]`, `[Name]`, `[Color]`, and the `Assign`
-> sub-menu). **The INS FX screens were read the same way on 2026-08-28, and again on 2026-08-30**, and
+> sub-menu). **The INS FX screens were read the same way**, and
 > their rows are the reason the Effect Reference Guide is not the arbiter: the guide is a document and
 > `dev()` names what the SCREEN prints, and on several of them they differ. The unit prints
 > `Gate` on the guitar cabinet where the guide writes
@@ -1281,7 +1281,7 @@ the inspector, and the open modal itself.
 > initial-capital, not shouted, which is what the guitar panel's card labels follow — and what the
 > guide's shouted spellings above do not.
 >
-> **The FX EFFECT faces were read the same way on 2026-09-23** — Rev.R3, REV-X and the two delays,
+> **The FX EFFECT faces were read the same way** — Rev.R3, REV-X and the two delays,
 > one face at a time, each page's captions in the order they sit. The guide is not the arbiter there
 > either: it writes `ER/Reverb Delay` where the face prints `E/R Delay`. A spelling is the other
 > thing the marks cannot catch — `dev()` fixes a string's *identity*, so a row that reproduces the
