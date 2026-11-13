@@ -252,6 +252,11 @@ const DOC_MENTIONS = new Map([
     "architecture.md|latest.json",
     "the updater manifest tauri-action publishes to a GitHub Release, served from a URL and never a file in the tree",
   ],
+  [
+    "development-process.md|CLAUDE.md",
+    "the name the project instructions had before AGENTS.md; the decision that renamed them names the old file",
+  ],
+  ["midi-control.md|CLAUDE.md", "the name the project instructions had when the incident the record narrates happened"],
 ]);
 
 const SOURCE_EXT = /\.(ts|mjs|js|py|rs|json|sh|yml|yaml|html|css|png|svg)$/;
