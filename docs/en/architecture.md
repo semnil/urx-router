@@ -602,9 +602,7 @@ carries a one-line map of the same directories and points here.
   two clicks; gang members render contiguously below their head with a Linked tag, and the Behavior column's
   vocabularies are printed as a key under the table — for the vocabularies the list actually uses, since a
   native dropdown cannot annotate its own options and a hover-revealed card is an affordance nobody finds; the
-  vocabularies share one name column through `subgrid`, so their notes start on one left edge (WebView2
-  154.0.4258.62, 2026-10-11: every note at x = 95.38, the first vocabulary's column as wide as the second's
-  widest name) /
+  vocabularies share one name column through `subgrid`, so their notes start on one left edge /
   `midi-learn.ts` the one MIDI-learn treatment and arming path, shared by the CONSOLE strips and the channel
   tuning screens (target ring, armed pulse, mapped dot — plus the bound address as a tooltip at all times,
   since the MIDI window can sit behind the app and a dot says only "assigned", never to what) /
@@ -1378,8 +1376,8 @@ to one of `select` / `send` / `out`, and both layers are keyed by that group rat
 `source` and `key` are `select`, `send` and `sendSwitch` are `send`, `patch` and `record` are `out`.
 The three merged distinctions are already carried by geometry — a `key` is a `source` that lands on a
 ducker, a `sendSwitch` is a `send` with an on/off, a `record` is an output selection that lands on a
-microSD track — so a hue spent on each buys nothing and costs separability: measured under
-deuteranopia on a palette with one hue per kind, `record` and `source` were 1.6 apart in OKLab (x100), which is to
+microSD track — so a hue spent on each buys nothing and costs separability: under
+deuteranopia, a palette with one hue per kind puts `record` and `source` 1.6 apart in OKLab (x100), which is to
 say the same color. `WIRE_GROUP` is `Record<ConnectionKind, WireGroup>`, so a new kind does not compile until it is
 placed; the read site takes no fallback, because a fallback such as `?? "#888"` would draw a missed kind in grey
 with no halo and say nothing.
@@ -1408,7 +1406,7 @@ with no halo and say nothing.
 > that rests on an assumption.** Its scribble ink is not a stylesheet value: `inkOn()` picks black or
 > white from the ground it lands on, and for a strip wearing a rail colour that ground is a theme token,
 > so the inline ink a switch leaves behind was computed
-> against the ground that just left. Measured 2026-08-07: harmless, because **all five rails resolve to
+> against the ground that just left. It is harmless today, because **all five rails resolve to
 > white in both themes**, so the stale answer is the right one. Move a rail to a ground where the two
 > themes disagree and it becomes a strip inked for the theme that left; the fix is one
 > `consoleView.refresh()` in that funnel, at the cost of one strip rebuild per switch.
@@ -1431,7 +1429,7 @@ states the value instead, and cargo applies it to both (see "Build and distribut
 
 A Windows contrast theme turns on the CSS `forced-colors` mode, which replaces every background and
 every text colour with a handful of OS system colours, deletes `box-shadow` outright, and paints an
-opaque backplate behind text. Anything this UI says with colour alone stops saying it: measured without
+opaque backplate behind text. Anything this UI says with colour alone stops saying it: without
 the rule block, the default board's 51 lit chips and 73 unlit ones all compute to the same
 colour — one rectangle each, with no way to tell an engaged control from an idle one.
 
@@ -1439,17 +1437,15 @@ Two mechanisms survive, and the one `@media (forced-colors: active)` block in `s
 from them. Nothing in it touches a declaration used outside the query, so the ordinary themes stay
 pixel-identical.
 
-- **An outline.** An engaged control takes `3px double CanvasText`, a weight measured to keep its three
-  pixel rows distinct under the system palette (the other widths of a double border were not measured).
+- **An outline.** An engaged control takes `3px double CanvasText`, a weight that keeps its three
+  pixel rows distinct under the system palette (the other widths of a double border are untested).
   Two controls take it without changing size: the FOLLOW USB badge gives the rim's extra width back out
   of its padding, and the INS FX popover's held row draws it as an inset outline, which turns dashed while
   the keyboard focus is on that row, since the focus ring and the held state share the one outline. Anything whose job is to mark a position or a path — the knob
   pointer, the fader and mini-fader cap bars, the 0-dB lines, the slot each cap rides in, and the
   parameter sliders' track — trades its fill for an outline of the same geometry. Making the knob pointer an
   island instead does not keep its fill: with `forced-color-adjust: none` on the pointer, its computed
-  background returns to the authored amber and nothing on screen changes — 0 px against the same pointer
-  without it, in Chromium and in WebView2 154.0.4258.62 under hc2 and hcblack (2026-10-11), where the outline
-  against no outline differs by 32–33 px in the same clip.
+  background returns to the authored amber and nothing on screen changes.
 - **An island.** A surface whose colours ARE the reading — the scribble's device colour, the meters'
   green/yellow/red zones on the CONSOLE **and on the tuning screens' lanes**, the board's whole
   vocabulary of wires and rails — opts out with `forced-color-adjust: none`. Forcing those into two
@@ -1484,31 +1480,25 @@ Two traps are worth stating.
 
 `e2e/forced-colors.spec.ts` pins all of the above under Chromium's emulation of the mode and asserts no
 absolute colour — the values belong to the OS theme, not to this app. What the emulation cannot answer
-was measured against a real Windows contrast theme in WebView2 (2026-08-07) and held: the system colour
+holds in a real Windows contrast theme in WebView2: the system colour
 values are unguessable from their names, the opaque text backplate makes the usual
 `Highlight` / `HighlightText` idiom unreadable, `3px double` resolves as three distinct pixel rows, and
-the meter island keeps its three zones. The tuning-screen lane and the slider track were measured the
-same way (2026-08-08, hcblack and hcwhite) and hold under both themes. The rules added on 2026-10-01 were
-read the same way on 2026-10-09 (WebView2 154.0.4258.62) in hcblack, hcwhite, hc1 and hc2, and read by shape in
-each: the pressed view tab alone wears `3px double`; the INS FX popover's held row is `3px dashed` with the
+the meter island keeps its three zones. The tuning-screen lane and the slider track hold the
+same way under hcblack and hcwhite. The later rules hold in hcblack, hcwhite, hc1 and hc2, each told apart by shape:
+the pressed view tab alone wears `3px double`; the INS FX popover's held row is `3px dashed` with the
 keyboard focus on it and `3px double` beside a `2px solid` ring once the focus moves to the next row; the FOLLOW
-USB badge keeps its 95.27x25 box between its dashed rim and its double one (the state set on the element rather
-than by a device); the Inspector's section LEDs keep a `1px solid` rim, filled only when lit; and the board
+USB badge keeps one box size between its dashed rim and its double one; the Inspector's section LEDs keep a `1px solid` rim, filled only when lit; and the board
 node's `focus-ring` is drawn.
 
 **A locked control is a question this block does not answer**, because `opacity` is one of the few things
-forced colors leaves alone, so the read-only dims written elsewhere are supposed to survive it. Measured
-2026-08-13 in WebView2 151.0.4129.78 (debug build, 1280x800 viewport, URX44V) on the inspector's SD Rec
-track-count select, locked by setting the property rather than by holding a session — the same paint path —
-across all four Windows contrast themes: it is separable in pixels under every one, 714–719 of the 8544
-pixels in the rectangle captured around it (its box plus a 2 px margin — the box itself is 263x28), and
-mean luma over that whole rectangle 48.8 → 36.6 (hcblack), 236.3 → 245.3 (hcwhite), 64.7 → 53.1 (hc1) and
-19.2 → 5.6 (hc2). Every theme's locked face moves toward its own ground — which is what both the authored
+forced colors leaves alone, so the read-only dims written elsewhere are supposed to survive it. They do: a
+locked select stays separable in pixels from its unlocked state under every one of the four Windows contrast
+themes. Every theme's locked face moves toward its own ground — which is what both the authored
 alpha and the substitution below do — and hcwhite is the only one where that shows as a **rise**, because
 it is the only theme whose ground is brighter than the control. So the difference survives the mode and
-this block needs no restatement of the lock; whether it *reads* to an operator was not measured. The engine
+this block needs no restatement of the lock; whether it *reads* to an operator is not known. The engine
 also substitutes on its own here: a disabled select's text and border become `GrayText`, and, with the
-authored rule withdrawn through the stylesheet in each theme, the computed opacity came back **1**, where
+authored rule withdrawn through the stylesheet, the computed opacity is **1**, where
 the same withdrawal in the ordinary themes leaves **0.7** of the engine's own — so under forced colors the
 engine supplies none of its own, and the authored dim is the whole opacity signal, added to that
 substitution rather than replacing it. The launcher caret goes the other way on purpose, and the
@@ -1522,14 +1512,14 @@ One case in that spec reads painted pixels as well as computed styles. A range i
 are `::-webkit-` pseudo elements whose author declarations this engine does not report through
 `getComputedStyle`: the rule that draws the track computes to `0px none` while the track is on screen.
 The DevTools protocol does reach them — the input's user-agent shadow tree carries the two as `#track`
-and `#thumb`, and `CSS.getComputedStyleForNode` on those returns the forced-colors values (2026-09-24,
-Chromium 153: the track `1px solid`, the thumb an opaque Canvas fill) — so the case asserts the two
+and `#thumb`, and `CSS.getComputedStyleForNode` on those returns the forced-colors values (the track
+`1px solid`, the thumb an opaque Canvas fill) — so the case asserts the two
 declarations there, and each assertion fails with its own rule removed. What it reads from the pixels is what no declaration states: that
 the painted thumb covers the painted track.
 
 Its border-width assertions ask for **more than zero**, not for at least one pixel. A 1px border is snapped
 to the device pixel grid and reported as its used value, so at a 1.25 display scale `border-top-width`
-comes back as `0.8px` — measured on Windows, and invisible to this suite, which always runs at a scale
+comes back as `0.8px` on Windows — invisible to this suite, which always runs at a scale
 factor of 1. The intent is that a border exists; a floor of 1 quietly assumes the ratio the emulation
 happens to use.
 
@@ -1835,23 +1825,24 @@ drag lands on the nearest.
 
 ### The inspector repaint versus an IME composition
 
-That reflect rebuilds the inspector with `replaceChildren`, and a node name is typed into it. **Measured in the real
-WKWebView** with the panel repainted at the 20 Hz a knob sweep produces (`ui/keyprobe.ts`, the dev-only F2 / F3 / F4
-harness): typing `nihonngo` produced **`nいhおnngお`**, with **eight compositionstarts for eight keystrokes**. The
+That reflect rebuilds the inspector with `replaceChildren`, and a node name is typed into it. In the real
+WKWebView, with the panel repainted at the rate a knob sweep produces, typing `nihonngo` produces
+**`nいhおnngお`**, with **one compositionstart per keystroke**. The
 romaji buffer that spans keystrokes goes with the removed element, so a consonant that has no vowel yet lands as
 literal ASCII. Focus and caret are not the problem — they are carried across the rebuild and every character landed
 in the right place; the composition alone is destroyed. The field's text is carried too, while the plan still holds
 what it normalizes to: the plan stores a name without its trailing space, so a rebuilt field would otherwise drop the
 space the operator has just typed. Through the composition gate, at the same repaint rate: **one
-compositionstart, one compositionend, `日本語` intact**, 67 of 397 repaints deferred to the commit.
+compositionstart, one compositionend, `日本語` intact**, with the repaints that fall inside the composition
+deferred to the commit.
 
 Confirmed on the device path the synthetic repaint stands in for, with a URX attached and Live sync up: sweeping
 the A.Gain of jack 1, which CH 1 reads (`HA_GAIN`, a direct follow), with that channel selected repaints the panel **6 times**. With a
 composition open, **all 6 are held and exactly one runs, at the commit** — one compositionstart, one
 compositionend, the name whole.
 
-The same measurement shows what the gate's own backstop is worth. Across 349 rebuilds that took the composing
-field away, **zero compositionend and zero focusout reached the host**. `focusout` backstops a field that loses
+The gate's own backstop is worth little: a rebuild that takes the composing field away delivers **no
+compositionend and no focusout to the host**. `focusout` backstops a field that loses
 focus, not one that is removed — so nothing releases the gate if the composing field disappears by some other path,
 and what makes that unreachable is that `renderInspector` has exactly **one** call site, behind the gate. A second
 one would latch the gate for the rest of the session and the panel would silently stop updating.
@@ -4180,13 +4171,12 @@ on: a horizontal gesture (a trackpad swipe sideways, a tilt wheel, Shift + wheel
 `deltaX`, a vertical one zooms as above, and a `ctrl`+wheel event, which is what a trackpad pinch
 arrives as, zooms whichever axis the gesture holds. An event that does not move along the axis it is
 read on does nothing, so a `deltaY` of 0 is no longer a step out. Per event the deltas cannot decide
-it: measured on macOS's WKWebView (2026-10-03, a console probe counting one gesture at a time, `deltaMode`
-0 throughout), a two-finger sideways swipe gave 206 events with the larger `deltaX`, 1 with the larger
-`deltaY` and 32 equal, and a vertical swipe 2 / 80 / 12, while the first event of each lay on the
-swipe's own axis; a pinch arrived as `ctrl`+wheel with `deltaX` 0; a tilt wheel carried `deltaX` alone.
-The 150 ms sits between the longest gap measured inside one trackpad gesture, momentum included
-(78 ms, over four gestures), and a deliberate second flick after the first had visibly stopped, which
-arrived 250 ms after the first one's last event (one sample).
+it: in macOS's WKWebView one two-finger swipe, sideways or vertical, delivers events whose larger delta
+is on either axis, and some with the two equal, while its first event lies on the swipe's own axis; a pinch
+arrives as `ctrl`+wheel with `deltaX` 0; a tilt wheel carries `deltaX` alone.
+The 150 ms sits between the longest gap inside one trackpad gesture, momentum included
+(78 ms), and a deliberate second flick after the first has visibly stopped, which
+arrives 250 ms after the first one's last event.
 
 **A press ends at a mouse move with no button held.** A pan, a node drag or a connect drag on the
 board follows the pointer only while a mouse button is down: a mouse `pointermove` whose `buttons` is
@@ -4198,30 +4188,22 @@ tracks, through one predicate (`mouseMovedUnpressed` in `ui/dom.ts`): the undo h
 drags, and the tuning screen's cap and plot drags and the refresh its press defers
 ([channel-tuning.md](channel-tuning.md)). A move with the button held is still a drag, and the move ends only the
 press that mouse made: each of these tracks its press by pointer id, so a finger or a pen still down — the cap
-dragged by a finger while the mouse moves — is left to its own release. The route that was measured is the native
-context menu: on macOS's WKWebView (2026-10-03, a page-side pointer probe beside an OS-level event
-tap), a right press on the empty board delivered `pointerdown` (button 2), `gotpointercapture` and
-`contextmenu`, and no `pointerup`, `pointercancel` or `lostpointercapture` followed; with the menu
-dismissed by Escape the pan it started went on following the buttonless cursor until the next click,
-and only where a window `blur` arrived (`endAllPointers` in `graph.ts`) did it stop. The same route in
-the Inspector, read by hand in the same engine (2026-10-04): a channel switched with a click, a right
-press on blank Inspector space, the menu dismissed by Escape, then `Cmd+Z` — refused with "Finish the
-current drag before undoing", and the channel stayed as switched. WebView2 differs at the first step
-(2026-10-09, 154.0.4258.62, the same steps on STEREO (MAIN)): the right press's `pointerup` (button 2,
-`buttons` 0) reaches the page just before `contextmenu`, so the press is over before the menu opens; with the menu
-dismissed and the mouse moved, `Ctrl+Z` undid the switch. That run cannot say which of the `pointerup` and the
-buttonless move ended the press.
+dragged by a finger while the mouse moves — is left to its own release. The native context menu is the route
+that needs it: in macOS's WKWebView a right press on the empty board delivers `pointerdown` (button 2),
+`gotpointercapture` and `contextmenu`, and no `pointerup`, `pointercancel` or `lostpointercapture` follows.
+Without this rule, the pan that press started goes on following the buttonless cursor after the menu is
+dismissed, until the next click, and only a window `blur` stops it (`endAllPointers` in `graph.ts`); in the
+Inspector the same route leaves the press standing, so `Cmd+Z` is refused with "Finish the current drag
+before undoing". WebView2 differs at the first step: the right press's `pointerup` (button 2,
+`buttons` 0) reaches the page just before `contextmenu`, so the press is over before the menu opens.
 
 **A select takes the comfortable target as a height.** The same breakpoint gives the rack's and the
 inspector's controls a 40px minimum height, and a `<select>` does not take it that way: WebKit keeps these
 selects at the platform's own height whatever `min-height` says. It does take a `height`, and keeps the
 platform control while doing so — the computed `appearance` stays `auto` — so the breakpoint gives the
-rack's two pickers and every inspector select `height: 40px` instead. Measured 2026-09-24 at phone width,
-Playwright's WebKit 26.6 / Chromium 153 / iOS Safari 26.5 (an iPhone 17 simulator): the model picker read
-19 / 40 / 27 px with `min-height` alone and 40 / 40 / 40 with the height, and an inspector select
-19 / 28 / 27 px with neither and 40 / 40 / 40 with the height. macOS 27's own WKWebView, the engine the
-desktop build renders in (an off-screen view 390px wide), read 19 px for both pickers and the inspector
-selects before the change and 40 after. `e2e/chrome.spec.ts` holds the target in both Playwright
+rack's two pickers and every inspector select `height: 40px` instead. At phone width that gives them 40px in
+WebKit, Chromium and iOS Safari alike, and in the macOS WKWebView the desktop build renders in.
+`e2e/chrome.spec.ts` holds the target in both Playwright
 engines (the case is tagged for `app-webkit`). Above the breakpoint nothing sets it, so on desktop a
 parameter select stays at the platform's height beside a text input's 26px — 19px in WebKit, 28 in
 Chromium.
@@ -4523,7 +4505,7 @@ one is an edit that silently cannot be undone.
 
 | Boundary | Ends | Timing |
 | --- | --- | --- |
-| `pointerup` / `pointercancel` / window `blur` / a mouse `pointermove` with no button held | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — measured 2026-08-14 on Chromium (over its own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so without this boundary the CONSOLE fader on the unit-facing build would go on following the pointer, and writing, while another application is frontmost. The drags in `console.ts` / `dyn-screen.ts` end at that same event, confirmed in WKWebView (the same gesture leaves the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely. Each press is tracked by its pointer id and ends at that pointer's own release, so a second pointer pressed and lifted while the first drags — the mouse clicking while a finger drags — ends nothing and commits nothing: the gesture ends, and its commit is scheduled, when the last press does, and only a pressed pointer's own move makes its press a drag. A `blur` ends every press. The buttonless move ends that mouse's own press whose release never reached the page — the native context menu takes a right press's — so a hover leaves an entry an edit with no gesture of its own left open; the rule and its reading are under [Responsive layout (mobile)](#responsive-layout-mobile). A wheel turned with no button held ends every standing mouse press the same way, but commits nothing: the wheel's own edit and the notches after it are one entry, which the idle backstop closes. A touch or pen press is ended by neither — the `buttons` of a mouse move or a wheel does not show its contact, so a finger still dragging reads the same as one lifted — and stands until its own `pointerup`, `pointercancel` or `blur` |
+| `pointerup` / `pointercancel` / window `blur` / a mouse `pointermove` with no button held | Every drag and click | One macrotask later, because `click` and `dblclick` are dispatched *after* `pointerup`, so a chip toggle's edit arrives after the gesture that produced it. The next `pointerdown` lands that commit first — its own click has been dispatched by then, and a late macrotask on a busy page would otherwise merge two deliberate clicks. The `blur` is there because the window can go away while the button is still down, and neither engine ends the drag when it does — in Chromium and in the shipping WKWebView alike, the foreground moves away, `blur` fires, `pointercancel` does not, and the pointer capture is kept, so without this boundary the CONSOLE fader on the unit-facing build would go on following the pointer, and writing, while another application is frontmost. The drags in `console.ts` / `dyn-screen.ts` end at that same event, confirmed in WKWebView (the same gesture leaves the value where the window was lost). What macOS does *not* lose is the release itself — letting the button go over another application still ended the gesture — so on that platform this closes the writing done while the window is away rather than a drag standing indefinitely. Each press is tracked by its pointer id and ends at that pointer's own release, so a second pointer pressed and lifted while the first drags — the mouse clicking while a finger drags — ends nothing and commits nothing: the gesture ends, and its commit is scheduled, when the last press does, and only a pressed pointer's own move makes its press a drag. A `blur` ends every press. The buttonless move ends that mouse's own press whose release never reached the page — the native context menu takes a right press's — so a hover leaves an entry an edit with no gesture of its own left open; the rule and why it is needed are under [Responsive layout (mobile)](#responsive-layout-mobile). A wheel turned with no button held ends every standing mouse press the same way, but commits nothing: the wheel's own edit and the notches after it are one entry, which the idle backstop closes. A touch or pen press is ended by neither — the `buttons` of a mouse move or a wheel does not show its contact, so a finger still dragging reads the same as one lifted — and stands until its own `pointerup`, `pointercancel` or `blur` |
 | `keyup` of an Arrow / Page / Home / End / Enter / Space key, outside a text field | Keyboard stepping on a fader or knob, which autorepeats one edit per repeat with no other terminator | At once. Nothing is dispatched after a keyup on the gesture's behalf, and the next press is a new gesture — deferring would let an autorepeat outrun the macrotask and merge two presses |
 | `focusout` | The node-name field and the in-frame note editor, which edit the plan on every keystroke. Not one from inside the SIM view's LCD, which draws itself again on every step of a value and moves the focus onto the control drawn in its place: its gestures end at their pointer and key boundaries | At once |
 | 300 ms idle, re-arming | A wheel-notch burst and an incoming MIDI sweep, which produce no DOM gesture at all | Only armed for edits with no boundary of their own: suppressed while a pointer is down, and while a text field has focus (its `focusout` is the boundary, so a name typed with a pause between letters must not cost an entry per letter) |
@@ -4675,8 +4657,8 @@ modified — the same false positive any round-trip edit already produces.
 
 Tauri installs a default macOS menu whenever the app sets none, and its Edit submenu carries
 `PredefinedMenuItem::undo` / `::redo`. Those send the AppKit `undo:` selector, which **never reaches the
-page**: measured, a click ran WebKit's own text-field undo — on the last edited field, *even after focus
-had left it*, re-focusing that field — while the plan's undo did nothing and nothing was reported. Since
+page**: a click runs WebKit's own text-field undo — on the last edited field, *even after focus
+has left it*, re-focusing that field — while the plan's undo does nothing and nothing is reported. Since
 the field edits the plan on every keystroke, that silently changed the plan by a path the operator did
 not choose. Nothing on the page can intercept or even observe it (muda emits a menu event only for
 items the app created), and a predefined item cannot be enabled or disabled at runtime.
@@ -4686,19 +4668,15 @@ platform installs a menu). `Menu::default()` is rebuilt and only those two items
 the predefined items' own text rather than by position; a miss leaves the default menu untouched and
 says so on stderr. A click arrives as a menu event the frontend routes into `menuUndo` / `menuRedo`,
 which hand a **focused text surface its own undo instead** (`document.execCommand`, deprecated; it is the
-route this code takes to WebKit's field undo, measured working in WKWebView, a typing burst being one
+route this code takes to WebKit's field undo, which works in WKWebView, a typing burst being one
 unit as it is for the chord). That is what makes the menu agree with the chord instead of meaning
-something different. The native side reaches the same undo: in an off-screen macOS 27 WKWebView
-(2026-09-24), `WKWebView.undoManager.undo()` and an `undo:` sent down the window's responder chain each
-reverted a field edit, as `execCommand("undo")` did, while a run that sent nothing kept it. The edit
-there was made with `execCommand("insertText")` rather than by typing, in a bare WKWebView rather than
-under Tauri.
+something different. The native side reaches the same undo.
 
 Their enabled state and labels are pushed from the frontend (`set_edit_menu_state` /
 `set_edit_menu_labels`), so they grey out with the history and follow the app's language — the rest of
 that bar is AppKit's and stays in its own wording. The menu is built before the frontend loads, so the
 items start disabled and in English until the first push. The accelerators are **shown, not claimed**:
-measured, the page receives the chord and the item's key equivalent never fires, so they are set only so
+the page receives the chord and the item's key equivalent never fires, so they are set only so
 the menu prints the shortcut the operator actually uses. A push failure is logged rather than surfaced —
 the menu is a nicety, and a dialog for it would interrupt work it is not part of.
 
@@ -4722,8 +4700,8 @@ The undo branch runs before the `Delete` / `Escape` handling and applies its own
 that handler's broader "focus is in a field" bail is wrong for the shortcut: a focused range slider or
 the model picker owns no undo stack of its own, and bailing there would make `Ctrl+Z` quietly do
 nothing right after a slider drag. Conversely a text field, a textarea and a `contenteditable` region
-**do** own one, so the shortcut is left to them and `preventDefault` is not called — measured on
-macOS: the page receives `Cmd+Z` even with the native Edit menu installed, and calling
+**do** own one, so the shortcut is left to them and `preventDefault` is not called — on
+macOS the page receives `Cmd+Z` even with the native Edit menu installed, and calling
 `preventDefault` is what suppresses WebKit's own field undo. The listener is registered in the bubble
 phase like the rest of that handler, which is what lets the note editor's `stopPropagation` shield an
 in-progress note from the shortcut.
@@ -4736,8 +4714,8 @@ SVG stroke — a `.focus-ring` rect drawn last in the node, stroked by the style
 stroke-less in an export — because an outline on an SVG group is not painted in WebKit; a node dimmed as a whole
 dims its ring with it, while a badged node's ring sits beside its dimmed body. Focus is carried by node id across
 every rebuild of the node layer (`renderNodes`), a single node's (`repaintNode`) and the re-append that raises the
-selected node, for as long as the board draws the same plan: measured on macOS's WKWebView (2026-10-03), re-appending
-the focused group moved focus to `<body>`, and Tab reached `<g tabindex="0">` with the OS keyboard-navigation setting
+selected node, for as long as the board draws the same plan: in macOS's WKWebView, re-appending
+the focused group moves focus to `<body>`, and Tab reaches `<g tabindex="0">` with the OS keyboard-navigation setting
 at its default (off). The shelf and the selection bar are rebuilt by the same renders and carry focus the same way, a
 chip by the node it restores and Show all and the bar's buttons by their class (`rebuildChrome`); a chip that restores
 its node hands focus to the chip that took its place, or to that node when it was the last, and Show all, which closes
