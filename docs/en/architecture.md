@@ -323,10 +323,8 @@ carries a one-line map of the same directories and points here.
       below. The layout heads (each FX channel's EFFECT TYPE, each insert-FX selector) are read off the unit
       even when announced: the family read checks its head a second time behind the values it lays out, and
       an answer from the announcement would make that check a constant / `settle.ts` the post-write settle: **a write is acked
-      before its value is readable**, and the boundary is that write's own device notify (measured on a
-      URX44V, 9-204 ms from the write's issue, 87 value-paired samples on six addresses, independent of the
-      parameter's class; on hardware a 1-knob drag ended at the notify 10/10, 42-203 ms, never at the
-      bound). The answer is **the value the device announced, never the value we sent** — an acked write the
+      before its value is readable**, and the boundary is that write's own device notify, independent of the
+      parameter's class. The answer is **the value the device announced, never the value we sent** — an acked write the
       unit silently discarded is indistinguishable from one it took, so answering from the send would record
       our value as device truth with no diff left to retry; a quantised or clamped write therefore needs no
       case of its own, and an address the unit said nothing about is simply read. `follow.ts` registers its
@@ -361,14 +359,14 @@ carries a one-line map of the same directories and points here.
       caller that skips them, and a dropped rename leaves no diff for a later flush because the plan and the
       name snapshot have both moved on. Nothing is withdrawn from the handle: the last announcement wins,
       so an address the operator moved on the board comes back carrying THEIR value. `sendConverging`'s
-      INTER-ROUND wait stays blind **deliberately** — no `sideEffect: "converge"` head's reset latency has
-      ever been measured, and a round sends whole groups the read diff never named — but its SEED read takes
-      the same `PendingWrites` handle and waits the flush's writes out (17-84 ms on hardware, so the bound is
-      the fallback and not the price). The NAME path is fixed by not reading at all: `readPass` skips names
+      INTER-ROUND wait stays blind **deliberately** — no `sideEffect: "converge"` head's reset latency is
+      known, and a round sends whole groups the read diff never named — but its SEED read takes
+      the same `PendingWrites` handle and waits the flush's writes out (the wait ends at the device's own notify,
+      so the bound is the fallback and not the price). The NAME path is fixed by not reading at all: `readPass` skips names
       whenever `pending` is present, because a name is written on the string path and enters no write ledger, so
       the overlay has
       nothing to answer from and a settle could only spend its bound — and a rename read back inside its own
-      81 ms window goes into the plan and `nameSnapshot` together, leaving no diff to retry. See "A write is
+      window goes into the plan and `nameSnapshot` together, leaving no diff to retry. See "A write is
       not readable when it is acked" / `params.ts` catalog of confirmed parameters
     - `preferred-numbers.ts` the ISO 3 (Renard) grade tables R40 and R20, and the lookup that reads one.
       The unit's frequency tables step in these rather than in octave divisions, and the two catalogues
@@ -2679,17 +2677,12 @@ being downgraded by the timer that retries it.
 
 #### A write is not readable when it is acked
 
-The broker acks a write before the unit will answer for it. **Measured on a URX44V (System V1.3.1.0), and the
-window is not small**: a GET of a just-written address answers the value that write REPLACED until that write's own
-change notify arrives. Pairing each write with the notify carrying its value — strictly by value, since matching on
-the address alone during a drag picks up the PREVIOUS write's answer and manufactures a fresh-before-the-boundary
-reading that does not exist — produced no counterexample in either direction across **87 samples on six addresses**,
-53 of them taken during a real drag: not one fresh read before that notify, not one stale read after it. The notify
-is the boundary rather than an estimate of it. From the write's issue the window is **9-204 ms**, median ~101,
-polled every 4 ms; the ack tells nothing about it (one write acked in 2 ms stayed stale for another 31 ms), and it
-is always the ack that lands first. The parameter's class is
-irrelevant: the same behaviour was measured on a `sideEffect` head, a `follow: "direct"` scalar, plain storage and
-the PEQ band gains. Two consequences bound any repair. What a `sideEffect: "refetch"` head makes the unit recompute
+A write is acked before the unit will answer for it, **and the window is not small**: a GET of a just-written
+address answers the value that write REPLACED until that write's own change notify arrives. The notify is the
+boundary rather than an estimate of it — a read before it never answers the new value, and a read after it never
+answers the old one. The ack tells nothing about the window, and it is always the ack that lands first. The
+parameter's class is irrelevant: a `sideEffect` head, a `follow: "direct"` scalar, plain storage and the PEQ band
+gains behave the same. Two consequences bound any repair. What a `sideEffect: "refetch"` head makes the unit recompute
 goes readable within a few milliseconds of the head's own notify — **1-2 ms after** it for the EQ 1-knob LEVEL, 2-4 ms
 for the preset its TYPE loads, and announced behind the head within a millisecond for SSMCS Morphing, Sweet Spot Data,
 the COMP 1-knob and its Level, and the insert-FX drivers (the multi-band compressor's 1-knob and Level, Pitch Fix's
@@ -2745,8 +2738,8 @@ the unit announced and **the last announcement wins**, so an address the operato
 comes back carrying THEIR value. A `capture()` landing inside the flush needs no answer either: it re-authors the
 snapshot from a device read, and a device read cannot contradict a later word from the same device.
 
-**The name path has the same window, and the numeric repair cannot reach it.** Measured on a URX44V: a channel
-name written and then polled every 4 ms answered the PREVIOUS name for 81 ms. `writeOverlay` answers an address
+**The name path has the same window, and the numeric repair cannot reach it.** A channel name read just after it
+is written answers the PREVIOUS name. `writeOverlay` answers an address
 out of what the unit ANNOUNCED for it, and no name announcement can reach it: names are not emitted by
 `planToCommands` but written on the string path (`vdSetStr`), and that loop records a NAME in nothing the
 overlay is built from — it records a mark for a catalog string write (the SSMCS preset, as `boundaryMarks`), and a
@@ -2780,7 +2773,7 @@ in SSMCS mode.
 reaches one only through a `sideEffect` param's converge or refetch epilogue — a COMP/EQ mode change does, and
 nothing without such a head does. So the flush also **compares the emitted set against the follow list before its
 first await**, and rebuilds the list (not the snapshot — nothing has been read) when they differ. That comparison
-has no reachable trigger today, and the measurement is why it exists rather than why it does not: `SEND_LEVEL` /
+has no reachable trigger today, and the inventory below is why it exists rather than why it does not: `SEND_LEVEL` /
 `SEND_PAN` / `SEND_ON` / `SEND_TAP` carry no `sideEffect`, so a wire edit is the shape that would move the set with
 no capture behind it — but **every connection the default plan carries is fixed routing the graph refuses to cut**,
 and of the **310 routes** the model would let an operator draw, the emitted set moves for **none**. The property
@@ -2812,8 +2805,8 @@ answered.
 
 **Follow-only cases join for the same reason as the names**: an address the app only READS is in no
 registration unless it is listed here, so the unit's announcement would reach nobody and the value would catch up
-only at the next full read. The first two were measured announcing a front-panel change on a URX44V
-(2026-08-11, System V1.3.1.0), which is what separates them from the addresses that genuinely stay silent — D.Gain
+only at the next full read. The first two announce a front-panel change, which is what separates them from the
+addresses that genuinely stay silent — D.Gain
 and the FX / insert-FX engine arrays emit nothing when the panel moves them, and for those a registration would be
 useless for that purpose. **A device-side RECOMPUTE is a different trigger and does announce**: writing an FX
 delay's Sync, Note or BPM makes the unit recalculate the delay time from BPM and the note value and notify the
@@ -2911,14 +2904,12 @@ as invariant 4 (channel-tuning.md, "FX EFFECT").
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
 the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
-has ever been measured — the figures above belong to the `refetch` heads, which never reach this loop. Its
+is known — the figures above belong to the `refetch` heads, which never reach this loop. Its
 round also sends `roundCommands`, whole groups, so a wait that ended at the read diff's own notifies would return
 while the rest of a group was still inside its window.
 
-**What the wait costs was measured on the unit, not estimated** (2026-08-02, URX44V V1.3.1.0, a throwaway build
-carrying the diagnostic instrumentation). A 1-knob LEVEL drag produced ten flush cycles, and the settle
-ended at the device's own notify in **10 of 10** — 42-203 ms after the write was issued, write to read-complete
-58-298 ms. **The 300 ms bound was never reached.** Two things follow. Lowering `SETTLE_TIMEOUT_MS` cannot make a
+**What the wait costs: the settle ends at the device's own notify, well inside the bound**, so the wait is not a
+flat cost on every flush. Two things follow. Lowering `SETTLE_TIMEOUT_MS` cannot make a
 drag faster, because what ends the wait is the announcement and not the bound — the constant governs class (b)
 alone. And the added latency IS the device's announcement window, so the only ways to remove it are not to read at
 all (which leaves the plan's band gains stale for the whole drag, and the EQ plot then draws a curve the unit is not
@@ -3298,8 +3289,7 @@ plan as device truth with no diff left to retry.
 The flush therefore hands `sendConverging` the same `PendingWrites` handle the refetch gets, and the loop holds the
 seed read until the unit has spoken for **every** address it wrote — the whole set, not one node's worth, because
 the seed read asks about the whole write scope. The wait does not cost a flat +300 ms on every `sendConverging`:
-measured on hardware, it ends at the device's own notify, 17-84 ms across four probe runs on a URX44V, and the 300 ms
-bound is the fallback rather than the price. Callers that hand over `initialDiffs` — the Write button — never seed and are
+it ends at the device's own notify, and the 300 ms bound is the fallback rather than the price. Callers that hand over `initialDiffs` — the Write button — never seed and are
 untouched. The reads *between* rounds stay blind, for the two reasons in that section.
 
 Seeding the loop from the flush's own send list instead would be wrong — those values freeze at send time,
