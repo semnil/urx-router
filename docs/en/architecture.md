@@ -4323,19 +4323,17 @@ identical on every model's page:
   unlike that row it does **not** read the switch — `sendlessNote` classifies a wire without the plan,
   by design, so the note states the mechanism rather than the current state.
 
-What the figure does **not** give is the MONO block's gain law, and that was measured on the unit
-(URX44V, System 1.3.1.0, 2026-08-13, reading `129:0/1` — the monitor's own meter, downstream of MONO
-on the same figure). It is a **power sum, (L+R)/√2**, and it takes two states to say so:
+What the figure does **not** give is the MONO block's gain law. It is a **power sum, (L+R)/√2**, and it
+takes two states to say so:
 
-| oscillator | MONO off | MONO on | delta |
+| input | MONO off | MONO on | delta |
 | --- | --- | --- | --- |
-| STEREO L alone, −30 dBFS | L −30.0, R at the floor | both lanes −33.0 | **−3.0 dB** |
-| both lanes in phase, −30 dBFS each | both −30.0 | both **−27.0** | **+3.0 dB** |
+| one side alone | that side at its level, the other silent | both sides 3 dB below that level | **−3 dB** |
+| both sides in phase at one level | both at that level | both **3 dB above** it | **+3 dB** |
 
-Switching back returned L to −30.0 exactly, so the reading is the switch rather than drift. The first
-row alone does **not** identify the law — an energy sum `√((L²+R²)/2)` produces the same −3.0 there —
-and the second is what separates them, since an energy sum would not have moved. What it rules out on
-the way: a straight `L+R` (0 dB on the first row), an average `(L+R)/2` (−6.0) and a plain copy of L.
+The first row alone does **not** identify the law — an energy sum `√((L²+R²)/2)` produces the same −3 dB
+there — and the second is what separates them, since an energy sum would not move. What it rules out on
+the way: a straight `L+R` (0 dB on the first row), an average `(L+R)/2` (−6 dB) and a plain copy of L.
 
 | material | when MONO engages |
 | --- | --- |
