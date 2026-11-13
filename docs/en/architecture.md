@@ -2065,7 +2065,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   (Boddlnagg/midir#160), and 0.11.1 ends such a message at the packet's end. The frontend's decoder already ignores a message shorter than three bytes. midir has no hot-plug notification, so the port lists are
   re-enumerated every time the MIDI window announces itself. A port that fails to open reports the error on the
   status line — the app's and the window's own — and drops the select back to "None" (the stored port entry is
-  removed too). The reverse direction — a port closed from the NATIVE side, which the page-load teardown
+  removed too). The error is reported only while that port is still the latest choice for its direction: the
+  wording names no port, so a failure of a choice the operator has already replaced is not said. The reverse direction — a port closed from the NATIVE side, which the page-load teardown
   under "Session teardown" does — cannot be reported, because the side that closes it is talking about a page
   that is going away. So it is **read instead of pushed**: `midi_open_ports` answers which ports are actually
   open, and every port refresh checks this side's record against it (`reconcileOpenPorts`), adopting the

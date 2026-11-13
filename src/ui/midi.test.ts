@@ -766,6 +766,86 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     expect(mocks.midiSend).not.toHaveBeenCalled();
   });
 
+  // A failed open is said on the status line, and the wording names no port. Said for an
+  // attempt the operator has already chosen away from, it arrives after their new choice
+  // and reads as that port's failure — and stays there once that port is open.
+  it("says nothing about a failed input open the operator has already chosen away from", async () => {
+    mocks.midiListInputs.mockResolvedValue(["A", "B"]);
+    const { hooks } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["A", "B"]));
+
+    let fail!: (err: Error) => void;
+    const stalled = new Promise<never>((_, reject) => (fail = reject));
+    mocks.midiOpenInput.mockImplementation(async (port: string, onMessage: (bytes: number[]) => void) => {
+      mocks.inputReceiver = onMessage;
+      if (port === "A") await stalled;
+      return mocks.closeInput;
+    });
+
+    dispatch({ type: "port", dir: "in", name: "A" });
+    await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalledWith("A", expect.any(Function)));
+    dispatch({ type: "port", dir: "in", name: "B" });
+    fail(new Error("midi-open-failed: busy"));
+
+    await vi.waitFor(() => expect(lastState().input).toBe("B"));
+    expect(hooks.onStatus).not.toHaveBeenCalled();
+    expect(lastState().status).toBe("");
+  });
+
+  it("says nothing about a failed output open the operator has already chosen away from", async () => {
+    mocks.midiListOutputs.mockResolvedValue(["X", "Y"]);
+    const { hooks } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["X", "Y"]));
+
+    let fail!: (err: Error) => void;
+    const stalled = new Promise<never>((_, reject) => (fail = reject));
+    mocks.midiOpenOutput.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "X") await stalled;
+    });
+
+    dispatch({ type: "port", dir: "out", name: "X" });
+    await vi.waitFor(() => expect(mocks.midiOpenOutput).toHaveBeenCalledWith("X"));
+    dispatch({ type: "port", dir: "out", name: "Y" });
+    fail(new Error("midi-open-failed: busy"));
+
+    await vi.waitFor(() => expect(lastState().output).toBe("Y"));
+    expect(hooks.onStatus).not.toHaveBeenCalled();
+    expect(lastState().status).toBe("");
+  });
+
+  // The same failure with no later choice behind it is the operator's current one, and
+  // it is said.
+  it("still says a failed open that is the latest choice, after an earlier one was replaced", async () => {
+    mocks.midiListInputs.mockResolvedValue(["A", "B"]);
+    const { hooks } = install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["A", "B"]));
+
+    let land!: () => void;
+    const stalled = new Promise<void>((r) => (land = r));
+    mocks.midiOpenInput.mockImplementation(async (port: string, onMessage: (bytes: number[]) => void) => {
+      mocks.inputReceiver = onMessage;
+      if (port === "A") await stalled;
+      else throw new Error("midi-open-failed: busy");
+      return mocks.closeInput;
+    });
+
+    dispatch({ type: "port", dir: "in", name: "A" });
+    await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalledWith("A", expect.any(Function)));
+    dispatch({ type: "port", dir: "in", name: "B" });
+    land();
+
+    await vi.waitFor(() => expect(mocks.midiOpenInput).toHaveBeenCalledWith("B", expect.any(Function)));
+    await vi.waitFor(() => expect(hooks.onStatus).toHaveBeenCalledOnce());
+    expect(lastState().status.startsWith(t().midi.inputError(""))).toBe(true);
+    expect(lastState().input).toBeNull();
+  });
+
   // The relay's own header says it can deliver a previous session's messages, and
   // `parseRelay` checks the envelope rather than the field vocabulary. The engine reads
   // any non-"pickup" mode as absolute, so an unknown value looked fine for the session

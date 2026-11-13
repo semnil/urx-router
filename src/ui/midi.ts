@@ -544,6 +544,8 @@ export class MidiControl {
   }
 
   private async openInput(port: string): Promise<void> {
+    // The choice this open belongs to — it is called in that choice's turn of the queue.
+    const gen = this.portGen.in;
     this.opensInFlight++;
     try {
       // The Rust side replaces any prior input, so no explicit close first.
@@ -562,7 +564,10 @@ export class MidiControl {
     } catch (err) {
       this.closeInput = null;
       this.inputPort = null;
-      this.say(midiErrorStatus(err, t().midi.inputError));
+      // Said only while this is still the operator's latest choice for the input. The
+      // wording names no port, so said after a later choice it reads as that one's
+      // failure, and nothing takes it down again when that one opens.
+      if (gen === this.portGen.in) this.say(midiErrorStatus(err, t().midi.inputError));
     } finally {
       this.opensInFlight--;
       this.portChanges++;
@@ -570,6 +575,7 @@ export class MidiControl {
   }
 
   private async openOutput(port: string): Promise<void> {
+    const gen = this.portGen.out;
     this.opensInFlight++;
     try {
       await midiOpenOutput(port);
@@ -586,7 +592,8 @@ export class MidiControl {
       this.runFeedback("port-open"); // align motor faders / LEDs with the plan at once
     } catch (err) {
       this.outputPort = null;
-      this.say(midiErrorStatus(err, t().midi.outputError));
+      // As for the input: a failure of a choice a later one has replaced is not said.
+      if (gen === this.portGen.out) this.say(midiErrorStatus(err, t().midi.outputError));
     } finally {
       this.opensInFlight--;
       this.portChanges++;
