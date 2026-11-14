@@ -5413,8 +5413,8 @@ requires no approving review, so all of this gates the operator's own merges as 
 **Every job carries a `timeout-minutes`, and every step that fetches from a host outside GitHub carries
 one too**. Each is sized from the job's duration with several times the headroom, because a false timeout
 on the release path costs far more than a slow one. `.github/actions/install-browsers` is the one place
-that carries the reasoning, the measurements and the message, and its header is the one home for every
-external fetch's step durations — pnpm setup and `pnpm install`, the Rust toolchain, cargo-about,
+that carries the reasoning and the message, and its header is the one place every external fetch's bound
+is explained — pnpm setup and `pnpm install`, the Rust toolchain, cargo-about,
 `cargo test` / `cargo build`, tauri-action, the Codecov upload and the Windows E2E job's
 `playwright install` — so each of those steps carries a bare bound that points at it.
 
@@ -5424,7 +5424,7 @@ external fetch's step durations — pnpm setup and `pnpm install`, the Rust tool
 fetch nor as one whose fetches are GitHub's is refused until someone classifies it — the two lists are
 `FETCHING_ACTIONS` and `GITHUB_ONLY_ACTIONS` in `scripts/check-merge-gates.mjs`. **A job's `container:`
 image is pulled before any step exists**, so no step bound can reach that fetch: the job's own bound is
-what stops a stalled pull, and the header carries its timings too.
+what stops a stalled pull, and the header says so too.
 
 **Every Ubuntu E2E job runs inside the official Playwright image**: the system-library half of
 `playwright install --with-deps webkit` is far more sequential .deb fetches than chromium's, so a
@@ -5432,9 +5432,9 @@ degraded Ubuntu mirror can stall it past a whole job, while pulling the image co
 path does when the mirror is healthy, so it costs nothing in time and takes the Ubuntu mirror out of the
 picture entirely. **`e2e-windows` cannot**: GitHub's Windows runners take no `container:`, so it installs
 Chromium with `playwright install`, which fetches no system libraries there, and `pnpm check:gates` holds
-that command to a step bound like any other fetch. **The counts and timings are stated once, each with
-the date or the runs it came from, in that action's header and nowhere else** — they move with the
-browser build and with the runner image, so a copy drifts. The tag is derived from the lockfile
+that command to a step bound like any other fetch. **No file in this repository writes the package counts
+or the timings down** — they move with the browser build and with the runner image, so a copy drifts;
+that action's header keeps the ratio and the bounds. The tag is derived from the lockfile
 (`.github/actions/playwright-version`) and reaches `container:` as a prior job's output, since
 `container:` is evaluated before any step of its own job; hand-pinning it would drift at the first
 Dependabot bump and the symptom is a browser build the installed Playwright does not drive.
