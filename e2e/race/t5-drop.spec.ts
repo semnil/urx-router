@@ -43,7 +43,7 @@ const HPF_FREQ = 26; // scoped (non-direct) param: a notify on it needs a node r
 const CH_FADER = 139; // direct param: a notify on it is applied with no read at all
 
 // Groups a scoped reconcile of one MONO IN channel node reports applying ("← device
-// (9)") — measured, and the unit the concentration runs below are counted in.
+// (9)"), the unit the concentration runs below are counted in.
 const GROUPS_PER_NODE = 9;
 
 // planExternal parameters (src/core/control/params.ts): never emitted, never read
@@ -447,10 +447,9 @@ test.describe("T5 drop", () => {
     // The count is only that claim if the teardown finished before the NEXT flush
     // window could open — otherwise a second write is the throttle doing its job, not
     // the abort failing to. Asserted first, so a slow renderer fails naming the slip
-    // rather than as "the abort let a second write through". Measured latch → first
-    // doomed write → session end: +79 → +105 ms at 1x and +138 → +163 at 12x CPU
-    // throttling, i.e. the teardown itself costs ~25 ms and it is the drag's own
-    // cadence that moves.
+    // rather than as "the abort let a second write through". The teardown itself costs
+    // a short, steady interval even under CPU throttling; it is the drag's own cadence
+    // that moves.
     // A doomed write is one the latch refused. The drag can issue a write between the mark
     // and setDeviceLost, two driver calls apart, and that one is accepted.
     const doomedSets = doomed.filter((s) => s.cmd === "vd_set" && s.detail === "device-lost");
@@ -775,7 +774,7 @@ test.describe("T5 drop", () => {
       // scoped landings SUM to one node read per distinct node — the stable figure.
       // How many passes that sum arrives in is not: a notify pushed while a reconcile
       // is in flight is carried into the next window, so run C lands its four nodes in
-      // 2–4 passes from run to run (measured: 9,9,18 and 9,18,9).
+      // 2–4 passes from run to run.
       const scopedGroups = scopedLandings.reduce((a, b) => a + b, 0);
       if (label.startsWith("A")) {
         expect(first.reads).toBeLessThan(400);

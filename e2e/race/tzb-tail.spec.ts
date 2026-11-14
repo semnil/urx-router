@@ -392,8 +392,8 @@ test.describe("Tzb tail", () => {
       // outcome turns on whether a plan EDIT landed between the sweep being issued and it
       // resolving — and an edit is not in the IPC log at all. Only its write is, lagged by
       // up to the 120 ms flush window and continuing after the read has resolved, so no
-      // predicate over the trace decides it. Measured both ways: `-7.0` (the scene) running
-      // alone, `-14.0` (a value the drag passed through) under `--workers=4`.
+      // predicate over the trace decides it. The key lands both ways: on the scene's value
+      // when run alone, on a value the drag passed through under parallel workers.
       //
       // Placing the edit exactly, the way T1 does with `blockAt`, would decide it — but
       // this case's variable is already D, where the recall falls inside the gesture,
@@ -740,10 +740,10 @@ test.describe("Tzb tail", () => {
     const pressClose = async (holdMs: number): Promise<boolean> => {
       // Re-resolved until it answers, because the churn below rebuilds this screen at
       // 10 Hz: a node resolved just before a refresh is detached by the time its box is
-      // asked for, and `boundingBox()` answers null for a detached node. Measured at 6x
-      // CPU throttling, where the whole run went red on the `!` that used to be here —
-      // the press is the subject of this case, so losing it to the rebuild it is
-      // deliberately straddling would be the harness reporting its own gesture.
+      // asked for, and `boundingBox()` answers null for a detached node. Under CPU
+      // throttling a non-null assertion here turns the whole run red — the press is the
+      // subject of this case, so losing it to the rebuild it is deliberately straddling
+      // would be the harness reporting its own gesture.
       // Bounded, and the count is printed: a press that needed a dozen attempts is a
       // different measurement from one that landed first try.
       const button = page.locator("#dyn-screen-box .consent-btn-secondary");

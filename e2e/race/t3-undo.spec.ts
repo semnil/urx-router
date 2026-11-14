@@ -183,9 +183,9 @@ test.describe("T3 undo", () => {
     await expect(levelSlider(page)).toHaveValue(seed);
 
     // A second entry, because the check above spent the first one — and a node drag
-    // opens no entry of its own until the pointer lifts (measured: without this the
-    // refusal below reads "Nothing to undo"), so the stack would be empty exactly when
-    // the drag refusal is supposed to be observable.
+    // opens no entry of its own until the pointer lifts (without this the refusal below
+    // reads "Nothing to undo"), so the stack would be empty exactly when the drag
+    // refusal is supposed to be observable.
     await wheelBurst(levelSlider(page), 1, 0);
     await page.waitForTimeout(600);
     await expect(levelSlider(page)).not.toHaveValue(seed);
@@ -1069,10 +1069,10 @@ test.describe("T3 undo — a late announcement", () => {
     // The overtake needs the first write's announcement to be EMITTED and then arrive
     // after the app has issued the second write. It is a window, not merely a late
     // announcement: a write superseded before its announcement goes out is never
-    // announced at all (measured on a URX44V), which the fake models by cancelling the
-    // pending timer at the superseding write's ack. So the announcement has to land
-    // between the second write's ISSUE — where the app's snapshot moves — and its ACK,
-    // and that window is exactly `latency.set` wide. At the default of 0 there is no
+    // announced at all, which the fake models by cancelling the pending timer at the
+    // superseding write's ack. So the announcement has to land between the second
+    // write's ISSUE — where the app's snapshot moves — and its ACK, and that window is
+    // exactly `latency.set` wide. At the default of 0 there is no
     // window and the overtake cannot happen at all, which is why this case carries a
     // set latency of its own rather than only a raised `announceMs`.
     //

@@ -415,20 +415,19 @@ test.describe("T7 meter", () => {
     // at the resolve compares equal, and keeps.
     // The ladder is wall-clock placed, so only rungs that land clearly on one side of
     // the registration's closing edge are interpretable; a rung aimed at the edge itself
-    // (190 ms into a nominal 200 ms window) landed 23 ms PAST it and could assert
-    // nothing. The deterministic form of the "inside" point is the barrier test below.
+    // (190 ms into a nominal 200 ms window) landed PAST it and could assert nothing.
+    // The deterministic form of the "inside" point is the barrier test below.
     //
     // The window has to be wide enough that the DRIVER's own cost cannot carry a rung
     // across that edge. Between the sleep and the mark sit two clicks and a locator
-    // resolution, and that cost is added to every rung — measured on CI at 147, 150 and
-    // 153 ms across one job's three rungs, and 470 ms on a retry, where `trace:
-    // "on-first-retry"` is in force. It is also one-directional: it only ever pushes a
-    // gesture LATER, so "after the edge" is robust and "before the edge" is what a slow
-    // runner takes away. At 200 ms it took both — D=50 achieved exactly 200 ms into a
-    // 200 ms window (margin -0) and failed the dead-zone guard, and D=10 achieved 157
-    // (margin -44) with 14 ms to spare. Placed against the measured cost instead: the
-    // inside rungs clear the edge by 230 ms even at the retry's 470, and the outside one
-    // clears it by 100 ms even at a driver cost of zero.
+    // resolution, and that cost is added to every rung — on the order of a hundred ms
+    // on CI, and several times that on a retry, where `trace: "on-first-retry"` is in
+    // force. It is also one-directional: it only ever pushes a gesture LATER, so "after
+    // the edge" is robust and "before the edge" is what a slow runner takes away. At
+    // 200 ms the cost consumed the margin of both inside rungs, and the one placed
+    // nearer the edge landed on it and failed the dead-zone guard. Placed against that
+    // cost instead: the inside rungs clear the edge even at a retry's cost, and the
+    // outside one clears it by 100 ms even at a driver cost of zero.
     const REGISTRATION_MS = 1000;
     for (const d of [10, 300, 1100]) {
       test(`a re-scope ${d} ms into a ${REGISTRATION_MS} ms registration: what is actually registered`, async ({
