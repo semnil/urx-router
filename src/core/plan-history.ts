@@ -237,8 +237,8 @@ function diffKeys(before: AnyRecord, after: AnyRecord): [KeySlots, KeySlots] | n
  *
  *  Descends as far as the two sides stay groups of the same kind. Stopping at the first
  *  one made `fxEffect.params` a single contested key, so the app moving one of its fields
- *  and the device moving another were one key and the app won both — measured: a device's
- *  reverb room size read during an edit to the reverb time was thrown away with it. The
+ *  and the device moving another were one key and the app won both: a device's reverb
+ *  room size read during an edit to the reverb time was thrown away with it. The
  *  same shape is in the SSMCS bank's comp / sc / eq sections and in eqBands, whose bands
  *  are objects inside an array. */
 function diffLeaves(before: AnyRecord, after: AnyRecord, prefix = ""): [KeySlots, KeySlots] | null {
@@ -725,8 +725,9 @@ export function nodeParamContestKey(nodeId: string, param: string, sub?: string)
  *  it. The distinction is the difference between keeping a value and throwing one away —
  *  every funnel that edits a nested group REBUILDS it, writing one field and copying the
  *  rest, so naming the group claims the siblings too and a device read in flight loses
- *  its answer for all of them. Measured: with the group named, a device's OSC frequency
- *  read during an OSC ON toggle was dropped whole; with the field named, it landed. */
+ *  its answer for all of them: with the group named, a device's OSC frequency read
+ *  during an OSC ON toggle is thrown away with the toggle's own key; with the field
+ *  named, it lands. */
 /** Every leaf of a parameter record, by the dotted path {@link nodeParamContestPath} takes
  *  — array indices included, since the differ names one as a path segment too. Callers that
  *  record something PER PARAMETER (where a value came from) need the same granularity and
@@ -909,9 +910,9 @@ export class PlanWriteWitness {
    * funnel writing a patch asserts every member of it — selecting an insert effect over
    * an engaged one writes `insertFxOn: true` again, which moves nothing. Without the
    * list that key authors nothing, a device read in flight is left free to take it back
-   * to whatever the unit held, and the operator's newly selected effect lands bypassed
-   * (measured before this argument existed). A funnel with no list — a view that mutated
-   * the plan itself, an undo applying a patch — passes none and the diff is the floor.
+   * to whatever the unit held, and the operator's newly selected effect lands bypassed.
+   * A funnel with no list — a view that mutated the plan itself, an undo applying a
+   * patch — passes none and the diff is the floor.
    *
    * What makes a funnel need one is a MULTI-key patch: with a single key, a write that
    * moves nothing changed nothing, and there is no second key whose assertion could be
