@@ -1268,7 +1268,7 @@ export function refMatches(pattern, ref) {
     } else if (ch === "[") {
       const end = classEnd(pattern, i);
       // An unterminated `[` is not a literal bracket: Ruby matches nothing at all with it,
-      // `"a["` included. Measured, because reading it as a literal is the natural guess.
+      // `"a["` included. Reading it as a literal is the natural guess, and it is wrong.
       if (end === -1) return false;
       let body = pattern.slice(i + 1, end);
       if (body.startsWith("^")) {

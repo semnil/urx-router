@@ -8,12 +8,12 @@
 // still — on the pull request that sets the version, where the fix is a character rather
 // than a red post-merge run and a tag that cannot be moved.
 //
-// It RUNS the workflows' own `run:` blocks rather than reading them. The first version of
-// this file only checked that the script's name appeared in each workflow, and three
-// mutations measured green under it: release.yml taking the verdict and discarding it
-// (`|| shape=false`), tag-release turning its refusal into a warning, and — the one that
-// matters most — tag-release's whole gate moved BELOW `git push`, which is the exact
-// arrangement this gate exists to replace, with its own comment still claiming otherwise.
+// It RUNS the workflows' own `run:` blocks rather than reading them. A check that the
+// script's name appears in each workflow stays green under release.yml taking the verdict
+// and discarding it (`|| shape=false`), tag-release turning its refusal into a warning, and
+// — the one that matters most — tag-release's whole gate moved BELOW `git push`, which is
+// the exact arrangement this gate exists to replace, with its own comment still claiming
+// otherwise.
 // A name check cannot see any of that, so the blocks are extracted from the YAML and
 // executed against a sandbox: a real script, a stub `git` and `gh` that record what they
 // were asked to do, and a package.json holding the version under test.
@@ -155,8 +155,8 @@ it("is the only place any workflow judges a tag's shape", () => {
 });
 
 // The one ordering that a running block cannot show, because the block that would prove it
-// is the one that pushes. Measured before this existed: moving the gate below the push left
-// every other case in this file green.
+// is the one that pushes. Without this case, moving the gate below the push leaves every
+// other case in this file green.
 it("asks before tag-release pushes, not after", () => {
   const body = executableLines(runBlock(read(TAG_RELEASE), "GH_TOKEN:"));
   const asked = body.indexOf(INVOCATION);

@@ -1,7 +1,6 @@
 // Pins the merge-gate checker, which nothing else covers: it is the only guard over the
-// status checks a merge waits for, and it had shipped two defects and then three more
-// in its ref matcher, every one of them found by hand-run fixtures that were then thrown
-// away. These are those fixtures, kept.
+// status checks a merge waits for, and defects in its ref matcher have been found by
+// hand-run fixtures that were then thrown away. These are those fixtures, kept.
 //
 // The shape of every case is the same, and it is the one that matters for a checker: an
 // arrangement that is WRONG must produce a finding, and the arrangement it is a mutation
