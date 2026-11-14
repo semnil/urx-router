@@ -142,8 +142,6 @@ export interface ParamSpec {
   readOnly?: true;
 }
 
-// Confirmed anchors. Validated: their ids match both the original sniff and the
-// /vd/parameters descriptor (table_id + min/max/default).
 /**
  * The SSMCS strip values the device recomputes for you: every CONTINUOUS value in the
  * block, and none of the five ON switches (SC, EQ, and the three bands), which it leaves to
@@ -213,13 +211,13 @@ export const PARAMS = {
   /** Stereo channel EQ ON (1 = on), indexed by stereo position. */
   STEREO_CH_EQ_ON: { id: 213, encoding: "bool" },
   // SSMCS (Sweet Spot Morphing Channel Strip) bank, MONO IN only — active when
-  // COMP_EQ_TYPE = SSMCS. Confirmed + calibrated by live LCD readback. The comp/EQ
-  // section ON toggles reuse SSMCS_COMP_ON (94, inverted) / SSMCS_EQ_ON (106,
-  // inverted) above. All continuous values are RAW broker integers (the device
-  // curves are non-linear; vd.ts holds the display formatters). Sweet Spot Data
-  // (param 91, SWEET_SPOT_DATA below) is a string preset index the numeric IPC
-  // cannot carry, so it has a catalog entry but rides the string-write path
-  // (planToNameWrites / vd_set_str), not the numeric VdCommand path.
+  // COMP_EQ_TYPE = SSMCS. The comp/EQ section ON toggles reuse SSMCS_COMP_ON (94,
+  // inverted) / SSMCS_EQ_ON (106, inverted) above. All continuous values are RAW
+  // broker integers (the device curves are non-linear; vd.ts holds the display
+  // formatters). Sweet Spot Data (param 91, SWEET_SPOT_DATA below) is a string
+  // preset index the numeric IPC cannot carry, so it has a catalog entry but rides
+  // the string-write path (planToNameWrites / vd_set_str), not the numeric
+  // VdCommand path.
   /** SSMCS section ON (1 = on). */
   SSMCS_ON: { id: 89, encoding: "bool" },
   /** SSMCS Comp Drive (raw 0..200; display = raw/20). NOT a sideEffect: it changes what the
@@ -442,10 +440,9 @@ export const PARAMS = {
    *  boundary every other refetch head ends on works here unchanged.
    *
    *  `drives` is the same seventeen `SSMCS_MORPHING` drives and NOT `93`. The announcement is
-   *  block-wise, so `93` arrives with the burst whatever it holds; with Morphing parked at 62
-   *  before the write it was announced as 62 and read back as 62, so a preset does not move
-   *  it. (Two earlier runs called it a reset from an announcement taken while Morphing was
-   *  already 0 — the same mistake the COMP knee produced, in the same block.)
+   *  block-wise, so `93` arrives with the burst whatever it holds. A preset leaves Morphing
+   *  where it was: the `93` it announces carries the value Morphing already had, and from a
+   *  Morphing of 0 that same-value announcement reads like a reset.
    *
    *  Without the declaration the plan is not left unrepaired — device-follow takes the changed
    *  dependents and reconciles (follow.ts) — but a converge running before that reconcile
@@ -505,11 +502,11 @@ export const PARAMS = {
   // the command + encoding.
   /** Output PEQ band ON. */
   EQ_BAND_ON: { id: 503, encoding: "bool" },
-  /** Output PEQ band filter type (LOW / HIGH bands only). Not a sideEffect: measured
-   *  on all four EQ instances (mono CH 44, stereo CH 213, MIX 591, STEREO 498), on both
-   *  bands that own a type slot, cycling all three values over a curve authored to be
-   *  distinctive in every slot — nothing but the type param itself ever moved. It was
-   *  flagged on the assumption that retyping a band resets its other slots. */
+  /** Output PEQ band filter type (LOW / HIGH bands only). Not a sideEffect: on every EQ
+   *  instance (mono CH 44, stereo CH 213, MIX 591, STEREO 498), retyping either band that
+   *  owns a type slot moves the type param alone and leaves the band's other slots as
+   *  they were. It was flagged on the assumption that retyping a band resets its other
+   *  slots. */
   EQ_BAND_TYPE: { id: 504, encoding: "enum" },
   /** Output PEQ band Q. */
   EQ_BAND_Q: { id: 505, encoding: "q" },
@@ -569,8 +566,8 @@ export const PARAMS = {
   FX_EFFECT_PARAM: { id: 681, encoding: "raw" },
   /** Insert-FX effect parameter array (anchor = Guitar engine 697; the actual
    *  engine 689/693/697/701 is resolved per effect family in translate.ts).
-   *  Addressed by SLOT on the y axis; raw broker integers (see
-   *  control/insert-fx-effect.ts). Calibrated on a factory URX44V. */
+   *  Addressed by SLOT on the y axis; raw broker integers, which
+   *  control/insert-fx-effect.ts maps to what the unit displays. */
   INSERT_FX_EFFECT: { id: 697, encoding: "raw" },
   /**
    * The two engine slots that are CONTROLS over the rest of the array rather than values
@@ -1176,7 +1173,7 @@ export const EQ_ONE_KNOB_TYPE_ALL_OPTIONS = EQ_ONE_KNOB_TYPE_OPTIONS;
 export const EQ_ONE_KNOB_LEVEL_MIN = 0;
 export const EQ_ONE_KNOB_LEVEL_MAX = 100;
 
-// COMP knee selector (device labels per user; 0 = Soft verified, default Medium).
+// COMP knee selector (the unit's own labels; default Medium).
 export const COMP_KNEE_DEFAULT = 1;
 export const COMP_KNEE_OPTIONS = [
   { value: 0, label: "Soft" },
