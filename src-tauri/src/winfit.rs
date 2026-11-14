@@ -16,14 +16,15 @@
 // **A placement is applied twice when it crosses a scale boundary**, which is what
 // makes that rule hold on a mixed-DPI desk. Landing a window can move it onto a
 // display at another scale, and Windows answers the move by preserving the window's
-// LOGICAL size and re-dressing it in a frame of a different thickness — measured, a
-// window placed at 1516x1004 came back 2274x1506 on a work area 1008 tall, and in the
-// other direction a remembered 1296x839 collapsed to 868x571, under its own minimum.
-// Neither number is knowable before the move (`frame_delta` says why), so the
-// placement simply runs again once the window is where it belongs and both are
-// readable. On macOS the desk is in points and a move cannot change the scale a
-// window is measured at, so the second pass never runs and that platform keeps the
-// path it always had.
+// LOGICAL size and re-dressing it in a frame of a different thickness — a window
+// placed to fit a work area comes back multiplied by the ratio of the two scale
+// factors, which can leave it larger than that work area, and in the other direction
+// a remembered size can collapse by the same ratio to under its own minimum. Neither
+// the size nor the frame it lands with is knowable before the move (`frame_delta`
+// says why), so the placement simply runs again once the window is where it belongs
+// and both are readable. On macOS the desk is in points and a move cannot change the
+// scale a window is measured at, so the second pass never runs and that platform
+// keeps the path it always had.
 //
 // **Every rectangle below is in DESK units, and which unit that is depends on the
 // platform** — see `physical_per_desk`. This module used to do its arithmetic in
@@ -31,12 +32,11 @@
 // both reported in them, and that converting would have to pick a scale factor.
 // The second half was right and the first half was not: on macOS a "physical"
 // rectangle is points times the scale factor of THE OBJECT IT BELONGS TO, so two
-// displays at different scales are not measured in one space at all. Measured, on
-// the machine this was written on: a 1512x982@2.0 built-in panel and a
-// 2560x1440@1.0 external one report work areas of (0,66 3024x1898) and
-// (1512,-458 2560x1380), which overlap by 1,294,272 px² where the displays
-// themselves share nothing. The arithmetic that overlap feeds decides which
-// display a window belongs to and then clamps it into that display's rectangle.
+// displays at different scales are not measured in one space at all: a built-in
+// panel at 2.0 beside an external display at 1.0 can report work areas that overlap
+// where the displays themselves share nothing (the mixed-DPI tests below hold one
+// such desk). The arithmetic that overlap feeds decides which display a window
+// belongs to and then clamps it into that display's rectangle.
 
 use tauri::{PhysicalPosition, PhysicalSize, Position, Runtime, Size, Window};
 
@@ -248,12 +248,12 @@ fn displays<R: Runtime>(win: &Window<R>) -> tauri::Result<Vec<Display>> {
 /// The two sizes are physical and the answer is wanted in desk units, so it takes
 /// the scale they were measured at. That is the scale of the display the window is
 /// on NOW, which is not necessarily the one it is about to move to: on Windows the
-/// frame is (16, 39) at 100% and (26, 71) at 200%, and there is no way to ask for
-/// the frame at a DPI the window has not visited (`AdjustWindowRectExForDpi` is not
-/// reachable through Tauri, and scaling the frame by the DPI ratio does not predict
-/// it — 100%'s (16, 39) times 1.5 is (24, 58.5) where 150% really wears (22, 56)).
-/// So `place_window` MEASURES it instead, by reading the frame again once the move
-/// has landed. On macOS both numbers are zero, so the first read is already exact.
+/// frame's thickness changes with the DPI but not in proportion to it, and there is
+/// no way to ask for the frame at a DPI the window has not visited
+/// (`AdjustWindowRectExForDpi` is not reachable through Tauri, and scaling the frame
+/// by the DPI ratio does not predict it). So `place_window` MEASURES it instead, by
+/// reading the frame again once the move has landed. On macOS the frame is zero, so
+/// the first read is already exact.
 fn frame_delta(outer: PhysicalSize<u32>, inner: PhysicalSize<u32>, scale: f64) -> (u32, u32) {
     let k = physical_per_desk(scale);
     let px = outer.width.saturating_sub(inner.width) as f64;
@@ -293,9 +293,8 @@ fn inner_size(outer: Rect, frame: (u32, u32)) -> (u32, u32) {
 /// The minimum has to be raised at all because **a programmatic size is not raised
 /// to it**: Windows enforces a minimum through `WM_GETMINMAXINFO`, which a user drag
 /// goes through and a `SetWindowPos` does not, and AppKit's `contentMinSize`
-/// constrains a drag rather than a `setContentSize:`. Measured on Windows — a
-/// remembered 1280x800 came back at 150% as an 854x534 CSS viewport against a
-/// configured 960x640 minimum.
+/// constrains a drag rather than a `setContentSize:`. On Windows a remembered size
+/// restored at another scale can come back under the configured 960x640 minimum.
 fn at_least(win: Rect, min_inner: (f64, f64), factor: f64, frame: (u32, u32)) -> Rect {
     let px = |v: f64| {
         let v = v * factor;
@@ -375,10 +374,10 @@ fn placement(
 /// only parts a caller can state: an outer rectangle can only be built by adding a
 /// frame, the frame belongs to the display the window ENDS UP on, and no caller knows
 /// that display yet. Adding one where the window happens to be instead loses the
-/// difference between the two frames at every launch — measured over four consecutive
-/// launches, the outer width fell 1516, 1510, 1504, 1498, the 6 between (16, 39) and
-/// (22, 56). It is the failure "at every launch the window grows by its own title bar"
-/// with the sign reversed, and one launch cannot see it either.
+/// difference between the two frames at every launch — the window shrinks by that
+/// difference, launch after launch. It is the failure "at every launch the window
+/// grows by its own title bar" with the sign reversed, and one launch cannot see it
+/// either.
 ///
 /// The numbers are about to be applied, not necessarily ones the window is at: at
 /// startup the window cannot be read back (see `restore_window` in lib.rs), so the
@@ -407,8 +406,8 @@ fn place_window<R: Runtime>(
     // applied. It has to be, twice over: the minimum is logical and only means a
     // number of desk units once a display is chosen, and a rectangle inflated to a
     // minimum overlaps the displays differently from the window that was actually
-    // there — measured, a 1400x900 window on one display was inflated to 1920x1280
-    // and the inflated rectangle then named the other one as its host.
+    // there — a window on one display, inflated to its minimum, can name the other
+    // display as its host.
     // `host_rect` overrides which display is chosen, without touching the rectangle
     // being placed — see `place_saved` for the window whose own position cannot pick.
     let Some(host) = host_display(host_rect.unwrap_or(want), &displays) else {
@@ -422,9 +421,9 @@ fn place_window<R: Runtime>(
     // all: Windows sends `WM_DPICHANGED` inside the `SetWindowPos` the move issues,
     // and tao resizes from within that handler. Waiting for the `ScaleFactorChanged`
     // event instead would not work — the main window is placed from the setup hook,
-    // before the event loop delivers anything, and measured, the event never arrives
-    // there (it does for the MIDI window, which is built while the loop runs, which is
-    // exactly what makes it useless as the trigger).
+    // before the event loop delivers anything, and the event never arrives there (it
+    // does for the MIDI window, which is built while the loop runs, which is exactly
+    // what makes it useless as the trigger).
     let land = |frame: (u32, u32)| -> tauri::Result<f64> {
         let fitted = placement(
             outer_rect(at, inner, frame),
@@ -462,14 +461,13 @@ fn place_window<R: Runtime>(
 /// `host_of` names a window whose display the restore must land on, for a window
 /// whose remembered POSITION cannot pick one for itself. It EARNED its place from an
 /// AppKit child, translated with its parent one for one so its absolute position
-/// drifted by every move the parent had made since — measured, a parent dragged
-/// 2172 pt left took the MIDI window from x=536 to x=-1636, off every display, where
-/// it stayed listed as on-screen and opaque and drew nothing. That relationship is
-/// gone on macOS and the Windows owner was measured not to move the window at all
-/// (`midiwin.rs` carries both), so what is left is the case it still answers: a
-/// rectangle that lands on no attached display because the desk changed under it. The
-/// remembered SIZE is still honoured; only the choice of display is taken from the
-/// host. `None` keeps the plain behaviour, where the rectangle picks its own.
+/// drifted by every move the parent had made since — far enough to leave it off every
+/// display, listed as on-screen and opaque and drawing nothing. That relationship is
+/// gone on macOS and the Windows owner does not move the window at all (`midiwin.rs`
+/// carries both), so what is left is the case it still answers: a rectangle that
+/// lands on no attached display because the desk changed under it. The remembered
+/// SIZE is still honoured; only the choice of display is taken from the host. `None`
+/// keeps the plain behaviour, where the rectangle picks its own.
 pub fn place_saved<R: Runtime>(
     win: &Window<R>,
     position: PhysicalPosition<i32>,
@@ -488,11 +486,11 @@ pub fn place_saved<R: Runtime>(
     let want = window_to_desk(position, size, scale);
     // The host is a RESCUE, not a policy: it is consulted only when the remembered
     // rectangle lands on no attached display at all. Overriding unconditionally
-    // discards a position the operator chose — measured, a window remembered at
-    // x=536 came back clamped to x=1512, the left edge of the parent's display,
-    // and "open it on the sub-display, close it, open it again" stopped returning
-    // it there. Remembering the position is the requirement; the parent only
-    // decides where a rectangle that has nowhere to go should land.
+    // discards a position the operator chose — a window remembered on the
+    // sub-display comes back clamped to the parent's display, and "open it on the
+    // sub-display, close it, open it again" stops returning it there. Remembering
+    // the position is the requirement; the parent only decides where a rectangle
+    // that has nowhere to go should land.
     let host_rect = match host_of {
         Some(host) if !on_any_display(want, &displays(win)?) => Some(window_to_desk(
             host.outer_position()?,
@@ -519,13 +517,13 @@ pub fn place_saved<R: Runtime>(
 /// "unknown", and the caller falls back to the window's own scale factor, which is
 /// what this module used unconditionally before.
 ///
-/// Measured over the two displays this was written against: 98% of the positions a
-/// 1234x813 window can take are resolved uniquely, 87% for a 440x620 one, and **no
-/// position is resolved to the wrong display**. The two holes are real, which is why
-/// the scale is recorded going forward rather than derived: a rectangle inside the
-/// region the two displays' desk rectangles both cover is ambiguous, and a rectangle
-/// that is no longer on any display — the case this whole module exists for —
-/// matches nothing at all.
+/// The trial finds a scale under which the rectangle fits a display attached NOW; a
+/// single acceptance does not prove that it is the scale the rectangle was saved at,
+/// which is why the scale is recorded going forward rather than derived. A rectangle
+/// inside the region the two displays' desk rectangles both cover is ambiguous. One
+/// that does not fit its own display's work area — overlapping the Dock, or on a
+/// display that has since moved or gone — can match nothing, or can fit another
+/// display under that display's scale factor and come back with that scale.
 ///
 /// Where a desk unit already is a physical pixel (Windows) the conversion is the
 /// identity and the answer cannot matter: every hypothesis produces the same
@@ -763,10 +761,10 @@ mod tests {
     // identically 1.0 where the desk is logical, and the `cargo test` job runs on macOS,
     // so a version that reached for it here would compile away in CI.
     //
-    // Measured on Windows 11, 2026-08-09: a 1920x1080 display at 150% with a 72px
-    // taskbar, and a window remembered on a 100% one. Its frame is (16, 39) where it is
-    // born and (22, 56) where it is going, and one logical pixel is 1.5 desk units on
-    // the display it is going to.
+    // The desk, on Windows: a 1920x1080 display at 150% with a 72px taskbar, and a
+    // window remembered on a 100% one. Its frame is (16, 39) where it is born and
+    // (22, 56) where it is going, and one logical pixel is 1.5 desk units on the
+    // display it is going to.
     #[test]
     fn the_destination_frame_changes_the_answer() {
         let work = win(-7, 1440, 1920, 1008);
@@ -799,10 +797,9 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // Mixed DPI. Measured on the machine this fix was written on (2026-08-08,
-    // Quartz + NSScreen): a built-in 1512x982 panel at 2.0 with a 33pt menu bar,
-    // and a 2560x1440 external at 1.0 placed to its right and 458pt higher, with
-    // the Dock along its bottom.
+    // Mixed DPI: a built-in 1512x982 panel at 2.0 with a 33pt menu bar, and a
+    // 2560x1440 external at 1.0 placed to its right and 458pt higher, with the
+    // Dock along its bottom.
     //
     // In DESK units — points, on macOS — the two work areas are disjoint, which is
     // the whole point of the rewrite. In the physical numbers tao reports they
@@ -846,11 +843,11 @@ mod tests {
         assert_eq!(fit(raised, host.work), want);
     }
 
-    // The MIDI window's own saved rectangle from the same file, read out on
-    // 2026-08-12 after a report that it had come back off-screen: physical
-    // x=1072 y=232 880x1240, recorded at scale 2.0. Its whole restore is this
-    // path — the state plugin skips both windows — so if the numbers place it
-    // somewhere unreachable, they place it there with nothing to correct them.
+    // The MIDI window's own saved rectangle from the same file, as it stood after
+    // a report that the window had come back off-screen: physical x=1072 y=232
+    // 880x1240, recorded at scale 2.0. Its whole restore is this path — the
+    // state plugin skips both windows — so if the numbers place it somewhere
+    // unreachable, they place it there with nothing to correct them.
     //
     // They do not: 880x1240 at 2.0 is 440x620 pt at (536, 116), inside the
     // built-in display's work area, and the fit leaves it alone. So the

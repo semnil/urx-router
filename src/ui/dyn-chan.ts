@@ -120,9 +120,9 @@ export function bindChannelStrip(
      * It stands there rather than at the end because that is where it belongs in the
      * causal order — the level arrives, the detector hears its own version of it, the
      * reduction follows, the level leaves — and NOT because it is a stage the audio
-     * passes through. On the SSMCS strip it is not: measured on a URX44V, sweeping the
-     * side-chain filter over 36 dB moved `109` against `108` by the full amount while
-     * `111` against `108` held at 5.0 dB with the compressor off its knee throughout.
+     * passes through. On the SSMCS strip it is not: the side-chain filter moves `109`
+     * against `108` by its full amount while `111` against `108` stays put, with the
+     * compressor off its knee.
      */
     keyLane?: DynLane;
     /** Extra lanes after the three, for a face that meters further down the strip. */

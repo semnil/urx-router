@@ -13,9 +13,8 @@
 // "sent, no reply" is most of the work.
 //
 // Recording is unconditional in a dev build rather than behind the trace flag: an
-// entry costs 0.08 µs (measured), which is four orders of magnitude below the gap it
-// exists to report, and a probe that has to be armed before the run is a probe that is
-// not there when the run happens.
+// entry costs orders of magnitude less than the gap it exists to report, and a probe
+// that has to be armed before the run is a probe that is not there when the run happens.
 //
 // Statically dropped from a production build (`import.meta.env.DEV`); ci.yml greps the
 // bundle for `__urxMidiProbe` to keep it dropped.
@@ -163,13 +162,12 @@ export const midiProbe: MidiProbe | null = import.meta.env.DEV ? recorder : null
 function report(): string {
   if (log.length === 0) return "(no entries)";
   // How many decimals this run's clock earns. The engine's clock is `performance.now()`,
-  // and **the shipping webview clamps it to whole milliseconds** — measured on macOS
-  // WKWebView (2026-08-16): 419 records over five launches, not one carrying a fraction.
-  // jsdom and Chromium keep sub-millisecond values, so the same report is read at two
-  // resolutions, and a fixed two decimals prints `.00` on every line of a real-device run
-  // — a precision the reading does not have, in the one report whose whole subject is how
-  // long a gap was. Read off the records rather than off the engine, so it describes the
-  // run being printed rather than the environment the reader is assumed to be in.
+  // and **the shipping webview clamps it to whole milliseconds**. jsdom and Chromium keep
+  // sub-millisecond values, so the same report is read at two resolutions, and a fixed two
+  // decimals prints `.00` on every line of a real-device run — a precision the reading does
+  // not have, in the one report whose whole subject is how long a gap was. Read off the
+  // records rather than off the engine, so it describes the run being printed rather than
+  // the environment the reader is assumed to be in.
   const dp = log.some((e) => !Number.isInteger(e.t)) ? 2 : 0;
   const fmt = (ms: number): string => ms.toFixed(dp).padStart(9);
   const t0 = log[0].t;

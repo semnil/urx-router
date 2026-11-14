@@ -26,9 +26,9 @@ describe("what jsdom gives us to restore", () => {
     expect(d!.configurable).toBe(true);
   });
 
-  // Measured, and the reason a prototype-level spy is not an alternative to this
-  // helper: window's own property shadows EventTarget.prototype whether or not the
-  // recorder has ever run, so a spy there observes none of window's registrations.
+  // The reason a prototype-level spy is not an alternative to this helper: window's own
+  // property shadows EventTarget.prototype whether or not the recorder has ever run, so a
+  // spy there observes none of window's registrations.
   it("shadows EventTarget.prototype with no help from the recorder", () => {
     const real = EventTarget.prototype.addEventListener;
     let seen = 0;

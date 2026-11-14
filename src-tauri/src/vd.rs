@@ -72,9 +72,9 @@ pub struct Connection {
 /// this side, and that is not evidence about the broker's internal state — it can
 /// answer promptly right up to the moment it stops answering. The drop share
 /// in particular cannot measure registration accumulation at all: registration and
-/// notify emission are decoupled on this protocol (measured — a registered address
-/// can change and announce nothing), and an address nobody moves emits nothing however
-/// many times it is registered. See docs/{en,ja}/architecture.md "The link ledger".
+/// notify emission are decoupled on this protocol (a registered address can change
+/// and announce nothing), and an address nobody moves emits nothing however many
+/// times it is registered. See docs/{en,ja}/architecture.md "The link ledger".
 #[derive(Default)]
 pub struct LinkCounters {
     sets: AtomicU64,
@@ -164,11 +164,11 @@ pub struct LinkEvent {
 /// `value_str` carries the STRING notifies — the name parameters, whose
 /// `current_value` is text rather than a number. They were dropped here for the
 /// life of this file, because the decode asked for an integer and gave up when it
-/// did not get one: the unit announces a rename (measured on a URX44V, one notify
-/// on the renamed address and nothing else), the frame reached this function, and
-/// this line discarded it. Numeric notifies leave the field `None` and pay one
-/// `is_none()` on the JS side; the integer decode is still tried first, so the
-/// common path costs exactly what it did before.
+/// did not get one: the unit announces a rename (one notify on the renamed address
+/// and nothing else), the frame reached this function, and this line discarded it.
+/// Numeric notifies leave the field `None` and pay one `is_none()` on the JS side;
+/// the integer decode is still tried first, so the common path costs exactly what it
+/// did before.
 // NOT `rename_all = "camelCase"`: the frontend reads `param_id` off this wire, so a
 // blanket rename would quietly break the numeric follow path — and neither the unit
 // tests nor the race harness would catch it, because neither goes through serde.
@@ -874,7 +874,9 @@ mod imp {
                 }) => {
                     // Replace any prior subscription: unregister the old set, then
                     // register the new one address by address (never a bulk post on
-                    // /vd/meters — that has been seen to crash Device Center).
+                    // /vd/meters — a post with no address is the presumed cause of a
+                    // Device Center crash, while address-by-address registration is
+                    // stable).
                     LinkCounters::bump(&counters.meter_subscribes);
                     unregister_meters(&mut link, &mut subs, &counters);
                     let mut first = Ok(());
@@ -1085,8 +1087,8 @@ mod imp {
     /// Both are load-bearing. Without the timeout, every read below blocks with no
     /// deadline of its own and a quiet moment becomes a hang the user can only
     /// escape by quitting. Nagle matters because this link is a strict ping-pong —
-    /// write one small line, block for the reply, 7074 times in a full sweep — which
-    /// is the shape Nagle punishes with a fixed 40 ms stall rather than a
+    /// write one small line, block for the reply, thousands of times in a full sweep —
+    /// which is the shape Nagle punishes with a fixed 40 ms stall rather than a
     /// proportional cost. A plain `TcpStream` leaves Nagle on unless told otherwise.
     fn arm_socket(sock: &TcpStream, timeout: Duration) -> Result<(), String> {
         sock.set_read_timeout(Some(timeout))
@@ -1300,8 +1302,8 @@ mod imp {
             Ok((
                 link,
                 DeviceSummary {
-                    // The `vddp` device list carries no label, and the two were
-                    // identical on every unit measured, so the model stands in for it.
+                    // The `vddp` device list carries no label, and a unit's label and
+                    // model name are the same, so the model stands in for it.
                     label: model.clone(),
                     model,
                     firmware: None,
@@ -1335,7 +1337,7 @@ mod imp {
     ///
     /// `get` rather than `pointer`: `Value::pointer` allocates two Strings per path
     /// token even when nothing needs escaping, and this runs on every frame of a
-    /// feed measured at ~200/s.
+    /// feed of ~200 frames a second.
     fn vdp_of(msg: &Value) -> Option<&Value> {
         msg.get("vdp")
     }
@@ -1345,11 +1347,11 @@ mod imp {
     ///
     /// The worker is one thread: while `pump` sits in `read_frame` it is not looking at
     /// the command channel at all, so a `Cmd::Set` enqueued just after that read starts
-    /// waits it out. At 200 ms that was measured on a URX44V (2026-08-11) as a **152 ms**
-    /// wait for the first live write after a quiet gap — the busy path cannot produce
-    /// that, since it is bounded by one `recv_timeout` (5 ms) plus `PUMP_BUDGET` (30 ms).
-    /// 50 ms bounds it at roughly a quarter of that; the price is the idle wake rate,
-    /// which goes from ~5/s to ~18/s (one cycle is this timeout plus the 5 ms recv).
+    /// waits it out — up to one whole read timeout, which is the wait the first live
+    /// write after a quiet gap meets. The busy path cannot produce that, since it is
+    /// bounded by one `recv_timeout` (5 ms) plus `PUMP_BUDGET` (30 ms). 50 ms bounds it
+    /// at a quarter of the former 200 ms; the price is the idle wake rate, which goes
+    /// from ~5/s to ~18/s (one cycle is this timeout plus the 5 ms recv).
     ///
     /// It bounds no command's patience: every reply loop carries its own 3 s wall-clock
     /// deadline and treats a read timeout as "keep waiting" (`do_set`, `do_get_value`,
@@ -1714,8 +1716,8 @@ mod imp {
     fn parse_param(msg: &Value) -> Option<ParamUpdate> {
         // A namespace-level notify — `/vd/parameters` with no address and no value —
         // is the broker's bulk-change push: a scene recall on the unit emits only
-        // this single frame (confirmed by capture; the changed parameters get no
-        // per-address notifies). Forward it as the sentinel (see BULK_CHANGE).
+        // this single frame (the changed parameters get no per-address notifies).
+        // Forward it as the sentinel (see BULK_CHANGE).
         if notify_frame(msg, "/vd/parameters").is_some_and(|(_, rest)| rest.is_empty()) {
             return Some(BULK_CHANGE);
         }
@@ -1745,11 +1747,11 @@ mod imp {
 
     /// Detect a device-lost push: Device Center spontaneously sends a
     /// `/vd/synchronize` frame with `sync_status` flipping to "offline"/"lost" the
-    /// moment the URX is physically unplugged (confirmed by capture). It arrives on
-    /// `/vd/synchronize`, not `/vd/parameters`, so the notify forwarders miss it;
-    /// the broker also keeps ACKing writes (response_code 200) with no unit
-    /// attached, so a write error cannot reveal the drop. Returns the ready-to-use
-    /// error message when seen, so each read loop just `return Err(..)`s on it.
+    /// moment the URX is physically unplugged. It arrives on `/vd/synchronize`, not
+    /// `/vd/parameters`, so the notify forwarders miss it; the broker also keeps
+    /// ACKing writes (response_code 200) with no unit attached, so a write error
+    /// cannot reveal the drop. Returns the ready-to-use error message when seen, so
+    /// each read loop just `return Err(..)`s on it.
     /// Not used by handshake / sync_status, which read `/vd/synchronize` on purpose.
     fn synchronize_lost(msg: &Value) -> Option<String> {
         let vdp = vdp_of(msg)?;
@@ -1779,9 +1781,9 @@ mod imp {
     /// the stall is declared ~9 s in. The number that mattered is the one it replaces:
     /// a whole-device readback is ~800 parameters, and with every one of them running
     /// out its own deadline the app sat on "Connecting for live sync…" for ~40 minutes
-    /// before the read finished and its error count refused the session. Measured, on
-    /// a broker left holding an abandoned session (see the page-load teardown in
-    /// lib.rs): the app sent a GET every 3 s and received zero bytes back.
+    /// before the read finished and its error count refused the session. A broker left
+    /// holding an abandoned session (see the page-load teardown in lib.rs) is that
+    /// case: it answers no GET at all.
     ///
     /// A healthy local broker answers in milliseconds, so three deadlines in a row is
     /// already far outside normal — and one answered command anywhere in the run puts
@@ -1862,12 +1864,11 @@ mod imp {
     // still draining many frames per send (so the IPC boundary stays ~30×/s). The
     // budget is only checked after each read, so when the feed falls quiet a pending
     // command still waits out the final read's socket timeout before the worker yields.
-    // That WAS written off here as "not the case that mattered"; it was measured on a
-    // URX44V (2026-08-11) as a 152 ms wait for the first live write after a quiet gap,
-    // which is the case that mattered. The bound is now READ_TIMEOUT's 50 ms rather
-    // than this budget — on a quiet link the loop breaks at `Ok(None)` and never
-    // reaches the check below, so shortening the socket timeout is what moved it and
-    // changing THIS constant would not have.
+    // That WAS written off here as "not the case that mattered"; it is the wait the
+    // first live write after a quiet gap meets, which is the case that mattered. The
+    // bound is now READ_TIMEOUT's 50 ms rather than this budget — on a quiet link the
+    // loop breaks at `Ok(None)` and never reaches the check below, so shortening the
+    // socket timeout is what moved it and changing THIS constant would not have.
     const PUMP_BUDGET: Duration = Duration::from_millis(30);
 
     /// Drain buffered frames for up to PUMP_BUDGET, absorbing meter and parameter
@@ -2015,7 +2016,8 @@ mod imp {
                  or the late drain is bounded by the socket timeout again"
             );
             // The bound the whole change exists for: a queued command waits at most one
-            // recv_timeout (5 ms) plus this. 152 ms was measured on a URX44V at 200 ms.
+            // recv_timeout (5 ms) plus this; a 200 ms read timeout delayed the first
+            // live write after a quiet gap by up to that whole timeout.
             assert!(
                 READ_TIMEOUT <= std::time::Duration::from_millis(50),
                 "a live write queues behind one READ_TIMEOUT; keeping it small is the fix"
@@ -2140,10 +2142,10 @@ mod imp {
             let (param_ch, params_seen) = capture();
             subs.param_ch = Some(param_ch);
 
-            // The broker's scene-recall push (capture-confirmed shape): a
-            // namespace-level notify with no address and no data. It must absorb
-            // as the unmappable sentinel — without depending on a value — while
-            // an addressed notify keeps parsing normally alongside it.
+            // The broker's scene-recall push: a namespace-level notify with no
+            // address and no data. It must absorb as the unmappable sentinel —
+            // without depending on a value — while an addressed notify keeps
+            // parsing normally alongside it.
             let bulk = json!({ "vdp": { "method": "notify", "uri": "/vd/parameters" } });
             subs.last_flush = Instant::now();
             assert!(subs.absorb(&bulk));
@@ -2249,9 +2251,9 @@ mod imp {
             );
         }
 
-        // A broker reply, as the link reads it. `data`
-        // is the measured shape for each verb (probe-regist-shape / probe-timeline):
-        // a get answers with the value plus its bounds, a post with a bare ack.
+        // A broker reply, as the link reads it. `data` is the shape the broker answers
+        // each verb with: a get answers with the value plus its bounds, a post with a
+        // bare ack.
         fn reply(method: &str, uri: &str, data: Value) -> Value {
             json!({ "vdp": { "method": method, "uri": uri, "data": data } })
         }
@@ -3061,10 +3063,10 @@ mod tests {
     }
 
     // A page load ends what THAT page holds. The app has two webviews, and the second
-    // one's load used to end the first one's session — measured: opening the MIDI
-    // control window closed the device link and the MIDI input the main window had
-    // restored, with the frontend never told. The session now records its owner, so a
-    // third window inherits the right behaviour with nothing to remember.
+    // one's load used to end the first one's session — opening the MIDI control window
+    // closed the device link and the MIDI input the main window had restored, with the
+    // frontend never told. The session now records its owner, so a third window
+    // inherits the right behaviour with nothing to remember.
     #[test]
     fn a_page_load_ends_only_the_session_that_page_opened() {
         let state = VdState::default();
@@ -3180,9 +3182,9 @@ mod tests {
 
     // …and the reload landing DURING the install, which the caller-side interleaving
     // above cannot reach. Asserted as the LOCK ORDERING rather than by racing the two:
-    // a race is timing-dependent, and measured, 200 rounds of it passed with the check
-    // and the install back under separate locks — a test that cannot fail on the defect
-    // is not coverage of it.
+    // a race is timing-dependent and can pass round after round with the check and the
+    // install back under separate locks — a test that cannot fail on the defect is not
+    // coverage of it.
     //
     // What must hold is that `note_page_load` cannot complete while the connection lock
     // is held, since `install_for_page` holds that lock across its check AND its

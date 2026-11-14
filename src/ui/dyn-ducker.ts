@@ -6,11 +6,11 @@
 // KEY lane from whatever the key wire starts at, the reduction from the ducker, and
 // the level pair from the host channel it attenuates.
 //
-// The KEY lane is one bar, not two, and that is a measured result rather than a layout
-// choice. The unit sums a stereo key's sides before its detector, and the cap can only
-// ride a ruler in its own coordinate — against a summed display the threshold's onset
-// held to -3.0 ±0.5 dB, where against the louder side it spread 7 dB. `duckerKeyDb`
-// carries the fold and the constant; here the lane just asks for it.
+// The KEY lane is one bar, not two, and that follows from the unit rather than from a
+// layout choice. The unit sums a stereo key's sides before its detector, and the cap can
+// only ride a ruler in its own coordinate — against a summed display the threshold's
+// onset holds near -3.0 dB, where against the louder side it spreads by several dB.
+// `duckerKeyDb` carries the fold and the constant; here the lane just asks for it.
 
 import { DUCKER_FIELDS, duckerControl, formatDyn } from "../core/control/translate";
 import { REC_POINT_DEFAULT } from "../core/control/params";
@@ -210,9 +210,9 @@ export const DUCKER_DYN: DynPlotProcessor = {
   },
 
   // Attack down to the range floor, then release back to unity. Straight ramps: the
-  // measured release is an exponential approach whose TAIL is dominated by the GR
-  // meter's 1 dB quantum, so no single time constant was fitted and the honest claim
-  // is the arrival time — which is what a ramp between two known points states.
+  // release is an exponential approach whose TAIL is dominated by the GR meter's 1 dB
+  // quantum, so the meter gives no single time constant to draw and the honest claim is
+  // the arrival time — which is what a ramp between two known points states.
   drawCurve: (c, g, v, tok) => {
     const range = v.get("range");
     const attack = v.get("attack");
@@ -251,8 +251,7 @@ export const DUCKER_DYN: DynPlotProcessor = {
  *  every value range can take and no more. Read from the field catalogue rather than
  *  written down again — this constant WAS a second copy, and it held -72, the floor
  *  of the broker `range` table the ducker shares with the GATE. The device stops the
- *  ducker two steps short of it (confirmed on the unit's own LCD), so the axis drew
- *  2 dB the control cannot reach. */
+ *  ducker two steps short of it, so the axis drew 2 dB the control cannot reach. */
 const RANGE_FLOOR_DB = DUCKER_FIELDS.find((f) => f.key === "range")!.min;
 
 /** The gain rules, spanning the floor in equal steps so the deepest range carries a

@@ -19,7 +19,8 @@ async の Tauri コマンドから待つ形は、macOS で完了しなかった�
 ## The release is dispatched on the tag without a personal access token
 
 **決定。** `tag-release.yml` は `gh workflow run --ref <tag>` で `release.yml` を起動し、`release.yml` は
-渡された ref の種類で、その run が何かを決める。仕組みは `AGENTS.md`「Development」にある。入れた変更は
+渡された ref の種類で、その run が何かを決める。仕組みは
+[architecture.md](../architecture.md)「リリースが始まる仕組み」にある。入れた変更は
 [#235](https://github.com/semnil/urx-router/pull/235)。
 
 **理由。** リポジトリ自身のトークンで push したタグは、ワークフローを起こさない。dispatch の形にしたのは、
@@ -59,7 +60,8 @@ personal access token を増やさずに済むため。
 ## The demo deploys when the draft is published
 
 **決定。** `pages.yml` は、人が draft のリリースを公開したときにデモを配る
-([#283](https://github.com/semnil/urx-router/pull/283))。仕組みは `AGENTS.md`「Development」にある。
+([#283](https://github.com/semnil/urx-router/pull/283))。仕組みは
+[architecture.md](../architecture.md)「ブラウザデモ (GitHub Pages)」にある。
 次の 3 つは検討して、足さなかった: プレリリースを外すこと、新しいリリースの後で古いリリースが公開される
 場合の防ぎ、同じリリースがもう一度公開されたときの配り直し。
 

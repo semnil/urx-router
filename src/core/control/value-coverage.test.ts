@@ -321,9 +321,8 @@ describe("continuous extremes round-trip through the device path", () => {
   });
 });
 
-// Addresses confirmed on URX44V: Rec Point 137 by live snapshot-diff, stereo
-// Rec Point 264 by notify reverse-lookup, BUS Type 587 by live snapshot-diff,
-// OSC Burst width 714 / interval 715 by live snapshot-diff.
+// Addresses: Rec Point 137, stereo Rec Point 264, BUS Type 587, OSC Burst width
+// 714 / interval 715.
 describe("Rec Point / BUS Type / OSC Burst round-trip", () => {
   it("Rec Point — every MONO IN option encodes raw and round-trips (param 137)", async () => {
     for (const opt of REC_POINT_OPTIONS) {
@@ -377,7 +376,7 @@ describe("Rec Point / BUS Type / OSC Burst round-trip", () => {
   });
 });
 
-// microSD Rec per-track source assign (param 736, confirmed on URX44V): each
+// microSD Rec per-track source assign (param 736): each
 // source writes its L/R port ref to the track pair's two tracks, and Track Count
 // (839) is read back (raw × 2) but never emitted.
 describe("microSD Rec source assign round-trips (param 736)", () => {

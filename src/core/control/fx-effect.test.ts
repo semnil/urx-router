@@ -132,8 +132,8 @@ describe("fx-effect encodings (live calibration anchors)", () => {
 
   // …and the rows themselves take it. Pinning the formatters alone leaves a REV-X descriptor
   // free to call the shared `formatHz` (FX2's form), which reads 3.55 kHz as "3.55 kHz" and
-  // 22.4 Hz as "22.4 Hz" — right in one band and wrong in the other. Measured raws, through the
-  // descriptor the panel actually renders.
+  // 22.4 Hz as "22.4 Hz" — right in one band and wrong in the other. The unit's own raws and
+  // labels, through the descriptor the panel actually renders.
   it("renders each filter row through its own family's formatter", () => {
     const row = (type: number, key: string): FxParamDesc => fxParams(type).find((d) => d.key === key)!;
     for (const [type, key, raw, label] of [
