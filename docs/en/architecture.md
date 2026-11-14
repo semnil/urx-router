@@ -5265,8 +5265,10 @@ to its workspace, its install or its environment reaches it: its checkout leaves
 configuration, it restores no cache, it installs the dependencies with their install scripts off, and
 it starts `tauri-action` through `scripts/tauri-bundle.mjs`, which turns the `tauri build` the action
 runs into `tauri bundle` — packaging, signing and notarizing that binary without compiling anything
-or running `beforeBuildCommand`. Only `create-release` and `build` can write to the repository
-contents. `pnpm test release-secrets` holds the arrangement.
+or running `beforeBuildCommand`. Only `create-release`, `build` and `verify-draft` can write to the
+repository contents (`verify-draft` holds that permission only to read the draft, which GitHub hides from
+a read-only token; it holds no secret and runs no build code). `pnpm test release-secrets` holds the
+arrangement.
 The Windows console window is already suppressed in release builds by
 `windows_subsystem = "windows"` in `src-tauri/src/main.rs` (it appears in dev /
 `cargo build`).
