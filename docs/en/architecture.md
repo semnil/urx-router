@@ -1606,7 +1606,8 @@ the fader and the scale do not move. A monitor whose Cue Interrupt is off, both 
 strip with Live sync off are laid out as before, and the STEREO strip never changes. The switch is made in place on
 every cue change, on a press of C.INT and on every start and end of a session (`syncCueOver`, from `syncCues` and
 `setLive`), and a strip built while its monitor plays the CUE bus is built showing it. Only a model whose CUE bus
-meter the app reads carries the CUE column (`cueTap`, from the model registry's `cueMeter`): the URX44V. Then +48 / Ф /
+meter the app reads carries the CUE column (`cueTap`, from the model registry's `cueMeter`): all three, the URX44 on
+the URX44V's footing. Then +48 / Ф /
 HPF on a mono channel (+48 and Hi-Z are the jack's it reads: Hi-Z where that jack carries it, neither on a source
 or on no source) or one Ф on a stereo channel, which inverts the side the strip shows (`phaseL` / `phaseR`,
 gated by `channelControl`); (2) the processing
@@ -1799,7 +1800,8 @@ drag lands on the nearest.
   strip without registering every address again. Meter ids were confirmed on a real URX44V; models without a
   mapping show no meter. The CUE bus's meter sits outside the per-node tables, as the side-chain tap does, so the
   meter-point selector never offers it, and the model registry's `cueMeter` names the models whose CUE bus meter
-  address is known: the URX44V alone. On the URX22 and the URX44 the MONITOR strips carry no CUE column.
+  the app reads: all three. The address was confirmed on the URX44V and the URX22; the URX44 is assumed to behave
+  as the URX44V and is not confirmed (decisions/device-control.md, "The URX44 is assumed to behave as the URX44V").
 - **Streaming path** — the Rust side (`src-tauri/src/vd.rs`) handles a meter subscription
   (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
   `notify` frames to the frontend over a Tauri Channel during the socket drain (`pump` parses each frame with

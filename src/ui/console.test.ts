@@ -865,9 +865,14 @@ describe("the CUE bus over the MONITOR strips", () => {
     expect(shown(h, "bus.mon1")).toBe(true);
   });
 
-  for (const modelId of ["URX22", "URX44"] as const) {
-    it(`carries no CUE column on the ${modelId}, whose CUE bus meter the app does not read`, () => {
-      h = consoleHost({ modelId, live: true, cue: flags("ch1").hooks });
+  // Every model reads the CUE bus meter today, so the gate is shown on a registry entry switched
+  // off for the case.
+  it("carries no CUE column on a model whose registry entry says the app does not read the meter", () => {
+    const model = getModel("URX44");
+    const was = model.cueMeter;
+    model.cueMeter = false;
+    try {
+      h = consoleHost({ modelId: "URX44", live: true, cue: flags("ch1").hooks });
       expect(h.host.querySelector(".con-meter.cue-meter")).toBeNull();
       for (const id of MONITORS) expect(shown(h, id), id).toBe(false);
       expect(
@@ -875,12 +880,22 @@ describe("the CUE bus over the MONITOR strips", () => {
           .subSig.split(",")
           .filter((a) => a.startsWith("128:")),
       ).toEqual([]);
+    } finally {
+      model.cueMeter = was;
+    }
+  });
+
+  for (const modelId of ["URX44V", "URX22", "URX44"] as const) {
+    it(`carries the CUE column on the ${modelId}'s two MONITOR strips and nowhere else, and shows it there`, () => {
+      h = consoleHost({ modelId, live: true, cue: flags("ch1").hooks });
+      const holders = [...priv(h).refs.entries()].filter(([, r]) => r.root.querySelector(".con-meter.cue-meter"));
+      expect(holders.map(([id]) => id)).toEqual(MONITORS);
+      for (const id of MONITORS) expect(shown(h, id), id).toBe(true);
+      expect(
+        priv(h)
+          .subSig.split(",")
+          .filter((a) => a.startsWith("128:")),
+      ).toEqual(["128:0", "128:1"]);
     });
   }
-
-  it("carries the CUE column on the URX44V's two MONITOR strips and nowhere else", () => {
-    h = consoleHost({ live: true, cue: flags("ch1").hooks });
-    const holders = [...priv(h).refs.entries()].filter(([, r]) => r.root.querySelector(".con-meter.cue-meter"));
-    expect(holders.map(([id]) => id)).toEqual(MONITORS);
-  });
 });

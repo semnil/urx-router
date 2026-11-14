@@ -15,7 +15,7 @@ const PARAMS: ModelParams[] = [
     hasSD: false,
     hasHDMI: false,
     hasLineOut: false,
-    cueMeter: false,
+    cueMeter: true,
   },
   {
     id: "URX44",
@@ -27,7 +27,9 @@ const PARAMS: ModelParams[] = [
     hasSD: true,
     hasHDMI: false,
     hasLineOut: true,
-    cueMeter: false,
+    // The URX44V's CUE bus meter, taken as the URX44's: not confirmed on a URX44
+    // (docs/en/decisions/device-control.md, "The URX44 is assumed to behave as the URX44V").
+    cueMeter: true,
   },
   {
     id: "URX44V",

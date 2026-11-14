@@ -115,8 +115,10 @@ app's real screens, over three rounds:
 - the switch follows the app's own [CUE] flags, each monitor's Cue Interrupt and the session, not
   the CUE bus's level, so a cue of something silent switches it too and shows the floor;
 - the STEREO strip does not change;
-- only a model whose CUE bus meter address is known carries it: the URX44V. The model registry says
-  so (`cueMeter`), and on the URX22 and the URX44 the MONITOR strips carry no CUE column.
+- every model carries it. The meter and each monitor's replacement were confirmed on the URX44V and
+  the URX22; the URX44 is assumed to behave as the URX44V and is not confirmed
+  ([device-control.md](device-control.md), "The URX44 is assumed to behave as the URX44V"). The model
+  registry's `cueMeter` keeps the gate for a model the meter does not hold on.
 
 **Why this form.**
 
@@ -170,8 +172,8 @@ Third round, on the implementation of 2a on the STEREO strip:
 
 **What would reopen it.**
 
-- The CUE bus meter's address read on a URX22 or a URX44: that model's `cueMeter` goes on, with a case
-  for it in `src/core/meters.test.ts`.
+- A URX44 measured and found to differ: its `cueMeter` goes off, with a case for it in
+  `src/core/meters.test.ts`.
 - The unit found not to replace a monitor's output with the CUE bus as that monitor's own Cue
   Interrupt says, on a model that carries the column: the strip would then name as played what the
   monitor does not play.

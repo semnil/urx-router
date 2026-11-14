@@ -184,8 +184,8 @@ describe("tap points", () => {
 });
 
 describe("the CUE bus meter", () => {
-  it("is a stereo tap on the URX44V", () => {
-    const tap = cueTap("URX44V")!;
+  it.each(["URX44V", "URX22", "URX44"] as const)("is a stereo tap on the %s", (modelId) => {
+    const tap = cueTap(modelId)!;
     expect(tap.l).toEqual([128, 0]);
     expect(tap.r).toEqual([128, 1]);
     expect(isStereoTap(tap)).toBe(true);
@@ -193,8 +193,15 @@ describe("the CUE bus meter", () => {
 
   it("is absent on a model whose registry entry does not say the app reads it", () => {
     for (const modelId of MODEL_IDS) expect(cueTap(modelId) !== undefined, modelId).toBe(MODELS[modelId].cueMeter);
-    expect(cueTap("URX22")).toBeUndefined();
-    expect(cueTap("URX44")).toBeUndefined();
+    // Every model reads it today, so the gate is shown on an entry switched off for the case.
+    const model = MODELS.URX44;
+    const was = model.cueMeter;
+    model.cueMeter = false;
+    try {
+      expect(cueTap("URX44")).toBeUndefined();
+    } finally {
+      model.cueMeter = was;
+    }
     // An id no model has answers nothing, rather than the URX44V's address.
     expect(cueTap("")).toBeUndefined();
     expect(cueTap("nope")).toBeUndefined();

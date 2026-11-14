@@ -94,8 +94,9 @@ Cue Interrupt が入っている間 — CONSOLE のその MONITOR のストリ�
 - 切り替えはアプリが持つ [CUE] の状態、各モニターの Cue Interrupt、セッションに従い、CUE バスのレベルには
   従わない。無音のものを CUE しても切り替わり、床を示す。
 - STEREO のストリップは変わらない。
-- これを持つのは、CUE バスのメーターのアドレスが分かっている機種だけ: URX44V。機種の登録 (`cueMeter`) がそう
-  示し、URX22 と URX44 の MONITOR のストリップは CUE の列を持たない。
+- すべての機種が持つ。メーターと各モニターの置き換えを本体で確かめたのは URX44V と URX22 で、URX44 は URX44V と
+  同じに動くとみなし、確かめていない ([device-control.md](device-control.md) の "The URX44 is assumed to behave as
+  the URX44V")。機種の登録の `cueMeter` は、メーターが当てはまらない機種のための門として残す。
 
 **この形にした理由。**
 
@@ -147,8 +148,7 @@ STEREO のストリップの上で、1 回目:
 
 **覆す条件。**
 
-- URX22 か URX44 で、CUE バスのメーターのアドレスを実機で読んだとき: その機種の `cueMeter` を入れ、
-  `src/core/meters.test.ts` にケースを足す。
+- URX44 を測って違うと分かったとき: その `cueMeter` を切り、`src/core/meters.test.ts` にケースを足す。
 - 列を持つ機種で、本体がモニターの出力を、そのモニター自身の Cue Interrupt のとおりに CUE バスへ置き換えない
   と分かったとき: ストリップが、モニターが流していないものを流していると示すことになる。
 

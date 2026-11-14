@@ -80,8 +80,11 @@ CONSOLE・インスペクタの CUE の行 (と、割り当てた MIDI コント
 チップは MIDI ラーンの対象にはなるので、コントロールの割り当てはできます。
 
 モニターが CUE バスを流している間 (何かを CUE していて、その Cue Interrupt が入っている間)、CONSOLE のその
-MONITOR のストリップは CUE バスのメーターを示します — **URX44V だけ**です。CUE バスのメーターのアドレスが分かって
-いるのはこの機種だけなので、URX22 と URX44 の MONITOR のストリップは、CUE している間もモニター自身の出力を示し続けます。
+MONITOR のストリップは CUE バスのメーターを示します。
+
+> URX44V と URX22 (System 1.5.0.1) で確認しました: CUE バスのメーターと、各モニターの出力がそのモニター自身の
+> Cue Interrupt のとおりに CUE バスへ置き換わること。URX44 では確認しておらず、URX44V と同じに動くとみなして
+> います ([decisions/device-control.md](decisions/device-control.md) の "The URX44 is assumed to behave as the URX44V")。
 
 本体の **CUE Mode** (System ファームウェア V1.5。MONITOR 画面の *Mix CUE* / *Last CUE*) も、同じく
 ライブ同期中の状態です。ライブ同期中は、ステータスバーと MONITOR の各ノードのインスペクタが本体の
