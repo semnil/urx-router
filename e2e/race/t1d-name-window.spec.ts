@@ -1,11 +1,11 @@
 // T1d — the NAME path's post-write window, and the refetch that used to read into it.
 //
-// The staleness window is not numeric-only. Measured on a URX44V (System V1.3.1.0):
-// a channel name written and then polled every 4 ms answered the PREVIOUS name for
-// 81 ms. The numeric repair does not reach it — `writeOverlay` answers an address out
-// of what the unit ANNOUNCED, and a name is written on the string path (`vdSetStr`),
-// whose loop records nothing in the flush's write ledger, so a name address is never in
-// the `PendingWrites` the overlay is built from and a settle could only spend its bound.
+// The staleness window is not numeric-only: a channel name just written answers the
+// PREVIOUS name until the write's own notify arrives. The numeric repair does not reach
+// it — `writeOverlay` answers an address out of what the unit ANNOUNCED, and a name is
+// written on the string path (`vdSetStr`), whose loop records nothing in the flush's
+// write ledger, so a name address is never in the `PendingWrites` the overlay is built
+// from and a settle could only spend its bound.
 // The unit's own announcement does arrive, and is followed — that is the second case
 // below — but it reaches the follow layer, not the read the refetch issues.
 //
@@ -92,9 +92,9 @@ test.describe("T1d name window", () => {
 
     await mark(page, "rename");
     // Both edits in ONE in-page task. They have to share a 120 ms flush window for the
-    // exposure to exist at all, and driving them from the driver put six round trips
-    // between them: measured 545 ms apart at 6x CPU throttling and 682 ms at 12x, i.e.
-    // on any loaded runner this case was measuring nothing and reporting a pass for it.
+    // exposure to exist at all, and driving them from the driver puts round trips
+    // between them that a loaded runner stretches past that window, where this case
+    // would be measuring nothing and reporting a pass for it.
     // `textInput` (ui/inspector.ts) commits on "input", so the native setter plus that
     // event is the same path a typed character takes.
     await page.evaluate(() => {
@@ -160,9 +160,9 @@ test.describe("T1d name window", () => {
   // The other half of the same address: a rename made on the UNIT must reach the app.
   // It could not, for the life of the follow layer — names are not in
   // `planToCommands`, so they were in no registration and `Subs::absorb` dropped the
-  // notify the unit does send (measured on a URX44V: one notify on the renamed
-  // address, identical whether the rename came from the LCD or a client). The app now
-  // registers them, so this is a direct follow: the label changes with no readback.
+  // notify the unit does send — one notify on the renamed address, identical whether
+  // the rename came from the LCD or a client. The app now registers them, so this is a
+  // direct follow: the label changes with no readback.
   test("a rename made on the unit reaches the plan, and the app's own rename does not bounce", async ({ page }) => {
     await goLive(page);
     await page.click("#btn-view");
@@ -177,8 +177,8 @@ test.describe("T1d name window", () => {
 
     // A name from the device is bounded like any other. The unit's own screen cannot
     // produce one longer than 8 characters, but the wire carries whatever it is given
-    // (measured: a 20-character name is stored and read back whole), and an unbounded
-    // one in the plan draws this label across the nodes beside it.
+    // (a 20-character name is stored and read back whole), and an unbounded one in the
+    // plan draws this label across the nodes beside it.
     expect(await pushNameNotify(page, CH1_NAME, "12345678901234567890")).toEqual([""]);
     await expect(node(page, "ch1").locator("text").first()).toHaveText("12345678");
 

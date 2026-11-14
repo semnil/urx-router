@@ -1528,11 +1528,11 @@ test.describe("T0b baseline sweeps", () => {
     //    nothing was written back to the unit for it — a followed value that bounced
     //    straight out again would be the app arguing with the operator's hardware.
     //
-    //    Measured the first time WITHOUT `divergeAt`, this read "0.0" and looked like
-    //    a refresh that never happened. It was not: the notify claimed a value the
-    //    fake's memory did not hold, so the idle full reconcile correctly read the old
-    //    one back. The verdict was a property of the fake, which is why the device is
-    //    made to hold the value before the notify is sent.
+    //    WITHOUT `divergeAt` this reads "0.0" and looks like a refresh that never
+    //    happened. It is not one: the notify claims a value the fake's memory does not
+    //    hold, so the idle full reconcile correctly reads the old one back. The verdict
+    //    would be a property of the fake, which is why the device is made to hold the
+    //    value before the notify is sent.
     expect(deviceWrites.length).toBeGreaterThan(0);
     expect(ch2Shown).toBe("0.40");
     // 3. The tuning screen's slider keeps moving across the theme flip — the deferred
