@@ -70,8 +70,8 @@ describe("errorText", () => {
     // realm, so `instanceof Error` is false there (Error is still in its prototype
     // chain) and the description falls to `String(err)` — "AbortError: aborted". In
     // the shipping webview, and in bare V8, `instanceof` holds and the description is
-    // the message alone — "aborted". Both were measured. Pinning either literal would
-    // pin the environment instead of the app, so pin what holds in both.
+    // the message alone — "aborted". Pinning either literal would pin the environment
+    // instead of the app, so pin what holds in both.
     //
     // The app's own cancel handling does not come through here: it tests
     // `err instanceof DOMException && err.name === "AbortError"` directly, within one
@@ -111,9 +111,9 @@ describe("errorText", () => {
   });
 
   // Being an Error is no guarantee its message can be read, or that it is a string.
-  // Three separate hazards, all on the reporting path, all measured to throw before
-  // the guard covered them: the prototype walk `instanceof` performs, the message
-  // read, and the string conversion.
+  // Three separate hazards, all on the reporting path, each of which throws without
+  // the guard: the prototype walk `instanceof` performs, the message read, and the
+  // string conversion.
   describe("an Error that refuses to describe itself", () => {
     it("substitutes a reason when the message getter throws", () => {
       const err = new Error("x");

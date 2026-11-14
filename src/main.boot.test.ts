@@ -282,12 +282,12 @@ describe("a document the loader will not simply open", () => {
   //
   // The wire is duplicated from a REAL connection rather than invented out of two port
   // names because `duplicate` is the reason under test and only an existing wire can be
-  // duplicated. An invented pair is not dropped on the way in — measured: the loader's
-  // filter is `isPlanConnection`, which checks SHAPE (a plain record, two string refs, a
-  // `kind` in `CONNECTION_KINDS`, valid params) and never whether a ref resolves, so a
-  // wire carrying a valid kind and two refs that name nothing survives the load and
-  // reports as `noRule`. What gets dropped is a wire that fails one of those shape
-  // checks — an absent kind is the one the measurement used.
+  // duplicated. An invented pair is not dropped on the way in: the loader's filter is
+  // `isPlanConnection`, which checks SHAPE (a plain record, two string refs, a `kind` in
+  // `CONNECTION_KINDS`, valid params) and never whether a ref resolves, so a wire carrying
+  // a valid kind and two refs that name nothing survives the load and reports as
+  // `noRule`. What gets dropped is a wire that fails one of those shape checks — an
+  // absent kind, for one.
   it("reports a wire the plan carries twice as a validation failure", async () => {
     await boot();
     const before = nodes();

@@ -298,10 +298,9 @@ describe("the update check", () => {
   //
   // Nothing in the DOM separates a swallowed failure from a successful check, so the
   // rejection ledger is what carries the case: `boot()` is launched with `void`, so a
-  // throw that escaped `checkForUpdates` would land nowhere at all. Measured with the
-  // catch removed — the rejection arrives, and without this listener the case still
-  // reports green (vitest attributes it to the FILE, as one "error" beside a passing
-  // test).
+  // throw that escaped `checkForUpdates` would land nowhere at all. Without this listener,
+  // such a rejection leaves the case reporting green (vitest attributes it to the FILE, as
+  // one "error" beside a passing test).
   it("survives an updater that cannot reach its endpoint", SLOW, async () => {
     const rejections: unknown[] = [];
     const onRejection = (reason: unknown): void => void rejections.push(reason);

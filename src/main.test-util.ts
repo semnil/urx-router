@@ -37,10 +37,9 @@ export const statusText = (): string => $("statusbar").textContent ?? "";
 /**
  * The window a `vi.waitFor` over an app flow gets, in place of that helper's own 1000 ms
  * default. A gesture here runs the entry's real async chain — codec, storage, repaint —
- * and the wait measures the machine as much as the app: of the 106 waits the two entry
- * suites perform, the longest recorded across a warm, an oversubscribed and a cold-cache
- * run was 158 ms (2026-08-13), while the first run after a `pnpm install` starved one
- * past the default and reported it as the app not having acted.
+ * and the wait measures the machine as much as the app: a cold cache, such as the first
+ * run after a `pnpm install`, can starve a wait past the default and report it as the app
+ * not having acted.
  *
  * Kept well under `testTimeout` on purpose: a wait that gives up first fails with the
  * assertion that did not come true, which names the flow, where the test timeout that

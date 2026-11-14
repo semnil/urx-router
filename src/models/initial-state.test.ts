@@ -82,9 +82,8 @@ describe("defaultPlan", () => {
   });
 
   // The device right-aligns each number of a stereo pair label in a 2-character
-  // field, so single-digit numbers carry a leading space. Pinned against param 206
-  // of a factory-reset unit's own settings backup: dropping the leading space made
-  // a fresh plan rewrite the device's factory names on the next sync.
+  // field, so single-digit numbers carry a leading space in param 206. Without it, a
+  // fresh plan would rewrite the device's factory names on the next sync.
   it("seeds the stereo pair labels exactly as the device ships them", () => {
     expect(URX44V_NODE_NAMES.ch_5_6).toBe(" 5/ 6");
     expect(URX44V_NODE_NAMES.ch_7_8).toBe(" 7/ 8");

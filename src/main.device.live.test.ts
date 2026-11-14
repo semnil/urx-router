@@ -1122,8 +1122,8 @@ describe("the live session", () => {
   });
 
   // The Signal Type transition is announced on the PAIR's primary and clears the effect
-  // on both members (measured), so recording the announcement without its partner leaves
-  // the other half of the pair held and re-sent — half a clearing undone.
+  // on both members, so recording the announcement without its partner leaves the other
+  // half of the pair held and re-sent — half a clearing undone.
   it("carries a pair-level announcement to the partner as well", SLOW, async () => {
     const shell = await bootDevice();
     await heldByExcursion(shell, true); // STEREO: the mirror gives both members the effect
@@ -1290,8 +1290,8 @@ describe("the live session", () => {
   // (the unit stores it, every read trims it off, and the two never match).
   //
   // The wire is what makes such a name reachable at all: the unit's own name screen
-  // takes 8 characters, but a 20-character name is storable and reads back whole
-  // (measured on a URX44V), so a longer one gets here from another client.
+  // takes 8 characters, but a 20-character name is storable and reads back whole, so a
+  // longer one gets here from another client.
   //
   // Read off the inspector, which shows the plan's own string.
   it("normalizes a rename arriving from the unit, its padding as well as its length", SLOW, async () => {

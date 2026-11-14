@@ -631,10 +631,10 @@ describe("the sample rate a write happens at", () => {
   }
 
   // The rate is the one plan value the device can accept and then undo on its own: with
-  // Follow USB on it re-clocks and is then dragged back to the host's rate. The interval
-  // that was measured on hardware is in architecture.md "Sample rate and Follow USB" and
-  // is deliberately not restated here. So the disagreement is a three-way rather than a
-  // yes/no, and none of the three answers may be inferred.
+  // Follow USB on it re-clocks and is then dragged back to the host's rate. How long that
+  // takes is in architecture.md "Sample rate and Follow USB" and is deliberately not
+  // restated here. So the disagreement is a three-way rather than a yes/no, and none of
+  // the three answers may be inferred.
   it("cancels the whole write when the three-way is dismissed", SLOW, async () => {
     const shell = await bootDevice({ vd_get: clockReads(true, 96_000) });
     await askedToChoose(shell);

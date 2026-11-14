@@ -7,9 +7,8 @@
 // an unmarked string widens to `string` and trips the assertion at the foot of the file.
 //
 //   dev()   a control reproduced from one of the unit's own screens. The unit shows English
-//           on those screens whichever of its three display languages is selected (read off
-//           the hardware with its Language set to Japanese), so every catalogue repeats the
-//           same characters — the literal type below is what forces that.
+//           on those screens whichever of its three display languages is selected, so every
+//           catalogue repeats the same characters — the literal type below is what forces that.
 //   fixed() identical in every language for a reason that is not the device. Most are on the
 //           CONSOLE strip: the group separators, which are set in vertical writing mode where
 //           a full-width glyph widens the column and so moves the rack's geometry, and the two
@@ -771,11 +770,10 @@ export const en = {
       open: tr("Comp screen"),
       tapGr: dev("COMP GR"),
       // The second sentence is the whole of what two rejected visual aids were built to
-      // say. Measured on a URX44V: a 50 ms burst 11 dB over the corner takes 10 dB of
-      // reduction at Attack 0.09 ms and none at 80 ms, while the SETTLED reduction for the
-      // same level moves 3 dB across that range — so the curve is right and the signal is
-      // what does not reach it. Release is named beside Attack because it widens the same
-      // gap and only Attack was swept.
+      // say. On the unit, a short burst over the corner is reduced far more at a fast Attack
+      // than at a slow one, while the SETTLED reduction for the same level moves far less
+      // across that range — so the curve is right and the signal is what does not reach it.
+      // Release is named beside Attack because it widens the same gap.
       curveHint: tr(
         "The curve is what the sliders do to the signal, the dot the live level. Attack and Release decide how close it gets.",
       ),
