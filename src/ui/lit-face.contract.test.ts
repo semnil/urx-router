@@ -273,8 +273,6 @@ describe("a focus ring drawn inside a lit face does not take the lamp's colour",
 describe("every --seg face wears one rim and one relief", () => {
   const segFaces = RULES.filter((r) => faceDecl(r.body) === "var(--seg)");
   const selectorsOf = (r: CssRule) => r.selector.split(",").map((s) => s.trim());
-  // Firefox's thumb rules have never carried a relief; they keep the rim.
-  const isMozThumb = (r: CssRule) => selectorsOf(r).every((s) => s.endsWith("::-moz-range-thumb"));
 
   it("finds the thumbs and the cap", () => {
     expect(segFaces.flatMap(selectorsOf)).toEqual(
@@ -282,6 +280,8 @@ describe("every --seg face wears one rim and one relief", () => {
         ".gt-cap",
         '.param input[type="range"]::-webkit-slider-thumb',
         '.gt-fader input[type="range"]::-webkit-slider-thumb',
+        '.param input[type="range"]::-moz-range-thumb',
+        '.gt-fader input[type="range"]::-moz-range-thumb',
       ]),
     );
   });
@@ -292,8 +292,7 @@ describe("every --seg face wears one rim and one relief", () => {
       if (decl(r.body, "border") !== "1px solid var(--seg-border)" || decl(r.body, "border-color") !== undefined) {
         off.push(`${r.selector}: border`);
       }
-      const shadow = decl(r.body, "box-shadow");
-      if (shadow === undefined ? !isMozThumb(r) : shadow !== "var(--seg-shadow)") off.push(`${r.selector}: box-shadow`);
+      if (decl(r.body, "box-shadow") !== "var(--seg-shadow)") off.push(`${r.selector}: box-shadow`);
     }
     expect(off).toEqual([]);
   });
