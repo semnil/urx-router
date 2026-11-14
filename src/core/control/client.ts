@@ -382,9 +382,9 @@ const SIDE_EFFECT_PARAMS = new Set<string>(
  *  different answers. A caller that wants to take a value the write path normalised — the plan
  *  says one thing, the wire carried another — may only take it for an address the device was
  *  actually asked about: a session whose snapshot already agrees sends nothing, so "the write
- *  succeeded" is true while that address was never in it. Keying the decision on the run rather
- *  than on the address adopted values no write had touched, which an unrelated fader move
- *  reproduced.
+ *  succeeded" is true while that address was never in it. Keyed on the run rather than on the
+ *  address, the decision adopts values no write had touched, and an unrelated fader move is
+ *  enough to set that off.
  *
  *  An address is confirmed by having been READ at the plan's value, not by not having failed.
  *  `stopOnError` breaks a diff at its first failure, so the addresses after it are in neither
@@ -593,7 +593,7 @@ export interface ConvergeResult {
  * member of a `group` any of them belongs to, in emit order.
  *
  * A round that re-sends only what differs is right for independent parameters and
- * wrong for a reset chain. The EQ 1-knob is the measured one: writing ON discards
+ * wrong for a reset chain. The EQ 1-knob is one: writing ON discards
  * the type, writing the type discards the level. Re-sending ON alone therefore
  * un-sets the type that already matched, the next round re-sends the type and
  * un-sets the level, and the loop alternates until it runs out of rounds — leaving
@@ -668,8 +668,8 @@ export interface ConvergeOptions {
    *  own staleness window (see architecture.md, "A write is not readable when it
    *  is acked") and reports differences that are not there while missing the
    *  resets this loop exists to settle. Held only until the unit has spoken for
-   *  them — measured 17-84 ms on a URX44V, not the bounded fallback — so this
-   *  costs a converging flush the window it was already inside, not a flat 300 ms.
+   *  them — not the bounded fallback — so this costs a converging flush the
+   *  window it was already inside, not a flat 300 ms.
    *  Callers that hand over `initialDiffs` never seed and never need it. */
   pending?: PendingWrites;
   /** Rounds the loop takes while nothing it sends rewrites other values. A round that sent a
@@ -742,7 +742,7 @@ export async function sendConverging(
     pending,
     maxRounds = 3,
     // One source with settle.ts: this site's blind window and the notify wait's bounded
-    // fallback are the same measured number, and a test that clears one by advancing the
+    // fallback are the same number, and a test that clears one by advancing the
     // other is only right while they agree.
     settleMs = SETTLE_TIMEOUT_MS,
     signal,
@@ -838,7 +838,7 @@ export async function sendConverging(
     // `roundCommands`, which pulls in every member of a group any differing command
     // belongs to, and those members were never read. A wait that ended at the read
     // diff's own notifies would return while the rest of the group was still inside
-    // its own window. No converge head's reset latency is measured either — only the
+    // its own window. No converge head's reset latency is known either — only the
     // "refetch" family's, which never reaches this loop.
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
     const next = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude, matched });
