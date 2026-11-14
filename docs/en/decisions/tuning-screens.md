@@ -106,6 +106,21 @@ tag in, and the modal would grow and shrink as tags came and went.
 side; it is now 98.7 px, with 8.1 px of clearance. APCA Lc went from 76.2 to 67.0 in the light
 theme and from 72.8 to 74.2 in the dark one, against a floor of 60.
 
+## Turning a knob card
+
+**Decision (2026-10-11, [#586](https://github.com/semnil/urx-router/pull/586); the operator's
+choice, not raised again).** A knob card's face takes the pointer and turns the value by a vertical
+drag relative to the press, the way the CONSOLE's knobs do. The question was the horizontal range
+input that took the pointer at the face: a press jumped the value, and the drag the face's cursor
+offered moved nothing. How a card turns now is in channel-tuning.md, "The guitar amp is one face",
+in the paragraph "A knob card turns the way the CONSOLE's knobs do", and in #586.
+
+**Turned down.** The operator chose the drag over two other options:
+
+- Keeping the range input and only changing the cursor to `ew-resize`.
+- Keeping the range input and only stopping the jump. That one ends up writing the drag by hand
+  anyway.
+
 ## Wiring to follow
 
 - **A screen's `refresh()` is wired to the follow reflect.** Without it, a value moved on the unit
