@@ -535,12 +535,12 @@ fn experimental_enabled() -> bool {
 // A launch flag that names a one-shot ACTION rather than a capability, consumed by
 // the first caller. The frontend asks on every page load, and a webview reload is a
 // page load — in `tauri dev` an HMR edit is one — so reading argv each time re-armed
-// the action. Measured: nine reloads during an editing session started nine device
-// self-tests on the connected unit, each abandoning the previous run's Rust callbacks
-// mid-flight, and the last one was still sweeping when the process was killed, so it
-// never reached its restore and left the unit holding a perturbed (silent) state in
-// place of the operator's settings. `experimental_enabled` is deliberately NOT one of
-// these: it gates what the UI offers, which every page load has to ask about again.
+// the action: every reload during an editing session started another device self-test
+// on the connected unit, each abandoning the previous run's Rust callbacks mid-flight,
+// and a run still sweeping when the process was killed never reached its restore, so
+// it left the unit holding a perturbed (silent) state in place of the operator's
+// settings. `experimental_enabled` is deliberately NOT one of these: it gates what the
+// UI offers, which every page load has to ask about again.
 fn take_launch_action(taken: &std::sync::atomic::AtomicBool, arg: &str) -> bool {
     std::env::args().any(|a| a == arg) && !taken.swap(true, std::sync::atomic::Ordering::SeqCst)
 }
@@ -577,12 +577,12 @@ fn reset_storage_requested() -> bool {
 // Put the main window back where it was, inside a display.
 //
 // The window cannot be read back at startup, so this corrects the NUMBERS and then
-// places the window once. Measured, after assuming the opposite: a `set_position`
-// issued from the setup hook is queued, and both the hook and `RunEvent::Ready`
-// still report the position the window was BORN at — the move only lands once the
-// event loop has run. A read-then-correct at either point therefore reads a
-// rectangle that is about to be replaced, which is worse than doing nothing: it
-// reports the window as fine and then the restore moves it off the display.
+// places the window once. A `set_position` issued from the setup hook is queued, and
+// both the hook and `RunEvent::Ready` still report the position the window was BORN
+// at — the move only lands once the event loop has run. A read-then-correct at either
+// point therefore reads a rectangle that is about to be replaced, which is worse than
+// doing nothing: it reports the window as fine and then the restore moves it off the
+// display.
 //
 // So the plugin's own restore is skipped for this window (`skip_initial_state`)
 // and its saved rectangle is read here, corrected, and applied. Nothing is read
@@ -590,11 +590,11 @@ fn reset_storage_requested() -> bool {
 //
 // A plugin hook was tried instead, so that any future window would inherit the
 // correction with nothing to remember: an `on_window_ready` registered after the
-// window-state plugin's. **Measured, and it does not work** — inside that hook the
-// MIDI window still reports the position it was BORN at even when the plugin has
-// just restored it, because a `set_position` issued from a `window_created` hook
-// is queued the same way one issued at startup is. It only lands before `build()`
-// returns, which is why `open_midi_window` corrects the window there and not here.
+// window-state plugin's. **It does not work** — inside that hook the MIDI window
+// still reports the position it was BORN at even when the plugin has just restored
+// it, because a `set_position` issued from a `window_created` hook is queued the same
+// way one issued at startup is. It only lands before `build()` returns, which is why
+// `open_midi_window` corrects the window there and not here.
 #[cfg(desktop)]
 fn restore_main_window(app: &tauri::AppHandle) {
     use tauri::Manager;
@@ -1063,9 +1063,9 @@ fn build_menu(handle: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<taur
     }
     edit.remove_at(at)?;
     edit.remove_at(at)?;
-    // The accelerators are shown, not claimed: measured on this stack, the page
-    // receives the chord and the menu's key equivalent never fires. They are set so the
-    // menu prints the shortcut the operator actually uses.
+    // The accelerators are shown, not claimed: the page receives the chord and the
+    // menu's key equivalent never fires. They are set so the menu prints the shortcut
+    // the operator actually uses.
     let undo = MenuItem::with_id(handle, EDIT_UNDO_ID, "Undo", false, Some("CmdOrCtrl+Z"))?;
     let redo = MenuItem::with_id(
         handle,
@@ -1115,12 +1115,10 @@ pub fn run() {
                 capture_window_scale(window);
                 // And put both on disk now. The plugin writes its file at
                 // `RunEvent::Exit` and nowhere else, so anything that ends the process
-                // without getting there loses every move since the last launch —
-                // measured: across a dozen `tauri dev` rebuild-restarts the file's
-                // mtime never moved, and the MIDI window came back to where it had
-                // been hours earlier. `save_window_state` re-reads the live windows
-                // before writing, so this does not depend on running after the
-                // plugin's own handler for the same event.
+                // without getting there — a `tauri dev` rebuild-restart among them —
+                // loses every move since the last launch. `save_window_state` re-reads
+                // the live windows before writing, so this does not depend on running
+                // after the plugin's own handler for the same event.
                 let app = window.app_handle();
                 use tauri_plugin_window_state::AppHandleExt;
                 let _ = app.save_window_state(WINDOW_STATE_FLAGS);
@@ -1165,11 +1163,10 @@ pub fn run() {
     // `vd_disconnect` needs, so the session can never be named again from the page
     // side: it would outlive its owner as an open broker socket and an open MIDI port.
     //
-    // Measured before this existed, after one dev reload: the connect handshake still
-    // succeeded (device list, sync_status, firmware) and then the broker answered NOT
-    // ONE parameter read — the app sent a parameter GET every 3 s and received zero
-    // bytes back for as long as it was left running. The MIDI port restore failed the
-    // same way, with "that port is no longer available".
+    // Without this, after a dev reload the connect handshake still succeeds (device
+    // list, sync_status, firmware) and then the broker answers NOT ONE parameter read,
+    // for as long as the app is left running. The MIDI port restore fails the same way,
+    // with `midi-port-not-found`.
     //
     // Native-side rather than a `pagehide` handler in the page: the IPC a dying page
     // posts is not guaranteed to leave before navigation tears the webview down, and a
@@ -1332,20 +1329,18 @@ mod tests {
     // entry point is looked for among ATTRIBUTE LINES only, which is what it is; prose,
     // identifiers and literals cannot reach that set however they are spelled.
     //
-    // Both directions have been run (2026-08-14, macOS). The attribute put back on its
-    // own fails this test; put back WITH `#[cfg(desktop)]` on the two `mod` lines, the
-    // crate compiles and `cargo test` reports 74 passed, 0 failed — `desktop` is true on
-    // this target, so that gate changes nothing about what is built here. An earlier
-    // version of this comment said that arm did not compile. It was written without
-    // running it, and is false.
+    // Both directions hold. The attribute put back on its own fails this test; put back
+    // WITH `#[cfg(desktop)]` on the two `mod` lines, the crate compiles and its tests
+    // pass — `desktop` is true on this target, so that gate changes nothing about what
+    // is built here.
     //
-    // The same run established what the pin does NOT reach, which is the more useful
-    // half: its condition is necessary and not sufficient. With those two `mod` lines
-    // behind a cfg that is false here (`target_os = "android"` stands in for the mobile
-    // build), the crate fails with 70 errors, every one E0433 on `vd` or `midi` — the
-    // command registrations, the managed state and the window-event handlers all still
-    // name them, spread through the file rather than gathered in `run()`. So a green run
-    // here is not "a mobile build works"; it is the one half that can be stated in text.
+    // What the pin does NOT reach is the more useful half: its condition is necessary
+    // and not sufficient. With those two `mod` lines behind a cfg that is false here
+    // (`target_os = "android"` stands in for the mobile build), the crate fails to
+    // compile, every error an E0433 on `vd` or `midi` — the command registrations, the
+    // managed state and the window-event handlers all still name them, spread through
+    // the file rather than gathered in `run()`. So a green run here is not "a mobile
+    // build works"; it is the one half that can be stated in text.
     // Swapping the gate for a false cfg is how to get the rest of the list: the compiler
     // enumerates every site, which no text scan here could do without going stale.
     #[test]

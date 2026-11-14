@@ -3965,11 +3965,13 @@ our own, written at the two moments the plugin captures a rectangle — a window
 — both of which re-read the live window, so the pair cannot drift.
 
 For a state file with no recorded scale, the scale is **derived by trial**: assume each display
-in turn, convert with its scale factor, and accept the display the result lands inside. Most positions
-resolve uniquely, with **no position resolving to the wrong display** — and two holes that are the reason the value is
-recorded rather than only derived. A rectangle inside the region both displays' desk
-rectangles cover is consistent either way, and a rectangle that is no longer on any display — the case this
-module exists for — matches nothing. Both fall back to the window's own scale factor.
+in turn, convert with its scale factor, and accept the display the result lands inside. The trial finds a scale under
+which the rectangle fits a display attached now; a single acceptance does not prove that it is the scale the rectangle
+was saved at, which is the reason the value is recorded rather than only derived. A rectangle inside the region both
+displays' desk rectangles cover is consistent either way. One that does not fit its own display's work area —
+overlapping the Dock, or on a display that has since moved or gone — can match nothing, or can fit another display
+under that display's scale factor and take that scale. The ambiguous case and the no-match case fall back to the
+window's own scale factor.
 
 **The correction is applied to numbers, not to a window.** At startup a window cannot be read back: a
 `set_position` issued from the setup hook is queued, and both that hook and `RunEvent::Ready` still report

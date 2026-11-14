@@ -139,11 +139,11 @@ async fn open_once(
 ///
 /// Owned by the main window on WINDOWS ONLY, where that keeps it above its owner in
 /// the z-order and minimizes it with the owner. On macOS the same call makes an
-/// AppKit child window, which was measured to be unusable here — the builder below
-/// says what was seen — so there it is an ordinary top-level window and staying in
-/// front is handled where it matters, while a learn is armed. Deliberately not
-/// "always on top" for the session: that would put the panel above every other
-/// application throughout, which is a far larger promise than the one being made.
+/// AppKit child window, which is unusable here — the builder below says why — so
+/// there it is an ordinary top-level window and staying in front is handled where
+/// it matters, while a learn is armed. Deliberately not "always on top" for the
+/// session: that would put the panel above every other application throughout,
+/// which is a far larger promise than the one being made.
 fn build_midi_window(app: &AppHandle, title: String) -> Result<(), String> {
     let main = app
         .get_webview_window(crate::MAIN_WINDOW)
@@ -155,21 +155,19 @@ fn build_midi_window(app: &AppHandle, title: String) -> Result<(), String> {
             .inner_size(440.0, 620.0)
             .min_inner_size(MIN_INNER.0, MIN_INNER.1)
             .resizable(true);
-    // NOT a child of the main window on macOS, though it was until this was measured.
-    // An AppKit child is only composited on its PARENT's display: put on any other one
-    // it stays listed on-screen at layer 0 with alpha 1.0 and draws nothing. Observed
-    // both ways on a two-display desk — parent external / child built-in, and parent
-    // built-in / child external — so it is the relationship and not an arrangement. It
-    // is also translated with the parent one point for one, which is how a remembered
-    // position ends up off the desk entirely.
+    // NOT a child of the main window on macOS. An AppKit child is only composited on
+    // its PARENT's display: put on any other one it stays listed on-screen and opaque
+    // and draws nothing, whichever of the two displays the parent is on — so it is the
+    // relationship and not an arrangement. It is also translated with the parent one
+    // point for one, which is how a remembered position ends up off the desk entirely.
     //
     // On Windows the same call means something else — a Win32 OWNER, which keeps this
     // window above the main one and minimizes with it — and both halves of the macOS
-    // finding were then measured there and are ABSENT: on a two-display desk this window
-    // is drawn in full on the display the main window is not on, and moving the main
-    // window across to the other display left it where it was, to the pixel. The
-    // `#[cfg]` is therefore the measurement rather than a gap in it (architecture.md,
-    // "Window geometry", carries the table, the rig and the rest of the run).
+    // behaviour are ABSENT there: on a two-display desk this window is drawn in full on
+    // the display the main window is not on, and moving the main window across to the
+    // other display leaves it where it was. The `#[cfg]` is therefore a difference
+    // between the platforms rather than a gap in the port (architecture.md, "Window
+    // geometry", carries the table).
     //
     // What the parent bought on macOS — that it cannot fall behind the main window — is
     // paid for by pinning it while a learn is armed (`pin_midi_window`).
@@ -198,12 +196,11 @@ fn build_midi_window(app: &AppHandle, title: String) -> Result<(), String> {
     // it was — which is the requirement, and what an unconditional override broke.
     //
     // The fallback EARNED its place from what a window dragged by its owner ends up as.
-    // Measured while this was still an AppKit child on macOS: a parent moved from
-    // x=2344 to x=172 took this window from x=536 to x=-1636, off every display, where
-    // the window server still reported it on-screen and opaque and nothing was drawn.
-    // That drag reaches neither platform as things stand — macOS no longer has the
-    // parent it took, and on Windows the owner was measured (2026-08-13, above) not to
-    // move this window at all — so what the fallback still answers is the case in the
+    // Under an AppKit parent on macOS, a parent dragged across the desk takes this
+    // window off every display, where the window server still reports it on-screen and
+    // opaque and nothing is drawn. That drag reaches neither platform as things stand —
+    // macOS no longer has the parent it took, and on Windows the owner does not move
+    // this window at all (above) — so what the fallback still answers is the case in the
     // paragraph above, now reached by the desk changing under the rectangle rather than
     // by the window being dragged off a display.
     #[cfg(desktop)]
@@ -242,7 +239,7 @@ pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
 /// and cleared when it disarms — the narrowest scope that answers the complaint.
 ///
 /// Always-on-top rather than a raise on the main window's focus. That was tried and
-/// measured not to work: `set_always_on_top(true)` immediately followed by `(false)`
+/// does not work: `set_always_on_top(true)` immediately followed by `(false)`
 /// leaves the window where it was, because on macOS it is a window LEVEL and putting
 /// the level back puts the order back, and Tauri exposes no order-front that keeps
 /// keystrokes where they are (`set_focus` is `makeKeyAndOrderFront:`). What this
@@ -250,11 +247,9 @@ pub fn focus_midi_window(app: AppHandle) -> Result<(), String> {
 /// seconds a learn is armed, which is why it is not left on.
 ///
 /// On Windows this window still has an owner, and the two compose rather than one
-/// standing in for the other: measured from the panel's own learn button, arming turned
-/// the `WS_EX_TOPMOST` bit (0x8) on and disarming turned it back off — the extended
-/// style went 0x110 -> 0x118 -> 0x110, the rest of it being whatever else that window
-/// carries — with the order against the owner unchanged in both states. So nothing here
-/// needs a `#[cfg]`.
+/// standing in for the other: arming a learn turns the `WS_EX_TOPMOST` bit (0x8) on
+/// and disarming turns it back off, with the order against the owner unchanged in
+/// both states. So nothing here needs a `#[cfg]`.
 #[tauri::command]
 pub fn pin_midi_window(app: AppHandle, on: bool) -> Result<(), String> {
     match app.get_webview_window(MIDI_WINDOW) {
