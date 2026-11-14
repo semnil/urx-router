@@ -20,20 +20,20 @@ import { openEqScreen } from "./ui";
 
 // T1c — refetch-reads-before-the-write-settles.
 //
-// The defect measured on hardware (URX44V, System V1.3.1.0): the operator toggles the
-// STEREO bus EQ 1-knob and the plan's eqOneKnob.on moves SIX times — twice by the two
-// clicks and four times unrequested. One round of it:
+// The defect on the unit: the operator toggles the STEREO bus EQ 1-knob and the plan's
+// eqOneKnob.on moves twice on its own after each click — back to the value the click
+// replaced, then forward again. One round of it, in order:
 //
-//   127502  the flush sends EQ_ONE_KNOB_ON (500:0:0) = 0, acked 127513 (11 ms)
-//   127539  the refetch that flush's `sideEffect: "refetch"` triggers reads the same
-//           address — ack+26 ms — and is answered the PRE-write value
-//   127542  readIntoPlan merges that back into the live plan (the button the operator
-//           just pressed goes back), and live.ts capture() records the stale value as
-//           the snapshot entry, destroying the one the same flush wrote there
-//   127577  the device's own notify for OUR write arrives. isEcho is bare snapshot
-//           equality, so it is classified as a device-side change
-//   127878  the 300 ms scoped reconcile re-reads (ack+425, fresh now) and puts the
-//           operator's value back
+//   1. the flush sends EQ_ONE_KNOB_ON (500:0:0) = 0, and the unit acks it
+//   2. the refetch that flush's `sideEffect: "refetch"` triggers reads the same address
+//      after the ack and is answered the PRE-write value
+//   3. readIntoPlan merges that back into the live plan (the button the operator just
+//      pressed goes back), and live.ts capture() records the stale value as the
+//      snapshot entry, destroying the one the same flush wrote there
+//   4. the device's own notify for OUR write arrives. isEcho is bare snapshot equality,
+//      so it is classified as a device-side change
+//   5. the 300 ms scoped reconcile re-reads (fresh now) and puts the operator's value
+//      back
 //
 // The end value is right, so a value-only case passes. What is wrong is everything
 // between: the screen flips under the operator's hand, the snapshot holds a value nothing
@@ -147,8 +147,7 @@ test.describe("T1c refetch staleness", () => {
     // The sideEffect refetch pass ran, witnessed by an address it reads and nothing
     // writes. Deliberately NOT "it read the 1-knob address back": answering that address
     // from the write instead of asking the unit is one of the legitimate repairs, and a
-    // gate that demanded the read would fail on it while the defect was gone — measured,
-    // not hypothetical.
+    // gate that demanded the read would fail on it while the defect was gone.
     expect(passReads.length).toBeGreaterThan(0);
     // The hazard was ARMED on the address the flush actually wrote: `armStale` fired at
     // the write's queue point and parked the pre-write value. Without this the verdicts
