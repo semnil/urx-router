@@ -229,7 +229,10 @@ carried has not been tried. The two stay as they are.
   code would leave the session unlatched.
 
 **Reopen when.** For the late reply: the broker is found to return, in its reply, an id that the
-request carried. For the device loss: the broker publishes a message of its own when a unit is lost.
+request carried. For the device loss: the broker publishes a message of its own when a unit is lost,
+or the app carries a device loss as a typed error instead of a string — both the text and the check
+are the app's own (`synchronize_lost` writes it, `Health::guard` reads it), so this needs no change
+on the broker's side.
 
 ## Where the audit-derived tests live
 
