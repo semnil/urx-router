@@ -4725,11 +4725,11 @@ Ubuntu のミラーから libwebkit2gtk を取ってくる必要があり、そ�
 
 **どのジョブも `timeout-minutes` を持ち、GitHub の外のホストから取得するステップも、それぞれ持つ**。
 それぞれの値は、ジョブにかかる時間に何倍もの余裕を持たせて決めてある。リリースの経路では、誤った
-タイムアウトのほうが、遅い実行よりもずっと高くつくからである。理由・測った値・失敗のときのメッセージを
-持つのは `.github/actions/install-browsers` の 1 か所だけで、外部から取得するすべてのステップの所要時間
+タイムアウトのほうが、遅い実行よりもずっと高くつくからである。理由と失敗のときのメッセージを
+持つのは `.github/actions/install-browsers` の 1 か所だけで、外部から取得するすべてのステップ
 — pnpm のセットアップと `pnpm install`、Rust のツールチェーン、cargo-about、`cargo test` /
-`cargo build`、tauri-action、Codecov へのアップロード、Windows の E2E ジョブの `playwright install` — を
-書く場所も、そのヘッダーだけである。そのため、これらのステップはどれも、そこを指すだけの上限を持つ。
+`cargo build`、tauri-action、Codecov へのアップロード、Windows の E2E ジョブの `playwright install` — の
+上限の決め方を説明する場所も、そのヘッダーだけである。そのため、これらのステップはどれも、そこを指すだけの上限を持つ。
 
 **`pnpm check:gates` がその半分を確かめる**: それらのアクションか `.github/actions/install-browsers` を
 使うステップ、または `run:` にそれらのコマンドを持つステップは、自分の `timeout-minutes` が無ければこの
@@ -4737,7 +4737,7 @@ Ubuntu のミラーから libwebkit2gtk を取ってくる必要があり、そ�
 取得が GitHub のものだけのものとも分類していなければ、誰かが分類するまで拒否される — 2 つの一覧は
 `scripts/check-merge-gates.mjs` の `FETCHING_ACTIONS` と `GITHUB_ONLY_ACTIONS` である。**ジョブの
 `container:` のイメージは、どのステップよりも前に取得される**ので、ステップの上限はその取得に届かない:
-止まった取得を止めるのはジョブ自身の上限で、その所要時間もヘッダーにある。
+止まった取得を止めるのはジョブ自身の上限で、そのこともヘッダーに書いてある。
 
 **Ubuntu の E2E ジョブは、どれも公式の Playwright のイメージの中で走る**:
 `playwright install --with-deps webkit` のシステムライブラリの半分は、chromium のものよりはるかに多くの
@@ -4746,9 +4746,9 @@ Ubuntu のミラーから libwebkit2gtk を取ってくる必要があり、そ�
 ミラーを話からすっかり外せる。**`e2e-windows` はこれができない**: GitHub の Windows のランナーは
 `container:` を受け付けないので、`playwright install` で Chromium を入れる。Windows ではこれは
 システムライブラリを取得しない。`pnpm check:gates` は、このコマンドもほかの取得と同じく、ステップの
-上限に掛ける。**回数と所要時間は、それぞれの日付か元になった run と一緒に、そのアクションのヘッダーに
-1 度だけ書き、ほかのどこにも書かない** — これらはブラウザのビルドとランナーのイメージで動くので、
-写しはずれていく。タグは lockfile から導き (`.github/actions/playwright-version`)、前のジョブの
+上限に掛ける。**パッケージの数と所要時間は、このリポジトリのどのファイルにも書かない** — これらは
+ブラウザのビルドとランナーのイメージで動くので、写しはずれていく。そのアクションのヘッダーが持つのは、
+比と上限である。タグは lockfile から導き (`.github/actions/playwright-version`)、前のジョブの
 出力として `container:` に届く。`container:` はそのジョブのどのステップよりも前に評価されるからである。
 手で固定すると最初の Dependabot の版上げでずれ、その症状は、入っている Playwright が動かせないブラウザの
 ビルドになる。

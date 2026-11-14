@@ -739,7 +739,7 @@ function checkPullRequestFieldConsumers(workflows) {
 // The steps that fetch from a host outside GitHub, by the action they use. Each carries a
 // `timeout-minutes` of its own, so a stall there fails that step, named, inside its job's
 // budget — rather than running the job out and reporting only "cancelled". What each
-// fetches from, and the readings each bound is sized from, are in
+// fetches from, and the bound it carries, are in
 // .github/actions/install-browsers/action.yml's header.
 const FETCHING_ACTIONS = new Set([
   "pnpm/action-setup",
@@ -880,7 +880,7 @@ function checkStepBounds(workflows) {
         finding(
           where,
           `fetches from outside GitHub (${fetches.join(", ")}) but carries no step \`timeout-minutes\` — a stall ` +
-            `there runs the job out and reports only "cancelled". Bound the step; the readings to size it from are ` +
+            `there runs the job out and reports only "cancelled". Bound the step; how each bound is sized is ` +
             `in .github/actions/install-browsers/action.yml`,
         );
       }
@@ -1268,7 +1268,7 @@ export function refMatches(pattern, ref) {
     } else if (ch === "[") {
       const end = classEnd(pattern, i);
       // An unterminated `[` is not a literal bracket: Ruby matches nothing at all with it,
-      // `"a["` included. Measured, because reading it as a literal is the natural guess.
+      // `"a["` included. Reading it as a literal is the natural guess, and it is wrong.
       if (end === -1) return false;
       let body = pattern.slice(i + 1, end);
       if (body.startsWith("^")) {

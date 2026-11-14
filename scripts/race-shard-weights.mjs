@@ -24,9 +24,9 @@
 // EVERY INPUT IS REFUSED RATHER THAN ABSORBED. The log is the one input nothing downstream
 // can check — a stale array is caught by check-race-skips.mjs, a bad plan by the runner
 // below, but a log that is short, partial, from another workflow or from a run that was
-// cancelled produces an ARITHMETICALLY VALID array over a suite that did not run. Measured
-// before the refusals existed: an empty log printed `[1, 1, 168]`, claimed 9s/9s/9s balanced
-// shards, exited 0, and would have passed check-race-skips.mjs after being pasted.
+// cancelled produces an ARITHMETICALLY VALID array over a suite that did not run: without
+// the refusals, an empty log derives a lopsided array, claims balanced shards, exits 0, and
+// would pass check-race-skips.mjs after being pasted.
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -125,7 +125,7 @@ function playwright(extra, env) {
     );
   }
   // Status AND errors, because `--list` exits 1 with a well-formed report when it finds
-  // nothing (measured: `suites: []`, `errors: [Error: No tests found]`), and a spec that
+  // nothing (`suites: []`, `errors: [Error: No tests found]`), and a spec that
   // fails to import leaves a PARTIAL listing behind the same exit code — a split derived
   // from that is a split over a corpus that is not this one.
   const errors = (json.errors ?? []).map((e) => e.message?.split("\n")[0] ?? String(e));
@@ -221,9 +221,9 @@ console.log(`${collected.length} cases collected, ${runnable.length} to run, ${t
 // count it toward a shard. A case the run itself skipped
 // does NOT — the log did not measure it, and zero is a guess that is near enough for a
 // serial ladder's tail and badly wrong for a file that never ran. Left as a silent zero it
-// has no ceiling: measured, a log with one timed case out of 170 derived `[1, 1, 168]` and
-// exited 0, which is the array this file's header records as the failure the refusals exist
-// to prevent. So it is refused with the cases named, and taking the guess is a flag.
+// has no ceiling: a log with a single timed case derives a lopsided array and exits 0, which
+// is the failure the refusals exist to prevent. So it is refused with the cases named, and
+// taking the guess is a flag.
 //
 // Anything else missing means the log does not describe this corpus — and unlike every
 // other input here, that cannot be caught downstream: the resulting array is
@@ -238,8 +238,8 @@ const shapeProblem = runShapeProblem(runShape(log), shards);
 if (shapeProblem) die(`the log does not describe one run: ${shapeProblem}`);
 // Two runs in one file, which the note below cannot be relaxed past: `durations` takes the
 // last line for a key, so the appended run supplies every duration they share and the split
-// is priced from a run nobody chose. Measured before this refusal existed: stitching an older
-// log onto a current one exits 0 with an array the newer run alone does not produce.
+// is priced from a run nobody chose. Without this refusal, stitching an older log onto a
+// current one exits 0 with an array the newer run alone does not produce.
 const doubled = doubledInLog(log);
 if (doubled.size) {
   die(

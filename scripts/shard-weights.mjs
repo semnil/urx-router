@@ -118,9 +118,8 @@ const RUN_MARK = /\burx-race-run (\d+\/\d+)/;
  *
  * The marks are a LIST rather than the distinct ids, because the two readings catch different
  * stitches. Two ids is two runs outright. One id on fewer lines than there are shards means the
- * REST of the file predates the echo — measured on run 31866387883's log, which carries exactly
- * three: a fresh marked run supplying two shards and an old unmarked log supplying the third
- * passed every other reading here.
+ * REST of the file predates the echo — a fresh marked run supplying two shards and an old
+ * unmarked log supplying the third passes every other reading here.
  */
 export function runShape(text) {
   const shards = [];
@@ -153,8 +152,8 @@ export function runShape(text) {
  * race-shard-weights.mjs already fell into once.
  *
  * What that leaves is a stitch of two logs BOTH written before the echo, assembled to put
- * exactly one header per shard: measured, that derives an array at exit 0. It is what the marks
- * shrink as logs age out.
+ * exactly one header per shard: that derives an array at exit 0. It is what the marks shrink
+ * as logs age out.
  *
  * The corpus size is deliberately NOT asked here. A log carrying one case more than this
  * checkout collects is the normal state after a deletion — which is exactly when the array has
@@ -357,8 +356,8 @@ export function inspectWeights({ weights, runnableCount, shardCounts, workflowTe
     ],
     [
       // Anchored on the jq invocation, not on the key appearing somewhere: the workflow
-      // names it in a comment and in the error it prints, so a bare token match stayed
-      // green with the read itself replaced by a literal (measured against the real file).
+      // names it in a comment and in the error it prints, so a bare token match stays
+      // green with the read itself replaced by a literal.
       // The `[^#\n]*` before `jq` is what keeps a commented-out read from counting.
       "a jq read of collect.shardWeights",
       /^[^#\n]*\bjq\b[^\n]*\.collect\.shardWeights/m,

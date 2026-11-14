@@ -62,8 +62,8 @@
 // the per-shard case counts race.yml hands to Playwright so the split is sized by measured
 // duration rather than by case count. Re-taking the collection under them is what makes a
 // stale array — or a Playwright that stopped reading an undocumented environment variable —
-// a red check instead of a slower run. It costs one `--list` per shard, about 0.6 s each
-// (measured over six on a 2026 Mac), on top of the two this check already takes.
+// a red check instead of a slower run. It costs one `--list` per shard, on top of the two
+// this check already takes.
 //
 // The price of being right is node_modules, so this runs from ci.yml rather than the
 // install-free docs.yml. Nothing is lost by that: the ci.yml job it runs in runs on every
@@ -229,9 +229,8 @@ const ledger = JSON.parse(readFileSync(join(repo, LEDGER), "utf8"));
 // Playwright DID collect, so a case that stops being collected at all is invisible to it:
 // only a total collection failure is caught (`--list` exits non-zero, see fatal above),
 // and short of that, deleting a case — or a whole file — leaves every assertion here
-// satisfied and the check green. Measured when this was written: of the 170 cases
-// collected, 8 are registered skips in 4 files, so 162 could go one at a time and 118
-// could go by the file with nothing objecting.
+// satisfied and the check green: any case that is not a registered skip could go, one at
+// a time or by the file, with nothing objecting.
 //
 // A MINIMUM per file, not an exact count: adding cases must not be a chore, and the
 // failure this guards against is loss. Every file now above its floor is printed at the
