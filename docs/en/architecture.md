@@ -5227,8 +5227,9 @@ installer.nsi:823-849, :914-954 and :897-901). The path a pinned shortcut points
 rewrites in place, so it cannot happen. An existing MSI install is detected by the NSIS
 installer (matching `DisplayName` + `Publisher`) and uninstalled first — this runs even under the updater's
 passive mode — but the install location moves to `%LOCALAPPDATA%\URX Router`, so that one migration prompts
-for the MSI uninstall and elevation, and an existing pin has to be re-pinned. The design assumes a copy
-installed from the MSI gets there through its own updater: the updater asks `latest.json` for a
+for the MSI uninstall and elevation, and an existing pin has to be re-pinned. A copy installed from the
+MSI gets there through its own updater, which was checked once on Windows with a copy installed from an
+MSI release: the updater asks `latest.json` for a
 `windows-x86_64-msi` entry first and falls back to `windows-x86_64`, and a release that builds NSIS only
 publishes the setup.exe under that unsuffixed key. For the same reason the updater's `installMode` is never
 `quiet`: a silent run skips the installer's pages, and the MSI uninstall is done from one of them.
