@@ -295,10 +295,10 @@ test.describe("toolbar", () => {
 
   // The rack's select recipe named the model picker by id, so the rate picker beside
   // it — same wrapper class, one control away — was never reached and wore the UA's
-  // own menulist: measured at 11px system-ui in WebKit and 13.3px Arial with square
-  // corners in Chromium, against the picker's 12px --mono. Pinned as an equality
-  // between the two rather than as values, so it holds through a token change and
-  // fails the moment one of them drops off the recipe again.
+  // own menulist, a different system face in each engine, against the picker's
+  // 12px --mono. Pinned as an equality between the two rather than as values, so it
+  // holds through a token change and fails the moment one of them drops off the
+  // recipe again.
   test("both rack pickers wear one face", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator("#model-picker")).toBeVisible();

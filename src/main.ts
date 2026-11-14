@@ -1728,12 +1728,12 @@ const followDirtyNodes = new Set<string>();
  * Diffed from a clone taken here because `place` reports only whether it placed the
  * value: where it lands is several places (a fader / pan / assign ON is a connection
  * param, a name is `nodeNames`, everything else a node param), and a scoped differ
- * that missed one would silently stop absorbing. A whole-plan clone + diff measures
- * 0.12 ms for the URX44V default plan against a stream of ~10 notifies/s.
+ * that missed one would silently stop absorbing. A whole-plan clone + diff is cheap
+ * against a stream of ~10 notifies/s.
  *
- * One definition rather than two: this rule is load-bearing and the comment above is
- * the record of what re-opening it costs, so a second copy kept in step by hand is
- * the shape that goes wrong quietly.
+ * One definition rather than two: this rule is load-bearing and the comment above says
+ * what re-opening it costs, so a second copy kept in step by hand is the shape that
+ * goes wrong quietly.
  */
 function authorFromDevice(node: string, place: () => boolean, kind: WriteSource = "follow-direct"): boolean {
   const before = clonePlanState(plan);
@@ -2227,7 +2227,7 @@ async function followRead(
     // whichever read finished first took the evidence out from under the full read the
     // notify was for; and a full read already in flight has read the selector before the
     // unit cleared it, so it holds nothing itself and the announcement belongs to the
-    // replay it scheduled. Measured: clearing the whole list there left that replay
+    // replay it scheduled. Clearing the whole list there would leave that replay
     // adopting the clearing.
     if (establishedRate) {
       const keep = announcedRates.filter((r) => r.seq > rateMark);
@@ -2616,9 +2616,9 @@ function syncDeviceActionUi(): void {
     if (el) el.disabled = deviceLinkHolder !== null && deviceLinkHolder !== owner;
   }
   // Follow USB is the one entry a live SESSION lends its connection to — its handler
-  // writes over the session's link instead of opening a second one, and measured on a
-  // URX44V the session survives the re-clock. During a live START it must not: the
-  // session is not up yet, so the same handler would take the connecting branch.
+  // writes over the session's link instead of opening a second one, and the session
+  // survives the re-clock. During a live START it must not: the session is not up yet,
+  // so the same handler would take the connecting branch.
   followUsbBadge.disabled = deviceLinkHolder !== null && !liveSessionUp;
   // The Device setup screen is the other: while a session is up it reads and writes over the
   // session's connection, behind every unit write queued so far.
@@ -3061,11 +3061,11 @@ const inspectorActions = {
     // A NESTED GROUP is the exception, and it is the default rather than a caller's
     // responsibility: every funnel edits one by REBUILDING it — one field set, the rest
     // copied — and the merge drops a named group WHOLE, so naming it hands the device's
-    // answer for every untouched sibling away with it (measured: an OSC frequency the
-    // unit moved during an OSC ON toggle was thrown out with the toggle's own key). A
-    // group therefore falls through to the plan's own diff, which names the fields that
-    // moved. A caller with a field that can be written WITHOUT moving names it itself, as
-    // a dotted path — that is what `written` carries, and it replaces this derivation.
+    // answer for every untouched sibling away with it (a device's OSC frequency read
+    // during an OSC ON toggle is thrown away with the toggle's own key). A group
+    // therefore falls through to the plan's own diff, which names the fields that moved. A
+    // caller with a field that can be written WITHOUT moving names it itself, as a dotted
+    // path — that is what `written` carries, and it replaces this derivation.
     const names = written ?? Object.keys(patch).filter((key) => typeof patch[key as keyof NodeParams] !== "object");
     const keys = [...names.map((name) => nodeParamContestPath(id, name)), ...transitionKeys, ...alsoWritten];
     // A mirror asserts the PARTNER's keys the same way, and it can assert one that already
@@ -3073,10 +3073,10 @@ const inspectorActions = {
     // on. Each names only what IT wrote, and for the pair mirror that is THIS EDIT's keys
     // MINUS the ones the pair does not share, not the whole record it copies: the other keys
     // it carries over were already equal on both sides, so copying them writes nothing, while
-    // claiming them takes the device's answer away from the partner alone. Measured before
-    // the narrowing: a read that moved both members' HPF, with an unrelated Phase edit inside
-    // it, left CH 1 on the device's ON and CH 2 on the plan's OFF — one gesture splitting a
-    // pair that moves as one. A key the mirror LEAVES with the partner is the same defect
+    // claiming them takes the device's answer away from the partner alone. Without the
+    // narrowing, a read that moves both members' HPF, with an unrelated Phase edit inside it,
+    // would leave CH 1 on the device's ON and CH 2 on the plan's OFF — one gesture splitting
+    // a pair that moves as one. A key the mirror LEAVES with the partner is the same defect
     // pointed the other way: the head amp is the member's own, so claiming it takes the
     // device's answer for a value this edit never sent.
     const mirroredKeys = new Set<string>();
@@ -6730,10 +6730,10 @@ function applyResolvedTheme(): void {
   // than an oversight: its scribble ink stopped being a stylesheet value when inkOn()
   // began picking black or white from the ground, which for a rail-coloured strip is a
   // theme token — so the ink survives a theme switch computed against the ground that
-  // just left. Measured 2026-08-07: harmless, because all five rails resolve to white
-  // in BOTH themes, so the stale answer is the right one. Move a rail to a ground where
-  // the two themes disagree and this becomes a strip inked for the theme that left;
-  // adding consoleView.refresh() here is the fix, and it costs one strip rebuild.
+  // just left. Harmless today, because inkOn() picks white on all five `--rail-*` grounds
+  // of style.css in BOTH themes, so the stale answer is the right one. Move a rail to a
+  // ground where the two themes disagree and this becomes a strip inked for the theme that
+  // left; adding consoleView.refresh() here is the fix, and it costs one strip rebuild.
   dynScreen.refresh();
 }
 

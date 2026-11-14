@@ -14,7 +14,7 @@ const strip = (page: Page, name: string) => page.locator(".con-strip", { has: pa
 // Legend opacities, matching .fine-tag / its armed state / a locked row in src/style.css.
 // LOCKED is DIM composed with the locked row's own 0.45, not that 0.45 alone: opacity on
 // one element cascades rather than multiplying, so the flat value printed the legend
-// heavier than the label it annotates (measured at 1.56x its ink, against 0.90x live).
+// heavier than the label it annotates.
 const DIM = "0.75";
 const LIT = "1";
 const LOCKED = "0.3375";

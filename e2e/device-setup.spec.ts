@@ -352,11 +352,11 @@ test("rows for a page the model does not have are locked, not hidden", async ({ 
 
 // Brightness is the app's only slider that commits on `change` rather than on `input`, so
 // the app-wide "hold a native slider inert when the window goes away" treatment
-// (`holdInertOnBlur`) cannot simply disable it: measured 2026-08-14, disabling a range
-// mid-drag makes Chromium fire that pending change at the disable and WebKit fire none at
-// all, which loses the value the operator dragged to. The row commits from its own value
-// first, then is held. This case drives the real drag; only the blur is dispatched, since
-// Playwright emulates focus.
+// (`holdInertOnBlur`) cannot simply disable it: disabling a range mid-drag makes Chromium
+// fire that pending change at the disable and WebKit fire none at all, which loses the
+// value the operator dragged to. The row commits from its own value first, then is held.
+// This case drives the real drag; only the blur is dispatched, since Playwright emulates
+// focus.
 test("a brightness drag interrupted by a window blur is committed, and the row is held", async ({ page }) => {
   await stubTauriDevice(page, { values: DEVICE_VALUES }); // brightness 4
   await page.goto("/");

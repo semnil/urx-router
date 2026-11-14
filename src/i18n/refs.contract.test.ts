@@ -4,8 +4,8 @@
 // SHOWS — by driving each surface and reading the screen. It cannot answer the
 // easier half, because a key nothing references does not fail there in a way that
 // names it: the surface simply renders without it, and the assertion is about what
-// IS on screen. The gap is real and was measured, at `d23b206^`, where `modeDesc`
-// sat in both catalogs referenced by nothing at all.
+// IS on screen. The gap is real: a key can sit in both catalogs referenced by nothing
+// at all, as `modeDesc` once did.
 //
 // So this is the floor under that guard, and deliberately the loose one: it asks
 // only whether the leaf's own name occurs anywhere in the shipped sources. A leaf
@@ -19,14 +19,13 @@
 // they are applied to: a computed index (`t().error[err.code]`, `m.inspector[key]`)
 // and a spread into something indexed later (`{ ...m.mode }`, then `text[v]`).
 // Nothing else does — in particular NOT `const m = t().prefs`, which is the house
-// idiom and would vouch for almost everything: written that way the rule covered
-// 44 of 48 namespaces and 687 of 713 leaves, i.e. it checked 26 of them (measured
-// 2026-08-12, which is why the rule is not written that way).
+// idiom and would vouch for almost everything: written that way the rule would check
+// almost none of the leaves, which is why the rule is not written that way.
 //
-// What it costs as written, same measurement: 22 namespaces are vouched wholesale
-// and 359 of 713 leaves sit inside one — `inspector` and `dynTuning` are indexed
-// by key, so their members cannot be named from the text. Inside those, this check
-// is asleep and the inventory spec is the only guard.
+// What it costs as written: a namespace reached by either form is vouched wholesale,
+// and a large share of the leaves sit inside one — `inspector` and `dynTuning` are
+// indexed by key, so their members cannot be named from the text. Inside those, this
+// check is asleep and the inventory spec is the only guard.
 //
 // THE EXCEPTION the top of this header points at. One reference form is not recognised
 // and is reported as unreferenced: destructuring (`const { title } = t().ns`). No leaf is
@@ -47,7 +46,7 @@ import { en } from "./en";
 // `new URL(..).pathname`: that is a URL path. A Windows checkout gets `/G:/…`, which
 // resolves against the current drive — that half is Windows-only. A directory with a
 // space in it arrives percent-encoded on every platform, which is the half that reaches
-// macOS and Linux too (reproduced locally). Either way readdirSync throws.
+// macOS and Linux too. Either way readdirSync throws.
 const SRC = resolve(process.cwd(), "src");
 
 /** Every `.ts` under src/, minus the catalogs themselves and the test layer. */
@@ -82,15 +81,15 @@ function unreferenced(catalog: unknown, text: string): string[] {
   for (const [, name] of text.matchAll(/\[\s*["'`]([^"'`]+)["'`]\s*\]/g)) named.add(name);
   const wholesale = new Set<string>();
   // `.foo[` and `.foo?.[` pick a member at runtime. The optional-chaining punctuator is
-  // spelled out rather than made optional one character at a time: `\??` matched a bare
-  // `?`, which missed `?.[` entirely AND vouched for the namespace on the left of a
-  // ternary (`cond.ns ? [1] : [2]`) — both measured 2026-08-13.
+  // spelled out rather than made optional one character at a time: `\??` matches a bare
+  // `?`, which misses `?.[` entirely AND vouches for the namespace on the left of a
+  // ternary (`cond.ns ? [1] : [2]`).
   for (const [, name] of text.matchAll(/\.([A-Za-z_$][\w$]*)\s*(?:\?\.)?\s*\[/g)) wholesale.add(name);
   // `...x.foo` — the namespace itself is taken away, to be indexed out of reach of this
   // scan. The lookahead rejects a match that is not the END of the property chain, which
   // is three things at once: a CALL (`...list.filter(…)`), its generic form
   // (`...el.querySelectorAll<T>(…)`), and a middle segment reached by backtracking —
-  // `[...a.b.c.filter(x)]` otherwise vouched for `c`, measured 2026-08-13.
+  // `[...a.b.c.filter(x)]` would otherwise vouch for `c`.
   for (const [, name] of text.matchAll(/\.\.\.\s*[\w$]+(?:\.[\w$]+)*\.([\w$]+)\s*(?![\w$(<.])/g)) wholesale.add(name);
 
   return leaves(catalog)

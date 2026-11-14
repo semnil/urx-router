@@ -706,7 +706,7 @@ describe("Write to device", () => {
   // name and collects one failure per read. The status count is pinned against that read
   // count — an independent observable — and the floor is the other half, because the two
   // move together if the sweep ever gains a stop: 1 === 1 would stay green while the
-  // operator's number fell from the whole name set to one. Measured here: 17 name reads.
+  // operator's number fell from the whole name set to one.
   it("cancels the write when a channel name cannot be read", SLOW, async () => {
     const shell = await bootDevice({
       ...SAVES,

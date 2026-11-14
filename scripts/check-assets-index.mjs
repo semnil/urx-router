@@ -27,16 +27,16 @@
 //     ignored path is SKIPPED, never failed (`git check-ignore`). The skip is decided by
 //     the ignore rule and not by whether the tree is there, so it holds in the
 //     operator's checkout too: a private path that went stale is skipped, not reported,
-//     in EVERY checkout (measured). The skip is named on the OK line for that reason —
-//     it is the one outcome a reader has to check by hand.
+//     in EVERY checkout. The skip is named on the OK line for that reason — it is the
+//     one outcome a reader has to check by hand.
 //   - Tier-B flags (§CLI flag) are a weak oracle: a substring match that includes
 //     comments, because meter-bench-run.mjs composes its flags at runtime
 //     ("--" + name), so --tree exists only in its usage comment. Tier A (Tauri
 //     launch flags), where the real rename risk lives, parses the actual call sites.
 //     THIS FILE AND ITS TEST are excluded from that corpus (SELF_FILES): this header names
 //     --tree and --hook, the test spells --experimental, and a checker whose own files answer
-//     its questions passes on itself (measured — renaming --tree away in meter-bench-run.mjs
-//     left the run green).
+//     its questions passes on itself: renaming --tree away in meter-bench-run.mjs would
+//     leave the run green.
 //   - A row is required to INTRODUCE an anchor, not merely to contain one, so a row
 //     pasted in with another row's `pnpm dev` in it cannot ride on that row's
 //     assertion. What no rule can see is a row that names a real-but-unrelated
@@ -285,8 +285,8 @@ const DOC_ROOTED = /^(?:src-tauri|src|e2e|scripts|docs|public|reference|\.github
 // A token with at least one slash. The head may start with a dot (.github/…), and the
 // tail may end in one (core/control/), carry a glob (e2e/race/t*.spec.ts) or a brace
 // alternation (docs/{en,ja}/…). `<` is excluded from the head so a Mermaid label's
-// <br/> is not a token: it matched 110 times and was pardoned as "another tree's path",
-// which made the OK line's suppression count say the opposite of what was suppressed.
+// <br/> is not a token: matched, it would be pardoned as "another tree's path", and the OK
+// line's suppression count would say the opposite of what was suppressed.
 const DOC_SLASHY = /(?<![\w./~@<-])([A-Za-z.][\w.-]*\/(?:[\w.*{}@,-]+\/)*[\w.*{}@,-]*)/g;
 const DOC_BASENAME = new RegExp(String.raw`(?<![\w./~@-])([A-Za-z][\w.-]*\.(?:${DOC_EXT}))(?![\w/-])`, "g");
 // A dotfile name (.env.demo, .gitignore). Never followed by a slash — .github/… is a
@@ -325,10 +325,10 @@ export function classifyToken(token, { isRowExport = () => false } = {}) {
   if (isRowExport(token)) return "rowExport";
   // The same oracle as `NAME=value`, for a variable the section names on its own — which
   // is how it names one it does not set. It is the LAST shape tried and it requires an
-  // underscore, both measured: this section shouts in prose, and a rule of "any all-caps
-  // run" counted `CONSOLE` as a verified variable (assertions went UP by one) where the
-  // fall-through had been forcing an author to classify it. An all-caps EXPORT is taken by
-  // the shape above, against the row that owns it, which is the stronger of the two answers.
+  // underscore: this section shouts in prose, and a rule of "any all-caps run" would count
+  // `CONSOLE` as a verified variable where the fall-through forces an author to classify
+  // it. An all-caps EXPORT is taken by the shape above, against the row that owns it,
+  // which is the stronger of the two answers.
   if (ENV_NAME_EXACT.test(token)) return "env";
   // The load-bearing invariant. A silently-ignored token class is how this check would rot
   // the same way the table does.
@@ -350,8 +350,8 @@ export const mentions = (hay, name) => new RegExp(String.raw`\b${name}\b`).test(
 // claim. Paths are matched with forward slashes, which is what `walk` below produces.
 //
 // Markdown is excluded from the .github/ arm rather than assumed absent: `PULL_REQUEST_TEMPLATE.md`
-// lives there and repeats claims the asset table makes, so a bare `^\.github/` put a document
-// back in the corpus and made the sentence above false (measured).
+// lives there and repeats claims the asset table makes, so a bare `^\.github/` would put a
+// document back in the corpus and make the sentence above false.
 export const ENV_CORPUS = /^(?:src|e2e|scripts)\/|^\.github\/(?!.*\.md$)|^\.env|\.config\.ts$/;
 
 // Never walked. A build output is not part of the repository's inventory, and src-tauri/target
@@ -360,8 +360,8 @@ const WALK_SKIP = new Set(["node_modules", ".git", "dist", "dist-trace", "target
 
 // Separators normalized, which is what lets ENV_CORPUS and every other path rule here be
 // written one way. `join` produces backslashes on Windows, where a rule anchored on `/` keeps
-// only its separator-free arms — measured by simulating that shape: the env corpus drops from
-// 343 files to 5, which is not empty enough to look broken.
+// only its separator-free arms — the env corpus shrinks to a handful of files, which is not
+// empty enough to look broken.
 export function walk(dir, out = []) {
   if (!existsSync(dir)) return out;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -914,9 +914,8 @@ if (isEntry(import.meta.url)) {
   // --- docs/{en,ja}: the file references the design documents make -------------
   //
   // The table above is checked and the private memory is checked; the design documents
-  // name files on nearly 600 spans and were checked by nobody. Nothing in them is stale
-  // today (measured), so this is preventive: the point is that the next moved file is
-  // caught by a run rather than by a reader months later.
+  // name files throughout and were checked by nobody. This is preventive: the point is
+  // that the next moved file is caught by a run rather than by a reader months later.
   //
   // The one design problem is the memory checker's: a CLAIM is not a MENTION. Three
   // rules, each measured against the corpus before it was kept:
@@ -949,10 +948,9 @@ if (isEntry(import.meta.url)) {
   // in a Mermaid label rots like any other (+86 assertions, no new misses). Prose outside
   // backticks is scanned for basenames and dotfiles ONLY — a slash in a sentence is not a
   // path (`ON/OFF`, `CH3/4`), but `console-sends.md` in a sentence is still that file, and
-  // backticks are a house style rather than a rule the documents follow. Measured before
-  // keeping it: 43 assertions, 0 misses, and it is the ONLY thing that covers
-  // console-sends.md and live-race-harness.md, which no backticked span in the corpus
-  // names at all.
+  // backticks are a house style rather than a rule the documents follow. It is the ONLY
+  // thing that covers console-sends.md and live-race-harness.md, which no backticked span
+  // in the corpus names at all.
   //
   // Deliberately not checked: Markdown link and image targets (a different class, and a
   // broken one is visible to the reader who clicks it — MD_TARGET strips them before the
@@ -1180,8 +1178,7 @@ if (isEntry(import.meta.url)) {
 
   // Every code span in a row's FIRST cell — what "X has a row" has to mean. The rules
   // below asked `sectionText.includes(file)` instead, which any mention satisfies: a row
-  // deleted and the same path written into a sentence of prose left the run green.
-  // Measured on this section — the E2E fixture table down to 43 rows, still OK. Exact
+  // deleted and the same path written into a sentence of prose left the run green. Exact
   // match rather than substring, so one path cannot be answered by a longer one that
   // contains it.
   const rowAnchors = new Set(rows.flatMap((row) => firstCellSpans.get(row) ?? []));
@@ -1249,9 +1246,8 @@ if (isEntry(import.meta.url)) {
     }
 
     // E3. an inventory row names every export of the file it heads. E and E2 stop at "a
-    //     row exists", which is what let this row stay green while the file gained two
-    //     exports — measured over the twelve days this table has existed, eight commits
-    //     added an export to a file whose row already existed and touched none of them.
+    //     row exists", which lets a row stay green while its file gains exports: a commit
+    //     can add an export to a file whose row already exists and touch no row at all.
     //     Naming the export rather than merely editing the row is the point: a diff-based
     //     rule is satisfied by any edit, including one that leaves the list wrong.
     for (const [file, why] of INVENTORY_ROWS) {

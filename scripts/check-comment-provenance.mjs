@@ -3,8 +3,8 @@
 //
 // A comment carries the behaviour and the assumptions the code rests on. A reading, a
 // capture date, or a hedge naming the run that established a fact is a derivation: it goes
-// stale at the next measurement, and it has a home already — the pull request, the
-// documents under docs/, or the private ledgers. Two shapes are enforced:
+// stale at the next measurement, so the record goes to the project's private notes and the
+// public side keeps the conclusion. Two shapes are enforced:
 //
 //   provenance hedge   "(measured)", "-- measured", "Measured on a URX44V", "measured by
 //                      driving ...". The claim beside it stays; only the sourcing goes.
@@ -2739,8 +2739,8 @@ const report = (found) => {
     console.error(`${f.path}:${f.line}  ${f.say}: ${JSON.stringify(f.hit)}`);
   }
   console.error(
-    `\n${found.length} comment(s) record where a fact came from. Keep the claim; move the run,` +
-      ` the reading and the date to the pull request or to docs/, which is where they stay findable.`,
+    `\n${found.length} comment(s) record where a fact came from. Keep the conclusion in the comment;` +
+      ` move the run, the reading and the date to the project's private notes.`,
   );
 };
 
@@ -2858,7 +2858,8 @@ if (invokedDirectly) {
       }
       console.error(
         `\n--update lowers a ceiling; it does not raise one. ${raised.length} file(s) above theirs.` +
-          ` Move the run, the reading and the date to the pull request or to docs/.` +
+          ` Keep the conclusion in the comment; move the run, the reading and the date to the` +
+          ` project's private notes.` +
           ` A RULE change that legitimately grows the corpus is --reseed, which is a separate` +
           ` decision and shows in the diff as one.`,
       );
@@ -2901,8 +2902,8 @@ if (invokedDirectly) {
       for (const x of f.findings) console.error(`  ${f.path}:${x.line}  ${x.say}: ${JSON.stringify(x.hit)}`);
     }
     console.error(
-      `\n${over.length} file(s) above the ledger. Keep the claim; move the run, the reading and` +
-        ` the date to the pull request or to docs/, which is where they stay findable.`,
+      `\n${over.length} file(s) above the ledger. Keep the conclusion in the comment; move the run,` +
+        ` the reading and the date to the project's private notes.`,
     );
     process.exit(1);
   }

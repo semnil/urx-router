@@ -627,7 +627,7 @@ export function focusMidiWindow(): Promise<void> {
  *  disarms. Narrow on purpose: it floats above other applications too, which is
  *  acceptable for the seconds an arming lasts and not as a standing state. The
  *  alternative — raising it whenever the main window is focused — was implemented
- *  and measured not to work (midiwin.rs `pin_midi_window` says why). */
+ *  and did not work (midiwin.rs `pin_midi_window` says why). */
 export function pinMidiWindow(on: boolean): Promise<void> {
   return invoke<void>("pin_midi_window", { on });
 }
@@ -703,9 +703,8 @@ export type DownloadEvent =
 
 /** How long an update check may take before it fails. The updater plugin sets
  *  no default request timeout, and a check whose response is lost on the
- *  network then never settles (measured: repeated checks against the release
- *  endpoint intermittently hang forever without this) — which would leave any
- *  await on it, and the UI state behind it, pending permanently. */
+ *  network then never settles — which would leave any await on it, and the UI
+ *  state behind it, pending permanently. */
 const UPDATE_CHECK_TIMEOUT_MS = 10_000;
 
 /** Ask the updater for a newer release. Returns null in a plain browser or when

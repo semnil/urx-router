@@ -20,11 +20,8 @@ export default defineConfig({
     environment: "node",
     // A hang detector, not a budget. The cases that boot the whole app under jsdom run
     // for seconds, and the 5000 ms default sits close enough to them to be crossed by a
-    // cold run rather than by a defect. Measured 2026-08-13 on one machine (Windows, 24
-    // cores), for main.flows' "the share link puts a decodable plan on the clipboard":
-    // 2.1 s at 72 workers, 3.1 s at the default worker count, 3.3 s with the Vite cache
-    // cleared, and 6.4 s on the first run after a `pnpm install` — the run that failed,
-    // at 129% of the default, and taken while this suite was smaller than it is now.
+    // cold run rather than by a defect: the first run after a `pnpm install` can be slow
+    // enough to take a whole-app case past it.
     // 30 s is what the main.device.*.test.ts files already pass per test for the same kind of case,
     // and a stuck test still reports in half a minute.
     testTimeout: 30_000,
@@ -48,11 +45,8 @@ export default defineConfig({
       // V8 counts no line for a string leaf — a catalog is one object literal, and the
       // only executable lines in the file are the formatter bodies (102 in each, plus
       // en.ts's three marker helpers). The percentage is therefore not "how much of the
-      // catalog is checked" but "how many formatters some test happened to call":
-      // measured 2026-08-13 on 238389c, ja.ts 19 of 103 lines and en.ts 84 of 108, where
-      // every other directory reads 95-100% of lines (core, control, midi, models, ui)
-      // and src itself reads 85.4 (main.ts at 85.47, midi-window.ts at 0). All of those
-      // are the line column, the one the two catalog figures are counted in.
+      // catalog is checked" but "how many formatters some test happened to call", and
+      // both catalogs read well below every other directory's line figure.
       // The suite runs in English, so ja.ts's figure is a statement about the language
       // the tests run in.
       //

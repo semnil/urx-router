@@ -135,7 +135,7 @@ async function collectOpenPages(
  *  and both fall back to the UA's, so such a pin needs one anchored value — but a
  *  `var()` naming a token that no longer exists is invalid at computed-value time, so
  *  the probe falls back to the initial `rgba(0, 0, 0, 0)` and so does every declaration
- *  in the app reading the same token. Measured: rename `--ctl-bg` away and the probe,
+ *  in the app reading the same token. Rename `--ctl-bg` away and the probe,
  *  the model picker and the inspector's select all report `rgba(0, 0, 0, 0)` together,
  *  which satisfies an equality against controls painting nothing at all. Asking the
  *  root for the declaration separately is what keeps the two failures apart — a token
@@ -265,10 +265,10 @@ export async function heldThroughBlur(page: Page, slider: Locator): Promise<void
   expect(await slider.inputValue()).toBe(dragged);
   await expect(slider).toBeDisabled();
 
-  // Coming back releases the hold — measured safe on the shipping WKWebView: re-enabling
-  // under a still-held button does not hand the drag back. (What DID resume there was the
-  // other treatment, detaching the element and re-inserting it.) So the row is live again
-  // and the value still does not move under the held pointer.
+  // Coming back releases the hold: re-enabling under a still-held button does not hand
+  // the drag back. (What does resume is the other treatment, detaching the element and
+  // re-inserting it.) So the row is live again and the value still does not move under
+  // the held pointer.
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   await expect(slider).toBeEnabled();
   await page.mouse.move(at(0.95), y);
@@ -291,7 +291,7 @@ const WHEEL_NOTCH = 400;
  *  What it exists to separate: a container whose content exceeds it is not a container the
  *  operator can reach into. `scrollHeight > clientHeight` holds on an `overflow: hidden`
  *  box just as well, and so does writing `scrollTop` — the box is still a scroll container,
- *  it is only the operator who has lost the way in. Both spellings were measured green in
+ *  it is only the operator who has lost the way in. Both spellings stay green in
  *  both engines against `.prefs-grid { overflow-y: hidden }` and
  *  `.con-strips { overflow: hidden }`, which is precisely the regression the cases using
  *  this are placed against. A wheel is what the two answers differ on.
