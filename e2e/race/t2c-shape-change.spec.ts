@@ -100,8 +100,8 @@ const oneKnobFace = (page: Page, face: 0 | 1) =>
  *
  * The slider is FOCUSED first, and that is a property of the driver rather than of the
  * app: a mousedown that also moves focus fires `focusout` on the element that had it,
- * and focusout is a history boundary — measured, the press then commits its own first
- * edit on the spot and one drag costs two entries. An operator's hand reaches a slider
+ * and focusout is a history boundary, so the press then commits its own first edit on
+ * the spot and one drag costs two entries. An operator's hand reaches a slider
  * the same way, but a case counting entries has to state which of them the gesture
  * caused. Pre-focusing removes the transition and leaves the press as the only thing
  * under test.
@@ -335,11 +335,11 @@ test.describe("T2c shape-change", () => {
     // …and the gap between flushes as a coarse net beside it. It CANNOT be tightened to
     // catch the same regression, and saying so is the point of this paragraph: the gap
     // is announcement (100 ms) plus the pass's ~70 sequential reads, and the reads are
-    // the dominant and load-sensitive term. Measured 421/434/440 ms here; the bounded-
-    // fallback regression would print ~640, which a ceiling low enough to catch would
-    // sit under the read chunk's own headroom on a slower machine. So the ceiling only
-    // says the cadence did not COLLAPSE — the several-windows-per-gesture property this
-    // case is about — and the per-cycle pin above is what watches the wait.
+    // the dominant and load-sensitive term. The bounded-fallback regression would
+    // lengthen it by less than a slower machine lengthens the reads, so a ceiling low
+    // enough to catch the one would be tripped by the other. So the ceiling only says
+    // the cadence did not COLLAPSE — the several-windows-per-gesture property this case
+    // is about — and the per-cycle pin above is what watches the wait.
     expect(midDrag.length).toBeGreaterThan(1);
     expect(Math.max(...gaps)).toBeLessThan(700);
     expect(refetches).toBeGreaterThan(1);
@@ -641,9 +641,9 @@ test.describe("T2c shape-change", () => {
     // sweep is what reads 689:0:6 for BOTH channels.
     //
     // The value must differ from the snapshot's single entry or isEcho swallows it —
-    // measured: announcing the value the snapshot happens to hold produced no read at
-    // all. The device still ANSWERS the catalog default on every read (the diverge
-    // hook), so what the reconcile carries back is that, not this.
+    // announcing the value the snapshot happens to hold produces no read at all. The
+    // device still ANSWERS the catalog default on every read (the diverge hook), so what
+    // the reconcile carries back is that, not this.
     await mark(page, "engine-notify");
     await pushNotify(page, [[ENGINE_COMPANDER, 0, 6, -1500]]);
     await settleAfter(page, "engine-notify", 2500);

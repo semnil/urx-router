@@ -347,9 +347,9 @@ test.describe("T2f shape-change", () => {
     // invariant 12 would count the starting readback's world against this one.
     const regNow = await paramAddrsOf(page);
     // Beside it, for clause B: the write set is never gated by sample rate — the
-    // rate-dependent limits in constraints.ts are UI-only, measured on hardware — so a
-    // rate change reshapes nothing and the difference is empty. 848 is deliberately
-    // outside the plan and is in no snapshot, which is the direction clause B ignores.
+    // rate-dependent limits in constraints.ts are UI-only — so a rate change reshapes
+    // nothing and the difference is empty. 848 is deliberately outside the plan and is
+    // in no snapshot, which is the direction clause B ignores.
     const snapNow = await snapshotOf(page);
     console.log(
       report(
