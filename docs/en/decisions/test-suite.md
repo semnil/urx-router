@@ -113,7 +113,9 @@ the page after it optimised dependencies.
 
 **Decision (2026-10-10).** Whether the dev app is up is answered by
 `node scripts/check-startup-wait.mjs --pid <tree>`, and a hook refuses a command that waits on the
-log instead. How it works is in `AGENTS.md` "Development"; the change is
+log instead. How it works is in [local-runs.md](../local-runs.md) "Whether the dev app is up" and
+[repository-checks.md](../repository-checks.md) "The edit-time hooks"; the rule is in `AGENTS.md`
+"Development"; the change is
 [#564](https://github.com/semnil/urx-router/pull/564). Two decisions inside it:
 
 - **The check looks only at processes of the current user** (`pgrep -x -u <uid>`). The working

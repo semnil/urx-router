@@ -17,7 +17,7 @@ check, its pins or its hook.
 - ui: console/graph/inspector/dyn-*/midi/prefs/dom/fine/history/keys/licenses etc.
 - the app entry: main.boot + main.flows in a browser and main.device against a stubbed Tauri shell
   (isTauri() gates half of main.ts, so without that shell it is unreachable rather than untested)
-- the contract and pin tests `AGENTS.md` "Reusable assets" lists.
+- the contract and pin tests [reusable-assets.md](reusable-assets.md) "The asset index" lists.
 
 `include` also covers `*.test.mjs` under `scripts/`, which is the tooling's own pins and stays out
 of the coverage set.
@@ -69,6 +69,19 @@ the repository's own config answers a different question.
 An UNTRACKED file is in the derived list as soon as it is written, unless an ignore rule covers it —
 the list is what git reports (`--others --exclude-standard` as well as the index), so a new file is
 formatted and checked before it is ever added.
+
+## `pnpm check:assets`
+
+`pnpm check:assets` (`scripts/check-assets-index.mjs`) holds
+[reusable-assets.md](reusable-assets.md) "The asset index" and `docs/{en,ja}` against the
+repository: every row and every file the documents name — in a code span or in a sentence — points
+at something real, and nothing real is missing from the table.
+
+The table it holds row by row is the English one; the Japanese document is its translation, held to
+the same file-reference rules as every other document under `docs/{en,ja}`. Three of its reverse
+rules read `AGENTS.md` rather than the index: every `package.json` script is named there (rule A), a
+file under `scripts/` is reached from it or from the index (rule B), and every source file is named
+by it or by both translations of [architecture.md](architecture.md) (rule H).
 
 ## `pnpm check:comments`
 
@@ -299,6 +312,21 @@ number, and a required context Codecov reports has those uploads on every pull r
 `.github/codecov.yml` leaves on; `--ruleset` also diffs that list against the live branch ruleset
 (needs an admin `gh`; no CI token can read it).
 
+## `pnpm check:skips`
+
+`pnpm check:skips` checks that every permanently skipped race case (as Playwright reports it) is
+registered in `e2e/race/skip-ledger.json`, naming either a unit test this check runs and watches
+pass or what would settle it; and every spec file still collects at least the floor the same ledger
+names — for the Chromium project and the WebKit one separately, since a case leaves the latter by
+losing a tag while its file keeps every case it had — so a case that stops being collected is red
+rather than a smaller green run. It also re-takes the collection under that ledger's shard weights,
+so a corpus that changed size under a fixed split, or a Playwright that stopped reading them, is red
+rather than slow.
+
+How it runs each guard, why a guard has to be a unit test, and what the floor and the shard reading
+add are in the `pnpm check:skips` row of [reusable-assets.md](reusable-assets.md) "The asset index";
+the decision is [decisions/race-harness.md](decisions/race-harness.md) "The permanent-skip ledger".
+
 ## The edit-time hooks
 
 A note pasted between rows of a Markdown table ends it; **restate the header + separator row** to
@@ -306,12 +334,24 @@ resume the table.
 
 `scripts/check-md-tables.mjs` catches it (`pnpm check:md`, `docs.yml`, and a `PostToolUse` hook —
 `.claude/settings.json` is tracked so the hook reaches every clone; `scripts/md-hook.sh` runs
-`check-assets-index.mjs --hook` behind the same trigger, so an asset row broken by an AGENTS.md edit
-— or a file reference broken by a `docs/{en,ja}` edit — is reported at the edit and not in CI; for
+`check-assets-index.mjs --hook` behind the same trigger, so an asset row broken by an edit to the
+index ([reusable-assets.md](reusable-assets.md)) — or a file reference broken by a `docs/{en,ja}`
+edit — is reported at the edit and not in CI; for
 an edit to a file inside the private notes' checkout, the same hook also runs that checkout's own
 ledger anchor check — located in the main checkout through git, so a worktree with no such checkout
 of its own still reaches it — which is how an edit to one of its ledgers made from this checkout is
 held to the ledger's contract).
+
+A `PreToolUse` hook (`scripts/check-startup-wait.mjs`, registered in `.claude/settings.json` beside
+the Markdown checks, through `scripts/startup-wait-hook.sh`; both hook wrappers find node through
+`scripts/hook-node.sh`) refuses a Bash command that waits on the log or uses `pgrep -f` on the
+binary, reading the command as shell — a quoted search pattern is not a command, a here-document's
+body is text, and so is a substitution a backslash escapes, and a grep after a loop's `done` is not
+inside it — and its `PostToolUse` half answers a background `tauri dev` launch with that check,
+since a background command reports only when it exits and the app exits when its window closes.
+`pnpm test check-startup-wait` holds each refused form beside the allowed one it is a mutation of,
+and runs the registered command to show it is wired. What the check answers, and why neither the log
+nor `pgrep -f` can: [local-runs.md](local-runs.md) "Whether the dev app is up".
 
 ## The displayed-item inventory
 

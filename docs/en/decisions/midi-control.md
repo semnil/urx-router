@@ -82,7 +82,8 @@ closes it. Closed with it:
 behind a build flag was turned down. What follows from that: a packaged build cannot be watched with
 this log, since the recorder and its commands are both compiled out. Whether something seen in a dev
 build also applies to a packaged one is answered from the code, once the mechanism is known. Where
-the instrumentation is and how to use it is in `AGENTS.md`, "Reusable assets".
+the instrumentation is and how to use it is in [reusable-assets.md](../reusable-assets.md), "The asset
+index".
 
 ## A window of its own
 

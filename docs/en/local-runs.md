@@ -155,8 +155,8 @@ the experimental features).
 - **If the SIM view fails with `Failed to resolve import` naming the simulator's fonts**, the simulator is
   not linked into `node_modules`. Run the set-up commands of AGENTS.md "Development" (the submodule,
   then the install). No tracked file changes.
-- **Whether the app is up** is answered by the process, not by the log: AGENTS.md "Development",
-  "The dev app being up is a process, not a log line".
+- **Whether the app is up** is answered by the process, not by the log: "Whether the dev app is up"
+  below.
 - **The app runs the simulator at the commit the submodule points at.** A change that is not merged
   in the simulator's repository is not in the app; say so when reporting what was seen.
 - **If `pnpm tauri dev` keeps showing a stale version or UI**, discard the build caches with
@@ -171,6 +171,28 @@ the experimental features).
   matches the operator's own `pnpm tauri dev`, and `until ! pgrep -f …` waits for someone else's run
   to finish — the same whether the target is a leftover preview server, a stuck Playwright run, or a
   dev app.
+
+## Whether the dev app is up
+
+The rule — ask the process, never the log — is in `AGENTS.md` "Development", "The dev app being up
+is a process, not a log line"; this is why the log and `pgrep -f` cannot answer, and what the check
+prints.
+
+`pnpm tauri dev` runs cargo with colour on, so its `Running` line carries an SGR reset between the
+word and the binary's path and no pattern written against the log matches it; the binary runs from
+`src-tauri/` with the relative argv `target/debug/urx-router`, so `pgrep -f` on an absolute path
+never matches it either, and on the bare name it also matches the shells wrapping it. The process
+name finds an app and its working directory says which tree built it, and a check needs both, since
+another checkout's app answers to the same name: `node scripts/check-startup-wait.mjs --pid <tree>`
+prints the PID of your `urx-router` process (`pgrep -x -u <uid> urx-router`) whose working directory
+is `<tree>/src-tauri` (`lsof -a -p <pid> -d cwd -Fn`), exits 1 while there is none and 2 with the
+reason when it cannot tell — `lsof` reading nothing from a process still running is that, while one
+that has exited is simply not the app — and `--wait` added to it, run in the background, polls only
+while the answer is 1 — it exits 0 with the PID to act on once this tree's app is up, and 2 at once
+when it cannot tell.
+
+The hook that refuses the other two forms is described in
+[repository-checks.md](repository-checks.md) "The edit-time hooks".
 
 ## Resetting the dev app's stored state
 
