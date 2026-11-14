@@ -4,8 +4,7 @@
 // do NOT live at fixed param_ids — the device packs each effect's parameters into
 // ONE "engine" array param addressed by a SLOT on the y axis, and a pointer param
 // names which engine the selected effect was bound to. This module isolates that
-// addressing plus the raw↔display encodings (all established by live LCD
-// calibration on a factory URX44V; see the project's private notes).
+// addressing plus the raw↔display encodings (the values the unit's LCD shows).
 //
 // Plan storage keeps RAW broker integers keyed by engine SLOT (insertFxParams on
 // the node), so a captured plan round-trips and the inspector edits raw with a
@@ -18,9 +17,7 @@
 // A SELECTOR WRITE IS NOT REVERSIBLE. Writing the selector makes the device fill
 // the bound engine array with that type's defaults, and selecting the ORIGINAL type
 // back only fills it with the original type's defaults — the values that were there
-// are gone. Confirmed on a URX44V by round-tripping CH1 Compander-S -> H -> S, which
-// left five slots (threshold / ratio / attack / gain / width) at the defaults.
-// The same holds for the FX-channel effect type in fx-effect.ts.
+// are gone. The same holds for the FX-channel effect type in fx-effect.ts.
 //
 // The engine array is a shared WORKING AREA, not storage: it is addressed by slot
 // with no channel axis, and it still held the previous effect's values while the
@@ -47,8 +44,8 @@
 import { preferredNumber, R40 } from "./preferred-numbers";
 import { boundRaw } from "./vd";
 
-// Engine array param_id each effect family binds (confirmed by the live pointer
-// read; the selector/enable/pointer params themselves live in params.ts).
+// Engine array param_id each effect family binds (the selector/enable/pointer
+// params themselves live in params.ts).
 export const ENGINE_GUITAR = 697;
 export const ENGINE_PITCH = 701;
 export const ENGINE_COMPANDER_INPUT = 689;
@@ -121,9 +118,9 @@ function mbcGainLabel(raw: number): string {
   return db === -Infinity ? "-∞ dB" : `${Math.round(db)} dB`;
 }
 // MBC crossover frequency table: the same ISO 3 R40 series the FX channel filters step in,
-// at the same offset, shared by L-M and M-H XOVER (they differ only in valid raw range). Full
-// L-M sweep read on the device confirmed the exact rounded values (125 not the 127 a pure
-// 1/12-oct formula gives). raw is the R40 sequence index with raw 0 = 15 Hz, raw 6 = 21.2 Hz.
+// at the same offset, shared by L-M and M-H XOVER (they differ only in valid raw range). The
+// unit uses the exact rounded values (125 not the 127 a pure 1/12-oct formula gives). raw is
+// the R40 sequence index with raw 0 = 15 Hz, raw 6 = 21.2 Hz.
 //
 // The grades come from `preferred-numbers.ts` rather than a second copy: this module used to
 // hold its own 1.0-based mantissa table, which multiplied up to 112.00000000000001 where the
@@ -218,9 +215,8 @@ const GUITAR_LEAD_TYPES = [
 
 // Pitch Fix slots. Key (15) is a semitone; Scale (16) is a preset label, with the
 // 12 note on/off toggles (22..33) the editable ground truth (Chromatic = all on;
-// editing any note shows "Custom"). The full Scale enum is LCD-confirmed
-// (sentinel writes, values 0..7). MIDI Control packs two bits across 34/35:
-// Off (0,0) / Setting (1,0) / Real Time (1,1).
+// editing any note shows "Custom"). The full Scale enum spans values 0..7. MIDI
+// Control packs two bits across 34/35: Off (0,0) / Setting (1,0) / Real Time (1,1).
 export const PITCH_KEYS = SEMITONE_NAMES.map((label, value) => ({ value, label }));
 export const PITCH_SCALE_SLOT = 16;
 export const PITCH_SCALE_CUSTOM = 0;
@@ -241,10 +237,10 @@ export const PITCH_NOTE_SLOTS = [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
  * Which semitones each Scale preset turns on, as offsets from the Key.
  *
  * The unit derives the twelve-note mask itself from the Scale enum and the Key, for every
- * preset and at every key — read off a URX44V at Key = C and Key = G, where the offsets
- * came back identical while the absolute bits moved. So the app can author any of them
- * rather than only the two it could spell, and the mask it writes agrees with what the
- * unit would have derived instead of overwriting it with a C-rooted one.
+ * preset and at every key: the offsets stay the same while the absolute bits move with the
+ * Key. So the app can author any of them rather than only the two it could spell, and the
+ * mask it writes agrees with what the unit would have derived instead of overwriting it
+ * with a C-rooted one.
  *
  * Custom is null: it is not a pattern. Selecting it leaves the mask exactly as it is, which
  * is also what the unit does to the enum when a note is edited — it sets Custom on its own.
@@ -636,10 +632,10 @@ const PITCH_PARAMS: InsertFxParamDesc[] = [
 // the type-specific slot 6 and the per-type extras.
 const GUITAR_COMMON_PARAMS: InsertFxParamDesc[] = [
   // Slot 7 is Volume on Clean and Gain on the other three — the label the unit prints,
-  // confirmed on the hardware and listed that way by the effect guide (Volume under
-  // CLEAN Only, Gain repeated under each of the other three). The slot, the encoding and
-  // the range are one thing across all four, so it stays here and only its label is
-  // swapped, which keeps the read order the emit path walks.
+  // and the one the effect guide lists (Volume under CLEAN Only, Gain repeated under
+  // each of the other three). The slot, the encoding and the range are one thing
+  // across all four, so it stays here and only its label is swapped, which keeps the
+  // read order the emit path walks.
   { slot: 7, label: "gain", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
   { slot: 9, label: "bass", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
   { slot: 10, label: "middle", control: "slider", rawMin: 0, rawMax: 100, rawStep: 1, def: 50, format: tenthDisplay },
@@ -1076,7 +1072,7 @@ export function mbcDeviceDriven(params: Record<string, number> | undefined): Rea
 }
 const MBC_ONE_KNOB_HELD: ReadonlySet<number> = new Set([
   // EVERY per-band slot, read off the descriptors rather than named here: that is the rule
-  // the run measured, and a band parameter added later is in it without anyone remembering.
+  // the unit follows, and a band parameter added later is in it without anyone remembering.
   ...MBC_PARAMS.filter((d) => d.band !== undefined).map((d) => d.slot),
   MBC_GLOBAL.release,
   MBC_GLOBAL.xoverLowMid,

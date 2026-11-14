@@ -10,7 +10,7 @@
 //
 // The share of notifies the address filter drops was proposed for this and rejected,
 // because it cannot measure what it looks like it measures. Registration and notify
-// emission are decoupled on this protocol (measured: a registered address can change
+// emission are decoupled on this protocol (a registered address can change
 // and announce nothing), and an address nobody moves emits nothing however many times
 // it is registered — so a registration piling up at the broker is invisible in the
 // inbound stream. See docs/{en,ja}/architecture.md "The link ledger".

@@ -591,7 +591,7 @@ export interface SendControl {
 // CH → MIX sends are laid out as 12-param stereo-bus blocks (L slot + R slot, 6
 // params each: level/pan/on at offsets 0/1/2, PRE/POST at offset 5 in the L slot
 // only). Mono channels use a block based at 146 (y = input index); stereo
-// channels a parallel block at 273 (y = stereo index). Confirmed by live scan.
+// channels a parallel block at 273 (y = stereo index).
 const MIX_SEND_BASE_MONO = 146;
 const MIX_SEND_BASE_STEREO = 273;
 const MIX_SEND_STRIDE = 12;
@@ -599,7 +599,7 @@ const MIX_SEND_BUS_INDEX: Record<string, number> = { "bus.mix1": 0, "bus.mix2": 
 
 // CH → FX sends are 4-param mono blocks: PRE/POST tap at +0, level at +1, on at
 // +3 (no pan). Mono channels base at 193 (y = input index); stereo channels at
-// 320 (y = stereo index). Confirmed by live scan.
+// 320 (y = stereo index).
 const FX_SEND_BASE_MONO = 193;
 const FX_SEND_BASE_STEREO = 320;
 const FX_SEND_STRIDE = 4;
@@ -609,7 +609,7 @@ const FX_SEND_BUS_INDEX = FX_CHANNEL_NODE_INDEX;
 // each: PRE/POST tap / level / BAL / on at offsets 0/1/2/3, +4 unused). y = FX
 // channel index (the FX bus index, fx1 = 0 / fx2 = 1). L/R are device-linked
 // (writing the L slot propagates to R), so the tap is written once on the L slot;
-// level/BAL/on write both for parity with CH → MIX. Live snapshot-diff confirmed.
+// level/BAL/on write both for parity with CH → MIX.
 const FXCH_MIX_SEND_BASE = 342;
 const FXCH_MIX_SEND_STRIDE = 10; // per MIX bus
 const FXCH_MIX_SLOT_STRIDE = 5; // L slot → R slot
@@ -798,7 +798,7 @@ export interface EqControl {
  *  the same names and the same "which of them carry a filter type" rule. */
 export const EQ_BAND_NAMES = ["low", "lowMid", "highMid", "high"] as const;
 /** Only LOW and HIGH carry a selectable filter type; the two mid bands are fixed peaking
- *  and the device rejects a type write to them (measured, response_code 400). */
+ *  and the device rejects a type write to them (response_code 400). */
 export const eqBandHasType = (index: number): boolean => index === 0 || index === 3;
 // Each PEQ band is a 5-param block (on / type / Q / freq / gain) and the first
 // band sits 5 params after the EQ-ON anchor. Only the LOW and HIGH bands carry a
@@ -820,7 +820,7 @@ function eqBandsFrom(eqOnParam: number, instances: number[]): EqControl {
  * Resolve an output bus 4-band PEQ, or null if the node has none. Reuses the
  * EQ-ON anchor (busEqOn): the band block starts 5 params later and writes the
  * same instances — STEREO a single slot (498→503), MIX the L/R-linked out pair
- * (591→596). Confirmed on STEREO and MIX by live scan (research §12.24).
+ * (591→596).
  */
 export function outputEq(nodeId: string): EqControl | null {
   const eq = busEqOn(nodeId);
@@ -898,7 +898,7 @@ export function geqBandWritable(nodeId: string, x: number): boolean {
  * output structure (band block 5 params after the EQ-ON anchor): mono COMP->EQ
  * mode anchors at EQ_ON 44 (→49), stereo channels at STEREO_CH_EQ_ON 213 (→218).
  * SSMCS mode has no 4-band PEQ (the morphing strip replaces it), so it returns
- * null. Confirmed on a mono channel by live scan (research §12.25).
+ * null.
  */
 export function inputEq(model: DeviceModel, nodeId: string, compEqType: number): EqControl | null {
   // A mono channel in SSMCS mode has no 4-band PEQ (the morphing strip replaces
@@ -1128,10 +1128,9 @@ const COMP_FIELDS: EmittedDynField[] = [
 /**
  * One band of the 4-band PEQ, in the order the unit's own screen reads it (Q, Freq, Gain).
  * The set depends on the filter type only in which of them the device reads — a pass filter
- * reads neither Q nor gain (measured: Q 0.71 and Q 4.00 draw an identical high-pass) and a
- * shelf reads no Q — so every band offers all three and the screen locks the rest. The gain
- * carries the 0.1 dB push-and-turn fine grid, one of the two values on the unit confirmed to
- * have one.
+ * reads neither Q nor gain (a high-pass draws the same at any Q) and a shelf reads no Q — so
+ * every band offers all three and the screen locks the rest. The gain carries the 0.1 dB
+ * push-and-turn fine grid, one of the two values on the unit confirmed to have one.
  */
 export function eqBandFields(index: number): EmittedDynField[] {
   return [
@@ -1368,8 +1367,7 @@ export interface ChannelDynamics {
 /**
  * Resolve a channel's GATE/COMP detail controls, or null if it has none. GATE and
  * COMP are MONO IN-channel features (user guide); COMP additionally exists only in
- * COMP->EQ mode (SSMCS replaces it with the morphing strip). Confirmed on a mono
- * channel by live scan (research §12.26).
+ * COMP->EQ mode (SSMCS replaces it with the morphing strip).
  */
 export function channelDynamics(model: DeviceModel, nodeId: string, compEqType: number): ChannelDynamics | null {
   const cc = channelControl(model, nodeId);
@@ -1825,14 +1823,14 @@ function pushEqBandCommands(out: VdCommand[], ctrl: EqControl, bands: EqBand[]):
 // Push the EQ 1-knob commands (ON / TYPE / LEVEL) for one node's EQ, on every
 // linked instance. When 1-knob is on the device drives the 4-band PEQ, so the
 // caller skips the band commands — the bands are device-driven, not authored.
-// ON / TYPE / LEVEL is a reset chain, measured on a URX44V: an OFF->ON transition
-// discards the type back to Intensity, and any type write discards the level to that
-// type's neutral point (Intensity 50, the presets 0). Sending them in this order lands
-// all three — but only if all three go out, which is why they carry a `group`: a
-// converge round re-sending ON alone would leave the type behind, the next round would
-// re-send the type and leave the level behind, and the loop alternates until it runs
-// out of rounds. Three links is what makes this one reach a residual; the shorter
-// chains behind the other sideEffect params are pinned in translate.test.ts.
+// ON / TYPE / LEVEL is a reset chain: an OFF->ON transition discards the type back to
+// Intensity, and any type write discards the level to that type's neutral point
+// (Intensity 50, the presets 0). Sending them in this order lands all three — but
+// only if all three go out, which is why they carry a `group`: a converge round
+// re-sending ON alone would leave the type behind, the next round would re-send the
+// type and leave the level behind, and the loop alternates until it runs out of rounds.
+// Three links is what makes this one reach a residual; the shorter chains behind the
+// other sideEffect params are pinned in translate.test.ts.
 function pushEqOneKnobCommands(out: VdCommand[], ctrl: EqOneKnobControl, ok: EqOneKnobParams): void {
   for (const inst of ctrl.instances) {
     const chain: VdCommand[] = [];
@@ -1859,13 +1857,11 @@ function pushEqOneKnobCommands(out: VdCommand[], ctrl: EqOneKnobControl, ok: EqO
  * position, via attachTo), or null if it is not a ducker. The ducker's enable
  * (258) and detail (260-263) all address this y.
  *
- * All four positions were confirmed on a URX44V by sentinel write and LCD read-back
- * (y 0..3 = CH5/6, CH7/8, CH9/10, CH11/12). Pair 0 is a different channel on a URX22
- * (`ch_3_4`), which no URX22 has been read to check; the operator accepted that half
- * on 2026-08-13 from the corroboration recorded in the private ledger's D-1, so it is
- * no longer reported as a guess. Getting it wrong would be quiet — the write and the
- * GR meter move together, since meters.ts keys 119 on the ducker node too — so a
- * URX22 that ever reaches this desk is worth one sentinel write and one LCD read.
+ * The four positions are y 0..3 = CH5/6, CH7/8, CH9/10, CH11/12 on a URX44V. Pair 0 is
+ * a different channel on a URX22 (`ch_3_4`), accepted without a URX22 read, so it is not
+ * reported as a guess. Getting it wrong would be quiet — the write and the GR meter move
+ * together, since meters.ts keys 119 on the ducker node too — so on a URX22 it is worth
+ * one sentinel write and one LCD read.
  */
 export function duckerControl(model: DeviceModel, nodeId: string): { y: number } | null {
   const node = model.nodes.find((n) => n.id === nodeId);
@@ -1879,8 +1875,7 @@ export function duckerControl(model: DeviceModel, nodeId: string): { y: number }
 // 0-3, then each stereo pair takes two — same axis as the input-source param 22).
 // The streaming-source (705/706), USB-output (732-735), monitor-source (719/720),
 // output-patch (730/731) and ducker-source (259) selectors all store one of these
-// ids. (Verified on URX44V: USB out / ducker source of CH9/10 = slot 8, not the
-// node index 6.)
+// ids. USB out / ducker source of CH9/10 = slot 8, not the node index 6.
 const BUS_PORTS: Record<string, { l: number; r: number }> = {
   "bus.stereo": { l: 256, r: 257 },
   "bus.stream": { l: 258, r: 259 },
@@ -1938,7 +1933,7 @@ function recordSourcePorts(model: DeviceModel, nodeId: string): { l: number; r: 
 // each selectable input source occupies an L/R mono-port pair. Analog mics are
 // 0-3; the 0x100+ blocks are stereo sources. The "All Input" / "All USB DAW"
 // menu entries are bulk-set actions, not sources, so they are not listed here.
-// (Ports verified on URX44V; URX22/44 assumed to share the scheme.)
+// (These are the URX44V's ports; URX22/44 are assumed to share the scheme.)
 const INPUT_PORTS: Record<string, [number, number]> = {
   "in.micline_1_2": [0, 1],
   "in.micline_3_4": [2, 3],
@@ -2091,8 +2086,8 @@ export type WriteScope = "all" | "scene";
 
 /** Bit layout of a packed address key: y in the low ADDR_SHIFT bits, x above it,
  *  paramId above that. The widths hold every address the app can emit with an order
- *  of magnitude to spare (measured over the whole PARAMS catalog and all three
- *  models' default plans: paramId <= 891, x == 0, y <= 18) and keep the key a
+ *  of magnitude to spare (across the whole PARAMS catalog and all three models'
+ *  default plans: paramId <= 891, x == 0, y <= 18) and keep the key a
  *  non-negative int32, which is what makes the Map lookup cheap. An address outside
  *  them would fold onto another one and silently drop that command's write, so
  *  translate.test.ts pins both the ranges and the injectivity. */
@@ -2105,11 +2100,11 @@ const ADDR_MASK = (1 << ADDR_SHIFT) - 1;
  * SNAPSHOT KEYS ON, so a second spelling would let a collapsed command miss its
  * snapshot entry.
  *
- * Packed into one integer rather than a "paramId:x:y" string: measured, the string
- * keying was the collapse's entire cost — +49 µs on a 101 µs buildCommands (782
- * commands), where the packed key builds the same map 4.7x faster. The string form
- * survives as the published one (LiveSync.snapshotEntries, read by the trace probe
- * and the race harness), rendered by formatAddrKey off the cold path.
+ * Packed into one integer rather than a "paramId:x:y" string: the string keying was
+ * the collapse's entire cost, and the packed key builds the same map several times
+ * faster. The string form survives as the published one (LiveSync.snapshotEntries,
+ * read by the trace probe and the race harness), rendered by formatAddrKey off the
+ * cold path.
  */
 export const addrKey = (paramId: number, x: number, y: number): number =>
   (paramId << (ADDR_SHIFT * 2)) | (x << ADDR_SHIFT) | y;
@@ -2269,12 +2264,11 @@ export interface EmitOptions {
    * every sweep pass (the sweep flips 1-knob off) and emitted by no restore, so its
    * VISIBLE EQ ends changed under a verdict that says it was restored.
    *
-   * Measured on a URX44V before relying on it (2026-08-10): a band gain written while
-   * 1-knob is on is accepted (response_code 200) and still holds 1.5 s later — the unit
-   * does not re-derive over it. Ordering is what matters instead: writing the 1-knob
-   * LEVEL while it is on makes the unit recompute base x level/50, so the bands must go
-   * out AFTER the 1-knob chain — which is the order below, and which a probe that got
-   * it backwards demonstrated by leaving a band at a fifth of its value.
+   * A band gain written while 1-knob is on is accepted (response_code 200) and holds —
+   * the unit does not re-derive over it. Ordering is what matters instead: writing the
+   * 1-knob LEVEL while it is on makes the unit recompute base x level/50, so the bands
+   * must go out AFTER the 1-knob chain, which is the order below; sent the other way
+   * round, a band is rescaled by the LEVEL write.
    */
   includeDeviceDriven?: boolean;
   /**
@@ -2492,8 +2486,8 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   // Emitted FIRST so the rest of the write lands on a device already clocked the way
   // the plan says. Re-clocking is the largest single thing a write can do to the
   // hardware, and everything after it is a value meant to hold under that clock.
-  // Confirmed on a URX44V: a rate-changing write completes, with the commands that
-  // follow the re-clock all reaching the device.
+  // A rate-changing write completes, with the commands that follow the re-clock all
+  // reaching the device.
   out.push(command("SAMPLE_RATE", 0, plan.sampleRate));
   own(undefined);
 
@@ -2591,9 +2585,9 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   // converge. Commands are attributed to the primary node.
   //
   // Emitted BEFORE the two connection blocks below: switching either selector makes
-  // the unit slam the pair's CH_PAN and every bus send's pan (measured — BAL→PAN hard-
-  // pans to ±63, PAN→BAL and unlinking centre), so a pan written ahead of the selector
-  // is discarded by the device. The selector leads and the plan's pans land on top.
+  // the unit slam the pair's CH_PAN and every bus send's pan (BAL→PAN hard-pans to ±63,
+  // PAN→BAL and unlinking centre), so a pan written ahead of the selector is discarded
+  // by the device. The selector leads and the plan's pans land on top.
   for (const [primary, secondary] of model.channelPairs) {
     const np = plan.nodeParams[primary];
     if (!np) continue;
@@ -2818,9 +2812,9 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
 
   // Output bus Flex12GEQ: the link first (turning it on copies a side on the unit, which the plan
   // already holds), then per side the [GEQ] button, the limit (it clamps the bands) and the bands.
-  // Sent only while the bus is on Flex12GEQ — every write of them the unit was seen to take was
-  // made in that state — so a bus on 4band PEQ keeps the unit's own, and a switch sends the plan's
-  // after the type. Left out above 48 kHz, where the unit offers no Flex12GEQ.
+  // Sent only while the bus is on Flex12GEQ — that is the state a write of them is known to land
+  // in — so a bus on 4band PEQ keeps the unit's own, and a switch sends the plan's after the type.
+  // Left out above 48 kHz, where the unit offers no Flex12GEQ.
   for (const node of model.nodes) {
     if (node.kind !== "bus") continue;
     const geq = busGeq(node.id);
@@ -2875,7 +2869,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
   // device's selection, matching readback (NONE = no source wire). MONO CH1-4 use
   // param 22 indexed by physical input slot (a mono node fills one slot, even = L /
   // odd = R). Stereo channels use the separate 209/210 (L/R) pair indexed by stereo
-  // pair index — param 22 only covers the mono slots (confirmed on URX44V).
+  // pair index — param 22 only covers the mono slots.
   const srcStereoIdx = stereoIndexMap(model);
   for (const node of model.nodes) {
     if (node.kind !== "channel") continue;
@@ -3111,10 +3105,9 @@ export interface FollowOnlyAddr {
  * Addresses the unit announces, the app reads, and nothing emits — so `planToCommands`
  * does not carry them and they would be in no notify registration. Registering them is
  * what lets a front-panel change reach the plan instead of waiting for the next full
- * read. Both families were measured announcing a change on a URX44V (2026-08-11, System
- * V1.3.1.0); the addresses that stay silent when the front panel moves them (D.Gain, the
- * insert-FX engine array, and every FX array slot but the one below) are not here, because
- * a registration would do nothing for them.
+ * read. Both families announce a change; the addresses that stay silent when the front
+ * panel moves them (D.Gain, the insert-FX engine array, and every FX array slot but the one
+ * below) are not here, because a registration would do nothing for them.
  *
  * The routing selectors here are the ones the emit leaves out (`leavesUnsourced`) — STREAMING's
  * source while the plan gives it no wire. The unit announces a source picked on its own panel
@@ -3460,9 +3453,8 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     // invented ids take values at all, and WHICH stereo pair a `y` reaches. The y here
     // is stereoIndexMap's, the same map the ducker block rode, so a faithful device
     // answers CONFIRMED by writing y and reading y back whichever pair y points at.
-    // Pair 0 is `ch_5_6` on a URX44/URX44V and `ch_3_4` on a URX22; the private ledger's
-    // D-1 carries the sentinel-write and LCD-read procedure that settles the other half,
-    // for both this and the ducker block it was written for.
+    // Pair 0 is `ch_5_6` on a URX44/URX44V and `ch_3_4` on a URX22; a sentinel write and
+    // an LCD read settle the other half, for this and for the ducker block alike.
     key: "stereo-block",
     label: "Stereo channel fader/on/pan block (266/267/268)",
     models: ["URX44"],

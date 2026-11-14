@@ -19,7 +19,7 @@ import { preferredNumber, R20, R40 } from "./preferred-numbers";
  *  Writing it is NOT reversible: the device refills the effect array with the new
  *  type's defaults, and selecting the original type back only refills it with that
  *  type's defaults. See the header of insert-fx-effect.ts, where the same rule is
- *  spelled out in full — it was measured there. */
+ *  spelled out in full. */
 export const FX_EFFECT_TYPE_PARAM = [679, 683] as const;
 /** Effect-parameter array param_id per FX channel index. Addressed by slot on y. */
 export const FX_EFFECT_ARRAY_PARAM = [681, 685] as const;

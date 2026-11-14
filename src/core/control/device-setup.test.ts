@@ -36,8 +36,8 @@ const setup = (patch: Partial<DeviceSetup> = {}): DeviceSetup => ({ ...defaultDe
 const V = getModel("URX44V");
 
 describe("device setup catalog", () => {
-  // Read off factory-initialised units: a URX44V and a URX22 leave the factory with the same six
-  // knobs assigned, and Auto Power Off on the URX44V alone.
+  // A URX44V and a URX22 leave the factory with the same six knobs assigned, and Auto Power Off
+  // on the URX44V alone.
   it.each(MODELS)("starts a %s from the settings it leaves the factory with", (id) => {
     const factory = defaultDeviceSetup(getModel(id));
     expect(factory.autoPowerOff, "Auto Power Off").toBe(id === "URX44V");

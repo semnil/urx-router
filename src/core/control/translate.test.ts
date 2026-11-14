@@ -1236,8 +1236,8 @@ describe("planToCommands", () => {
     plan.connections.push({ from: "bus.stream:out", to: "out.usbsub:in", kind: "patch" });
     const cmds = planToCommands(model, plan);
     // USB out is a stereo slot pair: L at y=0, R at y=1 (same param). Writing only
-    // L leaves R on its stale source (a CONSOLE-observed regression: B=MIX1 emitted
-    // L=MIX1 but R stayed on STEREO until the device panel rewrote both slots).
+    // L leaves R on its stale source (B=MIX1 sent as L=MIX1 alone leaves R on STEREO
+    // until the device panel rewrites both slots).
     const usbOut = (name: string) => [0, 1].map((y) => cmds.find((c) => c.name === name && c.y === y)!);
     expect(usbOut("USB_OUT_SRC_A").map((c) => c.vdValue)).toEqual([290, 291]);
     expect(usbOut("USB_OUT_SRC_A").map((c) => uri(c))).toEqual([
@@ -1926,8 +1926,8 @@ describe("the insert-FX bypass beside No Effect", () => {
 });
 
 describe("reset chains (sideEffect heads vs converge groups)", () => {
-  // Measured on a URX44V: ON discards the type, a type write discards the level. Three
-  // links, which a re-send of only what differs walks one round per link; the group lands all three in one.
+  // On the unit, ON discards the type, a type write discards the level. Three links,
+  // which a re-send of only what differs walks one round per link; the group lands all three in one.
   const GROUPED = new Set(["EQ_ONE_KNOB_ON", "EQ_ONE_KNOB_TYPE", "EQ_ONE_KNOB_LEVEL"]);
   // The head plus what it repopulates. A converge round that sends one is followed by another
   // past the base budget (client.ts sendConverging), which is what puts back what it moved.
@@ -1946,7 +1946,7 @@ describe("reset chains (sideEffect heads vs converge groups)", () => {
     // direction instead of fighting the reset.
     "BUS_TYPE",
     // The COMP 1-knob, ungrouped for the same reason as the rest after all. Its chain LOOKS
-    // like the EQ 1-knob's — writing 42 discards 43 (measured), the shape that earned the EQ
+    // like the EQ 1-knob's — writing 42 discards 43, the shape that earned the EQ
     // triple its group — but it is two links where the EQ's is three, and two is what one
     // extra round settles. Driven rather than reasoned: `client.test.ts` walks it from the
     // state that produces the longest path and it converges in round 2, with nothing further

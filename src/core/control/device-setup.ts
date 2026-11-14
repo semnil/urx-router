@@ -23,7 +23,7 @@ import { TIME_ZONE_CITIES } from "./timezones";
 
 /** Screen brightness, as the unit's own menu offers it. 0 is a real setting, not a
  *  dump artefact: the unit holds it and its LCD stays readable there rather than
- *  going dark (measured on a URX44V). */
+ *  going dark. */
 export const BRIGHTNESS_MIN = 0;
 export const BRIGHTNESS_MAX = 10;
 

@@ -37,12 +37,11 @@ import type { PlanWriteWatch } from "../plan-history";
 // final value of each address is sent.
 //
 // This is a trailing THROTTLE, not a debounce that re-arms: a window absorbs
-// whatever lands in it and then flushes. A re-arming debounce never fired at all
-// while a drag was in motion — measured, a 500 ms drag at 25 ms intervals sent
-// nothing until the pointer stopped, so the device only heard the end of every
-// move. One flush costs a whole-plan translate + diff, measured at 0.20 ms for
-// the URX44V default plan (782 commands) in both V8 and WebKit, so flushing per
-// window rather than per gesture is 0.2% of a core.
+// whatever lands in it and then flushes. A re-arming debounce never fires at all
+// while a drag is in motion — it sends nothing until the pointer stops, so the
+// device only hears the end of every move. One flush costs a whole-plan
+// translate + diff, cheap enough that flushing per window rather than per gesture
+// takes a negligible share of a core.
 export const DEBOUNCE_MS = 120;
 /** The longest an edit stream holds back a flush that would converge (see `schedule`). Past it
  *  the window is left to fire: the converge then runs once in the middle of the stream, and the
@@ -285,9 +284,9 @@ export class LiveSync {
   // it past the first, and when the first write's announcement finally arrives it no
   // longer equals anything the snapshot holds — and is applied as a device-side change,
   // writing a value the operator has already replaced back onto the board. The unit
-  // announces a numeric write ack+58-151 ms after the ack (the project's private notes) against a
-  // 120 ms flush window, so a drag reaches that overlap on real hardware. One queue per
-  // address, oldest first, retained for the same window a settle waits (settle.ts).
+  // announces a numeric write well after the ack — at times later than the 120 ms flush
+  // window — so a drag reaches that overlap on real hardware. One queue per address,
+  // oldest first, retained for the same window a settle waits (settle.ts).
   //
   // NOT writeSettle's job, though it is the obvious neighbour and the next reader will
   // ask. `PendingWrites` holds addresses without the values sent — settle.ts says that
@@ -322,10 +321,10 @@ export class LiveSync {
    *
    * They need it for the reason the refetch does. A follow reconcile reads whatever
    * node the operator's hardware gesture touched, and that node's addresses can include
-   * ones this session's flush wrote 40 ms ago — inside the measured 9-204 ms window in
-   * which the unit still answers a GET with the PRE-write value. The read then takes
-   * that stale value as device truth, and the unit's own notify for our write, which
-   * would have repaired it, is consumed as an echo instead. What the operator sees is
+   * ones this session's flush wrote 40 ms ago — inside the window in which the unit
+   * still answers a GET with the PRE-write value. The read then takes that stale value
+   * as device truth, and the unit's own notify for our write, which would have
+   * repaired it, is consumed as an echo instead. What the operator sees is
    * their toggle flipping back for ~0.6 s until the idle full reconcile re-reads past
    * the window — and in between, plan and snapshot agree on a value the device does not
    * hold, which is harness invariant 3 clause B exactly.
@@ -336,9 +335,9 @@ export class LiveSync {
    */
   private readonly recentWrites = new Map<number, { mark: number; node?: string; at: number }>();
   // The name twin. Separate for the reason isEchoName is separate — names live in their
-  // own snapshot and key on `${param}:${y}` with no x. Its measured overtake margin is
-  // wider (ack+1-102 ms), so this half is a structural twin rather than a reachable
-  // defect today; keeping one rule for one structure is what stops the two drifting.
+  // own snapshot and key on `${param}:${y}` with no x. Its overtake margin is wider, so
+  // this half is a structural twin rather than a reachable defect today; keeping one
+  // rule for one structure is what stops the two drifting.
   private readonly pendingNames = new Map<string, PendingQueue<string>>();
   // Bumped by every write the FOLLOW side makes into a snapshot — noteDirect's single entry
   // and capture()'s two whole rebuilds. A flush translates the plan once and then awaits
@@ -839,8 +838,8 @@ export class LiveSync {
   }
 
   /** Would flushing now send a sideEffect param? Runs the same whole-plan translate
-   *  the flush does (0.2 ms for a URX44V plan), so it is only consulted while the
-   *  previous flush converged — the state where the answer changes what happens. */
+   *  the flush does, so it is only consulted while the previous flush converged —
+   *  the state where the answer changes what happens. */
   private convergePending(): boolean {
     const model = this.hooks.getModel();
     const plan = this.hooks.getPlan();
@@ -978,9 +977,9 @@ export class LiveSync {
     // Name addresses join the registration set. They are not in `planToCommands`
     // (the app writes names through a separate string path), so for the life of the
     // follow layer they were in no registration and `Subs::absorb` dropped every
-    // rename notify — the unit announces one, measured on a URX44V, and nothing was
-    // listening. ~17 addresses against ~800, and a name notify only fires when
-    // someone renames, so the steady-state cost is nil.
+    // rename notify — the unit announces one, and nothing was listening. ~17
+    // addresses against ~800, and a name notify only fires when someone renames, so
+    // the steady-state cost is nil.
     this.nameIndex.clear();
     for (const node of model.nodes) {
       const nc = nameControl(model, node.id);
@@ -1141,7 +1140,7 @@ export class LiveSync {
       // not reached yet. `changed` says the snapshot held a DIFFERENT value, so the unit
       // must change and must announce it — as against an address the snapshot held NO
       // entry for, whose write may be a value the unit already holds, and a no-op write
-      // emits no notify at all (measured). `node` decides which of the two subsets below
+      // emits no notify at all. `node` decides which of the two subsets below
       // the address lands in, and cannot be resolved until the loop has finished: the
       // command that puts a node into `refetch` may come after the ones that wrote it.
       const writes = new Map<number, { mark: number; node?: string; changed: boolean; value: number }>();
@@ -1399,8 +1398,8 @@ export class LiveSync {
           // first (params.ts), and capture() now puts that address in the candidate set so
           // the app can hear it. What it does NOT decide is WHEN the follow layer subscribes
           // to a candidate: that happens after a reconcile, so an address the plan grew from
-          // an app-side edit — this one and the numeric SSMCS block alike (measured, t2b) —
-          // is unheard until one runs, and this wait resolves at its bound instead. Either
+          // an app-side edit — this one and the numeric SSMCS block alike — is unheard
+          // until one runs, and this wait resolves at its bound instead. Either
           // way the read does not start inside the write's staleness window, which is what
           // this line is for. It goes into
           // `mustSettle`, with its mark travelling as `boundaryMarks` rather than in the
@@ -1579,8 +1578,8 @@ export class LiveSync {
         //     because the two lists would then have to agree for ever and the cost of
         //     the conservative reading is one wait the pass shares with its neighbours
         //     anyway. A changed write ends that wait at its own notify
-        //     (9-204 ms measured, and the collateral the read is FOR went fresh 1-2 ms
-        //     behind it); one the snapshot held no entry for can only end at the bound,
+        //     (and the collateral the read is FOR goes fresh just behind it); one the
+        //     snapshot held no entry for can only end at the bound,
         //     since it may be a no-op the unit never announces.
         //   - outside it: not read, so nothing here confirms or repairs it. A CHANGED
         //     one the unit never announces is a write that went nowhere, and the settle

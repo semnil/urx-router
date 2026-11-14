@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addrKey } from "./translate";
 import { SETTLE_TIMEOUT_MS, WriteSettle } from "./settle";
 
-// The one address these cases write and wait on (the EQ 1-knob ON, the measured
-// case), and a second beside it standing for a collateral write in the same flush.
+// The one address these cases write and wait on (the EQ 1-knob ON), and a second
+// beside it standing for a collateral write in the same flush.
 const ADDR = addrKey(46, 0, 0);
 const SECOND = addrKey(47, 0, 0);
 const NOTIFY = { paramId: 46, x: 0, y: 0, value: 1 };
@@ -53,8 +53,8 @@ describe("WriteSettle waiting", () => {
   });
 
   it("times out when nothing answers — a write of a value the unit already holds", async () => {
-    // Measured: 18 such writes acked in 0-1 ms and produced no notify at all. A wait
-    // that only ever ended on a notify would hang the flush that made them.
+    // Such writes are acked and produce no notify at all. A wait that only ever ended on
+    // a notify would hang the flush that made them.
     const { settle } = armed();
     const written = wrote(settle, ADDR);
     let done = false;
@@ -216,7 +216,7 @@ describe("WriteSettle boundary marks", () => {
   //
   // Without one, `settle` finds no mark for the address and waits unconditionally, so an
   // announcement that had ALREADY arrived does not end the wait. That is the ordinary case
-  // rather than an edge: the unit answers a preset write ~15 ms after the ack, and the flush
+  // rather than an edge: the unit answers a preset write soon after the ack, and the flush
   // still has its remaining writes and its converge to get through before the read is issued.
   it("ends on an announcement that arrived before the wait began", async () => {
     const { settle } = armed();
@@ -546,8 +546,8 @@ describe("WriteSettle unannounced report", () => {
 describe("WriteSettle without a notify source", () => {
   it("waits the bounded window and announces nothing, since nothing feeds it", async () => {
     // The write path and the self-test hold their own connection with no follow
-    // subscription behind it, so note() is never called: 300 ms against a measured
-    // 9-204 ms window, and then the address comes off the device.
+    // subscription behind it, so note() is never called: the whole 300 ms, and then the
+    // address comes off the device.
     const settle = new WriteSettle();
     const written = wrote(settle, ADDR);
     let done = false;
