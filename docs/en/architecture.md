@@ -81,6 +81,10 @@ flowchart TD
 The diagram above is the shape. This is what each file is for and why it is that way; `AGENTS.md`
 carries a one-line map of the same directories and points here.
 
+- `src/models/` — device definitions. `build.ts` generates a `DeviceModel` (nodes + connection rules) from device
+  parameters. `index.ts` registers URX22/44/44V. `defaultPlan` in `initial-state.ts` produces the initial values for
+  a new plan (models captured from real hardware are seeded with factory defaults; data in `initial-urx44v.ts` /
+  `initial-urx22.ts`) — see "Data model"
 - `src/core/` — `plan-history.ts` the reversible plan patch behind undo / redo (a **diff, not a snapshot**,
   keyed per top-level `NodeParams` key / per wire / per record entry: while Live sync is up a whole-plan
   restore would rewind a channel the operator just moved on the hardware and the next flush would write that
@@ -376,7 +380,11 @@ carries a one-line map of the same directories and points here.
       the overlay has
       nothing to answer from and a settle could only spend its bound — and a rename read back inside its own
       window goes into the plan and `nameSnapshot` together, leaving no diff to retry. See "A write is
-      not readable when it is acked" / `params.ts` catalog of confirmed parameters
+      not readable when it is acked" / `params.ts` catalog of confirmed parameters — confirmed on the unit
+      itself, by writing a value and reading the result back (`AGENTS.md` "Conventions"). A descriptor lies: the
+      parameters the unit's own UI drives are frequently different ones, and some emit no notify at all when the
+      front panel moves them (D.Gain, the FX / insert-FX engine arrays), so a dump can look complete and still be
+      describing something the app must not write
     - `preferred-numbers.ts` the ISO 3 (Renard) grade tables R40 and R20, and the lookup that reads one.
       The unit's frequency tables step in these rather than in octave divisions, and the two catalogues
       below both index them — one seat, because two copies disagree in float
@@ -432,6 +440,8 @@ carries a one-line map of the same directories and points here.
       `cueAddrs` in `translate.ts`, where the URX44 guess is registered. The unit's [CUE Mode] (System 1.5)
       rides with them: `CueSet.mode` holds it and applies the Last CUE rule, `readCueMode` and `writeCueMode`
       read and switch it at `CUE_MODE_ADDR`
+    - `console-lock.ts` the unit's Console Lock and the watch a write outside a session takes for it (the
+      write hold itself is `platform.ts`'s `holdDeviceWrites`; see "Console Lock")
     - `link-stats.ts` the link ledger (it owns its own session policy — the opening line, the per-minute
       interval, the warn-once latch — behind `begin`/`end`, as `LiveSync` and `DeviceFollow` do, so the
       timer's lifetime and `startedAt` cannot be kept in step by hand and drift) — what one session asked of
@@ -466,7 +476,14 @@ carries a one-line map of the same directories and points here.
       took, and what the re-read found — because a residual names the end state and cannot say whether the
       parameter was ever re-sent; a restore that leaves anything different is itemized address by address,
       under the label `restore`, with a converge trace of its own; the report is offered for saving whenever the run found anything, and the
-      headless `--self-test` launch logs it in chunks instead) / `prepare.ts` audit-prep writer
+      headless `--self-test` launch logs it in chunks instead. `UNVERIFIED_MAPPINGS` in `translate.ts` registers
+      each guess beside the addresses that decide it, which is what lets the self-test return a verdict per guess
+      (`unverified[]`, which `summarizeVerdicts` tallies as confirmed / round-tripped / refuted / untestable)
+      instead of one pass. That is the instrument for a claim that acquires a "provided that" (`AGENTS.md`
+      "Conventions"): the rule that only confirmed parameters are written fires before an implementation and
+      cannot catch one, because there the second item arrives as a subordinate clause inside the answer to the
+      first ("the URX22 stereo fader block holds, provided its instance follows stereo-pair position"). The
+      private notes hold how each question is measured and what the readings were) / `prepare.ts` audit-prep writer
       (`--prepare-modified` launch flag, no UI exposure): captures the device, spreads every writable plan
       scalar to a distinctive in-range value, and writes it (tolerant send, no restore) so a scene
       SAVE/RECALL audit can save and diff the result; shares the `floorSilent` silence contract with
@@ -713,7 +730,10 @@ carries a one-line map of the same directories and points here.
   operator remembered a flag records nothing. `#statusbar` is therefore a message span plus this readout,
   and `setStatus` writes the span (a `statusbar.textContent =` would take the readout down on the next
   message). Introduces no colour: the only cell that may change is the no-answer one, since a broker that
-  stopped answering is the only state on the row that asks for something to be done
+  stopped answering is the only state on the row that asks for something to be done / `trace-probe.ts` the
+  read-only probe over the module state the race harness cannot otherwise reach — the plan-key write ledger (who
+  wrote which key) and the live snapshot's contents — built into the `VITE_TRACE=1` bundle only; the ledger reuses
+  `plan-history`'s differ rather than a second encoding (live-race-harness.md "Observables")
 - `src/core/sim-map.ts` + `src/ui/sim-view.ts` — the SIM view: the table from the LCD simulator's paths to the
   plan, and the view that mounts the simulator over it (see "SIM view (the unit's LCD)"). The table is assembled
   from `sim-map-processors.ts` (the processors) and `sim-map-routing.ts` (routing and setup), on the shapes and
@@ -757,7 +777,12 @@ carries a one-line map of the same directories and points here.
   `undo-refusal.ts` why an undo / redo entry is held back, judged on the plan it would leave: +48V and HI-Z
   both on for a channel, an input that takes one source left with two, STREAMING left with none, or —
   while Live sync is up — an HPF frequency outside the 40 … 120 Hz the control link writes. The
-  states it refuses are ones no surface produces, so a case reaches them by handing it that plan
+  states it refuses are ones no surface produces, so a case reaches them by handing it that plan /
+  `fx-reseed.ts` which EFFECT TYPE defaults an Inspector selection put in the plan the park in front of that
+  type's write leaves standing, and when that record is spent or dropped (see "What the app models, and what it
+  leaves to the unit") / `link-state-change.ts` whether a device read moved which pairs are STEREO-linked, which
+  is what decides between the follow reflect's two branches — the fine-grained one repaints the nodes a read
+  named and the heart tie belongs to the pair, so only the full one draws it
 
 - `src-tauri/` — Rust shell. Webview host + tauri-plugin-dialog + file IO commands
   (`read_text_file`/`read_binary_file`/`write_text_file`/`write_binary_file`; `third_party_licenses` reads
@@ -1173,7 +1198,8 @@ in-house module `src/i18n/`:
   to an error message instead of `true` and the build stops. This is what makes the choice
   explicit at the moment a key is added rather than a translation being the silent default. It
   cannot check that the choice is *right*: a device row marked `tr()` and then translated compiles
-  cleanly, so that call is stated in the pull request and confirmed by review.
+  cleanly, so that call is stated in the pull request and confirmed by review. The contributor-facing form of
+  the markers is in `CONTRIBUTING.md` "Conventions", and `README.md` carries a summary.
 - `ja.ts` — the Japanese translation that satisfies `Messages`. Adding a key makes TypeScript
   require a translation in every language.
 - `index.ts` — the current language state, `t()` (returns the active catalog), and
@@ -1874,6 +1900,11 @@ bundles: `vite.config.ts` reads it where the install's link resolves and defines
 `__URX_LCD_SIM_COMMIT__` for the simulator's source, and a submodule left unchecked-out stops the build
 rather than naming this repository's commit.
 
+The view holds the line every surface holds — a write is refused only for a reason the unit or the operator gives
+("Live control connection") — toward the unit: what the app can read and write is connected to the unit during Live
+sync, what it can only read is shown from the unit and takes no write, and what the LCD holds shut, and why, is
+"What it holds shut" below.
+
 - **What it edits** is the plan, through the funnels the Inspector and the tuning screens use
   (`onUpdateNodeParams`, `onUpdateParams`, `onRenameNode`). An edit on the LCD is therefore an undo entry like any
   other, Live sync writes it, and a device read arbitrates it as the app's. The undo history's gesture boundaries
@@ -2379,6 +2410,12 @@ survives the re-clock), so it stays usable while live and greys for every other 
 The lock is the affordance and the latch is what makes it true, which is why both exist: a drop target, a
 keyboard path or a click that races the lock reaches `holdDeviceLink` and is refused there, with the status
 line saying so rather than the action silently doing nothing.
+
+**A write is refused only for a reason the unit or the operator gives** (`AGENTS.md` "Conventions" holds the rule).
+A restriction with neither basis is a defect rather than a precaution: that is why the Device setup screen, the
+rate with Follow USB off and the whole device in scope, the `.urxf` import and the device scope stay open during
+Live sync, and why the Delay under tempo Sync stays turnable. The SIM view holds the same line toward the unit
+("SIM view (the unit's LCD)").
 
 Every failure raised outside the UI layer returns a stable, machine-readable code rather than a raw English
 string — see [Error codes](#error-codes) for the scheme. The broker link's are `broker-unreachable` (Device

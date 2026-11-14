@@ -573,6 +573,7 @@ former cost.
 | --- | --- |
 | `fake-device.ts` | the fake, its barrier, the trace, the MIDI bridge, the event plugin |
 | `analyze.ts` | invariants 1 / 2 / 3 / 4 / 6 / 8 / 12 / 13 / 16 and timeline rendering |
+| `ui.ts` | the shared locators and the value-settle wait |
 | `t0`–`t8` plus `t0b`–`tzb` | the cases, by tier |
 | `t2c`–`t2f` | T2's remaining eight cases (the shape-changing params filled in later) |
 | `t9-probe.spec.ts` | the probe's own contract, and invariants 13 and 3 — including that a landed Fetch's or Live-sync start's read is attributed to `device-action` |
