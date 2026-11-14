@@ -418,7 +418,7 @@ describe("sendConverging", () => {
   const panConn = (plan: Plan, to: string) =>
     plan.connections.find((c) => c.from === "ch3:out" && c.to === `${to}:in`)!;
 
-  // The write the unit was seen to fight: a plan read from a linked unit, with the channel PAN
+  // The write the unit fights: a plan read from a linked unit, with the channel PAN
   // moved. The send pans it read are the channel's old PAN, and writing them back moved the
   // channel there, round after round. Linked, they are the unit's to drive, so the one write
   // that goes out is the PAN, and the unit carries the send pans to it.
@@ -547,12 +547,12 @@ describe("sendConverging", () => {
     expect(r.outcomes.some((o) => !o.ok && !o.skipped)).toBe(true);
   });
 
-  // The EQ 1-knob reset chain, measured on a URX44V: an OFF->ON transition discards
-  // the type back to Intensity, and a type write discards the level to that type's
-  // neutral. A round that re-sends only what differs walks the chain one link per
-  // round — ON, then the type it just discarded, then the level that discarded —
-  // and the level lands only in a round of its own. The chain travels as
-  // one group, so a single round lands all three.
+  // The EQ 1-knob reset chain: an OFF->ON transition discards the type back to
+  // Intensity, and a type write discards the level to that type's neutral. A round
+  // that re-sends only what differs walks the chain one link per round — ON, then
+  // the type it just discarded, then the level that discarded — and the level lands
+  // only in a round of its own. The chain travels as one group, so a single round
+  // lands all three.
   it("re-sends a reset chain whole rather than one link per round", async () => {
     const table = installDevice();
     const inner = vi.mocked(vdSet).getMockImplementation()!;
@@ -619,7 +619,7 @@ describe("sendConverging", () => {
   });
 
   // Does the COMP 1-knob chain need a group, the way the EQ 1-knob's does? Writing 42
-  // discards 43 to 0 (measured), which is the same shape — and the EQ's group exists because
+  // discards 43 to 0, which is the same shape — and the EQ's group exists because
   // that shape ran the round budget out. This settles it by driving the chain rather than by
   // reasoning from the shape: the device below models the discard, and the case starts from
   // the state that produces the longest walk (only the ON differs, so round 1 sends 42 alone
@@ -635,7 +635,7 @@ describe("sendConverging", () => {
     vi.mocked(vdSet).mockImplementation(async (id, x, y, v) => {
       const wasOn = table.get(`42:${x}:${y}`) ?? 0;
       await inner(id, x, y, v);
-      if (id === 42 && v === 1 && wasOn !== 1) table.set(`43:${x}:${y}`, 0); // the measured discard
+      if (id === 42 && v === 1 && wasOn !== 1) table.set(`43:${x}:${y}`, 0); // the unit's discard
     });
     table.set("43:0:0", 70); // the level the plan wants is already there; only the ON differs
     const plan = dirtyPlan();
@@ -1006,10 +1006,10 @@ describe("diffNames", () => {
   // The other side of that trim, and the one that could not converge. The trim above
   // is one-sided, so it only closes the gap when the PLAN side is clean — and a name
   // ending in a space survived every gate into the plan. The device does not settle it
-  // either: measured on a URX44V (2026-08-14), `"SPCTEST "` is stored and read back
-  // unchanged rather than padded away. So the comparison differed on every sync and
-  // re-sent the name forever, invisibly — each round reports one write and succeeds at
-  // it, and the two names render identically wherever they are shown.
+  // either: a name ending in a space is stored and read back unchanged rather than
+  // padded away. So the comparison differed on every sync and re-sent the name
+  // forever, invisibly — each round reports one write and succeeds at it, and the two
+  // names render identically wherever they are shown.
   it("does not re-send a name forever because the plan side carried the padding", async () => {
     const plan = namedPlan();
     for (const id of Object.keys(plan.nodeNames)) plan.nodeNames[id] += " ";

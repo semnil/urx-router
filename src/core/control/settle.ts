@@ -1,13 +1,10 @@
 // Post-write settle: what a read may believe about an address the caller has just
 // written, and how long it must wait before asking the unit instead.
 //
-// The unit acks a write before the value is readable. Measured on a URX44V (System
-// V1.3.1.0), across six addresses and three parameter classes: a GET of a just-written
-// address answers the PRE-write value until that write's own change notify arrives.
-// Strictly value-paired, n = 87 (53 of them taken during a real drag): 9 ms at the
-// fastest, ~101 ms median, 204 ms at the widest, and not one read before its own notify
-// was fresh, nor one stale after it. The notify IS the boundary, not an approximation
-// of it.
+// The unit acks a write before the value is readable, whatever the parameter class: a
+// GET of a just-written address answers the PRE-write value until that write's own
+// change notify arrives. No read before its own notify is fresh, and none after it is
+// stale. The notify IS the boundary, not an approximation of it.
 //
 // So the answer this module gives is THE VALUE THE DEVICE ANNOUNCED — never the value
 // the caller sent. That is the whole of it, and it is why there is no special case for
@@ -30,14 +27,13 @@
 // the unit. So the mark removes a spurious reconcile rather than carrying the correctness
 // of the merge.
 //
-// Two ways the wait ends, both measured:
+// Two ways the wait ends:
 //   - the address's own notify (exact). What every write the snapshot held a DIFFERENT
 //     value for owes: the unit must change, and a change is announced.
-//   - the bounded window (conservative), 300 ms against the measured 204 ms maximum,
-//     i.e. a 1.47x margin. What a write the snapshot held NO entry for gets, because
-//     that write may be a no-op and a no-op emits no notify at all (measured: 18 such
-//     writes acked in 0-1 ms and produced none). The wait must time out rather than
-//     hang, and the address must not be read before it does.
+//   - the bounded window (conservative), 300 ms, longer than the staleness window
+//     lasts. What a write the snapshot held NO entry for gets, because that write may
+//     be a no-op and a no-op emits no notify at all. The wait must time out rather
+//     than hang, and the address must not be read before it does.
 //
 // Every `sideEffect: "refetch"` head ends its wait on its own notify, and the refetch that
 // follows reads what the write made the unit recompute. That assumes those values are

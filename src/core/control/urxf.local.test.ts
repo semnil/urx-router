@@ -39,7 +39,7 @@ describe.skipIf(!present)("device-written settings files (private samples)", () 
     }
   });
 
-  // Values confirmed against the device's own display. The first three are the
+  // Values as the device's own display shows them. The first three are the
   // decode traps: an unsigned 4-byte bitmask read as signed goes negative, and a
   // 4-byte ASCII field read by width alone comes back as an integer.
   it("decodes the documented values of a configured unit", () => {

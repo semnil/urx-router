@@ -152,8 +152,8 @@ export interface SelfTestMismatch {
  *   refuted     at least one did not, in a pass that completed — `mismatches` says which
  *   unread      one of ITS OWN addresses could not be read, so nothing about it round-
  *               tripped. This is the one per-address reason, taken from the failed reads
- *               themselves. Measured in a fixture: one unreadable address left an
- *               unrelated guess with 14 "mismatches"
+ *               themselves; otherwise one unreadable address leaves an unrelated
+ *               guess with spurious "mismatches"
  *   incomplete  it differed, in a pass that did not finish. WHY that pass stopped is a
  *               fact about the pass, not about this guess — `sendCommands` stops at the
  *               first refusal, so a guess written earlier in the same round was asked and
@@ -251,9 +251,8 @@ export interface SelfTestReport {
    *  `diag.idleEngineOn`) — PLUS the node names and Sweet
    *  Spot presets that still differ, or could not be read, after the string write-back. ⚠️ Still bounded by the app's
    *  parameter catalogue: a run also perturbs the unit's 1-knob base save-off, which
-   *  has no entry and so cannot be read, written or counted (measured on a URX44V,
-   *  2026-08-10 — 27 addresses; nothing observed restores from it, see diag and the
-   *  private PLAN.md). */
+   *  has no entry and so cannot be read, written or counted; nothing is known to
+   *  restore from it (see diag). */
   restoreResidual: number;
   /** Non-fatal issues (read failures, send failures) collected along the way. */
   errors: string[];
@@ -344,8 +343,8 @@ export interface PendingRestore {
 
 // What the restore emits, named once: the diagnostic below asks "which addresses will
 // the restore NOT send", and asking it of a different set than the restore uses is how
-// a run reports a gap it does not have (the PEQ was listed as unrestorable in a run
-// that restored it, 2026-08-10).
+// a run reports a gap it does not have (such as listing the PEQ as unrestorable in a
+// run that restores it).
 const RESTORE_EMIT = { includeDeviceDriven: true } as const;
 
 // How many times the write-back of the addresses the restore has no command for is tried:
@@ -1237,7 +1236,7 @@ async function restoreCaptured(
   // the app never authors while EQ 1-knob is on, because the unit drives them. A
   // capture holding 1-knob ON otherwise emits none of them while every sweep pass
   // wrote them, so the unit ends with a VISIBLE EQ change under a verdict that says
-  // it was restored. The unit keeps such a write (measured; see EmitOptions), and
+  // it was restored. The unit keeps such a write (see EmitOptions), and
   // the residual now covers the same set, so a unit that did re-derive would be
   // reported rather than passed over.
   const restore = { settleMs, signal, trace: true, emit: RESTORE_EMIT, stopOnError: false };
