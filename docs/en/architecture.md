@@ -1598,10 +1598,10 @@ While anything is cued, a MONITOR strip whose Cue Interrupt is on is framed in t
 chip is painted in it. The frame is drawn on a layer over the strip's contents, so the readout's cell borders do
 not cut it, and gives way to the strip's own focus ring. During Live sync such a strip also **meters the CUE
 bus** (`cue-over`, `setCueOver`), whatever level the CUE bus carries — a cue of something silent shows its floor:
-the CUE bus's meter stands where the meter stood, 2px closer to the scale, inside a 2px ring in the CUE colour held
-1px off the ladder and the OVER box, so the ring borders the panel on both sides; the readout's METER cell reads the
-CUE bus under a CUE caption, both in the CUE colour; and the monitor's own meter stays as a 5px frameless line at
-the strip's right edge. What the CUE column and the line add to the row is taken back by the line's right margin, so
+the CUE bus's meter stands where the meter stood, 3.5px closer to the scale, inside a 2px ring in the CUE colour
+held 1px off the ladder and the OVER box, so the ring borders the panel on both sides; the readout's METER cell
+reads the CUE bus under a CUE caption, both in the CUE colour; and the monitor's own meter stays as a 5px frameless
+line at the strip's right edge, ending inside the strip's frame, which is drawn over the strip's contents. What the CUE column and the line add to the row is taken back by the line's right margin, so
 the fader and the scale do not move. A monitor whose Cue Interrupt is off, both monitors with nothing cued, and every
 strip with Live sync off are laid out as before, and the STEREO strip never changes. The switch is made in place on
 every cue change, on a press of C.INT and on every start and end of a session (`syncCueOver`, from `syncCues` and

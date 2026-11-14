@@ -1296,8 +1296,16 @@ test("a cue leaves a monitor's fader and scale where they stand, inside the stri
   // The CUE meter where the meter stood, the line right of it, both inside the strip's box.
   expect(cue.left).toBeGreaterThan(cued.scale.right);
   expect(cued.line.left).toBeGreaterThan(cue.right);
-  expect(cued.line.right).toBeLessThanOrEqual(cued.strip.right - 1); // inside its right border
   expect(cued.line.right - cued.line.left).toBe(5);
+  // The line ends inside the frame the strip takes while its monitor plays the CUE bus, which is
+  // drawn over the strip's contents: under it, the line would lose its right lane.
+  const frame = await m1.evaluate((s) => {
+    const shadow = getComputedStyle(s, "::after").boxShadow;
+    const spread = [...shadow.matchAll(/(-?[\d.]+)px/g)].map((m) => Number(m[1]))[3];
+    return { spread, border: parseFloat(getComputedStyle(s).borderRightWidth) };
+  });
+  expect(frame.spread).toBeGreaterThan(0);
+  expect(cued.line.right).toBeLessThanOrEqual(cued.strip.right - frame.border - frame.spread);
 });
 
 test("the meter-point badge shows a meter glyph, distinct from the send-tap PRE button", async ({ page }) => {

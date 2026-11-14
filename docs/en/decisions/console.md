@@ -104,9 +104,11 @@ screen as a thin line beside it. What it draws is in [architecture.md](../archit
 view (mixer-style level overview)". The operator chose the place and the form from renderings of the
 app's real screens, over three rounds:
 
-- the CUE bus's meter stands where the meter stood, 2px closer to the scale, inside a ring in the
+- the CUE bus's meter stands where the meter stood, closer to the scale, inside a ring in the
   CUE colour held 1px off the meter;
-- the monitor's own meter stays as a 5px line at the strip's right edge;
+- the monitor's own meter stays as a 5px line at the strip's right edge, inside the frame the strip
+  takes while its monitor plays the CUE bus — 3.5px closer to the scale than the meter stood is what
+  leaves the line whole there;
 - the fader and the scale do not move;
 - no badge: the frame the strip already takes while its monitor plays the CUE bus, and the readout's
   CUE caption, name what the meter shows;
