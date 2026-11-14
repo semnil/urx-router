@@ -102,8 +102,10 @@ even without Rust installed. Desktop builds (`pnpm tauri dev` / `pnpm tauri buil
 [Rust](https://rustup.rs/). `pnpm dev` runs the full build; to see the reduced **demo** build
 locally (what <https://urx-router.semnil.com> serves), use `pnpm build:demo` then `pnpm preview`.
 
-The full command list (unit/e2e tests, formatting, cache cleaning) and development notes live in
-[AGENTS.md](AGENTS.md).
+The full command list (unit/e2e tests, formatting, cache cleaning) and the development rules live in
+[AGENTS.md](AGENTS.md); the procedures around them are in
+[docs/en/local-runs.md](docs/en/local-runs.md), and what each repository check holds in
+[docs/en/repository-checks.md](docs/en/repository-checks.md).
 
 The UI is English-first with a Japanese translation, and **a control reproduced from one of the
 unit's own screens is not translated** — the URX is English on those screens whichever of its three
