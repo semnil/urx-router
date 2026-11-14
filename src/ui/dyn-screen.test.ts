@@ -1220,15 +1220,14 @@ describe("refresh", () => {
 
   // The value rows are native ranges, so the ENGINE owns their drag and this tier cannot
   // hold that half at all — jsdom has no such drag to end, and a case written here passes
-  // whether or not the row leaves an ender behind (measured: deleting the registration
-  // left this file green). It lives in `e2e/dyntuning.spec.ts` instead, where the drag is
-  // real and only the blur is dispatched.
+  // whether or not the row leaves an ender behind. It lives in `e2e/dyntuning.spec.ts`
+  // instead, where the drag is real and only the blur is dispatched.
   //
   // The MIDI question: a message applied while the window is away still reaches the plan
   // and the unit; what waits is the repaint, for as long as the press does. The operator
   // is looking at another application for that interval by definition — it begins when
   // this window lost the foreground — and it ends when they let go, which they can do
-  // without coming back (a release reaches a background window; measured on the unit).
+  // without coming back (a release reaches a background window).
   it("lands a device- or MIDI-driven value on the screen when the press ends", () => {
     host = dynHost();
     const screen = new DynScreen(host.hooks);

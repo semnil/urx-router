@@ -79,7 +79,7 @@ const tagOf = (label: string, within?: HTMLElement): string | null =>
 /**
  * Move a slider row by `steps` of its own step, and let the screen see both events a
  * real drag ends with. Relative, not absolute: the frequency slider is an INDEX into
- * the device's frequency table (measured: min 0, max 1000, and index 265 = 125 Hz), so
+ * the device's frequency table (min 0, max 1000, and index 265 = 125 Hz), so
  * writing a hertz value into it lands somewhere else entirely and the case then
  * asserts against a number nobody chose.
  */
@@ -199,10 +199,9 @@ describe("what an edit writes back", () => {
 });
 
 describe("the rate lock", () => {
-  // Above 96 kHz the unit does not apply a stereo channel's EQ at all — measured, a
-  // 1 kHz high-pass passes 500 Hz untouched at 176.4 and 192 kHz while the parameters
-  // are still stored and returned. So every row goes read-only, band and 1-knob alike,
-  // and each says the rate is why.
+  // Above 96 kHz the unit does not apply a stereo channel's EQ at all, while the
+  // parameters are still stored and returned. So every row goes read-only, band and
+  // 1-knob alike, and each says the rate is why.
   it("locks every row above 96 kHz, with the rate as the reason", () => {
     host = dynHost();
     host.plan.sampleRate = 192000;
@@ -336,8 +335,8 @@ describe("the filter type", () => {
     expect(locked(t().inspector.eqGain, PARAMS())).toBe(false);
   });
 
-  // The two mid bands have no type at all — the device rejects the write (measured
-  // 400) — so the row offers the one value it can be, locked, rather than vanishing.
+  // The two mid bands have no type at all — the device rejects the write with a 400 — so
+  // the row offers the one value it can be, locked, rather than vanishing.
   it("offers the mid bands their one fixed type, locked", () => {
     host = dynHost();
     open();
