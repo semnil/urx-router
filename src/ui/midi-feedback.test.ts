@@ -412,8 +412,8 @@ describe("feedback to the controller", () => {
   // `settleTimer` before re-running the pass, which is the only reason a SECOND deferral
   // can arm a timer at all: without that clear the guard stays shut for the life of the
   // app, and a value deferred twice — an address still moving 350 ms later, which is an
-  // ordinary fader drag — never reaches the controller. Measured: deleting the clear
-  // leaves the case above green.
+  // ordinary fader drag — never reaches the controller. Without the clear, the case above
+  // still stays green.
   it("keeps re-arming while the sweep continues, and lands once it stops", async () => {
     const { control, sweep } = await sweptRig();
 

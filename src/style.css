@@ -253,10 +253,9 @@ body {
      moves with the engine, the language, and which build is running, and the three
      builds do not carry the same controls. `pnpm dev` hides the device-only ones,
      `build:demo` hides those and adds Share URL / Download JSON / Desktop app, and
-     the desktop build shows the FOLLOW USB badge and the Device menu. Measured, the
-     first two are about 280px apart. A single number stood here for a long time with
-     none of that beside it, so nothing could tell which configuration it described
-     or whether it had gone stale — which it had. */
+     the desktop build shows the FOLLOW USB badge and the Device menu. A single number
+     stood here for a long time with none of that beside it, so nothing could tell
+     which configuration it described or whether it had gone stale — which it had. */
   overflow-x: auto;
   background: var(--bar);
   border-bottom: 1px solid var(--line);
@@ -305,43 +304,30 @@ body {
    stylesheet, and it had grown its own near-copy (4px radius, --ctl-border) —
    near enough to read as the same control and different enough to look like a
    slip when the two are open side by side. The inspector's carried no rule at
-   all until this list named it, so its whole face was the UA's own menulist:
-   measured at 11px system-ui against the panel's 12px --mono, on WebKit's own
-   #1e1e1e rather than --ctl-bg, and hugging its content 170px short of the
-   column every other control in the row fills.
+   all until this list named it, so its whole face was the UA's own menulist: a
+   smaller system-ui face than the panel's 12px --mono, on the engine's own ground
+   rather than --ctl-bg, and hugging its content short of the column every other
+   control in the row fills.
 
    The rate picker sits in the second .model-select of the same rack, one control
    away from the model picker, and was missed for as long because this list names
-   that one BY ID. It read as a different product: 11px system-ui in WebKit, 13.3px
-   Arial with square corners in Chromium, in both themes. The face it was painted
-   with is not the face it computed — WebKit reported background-color
-   rgb(30,30,30) while painting #2f2f2f (light: white against #ebebeb), because the
-   UA draws a menulist with its own appearance; Chromium's rgb(59,59,59) and its
-   pixel agree. Anything added to the rack from here on is a selector in this list,
-   not an id beside it.
+   that one BY ID. Unstyled, it read as a different product in each engine, and the
+   face a UA menulist paints is not always the face it computes: WebKit draws a
+   menulist with its own appearance, so its computed background and its pixels
+   disagree, where Chromium's agree. Anything added to the rack from here on is a
+   selector in this list, not an id beside it.
 
    The DROPDOWN this opens is a different surface on each platform, and neither needs
    `option` authored. The two selects in this list that ever disable an option are the
    Insert FX menu (a type over the rate's ceiling, or whose 1-of slot is taken) and the
-   insert-FX pitch scale, both `#inspector select`. The Windows reading below was taken
-   on neither: it used the SD Rec track-count select, which disables none of its own,
-   with a row disabled BY HAND. The macOS session did not record which control it read.
-   On macOS the popup is the platform's own menu and takes none of this: with #22ff22 /
-   #ff00c8 forced onto the select, the rows still came back greyscale (channel spread
-   1-3) on rgb(20,20,20) / rgb(21,21,21) rather than --ctl-bg. On Windows WebView2 draws
-   the popup itself and DOES take the authored face — measured 2026-08-13 in the dark
-   theme on that select, its ground is rgb(34,28,19), --ctl-bg to the byte, and an
-   enabled row's brightest text pixel is rgb(241,232,214), the authored colour exactly.
-   What decides the rule either way is that the ENGINE dims a disabled option on
-   whatever ground it used, so the lock reads without help: on that Windows ground the
-   disabled row peaks at a neutral rgb(170,170,170) against the enabled rows'
-   rgb(241,232,214). macOS gives the same verdict in a different unit — ink per row, how
-   far a row departs from its own ground rather than a contrast ratio: 2.13 against
-   7.6-8.5 in Chromium, 6.42 against 7.7-9.9 in WebKit. The selected row stays the
-   system's on both — a rgb(195,195,195) highlight backplate under rgb(48,46,43) text on
-   Windows, which is why no contrast pair here is authored against it. Photographing
-   this popup takes a different instrument from every other reading in this file;
-   AGENTS.md's "Reading the REAL webview from outside" says which and why. */
+   insert-FX pitch scale, both `#inspector select`. On macOS the popup is the platform's
+   own menu and takes none of this: its rows and its ground stay the platform's whatever
+   the select is styled with. On Windows WebView2 draws the popup itself and DOES take
+   the authored face: its ground is --ctl-bg and an enabled row's text is the authored
+   colour. What decides the rule either way is that the ENGINE dims a disabled option on
+   whatever ground it used, so the lock reads without help on both platforms. The
+   selected row stays the system's on both, which is why no contrast pair here is
+   authored against it. */
 select#model-picker,
 select#rate-picker,
 .prefs-select,
@@ -367,38 +353,20 @@ select#rate-picker,
    measured against the label beside them on the same strip (9.0:1 dark / 4.8:1
    light): the value text lands at 3.9 / 2.6 with 0.45 and at 7.9 / 5.1 with 0.7.
 
-   The rule is not optional decoration. Measured in Playwright's WebKit build with it
-   removed, a locked and an unlocked picker computed identical colour, border and
-   opacity, while Chromium supplied 0.7 of its own — an authored colour and background
-   are what stop that engine dimming a disabled select, which is the trade the recipe
-   above pays for. Measured again in the shipping WKWebView against a real unit, with
-   the rule in place: under a live session both pickers changed 476 / 475 pixels over
-   their own boxes, mean luma 45.8 -> 40.8 and 39.8 -> 36.5, and returned to the
-   pre-session pixels exactly when it ended — so the lock READS in the shipping engine.
-   Solving 0.7*content + 0.3*ground for the ground gives 29.1 / 28.8 against the bar's
-   own 29.5, which is consistent with this rule doing it and does not prove it: the
-   arithmetic recovers the alpha, not who applied it, and an engine supplying 0.7 of
-   its own over the same ground would land on the same numbers. Separating them needs
-   the rule WITHDRAWN in that window, and both shipping engines have now been read that
-   way. It needs no rebuild either: deleting the rule from `document.styleSheets` at
-   runtime is the whole experiment, and that is how it was run in the shipping WebView2
-   (2026-08-13) — on the INSPECTOR's 0.45 rule below rather than on this one, because
-   only there do the authored and supplied numbers differ, so one reading separates
-   them. WebView2 supplied 0.7 of its own, which is both the Chromium reading above and
-   the number this rule authors, so against that engine this rule's opacity declaration
-   is duplicating it and only the `cursor` one is not — read on the inspector's select,
-   with nothing here separating one disabled select from another. Under forced colors
-   WebView2 behaves differently again (architecture.md, "Windows high contrast").
+   The rule is not optional decoration. An authored colour and background are what stop
+   WebKit dimming a disabled select, which is the trade the recipe above pays for, while
+   Chromium supplies 0.7 of its own. With the rule in place the lock reads in the
+   shipping WKWebView, and the pickers return to their unlocked face when the session
+   ends. WebView2, being Chromium, supplies the same 0.7, which is also the number this
+   rule authors, so against that engine this rule's opacity declaration duplicates it
+   and only the `cursor` one does not. Under forced colors WebView2 behaves differently
+   again (architecture.md, "Windows high contrast").
 
-   macOS answers the other way. Same day, shipping WKWebView (desktop dev build), both
-   pickers held disabled and this rule withdrawn: locked and unlocked came back
-   IDENTICAL — 0 pixels over either box, in both themes, computed opacity 1 while
-   `disabled` stayed true. That engine supplies nothing, so here the rule is the whole
-   signal and withdrawing it stops the lock reading, exactly as in Playwright's WebKit.
-   The two engines therefore disagree about whether this declaration is redundant, and
-   the rule earns its place from the one that supplies nothing. The lock was forced
-   rather than driven from a device, which changes nothing about what is painted; what
-   that run does not cover is the packaged build. */
+   WKWebView answers the other way: without this rule a disabled picker is identical to
+   an enabled one, so that engine supplies nothing and here the rule is the whole
+   signal, exactly as in Playwright's WebKit. The two engines therefore disagree about
+   whether this declaration is redundant, and the rule earns its place from the one
+   that supplies nothing. */
 select#model-picker:disabled,
 select#rate-picker:disabled {
   opacity: 0.7;
@@ -535,8 +503,7 @@ button.consent-btn-secondary {
 
 /* A toggled-on menu item reads as an engaged switch: the raised gradient flips to
    a recessed one and the accent LED tints the face, so the state shows at a glance
-   without a separate indicator. Measured: without this the pressed row loses ~48k
-   pixels in both themes.
+   without a separate indicator.
 
    It was written as `.tools button[aria-pressed="true"]`, which described the wrong
    thing — the toolbar's own buttons never carry that state, and the only elements
@@ -1267,30 +1234,18 @@ input[type="range"]:focus-visible,
 
 /* The one select in this panel the app locks: SD Rec track count, read-only while a
    live session holds the device. The dim has to be authored because the engines
-   disagree about whether there is one — measured in Playwright with the rule removed,
-   Chromium dims a disabled select to 0.7 on its own while its WebKit build leaves
-   colour, border and opacity unchanged. (Unstyled, that WebKit does dim it — text and
-   border drop from 0.847 to 0.247 alpha — and stops the moment the recipe above
+   disagree about whether there is one: Chromium, WebView2 included, dims a disabled
+   select to 0.7 on its own, while WebKit stops dimming it the moment the recipe above
    authors a colour and a background, which is the trade the pickers' own :disabled
-   rule pays for.) Shown locked in macOS's shipping WKWebView (2026-08-13, dev build):
-   with this rule it moved 19,932 pixels over its own box, mean luma 32.9 -> 26.9, and
-   with the rule withdrawn it was identical to unlocked — 0 pixels, computed opacity 1,
-   so that engine adds nothing and the authored value is the only dim. The select shown
-   there was a channel's insert-FX selector rather than the Track Count row, whose node
-   was not on that profile's board: the same rule, on one of the rows the app never
-   locks. Shown locked in the shipping WebView2 (2026-08-13, debug build): it computes
-   --row-lock-dim with the rule in place and the engine's own 0.7 with it withdrawn, so
-   the authored value is the one on screen. Both shipping engines were read on THIS
-   rule, and they answer differently about what a withdrawal leaves — WebView2 0.7,
-   WKWebView nothing; the pickers' rule above was read in WKWebView only.
+   rule pays for. So in WebView2 the authored value is the one on screen, and in the
+   shipping WKWebView it is the only dim.
    Unlocked, its face matches the rack's model picker on colour, background,
    border colour, border width, radius, font family, font size and padding — that engine
    keeps the authored `padding: 5px 10px` where Playwright's WebKit computes it to `0px`
-   on a menulist select (measured the same day). `e2e/recpoint.spec.ts` compares that
-   padding only against the model picker's, deliberately, so an engine computing `0px`
-   on both still passes. The value is the panel's read-only dim — the token the locked
-   Preferences row takes, which is the same 0.45 #inspector .toggle button:disabled
-   writes as a literal. */
+   on a menulist select. `e2e/recpoint.spec.ts` compares that padding only against the
+   model picker's, deliberately, so an engine computing `0px` on both still passes. The
+   value is the panel's read-only dim — the token the locked Preferences row takes, which
+   is the same 0.45 #inspector .toggle button:disabled writes as a literal. */
 #inspector select:disabled {
   opacity: var(--row-lock-dim);
   cursor: not-allowed;
@@ -2061,10 +2016,8 @@ input[type="range"]:focus-visible,
 
 /* The inspector's plain console button, distinct from .danger: "hide this node"
    and the tuning-screen launchers. The launchers carried no rule at all until
-   this list named them, so their whole face was the UA's own button — measured
-   at 16px with no tracking, square corners and an outset bevel, and a different
-   one per engine (a translucent white in WebKit, #6b6b6b in Chromium, silver in
-   WebKit light), since nothing here was reading a theme token. */
+   this list named them, so their whole face was the UA's own button, a different
+   one per engine, since nothing here was reading a theme token. */
 #inspector button.subtle,
 #inspector button.gate-open {
   font-family: var(--mono);
@@ -2097,12 +2050,11 @@ input[type="range"]:focus-visible,
    Two adjacent borders rather than a glyph, and that is a decision rather than a
    detail: `.con-chip-open` opens these same four screens from the CONSOLE and is
    a `▸`, so the one action carries two different marks. They stay different
-   because each belongs to the family of the surface it is on. Measured against
-   the section chevron two rows above this button, the caret paints 174 painted
-   pixels to its 180 — one mark at one weight — while a `▸` at this size paints
-   134–142 in a box twice as tall, a denser shape that matches its CONSOLE
-   neighbours and not this one. Matching the two to each other breaks whichever
-   panel it is matched into.
+   because each belongs to the family of the surface it is on: the caret matches
+   the section chevron two rows above this button, one mark at one weight, while a
+   `▸` at this size is a denser shape that matches its CONSOLE neighbours and not
+   this one. Matching the two to each other breaks whichever panel it is matched
+   into.
 
    `::before` is an invisible twin: auto margins split the free space between the
    two, so without it the label would centre on the space beside the caret rather
@@ -2352,12 +2304,12 @@ input[type="range"]:focus-visible,
   --strip-w: 94px;
   /* Fixed for every strip, so the tallest head sets it. Four processing-chip rows on a
      mono channel (GATE / COMP / EQ each with their tuning-screen opener, then INS FX)
-     is the tallest: measured at the old 252px, the head's inner box came to 254px (the
-     height is content-box, so the padding pair and the bottom border add to it), a chip
-     row costs 24px, and the strips reading a jack that carries Hi-Z (`HI_Z_JACKS`) — which carry a Hi-Z
-     chip the others do not — had 0.9px of slack. Raising it takes 24px from the fader zone on every strip,
-     including the ones with no chips at all. It is no longer hand-checked: an E2E asserts
-     no strip's head overflows its own contents (e2e/console.spec.ts). */
+     is the tallest. The height is content-box, so the padding pair and the bottom border
+     add to it; a chip row costs 24px, and the strips reading a jack that carries Hi-Z
+     (`HI_Z_JACKS`) carry a Hi-Z chip the others do not. Raising it takes 24px from the
+     fader zone on every strip, including the ones with no chips at all. It is no longer
+     hand-checked: an E2E asserts no strip's head overflows its own contents
+     (e2e/console.spec.ts). */
   --head-h: 276px;
   --groove: color-mix(in srgb, var(--canvas-bg) 55%, #000 45%);
   flex: 1;
@@ -4252,9 +4204,8 @@ input[type="range"]:focus-visible,
    under the floor.
    `button` qualifies the face selectors deliberately. The base rule above is
    (0,1,1) and a bare `.consent-btn-primary` is (0,1,0), so its shorthand `border`
-   beat the face's `border-color` and the amber edge never rendered — from the
-   first release until this was measured. Matching the specificity puts the
-   decision back where it reads, on source order. */
+   beat the face's `border-color` and the amber edge never rendered. Matching the
+   specificity puts the decision back where it reads, on source order. */
 button.consent-btn-primary {
   background: var(--led-face);
   border-color: var(--led-ink);
@@ -4264,11 +4215,10 @@ button.consent-btn-primary {
 /* Third-party license notice, rendered as app DOM (ui/licenses.ts parses the
    bundled cargo-about page). No iframe: WKWebView scrolls subframes through a
    separate scroller code path (an unpainted classic-scrollbar gutter plus a
-   paint-only indicator, measured on the real engine), so the notice scrolls as
-   part of the main frame like every other surface. The box and its footer
-   separator share the prefs-box pinned-column recipe (see the Preferences
-   modal rules): title on top, Close pinned at the bottom, the body between
-   them is the scrolling region. */
+   paint-only indicator), so the notice scrolls as part of the main frame like
+   every other surface. The box and its footer separator share the prefs-box
+   pinned-column recipe (see the Preferences modal rules): title on top, Close
+   pinned at the bottom, the body between them is the scrolling region. */
 .lic-body {
   overflow-y: auto;
   min-height: 0;
@@ -4520,8 +4470,7 @@ button.consent-btn-primary {
 }
 /* The legend is excluded above rather than overridden here: it is printed dim already, so
    the flat value would *replace* that dim instead of composing with it (`opacity` on one
-   element cascades) and the legend came out heavier than the label it annotates — measured
-   on the COMP makeup gain at 1.56x the label's ink, against 0.90x while both are live.
+   element cascades) and the legend came out heavier than the label it annotates.
    Excluding it means this rule wins on the selector, not on source order, so it survives
    being moved up beside the other .fine-tag rules. */
 .prefs-row.locked .lblc > .fine-tag {
@@ -4704,11 +4653,11 @@ button.consent-btn-primary {
   border-radius: 4px;
 }
 /* The mapped dot is anchored to the ROW here rather than to the control. A console
-   chip floats over the strip with room around it; a screen row's control has none —
-   measured, the console's own corner offset put half the dot outside the scrolling
-   column (.prefs-grid clips), inset on the right it sat on the value's last character,
-   and inset on the left it sat on the slider's thumb whenever the control was parked
-   at its minimum (amber on amber, invisible). The label gutter is empty at every
+   chip floats over the strip with room around it; a screen row's control has none:
+   the console's own corner offset would put half the dot outside the scrolling column
+   (.prefs-grid clips), inset on the right it would sit on the value's last character,
+   and inset on the left it would sit on the slider's thumb whenever the control is
+   parked at its minimum (amber on amber, invisible). The label gutter is empty at every
    value, and it is also where the eye scans for which rows are assigned. */
 #dyn-screen-box .midi-target.midi-mapped::before {
   display: none;
@@ -4745,10 +4694,10 @@ button.consent-btn-primary {
   }
 }
 /* The only animation here with no end: learn mode arms a control and it pulses
-   until the binding lands. Measured on a real learn, the two phases differ by
-   13,140 pixels over the fader's full height — large enough that leaving it
-   running is the kind of motion this query exists to stop. The solid outline
-   stays, so the armed control is still marked. */
+   until the binding lands, and its two phases differ over the fader's full
+   height — enough that leaving it running is the kind of motion this query
+   exists to stop. The solid outline stays, so the armed control is still
+   marked. */
 @media (prefers-reduced-motion: reduce) {
   .midi-target.midi-armed {
     animation: none;
@@ -4832,9 +4781,8 @@ button.consent-btn-primary {
    like a third top-level section rather than part of one.
    The indent is the SECTION's padding, not a margin on each child: the assignment
    table is `width: 100%`, so a margin makes its used width exceed the containing
-   block and the delete column is clipped by the body's scroll box (measured: the
-   table's right edge landed 14px past the section at every window width). As padding
-   it moves the containing block instead, and 100% still means the indented width.
+   block and the delete column is clipped by the body's scroll box. As padding it moves
+   the containing block instead, and 100% still means the indented width.
    The heading is pulled back out so its hairline stays full-bleed. */
 .mw-sec {
   padding-left: 14px;
@@ -5076,20 +5024,17 @@ button.consent-btn-primary {
 /* One height for every face of a bank, so moving between them does not resize the modal
    under the pointer — and the segment that moves between them is in the title row, which
    a resize moves. The reserve is the tallest face's own grid: the SSMCS COMP face's eight
-   rows, measured at 489.4px in English and 497.4px in Japanese (Chromium, macOS, at 960 /
-   1280 / 1440px windows), plus the headroom a wider font stack takes. A floor, not a cap:
-   `pnpm test:e2e:app ssmcs` fails when the three faces stop agreeing, which is what
-   catches a font or a row that outgrows it. Scoped to a faced bank, so the single-face
-   screens keep their own heights. */
+   rows in whichever language sets them taller, plus the headroom a wider font stack
+   takes. A floor, not a cap: `pnpm test:e2e:app ssmcs` fails when the three faces stop
+   agreeing, which is what catches a font or a row that outgrows it. Scoped to a faced
+   bank, so the single-face screens keep their own heights. */
 #dyn-screen-box .prefs-grid.gt-faced {
   /* The reserve YIELDS when the window is too short to hold it. `.consent-box` clamps
      itself to the viewport and hides its overflow, and the action row is its last child,
-     so a floor the box cannot honour pushes Close off the bottom — measured at the 960x640
-     minimum window, on the three faces MAIN, COMP and EQ in both languages: 68px past the
-     box's own edge on each of the six readings. 211px is what the
-     modal wraps around the grid (a 683px box over a 520px one) plus the 48px the box keeps
-     clear of the viewport, so the second term is the grid's own share of the shortest
-     window it has to survive.
+     so a floor the box cannot honour pushes Close off the bottom at the 960x640 minimum
+     window. 211px is what the modal wraps around the grid (a 683px box over a 520px one)
+     plus the 48px the box keeps clear of the viewport, so the second term is the grid's
+     own share of the shortest window it has to survive.
 
      The 520px is the shipped bank's number and the default a face gets. A bank whose
      tallest face needs more says so from its binding (`faceReserve`), which sets
@@ -5335,10 +5280,8 @@ button.consent-btn-primary {
    clip and lands over the slot's frame, at the cap's full width.
 
    `overflow-clip-margin: 4px` on the slot was tried first and does the same thing in
-   Chromium; WebKit does not implement the property (measured: the ring came back 44px wide
-   there against 50px in Chromium, i.e. cut to the cap), and the desktop build renders in
-   WebKit. The narrower alternative — inset the cap by the ring instead — was measured beside
-   this one and dropped. */
+   Chromium; WebKit does not implement the property, so there the ring is cut to the cap,
+   and the desktop build renders in WebKit. */
 .gt-capwrap {
   position: relative;
   width: var(--gt-slot-w);
@@ -5404,20 +5347,17 @@ button.consent-btn-primary {
    panel must not change height when the band changes (three tests pin that), and
    `overflow: hidden` is what holds it — so whatever does not fit is cut with nothing to
    say it was.
-   It was one line, then two. One is not enough: the COMP and EQ notes that shipped already
-   wrapped below about 1150 px of window and the Japanese ones below about 1300, so they
-   were silently truncated on any window narrower than a wide desktop. Two is not enough
-   either, and how that was found is the point — **the font decides the wrap, and the font
-   is the runner's, not this machine's**. Two lines measured clean at 960 px on macOS for
-   every note in both languages; on the CI image the Japanese COMP note takes a third line
-   and was cut by 13 px. A local reading cannot settle this rule, so the guard that owns it
-   is `pnpm test:e2e:app dyntuning`, in CI.
-   Three lines costs almost nothing, measured: at the 960x640 minimum the panel does not
-   move at all on any of the six language x screen pairs (the grid already yields there and
-   the scroll absorbs it), and at 1280x800 only GATE grows — 610 to 634 px — because COMP's
-   and the EQ's parameter columns are already taller than their display columns. Close stays
-   23 px inside the box throughout. Shortening the copy is the other lever and it is worse:
-   it only moves the width, and the font, at which the next note is cut. */
+   It was one line, then two. One is not enough: the notes wrap on any window narrower
+   than a wide desktop, where one line silently truncates them. Two is not enough either,
+   and the reason is the point — **the font decides the wrap, and the font is the
+   runner's, not this machine's**: two lines can fit on a local machine and still cut the
+   Japanese COMP note on the CI image. A local reading cannot settle this rule, so the guard that
+   owns it is `pnpm test:e2e:app dyntuning`, in CI.
+   Three lines costs almost nothing: at the 960x640 minimum the grid already yields and
+   the scroll absorbs it, and at larger windows only GATE grows, because COMP's and the
+   EQ's parameter columns are already taller than their display columns; Close stays
+   inside the box. Shortening the copy is the other lever and it is worse: it only moves
+   the width, and the font, at which the next note is cut. */
 .gt-note {
   margin-left: 14px;
   height: 4.65em;
@@ -5434,8 +5374,8 @@ button.consent-btn-primary {
      it. The rule the counts follow is that the row ends with no empty cell: four tiles on
      three columns wrap to 3 + 1, ragged and wider than four need to be, so a rack of four
      takes two (a 2 x 2 block) or four (one row). The SSMCS bank's Side Chain segment takes
-     the row of four, where a second row of tiles measured 64px — enough to push that face
-     past the height its three siblings are held at. */
+     the row of four, where a second row of tiles would push that face past the height its
+     three siblings are held at. */
   grid-template-columns: repeat(var(--gt-ro-cols), 1fr);
   gap: 8px;
   --gt-ro-indent: 14px;
@@ -5485,16 +5425,15 @@ button.consent-btn-primary {
    The OS replaces the whole palette with a handful of system colors, so anything
    this UI says with color alone stops saying it. Two mechanisms survive, and only
    two: an outline/border, and `forced-color-adjust: none` on a surface whose
-   colors ARE the information. Everything else was measured and does not work --
+   colors ARE the information. Everything else does not work --
    `box-shadow` is removed by the spec, and setting `color` on a filled element is
    defeated by the opaque text backplate the engine paints behind it, which is
    also why the Highlight / HighlightText idiom cannot be used here.
 
    Nothing below touches a declaration used outside this query, so the normal
-   modes stay pixel-identical. Measured under Chromium's emulation and again
-   under a real Windows contrast theme in WebView2 (2026-08-07): the system
-   colour values, the text backplate and the `3px double` rendering all behaved
-   as this block assumes, so no absolute colour is asserted anywhere.
+   modes stay pixel-identical. The system colour values, the text backplate and
+   the `3px double` rendering behave as this block assumes, so no absolute colour
+   is asserted anywhere.
 
    The trap this block has already fallen into: a rule reaches ONE of two
    elements that share a visual grammar. .con-vfad is the mini-fader and repeats
@@ -5568,9 +5507,9 @@ button.consent-btn-primary {
   .con-vfad .cap::after,
   /* An OFF send column repaints that same bar in the dim ink (`.con-scol.off
      .con-vfad .cap::after`, four classes), which OUT-SPECIFIES the row above --
-     a media query adds no specificity of its own. Measured: without this the
-     OFF column kept a filled bar while every other column had an outline.
-     Naming the state is what makes the rule reach it. */
+     a media query adds no specificity of its own. Without this the OFF column
+     would keep a filled bar while every other column has an outline. Naming
+     the state is what makes the rule reach it. */
   .con-scol.off .con-vfad .cap::after {
     background: none;
     border: 1px solid CanvasText;
@@ -5582,11 +5521,10 @@ button.consent-btn-primary {
     border-top: 1px solid CanvasText;
   }
   /* The slot the cap rides in, which is a background plus an inset shadow: the
-     mode replaces the first and deletes the second, so nothing of it remains --
-     measured on real Windows high contrast, where every pixel across the groove
-     came back as Canvas and the fader read as a cap floating in empty space. An
-     outline of the same geometry is the one form that survives, the same answer
-     the indicators above take. */
+     mode replaces the first and deletes the second, so nothing of it remains:
+     the groove renders as plain Canvas and the fader reads as a cap floating in
+     empty space. An outline of the same geometry is the one form that survives,
+     the same answer the indicators above take. */
   .con-fader .track,
   .con-vfad .track {
     background: none;
@@ -5607,10 +5545,10 @@ button.consent-btn-primary {
   /* The parameter rows' slider, which is the groove above in another costume: a
      gradient track with an inset shadow, so the mode drops one and deletes the
      other and the row renders as a label, a value and a thumb floating over
-     nothing -- measured on real Windows high contrast (hcblack), where no pixel
-     of the track survived. The same answer the groove takes. Every range input
-     in the app is one of these two classes, so this reaches the tuning screens'
-     parameter rows, the inspector's, and the Device setup brightness row.
+     nothing: no pixel of the track survives. The same answer the groove takes.
+     Every range input in the app is one of these two classes, so this reaches
+     the tuning screens' parameter rows, the inspector's, and the Device setup
+     brightness row.
      The thumb was the one part of the row still visible, and it needs a rule all
      the same: its own fill is a gradient the mode drops, so the outlined track
      would read straight THROUGH the handle. Canvas is the mode's own background
@@ -5647,10 +5585,10 @@ button.consent-btn-primary {
 
      .gt-slot is the tuning screens' meter lane, and it is here for exactly the
      reason .con-meter is -- it was simply missed, because the two share the
-     grammar and not the selector. Measured on hcblack: the level gradient and
-     the reduction's hatch are background IMAGES and the mode drops both, the
-     shade and the peak marker are background COLOURS and the mode forces both
-     to Canvas, so all four lanes rendered as empty outlined boxes. Not "the
+     grammar and not the selector. The level gradient and the reduction's
+     hatch are background IMAGES and the mode drops both, the shade and the
+     peak marker are background COLOURS and the mode forces both to Canvas, so
+     all four lanes rendered as empty outlined boxes. Not "the
      reduction cannot be told from the level" -- neither was drawn at all.
      forced-color-adjust inherits, so naming the slot covers the sides, the bar,
      the shade and the peak. The threshold cap is a SIBLING of the slot rather than

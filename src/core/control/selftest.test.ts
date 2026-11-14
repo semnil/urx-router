@@ -525,10 +525,10 @@ describe("stereo-link sweep", () => {
 
   // The regression this exists for: a linked pair holds ONE insert effect between its two
   // members, so a pass naming an effect on one and No Effect on the other describes no
-  // device state. It cost a whole self-test run against hardware (8 of 10 passes left one
-  // address differing after every round), and it is invisible from inside the sweep — the
-  // plan is built, written and only the unit disagrees. planProblems is the same funnel the
-  // loader runs, so a perturbed plan is held to what a hand-written document is held to.
+  // device state. Against hardware it leaves an address differing after every round, and it
+  // is invisible from inside the sweep — the plan is built, written and only the unit
+  // disagrees. planProblems is the same funnel the loader runs, so a perturbed plan is held
+  // to what a hand-written document is held to.
   for (const id of models) {
     it(`${id}: every pass is a document the unit can hold`, () => {
       const m = getModel(id);
@@ -751,15 +751,14 @@ describe("runSelfTest", () => {
   // The verdict's residual covers only what the restore SENT, so it cannot answer the
   // question this asks: is the unit holding what it held? Only a full-address comparison
   // asks that — what an external sweep does against hardware, and this is its in-memory
-  // form. It was a PIN of an open gap until 2026-08-10; the gap is closed and it is now
-  // a set.
+  // form. It once pinned an open gap; the gap is closed and it is now a set.
   //
   // The gap: with EQ 1-knob ON in the capture, translate.ts authors no band values (the
   // unit drives them), so the restore emitted none of those addresses while the sweep,
   // which flips 1-knob every pass, wrote them on every pass that saw it OFF. A unit
   // found that way ended with its VISIBLE EQ changed under restored: true. The restore
   // now asks for those addresses explicitly (EmitOptions.includeDeviceDriven), which is
-  // sound because the unit keeps such a write — measured, not assumed.
+  // sound because the unit keeps such a write.
   it("leaves the device holding exactly what it held, including the bands the unit drives", async () => {
     // The factory-default plan, not the sparse fixture: this compares EVERY address, and
     // a sparse seed leaves the mock answering 0 for parameters no unit ever holds at 0

@@ -407,7 +407,7 @@ describe("DeviceFollow", () => {
   });
 
   // The app's own rename echoed back, stopped by the SAME gate a numeric echo is. The
-  // unit announces one for every name write it takes (measured on a URX44V), so this is
+  // unit announces one for every name write it takes, so this is
   // not an edge case: it is what EVERY rename made in the app produces, four times over
   // for one typed name. Letting it past the gate armed the idle net each time, and that
   // net is a full reconcile whose reflect calls planHistory.reset() — so a rename during

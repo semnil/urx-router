@@ -376,9 +376,9 @@ describe("the COMP face", () => {
   });
 
   // The side-chain lane is the compressor's key signal, not a point on the strip. It reads
-  // `109`, which is the filter's output: measured on a URX44V, `109` - `108` = 0.0 dB with
-  // the filter flat and swings the filter's full ±18 dB with it engaged, while the audio
-  // path (`111` - `108`) does not move at all. So it stands between the input and the
+  // `109`, which is the filter's output: `109` - `108` is 0 dB with the filter flat and
+  // swings the filter's full ±18 dB with it engaged, while the audio path (`111` - `108`)
+  // does not move at all. So it stands between the input and the
   // reduction — the causal order — and it is NOT metered as a stage the audio passes.
   it("meters the side chain from 109, off the same channel as PRE COMP", () => {
     const sc = SSMCS_COMP_DYN.bind(ctxOf(h!, SC_SEL))!.lanes.find((l) => l.key === "sc")!;
@@ -1015,10 +1015,10 @@ describe("what the curves draw", () => {
 
   // Out Gain reached NEITHER curve before this, so a slider worth ±18 dB moved nothing on
   // screen. It is drawn on the compressor's baseline: the unit applies it after the EQ
-  // (measured — `117` moves tap `112` one-for-one and leaves `108` and `111` alone), but
-  // the EQ plot's gain axis IS the band gain range, so an offset there pushes the response
-  // off the frame. Both halves are asserted, because "on the EQ curve" is the arrangement
-  // this replaced and each direction is its own defect.
+  // (`117` moves tap `112` one-for-one and leaves `108` and `111` alone), but the EQ plot's
+  // gain axis IS the band gain range, so an offset there pushes the response off the
+  // frame. Both halves are asserted, because "on the EQ curve" is the arrangement this
+  // replaced and each direction is its own defect.
   it("puts Out Gain on the compressor's baseline and not on the EQ's curve", () => {
     const withOut = (outGain: number): void => {
       h!.plan.nodeParams[ssmcsChannel] = {

@@ -51,8 +51,8 @@ export function scrubFloat(v: number): number {
 // another modal — and they do stack: Preferences opens the licenses notice, and a
 // load report arrives over whatever raised it. So a claim carries its own scrim,
 // the one the page draws on top stays reachable, and every other claimed scrim is
-// inert alongside the app. Measured before this: Tab from a load report's Close
-// reached the Preferences rows behind it.
+// inert alongside the app. Without this, Tab from a load report's Close would reach
+// the Preferences rows behind it.
 //
 // A list rather than a counter, and release by identity rather than by popping,
 // because a lower modal can close first (the shell closes Preferences out from
@@ -205,9 +205,9 @@ export function wheelStep(
   onWheelStep(
     over,
     (dir) => {
-      // A disabled slider takes no pointer input, but the wheel is delivered to it anyway
-      // (measured in both engines) — and this is the app's own write path, not the
-      // engine's, so nothing else would stop it. That matters while `holdInertOnBlur` has
+      // A disabled slider takes no pointer input, but the wheel is delivered to it anyway,
+      // in both engines — and this is the app's own write path, not the engine's, so
+      // nothing else would stop it. That matters while `holdInertOnBlur` has
       // a row held inert: macOS delivers scroll to an unfocused window, so a notch over
       // the background app would write the value the app just declared out of reach.
       if (slider.disabled) return;
@@ -305,22 +305,22 @@ export function stopStep(slider: HTMLInputElement, stops: readonly number[], hel
  * the same reason `wheelStep` is: they either all behave this way or the operator has to
  * remember which.
  *
- * The engine owns a native drag, so unhooking a listener does nothing — measured on the
- * shipping WKWebView (2026-08-14), a row dragged with the button held went on writing
- * into the plan and out to the unit while another application was frontmost, and the drags
- * the app runs itself (the CONSOLE faders, the tuning screens' cap and plot, the node
- * graph) end at the same `blur` for the same reading. Of the treatments measured, only
- * `disabled` both ends the drag and refuses to be re-acquired: taking the element out of
- * the document and putting it back ends it too, but on the unit the row RESUMED under the
- * still-held button once focus returned, and `pointer-events: none` never ended it at all.
+ * The engine owns a native drag, so unhooking a listener does nothing: a row dragged with
+ * the button held goes on writing into the plan and out to the unit while another
+ * application is frontmost, and the drags the app runs itself (the CONSOLE faders, the
+ * tuning screens' cap and plot, the node graph) end at the same `blur` for the same
+ * reason. Only `disabled` both ends the drag and refuses to be re-acquired: taking the
+ * element out of the document and putting it back ends it too, but the row RESUMES under
+ * the still-held button once focus returns, and `pointer-events: none` never ends it at
+ * all.
  *
  * So: disabled at the blur, and held that way until a `pointerup`, a `pointercancel`, a
  * `pointermove` reporting no buttons — the release the window never heard — or the window
  * coming back, which is the release that always arrives (the note on that listener below
  * carries what makes it safe, and it is a different question from the DETACH treatment,
- * which resumed on exactly that event). It costs nothing on screen, since these sliders are
+ * which resumes on exactly that event). It costs nothing on screen, since these sliders are
  * authored (`appearance: none`, own track and thumb) and the engines have nothing of their
- * own to dim — a row shot enabled and disabled is byte-identical in both.
+ * own to dim — a row paints the same pixels enabled and disabled in both.
  *
  * `live` names the row as it is NOW, for a surface that rebuilds: the same blur can land a
  * repaint that replaces this element — and it lands FIRST, since a surface registers its
@@ -332,11 +332,11 @@ export function stopStep(slider: HTMLInputElement, stops: readonly number[], hel
  * device-driven value back under the pointer.
  *
  * `beforeDisable` is for a row that commits on `change` rather than on `input` — Device
- * setup's brightness is the only one. Measured 2026-08-14, disabling a range mid-drag makes
- * Chromium fire that pending `change` at the disable and WebKit fire none at all, so the
- * value the operator dragged to is either committed early or lost outright; the caller
- * commits it here instead, before anything is disabled, and `live` is resolved after that
- * in case the commit rebuilt the row.
+ * setup's brightness is the only one. Disabling a range mid-drag makes Chromium fire that
+ * pending `change` at the disable and WebKit fire none at all, so the value the operator
+ * dragged to is either committed early or lost outright; the caller commits it here
+ * instead, before anything is disabled, and `live` is resolved after that in case the
+ * commit rebuilt the row.
  *
  * `pressOn` is the element whose press starts the hold, for a range that takes no pointer of
  * its own: a knob card's range sits under its face with `pointer-events: none`, and the face
@@ -393,11 +393,10 @@ export function holdInertOnBlur(
     // clear it. A hold only ever begins with a blur, so returning to the app is on the
     // path to using that row again, which makes this the one signal that always arrives.
     //
-    // Safe because re-enabling under a still-held button does not hand the drag back:
-    // measured 2026-08-14 in Chromium and WebKit, and confirmed by hand on the shipping
-    // WKWebView (hold through the switch, return still holding, keep moving — the value
-    // stayed put). That reading is what this release rests on; the detach treatment,
-    // which DID resume there, is why it was worth measuring rather than assuming.
+    // Safe because re-enabling under a still-held button does not hand the drag back: in
+    // every engine the app runs on, a value held through the switch stays put when the
+    // operator returns still holding and keeps moving. That is what this release rests on,
+    // and it is not true of every treatment: the detach treatment DOES resume there.
     window.addEventListener("focus", done);
     pressEnded.add(done);
   });
@@ -555,8 +554,8 @@ function trackPointers(): void {
   // Not `capture: true`, unlike the four above: an element's own `focus` does not bubble
   // but does propagate down, so a capturing window listener fires every time focus moves
   // anywhere on the page — which would forget the pointer the operator is pressing WITH.
-  // Measured 2026-08-14, both engines: `el.focus()` reaches only the capturing window
-  // listener, while a focus event at the window reaches both.
+  // In both engines `el.focus()` reaches only the capturing window listener, while a
+  // focus event at the window reaches both.
   window.addEventListener("focus", () => {
     if (pressedPointers.size === 0) return;
     pressedPointers.clear();
@@ -653,9 +652,9 @@ export function tabbable(e: HTMLElement): boolean {
  *  How a control is keyed is the caller's: the console keys by strip + the control's own
  *  identity, the inspector by the row's label. What must not differ lives here — the
  *  containment check, and `focus({ preventScroll: true })`, which keeps the surface where the
- *  operator left it when the restored control sits off screen (measured honoured on
- *  both engines; scripts/meter-bench.mjs's scrollCheck holds it against WKWebView on
- *  every bench run, so a copy that dropped it would show up there).
+ *  operator left it when the restored control sits off screen (honoured on both engines;
+ *  scripts/meter-bench.mjs's scrollCheck holds it against WKWebView on every bench run,
+ *  so a copy that dropped it would show up there).
  *
  *  `scrollTop` opts into restoring the host's scroll offset, and is a getter rather
  *  than a read here because the console deliberately does NOT restore it: reading the

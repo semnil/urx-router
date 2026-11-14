@@ -106,11 +106,10 @@ export const EQ_DYN: DynPlotProcessor = {
     const keys = eqTapKeys(ctx.nodeId);
     // Always the same three sliders, in the order the unit reads them. Which of them the
     // device actually reads depends on the filter type — a pass filter reads neither Q nor
-    // gain (measured: Q 0.71 and Q 4.00 draw an identical high-pass with no corner
-    // resonance), and only a peaking band reads Q — but a row that disappears takes the
-    // panel's height with it and moves every row below under the pointer. So the
-    // inapplicable ones lock and say why, which is the treatment the 1-knob's own rows
-    // already get while 1-knob is off.
+    // gain, and only a peaking band reads Q — but a row that disappears takes the panel's
+    // height with it and moves every row below under the pointer. So the inapplicable ones
+    // lock and say why, which is the treatment the 1-knob's own rows already get while
+    // 1-knob is off.
     const fields = eqBandFields(ctx.sel);
     const lane = (key: string, tapKey: string, caption: string): DynLane =>
       levelLane(key, pairTap(ctx, tapKey), caption);
@@ -184,15 +183,15 @@ export const EQ_DYN: DynPlotProcessor = {
 
   // Three reasons a band row is not the operator's, and they are not the same thing:
   //   - the rate. Above 96 kHz a stereo channel's EQ is not merely locked in the app —
-  //     measured, a 1 kHz high-pass that cut -13 dB at 500 Hz passes it untouched at
-  //     176.4 and 192 kHz, while the parameters are still stored and returned;
+  //     the unit does not apply it at all, while the parameters are still stored and
+  //     returned;
   //   - 1-knob. The device computes all four bands from one level, so the band rows are
   //     **reserved out of sight** and the plot stops taking a band press: there is no band
   //     being edited, so offering one to select would be offering a choice with no effect. They
   //     keep their space, because a panel that changes height moves everything below it —
   //     including the Close action — under the pointer;
   //   - the filter type. The two mid bands have no type at all (the device rejects the
-  //     write, measured 400), a pass filter reads neither Q nor gain, and a shelf reads
+  //     write with a 400), a pass filter reads neither Q nor gain, and a shelf reads
   //     no Q. Those rows stay visible and say why, since the operator still owns the band.
   rowStates: (ctx, vals) => {
     const band = ["on", "type", "freq", "q", "gain"];
@@ -211,7 +210,7 @@ export const EQ_DYN: DynPlotProcessor = {
       // and disabling its control means a stray programmatic focus cannot write either.
       // The tags above are kept rather than dropped — invisible, but a tag pill makes a
       // row taller, so keeping them is what makes a reserved row exactly as tall as the
-      // row it stands in for (measured: dropping them lost 3 px over the five).
+      // row it stands in for.
       for (const k of band) out.set(k, { ...out.get(k), locked: true, cls: "gt-reserved" });
     }
     return out.size ? out : null;
@@ -321,8 +320,8 @@ export const EQ_DYN: DynPlotProcessor = {
   drawAxes: (c, g, tok) => drawFreqAxes(c, g, tok),
 
   drawCurve: (c, g, _v, tok, ctx) => {
-    // Above 96 kHz a stereo channel's EQ is acoustically bypassed (measured), so the
-    // response it would have is drawn sunk rather than left looking effective.
+    // Above 96 kHz a stereo channel's EQ is acoustically bypassed, so the response it
+    // would have is drawn sunk rather than left looking effective.
     const inert = channelEqUnavailable(ctx.nodeId, ctx.plan.sampleRate);
     // -1 = no band selected, so no handle is drawn as the active one.
     drawResponse(c, g, tok, allBands(ctx), oneKnobOn(ctx) ? -1 : ctx.sel, inert);

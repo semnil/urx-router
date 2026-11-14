@@ -1454,8 +1454,8 @@ describe("LiveSync unannounced write", () => {
   });
 });
 
-// The unit announces a numeric write 58-151 ms after acking it, against a 120 ms flush
-// window — so the second write of a drag can move the snapshot before the first write's
+// The unit announces a numeric write well after acking it — at times later than the 120 ms
+// flush window — so the second write of a drag can move the snapshot before the first write's
 // announcement arrives. The snapshot holds one value per address and cannot represent
 // the write it has moved past, so that announcement used to read as a device-side
 // change: the plan was written back to a value the operator had already replaced, and
@@ -1751,12 +1751,12 @@ function setCh1OneKnob(plan: Plan, patch: { on?: boolean; level?: number }): voi
   };
 }
 
-// The SSMCS strip's morphing knob recomputes the whole strip on the device — measured on
-// a URX44V (2026-08-14): seventeen addresses across 96…117 announced 21 ms after the
-// write, including the comp's ratio and knee. The plan mirrors those rather than authoring
-// them, so this is a refetch; a converge would push its pre-morph copies back and undo the
-// morph with nothing on screen to say so. The mode itself is in the plan from the start
-// here — setting it is a converge param, and this case is about the morphing write alone.
+// The SSMCS strip's morphing knob recomputes the whole strip on the device: seventeen
+// addresses across 96…117 are announced after the write, including the comp's ratio and
+// knee. The plan mirrors those rather than authoring them, so this is a refetch; a converge
+// would push its pre-morph copies back and undo the morph with nothing on screen to say so.
+// The mode itself is in the plan from the start here — setting it is a converge param, and
+// this case is about the morphing write alone.
 function setCh1Morphing(plan: Plan, morphing: number): void {
   plan.nodeParams.ch1 = {
     ...plan.nodeParams.ch1,
@@ -1766,12 +1766,11 @@ function setCh1Morphing(plan: Plan, morphing: number): void {
 }
 
 // The COMP 1-knob drives the values in COMP_ONE_KNOB_DRIVEN on the device and announces the
-// recomputation (measured 2026-08: the written address goes fresh 0.046 ms before the four
-// dependents when the knob is switched on — threshold, ratio, makeup and the knee — and
-// 0.111 ms before the three a level change moves, which are the same minus the knee; none
-// ahead of it in either direction). The plan mirrors them while the knob is on — the screen
-// locks those rows — so this is a refetch, and a converge would push the pre-write copies
-// back over what the knob just computed.
+// recomputation (the written address goes fresh before threshold, ratio and makeup, both
+// when the knob is switched on and when its level changes, with none of them ahead of it;
+// switching it on also takes the knee). The plan mirrors them while the knob is on — the
+// screen locks those rows — so this is a refetch, and a converge would push the pre-write
+// copies back over what the knob just computed.
 function setCh1CompOneKnob(plan: Plan, patch: { oneKnob?: boolean; oneKnobLevel?: number }): void {
   plan.nodeParams.ch1 = {
     ...plan.nodeParams.ch1,
@@ -1926,7 +1925,7 @@ describe("LiveSync follow re-registration", () => {
 });
 
 describe("LiveSync sideEffect refetch", () => {
-  // The measured membership, pinned by address rather than by count: the morph recomputes
+  // The membership, pinned by address rather than by count: the morph recomputes
   // every CONTINUOUS value in the strip and none of the five ON switches. Both directions
   // matter — a missing one leaves the converge undoing it, and a spurious one stops the
   // converge from restoring a switch the operator turned off.
@@ -1938,7 +1937,7 @@ describe("LiveSync sideEffect refetch", () => {
     const onSwitches = ["SSMCS_SC_ON", "SSMCS_EQ_ON", "SSMCS_EQ_LOW_ON", "SSMCS_EQ_MID_ON", "SSMCS_EQ_HIGH_ON"];
     expect(onSwitches.map((n) => (PARAMS as Record<string, { id: number }>)[n].id)).toEqual([102, 106, 107, 110, 114]);
     for (const n of onSwitches) expect(drives).not.toContain(n);
-    // The preset drives the same seventeen and is measured NOT to move Morphing, so it must
+    // The preset drives the same seventeen and does NOT move Morphing, so it must
     // not name `93`: excluding that would stop the converge restoring a morph the operator set.
     expect(PARAMS.SWEET_SPOT_DATA.drives).toBe(drives);
     expect(drives).not.toContain("SSMCS_MORPHING");
@@ -2025,7 +2024,7 @@ describe("LiveSync sideEffect refetch", () => {
     expect(held).toEqual([[addrKey(PARAMS.SWEET_SPOT_DATA.id, 0, 0)]]);
     // With the MARK taken before that write, not just the address. Without it the wait
     // cannot tell this write's announcement from an older one, so an answer that arrived
-    // while the flush was still running — the ordinary case, the unit replies in ~15 ms —
+    // while the flush was still running — the ordinary case, the unit replies soon after the ack —
     // is missed and the read waits out the whole bound instead.
     expect([...(marks[0] ?? new Map()).keys()]).toEqual([addrKey(PARAMS.SWEET_SPOT_DATA.id, 0, 0)]);
     expect(typeof [...(marks[0] ?? new Map()).values()][0]).toBe("number");
@@ -2730,7 +2729,7 @@ describe("LiveSync sideEffect refetch", () => {
     vi.mocked(vdSet).mockImplementation(async (paramId: number, x: number, y: number, v: number) => {
       const k = addrKey(paramId, x, y);
       device.set(k, v);
-      // The selector hard-pans the pair (measured) — that reset is what the converge is FOR,
+      // The selector hard-pans the pair — that reset is what the converge is FOR,
       // and it has to still be pushed back while the morph's own values are left alone.
       if (k === key("PAN_BAL")) device.set(PAN, 63);
       if (k === MORPH) device.set(RATIO, morphed);
@@ -2863,8 +2862,8 @@ describe("LiveSync sideEffect refetch", () => {
     const LEVEL = addr("COMP_ONE_KNOB_LEVEL");
 
     // The unit: seeded from the plan the session opened on, and recomputing the three the
-    // knob drives when the level is written (the measured shape — a level change moved all
-    // three, announced 0.111 ms behind the level's own notify).
+    // knob drives when the level is written (a level change moves all three, announced
+    // behind the level's own notify).
     const device = new Map<number, number>(every.map((c) => [addrKey(c.paramId, c.x, c.y), c.vdValue]));
     vi.mocked(vdSet).mockImplementation(async (paramId: number, x: number, y: number, v: number) => {
       const k = addrKey(paramId, x, y);
@@ -3049,7 +3048,7 @@ describe("LiveSync sideEffect refetch", () => {
     live.begin();
     // ch1 carries no eqOneKnob at all until this edit, so its addresses are not in the
     // snapshot the flush diffs against and the flush cannot say they changed. A write
-    // the unit already agreed with emits no notify (measured), so nothing but the bound
+    // the unit already agreed with emits no notify, so nothing but the bound
     // can say the window is over — and the read must not take it before then.
     setCh1OneKnob(plan, { on: true });
     live.schedule();
@@ -3208,7 +3207,7 @@ describe("LiveSync sideEffect refetch", () => {
     //
     // Worst case on purpose: no notify source feeds the settle here (DeviceFollow owns
     // the only subscription), so every window spends the bounded fallback rather than
-    // ending at the unit's own announcement, which on hardware lands at 9-204 ms. A drag
+    // ending at the unit's own announcement, which on hardware lands sooner. A drag
     // that keeps its cadence under the fallback keeps it under anything the unit does.
     const plan = basePlan();
     const live = liveFor(plan, async (nodes, pending) => {
@@ -3360,8 +3359,8 @@ describe("LiveSync shared device address", () => {
 
 // The unit announces a change to these; the app never writes them. Before they were
 // registered the notify reached no one, and a front-panel change showed up only at the
-// next full read. Measured on a URX44V (2026-08-11, System V1.3.1.0): a CH → FX PRE/POST
-// and a Track Count change each pushed a notify within a second of the panel operation.
+// next full read. A CH → FX PRE/POST and a Track Count change each push a notify when the
+// panel moves them.
 describe("LiveSync read-only follow registrations", () => {
   const addrsOf = (live: LiveSync): Set<string> => new Set(live.followAddrs().map((a) => a.join(":")));
   const FX_TAP_IDS = [193, 197, 320, 324];
@@ -3504,7 +3503,7 @@ describe("LiveSync read-only follow registrations", () => {
 
 // A device-follow read is issued for the node the operator moved on the hardware, and
 // that node's addresses can include ones this session's flush wrote tens of ms ago —
-// inside the measured 9-204 ms window in which the unit still answers a GET with the
+// inside the window in which the unit still answers a GET with the
 // PRE-write value. The read used to take that as device truth, and the unit's own
 // notify for our write (which would have repaired it) was consumed as an echo, so the
 // operator's toggle flipped back on screen and plan and snapshot agreed on a value the
