@@ -1,10 +1,9 @@
 // The rules over the race tier's shard split, shown the broken arrangements they exist to
-// reject. Three of these were run by hand against the real workflow and the real ledger
-// before this file existed — a weight that no longer sums to the corpus, a checker that did
-// not pass the variable (standing in for a Playwright that stopped reading it), and the env
-// key renamed to PWTEST_SHARD_WEIGHTS_DISABLED, which is what caught `includes()` passing
-// while nothing was read. A hand-run mutation is a measurement of the guard on one day; this
-// is the same measurement on every run.
+// reject — among them a weight that no longer sums to the corpus, a checker that did not
+// pass the variable (standing in for a Playwright that stopped reading it), and the env key
+// renamed to PWTEST_SHARD_WEIGHTS_DISABLED, under which an `includes()` check passes while
+// nothing is read. A hand-run mutation is a measurement of the guard on one day; this is
+// the same measurement on every run.
 //
 // Every case is paired with the good arrangement it is a mutation of, because a rule that
 // fires on everything is as useless as one that fires on nothing.
@@ -319,8 +318,8 @@ describe("planMismatch", () => {
   });
 
   // The divergence the whole comparison exists for: Playwright grouping the SAME cases in
-  // another order. A membership check passes it, and passed every other case in this file
-  // when it was tried (measured), so this is the one that says sequence.
+  // another order. A membership check passes it, and every other case in this file stays
+  // green under one, so this is the one that says sequence.
   it("reports the plan's own cases handed back in another order", () => {
     const found = planMismatch("--shard=1/3", plan, ["b:2|y", "a:1|x", "c:3|z"]);
     expect(found).toMatch(/position 0: Playwright takes b:2\|y where the plan puts a:1\|x/);
@@ -342,11 +341,11 @@ describe("planProblems", () => {
   const keys = ["a", "b", "c", "d", "e", "f"];
   const correct = (k) => keys.slice((k - 1) * 2, k * 2);
 
-  // UNEVEN on purpose, and the committed array is `[38, 73, 59]`. With equal sizes every
-  // offset expression built from the wrong element — `sizes[0]`, the last size, `i * stride`
-  // — produces the same windows as the right one, so a suite of equal plans is green under
-  // all of them (measured). The real weights are not equal, so those would refuse a correct
-  // derivation and blame Playwright for it.
+  // UNEVEN on purpose, as the committed array is. With equal sizes every offset expression
+  // built from the wrong element — `sizes[0]`, the last size, `i * stride` — produces the
+  // same windows as the right one, so a suite of equal plans is green under all of them.
+  // The real weights are not equal, so those would refuse a correct derivation and blame
+  // Playwright for it.
   it("cuts each shard at its own size and offset, not the first one's", () => {
     const plan = [1, 3, 2];
     const cut = { 1: ["a"], 2: ["b", "c", "d"], 3: ["e", "f"] };
@@ -465,9 +464,7 @@ describe("inspectWeights", () => {
   // ladder in t5-drop) moves cases without moving the sum — so the two shards either side
   // of that cut both report. Expressed against the ledger's own array rather than written
   // out: a re-derivation moves those numbers, and a fixture holding the previous ones
-  // fails for a reason that has nothing to do with the rule (measured — this case broke
-  // on the array going 38:66:59 → 38:74:51, where the literal it held was one shard off
-  // instead of two and the rule itself was untouched).
+  // fails for a reason that has nothing to do with the rule.
   it("reports the two shards either side of a cut that moved", () => {
     const moved = [...WEIGHTS];
     moved[1] += 1;
