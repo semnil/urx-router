@@ -224,10 +224,10 @@ jobs:
     needs: detect
     if: needs.detect.outputs.run != 'false'
     runs-on: ubuntu-26.04
-    # Same image as the WebKit job below, for the same reason and at the same measured
-    # cost — see that job's header. The shards' own exposure is the smaller one (36
-    # sequential .deb fetches against WebKit's 201, and the three of them were unharmed
-    # by the degradation that killed WebKit), so what settles it here is that a run of
+    # Same image as the WebKit job below, for the same reason and at the same cost — see
+    # that job's header. The shards' own exposure is the smaller one (far fewer
+    # sequential .deb fetches than WebKit's, and the three of them were unharmed by the
+    # degradation that killed WebKit), so what settles it here is that a run of
     # this workflow sits in front of a merge — and on the version-bump PR, in front of a
     # release. One environment for all four jobs also means the workflow states one rule
     # rather than two.
@@ -337,8 +337,7 @@ jobs:
     # carries those libraries and the browsers already, and pulling it costs about what
     # the apt path costs on a good day — so this is not a trade of speed for reliability,
     # and it replaces a long run of sequential requests with a handful of blobs from a
-    # different host. The readings are in .github/actions/install-browsers,
-    # which is the only place any of these counts and timings are written down.
+    # different host. The reasons are in .github/actions/install-browsers' header.
     #
     # The tag comes from `detect`, which reads the version the lockfile resolves. Pinning
     # it here by hand would drift the first time Dependabot bumps Playwright, and the

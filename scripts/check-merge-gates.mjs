@@ -739,7 +739,7 @@ function checkPullRequestFieldConsumers(workflows) {
 // The steps that fetch from a host outside GitHub, by the action they use. Each carries a
 // `timeout-minutes` of its own, so a stall there fails that step, named, inside its job's
 // budget — rather than running the job out and reporting only "cancelled". What each
-// fetches from, and the readings each bound is sized from, are in
+// fetches from, and the bound it carries, are in
 // .github/actions/install-browsers/action.yml's header.
 const FETCHING_ACTIONS = new Set([
   "pnpm/action-setup",

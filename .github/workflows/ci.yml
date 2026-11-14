@@ -243,7 +243,7 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     # Sized from post-merge.yml's slowest whole warm-cache run (~6.8 min), with the same
     # headroom, rather than a budget of its own. The Windows entry's cargo test with no
-    # cache to restore is in .github/actions/install-browsers' header, well inside it.
+    # cache to restore runs well inside it.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -291,8 +291,8 @@ jobs:
     # The browsers and their system libraries come from the image rather than from the
     # runner's Ubuntu mirror. Pulling the image costs about what `--with-deps chromium`
     # costs on a good day — so the change is free in time and takes a whole run of
-    # sequential .deb fetches out of every pull request. The readings behind that are in
-    # .github/actions/install-browsers and are not restated here.
+    # sequential .deb fetches out of every pull request. The rest of the reasoning is in
+    # .github/actions/install-browsers and is not restated here.
     container: mcr.microsoft.com/playwright:v${{ needs.preflight.outputs.version }}-noble
     timeout-minutes: 15
     # Split across runners rather than across workers on one. Playwright's default takes
