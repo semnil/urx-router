@@ -146,8 +146,7 @@ git worktree add --detach <dir> <sha>
 - **SIM ビューが、シミュレーターのフォントを名指す `Failed to resolve import` で読めないとき**は、シミュレーターが
   `node_modules` につながっていない。AGENTS.md「Development」の準備のコマンド (submodule、その後に
   インストール) を走らせる。追跡しているファイルは変わらない。
-- **アプリが上がったかどうか**は、ログではなく、プロセスで答える。AGENTS.md「Development」の
-  「The dev app being up is a process, not a log line」。
+- **アプリが上がったかどうか**は、ログではなく、プロセスで答える。下の「dev アプリが上がったかどうか」。
 - **アプリは、submodule が指すコミットのシミュレーターを動かす。** シミュレーターのリポジトリでまだ
   マージされていない変更は、アプリに入っていない。見たことを報告するときに、そう書く。
 - **`pnpm tauri dev` が古い版や UI を出し続けるとき**は、`pnpm clean` でビルドのキャッシュを捨てて、
@@ -162,6 +161,25 @@ git worktree add --detach <dir> <sha>
   広い `pkill -f vite` は操作者自身の `pnpm tauri dev` に当たり、`until ! pgrep -f …` は、
   ほかの人の実行が終わるのを待ってしまう — 相手が、残ったプレビューのサーバーでも、
   止まった Playwright の実行でも、dev アプリでも同じである。
+
+## dev アプリが上がったかどうか
+
+決まり — ログではなく、プロセスに尋ねる — は `AGENTS.md`「Development」の「The dev app being up is a
+process, not a log line」にある。ここに書くのは、なぜログと `pgrep -f` では答えられないかと、確かめが何を出すかである。
+
+`pnpm tauri dev` は cargo を色付きで走らせるので、その `Running` の行は、語とバイナリのパスの間に SGR の
+リセットを持ち、ログに対して書いたどのパターンもそれに合わない。バイナリは `src-tauri/` から、相対の argv
+`target/debug/urx-router` で走るので、絶対のパスへの `pgrep -f` もそれに合わず、素の名前では、それを包む
+シェルにも合ってしまう。プロセスの名前はアプリを見つけ、その作業ディレクトリは、どの木がそれを作ったかを言う。
+確かめには両方が要る。ほかのチェックアウトのアプリも、同じ名前で答えるからである:
+`node scripts/check-startup-wait.mjs --pid <tree>` は、作業ディレクトリが `<tree>/src-tauri`
+(`lsof -a -p <pid> -d cwd -Fn`) である自分の `urx-router` のプロセス (`pgrep -x -u <uid> urx-router`)
+の PID を出し、それが無い間は 1 で、分からないときは理由とともに 2 で終わる — まだ走っているプロセスから
+`lsof` が何も読まないのはそれで、終わったプロセスは単にアプリではない — そして、それに `--wait` を足して
+バックグラウンドで走らせると、答えが 1 の間だけ見張る — この木のアプリが上がると、動かすべき PID とともに
+0 で終わり、分からないときは、すぐに 2 で終わる。
+
+ほかの 2 つの形を断るフックは、[repository-checks.md](repository-checks.md)「編集のときのフック」に書いてある。
 
 ## dev アプリが保存した状態を消す
 

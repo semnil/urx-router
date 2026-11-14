@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Verifies the "## Reusable assets" table in AGENTS.md, and the file references the
-// design documents make, against the repo.
+// Verifies the asset index ("## The asset index" in docs/en/reusable-assets.md), and the file
+// references the design documents make, against the repo.
 //
 // The prose is judgement and is not generatable, so this checks the ANCHORS:
 // every row points at something that exists (forward), and everything that
@@ -9,7 +9,7 @@
 // docs/{en,ja}/*.md gets the forward half of that treatment — see the docs section.
 //
 //   node scripts/check-assets-index.mjs        check
-//   node scripts/check-assets-index.mjs --hook check after an AGENTS.md edit (forward half only)
+//   node scripts/check-assets-index.mjs --hook check after a docs/{en,ja} edit (forward half only)
 //
 // Exits 1 on findings; --hook exits 2 so the message is fed back to Claude.
 //
@@ -59,8 +59,12 @@ export function isEntry(url) {
   }
 }
 
+// The instruction file: the reverse rules A, B and H read it, since it names every package.json
+// script and is one side of the source map. The asset table lives in INDEX, and only its English
+// copy is held to the tree row by row — the Japanese one gets the docs half like any document.
 const DOC = "AGENTS.md";
-const SECTION = "## Reusable assets";
+const INDEX = "docs/en/reusable-assets.md";
+const SECTION = "## The asset index";
 const DOC_DIRS = ["docs/en", "docs/ja"];
 // Derived, not spelled: a renamed checker must not quietly re-enter its own corpus.
 const SELF = relative(process.cwd(), fileURLToPath(import.meta.url))
@@ -257,6 +261,18 @@ const DOC_MENTIONS = new Map([
     "the name the project instructions had before AGENTS.md; the decision that renamed them names the old file",
   ],
   ["midi-control.md|CLAUDE.md", "the name the project instructions had when the incident the record narrates happened"],
+  // The asset index is a document as well as the table, so the docs half reads its rows too.
+  // The table half pardons these three its own way (a placeholder is stripped, `.git` is a
+  // PROSE_TOKENS entry); here they are the same three spans seen as file names.
+  [
+    "reusable-assets.md|latest.json",
+    "the updater manifest tauri-action publishes to a GitHub Release, served from a URL and never a file in the tree",
+  ],
+  ["reusable-assets.md|plan.json", "the placeholder in `<plan.json>`: whichever plan file the reader validates"],
+  [
+    "reusable-assets.md|.git",
+    "the directory or file git keeps at the top of a working tree, which the walk never enters",
+  ],
 ]);
 
 const SOURCE_EXT = /\.(ts|mjs|js|py|rs|json|sh|yml|yaml|html|css|png|svg)$/;
@@ -375,19 +391,20 @@ if (isEntry(import.meta.url)) {
   // fires on every edit, so a broken checker there must not block the operator's work.
   process.on("uncaughtException", (e) => {
     if (HOOK) process.exit(0);
-    console.error(`${DOC}: the check could not run — ${e.message}`);
+    console.error(`${INDEX}: the check could not run — ${e.message}`);
     process.exit(1);
   });
 
   // Which edit this hook run is about. Resolved against the cwd rather than matched on a
-  // basename: a basename gate fires for ANY file called AGENTS.md — another repository's
-  // among them — and then checks THIS repository's copy, which the edit never touched.
+  // basename: a basename gate fires for ANY file called reusable-assets.md — another
+  // repository's among them — and then checks THIS repository's copy, which the edit never
+  // touched.
   // What this run covers. One decision, taken at the gate, instead of the same question
   // re-derived at each section: the sections below read a field rather than re-testing
   // HOOK. A later mode is a new row here, not a fifth condition somewhere downstream —
   // which is what the previous shape's failure looked like, since a section that forgot
   // the guard fails by checking the wrong corpus rather than by erroring.
-  let scope = { instructionFile: true, docFiles: null }; // null = walk DOC_DIRS
+  let scope = { index: true, docFiles: null }; // null = walk DOC_DIRS
   if (HOOK) {
     let edited;
     try {
@@ -402,16 +419,25 @@ if (isEntry(import.meta.url)) {
     // a question. Only that one file is walked below, which is what keeps the run inside
     // the hook's budget.
     const isDocsMd = DOC_DIRS.some((d) => rel.startsWith(`${d}/`)) && rel.endsWith(".md");
-    if (rel !== DOC && !isDocsMd) process.exit(0);
-    // An AGENTS.md edit answers for the asset table; a docs edit answers for that one
-    // document. Neither answers for the other.
-    scope = isDocsMd ? { instructionFile: false, docFiles: [rel] } : { instructionFile: true, docFiles: [] };
+    if (!isDocsMd) process.exit(0);
+    // An edit to the index answers for the asset table and for the index's own file
+    // references; any other docs edit answers for that one document. AGENTS.md is read only
+    // by the reverse rules, which the hook does not run, so an edit to it has nothing here.
+    scope = { index: rel === INDEX, docFiles: [rel] };
   }
 
   // Kept structured so the report can be read in file order: findings are produced in
   // rule order, and rule order is not reading order once they span thirteen documents.
   const findings = [];
-  const finding = (where, message) => findings.push({ where, message });
+  // Once per place and message: the index is the table AND a document under docs/en, so a
+  // broken path in a row is reached by both halves, and it is one finding.
+  const reported = new Set();
+  const finding = (where, message) => {
+    const key = `${where}\n${message}`;
+    if (reported.has(key)) return;
+    reported.add(key);
+    findings.push({ where, message });
+  };
   function reportFindings() {
     const key = (f) => {
       const m = f.where.match(/^(.*):(\d+)$/);
@@ -429,7 +455,7 @@ if (isEntry(import.meta.url)) {
 
   // Memoized. The environment-variable corpus and the three per-directory texts name 320 of the
   // same files, and reading them a second time cost 9.7 ms against 0.8 ms — on a ~170 ms run
-  // that the tracked hook pays on every AGENTS.md and docs edit. Nothing here writes, so a file
+  // that the tracked hook pays on every docs edit. Nothing here writes, so a file
   // this process reads twice is the same file both times.
   const readCache = new Map();
   const read = (path) => {
@@ -454,7 +480,7 @@ if (isEntry(import.meta.url)) {
     const res = spawnSync("git", ["check-ignore", "--stdin"], { input: askable.join("\n"), encoding: "utf8" });
     if (res.error || (res.status !== 0 && res.status !== 1)) {
       finding(
-        DOC,
+        INDEX,
         `git check-ignore is unavailable, so private paths cannot be told from missing ones (${res.status})`,
       );
       return new Set();
@@ -466,14 +492,15 @@ if (isEntry(import.meta.url)) {
   // --- the document -----------------------------------------------------------
 
   const doc = read(DOC);
-  if (!doc) {
+  const indexText = read(INDEX);
+  if (!doc || !indexText) {
     // Infrastructure, not a finding: the hook can fire from anywhere, and blocking on a
     // wrong cwd is the failure mode that gets a hook disabled.
     if (HOOK) process.exit(0);
-    console.error(`${DOC}: not found (run from the repository root)`);
+    console.error(`${doc ? INDEX : DOC}: not found (run from the repository root)`);
     process.exit(1);
   }
-  const lines = doc.split("\n");
+  const lines = indexText.split("\n");
 
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
@@ -487,7 +514,7 @@ if (isEntry(import.meta.url)) {
   if (start < 0) {
     // A finding, not infrastructure: the edit that renamed the heading is the one the
     // hook is watching, so it exits 2 like any other finding rather than 1.
-    console.error(`${DOC}: section "${SECTION}" not found — renaming it disables every assertion below it`);
+    console.error(`${INDEX}: section "${SECTION}" not found — renaming it disables every assertion below it`);
     process.exit(HOOK ? 2 : 1);
   }
   let end = lines.length;
@@ -513,10 +540,10 @@ if (isEntry(import.meta.url)) {
   // Spans from the tables AND the surrounding paragraphs: the `ls scripts/` instruction
   // and the "ci.yml greps dist" claim live in prose.
   const spans = [];
-  // A hook run about a docs/ file answers for that file only: the asset table belongs to
-  // the edit that touched AGENTS.md, and re-reporting it here would blame every docs edit
+  // A hook run about another docs/ file answers for that file only: the asset table belongs
+  // to the edit that touched the index, and re-reporting it here would blame every docs edit
   // for a row somebody else broke.
-  if (scope.instructionFile)
+  if (scope.index)
     for (let i = start; i < end; i++) {
       for (const m of lines[i].matchAll(/`([^`]+)`/g)) spans.push({ raw: m[1], line: i + 1 });
     }
@@ -646,7 +673,7 @@ if (isEntry(import.meta.url)) {
   const SETTINGS = ".claude/settings.json";
   const ciText = read(CI_WORKFLOW);
   const settingsText = read(SETTINGS);
-  // Not in the hook: it fires on every AGENTS.md edit, and a missing input is the repo's
+  // Not in the hook: it fires on every docs edit, and a missing input is the repo's
   // problem to report on a full run, not a reason to block the operator mid-edit.
   if (!HOOK && !ciText)
     finding(CI_WORKFLOW, "does not exist, so the per-handle bundle-grep assertion has nothing to read");
@@ -706,7 +733,9 @@ if (isEntry(import.meta.url)) {
 
   // `file` is the document making the claim: the table's rows and a design document's
   // spans share this funnel, so both reach the same git check-ignore classification below.
-  function assertPath(token, line, note = "", file = DOC) {
+  // The table is `null` rather than INDEX, because the docs half walks INDEX as a document
+  // too, and a skip has to be named on the line of the half that made the claim.
+  function assertPath(token, line, note = "", file = null) {
     const path = token.replace(/^\.\//, "");
     if (existsSync(path)) return true;
     return { miss: path, line, note, file };
@@ -721,7 +750,7 @@ if (isEntry(import.meta.url)) {
   function assertEnv(name, line) {
     checked++;
     if (!mentions(envHay, name)) {
-      finding(`${DOC}:${line}`, `environment variable ${name} appears nowhere in the repo`);
+      finding(`${INDEX}:${line}`, `environment variable ${name} appears nowhere in the repo`);
     }
   }
 
@@ -733,7 +762,7 @@ if (isEntry(import.meta.url)) {
     else if (script === "test:e2e:app") pool = appSpecs;
     else pool = [...appSpecs, ...raceSpecs];
     const hits = pool.filter((f) => f.includes(filter));
-    if (!hits.length) finding(`${DOC}:${line}`, `\`pnpm ${script} ${filter}\` matches no test file`);
+    if (!hits.length) finding(`${INDEX}:${line}`, `\`pnpm ${script} ${filter}\` matches no test file`);
     if (script === "test") for (const h of hits) testFilterHits.add(h);
   }
 
@@ -742,13 +771,13 @@ if (isEntry(import.meta.url)) {
     const inSrc = mentions(srcText, name);
     const inE2e = mentions(e2eText, name);
     if (!inSrc && !inE2e) {
-      finding(`${DOC}:${line}`, `handle ${name} is published nowhere under src/ or e2e/`);
+      finding(`${INDEX}:${line}`, `handle ${name} is published nowhere under src/ or e2e/`);
       return;
     }
     // Holds the section's own claim: "ci.yml greps dist for each name". A handle found
     // only under e2e/ (the fake device) never reaches a bundle and is exempt.
     if (inSrc && !ciText.includes(name)) {
-      finding(`${DOC}:${line}`, `${name} ships from src/ but ci.yml does not grep the bundle for it`);
+      finding(`${INDEX}:${line}`, `${name} ships from src/ but ci.yml does not grep the bundle for it`);
     }
   }
 
@@ -766,9 +795,10 @@ if (isEntry(import.meta.url)) {
         checked++;
         if (isTauri && afterSep) {
           // Tier A: a real launch flag, parsed out of the Rust call sites.
-          if (!launchFlags.has(arg)) finding(`${DOC}:${line}`, `launch flag ${arg} is not read by src-tauri/src/*.rs`);
+          if (!launchFlags.has(arg))
+            finding(`${INDEX}:${line}`, `launch flag ${arg} is not read by src-tauri/src/*.rs`);
         } else if (!scriptsText.includes(arg)) {
-          finding(`${DOC}:${line}`, `CLI flag ${arg} appears in no script under scripts/`);
+          finding(`${INDEX}:${line}`, `CLI flag ${arg} appears in no script under scripts/`);
         }
         continue;
       }
@@ -792,7 +822,7 @@ if (isEntry(import.meta.url)) {
     const script = parts[1];
     checked++;
     if (!(script in scripts)) {
-      finding(`${DOC}:${line}`, `\`pnpm ${script}\` is not a script in package.json`);
+      finding(`${INDEX}:${line}`, `\`pnpm ${script}\` is not a script in package.json`);
       return;
     }
     checkArgs(parts.slice(2), line, script);
@@ -835,7 +865,7 @@ if (isEntry(import.meta.url)) {
           checked++;
           const body = read(path);
           if (body && !body.includes(`"${sub}"`) && !body.includes(`'${sub}'`)) {
-            finding(`${DOC}:${line}`, `${path} defines no "${sub}" subcommand`);
+            finding(`${INDEX}:${line}`, `${path} defines no "${sub}" subcommand`);
           }
         }
         break;
@@ -848,7 +878,7 @@ if (isEntry(import.meta.url)) {
         if (launchFlags.has(token)) {
           // fine: a launch flag named on its own
         } else if (!scriptsText.includes(token)) {
-          finding(`${DOC}:${line}`, `CLI flag ${token} appears in no script under scripts/`);
+          finding(`${INDEX}:${line}`, `CLI flag ${token} appears in no script under scripts/`);
         }
         break;
       case "envAssign":
@@ -868,7 +898,7 @@ if (isEntry(import.meta.url)) {
         break;
       case "unclassified":
         finding(
-          `${DOC}:${line}`,
+          `${INDEX}:${line}`,
           `unclassified token \`${token}\` — add a classifier or add it to PROSE_TOKENS with a reason`,
         );
         break;
@@ -1110,12 +1140,15 @@ if (isEntry(import.meta.url)) {
   const ignored = ignoredSet(pathMisses.map((m) => m.miss));
   for (const m of pathMisses) {
     if (ignored.has(m.miss)) {
-      (m.file === DOC ? skipped : docSkipped).push(m.miss);
+      (m.file === null ? skipped : docSkipped).push(m.miss);
       continue;
     }
     const base = m.miss.split("/").pop();
     const near = [...srcFiles, ...e2eFiles, ...scriptFiles].find((f) => f.endsWith("/" + base));
-    finding(`${m.file}:${m.line}`, `\`${m.miss}\` does not resolve to a file${near ? ` (did you mean ${near}?)` : ""}`);
+    finding(
+      `${m.file ?? INDEX}:${m.line}`,
+      `\`${m.miss}\` does not resolve to a file${near ? ` (did you mean ${near}?)` : ""}`,
+    );
   }
 
   // Every table row must yield at least one asserted token, and that token must be the
@@ -1131,13 +1164,13 @@ if (isEntry(import.meta.url)) {
     if (i + 1 < end && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) continue; // header
     rows.push(i + 1);
   }
-  for (const row of scope.instructionFile ? rows : []) {
+  for (const row of scope.index ? rows : []) {
     const label = () => (lines[row - 1].split("|")[1] ?? "").trim().replace(/`/g, "");
     if (!asserted.has(row)) {
-      finding(`${DOC}:${row}`, `row "${label()}" carries no checkable anchor — name the module or file it lives in`);
+      finding(`${INDEX}:${row}`, `row "${label()}" carries no checkable anchor — name the module or file it lives in`);
     } else if (!introduced.has(row)) {
       finding(
-        `${DOC}:${row}`,
+        `${INDEX}:${row}`,
         `row "${label()}" introduces no anchor of its own — every span in it already anchors an earlier line; name the module, file or command this row is about`,
       );
     }
@@ -1161,20 +1194,21 @@ if (isEntry(import.meta.url)) {
     const named = (name) => new RegExp(`pnpm ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w:.-])`).test(doc);
 
     // A. every package.json script is named somewhere in AGENTS.md (the ## Development
-    //    fence is the everyday list; this section is the rest).
+    //    fence is the everyday list), not merely in the index: the index is read when a
+    //    tool is wanted, the instruction file on every task.
     for (const name of Object.keys(scripts)) {
       if (!named(name)) finding("package.json", `script "${name}" is named nowhere in ${DOC}`);
     }
 
-    // B. every file in scripts/ is reachable from the docs: named directly, run by a
-    //    pnpm script AGENTS.md names, wired into the tracked hook, or — for a test —
-    //    selected by a `pnpm test <filter>` row, which is how the pin table names one
-    //    without spelling the path. All four are required: e2e-worktree.mjs /
+    // B. every file in scripts/ is reachable from the docs: named directly (in AGENTS.md
+    //    or the index), run by a pnpm script AGENTS.md names, wired into the tracked hook,
+    //    or — for a test — selected by a `pnpm test <filter>` row, which is how the pin
+    //    table names one without spelling the path. All four are required: e2e-worktree.mjs /
     //    reset-storage.mjs are reached only through their pnpm scripts, md-hook.sh only
     //    through .claude/settings.json, and a test file only through its filter.
     for (const file of scriptFiles) {
       const base = file.split("/").pop();
-      if (doc.includes(file) || testFilterHits.has(file)) continue;
+      if (doc.includes(file) || indexText.includes(file) || testFilterHits.has(file)) continue;
       const viaScript = Object.entries(scripts).some(([name, cmd]) => cmd.includes(file) && named(name));
       if (viaScript || settingsText.includes(base)) continue;
       finding(file, `is in scripts/ but no row, pnpm script or hook names it`);
@@ -1219,13 +1253,13 @@ if (isEntry(import.meta.url)) {
     for (const [file, why] of INVENTORY_ROWS) {
       const row = rowLineOf.get(file);
       if (row === undefined) {
-        finding(DOC, `INVENTORY_ROWS names ${file}, which heads no row — drop the entry or restore the row`);
+        finding(INDEX, `INVENTORY_ROWS names ${file}, which heads no row — drop the entry or restore the row`);
         continue;
       }
       const text = lines[row - 1];
       const missing = exportsOf(file).filter((name) => !text.includes(`\`${name}\``));
       if (missing.length) {
-        finding(`${DOC}:${row}`, `${file} exports ${missing.join(", ")}, which this row does not name (${why})`);
+        finding(`${INDEX}:${row}`, `${file} exports ${missing.join(", ")}, which this row does not name (${why})`);
       }
     }
 
@@ -1241,7 +1275,7 @@ if (isEntry(import.meta.url)) {
     //    pardon the next token that happens to be spelled the same way. Delete it instead.
     for (const token of PROSE_TOKENS.keys()) {
       if (!usedProse.has(token))
-        finding(DOC, `PROSE_TOKENS entry \`${token}\` no longer matches any span in "${SECTION}" — delete it`);
+        finding(INDEX, `PROSE_TOKENS entry \`${token}\` no longer matches any span in "${SECTION}" — delete it`);
     }
     for (const [key, why] of DOC_MENTIONS) {
       if (usedMentions.has(key)) continue;

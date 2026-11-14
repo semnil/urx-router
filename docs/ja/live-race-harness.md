@@ -661,7 +661,7 @@ undo は WebKit 自身が持ち、アプリは意図的に `preventDefault` し�
 
 | リストの内容 | 漏れていたもの | そのファイルが効く理由 |
 | --- | --- | --- |
-| `src/**` と `e2e/race/**` | `e2e/graph-helpers.ts` | `t0b-sweeps.spec.ts` と `t2b-shape-change.spec.ts` が import しており、AGENTS.md のアセット表がハーネス側の集約先として名指ししている |
+| `src/**` と `e2e/race/**` | `e2e/graph-helpers.ts` | `t0b-sweeps.spec.ts` と `t2b-shape-change.spec.ts` が import しており、資産の索引 ([reusable-assets.md](reusable-assets.md)) がハーネス側の集約先として名指ししている |
 | — | `playwright.config.ts` | `race` と `race-webkit` のプロジェクト定義がそこにしか無い |
 | + 上記 2 つ | `pnpm-lock.yaml` | Playwright のバージョンを固定し、それが両ハーネスジョブの `container:` イメージになる |
 | + `package.json` と lockfile | `race.yml` 自身・`.github/actions/install-browsers/`・`.env.trace`・`vite.config.ts`・`scripts/e2e-serve.mjs` | ジョブ定義・ブラウザ導入・trace ビルドフラグ・ティアが serve するバンドル・その serve 側 |

@@ -242,7 +242,8 @@ shards are sized", and the commands are in `AGENTS.md`.
 - **The reason for a permanent skip lives in one place, the ledger in this repository
   (`e2e/race/skip-ledger.json`), and is not copied into another document** (2026-08-11). A copy
   goes unread when the reason expires, and the harness runs only on a version-bump pull request.
-  What the ledger's check does is in `AGENTS.md`.
+  What the ledger's check does is in [repository-checks.md](../repository-checks.md)
+  "`pnpm check:skips`".
 - **Merging on the plan side alone was a regression.** A read returns the copy it used, and a
   capture takes its shape from the live plan and its values from the copy.
 - **The three follow reads do not refuse file operations.** They start on their own, and File > New

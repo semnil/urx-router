@@ -699,7 +699,7 @@ stayed green:
 
 | the list said | what it left out | why that file matters |
 | --- | --- | --- |
-| `src/**` and `e2e/race/**` | `e2e/graph-helpers.ts` | `t0b-sweeps.spec.ts` and `t2b-shape-change.spec.ts` import it, and AGENTS.md's asset table asks the harness to consolidate onto it |
+| `src/**` and `e2e/race/**` | `e2e/graph-helpers.ts` | `t0b-sweeps.spec.ts` and `t2b-shape-change.spec.ts` import it, and the asset index ([reusable-assets.md](reusable-assets.md)) asks the harness to consolidate onto it |
 | — | `playwright.config.ts` | the `race` and `race-webkit` projects are declared there and nowhere else |
 | + those two | `pnpm-lock.yaml` | it pins the Playwright version, which `.github/actions/playwright-version` turns into the container image both harness jobs run in |
 | + `package.json` and the lockfile | `race.yml` itself, `.github/actions/install-browsers/`, `.env.trace`, `vite.config.ts`, `scripts/e2e-serve.mjs` | the job definition, the browser install, the trace build flag, the bundle the tier serves, and the server that serves it |
