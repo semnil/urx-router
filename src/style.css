@@ -3074,25 +3074,13 @@ input[type="range"]:focus-visible,
   opacity: var(--clip, 0);
 }
 
-/* The STEREO strip while anything is cued (`cue-over`): the CUE bus's meter stands where the
-   meter was, 2px closer to the scale, and STEREO's own stays as a thin line at the strip's right
-   edge. What the two add to the row is taken back on the line's right, so the row keeps its
-   width and the centring leaves the fader and the scale where they are. The CUE badge stands in
-   the meter-point badge's place: beside it, any meter point longer than POST would push the pair
-   past the strip's left edge. With nothing cued the CUE column and its badge are not drawn and
-   the strip is laid out as every other. */
-.con-strip:not(.cue-over) :is(.con-meter.cue-meter, .con-cuetag),
-.con-strip.cue-over .con-tap {
+/* A MONITOR strip while it plays the CUE bus during Live sync (`cue-over`): the CUE bus's meter
+   stands where the meter was, 2px closer to the scale, and the monitor's own stays as a thin line
+   at the strip's right edge. What the two add to the row is taken back on the line's right, so
+   the row keeps its width and the centring leaves the fader and the scale where they are. Outside
+   that the CUE column is not drawn and the strip is laid out as every other. */
+.con-strip:not(.cue-over) .con-meter.cue-meter {
   display: none;
-}
-.con-cuetag {
-  padding: 4px 6px;
-  border-radius: 4px;
-  background: var(--cue);
-  color: var(--cue-ink);
-  font: 700 9px var(--mono);
-  letter-spacing: 0.5px;
-  line-height: 1;
 }
 .con-strip.cue-over .con-meter.cue-meter {
   margin-left: -2px;
@@ -3112,7 +3100,7 @@ input[type="range"]:focus-visible,
   border-radius: 5px;
   pointer-events: none;
 }
-/* STEREO's line: 5px, two 2px lanes 1px apart, frameless. Its right margin takes back the CUE
+/* The monitor's own line: 5px, two 2px lanes 1px apart, frameless. Its right margin takes back the CUE
    column's pull, the row gap before the line, the line's own pull and its width. */
 .con-strip.cue-over .con-meter:not(.cue-meter) {
   width: 5px;
@@ -3134,7 +3122,7 @@ input[type="range"]:focus-visible,
 .con-strip.cue-over .con-meter.stereo:not(.cue-meter) :is(.con-ladder.sig .mtrcol.r, .con-over .lit.r) {
   left: calc(50% + 0.5px);
 }
-/* The readout reads the CUE bus, named and coloured as the badge. */
+/* The readout reads the CUE bus, named CUE and in the CUE colour. */
 .con-strip.cue-over .con-readout .mtr :is(.cap2, .rv, .rv.off) {
   color: var(--cue);
 }

@@ -259,7 +259,7 @@ function readCap(text: string): HTMLElement {
 
 // The live-meter readout cell (METER caption + dBFS value, reset to "—" until the
 // stream feeds it). Shared by both strip builders; the value element is returned so
-// the caller can store it as the strip's readMtr, and the caption so the STEREO strip
+// the caller can store it as the strip's readMtr, and the caption so a MONITOR strip
 // can name the CUE bus there while it shows it.
 function meterReadCell(): { cell: HTMLElement; cap: HTMLElement; value: HTMLElement } {
   const cell = el("div", "rd mtr");
@@ -346,9 +346,9 @@ function carryLanes(from: MeterLane[], to: MeterLane[]): void {
   });
 }
 
-// The STEREO strip's second meter column, the CUE bus's, on a model whose CUE bus meter the
-// app reads. Shown in place of STEREO's own while anything is cued (`on`), when the readout
-// reads it too and its caption names it.
+// A MONITOR strip's second meter column, the CUE bus's, on a model whose CUE bus meter the
+// app reads. Shown in place of the monitor's own while the monitor plays the CUE bus during
+// Live sync (`on`), when the readout reads it too and its caption names it.
 interface CueMeter {
   tap: MeterTap;
   lanes: MeterLane[];
@@ -370,7 +370,7 @@ interface StripRef {
   tap: MeterTap | null; // the resolved tap this strip's meter shows (fixed per render)
   // lmtr = last meter readout written (deci-dB; 1 = sentinel "none written").
   sig: { lmtr: number };
-  cue?: CueMeter; // the STEREO strip's CUE bus meter; absent elsewhere
+  cue?: CueMeter; // a MONITOR strip's CUE bus meter; absent elsewhere
   // SENDS rack: the per-send column faders — kept so a linked partner's rack
   // fader can be mirrored in place, like the main fader. The header readout and the
   // collapsed dots are reached via `root` when the global collapse toggles.
@@ -594,7 +594,7 @@ export class Console {
     if (!active || !this.visible) this.stopMeters();
     // Rebuild so the CH → FX send Pre/Post chip flips read-only with live state;
     // render() (re)starts/re-scopes the meter stream at its tail when live. A hidden view
-    // is not rebuilt, so the STEREO strip's meter is switched in place.
+    // is not rebuilt, so the MONITOR strips' meters are switched in place.
     if (this.visible) this.render();
     else this.syncCueOver();
   }
@@ -2338,9 +2338,8 @@ export class Console {
     return chip;
   }
 
-  /** Repaint what shows the cues without rebuilding a strip: the STEREO strip's meter, each CUE
-   *  chip's light, and the frame and C.INT colour of a MONITOR whose Cue Interrupt makes it play
-   *  the CUE bus. */
+  /** Repaint what shows the cues without rebuilding a strip: each CUE chip's light, and the
+   *  frame, C.INT colour and meter of a MONITOR whose Cue Interrupt makes it play the CUE bus. */
   syncCues(): void {
     const cue = this.hooks.cue;
     if (!cue) return;
@@ -2350,10 +2349,9 @@ export class Console {
       chip.classList.toggle("on", on);
       chip.setAttribute("aria-pressed", String(on));
     }
-    const plan = this.hooks.getPlan();
     for (const strip of this.host.querySelectorAll<HTMLElement>("[data-cue-monitor]")) {
       const id = strip.dataset.cueMonitor!;
-      const taking = cue.any() && (plan.nodeParams[id]?.cueInterrupt ?? true);
+      const taking = this.takesCue(id);
       strip.classList.toggle("cue-take", taking);
       const cint = strip.querySelector<HTMLElement>(`[data-ctl="${controlId(id, "cueInterrupt")}"]`);
       if (!cint) continue;
@@ -2362,28 +2360,25 @@ export class Console {
     }
   }
 
-  /** Whether the STEREO strip's meter shows the CUE bus: while anything is cued during Live sync,
-   *  whatever level the CUE bus carries — a cue of something silent shows the floor. */
-  private cueOverOn(): boolean {
-    return this.live && (this.hooks.cue?.any() ?? false);
+  /** Whether a MONITOR plays the CUE bus in place of its source: anything is cued and its Cue
+   *  Interrupt is on. */
+  private takesCue(id: string): boolean {
+    return (this.hooks.cue?.any() ?? false) && (this.hooks.getPlan().nodeParams[id]?.cueInterrupt ?? true);
   }
 
-  /** Switch the STEREO strip's meter column, badge and readout between STEREO and the CUE bus.
-   *  The CUE lanes leaving the screen drop to the floor, so the next time they are shown they rise
-   *  from it rather than from the level they left at, and the readout holds "—" until a paint
-   *  writes what it now reads. The CUE badge stands where the meter-point badge stood, so a
-   *  meter-point popover open for the strip closes, and a focus on the badge or in the popover
-   *  lands on the strip root. */
+  /** Whether a MONITOR strip's meter shows the CUE bus: while the monitor plays it during Live
+   *  sync, whatever level it carries — a cue of something silent shows the floor. */
+  private cueOverOn(r: StripRef): boolean {
+    return this.live && this.takesCue(r.m.id);
+  }
+
+  /** Switch a MONITOR strip's meter column and readout between the monitor's own and the CUE
+   *  bus. The CUE lanes leaving the screen drop to the floor, so the next time they are shown they
+   *  rise from it rather than from the level they left at, and the readout holds "—" until a
+   *  paint writes what it now reads. */
   private setCueOver(r: StripRef, on: boolean): void {
     const c = r.cue;
     if (!c || c.on === on) return;
-    if (on) {
-      const held = [r.root.querySelector(".con-tap"), this.tapOpenFor === r.m.id ? this.tapPop : null].some((e) =>
-        e?.contains(document.activeElement),
-      );
-      if (this.tapOpenFor === r.m.id) this.closeTapPop();
-      if (held) r.root.focus();
-    }
     c.on = on;
     r.root.classList.toggle("cue-over", on);
     c.cap.textContent = on ? t().console.cueChip : t().console.readMeter;
@@ -2393,12 +2388,14 @@ export class Console {
     r.sig.lmtr = 1;
   }
 
-  /** Bring the STEREO strip's meter in line with the cues and the session, in place. */
+  /** Bring each MONITOR strip's meter in line with the cues, its Cue Interrupt and the session,
+   *  in place. */
   private syncCueOver(): void {
-    const r = this.refs.get(MAIN_BUS);
-    if (!r?.cue || r.cue.on === this.cueOverOn()) return;
-    this.setCueOver(r, !r.cue.on);
-    if (this.live && this.visible) this.paintStrip(r, true, false);
+    for (const r of this.refs.values()) {
+      if (!r.cue || r.cue.on === this.cueOverOn(r)) continue;
+      this.setCueOver(r, !r.cue.on);
+      if (this.live && this.visible) this.paintStrip(r, true, false);
+    }
   }
 
   // Build one lane: its bar column (green→red LED bar + shade + peak marker) and its
@@ -2634,7 +2631,7 @@ export class Console {
   // Carry a strip's live meter ballistics over from the elements it is replacing, so
   // a rebuild doesn't drop the bars to the floor and re-attack. Only when the strip
   // still meters the same tap — the tap objects are the table's own singletons, so
-  // identity means the same addresses and the same lane count. The STEREO strip's CUE
+  // identity means the same addresses and the same lane count. A MONITOR strip's CUE
   // lanes carry the same way, since their tap is one singleton too. The last-written
   // trackers (lv/lpk/lov/lmtr) stay at their fresh sentinels: the new elements are
   // undrawn, so the next paint must write them, not skip them as unchanged.
@@ -3353,16 +3350,11 @@ export class Console {
     // with the OVER clip window above it. Stereo taps split into independent L/R bars.
     const tap = tapFor(m.id, tapKey, this.hooks.getModel().id) ?? null;
     const { meter, lanes } = this.buildMeterColumn(m.range, isStereoTap(tap));
-    // The STEREO strip carries the CUE bus's meter as well, left of its own, drawn only while it
-    // shows the CUE bus (`cue-over`, setCueOver) with a badge above naming it.
-    const cueT = m.id === MAIN_BUS ? cueTap(model.id) : undefined;
+    // A MONITOR strip carries the CUE bus's meter as well, left of its own, drawn only while the
+    // monitor plays the CUE bus (`cue-over`, setCueOver).
+    const cueT = m.hasPhones ? cueTap(model.id) : undefined;
     const cueCol = cueT ? this.buildMeterColumn(m.range, isStereoTap(cueT)) : null;
-    if (cueCol) {
-      cueCol.meter.classList.add("cue-meter");
-      const badge = el("div", "con-cuetag");
-      badge.textContent = t().console.cueChip;
-      tapHead.prepend(badge);
-    }
+    cueCol?.meter.classList.add("cue-meter");
 
     zrow.append(fader, this.buildScale(m.range), ...(cueCol ? [cueCol.meter] : []), meter);
     zone.append(zrow);
@@ -3406,7 +3398,7 @@ export class Console {
     this.refs.set(m.id, refObj);
     // Built showing what the cues say, so a rebuild of this strip alone (refreshStrip) needs no
     // separate pass to switch it.
-    this.setCueOver(refObj, this.cueOverOn());
+    this.setCueOver(refObj, this.cueOverOn(refObj));
     // Paint the cap position, readout and aria-valuenow through the same helper
     // the edit path uses (as buildSendCol does via updateColLevel), so build and
     // edit cannot drift apart.
@@ -3521,7 +3513,7 @@ export class Console {
 
   private startMeters(): void {
     if (!this.live || !this.visible || this.metersLent) return;
-    // The CUE bus's meter is subscribed whenever the STEREO strip carries it, cued or not, so a
+    // The CUE bus's meter is subscribed whenever a MONITOR strip carries it, cued or not, so a
     // cue switches the strip at once instead of re-registering every address on screen.
     const taps: MeterTap[] = [];
     for (const r of this.refs.values()) {
@@ -3642,8 +3634,8 @@ export class Console {
   private paintStrip(r: StripRef, showReadout: boolean, step: boolean): void {
     const reading = r.tap ? this.store.readingTap(r.tap) : null;
     if (reading) this.paintLanes(r.lanes, reading, r.m.range, step);
-    // While the STEREO strip shows the CUE bus, the CUE lanes run beside STEREO's and the
-    // readout reads the CUE bus.
+    // While a MONITOR strip shows the CUE bus, the CUE lanes run beside the monitor's own and
+    // the readout reads the CUE bus.
     const cue = r.cue?.on ? this.store.readingTap(r.cue.tap) : null;
     if (cue) this.paintLanes(r.cue!.lanes, cue, r.m.range, step);
     const shown = r.cue?.on ? cue : reading;

@@ -29,7 +29,8 @@ test("a mono channel meters with a single bar column and clip cell", async ({ pa
 
 test("stereo strips split into separate L and R bars and clip cells", async ({ page }) => {
   for (const name of ["CH 5/6", "FX 1", "MIX 1", "STEREO", "STREAMING", "MONITOR 1"]) {
-    // The strip's own meter: STEREO's also carries the CUE bus's column, drawn only while cued.
+    // The strip's own meter: a MONITOR's also carries the CUE bus's column, drawn only while it
+    // plays the CUE bus.
     const meter = strip(page, name).locator(".con-meter:not(.cue-meter)");
     await expect(meter, name).toHaveClass(/stereo/);
     // One undivided ladder + OVER frame, each holding an L and an R lane.

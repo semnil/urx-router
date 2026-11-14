@@ -100,7 +100,7 @@ export interface DeviceModel {
   hasSD: boolean;
   hasHDMI: boolean;
   /** Whether the app reads the CUE bus's level meter on this model. Only the URX44V's address
-   *  is known; elsewhere the CONSOLE never shows the CUE bus over the STEREO strip's meter
+   *  is known; elsewhere the CONSOLE never shows the CUE bus over a MONITOR strip's meter
    *  (`cueTap` in core/meters.ts). */
   cueMeter: boolean;
 }

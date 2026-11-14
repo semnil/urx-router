@@ -64,7 +64,7 @@ const CUE_TAP: MeterTap = { key: "cue", label: "CUE", l: [128, 0], r: [128, 1] }
  *
  * Deliberately NOT in the per-node tables, for the reason `sidechainTap` is not: the CUE bus is
  * no node and no point on a strip's chain, so the meter-point selector must not offer it. The
- * CONSOLE shows it over the STEREO strip's meter while anything is cued.
+ * CONSOLE shows it over a MONITOR strip's meter while that monitor plays the CUE bus.
  *
  * Undefined on a model whose registry entry does not say the app reads it (`cueMeter`). The
  * model id is required, unlike the tables' lookups: an id that was never passed answers no tap

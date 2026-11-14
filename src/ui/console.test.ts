@@ -9,6 +9,7 @@ import { BUS_TYPE_FIXED, COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/contr
 import { setExclusiveConnection, type Plan } from "../core/plan";
 import { t } from "../i18n";
 import { EQ_TYPE_GEQ } from "../core/geq";
+import { controlId } from "../core/midi/controls";
 import { tapAddrs, type MeterStore, type MeterTap } from "../core/meters";
 
 /** The EFFECT TYPE action of a host whose cases choose none. */
@@ -639,10 +640,11 @@ describe("a bus's EQ opener", () => {
   });
 });
 
-// While anything is cued during Live sync the STEREO strip's meter column and readout show the
-// CUE bus, with STEREO kept as a thin line beside it. The switch reads the app's [CUE] flags and
+// While a MONITOR plays the CUE bus during Live sync — anything is cued and its Cue Interrupt is
+// on — its strip's meter column and readout show the CUE bus, with the monitor's own meter kept
+// as a thin line beside it. The switch reads the app's [CUE] flags, the plan's Cue Interrupt and
 // the session, never the CUE bus's level, so a cue of something silent switches it too.
-describe("the CUE bus over the STEREO strip", () => {
+describe("the CUE bus over the MONITOR strips", () => {
   let h: ConsoleHost | undefined;
   afterEach(() => {
     h?.restore();
@@ -662,29 +664,41 @@ describe("the CUE bus over the STEREO strip", () => {
       },
     };
   };
-  type Priv = {
-    store: MeterStore;
-    subSig: string;
-    refs: Map<string, { root: HTMLElement; readMtr: HTMLElement; lanes: Array<{ v: number }>; tap: MeterTap | null }>;
+  /** A plan whose monitors' Cue Interrupt is as given (the factory has both on). */
+  const planWith = (mon1: boolean, mon2: boolean): Plan => {
+    const plan = defaultPlan("URX44V");
+    plan.nodeParams["bus.mon1"] = { ...plan.nodeParams["bus.mon1"], cueInterrupt: mon1 };
+    plan.nodeParams["bus.mon2"] = { ...plan.nodeParams["bus.mon2"], cueInterrupt: mon2 };
+    return plan;
   };
+  type Ref = {
+    root: HTMLElement;
+    readMtr: HTMLElement;
+    lanes: Array<{ v: number }>;
+    tap: MeterTap | null;
+    cue?: { lanes: Array<{ v: number }> };
+  };
+  type Priv = { store: MeterStore; subSig: string; refs: Map<string, Ref> };
   const priv = (host: ConsoleHost): Priv => host.view as unknown as Priv;
-  const stereo = (host: ConsoleHost) => priv(host).refs.get("bus.stereo")!;
-  const shown = (host: ConsoleHost): boolean => stereo(host).root.classList.contains("cue-over");
-  const caption = (host: ConsoleHost): string | null =>
-    stereo(host).root.querySelector(".con-readout .mtr .cap2")!.textContent;
-  /** The CUE column's lanes, read off the strip record the view paints them from. */
-  const cueLanes = (host: ConsoleHost): Array<{ v: number }> =>
-    (stereo(host) as unknown as { cue: { lanes: Array<{ v: number }> } }).cue.lanes;
-  /** STEREO at POST (L -36 / R -34 dBFS) and the CUE bus (L -20 / R -14 dBFS), raw. */
+  const ref = (host: ConsoleHost, id: string): Ref => priv(host).refs.get(id)!;
+  const shown = (host: ConsoleHost, id: string): boolean => ref(host, id).root.classList.contains("cue-over");
+  const caption = (host: ConsoleHost, id: string): string | null =>
+    ref(host, id).root.querySelector(".con-readout .mtr .cap2")!.textContent;
+  const reads = (host: ConsoleHost, id: string): string | null => ref(host, id).readMtr.textContent;
+  const cueLanes = (host: ConsoleHost, id: string): number[] => ref(host, id).cue!.lanes.map((ln) => ln.v);
+  /** Each monitor's own meter (L -36 / R -34 dBFS) and the CUE bus (L -20 / R -14 dBFS), raw. */
   const feed = (host: ConsoleHost, cueL = -200, cueR = -140): void => {
     const store = priv(host).store;
-    store.apply({ meterId: 125, x: 0, value: -360 });
-    store.apply({ meterId: 125, x: 1, value: -340 });
+    for (const x of [0, 2]) {
+      store.apply({ meterId: 129, x, value: -360 });
+      store.apply({ meterId: 129, x: x + 1, value: -340 });
+    }
     store.apply({ meterId: 128, x: 0, value: cueL });
     store.apply({ meterId: 128, x: 1, value: cueR });
   };
+  const MONITORS = ["bus.mon1", "bus.mon2"];
 
-  it("subscribes the CUE bus's meter beside every strip's own, cued or not", () => {
+  it("subscribes the CUE bus's meter once, beside every strip's own, cued or not", () => {
     h = consoleHost({ live: true, cue: flags().hooks });
     const sig = priv(h).subSig.split(",");
     const strips = tapAddrs([...priv(h).refs.values()].flatMap((r) => r.tap ?? []));
@@ -697,96 +711,146 @@ describe("the CUE bus over the STEREO strip", () => {
     expect(priv(h).subSig).toBe("");
   });
 
-  it("shows the CUE bus while anything is cued, and STEREO beside it", () => {
+  it("shows the CUE bus on each monitor whose Cue Interrupt is on while anything is cued", () => {
     const f = flags();
     h = consoleHost({ live: true, cue: f.hooks });
     feed(h);
     h.frame();
-    expect(shown(h)).toBe(false);
-    expect(caption(h)).toBe(t().console.readMeter);
-    expect(stereo(h).readMtr.textContent).toBe("-34.0");
+    for (const id of MONITORS) {
+      expect(shown(h, id), id).toBe(false);
+      expect(caption(h, id), id).toBe(t().console.readMeter);
+      expect(reads(h, id), id).toBe("-34.0");
+    }
 
     f.on.add("ch_7_8");
     h.view.syncCues();
-    expect(shown(h)).toBe(true);
-    expect(caption(h)).toBe(t().console.cueChip);
-    // Written in the same task, not on the next throttled readout frame.
-    expect(stereo(h).readMtr.textContent).toBe("-14.0");
+    for (const id of MONITORS) {
+      expect(shown(h, id), id).toBe(true);
+      expect(caption(h, id), id).toBe(t().console.cueChip);
+      // Written in the same task, not on the next throttled readout frame.
+      expect(reads(h, id), id).toBe("-14.0");
+    }
     h.frame();
-    expect(cueLanes(h)[0].v).toBeGreaterThan(0);
-    expect(cueLanes(h)[1].v).toBeGreaterThan(cueLanes(h)[0].v);
-    // STEREO's own lanes keep running: they are the thin line.
-    expect(stereo(h).lanes[0].v).toBeGreaterThan(0);
+    for (const id of MONITORS) {
+      const [l, r] = cueLanes(h, id);
+      expect(l, id).toBeGreaterThan(0);
+      expect(r, id).toBeGreaterThan(l);
+      // The monitor's own lanes keep running: they are the thin line.
+      expect(ref(h, id).lanes[0].v, id).toBeGreaterThan(0);
+    }
+    // STEREO is not one of them, and carries no CUE column at all.
+    expect(ref(h, "bus.stereo").root.classList.contains("cue-over")).toBe(false);
+    expect(ref(h, "bus.stereo").root.querySelector(".con-meter.cue-meter")).toBeNull();
   });
 
-  it("shows STEREO again, and its reading, the moment the last cue goes off", () => {
+  it("shows it only on the monitor whose Cue Interrupt is on", () => {
+    h = consoleHost({ live: true, plan: planWith(false, true), cue: flags("ch_7_8").hooks });
+    feed(h);
+    h.frame();
+    expect(shown(h, "bus.mon1")).toBe(false);
+    expect(reads(h, "bus.mon1")).toBe("-34.0");
+    expect(shown(h, "bus.mon2")).toBe(true);
+    expect(reads(h, "bus.mon2")).toBe("-14.0");
+  });
+
+  it("shows it on neither monitor with both Cue Interrupts off", () => {
+    h = consoleHost({ live: true, plan: planWith(false, false), cue: flags("ch_7_8").hooks });
+    feed(h);
+    h.frame();
+    for (const id of MONITORS) {
+      expect(shown(h, id), id).toBe(false);
+      expect(caption(h, id), id).toBe(t().console.readMeter);
+      expect(reads(h, id), id).toBe("-34.0");
+    }
+  });
+
+  it("follows a press on a monitor's C.INT, in place", () => {
+    h = consoleHost({ live: true, cue: flags("ch_7_8").hooks });
+    feed(h);
+    h.frame();
+    const root = ref(h, "bus.mon1").root;
+    const cint = (): HTMLElement =>
+      ref(h!, "bus.mon1").root.querySelector<HTMLElement>(`[data-ctl="${controlId("bus.mon1", "cueInterrupt")}"]`)!;
+    cint().click();
+    expect(shown(h, "bus.mon1")).toBe(false);
+    expect(reads(h, "bus.mon1")).toBe("-34.0");
+    expect(shown(h, "bus.mon2")).toBe(true);
+    cint().click();
+    expect(shown(h, "bus.mon1")).toBe(true);
+    expect(reads(h, "bus.mon1")).toBe("-14.0");
+    expect(ref(h, "bus.mon1").root).toBe(root);
+  });
+
+  it("shows each monitor's own reading again the moment the last cue goes off", () => {
     const f = flags("ch_7_8");
     h = consoleHost({ live: true, cue: f.hooks });
     feed(h);
     h.frame();
-    expect(stereo(h).readMtr.textContent).toBe("-14.0");
+    expect(reads(h, "bus.mon1")).toBe("-14.0");
 
     f.on.clear();
     h.view.syncCues();
-    expect(shown(h)).toBe(false);
-    expect(caption(h)).toBe(t().console.readMeter);
-    expect(stereo(h).readMtr.textContent).toBe("-34.0");
-    // The CUE lanes rest at the floor, so a later cue raises them from there.
-    expect(cueLanes(h).map((ln) => ln.v)).toEqual([0, 0]);
+    for (const id of MONITORS) {
+      expect(shown(h, id), id).toBe(false);
+      expect(caption(h, id), id).toBe(t().console.readMeter);
+      expect(reads(h, id), id).toBe("-34.0");
+      // The CUE lanes rest at the floor, so a later cue raises them from there.
+      expect(cueLanes(h, id), id).toEqual([0, 0]);
+    }
   });
 
   it("shows the CUE bus on a cue of something silent, at its floor", () => {
     h = consoleHost({ live: true, cue: flags("ch1").hooks });
     feed(h, -1280, -1280);
     h.frame();
-    expect(shown(h)).toBe(true);
-    expect(stereo(h).readMtr.textContent).toBe("-∞");
-    expect(stereo(h).readMtr.classList.contains("off")).toBe(true);
-    expect(cueLanes(h).map((ln) => ln.v)).toEqual([0, 0]);
+    expect(shown(h, "bus.mon1")).toBe(true);
+    expect(reads(h, "bus.mon1")).toBe("-∞");
+    expect(ref(h, "bus.mon1").readMtr.classList.contains("off")).toBe(true);
+    expect(cueLanes(h, "bus.mon1")).toEqual([0, 0]);
   });
 
-  it('holds "—" until the CUE bus has streamed, rather than STEREO\'s reading', () => {
+  it('holds "—" until the CUE bus has streamed, rather than the monitor\'s own reading', () => {
     const f = flags();
     h = consoleHost({ live: true, cue: f.hooks });
-    priv(h).store.apply({ meterId: 125, x: 0, value: -360 });
+    priv(h).store.apply({ meterId: 129, x: 0, value: -360 });
     h.frame();
-    expect(stereo(h).readMtr.textContent).toBe("-36.0");
+    expect(reads(h, "bus.mon1")).toBe("-36.0");
     f.on.add("ch1");
     h.view.syncCues();
-    expect(stereo(h).readMtr.textContent).toBe("—");
+    expect(reads(h, "bus.mon1")).toBe("—");
   });
 
-  it("shows STEREO with Live sync off, whatever the flags say, and switches as the session does", () => {
+  it("shows the monitors' own meters with Live sync off, whatever the flags say, and switches as the session does", () => {
     h = consoleHost({ cue: flags("ch_7_8").hooks });
-    expect(shown(h)).toBe(false);
+    expect(shown(h, "bus.mon1")).toBe(false);
     h.view.setLive(true);
-    expect(shown(h)).toBe(true);
+    expect(shown(h, "bus.mon1")).toBe(true);
     h.view.setLive(false);
-    expect(shown(h)).toBe(false);
-    expect(caption(h)).toBe(t().console.readMeter);
+    expect(shown(h, "bus.mon1")).toBe(false);
+    expect(caption(h, "bus.mon1")).toBe(t().console.readMeter);
   });
 
   it("switches a hidden view in place when the session ends", () => {
     h = consoleHost({ live: true, cue: flags("ch_7_8").hooks });
-    expect(shown(h)).toBe(true);
+    expect(shown(h, "bus.mon1")).toBe(true);
     h.view.hide();
     h.view.setLive(false);
-    expect(shown(h)).toBe(false);
+    expect(shown(h, "bus.mon1")).toBe(false);
   });
 
   it("keeps showing the CUE bus across a re-render and a rebuild of the strip, its bars carried", () => {
     h = consoleHost({ live: true, cue: flags("ch_7_8").hooks });
     feed(h);
     h.frame();
-    const lit = cueLanes(h)[1].v;
+    const lit = cueLanes(h, "bus.mon1")[1];
     h.view.refresh();
-    expect(shown(h)).toBe(true);
-    expect(cueLanes(h)[1].v).toBeCloseTo(lit, 5);
-    expect(stereo(h).readMtr.textContent).toBe("-14.0");
-    h.view.refreshStrip("bus.stereo");
-    expect(shown(h)).toBe(true);
-    expect(cueLanes(h)[1].v).toBeCloseTo(lit, 5);
-    expect(stereo(h).readMtr.textContent).toBe("-14.0");
+    expect(shown(h, "bus.mon1")).toBe(true);
+    expect(cueLanes(h, "bus.mon1")[1]).toBeCloseTo(lit, 5);
+    expect(reads(h, "bus.mon1")).toBe("-14.0");
+    h.view.refreshStrip("bus.mon1");
+    expect(shown(h, "bus.mon1")).toBe(true);
+    expect(cueLanes(h, "bus.mon1")[1]).toBeCloseTo(lit, 5);
+    expect(reads(h, "bus.mon1")).toBe("-14.0");
   });
 
   // The switch happens in place: the strip is not rebuilt, so a fader being dragged or focused
@@ -794,60 +858,18 @@ describe("the CUE bus over the STEREO strip", () => {
   it("switches without rebuilding the strip", () => {
     const f = flags();
     h = consoleHost({ live: true, cue: f.hooks });
-    const root = stereo(h).root;
+    const root = ref(h, "bus.mon1").root;
     f.on.add("ch1");
     h.view.syncCues();
-    expect(stereo(h).root).toBe(root);
-    expect(shown(h)).toBe(true);
-  });
-
-  // The CUE badge stands where the meter-point badge stood, so what that badge opened closes,
-  // and a keyboard standing on either is handed to the strip rather than to the page.
-  it("closes the strip's meter-point popover when a cue covers it, keeping the focus in the strip", () => {
-    const f = flags();
-    h = consoleHost({ live: true, cue: f.hooks });
-    const badge = stereo(h).root.querySelector<HTMLElement>(".con-tap")!;
-    badge.focus();
-    badge.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    const pop = h.host.querySelector<HTMLElement>(".con-tappop")!;
-    expect(pop.hidden).toBe(false);
-    expect(pop.contains(document.activeElement)).toBe(true);
-    f.on.add("ch1");
-    h.view.syncCues();
-    expect(pop.hidden).toBe(true);
-    expect(badge.getAttribute("aria-expanded")).toBe("false");
-    expect(document.activeElement).toBe(stereo(h).root);
-  });
-
-  it("closes a meter-point popover a pointer opened, with the focus nowhere in it", () => {
-    const f = flags();
-    h = consoleHost({ live: true, cue: f.hooks });
-    stereo(h).root.querySelector<HTMLElement>(".con-tap")!.click();
-    const pop = h.host.querySelector<HTMLElement>(".con-tappop")!;
-    expect(pop.hidden).toBe(false);
-    expect(pop.contains(document.activeElement)).toBe(false);
-    f.on.add("ch1");
-    h.view.syncCues();
-    expect(pop.hidden).toBe(true);
-  });
-
-  it("leaves the focus where it is when it stands elsewhere", () => {
-    const f = flags();
-    h = consoleHost({ live: true, cue: f.hooks });
-    const fader = h.strip("ch1").fader!;
-    fader.focus();
-    f.on.add("ch1");
-    h.view.syncCues();
-    expect(document.activeElement).toBe(fader);
+    expect(ref(h, "bus.mon1").root).toBe(root);
+    expect(shown(h, "bus.mon1")).toBe(true);
   });
 
   for (const modelId of ["URX22", "URX44"] as const) {
     it(`carries no CUE column on the ${modelId}, whose CUE bus meter the app does not read`, () => {
       h = consoleHost({ modelId, live: true, cue: flags("ch1").hooks });
-      const root = stereo(h).root;
-      expect(root.querySelector(".con-meter.cue-meter")).toBeNull();
-      expect(root.querySelector(".con-cuetag")).toBeNull();
-      expect(shown(h)).toBe(false);
+      expect(h.host.querySelector(".con-meter.cue-meter")).toBeNull();
+      for (const id of MONITORS) expect(shown(h, id), id).toBe(false);
       expect(
         priv(h)
           .subSig.split(",")
@@ -856,10 +878,9 @@ describe("the CUE bus over the STEREO strip", () => {
     });
   }
 
-  it("carries the CUE column and its badge on the URX44V only on the STEREO strip", () => {
+  it("carries the CUE column on the URX44V's two MONITOR strips and nowhere else", () => {
     h = consoleHost({ live: true, cue: flags("ch1").hooks });
-    expect(h.host.querySelectorAll(".con-meter.cue-meter")).toHaveLength(1);
-    expect(h.host.querySelectorAll(".con-cuetag")).toHaveLength(1);
-    expect(stereo(h).root.querySelector(".con-cuetag")!.textContent).toBe(t().console.cueChip);
+    const holders = [...priv(h).refs.entries()].filter(([, r]) => r.root.querySelector(".con-meter.cue-meter"));
+    expect(holders.map(([id]) => id)).toEqual(MONITORS);
   });
 });
