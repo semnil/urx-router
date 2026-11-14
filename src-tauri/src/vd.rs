@@ -874,7 +874,9 @@ mod imp {
                 }) => {
                     // Replace any prior subscription: unregister the old set, then
                     // register the new one address by address (never a bulk post on
-                    // /vd/meters — that has been seen to crash Device Center).
+                    // /vd/meters — a post with no address is the presumed cause of a
+                    // Device Center crash, while address-by-address registration is
+                    // stable).
                     LinkCounters::bump(&counters.meter_subscribes);
                     unregister_meters(&mut link, &mut subs, &counters);
                     let mut first = Ok(());
