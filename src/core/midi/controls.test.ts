@@ -685,8 +685,8 @@ describe("channel tuning screen parameters", () => {
   });
 
   it("refuses a stereo channel's EQ at the rates the device bypasses it", () => {
-    // Measured: at 176.4 / 192 kHz a stereo channel's EQ passes the signal
-    // untouched while still storing and returning its parameters.
+    // At 176.4 / 192 kHz a stereo channel's EQ passes the signal untouched while
+    // still storing and returning its parameters.
     const gain = bindControl(model, plan, "ch_5_6/gain@eq.low")!;
     expect(gain.set(0.75)).toBe(true);
     plan.sampleRate = 192000;
