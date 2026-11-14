@@ -27,8 +27,8 @@
 | 色 | ダーク `#84e3ff` (本体の点灯した [CUE] の色)、ライト `#0b7285`。その上の文字色は `inkOn()` が選ぶ (ダークは黒、ライトは白) |
 | PNG・PDF の書き出し | CUE の表示を含めない |
 
-CONSOLE の行は 2026-11-14 に広げた: 何かを CUE している間、STEREO のストリップは CUE バスのメーターを示し、
-専用の輪と CUE のバッジを付ける。その決定は [console.md](console.md) の「The CUE bus over the STEREO strip」にある。
+CONSOLE の行は 2026-11-14 に広げた: CUE バスを流しているモニターの MONITOR のストリップは、CUE バスのメーターも
+示し、専用の輪で囲む。その決定は [console.md](console.md) の「The CUE bus over the MONITOR strips」にある。
 
 **実装の中で閉じたこと。**
 

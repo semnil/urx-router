@@ -30,9 +30,9 @@ follows.
 | Colour | Dark `#84e3ff` (the colour of the unit's lit [CUE]), light `#0b7285`. The ink on it is what `inkOn()` picks (black on dark, white on light) |
 | PNG and PDF export | The CUE display is left out |
 
-The CONSOLE row was extended on 2026-11-14: while anything is cued, the STEREO strip meters the CUE
-bus, with a ring and a CUE badge of its own. That decision is in [console.md](console.md), "The CUE bus
-over the STEREO strip".
+The CONSOLE row was extended on 2026-11-14: a MONITOR strip whose monitor plays the CUE bus also
+meters the CUE bus, inside a ring of its own. That decision is in [console.md](console.md), "The CUE bus
+over the MONITOR strips".
 
 **Closed while implementing.**
 
