@@ -383,8 +383,7 @@ export const URX44V_NODE_COLORS: Record<string, string> = {
 // stereo channels from param 206, buses from their own params), trimmed to match
 // readback. Mono ship "ch 1".."ch 4", stereo the pair label " 5/ 6"…, buses their
 // short labels. The device right-aligns each number in a 2-character field, so
-// single-digit numbers carry a leading space (" 5/ 6", not "5/ 6"); verified
-// against a factory-reset unit's own settings backup (param 206).
+// single-digit numbers carry a leading space (" 5/ 6", not "5/ 6").
 export const URX44V_NODE_NAMES: Record<string, string> = {
   ch1: "ch 1",
   ch2: "ch 2",
@@ -697,7 +696,7 @@ export const URX44V_CONNECTIONS: PlanConnection[] = [
   { from: "in.micline_3_4:out", to: "ch4:in", kind: "source" },
   // Stereo channels carry their source on param 209/210 (not param 22), so the
   // factory defaults read back as CH5/6=AUX, CH7/8=USB MAIN A, CH9/10=USB MAIN B,
-  // CH11/12=USB MAIN C (confirmed on URX44V).
+  // CH11/12=USB MAIN C.
   { from: "in.aux:out", to: "ch_5_6:in", kind: "source" },
   { from: "in.usbmain_a:out", to: "ch_7_8:in", kind: "source" },
   { from: "in.usbmain_b:out", to: "ch_9_10:in", kind: "source" },
@@ -711,9 +710,9 @@ export const URX44V_CONNECTIONS: PlanConnection[] = [
   { from: "bus.stereo:out", to: "bus.mon2:in", kind: "source" },
   { from: "bus.stereo:out", to: "out.main:in", kind: "patch" },
   { from: "bus.mix1:out", to: "out.line:in", kind: "patch" },
-  // microSD Rec factory track assign (param 736, confirmed on URX44V): tracks 1-12
-  // = CH1-12 (each pair from its primary channel node), tracks 13/14 = none (no
-  // wire), tracks 15/16 = STEREO. Track Count 16 (out.sdrec.sdRecTrackCount).
+  // microSD Rec factory track assign (param 736): tracks 1-12 = CH1-12 (each pair
+  // from its primary channel node), tracks 13/14 = none (no wire), tracks 15/16 =
+  // STEREO. Track Count 16 (out.sdrec.sdRecTrackCount).
   { from: "ch1:out", to: "out.sdrec.t1:in", kind: "record" },
   { from: "ch3:out", to: "out.sdrec.t2:in", kind: "record" },
   { from: "ch_5_6:out", to: "out.sdrec.t3:in", kind: "record" },
