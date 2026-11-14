@@ -147,6 +147,22 @@ as they are. Each entry's `howToSettle` is the procedure that settles it, used a
 
 **Reopen when.** A URX44 unit is at hand.
 
+## The URX44 is assumed to behave as the URX44V
+
+**Decision (2026-11-14, the operator).** No URX44 is available for measurement. A device fact
+confirmed on the URX44V is assumed to hold on the URX44 too, and is marked unconfirmed for the URX44
+until a URX44 can be measured. This is the standing rule for every model-dependent fact, and the
+six entries above are it applied to addresses the app writes. How a fact is marked:
+
+- **An address the app writes** on that footing is an entry of `UNVERIFIED_MAPPINGS` in
+  `src/core/control/translate.ts`, so the self-test names it and says how it would be settled.
+- **A fact the app only reads or shows**, such as a meter, is said to be unconfirmed on the URX44
+  where the documents state it, beside the models it was confirmed on. known-issues.md is where a
+  user meets it.
+
+**Reopen when.** A URX44 can be measured: each fact taken on this footing is measured then, and the
+mark comes off the ones that hold.
+
 ## Console Lock: the app holds its own writes back, and never writes the lock
 
 **Decision (2026-11-12, the operator).** The unit takes writes over the link while it is under

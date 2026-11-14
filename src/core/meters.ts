@@ -7,6 +7,8 @@
 // one its meter shows. Models without a tap → meter_id mapping show no meter.
 
 import { vdMetersSubscribe, type MeterUpdate } from "./platform";
+import { MODELS } from "../models/index";
+import type { ModelId } from "../models/types";
 
 // Ladder span and sentinels, from the device level_meter table (unit dBFS).
 export const METER_TOP_DB = 0; // ladder top (0 dBFS); OVER lights the clip cap above it
@@ -53,6 +55,23 @@ export const isStereoTap = (tap: MeterTap | null | undefined): boolean => tap?.r
 export function sidechainTap(nodeId: string, modelId?: string): MeterTap | undefined {
   const pre = tapFor(nodeId, "precomp", modelId);
   return pre && { key: "sidechain", label: "SIDE CHAIN", l: [109, pre.l[1]] };
+}
+
+const CUE_TAP: MeterTap = { key: "cue", label: "CUE", l: [128, 0], r: [128, 1] };
+
+/**
+ * The CUE bus's level meter (`128`): what is cued, at its floor while nothing is.
+ *
+ * Deliberately NOT in the per-node tables, for the reason `sidechainTap` is not: the CUE bus is
+ * no node and no point on a strip's chain, so the meter-point selector must not offer it. The
+ * CONSOLE shows it over a MONITOR strip's meter while that monitor plays the CUE bus.
+ *
+ * Undefined on a model whose registry entry does not say the app reads it (`cueMeter`). The
+ * model id is required, unlike the tables' lookups: an id that was never passed answers no tap
+ * rather than the URX44V's.
+ */
+export function cueTap(modelId: string): MeterTap | undefined {
+  return MODELS[modelId as ModelId]?.cueMeter ? CUE_TAP : undefined;
 }
 
 // Mono input channel CH1-4 (x = channel index 0..3): the full processing chain.

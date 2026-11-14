@@ -1,6 +1,24 @@
-import { test, expect, colorToken, scrollsByWheel, textContrast, type Locator, type Page } from "./fixtures";
+import {
+  test,
+  expect,
+  colorToken,
+  contrastRatio,
+  scrollsByWheel,
+  textContrast,
+  type Locator,
+  type Page,
+} from "./fixtures";
 import { chooseOption } from "./choose-option";
-import { LIVE_COMMANDS, heldReadsOf, notifyParam, setDeviceValue, setHeldReads, stubTauriDevice } from "./tauri-stub";
+import {
+  LIVE_COMMANDS,
+  heldReadsOf,
+  meterAddrsOf,
+  notifyParam,
+  pushMeters,
+  setDeviceValue,
+  setHeldReads,
+  stubTauriDevice,
+} from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
 import { planParamZ } from "./plan-param";
 import { drag, port, wire } from "./graph-helpers";
@@ -1128,6 +1146,171 @@ test("the readout cells carry FADER / METER captions", async ({ page }) => {
   await expect(readout.locator(".rd:not(.mtr) .cap2")).toHaveText("FADER");
   await expect(readout.locator(".rd.mtr .cap2")).toHaveText("METER");
   await expect(readout.locator(".rd:not(.mtr) .rv")).toHaveText("0.00");
+});
+
+// While a MONITOR plays the CUE bus during Live sync — anything is cued and its Cue Interrupt is
+// on — its strip meters the CUE bus: a ring in the CUE colour round the meter and the readout
+// naming it, with the monitor's own meter kept as a thin line at the strip's right edge. The
+// unit's Cue Interrupt and master ON are seeded on for both monitors, as the unit ships; the
+// levels arrive through the stub's meter channel — the CUE bus at L -20 / R -14 dBFS, each
+// monitor's own at -36 / -34, STEREO's POST at -46 / -44 — and the cue is a press on CH 7/8's chip.
+const goLiveOnConsole = async (page: Page): Promise<void> => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  for (const y of [0, 1]) {
+    await setDeviceValue(page, PARAMS.MONITOR_CUE_INTERRUPT.id, y, 1);
+    await setDeviceValue(page, PARAMS.MONITOR_ON.id, y, 1);
+  }
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await page.click("#btn-view-console");
+  await expect
+    .poll(() => meterAddrsOf(page))
+    .toEqual(
+      expect.arrayContaining([
+        [128, 0],
+        [128, 1],
+      ]),
+    );
+  await pushMeters(page, [
+    [129, 0, -360],
+    [129, 1, -340],
+    [129, 2, -360],
+    [129, 3, -340],
+    [125, 0, -460],
+    [125, 1, -440],
+    [128, 0, -200],
+    [128, 1, -140],
+  ]);
+};
+const monitorStrip = (page: Page, id: string) => page.locator(`#console-host [data-cue-monitor="${id}"]`);
+const cueChip = (page: Page, node: string) => page.locator(`#console-host .con-cue[data-cue="${node}"]`);
+const cint = (page: Page, id: string) => monitorStrip(page, id).locator(`[data-ctl="${id}/cueInterrupt"]`);
+
+test("a monitor playing the CUE bus meters it, and its own meter again once it does not", async ({ page }) => {
+  await goLiveOnConsole(page);
+  const [m1, m2] = [monitorStrip(page, "bus.mon1"), monitorStrip(page, "bus.mon2")];
+  const st = page.getByRole("group", { name: "STEREO", exact: true });
+  const caption = (s: Locator) => s.locator(".con-readout .mtr .cap2");
+  const value = (s: Locator) => s.locator(".con-readout .mtr .rv");
+  for (const m of [m1, m2]) {
+    await expect(caption(m)).toHaveText("METER");
+    await expect(value(m)).toHaveText("-34.0");
+    await expect(m.locator(".con-meter.cue-meter")).toBeHidden();
+  }
+
+  await cueChip(page, "ch_7_8").click();
+  for (const m of [m1, m2]) {
+    await expect(m).toHaveClass(/cue-over/);
+    await expect(m.locator(".con-meter.cue-meter")).toBeVisible();
+    await expect(caption(m)).toHaveText("CUE");
+    await expect(value(m)).toHaveText("-14.0");
+  }
+  // The ring is the CUE colour, the token the CUE chip lights in.
+  const ring = await m1.locator(".con-meter.cue-meter").evaluate((m) => getComputedStyle(m, "::before").borderTopColor);
+  expect(ring).toBe(await colorToken(page, "--cue"));
+  // STEREO keeps its own meter, and carries no CUE column.
+  await expect(st.locator(".con-meter.cue-meter")).toHaveCount(0);
+  await expect(caption(st)).toHaveText("METER");
+  await expect(value(st)).toHaveText("-44.0");
+
+  // MONITOR 1's Cue Interrupt off: it plays its source again, and meters it.
+  await cint(page, "bus.mon1").click();
+  await expect(m1).not.toHaveClass(/cue-over/);
+  await expect(caption(m1)).toHaveText("METER");
+  await expect(value(m1)).toHaveText("-34.0");
+  await expect(m2).toHaveClass(/cue-over/);
+
+  await cueChip(page, "ch_7_8").click();
+  await expect(m2).not.toHaveClass(/cue-over/);
+  await expect(caption(m2)).toHaveText("METER");
+  await expect(value(m2)).toHaveText("-34.0");
+  await expect(m2.locator(".con-meter.cue-meter")).toBeHidden();
+});
+
+// The monitor's line is drawn at half strength; on a strip whose master is off it takes the
+// meter's dim on top, rather than the dim replacing its own.
+test("a monitor's own line takes the dim of a strip whose master is off, on top of its own", async ({ page }) => {
+  await goLiveOnConsole(page);
+  await cueChip(page, "ch_7_8").click();
+  const m1 = monitorStrip(page, "bus.mon1");
+  await expect(m1).toHaveClass(/cue-over/);
+  await expect(m1).not.toHaveClass(/inactive/);
+  const line = m1.locator(".con-meter:not(.cue-meter)");
+  const cue = m1.locator(".con-meter.cue-meter");
+  expect(await strength(line)).toBeCloseTo(0.5, 5);
+  expect(await strength(cue)).toBeCloseTo(1, 5);
+  await m1.locator(".con-power").click();
+  await expect(m1).toHaveClass(/inactive/);
+  expect(await strength(line)).toBeCloseTo(0.25, 5);
+  expect(await strength(cue)).toBeCloseTo(0.5, 5);
+});
+
+// The ring stands on the panel on both sides, so in the light theme it is set against the panel
+// alone; the readout's CUE caption is text a reader needs.
+test("the CUE ring and the CUE readout clear their ratios in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  await goLiveOnConsole(page);
+  await cueChip(page, "ch_7_8").click();
+  const m1 = monitorStrip(page, "bus.mon1");
+  await expect(m1).toHaveClass(/cue-over/);
+  const { ring, ground } = await m1.evaluate((s) => ({
+    ring: getComputedStyle(s.querySelector(".con-meter.cue-meter")!, "::before").borderTopColor,
+    ground: getComputedStyle(s).backgroundColor,
+  }));
+  expect(await contrastRatio(page, ring, ground)).toBeGreaterThanOrEqual(3);
+  const caption = m1.locator(".con-readout .mtr .cap2");
+  await expect(caption).toHaveText("CUE");
+  expect(await textContrast(page, caption)).toBeGreaterThanOrEqual(4.5);
+  expect(await textContrast(page, m1.locator(".con-readout .mtr .rv"))).toBeGreaterThanOrEqual(4.5);
+});
+
+// The CUE column and the thin line take back what they add to the row, so a cue moves neither the
+// fader nor the scale, and both meters stay inside the strip.
+test("a cue leaves a monitor's fader and scale where they stand, inside the strip @webkit", async ({ page }) => {
+  await goLiveOnConsole(page);
+  const m1 = monitorStrip(page, "bus.mon1");
+  const geometry = () =>
+    m1.evaluate((s) => {
+      const rect = (e: Element) => {
+        const r = e.getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+      };
+      const box = (sel: string) => rect(s.querySelector(sel)!);
+      return {
+        strip: rect(s),
+        fader: box(".con-fader"),
+        scale: box(".con-scale"),
+        cue: s.querySelector(".con-meter.cue-meter")!.getBoundingClientRect().width
+          ? box(".con-meter.cue-meter")
+          : null,
+        line: box(".con-meter:not(.cue-meter)"),
+      };
+    });
+  const idle = await geometry();
+  expect(idle.cue).toBeNull();
+
+  await cueChip(page, "ch_7_8").click();
+  await expect(m1).toHaveClass(/cue-over/);
+  const cued = await geometry();
+  expect(cued.fader).toEqual(idle.fader);
+  expect(cued.scale).toEqual(idle.scale);
+  const cue = cued.cue!;
+  // The CUE meter where the meter stood, the line right of it, both inside the strip's box.
+  expect(cue.left).toBeGreaterThan(cued.scale.right);
+  expect(cued.line.left).toBeGreaterThan(cue.right);
+  expect(cued.line.right - cued.line.left).toBe(5);
+  // The line ends inside the frame the strip takes while its monitor plays the CUE bus, which is
+  // drawn over the strip's contents: under it, the line would lose its right lane.
+  const frame = await m1.evaluate((s) => {
+    const shadow = getComputedStyle(s, "::after").boxShadow;
+    const spread = [...shadow.matchAll(/(-?[\d.]+)px/g)].map((m) => Number(m[1]))[3];
+    return { spread, border: parseFloat(getComputedStyle(s).borderRightWidth) };
+  });
+  expect(frame.spread).toBeGreaterThan(0);
+  expect(cued.line.right).toBeLessThanOrEqual(cued.strip.right - frame.border - frame.spread);
 });
 
 test("the meter-point badge shows a meter glyph, distinct from the send-tap PRE button", async ({ page }) => {

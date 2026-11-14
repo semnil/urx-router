@@ -99,6 +99,9 @@ export interface DeviceModel {
    *  menu), so they are carried here rather than restated per consumer. */
   hasSD: boolean;
   hasHDMI: boolean;
+  /** Whether the app reads the CUE bus's level meter on this model; where it does not, the
+   *  CONSOLE never shows the CUE bus over a MONITOR strip's meter (`cueTap` in core/meters.ts). */
+  cueMeter: boolean;
 }
 
 export function ref(nodeId: string, portId: string): string {

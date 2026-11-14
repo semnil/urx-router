@@ -1596,7 +1596,18 @@ where there is no MUTE — lit in the CUE colour while the strip is cued. It swi
 the plan, so a press commits nothing; with no Live-sync session it is read-only and stays a MIDI-learn target.
 While anything is cued, a MONITOR strip whose Cue Interrupt is on is framed in the CUE colour and its CUE Int
 chip is painted in it. The frame is drawn on a layer over the strip's contents, so the readout's cell borders do
-not cut it, and gives way to the strip's own focus ring. Then +48 / Ф /
+not cut it, and gives way to the strip's own focus ring. During Live sync such a strip also **meters the CUE
+bus** (`cue-over`, `setCueOver`), whatever level the CUE bus carries — a cue of something silent shows its floor:
+the CUE bus's meter stands where the meter stood, 3.5px closer to the scale, inside a 2px ring in the CUE colour
+held 1px off the ladder and the OVER box, so the ring borders the panel on both sides; the readout's METER cell
+reads the CUE bus under a CUE caption, both in the CUE colour; and the monitor's own meter stays as a 5px frameless
+line at the strip's right edge, ending inside the strip's frame, which is drawn over the strip's contents. What the CUE column and the line add to the row is taken back by the line's right margin, so
+the fader and the scale do not move. A monitor whose Cue Interrupt is off, both monitors with nothing cued, and every
+strip with Live sync off are laid out as before, and the STEREO strip never changes. The switch is made in place on
+every cue change, on a press of C.INT and on every start and end of a session (`syncCueOver`, from `syncCues` and
+`setLive`), and a strip built while its monitor plays the CUE bus is built showing it. Only a model whose CUE bus
+meter the app reads carries the CUE column (`cueTap`, from the model registry's `cueMeter`): all three, the URX44 on
+the URX44V's footing. Then +48 / Ф /
 HPF on a mono channel (+48 and Hi-Z are the jack's it reads: Hi-Z where that jack carries it, neither on a source
 or on no source) or one Ф on a stereo channel, which inverts the side the strip shows (`phaseL` / `phaseR`,
 gated by `channelControl`); (2) the processing
@@ -1784,8 +1795,13 @@ drag lands on the nearest.
   compositor layers. A tap that has streamed nothing yet resolves to no reading at all (`readingTap` → null) and its
   cell holds "—": a stream that has not started is not a measurement of silence, and printing the resting floor
   would claim one. Subscriptions are scoped to the on-screen strips that have a meter in the current model
-  (`startMeters` collects each visible strip's selected tap and passes it through `tapAddrs` / `subscribeMeters`).
-  Meter ids were confirmed on a real URX44V; models without a mapping show no meter.
+  (`startMeters` collects each visible strip's selected tap and passes it through `tapAddrs` / `subscribeMeters`),
+  plus the CUE bus's meter wherever a MONITOR strip carries its CUE column, cued or not, so a cue switches the
+  strip without registering every address again. Meter ids were confirmed on a real URX44V; models without a
+  mapping show no meter. The CUE bus's meter sits outside the per-node tables, as the side-chain tap does, so the
+  meter-point selector never offers it, and the model registry's `cueMeter` names the models whose CUE bus meter
+  the app reads: all three. The address was confirmed on the URX44V and the URX22; the URX44 is assumed to behave
+  as the URX44V and is not confirmed (decisions/device-control.md, "The URX44 is assumed to behave as the URX44V").
 - **Streaming path** — the Rust side (`src-tauri/src/vd.rs`) handles a meter subscription
   (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
   `notify` frames to the frontend over a Tauri Channel during the socket drain (`pump` parses each frame with

@@ -94,6 +94,14 @@ ends, and neither the CONSOLE's CUE chips, the inspector's CUE row nor a MIDI co
 assigned to a CUE switch one. A chip can still be armed for MIDI learn, so a control
 can be assigned to it.
 
+While a MONITOR plays the CUE bus (anything is cued and its Cue Interrupt is on), its
+CONSOLE strip meters the CUE bus.
+
+> Confirmed on a URX44V and a URX22 (System 1.5.0.1): the CUE bus meter, and each monitor's
+> output replaced by the CUE bus as its own Cue Interrupt says. Not confirmed on the URX44, which
+> is assumed to behave as the URX44V ([decisions/device-control.md](decisions/device-control.md),
+> "The URX44 is assumed to behave as the URX44V").
+
 The unit's **CUE Mode** (System firmware V1.5: *Mix CUE* or *Last CUE*, on its MONITOR
 screen) is the session's in the same way. While Live sync is on, the status bar and each
 MONITOR node's panel show the unit's mode and switch it, and under *Last CUE* a cue turned

@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as platform from "./platform";
 import {
+  cueTap,
   decodeGrDb,
   decodeMeterDb,
   defaultTapKey,
   grAddr,
   GR_FLOOR_DB,
   hasMeter,
+  isStereoTap,
   MeterStore,
   METER_OVER_RAW,
   METER_TOP_DB,
@@ -14,6 +16,7 @@ import {
   tapAddrs,
   tapFor,
   tapsFor,
+  type MeterTap,
 } from "./meters";
 import { MODELS, MODEL_IDS } from "../models/index";
 
@@ -180,6 +183,40 @@ describe("tap points", () => {
   });
 });
 
+describe("the CUE bus meter", () => {
+  it.each(["URX44V", "URX22", "URX44"] as const)("is a stereo tap on the %s", (modelId) => {
+    const tap = cueTap(modelId)!;
+    expect(tap.l).toEqual([128, 0]);
+    expect(tap.r).toEqual([128, 1]);
+    expect(isStereoTap(tap)).toBe(true);
+  });
+
+  it("is absent on a model whose registry entry does not say the app reads it", () => {
+    for (const modelId of MODEL_IDS) expect(cueTap(modelId) !== undefined, modelId).toBe(MODELS[modelId].cueMeter);
+    // Every model reads it today, so the gate is shown on an entry switched off for the case.
+    const model = MODELS.URX44;
+    const was = model.cueMeter;
+    model.cueMeter = false;
+    try {
+      expect(cueTap("URX44")).toBeUndefined();
+    } finally {
+      model.cueMeter = was;
+    }
+    // An id no model has answers nothing, rather than the URX44V's address.
+    expect(cueTap("")).toBeUndefined();
+    expect(cueTap("nope")).toBeUndefined();
+  });
+
+  it("stays off every node's chain, so the meter-point selector never offers it", () => {
+    for (const modelId of MODEL_IDS)
+      for (const n of MODELS[modelId].nodes)
+        expect(
+          tapAddrs(tapsFor(n.id, modelId)).map(([id]) => id),
+          `${modelId} ${n.id}`,
+        ).not.toContain(128);
+  });
+});
+
 describe("MeterStore reading (readingTap + tapFor)", () => {
   it("returns null for an unmapped node", () => {
     expect(reading(new MeterStore(), "out.main", "post")).toBeNull();
@@ -250,23 +287,31 @@ describe("tapAddrs", () => {
 // would silently make two strips mirror each other's meter. Pin global uniqueness across
 // every metered node in every model so such a slip is caught.
 describe("meter address table has no collisions", () => {
-  it("maps every (node, tap, side) to a unique broker address within each model", () => {
+  it("maps every (node, tap, side) and the CUE bus to a unique broker address within each model", () => {
     for (const modelId of MODEL_IDS) {
       const owner = new Map<string, string>();
       const collisions: string[] = [];
-      for (const n of MODELS[modelId].nodes) {
-        if (!hasMeter(n.id, modelId)) continue;
-        for (const t of tapsFor(n.id, modelId)) {
-          for (const a of [t.l, t.r]) {
-            if (!a) continue;
-            const key = `${a[0]}:${a[1]}`;
-            const here = `${n.id}.${t.key}`;
-            if (owner.has(key)) collisions.push(`[${modelId}] ${key} -> ${owner.get(key)} & ${here}`);
-            else owner.set(key, here);
-          }
+      // The CUE bus's meter sits outside the per-node tables, and is held to the same rule: a
+      // slip that gave it a node's address would make the STEREO strip show that node's level
+      // while something is cued.
+      const cue = cueTap(modelId);
+      const owned: Array<[string, MeterTap]> = [
+        ...MODELS[modelId].nodes
+          .filter((n) => hasMeter(n.id, modelId))
+          .flatMap((n) => tapsFor(n.id, modelId).map((t): [string, MeterTap] => [n.id, t])),
+        ...(cue ? [["bus.cue", cue] as [string, MeterTap]] : []),
+      ];
+      for (const [id, t] of owned) {
+        for (const a of [t.l, t.r]) {
+          if (!a) continue;
+          const key = `${a[0]}:${a[1]}`;
+          const here = `${id}.${t.key}`;
+          if (owner.has(key)) collisions.push(`[${modelId}] ${key} -> ${owner.get(key)} & ${here}`);
+          else owner.set(key, here);
         }
       }
       expect(owner.size, modelId).toBeGreaterThan(10);
+      if (cue) expect(owner.get(`${cue.l[0]}:${cue.l[1]}`), modelId).toBe("bus.cue.cue");
       expect(collisions).toEqual([]);
     }
   });

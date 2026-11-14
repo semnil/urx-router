@@ -249,6 +249,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         __urxSaved: string[];
         __urxInstance: Record<string, number>;
         __urxNotify: { onmessage: (batch: unknown) => void } | null;
+        __urxMeters: { addrs: Array<[number, number]>; channel: { onmessage: (batch: unknown) => void } } | null;
         __urxRefuseReads: number[];
         __urxHoldReads: number[];
         __urxHeld: Array<{ id: number; go: () => void }>;
@@ -270,6 +271,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       w.__urxLinkLog = linkLog;
       w.__urxSaved = saved;
       w.__urxNotify = null;
+      w.__urxMeters = null;
       // Per-instance state, empty until something writes. x/y default to 0 so a
       // scalar param has exactly one key whichever way it is addressed.
       const instance: Record<string, number> = {};
@@ -358,6 +360,13 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
           // beside the constant answer rather than instead of it, so a spec that never
           // registered the live commands still meets the same refusal it always did.
           if (cmd === "vd_params_subscribe") w.__urxNotify = args?.channel as typeof w.__urxNotify;
+          // The meter registration likewise: what it names, and the channel the unit's meter stream
+          // would arrive through. A registration replaces the one before it, as the shell's does.
+          if (cmd === "vd_meters_subscribe")
+            w.__urxMeters = {
+              addrs: args?.addrs as Array<[number, number]>,
+              channel: args?.channel as { onmessage: (batch: unknown) => void },
+            };
           // Recorded beside the constant answer, so a spec that answers a save can read back
           // the document it wrote. Without an answer in `commands` the save is refused as before.
           if (cmd === "write_text_file") saved.push(String(args?.contents ?? ""));
@@ -432,6 +441,23 @@ export const setDeviceValue = (page: Page, paramId: number, y: number, value: nu
     },
     [paramId, x, y, value],
   );
+
+/** The meter addresses the app registered last, as [meterId, x]. A registration replaces the
+ *  one before it, so this is the whole set the app is reading; empty before the first. */
+export const meterAddrsOf = (page: Page): Promise<Array<[number, number]>> =>
+  page.evaluate(
+    () => (window as unknown as { __urxMeters: { addrs: Array<[number, number]> } | null }).__urxMeters?.addrs ?? [],
+  );
+
+/** Deliver one batch of meter readings ([meterId, x, raw value]) through the channel the app
+ *  registered last, the way the shell forwards the unit's meter stream. */
+export const pushMeters = (page: Page, frames: ReadonlyArray<readonly [number, number, number]>): Promise<void> =>
+  page.evaluate((list) => {
+    const m = (window as unknown as { __urxMeters: { channel: { onmessage: (batch: unknown) => void } } | null })
+      .__urxMeters;
+    if (!m) throw new Error("pushMeters: nothing registered for meters");
+    m.channel.onmessage(list.map(([meter_id, x, value]) => ({ meter_id, x, value })));
+  }, frames);
 
 /** Hold every write of these param ids from now on: the write is neither answered nor applied
  *  (nor recorded by `writesOf`) until `releaseHeldWrite` lands the oldest one, or a later call
