@@ -4,8 +4,7 @@
 // address), decodes the raw value to dBFS, and holds the latest reading per address
 // behind a small store the UI samples each animation frame. A node exposes several
 // tap points (INPUT → PRE GATE → … → POST); the console lets each strip pick which
-// one its meter shows. Tap → meter_id was confirmed on a real URX44V by a stage
-// probe (see the private reference notes); models without a mapping show no meter.
+// one its meter shows. Models without a tap → meter_id mapping show no meter.
 
 import { vdMetersSubscribe, type MeterUpdate } from "./platform";
 
@@ -45,11 +44,11 @@ export const isStereoTap = (tap: MeterTap | null | undefined): boolean => tap?.r
  * side-chain filter produced — the key signal the compressor's detector listens to — and
  * reads its floor unless the channel is SSMCS with both the strip's compressor and its
  * side chain on, so as a console meter point it would be a black column on almost every
- * channel. Confirmed on a URX44V, over the broker's whole 161-address meter catalogue.
+ * channel.
  *
  * The channel index comes from the channel's own PRE COMP tap rather than from a second
  * table, because the two are the same point of the same channel: the filter's input is
- * exactly what `108` meters, measured as `109` - `108` = 0.0 dB with the filter flat.
+ * exactly what `108` meters, and with the filter flat `109` reads what `108` does.
  */
 export function sidechainTap(nodeId: string, modelId?: string): MeterTap | undefined {
   const pre = tapFor(nodeId, "precomp", modelId);
@@ -57,7 +56,6 @@ export function sidechainTap(nodeId: string, modelId?: string): MeterTap | undef
 }
 
 // Mono input channel CH1-4 (x = channel index 0..3): the full processing chain.
-// meter_id per tap confirmed on URX44V (the project's private notes, stage probe).
 const monoTaps = (i: number): MeterTap[] => [
   { key: "input", label: "INPUT", l: [100, i] },
   { key: "pregate", label: "PRE GATE", l: [106, i] },
@@ -162,12 +160,12 @@ const getTapsMap = (modelId?: string): Record<string, MeterTap[]> => {
 // 133) without touching the level chain.
 //
 // One table per processor, node id → full address. The x axis is deliberately NOT
-// factored out and shared: it is measured per meter, and the family disagrees —
+// factored out and shared: each meter has its own, and the family disagrees —
 // GATE (107) and COMP (110) are indexed by mono channel, DUCKER (119) by stereo
 // pair, the output insert FX (133) by effect band. A shared node→x map would let
 // `grAddr("gate", "ch_5_6")` answer with a plausible mono address the moment a
 // stereo node was listed for the ducker; a table per kind cannot pair a processor
-// with a node it was never measured on.
+// with a node its own table does not list.
 const GR_TAPS: Record<GrKind, Record<string, readonly [number, number]>> = {
   gate: { ch1: [107, 0], ch2: [107, 1], ch3: [107, 2], ch4: [107, 3] },
   comp: { ch1: [110, 0], ch2: [110, 1], ch3: [110, 2], ch4: [110, 3] },
@@ -234,13 +232,13 @@ export function grAddr(kind: GrKind, nodeId: string, modelId?: string): readonly
  * Fold a key source's two sides into the single number a ducker's detector compares
  * against its threshold, so the KEY lane and the threshold cap share one coordinate.
  *
- * Two measured facts, both on a URX44V (2026-08-08). The unit SUMS the sides: with one
- * source panned hard left and then centred, the detector moved +2.8 dB against +3.0
- * for a sum and -3.0 for a louder-side pick. And the summed level is what a cap can
- * ride — across the two configurations a tone can make, the offset from a summed
- * display held at -3.0 ±0.5 dB (the residual is the meter's 1 dB quantum) where the
- * offset from `max(L,R)` spread 7 dB and is therefore unusable. The constant itself is
- * a sine's peak-to-RMS: these meters read peak and the ducker's detector reads RMS.
+ * Two facts about the unit. It SUMS the sides: a source moved from hard left to centre
+ * moves the detector by the +3.0 dB a sum predicts, not the -3.0 a louder-side pick
+ * would. And the summed level is what a cap can ride — across the two configurations a
+ * tone can make, the offset from a summed display holds at -3.0 dB within the meter's
+ * 1 dB quantum, where the offset from `max(L,R)` scatters too widely to use. The
+ * constant itself is a sine's peak-to-RMS: these meters read peak and the ducker's
+ * detector reads RMS.
  *
  * With uncorrelated sides the offset is not a constant: -3.0 is a sine's figure, and a
  * key whose peak-to-RMS is larger (noise, programme material) engages the ducker at a
@@ -275,14 +273,13 @@ export const GR_FLOOR_DB = -128;
  * OVER sentinel to 0 dBFS while `readingTap` separately raises its `over` flag,
  * which would light a clip indicator for a processor that is simply passing signal.
  *
- * Which idle value appears is not arbitrary — measured on a URX44V (2026-07-29):
- * `0` means the processor is not engaged (COMP off, gate off) and the sentinel
- * 32767 means it is engaged with no reduction to report. Both mean "no reduction"
- * to a reader, which is all this decode claims.
+ * Which idle value appears is not arbitrary: `0` means the processor is not engaged
+ * (COMP off, gate off) and the sentinel 32767 means it is engaged with no reduction to
+ * report. Both mean "no reduction" to a reader, which is all this decode claims.
  *
- * The reported figure is the reduction alone: sweeping the COMP makeup gain from 0
- * to +18 dB moved the downstream level tap by exactly 18 dB and left the GR meter
- * where it was, so a lane drawn from this stays readable at any makeup setting.
+ * The reported figure is the reduction alone: the COMP makeup gain moves the
+ * downstream level tap and leaves the GR meter where it is, so a lane drawn from this
+ * stays readable at any makeup setting.
  */
 export function decodeGrDb(raw: number): number {
   if (raw === METER_OVER_RAW || raw >= 0) return 0;

@@ -65,8 +65,8 @@ describe("gain-reduction meters", () => {
   });
 
   it("reads both idle values as no reduction", () => {
-    // Measured on a URX44V: 0 means the processor is not engaged (gate off, comp
-    // off) and the OVER sentinel means it is engaged with nothing to reduce.
+    // On the unit, 0 means the processor is not engaged (gate off, comp off) and
+    // the OVER sentinel means it is engaged with nothing to reduce.
     // Neither is a reduction, and neither may raise a clip flag.
     expect(decodeGrDb(0)).toBe(0);
     expect(decodeGrDb(METER_OVER_RAW)).toBe(0);
