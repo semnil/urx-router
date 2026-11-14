@@ -261,33 +261,30 @@ export function inspectorNodes(model: DeviceModel, plan: Plan, selection: Select
 }
 
 /** The gate a rebuild of `host` asks before running, so it cannot land inside an IME
- *  composition. `replaceChildren` destroys one — measured in the real WKWebView, with the
- *  panel repainted at the 20 Hz a device-driven reflect produces (ui/keyprobe.ts, F4):
- *  typing `nihonngo` into a node name produced `nいhおnngお` and EIGHT compositionstarts
- *  for eight keystrokes. Not "the interim kana are committed and composition restarts":
- *  the romaji buffer that spans keystrokes goes with the element, so a consonant that had
- *  no vowel yet lands as literal ASCII and only a bare vowel survives as kana. Focus and
- *  caret are not the problem — they are carried across the rebuild and every character
- *  landed in the right place. A rebuild asked for while a composition is in flight is
- *  remembered and run once it ends, rather than dropped: the plan has already changed and
- *  the panel would otherwise keep showing the value before it. Same repaint rate through
- *  this gate: one compositionstart, one compositionend, `日本語` intact, 67 of 397
- *  repaints held.
+ *  composition. `replaceChildren` destroys one in WebKit: at the 20 Hz a device-driven
+ *  reflect repaints, every keystroke starts a fresh composition. Not "the interim kana are
+ *  committed and composition restarts": the romaji buffer that spans keystrokes goes with
+ *  the element, so a consonant that had no vowel yet lands as literal ASCII and only a bare
+ *  vowel survives as kana. Focus and caret are not the problem — they are carried across
+ *  the rebuild and every character lands in the right place. A rebuild asked for while a
+ *  composition is in flight is remembered and run once it ends, rather than dropped: the
+ *  plan has already changed and the panel would otherwise keep showing the value before
+ *  it. Through this gate, a composition at the same repaint rate stays one composition and
+ *  arrives intact.
  *
- *  Confirmed on the device path itself, which is what the synthetic repaint stands in
- *  for: sweeping CH 1's A.Gain (`HA_GAIN`, a direct follow) with the channel selected
- *  repaints this panel 6 times. With a composition open, all 6 are held and exactly ONE
- *  runs — at the commit — and the name arrives whole.
+ *  The same holds on the device path itself, which is what the synthetic repaint stands in
+ *  for: with a composition open, the repaints a direct follow such as CH 1's A.Gain
+ *  (`HA_GAIN`) asks for are all held, exactly ONE runs — at the commit — and the name
+ *  arrives whole.
  *
  *  The composition events bubble, so the host keeps listening across every rebuild.
- *  `focusout` backstops a field that loses FOCUS — not one that is removed: the same
- *  measurement recorded zero compositionend AND zero focusout at the host across 349
- *  rebuilds that took the composing field away. Whether WebKit fires neither, or fires
- *  them at a node already detached, is the same thing to a listener here. So nothing
- *  releases the gate if the composing field is removed by some other path, and what makes
- *  that unreachable is that `renderInspector` has exactly ONE call site and it is behind
- *  this gate. A second one would latch `composing` for the rest of the session and the
- *  panel would silently stop updating. */
+ *  `focusout` backstops a field that loses FOCUS — not one that is removed: a rebuild that
+ *  takes the composing field away delivers neither compositionend nor focusout to the
+ *  host. Whether WebKit fires neither, or fires them at a node already detached, is the
+ *  same thing to a listener here. So nothing releases the gate if the composing field is
+ *  removed by some other path, and what makes that unreachable is that `renderInspector`
+ *  has exactly ONE call site and it is behind this gate. A second one would latch
+ *  `composing` for the rest of the session and the panel would silently stop updating. */
 export function compositionGate(host: HTMLElement, rebuild: () => void): { held: () => boolean; reset: () => void } {
   let composing = false;
   let pending = false;
@@ -880,8 +877,7 @@ export function renderInspector(
       }
       ps.body.append(faderControl(np.level ?? 0, (v) => actions.onUpdateNodeParams(node.id, { level: v })));
       // Master balance (STEREO 583 / MIX 676): the bus output's L/R balance. The
-      // device keeps the BALANCE label even under Pan Link (confirmed on URX44V),
-      // so it is always "Balance".
+      // device keeps the BALANCE label even under Pan Link, so it is always "Balance".
       if (busBalance(node.id)) {
         ps.body.append(
           balanceControl(m.inspector.balance, np.pan ?? 0, (v) => actions.onUpdateNodeParams(node.id, { pan: v })),
@@ -973,11 +969,10 @@ export function renderInspector(
       // switching MONO for a pair of speakers takes the headphones with it. Said only
       // while it is on: off, there is nothing for it to be about.
       //
-      // On `host`, where every other hint goes, and NOT inside the section body —
-      // measured with it there: the body's `> .param:last-child { border-bottom: none }`
-      // stopped matching, so the MONO row's rule reappeared whenever MONO was on
-      // (0px -> 1px), and the paragraph brought the UA's 1em margins (13px top and
-      // bottom) into a body padded 6px. Section height went 358 -> 495.
+      // On `host`, where every other hint goes, and NOT inside the section body — inside
+      // it, the body's `> .param:last-child { border-bottom: none }` stops matching, so the
+      // MONO row's rule reappears whenever MONO is on, and the paragraph brings the UA's 1em
+      // margins into a body padded 6px.
       if (np.mono) host.append(hint(m.inspector.monoPhonesShared));
     }
 
@@ -1523,8 +1518,8 @@ function panSlider(conn: PlanConnection, onUpdate: UpdateParams, label: string):
 
 /** The dotted paths a group rebuild ASSERTED: the fields the caller set, not the whole
  *  group it rebuilt. Naming the group would claim every sibling it merely copied, and the
- *  merge drops a named group whole — measured, a device's OSC frequency read during an
- *  OSC ON toggle was thrown away with it. */
+ *  merge drops a named group whole: a device's OSC frequency read during an OSC ON toggle
+ *  is thrown away with the toggle's own key. */
 function groupPaths(group: string, patch: object): string[] {
   return Object.keys(patch).map((key) => `${group}.${key}`);
 }
