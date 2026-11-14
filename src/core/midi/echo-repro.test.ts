@@ -3,13 +3,12 @@ import { MidiEngine } from "./engine";
 import { encodeCc } from "./message";
 import { fake } from "./fake-control.test-util";
 
-// Reproduction of the real rig, from the measured MIDI bus trace:
-//  - the Stream Deck "Push" button sends ONE CC 127 per press and NO release 0
-//    (confirmed: two captures, a 0 never appears);
+// Reproduction of the real rig, from its MIDI bus traffic:
+//  - the Stream Deck "Push" button sends ONE CC 127 per press and NO release 0;
 //  - URX Router's feedback returns as exactly one self-echo on the shared IAC
-//    bus at ~0.13 ms (measured), and feedback is debounced 120 ms in the UI.
-// The harness loops every sent feedback message back into onMessage after the
-// measured echo delay, and drives the button as a bare 127-per-press sender.
+//    bus at ~0.13 ms, and feedback is debounced 120 ms in the UI.
+// The harness loops every sent feedback message back into onMessage after that
+// echo delay, and drives the button as a bare 127-per-press sender.
 
 class Bus {
   clock = 0;
@@ -25,7 +24,7 @@ class Bus {
         this.applied.push(this.control.value);
         this.scheduleFeedback();
       },
-      // Measured: one self-echo on the shared IAC bus at ~0.13 ms.
+      // One self-echo on the shared IAC bus at ~0.13 ms.
       send: (bytes) => this.after(0.13, () => this.engine.onMessage(bytes)),
       learned: () => {},
       learnPending: () => {},
@@ -46,7 +45,7 @@ class Bus {
       this.engine.feedback();
     });
   }
-  // A Push press: one CC 127, no release 0 (the measured button behavior).
+  // A Push press: one CC 127, no release 0 (the real button's behavior).
   press(at: number): void {
     this.queue.push({ at, run: () => this.engine.onMessage(encodeCc(0, 0, 127)) });
   }

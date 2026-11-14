@@ -902,8 +902,8 @@ test("learn mode ignores a wheel over a fader so a stray scroll never edits it",
 
 test("edge-mode MUTE flips on every CC press even with no release-to-0 between", async ({ page }) => {
   // Regression for a Stream Deck "Push" button set to send 127 only (no 0 on
-  // release, confirmed by a bus trace): edge mode must flip on every press, not
-  // just the first — a rising-edge test would stick after the first press.
+  // release): edge mode must flip on every press, not just the first — a
+  // rising-edge test would stick after the first press.
   const win = await openMidiWindow(page);
   await pickInputPort(page, win);
   const muteChip = () => strip(page, "CH 1").locator(".con-chip", { hasText: "MUTE" });
@@ -1171,11 +1171,10 @@ test("a toggle ignores the echo of its own feedback", async ({ page }) => {
   await expect(muteChip()).toHaveClass(/\bon\b/);
 
   // Echoed page-side, in the task that sees the feedback go out. Bridging that over the
-  // driver — poll for `sent`, then send — puts the echo ~250 ms after the feedback
-  // (measured on this spec), well past the engine's 50 ms guard, so the case asserted the
-  // guard against a message it is not meant to catch and failed wherever the poll was
-  // slower than the window. A reflecting transport answers in 0.13-5 ms, which is what
-  // the guard is sized from and what this reproduces.
+  // driver — poll for `sent`, then send — puts the echo well past the engine's 50 ms
+  // guard, so the case asserted the guard against a message it is not meant to catch and
+  // failed wherever the poll was slower than the window. A reflecting transport answers
+  // in 0.13-5 ms, which is what the guard is sized from and what this reproduces.
   const echoed = await echoNextFeedback(page);
   await page.waitForTimeout(150);
   await expect(muteChip()).toHaveClass(/\bon\b/); // still muted

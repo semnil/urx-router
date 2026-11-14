@@ -227,7 +227,7 @@ describe("insertFxMenu", () => {
   // A STEREO-linked pair holds one effect between them on the unit, and the app mirrors
   // the selection onto both members — so the census counts the pair once and the pair's
   // own menu must not lock against what the app itself wrote. The gate is Signal Type:
-  // the unit was measured mirroring in PAN mode too.
+  // the unit mirrors in PAN mode too.
   it("does not hold a linked partner's mirrored selection against either member", () => {
     // While the pair is linked a mono-only option reports "link" before the slot is asked,
     // so only a family with no mono-only member can show a slot lock here at all. Without a

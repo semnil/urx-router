@@ -44,11 +44,11 @@ describe("level_gain grid", () => {
     expect(stepLevel(10, 1)).toBe(10);
   });
 
-  // Off-grid levels are real: the unit retains its own level_gain (measured 6/6) and a
-  // received level is deliberately not snapped, so a fader focused on a device-held
-  // value steps from between two detents. Snapping to the NEAREST first put the start
-  // point on the travel side half the time, and the step then jumped the adjacent
-  // detent — one keypress moving two detents' distance, with nothing to show it.
+  // Off-grid levels are real: the unit retains its own level_gain and a received level
+  // is deliberately not snapped, so a fader focused on a device-held value steps from
+  // between two detents. Snapping to the NEAREST first put the start point on the
+  // travel side half the time, and the step then jumped the adjacent detent — one
+  // keypress moving two detents' distance, with nothing to show it.
   it("steps to the adjacent detent from a value between two of them", () => {
     // -14.5 sits between -16 and -14, nearest -14: up must give -14, not -12.
     expect(stepLevel(-14.5, 1)).toBe(-14);

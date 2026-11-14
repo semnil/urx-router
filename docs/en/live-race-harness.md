@@ -660,6 +660,7 @@ the console's vertical scroll away in WebKit and leaves Chromium's intact, so a 
 no verdict on what ships. What the job spends is its fixed half — the image, the install and the two
 builds — rather than its handful of cases, which is also why it is not a fourth shard of the ordinary
 tier: WebKit is a separate browser download and each shard would pay for it to run nothing in it.
+`playwright.config.ts` states the boundary and `pnpm test webkit-tier` holds the floor.
 
 **Read the ordinary tier's machine time as a range rather than a budget.** Runner variance moves it
 from run to run with no change in the suite. The harness's is steadier, which is what lets the
@@ -676,6 +677,9 @@ of its own with a condition in front of it rather than three more shards in `ci.
 suite is cheaper to run on every pull request than to run after the merge, and at about four times its
 cost the harness is worth asking first whether this pull request can break it. Both have grown since
 the tiering was cut and the ratio has barely moved, which is the part the boundary actually rests on.
+
+**The race harness runs on the pull request too** — on every one whose diff is not documentation alone
+(`race.yml`'s `detect`), so a live-sync break surfaces at the merge that caused it.
 
 Where it runs is **every pull request except one whose diff is documentation alone, and the one that
 changes the app version**. Two clauses, and `detect` evaluates and prints both rather than returning
@@ -799,8 +803,8 @@ its own table above, under the line that claims that table as its single home.
 makes `race-required` usable as a merge condition: a workflow skipped by a trigger filter reports no
 check run, so a pull request the harness does not run on could never carry the check the others wait
 for. On those the two harness jobs skip on their own condition, which reports success in seconds — the
-arrangement, and why a required check has to be able to report on every pull request, is in AGENTS.md's
-"What a merge waits for".
+arrangement, and why a required check has to be able to report on every pull request, is in
+[architecture.md](architecture.md) "What a merge waits for".
 
 Against a branch, on demand — for pulling a verdict forward, or re-running one:
 
@@ -816,6 +820,10 @@ own condition, `race` as one job because **a matrix job whose own `if:` is false
 it reports once rather than three times. `detect`'s log is what distinguishes the two, and it prints
 its reason on both sides. WebKit is a separate browser download, so it is its own job rather than a
 fourth shard — paying for it three times would cost more than the cases do.
+
+What the gate DOES catch on every pull request is the harness disappearing — `pnpm check:skips` fails if
+a spec file collects fewer cases than the floor in `e2e/race/skip-ledger.json`, so a deleted or
+uncollectable case is a red check rather than a smaller green run.
 
 A pull request pushed again abandons the run in flight (`concurrency` in `race.yml`, whose header
 carries why the group key falls back to `github.run_id` rather than to the ref).

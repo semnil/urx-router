@@ -122,7 +122,7 @@ test("STEREO / MIX master expose a Balance control that stays Balance under Pan 
 
   await node(page, "bus.mix1").click();
   await expect(paramExact(page, "Balance")).toHaveCount(1);
-  // The device keeps the BALANCE label even with Pan Link on (confirmed on URX44V).
+  // The device keeps the BALANCE label even with Pan Link on.
   await param(page, "Pan Link").locator("button", { hasText: "ON" }).click();
   await expect(paramExact(page, "Balance")).toHaveCount(1);
   await expect(paramExact(page, "Pan")).toHaveCount(0);
@@ -130,10 +130,10 @@ test("STEREO / MIX master expose a Balance control that stays Balance under Pan 
 
 // The inspector's sliders are native ranges, like the tuning screen's rows, and every one
 // in the app goes through `holdInertOnBlur`: the engine owns a native drag, so nothing the
-// app unhooks ends it — measured on the shipping WKWebView, a slider held through an app
-// switch went on writing, and it resumed when focus came back if the treatment only ended
-// it once. This is the inspector's half of that wiring, in a real engine: the drag is real
-// and only the blur is dispatched, since Playwright emulates focus.
+// app unhooks ends it — a slider held through an app switch goes on writing, and resumes
+// when focus comes back if the treatment only ends it once. This is the inspector's half of
+// that wiring, in a real engine: the drag is real and only the blur is dispatched, since
+// Playwright emulates focus.
 test("a send slider stops at a window blur and stays stopped while the button is held", async ({ page }) => {
   await selectWire(page, "ch1:out", "bus.mix1:in");
   // Both of the inspector's slider builders are on this one selection: Level is the

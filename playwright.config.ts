@@ -83,8 +83,8 @@ export default defineConfig({
       testDir: "e2e/race",
       // Its own timeout, well above the 30 s default: a single case can hold a barrier
       // through a converge round that reads ~800 addresses sequentially, and the driver
-      // then waits for the link to fall quiet again. The longest measured 60 s on a
-      // two-worker CI runner, so the default turns a passing case into a timeout that
+      // then waits for the link to fall quiet again. The longest case takes about half
+      // this figure on CI, so the default turns a passing case into a timeout that
       // reads like a defect. Twice that rather than three times it, because the handful
       // of cases needing more say so themselves (`test.setTimeout` in tzb-tail and
       // t8-stress) — a project figure wide enough to cover them would also let every
@@ -118,8 +118,8 @@ export default defineConfig({
   ],
   // Both servers start whatever `--project` selects — the list is a property of the
   // config, not of the run — so the ordinary tier builds the trace bundle it will not
-  // visit. Left that way deliberately: measured at 6 s for the pair on a CI runner
-  // (the app is 73 modules), which is less than the branch it would take to skip one.
+  // visit. Left that way deliberately: the extra build is cheap, cheaper than the
+  // branch it would take to skip one.
   webServer: [
     {
       command: "pnpm e2e:serve",

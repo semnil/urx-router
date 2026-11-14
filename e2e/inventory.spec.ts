@@ -528,9 +528,9 @@ test("the rate-choice modal shows all three answers and the high-rate note", asy
 });
 
 // The cargo-about structure in miniature, as licenses.spec.ts builds it. A copy
-// rather than a shared fixture: Playwright refuses one spec importing another
-// (measured), and lifting twelve lines of HTML into a module of its own would owe
-// the reusable-assets index a row for something nothing else will reach for.
+// rather than a shared fixture: Playwright refuses one spec importing another, and
+// lifting twelve lines of HTML into a module of its own would owe the reusable-assets
+// index a row for something nothing else will reach for.
 // Three crates and two texts, because the count line is written in the plural and
 // the singular is a branch the catalog probe does not yield.
 const NOTICE = `<html><body><main class="container"><ul class="licenses-list">
