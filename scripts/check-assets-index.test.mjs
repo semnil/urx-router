@@ -133,9 +133,8 @@ describe("ENV_CORPUS", () => {
     // The checker's own walk, so the paths carry forward slashes on every platform — built with
     // join() alone they are backslashes on Windows, where ENV_CORPUS keeps only the arms that
     // have no separator in them (`.env*`, `*.config.ts`). That does not empty the corpus, it
-    // shrinks it to five files, and this case then passes MORE easily: `outside` collapses from
-    // 5.47 MB to 0.01 MB, so 31 names look workflow-only where 22 are. Measured by simulating
-    // the shape rather than asserting it.
+    // shrinks it to a handful of files, and this case then passes MORE easily: `outside` all
+    // but vanishes, so names look workflow-only that are not.
     const tree = walk(repo).map((f) => f.slice(repo.length + 1));
     expect(tree.some((f) => f.startsWith("src/"))).toBe(true);
     const files = tree.filter((f) => f.startsWith(".github/"));
