@@ -20,6 +20,8 @@ export interface ModelParams {
   hasSD: boolean;
   hasHDMI: boolean;
   hasLineOut: boolean;
+  /** DeviceModel.cueMeter. */
+  cueMeter: boolean;
 }
 
 // Base layout column per node kind. Buses split across two columns by signal
@@ -296,5 +298,15 @@ export function buildModel(p: ModelParams): DeviceModel {
     for (const s of duckerSources) r(ref(s, "out"), ref(`out.ducker${d}`, "in"), "key");
   }
 
-  return { id: p.id, name: p.name, nodes, rules, channelPairs, requiredSources, hasSD: p.hasSD, hasHDMI: p.hasHDMI };
+  return {
+    id: p.id,
+    name: p.name,
+    nodes,
+    rules,
+    channelPairs,
+    requiredSources,
+    hasSD: p.hasSD,
+    hasHDMI: p.hasHDMI,
+    cueMeter: p.cueMeter,
+  };
 }

@@ -15,6 +15,7 @@ const PARAMS: ModelParams[] = [
     hasSD: false,
     hasHDMI: false,
     hasLineOut: false,
+    cueMeter: false,
   },
   {
     id: "URX44",
@@ -26,6 +27,7 @@ const PARAMS: ModelParams[] = [
     hasSD: true,
     hasHDMI: false,
     hasLineOut: true,
+    cueMeter: false,
   },
   {
     id: "URX44V",
@@ -37,6 +39,7 @@ const PARAMS: ModelParams[] = [
     hasSD: true,
     hasHDMI: true,
     hasLineOut: true,
+    cueMeter: true,
   },
 ];
 
