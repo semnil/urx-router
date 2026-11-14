@@ -405,12 +405,12 @@ test("every slider row keeps one track length through every reading", async ({ p
 });
 
 // A value row is a native range, so the ENGINE owns its drag: dropping a listener does
-// not end it, and measured on the packaged build (2026-08-14) a row dragged with the
-// button held went on writing while another application was frontmost. The app ends it by
-// disabling the row, and holds it that way until the press is over or the window comes
-// back; `holdInertOnBlur` carries the treatment and why the other candidates were dropped —
-// taking the element out of the document and putting it back is one of them, and it is the
-// one this case's own assertions below are shaped to tell apart.
+// not end it, and a row dragged with the button held goes on writing while another
+// application is frontmost. The app ends it by disabling the row, and holds it that way
+// until the press is over or the window comes back; `holdInertOnBlur` carries the
+// treatment and why the other candidates were dropped — taking the element out of the
+// document and putting it back is one of them, and it is the one this case's own
+// assertions below are shaped to tell apart.
 //
 // This is the tier that can hold it, and the split is deliberate: the DRAG here is real
 // (Playwright's mouse drives the engine's own slider), while the blur is dispatched,
@@ -467,14 +467,14 @@ test("a value row stops following the pointer once the window is gone", async ({
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
   await page.mouse.move(b.x + b.width * 0.8, y);
   expect(await value()).toBe(dragged);
-  // The state itself: a frozen value alone would also pass for the detach treatment that
-  // was measured to resume on the unit.
+  // The state itself: a frozen value alone would also pass for the detach treatment,
+  // which lets the row resume once focus comes back.
   await expect(slider).toBeDisabled();
 
-  // The half the first attempt got wrong, found on the unit: with the DETACH treatment,
-  // coming back with the button still down resumed the row — "not moving smoothly and not
-  // held either". Disabling does not, so the return releases the hold and the value still
-  // does not move under the held pointer.
+  // The half the first attempt got wrong: with the DETACH treatment, coming back with the
+  // button still down resumes the row, neither moving smoothly nor held. Disabling does
+  // not, so the return releases the hold and the value still does not move under the held
+  // pointer.
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   await expect(slider).toBeEnabled();
   await page.mouse.move(b.x + b.width * 0.95, y);
@@ -700,7 +700,7 @@ test.describe("with a live session", () => {
     await openFromInspector(page, "ch1");
     const gr = readout(page, "GATE GR").locator(".v");
 
-    // Measured: the gate reports 0 while switched off …
+    // The unit's gate reports 0 while switched off …
     await pushMeters(page, [107, 0, 0]);
     await expect(gr).toHaveText("0.0");
     // … and the OVER sentinel while switched on and open. Neither is a clip.
@@ -1033,16 +1033,16 @@ test.describe("comp", () => {
     test("reads the reduction, and both idle values as none", async ({ page }) => {
       await openFromInspector(page, "ch1", "comp");
       const gr = readout(page, "COMP GR").locator(".v");
-      // Measured: 0 while the compressor is off, the OVER sentinel while it is on
-      // with nothing to reduce. Neither is a clip, and neither is a reduction.
+      // The unit reports 0 while the compressor is off, the OVER sentinel while it is
+      // on with nothing to reduce. Neither is a clip, and neither is a reduction.
       await pushMeters(page, [110, 0, 0]);
       await expect(gr).toHaveText("0.0");
       await pushMeters(page, [110, 0, 32767]);
       await expect(gr).toHaveText("0.0");
       await pushMeters(page, [110, 0, -80]);
       await expect(gr).toHaveText("-8.0");
-      // The makeup gain is not in this figure — measured by sweeping it against a
-      // held compression — so the lane reads the same at any makeup setting.
+      // The makeup gain is not in this figure, so the lane reads the same at any
+      // makeup setting.
       await expect(readout(page, "PRE EQ").locator(".v")).toHaveText("—");
     });
   });
@@ -1160,8 +1160,7 @@ test.describe("eq", () => {
     await expect(bandRow(page, "Q").locator(".prefs-lock")).toHaveText("Unused by this type");
     await expect(bandRow(page, "Gain").locator("input[type=range]")).toBeEnabled();
 
-    // A pass filter reads neither Q nor gain (measured: Q 0.71 and Q 4.00 draw an
-    // identical high-pass), so both lock — and both rows stay.
+    // A pass filter reads neither Q nor gain, so both lock — and both rows stay.
     await chooseOption(bandRow(page, "Type").locator("select"), "2");
     for (const r of rows) await expect(bandRow(page, r)).toHaveCount(1);
     await expect(bandRow(page, "Gain")).toHaveClass(/locked/);
@@ -1373,7 +1372,7 @@ test.describe("ducker", () => {
     // Both, as the EQ does. The envelope's live overlay is a reduction depth, which is
     // read against the meter carrying the same quantity rather than instead of it.
     await expect(screenBox(page).locator("canvas")).toBeVisible();
-    // THREE slots for four lanes: the reduction is drawn in the POST lane's. Measured:
+    // THREE slots for four lanes: the reduction is drawn in the POST lane's, because
     // over a LEVEL that is still at operating level the two fight for the same pixels
     // (on PRE DUCKER at -6 dBFS a -24 dB block buries the bar's top entirely), while
     // over POST they are complementary — they meet only if the pre-ducker signal
@@ -1456,9 +1455,8 @@ test.describe("ducker", () => {
 
 // The note under the display is a FIXED three lines with `overflow: hidden`, so the
 // panel keeps its height whatever the display shows. That makes a note too long for it get
-// cut with nothing to say so — which is what shipped: measured, the COMP and EQ notes
-// already wrapped below about 1150 px of window and their Japanese counterparts below
-// about 1300, and the ducker's second line was missing on a real unit.
+// cut with nothing to say so — which is what shipped: the COMP and EQ notes already
+// wrapped at narrow windows, sooner in Japanese, and the ducker's second line was gone.
 //
 // The display inventory cannot catch this class. It answers presence, and a clipped
 // element whose text still renders passes. So this measures the geometry, at the

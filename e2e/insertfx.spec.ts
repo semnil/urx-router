@@ -237,7 +237,7 @@ test("a guitar amp's values are knobs, on one face with no bar", async ({ page }
 // an ordinary settings row satisfies every locator here — it is present, visible, carries
 // its label and drives its value — while spanning every column and putting its control
 // an amp's width from the label naming it, which cuts the panel into blocks. The cabinet's
-// last two selectors were outside the panel altogether. 470 of 470 cases passed on it.
+// last two selectors were outside the panel altogether, and every case still passed on it.
 //
 // So this measures rectangles, in the built bundle, which is the only place that answers:
 // jsdom lays nothing out, and the unit guard beside it can only ask which container an
@@ -1247,9 +1247,9 @@ test("a write says which node's insert-FX values reach the device", async ({ pag
   // The interval has to clear sendConverging's own blind wait between rounds
   // (SETTLE_TIMEOUT_MS, 300 ms). Sampling faster than that — this polled at 200 ms —
   // sees the inter-round gap as "stopped" every time and reads the log mid-write, so
-  // the count below became whatever had landed by then: measured 4 on 689 when only
-  // the first round was in and 8 when the second had partly landed, from the same
-  // build. That is what made this case flaky; it was never a timing accident.
+  // the count below became whatever had landed by then: fewer commands on 689 with only
+  // the first round in, more once the second had partly landed. That is what made this
+  // case flaky; it was never a timing accident.
   const POLL_MS = 500;
   let settled = -1;
   for (let i = 0; i < 40 && settled !== (await writesOf(page)).length; i++) {
