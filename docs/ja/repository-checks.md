@@ -17,7 +17,7 @@
 - アプリの入口: ブラウザの中の main.boot と main.flows、
   スタブにした Tauri のシェルに対する main.device (main.ts の半分は isTauri() が門になっているので、
   そのシェルが無いと、そこはテストされていないのではなく、届かない)
-- `AGENTS.md`「Reusable assets」が挙げる、契約のテストとピン
+- [reusable-assets.md](reusable-assets.md)「資産の索引」が挙げる、契約のテストとピン
 
 `include` は、`scripts/` の下の `*.test.mjs` も含む。これはツールそのもののピンで、
 カバレッジの対象には入れない。
@@ -71,6 +71,18 @@ Prettier の見るものを決める理由は無い。YAML は、Prettier が解
 **追跡していない**ファイルは、無視の規則が覆っていない限り、書いた時点で、
 導いた一覧に入る — 一覧は git が報告するもの (index に加えて `--others --exclude-standard`) なので、
 新しいファイルは、追加する前から整形され、検査される。
+
+## `pnpm check:assets`
+
+`pnpm check:assets` (`scripts/check-assets-index.mjs`) は、[reusable-assets.md](reusable-assets.md)
+「資産の索引」と `docs/{en,ja}` を、リポジトリと突き合わせる: すべての行と、文書が名指すすべてのファイル —
+コードスパンの中でも文の中でも — が本物のものを指し、本物のもので表から欠けているものが無いこと。
+
+行ごとに突き合わせる表は、英語のものである。日本語の文書はその訳で、`docs/{en,ja}` の下のほかのどの文書とも
+同じ、ファイルの参照の決まりに照らされる。逆向きの規則のうち 3 つは、索引ではなく `AGENTS.md` を読む:
+`package.json` のどのスクリプトもそこで名指されていること (規則 A)、`scripts/` の下のファイルが、そこか
+索引から届くこと (規則 B)、そして、どのソースファイルも、それか [architecture.md](architecture.md)
+の両方の訳に名指されていること (規則 H)。
 
 ## `pnpm check:comments`
 
@@ -305,6 +317,21 @@ Codecov が報告する必須のコンテキストには、すべてのプルリ
 `.github/codecov.yml` がそのステータスを有効にしていること。`--ruleset` は、さらにその一覧を、
 実際のブランチの ruleset と比べる (admin の `gh` が要る。CI のトークンでは読めない)。
 
+## `pnpm check:skips`
+
+`pnpm check:skips` は、次のことを確かめる: 恒久に飛ばすレースのケース (Playwright が報告するもの) が、
+どれも `e2e/race/skip-ledger.json` に登録され、この検査が走らせて通るのを見る単体のテストか、
+何がそれを決着させるかのどちらかを名指していること。そして、どの spec のファイルも、同じ台帳が名指す下限を
+今も少なくとも集めること — Chromium のプロジェクトと WebKit のプロジェクトで別々に。ケースは、
+そのファイルが持っていたケースをすべて持ち続けたまま、タグを失うことで後者から外れるからである — だから、
+集められなくなったケースは、小さくなった緑の実行ではなく、赤になる。その台帳のシャードの重みの下で、
+集めることも取り直すので、決まった分け方の下で大きさを変えたコーパスや、それを読まなくなった Playwright は、
+遅くなるのではなく、赤になる。
+
+各ガードをどう走らせるか、なぜガードは単体のテストでなければならないか、下限とシャードの読みが何を足すかは、
+[reusable-assets.md](reusable-assets.md)「資産の索引」の `pnpm check:skips` の行にある。決定は
+[decisions/race-harness.md](decisions/race-harness.md)「The permanent-skip ledger」である。
+
 ## 編集のときのフック
 
 Markdown の表の行の間に貼った注記は、そこで表を終わらせる。
@@ -313,11 +340,23 @@ Markdown の表の行の間に貼った注記は、そこで表を終わらせ�
 `scripts/check-md-tables.mjs` がそれを捕まえる (`pnpm check:md`、`docs.yml`、
 そして `PostToolUse` のフック — `.claude/settings.json` は追跡しているので、フックはどのクローンにも届く。
 `scripts/md-hook.sh` は、同じきっかけで `check-assets-index.mjs --hook` を走らせるので、
-AGENTS.md の編集で壊れた資産の行も — `docs/{en,ja}` の編集で壊れたファイルの参照も — CI ではなく、
-編集の時点で報告される。非公開のノートのチェックアウトの中のファイルを編集したときは、同じフックが、
+索引 ([reusable-assets.md](reusable-assets.md)) の編集で壊れた資産の行も — `docs/{en,ja}` の編集で壊れた
+ファイルの参照も — CI ではなく、編集の時点で報告される。非公開のノートのチェックアウトの中のファイルを
+編集したときは、同じフックが、
 そのチェックアウト自身の台帳のアンカーの検査も走らせる — 検査は git を通して主チェックアウトの中から探すので、
 そのチェックアウトを自分では持たない worktree からも届く — このチェックアウトから行った台帳の編集が、
 台帳の取り決めに照らされるのは、こうしてである)。
+
+`PreToolUse` のフック (`scripts/check-startup-wait.mjs`。`.claude/settings.json` の中に、Markdown の検査の横に、
+`scripts/startup-wait-hook.sh` を通して登録してある。どちらのフックの包みも、`scripts/hook-node.sh` を通して
+node を見つける) は、ログで待つ Bash のコマンドや、バイナリに `pgrep -f` を使う Bash のコマンドを、
+コマンドをシェルとして読んで断る — 引用符で囲んだ検索のパターンはコマンドではなく、ヒアドキュメントの本体は文で、
+バックスラッシュがエスケープした置換も文であり、ループの `done` の後の grep はその中にない — そして、その
+`PostToolUse` の半分は、バックグラウンドの `tauri dev` の起動に、その確かめで答える。バックグラウンドの
+コマンドは、終わったときにしか報告せず、アプリはウィンドウを閉じたときに終わるからである。
+`pnpm test check-startup-wait` は、断る各形を、それが変異させたもとの、許される形の横に置き、
+登録したコマンドを走らせて、つながっていることを示す。確かめが何に答えるかと、なぜログも `pgrep -f` も
+答えられないかは、[local-runs.md](local-runs.md)「dev アプリが上がったかどうか」にある。
 
 ## 表示項目の目録
 

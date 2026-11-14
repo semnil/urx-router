@@ -96,7 +96,8 @@ MIDI のウィンドウ、メニュー 3、ポップオーバー 2 と、最初�
 ## The startup check
 
 **決定 (2026-10-10)。** dev アプリが上がったかどうかは、`node scripts/check-startup-wait.mjs --pid <tree>` が答える。
-ログで待つコマンドは、フックが断る。仕組みは `AGENTS.md`「Development」にあり、変更は
+ログで待つコマンドは、フックが断る。仕組みは [local-runs.md](../local-runs.md)「dev アプリが上がったかどうか」と
+[repository-checks.md](../repository-checks.md)「編集のときのフック」に、決まりは `AGENTS.md`「Development」にあり、変更は
 [#564](https://github.com/semnil/urx-router/pull/564)。その中の 2 つの決定:
 
 - **検査が見るのは、今のユーザーのプロセスだけ** (`pgrep -x -u <uid>`)。ほかのユーザーのプロセスの作業
