@@ -3,9 +3,9 @@
 // AS ink on a dark ground — and `--seg` is the gradient for faces nothing is printed on
 // (fader caps, knobs, slider thumbs). Neither is a face to print on.
 //
-// The reason is measured and already written into style.css beside the chip rule: on the
-// light theme the dark ink reaches APCA Lc 55.4 against `--led`, short of the Lc 60 floor,
-// where `--led-face` reaches 76. That migration went into the toggles and the console chips
+// The reason is already written into style.css beside the chip rule: on the light theme
+// the dark ink reaches APCA Lc 55.4 against `--led`, short of the Lc 60 floor, where
+// `--led-face` reaches 76. That migration went into the toggles and the console chips
 // and was then missed by five more surfaces plus a canvas one — nothing in the tree said so,
 // because the split lives in two layers that never referred to each other:
 //

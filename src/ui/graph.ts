@@ -144,8 +144,8 @@ export type LabelSource = "model" | "device";
  *  `key` is a `source` that happens to feed a ducker, `sendSwitch` is a `send`
  *  with an on/off, and `record` is an output selection that lands on a track. All
  *  three are already told apart by their endpoints, and spending a hue on each
- *  cost more than it bought — measured, `record` and `source` were 1.6 OKLab
- *  apart under deuteranopia, which is to say indistinguishable. */
+ *  cost more than it bought: `record` and `source` are indistinguishable under
+ *  deuteranopia. */
 export type WireGroup = "select" | "send" | "out";
 
 /** Which family each connection kind is drawn in. Exhaustive by type, so adding a
@@ -795,13 +795,12 @@ export class Graph {
     this.svg.addEventListener("pointerup", (e) => this.onPointerUp(e));
     this.svg.addEventListener("pointercancel", (e) => this.onPointerCancel(e));
     // Losing the window is the fourth way an interaction ends, and the engine announces
-    // it with a `blur` and nothing else: measured 2026-08-14 on Chromium and on the
-    // shipping WKWebView, the foreground moving away with the button down fires no
-    // `pointercancel` and keeps the pointer capture, so a node drag went on writing
-    // positions while another application was frontmost — into a second undo entry at
-    // that, since history.ts ends its press at the same blur. docs/en/channel-tuning.md,
-    // "A gesture the window is taken away from", states the rule; the CONSOLE and
-    // tuning-screen drags end at this event too.
+    // it with a `blur` and nothing else: in Chromium and in the shipping WKWebView, the
+    // foreground moving away with the button down fires no `pointercancel` and keeps the
+    // pointer capture, so a node drag went on writing positions while another application
+    // was frontmost — into a second undo entry at that, since history.ts ends its press at
+    // the same blur. docs/en/channel-tuning.md, "A gesture the window is taken away from",
+    // states the rule; the CONSOLE and tuning-screen drags end at this event too.
     // Window-lifetime, like the view itself: the app builds one Graph and never takes it
     // down. A suite that builds several takes them back through `recordWindowListeners`.
     window.addEventListener("blur", () => this.endAllPointers());

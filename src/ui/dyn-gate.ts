@@ -1,9 +1,9 @@
 // The GATE processor for the channel tuning screen.
 //
-// A GATE threshold in dB is directly comparable with the PRE GATE meter's dBFS
-// (measured: CH1's -54 dBFS noise floor sat below a -52 dB threshold and the gate
-// stayed shut), which is what earns the lane rack's one gesture — the threshold is a
-// fader cap dragged on the input meter itself.
+// A GATE threshold in dB is directly comparable with the PRE GATE meter's dBFS (a
+// level the meter shows below the threshold keeps the gate shut), which is what earns
+// the lane rack's one gesture — the threshold is a fader cap dragged on the input meter
+// itself.
 
 import { formatDyn } from "../core/control/translate";
 import { GATE_RANGE_OFF_DB } from "../core/control/vd";
@@ -26,9 +26,8 @@ const LO_DB = -72;
 // at the factory threshold 70% of the range domain drew an identical picture and
 // range was invisible. Running the output axis to the GR floor puts the shelf on
 // scale: moving range from -30 to -56 shifts it by 20% of the plot height, from
-// 0% before. A log-compressed axis was measured too and is worse (8.5%) — dB is
-// already a log unit, and compressing it again squeezes exactly the deep region
-// range lives in.
+// 0% before. A log-compressed axis is worse (8.5%) — dB is already a log unit, and
+// compressing it again squeezes exactly the deep region range lives in.
 const OUT_LO_DB = -128;
 /** Output-axis gridlines. Coarser than the input's: the axis is 1.8× longer and
  *  the region below -72 dB is context, not something to read off. */

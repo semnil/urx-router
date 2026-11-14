@@ -33,7 +33,7 @@
 //
 // Its keys are F2 / F3 / F4 and NOT the free slots beside the existing ones, because
 // **F6-F10 are Kotoeri's conversion keys during a composition** (ひらがな / カタカナ /
-// 半角カナ / 全角英数 / 半角英数). Measured, and worse than "the page never sees them":
+// 半角カナ / 全角英数 / 半角英数), and worse than "the page never sees them":
 // the key does BOTH — Kotoeri acts on it and the page gets the keydown as well, so F6
 // mid-composition ran this harness's blur and committed the composition. The harness was
 // destroying what it was measuring. F6-F10 therefore stand down while the record is on;

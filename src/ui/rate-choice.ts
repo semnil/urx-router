@@ -11,9 +11,9 @@ export type RateChoice = "adopt" | "release" | "cancel";
  *
  * With Follow USB on, the device slaves its clock to the USB host: a rate write is
  * accepted and re-clocks, then the host's rate reasserts itself about a second
- * later (measured on hardware). So writing the plan's rate would appear to work and
- * silently undo itself — the one outcome the operator must not be handed. Both real
- * answers are offered instead of guessing which was meant.
+ * later. So writing the plan's rate would appear to work and silently undo itself —
+ * the one outcome the operator must not be handed. Both real answers are offered
+ * instead of guessing which was meant.
  *
  * `hiRateNote` names the plan settings a device rate above 96 kHz would leave
  * unwritten, so choosing `adopt` is not a surprise. The plan keeps them either way, except the

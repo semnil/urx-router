@@ -14,8 +14,7 @@
 // The descriptor is selected per open() rather than per instance, because all of them
 // share one modal host and two instances would fight over its DOM.
 //
-// What the meters can and cannot show (measured on a URX44V, 2026-07-29 — see
-// the project's private notes):
+// What the meters can and cannot show:
 //   - the feed is exactly 100 ms and each frame is an instantaneous sample, not a
 //     window extreme, so nothing is gained by painting faster;
 //   - the level meters are peak detectors with a ~30 dB/s release, so they hold
@@ -23,8 +22,8 @@
 //   - the GR meters have no ballistics at all, so an action shorter than 100 ms is
 //     missed outright. The peak hold below is the only thing that makes a caught
 //     one readable, and it cannot recover one that was never sampled;
-//   - a GR meter reports the reduction alone. Sweeping the COMP makeup gain moved
-//     the downstream level tap by the full amount and left the GR meter still.
+//   - a GR meter reports the reduction alone: the COMP makeup gain moves the
+//     downstream level tap and leaves the GR meter where it is.
 //
 // The broker has a single meter subscription slot process-wide (a subscribe replaces
 // the previous one and the unsubscribe takes no address), so this screen takes the slot
@@ -830,11 +829,11 @@ export class DynScreen {
     // cleared and return.
     onInertHoldsEnd(release);
     // A window blur is the third end. The two registered above carry a pointer event;
-    // this one carries none, so it needs the ender the gesture left behind. Measured
-    // 2026-08-14 on Chromium and on the shipping WKWebView: losing the foreground with
-    // the button down fires `blur`, fires no `pointercancel` and keeps the capture — so
-    // the cap and plot drags below stayed armed, with that surviving capture routing
-    // every later move straight to them. channel-tuning.md states the rule.
+    // this one carries none, so it needs the ender the gesture left behind. In Chromium
+    // and in the shipping WKWebView, losing the foreground with the button down fires
+    // `blur`, fires no `pointercancel` and keeps the capture — so the cap and plot drags
+    // below stayed armed, with that surviving capture routing every later move straight
+    // to them. channel-tuning.md states the rule.
     // Not `capture: true`: that would also catch the cap's and the canvas's own element
     // blur, which happens whenever focus moves inside the screen.
     //
@@ -1568,7 +1567,7 @@ export class DynScreen {
     // counts and different displays, so without the reserve the modal resizes under the
     // pointer on every press of the segment that moves between them. What the reserve
     // costs is blank space below the shorter faces; `.gt-faced`'s `min-height` in
-    // style.css is where the measurement lives, along with what it yields to.
+    // style.css says what the reserve is sized to, along with what it yields to.
     if (proc.banked) grid.classList.add("gt-faced");
     if (this.faceReserve !== null) grid.style.setProperty("--gt-face-min", `${this.faceReserve}px`);
     // A reversed panel is one class plus the DOM order, not a second layout: it is still one
@@ -1838,7 +1837,7 @@ export class DynScreen {
     // element then generates no line box, and `.gt-lcol`'s `1fr auto` hands the difference
     // to the scale — it stands taller than the slot beside it, the two share a top edge and
     // drift apart linearly down to the floor, and a tick points at a level it is not level
-    // with. Measured at 12.75px of drift back when the caption was two lines.
+    // with.
     const spacer = el("span", "gt-cap-label");
     spacer.setAttribute("aria-hidden", "true");
     spacer.textContent = "\u00a0";
@@ -2303,10 +2302,10 @@ export class DynScreen {
     markMidi(control, id, midi);
     armOnActivate(control, id, midi);
     // The mapped dot is the row's, not the control's. A console chip floats over the
-    // strip with room around it; a screen row's control has none — measured, the dot
-    // landed on the value's last character at the cell's right corner and on the
-    // slider's own thumb at its left one (a control parked at its minimum: amber on
-    // amber). The label gutter is empty at every value.
+    // strip with room around it; a screen row's control has none: the dot would land on
+    // the value's last character at the cell's right corner and on the slider's own thumb
+    // at its left one (a control parked at its minimum: amber on amber). The label gutter
+    // is empty at every value.
     if (midi.isMapped(id)) row.classList.add("midi-mapped-row");
     return row;
   }
@@ -2478,7 +2477,7 @@ export class DynScreen {
     if (f.steps && f.heldOffStops) stopStep(input, f.steps, () => this.val(f.key));
     // Every native range in the app ends its drag at a window blur and stays inert until
     // the press is over or the window comes back; `holdInertOnBlur` carries the treatment
-    // and the measurements. This screen's own half is the row named below: the blur leaves
+    // and the reasons for it. This screen's own half is the row named below: the blur leaves
     // `grabbed` set, since the press is still in flight, so the refresh it deferred waits
     // for the first release to arrive — a pointer one, or the end of the app-wide holds,
     // which the window coming back also produces. By then a rebuild may have replaced this

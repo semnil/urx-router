@@ -347,7 +347,7 @@ describe("Console UI", () => {
 // more chips measures taller — which is the whole of what the cache key has to track.
 // It doubles as the re-measure counter, since a call to it IS the view laying the strips
 // out again; that is the only observable for a key term that changes no height, which is
-// what the sample rate was measured to be (console.ts, `mainHeadHeight`).
+// what the sample rate is (console.ts, `mainHeadHeight`).
 describe("the head-height cache", () => {
   const chips = (head: HTMLElement): number => head.querySelectorAll(".con-chip").length;
   const px = (head: HTMLElement): number => 40 + 12 * chips(head);

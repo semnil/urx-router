@@ -829,9 +829,9 @@ export class MidiControl {
     // And KEEP it in front for as long as the arming lasts: the next thing the
     // operator does is click the control being armed, in the main window, which on
     // macOS put the panel behind it and left the hint unreadable at the one moment
-    // it is the instruction. On Windows the owner already prevents that (measured
-    // 2026-08-13 with a real click; architecture.md, "Window geometry"), so there the
-    // pin is what holds the panel above OTHER applications for the same seconds.
+    // it is the instruction. On Windows the owner already prevents that (architecture.md,
+    // "Window geometry"), so there the pin is what holds the panel above OTHER applications
+    // for the same seconds.
     if (this.windowOpen) void pinMidiWindow(on).catch(() => {});
   }
 
@@ -867,12 +867,12 @@ export class MidiControl {
     this.applyMappings(next);
     this.hooks.onLearnChanged();
     this.say(t().midi.bound(this.labelOf(id), addrLabel(addr)), true);
-    // Deliberately NOT raised here. Measured on macOS (2026-08-01): raising takes
-    // focus off the main window, and a click on a window that is not active does
-    // not reach the webview (`accept_first_mouse` defaults to false), so every
-    // binding after the first would have cost two clicks — one to activate, one to
-    // arm. Assigning a bank of controls is a run of gestures, and the confirmation
-    // is already on the status line of the window the operator is clicking in.
+    // Deliberately NOT raised here. On macOS raising takes focus off the main window,
+    // and a click on a window that is not active does not reach the webview
+    // (`accept_first_mouse` defaults to false), so every binding after the first would
+    // have cost two clicks — one to activate, one to arm. Assigning a bank of controls
+    // is a run of gestures, and the confirmation is already on the status line of the
+    // window the operator is clicking in.
   }
 
   // ---- mappings ----
