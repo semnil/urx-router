@@ -15,9 +15,9 @@ import { LIVE_COMMANDS, stubTauriDevice } from "./tauri-stub";
 // Only two things survive the mode: `border` / `outline`, and an island opted
 // out with `forced-color-adjust: none`. The assertions below are those two, and
 // they are written as DIFFERENCES rather than as absolute values — the system
-// colours are the OS theme's, not ours (in the theme these numbers came from,
-// `GrayText` is a bright green), so asserting a specific colour would pin the
-// tester's Windows settings instead of the app's behaviour.
+// colours are the OS theme's, not ours, and a colour's name does not predict its
+// value, so asserting a specific colour would pin the tester's Windows settings
+// instead of the app's behaviour.
 
 const strip = (page: Page, name: string) => page.locator(".con-strip", { has: page.getByText(name, { exact: true }) });
 

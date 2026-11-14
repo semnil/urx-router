@@ -646,8 +646,8 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       };
       // Armed from what is VISIBLE, not from what is stored: two writes inside one
       // staleness window leave the second one answering the value the first was still
-      // hiding, which is what the measured session's second round did — its read
-      // answered the value from before ITS write, not the settled one.
+      // hiding. That is the unit's answer too — a read after the second write answers
+      // what was visible before it, not the value the first write stored.
       const armStale = (k: string): Stale | undefined => {
         const n = fake.staleAfterWrite[k];
         if (!n) return undefined;
