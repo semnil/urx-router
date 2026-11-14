@@ -370,12 +370,11 @@ test.describe("T1 overtake", () => {
     // put a click in the middle of the window this case is placing.
     await openEqScreen(page, "ch1");
 
-    // 615 of the sweep's own 675 reads. The barrier counts from the moment it is armed
-    // and the link is otherwise idle, so read #615 leaves 60. The number is what places
-    // the overlap: the flush takes about 40 commands to reach its refetch, and the
-    // refetch's own node read is about 50, so a tail of 60 has the sweep finishing (120
-    // interleaved slots) while the refetch is still reading (140). At 30 —
-    // measured — the sweep ended before the refetch had opened at all.
+    // Stop the sweep near the end of its own reads. The barrier counts from the moment it
+    // is armed and the link is otherwise idle, so the tail it leaves is what places the
+    // overlap: the flush has to reach its refetch and the refetch has to be reading its
+    // node while the sweep is still finishing. Too short a tail and the sweep ends before
+    // the refetch has opened at all.
     await blockAt(page, "vd_get", 555);
     await mark(page, "excursion");
     await setMemAt(page, {
