@@ -271,11 +271,11 @@ test.describe("T1b overtake", () => {
           if (armSecond) (document.querySelector("[data-race-chip]") as HTMLElement | null)?.click();
           // The first edit goes out in the SAME task as the click, which is what the
           // description above has always claimed. Left to the interval's first callback
-          // it landed at click + 90 ms against a 120 ms window, so the whole case rested
-          // on ~25 ms of main-thread slack: on a loaded runner the window closed first,
-          // the latch was never entered, and the absence below read as the pinned defect
-          // having gone away. Measured under CDP CPU throttling, the click alone costs
-          // 5.9 ms at 1x and 35 ms at 6x, and 6x is where the old form flipped.
+          // it lands at click + 90 ms (the period) against a 120 ms window, so the whole
+          // case would rest on the main-thread slack between the two: on a loaded runner
+          // the window closes first, the latch is never entered, and the absence below
+          // reads as the pinned defect having gone away. The click alone grows
+          // several-fold under CPU throttling, enough to flip that form.
           edit(0);
           await new Promise<void>((resolve) => {
             let i = 1;

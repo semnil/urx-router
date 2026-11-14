@@ -272,8 +272,8 @@ test.describe("T1 overtake", () => {
     // default, so the re-apply below re-sends the whole array either way; the authored slot is
     // what tells the plan's tuning from the default the unit would refill. Settled from its own mark rather than
     // waited quiet: an edit's flush is debounced, so the quiet a `waitQuiet` finds is
-    // the one BEFORE it — measured, the slot write then landed 119 ms after the next
-    // mark and read as part of the re-apply.
+    // the one BEFORE it, and the slot write would then land after the next mark and
+    // read as part of the re-apply.
     // The Threshold lives on the insert-FX tuning screen. Opened BEFORE the mark, because
     // the open is not what this window measures, and closed after: the excursion below
     // asserts on the writes, and a modal left standing would sit over the rest of the case.
@@ -352,9 +352,9 @@ test.describe("T1 overtake", () => {
   // below opens that refetch inside the read, but not in a placement where it outlives
   // it: the link is one queue, so the two flows interleave one command each and the
   // refetch's node read (about 50) is spent well before a whole-device sweep's tail.
-  // Barrier placements leaving 30, 60 and 120 reads were measured and none of them left
-  // the refetch open at the moment of consumption, so restoring the gate leaves this case
-  // green. The gate and the sequence differ only for a read that STARTS while the refetch
+  // Moving the barrier along the sweep's tail does not reach it either: the refetch is
+  // closed by the moment of consumption, so restoring the gate leaves this case green.
+  // The gate and the sequence differ only for a read that STARTS while the refetch
   // is still open, and none can: a reconcile does not start while a flush, which a refetch
   // runs inside, is armed or running (follow.ts `deferReconcile`). What this case carries
   // is the other end: the addresses and values a held clearing actually re-sends.
@@ -370,12 +370,11 @@ test.describe("T1 overtake", () => {
     // put a click in the middle of the window this case is placing.
     await openEqScreen(page, "ch1");
 
-    // 615 of the sweep's own 675 reads — measured, not guessed. The barrier counts from
-    // the moment it is armed and the link is otherwise idle, so read #615 leaves 60. The
-    // number is what places the overlap: the flush takes about 40 commands to reach its
-    // refetch, and the refetch's own node read is about 50, so a tail of 60 has the sweep
-    // finishing (120 interleaved slots) while the refetch is still reading (140). At 30 —
-    // measured — the sweep ended before the refetch had opened at all.
+    // Stop the sweep near the end of its own reads. The barrier counts from the moment it
+    // is armed and the link is otherwise idle, so the tail it leaves is what places the
+    // overlap: the flush has to reach its refetch and the refetch has to be reading its
+    // node while the sweep is still finishing. Too short a tail and the sweep ends before
+    // the refetch has opened at all.
     await blockAt(page, "vd_get", 555);
     await mark(page, "excursion");
     await setMemAt(page, {

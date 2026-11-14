@@ -341,15 +341,15 @@ test.describe("T8 stress", () => {
     // presses arrows for ten seconds, so flushes run throughout, and only this one has a
     // flush to observe.
     //
-    // It read 0 / 2 / 3 / 3 across four runs of this one case (2026-08-01), which is why
-    // it went unasserted for as long as it did: the count is a function of where the
-    // notifies fell inside the flush's own await chain. The cause is one flush behind
-    // one translate — live.ts froze its command list at flush start and diffed each
-    // command against a snapshot the follow side kept writing into, so the loop reached
-    // an address the device had moved and sent the value it no longer held.
-    // t1b-overtake's "a direct notify the send loop has not reached yet" places that
-    // window on a barrier and owns the verdict; this line is the tier's regression net,
-    // and it is a real one — every one of those runs would fail it.
+    // Its count varied from run to run of this one case, which is why it went unasserted
+    // for as long as it did: the count is a function of where the notifies fell inside
+    // the flush's own await chain. The cause is one flush behind one translate — live.ts
+    // froze its command list at flush start and diffed each command against a snapshot
+    // the follow side kept writing into, so the loop reached an address the device had
+    // moved and sent the value it no longer held. t1b-overtake's "a direct notify the
+    // send loop has not reached yet" places that window on a barrier and owns the
+    // verdict; this line is the tier's regression net, and it is a real one — a run of
+    // that loop that writes a device value back fails it.
     expect(pushedBack).toHaveLength(0);
     // What IS deterministic here: the flushes were real, so a zero above is never
     // "nothing was sent".

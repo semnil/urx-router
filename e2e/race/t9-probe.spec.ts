@@ -188,8 +188,7 @@ test.describe("T9 probe", () => {
   //
   // The refetch epilogue used to re-base from the live plan, so an edit made during the
   // read was recorded as device truth: the screen kept the operator's value, the unit
-  // was never given it, and no later diff could see the address again. Measured here
-  // first (the snapshot held 40 while the device held nothing), then fixed in
+  // was never given it, and no later diff could see the address again. It was fixed in
   // live.ts by freezing a pre-await copy and splitting the re-base by owner node.
   //
   // The gesture below is on CH 2 while the refetch is scoped to ch1, deliberately: a

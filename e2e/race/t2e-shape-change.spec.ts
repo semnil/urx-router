@@ -42,8 +42,7 @@ import { chooseOption } from "../choose-option";
 // (the `addrs` argument of vd_params_subscribe, which IS the follow registration set)
 // the control rather than the result: the interesting number is that it does NOT move.
 //
-// Two properties of the observables had to be measured rather than reasoned about, and
-// they are what the assertions below are shaped around:
+// Two properties of the observables shape the assertions below:
 //   - the live snapshot's KEY SET is rebuilt only at capture (begin / resync / a
 //     converge or refetch epilogue), while a flush only ever `set`s keys it just sent.
 //     So a write set that GREW is visible in the snapshot immediately and one that
@@ -727,7 +726,7 @@ test.describe("T2e shape-change", () => {
   //
   // Two constraints share one control. The sample-rate ceiling (core/constraints.ts,
   // params.ts insertFxAvailable) is UI-only by design: the unit accepts and holds writes
-  // to the "unavailable" params at 192 kHz — measured — so translate.ts never consults
+  // to the "unavailable" params at 192 kHz, so translate.ts never consults
   // plan.sampleRate for anything but SAMPLE_RATE itself. The device-wide 1-of slot
   // (user guide p.180) is cross-node: whichever channel holds "amp" removes the four
   // guitar amps from every other channel's menu, with nothing written to those channels.

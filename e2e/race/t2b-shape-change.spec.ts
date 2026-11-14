@@ -277,15 +277,15 @@ test.describe("T2b shape-change", () => {
   //
   // It first asserted that NEITHER address was registered and concluded "a rename cannot
   // be followed". That was true of the app and not of the unit: the URX announces a
-  // rename (measured on a URX44V), and the app had simply never registered the address,
-  // so `Subs::absorb` dropped it. Names were registered and the name half flipped.
+  // rename, and the app had simply never registered the address, so `Subs::absorb`
+  // dropped it. Names were registered and the name half flipped.
   //
   // Sweet Spot Data has now gone the same way, and for the same reason: the unit
-  // announces a preset write on its own address FIRST, 0.319 ms ahead of the seventeen
-  // strip values it recomputes (measured). What was missing was again the app — the
-  // string path emitted no owner and consulted no sideEffect set, so the catalog could
-  // not classify the write and nothing repaired the plan. It is a `refetch` head now, so
-  // this case pins the repair rather than its absence.
+  // announces a preset write on its own address FIRST, ahead of the seventeen strip
+  // values it recomputes. What was missing was again the app — the string path emitted
+  // no owner and consulted no sideEffect set, so the catalog could not classify the
+  // write and nothing repaired the plan. It is a `refetch` head now, so this case pins
+  // the repair rather than its absence.
   //
   // One thing is UNCHANGED and still gets a line: the string path has no numeric snapshot
   // entry. The registration is not that thing any more — the mode change's own flush now
@@ -316,8 +316,8 @@ test.describe("T2b shape-change", () => {
     // The click's own commit is deferred one macrotask (a click handler may still edit
     // the plan on that gesture's behalf), so typing started immediately would put the
     // first character inside the CLICK's entry and produce two entries for one typing
-    // gesture. Measured: with this settle the burst is one entry, without it two. That
-    // is a property of the driver, not of the app — the operator's hand cannot type a
+    // gesture. With this settle the burst is one entry, without it two. That is a
+    // property of the driver, not of the app — the operator's hand cannot type a
     // character inside the same macrotask as the click that focused the field.
     await page.waitForTimeout(400);
     const depthBefore = await depthOf(page);
@@ -363,9 +363,9 @@ test.describe("T2b shape-change", () => {
     //
     // The string path is throttled by the flush window like everything else, but it is
     // NOT coalesced by the gesture: eight keystrokes 90 ms apart leave as one write per
-    // 120 ms window, so partial names ("VOX", "VOX L", …) reach the unit. Measured 4 —
-    // pinned as a range, since the exact count is the window arithmetic, but a
-    // per-keystroke path (8) and a per-gesture path (1) are both excluded.
+    // 120 ms window, so partial names ("VOX", "VOX L", …) reach the unit. Pinned as a
+    // range, since the exact count is the window arithmetic, but a per-keystroke path (8)
+    // and a per-gesture path (1) are both excluded.
     expect(strWrites.length).toBeGreaterThan(1);
     expect(strWrites.length).toBeLessThan(8);
     expect(numericOnName).toHaveLength(0);
@@ -376,23 +376,22 @@ test.describe("T2b shape-change", () => {
     // input — both are what keep eight keystrokes from costing eight entries).
     //
     // It also catches something further away, and did: the unit ANNOUNCES every name
-    // write it takes, so these four writes echo back. Counting an echo as a followed
-    // change armed the idle full reconcile, whose reflect ends in planHistory.reset()
-    // — measured here as 0 entries and an ~800-read sweep 900 ms after the last
-    // keystroke. The fake modelled no announcement at all until then, which is the only
-    // reason a rename looked free. See follow.ts's string branch.
+    // write it takes, so these writes echo back. Counting an echo as a followed change
+    // armed the idle full reconcile, whose reflect ends in planHistory.reset() — an
+    // emptied history and a whole-device sweep 900 ms after the last keystroke. The fake
+    // modelled no announcement at all until then, which is the only reason a rename
+    // looked free. See follow.ts's string branch.
     expect(depthAfter.undo - depthBefore.undo).toBe(1);
     expect(regKeys(await paramAddrsOf(page)).has(CH1_NAME)).toBe(true);
 
     // Phase 2 — the device's own rename, which the app now FOLLOWS. This phase used to
     // pin the opposite and is rewritten rather than deleted: the name addresses were in
     // no registration, so the bridge dropped the one notify a rename broadcasts (the
-    // unit does send it — measured on a URX44V), nothing escalated, and the value was
-    // only ever discovered by an unrelated sweep. Registering the addresses turned that
-    // into a direct follow. The behaviour itself is owned by `t1d-name-window`; what is
-    // pinned HERE is that this case's own subject — the string path — is no longer
-    // uniformly unfollowed, so a future reader does not take the Sweet Spot half as a
-    // statement about names too.
+    // unit does send it), nothing escalated, and the value was only ever discovered by
+    // an unrelated sweep. Registering the addresses turned that into a direct follow.
+    // The behaviour itself is owned by `t1d-name-window`; what is pinned HERE is that
+    // this case's own subject — the string path — is no longer uniformly unfollowed, so
+    // a future reader does not take the Sweet Spot half as a statement about names too.
     await mark(page, "name-notify");
     const nameWhy = await pushNameNotify(page, CH1_NAME, "DESK 3");
     // Short on purpose: under the 900 ms idle net, which arms after ANY followed
@@ -663,10 +662,9 @@ test.describe("T2b shape-change", () => {
     //
     // Registration is now a SEPARATE question, and this is where that split is pinned:
     // the write set used to define it, so "never emitted" implied "never followed". Two
-    // of the three are registered anyway, because the unit announces them (measured on a
-    // URX44V, 2026-08-11) and a value it announces to nobody is one the panel can change
-    // with no effect on screen. The mid PEQ types are not: no control exists to change
-    // them on either side.
+    // of the three are registered anyway, because the unit announces them and a value it
+    // announces to nobody is one the panel can change with no effect on screen. The mid
+    // PEQ types are not: no control exists to change them on either side.
     const reg = regKeys(await paramAddrsOf(page));
     const neverEmitted = [CH1_FX1_TAP, ...EQ_MID_TYPES, SD_TRACK_COUNT];
     console.log(`never-emitted addresses registered: ${neverEmitted.filter((a) => reg.has(a)).join(", ") || "(none)"}`);

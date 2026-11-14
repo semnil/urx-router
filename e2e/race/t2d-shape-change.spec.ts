@@ -39,9 +39,9 @@ import { chooseOption } from "../choose-option";
 // that lag is what the orphan count below measures, not a substitute for the read set.)
 //
 // Read latency is 1 ms: both cases provoke several whole-scope converge passes, each
-// ~800 sequential reads (measured: 793 in the first case, 795 in the second, and the
-// second runs four of them). Nothing asserted is a timing verdict — every assertion is
-// about which IPC happened, in what order, and against which address set.
+// ~800 sequential reads, and the second runs four of them. Nothing asserted is a timing
+// verdict — every assertion is about which IPC happened, in what order, and against
+// which address set.
 
 /** FX1 EFFECT TYPE selector (679) and its parameter array (681, addressed by slot). */
 const FX1_TYPE = "679:0:0";
@@ -514,11 +514,11 @@ test.describe("T2d shape-change", () => {
   // does not author. The app models the same recomputation and emits the SELECTOR
   // FIRST: translate.ts writes the pair-level CH SETTING block (SIGNAL_TYPE 23,
   // PAN_BAL 891) ahead of the two connection blocks that carry the pans, because
-  // writing 891 makes the unit slam all ten of them (measured: BAL→PAN hard-pans to
-  // ±63, PAN→BAL and unlinking centre), so a pan sent ahead of the selector is
-  // discarded. The same selector-leads rule insert FX (135 before its engine array,
-  // and 134 after it) and the FX effect type (679 before its 681 array) keep. Measured
-  // on the switch and again on its undo.
+  // writing 891 makes the unit slam all ten of them (BAL→PAN hard-pans to ±63, PAN→BAL
+  // and unlinking centre), so a pan sent ahead of the selector is discarded. The same
+  // selector-leads rule insert FX (135 before its engine array, and 134 after it) and
+  // the FX effect type (679 before its 681 array) keep. This case pins the order on the
+  // switch and again on its undo.
   test("PAN/BAL sends the selector before the pans it re-authors, and the undo does too", async ({ page }) => {
     expect(await hasProbe(page)).toBe(true);
     await goLive(page);

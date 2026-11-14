@@ -677,20 +677,19 @@ test.describe("T4b midi", () => {
    *  app's modules. The four cases that turn on the window — the toggle ladder, the
    *  mismatched-value differential, the one-shot pair and the fader ladder — place
    *  their rungs against this rather than against a literal, which is what they lacked
-   *  when the constant moved: it went 300 -> 50 (sized
-   *  from a measured 0.13-5 ms echo latency, where 300 ms was eating real presses) and
+   *  when the constant moved: it went 300 -> 50 (sized from the echo latency of a
+   *  reflecting transport, a few ms at most, where 300 ms was eating real presses) and
    *  three rungs that named 300 kept asserting the old window — the ladder's inner ones
    *  failed, while the two cases that only claim "inside the window" went on passing at
-   *  a phase that is now outside it, one of them landing on the boundary itself
-   *  (measured: first message eaten at an achieved 50 ms, the ladder's own 50 ms rung
-   *  applied at 51). Neither was a failure; both had stopped testing what they say.
+   *  a phase that is now outside it, one of them landing on the boundary itself.
+   *  Neither was a failure; both had stopped testing what they say.
    *
    *  The comparison is `>=`, so a message AT the window is outside it. */
   const ECHO_WINDOW_MS = 50;
   /** How far a rung is placed from the window's edge. The bracket a phase is measured
-   *  as spans 0-1 ms on this machine (achieved 50..51, 290..291), so 10 ms is the same
-   *  absolute margin the 300 ms ladder ran at — and the phase assertion in each case,
-   *  not its verdict, is what fails if a loaded renderer spends it. */
+   *  as is far narrower than this on an idle renderer, so 10 ms is the same absolute
+   *  margin the 300 ms ladder ran at — and the phase assertion in each case, not its
+   *  verdict, is what fails if a loaded renderer spends it. */
   const EDGE_MARGIN_MS = 10;
 
   /** Install a send-time stamp on the fake's outgoing byte log, so a phase can be
@@ -719,10 +718,9 @@ test.describe("T4b midi", () => {
    *  fake's trace push plus the decode. It is a fraction of a millisecond on an idle
    *  machine and grows with the renderer's load, which is enough to move a rung placed
    *  10 ms from the window's edge to the other side of it — so a rung inside the window
-   *  is placed against `after` and one outside it against `before`. Measured for the
-   *  emit side of the same question and found NOT to be the problem: the offset between
-   *  the app arming its guard and the fake seeing the send is 0.0-0.9 ms at 1x and at
-   *  12x CPU throttling alike.
+   *  is placed against `after` and one outside it against `before`. The emit side of
+   *  the same question is not the problem: the offset between the app arming its guard
+   *  and the fake seeing the send is negligible and does not grow under CPU throttling.
    *
    *  `since` is passed IN rather than sampled here. The evaluate starts a couple of
    *  driver round trips after the gesture and the feedback emit it waits for lands
