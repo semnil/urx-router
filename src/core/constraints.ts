@@ -158,9 +158,9 @@ export type InsertFxCensus = ReadonlyMap<InsertFxSlot, readonly string[]>;
  *  (the loader warns and offers to open it), so a slot claimed by this node AND
  *  another must still read as taken for this node's menu.
  *  A STEREO-linked MONO IN pair claims once, under the member the model lists first:
- *  measured, its two members mirror the selector and point at one engine instance,
- *  so the pair holds one effect between them. The gate is Signal Type, not PAN/BAL —
- *  the mirror was measured in both modes. Counting the app's own mirror as a second
+ *  its two members mirror the selector and point at one engine instance, so the
+ *  pair holds one effect between them. The gate is Signal Type, not PAN/BAL — the
+ *  mirror holds in both modes. Counting the app's own mirror as a second
  *  holder would lock the pair's menu against its own selection and report a file the
  *  app itself saved as a collision.
  *  Shared with plan-validate.ts, whose slot-collision check reads the same census. */

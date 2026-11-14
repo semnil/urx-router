@@ -123,11 +123,10 @@ test("a track-pair slot records its factory source as a no-param record assign",
 
 // Track Count is the device's while a live session holds it, so the inspector shows
 // it read-only. The lock has to stay VISIBLE, and that is not free: a select gets a
-// disabled look from the engine only while it is unstyled — measured in WebKit, the
-// engine the macOS build renders in, an unstyled one drops its text and border from
-// 0.847 to 0.247 alpha, and stops moving at all once a rule authors a colour and a
-// background. Joining the app's select recipe took that away, so the panel's own
-// read-only dim replaces it.
+// disabled look from the engine only while it is unstyled — in WebKit, the engine the
+// macOS build renders in, an unstyled one dims its text and border sharply, and does
+// not dim at all once a rule authors a colour and a background. Joining the app's
+// select recipe took that away, so the panel's own read-only dim replaces it.
 //
 // The comparison is against what THIS engine does to a disabled select unaided,
 // measured on the page rather than assumed, because the two engines disagree and

@@ -877,8 +877,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
     }
 
     if (!hasEq(model, id, compEqType)) return;
-    // Above 96 kHz a stereo channel's EQ is acoustically bypassed (measured), so
-    // every EQ control on it refuses — the whole processor, 1-knob included.
+    // Above 96 kHz a stereo channel's EQ is acoustically bypassed, so every EQ
+    // control on it refuses — the whole processor, 1-knob included.
     const rateLocked = (): boolean => channelEqUnavailable(id, plan.sampleRate);
     const knob = (): Record<string, unknown> => (plan.nodeParams[id]?.eqOneKnob ?? {}) as Record<string, unknown>;
     const knobOn = (): boolean => knob().on === true;
@@ -943,9 +943,8 @@ function nodeControls(model: DeviceModel, plan: Plan, id: string, cue?: CueAcces
         },
       });
       for (const f of eqBandFields(index)) {
-        // A pass filter reads neither Q nor gain (measured: Q 0.71 and Q 4.00 draw
-        // an identical high-pass), and only a peaking band reads Q — the same rows
-        // the screen locks and tags "Unused by this type".
+        // A pass filter reads neither Q nor gain, and only a peaking band reads Q —
+        // the same rows the screen locks and tags "Unused by this type".
         const unused =
           f.key === "q"
             ? (): boolean => type() !== EQ_TYPE_PEAKING

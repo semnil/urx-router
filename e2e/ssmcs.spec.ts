@@ -167,8 +167,8 @@ test.describe("the tuning screen's three faces", () => {
       // The RECORDS, not the flag's value when the callback runs. A close followed
       // immediately by a reopen lands both writes in one batch, and by the time the
       // callback is called `hidden` is false again — so reading the flag there reports a
-      // screen that never closed. Measured: an implementation that closed and reopened on
-      // every face press passed against that reading.
+      // screen that never closed: an implementation that closes and reopens on every face
+      // press passes against that reading.
       new MutationObserver((records) => {
         w.__closes += records.length;
       }).observe(scrim, { attributes: true, attributeFilter: ["hidden"] });
@@ -228,20 +228,19 @@ test.describe("the tuning screen's three faces", () => {
   // different y makes the plot jump under the eye that is reading it.
   // Three runs, and each one is here because the other two cannot see what it sees.
   //
-  // **Japanese** is where the reserve does its work. Measured with the floor removed: in
-  // English the three faces coincide at 656.4px on their own, so an English run passes
-  // against no reserve at all — while Japanese lands the COMP face at 660.4 and the other
-  // two at 656.4, because a translated row label is wider and its column is the tallest
-  // thing on that face. A guard for a floor has to run in the language whose content
-  // reaches it.
+  // **Japanese** is where the reserve does its work. Without the floor, the three faces
+  // coincide on their own in English, so an English run passes against no reserve at all —
+  // while in Japanese the COMP face lands taller than the other two, because a translated
+  // row label is wider and its column is the tallest thing on that face. A guard for a
+  // floor has to run in the language whose content reaches it.
   //
   // **960x640** is the smallest window the shell allows (`tauri.conf.json`: minWidth 960,
   // minHeight 640), and a floor is only safe if it yields there. `.consent-box` clamps
   // itself to the viewport, and the action row carrying Close is its last child, so a grid
-  // that refuses to shrink pushes Close past the fold — measured before the floor learned
-  // to yield: 68px past the box's own edge. That run is a constrained window holding its
-  // layout, so it is tagged @webkit as well: the floor has to give way to the chrome around
-  // the grid, and that chrome is the engine's to lay out.
+  // that refuses to shrink pushes Close past the fold, beyond the box's own edge. That run
+  // is a constrained window holding its layout, so it is tagged @webkit as well: the floor
+  // has to give way to the chrome around the grid, and that chrome is the engine's to
+  // lay out.
   const RUNS = [
     { lang: "en", size: null },
     { lang: "ja", size: null },

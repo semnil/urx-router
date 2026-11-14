@@ -21,9 +21,8 @@ import { cmdAddr, planToCommands } from "./control/translate";
 // write-side boundary) and scene-scope.ts (the plan-side boundary) must both track
 // them, so the two cannot drift apart silently.
 //
-// Measured by the scene recall audit (31 catalog names, URX44V, Standard Mode) plus
-// OSC_ON, which the .urxf format carries no descriptor for and which a one-item
-// recall measurement confirmed scene-external (URX44V, 2026-07-24).
+// The catalog names a scene recall leaves alone, plus OSC_ON, which the .urxf format
+// carries no descriptor for and which a recall leaves alone as well.
 const AUDITED_SCENE_EXTERNAL = [
   "MONITOR_SRC_L",
   "MONITOR_SRC_R",

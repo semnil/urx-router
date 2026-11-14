@@ -57,13 +57,13 @@ const RECENT_MS = 300;
 // keeps an equal real press right after the echo alive (edge-mode presses are
 // always 127, so a blanket window would eat them). Which addresses are armed, and
 // why the 14-bit ones are not, is decided in feedback().
-// Sized from the phenomenon, not from a round number. Measured echo latency on the
-// reflecting transports this guard exists for is 0.13-5 ms (echo-repro.test.ts), and
-// 300 ms was 60-2300x that — long enough to eat a REAL press on a plain controller
-// where no echo will ever arrive to disarm it. Every physical edge press re-armed the
-// trap through its own LED confirm: press at t=0, confirm (127) at t≈120, a second
-// press at t≈200-420 sends 127 again, equals `lastSent`, and is consumed as the echo.
-// The intervening release (0) does not disarm it, since 0 ≠ 127.
+// Sized from the phenomenon, not from a round number. Echo latency on the reflecting
+// transports this guard exists for is 0.13-5 ms (echo-repro.test.ts), and 300 ms was
+// 60-2300x that — long enough to eat a REAL press on a plain controller where no echo
+// will ever arrive to disarm it. Every physical edge press re-armed the trap through
+// its own LED confirm: press at t=0, confirm (127) at t≈120, a second press at
+// t≈200-420 sends 127 again, equals `lastSent`, and is consumed as the echo. The
+// intervening release (0) does not disarm it, since 0 ≠ 127.
 const ECHO_MS = 50;
 
 /** The key a 14-bit CC pair's assembly state is held under, by its MSB controller. */
@@ -637,10 +637,12 @@ export class MidiEngine {
       // plan's own grid is finer than the 7 bits the value crossed on: the decoded
       // value snaps to a neighbouring detent, so `after !== before` and the change
       // reaches the device — once per feedback pass, and so once per Live-sync start.
-      // Measured over every bindable continuous control (2026-08-09): 90 of 282 on a
-      // URX44V behave that way, all of them tuning-screen parameters (EQ frequency
-      // and Q, GATE attack / hold / decay, COMP attack / release / ratio), while
-      // every console-level control round-trips unchanged.
+      // The controls that behave that way are tuning-screen and effect parameters — EQ
+      // frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER
+      // attack, an SSMCS strip's Comp Drive, Out Gain, compressor attack / release,
+      // side-chain gain and band gains, and a delay effect's Delay Time, FB.Gain and
+      // BPM — while COMP ratio, every console-level control and every send round-trip
+      // unchanged.
       //
       // The 14-bit forms are left unarmed. A cc14 echo cannot be matched here at all — it
       // arrives as two 7-bit halves — and neither form needs to be: `continuousTarget`

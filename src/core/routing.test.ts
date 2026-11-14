@@ -480,8 +480,8 @@ describe("applyPairTransition", () => {
     expect(pans("ch2")).toEqual([0, 0]);
   });
 
-  // Measured on the unit: the Signal Type transition clears the insert-FX selector and
-  // its ON on both members, in either direction and whichever member was holding one.
+  // On the unit, the Signal Type transition clears the insert-FX selector and its ON on
+  // both members, in either direction and whichever member was holding one.
   const heldInsertFx = (id: string) => [
     plan.nodeParams[id]?.insertFx,
     plan.nodeParams[id]?.insertFxOn,
@@ -538,8 +538,8 @@ describe("applyPairTransition", () => {
     }
   });
 
-  // Measured: a PAN/BAL toggle on its own leaves the pair holding its effect — only a
-  // Signal Type transition clears it.
+  // A PAN/BAL toggle on its own leaves the pair holding its effect — only a Signal Type
+  // transition clears it.
   it("keeps the insert FX when only PAN/BAL switches", () => {
     plan.nodeParams.ch1 = { ...plan.nodeParams.ch1, stereoLink: true, panBal: PAN_BAL_BAL, insertFx: INSERT_FX };
     plan.nodeParams.ch2 = { ...plan.nodeParams.ch2, insertFx: INSERT_FX, insertFxOn: true };
@@ -675,7 +675,7 @@ describe("isBalLinkedPair / mirrorLinkedPair", () => {
 
   it("carries a send's level / PRE-POST / ON in PAN, and leaves the partner's own pan", () => {
     // The pan is the one thing PAN mode keeps per member — which is what PAN means, and
-    // what the unit was measured doing while everything around it moved together.
+    // what the unit does while everything around it moves together.
     plan.nodeParams.ch1 = { stereoLink: true, panBal: PAN_BAL_PAN };
     const a = stereoSend("ch1")!;
     const b = stereoSend("ch2")!;
@@ -722,10 +722,10 @@ describe("isBalLinkedPair / mirrorLinkedPair", () => {
   });
 });
 
-// Measured on the unit: the insert FX mirrors on Signal Type alone — a selector write on
-// either member reached the other in PAN mode as well as in BAL, both pointing at one
-// engine instance. It takes a pass of its own beside mirrorLinkedPair above, which shares
-// that gate and is what names the pair's three insert-FX keys on every edit.
+// On the unit, the insert FX mirrors on Signal Type alone — a selector write on either
+// member reaches the other in PAN mode as well as in BAL, both pointing at one engine
+// instance. It takes a pass of its own beside mirrorLinkedPair above, which shares that
+// gate and is what names the pair's three insert-FX keys on every edit.
 describe("isStereoLinkedPair / mirrorLinkedInsertFx", () => {
   let plan: Plan;
   const link = (panBal: number): void => {
