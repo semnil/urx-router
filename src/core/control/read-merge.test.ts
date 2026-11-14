@@ -569,9 +569,8 @@ describe("insertFxHoldKeys", () => {
   };
   /** The same answer from a read that established NO rate — every scoped one, and a full
    *  one whose 766 failed. Spelled as its own helper rather than an `undefined` argument:
-   *  a default parameter takes effect for `undefined`, so passing it would have handed
-   *  the predicate the very rate the case exists to withhold (measured — the case passed
-   *  a rate it believed it had suppressed). */
+   *  a default parameter takes effect for `undefined`, so passing it would hand the
+   *  predicate the very rate the case exists to withhold, and the case would still pass. */
   const clearedNoRate = (into: Plan, planRate: number): ReadbackResult => {
     const result = cleared(into, planRate);
     return { ...result, deviceSampleRate: undefined };

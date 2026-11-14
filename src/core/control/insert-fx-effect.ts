@@ -756,8 +756,8 @@ function guitarTypeParams(family: InsertFxFamily): InsertFxParamDesc[] {
  * shared table above can only carry one number per slot. It carried mid-scale ones (every
  * tone control 50, Output 64, SP Type 1), which is a shape no measurement produces: those
  * were placeholders, and the screen printed them wherever a device read had not filled the
- * plan yet. These are the unit's own, read from a factory-initialised unit
- * (docs/{en,ja}/channel-tuning.md, "Where the catalogue's defaults come from").
+ * plan yet. These are the unit's own factory values (docs/{en,ja}/channel-tuning.md,
+ * "Where the catalogue's defaults come from").
  *
  * Only the slots that differ from the shared descriptor are listed. A slot absent here
  * keeps the table's value, which is then the measurement for all four (Gate 0, Gate Level

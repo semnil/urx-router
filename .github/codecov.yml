@@ -40,9 +40,9 @@ coverage:
 #
 # This is a one-time INCREASE (the excluded lines were mostly unhit), so the `project`
 # status above passes on the commit that lands it; the base commit keeps the number it was
-# processed with. Codecov's validator (POST https://codecov.io/validate) answers Valid! and
-# expands the two entries to `^src/i18n/en.ts.*` / `^src/i18n/ja.ts.*` — repo-relative and
-# anchored, so the pair names those two files and nothing else in the tree.
+# processed with. Codecov reads each entry as a repo-relative pattern anchored at its start
+# (`^src/i18n/en.ts.*` / `^src/i18n/ja.ts.*`), so the pair names those two files and nothing
+# else in the tree.
 ignore:
   - "src/i18n/en.ts"
   - "src/i18n/ja.ts"

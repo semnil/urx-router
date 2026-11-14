@@ -286,8 +286,8 @@ export function processorOn(np: NodeParams | undefined, key: keyof typeof PROCES
   return np?.[key] ?? PROCESSOR_ON_DEFAULT[key];
 }
 
-// SSMCS factory-initial values, captured from a real URX44V MONO IN channel with
-// the default "01 Basic" Sweet Spot Data loaded (raw broker units). Shared by all
+// SSMCS factory-initial values: a URX44V MONO IN channel's SSMCS bank with the
+// default "01 Basic" Sweet Spot Data loaded (raw broker units). Shared by all
 // models' seeds and used as the inspector's absent-value fallback, so a new SSMCS
 // channel matches the device out of the box.
 export const SSMCS_INITIAL = {

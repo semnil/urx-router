@@ -19,8 +19,8 @@ description: >
 # not with reachability.
 #
 # What that cost was not the runner minutes. It was a release PR carrying a red check
-# that said only "cancelled", with the reason 600 lines into a log the API will not
-# serve while the run is still going. Bounded, the step fails at a known time and says
+# that said only "cancelled", with the reason deep in a log the API will not serve
+# while the run is still going. Bounded, the step fails at a known time and says
 # what stalled, which is the whole of the difference.
 #
 # Deliberately NOT retried. `timeout` signals the process it started — pnpm — and apt

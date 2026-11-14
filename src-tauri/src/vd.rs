@@ -906,7 +906,8 @@ mod imp {
                 }) => {
                     // Replace any prior subscription: unregister the old set, then
                     // register the new one address by address (per-address regist
-                    // only, mirroring meters — a bulk post has crashed Device Center).
+                    // only, mirroring meters — an addressless bulk post can take Device
+                    // Center down).
                     LinkCounters::bump(&counters.param_subscribes);
                     unregister_params(&mut link, &mut subs, &counters);
                     let mut first = Ok(());

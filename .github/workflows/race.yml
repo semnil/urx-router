@@ -97,8 +97,8 @@ jobs:
           # instead truncate without saying so (that job carries the ceilings and the
           # guards against them). A diff against the base has no ceiling to guard.
           #
-          # Two flags, each measured in a scratch repository, and since the question
-          # became an exclusion they no longer guard the same direction.
+          # Two flags, and since the question became an exclusion they no longer guard
+          # the same direction.
           #
           # `--no-renames` is the one that still stops a silent skip: rename detection
           # prints a moved file at its DESTINATION alone, so moving a module into docs/

@@ -224,7 +224,7 @@ describe("diffDeviceSetup", () => {
 describe("time zone table", () => {
   it("holds the anchors the unit reported at their measured indices", () => {
     // Index IS the value written to the device, so these two are the contract:
-    // 139 is also the broker's default, and 140 was read off the unit's screen.
+    // 139 is also the broker's default, and 140 is the city the unit itself shows for it.
     expect(TIME_ZONE_CITIES[139]).toBe("Tokyo");
     expect(TIME_ZONE_CITIES[140]).toBe("Ulaan Bataar");
     expect(TIME_ZONE_CITIES[0]).toBe("Abu Dhabi");
