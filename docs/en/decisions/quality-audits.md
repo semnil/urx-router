@@ -202,6 +202,38 @@ that decision, not a design adjustment.
   write failures when nothing had been written; `formatReadbackReport` already described reads
   correctly.
 
+## Two limits of the device link are recorded, not fixed
+
+**Decision (2026-11-12, the operator).** The robustness audit left open how `src-tauri/src/vd.rs`
+handles a late reply and how it latches a device loss. The operator decided that `drain_late_reply`
+would be fixed first if the reply to a request named that request, and that otherwise these two
+would be recorded here as known limitations. A reply to a request as the app sends it, without an
+id, carries the verb (`method`) and the `uri` of that request, and its `data`; nothing in it names
+the request, neither a number nor an id. Whether the broker would return an id that a request
+carried has not been tried. The two stay as they are.
+
+- **A late reply can be dropped, but not identified.** A command that runs out its deadline
+  (`do_set`, `do_get_value`) can still have its reply on the way. When two requests with the same
+  verb go to the same address, nothing in their replies says which request each one answers, so a
+  late reply can be taken as the answer to the next such request. `drain_late_reply` makes that less
+  likely: after the deadline it reads until it has looked at `DRAIN_FRAMES` frames, or until
+  `DRAIN_QUIET` has passed and a read finds nothing, and drops the first reply that matches the verb
+  and the address of the command that gave up. A reply that arrives after the drain has given up
+  still answers the next command with that verb on that address. With requests sent as they are
+  now, nothing in a reply ties it to its request, so matching replies cannot close that gap.
+- **A device loss is latched through the text of an error.** The broker's only sign of a lost unit
+  is a `/vd/synchronize` frame whose `sync_status` is no longer `online`. `synchronize_lost` turns
+  that frame into an error whose code is `device-lost`, and on the command paths `Health::guard`
+  latches the session on an error that begins with `DEVICE_LOST_PREFIX`. The latch rests on a string
+  the app writes and then reads back: a reader that met that frame and reported it under another
+  code would leave the session unlatched.
+
+**Reopen when.** For the late reply: the broker is found to return, in its reply, an id that the
+request carried. For the device loss: the broker publishes a message of its own when a unit is lost,
+or the app carries a device loss as a typed error instead of a string — both the text and the check
+are the app's own (`synchronize_lost` writes it, `Health::guard` reads it), so this needs no change
+on the broker's side.
+
 ## Where the audit-derived tests live
 
 Besides the `*.audit.test.ts` unit pins, the audits left E2E cases in three specs:
