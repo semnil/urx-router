@@ -581,10 +581,10 @@ describe("insertFxHoldKeys", () => {
   // the addresses read after it and missed on those read before, and the pair's Signal
   // Type is read BEFORE the selector — so a transition in that gap leaves this predicate
   // comparing two equal, stale values and holding a clearing the unit made for a reason
-  // of its own. Measured on the code before `announced` existed: three keys held, which
-  // the outgoing diff then re-sent. What separates the two causes is the notify stream:
-  // measured on a URX44V, the transition announces the selector and the bypass on both
-  // members, the rate excursion announces the rate and nothing else.
+  // of its own. Without `announced`, keys are held that the outgoing diff then re-sends.
+  // What separates the two causes is the notify stream: the transition announces the
+  // selector and the bypass on both members, the rate excursion announces the rate and
+  // nothing else.
   it("leaves a route alone when the unit announced the change itself", () => {
     const before = basePlan();
     before.nodeParams.ch1 = selected(before);
@@ -670,8 +670,8 @@ describe("insertFxHoldKeys", () => {
   // A SCOPED read has no rate of its own, and is not therefore blind: it reads a node's
   // insert FX like any other body value, so one already running when the unit clears an
   // effect is the FIRST to see the cleared selector — ahead of the full read the rate
-  // notify escalates to, which then finds nothing left to hold. Measured before the
-  // announced rate could decide on its own: nothing held, and the effect was gone.
+  // notify escalates to, which then finds nothing left to hold. Without the announced
+  // rate deciding on its own, nothing is held and the effect is gone.
   it("holds on a rate the unit announced even when the read established none of its own", () => {
     const before = basePlan();
     before.nodeParams.ch1 = selected(before);

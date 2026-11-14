@@ -66,12 +66,12 @@ describe("sample rate — command ordering", () => {
   });
 
   it("writes the features the block diagram calls unavailable above 96 kHz", () => {
-    // The device ACCEPTS and holds these at 192 kHz — measured on a URX44V for the
-    // stereo CH EQ (213), FX2's fader/send/effect type and the insert FX selector
-    // (135). "The feature is unavailable" does not mean "the parameter is
-    // unwritable": only the DSP is gone, the stored value survives. So the write
-    // still drives the device to the plan, and lowering the rate brings the
-    // settings back into effect with nothing left to re-send.
+    // The device ACCEPTS and holds these at 192 kHz — the stereo CH EQ (213), FX2's
+    // fader/send/effect type and the insert FX selector (135). "The feature is
+    // unavailable" does not mean "the parameter is unwritable": only the DSP is gone,
+    // the stored value survives. So the write still drives the device to the plan,
+    // and lowering the rate brings the settings back into effect with nothing left to
+    // re-send.
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
     plan.sampleRate = 192000;
@@ -99,7 +99,7 @@ describe("sample rate — what a write does about a rate disagreement", () => {
   });
 
   it("asks the operator to choose when the device is slaved to its USB host", () => {
-    // Writing the plan's rate here would be undone ~0.4 s later, and neither answer
+    // Writing the plan's rate here would be undone shortly after, and neither answer
     // (adopt the device's rate / release Follow USB) can be inferred.
     expect(rateAction(96000, { followUsb: true, sampleRate: 48000 })).toBe("askChoice");
   });

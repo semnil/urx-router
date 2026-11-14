@@ -50,10 +50,9 @@ describe("plot drawing stays off the frame instead of on its edge", () => {
     // in this suite passes either way, which is how 40 survived a measurement that had
     // already contradicted it.
     //
-    // 52 is the measured value (the project's private notes, signal-side sweep,
-    // 2026-08): the residual minimum is 51 dB and 50 / 52 / 54 are indistinguishable, so
-    // the source takes the round middle. Written out here rather than imported — importing
-    // the constant would make this agree with any value it is given.
+    // 52 is the fitted value: the residual minimum is 51 dB and 50 / 52 / 54 are
+    // indistinguishable, so the source takes the round middle. Written out here rather than
+    // imported — importing the constant would make this agree with any value it is given.
     const SOFT_KNEE_DB = 52;
     const compGeo = COMP_DYN.plotGeo(W, H, {} as never);
     const thr = -30;

@@ -362,8 +362,7 @@ function mbcResponses(v: DynValues): {
 }[] {
   return MBC_BANDS.map((b) => {
     // A bypassed band is a straight line: the unit passes it through with neither the
-    // compression nor the make-up. Measured — with the other two silenced so the post meter
-    // read this band alone, a bypassed band sat ON its unity level and 92 dB above silence.
+    // compression nor the make-up.
     if (mbcRaw(v, b.bypass)) {
       return { band: b.band, gainDb: 0, thresholdDb: null, out: (inDb: number): number => inDb };
     }
@@ -918,9 +917,9 @@ function insFxFace(): DynProcessor {
       // treatment. A tag says why THIS row cannot be touched, and it earns its space where
       // some rows carry it and others do not; here it is every row for one reason, so
       // eighteen copies of one word carry nothing a reader did not have from the first. The
-      // reason is on the panel's own line instead — and the cost of the other way was
-      // measured: the word wraps inside a card and the panel grew 414px, which is the
-      // resize under the pointer that "no row is ever removed" exists to stop.
+      // reason is on the panel's own line instead — the other way, the word wraps inside a
+      // card and the panel grows, which is the resize under the pointer that "no row is ever
+      // removed" exists to stop.
       if (fam === "mbc") {
         // The 1-knob's own Level is locked too while the knob is off, and it is not a row
         // of this panel — `mbcOneKnobSection` draws it, and asks the same predicate.

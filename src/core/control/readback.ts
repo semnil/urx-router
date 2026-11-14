@@ -170,9 +170,8 @@ function readers(source: ParamSource): Readers {
  * A source that answers an address out of what the DEVICE ANNOUNCED about it, and
  * reads everything else.
  *
- * The unit acks a write before the value is readable: measured on a URX44V, a GET of a
- * just-written address answers the PRE-write value until that write's own change notify
- * arrives, 9-204 ms after the write was issued (n = 87, value-paired). The caller
+ * The unit acks a write before the value is readable: a GET of a just-written address
+ * answers the PRE-write value until that write's own change notify arrives. The caller
  * settles first (see settle.ts), so every entry here is a value the unit itself has
  * spoken. What that adds over reading the address is a statement of a different kind:
  * an announcement names what the unit took, where a read anywhere near the boundary can
@@ -1025,17 +1024,16 @@ async function readPass(
   //
   // Live sync's `sideEffect` refetch skips this entirely, and the reason is not
   // cost. **The name path has the same post-write staleness window as every
-  // numeric one** — measured on a URX44V (System V1.3.1.0): a name written and
-  // then polled every 4 ms answered the PREVIOUS name for 81 ms. But the numeric
-  // repair does not reach here. `writeOverlay` answers an address out of what
-  // the unit ANNOUNCED for it, and no name announcement can get into it: a name
-  // is written on the string path (`vdSetStr`), and that loop in `live.ts`
-  // records nothing in the flush's write ledger, so a name address is never in
-  // the `PendingWrites` the overlay is built from. The unit's notify itself does
-  // arrive — name addresses are registered, which is what carries a rename made
-  // on the unit — but it arrives at the follow layer, not here. A settle would
-  // therefore always spend its whole bound, and answering from the send is what
-  // D1 forbids.
+  // numeric one**: a just-written name still answers as the PREVIOUS name for a
+  // while. But the numeric repair does not reach here. `writeOverlay` answers an
+  // address out of what the unit ANNOUNCED for it, and no name announcement can
+  // get into it: a name is written on the string path (`vdSetStr`), and that loop
+  // in `live.ts` records nothing in the flush's write ledger, so a name address is
+  // never in the `PendingWrites` the overlay is built from. The unit's notify
+  // itself does arrive — name addresses are registered, which is what carries a
+  // rename made on the unit — but it arrives at the follow layer, not here. A
+  // settle would therefore always spend its whole bound, and answering from the
+  // send is what D1 forbids.
   //
   // Not reading is the right answer rather than the cheap one. The refetch exists
   // to collect what the unit RECOMPUTED because of a write, and no parameter
@@ -1328,7 +1326,7 @@ async function readPass(
   // Input source select: decode the channel's source port to its input node and
   // reflect inputNode → channel as a source wire (NONE clears it). MONO CH1-4 read
   // param 22 at the physical slot; stereo channels read param 209 (L) at the stereo
-  // pair index — param 22 only covers the mono slots (confirmed on URX44V).
+  // pair index — param 22 only covers the mono slots.
   const srcStereoIdx = stereoIndexMap(model);
   for (const node of model.nodes) {
     signal?.throwIfAborted();
@@ -1642,9 +1640,9 @@ export function insertFxHoldKeys(model: DeviceModel, ctx: HoldContext): Set<stri
   // A scoped read has no rate of its own (the address has no owner node) and is not
   // therefore blind: it reads a node's insert FX like any other body value, so one
   // already running when the unit clears an effect is the FIRST to see the cleared
-  // selector — before the full read the rate notify escalates to. Measured: without the
-  // announced rate to decide from, that scoped read adopted the clearing, and the full
-  // read behind it then had nothing left to hold.
+  // selector — before the full read the rate notify escalates to. Without the announced
+  // rate to decide from, that scoped read adopts the clearing, and the full read behind
+  // it then has nothing left to hold.
   const rates = [...(ctx.deviceSampleRate === undefined ? [] : [ctx.deviceSampleRate]), ...(ctx.ratesSeen ?? [])];
   if (!rates.length) return held;
   for (const node of model.nodes) {
@@ -1743,10 +1741,9 @@ export interface HoldContext {
    *  another, and two values compared across that gap say nothing about what happened
    *  between them. The notify stream is what carries the order, and it separates the two
    *  clearings by hand: a Signal Type transition announces the insert-FX addresses it
-   *  clears on both members, while the sample-rate excursion announces only the rate
-   *  (both measured on a URX44V). A route named here is therefore one whose clearing has
-   *  a cause of its own, and the hold — which exists for the announced-nothing case —
-   *  leaves it alone. */
+   *  clears on both members, while the sample-rate excursion announces only the rate.
+   *  A route named here is therefore one whose clearing has a cause of its own, and the
+   *  hold — which exists for the announced-nothing case — leaves it alone. */
   announced?: ReadonlySet<string>;
   /** Every sample rate the UNIT announced since the previous read that established one
    *  finished — the session's own starting read included, so an announcement a session

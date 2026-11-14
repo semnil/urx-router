@@ -16,9 +16,9 @@ export const SIM_ROOT = ".urx-lcd-sim";
 
 /** Whether the target owns its own undo, so an undo command belongs to it — the
  *  keyboard leaves the chord alone and the menu hands it `document.execCommand`.
- *  Measured on macOS: the page receives Cmd+Z even with a native Edit menu installed,
- *  and calling preventDefault is what suppresses WebKit's own field undo, so returning
- *  true here is what keeps a text field's undo working. */
+ *  On macOS the page receives Cmd+Z even with a native Edit menu installed, and calling
+ *  preventDefault is what suppresses WebKit's own field undo, so returning true here is
+ *  what keeps a text field's undo working. */
 export function ownsNativeUndo(target: unknown): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.tagName === "TEXTAREA") return true;

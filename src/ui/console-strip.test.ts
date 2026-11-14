@@ -160,8 +160,7 @@ describe("the main fader", () => {
     window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1 }));
   });
 
-  // The other end with no pointerup behind it. Measured 2026-08-14 on Chromium (over its
-  // own DevTools socket) and on the shipping WKWebView (macOS 26.6.1, packaged 1.8.3): a
+  // The other end with no pointerup behind it. In Chromium and in the shipping WKWebView, a
   // window that loses the foreground with the button down gets `blur`, no `pointercancel`,
   // and keeps the capture — so the drag went on writing levels to the plan and out to the
   // unit while another application was frontmost. No E2E tier can reproduce the cause
@@ -189,8 +188,8 @@ describe("the main fader", () => {
 
     // And it stays ended when the window comes back with the button still down. The
     // tuning screens' value rows needed a treatment for this (the engine owns their drag
-    // and re-acquired it — measured on the unit); a drag the view runs itself cannot,
-    // since only a fresh `pointerdown` registers the move handler again.
+    // and re-acquires it); a drag the view runs itself cannot, since only a fresh
+    // `pointerdown` registers the move handler again.
     window.dispatchEvent(new FocusEvent("focus"));
     window.dispatchEvent(new PointerEvent("pointermove", { clientY: 5, pointerId: 1 }));
     expect(main("ch1")).toBe(stillDragging);
@@ -394,9 +393,9 @@ describe("a head knob", () => {
   // Shift rebases both anchors, so entering fine mode mid-drag never jumps the value.
   // The observable is that the same pixels move it less, not the rebase itself.
   //
-  // Only a knob that declares a `fine` step has a fine mode at all — measured, the
-  // STREAMING delay knob is the one that does, and the channel gain is not. Run on a
-  // knob without one, this case compares a value to itself and passes for nothing.
+  // Only a knob that declares a `fine` step has a fine mode at all: the STREAMING delay
+  // knob is the one that does, and the channel gain is not. Run on a knob without one,
+  // this case compares a value to itself and passes for nothing.
   it("moves a shorter distance in fine mode", () => {
     h = consoleHost();
     const knob = h.strip("bus.stream").root.querySelector<HTMLElement>(".con-gain.has-fine .con-knob")!;

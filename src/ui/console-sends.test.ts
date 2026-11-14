@@ -41,8 +41,8 @@ const colOf = (id: string, short: string): HTMLElement => {
 const level = (id: string, target: string): number | undefined =>
   sendConnection(h.plan, id, target)?.params?.level as number | undefined;
 
-// Every send ships OFF (-96.5 dB, measured on the default URX44V plan). Tests about the
-// ordinary stepping seed a real level first; the OFF end has a case of its own below.
+// Every send ships OFF (-96.5 dB). Tests about the ordinary stepping seed a real level
+// first; the OFF end has a case of its own below.
 const seedLevel = (id: string, target: string, db: number): void => {
   const c = sendConnection(h.plan, id, target)!;
   c.params = { ...c.params, level: db };
@@ -52,7 +52,7 @@ const seedLevel = (id: string, target: string, db: number): void => {
 describe("the rack's column set", () => {
   // The alignment claim. A strip with no send to MIX 2 still spends that column's
   // width, or the racks below it would sit one column to the left of the racks above.
-  // Measured on a URX44V: the slot set is FX 1 / FX 2 / MIX 1 / MIX 2 = four columns.
+  // The slot set is FX 1 / FX 2 / MIX 1 / MIX 2 = four columns.
   it("gives every sending strip the same number of columns, filling the ones it lacks", () => {
     h = consoleHost();
     const counts = new Set<number>();
@@ -901,8 +901,8 @@ describe("storage that cannot be trusted", () => {
 
 describe("the slot set follows the model", () => {
   // The column set is derived from the buses this model actually shows, not hard-coded.
-  // Measured: a URX22 carries the same four (F1 / F2 / M1 / M2) as a URX44V, so the
-  // model is not what makes the set differ — SHELVING a bus out of the graph is.
+  // A URX22 carries the same four (F1 / F2 / M1 / M2) as a URX44V, so the model is not
+  // what makes the set differ — SHELVING a bus out of the graph is.
   it("carries the same four slots on a URX22", () => {
     h = consoleHost({ modelId: "URX22" });
     expect([...rack("ch1").querySelectorAll<HTMLElement>(".con-scol .con-sl")].map((c) => c.textContent)).toEqual([
