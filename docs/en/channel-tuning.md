@@ -595,7 +595,7 @@ plan keeps the ONs it held.
 ### Above 96 kHz
 
 A stereo channel's EQ is not merely locked in the app at 176.4 / 192 kHz: a 1 kHz high-pass that cuts
--13 dB at 500 Hz passes it untouched at both rates, while the parameters are still stored
+-12 dB at 500 Hz passes it untouched at both rates, while the parameters are still stored
 and returned. The rows lock with the rate's own sentence rather than the device-driven one, and the
 response is drawn sunk instead of left looking effective.
 

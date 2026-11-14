@@ -422,9 +422,8 @@ export class DeviceSetupPanel {
     );
     // This row is the app's only slider that commits on `change`, and an engine will not
     // synthesize that change when the control is disabled — Chromium fires it early, at
-    // the disable, and WebKit fires none at all (measured 2026-08-14), which loses the
-    // value the operator dragged to. So the commit is made here, from the element, before
-    // anything is held.
+    // the disable, and WebKit fires none at all, which loses the value the operator
+    // dragged to. So the commit is made here, from the element, before anything is held.
     holdInertOnBlur(input, {
       beforeDisable: () => this.edit({ brightness: Number(input.value) }),
       live: () => this.box.querySelector<HTMLInputElement>("#device-setup-brightness"),

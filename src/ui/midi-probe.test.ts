@@ -100,11 +100,10 @@ describe("midi probe", () => {
   };
 
   // The engine's clock is `performance.now()`, and the shipping webview clamps it to
-  // whole milliseconds (measured on macOS WKWebView, 2026-08-16: 419 records over five
-  // launches, none carrying a fraction) while jsdom and Chromium keep sub-millisecond
-  // values. The same report is therefore read at two resolutions, so it states which one
-  // it is in: printing `.00` on every line of a real-device run claims a precision the
-  // reading does not have, and a 0 there means "below the clock", not "simultaneous".
+  // whole milliseconds while jsdom and Chromium keep sub-millisecond values. The same
+  // report is therefore read at two resolutions, so it states which one it is in: printing
+  // `.00` on every line of a real-device run claims a precision the reading does not have,
+  // and a 0 there means "below the clock", not "simultaneous".
   it("drops the decimals, and says what it counted, when the clock carries no fractions", () => {
     const text = reportAtClock(1000, 1002, 1004);
     expect(text).toContain("first rx +4 ms");

@@ -1916,9 +1916,9 @@ export class Console {
   // Paint a scribble with the node's device CH SETTING colour, or with the rail
   // fallback when unset — and pick the ink for whichever ground it ends up being.
   // The fallback used to return early, which left every rail-coloured scribble on
-  // the stylesheet's fixed ink and no halo at all: measured, four of the five rails
-  // are mid-tones where that ink loses by 30-40 Lc, and two of them reach neither
-  // ink's floor, which is exactly where the halo does the work.
+  // the stylesheet's fixed ink and no halo at all: four of the five rails are
+  // mid-tones where that ink loses by 30-40 Lc, and two of them reach neither ink's
+  // floor, which is exactly where the halo does the work.
   private paintScribble(scrib: HTMLElement, m: StripModel): void {
     const color = planColorHex(this.hooks.getPlan().nodeColors?.[m.id]);
     const ink = color ? inkOn(color) : this.inkForRail(m.rail);
@@ -2737,17 +2737,16 @@ export class Console {
   // height seen to move, since what balances it is a coincidence of counts rather than a
   // rule.
   //
-  // The sample rate is in the key too, and it earns its place differently. Measured
-  // 2026-08-14 over URX44V / URX44 / URX22 at 48 / 96 / 176.4 / 192 kHz, on each one's
-  // default plan (17 / 17 / 15 heads), the rate moved no head in that set — chip count,
-  // grid row count and element count come back identical at every rate. It does change
-  // what a stereo channel's head CARRIES: above 96 kHz the EQ opener goes and the chip
-  // beside it turns read-only. What absorbs that is the parity spacer, appended so a
-  // group's last chip never stretches to full width — it takes the freed slot, and a
-  // two-column group of 7-plus-spacer is the same number of rows as one of 8. So the term
-  // is here for the shape of that compensation rather than for a height seen to move: it
-  // costs one re-measure per rate change, and either rule changing without it is the
-  // clipped head above, in silence.
+  // The sample rate is in the key too, and it earns its place differently. On every
+  // model's default plan the rate moves no head: chip count, grid row count and element
+  // count stay the same at every rate. It does change what a stereo channel's head
+  // CARRIES: above 96 kHz the EQ opener goes and the chip beside it turns read-only.
+  // What absorbs that is the parity spacer, appended so a group's last chip never
+  // stretches to full width — it takes the freed slot, and a two-column group of
+  // 7-plus-spacer is the same number of rows as one of 8. So the term is here for the
+  // shape of that compensation rather than for a height seen to move: it costs one
+  // re-measure per rate change, and either rule changing without it is the clipped head
+  // above, in silence.
   //
   // Each channel's input stage is in the key as well: the jack or source it reads decides
   // whether its head carries +48, Hi-Z and a gain knob at all — a channel with no source
@@ -3227,8 +3226,7 @@ export class Console {
     // Master balance (STEREO 583 / MIX 676) = the bus output's L/R balance, edited
     // on the node's own `pan`. `busBalance` is the single source of truth for which
     // buses have one (shared with the inspector / translate / readback). The device
-    // keeps the BALANCE label even under Pan Link (confirmed on URX44V), so it is
-    // always "BAL".
+    // keeps the BALANCE label even under Pan Link, so it is always "BAL".
     if (busBalance(m.id)) {
       this.addNodePanKnob(head, m.id, "BAL");
     }
@@ -3363,8 +3361,8 @@ export class Console {
       // The cap centre travels the element's whole height (`--pos` is a percentage of
       // it, under a -50% translate), so that is the scale a pointer maps through — not
       // the groove's 6 px inset, which used to be subtracted here and made the mapping
-      // agree with the cap at mid-travel only, drifting to 1.3 detents by either end
-      // (measured at the default window; 2.7 at the minimum one).
+      // agree with the cap at mid-travel only, drifting by more than a detent toward
+      // either end.
       const travel = rect.height;
       // A press that lands on the cap grabs it where it is and writes nothing: the cap
       // is 14 px on a travel worth a few pixels per detent, so jumping to the pointer
@@ -3463,8 +3461,8 @@ export class Console {
     // whose expectation is the defect, so a fix has to rewrite that case as a set.
     // What closes it is one line — re-invoking `startMeters()` at the end of
     // `resubscribeMeters`, which self-guards and no-ops when the kept signature
-    // already matches. Left out of the 2026-08-13 audit's fixes deliberately, as the
-    // one finding of the 51 triaged out; nothing has decided against it since.
+    // already matches. It was left out of an audit's fixes deliberately; nothing has
+    // decided against it since.
     if (!this.subPending && (!this.unsub || sig !== this.subSig)) {
       this.unsub?.();
       this.unsub = null;
@@ -4153,8 +4151,8 @@ export class Console {
 // both #rrggbb as numbers. Unlike a WCAG ratio — which is two relative luminances
 // divided — this carries polarity and the non-linearity of vision at the dark end,
 // and that is exactly where the two disagree: on saturated mid-tones a ratio
-// systematically picks the wrong ink. Measured across the device's ten CH SETTING
-// colours plus the five node rails, the two verdicts differ on 12 of 21 grounds.
+// systematically picks the wrong ink: across the device's CH SETTING colours and the
+// node rails, the two verdicts often differ.
 // Only the magnitude is used here, since which ink wins is the whole question.
 function apcaLc(text: number, bg: number): number {
   const y = (n: number): number => {

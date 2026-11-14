@@ -76,12 +76,9 @@ const DIRECT_OUT_NOTES: Record<NonNullable<ReturnType<typeof directOutTarget>>, 
  *  It runs up to FOUR linear scans of the model's rules (directOutTarget, ruleKind,
  *  canPatchFromMonitor — which alone does not short-circuit and walks all of them —
  *  and duckerKeySource), and `makeWire` calls it for every wire, so it is on the
- *  redraw path a node drag fires per pointermove.
- *  **Measured** (URX44V default plan, 358 rules, 75 wires, 2000 redraws):
- *  **0.070 ms per redraw**, 0.93 us per wire — 0.4% of a 60 fps frame, 1.4 ms per
- *  second at the live-follow rate. Recorded so the next reader has the number
- *  rather than the arithmetic, and so a change here has something to regress
- *  against; no bench covers this path. */
+ *  redraw path a node drag fires per pointermove. Its cost per redraw is a small
+ *  fraction of a 60 fps frame, and stays small at the live-follow rate; no bench covers
+ *  this path. */
 export function sendlessNote(
   model: DeviceModel,
   from: string,

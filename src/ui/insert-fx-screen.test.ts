@@ -1708,11 +1708,9 @@ describe("the multi-band compressor", () => {
   });
 
   it("draws a bypassed band at unity, and its MAIN step at 0", () => {
-    // Measured: with the other two bands silenced so the post meter read this one alone, a
-    // bypassed band sat ON its unity level and 92 dB above silence — neither its compression
-    // nor its make-up reaches the signal. Drawn from the values it still holds, the figure
-    // would show a knee the unit is not applying and a step at a level it is not coming
-    // back at.
+    // A bypassed band sits ON its unity level: neither its compression nor its make-up
+    // reaches the signal. Drawn from the values it still holds, the figure would show a knee
+    // the unit is not applying and a step at a level it is not coming back at.
     const shaped = { "ifx:mbc:9": 81, "ifx:mbc:10": 6, "ifx:mbc:11": 55 };
     const ysFor = (raws: Record<string, number>, sel = LOW): number[] => {
       const ctx = mbc(sel);
