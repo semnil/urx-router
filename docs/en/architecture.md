@@ -21,6 +21,15 @@ hardware over live sync in the desktop build.
 Hardware control is handled on the Tauri (Rust) side, and the UI and core (model / constraints /
 plan) are kept shell-independent.
 
+Node in the range `package.json` `engines` declares is required. That range is where the `engines` ranges
+of the direct dependencies meet, together with the 21.2 the `?plan=` deep-link codec's
+`CompressionStream("deflate-raw")` needs; `pnpm test node-engines` fails when the field and that
+intersection differ, so a dependency update that narrows its range is red on its own pull request. The
+Rust counterpart is `src-tauri/Cargo.toml`'s `rust-version`, held to the highest one the locked crates
+declare by `cargo test --manifest-path src-tauri/Cargo.toml --test rust_version`
+(`src-tauri/tests/rust_version.rs`). The matching browser floor is Safari 16.4+; `plan.ts` raises a typed
+`planUrlUnsupported` error on older webviews instead of failing as a malformed link.
+
 ## Module structure
 
 ```mermaid
@@ -5308,6 +5317,155 @@ included — and the next merge's runs cover the tree that contains it. `tag-rel
 `ci.yml` finishing on main, so it does not run either, and a Dependabot pull request does not move the
 `version` it compares.
 
+### Pull-request checks
+
+CI is the workflows under `.github/workflows/`:
+
+- PRs run build + e2e typecheck (`pnpm typecheck:e2e`) + the race harness's skip ledger
+  (`pnpm check:skips`) + unit tests + **the ordinary E2E suite** + **`cargo test`**, the last three on
+  `windows-latest` as well (`ci.yml`; its expensive jobs skip `**/*.md` / `docs/**`-only changes, except
+  the skill's generated `references/model-*.md`, which `skill-export.test.ts` diffs, and except the unit
+  job, the ordinary E2E tier and the job that uploads their coverage, which run on every pull request
+  because `codecov/project` is required — that skip is a **job** condition, decided once by the
+  `preflight` job from the API's own file list, and never a trigger filter, for the reason in
+  "What a merge waits for" below) and get their formatting verified (`format.yml`: Prettier + cargo fmt
+  applied to a checkout, failing on the resulting diff and never pushing a fix back — the workflow header
+  carries why a required check cannot coexist with a bot push);
+- the document and configuration checks are `docs.yml`, which runs on **every** PR and push
+  (`pnpm check:md` + `pnpm check:assets` + `pnpm check:gates` + `pnpm check:comments`, and on a pull
+  request `pnpm check:pr-assumptions` as well — seconds, no install — and running unfiltered is what lets
+  `pnpm check:assets` see a moved file the documents still name);
+- the live-sync race harness is its own `race.yml` (three shards + a WebKit job), whose harness jobs run
+  on **every PR except a documentation-only one, and on the version-bump PR** — a `detect` job, which
+  itself runs on every PR, diffs the changed paths against the base and compares the `version` field
+  across the PR, since `paths-ignore:` on the trigger would skip the whole workflow, which reports no
+  check run at all, and could not ask whether the version moved — and on demand via
+  `gh workflow run race.yml --ref <branch>`;
+- the tiering — where each tier runs, why the boundary is cut there, and how often the trigger fires —
+  lives in `docs/{en,ja}/live-race-harness.md`, and `race.yml`, `ci.yml` and `post-merge.yml` point at
+  that document instead of restating it;
+- the third-party license gate and the platform Rust cache warming run post-merge (`post-merge.yml`; the
+  warm build keeps the next release off a cold cache — rationale in the job header);
+- license generation itself is the reusable `licenses.yml`, called by both `post-merge.yml` and
+  `release.yml` (once per run, its artifact feeding both platform builds);
+- the desktop installers build for a `vX.Y.Z` tag into a draft Release (`release.yml`) and the browser
+  demo deploys to GitHub Pages when that draft is **published** (`pages.yml`, on `release: published`);
+  `tag-release.yml` is what creates that tag.
+
+**The frontend unit job and each of the ordinary E2E tier's three shards produce coverage for Codecov,
+and ci.yml's `coverage` job uploads all four once every one exists** — under the flags `unit` and `e2e`,
+four uploads that Codecov merges into one reading, with its statuses held until all four have arrived;
+the race jobs upload none — **and Codecov's own behaviour is configured in `.github/codecov.yml`**: the
+service's defaults fail the `project` status on any decrease at all while the E2E half of the merged
+figure is not reproducible to the line, so the threshold, the readings behind it and why `patch` stays at
+its default are in that file and stated nowhere else.
+
+**The `cargo test` job runs on macOS and Windows**, not the cheaper Ubuntu runner: this crate is only
+ever built on macos-26 and windows-latest, so those are the two it is tested on, and a Linux build would
+need libwebkit2gtk from the Ubuntu mirror — the same sequential apt path every E2E job above avoids, on a
+platform nothing else here compiles on. **It is what compiles `src-tauri` on a pull request**, and
+`cargo check` would not cover it: it does not build `#[cfg(test)]`.
+
+How third-party actions are pinned, and which Dependabot pull requests merge on their own and what those
+merges leave unrun, is described above.
+
+### What a merge waits for
+
+The branch ruleset on `main` requires these status checks — `ci-required`, `docs-required`, `format`,
+`race-required`, `auto-merge`, and Codecov's `codecov/project` — and `.github/required-checks.json` is
+the only place that list is written down outside GitHub's own settings. Two properties of a skipped check
+shape all of it: a required context that a trigger filter skips sits at "Expected" for good, so **every
+pull-request workflow triggers unfiltered and every path-dependent skip is a job condition**; and a job
+skipped because something it needed failed reports success, so **the two gates are `if: always()` jobs
+that read `needs.*.result` themselves** — wired with a bare `needs:`, a gate would be skipped by its own
+failed dependency and the ruleset would read a red run as green. A gate also has to wait for *every* job
+in its workflow, or a new job's failure blocks nothing. `pnpm check:gates` holds all of that from the
+workflow side, and runs in both `preflight` and `docs.yml` so a change to either one's trigger is still
+caught by the other. The ruleset itself it can only check with `--ruleset` from an admin's machine:
+`permissions:` has no administration scope, so **no token available to CI can read a ruleset** — and
+nothing here writes one either, so the manifest and the live rule are two hand-kept copies with
+`pnpm check:gates --ruleset` as the only thing that compares them. **Until that command reports every one
+of them, this section describes the manifest rather than the repository**, and the check that is missing
+from the ruleset is one nothing objects to merging over.
+
+Two further properties decide what may be added here. **Nothing in CI writes to a pull request's
+branch**; the same rule's other half — a push made with the repository's `GITHUB_TOKEN` starts no
+workflow — is what `tag-release.yml` works around ("How a release fires" below). That is why `format.yml`
+verifies rather than fixes, and it is the test any "CI fixes it for you" idea has to pass. And Codecov's
+statuses report only once a pull request's uploads have arrived, which is the "sometimes reports" shape
+the whole arrangement is built to keep out — so `codecov/project` is required only together with the
+uploads it is computed from running on every pull request, a documentation-only one included, and a
+failed upload failing the job that makes it on a pull request; `pnpm check:gates` holds the first half.
+`codecov/patch` stays out of the list.
+
+One thing nothing here can catch, because it is a repository setting rather than a file: **turning on a
+merge queue breaks all of them at once** — a queued pull request runs on the `merge_group` event, which
+no workflow here triggers on, so every required context goes missing on the branch the queue builds.
+Adding that trigger is part of enabling the queue, not a follow-up. The ruleset has no bypass actor and
+requires no approving review, so all of this gates the operator's own merges as well as everyone else's.
+
+### Time bounds on jobs and fetches
+
+**Every job carries a `timeout-minutes`, and every step that fetches from a host outside GitHub carries
+one too**. Each is sized from the job's duration with several times the headroom, because a false timeout
+on the release path costs far more than a slow one. `.github/actions/install-browsers` is the one place
+that carries the reasoning, the measurements and the message, and its header is the one home for every
+external fetch's step durations — pnpm setup and `pnpm install`, the Rust toolchain, cargo-about,
+`cargo test` / `cargo build`, tauri-action, the Codecov upload and the Windows E2E job's
+`playwright install` — so each of those steps carries a bare bound that points at it.
+
+**`pnpm check:gates` holds that half**: a step that uses one of those actions or
+`.github/actions/install-browsers`, or whose `run:` holds one of those commands, fails it without a
+`timeout-minutes` of its own, and a step `uses:` of an action the checker classifies neither as such a
+fetch nor as one whose fetches are GitHub's is refused until someone classifies it — the two lists are
+`FETCHING_ACTIONS` and `GITHUB_ONLY_ACTIONS` in `scripts/check-merge-gates.mjs`. **A job's `container:`
+image is pulled before any step exists**, so no step bound can reach that fetch: the job's own bound is
+what stops a stalled pull, and the header carries its timings too.
+
+**Every Ubuntu E2E job runs inside the official Playwright image**: the system-library half of
+`playwright install --with-deps webkit` is far more sequential .deb fetches than chromium's, so a
+degraded Ubuntu mirror can stall it past a whole job, while pulling the image costs no more than the apt
+path does when the mirror is healthy, so it costs nothing in time and takes the Ubuntu mirror out of the
+picture entirely. **`e2e-windows` cannot**: GitHub's Windows runners take no `container:`, so it installs
+Chromium with `playwright install`, which fetches no system libraries there, and `pnpm check:gates` holds
+that command to a step bound like any other fetch. **The counts and timings are stated once, each with
+the date or the runs it came from, in that action's header and nowhere else** — they move with the
+browser build and with the runner image, so a copy drifts. The tag is derived from the lockfile
+(`.github/actions/playwright-version`) and reaches `container:` as a prior job's output, since
+`container:` is evaluated before any step of its own job; hand-pinning it would drift at the first
+Dependabot bump and the symptom is a browser build the installed Playwright does not drive.
+
+**What makes webkit's install fatal and chromium's survivable is that apt is sequential** — the same
+request count over a parallel client is a different risk, which is why `pnpm install` and cargo — both of
+which fetch a comparable number of files, concurrently — run on the runner as they are.
+
+### How a release fires
+
+The version lives in `package.json` alone, and a version bump touches that one file in a pull request
+that carries nothing else; merging that pull request is the release, and nothing else is (the rules are
+in `AGENTS.md` "Development"). The isolation is therefore not tidiness: it is what makes the released
+commit the one the checks ran on, and it is why `race.yml`'s trigger carries a version clause at all.
+What that clause decides on a version bump, and why it is kept, is in
+[live-race-harness.md](live-race-harness.md) "Where each tier runs".
+
+`tag-release.yml` watches `ci.yml` finish on main; when that push moved `package.json`'s `version`, it
+tags the tested commit `vX.Y.Z` and starts the installer build. Two things about it are load-bearing and
+easy to undo by accident. It triggers on `workflow_run` rather than on the push, because the installers
+are built from that tag and **a tag a published release points at cannot be moved afterwards** — so it
+has to name a commit that already has a verdict. And it reaches `release.yml` with
+`gh workflow run ... --ref <tag>` rather than letting its `push: tags:` trigger fire, because a tag
+pushed with the repository's `GITHUB_TOKEN` starts no workflow and `workflow_dispatch` is the exception.
+
+That is why `release.yml`'s `check-tag` gates on `GITHUB_REF_TYPE` being `tag` instead of on the event
+name: a dispatch on a tag must mean what a tag push meant, while a dispatch on a branch stays the
+packaging check that creates nothing. A green branch dispatch is therefore no statement about the
+tag-shape gate: `check-tag` checks the repository out only when the ref is a tag, so on a branch the step
+returns before `scripts/release-tag-shape.sh` is read, and the one run that takes a real tag through it
+is the merge of a version bump. The job is a no-op on any push that did not move the version, refuses to
+move a tag that already exists, and refuses to push one at all in a shape `check-tag` would decline — the
+two read the same `scripts/release-tag-shape.sh`, and asking in front of the push is what keeps a bad
+channel from costing an immovable tag.
+
 ### Browser demo (GitHub Pages)
 
 Separate from the desktop app, a browser-only demo is published to GitHub Pages. `vite build --mode demo`
@@ -5326,8 +5484,11 @@ their place the demo reveals `[data-demo-only]` controls: Share URL copies the p
 (also placed in the address bar as a copy-by-hand fallback), and Download JSON downloads the plan document —
 identical to a desktop save — so a plan built or opened in the demo carries over to the desktop app. The
 `?plan=` payload is deflate-compressed (`"z"` + URL-safe base64, via the platform CompressionStream) so even
-a full device capture stays inside GitHub Pages' ~8 KB URL limit; legacy uncompressed links keep decoding. A
-normal (desktop) build eliminates that branch as dead code and keeps every feature, so distributed binaries
+a full device capture stays inside GitHub Pages' ~8 KB URL limit; legacy uncompressed links keep decoding.
+`decodePlanParam` in `src/core/plan.ts` tells the compressed form from the older uncompressed one by the
+first character (`z` against the `e` an uncompressed document always starts with), and
+`encode_plan_param` in the `urx-routing-planner` skill's `plan_tool.py` writes the form the app reads.
+A normal (desktop) build eliminates that branch as dead code and keeps every feature, so distributed binaries
 are unaffected. `vite.config.ts`'s relative `base: "./"` lets assets resolve under a sub-path.
 
 ### Auto-update
