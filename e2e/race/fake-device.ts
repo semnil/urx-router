@@ -158,9 +158,8 @@ export const DEFAULT_LATENCY: FakeLatency = {
  * closure: a same-value write, an `ignoreWrites` address and a `diverge`d one all leave
  * it where it was, and all three are silent.
  *
- * Measured on a URX44V: 9-204 ms from the write's ISSUE, median ~101 (n = 87 strictly
- * value-paired samples on 6 addresses, 53 of them taken during a real drag), and
- * 58-151 ms from the ack — always after it, 30/30. It is armed from the ack here
+ * On the unit the announcement always follows the write's ack, by an interval whose
+ * spread reaches past live.ts's 120 ms flush window. It is armed from the ack here
  * because that is the ordering, and because `latency.set` is a knob a case can set
  * anywhere (see Served.announce).
  *
@@ -168,14 +167,13 @@ export const DEFAULT_LATENCY: FakeLatency = {
  * stays under live.ts's 120 ms flush window so the ordinary cases are not all measuring
  * the overtake — an announcement that arrives after the next write of a drag is matched
  * against a snapshot that has moved on. That is a real device behaviour, not a hazard of
- * the fake: the ack+58-151 ms measured three lines above crosses 120, so the unit DOES
+ * the fake: the unit's ack-to-announcement interval crosses 120, so the unit DOES
  * present it. This comment used to say the opposite ("one the unit does not actually
- * present"), which is why no case set this above 120 for a year; `late echo of an
- * overtaken write` in t3-undo.spec.ts is the one that deliberately does. Below: it has
- * to outlast the read an
- * unfixed app issues straight after its write, or the staleness a case armed is already
- * over when that read arrives and the defect goes green; T1c's refetch reaches the
- * address ~26 ms after the write on the measured trace.
+ * present"), which is why no case set this above 120; `late echo of an overtaken write`
+ * in t3-undo.spec.ts is the one that deliberately does. Below: it has to outlast the
+ * read an unfixed app issues straight after its write, or the staleness a case armed is
+ * already over when that read arrives and the defect goes green; T1c's refetch is such
+ * a read, and it reaches the address well inside this bound after the write's ack.
  */
 export const ANNOUNCE_MS = 100;
 
@@ -206,13 +204,11 @@ export interface FakeHandle {
    * Post-write read staleness: address ("paramId:x:y") → how many reads of it, after
    * EACH write to it, answer the value it held BEFORE that write.
    *
-   * The unit acks a write before the value is readable. Measured on a URX44V (System
-   * V1.3.1.0) across six addresses and three parameter classes: a GET of a just-written
-   * address answers the pre-write value until that write's own device notify arrives —
-   * 9-204 ms from the write's issue, 87 value-paired samples with no counterexample.
-   * `mem` stays truthful throughout: the unit ACCEPTED the write, which is what
-   * separates this from `ignoreWrites` (acked, never stored) and from `diverge` (holds
-   * for ever a value the app never wrote).
+   * The unit acks a write before the value is readable: a GET of a just-written address
+   * answers the pre-write value until that write's own device notify arrives. `mem`
+   * stays truthful throughout: the unit ACCEPTED the write, which is what separates this
+   * from `ignoreWrites` (acked, never stored) and from `diverge` (holds for ever a value
+   * the app never wrote).
    *
    * WHICH reads are stale is COUNT-based, not time-based. A duration would make every
    * verdict a property of CI load; a count makes "the refetch's read is the stale one"
@@ -634,13 +630,13 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         s.spent++;
         return s.value as number;
       };
-      // The same window on the NAME path. Measured on a URX44V: a channel name written
-      // and then polled every 4 ms answered the PREVIOUS name for 81 ms — the string
-      // path is not exempt, and it was modelled as exempt here for the harness's whole
-      // life. It matters more than the numeric case, not less: a stale numeric read
-      // oscillates and is visible, while a stale NAME read goes into the plan and
-      // `nameSnapshot` together, so they agree, no diff is left, and the operator's
-      // rename is reverted with nothing to retry.
+      // The same window on the NAME path: a channel name just written answers the
+      // PREVIOUS name until the write's own notify arrives — the string path is not
+      // exempt, and it was modelled as exempt here for the harness's whole life. It
+      // matters more than the numeric case, not less: a stale numeric read oscillates
+      // and is visible, while a stale NAME read goes into the plan and `nameSnapshot`
+      // together, so they agree, no diff is left, and the operator's rename is reverted
+      // with nothing to retry.
       const takeVisibleStr = (k: string): string => {
         const s = openStale(k);
         if (!s) return fake.memStr[k] ?? "";
@@ -674,26 +670,27 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // The unit announces a write that CHANGED the value it reports, and that
       // announcement is what ends the staleness window — the boundary the staleness was
       // measured against rather than a separate stimulus. Nothing else closes it: a
-      // device that accepts a value-changing write and never announces it is not a
-      // device any URX measurement describes (30/30 value-paired), and an app that waits
-      // for the announcement before re-reading would then be failed here for the fake's
-      // own contradiction rather than for a defect.
+      // device that accepts a value-changing write and never announces the value it ends
+      // up holding is not a URX, and an app that waits for the announcement before
+      // re-reading would then be failed here for the fake's own contradiction rather
+      // than for a defect.
       //
       // Armed from the ACK rather than from the queue point (see Served.announce), which
-      // is also the interval the measurement brackets most tightly: 58-151 ms after the
-      // ack, always after it, 30/30. `announceMs` defaults below live.ts's flush window,
-      // so an ordinary case's announcement lands before the next write of a drag. Set
-      // above it, an announcement arrives after the next write has moved the snapshot on,
-      // which the unit also presents (the header above); the app then matches it against
-      // the queue of acked-but-unannounced writes rather than the snapshot, and
-      // `late echo of an overtaken write` in t3-undo.spec.ts is the case that raises it.
+      // is also where the unit's timing is tightest: the announcement always follows the
+      // ack, and varies less from it than from the write's issue. `announceMs` defaults
+      // below live.ts's flush window, so an ordinary case's announcement lands before
+      // the next write of a drag. Set above it, an announcement arrives after the next
+      // write has moved the snapshot on, which the unit also presents (the header above);
+      // the app then matches it against the queue of acked-but-unannounced writes rather
+      // than the snapshot, and `late echo of an overtaken write` in t3-undo.spec.ts is
+      // the case that raises it.
       //
-      // Three silences, and the same rule produces all of them. A same-value write:
-      // measured, 18 of them acked in 0-1 ms and produced none. A write the fake never
-      // accepted (`ignoreWrites`), the acked-and-silently-discarded model: nothing it
-      // reports moved. And a write to a `diverge`d address, which is the same shape from
-      // the reporting side — the unit goes on asserting the value it already held, so
-      // there is nothing new to announce, and its reads and its (absent) notify agree.
+      // Three silences, and the same rule produces all of them. A same-value write: the
+      // unit acks it and announces nothing. A write the fake never accepted
+      // (`ignoreWrites`), the acked-and-silently-discarded model: nothing it reports
+      // moved. And a write to a `diverge`d address, which is the same shape from the
+      // reporting side — the unit goes on asserting the value it already held, so there
+      // is nothing new to announce, and its reads and its (absent) notify agree.
       // Announcing the asserted value instead would be a notify contradicting the fake's
       // own `mem` and carrying a value the app never sent, which is a DEVICE-SIDE CHANGE
       // to the app, not a coercion. A coerced write is a transform applied to the write
@@ -706,8 +703,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // the change it belongs to. Read lazily, an announcement carries a LATER write's
       // value and arrives before that write's ack, so the app sees a value its snapshot
       // cannot hold yet, calls it a device-side change, and applies it over whatever the
-      // operator has moved to since. (Measured against the app: a 240-detent key train
-      // landed 5-14 dB off.)
+      // operator has moved to since.
       //
       // A write SUPERSEDED before its announcement went out is never announced: the unit
       // reports the value it ended up holding and says nothing about what it passed
@@ -858,22 +854,20 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           // for the harness's whole life, and it drifted unnoticed because nobody could
           // read the two arms side by side.
           //
-          // BOTH HALVES OF THE RULE ARE MEASURED HERE, not carried over from the
-          // numeric path. The ORDER: 32 name writes over two runs announced after their
-          // own ack, 32/32 — ack 0-4 ms from the issue, notify ack+1-102 ms. The
-          // SILENCE (`now !== said`): a same-value name write acked in 0 ms and
-          // announced nothing in 2000 ms, bracketed by a value-changing write on each
-          // side of one subscription so a dead stream could not pass for a silent
-          // device. And the WINDOW: 81 ms on a URX44V, closed by the write's own notify
-          // — a fake that armed it and never closed it would describe a device that
-          // goes on answering a name it no longer holds.
+          // BOTH HALVES OF THE RULE HOLD ON THE NAME PATH IN THEIR OWN RIGHT, not
+          // carried over from the numeric path. The ORDER: a name write is announced
+          // after its own ack. The SILENCE (`now !== said`): a same-value name write is
+          // acked and announces nothing. And the WINDOW: a name just written reads back
+          // as the one it replaced until the write's own notify closes it — a fake that
+          // armed it and never closed it would describe a device that goes on answering
+          // a name it no longer holds.
           //
-          // `announceMs` (the numeric median, 100) is reused for names even so, and one
-          // number is why that is a choice rather than a fit: most name notifies land at
-          // 66-102 ms, but 2 of the 32 arrived under 10 ms — a low tail the numeric
-          // spread (ack+58-151 ms) does not have, cause unidentified. Erring LATE is the
-          // hazardous direction, so modelling the late cluster is what keeps the
-          // overtake case reachable; a fake at 5 ms would simply never produce it.
+          // `announceMs` (100) is reused for names even so, and that is a choice rather
+          // than a fit: most name notifies land late, inside the numeric spread, but a
+          // few arrive almost at once after the ack — a low tail the numeric spread does
+          // not have, cause unidentified. Erring LATE is the hazardous direction, so
+          // modelling the late cluster is what keeps the overtake case reachable; a fake
+          // at 5 ms would simply never produce it.
           //
           // An address the session did not register is still dropped at the bridge, so
           // Sweet Spot Data (param 91, in no registration) reaches nothing.
@@ -949,9 +943,9 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         // continuation, and so is the ack a write's announcement is armed from. Armed at the
         // queue point instead, a case with a slow link would receive the unit's word about a
         // write before the app was told the write landed — an ordering the unit never
-        // produces (the notify follows the ack, ack+58-151 ms, 30/30), which the app then
-        // reads as a device-side change to an address whose snapshot entry it has not
-        // written yet. A refused or lost write is not acked, so it announces nothing.
+        // produces (the notify always follows the ack), which the app then reads as a
+        // device-side change to an address whose snapshot entry it has not written yet.
+        // A refused or lost write is not acked, so it announces nothing.
         const end = (): void => void put("ipc-end", { cmd, of: start, detail: endDetail });
         answered.then(() => {
           end();
@@ -1148,8 +1142,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           case "vd_set_str":
             // Announced after the ack, never before it — `handle` arms it as the answer
             // reaches the app. One arm for both, because that ordering rule is one rule:
-            // measured on the numeric path (ack+58-151 ms, 30/30) and on the string path
-            // (ack+1-102 ms, 32/32).
+            // it holds on the numeric path and on the string path alike.
             await wait(cmd === "vd_set" ? config.latency.set : config.latency.setStr);
             done();
             return null;
@@ -1224,12 +1217,11 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
  *
  *  What made it matter: the first actionability-gated action after a cold page load
  *  waits on Playwright's stability gate, which is a requestAnimationFrame loop needing
- *  two consecutive frames. Headless WebKit delivers its first frames sparsely
- *  (measured on macOS WebKit: 2 frames in the first 187 ms of a document, against a
- *  ~16 ms cadence once the page is warm), so on a CI runner that first check is the
- *  one long wait in the run — and `goLive`'s opening click is where every case meets
- *  it. It is not the app: the button's own box is byte-identical across 92 consecutive
- *  frames. The `waitForSelector` below already carried its own bound for the readback;
+ *  two consecutive frames. Headless WebKit delivers its first frames sparsely, far
+ *  apart against its cadence once the page is warm, so on a CI runner that first check
+ *  is the one long wait in the run — and `goLive`'s opening click is where every case
+ *  meets it. It is not the app: the button's own box stays byte-identical frame after
+ *  frame. The `waitForSelector` below already carried its own bound for the readback;
  *  the clicks were left inheriting, which is what made this a WebKit-only flake. */
 const SESSION_UP_TIMEOUT_MS = 30_000;
 
@@ -1568,8 +1560,8 @@ export const divergeAt = (page: Page, addr: string, value: number): Promise<void
  * address never agrees with the app, a stale one agrees a moment later, and every repair
  * path in the app is built on reading again.
  *
- * Both paths: a name is not exempt. Measured on a URX44V — a written name answered the
- * one it replaced for 81 ms — and the fake modelled it as exempt for its whole life.
+ * Both paths: a name is not exempt — a written name answers the one it replaced until
+ * its own notify arrives — and the fake modelled it as exempt for its whole life.
  *
  * Which read spends it is a matter of ORDER, not of time: at DEFAULT_LATENCY a run of
  * queued reads is answered one task after the next, in the order asked, with no delay
