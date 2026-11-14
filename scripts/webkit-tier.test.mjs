@@ -36,7 +36,7 @@ const rel = (p) => relative(repo, p).split(sep).join("/");
 const FLOOR = {
   "e2e/chrome.spec.ts": 1,
   "e2e/console-lock.spec.ts": 1,
-  "e2e/console.spec.ts": 5,
+  "e2e/console.spec.ts": 6,
   "e2e/fxeffect.spec.ts": 2,
   "e2e/midi.spec.ts": 2,
   "e2e/prefs.spec.ts": 1,

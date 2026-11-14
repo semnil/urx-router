@@ -2311,6 +2311,9 @@ input[type="range"]:focus-visible,
      hand-checked: an E2E asserts no strip's head overflows its own contents
      (e2e/console.spec.ts). */
   --head-h: 276px;
+  /* The fader zone's floor (.con-faderzone), which the short-window rule reserves as
+     scroll padding too. */
+  --zone-floor: 140px;
   --groove: color-mix(in srgb, var(--canvas-bg) 55%, #000 45%);
   flex: 1;
   display: flex;
@@ -2754,7 +2757,28 @@ input[type="range"]:focus-visible,
   /* A floor rather than 0: the zone still shrinks to share the window with the
      head and the SENDS rack, but never below a usable fader/meter travel (see
      .con-strip's min-content note). */
-  min-height: 140px;
+  min-height: var(--zone-floor);
+}
+/* Below the window's own minimum height (640px, `minHeight` in tauri.conf.json), which only
+   docked devtools reach, the head alone fills the strip grid's visible area and the floor
+   above leaves the faders and meters below the fold. There the zone pins to the bottom of the
+   visible area and the head and the SENDS rack scroll beneath it, so the faders and meters
+   stay in view at every scroll position and the rest of the strip is still reached by
+   scrolling. The z-index lifts the zone over the power LED's hit area (z-index 1, earlier in
+   the strip), which it reaches on the shortest views; the line above it lies on the SENDS
+   rack's bottom border where the zone sits in place and parts it from what scrolls beneath;
+   the scroll padding keeps a control that takes focus from landing behind the zone. */
+@media (max-height: 639px) {
+  .con-strips {
+    scroll-padding-bottom: var(--zone-floor);
+  }
+  .con-faderzone {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    background: var(--panel);
+    box-shadow: 0 -1px 0 var(--line);
+  }
 }
 /* Meter-point header row above the fader/meter. Fixed height (reserved even when a
    single-meter strip has no badge) so fader tops align across all strips. The
