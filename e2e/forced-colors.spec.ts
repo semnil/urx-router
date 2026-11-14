@@ -7,11 +7,10 @@ import { LIVE_COMMANDS, stubTauriDevice } from "./tauri-stub";
 //
 // What this pins is the class of defect the mode produces: the system palette
 // replaces every background and every text colour, so a control whose ONLY tell
-// is a colour stops being a control. Measured before the CSS block existed: the
-// default board's 51 lit chips and 73 unlit ones all computed to `rgb(0, 0, 0)`
-// — one black rectangle each, no way to tell an engaged control from an idle
-// one. `box-shadow` is removed by the spec, so the inset bar that used to mark
-// them was gone too.
+// is a colour stops being a control. Without the CSS block, every chip on the
+// default board, lit or unlit, computes to the same colour — one black rectangle
+// each, no way to tell an engaged control from an idle one. `box-shadow` is
+// removed by the spec, so the inset bar that used to mark them is gone too.
 //
 // Only two things survive the mode: `border` / `outline`, and an island opted
 // out with `forced-color-adjust: none`. The assertions below are those two, and
@@ -124,9 +123,9 @@ const expectOutlined = async (page: Page, { selector, pseudo }: { selector: stri
   expect(shape.border, selector).toBe("solid");
   // Non-zero rather than "at least 1": a 1px border is snapped to the device pixel
   // grid and reported as its USED width, so the same rule computes to 0.8px at a
-  // device pixel ratio of 1.25 — measured in WebView2 on a 125% display. This
-  // suite always runs at dpr 1, which is exactly why the stricter form would have
-  // gone on passing while encoding an assumption it never states.
+  // device pixel ratio of 1.25. This suite always runs at dpr 1, which is exactly
+  // why the stricter form would have gone on passing while encoding an assumption it
+  // never states.
   expect(shape.width, selector).toBeGreaterThan(0);
   expect(shape.image, selector).toBe("none");
   expect(shape.background, selector).toMatch(/, 0\)$/);
@@ -338,8 +337,8 @@ test("the parts stay outlines in a send column that has been switched off", asyn
   // a selector one class longer than the forced-colors rule — and a media query
   // adds no specificity, so the longer one wins. Every locator in the test above
   // lands on an ON column in the factory plan, which is why the state has to be
-  // driven here rather than assumed: measured, the OFF column kept a filled bar
-  // while every other column had an outline.
+  // driven here rather than assumed: left to that longer selector, the OFF column
+  // keeps a filled bar while every other column has an outline.
   const col = page.locator(".con-scol").first();
   await expect(col).not.toHaveClass(/\boff\b/);
   await col.locator(".con-sl").first().click();
@@ -354,9 +353,9 @@ test("the parts stay outlines in a send column that has been switched off", asyn
 
 test("a parameter slider keeps its track, and the thumb still covers it", async ({ page }) => {
   // The track is a gradient with an inset shadow — the fader groove's construction in
-  // another costume, and it loses both the same way. Measured on real Windows high
-  // contrast (hcblack and hcwhite, WebView2): not one pixel of it survived, so every
-  // slider in the app rendered as a label, a value and a thumb floating over nothing.
+  // another costume, and it loses both the same way. Under real Windows high
+  // contrast, without the fix, not one pixel of it survives, so every slider
+  // in the app renders as a label, a value and a thumb floating over nothing.
   //
   // The fix is the groove's pair of rules, and the SECOND one is what this test is
   // really for: an outlined track needs the thumb to keep occluding it, because the
@@ -463,12 +462,12 @@ test("the surfaces where the colour IS the reading are opted out", async ({ page
 
   // The tuning screens' meter lane is the same island for the same reason, and it was
   // missed when this block was written — the two share the grammar and not the
-  // selector, which is the shape of defect this file's closing note names. Measured on
-  // real Windows high contrast before the rule existed: all four DUCKER lanes rendered
-  // as empty outlined boxes. The level gradient and the reduction's hatch are
-  // background IMAGES and the mode drops them; the shade and the peak marker are
-  // background COLOURS and the mode forces them to Canvas. Not "the reduction cannot be
-  // told from the level" — neither was drawn.
+  // selector, which is the shape of defect this file's closing note names. Without the
+  // rule, under real Windows high contrast all four DUCKER lanes render as empty
+  // outlined boxes. The level gradient and the reduction's hatch are background IMAGES
+  // and the mode drops them; the shade and the peak marker are background COLOURS and
+  // the mode forces them to Canvas. Not "the reduction cannot be told from the level" —
+  // neither is drawn.
   await page.click("#btn-view-graph");
   await openGate(page);
   const lane = await page
@@ -480,14 +479,13 @@ test("the surfaces where the colour IS the reading are opted out", async ({ page
 
 // Not covered here, and not coverable here: this is Chromium's emulation of the
 // mode, not WebView2's. The system colour VALUES, whether the opaque text
-// backplate behaves the same way, and how `3px double` actually renders were all
-// measured separately against real Windows high contrast (2026-08-07, WebView2
-// under a contrast theme) and all three held — which is why the assertions above
-// still avoid every one of those three. Pinning a value here would pin the
-// tester's Windows settings instead of the app's behaviour. What they do pin is
-// that the app asks for the rim, the outlines and the islands at all, which is
-// the half that can regress here.
+// backplate behaves the same way, and how `3px double` actually renders are
+// WebView2's to answer under a real contrast theme, where all three hold —
+// which is why the assertions above still avoid every one of those three.
+// Pinning a value here would pin the tester's Windows settings instead of the
+// app's behaviour. What they do pin is that the app asks for the rim, the
+// outlines and the islands at all, which is the half that can regress here.
 //
-// What that measurement also showed is the shape of the defect this file cannot
-// see by itself: a rule that reaches one of two elements sharing a visual
-// grammar. Prefer adding a row to the tables above over adding a test.
+// The shape of defect this file cannot see by itself is a rule that reaches one
+// of two elements sharing a visual grammar. Prefer adding a row to the tables
+// above over adding a test.

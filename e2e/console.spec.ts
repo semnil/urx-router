@@ -763,9 +763,9 @@ test("a re-render that moves the tab order keeps the focus on the same chip", as
 // The scroll offset survives a rebuild on its own: `render()` clears and refills the
 // rack in one task, so the empty rack is never laid out and the offset is never
 // clipped. Saving and rewriting it around the rebuild instead forces a synchronous
-// layout of the whole rack — measured at ~25 ms per render on WKWebView, against ~6 ms
-// without — on a path Live sync takes for every device read-back. These two pin the
-// offset so that cost cannot come back as the fix for a regression they would catch.
+// layout of the whole rack, several times the cost of a render without it, on a path
+// Live sync takes for every device read-back. These two pin the offset so that cost
+// cannot come back as the fix for a regression they would catch.
 test("a re-render with nothing focused keeps the strip scroll offset", async ({ page }) => {
   const scrolled = await scrollStripsToEnd(page);
   // A rate change re-renders every strip (applyRateConstraints), with focus on the
@@ -1173,9 +1173,9 @@ test("a very short window keeps a usable fader instead of crushing it @webkit", 
 
 test("every strip's head holds its own contents, so --head-h is not hand-measured", async ({ page }) => {
   // `--head-h` is one fixed height for every strip, so the tallest head sets it — and it has
-  // been re-measured by hand each time a chip row was added. Nothing caught the previous
-  // value having 0.9 px of slack; this does. Overflow is invisible on screen (the head does
-  // not scroll), which is exactly why it needs asserting rather than looking at.
+  // been set by hand each time a chip row was added, with nothing to catch a value left with
+  // almost no slack; this does. Overflow is invisible on screen (the head does not scroll),
+  // which is exactly why it needs asserting rather than looking at.
   const overflow = await page.evaluate(() =>
     [...document.querySelectorAll<HTMLElement>(".con-strip")].map((strip) => {
       const head = strip.querySelector(".con-head") as HTMLElement;

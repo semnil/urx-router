@@ -2,11 +2,10 @@ import { test, expect, heldThroughBlur, type Page } from "./fixtures";
 import { pickPlot, screenBox } from "./dyn-helpers";
 
 // The EQ 1-knob, on the tuning screen where it lives (the inspector keeps the section's
-// ON toggle and a launcher). What it does on the device is measured and recorded in
-// the project's private notes: writing a TYPE loads a preset and initialises LEVEL to that type's
-// neutral point, and while 1-knob is on the device computes all four bands and announces
-// every recomputation — so the band rows stay in the document and are not shown, and a
-// note in their place says why.
+// ON toggle and a launcher). On the device, writing a TYPE loads a preset and initialises
+// LEVEL to that type's neutral point, and while 1-knob is on the device computes all four
+// bands and announces every recomputation — so the band rows stay in the document and are
+// not shown, and a note in their place says why.
 const node = (page: Page, id: string) => page.locator(`#graph-host g.node[data-id="${id}"]`);
 const row = (page: Page, label: string) =>
   screenBox(page)
@@ -58,7 +57,7 @@ test("the Type and Level rows stay on screen with 1-knob off, locked", async ({ 
   const level = row(page, "1-knob Level");
   // Shown rather than hidden: the section would otherwise shrink by two rows on every
   // toggle, moving everything under it. Locked, because the value has no effect until
-  // 1-knob is on — and the unit discards it on the transition (measured).
+  // 1-knob is on — and the unit discards it on the transition.
   await expect(type).toHaveClass(/locked/);
   await expect(level).toHaveClass(/locked/);
   await expect(type.locator("select")).toBeDisabled();
