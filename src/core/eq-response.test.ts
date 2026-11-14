@@ -4,13 +4,12 @@ import type { SsmcsBandState } from "./eq-response";
 import type { EqBandState } from "./eq-response";
 import { EQ_TYPE_PASS, EQ_TYPE_PEAKING, EQ_TYPE_SHELVING } from "./control/params";
 
-// The model is pinned against the device itself: every table below is a sweep measured
-// on a URX44V by driving the oscillator (or, for the channel blocks, the host's USB
-// output) through the EQ and taking the difference between the two meters that bracket
-// it. Both meters are 1 dB-quantized peak detectors, so a difference carries about
-// ±1 dB of its own; 2.0 dB is the tolerance that leaves the measurement its resolution
-// while still failing every wrong model this went through — the three corrections
-// checked separately below are each worth 4 dB or more where they bite.
+// The model is pinned against the device itself: every table below is a sweep of the
+// unit's own EQ, each point the difference between the two meters that bracket it. Both
+// meters are 1 dB-quantized peak detectors, so a difference carries about ±1 dB of its
+// own; 2.0 dB is the tolerance that leaves the sweep its resolution while still failing
+// every wrong model this went through — the three corrections checked separately below
+// are each worth 4 dB or more where they bite.
 const TOL = 2.0;
 
 const band = (o: Partial<EqBandState> & { index: number }): EqBandState => ({
@@ -280,8 +279,7 @@ describe("the SSMCS strip's three-band EQ", () => {
   });
 
   /**
-   * The shelves ARE the sweep. Read on a URX44V at 48 kHz as `112` − `111`, each point
-   * averaged over a 1 dB walk of the input level, so a point carries about 0.1 dB of its own.
+   * The shelves ARE the sweep: `112` − `111` at 48 kHz, each point good to about 0.1 dB.
    * Nominals of 1002 Hz (raw 72) across the transition, plus single readings there for the
    * small gains; 7962 Hz (raw 108); and the top of the HIGH range, 15887 Hz (raw 120) and
    * 20000 Hz (raw 124). Above 1 kHz the tones are offset from the divisors of 48 kHz, since
@@ -346,11 +344,11 @@ describe("the SSMCS strip's three-band EQ", () => {
   /**
    * The bell IS the sweep, at every point of it.
    *
-   * Three states of the MID band at 1002 Hz, read on a URX44V as `112` − `111`: every other
-   * frequency of the sweep's grid from 100 Hz to 10 kHz, so the two skirts are covered as
-   * well as the peak. Both meters quantize to 1 dB, so a point can be half a step out on
-   * each; 1.5 dB is that floor with a little room, and it is the whole tolerance — no
-   * per-point exceptions.
+   * Three states of the MID band at 1002 Hz, as `112` − `111`: every other frequency of
+   * the sweep's grid from 100 Hz to 10 kHz, so the two skirts are covered as well as the
+   * peak. Both meters quantize to 1 dB, so a point can be half a step out on each; 1.5 dB
+   * is that floor with a little room, and it is the whole tolerance — no per-point
+   * exceptions.
    *
    * The three are what separate the LAW from a constant. +18 and +6 differ only in gain, so
    * together they pin the gain dependence a constant ratio cannot carry; Q 2.83 against

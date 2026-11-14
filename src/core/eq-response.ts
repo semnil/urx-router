@@ -1,34 +1,28 @@
 // The 4-band PEQ's frequency response, as the unit actually implements it.
 //
-// Measured on a URX44V (V1.3.1.0, 2026-07-30) by driving the oscillator into MIX 1 and
-// reading the difference between the two meters that bracket the EQ (PRE EQ 105:0 →
-// PRE FADER 122:0), then repeated on the STEREO master block and, with the host's USB
-// output as the source, on a stereo channel — 19 datasets / 108 points, worst case
-// 1.3 dB, which is the resolution of a difference between two 1 dB-quantized peak
-// meters. The filters are RBJ cookbook biquads with three corrections that only came
-// out of measuring, and each one was drawing a visibly wrong curve before it did:
+// The model holds on a mix bus, the STEREO master block and a stereo channel, to within
+// the resolution of a difference between the two 1 dB-quantized peak meters that bracket
+// the EQ (PRE EQ 105:0 → PRE FADER 122:0 on MIX 1). The filters are RBJ cookbook biquads
+// with three corrections, and each one draws a visibly wrong curve without it:
 //
-//   peaking   The unit's Q is TWICE the biquad Q. A "Q 1.00" bell measured
-//             +12/+10/+7/+3 dB at 1k/700/500/300 Hz with a +12 dB setting, which is a
-//             biquad Q of 0.5. Taking the number at face value drew every bell half as
-//             wide as the device's.
+//   peaking   The unit's Q is TWICE the biquad Q: a "Q 1.00" bell has the width of a
+//             biquad Q of 0.5. Taking the number at face value draws every bell half
+//             as wide as the device's.
 //   HPF/LPF   Fixed 2nd-order Butterworth: -3.0 dB exactly at the nominal frequency and
-//             12 dB/octave beyond (-13/-25/-40 dB at 1/2/3.3 octaves). **The band's Q
-//             slot is ignored** — Q 0.71 and Q 4.00 measured identical, with no
+//             12 dB/octave beyond. **The band's Q slot is ignored**, and there is no
 //             resonant peak at the corner.
 //   shelving  The S = 1 shape, but the unit's nominal frequency is the point 3 dB
-//             below the plateau, not the midpoint: a +18 dB shelf at 1 kHz measured
-//             +15 dB at 1 kHz and reached +18 dB only by 4 kHz. So the design
+//             below the plateau, not the midpoint: a +18 dB shelf at 1 kHz is at
+//             +15 dB there and reaches +18 dB only well above it. So the design
 //             frequency is solved for, and the search direction flips with the gain's
-//             sign — reusing the boost direction for a cut was 4.2 dB out. Under
-//             6 dB of gain the solved frequency would sit inside the nominal one;
-//             the unit designs such a shelf at its nominal frequency instead.
+//             sign — reusing the boost direction for a cut misplaces it by several dB.
+//             Under 6 dB of gain the solved frequency would sit inside the nominal
+//             one; the unit designs such a shelf at its nominal frequency instead.
 //
-// Two further measurements bound what this model is worth: bands sum in dB (a LOW
-// shelf +12 and a HIGH-MID peaking -9 measured together matched the sum of the two
-// measured separately to within the meters' own ±2 dB), and the sample rate moves a
-// high bell by at most 2 dB across 44.1 … 176.4 kHz — so the drawing is computed at 48
-// kHz whatever the plan's rate, and says so rather than pretending otherwise.
+// Two further properties bound what this model is worth: bands sum in dB, to within the
+// meters' own resolution, and the sample rate moves a high bell by at most 2 dB across
+// 44.1 … 176.4 kHz — so the drawing is computed at 48 kHz whatever the plan's rate, and
+// says so rather than pretending otherwise.
 //
 // The SSMCS strip's own 3-band EQ is at the foot of this file. It is a different DSP
 // block reached by switching the channel's COMP/EQ type, and it shares no filter with
@@ -38,7 +32,7 @@
 import { EQ_TYPE_PASS, EQ_TYPE_SHELVING } from "./control/params";
 
 /** The rate the response is drawn at. Rate dependence is ≤2 dB across the device's
- *  whole range (measured), which is inside the measurement's own resolution. */
+ *  whole range, which is inside the meters' own resolution. */
 export const EQ_RESPONSE_FS = 48000;
 
 /** One band as the response model needs it. `index` decides which pass filter the
@@ -74,17 +68,16 @@ function magDb(c: Coefs, hz: number, fs: number): number {
   const nIm = -(c.b1 * sw + c.b2 * s2);
   const dRe = c.a0 + c.a1 * cw + c.a2 * c2;
   const dIm = -(c.a1 * sw + c.a2 * s2);
-  // The squared magnitudes, not `hypot`: their ratio carries the same dB (verified to
-  // 7e-15 dB over 220 filter settings across 20 Hz … 20 kHz) and the largest coefficient
-  // part here is ~59, so hypot's overflow guard buys nothing. Measured 1.45x faster in V8,
-  // more in JSC — which is the engine the macOS build renders in.
+  // The squared magnitudes, not `hypot`: their ratio carries the same dB and the largest
+  // coefficient part here is ~59, so hypot's overflow guard buys nothing and only costs
+  // time — in JSC as in V8, and JSC is the engine the macOS build renders in.
   const num = nRe * nRe + nIm * nIm;
   const den = dRe * dRe + dIm * dIm;
   if (den === 0 || num === 0) return 0;
   return 10 * Math.log10(num / den);
 }
 
-/** Displayed Q → biquad Q, per DSP block. Each is measured on its own block and neither
+/** Displayed Q → biquad Q, per DSP block. Each belongs to its own block and neither
  *  may be used for the other: the 4-band PEQ's bell is half the width its number says.
  *  Kept adjacent to the SSMCS law below so the two are read together — carrying the
  *  4-band factor into SSMCS draws every bell at 0.5. */
@@ -92,28 +85,22 @@ const PEQ_Q_TO_BIQUAD = 0.5;
 
 /**
  * The SSMCS strip's bell — ONE law for both of the places the strip puts one: the 3-band
- * EQ's MID band and the compressor's side-chain filter. They are the same filter (measured
- * through two different paths, agreeing at 60 of 61 frequencies), so a second law here
- * would be two answers to one question.
+ * EQ's MID band and the compressor's side-chain filter. They are the same filter, so a
+ * second law here would be two answers to one question.
  *
  * The unit's Q is NOT the biquad Q times a constant — the bell narrows as the gain set on
- * it grows. Measured against the threshold ruler at 0.2 dB resolution, the ratio runs
- * 0.3585 / 0.3085 / 0.2750 / 0.2615 at 18 / 12 / 6 / 3 dB, symmetric in the gain's sign,
- * and independent of both the Q set (0.50 … 16.0, a 16:1 range, within ±1.6%) and the
- * centre frequency (100 Hz / 1 kHz / 10 kHz). One law covers seven settings at an RMS of
- * 0.064 dB, which is what fitting each gain on its own leaves.
+ * it grows: the ratio of the biquad Q to the displayed one rises with the gain, symmetric
+ * in the gain's sign, and independent of both the Q set (0.50 … 16.0) and the centre
+ * frequency. One law in the gain covers every setting as closely as fitting each gain on
+ * its own does.
  *
- * Three earlier sweeps could see the gain dependence and none could prove it: both meters
- * quantize to 1 dB, and a 6 dB bell carries six steps of shape, so a synthetic bell of
- * known width returns anywhere from 0.328 to 0.401 there from the quantizer's phase
- * alone. Averaging the threshold across one full quantum is what settled it.
+ * A sweep of the two meters alone can see the gain dependence but not prove it: both
+ * meters quantize to 1 dB, and a 6 dB bell carries six steps of shape, so the quantizer's
+ * phase alone moves the width such a sweep returns.
  *
- * A CONSTANT ratio of 0.82 stood here for the MID band before this law reached it, taken
- * from a sweep that read the width between the points 3 dB below the PEAK. A biquad's Q is
- * the width at HALF THE GAIN, and for an 18 dB bell the two differ by a factor of 2.78 —
- * so the constant drew every MID bell about 2.3x too narrow. Against the same 61-point
- * measurement it lands at an RMS of 2.2 dB over three states (worst 5.6 dB, always on the
- * narrow side); this law lands at 0.47 dB (worst 1.0).
+ * A constant ratio taken from the width between the points 3 dB below the PEAK draws
+ * every MID bell too narrow: a biquad's Q is the width at HALF THE GAIN, and for an 18 dB
+ * bell the two differ by a factor of 2.78.
  */
 const ssmcsBellQ = (displayedQ: number, gainDb: number): number =>
   0.238 * displayedQ * Math.pow(10, (Math.abs(gainDb) / 40) * 0.39);
@@ -137,7 +124,7 @@ function peakingCoefs(hz: number, q: number, gainDb: number, fs: number): Coefs 
 function passCoefs(hz: number, high: boolean, fs: number): Coefs {
   const w0 = (2 * Math.PI * hz) / fs;
   const cw = Math.cos(w0);
-  // Fixed Butterworth: the band's Q slot has no effect on a pass filter (measured).
+  // Fixed Butterworth: the band's Q slot has no effect on a pass filter.
   const alpha = Math.sin(w0) / (2 * Math.SQRT1_2);
   const a = { a0: 1 + alpha, a1: -2 * cw, a2: 1 - alpha };
   return high
@@ -174,7 +161,7 @@ function shelfCoefs(hz: number, gainDb: number, high: boolean, fs: number): Coef
 
 /**
  * The design frequency whose S = 1 shelf passes |gain| - 3 dB at the nominal one — the
- * unit's own convention (measured). Bisected on a log frequency axis; the direction the
+ * unit's own convention. Bisected on a log frequency axis; the direction the
  * magnitude moves in is read off the function rather than assumed, because it flips
  * with the gain's sign, and the result is clamped so solving can only ever move the
  * transition outward (a high shelf's design frequency below its nominal, a low shelf's
@@ -188,10 +175,8 @@ export function shelfDesignFreq(nominal: number, gainDb: number, high: boolean, 
   // Kept under Nyquist. `shelfCoefs` past fs/2 aliases (w0 wraps mod 2π), and where
   // nominal × 20 lands near a multiple of fs the aliased shelf degenerates to a flat
   // full-gain plateau — `rising` then compares two near-equal values and the bisection
-  // walks the wrong bracket. Measured over the inspector's own 1001-value frequency
-  // grid × 8 gains × 2 shelf directions: 71 of 16016 settings drew more than the
-  // model's 2 dB tolerance off at their own nominal frequency, and a HIGH shelf at
-  // 11996 Hz / +12 dB read 6.0 dB where the measured convention requires 9.
+  // walks the wrong bracket, which draws a shelf near such a multiple far outside the
+  // model's 2 dB tolerance at its own nominal frequency.
   let hi = Math.min(nominal * 20, fs / 2 - 1);
   const rising = at(hi) > at(lo);
   for (let i = 0; i < 40; i++) {
@@ -214,7 +199,7 @@ export function bandResponse(b: EqBandState, fs = EQ_RESPONSE_FS): (hz: number) 
   if (!b.on) return FLAT;
   const high = b.index === 3;
   // LOW-MID and HIGH-MID are fixed peaking on the unit: it rejects a type write there
-  // (response_code 400, measured), and the emit never sends one. The load drops a type a
+  // (response_code 400), and the emit never sends one. The load drops a type a
   // document parks on one, and the plot ignores one a plan holds there anyway: honouring it
   // draws a 2nd-order high-pass for a band the device is running as a bell, which
   // contradicts the hardware by up to the band's full gain — the one thing this drawing
@@ -234,8 +219,8 @@ export function bandResponse(b: EqBandState, fs = EQ_RESPONSE_FS): (hz: number) 
   return (hz) => magDb(c, hz, fs);
 }
 
-/** The whole EQ's response: the bands summed in dB (measured to hold within the
- *  meters' resolution). */
+/** The whole EQ's response: the bands summed in dB (which holds within the meters'
+ *  resolution). */
 export function eqResponse(bands: readonly EqBandState[], fs = EQ_RESPONSE_FS): (hz: number) => number {
   return sumDb(bands.map((b) => bandResponse(b, fs)));
 }
@@ -312,7 +297,7 @@ function ssmcsBandResponse(b: SsmcsBandState, fs: number): (hz: number) => numbe
  *
  * Out Gain is NOT here, and that is a decision rather than an omission. The unit applies
  * it after this block — stepping `117` between +18 and -18 dB moves tap `112` one-for-one
- * and leaves `108` and `111` alone (URX44V, 2026-08-15), so the strip runs
+ * and leaves `108` and `111` alone, so the strip runs
  * `108 → compressor → 111 → 3-band EQ → Out Gain → 112` — but this plot's gain axis IS the
  * band gain range, so an offset of up to 18 dB pushes the response off the frame and takes
  * the shape the operator came for with it. It is drawn on the compressor's transfer curve
@@ -329,11 +314,8 @@ export function ssmcsEqResponse(bands: readonly SsmcsBandState[], fs = EQ_RESPON
 // compressor LISTENS to. It never touches the audio, which is why the screen that draws
 // it says so rather than looking like another EQ.
 //
-// It is the same bell as the strip's MID band, in a different instance: measured through
-// the compressor's own reduction (ratio at infinity makes GR the detector minus the
-// threshold, and the threshold is a 0.2 dB-per-step ruler) and, independently, off meter
-// `109`, which carries the filter's output. The two agreed at a median of 0.00 dB over
-// 488 paired readings.
+// It is the same bell as the strip's MID band, in a different instance; meter `109`
+// carries the filter's output.
 
 /** The side-chain filter in plan units — Hz / displayed Q / dB, as the descriptor
  *  converts the broker's raw integers. One band, no type: the device offers a bell. */
@@ -347,15 +329,14 @@ export interface SsmcsScState {
 /**
  * The side-chain filter's response in dB.
  *
- * Flat is a real state here and it arrives two ways, both measured: the filter switched
- * out (`102` = 0), and the filter engaged at 0 dB, which is an EXACT bypass — 61 of 61
- * frequencies read 0.0 dB. The screen tells the two apart with its marker rather than
- * with the curve, since neither has a curve to tell them apart by.
+ * Flat is a real state here and it arrives two ways: the filter switched out (`102` = 0),
+ * and the filter engaged at 0 dB, which is an EXACT bypass. The screen tells the two apart
+ * with its marker rather than with the curve, since neither has a curve to tell them apart
+ * by.
  */
 export function ssmcsScResponse(sc: SsmcsScState, fs = EQ_RESPONSE_FS): (hz: number) => number {
-  // Through the BAND path rather than beside it: the two are the same filter (measured
-  // through two different paths, agreeing at 60 of 61 frequencies), and a second call to
-  // `peakingCoefs` here would let a correction made at coefficient time reach one of them
-  // and not the other — silently, since the two are never drawn on one screen.
+  // Through the BAND path rather than beside it: the two are the same filter, and a second
+  // call to `peakingCoefs` here would let a correction made at coefficient time reach one
+  // of them and not the other — silently, since the two are never drawn on one screen.
   return ssmcsBandResponse({ ...sc, kind: "mid" }, fs);
 }

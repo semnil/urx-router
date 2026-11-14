@@ -2207,7 +2207,8 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
   controls the factory plan lists, the morphing bank's, and those of each insert effect and each FX type). Only a pass that actually sends records the
   pair: one that delivers nothing tells the controller nothing. At 7 bits the codecs alone would not hold
   the value either: not every control round-trips — the tuning screens' EQ frequency and Q, GATE attack /
-  hold / decay, COMP attack / release and DUCKER attack do not. COMP
+  hold / decay, COMP attack / release and DUCKER attack, an SSMCS strip's Comp Drive, Out Gain, compressor
+  attack / release, side-chain gain and band gains, and a delay effect's Delay Time, FB.Gain and BPM do not. COMP
   **ratio** and DUCKER **decay** are not on that list because each field is a stop table of the unit's that
   holds fewer stops than the wire holds positions, so a 7-bit echo decodes onto the stop it left from; the
   attack, hold and decay / release tables hold more.

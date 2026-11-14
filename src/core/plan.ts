@@ -136,10 +136,9 @@ export interface DelayParams {
 // EQ 1-knob (UG "1-knob EQ"): a simplified mode on every EQ (input channels and
 // output buses) where one knob drives the whole 4-band PEQ. `type` is a shared
 // preset enum (0 Intensity / 1 Vocal / 2 Loudness); every EQ instance offers all
-// three (measured — the per-screen subset this once recorded was wrong).
-// `level` is the effect depth 0..100 %. When
-// on, the device recomputes the 4-band PEQ, so the tool does not author the band
-// values (they are device-driven). All optional (absent = device default: off).
+// three. `level` is the effect depth 0..100 %. When on, the device recomputes the
+// 4-band PEQ, so the tool does not author the band values (they are device-driven).
+// All optional (absent = device default: off).
 export interface EqOneKnobParams {
   on?: boolean;
   type?: number; // 0 Intensity / 1 Vocal / 2 Loudness
@@ -825,8 +824,7 @@ export function clipNodeName(name: string): string {
  *  are ` 5/ 6`, so a LEADING space is part of the name). A plan that keeps one the read
  *  drops never converges: `diffNames` compares the trimmed device value against the
  *  emitted one, so they differ on every sync and the name is rewritten forever. The
- *  device does not end that loop — measured on a URX44V (2026-08-14), it stores and
- *  returns a trailing space unchanged.
+ *  device does not end that loop: it stores and returns a trailing space unchanged.
  *
  *  Not what the name field clips with. That runs on every keystroke, and trimming there
  *  would eat the space in `A B` as it is typed. */

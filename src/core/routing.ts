@@ -212,7 +212,6 @@ export function sendIsPreFader(model: DeviceModel, plan: Plan, conn: PlanConnect
 // back), so readback still reflects the true device tap. CH -> MIX and
 // FX-channel -> MIX taps (max_value=1) are writable. This concerns the *device*
 // only: the plan's tap field stays freely editable in the planner regardless.
-// Confirmed by a live broker probe (2026-06-22).
 export function sendTapWritable(model: DeviceModel, from: string, to: string): boolean {
   return sendHasTap(model, from, to) && !parseRef(to).nodeId.startsWith("bus.fx");
 }
@@ -446,7 +445,7 @@ export function isBalLinkedPair(model: DeviceModel, plan: Plan, id: string): boo
 
 /** Apply what the unit does to a MONO IN pair's pan positions and insert FX when its
  *  Signal Type or PAN/BAL changes (`primary` names the pair; `patch` is the edit that landed).
- *  Measured on the unit: linking leaves the pair in BAL and an unlinked pair reads
+ *  On the unit, linking leaves the pair in BAL and an unlinked pair reads
  *  PAN, and each of the three transitions slams CH_PAN and every bus send's pan
  *  together — PAN hard-pans the odd channel left and the even one right, BAL and
  *  unlinking centre both. A channel's CH_PAN is the pan of its fixed send into
@@ -467,7 +466,7 @@ export function applyPairTransition(model: DeviceModel, plan: Plan, primary: str
     const np = plan.nodeParams[primary];
     plan.nodeParams[primary] = { ...np, panBal: patch.stereoLink ? PAN_BAL_BAL : PAN_BAL_PAN };
     written.push(nodeParamContestKey(primary, "panBal"));
-    // Measured: a Signal Type transition clears the insert-FX selector and its ON on BOTH
+    // A Signal Type transition clears the insert-FX selector and its ON on BOTH
     // members, in either direction and whichever member was holding the effect. Follow it —
     // a selection left in the plan would make the next live converge re-select an effect the
     // unit has just dropped. The selector and its ON are SET to No Effect and off rather than

@@ -421,13 +421,13 @@ describe("mixed mutator sequence + persistence round-trip (URX44V)", () => {
 });
 
 // A CH SETTING name is bounded by what the unit's own text-input screen can produce:
-// 8 characters. Nothing else in the stack enforces it — measured on a URX44V, the
-// broker stores a 20-character name and reads it back unchanged, and the settings
-// file's 64-byte element is the container rather than the limit. Names are the one
-// plan string that leaves the app over the device link; the numeric leaves have
-// `boundRaw` between them and the wire and nothing played that part for strings, so
-// a crafted plan's multi-kilobyte name loaded silently and rode `vd_set_str` uncut —
-// and a 63-character one drew a node label across its neighbours on the canvas.
+// 8 characters. Nothing else in the stack enforces it — the broker stores a longer
+// name and reads it back unchanged, and the settings file's 64-byte element is the
+// container rather than the limit. Names are the one plan string that leaves the app
+// over the device link; the numeric leaves have `boundRaw` between them and the wire
+// and nothing played that part for strings, so a crafted plan's multi-kilobyte name
+// loaded silently and rode `vd_set_str` uncut — and a 63-character one drew a node
+// label across its neighbours on the canvas.
 describe("node names are bounded by what the unit can hold", () => {
   const chars = (s: string): number => [...s].length;
 
@@ -476,10 +476,10 @@ describe("node names are bounded by what the unit can hold", () => {
   });
 
   // The second half of what a stored name is. The device keeps a trailing space rather
-  // than treating it as padding (measured on a URX44V, 2026-08-14: `"SPCTEST "` is
-  // stored and read back unchanged), while every read path trims one off — so a plan
-  // holding one is never equal to what the device answers, and the name is re-sent on
-  // every sync forever. Nothing shows it: the two render identically.
+  // than treating it as padding — a name ending in a space is stored and read back
+  // unchanged — while every read path trims one off, so a plan holding one is never
+  // equal to what the device answers, and the name is re-sent on every sync forever.
+  // Nothing shows it: the two render identically.
   it("drops trailing padding from a stored name, and keeps a leading space", () => {
     expect(normalizeNodeName("Kick ")).toBe("Kick");
     expect(normalizeNodeName("Kick\t\n ")).toBe("Kick");
