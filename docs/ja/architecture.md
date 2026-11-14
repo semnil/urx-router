@@ -1774,7 +1774,8 @@ macOS ではアームしたコントロールをクリックした瞬間に**メ
   各インサートエフェクトと各 FX タイプのものについてエンジン経由で確かめる)。ペアを記録するのは実際に送出したパスだけで、何も送らないパスはコントローラに何も
   伝えていない。7 ビットでは codec だけでは値が保たれない: 往復しないコントロールがある — 調整画面の EQ 周波数と
   Q、GATE の attack / hold / decay、COMP の attack / release、DUCKER の
-  attack。COMP の **ratio** と DUCKER の **decay** は、フィールドが実機の段の表で、段の数がワイヤーの位置の数より
+  attack、SSMCS ストリップの Comp Drive・Out Gain・コンプの attack / release・サイドチェインのゲインと各バンドの
+  ゲイン、ディレイのエフェクトの Delay Time・FB.Gain・BPM。COMP の **ratio** と DUCKER の **decay** は、フィールドが実機の段の表で、段の数がワイヤーの位置の数より
   少ないのでこの一覧に入らない — 7 ビットのエコーは出ていった段へ戻る。attack・hold・decay / release の表は
   それより段が多い。`localStorage["urx-midi-log"]` を設定すると全 rx/tx バイト列とエンジンの
   受信判定 (drop/ignore/apply) をコンソールへトレースする。dev ビルドはさらに `window.__urxMidiProbe`

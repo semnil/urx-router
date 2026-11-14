@@ -637,10 +637,12 @@ export class MidiEngine {
       // plan's own grid is finer than the 7 bits the value crossed on: the decoded
       // value snaps to a neighbouring detent, so `after !== before` and the change
       // reaches the device — once per feedback pass, and so once per Live-sync start.
-      // Measured over every bindable continuous control (2026-08-09): 90 of 282 on a
-      // URX44V behave that way, all of them tuning-screen parameters (EQ frequency
-      // and Q, GATE attack / hold / decay, COMP attack / release / ratio), while
-      // every console-level control round-trips unchanged.
+      // The controls that behave that way are tuning-screen and effect parameters — EQ
+      // frequency and Q, GATE attack / hold / decay, COMP attack / release, DUCKER
+      // attack, an SSMCS strip's Comp Drive, Out Gain, compressor attack / release,
+      // side-chain gain and band gains, and a delay effect's Delay Time, FB.Gain and
+      // BPM — while COMP ratio, every console-level control and every send round-trip
+      // unchanged.
       //
       // The 14-bit forms are left unarmed. A cc14 echo cannot be matched here at all — it
       // arrives as two 7-bit halves — and neither form needs to be: `continuousTarget`
