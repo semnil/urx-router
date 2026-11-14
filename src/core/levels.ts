@@ -1,10 +1,9 @@
 // The device's level_gain fader scale: the discrete dB values the URX hardware
-// actually lets you set on a fader / send level (empirically confirmed on the
-// device — coarser than the broker level_gain resolution, with index 0 = -∞ off
-// represented separately by LEVEL_OFF_DB). The grid is non-uniform — wide steps
-// in the tail, finer near 0 dB — so a uniform UI step would offer values the
-// device cannot store (e.g. -15.0). The faders space the detents evenly so
-// adjustment near 0 dB is not cramped.
+// actually lets you set on a fader / send level (coarser than the broker level_gain
+// resolution, with index 0 = -∞ off represented separately by LEVEL_OFF_DB). The
+// grid is non-uniform — wide steps in the tail, finer near 0 dB — so a uniform UI
+// step would offer values the device cannot store (e.g. -15.0). The faders space
+// the detents evenly so adjustment near 0 dB is not cramped.
 //
 // EVERY LEVEL THE APP AUTHORS is snapped to this grid — the inspector through
 // `snappedSlider`, the CONSOLE through `posToLevel`/`stepLevel`, external MIDI
@@ -16,10 +15,9 @@
 // thing this grid can name — which is what a device readout has to say, and what
 // the race harness reads back (`e2e/race/ui.ts` deviceLevelText).
 //
-// The unit RETAINS a non-detent level_gain rather than rounding it — measured
-// 2026-08-11 on a URX44V, 6/6 across two level params (CH_FADER 139 and
-// SEND_LEVEL 146), each written value read back unchanged and announced by its
-// own notify. So the receiving half above is not a theoretical branch: an
+// The unit RETAINS a non-detent level_gain rather than rounding it: on CH_FADER 139
+// and SEND_LEVEL 146 alike, a written value reads back unchanged and is announced
+// by its own notify. So the receiving half above is not a theoretical branch: an
 // off-grid value really can be sitting on the hardware, and snapping it on the
 // way in would replace the unit's actual state with the nearest name this grid
 // has for it. Do not "tidy" vdToLevel into posToLevel(levelToPos(...)) — beyond
@@ -69,9 +67,9 @@ export function levelToPos(db: number): number {
  * Step a level by `delta` grid detents (negative past the floor lands on off).
  *
  * Snapped in the direction of travel, not to the nearest detent. Off-grid levels are
- * real here — the unit retains its own level_gain (measured 6/6) and a received level
- * is deliberately not snapped — and from one of them the nearest detent can lie on the
- * travel side, so `nearest + delta` overshoots the adjacent detent by one. From -14.5
+ * real here — the unit retains its own level_gain and a received level is deliberately
+ * not snapped — and from one of them the nearest detent can lie on the travel side, so
+ * `nearest + delta` overshoots the adjacent detent by one. From -14.5
  * one ArrowUp used to land on -12, skipping -14; from -15.5 one ArrowDown gave -18,
  * skipping -16. One keypress, two detents, silently.
  */
