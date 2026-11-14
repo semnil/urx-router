@@ -49,9 +49,9 @@ concurrency:
   queue: max
 
 # Read by default. `contents: write` is granted only to the two jobs that create or upload to
-# a release — `create-release` and `build` — so the tag check, the licenses call, the compile
-# and the gate hold a token that cannot change the repository. scripts/release-secrets.test.mjs
-# holds it.
+# a release — `create-release` and `build` — and to `verify-draft`, which needs it only to read
+# the draft (its own header says why), so the tag check, the licenses call, the compile and the
+# gate hold a token that cannot change the repository. scripts/release-secrets.test.mjs holds it.
 permissions:
   contents: read
 
