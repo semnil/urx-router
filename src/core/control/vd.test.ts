@@ -282,7 +282,7 @@ describe("insert-FX normalization", () => {
 describe("STREAMING DELAY time encoding (param 708, ms×100)", () => {
   it("encodes ms to broker centi-ms", () => {
     expect(delayTimeToVd(DELAY_TIME_MIN_MS)).toBe(100); // 1.00 ms = 100
-    expect(delayTimeToVd(100)).toBe(10000); // 100.00 ms = 10000 (confirmed on device)
+    expect(delayTimeToVd(100)).toBe(10000); // 100.00 ms = 10000
     expect(delayTimeToVd(DELAY_TIME_MAX_MS)).toBe(100000); // 1000.00 ms = 100000
   });
 
@@ -303,7 +303,7 @@ describe("PHONES level encoding (param 725, 0.0..10.0 scale ×10)", () => {
   it("encodes the 0.0..10.0 scale to broker raw (×10)", () => {
     expect(phonesLevelToVd(PHONES_LEVEL_MIN)).toBe(0); // 0.0 = 0
     expect(phonesLevelToVd(2)).toBe(20); // 2.0 = 20 (factory default)
-    expect(phonesLevelToVd(PHONES_LEVEL_MAX)).toBe(100); // 10.0 = 100 (confirmed on device)
+    expect(phonesLevelToVd(PHONES_LEVEL_MAX)).toBe(100); // 10.0 = 100
   });
 
   it("decodes broker raw to the 0.0..10.0 scale", () => {
