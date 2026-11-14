@@ -177,17 +177,14 @@ const kneeReach = (knee: number): readonly [number, number] => KNEE_REACH_DB[kne
 /**
  * Where the corner stops, in the input meter's own dBFS.
  *
- * Measured on a URX44V (2026-08-15) with ratio at infinity and a hard knee, reading the
- * corner as `108` - |`110`|. Both parameters that move it are 0.2 dB per raw and they pull
- * against each other, so `0.2 * (threshold - drive) - 20` lands on every unclamped point
- * of two runs — threshold raws 50…175 at drive 200, and drives 100…160 at threshold raw 0
- * — within 0.1 dB.
+ * The corner reads as `108` - |`110`| with the ratio at infinity and a hard knee. Both
+ * parameters that move it are 0.2 dB per raw and they pull against each other, so the
+ * corner is `0.2 * (threshold - drive) - 20` wherever it is not clamped.
  *
- * The floor is separated from a REDUCTION ceiling, which the same readings would also fit
- * while the input sat still: driving the input to -18 / -25 / -30 / -35 dBFS with the
- * corner asked for -60 gave 36 / 29 / 24 / 19 dB of reduction, which is a corner holding
- * at -54 and not a reduction saturating at 34. The earlier runs had both read -20 dBFS,
- * the one level where the two laws agree.
+ * The floor is a CORNER held at -54 and not a REDUCTION ceiling, which one still input
+ * would also fit: with the corner asked for below it, the reduction is the input's
+ * distance above -54 at every input level rather than stopping at one figure. -20 dBFS
+ * is the one input level where the two laws agree.
  */
 const CORNER_FLOOR_DB = -54;
 
@@ -207,10 +204,9 @@ const CORNER_RAMP_RAW = 31;
 
 /** The makeup's own range, and the ceiling on what it returns. At its maximum it lifts
  *  the corner to 0 dBFS — so it is a FRACTION of the corner's depth, not a number of dB —
- *  and it stops at MAKEUP_MAX_DB. Measured over 22 points in three runs: raw 0 gives
- *  exactly 0 dB at two different corners, which is also what rules out a gain belonging to
- *  Comp Drive itself (what looked like one was this term following the corner as the drive
- *  moved it). */
+ *  and it stops at MAKEUP_MAX_DB. Raw 0 gives exactly 0 dB at different corners, which is
+ *  also what rules out a gain belonging to Comp Drive itself (what looked like one is this
+ *  term following the corner as the drive moves it). */
 const MAKEUP_RAW_MAX = 200;
 const MAKEUP_MAX_DB = 24;
 
@@ -244,12 +240,12 @@ function transferOf(v: StripValues): { out: (inDb: number) => number; gainDb: nu
   // dB: at its maximum it lifts the corner to 0 dBFS, capped at MAKEUP_MAX_DB. Which is
   // why it has to be computed from `thr` and cannot be a term added beside it.
   // Out Gain is the strip's output gain, and the unit applies it at the far end — after
-  // the EQ, measured (`117` moves tap `112` one-for-one and leaves `108` and `111` alone,
-  // URX44V 2026-08-15). It is drawn HERE anyway, on the compressor's baseline, and the
-  // reason is the other plot: the EQ's gain axis IS the band gain range, so an offset of
-  // up to 18 dB pushes that response off the frame and takes the shape with it. This axis
-  // has the room — its output already runs to +18 because the drive and the makeup add —
-  // and a strip output gain reads as a lifted baseline, which is where it lands.
+  // the EQ (`117` moves tap `112` one-for-one and leaves `108` and `111` alone). It is
+  // drawn HERE anyway, on the compressor's baseline, and the reason is the other plot: the
+  // EQ's gain axis IS the band gain range, so an offset of up to 18 dB pushes that response
+  // off the frame and takes the shape with it. This axis has the room — its output already
+  // runs to +18 because the drive and the makeup add — and a strip output gain reads as a
+  // lifted baseline, which is where it lands.
   // It survives a drive of zero, which disables the compressor and nothing else.
   const outDb = ssmcsGainDb(v.outGain);
   const makeupDb = Math.min(MAKEUP_MAX_DB, -thr * (v.comp.makeup / MAKEUP_RAW_MAX));
@@ -276,8 +272,8 @@ function drawTransfer(c: CanvasRenderingContext2D, g: DynPlotGeo, tok: Record<st
 const curveGainDb = (v: StripValues): number => transferOf(v).gainDb;
 
 /** The gain that sits between the compressor's two level taps — the makeup alone, since
- *  Out Gain is applied after the EQ and so reaches neither of them (measured: `117` moves
- *  `112` one for one and leaves `108` and `111` where they are). What the reduction lane
+ *  Out Gain is applied after the EQ and so reaches neither of them (`117` moves `112` one
+ *  for one and leaves `108` and `111` where they are). What the reduction lane
  *  is drawn shorter by where it shares a column with `111`. */
 const strapGainDb = (v: StripValues): number => curveGainDb(v) - ssmcsGainDb(v.outGain);
 

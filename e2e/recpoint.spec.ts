@@ -50,8 +50,8 @@ test("SSMCS drops PRE EQ and moves a PRE EQ tap to PRE COMP", async ({ page }) =
 });
 
 // The inspector's selects carried no stylesheet rule at all, so their whole face was
-// the UA's own menulist — measured at 11px system-ui on the engine's own grey, hugging
-// the chosen option's text well short of the column every other control in the row
+// the UA's own menulist, in the engine's system face on its own grey, hugging the
+// chosen option's text well short of the column every other control in the row
 // fills. Pinned relative rather than absolute, like the tuning-screen launcher's face
 // in dyntuning.spec.ts: the claim is that this select is on the SAME recipe as the
 // toolbar's model picker, which is what an absolute pin would restate in numbers that

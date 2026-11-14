@@ -2860,7 +2860,16 @@ describe("what the default scan reaches", () => {
   it("has ledgered what those roots carry", () => {
     expect(Object.keys(ledger.files).some((p) => p.endsWith(".rs"))).toBe(true);
     expect(Object.keys(ledger.files).some((p) => p.startsWith(".github/"))).toBe(true);
-    expect(ledger.files["vitest.config.ts"]).toBeGreaterThan(0);
+  });
+
+  // A root config file whose comments carry no finding has no ledger row to prove it was
+  // opened, so the proof is the scan itself: named alone, the file is read as one source.
+  it("opens the root config files", () => {
+    const out = execFileSync(process.execPath, [join(HERE, "check-comment-provenance.mjs"), "vitest.config.ts"], {
+      cwd: ROOT,
+      encoding: "utf8",
+    });
+    expect(out).toMatch(/OK: 1 source file\(s\)/);
   });
 });
 

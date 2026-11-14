@@ -350,10 +350,10 @@ describe("stopStep", () => {
 
 describe("holdInertOnBlur", () => {
   // Every native range in the app is wired through this, so the cases live with the helper
-  // rather than with any one surface. The reading behind it: the engine owns a native
-  // drag, so no listener the app drops ends it — measured on the shipping WKWebView, a
-  // slider dragged with the button held went on writing while another application was
-  // frontmost, and it RESUMED when focus came back if the treatment only ended it once.
+  // rather than with any one surface. Behind it: the engine owns a native drag, so no
+  // listener the app drops ends it — a slider dragged with the button held goes on
+  // writing while another application is frontmost, and it RESUMES when focus comes back
+  // if the treatment only ended it once.
   const range = (live?: () => HTMLInputElement | null): HTMLInputElement => {
     const input = document.createElement("input");
     input.type = "range";
@@ -376,9 +376,9 @@ describe("holdInertOnBlur", () => {
     expect(input.disabled).toBe(true);
 
     // Still held while the app is in the background: the value cannot move, which is the
-    // whole point. (Coming back is its own release — the case below — measured safe on the
-    // unit. What was measured to RESUME there, and is not what this does, is detaching the
-    // element and putting it back.)
+    // whole point. (Coming back is its own release — the case below — and it is safe. What
+    // RESUMES there, and is not what this does, is detaching the element and putting it
+    // back.)
     window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, buttons: 1 }));
     expect(input.disabled).toBe(true);
 
@@ -393,11 +393,11 @@ describe("holdInertOnBlur", () => {
     window.dispatchEvent(new FocusEvent("blur"));
     expect(input.disabled).toBe(true);
 
-    // Measured on the shipping WKWebView (2026-08-14) as well as both engines here:
-    // re-enabling under a still-held button does not hand the drag back, which is what
-    // makes this release safe — and it is the only one that always arrives. A release the
-    // window never hears is never counted, and a touch id is never reused, so without
-    // this the row would stay inert with nothing left to clear it.
+    // In every engine the app runs on, re-enabling under a still-held button does not
+    // hand the drag back, which is what makes this release safe — and it is the only one
+    // that always arrives. A release the window never hears is never counted, and a touch
+    // id is never reused, so without this the row would stay inert with nothing left to
+    // clear it.
     window.dispatchEvent(new FocusEvent("focus"));
     expect(input.disabled).toBe(false);
   });

@@ -433,7 +433,7 @@ describe("feedback", () => {
     mute.value = 1; // muted via the UI
     engine.feedback();
     expect(sent).toEqual([encodeCc(0, 20, 127)]);
-    clock += 5; // inside the window: the measured echo latency is 0.13-5 ms
+    clock += 5; // inside the window: the echo latency is 0.13-5 ms
     engine.onMessage(encodeCc(0, 20, 127)); // the echo
     expect(mute.value).toBe(1);
     expect(applied).toEqual([]);
@@ -470,10 +470,10 @@ describe("feedback", () => {
   //
   // Here it is falsifiable, but only with care: the guard matches on the value last
   // SENT, so a follow-up carrying the other state gets through whether or not the echo
-  // disarmed it, and a case written that way passes for the wrong reason (measured
-  // while writing this). The discriminator has to repeat the SAME bytes after moving
-  // the control elsewhere by another route — the app's own edit, which sends no
-  // feedback and so leaves both the armed flag and lastSent as they were.
+  // disarmed it, and a case written that way passes for the wrong reason. The
+  // discriminator has to repeat the SAME bytes after moving the control elsewhere by
+  // another route — the app's own edit, which sends no feedback and so leaves both the
+  // armed flag and lastSent as they were.
   it("consumes the echo one-shot in state mode too, where the message itself cannot show it", () => {
     const mute = fake("ch1/mute", "toggle", 0);
     controls.set("ch1/mute", mute);
@@ -504,7 +504,7 @@ describe("feedback", () => {
     mute.value = 1;
     engine.feedback();
     expect(sent).toEqual([encodeNote(0, 60, true)]);
-    clock += 5; // inside the window: the measured echo latency is 0.13-5 ms
+    clock += 5; // inside the window: the echo latency is 0.13-5 ms
     engine.onMessage(encodeNote(0, 60, true)); // the echo
     expect(mute.value).toBe(1);
     clock += 400;
@@ -517,7 +517,7 @@ describe("feedback", () => {
     // after the window is treated as a genuine press, not an echo — which is what the
     // window has to be short enough to allow: on a controller that never echoes, every
     // physical press arms the guard through its own LED confirm, so a window far wider
-    // than the measured 0.13-5 ms echo latency swallows the operator's next press.
+    // than the 0.13-5 ms echo latency swallows the operator's next press.
     const mute = fake("ch1/mute", "toggle", 0);
     controls.set("ch1/mute", mute);
     map("ch1/mute", { type: "cc", channel: 0, controller: 20 });
@@ -533,8 +533,8 @@ describe("feedback", () => {
   // The window's size is the property, not merely that one exists. A plain controller
   // with no loopback never sends an echo to consume the guard, and every physical edge
   // press re-arms it through its own LED confirm — so a double-tap lands inside it and
-  // the second press is dropped as "the echo". Measured echo latency on the transports
-  // this guard is for is 0.13-5 ms; a double-tap is 200 ms and up.
+  // the second press is dropped as "the echo". Echo latency on the transports this
+  // guard is for is 0.13-5 ms; a double-tap is 200 ms and up.
   it("lets a double-tap through, which is what keeps the window near the measured echo", () => {
     const mute = fake("ch1/mute", "toggle", 0);
     controls.set("ch1/mute", mute);
@@ -556,9 +556,9 @@ describe("feedback", () => {
   const ECHO_WINDOW = 50; // ECHO_MS in engine.ts, which does not export it
 
   it("drops a continuous control's feedback echo, which a fine grid would take as an edit", () => {
-    // The measured case (2026-08-09): a plan grid finer than the 7 bits the value
-    // crossed on decodes to a NEIGHBOURING detent, so applying the echo moves the
-    // value — and under Live sync that reaches the unit, once per feedback pass.
+    // The case the guard is for: a plan grid finer than the 7 bits the value crossed
+    // on decodes to a NEIGHBOURING detent, so applying the echo moves the value — and
+    // under Live sync that reaches the unit, once per feedback pass.
     const c = fake("ch1/attack@gate", "continuous", 0, FINE);
     controls.set(c.id, c);
     map(c.id, { type: "cc", channel: 0, controller: 40 });
@@ -567,7 +567,7 @@ describe("feedback", () => {
     engine.feedback();
     const echo = Math.round(before * 127); // 1
     expect(sent).toEqual([encodeCc(0, 40, echo)]);
-    clock += 5; // the loopback latency measured on a real bus
+    clock += 5; // the loopback latency of a real bus
     engine.onMessage(encodeCc(0, 40, echo));
     expect(c.value).toBe(before);
     expect(applied).toEqual([]);
@@ -794,7 +794,7 @@ describe("gang (several controls on one address)", () => {
     expect([a.value, b.value]).toEqual([1, 1]);
     engine.feedback(); // the head arms the address' echo guard
     expect(sent).toEqual([encodeCc(0, 20, 127)]);
-    clock += 5; // inside the window: the measured echo latency is 0.13-5 ms
+    clock += 5; // inside the window: the echo latency is 0.13-5 ms
     engine.onMessage(encodeCc(0, 20, 127)); // the echo: neither member may flip
     expect([a.value, b.value]).toEqual([1, 1]);
     clock += 400;

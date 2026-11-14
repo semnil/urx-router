@@ -9,8 +9,8 @@
 // observation channel is global: a module-level transport mock is written by every
 // stale listener as well as the live one, and an assertion phrased as "the last
 // thing sent" then holds whether or not the object under test registered anything.
-// Measured on this file's own suite before the fix: one `pagehide` produced ELEVEN
-// `closed` intents, ten of them from windows earlier tests had built.
+// Without this, one `pagehide` reports a `closed` intent from every window earlier tests
+// had built as well as from the live one.
 //
 // Recording rather than a blanket `removeEventListener` sweep: jsdom exposes no
 // listener registry, and the callbacks are closures the test never sees.

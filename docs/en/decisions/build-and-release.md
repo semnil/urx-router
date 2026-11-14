@@ -23,7 +23,7 @@ way the symptom was the same: Open and Save did nothing.
 
 **Decision.** `tag-release.yml` starts `release.yml` with `gh workflow run --ref <tag>`, and
 `release.yml` decides what the run is from the type of the ref it was given. The mechanism is in
-`AGENTS.md` "Development"; the change that introduced it is
+[architecture.md](../architecture.md) "How a release fires"; the change that introduced it is
 [#235](https://github.com/semnil/urx-router/pull/235).
 
 **Why.** A tag pushed with the repository's own token starts no workflow. The dispatch form was
@@ -67,8 +67,9 @@ Which boxes the template holds, and why running the formatter is not one of them
 ## The demo deploys when the draft is published
 
 **Decision.** `pages.yml` deploys the demo when a person publishes the draft release
-([#283](https://github.com/semnil/urx-router/pull/283)); the mechanism is in `AGENTS.md`
-"Development". Three refinements were considered and not added: leaving prereleases out, guarding
+([#283](https://github.com/semnil/urx-router/pull/283)); the mechanism is in
+[architecture.md](../architecture.md) "Browser demo (GitHub Pages)".
+Three refinements were considered and not added: leaving prereleases out, guarding
 against an older release being published after a newer one, and deploying again when a release is
 published a second time.
 

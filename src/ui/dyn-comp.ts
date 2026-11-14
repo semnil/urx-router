@@ -9,10 +9,10 @@
 // curve answers "what is this doing to my signal". The lane rack beside it is the same
 // three-tap ruler the gate screen uses.
 //
-// Two device facts shape it, both measured on a URX44V (2026-07-29):
-//   - COMP GR (110) reports the reduction alone. Sweeping the makeup gain 0 →
-//     +18 dB moved the downstream tap by exactly 18 dB and left the GR meter where
-//     it was, so the lane stays readable at any makeup setting;
+// Two device facts shape it:
+//   - COMP GR (110) reports the reduction alone: the makeup gain moves the
+//     downstream tap and leaves the GR meter where it is, so the lane stays
+//     readable at any makeup setting;
 //   - a compressor's reduction occupies a few dB of the 54 dB input ruler, so the
 //     GR lane carries a scale of its own rather than the level lanes' dB per pixel
 //     (a -8 dB reduction is 15% of the shared ruler — visible, but not readable).
@@ -44,25 +44,21 @@ const OUT_LO_DB = -54;
 const OUT_TICKS = [18, 6, -6, -18, -30, -42, -54];
 
 /**
- * Knee width in dB by selector value (0 Soft / 1 Medium / 2 Hard), from the
- * threshold-departure measurement in the project's private notes: with the
- * signal held still, the threshold was walked upward until the reduction stopped,
- * which is where the knee's lower edge leaves the detector behind. Hard stopped
- * immediately, Medium ~8 dB later, Soft ~20 dB later — so these are twice the
- * measured reach under the usual symmetric-knee model.
+ * Knee width in dB by selector value (0 Soft / 1 Medium / 2 Hard). With the signal held
+ * still, raising the threshold stops the reduction where the knee's lower edge leaves the
+ * detector behind: at once for Hard, about 8 dB later for Medium and about 20 dB later for
+ * Soft, so doubling those reaches gives a width under the usual symmetric-knee model.
  *
- * All three have since been measured the other way round — the threshold held and the
- * SIGNAL walked past it in 1 dB steps, which is the direction the curve is read in —
- * and fitted together against ONE detector-versus-meter offset (1.10 dB, 113 points),
- * since that offset belongs to the rig rather than to the knee selector. Medium and Hard
- * came back as they were. SOFT DID NOT: its residual minimum is 51 dB against the 40 that
- * doubling gave, which fits 62% worse, so the constant carries the measurement.
+ * Read the other way round — the threshold held and the SIGNAL walked past it, which is
+ * the direction the curve is read in — Medium and Hard hold. SOFT DOES NOT: its best
+ * symmetric fit is about 51 dB, wider than the 40 that doubling gives, so the constant
+ * carries the signal-side fit.
  *
- * The doubling worked for Medium and failed for Soft because the knee is not symmetric:
+ * The doubling works for Medium and fails for Soft because the knee is not symmetric:
  * a 20 dB lower reach against a 51 dB total leaves about 31 dB above the threshold. What
  * a symmetric model can be fitted to is therefore the best symmetric APPROXIMATION, which
- * is exactly what this constant has to hold — 50, 52 and 54 dB are indistinguishable
- * (0.275 / 0.274 / 0.283), so it takes the round middle.
+ * is exactly what this constant has to hold — 50, 52 and 54 dB are indistinguishable,
+ * so it takes the round middle.
  *
  * The symmetry itself is a per-block property, not a house rule. The SSMCS strip's
  * compressor — the other bank on the same channel — has an asymmetric knee, which a

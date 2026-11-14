@@ -170,7 +170,8 @@ describe("pitch scale presets", () => {
   });
 
   it("authors every preset, each with the pattern the unit derives", () => {
-    // Read off a URX44V at Key = C and Key = G; the offsets came back identical at both.
+    // The offsets from the Key that the unit derives for each preset: the Key moves the
+    // absolute notes, not the offsets.
     const OFFSETS: Record<number, number[]> = {
       [PITCH_SCALE_SINGLE]: [0],
       [PITCH_SCALE_MAJOR]: [0, 2, 4, 5, 7, 9, 11],
