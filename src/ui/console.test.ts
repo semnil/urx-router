@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect } from "vitest";
 import { Console } from "./console";
+import type { ConsoleCueHooks } from "./console";
 import { consoleHost, type ConsoleHost } from "./console.test-util";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
@@ -8,6 +9,7 @@ import { BUS_TYPE_FIXED, COMP_EQ_COMP_FIRST, COMP_EQ_SSMCS } from "../core/contr
 import { setExclusiveConnection, type Plan } from "../core/plan";
 import { t } from "../i18n";
 import { EQ_TYPE_GEQ } from "../core/geq";
+import { tapAddrs, type MeterStore, type MeterTap } from "../core/meters";
 
 /** The EFFECT TYPE action of a host whose cases choose none. */
 const noTypeChoice = (): never => {
@@ -634,5 +636,190 @@ describe("a bus's EQ opener", () => {
       { kind: "eq", id: "bus.stereo" },
     ]);
     expect(opener("bus.mix2").getAttribute("aria-label")).toBe(t().dynTuning.geq.open);
+  });
+});
+
+// While anything is cued during Live sync the STEREO strip's meter column and readout show the
+// CUE bus, with STEREO kept as a thin line beside it. The switch reads the app's [CUE] flags and
+// the session, never the CUE bus's level, so a cue of something silent switches it too.
+describe("the CUE bus over the STEREO strip", () => {
+  let h: ConsoleHost | undefined;
+  afterEach(() => {
+    h?.restore();
+    h = undefined;
+  });
+
+  /** The [CUE] flags as the app keeps them, switched by the case. */
+  const flags = (...cued: string[]): { on: Set<string>; hooks: ConsoleCueHooks } => {
+    const on = new Set(cued);
+    return {
+      on,
+      hooks: {
+        has: (n) => on.has(n),
+        any: () => on.size > 0,
+        set: (n, v) => void (v ? on.add(n) : on.delete(n)),
+        enabled: () => true,
+      },
+    };
+  };
+  type Priv = {
+    store: MeterStore;
+    subSig: string;
+    refs: Map<string, { root: HTMLElement; readMtr: HTMLElement; lanes: Array<{ v: number }>; tap: MeterTap | null }>;
+  };
+  const priv = (host: ConsoleHost): Priv => host.view as unknown as Priv;
+  const stereo = (host: ConsoleHost) => priv(host).refs.get("bus.stereo")!;
+  const shown = (host: ConsoleHost): boolean => stereo(host).root.classList.contains("cue-over");
+  const caption = (host: ConsoleHost): string | null =>
+    stereo(host).root.querySelector(".con-readout .mtr .cap2")!.textContent;
+  /** The CUE column's lanes, read off the strip record the view paints them from. */
+  const cueLanes = (host: ConsoleHost): Array<{ v: number }> =>
+    (stereo(host) as unknown as { cue: { lanes: Array<{ v: number }> } }).cue.lanes;
+  /** STEREO at POST (L -36 / R -34 dBFS) and the CUE bus (L -20 / R -14 dBFS), raw. */
+  const feed = (host: ConsoleHost, cueL = -200, cueR = -140): void => {
+    const store = priv(host).store;
+    store.apply({ meterId: 125, x: 0, value: -360 });
+    store.apply({ meterId: 125, x: 1, value: -340 });
+    store.apply({ meterId: 128, x: 0, value: cueL });
+    store.apply({ meterId: 128, x: 1, value: cueR });
+  };
+
+  it("subscribes the CUE bus's meter beside every strip's own, cued or not", () => {
+    h = consoleHost({ live: true, cue: flags().hooks });
+    const sig = priv(h).subSig.split(",");
+    const strips = tapAddrs([...priv(h).refs.values()].flatMap((r) => r.tap ?? []));
+    expect(new Set(sig)).toEqual(new Set([...strips.map((a) => a.join(":")), "128:0", "128:1"]));
+    expect(sig.length).toBe(strips.length + 2);
+  });
+
+  it("subscribes nothing with Live sync off", () => {
+    h = consoleHost({ cue: flags("ch_7_8").hooks });
+    expect(priv(h).subSig).toBe("");
+  });
+
+  it("shows the CUE bus while anything is cued, and STEREO beside it", () => {
+    const f = flags();
+    h = consoleHost({ live: true, cue: f.hooks });
+    feed(h);
+    h.frame();
+    expect(shown(h)).toBe(false);
+    expect(caption(h)).toBe(t().console.readMeter);
+    expect(stereo(h).readMtr.textContent).toBe("-34.0");
+
+    f.on.add("ch_7_8");
+    h.view.syncCues();
+    expect(shown(h)).toBe(true);
+    expect(caption(h)).toBe(t().console.cueChip);
+    // Written in the same task, not on the next throttled readout frame.
+    expect(stereo(h).readMtr.textContent).toBe("-14.0");
+    h.frame();
+    expect(cueLanes(h)[0].v).toBeGreaterThan(0);
+    expect(cueLanes(h)[1].v).toBeGreaterThan(cueLanes(h)[0].v);
+    // STEREO's own lanes keep running: they are the thin line.
+    expect(stereo(h).lanes[0].v).toBeGreaterThan(0);
+  });
+
+  it("shows STEREO again, and its reading, the moment the last cue goes off", () => {
+    const f = flags("ch_7_8");
+    h = consoleHost({ live: true, cue: f.hooks });
+    feed(h);
+    h.frame();
+    expect(stereo(h).readMtr.textContent).toBe("-14.0");
+
+    f.on.clear();
+    h.view.syncCues();
+    expect(shown(h)).toBe(false);
+    expect(caption(h)).toBe(t().console.readMeter);
+    expect(stereo(h).readMtr.textContent).toBe("-34.0");
+    // The CUE lanes rest at the floor, so a later cue raises them from there.
+    expect(cueLanes(h).map((ln) => ln.v)).toEqual([0, 0]);
+  });
+
+  it("shows the CUE bus on a cue of something silent, at its floor", () => {
+    h = consoleHost({ live: true, cue: flags("ch1").hooks });
+    feed(h, -1280, -1280);
+    h.frame();
+    expect(shown(h)).toBe(true);
+    expect(stereo(h).readMtr.textContent).toBe("-∞");
+    expect(stereo(h).readMtr.classList.contains("off")).toBe(true);
+    expect(cueLanes(h).map((ln) => ln.v)).toEqual([0, 0]);
+  });
+
+  it('holds "—" until the CUE bus has streamed, rather than STEREO\'s reading', () => {
+    const f = flags();
+    h = consoleHost({ live: true, cue: f.hooks });
+    priv(h).store.apply({ meterId: 125, x: 0, value: -360 });
+    h.frame();
+    expect(stereo(h).readMtr.textContent).toBe("-36.0");
+    f.on.add("ch1");
+    h.view.syncCues();
+    expect(stereo(h).readMtr.textContent).toBe("—");
+  });
+
+  it("shows STEREO with Live sync off, whatever the flags say, and switches as the session does", () => {
+    h = consoleHost({ cue: flags("ch_7_8").hooks });
+    expect(shown(h)).toBe(false);
+    h.view.setLive(true);
+    expect(shown(h)).toBe(true);
+    h.view.setLive(false);
+    expect(shown(h)).toBe(false);
+    expect(caption(h)).toBe(t().console.readMeter);
+  });
+
+  it("switches a hidden view in place when the session ends", () => {
+    h = consoleHost({ live: true, cue: flags("ch_7_8").hooks });
+    expect(shown(h)).toBe(true);
+    h.view.hide();
+    h.view.setLive(false);
+    expect(shown(h)).toBe(false);
+  });
+
+  it("keeps showing the CUE bus across a re-render and a rebuild of the strip, its bars carried", () => {
+    h = consoleHost({ live: true, cue: flags("ch_7_8").hooks });
+    feed(h);
+    h.frame();
+    const lit = cueLanes(h)[1].v;
+    h.view.refresh();
+    expect(shown(h)).toBe(true);
+    expect(cueLanes(h)[1].v).toBeCloseTo(lit, 5);
+    expect(stereo(h).readMtr.textContent).toBe("-14.0");
+    h.view.refreshStrip("bus.stereo");
+    expect(shown(h)).toBe(true);
+    expect(cueLanes(h)[1].v).toBeCloseTo(lit, 5);
+    expect(stereo(h).readMtr.textContent).toBe("-14.0");
+  });
+
+  // The switch happens in place: the strip is not rebuilt, so a fader being dragged or focused
+  // keeps its element.
+  it("switches without rebuilding the strip", () => {
+    const f = flags();
+    h = consoleHost({ live: true, cue: f.hooks });
+    const root = stereo(h).root;
+    f.on.add("ch1");
+    h.view.syncCues();
+    expect(stereo(h).root).toBe(root);
+    expect(shown(h)).toBe(true);
+  });
+
+  for (const modelId of ["URX22", "URX44"] as const) {
+    it(`carries no CUE column on the ${modelId}, whose CUE bus meter the app does not read`, () => {
+      h = consoleHost({ modelId, live: true, cue: flags("ch1").hooks });
+      const root = stereo(h).root;
+      expect(root.querySelector(".con-meter.cue-meter")).toBeNull();
+      expect(root.querySelector(".con-cuetag")).toBeNull();
+      expect(shown(h)).toBe(false);
+      expect(
+        priv(h)
+          .subSig.split(",")
+          .filter((a) => a.startsWith("128:")),
+      ).toEqual([]);
+    });
+  }
+
+  it("carries the CUE column and its badge on the URX44V only on the STEREO strip", () => {
+    h = consoleHost({ live: true, cue: flags("ch1").hooks });
+    expect(h.host.querySelectorAll(".con-meter.cue-meter")).toHaveLength(1);
+    expect(h.host.querySelectorAll(".con-cuetag")).toHaveLength(1);
+    expect(stereo(h).root.querySelector(".con-cuetag")!.textContent).toBe(t().console.cueChip);
   });
 });

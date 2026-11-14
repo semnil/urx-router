@@ -1,6 +1,24 @@
-import { test, expect, colorToken, scrollsByWheel, textContrast, type Locator, type Page } from "./fixtures";
+import {
+  test,
+  expect,
+  colorToken,
+  contrastRatio,
+  scrollsByWheel,
+  textContrast,
+  type Locator,
+  type Page,
+} from "./fixtures";
 import { chooseOption } from "./choose-option";
-import { LIVE_COMMANDS, heldReadsOf, notifyParam, setDeviceValue, setHeldReads, stubTauriDevice } from "./tauri-stub";
+import {
+  LIVE_COMMANDS,
+  heldReadsOf,
+  meterAddrsOf,
+  notifyParam,
+  pushMeters,
+  setDeviceValue,
+  setHeldReads,
+  stubTauriDevice,
+} from "./tauri-stub";
 import { PARAMS } from "../src/core/control/params";
 import { planParamZ } from "./plan-param";
 import { drag, port, wire } from "./graph-helpers";
@@ -1123,6 +1141,145 @@ test("the readout cells carry FADER / METER captions", async ({ page }) => {
   await expect(readout.locator(".rd:not(.mtr) .cap2")).toHaveText("FADER");
   await expect(readout.locator(".rd.mtr .cap2")).toHaveText("METER");
   await expect(readout.locator(".rd:not(.mtr) .rv")).toHaveText("0.00");
+});
+
+// While anything is cued during Live sync, the STEREO strip meters the CUE bus: a ring in the CUE
+// colour round its meter, a CUE badge above and the readout naming it, with STEREO kept as a thin
+// line at the strip's right edge. The levels arrive through the stub's meter channel — the CUE
+// bus at L -20 / R -14 dBFS, STEREO's POST at -36 / -34 — and the cue is a press on CH 7/8's chip.
+const goLiveOnConsole = async (page: Page): Promise<Locator> => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+  await page.goto("/");
+  await expect(page.locator("#model-picker")).toHaveValue("URX44V");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await page.click("#btn-view-console");
+  await expect
+    .poll(() => meterAddrsOf(page))
+    .toEqual(
+      expect.arrayContaining([
+        [128, 0],
+        [128, 1],
+      ]),
+    );
+  await pushMeters(page, [
+    [125, 0, -360],
+    [125, 1, -340],
+    [128, 0, -200],
+    [128, 1, -140],
+  ]);
+  return page.getByRole("group", { name: "STEREO", exact: true });
+};
+const cueChip = (page: Page, node: string) => page.locator(`#console-host .con-cue[data-cue="${node}"]`);
+
+test("while anything is cued the STEREO strip meters the CUE bus, and STEREO once nothing is", async ({ page }) => {
+  const st = await goLiveOnConsole(page);
+  const caption = st.locator(".con-readout .mtr .cap2");
+  const value = st.locator(".con-readout .mtr .rv");
+  await expect(caption).toHaveText("METER");
+  await expect(value).toHaveText("-34.0");
+  await expect(st.locator(".con-meter.cue-meter")).toBeHidden();
+  await expect(st.locator(".con-cuetag")).toBeHidden();
+
+  await cueChip(page, "ch_7_8").click();
+  await expect(st).toHaveClass(/cue-over/);
+  await expect(st.locator(".con-cuetag")).toHaveText("CUE");
+  await expect(st.locator(".con-meter.cue-meter")).toBeVisible();
+  await expect(caption).toHaveText("CUE");
+  await expect(value).toHaveText("-14.0");
+  // The ring is the CUE colour, the token the CUE chip lights in.
+  const ring = await st.locator(".con-meter.cue-meter").evaluate((m) => getComputedStyle(m, "::before").borderTopColor);
+  expect(ring).toBe(await colorToken(page, "--cue"));
+
+  await cueChip(page, "ch_7_8").click();
+  await expect(st).not.toHaveClass(/cue-over/);
+  await expect(caption).toHaveText("METER");
+  await expect(value).toHaveText("-34.0");
+  await expect(st.locator(".con-meter.cue-meter")).toBeHidden();
+});
+
+// STEREO's line is drawn at half strength; on a strip whose master is off it takes the meter's dim
+// on top, rather than the dim replacing its own.
+test("the STEREO line takes the dim of a strip whose master is off, on top of its own", async ({ page }) => {
+  const st = await goLiveOnConsole(page);
+  await cueChip(page, "ch_7_8").click();
+  await expect(st).toHaveClass(/cue-over/);
+  const line = st.locator(".con-meter:not(.cue-meter)");
+  const cue = st.locator(".con-meter.cue-meter");
+  // The stub's unit answers STEREO's master as off; switched on here, then off again.
+  const power = st.locator(".con-power");
+  if ((await power.getAttribute("aria-pressed")) === "false") await power.click();
+  await expect(st).not.toHaveClass(/inactive/);
+  expect(await strength(line)).toBeCloseTo(0.5, 5);
+  expect(await strength(cue)).toBeCloseTo(1, 5);
+  await power.click();
+  await expect(st).toHaveClass(/inactive/);
+  expect(await strength(line)).toBeCloseTo(0.25, 5);
+  expect(await strength(cue)).toBeCloseTo(0.5, 5);
+});
+
+// The ring stands on the panel on both sides, so in the light theme it is set against the panel
+// alone; the readout's CUE caption is text a reader needs.
+test("the CUE ring and the CUE readout clear their ratios in the light theme", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("urx-theme", "light"));
+  const st = await goLiveOnConsole(page);
+  await cueChip(page, "ch_7_8").click();
+  await expect(st).toHaveClass(/cue-over/);
+  const { ring, ground } = await st.evaluate((s) => ({
+    ring: getComputedStyle(s.querySelector(".con-meter.cue-meter")!, "::before").borderTopColor,
+    ground: getComputedStyle(s).backgroundColor,
+  }));
+  expect(await contrastRatio(page, ring, ground)).toBeGreaterThanOrEqual(3);
+  const caption = st.locator(".con-readout .mtr .cap2");
+  await expect(caption).toHaveText("CUE");
+  expect(await textContrast(page, caption)).toBeGreaterThanOrEqual(4.5);
+  expect(await textContrast(page, st.locator(".con-readout .mtr .rv"))).toBeGreaterThanOrEqual(4.5);
+});
+
+// The CUE column and the thin STEREO line take back what they add to the row, so a cue moves
+// neither the fader nor the scale, and both meters stay inside the strip, the CUE badge beside the
+// meter-point badge.
+test("a cue leaves the STEREO fader and scale where they stand, inside the strip @webkit", async ({ page }) => {
+  const st = await goLiveOnConsole(page);
+  const geometry = () =>
+    st.evaluate((s) => {
+      const rect = (e: Element) => {
+        const r = e.getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+      };
+      const box = (sel: string) => rect(s.querySelector(sel)!);
+      return {
+        strip: rect(s),
+        fader: box(".con-fader"),
+        scale: box(".con-scale"),
+        cue: s.querySelector(".con-meter.cue-meter")!.getBoundingClientRect().width
+          ? box(".con-meter.cue-meter")
+          : null,
+        line: box(".con-meter:not(.cue-meter)"),
+        badge: s.querySelector(".con-cuetag")!.getBoundingClientRect().width ? box(".con-cuetag") : null,
+        tap: s.querySelector(".con-tap")!.getBoundingClientRect().width ? box(".con-tap") : null,
+      };
+    });
+  const idle = await geometry();
+  expect(idle.cue).toBeNull();
+
+  await cueChip(page, "ch_7_8").click();
+  await expect(st).toHaveClass(/cue-over/);
+  const cued = await geometry();
+  expect(cued.fader).toEqual(idle.fader);
+  expect(cued.scale).toEqual(idle.scale);
+  const cue = cued.cue!;
+  const badge = cued.badge!;
+  // The CUE meter where the meter stood, the line right of it, both inside the strip's box.
+  expect(cue.left).toBeGreaterThan(cued.scale.right);
+  expect(cued.line.left).toBeGreaterThan(cue.right);
+  expect(cued.line.right).toBeLessThanOrEqual(cued.strip.right - 1); // inside its right border
+  expect(cued.line.right - cued.line.left).toBe(5);
+  // The badge row: the CUE badge then the meter-point badge, neither past the strip's edges.
+  expect(badge.left).toBeGreaterThanOrEqual(cued.strip.left);
+  expect(cued.tap!.left).toBeGreaterThan(badge.right);
+  expect(cued.tap!.right).toBeLessThanOrEqual(cued.strip.right);
 });
 
 test("the meter-point badge shows a meter glyph, distinct from the send-tap PRE button", async ({ page }) => {

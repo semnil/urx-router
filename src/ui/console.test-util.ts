@@ -17,7 +17,7 @@
 import { recordWindowListeners } from "./listener-scope.test-util";
 import { resetPointerTracking } from "./dom";
 import { Console } from "./console";
-import type { ConsoleHooks, ConsoleMidiHooks } from "./console";
+import type { ConsoleCueHooks, ConsoleHooks, ConsoleMidiHooks } from "./console";
 import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import type { DeviceModel } from "../models/types";
@@ -72,6 +72,9 @@ export interface ConsoleHostOptions {
   plan?: Plan;
   live?: boolean;
   midi?: ConsoleMidiHooks;
+  /** The [CUE] flags the view reads, which the app keeps outside the plan. Absent, the view has
+   *  none, as a host without a session's cues gives it. */
+  cue?: ConsoleCueHooks;
   /** The box every control measures as, the fader caps excepted (see `capBox`). */
   box?: { width: number; height: number };
   /** The box a fader cap measures as. The one exception to the single box above, and
@@ -206,6 +209,7 @@ export function consoleHost(opts: ConsoleHostOptions = {}): ConsoleHost {
       if (setDisplayedSide(id, side)) view.refresh();
     },
     midi: opts.midi,
+    cue: opts.cue,
   };
 
   // Installed after the stubs and before the view: the view registers window

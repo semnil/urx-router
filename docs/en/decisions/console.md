@@ -96,6 +96,71 @@ suite ran as a URX44V, so the suite passed with the model id not wired through a
 pinned by the unit test [src/ui/console.test.ts](../../../src/ui/console.test.ts), and the collision
 audit of the tables runs per model with a guard against an empty table.
 
+## The CUE bus over the STEREO strip
+
+**Decision (2026-11-14).** While anything is cued during Live sync, the STEREO strip meters the CUE
+bus, and STEREO stays on screen as a thin line beside it. What it draws is in
+[architecture.md](../architecture.md), "CONSOLE view (mixer-style level overview)". The operator chose
+the placement from renderings of the app's real screens, in two rounds, and chose the refined form
+below in the second:
+
+- the CUE bus's meter stands where the meter stood, 2px closer to the scale, inside a ring in the
+  CUE colour held 1px off the meter;
+- STEREO's own meter stays as a 5px line at the strip's right edge;
+- the fader and the scale do not move;
+- the switch follows the app's own [CUE] flags and the session, not the CUE bus's level, so a cue of
+  something silent switches it too and shows the floor;
+- only a model whose CUE bus meter address is known carries it: the URX44V. The model registry says
+  so (`cueMeter`), and the URX22 and the URX44 carry no CUE column.
+
+**Why this form.**
+
+- **The unit puts the CUE bus in the same place.** Its HOME screen shows STEREO's level in the side
+  menu's STEREO/CUE meter, and the CUE bus's level there while CUE is on (the user guide, "HOME screen
+  (Overview)", "Side menu").
+- **A ring held off the meter, in the existing colour.** A frame drawn on the meter touches the
+  groove inside it as well as the panel outside it. In the light theme those two are far apart, so
+  one colour clears 3:1 against both only from between them, and no CUE token sits there: framed
+  with `--cue`, the first rendering stood at 2.72:1 against the groove. Held 1px off, the ring has the
+  panel on both sides, and `--cue` stands at 4.66:1 against it with no new token.
+- **The fader and the scale stay put.** The first rendering with two columns moved them 5.5px left
+  for as long as something was cued.
+- **No new words.** The badge and the readout's caption use the CUE chip's own message.
+
+**Turned down.** Each was drawn on the app's real screens and compared.
+
+Where the CUE bus's level goes at all (the question was compared and left open on 2026-09-21):
+
+| Option | What it drew | What it cost |
+| --- | --- | --- |
+| A column in each MONITOR strip | A 10px CUE column beside the monitor's own meter, while that monitor's Cue Interrupt is on | The monitor's fader, scale and meter moved 7px left; with both Cue Interrupts off the CUE level showed nowhere |
+| A thin CUE strip | A 56px strip between MONITOR 2 and the OSCILLATOR: a name plate, a scale, a stereo meter and a readout | It is not a node, so the board's hiding and the single-strip rebuild do not reach it; the rack grows by its width |
+| A pair on the toolbar | A small L/R meter left of the File menu, on the CONSOLE only | A ladder about a tenth of a strip's, with no scale and no readout |
+
+On the STEREO strip, first round:
+
+| Option | What it drew | What it cost |
+| --- | --- | --- |
+| 1 — the column switches | STEREO's meter column and readout switch to the CUE bus, framed in the CUE colour, with a CUE badge | STEREO's level is off the screen for as long as something is cued |
+| 2 — STEREO kept thin (taken in a refined form) | The CUE column framed beside the scale, STEREO at 8px and dimmed on its right | The frame stood at 2.72:1 against the groove in the light theme; the fader and the scale moved 5.5px left while cued |
+| 3 — the name plate too | The plate reads CUE / STEREO and the strip takes a CUE tint, for as long as any monitor's Cue Interrupt is on | At the factory setting it reads CUE with nothing cued, and with both Cue Interrupts off the CUE level shows nowhere |
+| 4 — only while the CUE bus sounds | The CUE bars' green zone in the CUE colour and STEREO's number small under the readout, held a while after the CUE bus falls to its floor | A cue of something silent never switches it, and the hold has no measured fall time of the CUE bus to rest on |
+
+Refinements of 2, second round:
+
+| Option | What it drew | What it cost |
+| --- | --- | --- |
+| 2a (taken) | The ring held 1px off the meter, STEREO a 5px line at the right edge | The CUE column sits 2px closer to the scale than the meter does |
+| 2b | STEREO kept at its own left edge as a 4px line, the CUE column right of it, framed directly | A new light colour for the frame, one between the panel and the groove |
+| 2c | Option 2's order and widths, the scale gap closed from 6px to 2px | The same new colour as 2b |
+
+**What would reopen it.**
+
+- The CUE bus meter's address read on a URX22 or a URX44: that model's `cueMeter` goes on, with a case
+  for it in `src/core/meters.test.ts`.
+- The unit's HOME meter found to switch on a different condition — not on a cue of something silent,
+  or not with both Cue Interrupts off — where the CONSOLE is meant to switch as the unit does.
+
 ## Render cost during Live sync
 
 **Decision (2026-08-31, and 2026-10-10 for the frame gate).** The cost of the meters is set by the

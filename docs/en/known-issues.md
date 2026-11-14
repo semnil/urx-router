@@ -94,6 +94,10 @@ ends, and neither the CONSOLE's CUE chips, the inspector's CUE row nor a MIDI co
 assigned to a CUE switch one. A chip can still be armed for MIDI learn, so a control
 can be assigned to it.
 
+While anything is cued, the CONSOLE's STEREO strip meters the CUE bus — on the **URX44V
+only**. The CUE bus meter's address is known for that model alone, so on the URX22 and the
+URX44 the STEREO strip goes on metering STEREO while something is cued.
+
 The unit's **CUE Mode** (System firmware V1.5: *Mix CUE* or *Last CUE*, on its MONITOR
 screen) is the session's in the same way. While Live sync is on, the status bar and each
 MONITOR node's panel show the unit's mode and switch it, and under *Last CUE* a cue turned

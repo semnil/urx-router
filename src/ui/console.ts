@@ -31,6 +31,7 @@ import { LEVEL_POS_MAX, levelToPos, posToLevel, stepLevel } from "../core/levels
 import { hiZPatch, inputOnRefused, jackGainRange, jackIndex } from "../core/input-lock";
 import type { InputSwitch } from "../core/input-lock";
 import {
+  cueTap,
   defaultTapKey,
   hasMeter,
   isStereoTap,
@@ -42,6 +43,7 @@ import {
   tapAddrs,
   tapFor,
   tapsFor,
+  type MeterReading,
   type MeterTap,
 } from "../core/meters";
 import { loadJson, saveJson } from "../core/storage";
@@ -257,13 +259,15 @@ function readCap(text: string): HTMLElement {
 
 // The live-meter readout cell (METER caption + dBFS value, reset to "—" until the
 // stream feeds it). Shared by both strip builders; the value element is returned so
-// the caller can store it as the strip's readMtr.
-function meterReadCell(): { cell: HTMLElement; value: HTMLElement } {
+// the caller can store it as the strip's readMtr, and the caption so the STEREO strip
+// can name the CUE bus there while it shows it.
+function meterReadCell(): { cell: HTMLElement; cap: HTMLElement; value: HTMLElement } {
   const cell = el("div", "rd mtr");
+  const cap = readCap(t().console.readMeter);
   const value = el("div", "rv");
   value.textContent = "—";
-  cell.append(readCap(t().console.readMeter), value);
-  return { cell, value };
+  cell.append(cap, value);
+  return { cell, cap, value };
 }
 
 // A strip is a group named by its node, so a control inside it — named only for what it is
@@ -331,6 +335,27 @@ interface MeterLane {
   live: boolean;
 }
 
+// Hand one column's ballistics to the lanes rebuilt in its place (carryMeterState).
+function carryLanes(from: MeterLane[], to: MeterLane[]): void {
+  to.forEach((ln, i) => {
+    const o = from[i];
+    if (!o) return;
+    ln.v = o.v;
+    ln.pk = o.pk;
+    ln.over = o.over;
+  });
+}
+
+// The STEREO strip's second meter column, the CUE bus's, on a model whose CUE bus meter the
+// app reads. Shown in place of STEREO's own while anything is cued (`on`), when the readout
+// reads it too and its caption names it.
+interface CueMeter {
+  tap: MeterTap;
+  lanes: MeterLane[];
+  cap: HTMLElement;
+  on: boolean;
+}
+
 interface StripRef {
   m: StripModel;
   // The strip's root element, so a device-follow direct change can rebuild just this
@@ -345,6 +370,7 @@ interface StripRef {
   tap: MeterTap | null; // the resolved tap this strip's meter shows (fixed per render)
   // lmtr = last meter readout written (deci-dB; 1 = sentinel "none written").
   sig: { lmtr: number };
+  cue?: CueMeter; // the STEREO strip's CUE bus meter; absent elsewhere
   // SENDS rack: the per-send column faders — kept so a linked partner's rack
   // fader can be mirrored in place, like the main fader. The header readout and the
   // collapsed dots are reached via `root` when the global collapse toggles.
@@ -567,8 +593,10 @@ export class Console {
     // while hidden (nothing to stream until the first show re-subscribes).
     if (!active || !this.visible) this.stopMeters();
     // Rebuild so the CH → FX send Pre/Post chip flips read-only with live state;
-    // render() (re)starts/re-scopes the meter stream at its tail when live.
+    // render() (re)starts/re-scopes the meter stream at its tail when live. A hidden view
+    // is not rebuilt, so the STEREO strip's meter is switched in place.
     if (this.visible) this.render();
+    else this.syncCueOver();
   }
 
   /** Re-read set levels after an external edit (inspector / graph / readback). */
@@ -2310,11 +2338,13 @@ export class Console {
     return chip;
   }
 
-  /** Repaint what shows the cues without rebuilding a strip: each CUE chip's light, and the
-   *  frame and C.INT colour of a MONITOR whose Cue Interrupt makes it play the CUE bus. */
+  /** Repaint what shows the cues without rebuilding a strip: the STEREO strip's meter, each CUE
+   *  chip's light, and the frame and C.INT colour of a MONITOR whose Cue Interrupt makes it play
+   *  the CUE bus. */
   syncCues(): void {
     const cue = this.hooks.cue;
     if (!cue) return;
+    this.syncCueOver();
     for (const chip of this.host.querySelectorAll<HTMLElement>(".con-cue[data-cue]")) {
       const on = cue.has(chip.dataset.cue!);
       chip.classList.toggle("on", on);
@@ -2330,6 +2360,36 @@ export class Console {
       cint.classList.toggle("cue-int", taking);
       setTip(cint, taking ? t().console.cueTaking : t().console.cueFull);
     }
+  }
+
+  /** Whether the STEREO strip's meter shows the CUE bus: while anything is cued during Live sync,
+   *  whatever level the CUE bus carries — a cue of something silent shows the floor. */
+  private cueOverOn(): boolean {
+    return this.live && (this.hooks.cue?.any() ?? false);
+  }
+
+  /** Switch the STEREO strip's meter column, badge and readout between STEREO and the CUE bus.
+   *  The CUE lanes leaving the screen drop to the floor, so the next time they are shown they rise
+   *  from it rather than from the level they left at, and the readout holds "—" until a paint
+   *  writes what it now reads. */
+  private setCueOver(r: StripRef, on: boolean): void {
+    const c = r.cue;
+    if (!c || c.on === on) return;
+    c.on = on;
+    r.root.classList.toggle("cue-over", on);
+    c.cap.textContent = on ? t().console.cueChip : t().console.readMeter;
+    if (!on) this.resetLanes(c.lanes);
+    r.readMtr.textContent = "—";
+    r.readMtr.classList.remove("off");
+    r.sig.lmtr = 1;
+  }
+
+  /** Bring the STEREO strip's meter in line with the cues and the session, in place. */
+  private syncCueOver(): void {
+    const r = this.refs.get(MAIN_BUS);
+    if (!r?.cue || r.cue.on === this.cueOverOn()) return;
+    this.setCueOver(r, !r.cue.on);
+    if (this.live && this.visible) this.paintStrip(r, true, false);
   }
 
   // Build one lane: its bar column (green→red LED bar + shade + peak marker) and its
@@ -2565,18 +2625,14 @@ export class Console {
   // Carry a strip's live meter ballistics over from the elements it is replacing, so
   // a rebuild doesn't drop the bars to the floor and re-attack. Only when the strip
   // still meters the same tap — the tap objects are the table's own singletons, so
-  // identity means the same addresses and the same lane count. The last-written
+  // identity means the same addresses and the same lane count. The STEREO strip's CUE
+  // lanes carry the same way, since their tap is one singleton too. The last-written
   // trackers (lv/lpk/lov/lmtr) stay at their fresh sentinels: the new elements are
   // undrawn, so the next paint must write them, not skip them as unchanged.
   private carryMeterState(from: StripRef | undefined, to: StripRef | undefined): void {
-    if (!from || !to || from.tap !== to.tap) return;
-    to.lanes.forEach((ln, i) => {
-      const o = from.lanes[i];
-      if (!o) return;
-      ln.v = o.v;
-      ln.pk = o.pk;
-      ln.over = o.over;
-    });
+    if (!from || !to) return;
+    if (from.tap === to.tap) carryLanes(from.lanes, to.lanes);
+    if (from.cue && to.cue) carryLanes(from.cue.lanes, to.cue.lanes);
   }
 
   // Where keyboard focus sits inside the strips, as (strip id, the control's own identity).
@@ -3288,8 +3344,18 @@ export class Console {
     // with the OVER clip window above it. Stereo taps split into independent L/R bars.
     const tap = tapFor(m.id, tapKey, this.hooks.getModel().id) ?? null;
     const { meter, lanes } = this.buildMeterColumn(m.range, isStereoTap(tap));
+    // The STEREO strip carries the CUE bus's meter as well, left of its own, drawn only while it
+    // shows the CUE bus (`cue-over`, setCueOver) with a badge above naming it.
+    const cueT = m.id === MAIN_BUS ? cueTap(model.id) : undefined;
+    const cueCol = cueT ? this.buildMeterColumn(m.range, isStereoTap(cueT)) : null;
+    if (cueCol) {
+      cueCol.meter.classList.add("cue-meter");
+      const badge = el("div", "con-cuetag");
+      badge.textContent = t().console.cueChip;
+      tapHead.prepend(badge);
+    }
 
-    zrow.append(fader, this.buildScale(m.range), meter);
+    zrow.append(fader, this.buildScale(m.range), ...(cueCol ? [cueCol.meter] : []), meter);
     zone.append(zrow);
     strip.append(rack.el, zone);
 
@@ -3304,10 +3370,12 @@ export class Console {
     // Only metered strips build the meter readout cell; a fader-only strip keeps a
     // bare detached value element as its readMtr (never appended, never updated).
     let mtrEl: HTMLElement;
+    let mtrCap: HTMLElement | null = null;
     if (hasMeter(m.id, this.hooks.getModel().id)) {
       const rc = meterReadCell();
       readout.append(rc.cell);
       mtrEl = rc.value;
+      mtrCap = rc.cap;
     } else {
       mtrEl = el("div", "rv");
     }
@@ -3323,9 +3391,13 @@ export class Console {
       readMtr: mtrEl,
       tap,
       sig: { lmtr: 1 },
+      cue: cueT && cueCol && mtrCap ? { tap: cueT, lanes: cueCol.lanes, cap: mtrCap, on: false } : undefined,
       sendCols: rack.cols,
     };
     this.refs.set(m.id, refObj);
+    // Built showing what the cues say, so a rebuild of this strip alone (refreshStrip) needs no
+    // separate pass to switch it.
+    this.setCueOver(refObj, this.cueOverOn());
     // Paint the cap position, readout and aria-valuenow through the same helper
     // the edit path uses (as buildSendCol does via updateColLevel), so build and
     // edit cannot drift apart.
@@ -3440,8 +3512,13 @@ export class Console {
 
   private startMeters(): void {
     if (!this.live || !this.visible || this.metersLent) return;
+    // The CUE bus's meter is subscribed whenever the STEREO strip carries it, cued or not, so a
+    // cue switches the strip at once instead of re-registering every address on screen.
     const taps: MeterTap[] = [];
-    for (const r of this.refs.values()) if (r.tap) taps.push(r.tap);
+    for (const r of this.refs.values()) {
+      if (r.tap) taps.push(r.tap);
+      if (r.cue) taps.push(r.cue.tap);
+    }
     const addrs = tapAddrs(taps);
     const sig = addrs.map((a) => a.join(":")).join(",");
     // subPending closes the window the await opens: without it a render landing
@@ -3510,29 +3587,34 @@ export class Console {
   private resetMeters(): void {
     for (const r of this.refs.values()) {
       const s = r.sig;
-      for (const ln of r.lanes) {
-        ln.v = ln.pk = ln.over = 0;
-        if (ln.lv !== 0) {
-          ln.shade.style.setProperty("--lvl", "0");
-          ln.lv = 0;
-        }
-        if (ln.lpk !== 0) {
-          ln.peak.style.setProperty("--pk", "0");
-          ln.lpk = 0;
-        }
-        if (ln.lov !== 0) {
-          ln.clip.style.setProperty("--clip", "0");
-          ln.lov = 0;
-        }
-        if (ln.live) {
-          ln.col.classList.remove("live"); // release the compositor layers on teardown
-          ln.live = false;
-        }
-      }
+      this.resetLanes(r.lanes);
+      if (r.cue) this.resetLanes(r.cue.lanes);
       if (s.lmtr !== 1) {
         r.readMtr.textContent = "—";
         r.readMtr.classList.remove("off");
         s.lmtr = 1;
+      }
+    }
+  }
+
+  private resetLanes(lanes: MeterLane[]): void {
+    for (const ln of lanes) {
+      ln.v = ln.pk = ln.over = 0;
+      if (ln.lv !== 0) {
+        ln.shade.style.setProperty("--lvl", "0");
+        ln.lv = 0;
+      }
+      if (ln.lpk !== 0) {
+        ln.peak.style.setProperty("--pk", "0");
+        ln.lpk = 0;
+      }
+      if (ln.lov !== 0) {
+        ln.clip.style.setProperty("--clip", "0");
+        ln.lov = 0;
+      }
+      if (ln.live) {
+        ln.col.classList.remove("live"); // release the compositor layers on teardown
+        ln.live = false;
       }
     }
   }
@@ -3549,26 +3631,36 @@ export class Console {
   // onto freshly built elements passes false, so a rebuild writes the state the meter
   // already holds instead of aging it — the animation keeps its own clock.
   private paintStrip(r: StripRef, showReadout: boolean, step: boolean): void {
-    if (!r.tap) return;
-    const reading = this.store.readingTap(r.tap);
-    if (!reading) return;
+    const reading = r.tap ? this.store.readingTap(r.tap) : null;
+    if (reading) this.paintLanes(r.lanes, reading, r.m.range, step);
+    // While the STEREO strip shows the CUE bus, the CUE lanes run beside STEREO's and the
+    // readout reads the CUE bus.
+    const cue = r.cue?.on ? this.store.readingTap(r.cue.tap) : null;
+    if (cue) this.paintLanes(r.cue!.lanes, cue, r.m.range, step);
+    const shown = r.cue?.on ? cue : reading;
+    if (showReadout && shown) this.paintReadout(r, shown);
+  }
+
+  // Numeric meter readout (peak of L/R), -∞ below the floor.
+  private paintReadout(r: StripRef, reading: MeterReading): void {
     const s = r.sig;
-    // Numeric meter readout (selected tap, peak of L/R), -∞ below the floor.
     const peakDb = Math.max(reading.l, reading.r);
     const mtr = peakDb <= METER_FLOOR_DB ? -999 : Math.round(peakDb * 10);
-    if (showReadout && mtr !== s.lmtr) {
-      setLevelText(r.readMtr, mtr === -999 ? "-∞" : (mtr / 10).toFixed(1));
-      r.readMtr.classList.toggle("off", mtr === -999);
-      s.lmtr = mtr;
-    }
+    if (mtr === s.lmtr) return;
+    setLevelText(r.readMtr, mtr === -999 ? "-∞" : (mtr / 10).toFixed(1));
+    r.readMtr.classList.toggle("off", mtr === -999);
+    s.lmtr = mtr;
+  }
+
+  private paintLanes(lanes: MeterLane[], reading: MeterReading, range: LevelRange, step: boolean): void {
     // Drive each lane from its own channel — lane 0 = L, lane 1 = R. A mono strip has
     // only lane 0, and readingTap mirrors R onto L there, so lane 0 meters its true
     // level either way (no peak-fold; the peak-of-L/R fold is only for the readout).
-    for (let i = 0; i < r.lanes.length; i++) {
-      const ln = r.lanes[i];
+    for (let i = 0; i < lanes.length; i++) {
+      const ln = lanes[i];
       const chDb = i === 0 ? reading.l : reading.r;
       const chOver = i === 0 ? reading.overL : reading.overR;
-      const target = meterFrac(chDb, r.m.range);
+      const target = meterFrac(chDb, range);
       if (step) {
         // Fast attack, slow release for a meter-like response; peak hold decays slowly.
         ln.v = target > ln.v ? target : ln.v + (target - ln.v) * 0.3;
