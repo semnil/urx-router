@@ -1105,6 +1105,36 @@ test("the GR readout's value clears AA in the light theme", async ({ page }) => 
   expect(await textContrast(page, value)).toBeGreaterThanOrEqual(4.5);
 });
 
+// The threshold cap and the range thumbs are one handle: one fill, one rim, one relief.
+// `pnpm test lit-face` holds the stylesheet's rules; this holds what the cap is drawn with
+// once the cascade has run, which a later rule naming the cap would change without touching
+// those. A thumb's own computed style is not readable from the page, so the cap is held to
+// the tokens the thumbs read.
+for (const theme of ["dark", "light"] as const) {
+  test(`the threshold cap draws the range thumb's rim and relief (${theme})`, async ({ page }) => {
+    await page.addInitScript((t) => localStorage.setItem("urx-theme", t), theme);
+    await page.reload();
+    await openFromInspector(page, "ch1", "gate");
+    const cap = screenBox(page).locator("#dyn-threshold-cap");
+    await expect(cap).toBeVisible();
+    const drawn = await cap.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { rim: s.borderTopColor, relief: s.boxShadow };
+    });
+    const relief = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.boxShadow = "var(--seg-shadow)";
+      document.body.append(probe);
+      const resolved = getComputedStyle(probe).boxShadow;
+      probe.remove();
+      return resolved;
+    });
+    expect(relief, "--seg-shadow resolves to a shadow").not.toBe("none");
+    expect(drawn.rim).toBe(await colorToken(page, "--seg-border"));
+    expect(drawn.relief).toBe(relief);
+  });
+}
+
 test.describe("eq", () => {
   test("shows the response and the levels at once, with the plot selecting a band", async ({ page }) => {
     await openFromInspector(page, "ch1", "eq");

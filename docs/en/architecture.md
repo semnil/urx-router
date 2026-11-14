@@ -1770,6 +1770,10 @@ drag lands on the nearest.
   tallest strip** across every channel (measured by laying the strips out off-screen in `mainHeadHeight`,
   cached by model + hidden set); the fixed-height SENDS rack sits below it, and the fader / level-meter zone
   (`flex: 1`) takes the rest of the window height, so the fader and meter heights fit the open window.
+  On a short window the zone keeps a 140 px floor (`--zone-floor`) and the strip grid scrolls vertically.
+  Below the window's minimum height (640 px, which only docked devtools go under) the zone also pins to
+  the bottom of the grid's visible area and the head and the SENDS rack scroll beneath it, so the faders
+  and meters stay in view.
 - **Readout** — each strip's bottom readout carries no send-destination row (the FADER / live METER cells are
   covered above); the send destinations are conveyed by the rack columns, and per-send levels by the rack
   header readout on column touch. The mono font draws `∞` at x-height, smaller

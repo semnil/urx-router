@@ -185,6 +185,30 @@ is one armed control at a time. With animation off it is held on its bright side
 A test that pins a face is not finished at "the two are equal": it fixes one token and also checks
 that the resolved value is not transparent. Two transparent values are equal.
 
+## The range thumb and the threshold cap are one handle
+
+**Decision (2026-11-12).** Every face painted in the `--seg` gradient wears one rim and one relief
+as well as the one fill: `--seg-border` and `--seg-shadow`, declared once and the same in both
+themes, while the fill alone changes with the theme. Those faces are the range thumbs (the
+Inspector's slider rows, a tuning screen's slider rows, the GEQ faders, the Screen row under
+Device setup's Brightness) and a tuning screen's threshold cap. The shape stays each control's own: a thumb on its track, a
+cap as wide as the meter it rides, with its index line and its smaller corners.
+
+**What it replaced.** The cap drew a rim of its own and a dark outer ring, both written as literals,
+beside thumbs that carried another rim and a lift. Unifying the two had been put on hold on two
+grounds: in the light theme they were already different, and they sit on different grounds (a thumb
+on the panel, the cap on the plot's dark groove). The first ground went when the thumb's
+hand-written gradient became `--seg`
+([#273](https://github.com/semnil/urx-router/pull/273)). The operator chose to unify them.
+
+**Turned down.** Recording "not unified" as the decision, with those two grounds as its reasons.
+
+**How it is held.** `pnpm test lit-face` derives the `--seg` faces from the stylesheet and refuses
+one whose rim or relief is not the two tokens, and a theme that redefines either.
+[e2e/dyntuning.spec.ts](../../../e2e/dyntuning.spec.ts) checks what the Gate screen's cap is drawn
+with in both themes, which a later rule naming the cap could change without that test seeing it. A
+face that has to look different is a change to those tests and to this section.
+
 ## The polarity mark is Ф
 
 **Decision (2026-10-11, [#599](https://github.com/semnil/urx-router/pull/599)).** The polarity mark
