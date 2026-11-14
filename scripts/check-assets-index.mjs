@@ -887,40 +887,36 @@ if (isEntry(import.meta.url)) {
   // name files throughout and were checked by nobody. This is preventive: the point is
   // that the next moved file is caught by a run rather than by a reader months later.
   //
-  // The one design problem is the memory checker's: a CLAIM is not a MENTION. Three
-  // rules, each measured against the corpus before it was kept:
+  // The one design problem is the memory checker's: a CLAIM is not a MENTION. Three rules:
   //
   //   - A rooted path (src/, e2e/, docs/, .github/ …) has to resolve as written. It goes
   //     through the same funnel as the table's own paths, so src-tauri/target/release/bundle/
-  //     reads as generated rather than missing. 178 assertions, 2 misses, both that one.
+  //     reads as generated rather than missing.
   //   - An abbreviated one — `core/routing.ts`, `ui/dom.ts`, `control/live.ts`, the form
   //     the reader resolves by context — resolves under any directory carrying its FIRST
   //     segment. That segment is the whole discriminator: it tells this repo's shorthand
   //     from another tree's path, because `ui` and `control` are directories here and
   //     `tauri-runtime` is not, so `tauri-runtime/src/webview.rs` never becomes a claim
-  //     and needs no pardon. check-memory-refs.mjs settled the same rule after measuring
-  //     plain suffix matching at 10 false positives out of 10 — that path among them.
-  //     137 assertions, 0 misses.
+  //     and needs no pardon. check-memory-refs.mjs settled on the same rule because plain
+  //     suffix matching takes other trees' paths for claims — that one among them.
   //   - A bare basename (`main.ts`, `ci.yml`, `tauri.conf.json`) resolves by name anywhere
-  //     in the tree. The memory checker does NOT check this class (45 unresolved there,
-  //     0 real findings); in documents that describe only this repo it measures the other
-  //     way — 292 spans, 8 misses, and all 8 are the two DOC_MENTIONS entries, each named
-  //     twice per language.
+  //     in the tree. The memory checker does NOT check this class; in documents that
+  //     describe only this repo it is checked, and a name that resolves nowhere is a
+  //     finding unless a DOC_MENTIONS entry pardons it.
   //   - A dotfile (`.env.demo`) is invisible to that rule — it has no extension the rule
   //     knows, and every leading-dot span in the corpus is a CSS class, a file format or a
   //     method (`.consent-scrim`, `.urxf`, `.toContain`). So the same discriminator the
   //     shortened form uses applies: a leading dot-segment that names a top-level entry of
-  //     THIS repo, or the stem of one (`.env` from .env.demo). 4 assertions, 0 misses, and
-  //     26 distinct spans (74 occurrences) classified as mentions without an allowlist
-  //     entry each.
+  //     THIS repo, or the stem of one (`.env` from .env.demo), and the spans that name no
+  //     such entry are classified as mentions without an allowlist entry each.
   //
   // Fenced blocks are scanned whole, like the memory checker's: they are code, and a path
-  // in a Mermaid label rots like any other (+86 assertions, no new misses). Prose outside
-  // backticks is scanned for basenames and dotfiles ONLY — a slash in a sentence is not a
-  // path (`ON/OFF`, `CH3/4`), but `console-sends.md` in a sentence is still that file, and
-  // backticks are a house style rather than a rule the documents follow. It is the ONLY
-  // thing that covers console-sends.md and live-race-harness.md, which no backticked span
-  // in the corpus names at all.
+  // in a Mermaid label rots like any other. Prose outside backticks is scanned for
+  // basenames and dotfiles ONLY — a slash in a sentence is not a path (`ON/OFF`, `CH3/4`),
+  // but `console-sends.md` in a sentence is still that file, and backticks are a house
+  // style rather than a rule the documents follow. It is the ONLY thing that covers
+  // console-sends.md and live-race-harness.md, which no backticked span in the corpus
+  // names at all.
   //
   // Deliberately not checked: Markdown link and image targets (a different class, and a
   // broken one is visible to the reader who clicks it — MD_TARGET strips them before the
