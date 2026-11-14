@@ -646,7 +646,8 @@ export function sendControl(model: DeviceModel, channelId: string, busId: string
   const fxIndex = FX_SEND_BUS_INDEX[busId];
   if (fxIndex !== undefined) {
     const base = (stereo ? FX_SEND_BASE_STEREO : FX_SEND_BASE_MONO) + FX_SEND_STRIDE * fxIndex;
-    // PRE/POST tap at base+0 (single mono send, no pan). Live-confirmed writable.
+    // PRE/POST tap at base+0 (single mono send, no pan). Read back, never written:
+    // the broker publishes max_value 0 for it (see sendTapWritable).
     return { y: cc.y, level: [base + 1], pan: [], on: [base + 3], tap: base };
   }
   return null;
@@ -976,10 +977,9 @@ export interface DynField {
    *  wheel notch turns from the held value rather than from the position the slider shows
    *  (`stopStep`). */
   heldOffStops?: true;
-  /** Step the device's push-and-turn fine mode uses for this value, when it has
-   *  one. Confirmed for exactly one dynamics parameter (see the COMP gain row);
-   *  every other GATE/COMP/DUCKER value is a measured negative, so this is not a
-   *  class rule and must not be inferred from the unit. */
+  /** Step the device's push-and-turn fine mode uses for this value, where it is
+   *  finer than `step`. Among the dynamics values only the COMP gain row has one,
+   *  so this is not a class rule and must not be inferred from the unit. */
   fineStep?: number;
   /** How far one arrow press or wheel notch moves the value, where that is further than
    *  `step` — the unit's encoder click on a value held to a finer grid. The finer part is
