@@ -171,15 +171,14 @@ const getTapsMap = (modelId?: string): Record<string, MeterTap[]> => {
 const GR_TAPS: Record<GrKind, Record<string, readonly [number, number]>> = {
   gate: { ch1: [107, 0], ch2: [107, 1], ch3: [107, 2], ch4: [107, 3] },
   comp: { ch1: [110, 0], ch2: [110, 1], ch3: [110, 2], ch4: [110, 3] },
-  // Measured on all four (URX44V, 2026-08-08): turning ducker y on lights 119:y and
-  // nothing else. So 119's x is the ducker's own instance index — NOT, on this
-  // evidence, "the stereo pair position", which is a separate claim about what that
-  // index means. Keying this table on the DUCKER node rather than on its host
-  // channel is what makes the distinction stop mattering: ducker 1 hangs under
-  // ch_3_4 on a URX22 and under ch_5_6 on a URX44/44V, and both are its pair 0, so
-  // the same four rows are right on every model. A table keyed on the channel would
-  // have to vary by model, and getting that wrong returns the neighbouring pair's
-  // reduction — a value, so nothing on screen would look wrong.
+  // Turning ducker y on lights 119:y and nothing else, for each of the four. So 119's
+  // x is the ducker's own instance index — NOT "the stereo pair position", which is a
+  // separate claim about what that index means. Keying this table on the DUCKER node
+  // rather than on its host channel is what makes the distinction stop mattering:
+  // ducker 1 hangs under ch_3_4 on a URX22 and under ch_5_6 on a URX44/44V, and both
+  // are its pair 0, so the same four rows are right on every model. A table keyed on
+  // the channel would have to vary by model, and getting that wrong returns the
+  // neighbouring pair's reduction — a value, so nothing on screen would look wrong.
   ducker: { "out.ducker1": [119, 0], "out.ducker2": [119, 1], "out.ducker3": [119, 2], "out.ducker4": [119, 3] },
   // The input insert effect is NOT here: its x is not the channel. `insertFxInGrAddr`.
 };
