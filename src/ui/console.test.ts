@@ -801,6 +801,46 @@ describe("the CUE bus over the STEREO strip", () => {
     expect(shown(h)).toBe(true);
   });
 
+  // The CUE badge stands where the meter-point badge stood, so what that badge opened closes,
+  // and a keyboard standing on either is handed to the strip rather than to the page.
+  it("closes the strip's meter-point popover when a cue covers it, keeping the focus in the strip", () => {
+    const f = flags();
+    h = consoleHost({ live: true, cue: f.hooks });
+    const badge = stereo(h).root.querySelector<HTMLElement>(".con-tap")!;
+    badge.focus();
+    badge.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const pop = h.host.querySelector<HTMLElement>(".con-tappop")!;
+    expect(pop.hidden).toBe(false);
+    expect(pop.contains(document.activeElement)).toBe(true);
+    f.on.add("ch1");
+    h.view.syncCues();
+    expect(pop.hidden).toBe(true);
+    expect(badge.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(stereo(h).root);
+  });
+
+  it("closes a meter-point popover a pointer opened, with the focus nowhere in it", () => {
+    const f = flags();
+    h = consoleHost({ live: true, cue: f.hooks });
+    stereo(h).root.querySelector<HTMLElement>(".con-tap")!.click();
+    const pop = h.host.querySelector<HTMLElement>(".con-tappop")!;
+    expect(pop.hidden).toBe(false);
+    expect(pop.contains(document.activeElement)).toBe(false);
+    f.on.add("ch1");
+    h.view.syncCues();
+    expect(pop.hidden).toBe(true);
+  });
+
+  it("leaves the focus where it is when it stands elsewhere", () => {
+    const f = flags();
+    h = consoleHost({ live: true, cue: f.hooks });
+    const fader = h.strip("ch1").fader!;
+    fader.focus();
+    f.on.add("ch1");
+    h.view.syncCues();
+    expect(document.activeElement).toBe(fader);
+  });
+
   for (const modelId of ["URX22", "URX44"] as const) {
     it(`carries no CUE column on the ${modelId}, whose CUE bus meter the app does not read`, () => {
       h = consoleHost({ modelId, live: true, cue: flags("ch1").hooks });

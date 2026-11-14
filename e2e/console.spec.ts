@@ -1238,10 +1238,14 @@ test("the CUE ring and the CUE readout clear their ratios in the light theme", a
 });
 
 // The CUE column and the thin STEREO line take back what they add to the row, so a cue moves
-// neither the fader nor the scale, and both meters stay inside the strip, the CUE badge beside the
-// meter-point badge.
+// neither the fader nor the scale, and both meters stay inside the strip. The CUE badge takes the
+// meter-point badge's place, so it fits whichever point STEREO meters at — the longest (PRE INS
+// FX) here.
 test("a cue leaves the STEREO fader and scale where they stand, inside the strip @webkit", async ({ page }) => {
   const st = await goLiveOnConsole(page);
+  await st.locator(".con-tap").click();
+  await page.locator(".con-tappop .crow", { hasText: "PRE INS FX" }).click();
+  await expect(st.locator(".con-tap")).toContainText("PRE INS FX");
   const geometry = () =>
     st.evaluate((s) => {
       const rect = (e: Element) => {
@@ -1276,10 +1280,10 @@ test("a cue leaves the STEREO fader and scale where they stand, inside the strip
   expect(cued.line.left).toBeGreaterThan(cue.right);
   expect(cued.line.right).toBeLessThanOrEqual(cued.strip.right - 1); // inside its right border
   expect(cued.line.right - cued.line.left).toBe(5);
-  // The badge row: the CUE badge then the meter-point badge, neither past the strip's edges.
+  // The badge row: the CUE badge alone, where the meter-point badge stood, inside the strip.
+  expect(cued.tap).toBeNull();
   expect(badge.left).toBeGreaterThanOrEqual(cued.strip.left);
-  expect(cued.tap!.left).toBeGreaterThan(badge.right);
-  expect(cued.tap!.right).toBeLessThanOrEqual(cued.strip.right);
+  expect(badge.right).toBeLessThanOrEqual(idle.tap!.right);
 });
 
 test("the meter-point badge shows a meter glyph, distinct from the send-tap PRE button", async ({ page }) => {

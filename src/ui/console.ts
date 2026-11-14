@@ -2371,10 +2371,19 @@ export class Console {
   /** Switch the STEREO strip's meter column, badge and readout between STEREO and the CUE bus.
    *  The CUE lanes leaving the screen drop to the floor, so the next time they are shown they rise
    *  from it rather than from the level they left at, and the readout holds "—" until a paint
-   *  writes what it now reads. */
+   *  writes what it now reads. The CUE badge stands where the meter-point badge stood, so a
+   *  meter-point popover open for the strip closes, and a focus on the badge or in the popover
+   *  lands on the strip root. */
   private setCueOver(r: StripRef, on: boolean): void {
     const c = r.cue;
     if (!c || c.on === on) return;
+    if (on) {
+      const held = [r.root.querySelector(".con-tap"), this.tapOpenFor === r.m.id ? this.tapPop : null].some((e) =>
+        e?.contains(document.activeElement),
+      );
+      if (this.tapOpenFor === r.m.id) this.closeTapPop();
+      if (held) r.root.focus();
+    }
     c.on = on;
     r.root.classList.toggle("cue-over", on);
     c.cap.textContent = on ? t().console.cueChip : t().console.readMeter;

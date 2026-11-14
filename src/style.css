@@ -3077,13 +3077,13 @@ input[type="range"]:focus-visible,
 /* The STEREO strip while anything is cued (`cue-over`): the CUE bus's meter stands where the
    meter was, 2px closer to the scale, and STEREO's own stays as a thin line at the strip's right
    edge. What the two add to the row is taken back on the line's right, so the row keeps its
-   width and the centring leaves the fader and the scale where they are. With nothing cued the
-   CUE column and its badge are not drawn and the strip is laid out as every other. */
-.con-strip:not(.cue-over) :is(.con-meter.cue-meter, .con-cuetag) {
+   width and the centring leaves the fader and the scale where they are. The CUE badge stands in
+   the meter-point badge's place: beside it, any meter point longer than POST would push the pair
+   past the strip's left edge. With nothing cued the CUE column and its badge are not drawn and
+   the strip is laid out as every other. */
+.con-strip:not(.cue-over) :is(.con-meter.cue-meter, .con-cuetag),
+.con-strip.cue-over .con-tap {
   display: none;
-}
-.con-strip.cue-over .con-taphead {
-  gap: 4px;
 }
 .con-cuetag {
   padding: 4px 6px;

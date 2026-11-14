@@ -1600,7 +1600,8 @@ not cut it, and gives way to the strip's own focus ring. For as long, the **STER
 (`cue-over`, `setCueOver`), whatever level the CUE bus carries — a cue of something silent shows its floor — and
 whatever the monitors' Cue Interrupt: the CUE bus's meter stands where the meter stood, 2px closer to the scale,
 inside a 2px ring in the CUE colour held 1px off the ladder and the OVER box, so the ring borders the panel on both
-sides; a **CUE** badge stands beside the meter-point badge; the readout's METER cell reads the CUE bus under a
+sides; a **CUE** badge stands in the meter-point badge's place (a meter-point popover open on the strip closes, and
+a focus on the badge or in the popover lands on the strip root); the readout's METER cell reads the CUE bus under a
 CUE caption, both in the CUE colour; and STEREO's own meter stays as a 5px frameless line at the strip's right edge,
 still at the meter point chosen for it. What the CUE column and the line add to the row is taken back by the line's
 right margin, so the fader and the scale do not move. With nothing cued, or with Live sync off, the CUE column and
