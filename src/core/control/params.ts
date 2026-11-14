@@ -111,16 +111,15 @@ export interface ParamSpec {
   follow?: "direct";
   /**
    * The device keeps this param as a device-wide setting, outside any scene
-   * (a scene's Store does not take it and a Recall leaves it as-is; measured via
-   * the scene recall audit, Standard Mode). The boundary is System firmware V1.5's:
+   * (a scene's Store does not take it and a Recall leaves it as-is, in Standard
+   * Mode). The boundary is System firmware V1.5's:
    * the output patches and the STREAMING source, delay switch and time, and colour
    * are inside a scene there and so carry no flag. planToCommands drops the flagged
    * ones under the "scene" write scope;
    * the plan-level mirror of the same boundary is core/scene-scope.ts, and the
    * two are cross-checked by scene-scope.test.ts. OSC_ON has no .urxf
-   * descriptor at all, so it was invisible to the file-diff audit; a one-item
-   * recall measurement (URX44V, 2026-07-24: an OSC left ON survived recalling
-   * an OSC-off scene) confirmed it is scene-external too.
+   * descriptor at all, and it is scene-external too: an OSC left ON stays ON
+   * when an OSC-off scene is recalled.
    */
   sceneExternal?: true;
   /**
@@ -148,10 +147,10 @@ export interface ParamSpec {
 /**
  * The SSMCS strip values the device recomputes for you: every CONTINUOUS value in the
  * block, and none of the five ON switches (SC, EQ, and the three bands), which it leaves to
- * the operator. Measured address by address on a URX44V (2026-08-15).
+ * the operator.
  *
  * One list because TWO heads drive it — the Morphing position and the Sweet Spot Data preset
- * — and they were measured to drive the same seventeen. A second copy is the thing that
+ * — and they drive the same seventeen. A second copy is the thing that
  * would rot: whichever head was edited last would be the one the converge believes.
  */
 const SSMCS_STRIP_DRIVEN = [
@@ -183,8 +182,8 @@ export const PARAMS = {
    *  CH_ON (the channel master): this only gates the send into the STEREO main mix.
    *  Mono id 142; stereo channels use 269, FX channels 340 — all emitted under this
    *  one name (the id comes from channelControl / FX_STEREO_ASSIGN_ON). Added by
-   *  firmware V1.3 (SEND TO STEREO [ON]); confirmed on URX44V (2026-06-30, LCD toggle
-   *  → 142/269/340 track 1↔0; max=1 def=1, software write lands). */
+   *  firmware V1.3 (SEND TO STEREO [ON]): 142/269/340 follow the LCD toggle 1↔0;
+   *  max=1 def=1, and a write over the link lands. */
   STEREO_ASSIGN_ON: { id: 142, encoding: "bool", follow: "direct" },
   /** Input channel PAN/BAL (±63). */
   CH_PAN: { id: 141, encoding: "pan", follow: "direct" },
@@ -199,8 +198,8 @@ export const PARAMS = {
   // Channel-strip section ON toggles. GATE is MONO IN only and type-independent;
   // COMP/EQ are MONO IN only and SWAP param banks with the COMP/EQ type (the SSMCS
   // bank uses different ids and inverted polarity). EQ also exists on every stereo
-  // channel. Polarity is mixed (verified by live scan), so the resolver carries
-  // each toggle's onValue. (channelSections() picks the bank from the type.)
+  // channel. Polarity is mixed, so the resolver carries each toggle's onValue.
+  // (channelSections() picks the bank from the type.)
   /** MONO IN gate ON (1 = on; type-independent). */
   GATE_ON: { id: 28, encoding: "bool" },
   /** MONO IN compressor ON, COMP->EQ bank (1 = on). */
@@ -224,23 +223,21 @@ export const PARAMS = {
   /** SSMCS section ON (1 = on). */
   SSMCS_ON: { id: 89, encoding: "bool" },
   /** SSMCS Comp Drive (raw 0..200; display = raw/20). NOT a sideEffect: it changes what the
-   *  compressor does with the threshold, and leaves every strip value where it is. Measured
-   *  the same way as the morph below and in the same run (2026-08-15, URX44V): a 60-step
-   *  write announced nothing beside its own echo and moved no address in the block. */
+   *  compressor does with the threshold, and leaves every strip value where it is: a write
+   *  announces nothing beside its own echo and moves no address in the block. */
   SSMCS_COMP_DRIVE: { id: 95, encoding: "raw" },
   /** SSMCS Morphing position (raw 0..120). A "refetch", for the same reason the EQ
-   *  1-knob is one and measured the same way (2026-08-14, URX44V): writing it makes the
-   *  unit recompute the strip's runtime values and announce them 21 ms later — seventeen
-   *  addresses across 96…117, block-wise rather than by delta, three of them carrying
-   *  values that did not change. Those are the plan's to mirror rather than to author, so
-   *  pushing back would undo the morph; two of them are the comp's ratio and knee, which
-   *  a converge would send in their pre-morph state with nothing on screen to say so.
+   *  1-knob is one: writing it makes the unit recompute the strip's runtime values and
+   *  announce them — seventeen addresses across 96…117, block-wise rather than by delta,
+   *  some of them carrying values that did not change. Those are the plan's to mirror
+   *  rather than to author, so pushing back would undo the morph; two of them are the
+   *  comp's ratio and knee, which a converge would send in their pre-morph state with
+   *  nothing on screen to say so.
    *
-   *  `drives` is that measured set, re-taken address by address (2026-08-15): every
-   *  CONTINUOUS value in the strip, and none of the five ON switches (SC, EQ, and the three
-   *  bands), which the morph leaves to the operator. The plan authors these as well — the
-   *  inspector edits them — so the emit gate the two 1-knobs use is not available here and
-   *  the converge has to be told instead. */
+   *  `drives` is that set: every CONTINUOUS value in the strip, and none of the five ON
+   *  switches (SC, EQ, and the three bands), which the morph leaves to the operator. The
+   *  plan authors these as well — the inspector edits them — so the emit gate the two
+   *  1-knobs use is not available here and the converge has to be told instead. */
   SSMCS_MORPHING: {
     id: 93,
     encoding: "raw",
@@ -283,7 +280,7 @@ export const PARAMS = {
   SSMCS_EQ_HIGH_FREQ: { id: 115, encoding: "raw" },
   SSMCS_EQ_HIGH_GAIN: { id: 116, encoding: "raw" },
   // Input GATE / COMP detail values (MONO IN channels; COMP is the COMP->EQ bank,
-  // type-independent GATE). Verified by live scan (research §12.26).
+  // type-independent GATE).
   /** GATE threshold (dB). */
   GATE_THRESHOLD: { id: 29, encoding: "centiDb" },
   /** GATE range / attenuation depth (dB). */
@@ -334,16 +331,15 @@ export const PARAMS = {
   /** Input channel insert FX ON/OFF (bypass) — independent of the selector (135).
    *  The device auto-engages it whenever an effect is (re)selected, so translate
    *  emits it after the selector and after the engine values it applies to, to
-   *  enforce the plan's state. Confirmed by notify
-   *  reverse-lookup (LCD INS FX button). */
+   *  enforce the plan's state. */
   INSERT_FX_ON: { id: 134, encoding: "bool" },
   /** Input channel Rec Point: the signal-path tap fed to the recording / direct
-   *  out (enum 0..4, PRE GATE..PRE FADER). Confirmed by live snapshot-diff
-   *  (MONO CH1 4 → 0). MONO IN channels, on the input slot y. */
+   *  out (enum 0..4, PRE GATE..PRE FADER; MONO CH1 from PRE FADER to PRE GATE is
+   *  4 → 0). MONO IN channels, on the input slot y. */
   REC_POINT: { id: 137, encoding: "enum" },
   /** Stereo channel Rec Point (same enum as 137), indexed by stereo position —
-   *  part of the 264-268 block parallel to mono 137-141. Confirmed by notify
-   *  reverse-lookup (LCD CH5/6 PRE FADER → PRE EQ fired 264:0:0 = 4 ↔ 2). */
+   *  part of the 264-268 block parallel to mono 137-141. CH5/6 is 264:0:0, where
+   *  PRE FADER = 4 and PRE EQ = 2. */
   REC_POINT_STEREO: { id: 264, encoding: "enum" },
   /** STEREO master insert FX (single). Enum from output_insert_fx. sideEffect:
    *  rebinds + repopulates the output engine array (see INSERT_FX). */
@@ -354,7 +350,7 @@ export const PARAMS = {
   OUTPUT_INSERT_FX_MIX: { id: 671, encoding: "insertFx", sideEffect: "converge", resets: "insertFx" },
   /** MIX bus insert FX ON/OFF (L/R-linked; bypass, auto-engaged on selection — see INSERT_FX_ON). */
   OUTPUT_INSERT_FX_ON_MIX: { id: 670, encoding: "bool" },
-  // Analog mic-strip toggles (CH1-4 only). Confirmed by live scan.
+  // Analog mic-strip toggles (CH1-4 only).
   /** Input channel +48V phantom power. */
   PHANTOM: { id: 0, encoding: "bool" },
   /** Input channel phase / polarity invert (Ф), mono mic channels. */
@@ -378,11 +374,11 @@ export const PARAMS = {
   OUT_FADER: { id: 674, encoding: "level", follow: "direct" },
   /** MIX bus master balance (676, fader+2, parallel to STEREO_MASTER_BAL 583). The
    *  bus output's L/R balance; ±63, default 0. L/R-linked per stereo MIX (MIX1 [0,1]
-   *  / MIX2 [2,3]). Confirmed live (snapshot-diff: MIX1 balance → 676:0:0/0:1, and
-   *  the device keeps the BALANCE label even under Pan Link). */
+   *  / MIX2 [2,3]); MIX1's balance is 676:0:0/0:1. The device keeps the BALANCE
+   *  label even under Pan Link. */
   OUT_MASTER_BAL: { id: 676, encoding: "pan", follow: "direct" },
   /** MIX bus BUS Type: 0 = VARI (variable per-send level) / 1 = FIXED. L/R-linked
-   *  (written to both out instances). Confirmed by live snapshot-diff (MIX1 0 → 1).
+   *  (written to both out instances); MIX1 to FIXED is 0 → 1.
    *
    *  Writing it resets the whole send bank into that MIX on the device: every source's
    *  send level drops to -∞, and every send ON goes to the side the written type sets —
@@ -401,19 +397,19 @@ export const PARAMS = {
   BUS_TYPE: { id: 587, encoding: "enum", sideEffect: "converge" },
   /** MIX bus master ON (675, fader+1, parallel to STEREO_MASTER_ON 582). L/R-linked
    *  per stereo MIX (MIX1 [0,1] / MIX2 [2,3]); default 1. Independent of the MIX →
-   *  STEREO "TO ST" send. Confirmed by live readback (device-side MIX2 OFF → 675). */
+   *  STEREO "TO ST" send. A device-side MIX2 OFF lands on 675. */
   OUT_MASTER_ON: { id: 675, encoding: "bool", follow: "direct" },
   /** MIX 1/2 → STEREO "TO ST" send ON/OFF. Per stereo MIX, addressed at the bus's
-   *  L instance (MIX1 = 0, MIX2 = 2); not L/R-linked. Default 0 (off). Confirmed by
-   *  live param-notify (device-side MIX1 OFF → ON fired 677:0:0 = 1, MIX2 → 677:0:2).
+   *  L instance (MIX1 = 0, MIX2 = 2); not L/R-linked. Default 0 (off), 1 = on: MIX1
+   *  at 677:0:0, MIX2 at 677:0:2, and a device-side switch is announced there.
    *  Held in the MIX → STEREO connection's params.on, not a node param. */
   TO_ST: { id: 677, encoding: "bool", follow: "direct" },
   /** MIX bus Pan Link: each send's pan follows its source's own PAN / BAL. The unit's own screen
    *  offers it under VARI only and turns it off when BUS Type goes to FIXED; over the control
    *  link it is taken under FIXED as well and kept through a return to VARI, and the plan's
    *  value is written whatever the BUS Type.
-   *  Per stereo MIX, at the bus's L instance (MIX1 = 0, MIX2 = 2). Default 0 (off).
-   *  Confirmed by live param-notify (MIX1 OFF → ON fired 589:0:0 = 1, MIX2 → 589:0:2).
+   *  Per stereo MIX, at the bus's L instance (MIX1 = 0, MIX2 = 2). Default 0 (off), 1 = on:
+   *  MIX1 at 589:0:0, MIX2 at 589:0:2.
    *
    *  Turning it on makes the unit rewrite every send pan into that MIX to its source's PAN /
    *  BAL, and turning it off leaves them there, neither announced. translate.ts writes no send
@@ -423,28 +419,27 @@ export const PARAMS = {
   /** Signal Type stereo link for a MONO IN pair (1 = STEREO, 0 = MONO x2). Written
    *  to BOTH channels of the pair at their input indices. Enabling it resets the
    *  secondary channel's whole state on the device (it is copied from the primary),
-   *  so live must converge. Confirmed by live param-notify (CH1 MONO x2 ↔ STEREO
-   *  fired 23:0:0 and 23:0:1 together). */
+   *  so live must converge. A switch is announced on both members together (CH1 /
+   *  CH2: 23:0:0 and 23:0:1). */
   SIGNAL_TYPE: { id: 23, encoding: "bool", sideEffect: "converge" },
   /** PAN / BAL mode for a STEREO-linked MONO IN pair (0 = PAN, 1 = BAL), at the
    *  pair's primary channel input index. Switching mode rewrites the pair's pan
-   *  values on the device, so live must converge. Confirmed by live param-notify
-   *  (CH1/CH2 pair BAL → PAN fired 891:0:0 = 0).
+   *  values on the device, so live must converge. A switch is announced at the
+   *  primary's index (CH1/CH2 pair BAL → PAN: 891:0:0 = 0).
    *  translate.ts emits this ahead of CH_PAN and the send pans, so the same flush
    *  already re-sends every pan the switch slammed: the converge is now a net for a
-   *  side effect reaching further than measured, not the repair the pans rely on. It
-   *  stays until the PAN-ward side effect is measured exhaustively. */
+   *  side effect reaching further than is known, not the repair the pans rely on. It
+   *  stays until the PAN-ward side effect is known in full. */
   PAN_BAL: { id: 891, encoding: "enum", sideEffect: "converge" },
   /** SSMCS Sweet Spot Data preset index (MONO IN, SSMCS mode), at the channel input
    *  index. A 4-digit zero-padded STRING ("0001".."0034"; "0035"+ clamps to "0001"), so it
    *  rides the string-write path (vd_set_str / vd_get_str) rather than the numeric one.
-   *  Confirmed by live read (91:0:0 = "0001").
+   *  For example, 91:0:0 = "0001".
    *
    *  A `"refetch"` head, and the first one on the string path. Selecting a preset recomputes
-   *  the strip: measured on a URX44V (2026-08-15), a preset write announces the seventeen
-   *  addresses `drives` names below, and its own address IS announced FIRST — 0.319 ms ahead
-   *  of them with none in between — so the settle boundary every other refetch head ends on
-   *  works here unchanged.
+   *  the strip: a preset write announces the seventeen addresses `drives` names below, and its
+   *  own address IS announced FIRST — ahead of them with none in between — so the settle
+   *  boundary every other refetch head ends on works here unchanged.
    *
    *  `drives` is the same seventeen `SSMCS_MORPHING` drives and NOT `93`. The announcement is
    *  block-wise, so `93` arrives with the burst whatever it holds; with Morphing parked at 62
@@ -525,7 +520,7 @@ export const PARAMS = {
   // EQ 1-knob: ON / TYPE / LEVEL sit 2 / 3 / 4 params after each EQ-ON anchor
   // (mono 44, stereo 213, output STEREO 498, output MIX 591); the per-instance ids
   // are computed in translate.ts (eqOneKnob). These mono anchors only name the
-  // command + encoding. Confirmed by live snapshot-diff.
+  // command + encoding.
   // All three recompute the 4-band PEQ on the device. That is a "refetch", not a
   // "converge": the plan does not author those band values while 1-knob is on (translate
   // skips them), so there is nothing to push back — what is needed is to read what the
@@ -538,25 +533,24 @@ export const PARAMS = {
   EQ_ONE_KNOB_TYPE: { id: 47, encoding: "enum", sideEffect: "refetch" },
   /** EQ 1-knob effect depth (0 … 100 %, raw). */
   EQ_ONE_KNOB_LEVEL: { id: 48, encoding: "raw", sideEffect: "refetch" },
-  /** Monitor output ON (y = monitor 0..3). Confirmed by live snapshot-diff: the
-   *  MONITOR screen [ON] button toggles 723 on the touched monitor's slot only. */
+  /** Monitor output ON (y = monitor 0..3): the MONITOR screen [ON] button toggles
+   *  723 on the touched monitor's slot only. */
   MONITOR_ON: { id: 723, encoding: "bool", follow: "direct", sceneExternal: true },
   /** Monitor level (y = monitor 0..3). Wider -96 dB floor than the fader. */
   MONITOR_LEVEL: { id: 724, encoding: "level", follow: "direct", sceneExternal: true },
   /** PHONES output level (y0 = PHONES 1, y1 = PHONES 2): the unit-less 0.0..10.0
-   *  scale of the Phones menu (NOT dB). Confirmed by live snapshot-diff. */
+   *  scale of the Phones menu (NOT dB). */
   PHONES_LEVEL: { id: 725, encoding: "phonesLevel", follow: "direct", sceneExternal: true },
   /** STEREO master fader (y = 0, level down to -∞). */
   STEREO_MASTER_FADER: { id: 581, encoding: "level", follow: "direct" },
   /** STEREO master ON (y = 0). */
   STEREO_MASTER_ON: { id: 582, encoding: "bool", follow: "direct" },
   /** STEREO master balance (y = 0): the STEREO output's L/R balance, ±63, default 0.
-   *  Parallel to the fader (581) / ON (582) block. Confirmed live (snapshot-diff:
-   *  STEREO balance → 583:0:0, positive = R). */
+   *  Parallel to the fader (581) / ON (582) block, at 583:0:0; positive = R. */
   STEREO_MASTER_BAL: { id: 583, encoding: "pan", follow: "direct" },
   /** FX channel ON (y = FX1 0 / FX2 1). The FX channel reuses the input
    *  channel-strip layout one block earlier (139 fader / 140 ON / 141 pan ↔
-   *  337 / 338 / 339); confirmed by live read (FX1/FX2 hold independent states). */
+   *  337 / 338 / 339); FX1 and FX2 hold independent states. */
   FX_CHANNEL_ON: { id: 338, encoding: "bool", follow: "direct" },
   /** FX channel master fader = the fixed FX channel → STEREO send level (the FX
    *  channel's main path, mirroring CH_FADER for channels). y = FX1 0 / FX2 1. */
@@ -601,9 +595,9 @@ export const PARAMS = {
    *  slots 4..11, so stereo channels use the separate 209/210 pair below. */
   INPUT_SOURCE: { id: 22, encoding: "portRef" },
   /** Stereo channel input source L / R (y = stereo pair index 0..3). Raw input
-   *  port ref in the same physical-input namespace as param 22. Confirmed on
-   *  URX44V by live snapshot (CH5/6 = AUX 256/257, CH7/8 = USB MAIN A 512/513,
-   *  CH9/10 = USB MAIN B 514/515, CH11/12 = USB MAIN C 516/517). */
+   *  port ref in the same physical-input namespace as param 22 (on a URX44V:
+   *  CH5/6 = AUX 256/257, CH7/8 = USB MAIN A 512/513, CH9/10 = USB MAIN B
+   *  514/515, CH11/12 = USB MAIN C 516/517). */
   STEREO_INPUT_SOURCE_L: { id: 209, encoding: "portRef" },
   STEREO_INPUT_SOURCE_R: { id: 210, encoding: "portRef" },
   /** Ducker key source (y = stereo index). Raw port ref: channel slot or bus. */
@@ -635,11 +629,11 @@ export const PARAMS = {
   OSC_MODE: { id: 712, encoding: "enum", sceneExternal: true },
   OSC_FREQ: { id: 713, encoding: "eqFreq", sceneExternal: true },
   /** Oscillator Burst Noise width (length of noise; Burst mode only). Plan holds
-   *  seconds 0.1..10, broker raw is ms (= seconds ×1000, 100..10000). Confirmed by
-   *  live snapshot-diff (0.1 s → 0.2 s = 100 → 200). */
+   *  seconds 0.1..10, broker raw is ms (= seconds ×1000, 100..10000): 0.1 s →
+   *  0.2 s is 100 → 200. */
   OSC_BURST_WIDTH: { id: 714, encoding: "burstWidth", sceneExternal: true },
   /** Oscillator Burst Noise interval (noise cycle, seconds; Burst mode only). Raw
-   *  1..30, no scaling. Confirmed by live snapshot-diff (1 → 2). */
+   *  1..30, no scaling (1 s → 2 s is 1 → 2). */
   OSC_BURST_INTERVAL: { id: 715, encoding: "raw", sceneExternal: true },
   /** Oscillator → bus assign on/off (per output channel). STEREO 716[L0,R1],
    *  MIX 717[MIX1 L0/R1, MIX2 L2/R3], FX 718[FX1 0, FX2 1]. */
@@ -647,10 +641,10 @@ export const PARAMS = {
   OSC_ASSIGN_MIX: { id: 717, encoding: "bool", sceneExternal: true },
   OSC_ASSIGN_FX: { id: 718, encoding: "bool", sceneExternal: true },
   // CH SETTING color (the node's top accent cap). The broker stores a palette
-  // index (see COLOR_PALETTE), mirrored across separate params per node kind
-  // (confirmed by live snapshot-diff). Input channels use param 20 at the input
-  // slot index; the MIX/STEREO buses their own params at the fixed instances in
-  // translate.ts (colorControl). raw = pass the palette index straight through.
+  // index (see COLOR_PALETTE), mirrored across separate params per node kind.
+  // Input channels use param 20 at the input slot index; the MIX/STEREO buses
+  // their own params at the fixed instances in translate.ts (colorControl). raw =
+  // pass the palette index straight through.
   /** Mono input channel color (palette index), y = physical input slot 0..3. */
   CH_COLOR: { id: 20, encoding: "raw" },
   /** Stereo input channel color (palette index), y = stereo index 0..3. Stereo
@@ -666,27 +660,26 @@ export const PARAMS = {
    *  the value across all of them; the app writes the L/R pair 0/1. */
   STREAM_COLOR: { id: 704, encoding: "raw" },
   /** STREAMING DELAY (the bus.stream node, y = 0): on/off, time (ms×100,
-   *  1.00..1000.00 ms), frame rate (enum 0..7). Confirmed by live snapshot-diff. A scene
-   *  keeps the switch and the time and leaves the frame rate out. */
+   *  1.00..1000.00 ms), frame rate (enum 0..7). A scene keeps the switch and the
+   *  time and leaves the frame rate out. */
   STREAM_DELAY_ON: { id: 707, encoding: "bool" },
   STREAM_DELAY_TIME: { id: 708, encoding: "delayTime" },
   STREAM_DELAY_FRAME_RATE: { id: 830, encoding: "enum", sceneExternal: true },
   /** Mixer DSP / USB streaming sample rate (global, y0): raw Hz. Writing it
-   *  re-clocks the hardware (confirmed by live write + host coreaudio + LCD).
-   *  843 mirrors it read-only and auto-follows, so only 766 is written. Not in
-   *  /vd/synchronize|device|setup — a /vd/parameters value. Re-clocking
-   *  re-negotiates the USB audio stream (audio glitches), so this is an explicit
-   *  edit, never perturbed by self-test (plan.sampleRate is a top-level scalar,
-   *  outside the perturb walk over nodeParams/connections). */
+   *  re-clocks the hardware. 843 mirrors it read-only and auto-follows, so only
+   *  766 is written. Not in /vd/synchronize|device|setup — a /vd/parameters
+   *  value. Re-clocking re-negotiates the USB audio stream (audio glitches), so
+   *  this is an explicit edit, never perturbed by self-test (plan.sampleRate is a
+   *  top-level scalar, outside the perturb walk over nodeParams/connections). */
   SAMPLE_RATE: { id: 766, encoding: "raw", sceneExternal: true },
   /** SETUP > Follow USB (global, y0): when ON the device slaves its clock to the
    *  USB host, so a 766 write is accepted and re-clocks but is dragged back to the
-   *  host's rate ~0.4 s later (measured on URX44V; the LCD shows the switch, then
-   *  the rate reverts). Factory default ON. Readable and writable in both
-   *  directions. Deliberately NOT part of the plan or planToCommands: it is a
-   *  device-side clock policy, not a routing choice, and emitting it would make
-   *  every Live-sync flush re-assert it. The write path reads it as a pre-check and
-   *  the badge writes it with a single vdSet. */
+   *  host's rate shortly after (the LCD shows the switch, then the rate reverts).
+   *  Factory default ON. Readable and writable in both directions. Deliberately
+   *  NOT part of the plan or planToCommands: it is a device-side clock policy, not
+   *  a routing choice, and emitting it would make every Live-sync flush re-assert
+   *  it. The write path reads it as a pre-check and the badge writes it with a
+   *  single vdSet. */
   FOLLOW_USB: { id: 848, encoding: "bool", sceneExternal: true, planExternal: true },
   /** The unit's LCD selection (global, y0): the element its selection frame is on, packed
    *  `(block << 8) | index` — block 1 the stereo channels, whose index is 2 × the channel's
@@ -730,8 +723,7 @@ export const PARAMS = {
   /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
    *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
    *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.
-   *  Each stereo pair fills two adjacent tracks (L then R). Confirmed by live
-   *  snapshot-diff on URX44V. */
+   *  Each stereo pair fills two adjacent tracks (L then R). */
   SD_REC_SOURCE: { id: 736, encoding: "portRef", sceneExternal: true },
   /** microSD Rec Track Count (y = 0): how many tracks record, raw = tracks / 2
    *  (raw 1..8 = 2..16). Read back, never emitted — not because the write is
@@ -921,10 +913,10 @@ export const PORT_REF_PARAM_IDS: ReadonlySet<number> = new Set(
 /** The catalog names the unit announces an insert-FX change on — every route's selector
  *  and bypass, plus the Signal Type whose transition clears both members of a pair. The
  *  set exists because two clearings are indistinguishable in a read's own values and are
- *  not indistinguishable in the notify stream: measured on a URX44V, a Signal Type
- *  transition announces the selector and the bypass on both members, while a sample-rate
- *  excursion past an effect's ceiling announces the rate and nothing else. A route the
- *  unit announced therefore had a cause of its own. */
+ *  not indistinguishable in the notify stream: a Signal Type transition announces the
+ *  selector and the bypass on both members, while a sample-rate excursion past an effect's
+ *  ceiling announces the rate and nothing else. A route the unit announced therefore had a
+ *  cause of its own. */
 export const INSERT_FX_ANNOUNCED: ReadonlySet<ParamName> = new Set<ParamName>([
   "INSERT_FX",
   "INSERT_FX_ON",
@@ -1070,13 +1062,13 @@ export const SWEET_SPOT_DATA_OPTIONS = [
 
 // A CH SETTING name is bounded by what the unit lets anyone type into it: its own
 // text-input screen takes at most **8 characters** (`ch 1xxxx`). Nothing else in the
-// stack enforces that. Measured on a URX44V (2026-08-14): the broker accepts and
-// stores a 20-character name and a 4-character Japanese one, and reads both back
-// unchanged; their descriptors publish no bound at all (empty min/max); and the
-// unit's settings file holds the name in a 64-byte NUL-padded ASCII element, which
-// is the container, not the limit. Reading the container as the limit is the mistake
-// this constant replaces — a 63-character name is writable, and it drew a node label
-// that ran across its neighbours on the canvas.
+// stack enforces that: the broker accepts and stores a longer name, Japanese
+// included, and reads it back unchanged; the descriptors publish no bound at all
+// (empty min/max); and the unit's settings file holds the name in a 64-byte
+// NUL-padded ASCII element, which is the container, not the limit. Reading the
+// container as the limit is the mistake this constant replaces — a 63-character
+// name is writable, and it drew a node label that ran across its neighbours on the
+// canvas.
 //
 // Counted in code points, so a name stays within what the unit's own screen could
 // have produced whatever the script. 8 of any script fits the 64-byte element.
@@ -1084,14 +1076,13 @@ export const NODE_NAME_MAX_CHARS = 8;
 
 // Rec Point: the per-channel signal-path tap fed to the channel's recording /
 // direct out (block diagram: "Rec Point" selector -> CH OUT). Labels are the
-// device CH SETTING strings (confirmed on device by user). MONO IN exposes all
-// five stages; ST IN has only EQ, so it offers the two `stereo` options. Default
-// PRE FADER on every channel. In SSMCS mode the device drops PRE EQ from the
-// list (the morphing strip has no discrete EQ stage) and moves a selected PRE EQ
-// tap to PRE COMP on the switch (confirmed on device). Control addresses: MONO IN
-// = param 137 (in axis, live snapshot-diff), stereo channels = the parallel
-// param 264 at the stereo index (notify reverse-lookup) — see REC_POINT /
-// REC_POINT_STEREO in PARAMS.
+// device CH SETTING strings. MONO IN exposes all five stages; ST IN has only EQ,
+// so it offers the two `stereo` options. Default PRE FADER on every channel. In
+// SSMCS mode the device drops PRE EQ from the list (the morphing strip has no
+// discrete EQ stage) and moves a selected PRE EQ tap to PRE COMP on the switch.
+// Control addresses: MONO IN = param 137 (in axis), stereo channels = the
+// parallel param 264 at the stereo index — see REC_POINT / REC_POINT_STEREO in
+// PARAMS.
 export const REC_POINT_DEFAULT = 4;
 export const REC_POINT_PRE_COMP = 1;
 export const REC_POINT_PRE_EQ = 2;
@@ -1113,7 +1104,7 @@ export function recPointOptionsFor(stereo: boolean, ssmcs: boolean): typeof REC_
 // BUS Type for MIX 1 / MIX 2 (CH SETTING): VARI = variable per-send level (the
 // default, what the tool models), FIXED = a fixed send level (sends carry no
 // adjustable level). Labels are the device strings. Control address = param 587
-// (out axis, L/R-linked), confirmed by live snapshot-diff (see BUS_TYPE in PARAMS).
+// (out axis, L/R-linked; see BUS_TYPE in PARAMS).
 export const BUS_TYPE_VARI = 0;
 export const BUS_TYPE_FIXED = 1;
 export const BUS_TYPE_OPTIONS = [
@@ -1143,8 +1134,8 @@ export const PAN_BAL_OPTIONS = [
 export const STEREO_PAN_DEFAULT = 63;
 
 // Output 4-band PEQ filter type (LOW / HIGH bands only; the two mid bands are
-// fixed Peaking). Verified by live scan: 0 = Peaking, 1 = Shelving, 2 = HPF on
-// the LOW band and LPF on the HIGH band (device labels per user).
+// fixed Peaking): 0 = Peaking, 1 = Shelving, 2 = HPF on the LOW band and LPF on
+// the HIGH band (device labels).
 export const EQ_TYPE_PEAKING = 0;
 export const EQ_TYPE_SHELVING = 1;
 export const EQ_TYPE_PASS = 2;
@@ -1167,12 +1158,11 @@ export const EQ_Q_DEFAULT = 0.71;
 // EQ 1-knob preset type (param at EQ-ON+3): a shared enum across every EQ instance,
 // and every instance offers all three. This was previously recorded as a per-screen
 // subset (mono = Intensity/Vocal, stereo and output = Intensity/Loudness); that was
-// wrong. The unit's own mono EQ screen lists all three, confirmed on a URX44V with
-// the current value at Intensity so the list was not merely showing an out-of-menu
-// value, and the user guide's mono EQ page says as much ("changing the 1-knob type to
-// [Vocal] or [Loudness]"). The claim came from misreading a level reset: writing any
-// TYPE forces LEVEL to that type's neutral point (Intensity 50 = unity, the presets
-// 0 = flat), which an earlier probe read as the device refusing the preset.
+// wrong. The unit's own mono EQ screen lists all three, and the user guide's mono
+// EQ page says as much ("changing the 1-knob type to [Vocal] or [Loudness]"). The
+// claim came from misreading a level reset: writing any TYPE forces LEVEL to that
+// type's neutral point (Intensity 50 = unity, the presets 0 = flat), which an
+// earlier probe read as the device refusing the preset.
 export const EQ_ONE_KNOB_TYPE_DEFAULT = 0;
 export const EQ_ONE_KNOB_TYPE_OPTIONS = [
   { value: 0, label: "Intensity" },
@@ -1267,8 +1257,8 @@ export function compDeviceDriven(comp: { oneKnob?: unknown; autoMakeup?: unknown
 }
 
 // Oscillator mode (param 712). Frequency control applies to Sine Wave; Burst
-// Noise adds width (param 714) / interval (param 715), both confirmed by live
-// snapshot-diff and in the write catalog above.
+// Noise adds width (param 714) / interval (param 715), both in the write catalog
+// above.
 export const OSC_MODE_OPTIONS = [
   { value: 0, label: "Sine Wave" },
   { value: 1, label: "Pink Noise" },
@@ -1278,9 +1268,9 @@ export const OSC_MODE_SINE = 0;
 export const OSC_MODE_BURST = 2;
 
 // STREAMING DELAY frame rate (param 830). The value is an index into this list,
-// in the device's dropdown order (confirmed by live snapshot-diff: 30 = index 5,
-// 120 = index 7). Labels are the literal LCD strings (D = drop frame). The frame
-// rate only changes how the delay time is shown in frames; the delay is in ms.
+// in the device's dropdown order (30 = index 5, 120 = index 7). Labels are the
+// literal LCD strings (D = drop frame). The frame rate only changes how the delay
+// time is shown in frames; the delay is in ms.
 export const DELAY_FRAME_RATE_OPTIONS = [
   { value: 0, label: "24" },
   { value: 1, label: "25" },
@@ -1348,7 +1338,7 @@ export const SD_REC_TRACK_COUNT_OPTIONS = [2, 4, 6, 8, 10, 12, 14, 16].map((n) =
 // params 139/140/141. Encodings match (level_gain / onoff / ±63). The index is
 // the channel's position among the model's stereo channels (so it shifts with
 // the mono count — e.g. URX22's first stereo channel is index 0). HPF does not
-// exist on these channels. Confirmed on URX44V and URX22; URX44 inferred.
+// exist on these channels. On URX44 this layout is inferred.
 export const STEREO_FADER = 266;
 export const STEREO_ON = 267;
 export const STEREO_PAN = 268;

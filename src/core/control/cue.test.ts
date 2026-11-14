@@ -228,7 +228,7 @@ describe("CueEchoes", () => {
   });
 });
 
-// The unit's Last CUE, read off a URX22 and a URX44V on System 1.5: a cue turned on replaces the
+// The unit's Last CUE (System firmware V1.5): a cue turned on replaces the
 // other cues of its own group, the two groups still clear each other, and the output cue an input
 // cue cleared — one, since a group holds one — comes back with the last input cue off.
 describe("CueSet under Last CUE", () => {

@@ -93,7 +93,9 @@ pnpm preview        # デモ版を http://localhost:4173 で配信 — 公開デ
 `pnpm dev` は通常ビルド。機能を絞った **デモ版**（<https://urx-router.semnil.com> と同じもの）を
 ローカルで見るには `pnpm build:demo` の後に `pnpm preview` を実行する。
 
-全コマンド一覧（単体/E2E テスト・整形・キャッシュ削除）と開発上の注意は [AGENTS.md](AGENTS.md) にある。
+全コマンド一覧（単体/E2E テスト・整形・キャッシュ削除）と開発の決まりは [AGENTS.md](AGENTS.md) にある。その周りの
+手順は [docs/ja/local-runs.md](docs/ja/local-runs.md) に、リポジトリの各検査が何を確かめるかは
+[docs/ja/repository-checks.md](docs/ja/repository-checks.md) にある。
 
 UI は英語を基準に日本語ローカライズを持つが、**本体の画面にあるコントロールを写した行は翻訳しない** —
 URX は 3 つの表示言語のどれを選んでも当該画面が英語のままなので、`Threshold` / `Attack` / `Freq` /

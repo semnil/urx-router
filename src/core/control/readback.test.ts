@@ -816,8 +816,8 @@ describe("applyDeviceState and STREAMING's source list", () => {
   });
 });
 
-// The unit acks a write before the value is readable (measured: a GET answers the
-// pre-write value until that write's own notify arrives, 9-204 ms later, n = 87).
+// The unit acks a write before the value is readable (a GET answers the pre-write
+// value until that write's own notify arrives).
 // Live sync's sideEffect refetch reads a node it has just written, so it hands the
 // read what it wrote — and the read answers those addresses with WHAT THE UNIT
 // ANNOUNCED about them, never with what was sent.
@@ -859,8 +859,8 @@ describe("applyDeviceState and the other effects a node has held", () => {
 });
 
 describe("applyDeviceState write overlay", () => {
-  // A plan whose ch1 EQ 1-knob is on — the measured case: writing it makes the unit
-  // recompute the four band gains, which is what the refetch is for.
+  // A plan whose ch1 EQ 1-knob is on: writing it makes the unit recompute the four
+  // band gains, which is what the refetch is for.
   function oneKnobPlan(): Plan {
     const plan = emptyPlan("URX44V");
     ensureFixedConnections(model, plan);
@@ -1400,13 +1400,13 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
     expect(target.nodeNames["bus.mix1"]).toBeUndefined();
   });
 
-  // The name path has the same post-write staleness window as the numeric ones
-  // (measured on a URX44V: 81 ms), and the numeric repair cannot reach it — a
-  // name is written on the string path, which enters no write ledger, so
-  // `writeOverlay` has nothing to answer from. Live sync's sideEffect refetch is the one read issued inside that
-  // window, so it must not read names at all: a rename flushed in the same
-  // window would come back as the name it replaced and be written into the plan
-  // AND the name snapshot together, leaving no diff to retry.
+  // The name path has the same post-write staleness window as the numeric ones,
+  // and the numeric repair cannot reach it — a name is written on the string path,
+  // which enters no write ledger, so `writeOverlay` has nothing to answer from. Live
+  // sync's sideEffect refetch is the one read issued inside that window, so it must
+  // not read names at all: a rename flushed in the same window would come back as
+  // the name it replaced and be written into the plan AND the name snapshot
+  // together, leaving no diff to retry.
   it("skips the name read for the sideEffect refetch, and only for it", async () => {
     mockVdGetFrom(new Map());
     vi.mocked(vdGetStr).mockImplementation((paramId: number, _x: number, y: number) =>
@@ -1494,8 +1494,8 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
   });
 
   // A name arrives bounded, like one typed into the app. The unit's own screen takes
-  // 8 characters, but the wire does not enforce that — measured on a URX44V, a
-  // 20-character name is stored and read back whole — so a device holding one would
+  // 8 characters, but the wire does not enforce that — a longer name is stored and
+  // read back whole — so a device holding one would
   // otherwise put it in the plan, draw a node label across its neighbours, and change
   // length only after a save and reload. Bounding it here also lets the next converge
   // settle the device on the same string instead of diffing forever against a name
@@ -1515,8 +1515,8 @@ describe("applyDeviceState provenance (unreadNodes)", () => {
   // cutting finds nothing to trim on a name whose last character is not a space, and
   // the cut then lands on one — a trailing space in the plan, arriving by the very
   // path that exists to keep one out. It does not settle either: the device stores a
-  // trailing space unchanged (measured on a URX44V, 2026-08-14) while this read trims
-  // one off, so the emitted name and the device value differ on every sync.
+  // trailing space unchanged while this read trims one off, so the emitted name and
+  // the device value differ on every sync.
   it("does not put a trailing space in the plan by cutting onto one", async () => {
     mockVdGetFrom(new Map());
     vi.mocked(vdGetStr).mockImplementation((paramId: number, _x: number, y: number) =>

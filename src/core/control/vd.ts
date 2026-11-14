@@ -84,7 +84,7 @@ export function hpfFreqLinkWritable(hz: number): boolean {
   return hz >= HPF_FREQ_LINK_MIN_HZ && hz <= HPF_FREQ_LINK_MAX_HZ;
 }
 
-// Output 4-band parametric EQ band values (verified on STEREO/MIX by live scan):
+// Output 4-band parametric EQ band values (STEREO/MIX):
 //   freq: Hz×10 (the 0.1 Hz unit), 20 Hz … 20 kHz (broker 200 … 200000).
 //   Q:    ×100, 0.50 … 16.00 (broker 50 … 1600).
 //   gain: centi-dB, -18 … +18 dB (broker -1800 … 1800).
@@ -95,8 +95,8 @@ export const EQ_Q_MAX = 16;
 export const EQ_GAIN_MIN_DB = -18;
 export const EQ_GAIN_MAX_DB = 18;
 
-// Input GATE / COMP detail values (mono, COMP->EQ comp bank; verified by live
-// scan). Plan units → broker units:
+// Input GATE / COMP detail values (mono, COMP->EQ comp bank). Plan units → broker
+// units:
 //   centi-dB  (threshold / range / makeup gain): dB×100.
 //   attack    : ms×1000 (µs), broker 92 … 80000  → 0.092 … 80 ms.
 //   hold      : ms×100,        broker 2  … 196000 → 0.02 … 1960 ms.
@@ -120,7 +120,7 @@ export const DUCKER_DECAY_MAX_MS = DUCKER_DECAY_STOPS_MS[DUCKER_DECAY_STOPS_MS.l
 
 // STREAMING DELAY time (param 708): broker value is ms×100 (centi-ms). Range
 // 100 … 100000 = 1.00 … 1000.00 ms, default 100 (= 1.00 ms), 0.01 ms resolution
-// (confirmed by live snapshot-diff: ms 100.0 on the LCD reads back as 10000).
+// (ms 100.0 on the LCD is 10000).
 export const DELAY_TIME_MIN_MS = 1;
 export const DELAY_TIME_MAX_MS = 1000;
 /** The Delay Time knob's pressed step, and the grid a drag lands on: an even centi-ms. */
@@ -128,8 +128,8 @@ export const DELAY_TIME_GRID_MS = 0.02;
 
 // PHONES output level (param 725, y0 = PHONES 1, y1 = PHONES 2). The device shows
 // a unit-less 0.0 … 10.0 volume scale (NOT dB — distinct from the monitor fader);
-// broker value is that scale ×10 (raw 0 … 100), default 20 (= 2.0). Confirmed by
-// live snapshot-diff: 10.0 on the LCD reads back as 100, 0.0 as 0.
+// broker value is that scale ×10 (raw 0 … 100), default 20 (= 2.0): 10.0 on the
+// LCD is 100, 0.0 is 0.
 export const PHONES_LEVEL_MIN = 0;
 export const PHONES_LEVEL_MAX = 10;
 export const PHONES_LEVEL_DEFAULT = 2;
@@ -191,8 +191,7 @@ export function vdToDelayTime(value: number): number {
 
 // SSMCS (Sweet Spot Morphing Channel Strip) RAW broker ranges and display curves.
 // Values are stored raw in the plan; these turn a raw integer into the human unit
-// the device LCD shows. Curves were established by live LCD calibration (anchor
-// points in the project's private notes). The shared EQ/SC curves:
+// the device LCD shows. The shared EQ/SC curves:
 //   freq: 20 × 10^((raw-4)/40)  (= 20 × 2^((raw-4)/12), 1/12-oct, 4=20 Hz..124=20 kHz)
 //   Q:    0.5 × 32^(raw/60)     (0=0.50 .. 60=16.0, logarithmic)
 //   gain: (raw-180)/10 dB       (0..360, 180 = 0 dB, ±18 dB)
@@ -325,11 +324,9 @@ export function gainToVd(db: number): number {
 }
 
 // Broker centi-dB → plan HA gain dB. The round is a no-op for every value the
-// device actually produces: a hardware readback (A.Gain / D.Gain across all
-// channels) returned only whole-dB raws (multiples of 100), so the device's
-// native gain resolution is whole dB and the round-trip is already a fixed point.
-// It stays as defensive clamping of the broker's finer centi-dB unit to the plan
-// grain, never observed to discard a real device value.
+// device actually produces: its native gain resolution is whole dB (raws in
+// multiples of 100), so the round-trip is already a fixed point. It stays as
+// defensive clamping of the broker's finer centi-dB unit to the plan grain.
 export function vdToGain(value: number): number {
   return clamp(Math.round(value / 100), GAIN_MIN_DB, GAIN_MAX_DB);
 }
@@ -353,11 +350,10 @@ export function eqFreqToVd(hz: number): number {
 }
 
 // Broker 0.1 Hz units → plan EQ band frequency (Hz). The round is a no-op for
-// real device values: a hardware readback of every EQ band (including fine grid
-// points like 112 / 1180 / 2360 Hz) returned only whole-Hz raws (multiples of
-// 10), so the device's native EQ-frequency resolution is whole Hz and the
-// round-trip is already a fixed point. Defensive clamping of the broker's finer
-// 0.1 Hz unit, never observed to discard a real device value.
+// real device values: the device's native EQ-frequency resolution is whole Hz
+// (raws in multiples of 10), fine grid points such as 112 / 1180 / 2360 Hz
+// included, so the round-trip is already a fixed point. Defensive clamping of the
+// broker's finer 0.1 Hz unit.
 export function vdToEqFreq(value: number): number {
   return clamp(Math.round(value / 10), EQ_FREQ_MIN_HZ, EQ_FREQ_MAX_HZ);
 }
