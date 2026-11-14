@@ -954,9 +954,8 @@ describe("dropping a file onto the window", () => {
 
   /** What a dropped path reads back as. The sample rate is the witness because it is read
    *  straight off the file: an emptied `connections` moves the board too, but only by the
-   *  difference `ensureFixedConnections` leaves after putting the model's fixed wires back
-   *  (measured on URX44V: 77 wires on the default plan, 48 on this one), so reading it
-   *  means predicting that restoration. */
+   *  difference `ensureFixedConnections` leaves after putting the model's fixed wires back,
+   *  so reading it means predicting that restoration. */
   // STREAMING's source is written out, as every plan the app saves carries it: a document
   // without it loads with a note leading the status line, which is not what this is about.
   const droppedPlan = JSON.stringify({
@@ -976,7 +975,7 @@ describe("dropping a file onto the window", () => {
    *
    * `take()` hands the file to its handler synchronously, but every read behind it sits past
    * an `await`, so in the emit's own tick an ACCEPTED drop has read nothing and moved
-   * nothing either — measured: `read_text_file` is 0 and the rate picker still says 48000
+   * nothing either: `read_text_file` is 0 and the rate picker still says 48000
    * immediately after the drop that goes on to load. Every "and nothing happened" assertion
    * here is taken after this, or it is satisfied by the very behaviour it exists to refuse.
    *

@@ -304,8 +304,8 @@ describe("Fetch from device", () => {
   });
 
   // The read holds the plan by reference for seconds, so every file flow is refused
-  // for its duration through one shared latch. Measured: a Fetch does NOT disable the
-  // device buttons — that is the live session's doing, and only the live session's —
+  // for its duration through one shared latch. A Fetch does NOT disable the device
+  // buttons — that is the live session's doing, and only the live session's —
   // so the refusal is the observable here, and a case written against `disabled` would
   // be asserting the wrong guard entirely.
   //
@@ -1438,9 +1438,9 @@ describe("an edit funnel against a device read", () => {
 
   // A nested group is edited by REBUILDING it — one field set, the rest copied — so the
   // patch key names the whole group, and the merge drops a named group whole. Naming it
-  // therefore takes the device's answer for every sibling the rebuild never touched:
-  // measured, an OSC frequency the unit moved during an OSC ON toggle was thrown away
-  // with the toggle's own key.
+  // therefore takes the device's answer for every sibling the rebuild never touched: a
+  // device's OSC frequency read during an OSC ON toggle is thrown away with the toggle's
+  // own key.
   it("keeps a device change to a sibling of the group field the operator edited", SLOW, async () => {
     const shell = await bootDevice();
     // The unit answers a different oscillator frequency than the plan's default.

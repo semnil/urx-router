@@ -99,7 +99,7 @@ function installFlippableColorScheme(): (dark: boolean) => void {
 
 beforeEach(() => {
   installAppGlobals();
-  // jsdom's Blob has no `stream()` — measured — while `CompressionStream` is there.
+  // jsdom's Blob has no `stream()`, while `CompressionStream` is there.
   // The `?plan=` codec pipes one into the other, so without this the whole deep-link
   // half of this file would be testing a platform failure rather than the codec, and
   // the share button would report an error for a reason no browser has.
@@ -139,8 +139,6 @@ describe("the share link", () => {
   // A clipboard the browser refuses (no permission, no secure context) is not an
   // error here: the link goes into the ADDRESS BAR first, precisely so it stays
   // copyable by hand, and the status line says so instead of reporting a failure.
-  // Measured — an earlier version of this case asserted a dialog and was wrong about
-  // which of the two the app does.
   it("leaves the link in the address bar when the clipboard refuses", async () => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -194,8 +192,8 @@ describe("the deep link", () => {
     expect(strip.querySelector(".con-fader")!.getAttribute("aria-valuenow")).toBe("-20");
   });
 
-  // A broken link has two shapes and they surface differently — measured, because they
-  // read the same from the outside and a single case would have covered only one.
+  // A broken link has two shapes and they surface differently, though they read the same
+  // from the outside, so a single case would cover only one.
   //
   // Neither case may assert on the board or the picker as its observable: both exist
   // before the decode is even attempted, so a silently swallowed error passes. Waiting
@@ -1053,19 +1051,19 @@ describe("BUS Type in the panel", () => {
 });
 
 describe("what the browser build does not offer", () => {
-  // The device half is desktop-only and the buttons are still in the DOM. Measured off
-  // the shell, each one reports — through one of TWO channels, and which one is the
-  // fact worth pinning: three raise the error dialog, while the MIDI window opener
-  // frames its failure onto the status line instead. What must not happen is a throw
-  // out of a click handler, which leaves the app with no dialog, no status and a
-  // toolbar that looks like it did nothing.
+  // The device half is desktop-only and the buttons are still in the DOM. Off the shell,
+  // each one reports — through one of TWO channels, and which one is the fact worth
+  // pinning: three raise the error dialog, while the MIDI window opener frames its
+  // failure onto the status line instead. What must not happen is a throw out of a
+  // click handler, which leaves the app with no dialog, no status and a toolbar that
+  // looks like it did nothing.
   //
   // Two things make a loose version of this case pass for nothing. `status()` is
   // already the boot line, so "the status is non-empty" is true before any click; and
-  // `btn-write` ships DISABLED in index.html — `syncDeviceActionUi` enables it at boot
-  // (measured), but an optional-chained click on a button that had stayed disabled
-  // would assert nothing at all. Hence: the element is required to exist and to be
-  // enabled, and each channel is counted per button.
+  // `btn-write` ships DISABLED in index.html — `syncDeviceActionUi` enables it at boot,
+  // but an optional-chained click on a button that had stayed disabled would assert
+  // nothing at all. Hence: the element is required to exist and to be enabled, and
+  // each channel is counted per button.
   const CHANNELS = [
     { id: "btn-fetch", channel: "dialog" },
     { id: "btn-write", channel: "dialog" },
@@ -1330,9 +1328,9 @@ describe("editing a node through the inspector", () => {
   it("renames a node without rebuilding the panel, and clears the override on empty", async () => {
     // Booted on the DEVICE label source, which is what draws the plan's own names on the
     // board. The default is the model's fixed labels, and against those a rename repaints
-    // a label that cannot show it — measured: the node kept reading "CH 1" while the plan
-    // held the new name, so the case passed for nothing on the clear half and failed on
-    // the set half for a reason that was not the funnel.
+    // a label that cannot show it: the node keeps reading "CH 1" while the plan holds the
+    // new name, so the case would pass for nothing on the clear half and fail on the set
+    // half for a reason that is not the funnel.
     await boot({ "urx-labels": "device" });
     selectNode("ch1");
     const field = row(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
