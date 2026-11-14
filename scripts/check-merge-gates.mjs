@@ -880,7 +880,7 @@ function checkStepBounds(workflows) {
         finding(
           where,
           `fetches from outside GitHub (${fetches.join(", ")}) but carries no step \`timeout-minutes\` — a stall ` +
-            `there runs the job out and reports only "cancelled". Bound the step; the readings to size it from are ` +
+            `there runs the job out and reports only "cancelled". Bound the step; how each bound is sized is ` +
             `in .github/actions/install-browsers/action.yml`,
         );
       }
