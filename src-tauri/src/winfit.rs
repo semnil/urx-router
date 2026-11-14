@@ -517,16 +517,13 @@ pub fn place_saved<R: Runtime>(
 /// "unknown", and the caller falls back to the window's own scale factor, which is
 /// what this module used unconditionally before.
 ///
-/// With the displays the rectangle was saved on still attached, most positions are
-/// resolved uniquely, and **no position is resolved to the wrong display**. The holes
-/// are real, which is why the scale is recorded going forward rather than derived: a
-/// rectangle inside the region the two displays' desk rectangles both cover is
-/// ambiguous, and once the arrangement has changed — the case this whole module
-/// exists for — the trial only answers which scale fits the displays attached NOW. A
-/// rectangle that is no longer on any display can match nothing, or it can match a
-/// display it was never on: saved on an external display at scale 1.0 and that
-/// display removed, it can land inside the built-in one under that display's scale
-/// factor, and that scale is what comes back.
+/// The trial finds a scale under which the rectangle fits a display attached NOW; a
+/// single acceptance does not prove that it is the scale the rectangle was saved at,
+/// which is why the scale is recorded going forward rather than derived. A rectangle
+/// inside the region the two displays' desk rectangles both cover is ambiguous. One
+/// that does not fit its own display's work area — overlapping the Dock, or on a
+/// display that has since moved or gone — can match nothing, or can fit another
+/// display under that display's scale factor and come back with that scale.
 ///
 /// Where a desk unit already is a physical pixel (Windows) the conversion is the
 /// identity and the answer cannot matter: every hypothesis produces the same
