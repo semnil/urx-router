@@ -2632,13 +2632,15 @@ export class Console {
   // a rebuild doesn't drop the bars to the floor and re-attack. Only when the strip
   // still meters the same tap — the tap objects are the table's own singletons, so
   // identity means the same addresses and the same lane count. A MONITOR strip's CUE
-  // lanes carry the same way, since their tap is one singleton too. The last-written
+  // lanes carry only while the CUE column is shown before and after the rebuild: one the
+  // unit's own C.INT hid and showed again across rebuilds starts from the floor, not with
+  // the bars and OVER it had when it was hidden. The last-written
   // trackers (lv/lpk/lov/lmtr) stay at their fresh sentinels: the new elements are
   // undrawn, so the next paint must write them, not skip them as unchanged.
   private carryMeterState(from: StripRef | undefined, to: StripRef | undefined): void {
     if (!from || !to) return;
     if (from.tap === to.tap) carryLanes(from.lanes, to.lanes);
-    if (from.cue && to.cue) carryLanes(from.cue.lanes, to.cue.lanes);
+    if (from.cue?.on && to.cue?.on) carryLanes(from.cue.lanes, to.cue.lanes);
   }
 
   // Where keyboard focus sits inside the strips, as (strip id, the control's own identity).

@@ -10,7 +10,7 @@ import { setExclusiveConnection, type Plan } from "../core/plan";
 import { t } from "../i18n";
 import { EQ_TYPE_GEQ } from "../core/geq";
 import { controlId } from "../core/midi/controls";
-import { tapAddrs, type MeterStore, type MeterTap } from "../core/meters";
+import { METER_OVER_RAW, tapAddrs, type MeterStore, type MeterTap } from "../core/meters";
 
 /** The EFFECT TYPE action of a host whose cases choose none. */
 const noTypeChoice = (): never => {
@@ -864,6 +864,105 @@ describe("the CUE bus over the MONITOR strips", () => {
     expect(ref(h, "bus.mon1").root).toBe(root);
     expect(shown(h, "bus.mon1")).toBe(true);
   });
+
+  type Lane = { v: number; pk: number; over: number; clip: HTMLElement };
+  const lanesOf = (host: ConsoleHost, id: string, which: "cue" | "own"): Lane[] => {
+    const r = ref(host, id) as unknown as { lanes: Lane[]; cue: { lanes: Lane[] } };
+    return which === "cue" ? r.cue.lanes : r.lanes;
+  };
+  const MODEL_LIST = ["URX44V", "URX22", "URX44"] as const;
+
+  // A rebuild carries a column's bars only while that column is shown before and after it. One the
+  // unit's own Cue Interrupt hid and then showed again starts from the floor, rather than with the
+  // bars, peak and OVER latch it had when it was hidden. The unit's C.INT reaches the view as a plan
+  // value and a rebuild — of the whole console, or of the one strip — which is what device follow
+  // does; the C.INT chip's own press switches the strip in place instead.
+  //
+  // Either half of the rule alone keeps this path at the floor; the next case is the one the "after"
+  // half answers. The "before" half guards a state no path produces — a column hidden in the
+  // console is built at the floor, is not painted, and is reset when it is hidden in place — so a
+  // mutation dropping it alone leaves every case green.
+  for (const modelId of MODEL_LIST)
+    for (const mon of MONITORS)
+      for (const rebuild of ["console", "strip"] as const)
+        it(`starts a CUE column the unit hid and showed again from the floor (${modelId}, ${mon}, ${rebuild})`, () => {
+          const plan = defaultPlan(modelId);
+          h = consoleHost({ modelId, plan, live: true, cue: flags("ch1").hooks });
+          const redo = (): void => (rebuild === "console" ? h!.view.refresh() : h!.view.refreshStrip(mon));
+          const store = priv(h).store;
+          // The CUE bus clipping: its bars, its peak and its OVER latch all lit.
+          store.apply({ meterId: 128, x: 0, value: METER_OVER_RAW });
+          store.apply({ meterId: 128, x: 1, value: METER_OVER_RAW });
+          h.frame();
+          expect(lanesOf(h, mon, "cue").every((ln) => ln.v > 0 && ln.pk > 0 && ln.over > 0)).toBe(true);
+          // The unit turns the Cue Interrupt off, the CUE bus falls silent, and the unit turns it on.
+          plan.nodeParams[mon] = { ...plan.nodeParams[mon], cueInterrupt: false };
+          redo();
+          expect(shown(h, mon)).toBe(false);
+          store.apply({ meterId: 128, x: 0, value: -1280 });
+          store.apply({ meterId: 128, x: 1, value: -1280 });
+          h.frame();
+          plan.nodeParams[mon] = { ...plan.nodeParams[mon], cueInterrupt: true };
+          redo();
+          expect(shown(h, mon)).toBe(true);
+          for (const ln of lanesOf(h, mon, "cue")) {
+            expect([ln.v, ln.pk, ln.over]).toEqual([0, 0, 0]);
+            expect(ln.clip.style.getPropertyValue("--clip")).toBe("0");
+          }
+          expect(reads(h, mon)).toBe("-∞");
+        });
+
+  // Hidden by a rebuild (the unit's C.INT off), shown again in place (the CONSOLE's own C.INT chip):
+  // the column the rebuild built hidden is the one the press shows, so nothing may be carried into it.
+  for (const modelId of MODEL_LIST)
+    for (const mon of MONITORS)
+      for (const rebuild of ["console", "strip"] as const)
+        it(`starts a CUE column a rebuild hid and the C.INT chip showed again from the floor (${modelId}, ${mon}, ${rebuild})`, () => {
+          const plan = defaultPlan(modelId);
+          h = consoleHost({ modelId, plan, live: true, cue: flags("ch1").hooks });
+          const store = priv(h).store;
+          store.apply({ meterId: 128, x: 0, value: METER_OVER_RAW });
+          store.apply({ meterId: 128, x: 1, value: METER_OVER_RAW });
+          h.frame();
+          expect(lanesOf(h, mon, "cue").every((ln) => ln.v > 0 && ln.pk > 0 && ln.over > 0)).toBe(true);
+          plan.nodeParams[mon] = { ...plan.nodeParams[mon], cueInterrupt: false };
+          if (rebuild === "console") h.view.refresh();
+          else h.view.refreshStrip(mon);
+          expect(shown(h, mon)).toBe(false);
+          store.apply({ meterId: 128, x: 0, value: -1280 });
+          store.apply({ meterId: 128, x: 1, value: -1280 });
+          h.frame();
+          ref(h, mon)
+            .root.querySelector<HTMLElement>(`[data-ctl="${controlId(mon, "cueInterrupt")}"]`)!
+            .click();
+          expect(shown(h, mon)).toBe(true);
+          for (const ln of lanesOf(h, mon, "cue")) {
+            expect([ln.v, ln.pk, ln.over]).toEqual([0, 0, 0]);
+            expect(ln.clip.style.getPropertyValue("--clip")).toBe("0");
+          }
+          expect(reads(h, mon)).toBe("-∞");
+        });
+
+  for (const modelId of MODEL_LIST)
+    for (const mon of MONITORS)
+      it(`carries the CUE column and the monitor's own meter across rebuilds while it stays shown (${modelId}, ${mon})`, () => {
+        h = consoleHost({ modelId, plan: defaultPlan(modelId), live: true, cue: flags("ch_7_8").hooks });
+        feed(h);
+        h.frame();
+        const snap = () => ({
+          cue: lanesOf(h!, mon, "cue").map((ln) => [ln.v, ln.pk]),
+          own: lanesOf(h!, mon, "own").map((ln) => [ln.v, ln.pk]),
+        });
+        const before = snap();
+        expect(before.cue.flat().every((n) => n > 0)).toBe(true);
+        expect(before.own.flat().every((n) => n > 0)).toBe(true);
+        h.view.refresh();
+        expect(shown(h, mon)).toBe(true);
+        expect(snap()).toEqual(before);
+        h.view.refreshStrip(mon);
+        expect(snap()).toEqual(before);
+        expect(reads(h, mon)).toBe("-14.0");
+      });
 
   // Every model reads the CUE bus meter today, so the gate is shown on a registry entry switched
   // off for the case.
