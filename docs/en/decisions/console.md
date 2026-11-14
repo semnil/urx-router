@@ -171,6 +171,33 @@ writing (architecture.md, "Pressing the main fader",
 the same travel as the main one ([#571](https://github.com/semnil/urx-router/pull/571), decided
 2026-10-10 after first being left as it was).
 
+## A view lower than the window's minimum
+
+**What happened.** With the devtools docked to the bottom of the window, the view went down to 268 px
+high, the fixed-height head took the strips, and the meters and faders were squeezed to a height of
+0. That collapse no longer happens: the fader zone has a 140 px floor and the strip a `min-content`
+height, so the overflow goes to the strip grid's vertical scroll (2026-07-18). It left the zone below
+the fold instead: at 268 px and at 400 px high the visible part of the grid was all head, and no
+fader or meter showed until the grid was scrolled.
+
+**Decision (2026-11-12).** Below the window's minimum height (640 px, `minHeight` in
+`src-tauri/tauri.conf.json`), the fader zone pins to the bottom of the grid's visible area and the
+head and the SENDS rack scroll beneath it. Every part of the strip is still reached by scrolling,
+and a control in the head that takes focus is scrolled clear of the zone. The SEND PAN button is
+then in view only with the zone's height free below it, so its popover no longer has to open above
+it; the E2E case on the popover flip anchors on the meter-point badge instead. From 640 px up nothing
+changes: the shots at 640 and 800 px are identical before and after, in both themes. The space the
+head shows through is the view's height less the toolbar, the status bar and the zone: at 1280 px
+wide, 42 px at 268 px high, 174 px at 400 px, and none at 226 px.
+
+**Turned down.** Leaving it as it was, on the ground that only docked devtools take the view under
+640 px: the operator chose to handle it. Pinning the zone from 640 px up as well: at 640 px the
+lower part of the zone and the readout are below the fold too, but the change was to leave every
+height from the window's minimum up as it was.
+
+**What would reopen it.** A change to the window's minimum height, which moves the boundary, or to
+the fixed heights of the head, the SENDS rack or the zone's floor, which changes what fits at 640 px.
+
 ## Power LED and focus ring
 
 **Decision.** The power LED sits in a dark recessed washer. On the unit's CH SETTING colours the bare

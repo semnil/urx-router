@@ -621,12 +621,16 @@ test("a device-side rebuild of the strip keeps its SEND PAN popover open over a 
   await setHeldReads(page, []);
 });
 
-test("the SEND PAN popover flips above its anchor near the viewport bottom", async ({ page }) => {
-  // The static "below" class never changes, so only the geometry proves the flip.
-  // Measure the popover at the default viewport (room below), then shrink the
-  // viewport so that room is gone: popTop must place the popover above the button.
-  const btn = strip(page, "CH 1").locator(".con-panbtn");
-  const pop = page.locator(".con-spop");
+test("a console popover flips above its anchor near the viewport bottom", async ({ page }) => {
+  // Only the geometry proves the flip. Measure the popover on a tall viewport (room
+  // below), then shrink the viewport so that room is gone: popTop must place the
+  // popover above the anchor. The anchor is the meter-point badge, not the SEND PAN
+  // button: below the window's minimum height the fader zone pins over the SENDS rack,
+  // so the PAN button is in view only with the zone's height still free below it, and
+  // its popover never runs short of room.
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  const btn = strip(page, "CH 1").locator(".con-tap");
+  const pop = page.locator(".con-tappop");
   await btn.click();
   await expect(pop).toBeVisible();
   const popBox = (await pop.boundingBox())!;
@@ -635,8 +639,9 @@ test("the SEND PAN popover flips above its anchor near the viewport bottom", asy
   await page.keyboard.press("Escape");
   await expect(pop).toBeHidden();
 
-  // The head + SENDS rack heights are viewport-independent, so the button keeps
-  // its y; only the room below it shrinks (re-measured to be safe).
+  // The head + SENDS rack heights are viewport-independent, and the badge rides the
+  // top of the fader zone, so it keeps its y; only the room below it shrinks
+  // (re-measured to be safe).
   await page.setViewportSize({ width: 1280, height: Math.ceil(b.y + b.height + popBox.height) });
   await btn.click();
   await expect(pop).toBeVisible();
@@ -1169,6 +1174,51 @@ test("a very short window keeps a usable fader instead of crushing it @webkit", 
   // ...and the part of the strip below the fold is reachable, which the overflow figure
   // alone does not say: a rack that clips instead of scrolling reports the same number.
   await scrollsByWheel(page, page.locator(".con-strips"), "y");
+});
+
+test("below the window's minimum height the faders and meters stay in view @webkit", async ({ page }) => {
+  // Under 640 px, which only docked devtools reach, the head alone filled the strip grid's
+  // visible area and the fader zone sat entirely below the fold. The zone now pins to the
+  // bottom of that area, and the head and the SENDS rack scroll beneath it.
+  const grid = page.locator(".con-strips");
+  const ch1 = strip(page, "CH 1");
+  const zone = ch1.locator(".con-faderzone");
+  // On the shortest views the zone reaches up over the scribble, and a press on it must not
+  // land on the power LED's wider hit area.
+  await page.setViewportSize({ width: 1280, height: 250 });
+  const corner = (await zone.boundingBox())!;
+  const hit = await page.evaluate(
+    ([x, y]) => document.elementFromPoint(x, y)?.closest(".con-faderzone, .con-power")?.className,
+    [corner.x + 3, corner.y + 3],
+  );
+  expect(hit).toBe("con-faderzone");
+  await page.setViewportSize({ width: 1280, height: 400 });
+  await expect(zone).toBeVisible();
+  const view = () =>
+    grid.evaluate((el) => {
+      const top = el.getBoundingClientRect().top + el.clientTop;
+      return { top, bottom: top + el.clientHeight };
+    });
+  const edges = async (loc: Locator) => {
+    const b = (await loc.boundingBox())!;
+    return { top: b.y, bottom: b.y + b.height };
+  };
+  let v = await view();
+  let z = await edges(zone);
+  expect(z.top).toBeGreaterThanOrEqual(v.top);
+  expect(z.bottom).toBeLessThanOrEqual(v.bottom + 0.5);
+  // A head control that takes focus is scrolled clear of the zone rather than left behind it.
+  const knob = ch1.locator(".con-gain .con-knob").first();
+  await knob.focus();
+  z = await edges(zone);
+  expect((await edges(knob)).bottom).toBeLessThanOrEqual(z.top + 0.5);
+  // The end of the scroll still brings the readout under the zone into view.
+  await grid.evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  v = await view();
+  expect((await edges(ch1.locator(".con-readout"))).bottom).toBeLessThanOrEqual(v.bottom + 0.5);
+  // From the minimum window up the strip lays out as before: the zone is not pinned.
+  await page.setViewportSize({ width: 1280, height: 640 });
+  expect(await zone.evaluate((el) => getComputedStyle(el).position)).toBe("static");
 });
 
 test("every strip's head holds its own contents, so --head-h is not hand-measured", async ({ page }) => {
