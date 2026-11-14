@@ -33,7 +33,7 @@ const stateWith = (over: Partial<MidiUiState> = {}): MidiUiState => ({ ...initia
 // Everything the starts in one test registered on `window`, released between
 // tests. jsdom's window outlives the file, and `mocks.toMain` is shared by every
 // window ever started, so without this a stale `pagehide` listener reports
-// alongside the live one — measured at eleven `closed` intents for one dispatch.
+// alongside the live one.
 const windowScopes: Array<() => void> = [];
 
 function start(): HTMLElement {
