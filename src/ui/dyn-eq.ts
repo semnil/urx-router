@@ -184,8 +184,8 @@ export const EQ_DYN: DynPlotProcessor = {
 
   // Three reasons a band row is not the operator's, and they are not the same thing:
   //   - the rate. Above 96 kHz a stereo channel's EQ is not merely locked in the app —
-  //     measured, a 1 kHz high-pass that cut -13 dB at 500 Hz passes it untouched at
-  //     176.4 and 192 kHz, while the parameters are still stored and returned;
+  //     the unit does not apply it at all, while the parameters are still stored and
+  //     returned;
   //   - 1-knob. The device computes all four bands from one level, so the band rows are
   //     **reserved out of sight** and the plot stops taking a band press: there is no band
   //     being edited, so offering one to select would be offering a choice with no effect. They
