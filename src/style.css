@@ -94,6 +94,12 @@
   --meter-frame: #6b5d3c;
 
   --seg: linear-gradient(180deg, #ffd36b, #c9882a);
+  /* The rim and the relief of every --seg face. A range thumb, horizontal or upright, and a
+     tuning screen's threshold cap are one kind of handle, and they read as one only when the
+     edge and the lift match as well as the fill. Written once for both themes: the light
+     theme deepens the fill and keeps these. */
+  --seg-border: #6b4a18;
+  --seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.45);
   /* Console level-meter color zones (green / yellow / red), keyed to absolute dBFS. */
   --m-green: #4fb96a;
   --m-yellow: #ffd36b;
@@ -1321,10 +1327,8 @@ input[type="range"]:focus-visible,
   margin-top: -8px;
   border-radius: 3px;
   background: var(--seg);
-  border: 1px solid #6b4a18;
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  border: 1px solid var(--seg-border);
+  box-shadow: var(--seg-shadow);
 }
 
 .param input[type="range"]::-moz-range-track,
@@ -1340,7 +1344,8 @@ input[type="range"]:focus-visible,
   height: 20px;
   border-radius: 3px;
   background: var(--seg);
-  border: 1px solid #6b4a18;
+  border: 1px solid var(--seg-border);
+  box-shadow: var(--seg-shadow);
 }
 
 .toggle {
@@ -3650,10 +3655,8 @@ input[type="range"]:focus-visible,
   margin-left: -7px;
   border-radius: 3px;
   background: var(--seg);
-  border: 1px solid #6b4a18;
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  border: 1px solid var(--seg-border);
+  box-shadow: var(--seg-shadow);
 }
 
 .gt-fader input[type="range"]::-moz-range-track {
@@ -3667,7 +3670,8 @@ input[type="range"]:focus-visible,
   height: 11px;
   border-radius: 3px;
   background: var(--seg);
-  border: 1px solid #6b4a18;
+  border: 1px solid var(--seg-border);
+  box-shadow: var(--seg-shadow);
 }
 
 .gt-fader.locked input[type="range"] {
@@ -5289,9 +5293,9 @@ button.consent-btn-primary {
   top: var(--pos, 50%);
   transform: translateY(-50%);
   background: var(--seg);
-  border: 1px solid #7a5a1c;
+  border: 1px solid var(--seg-border);
   border-radius: 2px;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--seg-shadow);
   cursor: ns-resize;
   touch-action: none;
   z-index: 2;

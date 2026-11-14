@@ -264,3 +264,43 @@ describe("a focus ring drawn inside a lit face does not take the lamp's colour",
     expect(missing, "give the lit state `outline-color: var(--on-accent-ink)` on focus").toEqual([]);
   });
 });
+
+// The gradient's own faces — a range thumb, horizontal or upright, and a tuning screen's
+// threshold cap — are one kind of handle, and they read as one only when the rim and the
+// relief match as well as the fill. The cap wrote both out as literals of its own and so
+// drifted from the thumbs. Derived from the stylesheet, so a --seg face added tomorrow is held
+// the day it is written.
+describe("every --seg face wears one rim and one relief", () => {
+  const segFaces = RULES.filter((r) => faceDecl(r.body) === "var(--seg)");
+  const selectorsOf = (r: CssRule) => r.selector.split(",").map((s) => s.trim());
+
+  it("finds the thumbs and the cap", () => {
+    expect(segFaces.flatMap(selectorsOf)).toEqual(
+      expect.arrayContaining([
+        ".gt-cap",
+        '.param input[type="range"]::-webkit-slider-thumb',
+        '.gt-fader input[type="range"]::-webkit-slider-thumb',
+        '.param input[type="range"]::-moz-range-thumb',
+        '.gt-fader input[type="range"]::-moz-range-thumb',
+      ]),
+    );
+  });
+
+  it("takes its rim from --seg-border and its relief from --seg-shadow", () => {
+    const off: string[] = [];
+    for (const r of segFaces) {
+      if (decl(r.body, "border") !== "1px solid var(--seg-border)" || decl(r.body, "border-color") !== undefined) {
+        off.push(`${r.selector}: border`);
+      }
+      if (decl(r.body, "box-shadow") !== "var(--seg-shadow)") off.push(`${r.selector}: box-shadow`);
+    }
+    expect(off).toEqual([]);
+  });
+
+  it("declares the rim and the relief once, for both themes", () => {
+    expect(tokensIn(THEME_SELECTOR.dark)).toHaveProperty("--seg-border");
+    expect(tokensIn(THEME_SELECTOR.dark)).toHaveProperty("--seg-shadow");
+    expect(CSS.match(/--seg-border:/g)).toHaveLength(1);
+    expect(CSS.match(/--seg-shadow:/g)).toHaveLength(1);
+  });
+});
