@@ -27,6 +27,21 @@ V8 のカバレッジ付きで走らせる。2 つのメッセージカタログ
 同じ除外が `.github/codecov.yml` と `e2e/coverage-options.ts` にもある)。
 Codecov のために `coverage/lcov.info` を書く。
 
+`scripts/vitest-sequencer.ts` は、SIM の画面巡回、アプリ全体を起動する device のテスト、
+その他のファイルの順に開始する。各組の中では、Vitest が保存した失敗・実行時間による順序を保ち、
+記録がなければファイルサイズによる順序を保つ。ファイルごとの状態の分離と、各シャード
+(テストを分割した実行単位) が実行するテストは変えない。`pnpm test vitest-worker-log` が、
+設定した実行順、記録の有無による順序、分割後の重複と欠落がないことを確かめる。
+
+SIM のパスの検査は、`src/ui/sim-view.paths.test-util.ts` の巡回を共有する。通常の画面、
+入力の Insert FX、出力の Insert FX、エフェクトを別のテストファイルで走らせる。各画面の経路は
+1 つの組に入り、各組が、受け付けない書き込みと、何も押せなかった画面を検査する。通常画面の組は、
+タブの先の操作と、`GLASS_OWN` およびコンプレッサーの分割に届くことも検査する。
+
+CI は frontend のテストを複数のジョブに分割し、各ジョブでカバレッジを計測する。各ジョブは
+別の名前で結果を保存する。coverage のジョブは、分割したジョブがすべて終了してから Codecov へ
+結果を送る。送信する件数と Codecov が待つ件数の一致は、`pnpm check:gates` が検査する。
+
 ## E2E のティア
 
 - `pnpm typecheck:e2e` (`tsc -p tsconfig.e2e.json`) は、`e2e/` と、

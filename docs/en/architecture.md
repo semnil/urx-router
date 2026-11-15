@@ -5415,9 +5415,9 @@ CI is the workflows under `.github/workflows/`:
   demo deploys to GitHub Pages when that draft is **published** (`pages.yml`, on `release: published`);
   `tag-release.yml` is what creates that tag.
 
-**The frontend unit job and each of the ordinary E2E tier's three shards produce coverage for Codecov,
-and ci.yml's `coverage` job uploads all four once every one exists** — under the flags `unit` and `e2e`,
-four uploads that Codecov merges into one reading, with its statuses held until all four have arrived;
+**The frontend unit shards and the ordinary E2E shards each produce coverage for Codecov,
+and ci.yml's `coverage` job uploads every report once they all exist** — under the flags `unit` and `e2e`,
+which Codecov merges into one reading, with its statuses held until every upload has arrived;
 the race jobs upload none — **and Codecov's own behaviour is configured in `.github/codecov.yml`**: the
 service's defaults fail the `project` status on any decrease at all while the E2E half of the merged
 figure is not reproducible to the line, so the threshold, the readings behind it and why `patch` stays at
