@@ -137,6 +137,10 @@ jobs:
     needs: preflight
     runs-on: ubuntu-26.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     permissions:
       contents: read
     steps:
@@ -186,11 +190,11 @@ jobs:
       # would report on a smaller set of pull requests, since that tier's trigger skips one
       # whose diff touches neither src/ nor e2e/race/ nor the version.
       - run: pnpm check:skips
-      - run: pnpm test:coverage
+      - run: pnpm test:coverage --shard=${{ matrix.shard }}/${{ strategy.job-total }}
       # The report is uploaded to Codecov by the `coverage` job, once every report exists.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-unit
+          name: coverage-unit-${{ matrix.shard }}
           path: coverage/lcov.info
           if-no-files-found: error
           retention-days: 1
@@ -510,9 +514,9 @@ jobs:
       contents: read
       # Codecov's tokenless upload exchanges GitHub's OIDC token.
       id-token: write
-    # Above the four upload bounds together, so a stalled upload is reported by its own step
+    # Above the five upload bounds together, so a stalled upload is reported by its own step
     # rather than as a cancelled job.
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       # The uploader matches the reports' paths against the checked-out tree and applies its
       # file fixes from the sources there.
@@ -524,7 +528,7 @@ jobs:
           path: coverage-reports
       # `disable_search` keeps each upload to the one report it names: the search would
       # otherwise add every report under coverage-reports/ to every upload.
-      - name: Upload frontend coverage
+      - name: Upload frontend coverage (shard 1)
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
         # On a pull request a failed upload fails the job, so the run that lost it is red: an
@@ -536,9 +540,21 @@ jobs:
         with:
           disable_search: true
           fail_ci_if_error: true
-          files: ./coverage-reports/coverage-unit/lcov.info
+          files: ./coverage-reports/coverage-unit-1/lcov.info
           flags: unit
-          name: frontend-unit
+          name: frontend-unit-1
+          use_oidc: true
+      - name: Upload frontend coverage (shard 2)
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        timeout-minutes: 5 # hang detector, not a budget — see .github/actions/install-browsers
+        # As the first upload's (.github/required-checks.json:8).
+        continue-on-error: ${{ github.event_name != 'pull_request' }}
+        with:
+          disable_search: true
+          fail_ci_if_error: true
+          files: ./coverage-reports/coverage-unit-2/lcov.info
+          flags: unit
+          name: frontend-unit-2
           use_oidc: true
       - name: Upload frontend E2E coverage (shard 1)
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1

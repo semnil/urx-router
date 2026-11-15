@@ -10,6 +10,7 @@ import { afterAll, describe, expect, it } from "vitest";
 // Loaded here, on the real platform, so the native bindings it pulls in (Vite, Rolldown) are this machine's
 // before a case below reads vitest.config.ts with process.platform shown as another OS.
 import "vitest/config";
+import { FrontendSequencer } from "./vitest-sequencer.ts";
 
 const ENV = "URX_VITEST_WORKER_LOG";
 const SETUP = "scripts/vitest-worker-log-setup.mjs";
@@ -44,6 +45,9 @@ async function configWith(value, tag, platform = process.platform) {
 }
 
 describe("vitest.config.ts", () => {
+  it("starts the expensive suites through the frontend sequencer", async () => {
+    expect((await configWith(undefined, "unset", "darwin")).test.sequence.sequencer).toBe(FrontendSequencer);
+  });
   it("adds the setup file only when the variable names a file", async () => {
     expect((await configWith(path.join(tmp, "unused.log"), "on", "darwin")).test.setupFiles).toEqual([SETUP]);
     expect((await configWith(undefined, "unset", "darwin")).test.setupFiles).toEqual([]);
@@ -54,6 +58,63 @@ describe("vitest.config.ts", () => {
   it("refuses the variable on Windows and adds nothing there without it", async () => {
     await expect(configWith(path.join(tmp, "unused.log"), "winOn", "win32")).rejects.toThrow(ENV);
     expect((await configWith(undefined, "winUnset", "win32")).test.setupFiles).toEqual([]);
+  });
+});
+
+describe("the frontend file order", () => {
+  const spec = (moduleId) => ({
+    moduleId,
+    project: { name: "", config: { sequence: { groupOrder: 0 }, isolate: true } },
+  });
+  const context = (results, shard) => ({
+    config: { root: tmp, shard },
+    cache: { getTestSpecificationResult: (file) => results.get(file.moduleId) },
+  });
+
+  it("starts screen walks and device cases before larger files without a timing cache", async () => {
+    const names = [
+      "src/core/large.test.ts",
+      "src/main.device.live.test.ts",
+      "src/ui/sim-view.paths.fx.contract.test.ts",
+    ];
+    const files = names.map((name, i) => {
+      const file = path.join(tmp, name);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, " ".repeat(1000 - i * 400));
+      return spec(file);
+    });
+    const before = [...files];
+    expect(await new FrontendSequencer(context(new Map())).sort(files)).toEqual([...files].reverse());
+    expect(files).toEqual(before);
+  });
+
+  it("retains cached duration order within the groups and accepts Windows paths", async () => {
+    const names = [
+      "C:\\repo\\src\\main.device.live.test.ts",
+      "C:\\repo\\src\\ui\\sim-view.paths.contract.test.ts",
+      "C:\\repo\\src\\ui\\sim-view.paths.fx.contract.test.ts",
+      "C:\\repo\\src\\core\\long.test.ts",
+      "C:\\repo\\src\\main.device.fetch.test.ts",
+    ];
+    const files = names.map(spec);
+    const results = new Map(names.map((name, i) => [name, { duration: i + 1, failed: false }]));
+    expect(await new FrontendSequencer(context(results)).sort(files)).toEqual([
+      files[2],
+      files[1],
+      files[4],
+      files[0],
+      files[3],
+    ]);
+  });
+
+  it("keeps every file in exactly one shard, including newly added files", async () => {
+    const files = Array.from({ length: 7 }, (_, i) => spec(path.join(tmp, `src/new-${i}.test.ts`)));
+    const shards = await Promise.all(
+      [1, 2].map((index) => new FrontendSequencer(context(new Map(), { index, count: 2 })).shard(files)),
+    );
+    expect(shards.map((part) => part.length)).toEqual([4, 3]);
+    expect(new Set(shards.flat())).toEqual(new Set(files));
+    expect(shards[0].filter((file) => shards[1].includes(file))).toEqual([]);
   });
 });
 

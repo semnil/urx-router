@@ -26,6 +26,22 @@ of the coverage set.
 minus the two message catalogs (why: `vitest.config.ts`, and the same exclusion in
 `.github/codecov.yml` + `e2e/coverage-options.ts`); it writes `coverage/lcov.info` for Codecov.
 
+`scripts/vitest-sequencer.ts` starts the SIM screen walks, then the whole-app device suites,
+then the other files. Within each group it keeps Vitest's cached failure/duration ordering, or
+its file-size ordering without a cache. File isolation and the tests selected by a shard stay
+unchanged. `pnpm test vitest-worker-log` pins the configured sequencer, cold and cached ordering,
+and disjoint, complete shards.
+
+The SIM path contract shares its walk in `src/ui/sim-view.paths.test-util.ts`. The ordinary
+screens, input inserts, output inserts and effects run in separate test files. Every route belongs
+to one part; every part checks unanswered writes and screens with no presses. The ordinary-screen
+part also holds the tab-reachability and `GLASS_OWN` / compressor-split checks.
+
+CI runs the frontend suite as a shard matrix, with coverage enabled in every shard. Each shard
+uploads a report under its own artifact name; the coverage job waits for the entire matrix before
+sending the reports to Codecov. The upload count and Codecov's wait count are held together by
+`pnpm check:gates`.
+
 ## E2E tiers
 
 - `pnpm typecheck:e2e` (`tsc -p tsconfig.e2e.json`) type-checks `e2e/` + the root config `.ts`

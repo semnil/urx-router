@@ -2,8 +2,8 @@
 # one that matters here is `project`: target `auto` (the base commit's coverage) with a
 # threshold of 0%, so ANY decrease fails the check.
 #
-# Four uploads arrive for a commit, all from ci.yml's `coverage` job — `unit` with the
-# frontend job's report, and `e2e` with each of the three E2E shards'. Codecov merges them:
+# Five uploads arrive for a commit, all from ci.yml's `coverage` job — `unit` with each
+# frontend shard's report, and `e2e` with each E2E shard's report. Codecov merges them:
 # same flag or not, a line reached by any upload is covered, which is what lets the tier
 # be split across jobs without the figure moving.
 #
@@ -53,4 +53,4 @@ ignore:
 # that job's uploads and to the reports the jobs it needs produce.
 codecov:
   notify:
-    after_n_builds: 4
+    after_n_builds: 5

@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { FrontendSequencer } from "./scripts/vitest-sequencer.ts";
 import { LCD_SIM_DIR, lcdSimCommit } from "./vite.config.ts";
 
 /** The setup file the worker log adds, while URX_VITEST_WORKER_LOG names a file. On Windows the variable is
@@ -18,6 +19,7 @@ export default defineConfig({
   define: { __URX_LCD_SIM_COMMIT__: JSON.stringify(lcdSimCommit(LCD_SIM_DIR)) },
   test: {
     environment: "node",
+    sequence: { sequencer: FrontendSequencer },
     // A hang detector, not a budget. The cases that boot the whole app under jsdom run
     // for seconds, and the 5000 ms default sits close enough to them to be crossed by a
     // cold run rather than by a defect: the first run after a `pnpm install` can be slow
