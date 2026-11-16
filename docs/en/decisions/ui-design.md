@@ -3,7 +3,7 @@
 > 日本語版: [../../ja/decisions/ui-design.md](../../ja/decisions/ui-design.md)
 
 Closed decisions about how the app looks: its style, themes, toolbar, contrast, focus, wire colours,
-motion and the polarity mark. The rules as they stand are in [architecture.md](../architecture.md),
+motion, the polarity mark, the Console Lock strip and the status line. The rules as they stand are in [architecture.md](../architecture.md),
 "Display themes", "Windows high contrast (forced colors)", "Localization (i18n)" and "Preferences",
 and in the comments of [src/style.css](../../../src/style.css). This document holds what was chosen
 over what, and why. "The operator" below is the person who directs this project's work and decides
@@ -244,3 +244,40 @@ as long as it is shown. An edit put back still says so on the status line.
 **Turned down.** A pill beside the LIVE tally in the toolbar, which is seen wherever the operator
 looks but carries no explanation; a chip at the right of the status bar beside CUE Mode, which
 changes neither the toolbar nor the board but is the easiest of the three to miss.
+
+## An operation's line leads the status line during Live sync
+
+**Decision (2026-11-16, the operator).** What an operation writes on the status line stays at its
+front until anything else takes the line, and the session's own sync and follow status
+(`→ device (N)`, `← device…`, `← device (N)`) is printed behind it instead of over it — "Undone —
+→ device (3)". A line too long for the bar is cut with "…" in that leading part, never in the status
+behind it, and the bar's tooltip holds the whole line. The bar keeps its one line and its height.
+While what the line leads with stays the same, the live region announces only the new status. The
+rule as it stands is in [architecture.md](../architecture.md), "Aborting on failure".
+
+**Why.** The status line was one slot, and the last writer won. During Live sync an edit's own send
+reports a moment after the edit does, so the operator's outcome was replaced before it could be
+read: measured against the stubbed device in WebKit, "Undone" stayed 779 ms before "→ device (3)"
+took its place. A rate change's line already led the sync lines, and at the window's minimum width
+(960 px; 770 px left for the message beside the CUE readout) it was cut with "…" so that the status
+behind it never showed — 111 of its 176 characters in English and 87 of 129 in Japanese were
+visible, and "→ device (4)" was not. With this decision, at the same width the status takes about
+110 px and is always whole, and the rate's line shows 96 of 161 characters in English and 76 of 116
+in Japanese.
+
+**Accepted.** A line can keep leading long after the operation that wrote it, until the next one
+writes. A case that read the status from the start of the line now reads it from its end.
+
+**Turned down**, from prototypes shot in both themes and languages at 960 and 1600 px:
+
+- **The status in a place of its own** at the right of the bar, with the operation's line on the
+  left. The count would no longer be announced, the left part shrank from 770 px to 652 px the
+  moment the first send appeared, and the bar would gain a component.
+- **A minimum time for an operation's line** before a status may replace it. A status that waited
+  and the notes it carried were dropped when the next operation wrote first — in the prototype, the
+  note the stubbed device's session start produced was never shown — and the timer would make the
+  suites that wait on the status wait longer.
+- **A bar two lines tall** (30 px to 46 px, on top of either of the above). The long rate line fits
+  whole at 960 px, but the board and the console lose 16 px all the time, and a bar that grows only
+  when a long line needs it re-fits the graph's zoom on every such line, since the graph fits its
+  view to every resize until the operator has zoomed it.
