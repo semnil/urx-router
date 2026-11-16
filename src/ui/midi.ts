@@ -587,6 +587,11 @@ export class MidiControl {
   private async openOutput(port: string): Promise<void> {
     const gen = this.portGen.out;
     this.opensInFlight++;
+    // Until the answer, no output is known to be held: the shell takes the open when it
+    // arrives, so a send now may reach either port, and a failure of it would count
+    // toward giving up the port being opened. Nothing is sent meanwhile; the open's own
+    // re-send below carries everything once it lands.
+    this.outputPort = null;
     try {
       await midiOpenOutput(port);
       this.outputPort = port;
