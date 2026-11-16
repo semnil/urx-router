@@ -291,6 +291,11 @@ export class MidiControl {
       send: (bytes) => {
         this.traceLog?.(`tx [${bytes.join(" ")}]`);
         midiProbe?.tx(bytes);
+        // The choice this message was sent under. A failure is about that port, and the
+        // give-up below closes the SHELL's slot, which takes no port: counted after the
+        // operator has chosen another one, it reaches the shell behind that port's open
+        // and closes it, while the open's answer tells the page it is open.
+        const gen = this.portGen.out;
         void midiSend(bytes).then(
           () => {
             // A send that lands says the port is alive. The streak below is about a
@@ -299,8 +304,10 @@ export class MidiControl {
           },
           () => {
             // A rejection that arrives after the port was given up has nothing left
-            // to re-send, and must not count a second time.
-            if (!this.outputPort) return;
+            // to re-send, and must not count a second time. One that arrives after
+            // another port was chosen is about a port the operator has left; that
+            // port's open re-sends everything on its own.
+            if (!this.outputPort || gen !== this.portGen.out) return;
             // The controller never got this value, so drop what the engine thinks it
             // has been told and schedule another pass: a one-off failure self-heals.
             this.record("tx failed — re-sending feedback");
@@ -580,6 +587,11 @@ export class MidiControl {
   private async openOutput(port: string): Promise<void> {
     const gen = this.portGen.out;
     this.opensInFlight++;
+    // Until the answer, no output is known to be held: the shell takes the open when it
+    // arrives, so a send now may reach either port, and a failure of it would count
+    // toward giving up the port being opened. Nothing is sent meanwhile; the open's own
+    // re-send below carries everything once it lands.
+    this.outputPort = null;
     try {
       await midiOpenOutput(port);
       this.outputPort = port;

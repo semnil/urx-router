@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => ({
     mocks.inputReceiver = onMessage;
     return mocks.closeInput;
   }),
-  midiOpenOutput: vi.fn(async () => {}),
+  midiOpenOutput: vi.fn(async (_port: string) => {}),
   midiOpenPorts: vi.fn(async (): Promise<[string | null, string | null]> => [null, null]),
   midiSend: vi.fn(async () => {}),
   midiUiAttachMain: vi.fn(async (receiver: (payload: string) => void) => void (mocks.receiver = receiver)),
@@ -570,6 +570,90 @@ describe("feedback to the controller", () => {
     await vi.advanceTimersByTimeAsync(200);
 
     expect(mocks.midiCloseOutput).not.toHaveBeenCalled();
+  });
+
+  // A failed send is about the port it was sent to. The give-up closes the SHELL's slot,
+  // and the shell's close takes no port: it closes whatever is held. Counted after the
+  // operator has chosen another port, the give-up reached the shell after that port's
+  // open and closed it, while the open's answer then told the page it was open — the
+  // page said "Other Out" with nothing held behind it.
+  it("does not give up on a port the operator has already chosen away from", async () => {
+    seedMappings();
+    const { control, hooks } = install();
+    await attached();
+    await openOutput();
+
+    // The shell's held output slot: an open replaces it and a close empties it, each
+    // when it arrives, which is the order the page sends them in.
+    let held: string | null = "Controller Out";
+    mocks.midiCloseOutput.mockImplementation(async () => void (held = null));
+    let land!: () => void;
+    mocks.midiOpenOutput.mockImplementationOnce(async (port: string) => {
+      held = port;
+      await new Promise<void>((r) => (land = r));
+    });
+
+    vi.useFakeTimers();
+    mocks.midiSend.mockClear();
+    mocks.midiCloseOutput.mockClear();
+    let failLast: ((err: Error) => void) | undefined;
+    mocks.midiSend
+      .mockRejectedValueOnce(new Error("x"))
+      .mockRejectedValueOnce(new Error("x"))
+      .mockImplementationOnce(() => new Promise<void>((_, reject) => (failLast = reject)));
+    control.liveReadSettled();
+    await vi.advanceTimersByTimeAsync(200); // second failed pass
+    await vi.advanceTimersByTimeAsync(200); // third pass, its send still out
+    expect(failLast).toBeDefined();
+
+    dispatch({ type: "port", dir: "out", name: "Other Out" });
+    await vi.waitFor(() => expect(mocks.midiOpenOutput).toHaveBeenLastCalledWith("Other Out"));
+    failLast!(new Error("port gone")); // the third failure, about "Controller Out"
+    await vi.advanceTimersByTimeAsync(0);
+    land();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mocks.midiCloseOutput).not.toHaveBeenCalled();
+    expect(held).toBe("Other Out");
+    expect(hooks.onStatus).not.toHaveBeenCalledWith(t().midi.outputStalled);
+  });
+
+  // The same give-up from a pass that runs while the new port's open is still out. That
+  // pass is sent under the new choice, so the choice alone does not tell its failure from
+  // one about the new port, and the streak the old port built is still standing.
+  it("does not give up on a port whose open is still on its way", async () => {
+    seedMappings();
+    const { control, hooks } = install();
+    await attached();
+    await openOutput();
+
+    let held: string | null = "Controller Out";
+    mocks.midiCloseOutput.mockImplementation(async () => void (held = null));
+    let land!: () => void;
+    mocks.midiOpenOutput.mockImplementationOnce(async (port: string) => {
+      held = port;
+      await new Promise<void>((r) => (land = r));
+    });
+
+    vi.useFakeTimers();
+    mocks.midiSend.mockClear();
+    mocks.midiCloseOutput.mockClear();
+    mocks.midiSend
+      .mockRejectedValueOnce(new Error("x"))
+      .mockRejectedValueOnce(new Error("x"))
+      .mockRejectedValueOnce(new Error("x"));
+    control.liveReadSettled();
+    await vi.advanceTimersByTimeAsync(120); // second failed pass
+
+    dispatch({ type: "port", dir: "out", name: "Other Out" });
+    await vi.waitFor(() => expect(mocks.midiOpenOutput).toHaveBeenLastCalledWith("Other Out"));
+    await vi.advanceTimersByTimeAsync(120); // a re-send pass while the open is out
+    land();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mocks.midiCloseOutput).not.toHaveBeenCalled();
+    expect(held).toBe("Other Out");
+    expect(hooks.onStatus).not.toHaveBeenCalledWith(t().midi.outputStalled);
   });
 
   // Counted per PASS, not per message. A pass emits one message per bound address, and
