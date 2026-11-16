@@ -161,9 +161,9 @@ two port selects: what a second and a third choice do while the first port is st
   order the page issued them, when the page does not await the first, is not guaranteed by Tauri's
   documentation. It holds in the macOS webview (WKWebView). The Windows webview
   (WebView2) is unconfirmed.
-- **Known and left unguarded: three places where the result depends on the order two commands
-  are taken in.** The first two go wrong only if the shell takes the two commands in the reverse
-  of the order sent; the third goes wrong in the order sent.
+- **Known and left unguarded: two places where the result depends on the order two commands are
+  taken in.** Both go wrong only if the shell takes the two commands in the reverse of the order
+  sent.
   - A close is not awaited inside the port queue. "None" sends the close and the queue moves on
     (`applyInputPort`, `closeOutput`), so that close and the next open of the same direction can be
     in flight together. Taken in reverse, the shell opens the new port and then closes it, and the
@@ -171,10 +171,15 @@ two port selects: what a second and a third choice do while the first port is st
   - A close followed by the question about open ports (`reconcileOpenPorts`, which `refreshPorts`
     runs). The close is counted when it is sent, so a question sent after it is not discarded.
     Taken in reverse, the answer still names the port being closed and the page puts it back.
-  - Giving up a stalled output (`abandonOutput`) sends its close from outside the queue. If the
-    open of the next output is in flight at that moment, the close reaches the shell after that
-    open and closes the port it has just opened, while the page shows it as open. This one was
-    found by reading the code and has not been reproduced.
+- **Fixed: giving up an output the operator had already chosen away from.** Giving up a stalled
+  output (`abandonOutput`) sends its close from outside the queue, and the shell's close takes no
+  port: it closes whatever is held. A failed send counted toward the give-up even after the
+  operator had chosen another output, so with that output's open in flight, the close reached the
+  shell after the open and closed the port it had just opened, while the page showed it as open.
+  This went wrong in the order sent. A failed send now counts only while the choice it was sent
+  under is still the latest one; the new port's open re-sends everything on its own.
+  `src/ui/midi-feedback.test.ts`: "does not give up on a port the operator has already chosen away
+  from", which fails without the fix.
 
 ## Abort on failure is the operator's decision
 
