@@ -609,7 +609,7 @@ The `race` project raises the per-test timeout to **120 s** and drops to **one**
 case takes 60 s on a two-worker CI runner — a barrier held across a converge round of ~800
 sequential reads — so at the 30 s default a passing case turns into a timeout that reads like a defect.
 Twice that worst case rather than three times it, because the handful needing more say so themselves
-(`test.setTimeout` in `tzb-tail` and `t8-stress`), and a project figure wide enough to cover them would
+(`test.setTimeout` in `t0a-session-lifecycle`, `tzb-tail` and `t8-stress`), and a project figure wide enough to cover them would
 let every other case burn three minutes before reporting, once per retry. One retry rather than the
 suite's two for the matching reason: every pin here is placed on a barrier rather than on a delay, so a
 case that only passes on the third attempt is not a pin holding — it is a flake, and at two retries it
@@ -764,6 +764,9 @@ order, or a case that simply got slower leaves every count intact and needs a re
 can prompt. `node scripts/race-shard-weights.mjs <run id>` is that re-derivation: it refuses a log that
 does not describe this corpus (a partial or cancelled run's log used to yield an arithmetically valid
 array over a suite that did not run) and refuses a plan whose cuts the runner does not reproduce.
+
+The repeated-session lifecycle case is collected early in `t0a-session-lifecycle.spec.ts`. Its
+sessions stay in one test, with the history pressure and post-stop observation windows intact.
 
 **The current array** is derived from a whole race run's per-test durations, and the run's declared
 skips are left out of the cut.

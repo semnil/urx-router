@@ -566,7 +566,6 @@ describe("the live session", () => {
   const followedLine = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveFollowed(n)));
   const heldLine = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveHeld(n, 2, 0)));
 
-  // `delayMs` stretches each read, for the case that has to end the session inside one.
   // `hold` answers a read only once the promise it returns for that read settles.
   // `refuseY` refuses every read of one channel index, for the case that needs the read
   // to be partial as well as holding — CH 1 is y0, so a later index leaves the held
@@ -577,12 +576,10 @@ describe("the live session", () => {
   const notifyRate = (
     shell: TauriShell,
     {
-      delayMs = 0,
       hold = (): Promise<void> | null => null,
       refuseY = -1,
       linked = false,
     }: {
-      delayMs?: number;
       hold?: (a: Record<string, unknown>) => Promise<void> | null;
       refuseY?: number;
       linked?: boolean;
@@ -600,7 +597,7 @@ describe("the live session", () => {
     shell.answer("vd_get", (a: Record<string, unknown>) => {
       const held = hold(a);
       if (held) return held.then(() => answer(a));
-      return delayMs ? new Promise((r) => setTimeout(() => r(answer(a)), delayMs)) : answer(a);
+      return answer(a);
     });
     // Taken from the subscribe's own arguments rather than by position, so a second
     // channel opening beside it cannot silently redirect this.
@@ -688,24 +685,22 @@ describe("the live session", () => {
     const shell = await bootDevice();
     await heldByExcursion(shell);
 
-    // One millisecond per read, so the reconcile is long enough to end the session
-    // inside it. A follow read outlives a session that merely ended, so it still
-    // reaches the hold — with nothing left to flush through.
-    const reads = shell.count("vd_get");
+    // Hold CH 1's selector until the session ends. The follow read then finishes
+    // with nothing left to flush through.
+    const read = gate(PARAMS.INSERT_FX.id, 0);
+    read.arm();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    notifyRate(shell, { delayMs: 1 });
+    notifyRate(shell, { hold: read.take });
 
     try {
       const written = insertFxWrites(shell).length;
-      // Past the settle debounce and INTO the reconcile: the session start has already
-      // read the whole unit, so a bare `count > 5` is satisfied before the notify's
-      // read exists and the click below would cancel the settle instead of racing it.
-      await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 5), {
-        timeout: 25_000,
-        interval: 5,
-      });
-      $("btn-live").click();
-      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
+      try {
+        await vi.waitFor(() => expect(read.held()).toBe(true), { timeout: 25_000 });
+        $("btn-live").click();
+        await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
+      } finally {
+        read.release();
+      }
 
       await vi.waitFor(
         () =>
@@ -791,16 +786,18 @@ describe("the live session", () => {
     // control for the count below, taken from this run rather than written down.
     const sweep = shell.count("vd_get");
 
-    // A rate notify escalates to a whole-device reconcile; a millisecond per read is what
-    // makes the window to replace the plan inside it real.
-    notifyRate(shell, { delayMs: 1 });
+    // A rate notify escalates to a whole-device reconcile. Hold its first channel's
+    // HPF read until the plan is replaced, then let the abort reach the next boundary.
+    const read = gate(PARAMS.HPF_ON.id, 0);
+    read.arm();
     const before = shell.count("vd_get");
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(before + 20), {
-      timeout: 25_000,
-      interval: 5,
-    });
-
-    $("btn-new").click();
+    notifyRate(shell, { hold: read.take });
+    try {
+      await vi.waitFor(() => expect(read.held()).toBe(true), { timeout: 25_000 });
+      $("btn-new").click();
+    } finally {
+      read.release();
+    }
     await quiet(shell);
     // Not zero: the readback checks the signal at group boundaries, so reads already on
     // the wire still land. Against the sweep, though, an abandoned read is a fraction of
@@ -818,29 +815,33 @@ describe("the live session", () => {
     $("btn-live").click();
     await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
 
-    notifyRate(shell, { delayMs: 1 });
-    const before = shell.count("vd_get");
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(before + 20), {
-      timeout: 25_000,
-      interval: 5,
-    });
-
+    const read = gate(PARAMS.HPF_ON.id, 0);
+    read.arm();
+    notifyRate(shell, { hold: read.take });
     const connects = shell.count("vd_connect");
     const disconnects = shell.count("vd_disconnect");
-    $("btn-live").click();
-    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
+    try {
+      await vi.waitFor(() => expect(read.held()).toBe(true), { timeout: 25_000 });
+      $("btn-live").click();
+      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 25_000 });
 
-    // The toggle is off and the link is NOT: the read is still running over it.
-    expect(shell.count("vd_disconnect")).toBe(disconnects);
-    expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(true);
-    expect($<HTMLSelectElement>("rate-picker").disabled).toBe(true);
-    // The toggle stays usable — it is the holder's own entry — so the restart is refused
-    // by the latch rather than by the affordance. Read synchronously: `holdDeviceLink`
-    // writes the line before the click handler's first await, and the read still running
-    // writes its own over it.
-    $("btn-live").click();
-    expect(statusText()).toBe(t().status.deviceLinkBusy);
-    expect(shell.count("vd_connect")).toBe(connects);
+      // Let the session's other teardown finish while this read stays held.
+      await quiet(shell);
+
+      // The toggle is off and the link is NOT: the read is still running over it.
+      expect(shell.count("vd_disconnect")).toBe(disconnects);
+      expect($<HTMLButtonElement>("btn-fetch").disabled).toBe(true);
+      expect($<HTMLSelectElement>("rate-picker").disabled).toBe(true);
+      // The toggle stays usable — it is the holder's own entry — so the restart is refused
+      // by the latch rather than by the affordance. Read synchronously: `holdDeviceLink`
+      // writes the line before the click handler's first await, and the read still running
+      // writes its own over it.
+      $("btn-live").click();
+      expect(statusText()).toBe(t().status.deviceLinkBusy);
+      expect(shell.count("vd_connect")).toBe(connects);
+    } finally {
+      read.release();
+    }
 
     // …and the disconnect is what lifts it, not the toggle going off.
     await invoked(shell, "vd_disconnect", disconnects + 1);
@@ -968,7 +969,8 @@ describe("the live session", () => {
     await heldByExcursion(shell);
 
     const written = insertFxWrites(shell).length;
-    // Slow enough that the rate notify below lands INSIDE the scoped read.
+    const read = gate(PARAMS.HPF_ON.id, 2);
+    read.arm();
     shell.answer("vd_get", (a: Record<string, unknown>) => {
       const v =
         a.paramId === PARAMS.SAMPLE_RATE.id
@@ -976,24 +978,25 @@ describe("the live session", () => {
           : a.paramId === PARAMS.INSERT_FX.id
             ? denormalizeInsertFx(INSERT_FX_NONE)
             : unwrittenRead(a);
-      return new Promise((r) => setTimeout(() => r(v), 5));
+      const held = read.take(a);
+      return held ? held.then(() => v) : v;
     });
     const at = shell.invokes.indexOf("vd_params_subscribe");
     const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
 
     // A CH 3 parameter the unit moved: no owner-less address, so this settles into a
     // SCOPED read, which never asks for the rate.
-    const reads = shell.count("vd_get");
     channel.onmessage([{ param_id: PARAMS.HPF_ON.id, x: 0, y: 2, value: 1 }]);
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(reads + 3), {
-      timeout: 25_000,
-      interval: 2,
-    });
-    // …and the excursion, announced while that read is still running.
-    channel.onmessage([
-      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
-      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
-    ]);
+    try {
+      await vi.waitFor(() => expect(read.held()).toBe(true), { timeout: 25_000 });
+      // The excursion is announced while the scoped read is still running.
+      channel.onmessage([
+        { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
+        { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
+      ]);
+    } finally {
+      read.release();
+    }
 
     await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
       timeout: 25_000,
@@ -1012,34 +1015,43 @@ describe("the live session", () => {
     await heldByExcursion(shell);
 
     const written = insertFxWrites(shell).length;
-    // CH 1's selector answers as it stood for the FIRST read that asks, and cleared for
-    // every one after — so the read already in flight sees it standing (and holds
-    // nothing) while the replay behind it is the first to see it gone. Counted rather
-    // than timed: which read of a 700-address sweep reaches CH 1 is not a clock.
+    // Hold the full read at the sample rate, after its selector/engine reads have
+    // stabilised. All selector reads in that sweep see the standing effect; only the
+    // replay sees it cleared, including both reads of the family-stability check.
     let asked = 0;
+    let cleared = false;
+    const read = gate(PARAMS.SAMPLE_RATE.id, 0);
+    read.arm();
     shell.answer("vd_get", (a: Record<string, unknown>) => {
+      if (a.paramId === PARAMS.INSERT_FX.id && a.y === 0) asked++;
       const v =
         a.paramId === PARAMS.SAMPLE_RATE.id
           ? 48_000
           : a.paramId === PARAMS.INSERT_FX.id && a.y === 0
-            ? asked++ === 0
-              ? COMPANDER_H
-              : denormalizeInsertFx(INSERT_FX_NONE)
+            ? cleared
+              ? denormalizeInsertFx(INSERT_FX_NONE)
+              : COMPANDER_H
             : unwrittenRead(a);
-      return new Promise((r) => setTimeout(() => r(v), 2));
+      const held = read.take(a);
+      return held ? held.then(() => v) : v;
     });
     const at = shell.invokes.indexOf("vd_params_subscribe");
     const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
 
     // An address in no index forces a FULL read, without touching the rate history.
     channel.onmessage([{ param_id: 9_999, x: 0, y: 0, value: 1 }]);
-    // Past CH 1's own selector, which this read has now taken as standing.
-    await vi.waitFor(() => expect(asked).toBeGreaterThan(0), { timeout: 25_000, interval: 2 });
-    // The excursion lands inside it and schedules the replay.
-    channel.onmessage([
-      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
-      { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
-    ]);
+    try {
+      await vi.waitFor(() => expect(read.held()).toBe(true), { timeout: 25_000 });
+      expect(asked).toBeGreaterThanOrEqual(2); // The selector/engine family is stable.
+      cleared = true;
+      // The excursion lands inside it and schedules the replay.
+      channel.onmessage([
+        { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
+        { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
+      ]);
+    } finally {
+      read.release();
+    }
 
     // …and the replay behind it, which is the first read to see the cleared selector.
     await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
