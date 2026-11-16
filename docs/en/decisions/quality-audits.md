@@ -177,9 +177,11 @@ two port selects: what a second and a third choice do while the first port is st
   operator had chosen another output, so with that output's open in flight, the close reached the
   shell after the open and closed the port it had just opened, while the page showed it as open.
   This went wrong in the order sent. A failed send now counts only while the choice it was sent
-  under is still the latest one; the new port's open re-sends everything on its own.
-  `src/ui/midi-feedback.test.ts`: "does not give up on a port the operator has already chosen away
-  from", which fails without the fix.
+  under is still the latest one, and while an output's open is on its way no output is held, so
+  nothing is sent and nothing can fail; the open re-sends everything once it lands (the operator's
+  choice between that and keeping the old port's sends going uncounted). `src/ui/midi-feedback.test.ts`:
+  "does not give up on a port the operator has already chosen away from" and "does not give up on a
+  port whose open is still on its way", each of which fails without its half of the fix.
 
 ## Abort on failure is the operator's decision
 

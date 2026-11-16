@@ -159,9 +159,11 @@
   送信の失敗は、操作者が別の出力を選んだあとも見切りに数えられていた。そのため、その出力を開くコマンドが
   飛んでいると、閉じるコマンドはその開く処理のあとにシェルへ届き、開いたばかりのポートを閉じた。ページは、
   そのポートを開いていると表示した。これは送った順のまま処理されたときに誤る。今は、送ったときの選択が
-  最新のままのときだけ、送信の失敗を数える。新しいポートを開く処理は、自分で全部を送り直す。
-  `src/ui/midi-feedback.test.ts`: "does not give up on a port the operator has already chosen away
-  from" (直す前のコードでは失敗する)。
+  最新のままのときだけ、送信の失敗を数える。また、出力を開く処理の応答を待っている間は、出力を持たない
+  扱いにするので、何も送らず、失敗も起きない。開き終わったら、全部を送り直す (古いポートへの送信を
+  続けて失敗を数えない形との、操作者の選択)。`src/ui/midi-feedback.test.ts`: "does not give up on a port
+  the operator has already chosen away from" と "does not give up on a port whose open is still on its
+  way" (どちらも、直しのその半分が無いと失敗する)。
 
 ## Abort on failure is the operator's decision
 
