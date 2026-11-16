@@ -43,6 +43,10 @@ Fetch and Live tests that place an edit, notification or stop inside a device re
 read unanswered until that action finishes. Other reads answer without a per-read timer. The
 post-stop observation windows and the shared teardown's quiet window remain separate checks.
 
+The SIM sample-rate notification test advances its timers with a controlled clock after connecting.
+Its positive read determines the negative observation window, and both phases retain the shared
+shell-drain checks. Real timers are restored before disconnecting and tearing down the app.
+
 CI runs the frontend suite as a shard matrix, with coverage enabled in every shard. Each shard
 uploads a report under its own artifact name; the coverage job waits for the entire matrix before
 sending the reports to Codecov. The upload count and Codecov's wait count are held together by
@@ -156,6 +160,11 @@ read, resolved from the step's own `shell:`, then its job's `defaults.run.shell`
 workflow's, then the runner's own (bash everywhere but Windows) — since a step's `shell:` may be
 written after its `run:` and a job's `runs-on` after its steps, the values are queued and lexed once
 the document is read.
+
+The PowerShell execution oracle in `check-comment-provenance.test.mjs` batches its inputs in one
+process per corpus. Each input runs in a fresh runspace and reports its own output and final-statement
+status. The parser calls and workflow integration checks stay separate. A guard covers state isolation,
+Unicode output, parse and runtime errors, and a successful input after errors.
 
 PowerShell's block comment does NOT nest — the first `#>` ends it and what follows is code — its `#`
 begins a comment only where a TOKEN may begin, and its strings are not the shell's: `'…'` doubles
