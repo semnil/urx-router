@@ -12,6 +12,7 @@ import {
 import { markTime, setsOf } from "./analyze";
 import { CH1_HPF_ADDR, CH1_HPF_FREQ, graphNode, insertFxBypass, insertFxSelect, paramExact } from "./ui";
 import { chooseOption } from "../choose-option";
+import { en } from "../../src/i18n/en";
 
 // T1e — overtake-held-repaint-vs-the-next-gesture (docs/{en,ja}/live-race-harness.md,
 // "T1 overtake").
@@ -55,11 +56,18 @@ async function selectFocusedWithEffect(page: Page, follow: boolean): Promise<voi
   await settleAfter(page, "select-compander", 1800);
   const trace = await traceOf(page);
   const at = markTime(trace, "select-compander")!;
+  // A flush's line is its count behind whatever the line leads with, and what it took back
+  // is a note leading that count.
   const sent = trace
-    .filter((e) => e.kind === "status" && e.t > at && (e.detail ?? "").startsWith("→ device"))
-    .map((e) => e.detail);
+    .filter((e) => e.kind === "status" && e.t > at && /(?:^| — )→ device \(\d+\)$/.test(e.detail ?? ""))
+    .map((e) => e.detail ?? "");
+  const tookBack = (note: string): boolean => {
+    const n = /^\d+/.exec(note);
+    return !!n && en.status.paramsBounded(Number(n[0])) === note;
+  };
   expect(sent.length, "the selection's write reported its line").toBeGreaterThan(0);
-  for (const line of sent) expect(line, "the selection's write took nothing back").toMatch(/^→ device \(\d+\)$/);
+  for (const line of sent)
+    expect(line.split(" — ").some(tookBack), `the selection's write took nothing back: ${line}`).toBe(false);
   if (follow) {
     await setMemAt(page, { [CH1_HPF_ADDR]: MOVED_HPF });
     await mark(page, "hpf-notify");

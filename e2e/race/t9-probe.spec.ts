@@ -159,7 +159,9 @@ test.describe("T9 probe", () => {
     await page.waitForTimeout(500);
     await mark(page, "release");
     await releaseBarrier(page);
-    await page.waitForSelector('#statusbar:text-matches("← device \\\\(\\\\d+\\\\)")', { timeout: 20_000 });
+    await page.waitForSelector('#statusbar > .status-tail:text-matches("← device \\\\(\\\\d+\\\\)")', {
+      timeout: 20_000,
+    });
     await mark(page, "scoped-done");
 
     const trace = await traceOf(page);

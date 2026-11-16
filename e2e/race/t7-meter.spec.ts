@@ -149,7 +149,9 @@ test.describe("T7 meter", () => {
       // would take the slot back out from under the screen.
       await mark(page, "scoped-notify");
       await pushNotify(page, [[26, 0, 0, 120]]); // HPF frequency on ch1
-      await page.waitForSelector('#statusbar:text-matches("← device \\\\(\\\\d+\\\\)")', { timeout: 30_000 });
+      await page.waitForSelector('#statusbar > .status-tail:text-matches("← device \\\\(\\\\d+\\\\)")', {
+        timeout: 30_000,
+      });
       await mark(page, "reconciled");
       await waitQuiet(page);
 

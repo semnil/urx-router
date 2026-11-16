@@ -228,12 +228,13 @@ carries a one-line map of the same directories and points here.
   refused all the same (`unsentRefusedSwitches`). The flush holds the +40 dB A.Gain a held HI-Z ON lowered
   with it (`carrierOf`), and its converge leaves a switch the unit announced it turned on at its panel, with
   the other one on that channel, to the follow read that announcement scheduled. A read's status line leads
-  with the ONs it refused, and a later read's line keeps leading with them while the line it replaces still
-  does (`withSwitchNotes` and `ledBy` in `main.ts`) — the full read device follow runs once a burst goes quiet
-  lands there, while the next burst and a send say only what they did. A rate change's own line — the rate, and
-  what it took off the plan (an insert, a bus's Flex12GEQ) — leads every sync and follow line instead, until
-  anything else takes the line: the rate's own send and the read that follows the re-clock report at once,
-  and would replace it before it could be read / `stereo-side.ts` the side each stereo channel shows (L until switched): which jack's input stage
+  its count with the ONs it refused, and a later read's line keeps leading with them while the line it replaces
+  still does (`setFollowedStatus` and `ledBy` in `main.ts`) — the full read device follow runs once a burst goes
+  quiet lands there, while the next burst and a send say only what they did. Whatever an operation wrote on the
+  line — an outcome, a refusal, a rate change with what it took off the plan (an insert, a bus's Flex12GEQ) —
+  leads every sync and follow line in front of those notes, until anything else takes the line: during Live sync
+  an edit's own send and the read the unit's answer brings report a moment later, and would replace it before it
+  could be read / `stereo-side.ts` the side each stereo channel shows (L until switched): which jack's input stage
   the CONSOLE strip, the Inspector and a bound MIDI control show and edit, and which side's polarity the one
   Ф inverts. UI state rather than plan state — not saved, not undoable, not in a `?plan=` link — reset on
   a model switch, and DOM-free so `core/midi` reads it. Both views' switches reach it through one funnel in
@@ -727,11 +728,10 @@ carries a one-line map of the same directories and points here.
   `LINK_BAR_KEYS satisfies readonly LinkLedgerKey[]`, printing the panel's labels and the one `ledgerValue`
   — a shorter vocabulary of its own would leave nothing saying that a `cmd` on the bar and the panel's `Sent`
   are one number — the counters and the log run in every desktop build, since a record that only exists when the
-  operator remembered a flag records nothing. `#statusbar` is therefore a message span plus this readout,
-  and `setStatus` writes the span (a `statusbar.textContent =` would take the readout down on the next
-  message). Introduces no colour: the only cell that may change is the no-answer one, since a broker that
-  stopped answering is the only state on the row that asks for something to be done / `trace-probe.ts` the
-  read-only probe over the module state the race harness cannot otherwise reach — the plan-key write ledger (who
+  operator remembered a flag records nothing. The status bar is therefore a row (`.statusbar-row`) holding the
+  message (`#statusbar`, which `setStatus` writes) and this readout beside it. Introduces no colour: the only
+  cell that may change is the no-answer one, since a broker that stopped answering is the only state on the row
+  that asks for something to be done / `trace-probe.ts` the read-only probe over the module state the race harness cannot otherwise reach — the plan-key write ledger (who
   wrote which key) and the live snapshot's contents — built into the `VITE_TRACE=1` bundle only; the ledger reuses
   `plan-history`'s differ rather than a second encoding (live-race-harness.md "Observables")
 - `src/core/sim-map.ts` + `src/ui/sim-view.ts` — the SIM view: the table from the LCD simulator's paths to the
@@ -3512,7 +3512,12 @@ Errors are surfaced by meaning. An **operation that did not complete** (a failed
 fetch, write, self-test, connect, or live-sync start, plus a link drop during live sync) is shown as a
 **modal** so it cannot be missed
 (`errorDialog` → `showError`, which clears the status line first so a stale "Connecting…" does not linger behind
-it). **Routine progress, info, cancellation, and partial successes** stay on the status line at the bottom. Two sites take that
+it). **Routine progress, info, cancellation, and partial successes** stay on the status line at the bottom. What an
+operation writes there leads the line until anything else takes it: during Live sync the session's own sync and
+follow status (`→ device (N)`, `← device…`, `← device (N)`) is printed behind it rather than over it (`ledBy` /
+`setSyncStatus`), and a line too long for the bar is cut with "…" in its lead and never in that status
+(`printStatus`), the whole line staying in its tooltip. The live region beside it announces only what the line
+did not already say. Two sites take that
 clearing back, and what they have in common is the rule: a dialog raised AFTER an action has written its outcome
 would clear a line that is not stale — an action that changed the plan says so on it and nowhere else, while the
 dialog names something else. The write's recorder re-read is one (it runs in a `finally`, after the write's own

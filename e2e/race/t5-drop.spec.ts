@@ -821,7 +821,9 @@ test.describe("T5 drop", () => {
     // device read and repair CH 1 by accident, which is not what is being measured).
     await mark(page, "unrelated-notify");
     await pushNotify(page, [[HPF_FREQ, 0, 1, 40]]);
-    await page.waitForSelector('#statusbar:text-matches("← device \\\\(\\\\d+\\\\)")', { timeout: 20_000 });
+    await page.waitForSelector('#statusbar > .status-tail:text-matches("← device \\\\(\\\\d+\\\\)")', {
+      timeout: 20_000,
+    });
     await mark(page, "scoped-done");
     const afterScoped = (await faderReadout(page, "CH 1").textContent())!;
 

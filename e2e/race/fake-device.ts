@@ -1278,12 +1278,13 @@ export const mark = (page: Page, detail: string): Promise<void> =>
 
 /**
  * The first status line written after `act` was started, passing over the link's own
- * traffic lines (`→ device …`, `← device …`). A keypress resolves when it has been
- * dispatched, not when the page has handled it, so the line read straight after one can
- * still be whatever the previous flush wrote; and an action's verdict can land between two
- * lines a sweep or a flush writes, the next of which replaces it. For an action that always
- * writes a verdict — an undo / redo press, a wire deleted or drawn — this waits on that
- * write rather than on a guessed delay or on the line still holding it.
+ * traffic lines (`→ device …`, `← device …`, printed behind whatever the line leads with).
+ * A keypress resolves when it has been dispatched, not when the page has handled it, so
+ * the line read straight after one can still be whatever the previous flush wrote; and an
+ * action's verdict can land between two lines a sweep or a flush writes, the next of which
+ * replaces it. For an action that always writes a verdict — an undo / redo press, a wire
+ * deleted or drawn — this waits on that write rather than on a guessed delay or on the
+ * line still holding it.
  */
 export async function statusAfter(page: Page, act: () => Promise<void>): Promise<string> {
   const from = await page.evaluate(() => window.__urxFake.log.length);
@@ -1293,7 +1294,8 @@ export async function statusAfter(page: Page, act: () => Promise<void>): Promise
   // wait that lags the write moves those steps later than the case placed them.
   const line = await page.waitForFunction(
     (n) =>
-      window.__urxFake.log.slice(n).find((e) => e.kind === "status" && !/^[←→]/.test(e.detail ?? ""))?.detail ?? false,
+      window.__urxFake.log.slice(n).find((e) => e.kind === "status" && !/(?:^| — )[←→][^—]*$/.test(e.detail ?? ""))
+        ?.detail ?? false,
     from,
     { polling: 5, timeout: 10_000 },
   );

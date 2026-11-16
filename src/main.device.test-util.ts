@@ -394,6 +394,23 @@ export const RETRY_ASK = invariantOf(t().confirm.writeRetry(1, 1));
 export const countFor = (line: string, frame: (n: number) => string): number =>
   (line.match(/\d+/g)?.map(Number) ?? []).find((n) => frame(n) === line) ?? NaN;
 
+/** The sync or follow status `line` ends with: it is printed behind whatever the line leads with
+ *  (main.ts, ledBy), after the line's last " — ", and is the whole line when nothing leads it. */
+export const syncOf = (line: string): string => {
+  const at = line.lastIndexOf(" — ");
+  return at < 0 ? line : line.slice(at + " — ".length);
+};
+
+/** countFor on the sync or follow status `line` ends with. */
+export const syncCountFor = (line: string, frame: (n: number) => string): number => countFor(syncOf(line), frame);
+
+/** The count of a follow read that kept values and sends them back: its count, led by the note
+ *  saying what it kept (`liveHeld`). NaN for any other line. */
+export const heldCountFor = (line: string, unrunnable: number, source: number): number =>
+  line.split(" — ").slice(0, -1).includes(t().status.liveHeld(unrunnable, source))
+    ? syncCountFor(line, t().status.liveFollowed)
+    : NaN;
+
 /** The two commands a report save travels. Deliberately absent from `deviceCommands`: a
  *  device action that saves a file unasked is a defect, so a case that expects a save has
  *  to opt in, and one that does not gets the stub's refusal. */

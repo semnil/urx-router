@@ -297,7 +297,9 @@ test.describe("T4b midi", () => {
     await divergeAt(page, CH2_GATE_THRESHOLD, -3000); // -30.00 dB
     await mark(page, "notify");
     await pushNotify(page, [[29, 0, 1, -3000]]);
-    await page.waitForSelector('#statusbar:text-matches("← device \\\\(\\\\d+\\\\)")', { timeout: 20_000 });
+    await page.waitForSelector('#statusbar > .status-tail:text-matches("← device \\\\(\\\\d+\\\\)")', {
+      timeout: 20_000,
+    });
     await waitQuiet(page);
     const afterFollow = setsOf(await traceOf(page)).filter((s) => s.addr === CH2_GATE_THRESHOLD);
     expect(afterFollow).toHaveLength(0); // the follow itself wrote nothing back
@@ -1064,7 +1066,9 @@ test.describe("T4b midi", () => {
 
     await mark(page, "release");
     await releaseBarrier(page);
-    await page.waitForSelector('#statusbar:text-matches("← device \\\\(\\\\d+\\\\)")', { timeout: 20_000 });
+    await page.waitForSelector('#statusbar > .status-tail:text-matches("← device \\\\(\\\\d+\\\\)")', {
+      timeout: 20_000,
+    });
     // The reconcile's reflect rebuilt the strip the armed control lives on: the
     // element the operator armed is detached, while `armed` is engine state and is
     // not.

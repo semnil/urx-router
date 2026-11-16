@@ -42,6 +42,7 @@ const FLOOR = {
   "e2e/prefs.spec.ts": 1,
   "e2e/shelf-scrollbar.spec.ts": 1,
   "e2e/ssmcs.spec.ts": 1,
+  "e2e/statusbar.spec.ts": 1,
 };
 
 const require = createRequire(import.meta.url);

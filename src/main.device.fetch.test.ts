@@ -37,6 +37,7 @@ import {
   confirms,
   chooseRate,
   countFor,
+  heldCountFor,
   SAVES,
   paramRow,
   insertFxSection,
@@ -1067,10 +1068,10 @@ describe("a source replaced on the board while a device read was in flight", () 
       // here rather than after the settle, since the send-back's own read writes the line
       // again with nothing held.
       if (flow.name === "follow read") {
-        await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 0, 1))).not.toBeNaN(), {
+        await vi.waitFor(() => expect(heldCountFor(statusText(), 0, 1)).not.toBeNaN(), {
           timeout: 25_000,
         });
-        expect(countFor(statusText(), (n) => t().status.liveHeld(n, 1, 0))).toBeNaN();
+        expect(heldCountFor(statusText(), 1, 0)).toBeNaN();
       }
       await flow.settle(shell);
 

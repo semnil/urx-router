@@ -338,7 +338,7 @@ test.describe("Tzb tail", () => {
       // read that starts inside the drag can still resolve after the release.
       const sweepStart = reads.length ? reads[0].start : Number.POSITIVE_INFINITY;
       const landedAt = trace.find(
-        (e) => e.kind === "status" && e.t > sentinelAt && /^← device \(\d+\)/.test(e.detail ?? ""),
+        (e) => e.kind === "status" && e.t > sentinelAt && /(?:^| — )← device \(\d+\)$/.test(e.detail ?? ""),
       )?.t;
       expect(landedAt).toBeDefined();
       const landedInDrag = landedAt! < releaseAt;

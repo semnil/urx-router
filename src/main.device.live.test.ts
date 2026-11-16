@@ -13,8 +13,9 @@ import { FX_EFFECT_ARRAY_PARAM } from "./core/control/fx-effect";
 import { DEBOUNCE_MS } from "./core/control/live";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, PARAMS } from "./core/control/params";
 import { nameControl } from "./core/control/translate";
+import { buildUrxf } from "./core/control/urxf.test-util";
 import { getModel } from "./models";
-import { EDIT_MENU_EVENT, EDIT_UNDO_ID } from "./core/platform";
+import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
 import { spoken } from "./ui/glyph";
 import { WATCHED } from "./ui/param-watch";
@@ -30,6 +31,8 @@ import {
   chooseRate,
   errors,
   countFor,
+  heldCountFor,
+  syncCountFor,
   pressNode,
   paramRow,
   pickInsertFx,
@@ -42,6 +45,8 @@ import {
   streamingDrawn,
   quiet,
   turnOscOn,
+  oscFace,
+  undoTo,
   flowInvokes,
 } from "./main.device.test-util";
 
@@ -563,8 +568,8 @@ describe("the live session", () => {
     watch.observe($("statusbar"), { childList: true, characterData: true, subtree: true });
     return { lines, stop: () => watch.disconnect() };
   };
-  const followedLine = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveFollowed(n)));
-  const heldLine = (l: string): boolean => !Number.isNaN(countFor(l, (n) => t().status.liveHeld(n, 2, 0)));
+  const followedLine = (l: string): boolean => !Number.isNaN(syncCountFor(l, (n) => t().status.liveFollowed(n)));
+  const heldLine = (l: string): boolean => !Number.isNaN(heldCountFor(l, 2, 0));
 
   // `hold` answers a read only once the promise it returns for that read settles.
   // `refuseY` refuses every read of one channel index, for the case that needs the read
@@ -672,7 +677,7 @@ describe("the live session", () => {
     // Two keys held on CH 1 — the selector and its bypass. The third the hold names,
     // the stored engine values, is not in the plan for an effect selected and not yet
     // tuned, and a key the read's patch never carried is not one it can keep.
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(heldCountFor(statusText(), 2, 0)).not.toBeNaN(), {
       timeout: 25_000,
     });
     // …and the send-back really was scheduled, rather than only reported.
@@ -712,7 +717,7 @@ describe("the live session", () => {
       // The positive control is the case above, which takes this same path with the
       // session up and DOES write: an absence here is the session and not the setup.
       expect(insertFxWrites(shell).length).toBe(written);
-      expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
+      expect(heldCountFor(statusText(), 2, 0)).toBeNaN();
       // And the branch above is reachable at all because the LINK outlived the read: the
       // release waits for a follow read still doing round trips (releaseLive). Without the
       // wait the read dies at its next one, on a link taken out from under it — the same
@@ -763,10 +768,10 @@ describe("the live session", () => {
       { param_id: PARAMS.INSERT_FX.id, x, y, value: none },
     ]);
 
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(syncCountFor(statusText(), (n) => t().status.liveFollowed(n))).not.toBeNaN(), {
       timeout: 25_000,
     });
-    expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).toBeNaN();
+    expect(heldCountFor(statusText(), 2, 0)).toBeNaN();
     await quiet(shell);
     expect(insertFxWrites(shell).filter((v) => v === COMPANDER_H).length).toBe(written);
     await endLive();
@@ -945,14 +950,7 @@ describe("the live session", () => {
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
     ]);
 
-    await vi.waitFor(
-      () =>
-        expect(
-          countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0)),
-          progress(),
-        ).not.toBeNaN(),
-      { timeout: 25_000 },
-    );
+    await vi.waitFor(() => expect(heldCountFor(statusText(), 2, 0), progress()).not.toBeNaN(), { timeout: 25_000 });
     await vi.waitFor(() => expect(insertFxWrites(shell).length, progress()).toBeGreaterThan(written), {
       timeout: 25_000,
     });
@@ -998,7 +996,7 @@ describe("the live session", () => {
       read.release();
     }
 
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(heldCountFor(statusText(), 2, 0)).not.toBeNaN(), {
       timeout: 25_000,
     });
     await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
@@ -1054,7 +1052,7 @@ describe("the live session", () => {
     }
 
     // …and the replay behind it, which is the first read to see the cleared selector.
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(heldCountFor(statusText(), 2, 0)).not.toBeNaN(), {
       timeout: 25_000,
     });
     await vi.waitFor(() => expect(insertFxWrites(shell).length).toBeGreaterThan(written), { timeout: 25_000 });
@@ -1113,7 +1111,7 @@ describe("the live session", () => {
     await vi.waitFor(() => expect(refetch.held(), "the refetch reached STEREO").toBe(true), { timeout: 25_000 });
     // The full read ends with the refetch still open.
     fullRead.release();
-    await vi.waitFor(() => expect(countFor(statusText(), (n) => t().status.liveHeld(n, 2, 0))).not.toBeNaN(), {
+    await vi.waitFor(() => expect(heldCountFor(statusText(), 2, 0)).not.toBeNaN(), {
       timeout: 25_000,
     });
 
@@ -1648,5 +1646,111 @@ describe("the unit's CUE Mode", () => {
     expect($("cue-bar-face").hidden, "with the press").toBe(true);
     await vi.waitFor(() => expect(modeWrites(shell)).toEqual([1]), { timeout: 25_000 });
     expect(errors(shell)).toEqual([]);
+  });
+});
+
+// An operation's own line stays in front of what the session reports after it: the edit's send
+// reports a moment after the operation does, and written plainly it would replace the operation's
+// line before anyone could read it.
+describe("the status line during Live sync", () => {
+  const part = (name: string): string | null | undefined =>
+    $("statusbar").querySelector(`.status-${name}`)?.textContent;
+  const sentLine = (lead: string, lines: readonly string[]): string | undefined =>
+    lines.find((l) => l.startsWith(`${lead} — `) && syncCountFor(l, t().status.liveSynced) > 0);
+
+  it("keeps an operation's line in front of the send it causes, and announces the send alone", SLOW, async () => {
+    const shell = await bootDevice();
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    turnOscOn();
+    await new Promise((r) => setTimeout(r, 0)); // the press's own entry closes
+    await quiet(shell);
+
+    const lines: string[] = [];
+    const watch = new MutationObserver(() => lines.push(statusText()));
+    watch.observe($("statusbar"), { childList: true, characterData: true, subtree: true });
+    try {
+      await undoTo(shell, "OFF");
+      const undone = lines[0]!;
+      expect(syncCountFor(undone, t().status.liveSynced), "the premise: the undo wrote a line of its own").toBeNaN();
+      await vi.waitFor(() => expect(sentLine(undone, lines)).toBeDefined(), { timeout: 15_000 });
+      const n = syncCountFor(statusText(), t().status.liveSynced);
+      expect(statusText()).toBe(`${undone} — ${t().status.liveSynced(n)}`);
+      // The lead is the part a line that does not fit is cut in; the send is never cut, and the
+      // tooltip holds the whole line.
+      expect(part("lead")).toBe(undone);
+      expect(part("tail")).toBe(` — ${t().status.liveSynced(n)}`);
+      expect($("statusbar").title).toBe(statusText());
+      // The lead was announced when the undo wrote it.
+      expect($("statusbar-said").textContent).toBe(spoken(t().status.liveSynced(n)));
+
+      // The next operation takes the lead, and the send behind it is its own.
+      await quiet(shell);
+      lines.length = 0;
+      expect(shell.emit(EDIT_MENU_EVENT, EDIT_REDO_ID)).toBe(1);
+      await vi.waitFor(() => expect(oscFace()).toBe("ON"), { timeout: 10_000 });
+      const redone = lines[0]!;
+      expect(redone).not.toContain(undone);
+      await vi.waitFor(() => expect(sentLine(redone, lines)).toBeDefined(), { timeout: 15_000 });
+      expect(part("lead")).toBe(redone);
+    } finally {
+      watch.disconnect();
+    }
+  });
+
+  // A failed report save keeps the line the action ended on (`showError`'s `keep`). When a sync
+  // status has taken that line's end since, keeping it must not make the whole line the lead: the
+  // next status would go behind the old one, and the line would show two counts.
+  it("keeps a line through a failed report save without leading with its sync status", SLOW, async () => {
+    const bytes = buildUrxf([
+      {
+        chunk: "CURRENT",
+        block: "CSF_BACKUP",
+        label: "",
+        fields: [{ id: PARAMS.INPUT_SOURCE.id, typecode: 1, elemSize: 4, values: [0x80000100] }],
+      },
+    ]);
+    let releaseSave!: (path: string) => void;
+    const save = new Promise<string>((resolve) => (releaseSave = resolve));
+    const shell = await bootDevice(
+      {
+        experimental_enabled: true,
+        read_binary_file: () => bytes.buffer,
+        "plugin:dialog|save": () => save,
+        write_text_file: () => {
+          throw new Error("permission denied");
+        },
+      },
+      true,
+      { [PARAMS.SAMPLE_RATE.id]: 48_000, [PARAMS.FOLLOW_USB.id]: 0 },
+    );
+    await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false));
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    // A partial import offers its report; the save dialog is held open while the session's send
+    // and read report behind the import's line.
+    expect(shell.emit("tauri://drag-drop", { paths: ["/tmp/backup.urxf"] })).toBe(1);
+    await vi.waitFor(() => expect(shell.count("plugin:dialog|save")).toBe(1), { timeout: 15_000 });
+    await vi.waitFor(() => expect(syncCountFor(statusText(), t().status.liveSynced)).toBeGreaterThan(0), {
+      timeout: 15_000,
+    });
+    await quiet(shell);
+    const before = statusText();
+    const lead = part("lead");
+    expect(lead, "the premise: a sync status goes behind the import's line").toBeTruthy();
+    expect(part("tail")).toBeTruthy();
+
+    releaseSave("/tmp/import-report.md");
+    await vi.waitFor(() => expect(errors(shell)).toContain(t().status.saveError("permission denied")));
+    expect(statusText(), "the line the save failed behind stands").toBe(before);
+    expect(part("lead")).toBe(lead);
+
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.HPF_FREQ.id, x: 0, y: 0, value: 80 }]);
+    await vi.waitFor(() => expect(syncCountFor(statusText(), t().status.liveFollowed)).toBeGreaterThan(0), {
+      timeout: 15_000,
+    });
+    await quiet(shell);
+    expect(part("lead"), "the import's line still leads").toBe(lead);
+    expect(statusText().match(/[←→] device/g), statusText()).toHaveLength(1);
   });
 });

@@ -150,8 +150,9 @@ test("Live sync starts under All on a unit holding a mono PAIR, and writes nothi
 
   await node(page, "ch3").click();
   await chooseOption(sigSelect(page), "1"); // STEREO
-  // The flush's end: `→ device (n)` is written once its converge has finished.
-  await expect(page.locator("#statusbar")).toHaveText(/^→ device \(\d+\)/, { timeout: 20000 });
+  // The flush's end: `→ device (n)` is written once its converge has finished, behind whatever
+  // the line leads with.
+  await expect(page.locator("#statusbar")).toHaveText(/(?:^| — )→ device \(\d+\)$/, { timeout: 20000 });
   expect(
     (await writesOf(page)).filter(([id]) => id === PARAMS.SIGNAL_TYPE.id),
     "the converge ran",
@@ -281,7 +282,7 @@ test("Scene only keeps a session running when a monitor source turns unreadable 
   await expect
     .poll(
       async () =>
-        /^← device \(\d+\)/.test((await page.locator("#statusbar").textContent()) ?? "") ||
+        /(?:^| — )← device \(\d+\)$/.test((await page.locator("#statusbar").textContent()) ?? "") ||
         (await dialogsOf(page)).length > 0,
       { timeout: 20000 },
     )
