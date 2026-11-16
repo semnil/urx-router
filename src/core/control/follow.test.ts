@@ -448,6 +448,30 @@ describe("DeviceFollow", () => {
     expect(reconcileAll).toHaveBeenCalledTimes(1);
   });
 
+  it("replays a scoped notification that settles during an in-flight read without escalating it", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const reconcileNodes = vi.fn(async () => {}).mockImplementationOnce(() => held);
+    const reconcileAll = vi.fn(async () => {});
+    const follow = followFor({ reconcileNodes, reconcileAll });
+    await follow.begin();
+    notify(-600);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(reconcileNodes).toHaveBeenCalledTimes(1);
+    try {
+      notify(-500);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(reconcileNodes).toHaveBeenCalledTimes(1);
+      expect(reconcileAll).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reconcileNodes).toHaveBeenCalledTimes(2);
+    expect(reconcileNodes.mock.calls[1]).toEqual([new Set(["ch1"])]);
+    expect(reconcileAll).not.toHaveBeenCalled();
+  });
+
   it("keeps the idle full reconcile when it fires during an in-flight scoped read", async () => {
     // A scoped node readback is dozens of sequential round-trips, so the idle
     // timer routinely fires while it is still in flight. Hold the scoped read

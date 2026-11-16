@@ -107,6 +107,36 @@ describe("the frontend file order", () => {
     ]);
   });
 
+  it.each(["darwin", "linux", "win32"])(
+    "starts Git integration first only on Windows (%s), cold and cached",
+    async (platform) => {
+      const names = [
+        "scripts/sync-merged.test.mjs",
+        "src/ui/sim-view.paths.channels.contract.test.ts",
+        "src/main.device.fetch.test.ts",
+      ];
+      const files = names.map((name, i) => {
+        const file = path.join(tmp, name);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, " ".repeat(1000 - i * 400));
+        return spec(file);
+      });
+      const expected = platform === "win32" ? [0, 1, 2] : [1, 2, 0];
+      const ownPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+      Object.defineProperty(process, "platform", { ...ownPlatform, value: platform });
+      try {
+        expect(await new FrontendSequencer(context(new Map())).sort(files)).toEqual(expected.map((i) => files[i]));
+        const windowsFiles = names.map((name) => spec("C:\\repo\\" + name.replaceAll("/", "\\")));
+        const results = new Map(windowsFiles.map((file, i) => [file.moduleId, { duration: 100 - i, failed: false }]));
+        expect(await new FrontendSequencer(context(results)).sort(windowsFiles)).toEqual(
+          expected.map((i) => windowsFiles[i]),
+        );
+      } finally {
+        Object.defineProperty(process, "platform", ownPlatform);
+      }
+    },
+  );
+
   it("keeps every file in exactly one shard, including newly added files", async () => {
     const files = Array.from({ length: 7 }, (_, i) => spec(path.join(tmp, `src/new-${i}.test.ts`)));
     const shards = await Promise.all(

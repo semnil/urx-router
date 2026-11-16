@@ -26,16 +26,22 @@ of the coverage set.
 minus the two message catalogs (why: `vitest.config.ts`, and the same exclusion in
 `.github/codecov.yml` + `e2e/coverage-options.ts`); it writes `coverage/lcov.info` for Codecov.
 
-`scripts/vitest-sequencer.ts` starts the SIM screen walks, then the whole-app device suites,
-then the other files. Within each group it keeps Vitest's cached failure/duration ordering, or
+`scripts/vitest-sequencer.ts` starts Git integration (`sync-merged.test.mjs`) first on Windows,
+then the SIM screen walks, the whole-app device suites and the other files. On other platforms
+Git integration stays with the other files. Within each group it keeps Vitest's cached failure/duration ordering, or
 its file-size ordering without a cache. File isolation and the tests selected by a shard stay
 unchanged. `pnpm test vitest-worker-log` pins the configured sequencer, cold and cached ordering,
 and disjoint, complete shards.
 
 The SIM path contract shares its walk in `src/ui/sim-view.paths.test-util.ts`. The ordinary
-screens, input inserts, output inserts and effects run in separate test files. Every route belongs
-to one part; every part checks unanswered writes and screens with no presses. The ordinary-screen
-part also holds the tab-reachability and `GLASS_OWN` / compressor-split checks.
+screens, channel screens, input inserts, output inserts and effects run in separate test files.
+Every route belongs to one part; every part checks unanswered writes and screens with no presses.
+The ordinary-screen part also holds the tab-reachability and `GLASS_OWN` checks; the channel part
+holds the linked pair's compressor-split check.
+
+Fetch and Live tests that place an edit, notification or stop inside a device read hold a named
+read unanswered until that action finishes. Other reads answer without a per-read timer. The
+post-stop observation windows and the shared teardown's quiet window remain separate checks.
 
 CI runs the frontend suite as a shard matrix, with coverage enabled in every shard. Each shard
 uploads a report under its own artifact name; the coverage job waits for the entire matrix before

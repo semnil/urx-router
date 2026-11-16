@@ -59,6 +59,26 @@ import {
   quiet,
 } from "./main.device.test-util";
 
+/** The unit's answer to every read, with Follow USB — the read's first — held until released,
+ *  so an edit or a screen open can land while the plan snapshot is held. */
+const heldRead = (
+  rest: (a: Record<string, unknown>) => number,
+): { reading: Promise<void>; release: () => void; vd_get: (a: Record<string, unknown>) => unknown } => {
+  let asked = (): void => {};
+  const reading = new Promise<void>((r) => (asked = r));
+  let release = (): void => {};
+  const answered = new Promise<void>((r) => (release = r));
+  return {
+    reading,
+    release: () => release(),
+    vd_get: (a) => {
+      if (a.paramId !== PARAMS.FOLLOW_USB.id) return rest(a);
+      asked();
+      return answered.then(() => 0);
+    },
+  };
+};
+
 describe("Fetch from device", () => {
   // The same rule for what a MIRROR wrote. While a pair is linked the insert FX travels
   // to the partner, bypass included — and if the partner's bypass already held the value
@@ -74,12 +94,16 @@ describe("Fetch from device", () => {
     selectNode("ch2");
     expect(insertFxOnFace()).toBe("ON"); // the mirror carried it
 
-    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    const unit = heldRead(() => 0);
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-
-    selectNode("ch1");
-    pickInsertFx(COMPANDER_H);
+    await unit.reading;
+    try {
+      selectNode("ch1");
+      pickInsertFx(COMPANDER_H);
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch2");
@@ -105,12 +129,16 @@ describe("Fetch from device", () => {
     selectNode("ch1");
     pickInsertFx(256);
 
-    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    const unit = heldRead(() => 0);
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-
-    selectNode("ch1");
-    pickInsertFx(COMPANDER_H);
+    await unit.reading;
+    try {
+      selectNode("ch1");
+      pickInsertFx(COMPANDER_H);
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch2");
@@ -135,12 +163,16 @@ describe("Fetch from device", () => {
     expect(clipSafeOnFace()).toBe("ON");
 
     selectNode("ch1");
-    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    const unit = heldRead(() => 0);
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-
-    // The edit inside the read's window is on the SOURCE member's own head amp.
-    clipSafeButton("ON").click();
+    await unit.reading;
+    try {
+      // The edit inside the read's window is on the SOURCE member's own head amp.
+      clipSafeButton("ON").click();
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch1");
@@ -159,16 +191,16 @@ describe("Fetch from device", () => {
     selectNode("ch1");
     pickSignalType(1); // STEREO, with no effect selected on either member
 
-    shell.answer(
-      "vd_get",
-      (a: Record<string, unknown>) =>
-        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.INSERT_FX.id ? COMPANDER_H : 0), 1)),
-    );
+    const unit = heldRead((a) => (a.paramId === PARAMS.INSERT_FX.id ? COMPANDER_H : 0));
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-
-    selectNode("ch1");
-    pickSignalType(0); // MONO x2 — the transition clears the pair's insert FX
+    await unit.reading;
+    try {
+      selectNode("ch1");
+      pickSignalType(0); // MONO x2 — the transition clears the pair's insert FX
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch1");
@@ -187,18 +219,16 @@ describe("Fetch from device", () => {
     selectNode("ch1");
     pickSignalType(1); // STEREO — lands in BAL, which centres both members' pans
 
-    shell.answer(
-      "vd_get",
-      (a: Record<string, unknown>) =>
-        new Promise((r) =>
-          setTimeout(() => r(a.paramId === PARAMS.CH_PAN.id || a.paramId === PARAMS.SEND_PAN.id ? 63 : 0), 1),
-        ),
-    );
+    const unit = heldRead((a) => (a.paramId === PARAMS.CH_PAN.id || a.paramId === PARAMS.SEND_PAN.id ? 63 : 0));
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-
-    selectNode("ch1");
-    pickSignalType(0); // MONO x2 — the transition centres the pair's pans (0 over 0)
+    await unit.reading;
+    try {
+      selectNode("ch1");
+      pickSignalType(0); // MONO x2 — the transition centres the pair's pans (0 over 0)
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
 
     const before = shell.count("write_text_file");
@@ -225,14 +255,17 @@ describe("Fetch from device", () => {
     pickInsertFx(256); // Clean — an engaged effect to select over
     expect(insertFxOnFace()).toBe("ON");
 
-    // One millisecond per read, so there is a mid-read window at all (see the latch case).
-    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    const unit = heldRead(() => 0);
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-
-    // …and the operator picks a different effect while it runs.
-    selectNode("ch1");
-    pickInsertFx(COMPANDER_H);
+    await unit.reading;
+    try {
+      // …and the operator picks a different effect while it runs.
+      selectNode("ch1");
+      pickInsertFx(COMPANDER_H);
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch1");
@@ -269,14 +302,15 @@ describe("Fetch from device", () => {
       [PARAMS.COMP_AUTO_MAKEUP.id]: 1,
       [PARAMS.COMP_ONE_KNOB_LEVEL.id]: 50,
     };
-    shell.answer(
-      "vd_get",
-      (a: Record<string, unknown>) =>
-        new Promise((r) => setTimeout(() => r(stale[a.paramId as number] ?? unwrittenRead(a)), 1)),
-    );
+    const unit = heldRead((a) => stale[a.paramId as number] ?? unwrittenRead(a));
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-    knob(t().inspector.on).click();
+    await unit.reading;
+    try {
+      knob(t().inspector.on).click();
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
 
     const before = shell.count("write_text_file");
@@ -313,18 +347,17 @@ describe("Fetch from device", () => {
   // is done, which is the half that says the latch is a gate and not a discard.
   it("refuses a file flow while it holds the plan, and takes the same attempt afterwards", SLOW, async () => {
     const shell = await bootDevice();
-    // The stub answers a read in a microtask, so the whole 676-read sweep completes
-    // between two polls of `waitFor` and there is no mid-read window to test in — the
-    // first version of this case clicked New against a read that had already
-    // finished, and passed by asserting the wrong status. One millisecond per read
-    // makes the window real. Remove this and the case stops testing the latch.
-    shell.answer("vd_get", () => new Promise((r) => setTimeout(() => r(0), 1)));
+    // Hold the first read after the plan snapshot until the file-flow attempt has finished.
+    const unit = heldRead(() => 0);
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-
-    $("btn-new").click();
-    expect(statusText()).toBe(t().status.busyDeviceRead);
-
+    await unit.reading;
+    try {
+      $("btn-new").click();
+      expect(statusText()).toBe(t().status.busyDeviceRead);
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
     $("btn-new").click();
     await vi.waitFor(() => expect(statusText()).toBe(t().status.newPlan), { timeout: 10_000 });
@@ -1213,25 +1246,6 @@ describe("a source replaced on the board while a device read was in flight", () 
 // close when the read moved the channel onto a processor the screen does not edit.
 
 describe("a tuning screen open across a fetch", () => {
-  /** The unit's answer to every read, with Follow USB — the read's first — held until released,
-   *  so the screen can be opened while the read is in flight. */
-  const heldRead = (
-    rest: (a: Record<string, unknown>) => number,
-  ): { reading: Promise<void>; release: () => void; vd_get: (a: Record<string, unknown>) => unknown } => {
-    let asked = (): void => {};
-    const reading = new Promise<void>((r) => (asked = r));
-    let release = (): void => {};
-    const answered = new Promise<void>((r) => (release = r));
-    return {
-      reading,
-      release: () => release(),
-      vd_get: (a) => {
-        if (a.paramId !== PARAMS.FOLLOW_USB.id) return rest(a);
-        asked();
-        return answered.then(() => 0);
-      },
-    };
-  };
   const threshold = (): HTMLInputElement =>
     $("dyn-screen-box").querySelector<HTMLInputElement>('input[data-dyn="threshold"]')!;
   const ch1 = (paramId: number) => (a: Record<string, unknown>) => a.paramId === paramId && a.x === 0 && a.y === 0;
@@ -1412,22 +1426,20 @@ describe("an edit funnel against a device read", () => {
     pickInsertFx(COMPANDER_H);
     pickInsertFx(INSERT_FX_NONE); // selector alone: the bypass stays engaged
 
-    shell.answer(
-      "vd_get",
-      (a: Record<string, unknown>) =>
-        new Promise((r) =>
-          setTimeout(() => r(a.paramId === PARAMS.INSERT_FX.id ? denormalizeInsertFx(INSERT_FX_NONE) : 0), 1),
-        ),
-    );
+    const unit = heldRead((a) => (a.paramId === PARAMS.INSERT_FX.id ? denormalizeInsertFx(INSERT_FX_NONE) : 0));
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-
-    $("btn-view-console").click();
-    const strip = $("console-host").querySelectorAll<HTMLElement>(".con-strip")[0];
-    strip.querySelector<HTMLElement>(".con-ifxopen")!.click();
-    [...$("console-host").querySelectorAll<HTMLElement>(".con-ifxpop .irow")]
-      .find((r) => !r.classList.contains("off") && r.querySelector(".nm")!.textContent !== "No Effect")!
-      .click();
+    await unit.reading;
+    try {
+      $("btn-view-console").click();
+      const strip = $("console-host").querySelectorAll<HTMLElement>(".con-strip")[0];
+      strip.querySelector<HTMLElement>(".con-ifxopen")!.click();
+      [...$("console-host").querySelectorAll<HTMLElement>(".con-ifxpop .irow")]
+        .find((r) => !r.classList.contains("off") && r.querySelector(".nm")!.textContent !== "No Effect")!
+        .click();
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
 
     $("btn-view-graph").click();
@@ -1444,18 +1456,18 @@ describe("an edit funnel against a device read", () => {
   it("keeps a device change to a sibling of the group field the operator edited", SLOW, async () => {
     const shell = await bootDevice();
     // The unit answers a different oscillator frequency than the plan's default.
-    shell.answer(
-      "vd_get",
-      (a: Record<string, unknown>) =>
-        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.OSC_FREQ.id ? eqFreqToVd(2000) : 0), 1)),
-    );
+    const unit = heldRead((a) => (a.paramId === PARAMS.OSC_FREQ.id ? eqFreqToVd(2000) : 0));
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-
-    // Mid-read, the operator toggles the oscillator ON — one field of the same group.
-    selectNode("bus.osc");
-    const btns = [...paramRow(t().inspector.oscOn).querySelectorAll<HTMLButtonElement>("button")];
-    (btns.find((b) => b.textContent === "ON") ?? btns[0]).click();
+    await unit.reading;
+    try {
+      // Mid-read, the operator toggles the oscillator ON — one field of the same group.
+      selectNode("bus.osc");
+      const btns = [...paramRow(t().inspector.oscOn).querySelectorAll<HTMLButtonElement>("button")];
+      (btns.find((b) => b.textContent === "ON") ?? btns[0]).click();
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
 
     selectNode("bus.osc");
@@ -1476,20 +1488,21 @@ describe("an edit funnel against a device read", () => {
     strip.querySelector<HTMLElement>(".con-chip-open")!.click(); // the GATE opener
 
     // The unit moved GATE ATTACK to 4 ms while the screen was open.
-    shell.answer(
-      "vd_get",
-      (a: Record<string, unknown>) =>
-        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.GATE_ATTACK.id ? attackToVd(4) : 0), 1)),
-    );
+    const unit = heldRead((a) => (a.paramId === PARAMS.GATE_ATTACK.id ? attackToVd(4) : 0));
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-
-    // …and the operator drags THRESHOLD in the same group, mid-read.
-    const thr = $("dyn-screen-box").querySelector<HTMLInputElement>('input[data-dyn="threshold"]')!;
-    const moved = Number(thr.value) - 5;
-    thr.value = String(moved);
-    thr.dispatchEvent(new Event("input", { bubbles: true }));
-    thr.dispatchEvent(new Event("change", { bubbles: true }));
+    await unit.reading;
+    let moved: number;
+    try {
+      // …and the operator drags THRESHOLD in the same group, mid-read.
+      const thr = $("dyn-screen-box").querySelector<HTMLInputElement>('input[data-dyn="threshold"]')!;
+      moved = Number(thr.value) - 5;
+      thr.value = String(moved);
+      thr.dispatchEvent(new Event("input", { bubbles: true }));
+      thr.dispatchEvent(new Event("change", { bubbles: true }));
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
 
     // Read the plan back through a save: the saved document is the plan itself, so it answers
@@ -1514,18 +1527,18 @@ describe("an edit funnel against a device read", () => {
     pickSignalType(1); // STEREO, which lands the pair in BAL
 
     // The unit holds HPF ON on every channel; the plan holds the default OFF.
-    shell.answer(
-      "vd_get",
-      (a: Record<string, unknown>) =>
-        new Promise((r) => setTimeout(() => r(a.paramId === PARAMS.HPF_ON.id ? 1 : 0), 1)),
-    );
+    const unit = heldRead((a) => (a.paramId === PARAMS.HPF_ON.id ? 1 : 0));
+    shell.answer("vd_get", unit.vd_get);
     $("btn-fetch").click();
-    await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(5), { timeout: 10_000, interval: 5 });
-
-    // An edit that carries Phase alone, mid-read.
-    selectNode("ch1");
-    const btns = [...paramRow(t().inspector.phase).querySelectorAll<HTMLButtonElement>("button")];
-    (btns.find((b) => b.textContent === "ON") ?? btns[0]).click();
+    await unit.reading;
+    try {
+      // An edit that carries Phase alone, mid-read.
+      selectNode("ch1");
+      const btns = [...paramRow(t().inspector.phase).querySelectorAll<HTMLButtonElement>("button")];
+      (btns.find((b) => b.textContent === "ON") ?? btns[0]).click();
+    } finally {
+      unit.release();
+    }
     await invoked(shell, "vd_disconnect");
 
     selectNode("ch1");

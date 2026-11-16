@@ -394,11 +394,11 @@ async function survey(route: Route, state: string, seed: Seed): Promise<void> {
   if (presses === 0) unpressed.push(name);
 }
 
-type WalkGroup = "screens" | "input-inserts" | "output-inserts" | "fx";
+type WalkGroup = "screens" | "channels" | "input-inserts" | "output-inserts" | "fx";
 
 function groupFor(route: Route): WalkGroup {
   if (route.id === "ch.effect") return "fx";
-  if (route.id !== "ch.insfx") return "screens";
+  if (route.id !== "ch.insfx") return channelScreen(route.id) ? "channels" : "screens";
   const strip = STRIPS.find((s) => s.id === route.strip);
   if (!strip) throw new Error(`no strip for ${route.id}: ${route.strip}`);
   return strip.side === "output" ? "output-inserts" : "input-inserts";
@@ -448,8 +448,12 @@ export function testSimPaths(group: WalkGroup): void {
         expect(behind.filter((path) => !written.has(path))).toEqual([]);
       });
 
-      it("include every path GLASS_OWN names, and a linked pair's compressor split", () => {
+      it("include every path GLASS_OWN names", () => {
         expect([...GLASS_OWN].filter((path) => !written.has(path))).toEqual([]);
+      });
+    }
+    if (group === "channels") {
+      it("include a linked pair's compressor split", () => {
         expect([...written.keys()].filter((path) => /^pair\.[^.]+\.compSplit$/.test(path))).not.toEqual([]);
       });
     }
