@@ -3354,8 +3354,10 @@ function statusPart(className: string, text: string): HTMLElement {
 function showError(message: string, keep = ""): void {
   // Cleared by default so a stale "Connecting…" does not sit behind the dialog. `keep` is for
   // a caller raising this AFTER its action wrote an outcome: that line is not stale, it says
-  // what the dialog does not, and the two are about different things.
-  setStatus(keep);
+  // what the dialog does not, and the two are about different things. A `keep` that is the line
+  // on screen is left as it is: written again, a sync status at its end would become part of
+  // the lead (ledBy), and the next one would go behind it as a second count.
+  if (keep !== statusbar.textContent) setStatus(keep);
   // Not `void`: a dialog that cannot be raised would otherwise leave the failure it carries on
   // no surface at all. It goes to a box of its own rather than to the status line, which is
   // one transient slot — the line is holding what the run achieved, and whatever the app

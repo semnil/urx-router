@@ -13,6 +13,7 @@ import { FX_EFFECT_ARRAY_PARAM } from "./core/control/fx-effect";
 import { DEBOUNCE_MS } from "./core/control/live";
 import { COMP_EQ_SSMCS, denormalizeInsertFx, INSERT_FX_NONE, PARAMS } from "./core/control/params";
 import { nameControl } from "./core/control/translate";
+import { buildUrxf } from "./core/control/urxf.test-util";
 import { getModel } from "./models";
 import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
@@ -1695,5 +1696,61 @@ describe("the status line during Live sync", () => {
     } finally {
       watch.disconnect();
     }
+  });
+
+  // A failed report save keeps the line the action ended on (`showError`'s `keep`). When a sync
+  // status has taken that line's end since, keeping it must not make the whole line the lead: the
+  // next status would go behind the old one, and the line would show two counts.
+  it("keeps a line through a failed report save without leading with its sync status", SLOW, async () => {
+    const bytes = buildUrxf([
+      {
+        chunk: "CURRENT",
+        block: "CSF_BACKUP",
+        label: "",
+        fields: [{ id: PARAMS.INPUT_SOURCE.id, typecode: 1, elemSize: 4, values: [0x80000100] }],
+      },
+    ]);
+    let releaseSave!: (path: string) => void;
+    const save = new Promise<string>((resolve) => (releaseSave = resolve));
+    const shell = await bootDevice(
+      {
+        experimental_enabled: true,
+        read_binary_file: () => bytes.buffer,
+        "plugin:dialog|save": () => save,
+        write_text_file: () => {
+          throw new Error("permission denied");
+        },
+      },
+      true,
+      { [PARAMS.SAMPLE_RATE.id]: 48_000, [PARAMS.FOLLOW_USB.id]: 0 },
+    );
+    await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false));
+    live().click();
+    await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+    // A partial import offers its report; the save dialog is held open while the session's send
+    // and read report behind the import's line.
+    expect(shell.emit("tauri://drag-drop", { paths: ["/tmp/backup.urxf"] })).toBe(1);
+    await vi.waitFor(() => expect(shell.count("plugin:dialog|save")).toBe(1), { timeout: 15_000 });
+    await vi.waitFor(() => expect(syncCountFor(statusText(), t().status.liveSynced)).toBeGreaterThan(0), {
+      timeout: 15_000,
+    });
+    await quiet(shell);
+    const before = statusText();
+    const lead = part("lead");
+    expect(lead, "the premise: a sync status goes behind the import's line").toBeTruthy();
+    expect(part("tail")).toBeTruthy();
+
+    releaseSave("/tmp/import-report.md");
+    await vi.waitFor(() => expect(errors(shell)).toContain(t().status.saveError("permission denied")));
+    expect(statusText(), "the line the save failed behind stands").toBe(before);
+    expect(part("lead")).toBe(lead);
+
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.HPF_FREQ.id, x: 0, y: 0, value: 80 }]);
+    await vi.waitFor(() => expect(syncCountFor(statusText(), t().status.liveFollowed)).toBeGreaterThan(0), {
+      timeout: 15_000,
+    });
+    await quiet(shell);
+    expect(part("lead"), "the import's line still leads").toBe(lead);
+    expect(statusText().match(/[←→] device/g), statusText()).toHaveLength(1);
   });
 });
