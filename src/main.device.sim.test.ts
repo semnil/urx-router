@@ -1211,19 +1211,42 @@ describe("HOME's [Sends] destination", () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, { [SENDS]: 17 });
     await goLive();
     await drainShell(shell, () => false);
-    // The positive control, which also times how long the read takes to follow the notify.
-    const before = sendsReads(shell);
-    const sent = Date.now();
-    rateNotify(shell, 192000);
-    await vi.waitFor(() => expect(sendsReads(shell)).toBe(before + 1), { timeout: 10_000 });
-    const took = Date.now() - sent;
-    await drainShell(shell, () => false);
-    // A rate at 96 kHz, given three times as long as the read above took to arrive.
-    const after = sendsReads(shell);
-    rateNotify(shell, 96000);
-    await new Promise((r) => setTimeout(r, took * 3));
-    await drainShell(shell, () => false);
-    expect(sendsReads(shell), "no read for a rate at 96 kHz").toBe(after);
+    // Advance the app's timers while keeping the positive control and the relative observation window.
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      const drain = async (): Promise<void> => {
+        let done = false;
+        let failure: unknown;
+        const pending = drainShell(shell, () => false).then(
+          () => {
+            done = true;
+          },
+          (error: unknown) => {
+            failure = error;
+            done = true;
+          },
+        );
+        for (let i = 0; i < 1000 && !done; i++) await vi.advanceTimersToNextTimerAsync();
+        expect(done, "the shell reaches its quiet window").toBe(true);
+        await pending;
+        if (failure !== undefined) throw failure;
+      };
+      const before = sendsReads(shell);
+      const sent = Date.now();
+      rateNotify(shell, 192000);
+      for (let i = 0; i < 1000 && sendsReads(shell) === before; i++) await vi.advanceTimersToNextTimerAsync();
+      expect(sendsReads(shell), "a read follows the high-rate notify").toBe(before + 1);
+      const took = Date.now() - sent;
+      expect(took, "the positive control advances the clock").toBeGreaterThan(0);
+      await drain();
+      const after = sendsReads(shell);
+      rateNotify(shell, 96000);
+      await vi.advanceTimersByTimeAsync(took * 3);
+      await drain();
+      expect(sendsReads(shell), "no read for a rate at 96 kHz").toBe(after);
+    } finally {
+      vi.useRealTimers();
+    }
     $("btn-live").click();
     await invoked(shell, "vd_disconnect");
   });

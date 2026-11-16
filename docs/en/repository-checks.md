@@ -43,6 +43,10 @@ Fetch and Live tests that place an edit, notification or stop inside a device re
 read unanswered until that action finishes. Other reads answer without a per-read timer. The
 post-stop observation windows and the shared teardown's quiet window remain separate checks.
 
+The SIM sample-rate notification test advances its timers with a controlled clock after connecting.
+Its positive read determines the negative observation window, and both phases retain the shared
+shell-drain checks. Real timers are restored before disconnecting and tearing down the app.
+
 CI runs the frontend suite as a shard matrix, with coverage enabled in every shard. Each shard
 uploads a report under its own artifact name; the coverage job waits for the entire matrix before
 sending the reports to Codecov. The upload count and Codecov's wait count are held together by
