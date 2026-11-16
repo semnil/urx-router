@@ -1659,11 +1659,68 @@ describe("what counts as a comment in the # languages and in HTML", () => {
     });
   });
 
+  // Each input runs in a fresh runspace; its output and final statement status stay separate.
+  const runPowerShellCases = (scripts) => {
+    const ran = spawnSync(
+      "pwsh",
+      [
+        "-NoProfile",
+        "-Command",
+        `
+      [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+      $scripts = [Console]::In.ReadToEnd() | ConvertFrom-Json
+      $rows = foreach ($src in $scripts) {
+        $ps = [PowerShell]::Create()
+        try {
+          $output = @($ps.AddScript($src + [Environment]::NewLine + '[pscustomobject]@{ BenchSuccess = $? }').Invoke())
+          $status = [int](-not $output[-1].BenchSuccess)
+          $stdout = if ($output.Count -gt 1) { $output[0..($output.Count - 2)] -join "\n" } else { "" }
+          @{ status = $status; stdout = $stdout; stderr = ($ps.Streams.Error -join "\n") }
+        } catch {
+          @{ status = 1; stdout = ""; stderr = $_.ToString() }
+        } finally { $ps.Dispose() }
+      }
+      ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress
+    `,
+      ],
+      { input: asciiJson(scripts), encoding: "utf8", timeout: 20_000 },
+    );
+    expect(ran.status, ran.stderr).toBe(0);
+    const rows = JSON.parse(ran.stdout);
+    expect(rows).toHaveLength(scripts.length);
+    return rows;
+  };
+
   describe("what a run: is lexed as, differentially", () => {
     const pwsh = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });
+    it.skipIf(pwsh.error || pwsh.status !== 0)(
+      "keeps batched executions isolated and preserves output and status",
+      () => {
+        const rows = runPowerShellCases([
+          "$global:caseValue = 17; Write-Output 'set'",
+          "Write-Output ([bool](Get-Variable caseValue -ErrorAction SilentlyContinue))",
+          "Write-Output 'café 日本語'",
+          "Write-Output (",
+          "throw 'case failed'",
+          "Write-Output 'after errors'",
+        ]);
+        expect(rows.map(({ status, stdout }) => ({ status, stdout }))).toEqual([
+          { status: 0, stdout: "set" },
+          { status: 0, stdout: "False" },
+          { status: 0, stdout: "café 日本語" },
+          { status: 1, stdout: "" },
+          { status: 1, stdout: "" },
+          { status: 0, stdout: "after errors" },
+        ]);
+        expect(rows[3].stderr.length).toBeGreaterThan(0);
+        expect(rows[4].stderr).toContain("case failed");
+      },
+    );
+
     it.skipIf(pwsh.error || pwsh.status !== 0)("agrees with pwsh about where a comment is", () => {
-      for (const [script, where] of PWSH_SHAPES) {
-        const ran = spawnSync("pwsh", ["-NoProfile", "-Command", script], { encoding: "utf8" });
+      const executed = runPowerShellCases(PWSH_SHAPES.map(([script]) => script));
+      for (const [index, [script, where]] of PWSH_SHAPES.entries()) {
+        const ran = executed[index];
         expect(ran.status, `${script}: ${ran.stderr}`).toBe(0);
         // `out` means the words are OUTSIDE any comment, so running it prints them; `in`
         // means they are inside one, so it does not. That is the whole of what the reader
@@ -1686,14 +1743,19 @@ describe("what counts as a comment in the # languages and in HTML", () => {
       });
       const rows = SHELLS.filter(([name]) => name === shell);
       it.skipIf(probe.error || probe.status !== 0)(`agrees with ${shell} about what it ignores`, () => {
-        for (const [, hit, miss] of rows) {
+        const executed = shell === "pwsh" ? runPowerShellCases(rows.flatMap(([, hit, miss]) => [hit, miss])) : null;
+        for (const [index, [, hit, miss]] of rows.entries()) {
           // The half with the comment in it RUNS and does not print the words, because they are
           // a comment; the half without prints them, because they are data. That pair is the
           // whole of what the reader is asked to tell apart.
-          const ran = spawnSync(argv[0], [...argv.slice(1), hit], { encoding: "utf8" });
+          const ran = executed
+            ? executed[index * 2]
+            : spawnSync(argv[0], [...argv.slice(1), hit], { encoding: "utf8" });
           expect(ran.status, `${shell} ${hit}: ${ran.stderr}`).toBe(0);
           expect(ran.stdout, `${shell} ${hit}`).not.toContain("measured by device");
-          const kept = spawnSync(argv[0], [...argv.slice(1), miss], { encoding: "utf8" });
+          const kept = executed
+            ? executed[index * 2 + 1]
+            : spawnSync(argv[0], [...argv.slice(1), miss], { encoding: "utf8" });
           expect(kept.status, `${shell} ${miss}: ${kept.stderr}`).toBe(0);
           expect(kept.stdout, `${shell} ${miss}`).toContain("measured by device");
         }

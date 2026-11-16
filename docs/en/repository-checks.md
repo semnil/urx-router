@@ -157,6 +157,11 @@ workflow's, then the runner's own (bash everywhere but Windows) — since a step
 written after its `run:` and a job's `runs-on` after its steps, the values are queued and lexed once
 the document is read.
 
+The PowerShell execution oracle in `check-comment-provenance.test.mjs` batches its inputs in one
+process per corpus. Each input runs in a fresh runspace and reports its own output and final-statement
+status. The parser calls and workflow integration checks stay separate. A guard covers state isolation,
+Unicode output, parse and runtime errors, and a successful input after errors.
+
 PowerShell's block comment does NOT nest — the first `#>` ends it and what follows is code — its `#`
 begins a comment only where a TOKEN may begin, and its strings are not the shell's: `'…'` doubles
 the quote, `"…"` escapes with a BACKTICK, a here-string runs to a line beginning `"@`, and the
