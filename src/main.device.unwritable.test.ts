@@ -32,6 +32,7 @@ import {
   TRACK_COUNT_ADDR,
   errors,
   countFor,
+  syncCountFor,
   SAVES,
   pressNode,
   countedHead,
@@ -809,8 +810,8 @@ describe("a value the unit holds and the app cannot write", () => {
     fader.dispatchEvent(new Event("input", { bubbles: true }));
     fader.dispatchEvent(new Event("change", { bubbles: true }));
     await vi.waitFor(() => expect(shell.count("vd_set")).toBeGreaterThan(sets), { timeout: 20_000 });
-    // The line that flush wrote is its own count and nothing else.
-    await vi.waitFor(() => expect(countFor(statusText(), t().status.liveSynced)).toBeGreaterThan(0), {
+    // The line that flush wrote is its own count, led by nothing it took back.
+    await vi.waitFor(() => expect(syncCountFor(statusText(), t().status.liveSynced)).toBeGreaterThan(0), {
       timeout: 20_000,
     });
     expect(statusText()).not.toContain(t().status.paramsBounded(1));

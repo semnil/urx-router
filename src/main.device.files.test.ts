@@ -29,7 +29,7 @@ import {
   confirms,
   errors,
   byMessage,
-  countFor,
+  syncCountFor,
   countedHead,
   notifyChannel,
   oscFace,
@@ -608,7 +608,7 @@ describe("importing a settings file", () => {
     };
     /** The flush carrying the last edit has ended: it writes how many commands it sent. */
     const synced = (): Promise<void> =>
-      vi.waitFor(() => expect(countFor(statusText(), t().status.liveSynced)).not.toBeNaN(), { timeout: 15_000 });
+      vi.waitFor(() => expect(syncCountFor(statusText(), t().status.liveSynced)).not.toBeNaN(), { timeout: 15_000 });
     /** The import has run to its end: its last step offers to save the report of what the file
      *  did not carry. */
     const importDone = (shell: TauriShell): Promise<void> => invoked(shell, "plugin:dialog|save");

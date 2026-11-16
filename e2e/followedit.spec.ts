@@ -12,10 +12,11 @@ import { DEBOUNCE_MS } from "../src/core/control/live";
 
 // What the status line says as a notify is followed: the notify's own line, then one per
 // read once it has landed — the read the notify schedules is scoped to the node and counts
-// a handful of values, the idle whole-device read hundreds.
-const FOLLOWING = /^← device…$/;
-const SCOPED_READ = /^← device \(\d{1,2}\)$/;
-const FULL_READ = /^← device \(\d{3,}\)$/;
+// a handful of values, the idle whole-device read hundreds. Each is printed behind whatever
+// the line leads with.
+const FOLLOWING = /(?:^| — )← device…$/;
+const SCOPED_READ = /(?:^| — )← device \(\d{1,2}\)$/;
+const FULL_READ = /(?:^| — )← device \(\d{3,}\)$/;
 
 // When OFF is pressed, counted from the notify: half a flush debounce before the idle
 // whole-device read is due, so that read starts while the edit is still waiting to be sent.

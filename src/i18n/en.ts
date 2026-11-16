@@ -1119,9 +1119,8 @@ export const en = {
     liveSynced: (n: number): string => `→ device (${n})`,
     liveFollowing: tr("← device…"),
     liveFollowed: (n: number): string => `← device (${n})`,
-    liveHeld: (read: number, unrunnable: number, source: number): string =>
+    liveHeld: (unrunnable: number, source: number): string =>
       [
-        `← device (${read})`,
         ...(unrunnable ? [`${unrunnable} kept and re-sent (the unit's own sample rate cannot run them)`] : []),
         ...(source ? [`${source} kept and re-sent (a source drawn here while the read ran)`] : []),
       ].join(" · "),

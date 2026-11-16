@@ -1508,10 +1508,19 @@ input[type="range"]:focus-visible,
 }
 
 #statusbar {
+  display: flex;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A line that does not fit is cut in its lead; the sync or follow status behind it never is
+   (main.ts, printStatus). */
+#statusbar > .status-lead {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#statusbar > .status-tail {
+  white-space: pre;
 }
 
 /* Text for assistive technology only: laid out at no size and clipped away, but read as

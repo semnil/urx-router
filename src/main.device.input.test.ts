@@ -443,7 +443,7 @@ describe("+48V and Hi-Z on one channel", () => {
           },
           { timeout: 25_000, interval: 50 },
         );
-        expect(statusText().startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true);
+        expect(statusText().includes(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true);
         expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([]);
         expect(writesAt(shell, PARAMS.HI_Z.id), "the unit's own Hi-Z is never written").toEqual([]);
       },
@@ -539,7 +539,7 @@ describe("+48V and Hi-Z on one channel", () => {
 
       selectNode("ch3");
       expect(switches()).toEqual({ phantom: "OFF", hiZ: "ON" });
-      expect(statusText().startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true);
+      expect(statusText().includes(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true);
       expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([]);
     });
 
@@ -659,7 +659,7 @@ describe("+48V and Hi-Z on one channel", () => {
           { timeout: 25_000, interval: 50 },
         );
         expect(gainShown(), "the gain the press lowered is the unit's again").toBe("+60 dB");
-        expect(statusText().startsWith(`${t().status.hiZRefusedByRead("CH 3")} — `), statusText()).toBe(true);
+        expect(statusText().includes(`${t().status.hiZRefusedByRead("CH 3")} — `), statusText()).toBe(true);
         await quiet(shell);
         expect({
           phantom: writesAt(shell, PARAMS.PHANTOM.id),
@@ -750,7 +750,7 @@ describe("+48V and Hi-Z on one channel", () => {
       );
       await quiet(shell);
       expect(gainShown(), "the gain the press lowered is the unit's again").toBe("+60 dB");
-      expect(statusText().startsWith(`${t().status.hiZRefusedByRead("CH 3")} — `), statusText()).toBe(true);
+      expect(statusText().includes(`${t().status.hiZRefusedByRead("CH 3")} — `), statusText()).toBe(true);
       expect({
         phantom: writesAt(shell, PARAMS.PHANTOM.id),
         hiZ: writesAt(shell, PARAMS.HI_Z.id),
@@ -779,7 +779,7 @@ describe("+48V and Hi-Z on one channel", () => {
       selectNode("ch3");
       pressFace(t().inspector.phantom, t().inspector.on);
       await vi.waitFor(
-        () => expect(statusText().startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true),
+        () => expect(statusText().includes(`${t().status.phantomRefusedByRead("CH 3")} — `), statusText()).toBe(true),
         { timeout: 25_000, interval: 20 },
       );
       const refused = shell.invokes.length;
@@ -840,7 +840,7 @@ describe("+48V and Hi-Z on one channel", () => {
         { timeout: 25_000, interval: 50 },
       );
       expect(switches(), "the plan holds what the unit holds").toEqual({ phantom: "ON", hiZ: "ON" });
-      expect(statusText().startsWith(`${t().status.phantomHiZBothOn("CH 3")} — `), statusText()).toBe(true);
+      expect(statusText().includes(`${t().status.phantomHiZBothOn("CH 3")} — `), statusText()).toBe(true);
       expect({ phantom: writesAt(shell, PARAMS.PHANTOM.id), hiZ: writesAt(shell, PARAMS.HI_Z.id) }).toEqual({
         phantom: [1],
         hiZ: [],
@@ -915,7 +915,7 @@ describe("+48V and Hi-Z on one channel", () => {
       );
       await quiet(shell);
       expect(
-        seen.some((line) => line.startsWith(`${t().status.phantomRefusedByRead("CH 3")} — `)),
+        seen.some((line) => line.includes(`${t().status.phantomRefusedByRead("CH 3")} — `)),
         JSON.stringify(seen),
       ).toBe(true);
       expect({ phantom: writesAt(shell, PARAMS.PHANTOM.id), hiZ: writesAt(shell, PARAMS.HI_Z.id) }).toEqual({

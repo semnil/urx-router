@@ -860,9 +860,8 @@ export const ja: Messages = {
     liveSynced: (n: number): string => `→ デバイス (${n})`,
     liveFollowing: "← デバイス…",
     liveFollowed: (n: number): string => `← デバイス (${n})`,
-    liveHeld: (read: number, unrunnable: number, source: number): string =>
+    liveHeld: (unrunnable: number, source: number): string =>
       [
-        `← デバイス (${read})`,
         ...(unrunnable ? [`${unrunnable} 件を保持して再送 (実機のサンプルレートでは動かせない設定)`] : []),
         ...(source ? [`${source} 件を保持して再送 (読み取り中にここで描いたソース)`] : []),
       ].join(" · "),

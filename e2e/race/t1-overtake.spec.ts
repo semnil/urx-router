@@ -97,7 +97,9 @@ test.describe("T1 overtake", () => {
     // own signal, not a sleep. This is the value the operator is left looking at, and it
     // is not where the session eventually settles: the queued whole-device sweep that
     // follows takes seconds more before anything corrects it.
-    await page.waitForSelector('#statusbar:text-matches("← device \\\\(\\\\d+\\\\)")', { timeout: 20_000 });
+    await page.waitForSelector('#statusbar > .status-tail:text-matches("← device \\\\(\\\\d+\\\\)")', {
+      timeout: 20_000,
+    });
     await mark(page, "scoped-reconcile-done");
     const justAfter = (await faderReadout(page, "CH 1").textContent())!;
     await waitQuiet(page);
