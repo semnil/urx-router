@@ -5615,6 +5615,10 @@ gate runs only on the desktop (`isTauri()`); the browser/demo never sees it. The
 logs `[self-test] waiting for first-run consent` (or `[prepare-modified] …`), and runs nothing until the gate is
 accepted — they reach the device layer with nothing on screen to press, so the inert app does not hold them.
 
+### Issue auto-assignment
+
+`.github/workflows/issue-auto-assign.yml` adds `semnil` to newly opened issues, preserving existing assignees. Permanent feedback entry points are excluded; edits and reopenings do not assign anyone. Its assignment job holds only `issues: write` and runs no repository code. Pull requests run `.github/tests/issue-auto-assign.test.cjs` with a read-only token. An issue created using `GITHUB_TOKEN` does not trigger another workflow; that creation request must include `assignees: [semnil]`.
+
 ## Third-party licenses
 
 The web layer ships with no third-party runtime dependency — its one runtime dependency is semnil's own

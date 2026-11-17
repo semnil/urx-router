@@ -4914,6 +4914,10 @@ macOS の `.dmg` はドラッグインストールで同意ページを持たな
 ゲートを表示し、`[self-test] waiting for first-run consent` (または `[prepare-modified] …`) をログに出し、ゲートに
 同意するまで何も実行しない — 画面上に押すものが無いままデバイス層に届くので、操作不能にしたアプリでは止まらないため。
 
+### Issue auto-assignment
+
+`.github/workflows/issue-auto-assign.yml` は、新しく作成された Issue の担当者に `semnil` を追加し、既存の担当者は残す。固定の問い合わせ窓口 は除外し、編集・再オープンでは割り当てない。割り当て用ジョブは `issues: write` だけを持ち、リポジトリのコードを実行しない。PR では読み取り専用のトークンで `.github/tests/issue-auto-assign.test.cjs` を実行する。`GITHUB_TOKEN` で作成した Issue では別のワークフローが起動しないため、その作成処理で `assignees: [semnil]` を指定する。
+
 ## サードパーティライセンス
 
 Web 層はサードパーティのランタイム依存を持たない (唯一のランタイム依存は semnil 自身の urx-lcd-sim で、

@@ -156,3 +156,7 @@
 
 - `scripts/capture-screenshots.mjs` — ドキュメントのスクリーンショットの取得 (graph + console × EN/JA、dark のテーマ、URX44V) を `docs/assets/` へ。console のショットは、`.con-strips` が収まるようにビューポートを広げる。開発の記事が使う、ダッカーのバイパスの警告 (`screenshot-ducker-warning-*`) も撮る: 既定のプランの USB MAIN OUT B の配線を消し、CH 5/6 をその Rec Point の取り出しからそこへつなぎ直し、そのチャンネルの Ducker を入れる — 記事の画像は、そうでなければ `docs/assets/` の下に原本の無い唯一のもので、UI が変わったときに、ほかにそれを作り直すものは無い
 - `scripts/meter-bench.mjs` + `scripts/meter-bench-run.mjs` — CONSOLE の描画ベンチ。1 つ目はページの中のベンチで、合成したメーターの入力からビュー自身の描画のループを動かし (`churn` を付けると、機器の追従のストリップの作り直し / 全体の描き直しも)、描いたフレーム、フレームごとと作り直しごとの JS の時間、DOM の変化、フレームの隙間、イベントループの遅れを報告する。2 つ目は木を配り、それを Playwright の **WebKit** で走らせ、標本をブラウザのプロセスの CPU の時間で囲む。どの実行も `scrollCheck` を持ち、それは**そのエンジンで**、描き直しをまたいでストリップのラックのスクロールのずれを固定する — E2E のスイートの 2 つの WebKit のプロジェクトは、ほかの種類のケースを持つ (`app-webkit` はレイアウトが収まることの不変条件、`race-webkit` は判定がエンジンのものであるハーネスのケース) ので、そこではどれも、この描画の振る舞いで落ちることができない。どちらも `window.__urxConsole` を通してビューに届き、その面は `src/ui/meter-bench.contract.test.ts` が固定する。代わりに本物の機器の入力を測るには、`meter-bench.mjs` を `pnpm tauri dev` のウィンドウの Web Inspector のコンソールに貼る (`__urxBench.run({ feed: "none", live: false })`)
+
+## Issue assignment tests
+
+`node --test .github/tests/issue-auto-assign.test.cjs` は、`gh` の代用で割り当てワークフローのシェルを実行する。新規問い合わせ・除外 Issue・既存の担当者・ほかのイベント・API エラーを確認する。
