@@ -1,0 +1,61 @@
+name: Issue auto-assignment
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+
+permissions: {}
+
+jobs:
+  assign:
+    if: github.event_name == 'issues' && github.repository_owner == 'semnil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Add semnil to a new issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != issues ]]; then
+            exit 0
+          fi
+          is_new_issue="$(jq -r '.action == "opened" and .issue.pull_request == null' "$GITHUB_EVENT_PATH")"
+          if [[ "$is_new_issue" != true ]]; then
+            exit 0
+          fi
+          issue_number="$(jq -er '.issue.number | select(type == "number" and . > 0 and floor == .)' "$GITHUB_EVENT_PATH")"
+
+          # Keep the permanent feedback entry points untouched.
+          case "$GITHUB_REPOSITORY:$issue_number" in
+            semnil/MixTrack2Source:6|\
+            semnil/analyze-loudness:2|semnil/analyze-spectrum:2|\
+            semnil/audio-interface-compare-site:8|semnil/jimaku-translator:3|\
+            semnil/notification-sound-db:1|semnil/twitch-channel-volume:1|\
+            semnil/urx-lcd-sim:1|semnil/urx-router:7|\
+            semnil/x-to-bsky:3|semnil/yt-channel-volume:2)
+              exit 0
+              ;;
+          esac
+
+          response="$(gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$issue_number/assignees" \
+            -f 'assignees[]=semnil')"
+          jq -e 'any(.assignees[]; .login == "semnil")' <<< "$response"
+
+  test:
+    name: Issue auto-assignment tests
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test issue auto-assignment without GitHub writes
+        run: node --test .github/tests/issue-auto-assign.test.cjs

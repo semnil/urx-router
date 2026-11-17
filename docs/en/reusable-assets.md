@@ -175,3 +175,7 @@ above, and what each run covers.
   `window.__urxConsole`, whose surface is pinned by `src/ui/meter-bench.contract.test.ts`. Paste
   `meter-bench.mjs` into the Web Inspector console of a `pnpm tauri dev` window to measure a real
   device feed instead (`__urxBench.run({ feed: "none", live: false })`)
+
+## Issue assignment tests
+
+`node --test .github/tests/issue-auto-assign.test.cjs` executes the assignment workflow shell with a fake `gh`, covering new inquiries, excluded issues, existing assignees, other events and API failures.
