@@ -95,6 +95,24 @@ describe("the plan as the glass's transport", () => {
     await expect(t.write("ch.bus.stereo.geq.l.band.5", 3)).resolves.toBeTypeOf("number");
   });
 
+  // A Paste, a Compare or Gain Flat on the glass writes a side's bands in one go. Taken one by one
+  // they would meet the twelve-band rule midway; taken together they are one edit, or none.
+  it("takes a press's GEQ writes as one edit, and refuses them all together", async () => {
+    let live = false;
+    const applied: unknown[] = [];
+    const t = transport({ isLive: () => live, apply: (edit) => (applied.push(edit), true) });
+    // 20 Hz and the four bands above it, as one press.
+    const press = () =>
+      Promise.allSettled(Array.from({ length: 5 }, (_, x) => t.write(`ch.bus.stereo.geq.l.band.${x}`, 3)));
+    expect((await press()).every((r) => r.status === "fulfilled")).toBe(true);
+    expect(applied).toHaveLength(1);
+    // During Live sync the link takes none of STEREO's bands above 20 Hz, so 20 Hz goes back too.
+    live = true;
+    const refused = await press();
+    expect(refused.map((r) => r.status === "rejected" && String(r.reason))).toEqual(Array(5).fill("Error: unwritable"));
+    expect(applied, "nothing reaches the plan").toHaveLength(1);
+  });
+
   it("keeps the simulator's own state itself, and shows it in the next snapshot", async () => {
     const t = transport();
     for (const path of [

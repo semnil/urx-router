@@ -1943,7 +1943,12 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   output bus's EQ Type and Flex12GEQ (the GEQ Link, and each side's [GEQ], GEQ Limit and bands), through the GEQ tuning
   screen's own helpers, so the link's mirror, the limit's clamp and the twelve-band rule hold on the LCD as there;
   Flex12GEQ is refused above 48 kHz, and during Live sync a STEREO band the link takes no write at (any but 20 Hz) is
-  left as the unit holds it, as the GEQ tuning screen leaves it. `sim-map-routing.ts` adds the
+  left as the unit holds it, as the GEQ tuning screen leaves it. The GEQ's paths are one group (`SimGroup` in
+  `sim-map-base.ts`): the view holds the writes one press makes to them (a Paste, a Compare, Gain Flat, Default write
+  every band at once) and takes them as one edit decided on the state they leave — the Link first, then each side's
+  [GEQ] and Limit, then the bands — or refuses them together, so the twelve-band rule is met where the press ends
+  rather than band by band, a STEREO reset during Live sync is refused whole, and an undo takes the press back in one
+  step. `sim-map-routing.ts` adds the
   routing — a channel's source, the monitors' and STREAMING's source, the output patches and the recorder's
   tracks, each a wire drawn or deleted through the board's own connect and delete (`dropWire` in
   `src/core/routing.ts` is what both take) — and the sends' switches, a strip's colour, Signal Type, PAN/BAL and

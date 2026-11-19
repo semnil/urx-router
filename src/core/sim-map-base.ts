@@ -49,6 +49,18 @@ export interface SimBinding {
   values?: readonly SimValue[];
   /** Other paths that read the same plan value, and so move with this one. */
   moves?: readonly string[];
+  /** Where set, the writes one press on the LCD makes to the paths that share this group are
+   *  taken as one edit, decided on the state they leave together, in place of one `write` each. */
+  together?: SimGroup;
+}
+
+/** Paths whose writes of one press are decided together, as a rule that holds over all of them
+ *  (the GEQ's twelve bands) would refuse one of them alone midway through the press. */
+export interface SimGroup {
+  readonly key: string;
+  /** The edit the writes of one press make, in the order they came; `live` says a Live sync
+   *  session is up. */
+  write(plan: Plan, values: ReadonlyMap<string, SimValue>, live: boolean): SimEdit | SimRefusal;
 }
 
 export const isRefusal = (r: SimEdit | SimRefusal): r is SimRefusal => "refused" in r;

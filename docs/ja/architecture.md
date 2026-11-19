@@ -1549,7 +1549,11 @@ SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-s
   `sim-map-geq.ts` は出力バスの EQ Type と Flex12GEQ (GEQ Link と、左右それぞれの [GEQ]・GEQ Limit・帯域) を、GEQ の調整画面と
   同じ関数で足す。そのため、リンクによる反対側への写し、Limit による切り詰め、12 帯域の決まりは、LCD でも同じに効く。Flex12GEQ は
   48 kHz を超えると断り、ライブ同期中は、リンクが書き込みを受けない STEREO の帯域 (20 Hz 以外) を、GEQ の調整画面と同じく本体が
-  持つ値のままにする。`sim-map-routing.ts` は経路 (チャンネルの入力ソース、モニターと STREAMING のソース、出力パッチ、レコーダーのトラック。
+  持つ値のままにする。GEQ のパスは 1 つのグループ (`sim-map-base.ts` の `SimGroup`) になっている。ビューは 1 回の押下がそれらへ書く
+  値 (Paste・Compare・Gain Flat・Default は全帯域を一度に書く) をまとめて受け、押下が終わったときの状態で決める 1 つの編集として
+  反映するか (先に GEQ Link、次に左右の [GEQ] と Limit、最後に帯域)、まとめて断る。そのため 12 帯域の決まりは 1 帯域ずつではなく
+  押下の終わりの状態で判定され、ライブ同期中の STEREO のリセットは丸ごと断られ、アンドゥ 1 回で押下全体が戻る。
+  `sim-map-routing.ts` は経路 (チャンネルの入力ソース、モニターと STREAMING のソース、出力パッチ、レコーダーのトラック。
   どれも盤面と同じ接続と削除で配線を引き、外す。両方が使うのは `src/core/routing.ts` の `dropWire`) と、send の ON、
   ストリップの色、Signal Type・PAN/BAL・Pan Link、モニターとヘッドホン、発振器、全てのデジタル入力の D.Gain (シミュレーターが
   入力のゲインを持つパス: 入力の名前を小文字にし、英数字以外の並びをハイフン 1 つにしたもの)、STREAMING のディレイと名前、

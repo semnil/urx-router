@@ -199,6 +199,29 @@ export function setGeqGain(
   return withSides(np, nodeId, sides);
 }
 
+/**
+ * Set several bands as one edit, as a Paste, a Compare or a Gain Flat on the unit sets them: each
+ * gain pulled into its side's limit and onto 0.5 dB steps, and carried to the other side while the
+ * link is on unless that side's band is set too. The twelve-band rule is held over the state the
+ * edit leaves, not band by band on the way to it: null where a side would end with more than
+ * twelve bands away from 0 dB.
+ */
+export function setGeqGains(
+  np: NodeParams | undefined,
+  nodeId: string,
+  gains: readonly (readonly [side: number, x: number, db: number])[],
+): NodeParams | null {
+  const sides = bothSides(np);
+  const set = new Set(gains.map(([s, x]) => `${s}:${x}`));
+  for (const [s, x, db] of gains) {
+    const mirror = mirrorOf(np, nodeId, s);
+    for (const t of mirror === null || set.has(`${mirror}:${x}`) ? [s] : [s, mirror])
+      sides[t].gains[x] = geqClamp(db, sides[t].limit);
+  }
+  if (sides.some((side) => activeBands(side.gains) > GEQ_MAX_ACTIVE)) return null;
+  return withSides(np, nodeId, sides);
+}
+
 /** Set one side's GEQ Limit, pulling its bands into the new range (the other side too while linked). */
 export function setGeqLimit(np: NodeParams | undefined, nodeId: string, side: number, limit: number): NodeParams {
   const sides = bothSides(np);
