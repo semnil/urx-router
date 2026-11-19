@@ -372,6 +372,22 @@ is not the mode: it keeps the Simple preset's value after the unit is switched b
 Standard. What Simple Mode does to a write the app sends for a control it has removed is
 not known.
 
+## Linking a MONO IN pair copies part of CH1's Sweet Spot Data into CH2
+
+Switching a MONO IN pair's Signal Type from MONO x2 to STEREO makes the unit copy part of CH1's SSMCS
+Sweet Spot Data — the settings its **[Morphing]** knob moves between — into the same part of CH2's, a
+different part for CH1/2 than for CH3/4. On a URX44V, linking CH3/4 therefore changes CH2, a channel outside the
+pair, while CH2's **Sweet Spot Data** still names the preset it held. It happens whether the link is
+made from the app or on the unit's CHANNEL SETTING screen; switching back to MONO x2 copies nothing.
+
+The app does not model those stored settings, so neither the plan nor Compare with device shows the
+change. Writing CH2's **Sweet Spot Data** again puts them back to the preset's. What the copied
+setting does to CH2's sound when it runs SSMCS has not been measured. The device self-test links both
+pairs and left CH2's settings as they were.
+
+> Confirmed on a URX44V and a URX22 (System 1.5.0.1). On the URX22, whose only MONO IN pair is
+> CH1/2, the copy stays inside the pair. Not confirmed on the URX44.
+
 ## The STREAMING pre-DELAY meter is not readable
 
 The block diagram shows two meters on the STREAMING channel — one before the
