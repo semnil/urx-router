@@ -325,6 +325,22 @@ URX は初期設定または SETUP > [Operation Mode] で選ぶ 2 つの動作�
 モードとは別物で、Standard に戻した後も Simple のプリセットの値のまま残ります。取り上げられた
 機能に対してアプリが送った書込みを Simple Mode がどう扱うかは分かっていません。
 
+## MONO IN のペアをリンクすると、CH1 の Sweet Spot Data の一部が CH2 へ写る
+
+MONO IN のペアの Signal Type を MONO×2 から STEREO にすると、本体は CH1 の SSMCS の Sweet Spot Data
+(**[Morphing]** ノブが行き来する設定) の一部を、CH2 の同じ部分へ写します。写る部分は CH1/2 と CH3/4 で違います。
+そのため URX44V では、CH3/4 をリンクすると、ペアの外の CH2 が変わります。CH2 の **Sweet Spot Data** の
+表示は元のプリセットのままです。アプリからリンクしても、本体の CHANNEL SETTING 画面でリンクしても
+同じで、MONO×2 へ戻しても何も写りません。
+
+アプリはこの保存された設定をモデルにしていないので、プランにも Compare with device にもこの変化は
+出ません。CH2 の **Sweet Spot Data** を書き直すと、プリセットの値へ戻ります。写された設定が、
+SSMCS を使っている CH2 の音をどう変えるかは測っていません。実機の self-test は両方のペアをリンクしますが、
+CH2 の設定は元のまま残りました。
+
+> URX44V と URX22 (System 1.5.0.1) で確認。MONO IN のペアが CH1/2 だけの URX22 では、写しはペアの
+> 中にとどまります。URX44 では確認していません。
+
 ## STREAMING の pre-DELAY メーターは取得できない
 
 ブロックダイアグラムでは STREAMING チャンネルに DELAY の前後 2 つのメーターが
