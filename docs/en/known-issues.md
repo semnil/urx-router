@@ -398,13 +398,13 @@ are confirmed on a URX44V:
 
 With Follow USB on, the device's front panel locks its rate buttons but a software
 write is **not** refused: the device takes the new rate, re-clocks (the LCD shows
-its switching dialog), and shortly afterwards the host's rate is reasserted and
-the device returns to it. The audible result is a brief interruption for a change
+its switching dialog), and shortly afterwards the device goes back to the rate it
+was running before the write. The audible result is a brief interruption for a change
 that does not last.
 
 Turning Follow USB on does not re-clock the device by itself. A URX44V whose computer
-runs another rate keeps its own rate until a rate is next written, and that write is
-pulled back to the computer's. A URX22's computer follows the device, so the two rates
+runs another rate keeps its own rate, and a rate written to it then goes back to that
+rate, not to the computer's. A URX22's computer follows the device, so the two rates
 do not differ there. Both confirmed on System 1.5.0.1; not confirmed on the URX44.
 
 The LCD's switching dialog belongs to that pulled-back re-clock specifically. A

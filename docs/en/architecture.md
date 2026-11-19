@@ -3093,7 +3093,7 @@ readback re-authored the plan's values and no earlier entry describes a state it
 agreed with the plan at every key leaves both stacks as they were, and one that moved the sample rate alone takes it
 into the baseline at its hook (`followAuthor`) and leaves them as well. Where the unit took the rate back to the value
 the newest entry carrying the rate moved it from — a rate written under Follow USB on, which the unit returns to the
-computer's — the rate leaves that entry, and an entry left with nothing leaves the stack (`PlanHistory.takeBackRate`),
+rate it ran before — the rate leaves that entry, and an entry left with nothing leaves the stack (`PlanHistory.takeBackRate`),
 so the rest of it undoes and redoes during the session without the refusal a rate entry meets there. The redo side
 is read the same way: where the unit moved the rate to the value the newest redo entry carrying it would move it to,
 the rate leaves that entry too.
@@ -3537,7 +3537,7 @@ second and later calls return early because `deactivateLive` clears that flag sy
 
 The sample rate is a plan value the device can accept and then undo by itself. With **SETUP > Follow USB**
 on, the URX slaves its clock to the USB host: a rate written then is accepted, re-clocks the hardware, and roughly
-0.4 s later the host's rate is reasserted (on a URX44V). Writing straight through would report success
+0.4 s later the device goes back to the rate it was running before the write (on a URX44V). Writing straight through would report success
 for a change that did not last.
 
 Ahead of any of it, a plan holding +48V and HI-Z both on for a jack stops the write where it stands: whichever
@@ -3635,8 +3635,8 @@ action would mean the warning only arrives once the operator has already committ
 rather than persisted, since a remembered value would be a claim about hardware that may not even be attached. For
 the same reason it goes back to unknown whenever the plan switches to another model, whichever entry switched it —
 the model picker, File > Open, a drop, a recent row, or the switch a Fetch or a Live-sync start offers. During Live
-sync the Rate picker locks while Follow USB is on: the unit accepts a rate written then and takes the computer's
-rate back about a third of a second later, so the rate would show and vanish. It stays locked as well for a session
+sync the Rate picker locks while Follow USB is on: the unit accepts a rate written then and goes back to the rate it
+was running about a third of a second later, so the rate would show and vanish. It stays locked as well for a session
 whose device scope is Scene only, which writes no rate. Wherever it is locked, the field it sits in shows why as its
 tooltip — the connection, for a link held by anything but a Live sync session, and during one the Scene only scope
 (naming the Preferences Scope that puts the rate back in) or Follow USB — the reason the SIM view's Sampling
@@ -4604,7 +4604,7 @@ An undo is refused, with the reason on the status line and **without spending th
   Follow USB off, the holders the rate picker locks for and for the same reason: a write settles the
   rate once and then converges the plan it re-reads every round, so a rate the plan took after the
   settle would re-clock the unit with no confirm and no Track Count warning, and with Follow USB on the
-  unit takes the computer's rate back. A live session with Follow USB off asks first instead
+  unit goes back to the rate it was running. A live session with Follow USB off asks first instead
   (`confirmRate`, answered by `confirmLiveRate`): the entry stays on the stack while the question is
   open, and the same press runs again once the operator agrees, while the entry still leaves that rate. A patch is
   applied atomically, so the refusal takes the **whole** entry: when the entry carries more than the
@@ -5158,7 +5158,7 @@ the unit, so none is flagged as unread, while the status line still counts them.
 is clocked is asked about before
 anything is imported (`confirmImportClock`), and imports nothing when the operator declines or the microSD recorder
 holds a file. A rate the file changes with Follow USB left as it is gets the confirm a rate chosen in the app gets —
-with Follow USB on as well, where the unit takes the computer's rate back after the write; a file that turns Follow
+with Follow USB on as well, where the unit goes back to the rate it was running after the write; a file that turns Follow
 USB on gets the confirm the toolbar's FOLLOW USB gives, refused as well while the recorder holds a file; one that
 turns it off is asked about its rate where that differs, and about turning Follow USB off where it does not. The
 file's Follow USB is written before the rest, so the rate the session then writes lands on a unit clocked the way

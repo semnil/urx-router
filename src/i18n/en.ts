@@ -1230,7 +1230,7 @@ export const en = {
     reclock: (deviceRate: string, planRate: string): string =>
       `The device is running at ${deviceRate} and the plan is set to ${planRate}. Writing re-clocks the device and renegotiates the USB stream, interrupting audio for a moment. Continue?`,
     followUsbOn: tr(
-      "Turn Follow USB on? The device hands its clock back to the computer. Turning it on does not change the device's rate; a rate written to the device afterwards is pulled back to the computer's.",
+      "Turn Follow USB on? The device hands its clock back to the computer. Turning it on does not change the device's rate, and a rate written to the device afterwards goes back to the rate it was running.",
     ),
     // A settings file imported during Live sync that turns Follow USB off at the rate the
     // device is already running.

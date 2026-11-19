@@ -2657,7 +2657,7 @@ function syncDeviceActionUi(): void {
   // A write settles the rate at its boundary (settleSampleRate), so while one holds the link the
   // picker only reports the rate. A live session takes a rate chosen here once the operator has
   // been asked what it costs (confirmLiveRate), and only while Follow USB is off: with it on the
-  // unit takes the computer's rate back. Locked here, beside the other device actions, so no
+  // unit goes back to the rate it was running. Locked here, beside the other device actions, so no
   // early return can leave it stuck disabled.
   syncRateHold();
   // The model picker locks for the live SESSION only, not for every holder: a switch
@@ -4420,7 +4420,7 @@ function confirmLiveRate(rate: number): Promise<boolean> | null {
  * Follow USB are outside the session: nothing is asked and the rate is not taken.
  *
  * - The same Follow USB, another rate: asked as a rate chosen in the app is (askLiveRate); with
- *   Follow USB on, the unit takes the computer's rate back after the write.
+ *   Follow USB on, the unit goes back to the rate it was running after the write.
  * - Follow USB turned on: asked as the toolbar's FOLLOW USB asks, and refused while the recorder
  *   holds a file.
  * - Follow USB turned off: asked about the file's rate where it differs, and otherwise about

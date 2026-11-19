@@ -952,7 +952,7 @@ export const ja: Messages = {
     reclock: (deviceRate: string, planRate: string): string =>
       `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。続行しますか?`,
     followUsbOn:
-      "Follow USB を ON にしますか? デバイスはクロックをコンピューターに委ねます。ON にしてもデバイスのレートは変わりません。以後デバイスに書き込んだレートは、コンピューターのレートへ引き戻されます。",
+      "Follow USB を ON にしますか? デバイスはクロックをコンピューターに委ねます。ON にしてもデバイスのレートは変わらず、以後デバイスに書き込んだレートは、書き込む前のレートへ戻ります。",
     followUsbOffImport: (rate: string): string =>
       `設定ファイルは Follow USB を OFF にします。OFF にしますか? デバイスはクロックをコンピューターから受け取るのをやめ、${rate} で動作します。`,
     insertsOffAtRate: (list: string): string =>
