@@ -373,8 +373,8 @@ carries a one-line map of the same directories and points here.
       caller that skips them, and a dropped rename leaves no diff for a later flush because the plan and the
       name snapshot have both moved on. Nothing is withdrawn from the handle: the last announcement wins,
       so an address the operator moved on the board comes back carrying THEIR value. `sendConverging`'s
-      INTER-ROUND wait stays blind **deliberately** — no `sideEffect: "converge"` head's reset latency is
-      known, and a round sends whole groups the read diff never named — but its SEED read takes
+      INTER-ROUND wait stays blind **deliberately** — a round sends whole groups the read diff never named
+      (the converge heads' reset latency: "A write is not readable when it is acked") — but its SEED read takes
       the same `PendingWrites` handle and waits the flush's writes out (the wait ends at the device's own notify,
       so the bound is the fallback and not the price). The NAME path is fixed by not reading at all: `readPass` skips names
       whenever `pending` is present, because a name is written on the string path and enters no write ledger, so
@@ -2958,8 +2958,10 @@ reconcile off across all of it (`live.isWriting`, which answers for the whole fl
 as invariant 4 (channel-tuning.md, "FX EFFECT").
 
 **The converge loop is deliberately left out of all of this** and keeps its blind 300 ms. What it re-reads is not
-the address it wrote but what that write made the unit reset, and no `sideEffect: "converge"` head's reset latency
-is known — the figures above belong to the `refetch` heads, which never reach this loop. Its
+the address it wrote but what that write made the unit reset. What a `sideEffect: "converge"` head makes the unit
+reset behaves as a `refetch` head's recompute does on a URX44V: it is readable once the head's own notify has
+arrived, at most about 180 ms after the write, and no read taken after that notify answers a reset value's old one. That bound is
+for one head switched on its own, not for a flush that moves several. And the loop's
 round also sends `roundCommands`, whole groups, so a wait that ended at the read diff's own notifies would return
 while the rest of a group was still inside its window.
 
@@ -2984,7 +2986,7 @@ sequenceDiagram
   L->>D: vdSet a param the unit answers by moving others
   alt converge: the unit reset values the plan authors
     L->>L: freeze a clone of the plan
-    Note over L,D: 300 ms blind between rounds<br/>no converge head's reset latency is known, and a round re-sends whole groups
+    Note over L,D: 300 ms blind between rounds<br/>a round re-sends whole groups, not only what the read named
     L->>D: re-read the write scope, re-send what diverged, repeat until settled
     L->>L: capture from that frozen clone
     Note over L: an edit that arrived during the converge is still a diff<br/>baking it in here would drop it in silence
