@@ -3645,7 +3645,7 @@ chosen on the picker, on the SIM view or by an undo / redo goes through `confirm
 — refused while the microSD recorder holds a file, and otherwise confirmed with the re-clock and what it costs the
 recorder's Track Count, the questions the write's settle asks. The held connection survives the re-clock: a
 connection the rate was written over kept answering reads, online, on a URX44V and a URX22. The badge stays live:
-toggling Follow USB only re-clocks when the host is on a different rate, and the connection survived it on a URX44V.
+toggling Follow USB did not re-clock a URX44V whose host ran another rate, and the connection stayed up across the toggle (a URX22's host follows the device, so the two rates do not differ there).
 
 Above 96 kHz the device drops whole features (stereo channel EQ, insert FX, the FX2 bus), but it still **accepts
 and holds writes to their parameters** — on a URX44V at 192 kHz, for the stereo CH EQ, FX2's fader,
