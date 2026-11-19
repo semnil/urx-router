@@ -950,9 +950,9 @@ export const ja: Messages = {
     importSettingsLive: (name: string, model: string): string =>
       `${name} を現在の ${model} 計画に取り込み、本体に書き込みますか? ライブ同期中のため、取り込んだ設定はすべて本体に送られます (サンプリング周波数は今のままです)。設定ファイルにはどの機種で保存したかの情報が無いため、${model} で合っているか確認してください。配置・非表示・ノートは維持されます。`,
     reclock: (deviceRate: string, planRate: string): string =>
-      `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。コンピューター側はデバイスの新しいレートに追従します。続行しますか?`,
+      `デバイスは ${deviceRate}、計画は ${planRate} です。書き込むとデバイスがリクロックし USB ストリームが再ネゴシエートされるため、音声が一瞬中断されます。続行しますか?`,
     followUsbOn:
-      "Follow USB を ON にしますか? デバイスはクロックをコンピューターに委ねます。コンピューターが別のレートで動作している場合は直ちにそのレートへリクロックするため、音声が中断される場合があります。レートが既に一致していれば何も起きません。",
+      "Follow USB を ON にしますか? デバイスはクロックをコンピューターに委ねます。ON にしてもデバイスのレートは変わらず、以後デバイスに書き込んだレートは、書き込む前のレートへ戻ります。",
     followUsbOffImport: (rate: string): string =>
       `設定ファイルは Follow USB を OFF にします。OFF にしますか? デバイスはクロックをコンピューターから受け取るのをやめ、${rate} で動作します。`,
     insertsOffAtRate: (list: string): string =>

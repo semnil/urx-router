@@ -1228,9 +1228,9 @@ export const en = {
     importSettingsLive: (name: string, model: string): string =>
       `Import ${name} onto the current ${model} plan and write it to the unit? Live sync is on, so every imported setting is sent to the unit; the sampling frequency stays as it is. A settings file does not say which unit it came from, so check that ${model} is the right model. Layout, hidden nodes, and notes are kept.`,
     reclock: (deviceRate: string, planRate: string): string =>
-      `The device is running at ${deviceRate} and the plan is set to ${planRate}. Writing re-clocks the device and renegotiates the USB stream, interrupting audio for a moment. The computer follows the device's new rate. Continue?`,
+      `The device is running at ${deviceRate} and the plan is set to ${planRate}. Writing re-clocks the device and renegotiates the USB stream, interrupting audio for a moment. Continue?`,
     followUsbOn: tr(
-      "Turn Follow USB on? The device hands its clock back to the computer. If the computer is running a different rate, the device re-clocks to it immediately, which can interrupt audio; if the rates already match, nothing changes.",
+      "Turn Follow USB on? The device hands its clock back to the computer. Turning it on does not change the device's rate, and a rate written to the device afterwards goes back to the rate it was running.",
     ),
     // A settings file imported during Live sync that turns Follow USB off at the rate the
     // device is already running.

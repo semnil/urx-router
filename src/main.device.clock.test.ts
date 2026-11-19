@@ -803,8 +803,8 @@ describe("the sample rate a write happens at", () => {
 });
 
 // A live session takes a rate chosen in the app while Follow USB is off, once the operator has
-// agreed to what it costs — the questions a write's settle asks. With Follow USB on the unit takes
-// the computer's rate back, so the rate stays locked.
+// agreed to what it costs — the questions a write's settle asks. With Follow USB on the unit goes
+// back to the rate it was running, so the rate stays locked.
 
 describe("the sample rate during Live sync", () => {
   const rateWrites = (shell: TauriShell): number[] =>
