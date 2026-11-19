@@ -679,8 +679,8 @@ flowchart TD
   `VITE_TRACE=1` のバンドルにだけ入る。台帳は 2 つ目の符号化ではなく `plan-history` の差分を使い回す
   (live-race-harness.md「観測点」)
 - `src/core/sim-map.ts` + `src/ui/sim-view.ts` — SIM ビュー。LCD シミュレーターのパスからプランへの表と、その上に
-  シミュレーターを置くビュー (「SIM ビュー (本体の LCD)」を参照)。表は `sim-map-processors.ts` (処理系) と
-  `sim-map-routing.ts` (経路と設定) を、`sim-map-base.ts` の型と補助関数の上で組み合わせて作る。`sim-map-setup.ts` は
+  シミュレーターを置くビュー (「SIM ビュー (本体の LCD)」を参照)。表は `sim-map-processors.ts` (処理系)、
+  `sim-map-routing.ts` (経路と設定)、`sim-map-geq.ts` (出力バスの EQ Type と Flex12GEQ) を、`sim-map-base.ts` の型と補助関数の上で組み合わせて作る。`sim-map-setup.ts` は
   シミュレーターの SETUP > GENERAL のパスを、本体がプランの外に持つ本体の設定へ対応させ、`sim-map-scene.ts` は
   シミュレーターのシーンの位置を、本体の現在のシーンと SCENE LIST のカーソルへ対応させる。`sim-locks.ts` は
   ビューが止めるコントロールと、それぞれが示す理由を決める。
@@ -1546,6 +1546,13 @@ SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-s
   モノラルチャンネルの HPF・Ф・GATE・COMP と、そのチャンネルが読む端子の入力段 (A.Gain・+48V・HI-Z・Clip Safe。+48V と
   HI-Z はほかと同じく同時には入れない) を持つ。`sim-map-processors.ts` は SSMCS・1-knob の EQ と COMP・DUCKER (キー入力は
   配線)・FX チャンネルのエフェクト・INS FX (Inspector の選択欄が組むのと同じ変更と初期値、およびそのノードの INS FX が選べる各エフェクトの全ての値。値は今選ばれているエフェクトの下で読む。シミュレーターは `insertValuesFromPage` を付けてマウントするので、LCD でエフェクトを選んでも、Inspector と同じくプランがそのエフェクトについて持つ値を保つ)・BUS Type・COMP / EQ の順を足す。
+  `sim-map-geq.ts` は出力バスの EQ Type と Flex12GEQ (GEQ Link と、左右それぞれの [GEQ]・GEQ Limit・帯域) を、GEQ の調整画面と
+  同じ関数で足す。そのため、リンクによる反対側への写し、Limit による切り詰め、12 帯域の決まりは、LCD でも同じに効く。Flex12GEQ は
+  48 kHz を超えると断り、ライブ同期中は、リンクが書き込みを受けない STEREO の帯域 (20 Hz 以外) を、GEQ の調整画面と同じく本体が
+  持つ値のままにする。GEQ のパスは 1 つのグループ (`sim-map-base.ts` の `SimGroup`) になっている。ビューは 1 回の押下がそれらへ書く
+  値 (Paste・Compare・Gain Flat・Default は全帯域を一度に書く) をまとめて受け、押下が終わったときの状態で決める 1 つの編集として
+  反映するか (先に GEQ Link、次に左右の [GEQ] と Limit、最後に帯域)、まとめて断る。そのため 12 帯域の決まりは 1 帯域ずつではなく
+  押下の終わりの状態で判定され、ライブ同期中の STEREO のリセットは丸ごと断られ、アンドゥ 1 回で押下全体が戻る。
   `sim-map-routing.ts` は経路 (チャンネルの入力ソース、モニターと STREAMING のソース、出力パッチ、レコーダーのトラック。
   どれも盤面と同じ接続と削除で配線を引き、外す。両方が使うのは `src/core/routing.ts` の `dropWire`) と、send の ON、
   ストリップの色、Signal Type・PAN/BAL・Pan Link、モニターとヘッドホン、発振器、全てのデジタル入力の D.Gain (シミュレーターが
@@ -1563,7 +1570,7 @@ SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-s
   LCD が編集に付けて書く値や画面のために持つ値のうち、シミュレーター自身の状態は、プランではなくビューが持つ:
   リンクしたペアのコンプレッサーがどちらのチャンネルを聞くか (ペアのリンクと SSMCS への切り替えで書く)、レコーダーの
   再生 (レートの変更で止める)、Output Patch と Peripheral の画面のタブ、シーン一覧のバンクと行 (本体のカーソルが動くまで。下記)、microSD の画面が選んだ
-  フォルダとファイル、表示中の User Defined Knobs のバンク、LCD 自身の CUE の決まりが戻すために覚えている出力の CUE。表に無いパスと同じく断ると、編集全体が一緒に取り消される。プランが持つ値でも、今の状態で取れない編集 (リンクしていないペアの PAN/BAL、
+  フォルダとファイル、表示中の User Defined Knobs のバンク、LCD 自身の CUE の決まりが戻すために覚えている出力の CUE、RECALL SAFE の設定 (アプリには、それが効く自前のシーンの呼び出しが無い)。表に無いパスと同じく断ると、編集全体が一緒に取り消される。プランが持つ値でも、今の状態で取れない編集 (リンクしていないペアの PAN/BAL、
   配線の無い send、FX 2 を外すレートでの FX 2 への send、ライブ同期中のレコーダーの
   Track Count) は断る。表にも下の本体の値にも無い
   パス (シーンの中身とタイトル、カードの中身・名前・空き容量) はシミュレーターの値を表示し、
@@ -1589,7 +1596,8 @@ SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-s
   LCD には本体が戻すために覚えている出力の CUE を見せるので、入力の最後の CUE を外す押下は、その CUE が OFF になり
   覚えていた出力がすべて ON に戻る形で届く。ビューはこれを外した CUE として渡し、出力は本体が戻す。覚えていた出力の
   1 つだけを押したときは、その出力の押下として渡す。
-  セッションが無いときは押下を断り、シミュレーターが元に戻す。
+  セッションが無いときは押下を断り、シミュレーターが元に戻す。MONITOR の [CUE Mode] (Mix CUE / Last CUE) も同じくセッションの
+  状態で、LCD はセッションが持つモードを表示し、LCD での押下はインスペクターの CUE Mode と同じ入口へ渡り、セッションが無いときは断る。
 - **本体の設定と状態**は、アプリが知っているものをシミュレーターの値の代わりに表示する (`core/sim-map-setup.ts`)。
   SETUP > GENERAL は最後に読んだ値 (実験的起動でのセッション開始・本体設定画面・LCD での SETUP の編集) で、
   機種が変わるまで保つ。Follow USB はツールバーのバッジが持つ値 (バッジが分かっていない間はオフ)、動作モードはセッションが読んだ値、本体の現在のシーン (Recall と Store で動く) と SCENE LIST のカーソルがある行

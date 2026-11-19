@@ -736,7 +736,8 @@ carries a one-line map of the same directories and points here.
   `plan-history`'s differ rather than a second encoding (live-race-harness.md "Observables")
 - `src/core/sim-map.ts` + `src/ui/sim-view.ts` — the SIM view: the table from the LCD simulator's paths to the
   plan, and the view that mounts the simulator over it (see "SIM view (the unit's LCD)"). The table is assembled
-  from `sim-map-processors.ts` (the processors) and `sim-map-routing.ts` (routing and setup), on the shapes and
+  from `sim-map-processors.ts` (the processors), `sim-map-routing.ts` (routing and setup) and `sim-map-geq.ts` (an
+  output bus's EQ Type and Flex12GEQ), on the shapes and
   helpers in `sim-map-base.ts`. `sim-map-setup.ts` maps the simulator's SETUP > GENERAL paths onto the unit's own
   settings, which the unit holds outside the plan, and `sim-map-scene.ts` its scene pointers onto the unit's current
   scene and SCENE LIST cursor. `sim-locks.ts` names the controls the view holds shut and the
@@ -1938,7 +1939,16 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   adds SSMCS, the 1-knob EQ and COMP, the ducker (its key a wire), an FX channel's effect, the insert FX (the patch
   and defaults the Inspector's selector builds, and every value of each effect a node's insert offers, read under
   the effect it holds; the simulator is mounted with `insertValuesFromPage`, so choosing an effect on the LCD keeps
-  the values the plan holds for it, as the Inspector does), BUS Type and the COMP / EQ order. `sim-map-routing.ts` adds the
+  the values the plan holds for it, as the Inspector does), BUS Type and the COMP / EQ order. `sim-map-geq.ts` adds an
+  output bus's EQ Type and Flex12GEQ (the GEQ Link, and each side's [GEQ], GEQ Limit and bands), through the GEQ tuning
+  screen's own helpers, so the link's mirror, the limit's clamp and the twelve-band rule hold on the LCD as there;
+  Flex12GEQ is refused above 48 kHz, and during Live sync a STEREO band the link takes no write at (any but 20 Hz) is
+  left as the unit holds it, as the GEQ tuning screen leaves it. The GEQ's paths are one group (`SimGroup` in
+  `sim-map-base.ts`): the view holds the writes one press makes to them (a Paste, a Compare, Gain Flat, Default write
+  every band at once) and takes them as one edit decided on the state they leave — the Link first, then each side's
+  [GEQ] and Limit, then the bands — or refuses them together, so the twelve-band rule is met where the press ends
+  rather than band by band, a STEREO reset during Live sync is refused whole, and an undo takes the press back in one
+  step. `sim-map-routing.ts` adds the
   routing — a channel's source, the monitors' and STREAMING's source, the output patches and the recorder's
   tracks, each a wire drawn or deleted through the board's own connect and delete (`dropWire` in
   `src/core/routing.ts` is what both take) — and the sends' switches, a strip's colour, Signal Type, PAN/BAL and
@@ -1960,7 +1970,8 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   edit or keeps for a screen is held by the view rather than the plan: which channel a linked pair's compressors hear
   (written as the pair is linked or taken into SSMCS), the recorder's playback (which a rate change stops), the output
   patch's and the Peripheral screen's tab, the scene list's bank and row (until the unit's cursor moves, below), the
-  microSD folder and file a screen has picked, the User Defined Knobs bank on show, and the output cues the LCD's own CUE rule remembers to put back.
+  microSD folder and file a screen has picked, the User Defined Knobs bank on show, the output cues the LCD's own CUE rule remembers to put back,
+  and RECALL SAFE's settings, which the app has no scene recall of its own to act on.
   Refused like a path the table does not carry, one of these would take the whole edit back with it. A value the plan holds but the edit cannot take in its present state (PAN/BAL on an unlinked pair, an
   unwired send, an FX 2 send at a rate that takes FX 2 out, the recorder's Track Count
   while Live sync is up) is refused. A path neither the table nor the unit's values below carry — the scenes'
@@ -1990,7 +2001,9 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   The LCD is shown the output cues the unit holds to put back, so turning the last input cue off arrives as that cue
   off with exactly those outputs back on; it is handed on as the cue turned off, and the unit puts the outputs back. One
   of those outputs pressed on its own is a press of that output.
-  With no session a press is refused and the simulator puts it back.
+  With no session a press is refused and the simulator puts it back. MONITOR's [CUE Mode] (Mix CUE / Last CUE) is the
+  session's the same way: the LCD shows the mode the session holds, a press on it reaches the Inspector's CUE Mode
+  funnel, and with no session it is refused.
 - **The unit's own settings and states** are shown in place of the simulator's where the app knows them
   (`core/sim-map-setup.ts`): SETUP > GENERAL as the last reading of it — a session's start on an experimental launch,
   the Device setup screen, a SETUP edit on the LCD — kept until the model changes, Follow USB as the toolbar's

@@ -18,6 +18,7 @@ import { COLOR_PALETTE, PARAMS } from "../src/core/control/params";
 import { fxParams } from "../src/core/control/fx-effect";
 import { defaultPlan } from "../src/models/initial-state";
 import { serialize, type Plan } from "../src/core/plan";
+import { EQ_TYPE_GEQ, setEqType, setGeqGains } from "../src/core/geq";
 import type { ModelId } from "../src/models/types";
 import { planParamZ } from "./plan-param";
 import { chooseOption } from "./choose-option";
@@ -219,6 +220,31 @@ test("holds Software Integration shut again once Live sync ends, with the reason
   await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
   await expect(integration).toHaveAttribute("title", en.sim.lockIntegrationOff);
   await expect(integration.locator(".lock-mark")).toHaveCount(1);
+});
+
+// MONITOR's [CUE Mode] is the session's, as the [CUE] flags are: during Live sync a press on the
+// LCD goes through the app's own CUE Mode, which writes the unit and the status bar shows.
+test("a CUE Mode pressed on the LCD during Live sync is written to the unit and shown on the status bar", async ({
+  page,
+}) => {
+  await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await tapInto(page, lcd(page).getByRole("button", { name: "MONITOR", exact: true }), "monitor");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Monitor", exact: true }), "monitor.level");
+  await lcd(page).getByRole("button", { name: "CUE", exact: true }).click();
+  const last = lcd(page).getByRole("button", { name: "Last CUE", exact: true });
+  await expect(lcd(page).getByRole("button", { name: "Mix CUE", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await last.click();
+  await expect(last).toHaveAttribute("aria-pressed", "true");
+  await expect
+    .poll(async () => (await writesOf(page)).filter(([id]) => id === PARAMS.CUE_MODE.id))
+    .toEqual([[PARAMS.CUE_MODE.id, 1]]);
+  await expect(page.locator("#cue-mode-last")).toHaveAttribute("aria-pressed", "true");
 });
 
 // What the session told the glass goes when it ends, and what the glass keeps for its own showing
@@ -570,6 +596,88 @@ test("BUS Type FIXED leaves the same plan from the LCD as from the Inspector", a
   await inspect(page, "bus.mix1");
   await chooseOption(page.locator("#inspector .param", { hasText: "BUS Type" }).locator("select"), "1");
   expect(fromLcd).toEqual(mix(await save(page)));
+});
+
+test("EQ Type Flex12GEQ on MIX 1 leaves the same plan from the LCD as from the Inspector", async ({ page }) => {
+  await openSimSaving(page);
+  await lcd(page)
+    .getByRole("button", { name: /channel bank/ })
+    .click();
+  await lcd(page).getByRole("button", { name: "MIX, ST STREAMING", exact: true }).click();
+  await tapInto(page, lcd(page).getByRole("button", { name: "MIX 1 settings", exact: true }), "channel-view");
+  await tapInto(
+    page,
+    lcd(page)
+      .getByRole("button", { name: /^MIX 1 / })
+      .first(),
+    "ch.setting",
+  );
+  await lcd(page)
+    .getByRole("button", { name: /EQ Type/ })
+    .click();
+  await sim(page).getByRole("option", { name: "Flex12GEQ", exact: true }).click();
+  const mix = (p: SavedPlan) => {
+    const np = p.nodeParams["bus.mix1"];
+    return { eqType: np?.eqType, eqOn: np?.eqOn, link: (np?.geq as { link?: number } | undefined)?.link };
+  };
+  const fromLcd = mix(await save(page));
+  expect(fromLcd.eqType, "the LCD's choice reached the plan").toBe(2);
+
+  await inspect(page, "bus.mix1");
+  await chooseOption(page.locator("#inspector .param", { hasText: "EQ Type" }).locator("select"), "2");
+  expect(fromLcd).toEqual(mix(await save(page)));
+});
+
+// A Paste on the GEQ screen writes every band of both sides in one press. MIX 1 L at +3 dB from
+// 20 Hz to 250 Hz and MIX 2 L at -4 dB from 315 Hz to 4 kHz: twelve bands each and none in common,
+// so taken band by band MIX 2 would meet the twelve-band rule halfway and keep neither set.
+test("a GEQ Paste on the LCD leaves MIX 2 with MIX 1's bands, and one undo puts MIX 2's back", async ({ page }) => {
+  const low = Array.from({ length: 31 }, (_, x) => (x < 12 ? 3 : 0));
+  const mid = Array.from({ length: 31 }, (_, x) => (x >= 12 && x < 24 ? -4 : 0));
+  const seed = (p: Plan, id: string, gains: number[]) => {
+    const np = setGeqGains(
+      setEqType(p.nodeParams[id], id, EQ_TYPE_GEQ),
+      id,
+      gains.map((g, x) => [0, x, g] as const),
+    );
+    p.nodeParams[id] = np!;
+  };
+  await openSimSaving(page, {
+    path: planLink("URX44V", (p) => {
+      seed(p, "bus.mix1", low);
+      seed(p, "bus.mix2", mid);
+    }),
+  });
+  const bandsL = (p: SavedPlan, id: string) =>
+    ((p.nodeParams[id]?.geq as { sides: { bands: { gain: number }[] }[] }).sides[0]!.bands ?? []).map((b) => b.gain);
+  const menu = lcd(page).getByRole("menu", { name: "Submenu" });
+  const swipeOpen = async () => {
+    const box = (await lcd(page).locator(".submenu-tab").boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x - 60, box.y + box.height / 2, { steps: 5 });
+    await page.mouse.up();
+    await expect(menu).toBeVisible();
+  };
+  await lcd(page)
+    .getByRole("button", { name: /channel bank/ })
+    .click();
+  await lcd(page).getByRole("button", { name: "MIX, ST STREAMING", exact: true }).click();
+  await tapInto(page, lcd(page).getByRole("button", { name: "MIX 1 settings", exact: true }), "channel-view");
+  await tapInto(page, lcd(page).locator(".cv-geq"), "ch.geq");
+  await swipeOpen();
+  await menu.getByRole("button", { name: "Copy", exact: true }).click();
+  await lcd(page).getByRole("button", { name: "Close the submenu" }).click();
+  // MIX 1 is a pair: the first step goes to its R side, the second to MIX 2.
+  await lcd(page).getByRole("button", { name: "Next channel" }).click();
+  await lcd(page).getByRole("button", { name: "Next channel" }).click();
+  await swipeOpen();
+  await menu.getByRole("button", { name: "Paste", exact: true }).click();
+  await expect(lcd(page).getByRole("status")).toHaveText("GEQ Parameters Pasted.");
+  expect(bandsL(await save(page), "bus.mix2"), "the paste reached the plan whole").toEqual(low);
+
+  await page.keyboard.press("ControlOrMeta+z");
+  expect(bandsL(await save(page), "bus.mix2"), "one undo takes the whole paste back").toEqual(mid);
 });
 
 // While Live sync is up, an EFFECT TYPE chosen on any surface leaves the incoming type's factory

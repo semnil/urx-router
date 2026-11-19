@@ -36,10 +36,18 @@ import {
   type SimBinding,
   type SimValue,
 } from "./sim-map-base";
+import { geqBindings } from "./sim-map-geq";
 import { processorBindings } from "./sim-map-processors";
 import { routingBindings } from "./sim-map-routing";
 
-export { isRefusal, type SimBinding, type SimEdit, type SimRefusal, type SimValue } from "./sim-map-base";
+export {
+  isRefusal,
+  type SimBinding,
+  type SimEdit,
+  type SimGroup,
+  type SimRefusal,
+  type SimValue,
+} from "./sim-map-base";
 
 const EQ_BANDS = ["low", "lowMid", "highMid", "high"] as const;
 /** A band's shape by the plan's EQ type (0 peaking, 1 shelving, 2 pass), for the outer bands. */
@@ -233,6 +241,7 @@ export function simBindings(model: DeviceModel): Map<string, SimBinding> {
   out.set("setup.samplingFrequency", { read: (plan) => plan.sampleRate });
   processorBindings(model, out);
   routingBindings(model, out);
+  geqBindings(model, out);
   return out;
 }
 

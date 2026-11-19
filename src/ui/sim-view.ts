@@ -11,7 +11,15 @@
 
 import type { DeviceModel } from "../models/types";
 import type { Plan } from "../core/plan";
-import { isRefusal, readSim, simBindings, type SimBinding, type SimEdit, type SimValue } from "../core/sim-map";
+import {
+  isRefusal,
+  readSim,
+  simBindings,
+  type SimBinding,
+  type SimEdit,
+  type SimGroup,
+  type SimValue,
+} from "../core/sim-map";
 import { simStripId } from "../core/sim-map-base";
 import { MeterStore, sidechainTap, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
 import type { SimScale } from "../app/view-state";
@@ -66,7 +74,14 @@ type CueHooks = Pick<SimViewHooks, "unitCues" | "setUnitCue" | "clearUnitCues" |
 const CUE_OUTPUT_MEMORY = "ui.cueOutputMemory";
 type TransportHooks = Pick<
   SimViewHooks,
-  "getPlan" | "apply" | "unitSendsTarget" | "setUnitSendsTarget" | "unitValues" | "isUnitPath" | "writeUnitValue"
+  | "getPlan"
+  | "apply"
+  | "unitSendsTarget"
+  | "setUnitSendsTarget"
+  | "unitValues"
+  | "isUnitPath"
+  | "writeUnitValue"
+  | "isLive"
 > &
   CueHooks;
 
@@ -92,7 +107,10 @@ export const GLASS_OWN = new Set([
   "setup.udk.bank",
   "setup.peripheral.tab",
 ]);
-const glassOwn = (path: string): boolean => GLASS_OWN.has(path) || /^pair\.[^.]+\.compSplit$/.test(path);
+// RECALL SAFE's settings (System firmware V1.5) are the simulator's too: the app has no scene
+// recall of its own for them to act on, and the glass's scenes are the simulator's.
+const glassOwn = (path: string): boolean =>
+  GLASS_OWN.has(path) || /^pair\.[^.]+\.compSplit$/.test(path) || path.startsWith("safe.");
 
 /** The urx-router meter tap a simulator meter id reads, by the simulator's tap name. */
 const TAP_KEYS: Record<string, string> = {
@@ -262,19 +280,70 @@ export class PlanTransport implements DeviceTransport {
     }
     const binding = this.bindings.get(path);
     if (!binding?.write) return Promise.reject(new Error(`${path} is not the plan's`));
+    if (binding.together) return this.writeTogether(path, binding.together, value);
     const edit = binding.write(this.hooks.getPlan(), value);
     if (isRefusal(edit)) return Promise.reject(new Error(edit.refused));
     if (!this.hooks.apply(edit)) return Promise.reject(new Error("refused"));
-    const taken = binding.read(this.hooks.getPlan()) ?? value;
+    return Promise.resolve(this.taken(path, value));
+  }
+
+  /** What the plan holds at `path` after a write of `value` to it. A value the plan took
+   *  differently — kept as it was, or brought to its step — goes back to the glass as the answer
+   *  to the write, once the write has gone out. */
+  private taken(path: string, value: ParamValue): ParamValue {
+    const taken = this.bindings.get(path)?.read(this.hooks.getPlan()) ?? value;
     this.held.set(path, taken);
-    // A value the plan took differently — kept as it was, or brought to its step — goes back
-    // to the glass as the answer to this write, once the write has gone out.
     if (taken !== value)
       queueMicrotask(() => {
         if (this.closed) return;
         for (const listener of this.listeners) listener({ path, value: taken, echo: true });
       });
-    return Promise.resolve(taken);
+    return taken;
+  }
+
+  /** The writes a press is making to each group (`SimGroup`), by the group's key: the value
+   *  each path is to take, and the answer owed to each write, the last one to a path first in line
+   *  for its echo. */
+  private groups = new Map<
+    string,
+    { values: Map<string, SimValue>; last: Map<string, object>; done: ((refused: string | null) => void)[] }
+  >();
+
+  /** One write to a group's path, held until the press has made all of its writes (the store
+   *  sends an operation's writes in one go), then taken with the others as one edit, or refused
+   *  with them. */
+  private writeTogether(path: string, group: SimGroup, value: ParamValue): Promise<ParamValue> {
+    let batch = this.groups.get(group.key);
+    if (!batch) {
+      const made = {
+        values: new Map<string, SimValue>(),
+        last: new Map<string, object>(),
+        done: [] as ((refused: string | null) => void)[],
+      };
+      batch = made;
+      this.groups.set(group.key, made);
+      queueMicrotask(() => {
+        this.groups.delete(group.key);
+        let refused: string | null = "closed";
+        if (!this.closed) {
+          const edit = group.write(this.hooks.getPlan(), made.values, this.hooks.isLive());
+          refused = isRefusal(edit) ? edit.refused : this.hooks.apply(edit) ? null : "refused";
+        }
+        for (const done of made.done) done(refused);
+      });
+    }
+    const self = {};
+    batch.values.set(path, value);
+    batch.last.set(path, self);
+    const { last } = batch;
+    return new Promise<ParamValue>((resolve, reject) => {
+      batch.done.push((refused) => {
+        if (refused !== null) reject(new Error(refused));
+        // A write the press overtook with a later one to the same path is answered without an echo.
+        else if (last.get(path) === self) resolve(this.taken(path, value));
+        else resolve(this.bindings.get(path)?.read(this.hooks.getPlan()) ?? value);
+      });
+    });
   }
 
   /** One [CUE] write, held until the press has made all of its writes. */

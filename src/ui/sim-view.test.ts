@@ -59,11 +59,13 @@ describe("the plan as the glass's transport", () => {
         | "unitValues"
         | "isUnitPath"
         | "writeUnitValue"
+        | "isLive"
       >
     > = {},
   ): PlanTransport =>
     new PlanTransport(simBindings(model), new Map([["ui.bank", "CH 1 - 4"]]), {
       getPlan: () => plan,
+      isLive: hooks.isLive ?? (() => false),
       apply: hooks.apply ?? (() => true),
       unitSendsTarget: hooks.unitSendsTarget ?? (() => null),
       setUnitSendsTarget: hooks.setUnitSendsTarget ?? (() => false),
@@ -76,6 +78,40 @@ describe("the plan as the glass's transport", () => {
       writeUnitValue: hooks.writeUnitValue ?? (() => Promise.reject(new Error("refused"))),
     });
   const flush = () => new Promise<void>((r) => queueMicrotask(r));
+
+  it("holds RECALL SAFE's settings itself, the app having no recall of its own for them", async () => {
+    const t = transport();
+    expect(t.writable("safe.ch1.on")).toBe(true);
+    await expect(t.write("safe.ch1.on", true)).resolves.toBe(true);
+  });
+
+  it("leaves a STEREO GEQ band the link takes no write at during Live sync, and takes 20 Hz", async () => {
+    let live = true;
+    const t = transport({ isLive: () => live });
+    await expect(t.write("ch.bus.stereo.geq.l.band.5", 3)).rejects.toThrow("unwritable");
+    // This transport's plan takes no edit, so what comes back is the plan's value, not a refusal.
+    await expect(t.write("ch.bus.stereo.geq.l.band.0", 3)).resolves.toBeTypeOf("number");
+    live = false;
+    await expect(t.write("ch.bus.stereo.geq.l.band.5", 3)).resolves.toBeTypeOf("number");
+  });
+
+  // A Paste, a Compare or Gain Flat on the glass writes a side's bands in one go. Taken one by one
+  // they would meet the twelve-band rule midway; taken together they are one edit, or none.
+  it("takes a press's GEQ writes as one edit, and refuses them all together", async () => {
+    let live = false;
+    const applied: unknown[] = [];
+    const t = transport({ isLive: () => live, apply: (edit) => (applied.push(edit), true) });
+    // 20 Hz and the four bands above it, as one press.
+    const press = () =>
+      Promise.allSettled(Array.from({ length: 5 }, (_, x) => t.write(`ch.bus.stereo.geq.l.band.${x}`, 3)));
+    expect((await press()).every((r) => r.status === "fulfilled")).toBe(true);
+    expect(applied).toHaveLength(1);
+    // During Live sync the link takes none of STEREO's bands above 20 Hz, so 20 Hz goes back too.
+    live = true;
+    const refused = await press();
+    expect(refused.map((r) => r.status === "rejected" && String(r.reason))).toEqual(Array(5).fill("Error: unwritable"));
+    expect(applied, "nothing reaches the plan").toHaveLength(1);
+  });
 
   it("keeps the simulator's own state itself, and shows it in the next snapshot", async () => {
     const t = transport();
