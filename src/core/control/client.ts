@@ -838,8 +838,7 @@ export async function sendConverging(
     // `roundCommands`, which pulls in every member of a group any differing command
     // belongs to, and those members were never read. A wait that ended at the read
     // diff's own notifies would return while the rest of the group was still inside
-    // its own window. No converge head's reset latency is known either — only the
-    // "refetch" family's, which never reaches this loop.
+    // its own window.
     if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
     const next = await diffPlan(model, plan, { signal, scope, emit, stopOnError, exclude, matched });
     readErrors.push(...next.errors);
