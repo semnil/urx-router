@@ -222,6 +222,31 @@ test("holds Software Integration shut again once Live sync ends, with the reason
   await expect(integration.locator(".lock-mark")).toHaveCount(1);
 });
 
+// MONITOR's [CUE Mode] is the session's, as the [CUE] flags are: during Live sync a press on the
+// LCD goes through the app's own CUE Mode, which writes the unit and the status bar shows.
+test("a CUE Mode pressed on the LCD during Live sync is written to the unit and shown on the status bar", async ({
+  page,
+}) => {
+  await stubTauriDevice(page, { commands: { experimental_enabled: true, ...LIVE_COMMANDS } });
+  await page.goto("/");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await tapInto(page, lcd(page).getByRole("button", { name: "MONITOR", exact: true }), "monitor");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Monitor", exact: true }), "monitor.level");
+  await lcd(page).getByRole("button", { name: "CUE", exact: true }).click();
+  const last = lcd(page).getByRole("button", { name: "Last CUE", exact: true });
+  await expect(lcd(page).getByRole("button", { name: "Mix CUE", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await last.click();
+  await expect(last).toHaveAttribute("aria-pressed", "true");
+  await expect
+    .poll(async () => (await writesOf(page)).filter(([id]) => id === PARAMS.CUE_MODE.id))
+    .toEqual([[PARAMS.CUE_MODE.id, 1]]);
+  await expect(page.locator("#cue-mode-last")).toHaveAttribute("aria-pressed", "true");
+});
+
 // What the session told the glass goes when it ends, and what the glass keeps for its own showing
 // stays: the channel selected on it, the bank it shows and its knob mode.
 test("keeps the LCD's selected channel when Live sync ends", async ({ page }) => {

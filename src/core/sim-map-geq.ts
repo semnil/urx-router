@@ -34,7 +34,6 @@ import {
   type SimBinding,
   type SimEdit,
   type SimGroup,
-  type SimRefusal,
   type SimValue,
 } from "./sim-map-base";
 
@@ -44,11 +43,10 @@ const GEQ_LIMITS = ["±15dB", "±12dB", "±6dB", "-24dB"] as const;
 const GEQ_LINKS = ["Off", "L>R", "R>L"] as const;
 const SIDES = ["l", "r"] as const;
 
-/** An edit of the bus's params, as the patch the GEQ tuning screen's helpers return. */
-function geqEdit(id: string, next: NodeParams | null): SimEdit | SimRefusal {
-  if (next === null) return refused("value");
-  const patch: NodeParams = {};
-  if (next.eqType !== undefined) patch.eqType = next.eqType;
+/** The EQ Type's edit, as the patch `setEqType` makes: the type, and the EQ ON and GEQ Link it
+ *  switches with it where it does. */
+function eqTypeEdit(id: string, next: NodeParams): SimEdit {
+  const patch: NodeParams = { eqType: next.eqType };
   if (next.eqOn !== undefined) patch.eqOn = next.eqOn;
   if (next.geq !== undefined) patch.geq = next.geq;
   return { kind: "node", id, patch };
@@ -81,7 +79,7 @@ function geqGroup(id: string, base: string): SimGroup {
         if (!path.startsWith(head) || !m) return refused("value");
         writes.push({ link: m[1] !== undefined, side: m[2] === "r" ? 1 : 0, what: m[3] ?? "link", x: Number(m[4]), v });
       }
-      let cur: NodeParams | undefined = plan.nodeParams[id];
+      let cur: NodeParams = { ...plan.nodeParams[id] };
       for (const w of writes.filter((w) => w.link)) {
         const link = numberOf(GEQ_LINKS, GEQ_LINK_OPTIONS, w.v);
         if (link < 0) return refused("value");
@@ -103,8 +101,7 @@ function geqGroup(id: string, base: string): SimGroup {
           gains.push([w.side, w.x, db]);
         }
       }
-      if (!gains.length) return geqEdit(id, cur ?? {});
-      const next = setGeqGains(cur, id, gains);
+      const next = gains.length ? setGeqGains(cur, id, gains) : cur;
       if (next === null) return refused("full");
       if (live)
         for (const s of [0, 1]) {
@@ -112,7 +109,7 @@ function geqGroup(id: string, base: string): SimGroup {
           if (geqSideState(next, s).gains.some((g, x) => g !== was[x] && !geqBandWritable(id, x)))
             return refused("unwritable");
         }
-      return geqEdit(id, next);
+      return { kind: "node", id, patch: { geq: next.geq } };
     },
   };
 }
@@ -144,7 +141,7 @@ export function geqBindings(model: DeviceModel, out: Map<string, SimBinding>): v
         if (type < 0) return refused("value");
         // The unit takes Flex12GEQ only up to 48 kHz, as the toolbar's rate picker and the GEQ screen hold it.
         if (type === EQ_TYPE_GEQ && geqUnavailable(plan.sampleRate)) return refused("rate");
-        return geqEdit(id, setEqType(plan.nodeParams[id], id, type));
+        return eqTypeEdit(id, setEqType(plan.nodeParams[id], id, type));
       },
     });
 

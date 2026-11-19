@@ -24,6 +24,17 @@ describe("the SIM's EQ Type and Flex12GEQ", () => {
     expect([read(plan, "ch.bus.mix1.eqType"), read(plan, "ch.bus.mix1.geq.link")]).toEqual(["Flex12GEQ", "Off"]);
   });
 
+  it("carries EQ ON and the GEQ Link with the EQ Type only where the switch moves them", () => {
+    const bare: Plan = { ...defaultPlan("URX44V"), nodeParams: {} };
+    const patch = (plan: Plan, path: string, v: string) =>
+      (bindings.get(path)!.write!(plan, v) as Extract<SimEdit, { kind: "node" }>).patch;
+    // STEREO keeps its link, so the switch to Flex12GEQ carries EQ ON alone.
+    expect(patch(bare, "ch.bus.stereo.eqType", "Flex12GEQ")).toEqual({ eqType: 2, eqOn: true });
+    expect(Object.keys(patch(bare, "ch.bus.mix1.eqType", "Flex12GEQ")).sort()).toEqual(["eqOn", "eqType", "geq"]);
+    // The way back changes nothing else.
+    expect(patch(bare, "ch.bus.stereo.eqType", "4band PEQ")).toEqual({ eqType: 0 });
+  });
+
   it("refuses Flex12GEQ above 48 kHz", () => {
     const plan = { ...defaultPlan("URX44V"), sampleRate: 96000 };
     expect(isRefusal(bindings.get("ch.bus.stereo.eqType")!.write!(plan, "Flex12GEQ"))).toBe(true);
