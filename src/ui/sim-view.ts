@@ -13,6 +13,7 @@ import type { DeviceModel } from "../models/types";
 import type { Plan } from "../core/plan";
 import { isRefusal, readSim, simBindings, type SimBinding, type SimEdit, type SimValue } from "../core/sim-map";
 import { simStripId } from "../core/sim-map-base";
+import { geqBandWritable } from "../core/control/translate";
 import { MeterStore, sidechainTap, subscribeMeters, tapAddrs, tapFor, tapsFor, type MeterTap } from "../core/meters";
 import type { SimScale } from "../app/view-state";
 import type { SimLockSpec } from "../core/sim-locks";
@@ -66,7 +67,14 @@ type CueHooks = Pick<SimViewHooks, "unitCues" | "setUnitCue" | "clearUnitCues" |
 const CUE_OUTPUT_MEMORY = "ui.cueOutputMemory";
 type TransportHooks = Pick<
   SimViewHooks,
-  "getPlan" | "apply" | "unitSendsTarget" | "setUnitSendsTarget" | "unitValues" | "isUnitPath" | "writeUnitValue"
+  | "getPlan"
+  | "apply"
+  | "unitSendsTarget"
+  | "setUnitSendsTarget"
+  | "unitValues"
+  | "isUnitPath"
+  | "writeUnitValue"
+  | "isLive"
 > &
   CueHooks;
 
@@ -92,7 +100,14 @@ export const GLASS_OWN = new Set([
   "setup.udk.bank",
   "setup.peripheral.tab",
 ]);
-const glassOwn = (path: string): boolean => GLASS_OWN.has(path) || /^pair\.[^.]+\.compSplit$/.test(path);
+// RECALL SAFE's settings (System firmware V1.5) are the simulator's too: the app has no scene
+// recall of its own for them to act on, and the glass's scenes are the simulator's.
+const glassOwn = (path: string): boolean =>
+  GLASS_OWN.has(path) || /^pair\.[^.]+\.compSplit$/.test(path) || path.startsWith("safe.");
+
+/** A STEREO GEQ band the link takes no write at (`geqBandWritable`): during Live sync the glass,
+ *  as the GEQ tuning screen, leaves it as the unit holds it. */
+const STEREO_GEQ_BAND = /^ch\.bus\.stereo\.geq\.[lr]\.band\.(\d+)$/;
 
 /** The urx-router meter tap a simulator meter id reads, by the simulator's tap name. */
 const TAP_KEYS: Record<string, string> = {
@@ -262,6 +277,9 @@ export class PlanTransport implements DeviceTransport {
     }
     const binding = this.bindings.get(path);
     if (!binding?.write) return Promise.reject(new Error(`${path} is not the plan's`));
+    const stereoBand = STEREO_GEQ_BAND.exec(path);
+    if (stereoBand && this.hooks.isLive() && !geqBandWritable("bus.stereo", Number(stereoBand[1])))
+      return Promise.reject(new Error("unwritable"));
     const edit = binding.write(this.hooks.getPlan(), value);
     if (isRefusal(edit)) return Promise.reject(new Error(edit.refused));
     if (!this.hooks.apply(edit)) return Promise.reject(new Error("refused"));

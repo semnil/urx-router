@@ -36,6 +36,7 @@ import {
   type SimBinding,
   type SimValue,
 } from "./sim-map-base";
+import { geqBindings } from "./sim-map-geq";
 import { processorBindings } from "./sim-map-processors";
 import { routingBindings } from "./sim-map-routing";
 
@@ -233,6 +234,7 @@ export function simBindings(model: DeviceModel): Map<string, SimBinding> {
   out.set("setup.samplingFrequency", { read: (plan) => plan.sampleRate });
   processorBindings(model, out);
   routingBindings(model, out);
+  geqBindings(model, out);
   return out;
 }
 

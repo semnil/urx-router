@@ -572,6 +572,36 @@ test("BUS Type FIXED leaves the same plan from the LCD as from the Inspector", a
   expect(fromLcd).toEqual(mix(await save(page)));
 });
 
+test("EQ Type Flex12GEQ on MIX 1 leaves the same plan from the LCD as from the Inspector", async ({ page }) => {
+  await openSimSaving(page);
+  await lcd(page)
+    .getByRole("button", { name: /channel bank/ })
+    .click();
+  await lcd(page).getByRole("button", { name: "MIX, ST STREAMING", exact: true }).click();
+  await tapInto(page, lcd(page).getByRole("button", { name: "MIX 1 settings", exact: true }), "channel-view");
+  await tapInto(
+    page,
+    lcd(page)
+      .getByRole("button", { name: /^MIX 1 / })
+      .first(),
+    "ch.setting",
+  );
+  await lcd(page)
+    .getByRole("button", { name: /EQ Type/ })
+    .click();
+  await sim(page).getByRole("option", { name: "Flex12GEQ", exact: true }).click();
+  const mix = (p: SavedPlan) => {
+    const np = p.nodeParams["bus.mix1"];
+    return { eqType: np?.eqType, eqOn: np?.eqOn, link: (np?.geq as { link?: number } | undefined)?.link };
+  };
+  const fromLcd = mix(await save(page));
+  expect(fromLcd.eqType, "the LCD's choice reached the plan").toBe(2);
+
+  await inspect(page, "bus.mix1");
+  await chooseOption(page.locator("#inspector .param", { hasText: "EQ Type" }).locator("select"), "2");
+  expect(fromLcd).toEqual(mix(await save(page)));
+});
+
 // While Live sync is up, an EFFECT TYPE chosen on any surface leaves the incoming type's factory
 // value on the unit — what the unit's own refill puts there — and does not carry over a value the
 // unit's panel moved for the outgoing type into a key the two types share.

@@ -1253,6 +1253,9 @@ let pressFollowUsb: (() => void) | null = null;
 const OPERATION_MODES = ["Standard", "Simple"];
 
 /** The unit's values the glass shows in place of its own, by the glass's path. */
+/** The glass's path for MONITOR's [CUE Mode]. */
+const SIM_CUE_MODE = "monitor.cueMode";
+
 function unitGlassValues(): Map<string, SimValue> {
   const model = getModel(modelId);
   const out = unitSetup ? setupGlassValues(model, unitSetup) : new Map<string, SimValue>();
@@ -1264,6 +1267,8 @@ function unitGlassValues(): Map<string, SimValue> {
     out.set(path, value);
   if (unitIntegration) for (const [path, send] of integrationGlassValues(unitIntegration)) out.set(path, send);
   if (unitCardIn !== null) out.set("sd.mounted", unitCardIn);
+  // MONITOR's [CUE Mode] (System firmware V1.5) is live-session state, as the [CUE] flags are.
+  if (liveSessionUp) out.set(SIM_CUE_MODE, cues.mode === "last" ? "Last CUE" : "Mix CUE");
   return out;
 }
 
@@ -1280,6 +1285,12 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
   // compatible DAW holds it.
   // Console Lock: nothing on the glass is written to the unit.
   if (refusedForLock()) return Promise.reject(new Error("refused"));
+  // [CUE Mode] is the session's: a press reaches the Inspector's funnel, and with no session it is refused.
+  if (path === SIM_CUE_MODE) {
+    if (!liveSessionUp || (value !== "Mix CUE" && value !== "Last CUE")) return Promise.reject(new Error("refused"));
+    setCueMode(value === "Last CUE" ? "last" : "mix");
+    return Promise.resolve(shown());
+  }
   const slot = integrationSlotAt(path);
   if (slot) {
     const raw = encodeIntegrationSend(String(value));
@@ -1687,7 +1698,10 @@ const buildSimView = (): SimView =>
       unitCueMemory: () => (liveSessionUp ? cues.restorable() : null),
       unitValues: unitGlassValues,
       isUnitPath: (path) =>
-        path === "setup.followUsb" || integrationSlotAt(path) !== null || isSetupGlassPath(getModel(modelId), path),
+        path === "setup.followUsb" ||
+        path === SIM_CUE_MODE ||
+        integrationSlotAt(path) !== null ||
+        isSetupGlassPath(getModel(modelId), path),
       writeUnitValue: writeUnitGlassValue,
       clipSafeEngaged: (jack) => liveSessionUp && clipSafeEngaged.has(jack),
     },

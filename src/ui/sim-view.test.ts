@@ -59,11 +59,13 @@ describe("the plan as the glass's transport", () => {
         | "unitValues"
         | "isUnitPath"
         | "writeUnitValue"
+        | "isLive"
       >
     > = {},
   ): PlanTransport =>
     new PlanTransport(simBindings(model), new Map([["ui.bank", "CH 1 - 4"]]), {
       getPlan: () => plan,
+      isLive: hooks.isLive ?? (() => false),
       apply: hooks.apply ?? (() => true),
       unitSendsTarget: hooks.unitSendsTarget ?? (() => null),
       setUnitSendsTarget: hooks.setUnitSendsTarget ?? (() => false),
@@ -76,6 +78,22 @@ describe("the plan as the glass's transport", () => {
       writeUnitValue: hooks.writeUnitValue ?? (() => Promise.reject(new Error("refused"))),
     });
   const flush = () => new Promise<void>((r) => queueMicrotask(r));
+
+  it("holds RECALL SAFE's settings itself, the app having no recall of its own for them", async () => {
+    const t = transport();
+    expect(t.writable("safe.ch1.on")).toBe(true);
+    await expect(t.write("safe.ch1.on", true)).resolves.toBe(true);
+  });
+
+  it("leaves a STEREO GEQ band the link takes no write at during Live sync, and takes 20 Hz", async () => {
+    let live = true;
+    const t = transport({ isLive: () => live });
+    await expect(t.write("ch.bus.stereo.geq.l.band.5", 3)).rejects.toThrow("unwritable");
+    // This transport's plan takes no edit, so what comes back is the plan's value, not a refusal.
+    await expect(t.write("ch.bus.stereo.geq.l.band.0", 3)).resolves.toBeTypeOf("number");
+    live = false;
+    await expect(t.write("ch.bus.stereo.geq.l.band.5", 3)).resolves.toBeTypeOf("number");
+  });
 
   it("keeps the simulator's own state itself, and shows it in the next snapshot", async () => {
     const t = transport();

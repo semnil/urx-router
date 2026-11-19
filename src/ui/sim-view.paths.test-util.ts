@@ -59,6 +59,7 @@ const registry = buildRegistry();
 const plan = defaultPlan(MODEL_ID);
 const transport = new PlanTransport(bindings, shippedValues(MODEL_ID), {
   getPlan: () => plan,
+  isLive: () => false,
   apply: () => true,
   unitSendsTarget: () => "ST",
   setUnitSendsTarget: () => true,
@@ -68,7 +69,11 @@ const transport = new PlanTransport(bindings, shippedValues(MODEL_ID), {
   unitCueMemory: () => [],
   unitValues: () => new Map(),
   // main.ts's `isUnitPath`, which it builds in place.
-  isUnitPath: (path) => path === "setup.followUsb" || integrationSlotAt(path) !== null || isSetupGlassPath(model, path),
+  isUnitPath: (path) =>
+    path === "setup.followUsb" ||
+    path === "monitor.cueMode" ||
+    integrationSlotAt(path) !== null ||
+    isSetupGlassPath(model, path),
   writeUnitValue: (_path, value) => Promise.resolve(value),
 });
 
