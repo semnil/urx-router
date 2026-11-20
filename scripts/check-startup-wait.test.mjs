@@ -130,6 +130,7 @@ describe("which app the check names", () => {
   const cwds = { 11: "/x/other/src-tauri", 12: "/x/tree/src-tauri", 13: null };
   const tree = mkdtempSync(join(tmpdir(), "startup-wait-"));
   mkdirSync(join(tree, "src-tauri"));
+  afterAll(() => rmSync(tree, { recursive: true, force: true }));
   const cwdOf = (pid) => (pid === "12" ? join(tree, "src-tauri") : cwds[pid]);
 
   it("names the process whose working directory is the tree's src-tauri, and no other", () => {
@@ -210,8 +211,11 @@ describe.skipIf(!windows)("which app the check names, among real Windows process
 const which = (cmd) => spawnSync("sh", ["-c", `command -v ${cmd}`], { encoding: "utf8" }).stdout.trim();
 const tools = ["pgrep", "lsof", "bash"].map(which);
 
-describe.skipIf(tools.some((path) => path === ""))("which app the check names, among real processes", () => {
-  const root = mkdtempSync(join(tmpdir(), "startup-wait-"));
+const lacking = tools.some((path) => path === "");
+
+// A skipped suite still runs its body and never its hooks, so its directory is made only where it runs.
+describe.skipIf(lacking)("which app the check names, among real processes", () => {
+  const root = lacking ? "" : mkdtempSync(join(tmpdir(), "startup-wait-"));
   const children = [];
   afterEach(() => {
     for (const child of children.splice(0)) child.kill("SIGKILL");
