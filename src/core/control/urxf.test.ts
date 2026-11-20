@@ -275,7 +275,7 @@ describe("paramSourceOf", () => {
 
 // A file a unit wrote before System firmware 1.5 carries the Flex12GEQ records of STEREO and the MIX
 // buses (EQ Type, [GEQ], GEQ Link, the 31 bands) but no GEQ Limit, which that firmware did not have.
-// A unit on 1.5 that loads it keeps the Limit it holds, so the import keeps the plan's.
+// A URX44V on 1.5 that loads it keeps the Limit it holds, so the import keeps the plan's.
 describe("a file written before System 1.5", () => {
   const n = (count: number, value: number): number[] => Array.from({ length: count }, () => value);
   const bands = (from: number, count: number): Field[] =>

@@ -132,9 +132,10 @@ const ABSENT_FROM_FORMAT = new Map<number, { name: string; onLoad: number }>([
 ]);
 
 // Parameters a file written before System firmware 1.5 does not carry, the firmware that wrote it
-// having none: the GEQ Limit of STEREO and of the MIX buses. A unit on 1.5 that loads such a file
-// keeps the Limit it holds, so the source answers them through `keeps` and the read keeps the plan's
-// value. A file written on 1.5 carries them, and they read like any other parameter.
+// having none: the GEQ Limit of STEREO and of the MIX buses. A URX44V on 1.5 that loads such a file
+// keeps the Limit it holds, and the URX44 is taken to do the same, so the source answers them through
+// `keeps` and the read keeps the plan's value. A file written on 1.5 carries them, and they read like
+// any other parameter.
 const KEPT_ON_LOAD = new Set<number>([PARAMS.STEREO_GEQ_LIMIT.id, PARAMS.OUT_GEQ_LIMIT.id]);
 
 /**

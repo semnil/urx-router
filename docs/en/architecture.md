@@ -5215,7 +5215,8 @@ and a clean file imports with no failures and no unread nodes. This is a whiteli
 else genuinely absent surfaces as a read failure.
 
 A file written before System firmware 1.5 carries no GEQ Limit for STEREO and the MIX buses, the
-firmware that wrote it having none. A unit on 1.5 that loads such a file keeps the Limit it holds, so
+firmware that wrote it having none. A URX44V on 1.5 that loads such a file keeps the Limit it holds
+(the URX44 is taken to do the same, unconfirmed; the URX22 has no microSD to load a file from), so
 the source reports those Limits as kept (`ParamSource.keeps`) and the import keeps the plan's; the rest
 of the GEQ — the EQ Type, [GEQ], GEQ Link and the bands — comes from the file. A file written on 1.5
 carries the Limits, and they are read like any other parameter.
