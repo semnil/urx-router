@@ -189,7 +189,11 @@ is `<tree>/src-tauri` (`lsof -a -p <pid> -d cwd -Fn`), exits 1 while there is no
 reason when it cannot tell — `lsof` reading nothing from a process still running is that, while one
 that has exited is simply not the app — and `--wait` added to it, run in the background, polls only
 while the answer is 1 — it exits 0 with the PID to act on once this tree's app is up, and 2 at once
-when it cannot tell.
+when it cannot tell. Windows has neither `pgrep` nor `lsof`, and does not show another process's
+working directory, so there the check takes the `urx-router.exe` whose executable lies under
+`<tree>/src-tauri/target` (read with `Get-CimInstance Win32_Process` through `powershell.exe`):
+cargo writes the binary there and the app runs from that file, so its path says which tree built
+it. A process whose executable path Windows does not report is not taken as any tree's app.
 
 The hook that refuses the other two forms is described in
 [repository-checks.md](repository-checks.md) "The edit-time hooks".
