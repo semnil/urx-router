@@ -217,9 +217,10 @@ protocol, so newer versions are not guaranteed to behave identically.
 ## The unit lets +48V and HI-Z be on together; the app does not
 
 The user guide ("INPUT screen", the [+48V] button) says phantom power and HI-Z
-cannot be turned on at the same time. The URX44V and URX22 (System 1.3.1.0) panels
-do let both be on for one jack: pressing [HI-Z] with [+48V] on, or [+48V] with
-[HI-Z] on, leaves both on, and neither switches the other off.
+cannot be turned on at the same time. The URX44V and URX22 (System 1.3.1.0) panels,
+and the URX44V's again on System 1.5.0.1, do let both be on for one jack: pressing
+[HI-Z] with [+48V] on, or [+48V] with [HI-Z] on, leaves both on, and neither switches
+the other off.
 
 Both switches belong to a MIC/LINE jack, and a channel shows those of the jack it
 reads, so the app names a jack by the channels reading it. The app never turns one
@@ -359,9 +360,10 @@ what the unit offers — the channel and bus display is cut down and no longer s
 
 The unit does publish the mode, and announces each change with a notify: the value moves
 when Simple Mode is entered and its preset applied, and switching back to Standard moves it
-back, with no other parameter changing. Confirmed on a URX22 and a URX44V (System 1.3.1.0)
-for Simple Mode entered through SETUP > [Operation Mode] with one preset; the Setup
-Assistant and Scene routes into Simple Mode and the other presets are not covered. On an
+back, with no other parameter changing. Confirmed on a URX22 and a URX44V (System 1.3.1.0),
+and on the URX44V again on System 1.5.0.1, for Simple Mode entered through
+SETUP > [Operation Mode] with one preset; the Setup Assistant and Scene routes into
+Simple Mode and the other presets are not covered. On an
 experimental launch the app reads it while Live sync is up and follows its notify, to show
 it on the SIM view's LCD (architecture.md, "SIM view (the unit's LCD)"). Nothing else reads it: the graph,
 the CONSOLE and the Inspector present the same controls either way, including for things
