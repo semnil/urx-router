@@ -325,7 +325,9 @@ export function devAppPid(
   const want = realpathSync(join(tree, "src-tauri"));
   if (platform === "win32") {
     // Windows compares paths without case, and reports the drive letter in either.
-    const under = join(want, "target", sep).toLowerCase();
+    // Both sides are resolved: a `target` that is a junction to another directory leaves the
+    // executable's real path outside the tree as written.
+    const under = join(canonical(join(want, "target")), sep).toLowerCase();
     for (const { pid, exe } of apps()) {
       if (exe !== null && canonical(exe).toLowerCase().startsWith(under)) return pid;
     }

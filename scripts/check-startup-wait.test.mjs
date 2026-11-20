@@ -161,6 +161,18 @@ describe("which app the check names", () => {
     );
     expect(devAppPid(tree, { platform: "win32", apps: () => [{ pid: "31", exe: flipped }] })).toBe("31");
   });
+  it("follows a target directory that is a junction to the build output elsewhere", () => {
+    const linked = join(tree, "linked");
+    const out = join(tree, "build-output", "debug");
+    mkdirSync(join(linked, "src-tauri"), { recursive: true });
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, "urx-router.exe"), "");
+    symlinkSync(join(tree, "build-output"), join(linked, "src-tauri", "target"), "junction");
+    const throughLink = join(linked, "src-tauri", "target", "debug", "urx-router.exe");
+    for (const exe of [join(out, "urx-router.exe"), throughLink]) {
+      expect(devAppPid(linked, { platform: "win32", apps: () => [{ pid: "41", exe }] })).toBe("41");
+    }
+  });
 });
 
 const windows = process.platform === "win32";
