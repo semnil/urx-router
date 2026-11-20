@@ -4,6 +4,9 @@
 // the layout that builder writes.
 
 import { describe, expect, it } from "vitest";
+import { getModel } from "../../models";
+import { emptyPlan } from "../plan";
+import { applySourceState } from "./readback";
 import { parseUrxf, paramSourceOf } from "./urxf";
 import {
   BLOCK_HEADER,
@@ -14,6 +17,7 @@ import {
   SCENE_FIELDS,
   sampleUrxf as sample,
 } from "./urxf.test-util";
+import type { Field } from "./urxf.test-util";
 
 describe("parseUrxf", () => {
   it("reads the header, both chunks, and the scene label", () => {
@@ -266,5 +270,76 @@ describe("paramSourceOf", () => {
   // rather than failing every import on a gap the device fills the same way.
   it("supplies the load-time value for a parameter the format never carries", async () => {
     await expect(paramSourceOf(current()).get(710, 0, 0)).resolves.toBe(0);
+  });
+});
+
+// A file a unit wrote before System firmware 1.5 carries the Flex12GEQ records of STEREO and the MIX
+// buses (EQ Type, [GEQ], GEQ Link, the 31 bands) but no GEQ Limit, which that firmware did not have.
+// A unit on 1.5 that loads it keeps the Limit it holds, so the import keeps the plan's.
+describe("a file written before System 1.5", () => {
+  const n = (count: number, value: number): number[] => Array.from({ length: count }, () => value);
+  const bands = (from: number, count: number): Field[] =>
+    Array.from({ length: 31 }, (_, x) => ({ id: from + x, typecode: 2, elemSize: 2, values: n(count, 0) }));
+  const geqFields = (limits: boolean): Field[] => [
+    { id: 497, typecode: 1, elemSize: 1, values: [0] },
+    { id: 543, typecode: 1, elemSize: 1, values: n(2, 1) },
+    { id: 544, typecode: 1, elemSize: 1, values: n(2, 0) },
+    ...bands(545, 2),
+    { id: 590, typecode: 1, elemSize: 1, values: n(8, 0) },
+    { id: 636, typecode: 1, elemSize: 1, values: n(8, 1) },
+    { id: 637, typecode: 1, elemSize: 1, values: n(8, 1) },
+    ...bands(638, 8),
+    ...(limits
+      ? [
+          { id: 893, typecode: 1, elemSize: 1, values: n(2, 3) } as const,
+          { id: 894, typecode: 1, elemSize: 1, values: n(8, 3) } as const,
+        ]
+      : []),
+  ];
+  const sourceOf = (limits: boolean) =>
+    paramSourceOf(
+      parseUrxf(buildUrxf([{ chunk: "CURRENT", block: "CSF_BACKUP", label: "", fields: geqFields(limits) }])).chunks[0],
+    );
+  // STEREO and MIX 1 hold a Limit other than the factory one, a gain inside it and Flex12GEQ; MIX 2
+  // holds no Limit of its own.
+  const held = () => {
+    const plan = emptyPlan("URX44V");
+    const side = (limit: number) => ({ on: true, limit, bands: [{ gain: 600 }] });
+    plan.nodeParams["bus.stereo"] = { eqType: 2, geq: { link: 0, sides: [side(2), side(2)] } };
+    plan.nodeParams["bus.mix1"] = { eqType: 2, geq: { link: 1, sides: [side(1), side(1)] } };
+    plan.nodeParams["bus.mix2"] = { eqType: 2, geq: { link: 1, sides: [{ on: true }, { on: true }] } };
+    return plan;
+  };
+  const limits = (plan: ReturnType<typeof emptyPlan>, node: string) =>
+    plan.nodeParams[node]?.geq?.sides?.map((s) => s.limit);
+
+  it("reports the GEQ Limit as kept only where the file does not carry it", () => {
+    expect(sourceOf(false).keeps?.(893, 0, 1)).toBe(true);
+    expect(sourceOf(false).keeps?.(894, 0, 3)).toBe(true);
+    expect(sourceOf(true).keeps?.(893, 0, 1)).toBe(false);
+    expect(sourceOf(false).keeps?.(999, 0, 0), "any other gap still fails its read").toBe(false);
+  });
+
+  it("imports the rest of the GEQ and keeps the plan's Limit", async () => {
+    const plan = held();
+    const result = await applySourceState(getModel("URX44V"), plan, sourceOf(false));
+    expect(result.errors.filter((e) => /no parameter (893|894)/.test(e))).toEqual([]);
+    for (const node of ["bus.stereo", "bus.mix1", "bus.mix2"]) {
+      expect(plan.nodeParams[node]?.eqType, node).toBe(0);
+      expect(plan.nodeParams[node]?.geq?.sides?.[0]?.bands?.[0], node).toEqual({ gain: 0 });
+    }
+    expect(limits(plan, "bus.stereo")).toEqual([2, 2]);
+    expect(limits(plan, "bus.mix1")).toEqual([1, 1]);
+    expect(limits(plan, "bus.mix2")).toEqual([undefined, undefined]);
+    expect(plan.nodeParams["bus.mix2"]?.geq?.sides?.[0], "an absent Limit stays absent").not.toHaveProperty("limit");
+  });
+
+  // The control: a file written on 1.5 carries the Limit, and it is read.
+  it("reads the Limit from a file that carries it", async () => {
+    const plan = held();
+    await applySourceState(getModel("URX44V"), plan, sourceOf(true));
+    expect(limits(plan, "bus.stereo")).toEqual([3, 3]);
+    expect(limits(plan, "bus.mix1")).toEqual([3, 3]);
+    expect(limits(plan, "bus.mix2")).toEqual([3, 3]);
   });
 });

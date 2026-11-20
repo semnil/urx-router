@@ -14,6 +14,7 @@
 // with fewer scene chunks may or may not erase the unit's scene memory, which is
 // untested on hardware).
 
+import { PARAMS } from "./params";
 import type { ParamSource } from "./readback";
 
 const DECODER = new TextDecoder();
@@ -130,6 +131,12 @@ const ABSENT_FROM_FORMAT = new Map<number, { name: string; onLoad: number }>([
   [710, { name: "oscillator ON", onLoad: 0 }],
 ]);
 
+// Parameters a file written before System firmware 1.5 does not carry, the firmware that wrote it
+// having none: the GEQ Limit of STEREO and of the MIX buses. A unit on 1.5 that loads such a file
+// keeps the Limit it holds, so the source answers them through `keeps` and the read keeps the plan's
+// value. A file written on 1.5 carries them, and they read like any other parameter.
+const KEPT_ON_LOAD = new Set<number>([PARAMS.STEREO_GEQ_LIMIT.id, PARAMS.OUT_GEQ_LIMIT.id]);
+
 /**
  * A readback parameter source backed by one chunk. Addresses arrive as the broker
  * addresses readback.ts already uses; the file stores an x axis by flattening it
@@ -138,6 +145,8 @@ const ABSENT_FROM_FORMAT = new Map<number, { name: string; onLoad: number }>([
  * A parameter the file does not carry throws rather than falling back to the
  * plan's current value: a readback group that silently keeps its old value would
  * report the plan as imported while part of it still shows what was there before.
+ * The one exception is what `keeps` names, a value the unit itself keeps through a
+ * load of the file.
  */
 export function paramSourceOf(chunk: UrxfChunk): ParamSource {
   const at = (paramId: number, x: number, y: number): number | string => {
@@ -165,6 +174,7 @@ export function paramSourceOf(chunk: UrxfChunk): ParamSource {
       if (typeof value !== "string") throw new Error(`parameter ${paramId + x} is a number`);
       return value;
     },
+    keeps: (paramId, x) => KEPT_ON_LOAD.has(paramId + x) && !chunk.params.has(paramId + x),
   };
 }
 
