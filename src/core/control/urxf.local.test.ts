@@ -81,7 +81,7 @@ describe.skipIf(!present)("device-written settings files (private samples)", () 
 
   // Nine scenes stored before the unit was updated, and one stored after. The later one adds the
   // Output Patch and the STREAMING settings a scene keeps since System 1.5; CURRENT adds the ten
-  // parameters that firmware introduced, none of which the app names.
+  // parameters that firmware introduced, of which the import reads the two GEQ Limits.
   it("reads a file a unit on System 1.5 wrote, and imports its CURRENT with no failures", async () => {
     const file = parseUrxf(read("31-v15-ten-scenes.urxf"));
     expect(file.chunks.map((chunk) => chunk.params.size)).toEqual([830, ...Array(9).fill(695), 712]);

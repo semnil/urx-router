@@ -10,6 +10,7 @@ import type {
   EqOneKnobParams,
   FxEffectParams,
   GeqBand,
+  GeqParams,
   GeqSide,
   NodeParams,
   Plan,
@@ -139,6 +140,9 @@ import {
 export interface ParamSource {
   get(paramId: number, x: number, y: number): Promise<number>;
   getStr(paramId: number, x: number, y: number): Promise<string>;
+  /** True for an address the source does not carry and the unit keeps through a load of the
+   *  source: a read of it keeps the plan's value. Absent on the live device. */
+  keeps?(paramId: number, x: number, y: number): boolean;
 }
 
 // Delegating rather than referencing the imports directly: the binding is resolved
@@ -1149,7 +1153,10 @@ async function readPass(
     if (!geq) continue;
     attempted.add(node.id);
     try {
-      plan.nodeParams[node.id] = { ...plan.nodeParams[node.id], ...(await readGeq(source, geq)) };
+      plan.nodeParams[node.id] = {
+        ...plan.nodeParams[node.id],
+        ...(await readGeq(source, geq, plan.nodeParams[node.id]?.geq)),
+      };
       applied++;
     } catch (e) {
       failed.add(node.id);
@@ -2037,23 +2044,30 @@ async function readEqBands(source: ParamSource, ctrl: EqControl): Promise<EqBand
 }
 
 // Read a bus's Flex12GEQ: the EQ Type and the link at the L instance, and each side in full.
-async function readGeq(source: ParamSource, ctrl: GeqControl): Promise<Pick<NodeParams, "eqType" | "geq">> {
+// A side's limit the source keeps (a settings file written before System 1.5) stays as `held` has it.
+async function readGeq(
+  source: ParamSource,
+  ctrl: GeqControl,
+  held: GeqParams | undefined,
+): Promise<Pick<NodeParams, "eqType" | "geq">> {
   const { vdGet } = readers(source);
   const [l] = ctrl.sides;
   const eqType = await vdGet(ctrl.type.param, 0, ctrl.typeAt[0]);
   const link = await vdGet(ctrl.link.param, 0, l);
   const sides: GeqSide[] = [];
-  for (const inst of ctrl.sides) {
+  for (const [s, inst] of ctrl.sides.entries()) {
     const bands: GeqBand[] = [];
     for (let x = 0; x < GEQ_BAND_COUNT; x++) {
       const at = ctrl.band(x);
       bands.push({ gain: vdToCentiDb(await vdGet(at.param, at.x, inst)) });
     }
-    sides.push({
-      on: vdToBool(await vdGet(ctrl.on.param, 0, inst)),
-      limit: await vdGet(ctrl.limit.param, 0, inst),
-      bands,
-    });
+    const side: GeqSide = { on: vdToBool(await vdGet(ctrl.on.param, 0, inst)) };
+    const limit = source.keeps?.(ctrl.limit.param, 0, inst)
+      ? held?.sides?.[s]?.limit
+      : await vdGet(ctrl.limit.param, 0, inst);
+    if (limit !== undefined) side.limit = limit;
+    side.bands = bands;
+    sides.push(side);
   }
   return { eqType, geq: { link, sides } };
 }
