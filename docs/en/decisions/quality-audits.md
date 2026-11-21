@@ -153,17 +153,25 @@ two port selects: what a second and a third choice do while the first port is st
     and "still says a failed open that is the latest choice, after an earlier one was replaced".
 - **Turned down: reporting that failure and taking it down when a later port opens.** The line
   would still show a failure for a port the operator had left, for as long as the next open takes.
-- **Not established: that the shell takes two commands in the order the page sent them.** The
+- **Measured: whether the shell takes two commands in the order the page sent them.** The
   queue orders what the page sends, every test above stands a stub where the shell is, and the Rust
   side of the ports (`src-tauri/src/midi.rs`) has no test of its own. What is known about the order
   is this. The MIDI commands are all synchronous, and the shell enters synchronous commands one at
   a time, in the order the webview hands them over. That the webview hands two requests over in the
   order the page issued them, when the page does not await the first, is not guaranteed by Tauri's
-  documentation. It holds in the macOS webview (WKWebView). The Windows webview
-  (WebView2) is unconfirmed.
+  documentation, so it was measured on a development build with a probe kept out of this repository.
+  The probe issues bursts of 50 calls in four ways — all in one task, one per task, one per microtask,
+  and all in one task after 5.5 s without IPC — 20 bursts each, and the shell records the order they
+  arrive in. In the macOS webview (WKWebView) all 4,000 calls arrived in the order issued
+  (2026-11-13). In the Windows webview (WebView2 157 on Windows 11) they did not (2026-11-21): in 21
+  of the 80 bursts, a call arrived directly before one issued earlier, 90 times in all. Those were 1
+  of the 20 bursts issued in one task and all 20 issued in one task after the wait; the bursts issued
+  one per task or one per microtask arrived in order. Every call arrived, all over the same
+  transport, none was refused, and the page stayed visible throughout. Neither result is a
+  guarantee, and no release build was measured.
 - **Known and left unguarded: two places where the result depends on the order two commands are
   taken in.** Both go wrong only if the shell takes the two commands in the reverse of the order
-  sent.
+  sent, which the measurement above shows WebView2 can do.
   - A close is not awaited inside the port queue. "None" sends the close and the queue moves on
     (`applyInputPort`, `closeOutput`), so that close and the next open of the same direction can be
     in flight together. Taken in reverse, the shell opens the new port and then closes it, and the
