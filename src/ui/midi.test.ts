@@ -859,6 +859,160 @@ describe("MidiControl, the races and vocabularies around a port", () => {
     expect(mocks.midiSend).not.toHaveBeenCalled();
   });
 
+  // The webview does not keep the order of two requests the page did not await (WebView2
+  // was seen reordering them), and the shell's close takes no port: it closes whatever is
+  // held. A close followed by the next open of the same direction, taken in reverse, opened
+  // the new port and then closed it, while the page showed it as open. The open is not sent
+  // until the close has been answered, which is the shell having taken it.
+  it("does not send the next input open until the close before it is answered", async () => {
+    mocks.midiListInputs.mockResolvedValue(["A", "B"]);
+    install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["A", "B"]));
+    dispatch({ type: "port", dir: "in", name: "A" });
+    await vi.waitFor(() => expect(lastState().input).toBe("A"));
+
+    let closed = false;
+    let answerClose!: () => void;
+    mocks.closeInput.mockImplementationOnce(
+      () => new Promise<void>((r) => (answerClose = () => ((closed = true), r()))),
+    );
+    const sentWhileClosing: boolean[] = [];
+    mocks.midiOpenInput.mockImplementation(async (_port: string, onMessage: (bytes: number[]) => void) => {
+      sentWhileClosing.push(!closed);
+      mocks.inputReceiver = onMessage;
+      return mocks.closeInput;
+    });
+
+    dispatch({ type: "port", dir: "in", name: null });
+    await vi.waitFor(() => expect(mocks.closeInput).toHaveBeenCalled()); // the close is out
+    dispatch({ type: "port", dir: "in", name: "B" });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(mocks.midiOpenInput).not.toHaveBeenCalledWith("B", expect.anything());
+
+    answerClose();
+    await vi.waitFor(() => expect(lastState().input).toBe("B"));
+    expect(sentWhileClosing).toEqual([false]);
+  });
+
+  // The output's half. Its close also comes from the give-up of a stalled port, outside the
+  // queue, so the wait is on the close itself rather than on the queue's order.
+  it("does not send the next output open until the close before it is answered", async () => {
+    mocks.midiListOutputs.mockResolvedValue(["A", "B"]);
+    install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().outputs).toEqual(["A", "B"]));
+    dispatch({ type: "port", dir: "out", name: "A" });
+    await vi.waitFor(() => expect(lastState().output).toBe("A"));
+
+    let closed = false;
+    let answerClose!: () => void;
+    mocks.midiCloseOutput.mockImplementationOnce(
+      () => new Promise<void>((r) => (answerClose = () => ((closed = true), r()))),
+    );
+    const sentWhileClosing: boolean[] = [];
+    mocks.midiOpenOutput.mockImplementation(async () => void sentWhileClosing.push(!closed));
+
+    dispatch({ type: "port", dir: "out", name: null });
+    await vi.waitFor(() => expect(mocks.midiCloseOutput).toHaveBeenCalled()); // the close is out
+    dispatch({ type: "port", dir: "out", name: "B" });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(mocks.midiOpenOutput).not.toHaveBeenCalledWith("B");
+
+    answerClose();
+    await vi.waitFor(() => expect(lastState().output).toBe("B"));
+    expect(sentWhileClosing).toEqual([false]);
+  });
+
+  // The open-ports question after a close, taken in reverse, is answered from before the
+  // close and names the port being closed; the close was counted when it was sent, so the
+  // answer is not discarded and the page puts the port back. The question waits for every
+  // close still unanswered, in either direction.
+  it("does not ask which ports are open until a close before it is answered", async () => {
+    install();
+    await attached();
+    dispatch({ type: "ready" });
+    await vi.waitFor(() => expect(lastState().inputs).toEqual(["Controller In"]));
+    dispatch({ type: "port", dir: "in", name: "Controller In" });
+    await vi.waitFor(() => expect(lastState().input).toBe("Controller In"));
+
+    let answerClose!: () => void;
+    mocks.closeInput.mockImplementationOnce(() => new Promise<void>((r) => (answerClose = r)));
+    dispatch({ type: "port", dir: "in", name: null });
+    await vi.waitFor(() => expect(mocks.closeInput).toHaveBeenCalled());
+
+    const asked = mocks.midiOpenPorts.mock.calls.length;
+    dispatch({ type: "ready" }); // the window announcing itself is what asks
+    await vi.waitFor(() => expect(mocks.midiListInputs.mock.calls.length).toBeGreaterThan(1));
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(mocks.midiOpenPorts.mock.calls.length).toBe(asked);
+
+    answerClose();
+    await vi.waitFor(() => expect(mocks.midiOpenPorts.mock.calls.length).toBe(asked + 1));
+    expect(lastState().input).toBeNull();
+  });
+
+  // The question waits for the closes unanswered when it starts, and a close of the other
+  // direction can begin while it waits. That one is neither awaited nor seen by the change
+  // count unless the count is taken before the wait: the answer, taken before the shell
+  // took the second close, put that port back, and on the output side feedback was sent to
+  // it. A close begun during the wait now drops the question, as one inside its round trip does.
+  it.each(["in", "out"] as const)(
+    "does not put a port back that closed while the question waited for the %s close",
+    async (first) => {
+      seedMappings();
+      const { control } = install();
+      await attached();
+      dispatch({ type: "ready" });
+      await vi.waitFor(() => expect(mocks.midiOpenPorts).toHaveBeenCalledOnce());
+      dispatch({ type: "port", dir: "in", name: "Controller In" });
+      dispatch({ type: "port", dir: "out", name: "Controller Out" });
+      await vi.waitFor(() => expect(lastState()).toMatchObject({ input: "Controller In", output: "Controller Out" }));
+
+      // The shell's slots. The first close has been taken and only its answer is held
+      // back; the second is taken when its answer comes, after the question.
+      const shell: Record<"in" | "out", string | null> = { in: "Controller In", out: "Controller Out" };
+      const answers: Partial<Record<"in" | "out", () => void>> = {};
+      const second = first === "in" ? "out" : "in";
+      const close = (dir: "in" | "out"): Promise<void> =>
+        new Promise<void>((resolve) => {
+          if (dir === first) shell[dir] = null;
+          answers[dir] = () => ((shell[dir] = null), resolve());
+        });
+      mocks.closeInput.mockImplementationOnce(() => close("in"));
+      mocks.midiCloseOutput.mockImplementationOnce(() => close("out"));
+      let asked = false;
+      mocks.midiOpenPorts.mockImplementation(async () => ((asked = true), [shell.in, shell.out]));
+
+      dispatch({ type: "closed" });
+      let answerList!: () => void;
+      mocks.midiListInputs.mockImplementationOnce(
+        () => new Promise<string[]>((r) => (answerList = () => r(["Controller In"]))),
+      );
+      dispatch({ type: "ready" });
+      dispatch({ type: "port", dir: first, name: null });
+      await vi.waitFor(() => expect(answers[first]).toBeDefined());
+      answerList();
+      for (let i = 0; i < 30; i++) await Promise.resolve(); // the refresh is waiting on the first close
+      dispatch({ type: "port", dir: second, name: null });
+      await vi.waitFor(() => expect(answers[second]).toBeDefined());
+      const refreshed = asked
+        ? Promise.resolve()
+        : new Promise<void>((r) => void mocks.midiUiToWindow.mockImplementationOnce(async () => r()));
+      answers[first]!();
+      await refreshed;
+      answers[second]!();
+      control.liveReadSettled(); // a readback settling is what sends every mapped value
+      await Promise.resolve();
+
+      expect(shell).toEqual({ in: null, out: null });
+      expect({ input: lastState().input, output: lastState().output }).toEqual({ input: null, output: null });
+      expect(mocks.midiSend).not.toHaveBeenCalled();
+    },
+  );
+
   // A failed open is said on the status line, and the wording names no port. Said for an
   // attempt the operator has already chosen away from, it arrives after their new choice
   // and reads as that port's failure — and stays there once that port is open.

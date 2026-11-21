@@ -180,16 +180,26 @@ two port selects: what a second and a third choice do while the first port is st
   one per task or one per microtask arrived in order. Every call arrived, all over the same
   transport, none was refused, and the page stayed visible throughout. Neither result is a
   guarantee, and no release build was measured.
-- **Known and left unguarded: two places where the result depends on the order two commands are
-  taken in.** Both go wrong only if the shell takes the two commands in the reverse of the order
-  sent, which the measurement above shows WebView2 can do.
-  - A close is not awaited inside the port queue. "None" sends the close and the queue moves on
-    (`applyInputPort`, `closeOutput`), so that close and the next open of the same direction can be
-    in flight together. Taken in reverse, the shell opens the new port and then closes it, and the
-    page goes on showing it as open.
+- **Fixed: two places that relied on the order two commands are taken in.** Both went wrong only if
+  the shell took the two commands in the reverse of the order sent, which the measurement above
+  shows WebView2 can do.
+  - A close was not awaited inside the port queue. "None" sends the close and the queue moves on
+    (`applyInputPort`, `closeOutput`), so that close and the next open of the same direction could be
+    in flight together. Taken in reverse, the shell opened the new port and then closed it, and the
+    page went on showing it as open.
   - A close followed by the question about open ports (`reconcileOpenPorts`, which `refreshPorts`
-    runs). The close is counted when it is sent, so a question sent after it is not discarded.
-    Taken in reverse, the answer still names the port being closed and the page puts it back.
+    runs). The close is counted when it is sent, so a question sent after it was not discarded.
+    Taken in reverse, the answer still named the port being closed and the page put it back.
+
+  The last close of each direction is kept until the shell has answered it, and the next open of
+  that direction and the question about open ports are not sent before then. A close of the other
+  direction begun while the question waits drops the question, the same as a close begun inside its
+  round trip. The close still does not hold up the queue, and the shell's answer to a close is the
+  shell having taken it.
+  `src/ui/midi.test.ts`: "does not send the next input open until the close before it is answered",
+  the same for the output, "does not ask which ports are open until a close before it is
+  answered", and "does not put a port back that closed while the question waited" for each
+  direction, each of which fails without its part of the fix.
 - **Fixed: giving up an output the operator had already chosen away from.** Giving up a stalled
   output (`abandonOutput`) sends its close from outside the queue, and the shell's close takes no
   port: it closes whatever is held. A failed send counted toward the give-up even after the
