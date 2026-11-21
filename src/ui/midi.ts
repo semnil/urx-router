@@ -649,13 +649,16 @@ export class MidiControl {
    * already counted when the query leaves, so the query waits for every close still
    * unanswered: the webview does not keep the order of two requests the page did not
    * await (WebView2 was seen reversing them), and taken before the close, the answer
-   * names the port being closed.
+   * names the port being closed. A close begun during that wait drops the query, the
+   * same as one begun inside its round trip.
    */
   private async reconcileOpenPorts(): Promise<void> {
     if (!isTauri() || this.opensInFlight > 0) return;
-    await Promise.all([this.closing.in, this.closing.out]);
-    if (this.opensInFlight > 0) return;
+    // Taken before the wait: a close of the other direction can begin while this waits, and
+    // it is awaited by nothing here, so the count is what sees it.
     const generation = this.portChanges;
+    await Promise.all([this.closing.in, this.closing.out]);
+    if (this.opensInFlight > 0 || this.portChanges !== generation) return;
     const [input, output] = await midiOpenPorts().catch(() => [this.inputPort, this.outputPort]);
     if (this.opensInFlight > 0 || this.portChanges !== generation) return; // a slot changed under it
     if (input !== this.inputPort) {
