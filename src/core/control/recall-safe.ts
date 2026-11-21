@@ -3,7 +3,7 @@
 // (translate.ts `recallSafeRows`), state of the unit outside the plan that the live session reads,
 // follows and shows on the SIM view's RECALL SAFE screen. The session writes a selection chosen on
 // the glass and never a [Safe], which the unit takes from its own panel alone. Incoming Sends and
-// the Others tab are on no address of the link, and stay the glass's own.
+// the Others tab have no address of the link the app has found, and stay the glass's own.
 //
 // The glass names a row by its strip (urx-lcd-sim's `safe.<strip>.on` and `safe.<strip>.<key>`) and
 // each parameter as a flag of its own; on the unit a parameter is a bit field of the row's

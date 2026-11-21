@@ -387,8 +387,8 @@ connection reaches only part of it:
   LCD during Live sync is written to the unit, and the unit's screen shows it.
 - **A row's [Safe]** cannot: the control connection refuses the write. During Live sync it is
   read-only on the LCD, and is set on the unit.
-- **Incoming Sends** and the **Others** tab are on no address of the control connection, so the
-  app can neither read nor write them. The LCD keeps values of its own for them, which reach
+- **Incoming Sends** and the **Others** tab: no address of the control connection has been found
+  for them, so the app neither reads nor writes them. The LCD keeps values of its own for them, which reach
   nothing.
 - With Live sync off the whole screen is the LCD's own, and reaches nothing. A session's start
   replaces its rows with the unit's.
@@ -398,7 +398,9 @@ connection reaches only part of it:
 > selection written from the LCD during Live sync, which the unit shows, and a [Safe] pressed on the
 > unit, which the LCD follows. Confirmed on the URX44V alone: that a recall honours a selection
 > written over the control connection on a row whose [Safe] is on (for the CH ON column; the other
-> columns were not tried), the refused [Safe], and Incoming Sends and the Others tab out of reach.
+> columns were not tried), the refused [Safe], and that none of the listed addresses of the control connection moves with
+> Incoming Sends or the Others tab, and that the numbers outside the list answer no value at their
+> first instance.
 > Not confirmed on the URX44, which is assumed to behave as the URX44V
 > ([decisions/device-control.md](decisions/device-control.md), "The URX44 is assumed to behave as
 > the URX44V").

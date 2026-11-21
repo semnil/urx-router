@@ -1978,7 +1978,7 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   (written as the pair is linked or taken into SSMCS), the recorder's playback (which a rate change stops), the output
   patch's and the Peripheral screen's tab, the scene list's bank and row (until the unit's cursor moves, below), the
   microSD folder and file a screen has picked, the User Defined Knobs bank on show, the output cues the LCD's own CUE rule remembers to put back,
-  and RECALL SAFE's settings — Incoming Sends and the Others tab always, being on no address of the link, and the
+  and RECALL SAFE's settings — Incoming Sends and the Others tab always, no address of the link having been found for them, and the
   rows while no session holds the unit's (below).
   Refused like a path the table does not carry, one of these would take the whole edit back with it. A value the plan holds but the edit cannot take in its present state (PAN/BAL on an unlinked pair, an
   unwired send, an FX 2 send at a rate that takes FX 2 out, the recorder's Track Count
@@ -2011,8 +2011,8 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   the unit's panel, or found by a read, while the write waits is kept. Every press on a row before that turn goes
   out in the one write — the row's [All] and a Source with the HA beside it are one press. The unit announces its answer to each write,
   and an answer to a write the LCD has since replaced does not move the LCD back. A row's [Safe] the unit takes from
-  no link, so during Live sync the LCD holds it shut (below). Incoming Sends and the Others tab are on no address of
-  the link and stay the LCD's own, and with no session the whole screen is, reaching nothing. Which row each
+  no link, so during Live sync the LCD holds it shut (below). No address of the link has been found for Incoming
+  Sends and the Others tab, which stay the LCD's own, and with no session the whole screen is, reaching nothing. Which row each
   address belongs to is unconfirmed on the URX44 (known-issues.md).
 - **The [CUE] flags** are live-session state rather than the plan's (`cue.ts`; see "CUE" under "What the app models,
   and what it leaves to the unit"). While Live sync is up the LCD shows every strip's flag as the session holds it

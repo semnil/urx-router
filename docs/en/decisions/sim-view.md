@@ -220,7 +220,7 @@ and on the rate while Follow USB is on. architecture.md has the rule under What 
 firmware V1.5) shows each row's [Safe] and parameter selections as the unit holds them and follows a
 change made on the unit's panel, and a selection made on the LCD is written to the unit. A row's
 [Safe] is held shut with the wording of PRE / POST: the unit refuses it from the link. Incoming Sends
-and the Others tab stay the LCD's own, since no address of the link carries them, and RECALL SAFE is
+and the Others tab stay the LCD's own, since no address of the link has been found for them, and RECALL SAFE is
 not part of a plan.
 
 **Why.** The unit takes a selection from the link and shows it on its own screen, and a recall

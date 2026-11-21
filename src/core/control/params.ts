@@ -726,7 +726,7 @@ export const PARAMS = {
    *  per column (`recall-safe.ts`): announced on every change, on the panel or over the link, and
    *  written by the live session from the SIM view. The unit keeps both for itself as a whole — the
    *  settings file carries them outside every scene — so they are never part of the plan. Incoming
-   *  Sends and the Others tab are on no address of the link. */
+   *  Sends and the Others tab have no address of the link that has been found. */
   RECALL_SAFE_MONO: { id: 744, encoding: "raw", planExternal: true, readOnly: true },
   RECALL_SAFE_MONO_SELECT: { id: 745, encoding: "raw", sceneExternal: true, planExternal: true },
   RECALL_SAFE_STEREO_CH: { id: 746, encoding: "raw", planExternal: true, readOnly: true },

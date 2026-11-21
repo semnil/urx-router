@@ -109,7 +109,7 @@ export const GLASS_OWN = new Set([
 ]);
 // RECALL SAFE's settings (System firmware V1.5) are the simulator's too, except a row's [Safe] and
 // selections while a session holds the unit's (`isUnitPath`, asked first): Incoming Sends and the
-// Others tab are on no address of the link, and with no session the glass's scenes are the
+// Others tab have no address of the link the app has found, and with no session the glass's scenes are the
 // simulator's.
 const glassOwn = (path: string): boolean =>
   GLASS_OWN.has(path) || /^pair\.[^.]+\.compSplit$/.test(path) || path.startsWith("safe.");

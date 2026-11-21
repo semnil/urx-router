@@ -1125,7 +1125,7 @@ describe("the SIM view over a live session", () => {
     expect(await shownSafe("safe.ch3.chOn", "safe.ch3.chLevel")).toEqual([true, true]);
     // A row's [Safe] the unit takes from its own panel alone.
     await expect(transport().write("safe.ch3.on", false)).rejects.toThrow("refused");
-    // Incoming Sends and the Others tab are on no address of the link.
+    // No address of the link has been found for Incoming Sends and the Others tab.
     await expect(transport().write("safe.bus.mix1.incoming", true)).resolves.toBe(true);
     await expect(transport().write("safe.others.fx1", true)).resolves.toBe(true);
     await transport().write("setup.brightness", 3);
