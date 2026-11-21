@@ -1577,6 +1577,42 @@ describe("the SIM view over a live session", () => {
     expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]);
   });
 
+  it("keeps the answer to a RECALL SAFE write that lands while the row is read back", SLOW, async () => {
+    // The unit takes nothing at first: its answer comes once the read back is out.
+    const unit = silentSelectUnit({ take: false });
+    let holdRead = false;
+    let reading = false;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const get = unit.cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    unit.cmds.vd_get = (a: Record<string, unknown>) => {
+      if (!holdRead || a.paramId !== SELECT) return get(a);
+      const value = get(a);
+      reading = true;
+      return held.then(() => value);
+    };
+    const shell = await unit.boot();
+    holdRead = true;
+    // The answer window runs on `Date.now()`, held still so the late answer is still the write's;
+    // timers stay real, so the write's wait ends at its bound and the read back goes out.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      await transport().write("safe.ch1.name", true);
+      for (let i = 0; i < 1000 && !reading; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(reading, "the premise: the read back is out").toBe(true);
+      // The write lands and is answered; the read back then answers what it took before.
+      unit.press(SELECT, 0x100000);
+      release();
+      await new Promise((r) => setTimeout(r, 100));
+      expect(await shownSafe("safe.ch1.name"), "the answer over the older read").toEqual([true]);
+      await transport().write("safe.ch1.chLevel", true);
+      for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(setsOf(shell, SELECT)[1], "the next press changes its own column alone").toEqual([0, 0x100001]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // A SETUP write the unit holds unanswered, a RECALL SAFE selection queued behind it, and Console
   // Lock on and off while it waits; then another SETUP write and a selection of the same row.
   const lockedQueue = async (brightness2?: Error) => {

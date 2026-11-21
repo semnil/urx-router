@@ -2016,7 +2016,7 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   out in the one write — the row's [All] and a Source with the HA beside it are one press — and the next write to the row
   waits for the unit to announce the value of the one before. Where the unit announces none within the settle bound —
   it held that selection already, or did not take it — the row is read back first, and a selection the unit announces
-  while that read is out is kept over the read's answer; a read that fails ends the session. A selection not yet
+  while that read is out, the late answer to the write included, is kept over the read's answer; a read that fails ends the session. A selection not yet
   written when Console Lock arrives is put back, as an edit of the plan is, and the write queued for it is dropped, so
   a selection made after the unlock goes out in its own turn, behind the writes queued before it. The unit announces its answer to each write,
   and an answer to a write the LCD has since replaced does not move the LCD back. A row's [Safe] the unit takes from

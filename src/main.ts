@@ -1288,7 +1288,8 @@ const integrationVersions: Record<IntegrationField, number> = { active: 0, fx1Se
 // SCENE > [Recall Safe] (System firmware V1.5), by row: as a session read it and the unit announced
 // it since; what the glass chose there and has not written yet, laid over the unit's selection when
 // the row is written and while it is shown; a count of the unit's announcements of each row's [Safe]
-// and selection (`safePartKey`), which a read taken while one lands does not override; the
+// and selection, its answers to this app's writes included (`safePartKey`), which a read taken while
+// one lands does not override; the
 // selections this app wrote that the unit has not announced yet; and the rows one press on the glass
 // changed, written once each when the press has made all of its writes.
 let unitRecallSafe: Map<string, SafeRowState> | null = null;
@@ -1589,6 +1590,10 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
   // A RECALL SAFE row: the unit answering a selection this app wrote, or a press on its panel.
   const safeAt = recallSafeAt(getModel(modelId), paramId, 0, y);
   if (safeAt) {
+    // Counted before an answer is told apart, so a read taken before it — the answer to a write
+    // included, which lands at the edge of the settle bound — does not put the row back.
+    const key = safePartKey(safeAt.row.node, safeAt.part);
+    recallSafeVersions.set(key, (recallSafeVersions.get(key) ?? 0) + 1);
     if (safeAt.part === "select") {
       if (recallSafeEchoes.take(paramId, y, value)) return true;
       // A selection of the unit's own lands between this app's write and its answer: the answer then
@@ -1596,8 +1601,6 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
       recallSafeEchoes.drop(paramId, y);
     }
     if (unitRecallSafe) unitRecallSafe = withRecallSafeNotify(unitRecallSafe, safeAt, value);
-    const key = safePartKey(safeAt.row.node, safeAt.part);
-    recallSafeVersions.set(key, (recallSafeVersions.get(key) ?? 0) + 1);
     simView?.unitStateChanged();
     return true;
   }
