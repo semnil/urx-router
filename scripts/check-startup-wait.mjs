@@ -18,6 +18,9 @@
 // from `src-tauri/` with the relative argv `target/debug/urx-router`, so an absolute path never
 // matches it, and a match on the whole argv also finds the shells wrapping it. The process NAME
 // identifies an app, and its working directory identifies the tree that built it: `--pid`.
+// Windows has neither pgrep nor lsof, and does not show another process's working directory;
+// there the executable's own path identifies the tree, since cargo writes the binary under
+// `<tree>/src-tauri/target` and the app runs from that file.
 //
 // PostToolUse, Bash: a background launch of `tauri dev` is answered with that check, since a
 // background command reports only when it exits, and the app exits when its window closes.
@@ -26,7 +29,7 @@
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const APP = "urx-router";
@@ -42,7 +45,8 @@ const POLL_MS = 1000;
 const CHECK = [
   "Check the process instead, once and in this turn: `node scripts/check-startup-wait.mjs --pid <tree>` prints",
   "the PID of your `urx-router` process (`pgrep -x -u <uid> urx-router`) whose working directory is `<tree>/src-tauri`",
-  "(`lsof -a -p <pid> -d cwd -Fn`), exits 1 while that tree's app is not running — an app another tree built",
+  "(`lsof -a -p <pid> -d cwd -Fn`) — on Windows, your `urx-router.exe` whose executable lies under",
+  "`<tree>/src-tauri/target` — exits 1 while that tree's app is not running — an app another tree built",
   "does not count — and exits 2 with the reason when it cannot tell. To wait, run the same command with `--wait`",
   "in the background, after that one check has shown the app is not already up: it polls while the answer is",
   "not running, prints the PID and exits 0 once the app is up, and exits 2 as soon as it cannot tell. Act on",
@@ -291,10 +295,44 @@ function canonical(path) {
   }
 }
 
+/** Windows: the processes named like the app, each with the path of its executable, or null
+ *  where Windows reports none — such a process is not taken as any tree's app. */
+function windowsApps() {
+  const query =
+    "[Console]::OutputEncoding = [Text.Encoding]::UTF8; " +
+    `Get-CimInstance Win32_Process -Filter "Name='${APP}.exe'" | ` +
+    'ForEach-Object { [string]$_.ProcessId + "|" + $_.ExecutablePath }';
+  const res = run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", query]);
+  if (res.error) throw res.error;
+  if (res.status !== 0) throw new Error(`powershell.exe exited ${res.status}: ${res.stderr.trim()}`);
+  return res.stdout
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const at = line.indexOf("|");
+      const exe = line.slice(at + 1);
+      return { pid: line.slice(0, at), exe: exe === "" ? null : exe };
+    });
+}
+
 /** The PID of the dev app `tree` built — the process named like the app whose working directory
- *  is `<tree>/src-tauri` — or null. Throws when `tree` has no `src-tauri`. */
-export function devAppPid(tree, { pids = appPids, cwdOf = processCwd } = {}) {
+ *  is `<tree>/src-tauri`, or on Windows whose executable lies under `<tree>/src-tauri/target` —
+ *  or null. Throws when `tree` has no `src-tauri`. */
+export function devAppPid(
+  tree,
+  { platform = process.platform, pids = appPids, cwdOf = processCwd, apps = windowsApps } = {},
+) {
   const want = realpathSync(join(tree, "src-tauri"));
+  if (platform === "win32") {
+    // Windows compares paths without case, and reports the drive letter in either.
+    // Both sides are resolved: a `target` that is a junction to another directory leaves the
+    // executable's real path outside the tree as written.
+    const under = join(canonical(join(want, "target")), sep).toLowerCase();
+    for (const { pid, exe } of apps()) {
+      if (exe !== null && canonical(exe).toLowerCase().startsWith(under)) return pid;
+    }
+    return null;
+  }
   for (const pid of pids()) {
     const cwd = cwdOf(pid);
     if (cwd !== null && canonical(cwd) === want) return pid;

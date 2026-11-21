@@ -13,7 +13,16 @@
 // harness runs it, since a checker nobody calls refuses nothing while every case here passes.
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -121,22 +130,104 @@ describe("which app the check names", () => {
   const cwds = { 11: "/x/other/src-tauri", 12: "/x/tree/src-tauri", 13: null };
   const tree = mkdtempSync(join(tmpdir(), "startup-wait-"));
   mkdirSync(join(tree, "src-tauri"));
+  afterAll(() => rmSync(tree, { recursive: true, force: true }));
   const cwdOf = (pid) => (pid === "12" ? join(tree, "src-tauri") : cwds[pid]);
 
   it("names the process whose working directory is the tree's src-tauri, and no other", () => {
-    expect(devAppPid(tree, { pids: () => ["11", "13"], cwdOf })).toBeNull();
-    expect(devAppPid(tree, { pids: () => ["11", "13", "12"], cwdOf })).toBe("12");
+    expect(devAppPid(tree, { platform: "darwin", pids: () => ["11", "13"], cwdOf })).toBeNull();
+    expect(devAppPid(tree, { platform: "darwin", pids: () => ["11", "13", "12"], cwdOf })).toBe("12");
   });
   it("refuses a tree with no src-tauri rather than reading it as an app not running", () => {
-    expect(() => devAppPid(join(tree, "missing"), { pids: () => [], cwdOf })).toThrow();
+    expect(() => devAppPid(join(tree, "missing"), { platform: "darwin", pids: () => [], cwdOf })).toThrow();
+    expect(() => devAppPid(join(tree, "missing"), { platform: "win32", apps: () => [] })).toThrow();
   });
+
+  // Windows: the executable's path, not the working directory, names the tree.
+  const exeIn = (...dirs) => join(tree, ...dirs, "urx-router.exe");
+  it("names on Windows the process whose executable lies under the tree's src-tauri/target, and no other", () => {
+    const elsewhere = [
+      { pid: "21", exe: join(tmpdir(), "other", "src-tauri", "target", "debug", "urx-router.exe") },
+      { pid: "23", exe: null },
+      { pid: "24", exe: exeIn("src-tauri", "target-other") },
+      { pid: "25", exe: exeIn("installed") },
+    ];
+    const own = { pid: "22", exe: exeIn("src-tauri", "target", "debug") };
+    expect(devAppPid(tree, { platform: "win32", apps: () => elsewhere })).toBeNull();
+    expect(devAppPid(tree, { platform: "win32", apps: () => [...elsewhere, own] })).toBe("22");
+  });
+  it("matches the executable's path on Windows whatever the case of its letters", () => {
+    const flipped = exeIn("src-tauri", "target", "debug").replace(/[a-z]/gi, (c) =>
+      c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase(),
+    );
+    expect(devAppPid(tree, { platform: "win32", apps: () => [{ pid: "31", exe: flipped }] })).toBe("31");
+  });
+  it("follows a target directory that is a junction to the build output elsewhere", () => {
+    const linked = join(tree, "linked");
+    const out = join(tree, "build-output", "debug");
+    mkdirSync(join(linked, "src-tauri"), { recursive: true });
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, "urx-router.exe"), "");
+    symlinkSync(join(tree, "build-output"), join(linked, "src-tauri", "target"), "junction");
+    const throughLink = join(linked, "src-tauri", "target", "debug", "urx-router.exe");
+    for (const exe of [join(out, "urx-router.exe"), throughLink]) {
+      expect(devAppPid(linked, { platform: "win32", apps: () => [{ pid: "41", exe }] })).toBe("41");
+    }
+  });
+});
+
+const windows = process.platform === "win32";
+
+describe.skipIf(!windows)("which app the check names, among real Windows processes", () => {
+  const root = windows ? mkdtempSync(join(tmpdir(), "startup-wait-")) : "";
+  const children = [];
+  // Windows will not delete an executable while its process holds it, so each is waited out.
+  afterEach(() =>
+    Promise.all(
+      children.splice(0).map(
+        (child) =>
+          new Promise((resolve) => {
+            if (child.exitCode !== null || child.signalCode !== null) return resolve();
+            child.on("exit", resolve);
+            child.kill();
+          }),
+      ),
+    ),
+  );
+  afterAll(() => rmSync(root, { recursive: true, force: true, maxRetries: 5 }));
+  // A copy of node named like the app, in the tree's build output, waiting on a timer.
+  const launch = (name) => {
+    const dir = join(root, name, "src-tauri", "target", "debug");
+    mkdirSync(dir, { recursive: true });
+    const exe = join(dir, "urx-router.exe");
+    copyFileSync(process.execPath, exe);
+    const child = spawn(exe, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+    children.push(child);
+    return { tree: join(root, name), pid: String(child.pid) };
+  };
+  const cli = (tree) => spawnSync(process.execPath, [SCRIPT, "--pid", tree], { encoding: "utf8", timeout: 20000 });
+
+  it("exits 1 while only another tree's app runs, and prints its own PID once it runs", async () => {
+    mkdirSync(join(root, "tree", "src-tauri"), { recursive: true });
+    const other = launch("other");
+    await vi.waitFor(() => expect(devAppPid(other.tree)).toBe(other.pid), { timeout: 20000 });
+    const refused = cli(join(root, "tree"));
+    expect([refused.status, refused.stdout]).toEqual([1, ""]);
+
+    const own = launch("tree");
+    await vi.waitFor(() => expect(devAppPid(own.tree)).toBe(own.pid), { timeout: 20000 });
+    const answered = cli(join(root, "tree"));
+    expect([answered.status, answered.stdout.trim()]).toEqual([0, own.pid]);
+  }, 60000);
 });
 
 const which = (cmd) => spawnSync("sh", ["-c", `command -v ${cmd}`], { encoding: "utf8" }).stdout.trim();
 const tools = ["pgrep", "lsof", "bash"].map(which);
 
-describe.skipIf(tools.some((path) => path === ""))("which app the check names, among real processes", () => {
-  const root = mkdtempSync(join(tmpdir(), "startup-wait-"));
+const lacking = tools.some((path) => path === "");
+
+// A skipped suite still runs its body and never its hooks, so its directory is made only where it runs.
+describe.skipIf(lacking)("which app the check names, among real processes", () => {
+  const root = lacking ? "" : mkdtempSync(join(tmpdir(), "startup-wait-"));
   const children = [];
   afterEach(() => {
     for (const child of children.splice(0)) child.kill("SIGKILL");

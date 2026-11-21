@@ -120,7 +120,10 @@ log instead. How it works is in [local-runs.md](../local-runs.md) "Whether the d
 
 - **The check looks only at processes of the current user** (`pgrep -x -u <uid>`). The working
   directory of another user's process cannot be read with `lsof`, so with those included the
-  answer would become "cannot tell".
+  answer would become "cannot tell". On Windows (2026-11-21), where neither `pgrep` nor `lsof`
+  exists and the check had answered "cannot tell" for every tree, it names the process by the path
+  of its executable under `<tree>/src-tauri/target` instead, and passes over a process whose path
+  Windows does not report.
 - **The hook reads a command with a narrow reading of shell, and is not widened to cover shell
   syntax as a whole.** What it leaves alone on purpose: a word inside quotes, the body of a
   here-document, a substitution escaped with a backslash, and a grep that follows a loop's `done`.
