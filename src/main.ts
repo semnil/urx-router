@@ -2326,7 +2326,10 @@ const follow =
           if (at(LCD_SELECTION_ADDR)) {
             if (lcdEchoes.take(p.value)) return true;
             // The unit moved its selection itself, so what this app last wrote is no longer what
-            // the unit holds, and a switch still waiting to be written is older than this one.
+            // the unit holds, and a switch still waiting to be written is older than this one. A
+            // write already sent lands after this selection, and its answer then carries what the
+            // unit holds: it is taken rather than swallowed.
+            lcdEchoes.clear();
             lcdLast = null;
             lcdNext = null;
             const sel = decodeLcdSelection(getModel(modelId), p.value);
@@ -2336,7 +2339,12 @@ const follow =
           // HOME's [Sends] destination: the unit answering a write of this app's, or a choice on
           // its panel. Neither opens a reconcile.
           if (at(SENDS_TARGET_ADDR)) {
-            if (!sendsEchoes.take(p.value)) takeSendsTarget(p.value);
+            // A choice of the unit's own drops the answers waited on: one to a write of this app's that
+            // lands after it carries what the unit holds, and is taken rather than swallowed.
+            if (!sendsEchoes.take(p.value)) {
+              sendsEchoes.clear();
+              takeSendsTarget(p.value);
+            }
             return true;
           }
           // The unit's settings, its operation mode and an engaged Clip Safe, which the SIM view

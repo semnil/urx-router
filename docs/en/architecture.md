@@ -1980,8 +1980,9 @@ sync, what it can only read is shown from the unit and takes no write, and what 
 - **HOME's [Sends] destination** is the unit's UI state rather than the plan's (`sends-target.ts`). The SIM view is
   built once the experimental gate resolves on, so no other launch builds it or reads the destination. While Live
   sync is up the LCD shows the destination the unit holds and follows a choice made on the unit's panel, and a
-  destination chosen on the LCD is written to the unit — FX 2 is refused above 96 kHz. With no session the LCD
-  keeps a destination of its own, which reaches nothing.
+  destination chosen on the LCD is written to the unit — FX 2 is refused above 96 kHz. A choice made on the unit
+  drops the answers waited on, so the answer to a write already on the wire, landing after it, is shown as what the
+  unit holds. With no session the LCD keeps a destination of its own, which reaches nothing.
 - **SETUP > Software Integration** is the unit's setting rather than the plan's (`daw-integration.ts`). The unit opens
   it only while a compatible DAW (Cubase, Nuendo, MixKey) holds it, a state the unit publishes, and the LCD
   opens it only then and only while Live sync is up: during Live sync the session tells the LCD whether one does, and
@@ -2556,7 +2557,8 @@ written at all:
   two switches in a row do not bounce. One write is on the wire at a time: the switches made while it is go
   out as one write of the latest side, and not at all when that is the side the write sent — the unit leaves
   most of two writes 20 ms apart unannounced, so the answers cannot be counted. A selection the unit makes itself
-  drops the switches still waiting, and a session's release waits for its write on the wire before it disconnects,
+  drops the switches still waiting, and the answers waited on too: a write already on the wire lands after that
+  selection, so its answer carries what the unit holds and is shown. A session's release waits for its write on the wire before it disconnects,
   so that write's answer lands before another session can start. No plan key moves either way.
 
 - **CUE: the unit changes state it does not announce, outside the plan.** The [CUE] of a mono channel, a stereo

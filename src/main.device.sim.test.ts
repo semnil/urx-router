@@ -103,6 +103,28 @@ describe("the displayed side and the unit's LCD selection", () => {
     await end(shell);
   });
 
+  // A selection made on the unit lands between a switch this app wrote and that write's answer: the
+  // answer, landing after it, carries what the unit holds and is shown.
+  it("shows the side of a switch whose answer lands after a selection made on the unit", SLOW, async () => {
+    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
+    await goLive();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      nameArea().click();
+      expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
+      for (let i = 0; i < 1000 && lcdWrites(shell).length < 1; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(lcdWrites(shell)).toEqual([0x0101]);
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
+      expect(showing(), "the unit's own selection").toBe("C H 5 slash 6, showing C H 5 (L)");
+      notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+      expect(showing(), "what the unit holds after both").toBe("C H 5 slash 6, showing C H 6 (R)");
+      expect(lcdWrites(shell), "nothing written back").toEqual([0x0101]);
+    } finally {
+      vi.useRealTimers();
+    }
+    await end(shell);
+  });
+
   // Switches made while a write is on the wire go out as one write of the latest side, and
   // not at all when the latest is the side that write sent.
   it("writes the latest of the switches made while a write is on the wire", SLOW, async () => {
@@ -1094,6 +1116,28 @@ describe("the SIM view over a live session", () => {
     await transport().write("setup.integration.fx1Send", "MIX 2");
     await invoked(shell, "vd_disconnect");
     expect(errors(shell).join(" "), "the refused write is what ended it").toContain("send write refused");
+  });
+
+  it("shows the [Sends] destination whose answer lands after a choice made on the unit", SLOW, async () => {
+    const SENDS = PARAMS.SENDS_TARGET.id;
+    const shell = await bootDevice({ experimental_enabled: true }, true, { [`${SENDS}/0/0`]: 32 });
+    await openSim();
+    await goLive();
+    const shown = async (): Promise<unknown> => (await transport().snapshot()).get("ui.sendsTarget");
+    await vi.waitFor(async () => expect(await shown(), "the premise: the unit's MIX 1").toBe("MIX1"));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      await transport().write("ui.sendsTarget", "FX1");
+      for (let i = 0; i < 1000 && setsOf(shell, SENDS).length < 1; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(setsOf(shell, SENDS)).toEqual([[0, 16]]);
+      // MIX 2 chosen on the unit, then the write's own answer.
+      notifyChannel(shell).onmessage([{ param_id: SENDS, x: 0, y: 0, value: 34 }]);
+      expect(await shown()).toBe("MIX2");
+      notifyChannel(shell).onmessage([{ param_id: SENDS, x: 0, y: 0, value: 16 }]);
+      expect(await shown(), "what the unit holds after both").toBe("FX1");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ends the session when a delay time turned under tempo Sync is refused", SLOW, async () => {
