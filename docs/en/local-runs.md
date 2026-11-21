@@ -150,13 +150,22 @@ No test reaches the code that only the demo build runs (what `DEMO` selects when
 suite runs with `DEMO` false, and the E2E suite serves a plain build. What that code does is checked on the
 built bundles.
 
-- **A plain build drops that code.** After `pnpm build`, no JavaScript file under `dist/` contains
-  `data-demo-hide`; after `pnpm build:demo`, the JavaScript keeps it, as the selector the `if (DEMO)`
-  block in `src/main.ts` queries. Search the JavaScript files only: `index.html` carries the attribute in both
-  builds.
-- **What the demo hides** is read in a browser: run `pnpm build:demo`, then `pnpm preview`, and read the
-  element's computed `display` and its bounding rectangle. `pnpm preview` holds port 4173, which an E2E
-  run would reuse as it is; stop it afterwards ("Finding a server left on an E2E port" above).
+- **Build the two bundles outside `dist/`.** An E2E run serves `dist/`, and a build into it changes what
+  that server answers mid-run. Give each check build a folder of its own outside the repository:
+  `pnpm exec vite build --outDir <dir>/plain --emptyOutDir` and
+  `pnpm exec vite build --mode demo --outDir <dir>/demo --emptyOutDir` (these skip the `tsc --noEmit` that
+  `pnpm build` runs first).
+- **A plain build drops that code.** No JavaScript file under `<dir>/plain` contains `data-demo-hide`;
+  under `<dir>/demo`, the JavaScript keeps it, as the selector the `if (DEMO)` block in `src/main.ts`
+  queries. Search the JavaScript files only: `index.html` carries the attribute in both builds.
+- **What the demo hides** is read in a browser. Serve each folder with
+  `pnpm exec vite preview --outDir <dir>/<plain or demo> --port <n> --strictPort` on a port other than the
+  E2E ports 4173 and 4174, and read the File menu, `.menu[data-demo-hide]`: the plain build shows it, and
+  in the demo build its computed `display` is `none` and its bounding rectangle is 0 × 0. Do not judge by
+  the first `[data-demo-hide]`, `#follow-usb`: its `data-control-hide` hides it in every browser build, so
+  it reads the same when the demo's hiding is broken. The demo also shows the `[data-demo-only]` elements
+  (Share URL, Download JSON and the link to the desktop app). Stop the servers afterwards ("Finding a server
+  left on an E2E port" above).
 
 ## Starting the desktop app for a check
 

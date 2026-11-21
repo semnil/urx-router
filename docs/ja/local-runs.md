@@ -142,14 +142,23 @@ git worktree add --detach <dir> <sha>
 スイートは `DEMO` が false のまま走り、E2E のスイートは普通のビルドを配信する。そのコードがすることは、
 ビルドしたバンドルで確かめる。
 
-- **普通のビルドは、そのコードを落とす。** `pnpm build` の後は、`dist/` の下のどの JavaScript のファイルにも
-  `data-demo-hide` が無い。`pnpm build:demo` の後は、`src/main.ts` の `if (DEMO)` のブロックが探すセレクター
+- **2 つのバンドルは `dist/` の外にビルドする。** E2E の実行は `dist/` を配信するので、そこへビルドすると、
+  走っている途中でそのサーバーの答えが変わる。確かめるためのビルドは、それぞれリポジトリの外の別のフォルダに
+  出す: `pnpm exec vite build --outDir <dir>/plain --emptyOutDir` と
+  `pnpm exec vite build --mode demo --outDir <dir>/demo --emptyOutDir` (`pnpm build` が先に走らせる
+  `tsc --noEmit` は省かれる)。
+- **普通のビルドは、そのコードを落とす。** `<dir>/plain` の下のどの JavaScript のファイルにも
+  `data-demo-hide` が無い。`<dir>/demo` の下では、`src/main.ts` の `if (DEMO)` のブロックが探すセレクター
   として、JavaScript に残る。探すのは JavaScript のファイルだけにする。`index.html` は、どちらのビルドでも
   この属性を持つ。
-- **デモが何を隠すか**は、ブラウザで読む。`pnpm build:demo`、次に `pnpm preview` を走らせ、要素の計算後の
-  スタイル (computed style) の `display` と、要素を囲む矩形を読む。`pnpm preview` はポート 4173 を使ったままに
-  なり、E2E の実行はそのサーバーをそのまま使ってしまう。終わったら止める (上の「E2E のポートに残ったサーバーを
-  見つける」)。
+- **デモが何を隠すか**は、ブラウザで読む。それぞれのフォルダを
+  `pnpm exec vite preview --outDir <dir>/<plain か demo> --port <n> --strictPort` で、E2E のポート 4173 と
+  4174 でないポートに配信し、File のメニュー `.menu[data-demo-hide]` を読む。普通のビルドでは表示され、
+  デモのビルドでは計算後のスタイル (computed style) の `display` が `none` で、要素を囲む矩形が 0 × 0 になる。
+  最初の `[data-demo-hide]` の `#follow-usb` で判定しない。`data-control-hide` によって、どのブラウザのビルドでも
+  隠れるので、デモの隠し方が壊れていても同じに読める。デモは `[data-demo-only]` の要素 (Share URL、
+  Download JSON、デスクトップ版へのリンク) を表示する。終わったらサーバーを止める (上の「E2E のポートに残った
+  サーバーを見つける」)。
 
 ## 確かめるためにデスクトップアプリを起動する
 
