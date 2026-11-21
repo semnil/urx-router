@@ -1279,6 +1279,16 @@ test("the LCD shows the unit's current scene and SCENE LIST's cursor while Live 
   await setDeviceValue(page, CURSOR, 0, 0x8001);
   await notifyParam(page, CURSOR, 0, 0x8001);
   await expect(rows.filter({ hasText: "P01" }).first()).toHaveAttribute("aria-selected", "true");
+
+  // Onto P04, which System firmware V1.5 lists on the Standard tab between 00 and 01: the LCD follows it back there.
+  await setDeviceValue(page, CURSOR, 0, 0x8004);
+  await notifyParam(page, CURSOR, 0, 0x8004);
+  await expect(rows.filter({ hasText: "P04" }).first(), "P04 Music Production on Standard").toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rows.filter({ hasText: "P04" }).first()).toContainText("Music Production");
+  await expect(rows.filter({ hasText: "P01" }), "the Simple tab no longer open").toHaveCount(0);
 });
 
 // Whether a card is in the unit's microSD slot is live-session state outside the plan: while Live

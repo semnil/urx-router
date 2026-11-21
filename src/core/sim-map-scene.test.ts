@@ -6,18 +6,20 @@ describe("the unit's scene pointers on the glass", () => {
     expect([0, 8, 9, 62].map(simSceneNumber), "01, 09, 10 and 63").toEqual([1, 9, 10, 63]);
     expect(simSceneNumber(0x8000), "00 Initial Data").toBe(0);
     expect([0x8001, 0x8002, 0x8003].map(simSceneNumber), "P01 to P03").toEqual([101, 102, 103]);
+    expect([0x8004, 0x8005, 0x8006, 0x8007].map(simSceneNumber), "P04 to P07").toEqual([104, 105, 106, 107]);
   });
 
   it("leaves a value outside the encoding to the glass", () => {
-    expect([63, -1, 0x8004, 0.5, Number.NaN].map(simSceneNumber)).toEqual([null, null, null, null, null]);
-    expect(sceneGlassValues(63, 0x8004, null).size).toBe(0);
+    expect([63, -1, 0x8008, 0.5, Number.NaN].map(simSceneNumber)).toEqual([null, null, null, null, null]);
+    expect(sceneGlassValues(63, 0x8008, null).size).toBe(0);
     expect(sceneGlassValues(null, null, null).size).toBe(0);
   });
 
   it("names the tab only where one tab alone lists the cursor's row", () => {
     expect([sceneTab(0x8000), sceneTab(0x8001), sceneTab(0x8003)]).toEqual(["Standard", "Simple", "Simple"]);
+    expect([0x8004, 0x8007].map(sceneTab), "P04 and P07 on Standard").toEqual(["Standard", "Standard"]);
     expect([sceneTab(0), sceneTab(9), sceneTab(62)], "a user scene is on both").toEqual([null, null, null]);
-    expect([sceneTab(63), sceneTab(0x8004)], "outside the encoding").toEqual([null, null]);
+    expect([sceneTab(63), sceneTab(0x8008)], "outside the encoding").toEqual([null, null]);
   });
 
   it("shows the current scene, the cursor and the tab it is given", () => {
