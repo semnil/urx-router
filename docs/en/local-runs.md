@@ -144,6 +144,20 @@ git worktree add --detach <dir> <sha>
 - Name the commit by its SHA. A relative revision such as `HEAD~2` is resolved against the HEAD of
   the checkout the command runs in, which is another commit when the shell is in another worktree.
 
+## Checking the demo bundle
+
+No test reaches the code that only the demo build runs (what `DEMO` selects when it is true): the unit
+suite runs with `DEMO` false, and the E2E suite serves a plain build. What that code does is checked on the
+built bundles.
+
+- **A plain build drops that code.** After `pnpm build`, no JavaScript file under `dist/` contains
+  `data-demo-hide`; after `pnpm build:demo`, it occurs once, as the selector the `if (DEMO)` block in
+  `src/main.ts` queries. Search the JavaScript files only: `index.html` carries the attribute in both
+  builds.
+- **What the demo hides** is read in a browser: run `pnpm build:demo`, then `pnpm preview`, and read the
+  element's computed `display` and its bounding rectangle. `pnpm preview` holds port 4173, which an E2E
+  run would reuse as it is; stop it afterwards ("Finding a server left on an E2E port" above).
+
 ## Starting the desktop app for a check
 
 The command is the dev line in the README (`pnpm tauri dev`, with `-- -- --experimental` after it for

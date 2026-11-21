@@ -34,6 +34,9 @@ armed for dragging at the press, would start moving and the press would never co
   badges overlapped and a lower state's opacity could override a higher one's.
 - **`isNodeInactive` is the one predicate for "this node is off".** A ducker keeps its ON / OFF in
   `duckerOn`, not in `on`, so the predicate branches on the kind; the CONSOLE shares it.
+- **A PRE send from a channel whose Ducker is on is flagged in the inspector only.** The hint that the
+  send is not ducked sits under the wire's fixed-connection note. A mark for it on the board's wire was
+  turned down: it would be misread, and the board would carry more than it can show clearly.
 
 ## Hiding
 

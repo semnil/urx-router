@@ -16,6 +16,15 @@
 async の Tauri コマンドから待つ形は、macOS で完了しなかった。同期のダイアログをメインスレッドで走らせる
 形は、1 回目は動き、2 回目で固まった。どちらも症状は同じで、「開く」「保存」で何も起きなかった。
 
+## A file dropped on the desktop window comes from the shell's drag events
+
+**決定。** デスクトップでは、ウィンドウにドロップしたファイルを、シェルの `tauri://drag-*` のイベントから
+受け取る。このイベントは、ファイルの本当のパスを運ぶ。DOM のドロップのハンドラーは、Tauri の外でだけ
+登録する ([architecture.md](../architecture.md)「ファイルを開く: ドラッグ & ドロップと設定ファイル」)。
+
+**却下した案。** ウィンドウの `dragDropEnabled` を `false` にして、ドロップを webview の DOM のイベントに
+任せる案。DOM のイベントはパスを運ばないので、ドロップしたプランを「最近使ったファイル」に入れられない。
+
 ## The release is dispatched on the tag without a personal access token
 
 **決定。** `tag-release.yml` は `gh workflow run --ref <tag>` で `release.yml` を起動し、`release.yml` は
@@ -79,6 +88,14 @@ dispatch で行った。そのため公開のデモはタグより先のコミ�
 寸法の修正 ([#561](https://github.com/semnil/urx-router/pull/561)) を足したものだった。
 
 **dispatch の前に。** `git diff <リリースのタグ> origin/main` を読み、アプリの部分が両方で同じときに dispatch する。
+
+## The link-preview image is the repository's own screenshot
+
+**決定。** `index.html` の `og:image` (リンクのプレビューに出る画像) は、`docs/assets/screenshot-en.png` を
+GitHub の raw の URL で指す。スクリーンショットを `public/` へ写さない。
+
+**理由。** このファイルは `docs/assets/` にあり、Pages の配備はそこを配信しない。配備が公開するのは `dist`
+だけ。`public/` に写すと、デスクトップアプリのものも含めて、どのビルドの `dist` にもその写しが入る。
 
 ## The release build's cache: what was left out
 

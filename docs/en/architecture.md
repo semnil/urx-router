@@ -578,7 +578,9 @@ carries a one-line map of the same directories and points here.
   its author never opened) / `edit-menu.ts` the frontend half of the macOS Edit menu (routes a click into
   the history, pushes the items' enabled state and labels; the menu lives outside the document so neither
   follows from a re-render, and it self-registers its own `onLangChange`) / `inspector.ts` selected-element
-  editor, with the layers a rendered panel cannot check split out of it: `inspector-format.ts` the value
+  editor (a bus with a section of its own is picked out by comparing `node.id` inline where that section is
+  built; no helper stands in for the comparison), with the layers a rendered panel cannot check split out
+  of it: `inspector-format.ts` the value
   formatters and slider-position mappings (the exact display strings — which `glyph.ts` splits on the
   infinity glyph and the E2E specs assert verbatim — pinned without rendering a panel),
   `inspector-sections.ts` the persisted section folds, keyed by section kind rather than per node so the
@@ -5612,7 +5614,10 @@ a full device capture stays inside GitHub Pages' ~8 KB URL limit; legacy uncompr
 first character (`z` against the `e` an uncompressed document always starts with), and
 `encode_plan_param` in the `urx-routing-planner` skill's `plan_tool.py` writes the form the app reads.
 A normal (desktop) build eliminates that branch as dead code and keeps every feature, so distributed binaries
-are unaffected. `vite.config.ts`'s relative `base: "./"` lets assets resolve under a sub-path.
+are unaffected. No test runs that branch either — the unit suite sees `DEMO` false and the E2E suite serves a
+plain build — so the lines a change touches inside it show as uncovered on `codecov/patch`, which a merge does
+not wait for; how to check the branch by hand is in [local-runs.md](local-runs.md), "Checking the demo
+bundle". `vite.config.ts`'s relative `base: "./"` lets assets resolve under a sub-path.
 
 ### Auto-update
 

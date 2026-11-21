@@ -18,8 +18,9 @@ and decides for it.
   both directions), and what a plan file saves. **Reading and writing are not given separate
   scopes.** The operator chose this after the risk was laid out: a parameter outside the read scope
   would enter the live snapshot at its default, and converging would overwrite the unit with it.
-- **The entry is a gear icon of its own**, drawn as inline SVG and not as a text glyph. The name is
-  Preferences, which keeps it apart from the settings file.
+- **The entry is a gear icon of its own**, drawn as inline SVG and not as a text glyph: a glyph renders
+  small in the UI font, and Windows may put an emoji in its place. The name is Preferences, which keeps it
+  apart from the settings file.
 - **Changes apply at once**, and the only button is Close.
 - **The diagnostics (compare, self-test, prepare) always cover everything**, whatever the scope. The
   sentence that says so is shown only in experimental mode.

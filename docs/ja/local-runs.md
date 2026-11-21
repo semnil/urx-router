@@ -136,6 +136,21 @@ git worktree add --detach <dir> <sha>
 - コミットは SHA で名指す。`HEAD~2` のような相対の指定は、コマンドを走らせたチェックアウトの HEAD から解かれる。
   シェルが別の worktree にいると、別のコミットになる。
 
+## デモのバンドルを確かめる
+
+デモのビルドだけが走らせるコード (`DEMO` が true のときに選ばれるコード) には、どのテストも届かない。unit の
+スイートは `DEMO` が false のまま走り、E2E のスイートは普通のビルドを配信する。そのコードがすることは、
+ビルドしたバンドルで確かめる。
+
+- **普通のビルドは、そのコードを落とす。** `pnpm build` の後は、`dist/` の下のどの JavaScript のファイルにも
+  `data-demo-hide` が無い。`pnpm build:demo` の後は、`src/main.ts` の `if (DEMO)` のブロックが探すセレクター
+  として 1 か所だけ出てくる。探すのは JavaScript のファイルだけにする。`index.html` は、どちらのビルドでも
+  この属性を持つ。
+- **デモが何を隠すか**は、ブラウザで読む。`pnpm build:demo`、次に `pnpm preview` を走らせ、要素の計算後の
+  スタイル (computed style) の `display` と、要素を囲む矩形を読む。`pnpm preview` はポート 4173 を使ったままに
+  なり、E2E の実行はそのサーバーをそのまま使ってしまう。終わったら止める (上の「E2E のポートに残ったサーバーを
+  見つける」)。
+
 ## 確かめるためにデスクトップアプリを起動する
 
 コマンドは、README の dev の行 (`pnpm tauri dev`。experimental の機能を出すときは、後ろに

@@ -19,6 +19,15 @@ asynchronous file dialog from an async Tauri command never completed on macOS. R
 synchronous dialog on the main thread worked for the first dialog and hung on the second. Either
 way the symptom was the same: Open and Save did nothing.
 
+## A file dropped on the desktop window comes from the shell's drag events
+
+**Decision.** On the desktop, a file dropped onto the window is taken from the shell's `tauri://drag-*`
+events, which carry its real path; the DOM drop handlers are registered only outside Tauri
+([architecture.md](../architecture.md) "Opening files: drag & drop, and settings files").
+
+**Turned down.** Setting the window's `dragDropEnabled` to `false`, which leaves drops to the webview's
+DOM events. Those carry no path, so a dropped plan could not join the recent list.
+
 ## The release is dispatched on the tag without a personal access token
 
 **Decision.** `tag-release.yml` starts `release.yml` with `gh workflow run --ref <tag>`, and
@@ -89,6 +98,14 @@ correction to the size stated for the demo's link-preview image in `index.html`
 
 **Before dispatching.** `git diff <release tag> origin/main` is read, and the dispatch goes ahead
 when the app's part is the same on both sides.
+
+## The link-preview image is the repository's own screenshot
+
+**Decision.** The `og:image` in `index.html` names `docs/assets/screenshot-en.png` by its raw GitHub URL.
+The screenshot is not copied into `public/`.
+
+**Why.** The file lives in `docs/assets/`, which the Pages deploy does not serve: it publishes `dist`
+alone. A copy in `public/` would be carried into every build's `dist`, the desktop app's included.
 
 ## The release build's cache: what was left out
 
