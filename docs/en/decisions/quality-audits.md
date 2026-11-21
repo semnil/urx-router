@@ -151,6 +151,17 @@ two port selects: what a second and a third choice do while the first port is st
     that direction (the operator's decision, 2026-11-13). `src/ui/midi.test.ts`: "says nothing
     about a failed input open the operator has already chosen away from", the same for the output,
     and "still says a failed open that is the latest choice, after an earlier one was replaced".
+  - In the desktop app on Windows, the three fixes behaved as these tests say (a development build
+    of 1.18.6, 2026-11-21). Windows MIDI Services loopback ports stood in for a controller, and
+    removing a loopback pair stood in for unplugging it. "None" chosen as soon as the reopened
+    window's selects appeared stayed "None" for the input and the output. That is also the result
+    when no answer is on its way, so it does not show the fix at work. Each direction kept its own
+    stored port: an input chosen and then an output both came back after a restart, and an output
+    given up on after its pair was removed was still stored after "None" was chosen for the input.
+    For the failure of a replaced choice, ten runs picked a removed port and then another input,
+    0 to 300 ms apart, with the order of the steps recorded inside the app. In the five where the
+    second choice reached the main window before the first open failed, nothing was said; in the
+    five where the failure came first, it was.
 - **Turned down: reporting that failure and taking it down when a later port opens.** The line
   would still show a failure for a port the operator had left, for as long as the next open takes.
 - **Measured: whether the shell takes two commands in the order the page sent them.** The
