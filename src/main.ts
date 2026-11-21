@@ -1235,8 +1235,8 @@ function resetSendsTarget(): void {
 }
 
 // The unit's own settings and states the SIM view shows beside the plan: SETUP > GENERAL
-// (core/control/device-setup.ts), the operation mode, the microSD card and each MIC/LINE jack's
-// engaged Clip Safe.
+// (core/control/device-setup.ts), the operation mode, the microSD card, each MIC/LINE jack's
+// engaged Clip Safe and RECALL SAFE (core/control/recall-safe.ts).
 // SETUP is known from the last reading of it — a session's start, the Device setup screen, a SETUP
 // edit on the glass — and kept until the model changes, as Follow USB is. The operation mode, the
 // scene pointers (the current scene, SCENE LIST's cursor) and the microSD card are a session's
@@ -1453,7 +1453,8 @@ function scheduleUnitSetupRead(): void {
 }
 
 /** The addresses the unit announces its settings, its operation mode, its scene pointers, its
- *  microSD card and Software Integration at, which a session on an experimental launch registers. */
+ *  microSD card, Software Integration and RECALL SAFE at, which a session on an experimental launch
+ *  registers. */
 function unitStateNotifyAddrs(model: DeviceModel): [number, number, number][] {
   const setup = [
     PARAMS.BRIGHTNESS,

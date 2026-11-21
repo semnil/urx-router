@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getModel } from "../models";
 import { simBindings } from "./sim-map";
 import { setupGlassPaths } from "./sim-map-setup";
+import { safeOnGlassPaths } from "./control/recall-safe";
 import {
   rateHoldReason,
   SETUP_WRITTEN_SCREENS,
@@ -106,6 +107,17 @@ describe("the controls the SIM view holds shut", () => {
     expect(reasonFor(all, path("ch.ch1.send.fx2.pre"))).toBe("notAccepted");
     expect(reasonFor(all, path("ch.ch1.send.fx1.level"))).toBeNull();
     expect(reasonFor(all, path("ch.ch1.send.mix1.pre")), "a MIX send's PRE is the plan's").toBeNull();
+  });
+
+  it("holds each RECALL SAFE row's [Safe] while Live sync is up, which the unit does not take, and no selection", () => {
+    const safe = safeOnGlassPaths(model);
+    const held = (state: SimLockState): SimLockSpec[] => simLocks(paths, setupGlassPaths(model), state, REASONS, safe);
+    expect(safe).toContain("safe.ch1.on");
+    expect(reasonFor(held(LINKED), path("safe.ch1.on")), "outside a session the glass's own").toBeNull();
+    const all = held(LIVE);
+    for (const p of safe) expect(reasonFor(all, path(p)), p).toBe("notAccepted");
+    expect(reasonFor(all, path("safe.ch1.name")), "a selection is written").toBeNull();
+    expect(reasonFor(all, path("safe.bus.mix1.incoming")), "Incoming Sends stays the glass's").toBeNull();
   });
 
   // While Follow USB is on the unit takes no rate from its own screen either, and the simulator

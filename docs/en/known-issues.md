@@ -200,7 +200,8 @@ feeds are registered as unverified mappings (`jack-axis`, `dgain-source`). A rea
 write that fails at one of those addresses names the mapping, and the self-test says
 it cannot settle them and what would. The link between a stereo channel's displayed
 side and the unit's LCD selection uses the URX44V numbering there, registered as
-`lcd-side`, and so does the [CUE] flag of each strip, registered as `cue-flags`.
+`lcd-side`, and so does the [CUE] flag of each strip, registered as `cue-flags`, and the row each
+RECALL SAFE selection is written to, registered as `recall-safe-rows`.
 Offline planning, the plan JSON and image export are unaffected; this concerns only
 live sync on the URX44.
 
