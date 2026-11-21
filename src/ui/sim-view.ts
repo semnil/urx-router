@@ -107,8 +107,10 @@ export const GLASS_OWN = new Set([
   "setup.udk.bank",
   "setup.peripheral.tab",
 ]);
-// RECALL SAFE's settings (System firmware V1.5) are the simulator's too: the app has no scene
-// recall of its own for them to act on, and the glass's scenes are the simulator's.
+// RECALL SAFE's settings (System firmware V1.5) are the simulator's too, except a row's [Safe] and
+// selections while a session holds the unit's (`isUnitPath`, asked first): Incoming Sends and the
+// Others tab are on no address of the link, and with no session the glass's scenes are the
+// simulator's.
 const glassOwn = (path: string): boolean =>
   GLASS_OWN.has(path) || /^pair\.[^.]+\.compSplit$/.test(path) || path.startsWith("safe.");
 

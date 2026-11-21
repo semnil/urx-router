@@ -294,6 +294,21 @@ import {
   type DawIntegration,
   type IntegrationField,
 } from "./core/control/daw-integration";
+import {
+  isRecallSafeUnitPath,
+  mergeRecallSafeRead,
+  readRecallSafe,
+  recallSafeAt,
+  recallSafeGlassEdit,
+  recallSafeGlassPaths,
+  recallSafeGlassValues,
+  recallSafeNotifyAddrs,
+  safeOnGlassPaths,
+  withRecallSafeNotify,
+  writeRecallSafeSelect,
+  type SafeRowState,
+} from "./core/control/recall-safe";
+import type { RecallSafeRow } from "./core/control/translate";
 import { boundByRead, confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
 import {
@@ -1245,6 +1260,14 @@ const sceneVersions = { current: 0, cursor: 0 };
 // of the changes made to each of its values, which a read taken while one lands does not override.
 let unitIntegration: DawIntegration | null = null;
 const integrationVersions: Record<IntegrationField, number> = { active: 0, fx1Send: 0, fx2Send: 0 };
+// SCENE > [Recall Safe] (System firmware V1.5), by row: as a session read it and the unit announced
+// it since, a count of the changes made to each row, which a read taken while one lands does not
+// override, the selections this app wrote that the unit has not announced yet, and the rows one
+// press on the glass changed, written once each when the press has made all of its writes.
+let unitRecallSafe: Map<string, SafeRowState> | null = null;
+const recallSafeVersions = new Map<string, number>();
+const recallSafeEchoes = new CueEchoes();
+const recallSafeQueued = new Map<string, RecallSafeRow>();
 const clipSafeEngaged = new Set<number>();
 // A Follow USB press on the glass, handled as a press of the toolbar's FOLLOW USB; set where that
 // button is wired.
@@ -1266,6 +1289,7 @@ function unitGlassValues(): Map<string, SimValue> {
   for (const [path, value] of sceneGlassValues(unitScene.current, unitScene.cursor, unitScene.tab))
     out.set(path, value);
   if (unitIntegration) for (const [path, send] of integrationGlassValues(unitIntegration)) out.set(path, send);
+  if (unitRecallSafe) for (const [path, on] of recallSafeGlassValues(model, unitRecallSafe)) out.set(path, on);
   if (unitCardIn !== null) out.set("sd.mounted", unitCardIn);
   // MONITOR's [CUE Mode] (System firmware V1.5) is live-session state, as the [CUE] flags are.
   if (liveSessionUp) out.set(SIM_CUE_MODE, cues.mode === "last" ? "Last CUE" : "Mix CUE");
@@ -1285,6 +1309,19 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
   // compatible DAW holds it.
   // Console Lock: nothing on the glass is written to the unit.
   if (refusedForLock()) return Promise.reject(new Error("refused"));
+  // RECALL SAFE's selections are the session's, written row by row; its [Safe] the unit does not
+  // take from the link.
+  const safeEdit = unitRecallSafe ? recallSafeGlassEdit(getModel(modelId), unitRecallSafe, path, value === true) : null;
+  if (safeEdit !== null) {
+    if (safeEdit === "refused" || !liveSessionUp || !unitRecallSafe) return Promise.reject(new Error("refused"));
+    const node = safeEdit.row.node;
+    const held = unitRecallSafe.get(node);
+    if (!held) return Promise.reject(new Error("refused"));
+    unitRecallSafe = new Map(unitRecallSafe).set(node, { ...held, select: safeEdit.select });
+    recallSafeVersions.set(node, (recallSafeVersions.get(node) ?? 0) + 1);
+    queueRecallSafeWrite(safeEdit.row);
+    return Promise.resolve(shown());
+  }
   // [CUE Mode] is the session's: a press reaches the Inspector's funnel, and with no session it is refused.
   if (path === SIM_CUE_MODE) {
     if (!liveSessionUp || (value !== "Mix CUE" && value !== "Last CUE")) return Promise.reject(new Error("refused"));
@@ -1332,6 +1369,61 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
     return Promise.resolve(shown());
   }
   return Promise.reject(new Error("refused"));
+}
+
+/** Write `row`'s selection once the press on the glass has made all of its writes: a press that
+ *  selects a whole row, or clears a Source and the HA beside it, writes the row once. */
+function queueRecallSafeWrite(row: RecallSafeRow): void {
+  if (!recallSafeQueued.size) queueMicrotask(flushRecallSafeWrites);
+  recallSafeQueued.set(row.node, row);
+}
+
+/** Write each row a press changed with the selection it left there, behind every unit write queued
+ *  so far, within the session that took the press. */
+function flushRecallSafeWrites(): void {
+  const rows = [...recallSafeQueued.values()];
+  recallSafeQueued.clear();
+  if (!liveSessionUp) return;
+  const epoch = liveEpoch;
+  const ours = (): boolean => liveSessionUp && liveEpoch === epoch;
+  for (const row of rows) {
+    const raw = unitRecallSafe?.get(row.node)?.select;
+    if (raw === undefined) continue;
+    cueWrites = cueWrites
+      .then(async () => {
+        if (!ours()) return;
+        await live?.idle();
+        if (!ours()) return;
+        recallSafeEchoes.note(row.select, row.y, raw);
+        await writeRecallSafeSelect(row, raw);
+      })
+      .catch((err: unknown) => {
+        sessionWriteFailed(err);
+        // The selection the lock kept from the unit: the glass is shown what the unit holds.
+        if (stoppedByConsoleLock(err)) rereadRecallSafe();
+      });
+  }
+}
+
+/** Read RECALL SAFE again behind every unit write queued so far, and take each row the unit holds
+ *  unless that row changed while the read ran. */
+function rereadRecallSafe(): void {
+  if (!liveSessionUp || !experimentalOn) return;
+  const epoch = liveEpoch;
+  const model = getModel(modelId);
+  const ours = (): boolean => liveSessionUp && liveEpoch === epoch && getModel(modelId) === model;
+  cueWrites = cueWrites
+    .then(async () => {
+      await live?.idle();
+      if (!ours()) return;
+      const since = new Map(recallSafeVersions);
+      const read = await readRecallSafe(model);
+      if (!ours()) return;
+      const moved = new Set([...recallSafeVersions].filter(([node, n]) => since.get(node) !== n).map(([node]) => node));
+      unitRecallSafe = mergeRecallSafeRead(unitRecallSafe, read, moved);
+      simView?.unitStateChanged();
+    })
+    .catch((err: unknown) => stopLiveOnError(errorText(err)));
 }
 
 // The settle a re-read of the unit's settings waits for after the unit announces one, as a
@@ -1384,6 +1476,7 @@ function unitStateNotifyAddrs(model: DeviceModel): [number, number, number][] {
     [PARAMS.SCENE_CURSOR.id, 0, 0],
     ...(model.hasSD ? [[PARAMS.SD_CARD.id, 0, 0] as [number, number, number]] : []),
     ...dawIntegrationNotifyAddrs(),
+    ...recallSafeNotifyAddrs(model),
   ];
 }
 
@@ -1444,6 +1537,15 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
   if (field !== null) {
     if (unitIntegration) unitIntegration = withIntegrationNotify(unitIntegration, paramId, value) ?? unitIntegration;
     integrationVersions[field]++;
+    simView?.unitStateChanged();
+    return true;
+  }
+  // A RECALL SAFE row: the unit answering a selection this app wrote, or a press on its panel.
+  const safeAt = recallSafeAt(getModel(modelId), paramId, 0, y);
+  if (safeAt) {
+    if (safeAt.part === "select" && recallSafeEchoes.take(paramId, y, value)) return true;
+    if (unitRecallSafe) unitRecallSafe = withRecallSafeNotify(unitRecallSafe, safeAt, value);
+    recallSafeVersions.set(safeAt.row.node, (recallSafeVersions.get(safeAt.row.node) ?? 0) + 1);
     simView?.unitStateChanged();
     return true;
   }
@@ -1527,6 +1629,9 @@ function resetUnitSessionState(): void {
   unitOperationMode = null;
   unitScene = { current: null, cursor: null, tab: null };
   unitIntegration = null;
+  unitRecallSafe = null;
+  recallSafeEchoes.clear();
+  recallSafeQueued.clear();
   unitCardIn = null;
   clipSafeEngaged.clear();
   paintClipSafe();
@@ -1677,6 +1782,7 @@ const buildSimView = (): SimView =>
             integrationOff: t().sim.lockIntegrationOff,
             setupOffline: t().sim.lockSetupOffline,
           },
+          safeOnGlassPaths(getModel(modelId)),
         ),
       releaseMeters: () => consoleView.releaseMeters(),
       regainMeters: () => consoleView.regainMeters(),
@@ -1701,6 +1807,8 @@ const buildSimView = (): SimView =>
         path === "setup.followUsb" ||
         path === SIM_CUE_MODE ||
         integrationSlotAt(path) !== null ||
+        // RECALL SAFE's rows while a session holds the unit's: the glass's own the rest of the time.
+        (unitRecallSafe !== null && isRecallSafeUnitPath(getModel(modelId), path)) ||
         isSetupGlassPath(getModel(modelId), path),
       writeUnitValue: writeUnitGlassValue,
       clipSafeEngaged: (jack) => liveSessionUp && clipSafeEngaged.has(jack),
@@ -5917,6 +6025,7 @@ if (!DEMO) {
         let modeRead: number | null = null;
         let sceneRead: { current: number | null; cursor: number | null } = { current: null, cursor: null };
         let integrationRead: DawIntegration | null = null;
+        let recallSafeRead: Map<string, SafeRowState> | null = null;
         let cardRead: boolean | null = null;
         let cueRead: string[] = [];
         let cueModeRead: CueMode = "mix";
@@ -5937,6 +6046,7 @@ if (!DEMO) {
                   cursor: await vdGet(PARAMS.SCENE_CURSOR.id, 0, 0),
                 };
                 integrationRead = await readDawIntegration();
+                recallSafeRead = await readRecallSafe(getModel(switchTo ? switchTo.modelId : modelId));
                 if (getModel(switchTo ? switchTo.modelId : modelId).hasSD)
                   cardRead = (await vdGet(PARAMS.SD_CARD.id, 0, 0)) !== 0;
               }
@@ -6014,6 +6124,9 @@ if (!DEMO) {
         unitScene = { current: sceneRead.current, cursor: null, tab: null };
         if (sceneRead.cursor !== null) takeUnitCursor(sceneRead.cursor);
         unitIntegration = integrationRead;
+        unitRecallSafe = recallSafeRead;
+        // The unit's RECALL SAFE replaces what the glass chose on its own while no session held one.
+        if (recallSafeRead) simView?.unitTookOwn(recallSafeGlassPaths(getModel(modelId)));
         unitCardIn = cardRead;
         // A count left by a session that ended without the line that would have carried it
         // belongs to that session; this one's first flush starts from nothing.
@@ -6081,6 +6194,8 @@ if (!DEMO) {
         rereadSendsTarget();
         // …and Software Integration, which a DAW taking or letting go of the unit can have moved.
         rereadDawIntegration();
+        // …and RECALL SAFE, which a press on the unit can have moved.
+        rereadRecallSafe();
         // …and the scene pointers, which a recall, a store or the cursor on the unit can have moved.
         rereadScenePointers();
         // …and the microSD card, which can have gone in or come out.

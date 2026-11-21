@@ -111,13 +111,14 @@ export const UNIT_OPS = [
   "playback.stop",
 ] as const;
 
-/** The locks for the paths the SIM table binds and for `setupPaths`, the SETUP > GENERAL settings the
- *  app writes. */
+/** The locks for the paths the SIM table binds, for `setupPaths`, the SETUP > GENERAL settings the
+ *  app writes, and for `safePaths`, each RECALL SAFE row's [Safe]. */
 export function simLocks(
   paths: Iterable<string>,
   setupPaths: Iterable<string>,
   state: SimLockState,
   reasons: SimLockReasons,
+  safePaths: Iterable<string> = [],
 ): SimLockSpec[] {
   const out: SimLockSpec[] = [];
   for (const id of UNIT_ONLY_SCREENS) out.push({ target: { kind: "screen", id }, reason: reasons.unitOnly });
@@ -137,6 +138,10 @@ export function simLocks(
       ...INTEGRATION_GLASS_PATHS.map((path) => ({ kind: "path", path }) as const),
     ])
       out.push({ target, reason: reasons.integrationOff });
+  // RECALL SAFE's [Safe] is the unit's while Live sync is up, and the unit takes none from the link:
+  // each row's and, through them, the heading's ALL. Its selections are written.
+  if (state.live)
+    for (const path of safePaths) out.push({ target: { kind: "path", path }, reason: reasons.notAccepted });
   for (const op of UNIT_OPS) out.push({ target: { kind: "op", op }, reason: reasons.unitOp });
   out.push({ target: { kind: "path", path: "sd.usbStorage" }, reason: reasons.unitOp });
   // While Follow USB is on the unit takes no rate from its own screen either, which the simulator
