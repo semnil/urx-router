@@ -102,6 +102,18 @@ const CUE_MODE_SCENE_EXTERNAL = ["CUE_MODE"];
 // unit comes up unlocked after a power cycle.
 const CONSOLE_LOCK_SCENE_EXTERNAL = ["CONSOLE_LOCK"];
 
+// RECALL SAFE's selections, System 1.5: the settings file carries them for the unit as a whole and
+// in no scene — a scene stored on that firmware does not hold them. Its [Safe] is read only and
+// carries no scene claim.
+const RECALL_SAFE_SCENE_EXTERNAL = [
+  "RECALL_SAFE_MONO_SELECT",
+  "RECALL_SAFE_STEREO_CH_SELECT",
+  "RECALL_SAFE_FX_SELECT",
+  "RECALL_SAFE_STEREO_SELECT",
+  "RECALL_SAFE_MIX_SELECT",
+  "RECALL_SAFE_STREAMING_SELECT",
+];
+
 const SCENE_EXTERNAL_NAMES = [
   ...AUDITED_SCENE_EXTERNAL,
   ...SETUP_SCENE_EXTERNAL,
@@ -109,6 +121,7 @@ const SCENE_EXTERNAL_NAMES = [
   ...CUE_SCENE_EXTERNAL,
   ...CUE_MODE_SCENE_EXTERNAL,
   ...CONSOLE_LOCK_SCENE_EXTERNAL,
+  ...RECALL_SAFE_SCENE_EXTERNAL,
 ].sort();
 
 describe("scene boundary contract", () => {
