@@ -1982,8 +1982,10 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   sync is up the LCD shows the destination the unit holds and follows a choice made on the unit's panel, and a
   destination chosen on the LCD is written to the unit — FX 2 is refused above 96 kHz. A choice made on the unit
   while one made on the LCD is still to be written or answered leaves the LCD on its choice — the unit ends on
-  whichever lands last — and has the unit read again once that write has gone out; a read that finds a newer choice
-  of the LCD's still to be written leaves it shown. With no session the LCD keeps a destination of its own, which reaches nothing.
+  whichever lands last — and has the unit read again once that write has gone out and the unit has announced the value it wrote — a choice
+  announced from the panel in between does not end the wait — or the settle bound has passed, where nothing announces
+  it. A read that finds a newer choice of the LCD's still to be written, or that a choice announced by the unit
+  overtook while it was out, leaves the display as it is. With no session the LCD keeps a destination of its own, which reaches nothing.
 - **SETUP > Software Integration** is the unit's setting rather than the plan's (`daw-integration.ts`). The unit opens
   it only while a compatible DAW (Cubase, Nuendo, MixKey) holds it, a state the unit publishes, and the LCD
   opens it only then and only while Live sync is up: during Live sync the session tells the LCD whether one does, and

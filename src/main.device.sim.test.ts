@@ -1259,6 +1259,49 @@ describe("the SIM view over a live session", () => {
     expect(setsOf(shell, SENDS), "nothing written back").toEqual([[0, FX1]]);
   });
 
+  it("reads the [Sends] destination again only once the glass's own write is answered", SLOW, async () => {
+    const unit = sendsUnit();
+    const shell = await unit.boot();
+    await vi.waitFor(async () => expect(await sendsShown(), "the premise: the unit's MIX 1").toBe("MIX1"));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      await transport().write("ui.sendsTarget", "FX1");
+      await writes(shell, 1);
+      // MIX 2 chosen on the unit before the write lands; the unit then lands the write and answers it.
+      unit.press(MIX2);
+      await new Promise((r) => setTimeout(r, 100));
+      unit.set({ paramId: SENDS, x: 0, y: 0, value: FX1 });
+      unit.announce(FX1);
+    } finally {
+      vi.useRealTimers();
+    }
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
+    expect(await sendsShown(), "what the unit holds after both").toBe("FX1");
+  });
+
+  it("leaves a [Sends] destination the unit chose while a read of it was out", SLOW, async () => {
+    const unit = sendsUnit();
+    const get = unit.cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    let reads = 0;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    unit.cmds.vd_get = (a: Record<string, unknown>) => {
+      const answer = get(a);
+      // The read a session takes again once it is up answers with the value it found, late.
+      if (a.paramId === SENDS && ++reads === 2) return held.then(() => answer);
+      return answer;
+    };
+    const shell = await unit.boot();
+    await vi.waitFor(() => expect(reads, "the premise: the second read is out").toBe(2), { timeout: 10_000 });
+    unit.press(MIX2);
+    await vi.waitFor(async () => expect(await sendsShown(), "the unit's choice").toBe("MIX2"));
+    release();
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
+    expect(await sendsShown(), "not put back by the read's late answer").toBe("MIX2");
+  });
+
   it("ends the session when a delay time turned under tempo Sync is refused", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, {
       [`${PARAMS.FX_EFFECT_TYPE.id}/0/0`]: 1024,
