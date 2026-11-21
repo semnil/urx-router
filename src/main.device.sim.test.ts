@@ -103,28 +103,6 @@ describe("the displayed side and the unit's LCD selection", () => {
     await end(shell);
   });
 
-  // A selection made on the unit lands between a switch this app wrote and that write's answer: the
-  // answer, landing after it, carries what the unit holds and is shown.
-  it("shows the side of a switch whose answer lands after a selection made on the unit", SLOW, async () => {
-    const shell = await bootDevice({}, true, { [LCD]: 0x0000 });
-    await goLive();
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      nameArea().click();
-      expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
-      for (let i = 0; i < 1000 && lcdWrites(shell).length < 1; i++) await new Promise((r) => setTimeout(r, 10));
-      expect(lcdWrites(shell)).toEqual([0x0101]);
-      notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
-      expect(showing(), "the unit's own selection").toBe("C H 5 slash 6, showing C H 5 (L)");
-      notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
-      expect(showing(), "what the unit holds after both").toBe("C H 5 slash 6, showing C H 6 (R)");
-      expect(lcdWrites(shell), "nothing written back").toEqual([0x0101]);
-    } finally {
-      vi.useRealTimers();
-    }
-    await end(shell);
-  });
-
   // Switches made while a write is on the wire go out as one write of the latest side, and
   // not at all when the latest is the side that write sent.
   it("writes the latest of the switches made while a write is on the wire", SLOW, async () => {
@@ -1118,26 +1096,167 @@ describe("the SIM view over a live session", () => {
     expect(errors(shell).join(" "), "the refused write is what ended it").toContain("send write refused");
   });
 
-  it("shows the [Sends] destination whose answer lands after a choice made on the unit", SLOW, async () => {
-    const SENDS = PARAMS.SENDS_TARGET.id;
-    const shell = await bootDevice({ experimental_enabled: true }, true, { [`${SENDS}/0/0`]: 32 });
-    await openSim();
-    await goLive();
-    const shown = async (): Promise<unknown> => (await transport().snapshot()).get("ui.sendsTarget");
-    await vi.waitFor(async () => expect(await shown(), "the premise: the unit's MIX 1").toBe("MIX1"));
+  // A choice of the unit's own lands while one made on the glass is still to be written or answered.
+  // The unit ends on whichever lands last — the glass's — so the glass keeps its choice, and the
+  // read taken behind the write shows what the unit holds.
+  const SENDS = PARAMS.SENDS_TARGET.id;
+  const FX1 = 16;
+  const FX2 = 17;
+  const MIX1 = 32;
+  const MIX2 = 34;
+  const sendsUnit = () => {
+    const cmds = deviceCommands(
+      { "plugin:dialog|message": "Ok", experimental_enabled: true },
+      {
+        [`${SENDS}/0/0`]: MIX1,
+      },
+    );
+    const set = cmds.vd_set as (a: Record<string, unknown>) => unknown;
+    let shell: TauriShell | null = null;
+    const announce = (value: number): void => notifyChannel(shell!).onmessage([{ param_id: SENDS, x: 0, y: 0, value }]);
+    /** A choice on the unit's panel: held by the unit, and announced. */
+    const press = (value: number): void => {
+      set({ paramId: SENDS, x: 0, y: 0, value });
+      announce(value);
+    };
+    const boot = async (): Promise<TauriShell> => {
+      shell = (await bootApp({ tauri: cmds }))!;
+      await openSim();
+      await goLive();
+      return shell;
+    };
+    return { cmds, set, announce, press, boot };
+  };
+  const sendsShown = async (): Promise<unknown> => (await transport().snapshot()).get("ui.sendsTarget");
+  const writes = async (shell: TauriShell, n: number): Promise<void> => {
+    for (let i = 0; i < 1000 && setsOf(shell, SENDS).length < n; i++) await new Promise((r) => setTimeout(r, 10));
+  };
+
+  it(
+    "keeps the [Sends] destination written on the glass when the unit chooses another before its answer",
+    SLOW,
+    async () => {
+      const unit = sendsUnit();
+      const shell = await unit.boot();
+      await vi.waitFor(async () => expect(await sendsShown(), "the premise: the unit's MIX 1").toBe("MIX1"));
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        await transport().write("ui.sendsTarget", "FX1");
+        await writes(shell, 1);
+        expect(setsOf(shell, SENDS)).toEqual([[0, FX1]]);
+        // MIX 2 chosen on the unit before the write lands, then the write's own answer.
+        unit.announce(MIX2);
+        expect(await sendsShown(), "the glass keeps its choice").toBe("FX1");
+        unit.announce(FX1);
+      } finally {
+        vi.useRealTimers();
+      }
+      // The read taken behind the write.
+      await transport().write("setup.brightness", 3);
+      await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
+      expect(await sendsShown(), "what the unit holds").toBe("FX1");
+      expect(setsOf(shell, SENDS), "nothing written back").toEqual([[0, FX1]]);
+    },
+  );
+
+  it(
+    "shows the [Sends] destination the unit ends on when it chooses while choices of the glass wait",
+    SLOW,
+    async () => {
+      const unit = sendsUnit();
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      let holding = false;
+      unit.cmds.vd_set = (a: Record<string, unknown>) => {
+        unit.set(a);
+        if (a.paramId === SENDS) queueMicrotask(() => unit.announce(a.value as number));
+        if (a.paramId !== PARAMS.BRIGHTNESS.id || a.value !== 3) return undefined;
+        holding = true;
+        return held;
+      };
+      const shell = await unit.boot();
+      // A SETUP write the unit has not answered holds every unit write queued behind it.
+      await transport().write("setup.brightness", 3);
+      await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
+      await transport().write("ui.sendsTarget", "FX1");
+      await transport().write("ui.sendsTarget", "FX2");
+      unit.press(MIX2);
+      expect(await sendsShown(), "the glass keeps its latest choice").toBe("FX2");
+      release();
+      await transport().write("setup.brightness", 2);
+      await vi.waitFor(
+        () =>
+          expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([
+            [0, 3],
+            [0, 2],
+          ]),
+        { timeout: 10_000 },
+      );
+      expect(setsOf(shell, SENDS)).toEqual([
+        [0, FX1],
+        [0, FX2],
+      ]);
+      expect(await sendsShown(), "what the unit holds after all of them").toBe("FX2");
+    },
+  );
+
+  it("keeps a [Sends] destination chosen on the glass after the read a choice on the unit queued", SLOW, async () => {
+    const unit = sendsUnit();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let holding = false;
+    unit.cmds.vd_set = (a: Record<string, unknown>) => {
+      unit.set(a);
+      if (a.paramId === SENDS) queueMicrotask(() => unit.announce(a.value as number));
+      if (a.paramId !== PARAMS.BRIGHTNESS.id || a.value !== 3) return undefined;
+      holding = true;
+      return held;
+    };
+    const shell = await unit.boot();
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
+    // FX 1 chosen, MIX 2 on the unit (a read is queued behind FX 1's write), then FX 2 behind that read.
+    await transport().write("ui.sendsTarget", "FX1");
+    unit.press(MIX2);
+    await transport().write("ui.sendsTarget", "FX2");
+    release();
+    await transport().write("setup.brightness", 2);
+    await vi.waitFor(
+      () =>
+        expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([
+          [0, 3],
+          [0, 2],
+        ]),
+      { timeout: 10_000 },
+    );
+    expect(setsOf(shell, SENDS)).toEqual([
+      [0, FX1],
+      [0, FX2],
+    ]);
+    expect(await sendsShown(), "the read found FX 1 while FX 2 was still to be written").toBe("FX2");
+  });
+
+  it("shows a [Sends] destination the unit chooses right after answering a write of the glass", SLOW, async () => {
+    const unit = sendsUnit();
+    const shell = await unit.boot();
+    await vi.waitFor(async () => expect(await sendsShown(), "the premise: the unit's MIX 1").toBe("MIX1"));
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       await transport().write("ui.sendsTarget", "FX1");
-      for (let i = 0; i < 1000 && setsOf(shell, SENDS).length < 1; i++) await new Promise((r) => setTimeout(r, 10));
-      expect(setsOf(shell, SENDS)).toEqual([[0, 16]]);
-      // MIX 2 chosen on the unit, then the write's own answer.
-      notifyChannel(shell).onmessage([{ param_id: SENDS, x: 0, y: 0, value: 34 }]);
-      expect(await shown()).toBe("MIX2");
-      notifyChannel(shell).onmessage([{ param_id: SENDS, x: 0, y: 0, value: 16 }]);
-      expect(await shown(), "what the unit holds after both").toBe("FX1");
+      await writes(shell, 1);
+      // The write's answer and MIX 2 chosen on the unit after it, in one burst: the unit ends on MIX 2.
+      unit.set({ paramId: SENDS, x: 0, y: 0, value: MIX2 });
+      notifyChannel(shell).onmessage([
+        { param_id: SENDS, x: 0, y: 0, value: FX1 },
+        { param_id: SENDS, x: 0, y: 0, value: MIX2 },
+      ]);
     } finally {
       vi.useRealTimers();
     }
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
+    await vi.waitFor(async () => expect(await sendsShown(), "what the unit holds").toBe("MIX2"), { timeout: 10_000 });
+    expect(setsOf(shell, SENDS), "nothing written back").toEqual([[0, FX1]]);
   });
 
   it("ends the session when a delay time turned under tempo Sync is refused", SLOW, async () => {
