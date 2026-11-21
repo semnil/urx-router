@@ -153,24 +153,29 @@ two port selects: what a second and a third choice do while the first port is st
     and "still says a failed open that is the latest choice, after an earlier one was replaced".
 - **Turned down: reporting that failure and taking it down when a later port opens.** The line
   would still show a failure for a port the operator had left, for as long as the next open takes.
-- **Not established: that the shell takes two commands in the order the page sent them.** The
-  queue orders what the page sends, every test above stands a stub where the shell is, and the Rust
-  side of the ports (`src-tauri/src/midi.rs`) has no test of its own. What is known about the order
-  is this. The MIDI commands are all synchronous, and the shell enters synchronous commands one at
-  a time, in the order the webview hands them over. That the webview hands two requests over in the
-  order the page issued them, when the page does not await the first, is not guaranteed by Tauri's
-  documentation. It holds in the macOS webview (WKWebView). The Windows webview
-  (WebView2) is unconfirmed.
-- **Known and left unguarded: two places where the result depends on the order two commands are
-  taken in.** Both go wrong only if the shell takes the two commands in the reverse of the order
-  sent.
-  - A close is not awaited inside the port queue. "None" sends the close and the queue moves on
-    (`applyInputPort`, `closeOutput`), so that close and the next open of the same direction can be
-    in flight together. Taken in reverse, the shell opens the new port and then closes it, and the
-    page goes on showing it as open.
+- **The webview does not keep the order of two commands the page did not await.** The MIDI
+  commands are all synchronous, and the shell enters synchronous commands one at a time, in the
+  order the webview hands them over. That the webview hands two requests over in the order the page
+  issued them, when the page does not await the first, is not guaranteed by Tauri's documentation.
+  The macOS webview (WKWebView) kept the order; the Windows webview (WebView2) handed some of them
+  over reversed. Nothing that depends on the shell taking two commands in order may rest on the order
+  they were sent in.
+- **Fixed: two places that relied on the order two commands are taken in.** Both went wrong only if
+  the shell took the two commands in the reverse of the order sent, which WebView2 does.
+  - A close was not awaited inside the port queue. "None" sends the close and the queue moves on
+    (`applyInputPort`, `closeOutput`), so that close and the next open of the same direction could be
+    in flight together. Taken in reverse, the shell opened the new port and then closed it, and the
+    page went on showing it as open.
   - A close followed by the question about open ports (`reconcileOpenPorts`, which `refreshPorts`
-    runs). The close is counted when it is sent, so a question sent after it is not discarded.
-    Taken in reverse, the answer still names the port being closed and the page puts it back.
+    runs). The close is counted when it is sent, so a question sent after it was not discarded.
+    Taken in reverse, the answer still named the port being closed and the page put it back.
+
+  The last close of each direction is kept until the shell has answered it, and the next open of
+  that direction and the question about open ports are not sent before then. The close still does
+  not hold up the queue, and the shell's answer to a close is the shell having taken it.
+  `src/ui/midi.test.ts`: "does not send the next input open until the close before it is answered",
+  the same for the output, and "does not ask which ports are open until a close before it is
+  answered", each of which fails without its part of the fix.
 - **Fixed: giving up an output the operator had already chosen away from.** Giving up a stalled
   output (`abandonOutput`) sends its close from outside the queue, and the shell's close takes no
   port: it closes whatever is held. A failed send counted toward the give-up even after the
