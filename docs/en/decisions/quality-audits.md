@@ -151,26 +151,55 @@ two port selects: what a second and a third choice do while the first port is st
     that direction (the operator's decision, 2026-11-13). `src/ui/midi.test.ts`: "says nothing
     about a failed input open the operator has already chosen away from", the same for the output,
     and "still says a failed open that is the latest choice, after an earlier one was replaced".
+  - In the desktop app on Windows, the three fixes behaved as these tests say (a development build
+    of 1.18.6, 2026-11-21). Windows MIDI Services loopback ports stood in for a controller, and
+    removing a loopback pair stood in for unplugging it. "None" chosen as soon as the reopened
+    window's selects appeared stayed "None" for the input and the output. That is also the result
+    when no answer is on its way, so it does not show the fix at work. Each direction kept its own
+    stored port: an input chosen and then an output both came back after a restart, and an output
+    given up on after its pair was removed was still stored after "None" was chosen for the input.
+    For the failure of a replaced choice, ten runs picked a removed port and then another input,
+    0 to 300 ms apart, with the order of the steps recorded inside the app. In the five where the
+    second choice reached the main window before the first open failed, nothing was said; in the
+    five where the failure came first, it was.
 - **Turned down: reporting that failure and taking it down when a later port opens.** The line
   would still show a failure for a port the operator had left, for as long as the next open takes.
-- **Not established: that the shell takes two commands in the order the page sent them.** The
+- **Measured: whether the shell takes two commands in the order the page sent them.** The
   queue orders what the page sends, every test above stands a stub where the shell is, and the Rust
   side of the ports (`src-tauri/src/midi.rs`) has no test of its own. What is known about the order
   is this. The MIDI commands are all synchronous, and the shell enters synchronous commands one at
   a time, in the order the webview hands them over. That the webview hands two requests over in the
   order the page issued them, when the page does not await the first, is not guaranteed by Tauri's
-  documentation. It holds in the macOS webview (WKWebView). The Windows webview
-  (WebView2) is unconfirmed.
-- **Known and left unguarded: two places where the result depends on the order two commands are
-  taken in.** Both go wrong only if the shell takes the two commands in the reverse of the order
-  sent.
-  - A close is not awaited inside the port queue. "None" sends the close and the queue moves on
-    (`applyInputPort`, `closeOutput`), so that close and the next open of the same direction can be
-    in flight together. Taken in reverse, the shell opens the new port and then closes it, and the
-    page goes on showing it as open.
+  documentation, so it was measured on a development build with a probe kept out of this repository.
+  The probe issues bursts of 50 calls in four ways — all in one task, one per task, one per microtask,
+  and all in one task after 5.5 s without IPC — 20 bursts each, and the shell records the order they
+  arrive in. In the macOS webview (WKWebView) all 4,000 calls arrived in the order issued
+  (2026-11-13). In the Windows webview (WebView2 157 on Windows 11) they did not (2026-11-21): in 21
+  of the 80 bursts, a call arrived directly before one issued earlier, 90 times in all. Those were 1
+  of the 20 bursts issued in one task and all 20 issued in one task after the wait; the bursts issued
+  one per task or one per microtask arrived in order. Every call arrived, all over the same
+  transport, none was refused, and the page stayed visible throughout. Neither result is a
+  guarantee, and no release build was measured.
+- **Fixed: two places that relied on the order two commands are taken in.** Both went wrong only if
+  the shell took the two commands in the reverse of the order sent, which the measurement above
+  shows WebView2 can do.
+  - A close was not awaited inside the port queue. "None" sends the close and the queue moves on
+    (`applyInputPort`, `closeOutput`), so that close and the next open of the same direction could be
+    in flight together. Taken in reverse, the shell opened the new port and then closed it, and the
+    page went on showing it as open.
   - A close followed by the question about open ports (`reconcileOpenPorts`, which `refreshPorts`
-    runs). The close is counted when it is sent, so a question sent after it is not discarded.
-    Taken in reverse, the answer still names the port being closed and the page puts it back.
+    runs). The close is counted when it is sent, so a question sent after it was not discarded.
+    Taken in reverse, the answer still named the port being closed and the page put it back.
+
+  The last close of each direction is kept until the shell has answered it, and the next open of
+  that direction and the question about open ports are not sent before then. A close of the other
+  direction begun while the question waits drops the question, the same as a close begun inside its
+  round trip. The close still does not hold up the queue, and the shell's answer to a close is the
+  shell having taken it.
+  `src/ui/midi.test.ts`: "does not send the next input open until the close before it is answered",
+  the same for the output, "does not ask which ports are open until a close before it is
+  answered", and "does not put a port back that closed while the question waited" for each
+  direction, each of which fails without its part of the fix.
 - **Fixed: giving up an output the operator had already chosen away from.** Giving up a stalled
   output (`abandonOutput`) sends its close from outside the queue, and the shell's close takes no
   port: it closes whatever is held. A failed send counted toward the give-up even after the

@@ -1177,6 +1177,11 @@ function renderConsoleLock(): void {
 // nothing.
 let sendsTarget: SendsTarget | null = null;
 const sendsEchoes = new LcdEchoes();
+// The destinations chosen on the glass whose write has not gone out and settled yet. While one is,
+// the glass shows that choice rather than a choice the unit announces in between.
+let sendsChoicesOut = 0;
+// A count of the choices the unit announced, which a read taken while one lands does not override.
+let sendsVersion = 0;
 // How long after an announced rate above 96 kHz 763 is read again. The unit moves FX 2 to FX 1
 // at that rate and announces nothing, and has moved it by this long after the rate write.
 const SENDS_REREAD_AFTER_RATE_MS = 1000;
@@ -1198,6 +1203,7 @@ function chooseSendsTarget(target: string): boolean {
   const raw = encodeSendsTarget(getModel(modelId), target, plan.sampleRate);
   if (raw === null) return false;
   sendsTarget = decodeSendsTarget(getModel(modelId), raw);
+  sendsChoicesOut++;
   cueWrites = cueWrites
     .then(async () => {
       if (!liveSessionUp) return;
@@ -1208,12 +1214,17 @@ function chooseSendsTarget(target: string): boolean {
       sessionWriteFailed(err);
       // The destination the lock kept from the unit: the glass is shown what the unit holds.
       if (stoppedByConsoleLock(err)) rereadSendsTarget();
+    })
+    .finally(() => {
+      sendsChoicesOut--;
     });
   return true;
 }
 
 /** Read 763 behind every write queued so far, the plan flush and the follow reads running, and
- *  take what the unit holds. An experimental launch only, where the SIM view shows it. */
+ *  take what the unit holds, unless the unit announced a choice while the read was out, or a
+ *  destination chosen on the glass after the read was queued is still to be written: that write
+ *  lands last. An experimental launch only, where the SIM view shows it. */
 function rereadSendsTarget(): void {
   if (!liveSessionUp || !experimentalOn) return;
   cueWrites = cueWrites
@@ -1221,8 +1232,9 @@ function rereadSendsTarget(): void {
       await live?.idle();
       await Promise.all([...followReads].map((r) => r.done));
       if (!liveSessionUp) return;
+      const since = sendsVersion;
       const raw = await readSendsTarget();
-      if (liveSessionUp) takeSendsTarget(raw);
+      if (liveSessionUp && sendsVersion === since && sendsChoicesOut === 0) takeSendsTarget(raw);
     })
     .catch((err: unknown) => stopLiveOnError(errorText(err)));
 }
@@ -2485,7 +2497,13 @@ const follow =
           // HOME's [Sends] destination: the unit answering a write of this app's, or a choice on
           // its panel. Neither opens a reconcile.
           if (at(SENDS_TARGET_ADDR)) {
-            if (!sendsEchoes.take(p.value)) takeSendsTarget(p.value);
+            if (sendsEchoes.take(p.value)) return true;
+            sendsVersion++;
+            // A choice on the unit while one made on the glass is still to be written or answered:
+            // the unit ends on whichever lands last, so the glass keeps its choice and the unit is
+            // read again once that write has gone out.
+            if (sendsChoicesOut > 0) rereadSendsTarget();
+            else takeSendsTarget(p.value);
             return true;
           }
           // The unit's settings, its operation mode and an engaged Clip Safe, which the SIM view

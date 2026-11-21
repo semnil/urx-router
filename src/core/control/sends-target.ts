@@ -47,12 +47,13 @@ export function readSendsTarget(): Promise<number> {
   return vdGet(PARAMS.SENDS_TARGET.id, 0, 0);
 }
 
-/** Write 763, resolving once the unit has announced it — or once the settle window has passed,
- *  for a write that changed nothing and so is announced by nothing. The caller must have
- *  connected first. */
+/** Write 763, resolving once the unit has announced that value — or once the settle window has
+ *  passed, for a write that changed nothing and so is announced by nothing. A destination chosen on
+ *  the unit's panel in between does not end the wait, so what is read behind the write is the unit
+ *  after it. The caller must have connected first. */
 export async function writeSendsTarget(raw: number): Promise<void> {
   const [id, x, y] = SENDS_TARGET_ADDR;
   const mark = writeSettle.mark();
   await vdSet(id, x, y, raw);
-  await writeSettle.settle(new Map([[addrKey(id, x, y), mark]]));
+  await writeSettle.announcement(addrKey(id, x, y), mark, raw);
 }

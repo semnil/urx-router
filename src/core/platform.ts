@@ -575,10 +575,11 @@ export function midiOpenPorts(): Promise<[string | null, string | null]> {
 /**
  * Open a MIDI input port and stream each raw message through onMessage.
  * Replaces any previously open input. Rejects when the port is gone. Returns a
- * close function. No-op (resolved noop) outside Tauri.
+ * close function, settled once the shell has answered the close. No-op (resolved
+ * noop) outside Tauri.
  */
-export async function midiOpenInput(port: string, onMessage: (bytes: number[]) => void): Promise<() => void> {
-  if (!isTauri()) return () => {};
+export async function midiOpenInput(port: string, onMessage: (bytes: number[]) => void): Promise<() => Promise<void>> {
+  if (!isTauri()) return () => Promise.resolve();
   // Rust batches a controller burst into one channel message; fan it back out.
   const channel = newChannel<RawMidiMessage[]>((batch) => {
     for (const m of batch) onMessage(m.bytes);
@@ -593,10 +594,13 @@ export async function midiOpenInput(port: string, onMessage: (bytes: number[]) =
  *  closer function buys nothing, and CONDITIONING the close on holding one is a real
  *  gap: after `reconcileOpenPorts` adopts a port the shell already had, there is no
  *  closer, and the operator's next "None" then closed nothing at all. The select said
- *  None while the shell kept delivering into the engine. */
-export function midiCloseInput(): void {
-  if (!isTauri()) return;
-  void invoke<void>("midi_close_input").catch(() => {});
+ *  None while the shell kept delivering into the engine.
+ *
+ *  Settles once the shell has answered, and never rejects: what waits on it is the next
+ *  command, which must not reach the shell before this one has been taken. */
+export function midiCloseInput(): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return invoke<void>("midi_close_input").catch(() => {});
 }
 
 // ---- MIDI control window -------------------------------------------------
