@@ -302,22 +302,32 @@ export class WriteSettle {
    * Wait until the unit has announced `value` at `addr` after `mark`, or for `timeoutMs`.
    * Unlike `settle`, a notify carrying any other value does not end it: a write still
    * unannounced behind an earlier one at the same address is answered only by its own value.
+   * Resolves true when the value was announced, false when the wait ended at the bound.
    */
   async announcement(
     addr: number,
     mark: number,
     value: number,
     opts: { timeoutMs?: number; signal?: AbortSignal } = {},
-  ): Promise<void> {
+  ): Promise<boolean> {
     const { timeoutMs = SETTLE_TIMEOUT_MS, signal } = opts;
     signal?.throwIfAborted();
     const s = this.seen.get(addr);
-    if (s !== undefined && s.at > mark && s.value === value) return;
+    if (s !== undefined && s.at > mark && s.value === value) return true;
+    let announced = false;
     await this.wait(timeoutMs, signal, (done) => {
-      const waiter = { k: addr, value, done };
+      const waiter = {
+        k: addr,
+        value,
+        done: () => {
+          announced = true;
+          done();
+        },
+      };
       this.valueWaiters.add(waiter);
       return () => this.valueWaiters.delete(waiter);
     });
+    return announced;
   }
 
   // A write the unit was obliged to announce and did not, judged at the bound rather

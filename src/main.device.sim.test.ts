@@ -1269,6 +1269,157 @@ describe("the SIM view over a live session", () => {
     await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[0, 0x1]]), { timeout: 10_000 });
   });
 
+  // A unit that acks a write of CH 1's selection and announces nothing for it, and, when told to,
+  // announces CH ON pressed on its panel just before the write lands.
+  const silentSelectUnit = (opts: { take: boolean; pressFirst?: number }) => {
+    const unit = panelUnit();
+    let pressed = false;
+    unit.cmds.vd_set = (a: Record<string, unknown>) => {
+      if (a.paramId !== SELECT) return unit.set(a);
+      if (opts.pressFirst !== undefined && !pressed) {
+        pressed = true;
+        unit.press(SELECT, opts.pressFirst);
+      }
+      if (opts.take) unit.set(a);
+      return undefined;
+    };
+    return unit;
+  };
+
+  it("reads a RECALL SAFE row back when the unit announces nothing for a write it did not take", SLOW, async () => {
+    const unit = silentSelectUnit({ take: false });
+    const shell = await unit.boot();
+    await transport().write("safe.ch1.name", true);
+    await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]), { timeout: 10_000 });
+    await vi.waitFor(
+      async () => expect(await shownSafe("safe.ch1.name"), "what the unit holds, read back").toEqual([false]),
+      { timeout: 10_000 },
+    );
+    // The next press is made from what the unit holds.
+    await transport().write("safe.ch1.chLevel", true);
+    await vi.waitFor(
+      () =>
+        expect(setsOf(shell, SELECT)).toEqual([
+          [0, 0x100000],
+          [0, 0x1],
+        ]),
+      { timeout: 10_000 },
+    );
+  });
+
+  it(
+    "reads a RECALL SAFE row back when the answer to a write never follows a selection the unit made",
+    SLOW,
+    async () => {
+      // CH ON is announced from the unit's panel, then the write lands and its answer is lost.
+      const unit = silentSelectUnit({ take: true, pressFirst: 0x2 });
+      const shell = await unit.boot();
+      await transport().write("safe.ch1.name", true);
+      await vi.waitFor(
+        async () =>
+          expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn"), "what the unit holds after both").toEqual([
+            true,
+            false,
+          ]),
+        { timeout: 10_000 },
+      );
+      await transport().write("safe.ch1.chLevel", true);
+      await vi.waitFor(() => expect(setsOf(shell, SELECT)[1]).toEqual([0, 0x100001]), { timeout: 10_000 });
+    },
+  );
+
+  it("ends the session when the read of a RECALL SAFE row the unit announced nothing for fails", SLOW, async () => {
+    const unit = silentSelectUnit({ take: false });
+    let failRead = false;
+    const get = unit.cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    unit.cmds.vd_get = (a: Record<string, unknown>) =>
+      failRead && a.paramId === SELECT ? Promise.reject(new Error("selection read failed")) : get(a);
+    const shell = await unit.boot();
+    failRead = true;
+    await transport().write("safe.ch1.name", true);
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the failed read is what ended it").toContain("selection read failed");
+    expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]);
+  });
+
+  it("keeps a RECALL SAFE selection the unit announces while the row is read back", SLOW, async () => {
+    const unit = silentSelectUnit({ take: false });
+    let holdRead = false;
+    let reading = false;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const get = unit.cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    unit.cmds.vd_get = (a: Record<string, unknown>) => {
+      if (!holdRead || a.paramId !== SELECT) return get(a);
+      // The value is taken now and answered once released.
+      const value = get(a);
+      reading = true;
+      return held.then(() => value);
+    };
+    const shell = await unit.boot();
+    holdRead = true;
+    await transport().write("safe.ch1.name", true);
+    await vi.waitFor(() => expect(reading, "the premise: the read back is out").toBe(true), { timeout: 10_000 });
+    unit.press(SELECT, 0x2);
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch1.chOn")).toEqual([true]));
+    release();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn"), "the unit's announcement over the older read").toEqual([
+      false,
+      true,
+    ]);
+    expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]);
+  });
+
+  // A SETUP write the unit holds unanswered, a RECALL SAFE selection queued behind it, and Console
+  // Lock on and off while it waits; then another SETUP write and a selection of the same row.
+  const lockedQueue = async (brightness2?: Error) => {
+    const unit = panelUnit();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let holding = false;
+    const order: string[] = [];
+    unit.cmds.vd_set = (a: Record<string, unknown>) => {
+      unit.set(a);
+      if (a.paramId === SELECT || a.paramId === PARAMS.BRIGHTNESS.id)
+        order.push(`${String(a.paramId)}=${String(a.value)}`);
+      if (a.paramId !== PARAMS.BRIGHTNESS.id) return undefined;
+      if (a.value === 2 && brightness2) return Promise.reject(brightness2);
+      if (a.value !== 3) return undefined;
+      holding = true;
+      return held;
+    };
+    const shell = await unit.boot();
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
+    await transport().write("safe.ch1.name", true);
+    unit.press(PARAMS.CONSOLE_LOCK.id, 1);
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name"), "put back at the lock").toEqual([false]));
+    unit.press(PARAMS.CONSOLE_LOCK.id, 0);
+    await transport().write("setup.brightness", 2);
+    await transport().write("safe.ch1.chLevel", true);
+    release();
+    return { shell, order };
+  };
+
+  it("writes a RECALL SAFE selection made after a Console Lock behind the writes queued before it", SLOW, async () => {
+    const { shell, order } = await lockedQueue();
+    await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[0, 0x1]]), { timeout: 10_000 });
+    const b = PARAMS.BRIGHTNESS.id;
+    expect(order, "in the order the writes were taken").toEqual([`${b}=3`, `${b}=2`, `${SELECT}=1`]);
+  });
+
+  it(
+    "sends no RECALL SAFE selection made after a Console Lock when a write queued ahead of it fails",
+    SLOW,
+    async () => {
+      const { shell } = await lockedQueue(new Error("brightness write refused"));
+      await invoked(shell, "vd_disconnect");
+      expect(errors(shell).join(" ")).toContain("brightness write refused");
+      expect(setsOf(shell, SELECT)).toEqual([]);
+    },
+  );
+
   it(
     "holds each row's [Safe] shut during Live sync, and leaves RECALL SAFE to the glass once it ends",
     SLOW,

@@ -217,12 +217,21 @@ export function recallSafeGlassEdit(
   return { row: target.row, bits: BITS[target.row.kind][target.key]! };
 }
 
-/** Write one row's selection, resolving once the unit has announced that value — or once the settle
- *  window has passed, for a write of the selection it already holds. A selection the unit announces
- *  in between, pressed on its panel, does not end the wait, so the next write to the row is made
- *  from what the unit holds after this one. The caller must have connected first. */
-export async function writeRecallSafeSelect(row: RecallSafeRow, raw: number): Promise<void> {
+/** Write one row's selection, resolving true once the unit has announced that value, and false once
+ *  the settle window has passed without it — a write of the selection the unit already holds, or one
+ *  it did not take; the caller reads the row back then (`readRecallSafeSelect`). A selection the unit
+ *  announces in between, pressed on its panel, does not end the wait, so the next write to the row is
+ *  made from what the unit holds after this one. The caller must have connected first. */
+export async function writeRecallSafeSelect(row: RecallSafeRow, raw: number): Promise<boolean> {
   const mark = writeSettle.mark();
   await vdSet(row.select, 0, row.y, raw);
-  await writeSettle.announcement(addrKey(row.select, 0, row.y), mark, raw);
+  return writeSettle.announcement(addrKey(row.select, 0, row.y), mark, raw);
+}
+
+/** Read one row's selection from the unit. The caller must have connected first. */
+export function readRecallSafeSelect(
+  row: RecallSafeRow,
+  get: (paramId: number, x: number, y: number) => Promise<number> = vdGet,
+): Promise<number> {
+  return get(row.select, 0, row.y);
 }

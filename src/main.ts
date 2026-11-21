@@ -298,6 +298,7 @@ import {
   isRecallSafeUnitPath,
   mergeRecallSafeRead,
   readRecallSafe,
+  readRecallSafeSelect,
   recallSafeAt,
   safePartKey,
   withPending,
@@ -1036,7 +1037,9 @@ function takeConsoleLock(locked: boolean): void {
     return;
   }
   // A RECALL SAFE selection the glass made and the session has not written yet is put back, as an
-  // edit of the plan is: the write queued for it finds nothing left to send.
+  // edit of the plan is, and the writes queued for it are dropped with it: a selection made after the
+  // unlock is written in its own turn, behind the writes queued before it.
+  recallSafeLocks++;
   if (recallSafePending.size) {
     recallSafePending.clear();
     simView?.unitStateChanged();
@@ -1281,6 +1284,8 @@ const recallSafePending = new Map<string, SafePending>();
 const recallSafeVersions = new Map<string, number>();
 const recallSafeEchoes = new CueEchoes();
 const recallSafeQueued = new Map<string, RecallSafeRow>();
+// Raised at each Console Lock: a RECALL SAFE write queued before it sends nothing.
+let recallSafeLocks = 0;
 const clipSafeEngaged = new Set<number>();
 // A Follow USB press on the glass, handled as a press of the toolbar's FOLLOW USB; set where that
 // button is wired.
@@ -1397,7 +1402,8 @@ function flushRecallSafeWrites(): void {
   recallSafeQueued.clear();
   if (!liveSessionUp) return;
   const epoch = liveEpoch;
-  const ours = (): boolean => liveSessionUp && liveEpoch === epoch;
+  const locks = recallSafeLocks;
+  const ours = (): boolean => liveSessionUp && liveEpoch === epoch && recallSafeLocks === locks;
   for (const row of rows) {
     cueWrites = cueWrites
       .then(async () => {
@@ -1412,7 +1418,17 @@ function flushRecallSafeWrites(): void {
         recallSafePending.delete(row.node);
         unitRecallSafe = new Map(unitRecallSafe).set(row.node, { ...held, select: raw });
         recallSafeEchoes.note(row.select, row.y, raw);
-        await writeRecallSafeSelect(row, raw);
+        if (await writeRecallSafeSelect(row, raw)) return;
+        // The unit announced no such selection: it held it already, or did not take it. The row is
+        // read back, and what the unit announces for it while the read is out is kept instead.
+        if (!liveSessionUp || liveEpoch !== epoch) return;
+        const key = safePartKey(row.node, "select");
+        const since = recallSafeVersions.get(key);
+        const select = await readRecallSafeSelect(row);
+        if (!liveSessionUp || liveEpoch !== epoch || !unitRecallSafe) return;
+        if (recallSafeVersions.get(key) !== since) return;
+        unitRecallSafe = withRecallSafeNotify(unitRecallSafe, { row, part: "select" }, select);
+        simView?.unitStateChanged();
       })
       .catch((err: unknown) => {
         sessionWriteFailed(err);
