@@ -3543,6 +3543,8 @@ input[type="range"]:focus-visible,
 .con-spop .ph {
   display: flex;
   align-items: baseline;
+  /* Not inert: when the header sets the popover's width (one knob and a long strip name),
+     .who's margin-left: auto resolves to 0 and this gap is all that separates it from .cat. */
   gap: 8px;
   font: 700 9.5px var(--mono);
   letter-spacing: 1px;
