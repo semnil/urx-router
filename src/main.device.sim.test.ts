@@ -1208,6 +1208,67 @@ describe("the SIM view over a live session", () => {
     }
   });
 
+  it("makes the next write to a RECALL SAFE row from what the unit holds after the one before", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      await transport().write("safe.ch1.name", true);
+      for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < 1; i++) await new Promise((r) => setTimeout(r, 10));
+      // A second press while the first write waits for its answer, and CH ON pressed on the unit.
+      await transport().write("safe.ch1.chLevel", true);
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x2 }]);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(setsOf(shell, SELECT), "the second write waits for the first one's answer").toEqual([[0, 0x100000]]);
+      // The first write's answer: the unit holds Name, over the CH ON it took before the write landed.
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100000 }]);
+      for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(setsOf(shell, SELECT)).toEqual([
+        [0, 0x100000],
+        [0, 0x100001],
+      ]);
+      expect(await shownSafe("safe.ch1.name", "safe.ch1.chLevel")).toEqual([true, true]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("puts back a RECALL SAFE selection not yet written when the unit goes into Console Lock", SLOW, async () => {
+    const unit = panelUnit();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let holding = false;
+    unit.cmds.vd_set = (a: Record<string, unknown>) => {
+      unit.set(a);
+      if (a.paramId !== PARAMS.BRIGHTNESS.id || a.value !== 3) return undefined;
+      holding = true;
+      return held;
+    };
+    const shell = await unit.boot();
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
+    await transport().write("safe.ch1.name", true);
+    expect(await shownSafe("safe.ch1.name")).toEqual([true]);
+    unit.press(PARAMS.CONSOLE_LOCK.id, 1);
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name"), "put back at the lock").toEqual([false]));
+    unit.press(PARAMS.CONSOLE_LOCK.id, 0);
+    release();
+    await transport().write("setup.brightness", 2);
+    await vi.waitFor(
+      () =>
+        expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([
+          [0, 3],
+          [0, 2],
+        ]),
+      { timeout: 10_000 },
+    );
+    expect(setsOf(shell, SELECT), "nothing sent once the lock is off").toEqual([]);
+    // A press after the unlock is sent, alone.
+    await transport().write("safe.ch1.chLevel", true);
+    await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[0, 0x1]]), { timeout: 10_000 });
+  });
+
   it(
     "holds each row's [Safe] shut during Live sync, and leaves RECALL SAFE to the glass once it ends",
     SLOW,

@@ -2009,7 +2009,9 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   to set and to clear on that row, shown over the row the session holds, and written to the unit behind every unit
   write queued so far: laid over the row as the unit holds it when the write's turn comes, so a column changed on
   the unit's panel, or found by a read, while the write waits is kept. Every press on a row before that turn goes
-  out in the one write — the row's [All] and a Source with the HA beside it are one press. The unit announces its answer to each write,
+  out in the one write — the row's [All] and a Source with the HA beside it are one press — and the next write to the row
+  waits for the unit to announce the value of the one before. A selection not yet written when Console Lock arrives is
+  put back, as an edit of the plan is. The unit announces its answer to each write,
   and an answer to a write the LCD has since replaced does not move the LCD back. A row's [Safe] the unit takes from
   no link, so during Live sync the LCD holds it shut (below). No address of the link has been found for Incoming
   Sends and the Others tab, which stay the LCD's own, and with no session the whole screen is, reaching nothing. Which row each

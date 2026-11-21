@@ -1035,6 +1035,12 @@ function takeConsoleLock(locked: boolean): void {
     setStatus(t().status.consoleUnlocked);
     return;
   }
+  // A RECALL SAFE selection the glass made and the session has not written yet is put back, as an
+  // edit of the plan is: the write queued for it finds nothing left to send.
+  if (recallSafePending.size) {
+    recallSafePending.clear();
+    simView?.unitStateChanged();
+  }
   // The gesture in progress ends its entry here, so an edit refused from now on is taken back to
   // where the plan stands at the lock rather than to where that gesture began — part of it may
   // already be on the unit.

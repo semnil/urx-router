@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn() }));
-vi.mock("./settle", () => ({ writeSettle: { mark: () => 0, settle: () => Promise.resolve() } }));
+vi.mock("./settle", () => ({ writeSettle: { mark: () => 0, announcement: () => Promise.resolve() } }));
 
 import { vdSet } from "../platform";
 import { getModel, MODEL_IDS } from "../../models";
