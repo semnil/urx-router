@@ -1179,6 +1179,35 @@ describe("the SIM view over a live session", () => {
     },
   );
 
+  it("takes the answer to a RECALL SAFE write that lands after a selection the unit made itself", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const writes = async (n: number): Promise<void> => {
+        for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < n; i++) await new Promise((r) => setTimeout(r, 10));
+      };
+      await transport().write("safe.ch1.name", true);
+      await writes(1);
+      expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]);
+      // CH ON pressed on the unit before the write lands, then the write's own answer.
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x2 }]);
+      expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn")).toEqual([false, true]);
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100000 }]);
+      expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn"), "what the unit holds after both").toEqual([
+        true,
+        false,
+      ]);
+      // The next press changes its own column alone.
+      await transport().write("safe.ch1.chLevel", true);
+      await writes(2);
+      expect(setsOf(shell, SELECT)[1]).toEqual([0, 0x100001]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it(
     "holds each row's [Safe] shut during Live sync, and leaves RECALL SAFE to the glass once it ends",
     SLOW,

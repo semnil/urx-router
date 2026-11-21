@@ -1555,7 +1555,12 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
   // A RECALL SAFE row: the unit answering a selection this app wrote, or a press on its panel.
   const safeAt = recallSafeAt(getModel(modelId), paramId, 0, y);
   if (safeAt) {
-    if (safeAt.part === "select" && recallSafeEchoes.take(paramId, y, value)) return true;
+    if (safeAt.part === "select") {
+      if (recallSafeEchoes.take(paramId, y, value)) return true;
+      // A selection of the unit's own lands between this app's write and its answer: the answer then
+      // carries what the unit holds after both, and is taken rather than swallowed.
+      recallSafeEchoes.drop(paramId, y);
+    }
     if (unitRecallSafe) unitRecallSafe = withRecallSafeNotify(unitRecallSafe, safeAt, value);
     const key = safePartKey(safeAt.row.node, safeAt.part);
     recallSafeVersions.set(key, (recallSafeVersions.get(key) ?? 0) + 1);

@@ -187,6 +187,12 @@ export class CueEchoes {
     return this.byAddr.get(`${param}:${y}`)?.take(value) ?? false;
   }
 
+  /** Forget what is waited on at one address: the unit announced a value of its own there, so an
+   *  answer to this app's writes that lands after it is the unit's newer state, not an echo. */
+  drop(param: number, y: number): void {
+    this.byAddr.delete(`${param}:${y}`);
+  }
+
   clear(): void {
     this.byAddr.clear();
   }
