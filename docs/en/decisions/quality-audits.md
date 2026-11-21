@@ -171,11 +171,14 @@ two port selects: what a second and a third choice do while the first port is st
     Taken in reverse, the answer still named the port being closed and the page put it back.
 
   The last close of each direction is kept until the shell has answered it, and the next open of
-  that direction and the question about open ports are not sent before then. The close still does
-  not hold up the queue, and the shell's answer to a close is the shell having taken it.
+  that direction and the question about open ports are not sent before then. A close of the other
+  direction begun while the question waits drops the question, the same as a close begun inside its
+  round trip. The close still does not hold up the queue, and the shell's answer to a close is the
+  shell having taken it.
   `src/ui/midi.test.ts`: "does not send the next input open until the close before it is answered",
-  the same for the output, and "does not ask which ports are open until a close before it is
-  answered", each of which fails without its part of the fix.
+  the same for the output, "does not ask which ports are open until a close before it is
+  answered", and "does not put a port back that closed while the question waited" for each
+  direction, each of which fails without its part of the fix.
 - **Fixed: giving up an output the operator had already chosen away from.** Giving up a stalled
   output (`abandonOutput`) sends its close from outside the queue, and the shell's close takes no
   port: it closes whatever is held. A failed send counted toward the give-up even after the

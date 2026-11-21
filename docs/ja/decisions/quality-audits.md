@@ -155,10 +155,10 @@
     その選択を戻した。
 
   今は、向きごとに最後の閉じるコマンドを、シェルが答えるまで持っておき、その向きの次の開くコマンドと、
-  開いているポートの問い合わせは、それまで送らない。閉じるコマンドが待ち行列を止めることはない。シェルが
+  開いているポートの問い合わせは、それまで送らない。問い合わせが待っている間に、もう一方の向きの閉じるコマンドが始まったら、その問い合わせはやめる (往復の間に始まった閉じるコマンドと同じ扱い)。閉じるコマンドが待ち行列を止めることはない。シェルが
   閉じるコマンドに答えたことが、シェルがそれを処理したことになる。`src/ui/midi.test.ts`: 「does not send
   the next input open until the close before it is answered」、出力側の同じテスト、「does not ask which
-  ports are open until a close before it is answered」(どれも、直しのその部分が無いと失敗する)。
+  ports are open until a close before it is answered」、向きごとの「does not put a port back that closed while the question waited」(どれも、直しのその部分が無いと失敗する)。
 - **直したこと: 操作者がもう別の出力を選んだあとの見切り。** 止まった出力の見切り (`abandonOutput`) は、
   閉じるコマンドを待ち行列の外から送る。シェルの閉じる処理はポートを指定せず、持っているものを閉じる。
   送信の失敗は、操作者が別の出力を選んだあとも見切りに数えられていた。そのため、その出力を開くコマンドが
