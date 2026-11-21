@@ -128,7 +128,11 @@ describe("the program", () => {
 
 describe("which app the check names", () => {
   const cwds = { 11: "/x/other/src-tauri", 12: "/x/tree/src-tauri", 13: null };
-  const tree = mkdtempSync(join(tmpdir(), "startup-wait-"));
+  // Resolved, as the check resolves the tree: on macOS the temporary directory is reached through
+  // a link (/var -> /private/var), and the executables these cases name do not exist, so they
+  // keep the path they were built from. Built from the unresolved one, none of them is under the
+  // resolved tree, and the Windows cases below found no app on macOS.
+  const tree = realpathSync(mkdtempSync(join(tmpdir(), "startup-wait-")));
   mkdirSync(join(tree, "src-tauri"));
   afterAll(() => rmSync(tree, { recursive: true, force: true }));
   const cwdOf = (pid) => (pid === "12" ? join(tree, "src-tauri") : cwds[pid]);
