@@ -152,8 +152,8 @@ git worktree add --detach <dir> <sha>
   として、JavaScript に残る。探すのは JavaScript のファイルだけにする。`index.html` は、どちらのビルドでも
   この属性を持つ。
 - **デモが何を隠すか**は、ブラウザで読む。それぞれのフォルダを
-  `pnpm exec vite preview --outDir <dir>/<plain か demo> --port <n> --strictPort` で、E2E のポート 4173 と
-  4174 でないポートに配信し、File のメニュー `.menu[data-demo-hide]` を読む。普通のビルドでは表示され、
+  `pnpm exec vite preview --outDir <dir>/<plain か demo> --port <n> --strictPort` で、E2E の実行が使う 2 つの
+  ポート `E2E_PORT` と `E2E_TRACE_PORT` (設定しなければ 4173 と 4174) でないポートに配信し、File のメニュー `.menu[data-demo-hide]` を読む。普通のビルドでは表示され、
   デモのビルドでは計算後のスタイル (computed style) の `display` が `none` で、要素を囲む矩形が 0 × 0 になる。
   最初の `[data-demo-hide]` の `#follow-usb` で判定しない。`data-control-hide` によって、どのブラウザのビルドでも
   隠れるので、デモの隠し方が壊れていても同じに読める。デモは `[data-demo-only]` の要素 (Share URL、

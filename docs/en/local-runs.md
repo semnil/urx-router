@@ -160,7 +160,7 @@ built bundles.
   queries. Search the JavaScript files only: `index.html` carries the attribute in both builds.
 - **What the demo hides** is read in a browser. Serve each folder with
   `pnpm exec vite preview --outDir <dir>/<plain or demo> --port <n> --strictPort` on a port other than the
-  E2E ports 4173 and 4174, and read the File menu, `.menu[data-demo-hide]`: the plain build shows it, and
+  two an E2E run uses, `E2E_PORT` and `E2E_TRACE_PORT` (4173 and 4174 unless set), and read the File menu, `.menu[data-demo-hide]`: the plain build shows it, and
   in the demo build its computed `display` is `none` and its bounding rectangle is 0 × 0. Do not judge by
   the first `[data-demo-hide]`, `#follow-usb`: its `data-control-hide` hides it in every browser build, so
   it reads the same when the demo's hiding is broken. The demo also shows the `[data-demo-only]` elements
