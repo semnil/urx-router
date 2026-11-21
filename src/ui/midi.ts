@@ -169,7 +169,7 @@ export class MidiControl {
   // leaves `probeMark` an empty method there, and main.ts's calls to it remain.
   private learnOn = false;
   private armed: string | null = null;
-  private closeInput: (() => void) | null = null;
+  private closeInput: (() => Promise<void>) | null = null;
   private inputPort: string | null = null;
   private outputPort: string | null = null;
   /** Opens that have been asked for but not answered — what `reconcileOpenPorts`
@@ -179,6 +179,12 @@ export class MidiControl {
    *  can tell whether the shell's slots changed inside its own round trip — where the
    *  in-flight count is at zero and the answer it is holding is already out of date. */
   private portChanges = 0;
+  /** The last close sent per direction, settled once the shell has answered it. The
+   *  webview does not keep the order of two requests the page did not await (WebView2
+   *  was seen delivering them reversed), and the shell's close takes no port, so the
+   *  next open of that direction and the open-ports question wait on it: sent after the
+   *  answer, they cannot reach the shell before the close. */
+  private closing = { in: Promise.resolve(), out: Promise.resolve() };
   /** Which port choice, per direction, an in-flight open belongs to — bumped by every
    *  selection. `opensInFlight` / `portChanges` count for the reconcile's benefit and
    *  cannot answer this: they say whether a slot is changing or has changed, not whether
@@ -558,6 +564,7 @@ export class MidiControl {
     const gen = this.portGen.in;
     this.opensInFlight++;
     try {
+      await this.closing.in;
       // The Rust side replaces any prior input, so no explicit close first.
       const close = await midiOpenInput(port, (bytes) => {
         this.traceLog?.(`rx [${bytes.join(" ")}]`);
@@ -593,6 +600,7 @@ export class MidiControl {
     // re-send below carries everything once it lands.
     this.outputPort = null;
     try {
+      await this.closing.out;
       await midiOpenOutput(port);
       this.outputPort = port;
       // Re-picking a port is the operator's retry: a streak carried over from the
@@ -638,14 +646,15 @@ export class MidiControl {
    * sent to.
    *
    * Both counts see a change made AFTER the query was sent. A close sent before it is
-   * already counted when the query leaves, so that case rests on order instead: the
-   * shell's MIDI commands are synchronous and it enters them one at a time on one thread,
-   * in the order the webview hands them over, and the answer is the present one only if
-   * the close was handed over first. Nothing in Tauri's documentation says the webview keeps
-   * the order two requests were issued in when the first is not awaited.
+   * already counted when the query leaves, so the query waits for every close still
+   * unanswered: the webview does not keep the order of two requests the page did not
+   * await (WebView2 was seen reversing them), and taken before the close, the answer
+   * names the port being closed.
    */
   private async reconcileOpenPorts(): Promise<void> {
     if (!isTauri() || this.opensInFlight > 0) return;
+    await Promise.all([this.closing.in, this.closing.out]);
+    if (this.opensInFlight > 0) return;
     const generation = this.portChanges;
     const [input, output] = await midiOpenPorts().catch(() => [this.inputPort, this.outputPort]);
     if (this.opensInFlight > 0 || this.portChanges !== generation) return; // a slot changed under it
@@ -695,8 +704,7 @@ export class MidiControl {
       // reconcile adopts a port the shell already held there IS no closer, and asking
       // for one here left "None" closing nothing — the select read None while the shell
       // went on delivering into the engine, until some later open replaced the slot.
-      if (this.closeInput) this.closeInput();
-      else midiCloseInput();
+      this.closing.in = (this.closeInput ?? midiCloseInput)();
       this.closeInput = null;
       this.inputPort = null;
       this.portChanges++;
@@ -737,7 +745,7 @@ export class MidiControl {
     this.settleTimer = 0;
     this.outputPort = null;
     this.portChanges++;
-    void midiCloseOutput().catch(() => {});
+    this.closing.out = midiCloseOutput().catch(() => {});
   }
 
   // ---- feedback ----
