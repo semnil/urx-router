@@ -299,6 +299,10 @@ import {
   mergeRecallSafeRead,
   readRecallSafe,
   recallSafeAt,
+  safePartKey,
+  withPending,
+  withPendingEdit,
+  type SafePending,
   recallSafeGlassEdit,
   recallSafeGlassPaths,
   recallSafeGlassValues,
@@ -1261,10 +1265,13 @@ const sceneVersions = { current: 0, cursor: 0 };
 let unitIntegration: DawIntegration | null = null;
 const integrationVersions: Record<IntegrationField, number> = { active: 0, fx1Send: 0, fx2Send: 0 };
 // SCENE > [Recall Safe] (System firmware V1.5), by row: as a session read it and the unit announced
-// it since, a count of the changes made to each row, which a read taken while one lands does not
-// override, the selections this app wrote that the unit has not announced yet, and the rows one
-// press on the glass changed, written once each when the press has made all of its writes.
+// it since; what the glass chose there and has not written yet, laid over the unit's selection when
+// the row is written and while it is shown; a count of the unit's announcements of each row's [Safe]
+// and selection (`safePartKey`), which a read taken while one lands does not override; the
+// selections this app wrote that the unit has not announced yet; and the rows one press on the glass
+// changed, written once each when the press has made all of its writes.
 let unitRecallSafe: Map<string, SafeRowState> | null = null;
+const recallSafePending = new Map<string, SafePending>();
 const recallSafeVersions = new Map<string, number>();
 const recallSafeEchoes = new CueEchoes();
 const recallSafeQueued = new Map<string, RecallSafeRow>();
@@ -1289,7 +1296,8 @@ function unitGlassValues(): Map<string, SimValue> {
   for (const [path, value] of sceneGlassValues(unitScene.current, unitScene.cursor, unitScene.tab))
     out.set(path, value);
   if (unitIntegration) for (const [path, send] of integrationGlassValues(unitIntegration)) out.set(path, send);
-  if (unitRecallSafe) for (const [path, on] of recallSafeGlassValues(model, unitRecallSafe)) out.set(path, on);
+  if (unitRecallSafe)
+    for (const [path, on] of recallSafeGlassValues(model, unitRecallSafe, recallSafePending)) out.set(path, on);
   if (unitCardIn !== null) out.set("sd.mounted", unitCardIn);
   // MONITOR's [CUE Mode] (System firmware V1.5) is live-session state, as the [CUE] flags are.
   if (liveSessionUp) out.set(SIM_CUE_MODE, cues.mode === "last" ? "Last CUE" : "Mix CUE");
@@ -1311,14 +1319,11 @@ function writeUnitGlassValue(path: string, value: SimValue): Promise<SimValue> {
   if (refusedForLock()) return Promise.reject(new Error("refused"));
   // RECALL SAFE's selections are the session's, written row by row; its [Safe] the unit does not
   // take from the link.
-  const safeEdit = unitRecallSafe ? recallSafeGlassEdit(getModel(modelId), unitRecallSafe, path, value === true) : null;
+  const safeEdit = unitRecallSafe ? recallSafeGlassEdit(getModel(modelId), unitRecallSafe, path) : null;
   if (safeEdit !== null) {
-    if (safeEdit === "refused" || !liveSessionUp || !unitRecallSafe) return Promise.reject(new Error("refused"));
+    if (safeEdit === "refused" || !liveSessionUp) return Promise.reject(new Error("refused"));
     const node = safeEdit.row.node;
-    const held = unitRecallSafe.get(node);
-    if (!held) return Promise.reject(new Error("refused"));
-    unitRecallSafe = new Map(unitRecallSafe).set(node, { ...held, select: safeEdit.select });
-    recallSafeVersions.set(node, (recallSafeVersions.get(node) ?? 0) + 1);
+    recallSafePending.set(node, withPendingEdit(recallSafePending.get(node), safeEdit.bits, value === true));
     queueRecallSafeWrite(safeEdit.row);
     return Promise.resolve(shown());
   }
@@ -1378,8 +1383,9 @@ function queueRecallSafeWrite(row: RecallSafeRow): void {
   recallSafeQueued.set(row.node, row);
 }
 
-/** Write each row a press changed with the selection it left there, behind every unit write queued
- *  so far, within the session that took the press. */
+/** Write each row a press changed behind every unit write queued so far, within the session that
+ *  took the press: what the glass chose laid over the row as the unit holds it when the write's turn
+ *  comes, so a column changed on the unit's panel while the write waited is kept. */
 function flushRecallSafeWrites(): void {
   const rows = [...recallSafeQueued.values()];
   recallSafeQueued.clear();
@@ -1387,13 +1393,18 @@ function flushRecallSafeWrites(): void {
   const epoch = liveEpoch;
   const ours = (): boolean => liveSessionUp && liveEpoch === epoch;
   for (const row of rows) {
-    const raw = unitRecallSafe?.get(row.node)?.select;
-    if (raw === undefined) continue;
     cueWrites = cueWrites
       .then(async () => {
         if (!ours()) return;
         await live?.idle();
         if (!ours()) return;
+        const held = unitRecallSafe?.get(row.node);
+        const pending = recallSafePending.get(row.node);
+        // Nothing left to write: a write queued before this one took what the glass chose.
+        if (!unitRecallSafe || !held || !pending) return;
+        const raw = withPending(held.select, pending);
+        recallSafePending.delete(row.node);
+        unitRecallSafe = new Map(unitRecallSafe).set(row.node, { ...held, select: raw });
         recallSafeEchoes.note(row.select, row.y, raw);
         await writeRecallSafeSelect(row, raw);
       })
@@ -1405,8 +1416,8 @@ function flushRecallSafeWrites(): void {
   }
 }
 
-/** Read RECALL SAFE again behind every unit write queued so far, and take each row the unit holds
- *  unless that row changed while the read ran. */
+/** Read RECALL SAFE again behind every unit write queued so far, and take each row's [Safe] and
+ *  selection as the unit holds them unless that value was announced while the read ran. */
 function rereadRecallSafe(): void {
   if (!liveSessionUp || !experimentalOn) return;
   const epoch = liveEpoch;
@@ -1419,7 +1430,7 @@ function rereadRecallSafe(): void {
       const since = new Map(recallSafeVersions);
       const read = await readRecallSafe(model);
       if (!ours()) return;
-      const moved = new Set([...recallSafeVersions].filter(([node, n]) => since.get(node) !== n).map(([node]) => node));
+      const moved = new Set([...recallSafeVersions].filter(([key, n]) => since.get(key) !== n).map(([key]) => key));
       unitRecallSafe = mergeRecallSafeRead(unitRecallSafe, read, moved);
       simView?.unitStateChanged();
     })
@@ -1546,7 +1557,8 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
   if (safeAt) {
     if (safeAt.part === "select" && recallSafeEchoes.take(paramId, y, value)) return true;
     if (unitRecallSafe) unitRecallSafe = withRecallSafeNotify(unitRecallSafe, safeAt, value);
-    recallSafeVersions.set(safeAt.row.node, (recallSafeVersions.get(safeAt.row.node) ?? 0) + 1);
+    const key = safePartKey(safeAt.row.node, safeAt.part);
+    recallSafeVersions.set(key, (recallSafeVersions.get(key) ?? 0) + 1);
     simView?.unitStateChanged();
     return true;
   }
@@ -1631,6 +1643,7 @@ function resetUnitSessionState(): void {
   unitScene = { current: null, cursor: null, tab: null };
   unitIntegration = null;
   unitRecallSafe = null;
+  recallSafePending.clear();
   recallSafeEchoes.clear();
   recallSafeQueued.clear();
   unitCardIn = null;

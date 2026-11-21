@@ -2003,11 +2003,13 @@ sync, what it can only read is shown from the unit and takes no write, and what 
 - **SCENE > [Recall Safe]** (System firmware V1.5) is the unit's setting rather than the plan's
   (`recall-safe.ts`), which the unit keeps outside every scene. A session reads each row of the Input and Output
   tabs — its [Safe] and its selection of parameters — registers them, reads them again once registered, and
-  follows their announcements, a row announced or changed on the LCD while that read is out keeping its own state
-  over the read's answer. The LCD shows the rows the session holds, and its own values there are dropped as the
-  session starts. A parameter selected or cleared on the LCD is written to the unit behind every unit write queued
-  so far, the row's other bits as the unit holds them, and one press that changes a row in several columns — the
-  row's [All], a Source with the HA beside it — writes that row once. The unit announces its answer to each write,
+  follows their announcements, a row's [Safe] or selection announced while that read is out keeping its announced
+  value over the read's answer and taking the read's for the other. The LCD shows the rows the session holds, and its
+  own values there are dropped as the session starts. A parameter selected or cleared on the LCD is held as the bits
+  to set and to clear on that row, shown over the row the session holds, and written to the unit behind every unit
+  write queued so far: laid over the row as the unit holds it when the write's turn comes, so a column changed on
+  the unit's panel, or found by a read, while the write waits is kept. Every press on a row before that turn goes
+  out in the one write — the row's [All] and a Source with the HA beside it are one press. The unit announces its answer to each write,
   and an answer to a write the LCD has since replaced does not move the LCD back. A row's [Safe] the unit takes from
   no link, so during Live sync the LCD holds it shut (below). Incoming Sends and the Others tab are on no address of
   the link and stay the LCD's own, and with no session the whole screen is, reaching nothing. Which row each

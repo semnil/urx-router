@@ -108,30 +108,68 @@ export function withRecallSafeNotify(
   return out;
 }
 
-/** `read` taken over `held` row by row, keeping each row `moved` names: it changed while the read
- *  was out, and the change is newer than the read's answer. */
+/** The key a change to one of a row's two values is counted under (`mergeRecallSafeRead`). */
+export const safePartKey = (node: string, part: "safe" | "select"): string => `${node}:${part}`;
+
+/** `read` taken over `held` value by value, keeping each one `moved` names (`safePartKey`): it changed
+ *  while the read was out, and the change is newer than the read's answer. The other value of the
+ *  same row is the read's. */
 export function mergeRecallSafeRead(
   held: RecallSafeState | null,
   read: RecallSafeState,
   moved: ReadonlySet<string>,
 ): Map<string, SafeRowState> {
   const out = new Map(read);
-  if (held) for (const node of moved) if (held.has(node)) out.set(node, held.get(node)!);
+  if (!held) return out;
+  for (const [node, answer] of read) {
+    const kept = held.get(node);
+    if (!kept) continue;
+    out.set(node, {
+      safe: moved.has(safePartKey(node, "safe")) ? kept.safe : answer.safe,
+      select: moved.has(safePartKey(node, "select")) ? kept.select : answer.select,
+    });
+  }
   return out;
+}
+
+/** What the LCD chose on a row that has not been written yet: the bits to set and the bits to clear,
+ *  laid over the unit's selection when the row is written and while it is shown. */
+export interface SafePending {
+  set: number;
+  clear: number;
+}
+
+/** `pending` with one column selected (`on`) or cleared: the column's bits move from one side to the
+ *  other. */
+export function withPendingEdit(pending: SafePending | undefined, bits: number, on: boolean): SafePending {
+  const p = pending ?? { set: 0, clear: 0 };
+  return on
+    ? { set: (p.set | bits) >>> 0, clear: (p.clear & ~bits) >>> 0 }
+    : { set: (p.set & ~bits) >>> 0, clear: (p.clear | bits) >>> 0 };
+}
+
+/** `select` with `pending` laid over it. */
+export function withPending(select: number, pending: SafePending | undefined): number {
+  return pending ? ((select & ~pending.clear) | pending.set) >>> 0 : select;
 }
 
 const glassRow = (row: RecallSafeRow): string => `safe.${simStripId(row.node)}`;
 
-/** The glass's values `state` knows, by path: each row's [Safe] and each column it has a button
- *  for, a column selected where every one of its bits is. */
-export function recallSafeGlassValues(model: DeviceModel, state: RecallSafeState): Map<string, boolean> {
+/** The glass's values `state` knows, by path, with what the LCD chose and has not written yet
+ *  (`pending`) laid over it: each row's [Safe] and each column it has a button for, a column selected
+ *  where every one of its bits is. */
+export function recallSafeGlassValues(
+  model: DeviceModel,
+  state: RecallSafeState,
+  pending: ReadonlyMap<string, SafePending> = new Map(),
+): Map<string, boolean> {
   const out = new Map<string, boolean>();
   for (const row of recallSafeRows(model)) {
     const held = state.get(row.node);
     if (!held) continue;
+    const select = withPending(held.select, pending.get(row.node));
     out.set(`${glassRow(row)}.on`, held.safe);
-    for (const [key, bits] of safeColumnBits(row.kind))
-      out.set(`${glassRow(row)}.${key}`, (held.select & bits) === bits);
+    for (const [key, bits] of safeColumnBits(row.kind)) out.set(`${glassRow(row)}.${key}`, (select & bits) === bits);
   }
   return out;
 }
@@ -166,20 +204,17 @@ export function isRecallSafeUnitPath(model: DeviceModel, path: string): boolean 
   return glassTarget(model, path) !== null;
 }
 
-/** The row an edit of `path` on the glass writes and the selection it writes there, "refused" for a
- *  [Safe] or a row the session has not read, and null for a path no row of the unit answers. */
+/** The row an edit of `path` on the glass writes and the column's bits there, "refused" for a [Safe]
+ *  or a row the session has not read, and null for a path no row of the unit answers. */
 export function recallSafeGlassEdit(
   model: DeviceModel,
   state: RecallSafeState,
   path: string,
-  on: boolean,
-): { row: RecallSafeRow; select: number } | "refused" | null {
+): { row: RecallSafeRow; bits: number } | "refused" | null {
   const target = glassTarget(model, path);
   if (!target) return null;
-  const held = state.get(target.row.node);
-  if (target.key === "on" || !held) return "refused";
-  const bits = BITS[target.row.kind][target.key]!;
-  return { row: target.row, select: (on ? held.select | bits : held.select & ~bits) >>> 0 };
+  if (target.key === "on" || !state.has(target.row.node)) return "refused";
+  return { row: target.row, bits: BITS[target.row.kind][target.key]! };
 }
 
 /** Write one row's selection, resolving once the unit has announced it — or once the settle window

@@ -1151,12 +1151,17 @@ describe("the SIM view over a live session", () => {
       // the shell's answers run on them.
       vi.useFakeTimers({ toFake: ["Date"] });
       try {
-        // Two writes to the row, and the unit's answer to the first landing after the second.
+        // Two writes to the row, and the unit's answer to the first landing after the second. Polled on
+        // a real timer rather than `vi.waitFor`, which moves a faked clock forward by its interval on
+        // every poll; the second press waits for the first write, which it would otherwise join.
+        const writes = async (n: number): Promise<void> => {
+          for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < n; i++)
+            await new Promise((r) => setTimeout(r, 10));
+        };
         await transport().write("safe.ch1.name", true);
+        await writes(1);
         await transport().write("safe.ch1.name", false);
-        // Polled on a real timer rather than `vi.waitFor`, which moves a faked clock forward by its
-        // interval on every poll.
-        for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+        await writes(2);
         expect(setsOf(shell, SELECT)).toEqual([
           [0, 0x100002],
           [0, 0x2],
@@ -1239,6 +1244,112 @@ describe("the SIM view over a live session", () => {
     await transport().write("setup.brightness", 3);
     await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
     expect(await shownSafe("safe.ch1.name", "safe.ch2.chOn"), "CH 1 as announced, CH 2 as read").toEqual([true, true]);
+  });
+
+  // A unit whose RECALL SAFE a case moves as the unit's panel does: the value set and, unless told
+  // otherwise, announced.
+  const panelUnit = () => {
+    const cmds = deviceCommands({ "plugin:dialog|message": "Ok", experimental_enabled: true });
+    const set = cmds.vd_set as (a: Record<string, unknown>) => unknown;
+    const get = cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    let shell: TauriShell | null = null;
+    const press = (paramId: number, value: number, announce = true): void => {
+      set({ paramId, x: 0, y: 0, value });
+      if (announce && shell) notifyChannel(shell).onmessage([{ param_id: paramId, x: 0, y: 0, value }]);
+    };
+    const boot = async (): Promise<TauriShell> => {
+      shell = (await bootApp({ tauri: cmds }))!;
+      await openSim();
+      await goLive();
+      return shell;
+    };
+    return { cmds, set, get, press, boot };
+  };
+
+  it(
+    "keeps a RECALL SAFE column pressed on the unit while a selection made on the glass waits for its turn",
+    SLOW,
+    async () => {
+      const unit = panelUnit();
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      let holding = false;
+      unit.cmds.vd_set = (a: Record<string, unknown>) => {
+        unit.set(a);
+        if (a.paramId !== PARAMS.BRIGHTNESS.id) return undefined;
+        holding = true;
+        return held;
+      };
+      const shell = await unit.boot();
+      // A SETUP write the unit has not answered holds every unit write queued behind it.
+      await transport().write("setup.brightness", 3);
+      await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
+      await transport().write("safe.ch1.name", true);
+      unit.press(SELECT, 0x2);
+      await vi.waitFor(async () =>
+        expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn"), "the glass's choice over the unit's").toEqual([
+          true,
+          true,
+        ]),
+      );
+      expect(setsOf(shell, SELECT), "nothing written yet").toEqual([]);
+      release();
+      await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[0, 0x100002]]), { timeout: 10_000 });
+      expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn")).toEqual([true, true]);
+    },
+  );
+
+  it("shows a selection made on the glass before the session's second read of RECALL SAFE", SLOW, async () => {
+    const unit = panelUnit();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let integrationReads = 0;
+    let rowReads = 0;
+    unit.cmds.vd_get = (a: Record<string, unknown>) => {
+      const answer = unit.get(a);
+      if (a.paramId === SELECT && a.y === 0) rowReads++;
+      // The second read of Software Integration runs just before RECALL SAFE's.
+      if (a.paramId === PARAMS.DAW_INTEGRATION.id && ++integrationReads === 2) return held.then(() => answer);
+      return answer;
+    };
+    const shell = await unit.boot();
+    await vi.waitFor(() => expect(integrationReads, "the premise: the reads behind it wait").toBe(2));
+    expect(rowReads, "only the starting read of the row").toBe(1);
+    await transport().write("safe.ch1.name", true);
+    release();
+    await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]), { timeout: 10_000 });
+    expect(rowReads, "the second read ran before the write").toBe(2);
+    expect(await shownSafe("safe.ch1.name")).toEqual([true]);
+  });
+
+  it("takes the second read's selection for a row whose [Safe] the unit announced while it was out", SLOW, async () => {
+    const unit = panelUnit();
+    // CH ON pressed on the unit between the starting read and the registration, announced to nobody.
+    const subscribe = unit.cmds.vd_params_subscribe as (a: Record<string, unknown>) => unknown;
+    let moved = false;
+    unit.cmds.vd_params_subscribe = (a: Record<string, unknown>) => {
+      if (!moved) {
+        moved = true;
+        unit.press(SELECT, 0x2, false);
+      }
+      return subscribe(a);
+    };
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let reads = 0;
+    unit.cmds.vd_get = (a: Record<string, unknown>) => {
+      const answer = unit.get(a);
+      if (a.paramId === SELECT && a.y === 0 && ++reads === 2) return held.then(() => answer);
+      return answer;
+    };
+    const shell = await unit.boot();
+    await vi.waitFor(() => expect(reads, "the premise: the second read is out").toBe(2), { timeout: 10_000 });
+    unit.press(SAFE, 1);
+    release();
+    // A SETUP write queues behind the read, so its arrival says the read has been taken.
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
+    expect(await shownSafe("safe.ch1.on", "safe.ch1.chOn"), "[Safe] as announced, CH ON as read").toEqual([true, true]);
   });
 
   it("ends the session when a RECALL SAFE selection written from the glass is refused", SLOW, async () => {

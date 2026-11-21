@@ -25,6 +25,9 @@ import {
   recallSafeGlassValues,
   recallSafeNotifyAddrs,
   safeColumnBits,
+  safePartKey,
+  withPending,
+  withPendingEdit,
   safeOnGlassPaths,
   withRecallSafeNotify,
   writeRecallSafeSelect,
@@ -168,26 +171,49 @@ describe("an edit on the glass", () => {
     ["bus.mix1", NONE],
   ]);
 
-  it("sets or clears the column's bits and keeps every other bit of the row", () => {
-    expect(recallSafeGlassEdit(urx44v, state, "safe.ch3.name", true)).toMatchObject({
+  it("names the row and the column's bits, by the kind of row", () => {
+    expect(recallSafeGlassEdit(urx44v, state, "safe.ch3.name")).toMatchObject({
       row: { node: "ch3", select: 745, y: 2 },
-      select: 0x40000000 | 0x2 | 0x100000,
+      bits: 0x100000,
     });
-    expect(recallSafeGlassEdit(urx44v, state, "safe.ch3.chOn", false)).toMatchObject({ select: 0x40000000 });
-    expect(recallSafeGlassEdit(urx44v, state, "safe.bus.mix1.processing", true)).toMatchObject({
+    expect(recallSafeGlassEdit(urx44v, state, "safe.bus.mix1.processing")).toMatchObject({
       row: { node: "bus.mix1", select: 755, y: 0 },
-      select: 0x2400000,
+      bits: 0x2400000,
     });
   });
 
+  it("sets or clears the column's bits over the unit's selection, and keeps every other bit of the row", () => {
+    const held = state.get("ch3")!.select;
+    const name = withPendingEdit(undefined, 0x100000, true);
+    expect(withPending(held, name)).toBe(0x40000000 | 0x2 | 0x100000);
+    const both = withPendingEdit(name, 0x2, false);
+    expect(withPending(held, both)).toBe(0x40000000 | 0x100000);
+    // A column chosen again the other way takes back what the first choice laid over the row.
+    expect(withPending(held, withPendingEdit(both, 0x100000, false))).toBe(0x40000000);
+    expect(withPending(held, withPendingEdit(both, 0x2, true))).toBe(0x40000000 | 0x2 | 0x100000);
+    // The unit's selection moved under it: what the glass chose is laid over the newer value.
+    expect(withPending(0x8, both)).toBe(0x8 | 0x100000);
+    expect(withPending(held, undefined)).toBe(held);
+  });
+
+  it("shows what the glass chose and has not written yet over the unit's row", () => {
+    const pending = new Map([["ch3", withPendingEdit(undefined, 0x100000, true)]]);
+    const glass = recallSafeGlassValues(urx44v, state, pending);
+    expect([glass.get("safe.ch3.name"), glass.get("safe.ch3.chOn"), glass.get("safe.ch3.on")]).toEqual([
+      true,
+      true,
+      true,
+    ]);
+  });
+
   it("refuses a [Safe], and a row the reading does not hold", () => {
-    expect(recallSafeGlassEdit(urx44v, state, "safe.ch3.on", false)).toBe("refused");
-    expect(recallSafeGlassEdit(urx44v, state, "safe.ch1.name", true)).toBe("refused");
+    expect(recallSafeGlassEdit(urx44v, state, "safe.ch3.on")).toBe("refused");
+    expect(recallSafeGlassEdit(urx44v, state, "safe.ch1.name")).toBe("refused");
   });
 
   it("leaves Incoming Sends, the Others tab and a column the row has no button for to the glass", () => {
     for (const path of ["safe.bus.mix1.incoming", "safe.others.fx1", "safe.bus.mix1.source", "safe.ch3.bogus"]) {
-      expect(recallSafeGlassEdit(urx44v, state, path, true), path).toBeNull();
+      expect(recallSafeGlassEdit(urx44v, state, path), path).toBeNull();
       expect(isRecallSafeUnitPath(urx44v, path), path).toBe(false);
     }
     expect(isRecallSafeUnitPath(urx44v, "safe.ch3.on")).toBe(true);
@@ -234,19 +260,29 @@ describe("reading and following the unit", () => {
     expect(withRecallSafeNotify(held, recallSafeAt(urx22, 745, 0, 0)!, 2).has("ch1")).toBe(false);
   });
 
-  it("keeps, over a read, each row that moved while it ran", () => {
+  it("keeps, over a read, each value that moved while it ran, and takes the read's for the other", () => {
     const held = new Map([
       ["ch1", { safe: true, select: 2 }],
       ["ch2", { safe: true, select: 2 }],
+      ["ch3", { safe: true, select: 2 }],
     ]);
     const read = new Map([
-      ["ch1", NONE],
-      ["ch2", NONE],
+      ["ch1", { safe: false, select: 0x100000 }],
+      ["ch2", { safe: false, select: 0x100000 }],
+      ["ch3", { safe: false, select: 0x100000 }],
     ]);
-    const merged = mergeRecallSafeRead(held, read, new Set(["ch2"]));
-    expect(merged.get("ch1")).toEqual(NONE);
-    expect(merged.get("ch2")).toEqual({ safe: true, select: 2 });
-    expect(mergeRecallSafeRead(null, read, new Set(["ch2"]))).toEqual(read);
+    const merged = mergeRecallSafeRead(
+      held,
+      read,
+      new Set([safePartKey("ch2", "safe"), safePartKey("ch3", "safe"), safePartKey("ch3", "select")]),
+    );
+    expect(merged.get("ch1"), "nothing moved: the read's").toEqual({ safe: false, select: 0x100000 });
+    expect(merged.get("ch2"), "[Safe] announced: the selection is the read's").toEqual({
+      safe: true,
+      select: 0x100000,
+    });
+    expect(merged.get("ch3")).toEqual({ safe: true, select: 2 });
+    expect(mergeRecallSafeRead(null, read, new Set([safePartKey("ch2", "safe")]))).toEqual(read);
   });
 
   it("writes a row's selection at the row's own address", async () => {
