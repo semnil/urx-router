@@ -144,7 +144,7 @@ git worktree add --detach <dir> <sha>
 
 - **普通のビルドは、そのコードを落とす。** `pnpm build` の後は、`dist/` の下のどの JavaScript のファイルにも
   `data-demo-hide` が無い。`pnpm build:demo` の後は、`src/main.ts` の `if (DEMO)` のブロックが探すセレクター
-  として 1 か所だけ出てくる。探すのは JavaScript のファイルだけにする。`index.html` は、どちらのビルドでも
+  として、JavaScript に残る。探すのは JavaScript のファイルだけにする。`index.html` は、どちらのビルドでも
   この属性を持つ。
 - **デモが何を隠すか**は、ブラウザで読む。`pnpm build:demo`、次に `pnpm preview` を走らせ、要素の計算後の
   スタイル (computed style) の `display` と、要素を囲む矩形を読む。`pnpm preview` はポート 4173 を使ったままに

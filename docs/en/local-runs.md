@@ -151,8 +151,8 @@ suite runs with `DEMO` false, and the E2E suite serves a plain build. What that 
 built bundles.
 
 - **A plain build drops that code.** After `pnpm build`, no JavaScript file under `dist/` contains
-  `data-demo-hide`; after `pnpm build:demo`, it occurs once, as the selector the `if (DEMO)` block in
-  `src/main.ts` queries. Search the JavaScript files only: `index.html` carries the attribute in both
+  `data-demo-hide`; after `pnpm build:demo`, the JavaScript keeps it, as the selector the `if (DEMO)`
+  block in `src/main.ts` queries. Search the JavaScript files only: `index.html` carries the attribute in both
   builds.
 - **What the demo hides** is read in a browser: run `pnpm build:demo`, then `pnpm preview`, and read the
   element's computed `display` and its bounding rectangle. `pnpm preview` holds port 4173, which an E2E
