@@ -136,6 +136,30 @@ git worktree add --detach <dir> <sha>
 - コミットは SHA で名指す。`HEAD~2` のような相対の指定は、コマンドを走らせたチェックアウトの HEAD から解かれる。
   シェルが別の worktree にいると、別のコミットになる。
 
+## デモのバンドルを確かめる
+
+デモのビルドだけが走らせるコード (`DEMO` が true のときに選ばれるコード) には、どのテストも届かない。unit の
+スイートは `DEMO` が false のまま走り、E2E のスイートは普通のビルドを配信する。そのコードがすることは、
+ビルドしたバンドルで確かめる。
+
+- **2 つのバンドルは `dist/` の外にビルドする。** E2E の実行は `dist/` を配信するので、そこへビルドすると、
+  走っている途中でそのサーバーの答えが変わる。確かめるためのビルドは、それぞれリポジトリの外の別のフォルダに
+  出す: `pnpm exec vite build --outDir <dir>/plain --emptyOutDir` と
+  `pnpm exec vite build --mode demo --outDir <dir>/demo --emptyOutDir` (`pnpm build` が先に走らせる
+  `tsc --noEmit` は省かれる)。
+- **普通のビルドは、そのコードを落とす。** `<dir>/plain` の下のどの JavaScript のファイルにも
+  `data-demo-hide` が無い。`<dir>/demo` の下では、`src/main.ts` の `if (DEMO)` のブロックが探すセレクター
+  として、JavaScript に残る。探すのは JavaScript のファイルだけにする。`index.html` は、どちらのビルドでも
+  この属性を持つ。
+- **デモが何を隠すか**は、ブラウザで読む。それぞれのフォルダを
+  `pnpm exec vite preview --outDir <dir>/<plain か demo> --port <n> --strictPort` で、E2E の実行が使う 2 つの
+  ポート `E2E_PORT` と `E2E_TRACE_PORT` (設定しなければ 4173 と 4174) でないポートに配信し、File のメニュー `.menu[data-demo-hide]` を読む。普通のビルドでは表示され、
+  デモのビルドでは計算後のスタイル (computed style) の `display` が `none` で、要素を囲む矩形が 0 × 0 になる。
+  最初の `[data-demo-hide]` の `#follow-usb` で判定しない。`data-control-hide` によって、どのブラウザのビルドでも
+  隠れるので、デモの隠し方が壊れていても同じに読める。デモは `[data-demo-only]` の要素 (Share URL、
+  Download JSON、デスクトップ版へのリンク) を表示する。終わったらサーバーを止める (上の「E2E のポートに残った
+  サーバーを見つける」)。
+
 ## 確かめるためにデスクトップアプリを起動する
 
 コマンドは、README の dev の行 (`pnpm tauri dev`。experimental の機能を出すときは、後ろに

@@ -144,6 +144,29 @@ git worktree add --detach <dir> <sha>
 - Name the commit by its SHA. A relative revision such as `HEAD~2` is resolved against the HEAD of
   the checkout the command runs in, which is another commit when the shell is in another worktree.
 
+## Checking the demo bundle
+
+No test reaches the code that only the demo build runs (what `DEMO` selects when it is true): the unit
+suite runs with `DEMO` false, and the E2E suite serves a plain build. What that code does is checked on the
+built bundles.
+
+- **Build the two bundles outside `dist/`.** An E2E run serves `dist/`, and a build into it changes what
+  that server answers mid-run. Give each check build a folder of its own outside the repository:
+  `pnpm exec vite build --outDir <dir>/plain --emptyOutDir` and
+  `pnpm exec vite build --mode demo --outDir <dir>/demo --emptyOutDir` (these skip the `tsc --noEmit` that
+  `pnpm build` runs first).
+- **A plain build drops that code.** No JavaScript file under `<dir>/plain` contains `data-demo-hide`;
+  under `<dir>/demo`, the JavaScript keeps it, as the selector the `if (DEMO)` block in `src/main.ts`
+  queries. Search the JavaScript files only: `index.html` carries the attribute in both builds.
+- **What the demo hides** is read in a browser. Serve each folder with
+  `pnpm exec vite preview --outDir <dir>/<plain or demo> --port <n> --strictPort` on a port other than the
+  two an E2E run uses, `E2E_PORT` and `E2E_TRACE_PORT` (4173 and 4174 unless set), and read the File menu, `.menu[data-demo-hide]`: the plain build shows it, and
+  in the demo build its computed `display` is `none` and its bounding rectangle is 0 × 0. Do not judge by
+  the first `[data-demo-hide]`, `#follow-usb`: its `data-control-hide` hides it in every browser build, so
+  it reads the same when the demo's hiding is broken. The demo also shows the `[data-demo-only]` elements
+  (Share URL, Download JSON and the link to the desktop app). Stop the servers afterwards ("Finding a server
+  left on an E2E port" above).
+
 ## Starting the desktop app for a check
 
 The command is the dev line in the README (`pnpm tauri dev`, with `-- -- --experimental` after it for

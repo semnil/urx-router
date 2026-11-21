@@ -17,6 +17,10 @@ document.
 > The PDFs themselves are not included in the repository because they are copyrighted. The structure
 > is reconstructed here in our own words.
 
+The block diagram is necessary but not sufficient. What the unit does when an input's source is selected,
+and how the output side's fixed wires behave, do not show in it; the rules below that cover those rest on
+the user guide and on the unit itself.
+
 ## Per-model parameters
 
 | Item | URX22 | URX44 | URX44V |

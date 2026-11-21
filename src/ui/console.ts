@@ -3234,7 +3234,8 @@ export class Console {
         const v = (this.hooks.getPlan().nodeParams[holder] as Record<string, unknown> | undefined)?.[key];
         return typeof v === "number" ? v : undefined;
       };
-      // Horizontal-marking values: A.Gain +8/+55, D.Gain -14/+15.
+      // Horizontal-marking values: A.Gain +8/+55, D.Gain -14/+15. A.Gain has a pair of its own because
+      // its range (-8 … +70 dB) is wide: on D.Gain's pair its indicator would pass a full turn at +70.
       const [hl, hr] = analog ? [8, 55] : [-14, 15];
       const knob = this.addKnob(
         head,

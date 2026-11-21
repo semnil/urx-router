@@ -269,12 +269,13 @@ signal display by design.
 | Alternative | Rejection reason |
 | --- | --- |
 | Global "Send to" tabs | Mute needs tab switch; no cross-send visibility |
-| Per-strip flip tabs / TotalMix-style side panel | One send visible at a time / horizontal growth per strip |
-| Horizontal mini-fader rows | Only horizontal control on the console; reads as a balance slider — sends really have a pan, so "the visible slider is the send pan" is a coherent wrong model that causes live mis-writes |
+| Per-strip flip tabs / side panel | One send visible at a time / horizontal growth per strip |
+| Horizontal mini-fader rows | Only horizontal control on the console; reads as a balance slider — sends really have a pan, so "the visible slider is the send pan" is a coherent wrong model that causes live mis-writes; the four rows' 0 dB ticks fuse into one vertical dashed line that reads as a centre line |
 | Rotary send knobs in rows | Needle angle is the weakest at-a-glance encoding; misreads as per-send pan below the GAIN/PAN knobs; 3 px adjacent-knob gap |
 | PRE = green / POST = amber hue on the chip | Deutan/protan contrast ratio 1.07–1.21 (indistinguishable); collides with meter green; GRAPH marks PRE amber; vanishes on OFF chips |
 | Level-colored send buttons (blue→green→yellow→red) | Red collides with MUTE/OVER, green with meters; bar/cap position already encodes level |
 | Dashed border / double frame / notch / tag chip markers | Lit-state dashed border disintegrates at 17 px; inner keyline mimics MIDI-learn rings; silhouettes vanish on dark chips |
+| Neutral-colour underline under the chip as the PRE mark | No fatal flaw, the runner-up; competes with the tab-selection underline idiom and has no basis in the product's own visual grammar |
 | Numeric value column in rows | Illegible at the available width; replaced by the header readout |
 
 ## Implementation notes

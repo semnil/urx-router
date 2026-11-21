@@ -58,7 +58,7 @@ that goes on a screen is checked on the unit.
 
 ## Surfaces left in English
 
-**Decision (2026-11-12).** Seven surfaces show English whatever the app language is, and they are
+**Decision (2026-11-12).** Eight surfaces show English whatever the app language is, and they are
 recorded here as limitations that are not being fixed.
 
 | Surface | Where | Why it is English |
@@ -67,6 +67,7 @@ recorded here as limitations that are not being fixed.
 | The label of the view switch for assistive technology (`View`) | `index.html` | Left as it is |
 | The spoken value of a level fader (`off (-∞)`, and `PRE, ` in front of a pre-fader send) | `src/ui/console.ts` | Left as it is |
 | The status line of a `--prepare-modified` launch | `src/main.ts` | Left as it is |
+| The board's node badges and the PRE wire label (`OFF`, `MUTE`, `?`, `CUE`, `PRE`) | `src/ui/graph.ts` | Literals in the board's drawing code, not catalog strings: that file's convention |
 | The three Pitch Fix MIDI Control modes (`Off`, `Setting`, `Real Time`) | `src/ui/insert-fx-screen.ts` | The words on the unit's own screen |
 | The buttons of a confirm dialog on macOS (`OK`, `Cancel`) | the dialog library | The library writes them in English on macOS; on Windows they are the system's buttons and follow the OS language |
 | The predefined items of the macOS menu bar | the menu library | The library writes them in English; Windows has no menu bar |

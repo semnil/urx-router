@@ -17,6 +17,9 @@ sections below list as left out.
 not open the unit itself: it connects to the local broker that Yamaha's Device Center runs and
 speaks that broker's own protocol, which the code calls the vd protocol.
 
+**Why.** The broker's protocol is the control surface the maker provides. Building on it is more
+robust, and quicker, than decoding the unit's MIDI system-exclusive messages from nothing.
+
 **What follows.** Device Center running, with the unit attached, is the precondition of every
 control feature (architecture.md, "Live control connection").
 
