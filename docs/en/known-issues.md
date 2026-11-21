@@ -200,7 +200,8 @@ feeds are registered as unverified mappings (`jack-axis`, `dgain-source`). A rea
 write that fails at one of those addresses names the mapping, and the self-test says
 it cannot settle them and what would. The link between a stereo channel's displayed
 side and the unit's LCD selection uses the URX44V numbering there, registered as
-`lcd-side`, and so does the [CUE] flag of each strip, registered as `cue-flags`.
+`lcd-side`, and so does the [CUE] flag of each strip, registered as `cue-flags`, and the row each
+RECALL SAFE selection is written to, registered as `recall-safe-rows`.
 Offline planning, the plan JSON and image export are unaffected; this concerns only
 live sync on the URX44.
 
@@ -373,6 +374,36 @@ The current scene — or **preset** — is readable too (a Recall and a Store mo
 is not the mode: it keeps the Simple preset's value after the unit is switched back to
 Standard. What Simple Mode does to a write the app sends for a control it has removed is
 not known.
+
+## RECALL SAFE's [Safe], Incoming Sends and Others cannot be set from the app
+
+System firmware V1.5 adds **[Recall Safe]** to the unit's SCENE menu: what a scene recall leaves
+as it stands, row by row of its Input and Output tabs, and on its Others tab. On an experimental
+launch the SIM view's LCD shows it, and during Live sync it shows the unit's own and follows a
+change made on the unit's panel (architecture.md, "SIM view (the unit's LCD)"). The control
+connection reaches only part of it:
+
+- **A row's parameter selections** (Name, Source, CH ON and the rest) can be set: one made on the
+  LCD during Live sync is written to the unit, and the unit's screen shows it.
+- **A row's [Safe]** cannot: the control connection refuses the write. During Live sync it is
+  read-only on the LCD, and is set on the unit.
+- **Incoming Sends** and the **Others** tab: no address of the control connection has been found
+  for them, so the app neither reads nor writes them. The LCD keeps values of its own for them, which reach
+  nothing.
+- With Live sync off the whole screen is the LCD's own, and reaches nothing. A session's start
+  replaces its rows with the unit's.
+- RECALL SAFE is not part of a plan. The unit keeps it for itself as a whole, outside every scene.
+
+> Confirmed on a URX44V and a URX22 (System 1.5.0.1): which row each selection belongs to, a
+> selection written from the LCD during Live sync, which the unit shows, and a [Safe] pressed on the
+> unit, which the LCD follows. Confirmed on the URX44V alone: that a recall honours a selection
+> written over the control connection on a row whose [Safe] is on (for the CH ON column; the other
+> columns were not tried), the refused [Safe], and that none of the listed addresses of the control connection moves with
+> Incoming Sends or the Others tab, and that the numbers outside the list answer no value at their
+> first instance.
+> Not confirmed on the URX44, which is assumed to behave as the URX44V
+> ([decisions/device-control.md](decisions/device-control.md), "The URX44 is assumed to behave as
+> the URX44V").
 
 ## Linking a MONO IN pair copies part of CH1's Sweet Spot Data into CH2
 

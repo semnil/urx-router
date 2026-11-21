@@ -214,6 +214,25 @@ Release and simply does not turn them; a lock mark there is something the unit n
 removed the locks on the values the insert-effect switch moves, on a send into FX 2 at a high rate,
 and on the rate while Follow USB is on. architecture.md has the rule under What it holds shut.
 
+## RECALL SAFE during Live sync
+
+**Decision (2026-11-21, the operator).** While Live sync is up, the RECALL SAFE screen (System
+firmware V1.5) shows each row's [Safe] and parameter selections as the unit holds them and follows a
+change made on the unit's panel, and a selection made on the LCD is written to the unit. A row's
+[Safe] is held shut with the wording of PRE / POST: the unit refuses it from the link. Incoming Sends
+and the Others tab stay the LCD's own, since no address of the link has been found for them, and RECALL SAFE is
+not part of a plan.
+
+**Why.** The unit takes a selection from the link and shows it on its own screen, and a recall
+honours a selection written that way on a row whose [Safe] was set on the panel. That last point was
+measured before the work started, for the CH ON column.
+
+**Turned down.** Reading the unit and holding every RECALL SAFE button shut during Live sync; and
+leaving RECALL SAFE on the LCD alone, with no connection to the unit.
+
+**Reopen when.** The unit takes a [Safe] from the link, or Incoming Sends or the Others tab appears on
+an address of the link — after a firmware update, say.
+
 ## Browser demo
 
 **Decision (2026-10-13).** The simulator stays in the browser demo's bundle. `SimView` is imported

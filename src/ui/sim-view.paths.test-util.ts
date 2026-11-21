@@ -40,6 +40,7 @@ import { buildRegistry } from "../../node_modules/urx-lcd-sim/src/screens";
 import { startPlayback } from "../../node_modules/urx-lcd-sim/src/screens/recording";
 import { screenOnly } from "../../node_modules/urx-lcd-sim/src/screens/screen-only";
 import { integrationSlotAt } from "../core/control/daw-integration";
+import { isRecallSafeUnitPath } from "../core/control/recall-safe";
 import { cueAddrs } from "../core/control/translate";
 import { simLocks } from "../core/sim-locks";
 import { simBindings } from "../core/sim-map";
@@ -73,6 +74,7 @@ const transport = new PlanTransport(bindings, shippedValues(MODEL_ID), {
     path === "setup.followUsb" ||
     path === "monitor.cueMode" ||
     integrationSlotAt(path) !== null ||
+    isRecallSafeUnitPath(model, path) ||
     isSetupGlassPath(model, path),
   writeUnitValue: (_path, value) => Promise.resolve(value),
 });

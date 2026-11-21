@@ -1302,6 +1302,549 @@ describe("the SIM view over a live session", () => {
     expect(await sendsShown(), "not put back by the read's late answer").toBe("MIX2");
   });
 
+  // RECALL SAFE (System firmware V1.5): a row's [Safe] and selections are the unit's while Live sync
+  // is up, read, followed and written from the glass; the rest of the time, and Incoming Sends and
+  // the Others tab always, they are the glass's own.
+  const SAFE = PARAMS.RECALL_SAFE_MONO.id;
+  const SELECT = PARAMS.RECALL_SAFE_MONO_SELECT.id;
+  const shownSafe = async (...paths: string[]): Promise<unknown[]> => {
+    const shown = await transport().snapshot();
+    return paths.map((p) => shown.get(p));
+  };
+
+  it("shows the unit's RECALL SAFE during Live sync, and writes each row a press changes once", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, {
+      [`${SAFE}/0/2`]: 1,
+      // CH 3's Name, and a bit no column names.
+      [`${SELECT}/0/2`]: 0x40100000,
+    });
+    await openSim();
+    // Chosen on the glass with no session: the glass's own, which the unit's replaces.
+    await expect(transport().write("safe.ch3.chOn", true)).resolves.toBe(true);
+    await goLive();
+    await vi.waitFor(async () =>
+      expect(await shownSafe("safe.ch3.on", "safe.ch3.name", "safe.ch3.chOn")).toEqual([true, true, false]),
+    );
+    // One press that selects two columns of the row, as the row's [All] or a Source with its HA does.
+    await Promise.all([transport().write("safe.ch3.chOn", true), transport().write("safe.ch3.chLevel", true)]);
+    await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[2, 0x40100003]]), { timeout: 10_000 });
+    expect(await shownSafe("safe.ch3.chOn", "safe.ch3.chLevel")).toEqual([true, true]);
+    // A row's [Safe] the unit takes from its own panel alone.
+    await expect(transport().write("safe.ch3.on", false)).rejects.toThrow("refused");
+    // No address of the link has been found for Incoming Sends and the Others tab.
+    await expect(transport().write("safe.bus.mix1.incoming", true)).resolves.toBe(true);
+    await expect(transport().write("safe.others.fx1", true)).resolves.toBe(true);
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
+    expect(setsOf(shell, SAFE), "no [Safe] written").toEqual([]);
+    expect(setsOf(shell, SELECT), "and no other selection").toEqual([[2, 0x40100003]]);
+  });
+
+  it(
+    "follows RECALL SAFE pressed on the unit, and takes its answers to this app's writes as no change",
+    SLOW,
+    async () => {
+      const shell = await bootDevice({ experimental_enabled: true });
+      await openSim();
+      await goLive();
+      notifyChannel(shell).onmessage([{ param_id: SAFE, x: 0, y: 0, value: 1 }]);
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x2 }]);
+      await vi.waitFor(async () =>
+        expect(await shownSafe("safe.ch1.on", "safe.ch1.chOn", "safe.ch1.name")).toEqual([true, true, false]),
+      );
+      // The answer window runs on `Date.now()`, held still from the first write to the last answer,
+      // so every answer below lands inside it however long the steps between take. Timers stay real:
+      // the shell's answers run on them.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        // Two writes to the row, and the unit's answer to the first landing after the second. Polled on
+        // a real timer rather than `vi.waitFor`, which moves a faked clock forward by its interval on
+        // every poll; the second press waits for the first write, which it would otherwise join.
+        const writes = async (n: number): Promise<void> => {
+          for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < n; i++)
+            await new Promise((r) => setTimeout(r, 10));
+        };
+        await transport().write("safe.ch1.name", true);
+        await writes(1);
+        await transport().write("safe.ch1.name", false);
+        await writes(2);
+        expect(setsOf(shell, SELECT)).toEqual([
+          [0, 0x100002],
+          [0, 0x2],
+        ]);
+        notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100002 }]);
+        expect(await shownSafe("safe.ch1.name"), "the late answer to the first write").toEqual([false]);
+        notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x2 }]);
+        expect(await shownSafe("safe.ch1.name")).toEqual([false]);
+        // The positive control: the same value pressed on the unit's panel once no write is waiting.
+        notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100002 }]);
+        expect(await shownSafe("safe.ch1.name")).toEqual([true]);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("takes the answer to a RECALL SAFE write that lands after a selection the unit made itself", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const writes = async (n: number): Promise<void> => {
+        for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < n; i++) await new Promise((r) => setTimeout(r, 10));
+      };
+      await transport().write("safe.ch1.name", true);
+      await writes(1);
+      expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]);
+      // CH ON pressed on the unit before the write lands, then the write's own answer.
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x2 }]);
+      expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn")).toEqual([false, true]);
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100000 }]);
+      expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn"), "what the unit holds after both").toEqual([
+        true,
+        false,
+      ]);
+      // The next press changes its own column alone.
+      await transport().write("safe.ch1.chLevel", true);
+      await writes(2);
+      expect(setsOf(shell, SELECT)[1]).toEqual([0, 0x100001]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("makes the next write to a RECALL SAFE row from what the unit holds after the one before", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      await transport().write("safe.ch1.name", true);
+      for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < 1; i++) await new Promise((r) => setTimeout(r, 10));
+      // A second press while the first write waits for its answer, and CH ON pressed on the unit.
+      await transport().write("safe.ch1.chLevel", true);
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x2 }]);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(setsOf(shell, SELECT), "the second write waits for the first one's answer").toEqual([[0, 0x100000]]);
+      // The first write's answer: the unit holds Name, over the CH ON it took before the write landed.
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100000 }]);
+      for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(setsOf(shell, SELECT)).toEqual([
+        [0, 0x100000],
+        [0, 0x100001],
+      ]);
+      expect(await shownSafe("safe.ch1.name", "safe.ch1.chLevel")).toEqual([true, true]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("puts back a RECALL SAFE selection not yet written when the unit goes into Console Lock", SLOW, async () => {
+    const unit = panelUnit();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let holding = false;
+    unit.cmds.vd_set = (a: Record<string, unknown>) => {
+      unit.set(a);
+      if (a.paramId !== PARAMS.BRIGHTNESS.id || a.value !== 3) return undefined;
+      holding = true;
+      return held;
+    };
+    const shell = await unit.boot();
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
+    await transport().write("safe.ch1.name", true);
+    expect(await shownSafe("safe.ch1.name")).toEqual([true]);
+    unit.press(PARAMS.CONSOLE_LOCK.id, 1);
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name"), "put back at the lock").toEqual([false]));
+    unit.press(PARAMS.CONSOLE_LOCK.id, 0);
+    release();
+    await transport().write("setup.brightness", 2);
+    await vi.waitFor(
+      () =>
+        expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([
+          [0, 3],
+          [0, 2],
+        ]),
+      { timeout: 10_000 },
+    );
+    expect(setsOf(shell, SELECT), "nothing sent once the lock is off").toEqual([]);
+    // A press after the unlock is sent, alone.
+    await transport().write("safe.ch1.chLevel", true);
+    await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[0, 0x1]]), { timeout: 10_000 });
+  });
+
+  // A unit that acks a write of CH 1's selection and announces nothing for it, and, when told to,
+  // announces CH ON pressed on its panel just before the write lands.
+  const silentSelectUnit = (opts: { take: boolean; pressFirst?: number }) => {
+    const unit = panelUnit();
+    let pressed = false;
+    unit.cmds.vd_set = (a: Record<string, unknown>) => {
+      if (a.paramId !== SELECT) return unit.set(a);
+      if (opts.pressFirst !== undefined && !pressed) {
+        pressed = true;
+        unit.press(SELECT, opts.pressFirst);
+      }
+      if (opts.take) unit.set(a);
+      return undefined;
+    };
+    return unit;
+  };
+
+  it("reads a RECALL SAFE row back when the unit announces nothing for a write it did not take", SLOW, async () => {
+    const unit = silentSelectUnit({ take: false });
+    const shell = await unit.boot();
+    await transport().write("safe.ch1.name", true);
+    await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]), { timeout: 10_000 });
+    await vi.waitFor(
+      async () => expect(await shownSafe("safe.ch1.name"), "what the unit holds, read back").toEqual([false]),
+      { timeout: 10_000 },
+    );
+    // The next press is made from what the unit holds.
+    await transport().write("safe.ch1.chLevel", true);
+    await vi.waitFor(
+      () =>
+        expect(setsOf(shell, SELECT)).toEqual([
+          [0, 0x100000],
+          [0, 0x1],
+        ]),
+      { timeout: 10_000 },
+    );
+  });
+
+  it(
+    "reads a RECALL SAFE row back when the answer to a write never follows a selection the unit made",
+    SLOW,
+    async () => {
+      // CH ON is announced from the unit's panel, then the write lands and its answer is lost.
+      const unit = silentSelectUnit({ take: true, pressFirst: 0x2 });
+      const shell = await unit.boot();
+      await transport().write("safe.ch1.name", true);
+      await vi.waitFor(
+        async () =>
+          expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn"), "what the unit holds after both").toEqual([
+            true,
+            false,
+          ]),
+        { timeout: 10_000 },
+      );
+      await transport().write("safe.ch1.chLevel", true);
+      await vi.waitFor(() => expect(setsOf(shell, SELECT)[1]).toEqual([0, 0x100001]), { timeout: 10_000 });
+    },
+  );
+
+  it("ends the session when the read of a RECALL SAFE row the unit announced nothing for fails", SLOW, async () => {
+    const unit = silentSelectUnit({ take: false });
+    let failRead = false;
+    const get = unit.cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    unit.cmds.vd_get = (a: Record<string, unknown>) =>
+      failRead && a.paramId === SELECT ? Promise.reject(new Error("selection read failed")) : get(a);
+    const shell = await unit.boot();
+    failRead = true;
+    await transport().write("safe.ch1.name", true);
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the failed read is what ended it").toContain("selection read failed");
+    expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]);
+  });
+
+  it("keeps a RECALL SAFE selection the unit announces while the row is read back", SLOW, async () => {
+    const unit = silentSelectUnit({ take: false });
+    let holdRead = false;
+    let reading = false;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const get = unit.cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    unit.cmds.vd_get = (a: Record<string, unknown>) => {
+      if (!holdRead || a.paramId !== SELECT) return get(a);
+      // The value is taken now and answered once released.
+      const value = get(a);
+      reading = true;
+      return held.then(() => value);
+    };
+    const shell = await unit.boot();
+    holdRead = true;
+    await transport().write("safe.ch1.name", true);
+    await vi.waitFor(() => expect(reading, "the premise: the read back is out").toBe(true), { timeout: 10_000 });
+    unit.press(SELECT, 0x2);
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch1.chOn")).toEqual([true]));
+    release();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn"), "the unit's announcement over the older read").toEqual([
+      false,
+      true,
+    ]);
+    expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]);
+  });
+
+  it("keeps the answer to a RECALL SAFE write that lands while the row is read back", SLOW, async () => {
+    // The unit takes nothing at first: its answer comes once the read back is out.
+    const unit = silentSelectUnit({ take: false });
+    let holdRead = false;
+    let reading = false;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const get = unit.cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    unit.cmds.vd_get = (a: Record<string, unknown>) => {
+      if (!holdRead || a.paramId !== SELECT) return get(a);
+      const value = get(a);
+      reading = true;
+      return held.then(() => value);
+    };
+    const shell = await unit.boot();
+    holdRead = true;
+    // The answer window runs on `Date.now()`, held still so the late answer is still the write's;
+    // timers stay real, so the write's wait ends at its bound and the read back goes out.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      await transport().write("safe.ch1.name", true);
+      for (let i = 0; i < 1000 && !reading; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(reading, "the premise: the read back is out").toBe(true);
+      // The write lands and is answered; the read back then answers what it took before.
+      unit.press(SELECT, 0x100000);
+      release();
+      await new Promise((r) => setTimeout(r, 100));
+      expect(await shownSafe("safe.ch1.name"), "the answer over the older read").toEqual([true]);
+      await transport().write("safe.ch1.chLevel", true);
+      for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(setsOf(shell, SELECT)[1], "the next press changes its own column alone").toEqual([0, 0x100001]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A SETUP write the unit holds unanswered, a RECALL SAFE selection queued behind it, and Console
+  // Lock on and off while it waits; then another SETUP write and a selection of the same row.
+  const lockedQueue = async (brightness2?: Error) => {
+    const unit = panelUnit();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let holding = false;
+    const order: string[] = [];
+    unit.cmds.vd_set = (a: Record<string, unknown>) => {
+      unit.set(a);
+      if (a.paramId === SELECT || a.paramId === PARAMS.BRIGHTNESS.id)
+        order.push(`${String(a.paramId)}=${String(a.value)}`);
+      if (a.paramId !== PARAMS.BRIGHTNESS.id) return undefined;
+      if (a.value === 2 && brightness2) return Promise.reject(brightness2);
+      if (a.value !== 3) return undefined;
+      holding = true;
+      return held;
+    };
+    const shell = await unit.boot();
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
+    await transport().write("safe.ch1.name", true);
+    unit.press(PARAMS.CONSOLE_LOCK.id, 1);
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name"), "put back at the lock").toEqual([false]));
+    unit.press(PARAMS.CONSOLE_LOCK.id, 0);
+    await transport().write("setup.brightness", 2);
+    await transport().write("safe.ch1.chLevel", true);
+    release();
+    return { shell, order };
+  };
+
+  it("writes a RECALL SAFE selection made after a Console Lock behind the writes queued before it", SLOW, async () => {
+    const { shell, order } = await lockedQueue();
+    await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[0, 0x1]]), { timeout: 10_000 });
+    const b = PARAMS.BRIGHTNESS.id;
+    expect(order, "in the order the writes were taken").toEqual([`${b}=3`, `${b}=2`, `${SELECT}=1`]);
+  });
+
+  it(
+    "sends no RECALL SAFE selection made after a Console Lock when a write queued ahead of it fails",
+    SLOW,
+    async () => {
+      const { shell } = await lockedQueue(new Error("brightness write refused"));
+      await invoked(shell, "vd_disconnect");
+      expect(errors(shell).join(" ")).toContain("brightness write refused");
+      expect(setsOf(shell, SELECT)).toEqual([]);
+    },
+  );
+
+  it(
+    "holds each row's [Safe] shut during Live sync, and leaves RECALL SAFE to the glass once it ends",
+    SLOW,
+    async () => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, { [`${SAFE}/0/2`]: 1 });
+      await openSim();
+      const sim = simMounted.glasses.at(-1)!;
+      const locks = vi.spyOn(sim, "setLocks");
+      const held = (): string[] =>
+        (locks.mock.calls.at(-1)?.[0] ?? []).flatMap((l) =>
+          l.target.kind === "path" && l.target.path.startsWith("safe.") ? [`${l.target.path} ${l.reason}`] : [],
+        );
+      await goLive();
+      await vi.waitFor(() => expect(held()).toContain(`safe.ch3.on ${t().inspector.prePostLcdOnly}`));
+      expect(held(), "a [Safe] for every row, and no selection").toHaveLength(14);
+      $("btn-live").click();
+      await invoked(shell, "vd_disconnect");
+      await vi.waitFor(() => expect(held()).toEqual([]));
+      await vi.waitFor(async () =>
+        expect(await shownSafe("safe.ch3.on"), "the session that read it ended").toEqual([undefined]),
+      );
+      await expect(transport().write("safe.ch3.name", true), "the glass's own again").resolves.toBe(true);
+      await expect(transport().write("safe.ch3.on", false)).resolves.toBe(false);
+      expect(setsOf(shell, SELECT)).toEqual([]);
+    },
+  );
+
+  it("refuses a RECALL SAFE selection while the unit is in Console Lock", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    notifyChannel(shell).onmessage([{ param_id: PARAMS.CONSOLE_LOCK.id, x: 0, y: 0, value: 1 }]);
+    await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLocked));
+    await expect(transport().write("safe.ch1.name", true)).rejects.toThrow("refused");
+    expect(statusText(), "the status line says it was not sent").toBe(t().status.consoleLockedNotSent);
+    expect(setsOf(shell, SELECT)).toEqual([]);
+  });
+
+  it("keeps a RECALL SAFE row announced while the session's second read of it is out", SLOW, async () => {
+    const cmds = deviceCommands(
+      { "plugin:dialog|message": "Ok", experimental_enabled: true },
+      {
+        [`${SELECT}/0/1`]: 0x2,
+      },
+    );
+    const get = cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    let reads = 0;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    cmds.vd_get = (a: Record<string, unknown>) => {
+      if (a.paramId !== SELECT || a.y !== 0) return get(a);
+      reads++;
+      const answer = get(a);
+      return reads === 2 ? held.then(() => answer) : answer;
+    };
+    const shell = (await bootApp({ tauri: cmds }))!;
+    await openSim();
+    await goLive();
+    await vi.waitFor(() => expect(reads, "the premise: the second read is out").toBe(2), { timeout: 10_000 });
+    notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100000 }]);
+    release();
+    // A SETUP write queues behind the read, so its arrival says the read has been taken.
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
+    expect(await shownSafe("safe.ch1.name", "safe.ch2.chOn"), "CH 1 as announced, CH 2 as read").toEqual([true, true]);
+  });
+
+  // A unit whose RECALL SAFE a case moves as the unit's panel does: the value set and, unless told
+  // otherwise, announced.
+  const panelUnit = () => {
+    const cmds = deviceCommands({ "plugin:dialog|message": "Ok", experimental_enabled: true });
+    const set = cmds.vd_set as (a: Record<string, unknown>) => unknown;
+    const get = cmds.vd_get as (a: Record<string, unknown>) => unknown;
+    let shell: TauriShell | null = null;
+    const press = (paramId: number, value: number, announce = true): void => {
+      set({ paramId, x: 0, y: 0, value });
+      if (announce && shell) notifyChannel(shell).onmessage([{ param_id: paramId, x: 0, y: 0, value }]);
+    };
+    const boot = async (): Promise<TauriShell> => {
+      shell = (await bootApp({ tauri: cmds }))!;
+      await openSim();
+      await goLive();
+      return shell;
+    };
+    return { cmds, set, get, press, boot };
+  };
+
+  it(
+    "keeps a RECALL SAFE column pressed on the unit while a selection made on the glass waits for its turn",
+    SLOW,
+    async () => {
+      const unit = panelUnit();
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      let holding = false;
+      unit.cmds.vd_set = (a: Record<string, unknown>) => {
+        unit.set(a);
+        if (a.paramId !== PARAMS.BRIGHTNESS.id) return undefined;
+        holding = true;
+        return held;
+      };
+      const shell = await unit.boot();
+      // A SETUP write the unit has not answered holds every unit write queued behind it.
+      await transport().write("setup.brightness", 3);
+      await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
+      await transport().write("safe.ch1.name", true);
+      unit.press(SELECT, 0x2);
+      await vi.waitFor(async () =>
+        expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn"), "the glass's choice over the unit's").toEqual([
+          true,
+          true,
+        ]),
+      );
+      expect(setsOf(shell, SELECT), "nothing written yet").toEqual([]);
+      release();
+      await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[0, 0x100002]]), { timeout: 10_000 });
+      expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn")).toEqual([true, true]);
+    },
+  );
+
+  it("shows a selection made on the glass before the session's second read of RECALL SAFE", SLOW, async () => {
+    const unit = panelUnit();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let integrationReads = 0;
+    let rowReads = 0;
+    unit.cmds.vd_get = (a: Record<string, unknown>) => {
+      const answer = unit.get(a);
+      if (a.paramId === SELECT && a.y === 0) rowReads++;
+      // The second read of Software Integration runs just before RECALL SAFE's.
+      if (a.paramId === PARAMS.DAW_INTEGRATION.id && ++integrationReads === 2) return held.then(() => answer);
+      return answer;
+    };
+    const shell = await unit.boot();
+    await vi.waitFor(() => expect(integrationReads, "the premise: the reads behind it wait").toBe(2));
+    expect(rowReads, "only the starting read of the row").toBe(1);
+    await transport().write("safe.ch1.name", true);
+    release();
+    await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]), { timeout: 10_000 });
+    expect(rowReads, "the second read ran before the write").toBe(2);
+    expect(await shownSafe("safe.ch1.name")).toEqual([true]);
+  });
+
+  it("takes the second read's selection for a row whose [Safe] the unit announced while it was out", SLOW, async () => {
+    const unit = panelUnit();
+    // CH ON pressed on the unit between the starting read and the registration, announced to nobody.
+    const subscribe = unit.cmds.vd_params_subscribe as (a: Record<string, unknown>) => unknown;
+    let moved = false;
+    unit.cmds.vd_params_subscribe = (a: Record<string, unknown>) => {
+      if (!moved) {
+        moved = true;
+        unit.press(SELECT, 0x2, false);
+      }
+      return subscribe(a);
+    };
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let reads = 0;
+    unit.cmds.vd_get = (a: Record<string, unknown>) => {
+      const answer = unit.get(a);
+      if (a.paramId === SELECT && a.y === 0 && ++reads === 2) return held.then(() => answer);
+      return answer;
+    };
+    const shell = await unit.boot();
+    await vi.waitFor(() => expect(reads, "the premise: the second read is out").toBe(2), { timeout: 10_000 });
+    unit.press(SAFE, 1);
+    release();
+    // A SETUP write queues behind the read, so its arrival says the read has been taken.
+    await transport().write("setup.brightness", 3);
+    await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
+    expect(await shownSafe("safe.ch1.on", "safe.ch1.chOn"), "[Safe] as announced, CH ON as read").toEqual([true, true]);
+  });
+
+  it("ends the session when a RECALL SAFE selection written from the glass is refused", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true });
+    await openSim();
+    await goLive();
+    shell.failOnce("vd_set", new Error("selection write refused"));
+    await transport().write("safe.ch1.name", true);
+    await invoked(shell, "vd_disconnect");
+    expect(errors(shell).join(" "), "the refused write is what ended it").toContain("selection write refused");
+  });
+
   it("ends the session when a delay time turned under tempo Sync is refused", SLOW, async () => {
     const shell = await bootDevice({ experimental_enabled: true }, true, {
       [`${PARAMS.FX_EFFECT_TYPE.id}/0/0`]: 1024,

@@ -434,6 +434,13 @@ carries a one-line map of the same directories and points here.
       their read and write. On an experimental launch `main.ts` reads all three at a Live-sync start, takes their
       notifies through the follow `intercept`, and writes a send the SIM view's LCD picks while a DAW holds the
       unit
+    - `recall-safe.ts` SCENE > [Recall Safe] (System 1.5): each row's [Safe] (read only — the unit takes none
+      from the link) and its selection of parameters, one bit field per column laid out by the kind of row,
+      with their read, their write and the LCD's paths. The address of each row is `recallSafeRows` in
+      `translate.ts`, where the URX44 guess is registered. On an experimental launch `main.ts` reads every row
+      at a Live-sync start, takes their notifies through the follow `intercept` (an answer to its own write
+      told apart with `CueEchoes`), and writes a selection the SIM view's LCD makes, one write per row a press
+      changed
     - `cue.ts` the unit's [CUE] flags, held outside the plan for the live session (see "CUE" under "What
       the app models, and what it leaves to the unit"): `CueSet` applies the unit's rules to every change
       from either side, `CueEchoes` tells the unit's answer to the app's own write from a press on the panel,
@@ -1971,7 +1978,8 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   (written as the pair is linked or taken into SSMCS), the recorder's playback (which a rate change stops), the output
   patch's and the Peripheral screen's tab, the scene list's bank and row (until the unit's cursor moves, below), the
   microSD folder and file a screen has picked, the User Defined Knobs bank on show, the output cues the LCD's own CUE rule remembers to put back,
-  and RECALL SAFE's settings, which the app has no scene recall of its own to act on.
+  and RECALL SAFE's settings — Incoming Sends and the Others tab always, no address of the link having been found for them, and the
+  rows while no session holds the unit's (below).
   Refused like a path the table does not carry, one of these would take the whole edit back with it. A value the plan holds but the edit cannot take in its present state (PAN/BAL on an unlinked pair, an
   unwired send, an FX 2 send at a rate that takes FX 2 out, the recorder's Track Count
   while Live sync is up) is refused. A path neither the table nor the unit's values below carry — the scenes'
@@ -1996,6 +2004,25 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   while that read is out standing over its answer for that one value, the read's answer taken for the others. The LCD shows the sends the session holds, and a send picked on it is
   written to the unit behind every unit write queued so far, unless no DAW holds the unit by its turn: it is then
   dropped and the sends are read again.
+- **SCENE > [Recall Safe]** (System firmware V1.5) is the unit's setting rather than the plan's
+  (`recall-safe.ts`), which the unit keeps outside every scene. A session reads each row of the Input and Output
+  tabs — its [Safe] and its selection of parameters — registers them, reads them again once registered, and
+  follows their announcements, a row's [Safe] or selection announced while that read is out keeping its announced
+  value over the read's answer and taking the read's for the other. The LCD shows the rows the session holds, and its
+  own values there are dropped as the session starts. A parameter selected or cleared on the LCD is held as the bits
+  to set and to clear on that row, shown over the row the session holds, and written to the unit behind every unit
+  write queued so far: laid over the row as the unit holds it when the write's turn comes, so a column changed on
+  the unit's panel, or found by a read, while the write waits is kept. Every press on a row before that turn goes
+  out in the one write — the row's [All] and a Source with the HA beside it are one press — and the next write to the row
+  waits for the unit to announce the value of the one before. Where the unit announces none within the settle bound —
+  it held that selection already, or did not take it — the row is read back first, and a selection the unit announces
+  while that read is out, the late answer to the write included, is kept over the read's answer; a read that fails ends the session. A selection not yet
+  written when Console Lock arrives is put back, as an edit of the plan is, and the write queued for it is dropped, so
+  a selection made after the unlock goes out in its own turn, behind the writes queued before it. The unit announces its answer to each write,
+  and an answer to a write the LCD has since replaced does not move the LCD back. A row's [Safe] the unit takes from
+  no link, so during Live sync the LCD holds it shut (below). No address of the link has been found for Incoming
+  Sends and the Others tab, which stay the LCD's own, and with no session the whole screen is, reaching nothing. Which row each
+  address belongs to is unconfirmed on the URX44 (known-issues.md).
 - **The [CUE] flags** are live-session state rather than the plan's (`cue.ts`; see "CUE" under "What the app models,
   and what it leaves to the unit"). While Live sync is up the LCD shows every strip's flag as the session holds it
   and follows every change of it, from any surface or the unit's panel, and a [CUE] press on the LCD reaches the
@@ -2050,7 +2077,8 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   session alone ("Usable during Live sync"), Software Integration and its two sends — held in place on a screen already
   open — while Live sync is down, since whether a compatible DAW holds the unit is read only during a session ("Usable during Live sync while Cubase, Nuendo or MixKey is connected to the device"), the unit's own operations and USB Storage
   Mode ("Operate it on the device"), a channel's PRE / POST into an FX bus while Live sync is up, as on the CONSOLE
-  and in the Inspector (their wording), the sampling frequency while the device link is held and the unit is not known
+  and in the Inspector (their wording), each RECALL SAFE row's [Safe] — and with them the heading's ALL — while Live
+  sync is up, since the unit takes none from the link (the same wording), the sampling frequency while the device link is held and the unit is not known
   to have Follow USB on — with the reason the toolbar's rate gives (`rateHoldReason`): "Cannot be changed while
   connected to the device" for a link held by anything but a Live sync session, during Live sync the Scene only
   device scope, which leaves the rate out (naming the Preferences Scope that puts it back), and a Follow USB not yet
@@ -3707,7 +3735,8 @@ lands while that read is out is the newer of the two, and the read is not taken 
   colour — stands. An undo or redo whose entry would change the writes is held back the same way
   (`status.consoleLockedUndo`), and MIDI and the SIM glass refuse before anything is applied.
 - **An operation outside the plan that would write** — a cue, Clear CUE, CUE Mode, a stereo channel's displayed
-  side, the Device setup screen, Follow USB, HOME's [Sends] destination, Software Integration — is refused with
+  side, the Device setup screen, Follow USB, HOME's [Sends] destination, Software Integration, a RECALL SAFE
+  selection — is refused with
   `status.consoleLockedNotSent`.
 - **What a flush had not sent when the lock arrived** is read back from the unit: `LiveSync.setLocked` cancels an
   armed flush and stops a running one — its send loops and its converge alike — at its next command, a command

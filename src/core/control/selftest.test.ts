@@ -1918,10 +1918,11 @@ describe("unverified-guess workflow (URX44)", () => {
     expect(report.device).toBe("URX44");
     expect(report.collisions).toEqual([]);
     expect(report.unverified.map((u) => u.key).sort()).toEqual(
-      ["cue-flags", "dgain-source", "input-ports", "jack-axis", "lcd-side", "stereo-block"].sort(),
+      ["cue-flags", "dgain-source", "input-ports", "jack-axis", "lcd-side", "recall-safe-rows", "stereo-block"].sort(),
     );
-    // Neither the LCD selection nor a [CUE] flag is in the plan, so no pass writes either.
-    const unwritten = new Set(["lcd-side", "cue-flags"]);
+    // None of the LCD selection, a [CUE] flag and a RECALL SAFE selection is in the plan, so no
+    // pass writes any of them.
+    const unwritten = new Set(["lcd-side", "cue-flags", "recall-safe-rows"]);
     for (const u of report.unverified)
       expect(u.outcome, u.key).toBe(unwritten.has(u.key) ? "unexercised" : "roundTripped");
     expect(report.restored).toBe(true);
@@ -1930,7 +1931,7 @@ describe("unverified-guess workflow (URX44)", () => {
     expect(md).toContain("# URX self-test report — URX44");
     expect(md).toContain("ROUND-TRIPPED");
     expect(md).not.toContain("CONFIRMED");
-    expect(summarizeVerdicts(report.unverified)).toEqual({ confirmed: 0, roundTripped: 4, refuted: 0, untestable: 2 });
+    expect(summarizeVerdicts(report.unverified)).toEqual({ confirmed: 0, roundTripped: 4, refuted: 0, untestable: 3 });
     // …and says, per guess, that the run did not settle it and what would.
     for (const m of UNVERIFIED_MAPPINGS.filter((x) => x.models.includes("URX44"))) {
       expect(m.howToSettle, `${m.key} says what settles it`).toBeTruthy();

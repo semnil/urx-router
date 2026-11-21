@@ -177,34 +177,36 @@ describe("WriteSettle announcement", () => {
     const { settle } = armed();
     const at = settle.mark();
     settle.note({ ...NOTIFY, value: 5 });
-    let done = false;
-    void settle.announcement(ADDR, at, 5, { timeoutMs: SETTLE_TIMEOUT_MS }).then(() => (done = true));
+    let done: boolean | null = null;
+    void settle.announcement(ADDR, at, 5, { timeoutMs: SETTLE_TIMEOUT_MS }).then((announced) => (done = announced));
     await vi.advanceTimersByTimeAsync(0);
-    expect(done).toBe(true);
+    expect(done, "answered as announced").toBe(true);
   });
 
   it("is ended by its own value and not by another one, nor by one from before the mark", async () => {
     const { settle } = armed();
     settle.note({ ...NOTIFY, value: 6 });
     const at = settle.mark();
-    let done = false;
-    void settle.announcement(ADDR, at, 6, { timeoutMs: SETTLE_TIMEOUT_MS }).then(() => (done = true));
+    let done: boolean | null = null;
+    void settle.announcement(ADDR, at, 6, { timeoutMs: SETTLE_TIMEOUT_MS }).then((announced) => (done = announced));
     settle.note({ ...NOTIFY, value: 5 });
     await vi.advanceTimersByTimeAsync(0);
-    expect(done, "neither the earlier 6 nor a later 5 answers it").toBe(false);
+    expect(done, "neither the earlier 6 nor a later 5 answers it").toBe(null);
     settle.note({ ...NOTIFY, value: 6 });
     await vi.advanceTimersByTimeAsync(0);
-    expect(done).toBe(true);
+    expect(done, "answered as announced").toBe(true);
   });
 
   it("ends at the bound when nothing announces the value", async () => {
     const { settle } = armed();
-    let done = false;
-    void settle.announcement(ADDR, settle.mark(), 6, { timeoutMs: SETTLE_TIMEOUT_MS }).then(() => (done = true));
+    let done: boolean | null = null;
+    void settle
+      .announcement(ADDR, settle.mark(), 6, { timeoutMs: SETTLE_TIMEOUT_MS })
+      .then((announced) => (done = announced));
     await vi.advanceTimersByTimeAsync(SETTLE_TIMEOUT_MS - 1);
-    expect(done).toBe(false);
+    expect(done).toBe(null);
     await vi.advanceTimersByTimeAsync(1);
-    expect(done).toBe(true);
+    expect(done, "answered as not announced").toBe(false);
   });
 });
 

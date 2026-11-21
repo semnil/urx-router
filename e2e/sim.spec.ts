@@ -1316,6 +1316,73 @@ test("the LCD's microSD screen follows the unit's card while Live sync is up", a
   await expect(recorder, "the glass's own card once the session ends").toBeVisible();
 });
 
+// SCENE > [Recall Safe] (System firmware V1.5) is the unit's setting outside the plan: while Live sync
+// is up the LCD shows each row as the unit holds it and follows a press on the unit's panel, a selection
+// made on the LCD is written to the unit, and a row's [Safe], which the unit takes from no link, is held
+// shut. With no session the screen is the glass's own and reaches nothing.
+test("the LCD's RECALL SAFE is the unit's while Live sync is up, its [Safe] held shut, and the glass's own without", async ({
+  page,
+}) => {
+  const SAFE: number = PARAMS.RECALL_SAFE_MONO.id;
+  const SELECT: number = PARAMS.RECALL_SAFE_MONO_SELECT.id;
+  await stubTauriDevice(page, {
+    values: { [SAFE]: 0, [SELECT]: 0 },
+    commands: { experimental_enabled: true, ...LIVE_COMMANDS },
+  });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await tapInto(page, lcd(page).locator(".scene-box").first(), "scene");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Recall Safe", exact: true }), "scene.safe");
+  const screen = onScreen(page, "scene.safe");
+  const name = screen.getByRole("button", { name: "C H 1 Name", exact: true });
+  const safe = screen.getByRole("button", { name: "C H 1 Safe", exact: true });
+  const selectWrites = async (): Promise<number[]> =>
+    (await writesOf(page)).flatMap(([id, v]) => (id === SELECT ? [v] : []));
+
+  // No session: the glass's own, reaching nothing.
+  await name.click();
+  await expect(name).toHaveAttribute("aria-pressed", "true");
+  await safe.click();
+  await expect(safe).toHaveAttribute("aria-pressed", "true");
+  expect(await selectWrites()).toEqual([]);
+
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(name, "the unit's row replaces the glass's").toHaveAttribute("aria-pressed", "false");
+  await expect(safe).toHaveAttribute("aria-pressed", "false");
+  await expect(safe, "the unit takes no [Safe] from the link").toHaveAttribute("title", en.inspector.prePostLcdOnly);
+  await expect(safe.locator(".lock-mark")).toHaveCount(1);
+  await expect(name.locator(".lock-mark"), "a selection is the app's to write").toHaveCount(0);
+
+  // [Safe] pressed on the unit's panel.
+  await setDeviceValue(page, SAFE, 0, 1);
+  await notifyParam(page, SAFE, 0, 1);
+  await expect(safe).toHaveAttribute("aria-pressed", "true");
+
+  // A selection on the glass goes to the unit.
+  await name.click();
+  await expect.poll(selectWrites).toEqual([0x100000]);
+  await expect(name).toHaveAttribute("aria-pressed", "true");
+  expect(await deviceValueOf(page, SELECT, 0), "CH 1's row").toBe(0x100000);
+
+  // A selection cleared on the unit's panel.
+  await setDeviceValue(page, SELECT, 0, 0);
+  await notifyParam(page, SELECT, 0, 0);
+  await expect(name).toHaveAttribute("aria-pressed", "false");
+  expect(await selectWrites(), "the unit's own change is not written back").toEqual([0x100000]);
+
+  // The session ends: [Safe] is the glass's again, and nothing reaches the unit.
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+  await expect(safe.locator(".lock-mark")).toHaveCount(0);
+  await name.click();
+  await safe.click();
+  expect(await selectWrites()).toEqual([0x100000]);
+});
+
 // The unit's [CUE] is live-session state outside the plan: while Live sync is up the LCD shows
 // the flags the unit holds and a press on the glass switches them on the unit, the way the
 // CONSOLE chip does; with no session a press reaches nothing.

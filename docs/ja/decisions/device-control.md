@@ -126,7 +126,8 @@ microSD Rec に結線しても、警告は出さない。ドライの信号を�
 **決定 (2026-10-17、操作者。もう一度は持ち出さない)。** `src/core/control/translate.ts` の
 `UNVERIFIED_MAPPINGS` には 6 件が残っていて、6 件はそれぞれ URX44 だけについての推測になっている:
 `dgain-source`、`jack-axis`、`stereo-block`、`input-ports`、`lcd-side`、`cue-flags`。今のまま残す。
-決着の手順は、各エントリの `howToSettle` を、書いてあるとおりに使う。
+決着の手順は、各エントリの `howToSettle` を、書いてあるとおりに使う。7 件目の `recall-safe-rows` (2026-11-21) は、
+次の節の決まりに従って登録した。
 
 **覆す条件。** URX44 の実機が手に入ったとき。
 

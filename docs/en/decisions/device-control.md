@@ -143,7 +143,8 @@ version went up with the removal. The unit keeps whatever it holds there.
 **Decision (2026-10-17, the operator; not raised again).** Six entries of `UNVERIFIED_MAPPINGS` in
 `src/core/control/translate.ts` remain, and each of them is a guess about the URX44 alone:
 `dgain-source`, `jack-axis`, `stereo-block`, `input-ports`, `lcd-side` and `cue-flags`. They stay
-as they are. Each entry's `howToSettle` is the procedure that settles it, used as written.
+as they are. Each entry's `howToSettle` is the procedure that settles it, used as written. A seventh,
+`recall-safe-rows` (2026-11-21), was registered under the rule of the next section.
 
 **Reopen when.** A URX44 unit is at hand.
 

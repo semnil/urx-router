@@ -3360,6 +3360,67 @@ export function cueAt(
   return undefined;
 }
 
+// --- RECALL SAFE rows -------------------------------------------------------
+// The addresses of each row of SCENE > [Recall Safe]'s Input and Output tabs (System firmware
+// V1.5): the row's [Safe] and its selection of parameters, both at the instance the row's strip
+// takes. The rows are live-session state outside the plan; recall-safe.ts holds them.
+
+/** Which bit layout a row's selection uses (recall-safe.ts). */
+export type RecallSafeKind = "mono" | "stereoCh" | "fx" | "mix" | "stereo" | "streaming";
+
+/** One row of the RECALL SAFE screen. */
+export interface RecallSafeRow {
+  node: string;
+  kind: RecallSafeKind;
+  /** The row's [Safe], which the unit takes from its own panel alone. */
+  safe: number;
+  /** The row's selection of parameters. */
+  select: number;
+  y: number;
+}
+
+const safeRow = (node: string, kind: RecallSafeKind, safe: ParamName, select: ParamName, y: number): RecallSafeRow => ({
+  node,
+  kind,
+  safe: PARAMS[safe].id,
+  select: PARAMS[select].id,
+  y,
+});
+
+const BUS_SAFE_ROWS: readonly RecallSafeRow[] = [
+  safeRow("bus.fx1", "fx", "RECALL_SAFE_FX", "RECALL_SAFE_FX_SELECT", 0),
+  safeRow("bus.fx2", "fx", "RECALL_SAFE_FX", "RECALL_SAFE_FX_SELECT", 1),
+  safeRow("bus.mix1", "mix", "RECALL_SAFE_MIX", "RECALL_SAFE_MIX_SELECT", 0),
+  safeRow("bus.mix2", "mix", "RECALL_SAFE_MIX", "RECALL_SAFE_MIX_SELECT", 2),
+  safeRow("bus.stereo", "stereo", "RECALL_SAFE_STEREO", "RECALL_SAFE_STEREO_SELECT", 0),
+  safeRow("bus.stream", "streaming", "RECALL_SAFE_STREAMING", "RECALL_SAFE_STREAMING_SELECT", 0),
+];
+
+const recallSafeCache = new WeakMap<DeviceModel, readonly RecallSafeRow[]>();
+
+/** Every row of the model's RECALL SAFE screen: the channels in board order, the FX channels, then
+ *  the Output tab's MIX 1, MIX 2, STEREO and STREAMING. */
+export function recallSafeRows(model: DeviceModel): readonly RecallSafeRow[] {
+  let list = recallSafeCache.get(model);
+  if (list) return list;
+  const ids = new Set(model.nodes.map((n) => n.id));
+  const out: RecallSafeRow[] = [];
+  for (const n of model.nodes) {
+    if (n.kind !== "channel") continue;
+    const cc = channelControl(model, n.id);
+    if (!cc) continue;
+    out.push(
+      isStereoChannel(n.id)
+        ? safeRow(n.id, "stereoCh", "RECALL_SAFE_STEREO_CH", "RECALL_SAFE_STEREO_CH_SELECT", cc.y)
+        : safeRow(n.id, "mono", "RECALL_SAFE_MONO", "RECALL_SAFE_MONO_SELECT", cc.y),
+    );
+  }
+  for (const r of BUS_SAFE_ROWS) if (ids.has(r.node)) out.push(r);
+  list = out;
+  recallSafeCache.set(model, list);
+  return list;
+}
+
 // --- Unverified-mapping registry -------------------------------------------
 // Device mappings confirmed on URX44V and URX22 that remain educated guesses on
 // URX44, pending confirmation by an owner: through
@@ -3512,6 +3573,20 @@ export const UNVERIFIED_MAPPINGS: UnverifiedMapping[] = [
     howToSettle:
       "cue one strip at a time from the app while Live sync is on, and read which strip's [CUE] lights on the unit",
     addresses: (model) => cueAddrs(model).map((a) => [a.param, a.y] as GuessAddress),
+  },
+  {
+    // Which RECALL SAFE row each selection address reaches on URX44: the URX44V's addresses, with
+    // a channel's row at the instance its fader takes. The unit keeps any value written there, so
+    // a round trip says nothing about which row's button lit.
+    key: "recall-safe-rows",
+    label:
+      "RECALL SAFE selection of each row (mono CH 745 / stereo CH 747 / FX 749 / STEREO 753 / MIX 755 / STREAMING 757)",
+    models: ["URX44"],
+    guessedIds: [],
+    roundTripSettles: false,
+    howToSettle:
+      "select one parameter of one row at a time on the SIM view's RECALL SAFE screen while Live sync is on, and read which row's button lights on the unit's RECALL SAFE screen",
+    addresses: (model) => recallSafeRows(model).map((r) => [r.select, r.y] as GuessAddress),
   },
 ];
 

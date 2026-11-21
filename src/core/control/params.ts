@@ -717,6 +717,28 @@ export const PARAMS = {
    *  a 0 written over the link unlocks the unit whatever password is set. The password beside it
    *  (896) is stored as plain text and is never read. */
   CONSOLE_LOCK: { id: 895, encoding: "bool", sceneExternal: true, planExternal: true },
+  /** SCENE > [Recall Safe], System firmware V1.5: one pair of addresses per row of the Input and
+   *  Output tabs, at the instance the row's strip takes (a mono channel's input index, a stereo
+   *  channel's stereo position, FX 1 y0 / FX 2 y1, MIX 1 y0 / MIX 2 y2, STEREO and STREAMING y0).
+   *  The first of a pair is the row's [Safe], 0 / 1: announced on a press on the unit's panel, and
+   *  refused over the link (the unit answers its range as 0..0 and a write with 400), so read for
+   *  the SIM view and never written. The second is the row's selection of parameters, one bit field
+   *  per column (`recall-safe.ts`): announced on every change, on the panel or over the link, and
+   *  written by the live session from the SIM view. The unit keeps both for itself as a whole — the
+   *  settings file carries them outside every scene — so they are never part of the plan. Incoming
+   *  Sends and the Others tab have no address of the link that has been found. */
+  RECALL_SAFE_MONO: { id: 744, encoding: "raw", planExternal: true, readOnly: true },
+  RECALL_SAFE_MONO_SELECT: { id: 745, encoding: "raw", sceneExternal: true, planExternal: true },
+  RECALL_SAFE_STEREO_CH: { id: 746, encoding: "raw", planExternal: true, readOnly: true },
+  RECALL_SAFE_STEREO_CH_SELECT: { id: 747, encoding: "raw", sceneExternal: true, planExternal: true },
+  RECALL_SAFE_FX: { id: 748, encoding: "raw", planExternal: true, readOnly: true },
+  RECALL_SAFE_FX_SELECT: { id: 749, encoding: "raw", sceneExternal: true, planExternal: true },
+  RECALL_SAFE_STEREO: { id: 752, encoding: "raw", planExternal: true, readOnly: true },
+  RECALL_SAFE_STEREO_SELECT: { id: 753, encoding: "raw", sceneExternal: true, planExternal: true },
+  RECALL_SAFE_MIX: { id: 754, encoding: "raw", planExternal: true, readOnly: true },
+  RECALL_SAFE_MIX_SELECT: { id: 755, encoding: "raw", sceneExternal: true, planExternal: true },
+  RECALL_SAFE_STREAMING: { id: 756, encoding: "raw", planExternal: true, readOnly: true },
+  RECALL_SAFE_STREAMING_SELECT: { id: 757, encoding: "raw", sceneExternal: true, planExternal: true },
   /** microSD Rec per-track record-source assign (y = track 0..15). Raw port ref in
    *  the bus/channel namespace (CH n = its input slot, STEREO = 256/257, MIX1 =
    *  288/289, MIX2 = 290/291, none = the uint32 sentinel). Writable + readable.
