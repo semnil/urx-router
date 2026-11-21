@@ -399,6 +399,11 @@ flowchart TD
       Post Fader Send for FX (FX の Bus ごとに MIX 1 か MIX 2) と、その読み書き。
       実験的起動のときだけ、`main.ts` がライブ同期の開始時に 3 つとも読み、その通知を follow の
       `intercept` で受け、DAW がつながっている間に SIM ビューの LCD が選んだ Post Fader Send for FX を書く
+    - `recall-safe.ts` SCENE > [Recall Safe] (System 1.5)。行ごとの [Safe] (読むだけ。本体は接続から受け付けない) と
+      項目の選択 (行の種類ごとに並びの決まった、列ごとのビットの組) と、その読み書きと LCD のパス。行ごとの番号は
+      `translate.ts` の `recallSafeRows` で、URX44 の推測もそこに登録してある。実験的起動のときだけ、`main.ts` が
+      ライブ同期の開始時に全行を読み、その通知を follow の `intercept` で受け (自分の書込への答えは `CueEchoes` で
+      見分ける)、SIM ビューの LCD がした選択を、1 回の押下で変わった行ごとに 1 回ずつ書く
     - `cue.ts` 実機の [CUE] のフラグを、プランの外にライブ同期中の状態として持つ (「アプリがモデル化するもの・
       実機に任せるもの」の「CUE」): `CueSet` はどちらの側から来た変化にも実機の決まりを当て、`CueEchoes`
       はアプリ自身の書込への実機の応答をパネルでの押下と見分け、`readCues` は全フラグを読み、`writeCueFlag` は 1 本を書いて実機がそれを告知したときに終わる。
@@ -1570,7 +1575,7 @@ SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-s
   LCD が編集に付けて書く値や画面のために持つ値のうち、シミュレーター自身の状態は、プランではなくビューが持つ:
   リンクしたペアのコンプレッサーがどちらのチャンネルを聞くか (ペアのリンクと SSMCS への切り替えで書く)、レコーダーの
   再生 (レートの変更で止める)、Output Patch と Peripheral の画面のタブ、シーン一覧のバンクと行 (本体のカーソルが動くまで。下記)、microSD の画面が選んだ
-  フォルダとファイル、表示中の User Defined Knobs のバンク、LCD 自身の CUE の決まりが戻すために覚えている出力の CUE、RECALL SAFE の設定 (アプリには、それが効く自前のシーンの呼び出しが無い)。表に無いパスと同じく断ると、編集全体が一緒に取り消される。プランが持つ値でも、今の状態で取れない編集 (リンクしていないペアの PAN/BAL、
+  フォルダとファイル、表示中の User Defined Knobs のバンク、LCD 自身の CUE の決まりが戻すために覚えている出力の CUE、RECALL SAFE の設定 (Incoming Sends と Others のタブは接続のどの番号にも無いので常に。行は、セッションが本体の行を持っていない間。下記)。表に無いパスと同じく断ると、編集全体が一緒に取り消される。プランが持つ値でも、今の状態で取れない編集 (リンクしていないペアの PAN/BAL、
   配線の無い send、FX 2 を外すレートでの FX 2 への send、ライブ同期中のレコーダーの
   Track Count) は断る。表にも下の本体の値にも無い
   パス (シーンの中身とタイトル、カードの中身・名前・空き容量) はシミュレーターの値を表示し、
@@ -1588,6 +1593,16 @@ SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-s
   答えを採る。LCD はセッションの持つ Post Fader Send for FX を表示し、LCD で選んだ
   Post Fader Send for FX を、それまでに並んだ本体への書込の後ろで本体に書く。ただし順番が来た時点で DAW が本体から離れていれば、
   その書込は捨てて Post Fader Send for FX を読み直す。
+- **SCENE > [Recall Safe]** (System ファームウェア V1.5) はプランではなく本体の設定 (`recall-safe.ts`) で、本体はどの
+  シーンにも入れずに持つ。セッションは Input と Output のタブの行ごとに [Safe] と項目の選択を読み、登録し、登録した
+  後にもう一度読み、告知に追従する。その読み取りの最中に告知された行や LCD で変えた行は、読み取りの答えより自分の
+  状態を優先する。LCD はセッションの持つ行を表示し、セッションの開始で LCD 自身の値はそこから外れる。LCD で選んだ・
+  外した項目は、それまでに並んだ本体への書込の後ろで本体に書き、行のほかのビットは本体が持つままにする。1 回の押下で
+  行の複数の列が変わるとき (行の [All]、Source とその隣の HA) は、その行を 1 回だけ書く。本体は書込のそれぞれに答えを
+  告知し、LCD がその後に置き換えた書込への答えで LCD が戻ることはない。行の [Safe] は本体が接続から受け付けないので、
+  ライブ同期中は LCD が止める (下記)。Incoming Sends と Others のタブは接続のどの番号にも無く、LCD 自身の値のまま
+  にする。セッションが無いときは画面の全体が LCD 自身の値で、どこにも届かない。どの番号がどの行かは、URX44 では
+  確かめていない (known-issues.md)。
 - **[CUE] のフラグ**はプランではなくライブセッションの状態 (`cue.ts`。「アプリがモデル化するもの・実機に任せるもの」の
   「CUE」を参照)。ライブ同期中は、LCD がセッションの持つ全ストリップのフラグを表示し、どの面や本体のパネルからの変更にも
   追従する。LCD で押した [CUE] は CONSOLE のチップと同じ入口へ渡る。LCD は CUE の組の決まりを自分で当て、動かした
@@ -1630,7 +1645,8 @@ SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-s
   セッションでしか書かないため。開いている画面では位置を変えずに止める。「ライブ同期中に使えます」)、ライブ同期が切れている間の Software Integration とその 2 つの Post Fader Send for FX (対応 DAW が本体と
   つながっているかはセッション中にしか読めないため。開いている画面では位置を変えずに止める。「ライブ同期中、
   Cubase・Nuendo・MixKey が本体とつながっている間に使えます」)、本体自身の操作と USB Storage Mode (「本体で操作してください」)、
-  ライブ同期中の FX バスへのチャンネルの PRE / POST (CONSOLE と Inspector と同じく。同じ文言)、実機との接続中で、本体の
+  ライブ同期中の FX バスへのチャンネルの PRE / POST (CONSOLE と Inspector と同じく。同じ文言)、ライブ同期中の
+  RECALL SAFE の行ごとの [Safe] とそれに連なる見出しの ALL (本体が接続から受け付けないため。同じ文言)、実機との接続中で、本体の
   Follow USB がオンと分かっていない間のサンプリング周波数 (ツールバーのレートと同じ理由を出す (`rateHoldReason`)。
   ライブ同期のセッション以外が接続を持つ間は「デバイスとの接続中は変更できません」、ライブ同期中は、
   レートを外すデバイスの範囲「シーンのみ」(元に戻す環境設定の範囲を名指す) と、まだ読んでいない Follow USB
@@ -3154,7 +3170,7 @@ System ファームウェア V1.5 で、本体の SETUP メニューに **[Conso
   そのまま通ります。書く値を変える取り消し・やり直しも同じく止め (`status.consoleLockedUndo`)、MIDI と SIM の画面は、
   プランへ入れる前に断ります。
 - **プランに入らない、本体へ書く操作** (CUE・Clear CUE・CUE Mode・ステレオチャンネルの表示側・本体設定の画面・
-  Follow USB・HOME の [Sends] の送り先・Software Integration) は、`status.consoleLockedNotSent` で断ります。
+  Follow USB・HOME の [Sends] の送り先・Software Integration・RECALL SAFE の選択) は、`status.consoleLockedNotSent` で断ります。
 - **ロックが来たときに送っていなかった分**は、本体から読み直します。`LiveSync.setLocked` が、待っている送信を取り消し、
   走っている送信 (送信の繰り返しも収束 (converge) も。送る前に本体を待っているコマンド — A.Gain の後ろの Clip Safe の
   OFF — も含みます) を次の 1 件で止めます。`LiveSync.unsent` が、スナップショットの

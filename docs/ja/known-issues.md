@@ -325,6 +325,30 @@ URX は初期設定または SETUP > [Operation Mode] で選ぶ 2 つの動作�
 モードとは別物で、Standard に戻した後も Simple のプリセットの値のまま残ります。取り上げられた
 機能に対してアプリが送った書込みを Simple Mode がどう扱うかは分かっていません。
 
+## RECALL SAFE の [Safe]・Incoming Sends・Others はアプリから設定できない
+
+System ファームウェア V1.5 で、本体の SCENE メニューに **[Recall Safe]** が加わりました。シーンを呼び出しても
+そのまま残すものを、Input と Output のタブの行ごとと、Others のタブで決めます。実験的起動では SIM ビューの LCD に
+これを表示し、ライブ同期の間は本体の設定を表示して、本体のパネルでの変更に追従します (architecture.md「SIM ビュー
+(本体の LCD)」)。制御接続から届くのは、その一部だけです。
+
+- **行の項目の選択** (Name・Source・CH ON など) は設定できます。ライブ同期の間に LCD で選ぶと本体へ書き込み、
+  本体の画面にも出ます。
+- **行の [Safe]** は設定できません。制御接続からの書き込みを本体が断ります。ライブ同期の間は LCD で読むだけに
+  なるので、本体で設定します。
+- **Incoming Sends** と **Others** のタブは、制御接続のどの番号にもありません。アプリからは読むことも書くことも
+  できません。LCD はこれらに自分の値を持ちますが、その値はどこにも届きません。
+- ライブ同期をしていない間は、画面の全体が LCD の値で、どこにも届きません。セッションを始めると、行は本体の
+  設定に置き換わります。
+- RECALL SAFE はプランに入りません。本体はこれを本体全体の設定として持ち、どのシーンにも入れません。
+
+> URX44V と URX22 (System 1.5.0.1) で確認しました: どの行の選択がどこにあるか、ライブ同期の間に LCD で選んだ
+> 項目を本体が表示すること、本体で押した [Safe] に LCD が追従すること。URX44V だけで確認しました: [Safe] を入れた
+> 行では、制御接続から書いた選択にシーンの呼び出しが従うこと (CH ON の列で確かめ、ほかの列は試していません)、
+> [Safe] の書き込みを断ること、Incoming Sends と Others のタブに届かないこと。
+> URX44 では確かめておらず、URX44V と同じ動きとみなしています
+> ([decisions/device-control.md](decisions/device-control.md)「The URX44 is assumed to behave as the URX44V」)。
+
 ## MONO IN のペアをリンクすると、CH1 の Sweet Spot Data の一部が CH2 へ写る
 
 MONO IN のペアの Signal Type を MONO×2 から STEREO にすると、本体は CH1 の SSMCS の Sweet Spot Data
