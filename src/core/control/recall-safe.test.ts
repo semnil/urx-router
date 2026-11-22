@@ -29,6 +29,7 @@ import {
   withPending,
   withPendingEdit,
   safeOnGlassPaths,
+  withLinkCopies,
   withRecallSafeNotify,
   writeRecallSafeSelect,
   type SafeRowState,
@@ -258,6 +259,20 @@ describe("reading and following the unit", () => {
     expect(select.get("ch2")).toEqual({ safe: true, select: 0x100000 });
     // A row not read yet is left to the read.
     expect(withRecallSafeNotify(held, recallSafeAt(urx22, 745, 0, 0)!, 2).has("ch1")).toBe(false);
+  });
+
+  it("puts each linked pair's first row on its second, and leaves a pair one of whose rows is unread", () => {
+    const held = new Map<string, SafeRowState>([
+      ["ch1", { safe: true, select: 0x100000 }],
+      ["ch2", { safe: false, select: 0x1 }],
+      ["ch3", { safe: true, select: 0x2 }],
+    ]);
+    const out = withLinkCopies(urx44v, held, ["ch1", "ch3"]);
+    expect(out.get("ch2")).toEqual({ safe: true, select: 0x100000 });
+    expect(out.has("ch4"), "CH 4's row was never read").toBe(false);
+    expect(held.get("ch2"), "what was held stays as it was").toEqual({ safe: false, select: 0x1 });
+    // A second channel named as a pair's primary names no pair.
+    expect(withLinkCopies(urx44v, held, ["ch2"]).get("ch2")).toEqual({ safe: false, select: 0x1 });
   });
 
   it("keeps, over a read, each value that moved while it ran, and takes the read's for the other", () => {

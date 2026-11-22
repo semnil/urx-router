@@ -21,6 +21,7 @@ import {
   mixSendLocks,
   pairSharesNodeKey,
   isStereoLinkedPair,
+  pairPrimary,
   partnerChannel,
   resetMixSendBank,
   sendPansToSources,
@@ -185,6 +186,7 @@ import {
   vdWatchLink,
   type Connection,
   type DeviceSummary,
+  type ParamUpdate,
   type UpdateInfo,
 } from "./core/platform";
 import {
@@ -243,6 +245,7 @@ import {
   hpfFreqLeftOut,
   planToCommands,
   planToNameWrites,
+  recallSafeRows,
   unnamedNodes,
   unverifiedGuessAt,
   unverifiedGuessNote,
@@ -309,6 +312,7 @@ import {
   recallSafeGlassValues,
   recallSafeNotifyAddrs,
   safeOnGlassPaths,
+  withLinkCopies,
   withRecallSafeNotify,
   writeRecallSafeSelect,
   type SafeRowState,
@@ -634,8 +638,10 @@ function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   const lcd = lcdInFlight ?? Promise.resolve();
   // …and the [CUE] writes it has queued, with the [Sends] destination's queued behind them.
   const cue = cueWrites;
+  // …and the reads of the pairs' links a scene recall started, which stop at their next pair.
+  const recallReads = Promise.allSettled([...recallLinkReads]);
   return (
-    Promise.allSettled([ledger, reads, flush, lcd, cue])
+    Promise.allSettled([ledger, reads, flush, lcd, cue, recallReads])
       .then(() => vdDisconnect(epoch))
       // The holder goes back HERE and not in deactivateLive, because it is what stops
       // another action from connecting: an install replaces the worker, and the read still
@@ -1297,6 +1303,23 @@ const recallSafePending = new Map<string, SafePending>();
 const recallSafeVersions = new Map<string, number>();
 const recallSafeEchoes = new CueEchoes();
 const recallSafeQueued = new Map<string, RecallSafeRow>();
+// The [Safe] and selections of rows the unit changed without announcing them (`safePartKey`), whose
+// read still answers what they were: held over a read until the unit announces the value or takes a
+// write of this app's. The unit's link of each mono pair as the session last learned it, by the pair's
+// primary, which a link turned on is told apart from, and how many times the unit has announced each
+// pair's link, which a read taken across an announcement does not override.
+const recallSafeUnread = new Set<string>();
+let unitLinks: Map<string, boolean> | null = null;
+const linkHeard = new Map<string, number>();
+// The last selection this app sent to each row, which an answer of the unit's is taken for: an answer
+// to a write sent before it is one the LCD has since replaced.
+const recallSafeLastSent = new Map<string, number>();
+// How many scene recalls the unit has announced (its address-less bulk notify): a read of the unit started
+// before the latest one takes no link from what it found, the recall having changed links unannounced.
+let recallGen = 0;
+// The reads of the pairs' links a recall starts that are on the wire, which the session's release waits for
+// before it disconnects.
+const recallLinkReads = new Set<Promise<void>>();
 // Raised at each Console Lock: a RECALL SAFE write queued before it sends nothing.
 let recallSafeLocks = 0;
 const clipSafeEngaged = new Set<number>();
@@ -1431,16 +1454,41 @@ function flushRecallSafeWrites(): void {
         recallSafePending.delete(row.node);
         unitRecallSafe = new Map(unitRecallSafe).set(row.node, { ...held, select: raw });
         recallSafeEchoes.note(row.select, row.y, raw);
-        if (await writeRecallSafeSelect(row, raw)) return;
+        recallSafeLastSent.set(row.node, raw);
+        const key = safePartKey(row.node, "select");
+        // A row the unit copied unannounced, whose read can still answer what it held before the copy:
+        // until the unit takes this write, the session's row as it was before it is the unit's.
+        const unread = recallSafeUnread.has(key);
+        const sent = recallSafeVersions.get(key);
+        const restore = (): void => {
+          if (!unread || recallSafeVersions.get(key) !== sent || !unitRecallSafe) return;
+          const now = unitRecallSafe.get(row.node);
+          if (now) unitRecallSafe = new Map(unitRecallSafe).set(row.node, { ...now, select: held.select });
+        };
+        let announced: boolean;
+        try {
+          announced = await writeRecallSafeSelect(row, raw);
+        } catch (err) {
+          // A write the lock refused leaves the row as the unit held it, copy included.
+          if (stoppedByConsoleLock(err)) restore();
+          throw err;
+        }
+        // The unit's answer took the write in the order it came (takeUnitStateNotify).
+        if (announced) return;
         // The unit announced no such selection: it held it already, or did not take it. The row is
         // read back, and what the unit announces for it while the read is out is kept instead.
         if (!liveSessionUp || liveEpoch !== epoch) return;
-        const key = safePartKey(row.node, "select");
         const since = recallSafeVersions.get(key);
         const select = await readRecallSafeSelect(row);
         if (!liveSessionUp || liveEpoch !== epoch || !unitRecallSafe) return;
         if (recallSafeVersions.get(key) !== since) return;
-        unitRecallSafe = withRecallSafeNotify(unitRecallSafe, { row, part: "select" }, select);
+        if (recallSafeUnread.has(key) && select !== raw) {
+          // A read that is not this write can be the row before a copy: the row is kept as it was.
+          restore();
+        } else {
+          recallSafeUnread.delete(key);
+          unitRecallSafe = withRecallSafeNotify(unitRecallSafe, { row, part: "select" }, select);
+        }
         simView?.unitStateChanged();
       })
       .catch((err: unknown) => {
@@ -1466,10 +1514,91 @@ function rereadRecallSafe(): void {
       const read = await readRecallSafe(model);
       if (!ours()) return;
       const moved = new Set([...recallSafeVersions].filter(([key, n]) => since.get(key) !== n).map(([key]) => key));
+      // A value the unit changed unannounced reads as what it was, so the session's is kept.
+      for (const key of recallSafeUnread) moved.add(key);
       unitRecallSafe = mergeRecallSafeRead(unitRecallSafe, read, moved);
       simView?.unitStateChanged();
     })
     .catch((err: unknown) => stopLiveOnError(errorText(err)));
+}
+
+/** Each mono pair's link as `source` holds it, by the pair's primary. */
+function pairLinks(source: Plan): Map<string, boolean> {
+  return new Map(
+    getModel(modelId).channelPairs.map(([primary]) => [primary, source.nodeParams[primary]?.stereoLink === true]),
+  );
+}
+
+/** Take a pair's link as the unit's. Where it turned on and `copies`, the pair's first RECALL SAFE row is
+ *  put on its second, which the unit does unannounced for a link made over the control link or on its
+ *  panel, and not for one a scene recall makes (`copyLinkedRows`). */
+function takeLink(primary: string, on: boolean, copies: boolean): void {
+  if (!unitLinks) return;
+  unitLinks.set(primary, on);
+  if (copies && on) copyLinkedRows([primary]);
+}
+
+/** Take `source`'s links, of the pairs `taken` names, as the unit's, copying no row: the unit announces a
+ *  link made over the control link or on its panel, and not one a scene recall turns on, which carries
+ *  no row. A pair whose link the unit announced after `heard` was taken, the read's start, is left to
+ *  the announcement. */
+function takeReadLinks(
+  source: Plan,
+  heard: ReadonlyMap<string, number>,
+  taken: (primary: string) => boolean = () => true,
+): void {
+  for (const [primary, on] of pairLinks(source)) {
+    if (!taken(primary) || linkHeard.get(primary) !== heard.get(primary)) continue;
+    takeLink(primary, on, false);
+  }
+}
+
+/** A notify of a pair's Signal Type, taken as it arrives and before it is told an answer of this app's:
+ *  a link the unit announces is one made over the control link or on its panel, which puts the pair's
+ *  first RECALL SAFE row on its second as it turns on. A link a scene recall turns on is not announced,
+ *  and is taken from the read of the pairs' links that recall's bulk notify starts (`readRecallLinks`). */
+function observeLinkNotify(p: ParamUpdate): void {
+  if (!unitLinks) return;
+  if (p.paramId === 0 && p.x === -1 && p.y === -1) {
+    recallGen++;
+    const read = readRecallLinks();
+    recallLinkReads.add(read);
+    void read.finally(() => recallLinkReads.delete(read));
+    return;
+  }
+  if (p.paramId !== PARAMS.SIGNAL_TYPE.id || p.x !== 0) return;
+  const model = getModel(modelId);
+  const node = recallSafeRows(model).find((r) => r.kind === "mono" && r.y === p.y)?.node;
+  const primary = node === undefined ? null : pairPrimary(model, node);
+  if (primary === null) return;
+  linkHeard.set(primary, (linkHeard.get(primary) ?? 0) + 1);
+  // The unit announces a value that changed, so a link announced on is one it has just made, whatever
+  // the session last learned; it announces both channels, and the first one's copies.
+  takeLink(primary, p.value !== 0, node === primary);
+  simView?.unitStateChanged();
+}
+
+/** Put each pair's first RECALL SAFE row on its second, by the pair's primary (`withLinkCopies`), and
+ *  hold the second row's [Safe] and selection over a read, which answers what the row held before. */
+function copyLinkedRows(linked: readonly string[]): void {
+  if (!linked.length || !unitRecallSafe) return;
+  const model = getModel(modelId);
+  const copied = withLinkCopies(model, unitRecallSafe, linked);
+  const next = new Map(unitRecallSafe);
+  for (const primary of linked) {
+    const second = partnerChannel(model, primary);
+    const row = second === undefined ? undefined : copied.get(second);
+    if (second === undefined || !row) continue;
+    next.set(second, row);
+    // A change of the second row's, which a write's answer or read taken before it does not put back.
+    for (const part of ["safe", "select"] as const) {
+      const key = safePartKey(second, part);
+      recallSafeVersions.set(key, (recallSafeVersions.get(key) ?? 0) + 1);
+      recallSafeUnread.add(key);
+    }
+  }
+  unitRecallSafe = next;
+  simView?.unitStateChanged();
 }
 
 // The settle a re-read of the unit's settings waits for after the unit announces one, as a
@@ -1557,6 +1686,75 @@ function micLineJacks(model: DeviceModel): number[] {
 }
 
 /** Take a notify at one of `unitStateNotifyAddrs`. False for any other address. */
+/** Take a RECALL SAFE notify of the unit's own into the session's rows. On a linked pair the unit puts
+ *  a row pressed on its panel on the other row too and announces the row pressed alone: the other row
+ *  takes its whole selection, and its [Safe], and since its read can still answer what it held, the
+ *  session's is held over a read. */
+function applyRecallSafeNotify(paramId: number, y: number, value: number): void {
+  const model = getModel(modelId);
+  const safeAt = recallSafeAt(model, paramId, 0, y);
+  if (!safeAt) return;
+  recallSafeUnread.delete(safePartKey(safeAt.row.node, safeAt.part));
+  if (unitRecallSafe) {
+    unitRecallSafe = withRecallSafeNotify(unitRecallSafe, safeAt, value);
+    putOnLinkedPartner(safeAt.row, safeAt.part, value);
+  }
+  simView?.unitStateChanged();
+}
+
+/** Put a row's [Safe] or selection the unit took on the other row of its pair, where the unit holds the
+ *  pair linked: it does so unannounced, and the other row's read can still answer what it held, so the
+ *  session's is held over a read. */
+function putOnLinkedPartner(row: RecallSafeRow, part: "safe" | "select", value: number): void {
+  const model = getModel(modelId);
+  const primary = pairPrimary(model, row.node);
+  const other = partnerChannel(model, row.node);
+  const otherRow = recallSafeRows(model).find((r) => r.node === other);
+  if (primary === null || !otherRow || !unitRecallSafe || unitLinks?.get(primary) !== true) return;
+  const otherKey = safePartKey(otherRow.node, part);
+  recallSafeVersions.set(otherKey, (recallSafeVersions.get(otherKey) ?? 0) + 1);
+  recallSafeUnread.add(otherKey);
+  unitRecallSafe = withRecallSafeNotify(unitRecallSafe, { row: otherRow, part }, value);
+}
+
+/** The unit's answer to a selection this app wrote, which a read of the row answers from now on. The answer
+ *  to the last selection sent to the row is the row's, and is put on the other row of a linked pair, as the
+ *  unit did, in the order the unit announced it; an answer to a write the LCD has since replaced moves
+ *  neither row. */
+function takeRecallSafeAnswer(paramId: number, y: number, value: number): void {
+  const safeAt = recallSafeAt(getModel(modelId), paramId, 0, y);
+  if (!safeAt) return;
+  recallSafeUnread.delete(safePartKey(safeAt.row.node, safeAt.part));
+  if (recallSafeLastSent.get(safeAt.row.node) !== value || !unitRecallSafe) return;
+  unitRecallSafe = withRecallSafeNotify(unitRecallSafe, safeAt, value);
+  putOnLinkedPartner(safeAt.row, "select", value);
+  simView?.unitStateChanged();
+}
+
+/** Read each pair's link as the unit holds it right after a scene recall, which links and unlinks pairs
+ *  unannounced, and take it, copying nothing: a pair whose link the unit announced while the read was out
+ *  is left to that announcement, and a read a later recall overtook takes nothing. A read that fails ends the session, as every read of RECALL SAFE's does,
+ *  and one a session that has ended started sends nothing more. */
+async function readRecallLinks(): Promise<void> {
+  const session = unitLinks;
+  const heard = new Map(linkHeard);
+  const gen = recallGen;
+  const model = getModel(modelId);
+  try {
+    for (const [primary] of model.channelPairs) {
+      // A later recall's own read takes the links from here.
+      if (unitLinks !== session || recallGen !== gen) return;
+      const y = recallSafeRows(model).find((r) => r.node === primary)?.y;
+      if (y === undefined) continue;
+      const on = (await vdGet(PARAMS.SIGNAL_TYPE.id, 0, y)) !== 0;
+      if (unitLinks === session && recallGen === gen && linkHeard.get(primary) === heard.get(primary))
+        takeLink(primary, on, false);
+    }
+  } catch (err) {
+    if (unitLinks === session) stopLiveOnError(errorText(err));
+  }
+}
+
 function takeUnitStateNotify(paramId: number, y: number, value: number): boolean {
   if (paramId === PARAMS.OPERATION_MODE.id) {
     unitOperationMode = value;
@@ -1594,14 +1792,15 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
     // included, which lands at the edge of the settle bound — does not put the row back.
     const key = safePartKey(safeAt.row.node, safeAt.part);
     recallSafeVersions.set(key, (recallSafeVersions.get(key) ?? 0) + 1);
+    let answer = false;
     if (safeAt.part === "select") {
-      if (recallSafeEchoes.take(paramId, y, value)) return true;
+      answer = recallSafeEchoes.take(paramId, y, value);
       // A selection of the unit's own lands between this app's write and its answer: the answer then
       // carries what the unit holds after both, and is taken rather than swallowed.
-      recallSafeEchoes.drop(paramId, y);
+      if (!answer) recallSafeEchoes.drop(paramId, y);
     }
-    if (unitRecallSafe) unitRecallSafe = withRecallSafeNotify(unitRecallSafe, safeAt, value);
-    simView?.unitStateChanged();
+    if (answer) takeRecallSafeAnswer(paramId, y, value);
+    else applyRecallSafeNotify(paramId, y, value);
     return true;
   }
   if (!unitStateNotifyAddrs(getModel(modelId)).some(([id, , at]) => id === paramId && at === y)) return false;
@@ -1688,6 +1887,10 @@ function resetUnitSessionState(): void {
   recallSafePending.clear();
   recallSafeEchoes.clear();
   recallSafeQueued.clear();
+  recallSafeUnread.clear();
+  unitLinks = null;
+  linkHeard.clear();
+  recallSafeLastSent.clear();
   unitCardIn = null;
   clipSafeEngaged.clear();
   paintClipSafe();
@@ -2484,6 +2687,8 @@ const follow =
         // it replaces, and the merge takes that value over the operator's edit.
         deferReconcile: () => live?.isWriting() ?? false,
         intercept: (p) => {
+          // A pair's link, watched for RECALL SAFE and passed on.
+          observeLinkNotify(p);
           const at = (a: [number, number, number]): boolean => p.paramId === a[0] && p.x === a[1] && p.y === a[2];
           // The unit's own answer to a side this app wrote is consumed; any other selection
           // of a stereo channel shows that channel's side. Neither opens a reconcile.
@@ -2627,6 +2832,8 @@ async function reconcileNodesNow(nodeIds: ReadonlySet<string>, edits?: PlanWrite
   // operator's toggle flips back on screen, and plan and snapshot agree on a
   // value the device does not hold until the idle sweep re-reads past it.
   const pending = live?.recentPending(nodeIds);
+  const heard = new Map(linkHeard);
+  const gen = recallGen;
   const merged = await followRead(
     "device-follow scoped readback",
     (into, signal) => applyNodeStateScoped(into, nodeIds, signal, pending),
@@ -2636,6 +2843,9 @@ async function reconcileNodesNow(nodeIds: ReadonlySet<string>, edits?: PlanWrite
   // A Signal Type moved on the unit's own panel reaches the plan here, with no edit
   // funnel to snap the pair's partner beside its primary.
   snapLinkedPairs();
+  // …and the links this read found, which put no RECALL SAFE row: one the unit announced is taken as
+  // it arrived (observeLinkNotify).
+  if (gen === recallGen) takeReadLinks(merged.deviceView, heard, (primary) => nodeIds.has(primary));
   traceProbe?.sample("follow-scoped");
   noteMergeConflicts(merged);
   // Re-based here rather than in the coalesced reflect: only the copy this read
@@ -2665,6 +2875,8 @@ async function reconcileAllNow(edits?: PlanWriteWatch): Promise<void> {
   // whole-device read follows a scene recall and stands in for any notify missed.
   const cueSet = cues;
   const cueSince = cueSet.version;
+  const heard = new Map(linkHeard);
+  const gen = recallGen;
   let cueGot: { nodes: string[]; mode: CueMode } | null = null;
   const merged = await followRead(
     "device-follow readback",
@@ -2680,6 +2892,9 @@ async function reconcileAllNow(edits?: PlanWriteWatch): Promise<void> {
   // its partner snapped. This is the hook a scene or preset recall on the unit takes,
   // where several Signal Types move at once.
   snapLinkedPairs();
+  // A link a recall made carries no RECALL SAFE row; one the unit announced is taken as it arrived, and a
+  // recall made while this read was out leaves its links to that recall's own read (readRecallLinks).
+  if (gen === recallGen) takeReadLinks(merged.deviceView, heard);
   traceProbe?.sample("follow-full");
   noteMergeConflicts(merged);
   // Ahead of the re-base and the reflect, as in the scoped reconcile above.
@@ -6187,6 +6402,8 @@ if (!DEMO) {
         if (sceneRead.cursor !== null) takeUnitCursor(sceneRead.cursor);
         unitIntegration = integrationRead;
         unitRecallSafe = recallSafeRead;
+        // The links a RECALL SAFE row is put on the other row of a pair from (takeUnitLinks).
+        unitLinks = pairLinks(merged.deviceView);
         // The unit's RECALL SAFE replaces what the glass chose on its own while no session held one.
         if (recallSafeRead) simView?.unitTookOwn(recallSafeGlassPaths(getModel(modelId)));
         unitCardIn = cardRead;

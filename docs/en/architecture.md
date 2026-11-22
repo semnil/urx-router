@@ -2021,7 +2021,22 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   while that read is out, the late answer to the write included, is kept over the read's answer; a read that fails ends the session. A selection not yet
   written when Console Lock arrives is put back, as an edit of the plan is, and the write queued for it is dropped, so
   a selection made after the unlock goes out in its own turn, behind the writes queued before it. The unit announces its answer to each write,
-  and an answer to a write the LCD has since replaced does not move the LCD back. A row's [Safe] the unit takes from
+  and an answer to a write the LCD has since replaced does not move the LCD back. A mono pair linked over the link or
+  on the unit's panel has its first row, [Safe] and selection, put on its second by the unit, which announces none of
+  it and whose read of the second row stays what it was; a pair a scene recall links keeps its rows. The unit
+  announces a link made over the link or on its panel and not one a scene recall turns on, so the session puts the
+  first row on the second as the unit announces the link, pair by pair, whatever link it last learned for the pair,
+  and takes a link a recall made from a read of the pairs' links it makes at that recall's address-less bulk
+  notification, copying nothing. A read does not change the link of a pair the unit announced while the read was
+  out, and a read started before the latest recall takes no link. A recall made while the session is starting is
+  read the same way, and the session's end answers a read of the links already on the wire before it disconnects and
+  sends no more. Rows that overlap a recall or a write are taken as they come (known-issues.md). The second row is held over a read
+  of RECALL SAFE until the unit announces it or takes a write of this app's to it; a write Console Lock refuses, or one
+  the unit leaves unannounced and whose row reads back as something else, leaves the row as it was. On a linked pair
+  the unit puts a row pressed on its panel, or a selection this app wrote to a row, on the other row as well and
+  announces that row alone, its read of the other row able to stay what it was, and the session puts it there too,
+  in the order the unit announced it (a write of this app's, at the unit's answer to the last selection sent to the
+  row), and holds it over a read the same way. A row's [Safe] the unit takes from
   no link, so during Live sync the LCD holds it shut (below). No address of the link has been found for Incoming
   Sends and the Others tab, which stay the LCD's own, and with no session the whole screen is, reaching nothing. Which row each
   address belongs to is unconfirmed on the URX44 (known-issues.md).
@@ -2633,6 +2648,13 @@ written at all:
   cue, and with no session nothing switches one: the CONSOLE chips (which stay MIDI-learn targets) and the inspector's
   CUE row are read-only, and a
   MIDI control assigned to a CUE is refused.
+- **RECALL SAFE: the unit copies a row it does not announce, outside the plan.** A mono pair linked over the link
+  or on the unit's panel has its first row put on its second, and a row pressed on the panel of a linked pair, or
+  written over the link, reaches the other row; the unit announces neither copy, and the other row's read can keep answering what it
+  held, so neither a notify nor a read brings it in. The session models the copy (`withLinkCopies` and the link
+  notify path in `main.ts`) and holds the copied row over a read until the unit announces it or takes a write to
+  it. A pair a scene recall links keeps its rows, and the unit does not announce that link, which the app reads
+  at the recall's bulk notification instead (see "SCENE > [Recall Safe]" under "SIM view (the unit's LCD)").
 
 Which case a parameter falls into is settled on the unit rather than assumed: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being

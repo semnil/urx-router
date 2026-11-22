@@ -1393,6 +1393,53 @@ test("the LCD's RECALL SAFE is the unit's while Live sync is up, its [Safe] held
   expect(await selectWrites()).toEqual([0x100000]);
 });
 
+// The unit puts a mono pair's first RECALL SAFE row on its second as the pair is linked on its panel,
+// and announces none of it: the LCD shows the row there. A pair a scene recall links, a link the unit
+// does not announce, keeps its rows as they were.
+test("the LCD's RECALL SAFE puts a pair's first row on its second when the unit's panel links it, and not when a recall does", async ({
+  page,
+}) => {
+  const SAFE: number = PARAMS.RECALL_SAFE_MONO.id;
+  const SELECT: number = PARAMS.RECALL_SAFE_MONO_SELECT.id;
+  const LINK: number = PARAMS.SIGNAL_TYPE.id;
+  await stubTauriDevice(page, {
+    values: { [SAFE]: 0, [SELECT]: 0 },
+    commands: { experimental_enabled: true, ...LIVE_COMMANDS },
+  });
+  await page.goto("/");
+  await page.click("#btn-view-sim");
+  await expect(lcd(page)).toBeVisible();
+  await tapInto(page, lcd(page).locator(".scene-box").first(), "scene");
+  await tapInto(page, lcd(page).getByRole("button", { name: "Recall Safe", exact: true }), "scene.safe");
+  const screen = onScreen(page, "scene.safe");
+  const cell = (ch: number, column: string) => screen.getByRole("button", { name: `C H ${ch} ${column}`, exact: true });
+  // CH 1's and CH 3's rows: [Safe] and Name.
+  for (const y of [0, 2]) {
+    await setDeviceValue(page, SAFE, y, 1);
+    await setDeviceValue(page, SELECT, y, 0x100000);
+  }
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true", { timeout: 30_000 });
+  await expect(cell(1, "Name")).toHaveAttribute("aria-pressed", "true");
+  await expect(cell(2, "Name")).toHaveAttribute("aria-pressed", "false");
+
+  // CH 1/2 linked on the unit's panel: the link is announced, RECALL SAFE is not.
+  await setDeviceValue(page, LINK, 0, 1);
+  await setDeviceValue(page, LINK, 1, 1);
+  await notifyParam(page, LINK, 0, 1);
+  await expect(cell(2, "Name"), "CH 1's row on CH 2's").toHaveAttribute("aria-pressed", "true");
+  await expect(cell(2, "Safe")).toHaveAttribute("aria-pressed", "true");
+
+  // CH 3/4 linked by a scene recall, which announces no link, only the bulk change.
+  await setDeviceValue(page, LINK, 2, 1);
+  await setDeviceValue(page, LINK, 3, 1);
+  await notifyParam(page, 0, -1, 0, -1);
+  await expect(screen.locator(".safe-link"), "both pairs linked").toHaveCount(2, { timeout: 15_000 });
+  await expect(cell(4, "Name"), "CH 4's row as it was").toHaveAttribute("aria-pressed", "false");
+  await expect(cell(4, "Safe")).toHaveAttribute("aria-pressed", "false");
+});
+
 // The unit's [CUE] is live-session state outside the plan: while Live sync is up the LCD shows
 // the flags the unit holds and a press on the glass switches them on the unit, the way the
 // CONSOLE chip does; with no session a press reaches nothing.
