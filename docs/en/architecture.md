@@ -2032,12 +2032,15 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   address-less bulk notification, the RECALL SAFE notifies, the answers to this app's writes and the links the unit
   announces wait for the whole-unit read that recall starts, and are taken once it is in, in the order they came, on
   the links it found: a recall changes links without announcing them, so a row pressed before that read cannot be
-  told which link it was made under, and the LCD's rows stay as they were until then. The second row is held over a read
+  told which link it was made under, and the LCD's rows stay as they were until then. A selection made on the LCD in
+  that time is written once they are taken, from the row they leave, and each pair ends on the link the latest
+  recall left it with or the unit announced after that recall. The second row is held over a read
   of RECALL SAFE until the unit announces it or takes a write of this app's to it; a write Console Lock refuses, or one
   the unit leaves unannounced and whose row reads back as something else, leaves the row as it was. On a linked pair
   the unit puts a row pressed on its panel, or a selection this app wrote to a row, on the other row as well and
   announces that row alone, its read of the other row able to stay what it was, and the session puts it there too,
-  in the order the unit announced it (a write of this app's, at the unit's answer), and holds it over a read the same way. A row's [Safe] the unit takes from
+  in the order the unit announced it (a write of this app's, at the unit's answer to the last selection sent to the
+  row), and holds it over a read the same way. A row's [Safe] the unit takes from
   no link, so during Live sync the LCD holds it shut (below). No address of the link has been found for Incoming
   Sends and the Others tab, which stay the LCD's own, and with no session the whole screen is, reaching nothing. Which row each
   address belongs to is unconfirmed on the URX44 (known-issues.md).

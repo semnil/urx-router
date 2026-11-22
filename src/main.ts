@@ -1312,15 +1312,32 @@ const linkHeard = new Map<string, number>();
 // The selection each row held before a write of this app's to it that the unit has not answered: what a
 // link puts on the pair's second row while that write is on its way, since the unit has not taken it.
 const recallSafeSending = new Map<string, number>();
+// The last selection this app sent to each row, which an answer of the unit's is taken for: an answer
+// to a write sent before it is one the LCD has since replaced.
+const recallSafeLastSent = new Map<string, number>();
 // What the unit announced for RECALL SAFE since a scene recall's bulk notify, held for the whole-unit read
 // that recall starts: a recall links and unlinks pairs unannounced, so a row announced before that read
 // is in cannot be told which link it was made under. Taken in order once the read is in
 // (`takeRecallHold`); `gen` counts the bulk notifies, so a read started before the latest one does not.
 type RecallHeldEvent =
-  | { kind: "link"; primary: string; on: boolean; copies: boolean }
-  | { kind: "row"; paramId: number; y: number; value: number; answer: boolean };
+  | { kind: "link"; gen: number; primary: string; on: boolean; copies: boolean }
+  | { kind: "row"; gen: number; paramId: number; y: number; value: number; answer: boolean };
 let recallHold: { gen: number; events: RecallHeldEvent[] } | null = null;
 let recallGen = 0;
+// The writes from the glass waiting for a hold to be taken: one made from a row the hold has not given
+// what the unit announced would write the unit's own changes away.
+let recallHoldWaiters: Array<() => void> = [];
+
+/** Resolve once no recall's rows are held (`takeRecallHold`, or the session's end). */
+function recallHoldTaken(): Promise<void> {
+  return recallHold ? new Promise((resolve) => recallHoldWaiters.push(resolve)) : Promise.resolve();
+}
+
+function releaseRecallHoldWaiters(): void {
+  const waiters = recallHoldWaiters;
+  recallHoldWaiters = [];
+  for (const resolve of waiters) resolve();
+}
 // Raised at each Console Lock: a RECALL SAFE write queued before it sends nothing.
 let recallSafeLocks = 0;
 const clipSafeEngaged = new Set<number>();
@@ -1447,6 +1464,11 @@ function flushRecallSafeWrites(): void {
         if (!ours()) return;
         await live?.idle();
         if (!ours()) return;
+        // Made from the row once what the unit announced after a recall is in it.
+        while (recallHold) {
+          await recallHoldTaken();
+          if (!ours()) return;
+        }
         const held = unitRecallSafe?.get(row.node);
         const pending = recallSafePending.get(row.node);
         // Nothing left to write: a write queued before this one took what the glass chose.
@@ -1456,6 +1478,7 @@ function flushRecallSafeWrites(): void {
         unitRecallSafe = new Map(unitRecallSafe).set(row.node, { ...held, select: raw });
         recallSafeEchoes.note(row.select, row.y, raw);
         recallSafeSending.set(row.node, held.select);
+        recallSafeLastSent.set(row.node, raw);
         const key = safePartKey(row.node, "select");
         // A row the unit copied unannounced, whose read can still answer what it held before the copy:
         // until the unit takes this write, the session's row as it was before it is the unit's.
@@ -1476,7 +1499,10 @@ function flushRecallSafeWrites(): void {
           throw err;
         }
         // The unit's answer took the write in the order it came (takeUnitStateNotify).
-        if (announced) return;
+        if (announced) {
+          recallSafeSending.delete(row.node);
+          return;
+        }
         // The unit announced no such selection: it held it already, or did not take it. The row is
         // read back, and what the unit announces for it while the read is out is kept instead.
         if (!liveSessionUp || liveEpoch !== epoch) return;
@@ -1580,7 +1606,7 @@ function observeLinkNotify(p: ParamUpdate): void {
   // The unit announces a value that changed, so a link announced on is one it has just made, whatever
   // the session last learned; it announces both channels, and the first one's copies.
   if (recallHold) {
-    recallHold.events.push({ kind: "link", primary, on: p.value !== 0, copies: node === primary });
+    recallHold.events.push({ kind: "link", gen: recallHold.gen, primary, on: p.value !== 0, copies: node === primary });
     return;
   }
   takeLink(primary, p.value !== 0, node === primary);
@@ -1711,6 +1737,7 @@ function applyRecallSafeNotify(paramId: number, y: number, value: number): void 
   const safeAt = recallSafeAt(model, paramId, 0, y);
   if (!safeAt) return;
   recallSafeUnread.delete(safePartKey(safeAt.row.node, safeAt.part));
+  if (safeAt.part === "select" && recallSafeSending.has(safeAt.row.node)) recallSafeSending.set(safeAt.row.node, value);
   if (unitRecallSafe) {
     unitRecallSafe = withRecallSafeNotify(unitRecallSafe, safeAt, value);
     putOnLinkedPartner(safeAt.row, safeAt.part, value);
@@ -1730,18 +1757,21 @@ function putOnLinkedPartner(row: RecallSafeRow, part: "safe" | "select", value: 
   const otherKey = safePartKey(otherRow.node, part);
   recallSafeVersions.set(otherKey, (recallSafeVersions.get(otherKey) ?? 0) + 1);
   recallSafeUnread.add(otherKey);
+  if (part === "select" && recallSafeSending.has(otherRow.node)) recallSafeSending.set(otherRow.node, value);
   unitRecallSafe = withRecallSafeNotify(unitRecallSafe, { row: otherRow, part }, value);
 }
 
 /** The unit's answer to a selection this app wrote, which a read of the row answers from now on. The answer
- *  to the latest write is put on the other row of a linked pair, as the unit did, in the order the unit
- *  announced it; an answer to a write the LCD has since replaced moves neither row. */
+ *  to the last selection sent to the row is the row's, and is put on the other row of a linked pair, as the
+ *  unit did, in the order the unit announced it; an answer to a write the LCD has since replaced moves
+ *  neither row. */
 function takeRecallSafeAnswer(paramId: number, y: number, value: number): void {
   const safeAt = recallSafeAt(getModel(modelId), paramId, 0, y);
   if (!safeAt) return;
   recallSafeUnread.delete(safePartKey(safeAt.row.node, safeAt.part));
-  if (unitRecallSafe?.get(safeAt.row.node)?.select !== value) return;
+  if (recallSafeLastSent.get(safeAt.row.node) !== value || !unitRecallSafe) return;
   recallSafeSending.delete(safeAt.row.node);
+  unitRecallSafe = withRecallSafeNotify(unitRecallSafe, safeAt, value);
   putOnLinkedPartner(safeAt.row, "select", value);
   simView?.unitStateChanged();
 }
@@ -1752,16 +1782,26 @@ function takeRecallSafeAnswer(paramId: number, y: number, value: number): void {
 function takeRecallHold(): void {
   const hold = recallHold;
   recallHold = null;
-  if (!hold || !unitLinks) return;
+  if (!hold || !unitLinks) return releaseRecallHoldWaiters();
+  // The links the read found, which are the latest recall's but for a link announced since it.
+  const read = new Map(unitLinks);
   const first = new Map<string, boolean>();
-  for (const e of hold.events) if (e.kind === "link" && !first.has(e.primary)) first.set(e.primary, e.on);
+  const latest = new Map<string, boolean>();
+  for (const e of hold.events) {
+    if (e.kind !== "link") continue;
+    if (!first.has(e.primary)) first.set(e.primary, e.on);
+    if (e.gen === hold.gen) latest.set(e.primary, e.on);
+  }
   for (const [primary, on] of first) unitLinks.set(primary, !on);
   for (const e of hold.events) {
     if (e.kind === "link") takeLink(e.primary, e.on, e.copies);
     else if (e.answer) takeRecallSafeAnswer(e.paramId, e.y, e.value);
     else applyRecallSafeNotify(e.paramId, e.y, e.value);
   }
+  // A link announced before the latest recall does not outlast it.
+  for (const [primary, on] of read) if (!latest.has(primary)) unitLinks.set(primary, on);
   simView?.unitStateChanged();
+  releaseRecallHoldWaiters();
 }
 
 function takeUnitStateNotify(paramId: number, y: number, value: number): boolean {
@@ -1809,7 +1849,7 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
       if (!answer) recallSafeEchoes.drop(paramId, y);
     }
     if (recallHold) {
-      recallHold.events.push({ kind: "row", paramId, y, value, answer });
+      recallHold.events.push({ kind: "row", gen: recallHold.gen, paramId, y, value, answer });
       return true;
     }
     if (answer) takeRecallSafeAnswer(paramId, y, value);
@@ -1904,7 +1944,9 @@ function resetUnitSessionState(): void {
   unitLinks = null;
   linkHeard.clear();
   recallSafeSending.clear();
+  recallSafeLastSent.clear();
   recallHold = null;
+  releaseRecallHoldWaiters();
   unitCardIn = null;
   clipSafeEngaged.clear();
   paintClipSafe();
