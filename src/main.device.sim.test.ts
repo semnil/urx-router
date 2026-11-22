@@ -2120,6 +2120,94 @@ describe("the SIM view over a live session", () => {
     reads.releaseAll();
   });
 
+  it(
+    "takes a recall the unit announces while Live sync is starting, and writes from the glass after it",
+    SLOW,
+    async () => {
+      const cmds = deviceCommands({ "plugin:dialog|message": "Ok", experimental_enabled: true }, {});
+      const watch = cmds.vd_watch_link as (a: Record<string, unknown>) => unknown;
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      let holding = false;
+      cmds.vd_watch_link = (a: Record<string, unknown>) => {
+        holding = true;
+        return held.then(() => watch(a));
+      };
+      onTestFinished(() => release());
+      const shell = (await bootApp({ tauri: cmds }))!;
+      await openSim();
+      // A recall on the unit while the session is starting: its bulk notify arrives once the follow is in.
+      $("btn-live").click();
+      await vi.waitFor(() => expect(holding, "the premise: the start is under way").toBe(true), { timeout: 25_000 });
+      notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await new Promise((r) => setTimeout(r, 100));
+      release();
+      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
+      // The session's writes go out.
+      await transport().write("safe.ch1.name", true);
+      await vi.waitFor(() => expect(setsOf(shell, SELECT).at(-1)).toEqual([0, 0x100000]), { timeout: 10_000 });
+      await transport().write("setup.brightness", 3);
+      await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id).length).toBeGreaterThan(0), {
+        timeout: 10_000,
+      });
+    },
+  );
+
+  it(
+    "answers a recall's read of the links on the wire before disconnecting, and sends no more once the session has ended",
+    SLOW,
+    async () => {
+      const { shell, reads } = await bootLinkUnit({});
+      onTestFinished(() => reads.releaseAll());
+      reads.hold();
+      notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await vi.waitFor(() => expect(reads.asked(), "the premise: CH 1/2's read is out").toBe(1));
+      const disconnects = shell.count("vd_disconnect");
+      $("btn-live").click();
+      await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });
+      const pairReads = (): number =>
+        shell.invokes.filter((c, i) => c === "vd_get" && shell.args[i]?.paramId === LINK && shell.args[i]?.y === 2)
+          .length;
+      const before = pairReads();
+      // The link is held for the read on the wire, which is answered over it.
+      await new Promise((r) => setTimeout(r, 300));
+      expect(shell.count("vd_disconnect"), "not disconnected under the read").toBe(disconnects);
+      reads.releaseAll();
+      await vi.waitFor(() => expect(shell.count("vd_disconnect")).toBeGreaterThan(disconnects), { timeout: 10_000 });
+      expect(pairReads(), "no read of CH 3/4's link after the session ended").toBe(before);
+    },
+  );
+
+  it(
+    "copies a first row as it was before this app's write when the unit links the pair ahead of the write's answer in a recall's stretch",
+    SLOW,
+    async () => {
+      const { shell, reads } = await bootLinkUnit({});
+      onTestFinished(() => reads.releaseAll());
+      await transport().write("safe.ch1.name", true);
+      await vi.waitFor(() => expect(setsOf(shell, SELECT).at(-1)).toEqual([0, 0x100000]), { timeout: 10_000 });
+      // A recall, then the unit's panel links and unlinks the pair, then the write's answer: all held.
+      reads.hold();
+      notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await vi.waitFor(() => expect(reads.asked(), "the premise: the recall's read is out").toBe(1));
+      notifyChannel(shell).onmessage([
+        { param_id: LINK, x: 0, y: 0, value: 1 },
+        { param_id: LINK, x: 0, y: 1, value: 1 },
+      ]);
+      notifyChannel(shell).onmessage([
+        { param_id: LINK, x: 0, y: 0, value: 0 },
+        { param_id: LINK, x: 0, y: 1, value: 0 },
+      ]);
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100000 }]);
+      await new Promise((r) => setTimeout(r, 1_500));
+      reads.releaseAll();
+      await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name")).toEqual([true]), { timeout: 10_000 });
+      expect(await shownSafe("safe.ch2.name"), "the copy made before the answer").toEqual([false]);
+      await transport().write("safe.ch2.chOn", true);
+      await vi.waitFor(() => expect(setsOf(shell, SELECT).at(-1)).toEqual([1, 0x2]), { timeout: 10_000 });
+    },
+  );
+
   it("keeps a pair's link the unit announced over a read the unit answered before it", SLOW, async () => {
     const { shell, reads } = await bootLinkUnit({ [`${SAFE}/0/0`]: 1, [`${SELECT}/0/0`]: 0x100000 });
     onTestFinished(() => reads.releaseAll());

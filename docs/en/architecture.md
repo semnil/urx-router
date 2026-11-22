@@ -2035,7 +2035,9 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   in the order they came, on the links it found (a pair whose link the unit announced in that time from before the
   first such announcement): a recall changes links without announcing them, so a row pressed after it cannot be told
   which link it was made under before then. Each recall has its own wait, taken in turn, and the LCD's rows stay as
-  they were until it is over; a selection made on the LCD in that time is written once it is, from the row it leaves. The second row is held over a read
+  they were until it is over; a selection made on the LCD in that time is written once it is, from the row it leaves.
+  A recall made while the session is starting is read the same way, and the session's end answers a read of the
+  links already on the wire before it disconnects and sends no more. The second row is held over a read
   of RECALL SAFE until the unit announces it or takes a write of this app's to it; a write Console Lock refuses, or one
   the unit leaves unannounced and whose row reads back as something else, leaves the row as it was. On a linked pair
   the unit puts a row pressed on its panel, or a selection this app wrote to a row, on the other row as well and

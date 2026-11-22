@@ -638,8 +638,10 @@ function releaseLive(epoch: number, reason: LinkSessionEnd): Promise<void> {
   const lcd = lcdInFlight ?? Promise.resolve();
   // …and the [CUE] writes it has queued, with the [Sends] destination's queued behind them.
   const cue = cueWrites;
+  // …and the reads of the pairs' links a scene recall started, which stop at their next pair.
+  const recallReads = Promise.allSettled([...recallLinkReads]);
   return (
-    Promise.allSettled([ledger, reads, flush, lcd, cue])
+    Promise.allSettled([ledger, reads, flush, lcd, cue, recallReads])
       .then(() => vdDisconnect(epoch))
       // The holder goes back HERE and not in deactivateLive, because it is what stops
       // another action from connecting: an install replaces the worker, and the read still
@@ -1326,6 +1328,11 @@ type RecallHeldEvent =
 type RecallStretch = { links: Map<string, boolean> | null; events: RecallHeldEvent[] };
 let recallStretches: RecallStretch[] = [];
 let recallGen = 0;
+// The reads of the pairs' links in flight, which the session's release waits for before it disconnects,
+// and the rows whose write the unit answered while a stretch held the answer: their copy source goes once
+// the stretches are taken, the answer with them.
+const recallLinkReads = new Set<Promise<void>>();
+const recallSafeAnsweredHeld = new Set<string>();
 // The writes from the glass waiting for the stretches to be taken: one made from a row they have not given
 // what the unit announced would write the unit's own changes away.
 let recallHoldWaiters: Array<() => void> = [];
@@ -1500,9 +1507,12 @@ function flushRecallSafeWrites(): void {
           if (stoppedByConsoleLock(err)) restore();
           throw err;
         }
-        // The unit's answer took the write in the order it came (takeUnitStateNotify).
+        // The unit's answer took the write in the order it came (takeUnitStateNotify). Held in a recall's
+        // stretch, it is taken there, in its place among what the unit announced: until then a link in
+        // front of it copies the row as the unit held it before this write.
         if (announced) {
-          recallSafeSending.delete(row.node);
+          if (recallStretches.length) recallSafeAnsweredHeld.add(row.node);
+          else recallSafeSending.delete(row.node);
           return;
         }
         // The unit announced no such selection: it held it already, or did not take it. The row is
@@ -1598,7 +1608,9 @@ function observeLinkNotify(p: ParamUpdate): void {
     recallGen++;
     const stretch: RecallStretch = { links: null, events: [] };
     recallStretches.push(stretch);
-    void readRecallLinks(stretch);
+    const read = readRecallLinks(stretch);
+    recallLinkReads.add(read);
+    void read.finally(() => recallLinkReads.delete(read));
     return;
   }
   if (p.paramId !== PARAMS.SIGNAL_TYPE.id || p.x !== 0) return;
@@ -1785,19 +1797,26 @@ function takeRecallSafeAnswer(paramId: number, y: number, value: number): void {
  *  recall, and take the stretches whose links are in. A read that fails ends the session, as every read of
  *  RECALL SAFE's does. */
 async function readRecallLinks(stretch: RecallStretch): Promise<void> {
-  const epoch = liveEpoch;
+  // The session's own map of the links, which the session's start makes and its end drops: a read the
+  // start's window took is this session's, and one a session that has ended started sends nothing more.
+  const session = unitLinks;
   const model = getModel(modelId);
   const links = new Map<string, boolean>();
   try {
     for (const [primary] of model.channelPairs) {
+      if (unitLinks !== session) return;
       const y = recallSafeRows(model).find((r) => r.node === primary)?.y;
       if (y !== undefined) links.set(primary, (await vdGet(PARAMS.SIGNAL_TYPE.id, 0, y)) !== 0);
     }
   } catch (err) {
-    if (liveSessionUp && liveEpoch === epoch) stopLiveOnError(errorText(err));
+    if (unitLinks !== session) return;
+    // What the stretch held cannot be told its links: it is dropped with the session the failure ends.
+    recallStretches = recallStretches.filter((s) => s !== stretch);
+    takeRecallStretches();
+    stopLiveOnError(errorText(err));
     return;
   }
-  if (!liveSessionUp || liveEpoch !== epoch || !recallStretches.includes(stretch)) return;
+  if (unitLinks !== session || !recallStretches.includes(stretch)) return;
   stretch.links = links;
   takeRecallStretches();
 }
@@ -1820,7 +1839,10 @@ function takeRecallStretches(): void {
     }
   }
   simView?.unitStateChanged();
-  if (!recallStretches.length) releaseRecallHoldWaiters();
+  if (recallStretches.length) return;
+  for (const node of recallSafeAnsweredHeld) recallSafeSending.delete(node);
+  recallSafeAnsweredHeld.clear();
+  releaseRecallHoldWaiters();
 }
 
 function takeUnitStateNotify(paramId: number, y: number, value: number): boolean {
@@ -1965,6 +1987,7 @@ function resetUnitSessionState(): void {
   linkHeard.clear();
   recallSafeSending.clear();
   recallSafeLastSent.clear();
+  recallSafeAnsweredHeld.clear();
   recallStretches = [];
   releaseRecallHoldWaiters();
   unitCardIn = null;
