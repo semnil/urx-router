@@ -44,7 +44,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",
-    "@tauri-apps/cli": "^2.12.5",
+    "@tauri-apps/cli": "^2.12.6",
     "@types/node": "24",
     "@vitest/coverage-v8": "^5.1.1",
     "cross-env": "^10.1.0",
