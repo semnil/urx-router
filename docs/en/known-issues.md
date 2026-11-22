@@ -517,12 +517,6 @@ The consequence is visible and recoverable: after applying, the unit's own
 Date/Time screen shows the city it actually selected. If it differs from what was
 picked, pick again — nothing else depends on the value.
 
-## The URX22 has no Date/Time menu
-
-The URX22 has no microSD recorder, and the clock exists to date-stamp those
-recordings, so the unit has no Date/Time menu at all. The HDMI page is fitted to the
-URX44V only.
-
 ## The URX does not save device-wide settings in a scene
 
 This is a behavior of the URX itself, not of URX Router — noted here because it
