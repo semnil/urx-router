@@ -2640,6 +2640,13 @@ written at all:
   cue, and with no session nothing switches one: the CONSOLE chips (which stay MIDI-learn targets) and the inspector's
   CUE row are read-only, and a
   MIDI control assigned to a CUE is refused.
+- **RECALL SAFE: the unit copies a row it does not announce, outside the plan.** A mono pair linked over the link
+  or on the unit's panel has its first row put on its second, and a row pressed on the panel of a linked pair
+  reaches the other row; the unit announces neither copy, and the other row's read can keep answering what it
+  held, so neither a notify nor a read brings it in. The session models the copy (`withLinkCopies` and the notify
+  path in `main.ts`) and holds the copied row over a read until the unit announces it. A pair a scene recall links
+  keeps its rows, which the app tells apart by the unit's address-less bulk notification ahead of the follow read
+  (see "SCENE > [Recall Safe]" under "SIM view (the unit's LCD)").
 
 Which case a parameter falls into is settled on the unit rather than assumed: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being
