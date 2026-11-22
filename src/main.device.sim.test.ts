@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { $, bootApp, deviceCommands, statusText, unwrittenRead } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
 import { PARAMS } from "./core/control/params";
+import { consoleLockAbort } from "./core/control/console-lock";
 import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
 import { spoken } from "./ui/glyph";
@@ -1728,6 +1729,129 @@ describe("the SIM view over a live session", () => {
     await vi.waitFor(() => expect(setsOf(shell, PARAMS.BRIGHTNESS.id)).toEqual([[0, 3]]), { timeout: 10_000 });
     expect(await shownSafe("safe.ch1.name", "safe.ch2.chOn"), "CH 1 as announced, CH 2 as read").toEqual([true, true]);
   });
+
+  // The unit puts a pair's first RECALL SAFE row on its second as the pair is linked over the link or
+  // on its panel, and announces none of it; a pair a scene recall links keeps its rows as they were.
+  const LINK = PARAMS.SIGNAL_TYPE.id;
+  const unitSet = (paramId: number, y: number, value: number): Promise<unknown> =>
+    (
+      window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a: unknown) => Promise<unknown> } }
+    ).__TAURI_INTERNALS__.invoke("vd_set", { paramId, x: 0, y, value });
+  const shownLink = async (ch: string): Promise<unknown> => (await transport().snapshot()).get(`ch.${ch}.signalType`);
+
+  it(
+    "puts a pair's first RECALL SAFE row on its second when the unit's panel links the pair, and not when a recall does",
+    SLOW,
+    async () => {
+      // CH 1's and CH 3's rows: [Safe] and Name. CH 2's and CH 4's: nothing.
+      const shell = await bootDevice({ experimental_enabled: true }, true, {
+        [`${SAFE}/0/0`]: 1,
+        [`${SELECT}/0/0`]: 0x100000,
+        [`${SAFE}/0/2`]: 1,
+        [`${SELECT}/0/2`]: 0x100000,
+      });
+      await openSim();
+      await goLive();
+      const seconds = () => shownSafe("safe.ch2.on", "safe.ch2.name", "safe.ch4.on", "safe.ch4.name");
+      await vi.waitFor(async () => expect(await seconds()).toEqual([false, false, false, false]));
+      // CH 1/2 linked on the unit's panel: the link is announced at the primary, RECALL SAFE is not.
+      await unitSet(LINK, 0, 1);
+      await unitSet(LINK, 1, 1);
+      notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+      await vi.waitFor(async () => expect(await seconds()).toEqual([true, true, false, false]), { timeout: 10_000 });
+      // CH 3/4 linked by a scene recall, which the address-less bulk notify announces.
+      await unitSet(LINK, 2, 1);
+      await unitSet(LINK, 3, 1);
+      notifyChannel(shell).onmessage([
+        { param_id: LINK, x: 0, y: 2, value: 1 },
+        { param_id: 0, x: -1, y: -1, value: 0 },
+      ]);
+      await vi.waitFor(async () => expect(await shownLink("ch3")).toBe("STEREO"), { timeout: 10_000 });
+      expect(await seconds(), "CH 4's row as it was").toEqual([true, true, false, false]);
+    },
+  );
+
+  it(
+    "keeps the row a link put on a pair's second row over a read of RECALL SAFE, which answers the row as it was",
+    SLOW,
+    async () => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, {
+        [`${SAFE}/0/0`]: 1,
+        [`${SELECT}/0/0`]: 0x100000,
+      });
+      await openSim();
+      await goLive();
+      await unitSet(LINK, 0, 1);
+      await unitSet(LINK, 1, 1);
+      notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+      await vi.waitFor(async () => expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([true, true]), {
+        timeout: 10_000,
+      });
+      // A selection Console Lock stops sends RECALL SAFE to be read again, and the unit's read of CH 2's
+      // row still answers what the row held before the link.
+      const rowReads = (): number =>
+        shell.invokes.filter((c, i) => c === "vd_get" && shell.args[i]?.paramId === SAFE && shell.args[i]?.y === 1)
+          .length;
+      const before = rowReads();
+      shell.failOnce("vd_set", consoleLockAbort());
+      await transport().write("safe.ch3.chOn", true);
+      await vi.waitFor(() => expect(rowReads(), "the premise: RECALL SAFE read again").toBeGreaterThan(before), {
+        timeout: 10_000,
+      });
+      await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLockedNotSent));
+      expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([true, true]);
+    },
+  );
+
+  it("puts a pair's first RECALL SAFE row on its second when this app links the pair", SLOW, async () => {
+    const shell = await bootDevice({ experimental_enabled: true }, true, {
+      [`${SAFE}/0/0`]: 1,
+      [`${SELECT}/0/0`]: 0x100000,
+    });
+    await openSim();
+    await goLive();
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([false, false]));
+    await transport().write("ch.ch1.signalType", "STEREO");
+    await vi.waitFor(
+      () =>
+        expect(setsOf(shell, LINK)).toEqual([
+          [0, 1],
+          [1, 1],
+        ]),
+      { timeout: 10_000 },
+    );
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([true, true]), {
+      timeout: 10_000,
+    });
+  });
+
+  it(
+    "puts a RECALL SAFE row pressed on the unit on the other row of a linked pair, which the unit leaves unannounced",
+    SLOW,
+    async () => {
+      const shell = await bootDevice({ experimental_enabled: true }, true, { [`${LINK}/0/0`]: 1, [`${LINK}/0/1`]: 1 });
+      await openSim();
+      await goLive();
+      await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("STEREO"));
+      // Name pressed on CH 2's row: the unit gives CH 1's row the same and announces CH 2's alone, its
+      // read of CH 1's row still answering what that row held.
+      await unitSet(SELECT, 1, 0x100000);
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100000 }]);
+      await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name", "safe.ch2.name")).toEqual([true, true]));
+      // A selection Console Lock stops sends RECALL SAFE to be read again, and CH 1's row is kept.
+      const rowReads = (): number =>
+        shell.invokes.filter((c, i) => c === "vd_get" && shell.args[i]?.paramId === SELECT && shell.args[i]?.y === 0)
+          .length;
+      const before = rowReads();
+      shell.failOnce("vd_set", consoleLockAbort());
+      await transport().write("safe.ch3.chOn", true);
+      await vi.waitFor(() => expect(rowReads(), "the premise: RECALL SAFE read again").toBeGreaterThan(before), {
+        timeout: 10_000,
+      });
+      await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLockedNotSent));
+      expect(await shownSafe("safe.ch1.name")).toEqual([true]);
+    },
+  );
 
   // A unit whose RECALL SAFE a case moves as the unit's panel does: the value set and, unless told
   // otherwise, announced.

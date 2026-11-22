@@ -2021,7 +2021,14 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   while that read is out, the late answer to the write included, is kept over the read's answer; a read that fails ends the session. A selection not yet
   written when Console Lock arrives is put back, as an edit of the plan is, and the write queued for it is dropped, so
   a selection made after the unlock goes out in its own turn, behind the writes queued before it. The unit announces its answer to each write,
-  and an answer to a write the LCD has since replaced does not move the LCD back. A row's [Safe] the unit takes from
+  and an answer to a write the LCD has since replaced does not move the LCD back. A mono pair linked over the link or
+  on the unit's panel has its first row, [Safe] and selection, put on its second by the unit, which announces none of
+  it and whose read of the second row stays what it was. The session puts the first row on the second itself, for a
+  link this app's flush wrote and for one a follow read brings in, and holds the second row over a read of RECALL
+  SAFE until the unit announces it or this app writes it. A link a scene recall made, which the unit's address-less
+  bulk notification announces ahead of the follow read, carries no row, as on the unit. On a linked pair the unit
+  puts a row pressed on its panel on the other row as well and announces the row pressed alone, its read of the other
+  row able to stay what it was, and the session puts it there too and holds it over a read the same way. A row's [Safe] the unit takes from
   no link, so during Live sync the LCD holds it shut (below). No address of the link has been found for Incoming
   Sends and the Others tab, which stay the LCD's own, and with no session the whole screen is, reaching nothing. Which row each
   address belongs to is unconfirmed on the URX44 (known-issues.md).

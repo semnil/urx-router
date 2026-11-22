@@ -70,6 +70,26 @@ export async function readRecallSafe(
   return out;
 }
 
+/** `state` with each pair's first row, its [Safe] and its selection, put on its second, by the pair's
+ *  primary channel. The unit does this as a pair is linked over the control link or on its own panel,
+ *  and announces it to no one: the second row's announced and read values stay what they were while the
+ *  unit holds the first row's. A pair a scene recall links keeps each row as it was. A pair either of
+ *  whose rows the session has not read is left out. */
+export function withLinkCopies(
+  model: DeviceModel,
+  state: RecallSafeState,
+  primaries: Iterable<string>,
+): Map<string, SafeRowState> {
+  const out = new Map(state);
+  for (const primary of primaries) {
+    const second = model.channelPairs.find(([a]) => a === primary)?.[1];
+    const first = out.get(primary);
+    if (second === undefined || !first || !out.has(second)) continue;
+    out.set(second, { ...first });
+  }
+  return out;
+}
+
 /** The addresses a session registers for notifies: each row's [Safe] and selection. */
 export function recallSafeNotifyAddrs(model: DeviceModel): Array<[number, number, number]> {
   return recallSafeRows(model).flatMap((r): Array<[number, number, number]> => [
