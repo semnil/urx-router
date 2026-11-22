@@ -14,8 +14,11 @@ export type SceneTab = "Standard" | "Simple";
 
 /** The simulator numbers a preset Pn past this base, P01 being 101. */
 const SIM_PRESET_BASE = 100;
-/** The unit's presets, P01 to P03. */
-const PRESETS = 3;
+/** The unit's presets, P01 to P07: Simple Mode's P01 to P03 on the Simple tab, and Standard Mode's
+ *  P04 to P07 (System firmware V1.5) on the Standard tab. */
+const PRESETS = 7;
+/** The last preset the Simple tab lists. */
+const LAST_SIMPLE_PRESET = 3;
 /** The unit's user scenes, 01 to 63. */
 const USER_SCENES = 63;
 /** The unit's flag on a factory scene: 00 Initial Data and the presets. */
@@ -33,12 +36,13 @@ export function simSceneNumber(raw: number): number | null {
   return raw < USER_SCENES ? raw + 1 : null;
 }
 
-/** The tab a cursor at `raw` stands on where only one of the two lists its row: 00 on Standard, a
- *  preset on Simple. Null for a user scene, which both list, and for a value outside the encoding. */
+/** The tab a cursor at `raw` stands on where only one of the two lists its row: 00 and P04 to P07 on
+ *  Standard, P01 to P03 on Simple. Null for a user scene, which both list, and for a value outside
+ *  the encoding. */
 export function sceneTab(raw: number): SceneTab | null {
   const no = simSceneNumber(raw);
-  if (no === 0) return "Standard";
-  return no !== null && no > SIM_PRESET_BASE ? "Simple" : null;
+  if (no === null || (no > 0 && no <= SIM_PRESET_BASE)) return null;
+  return no > SIM_PRESET_BASE && no <= SIM_PRESET_BASE + LAST_SIMPLE_PRESET ? "Simple" : "Standard";
 }
 
 /** What the glass shows for the unit's scene pointers: the current scene, SCENE LIST's cursor and
