@@ -1053,7 +1053,7 @@ export const en = {
       `Write canceled: ${n} setting${n === 1 ? "" : "s"} could not be read from the device`,
     writeError: (message: string): string => `Device write failed: ${message}`,
     writeLocked: (sent: number, total: number): string =>
-      `The unit went into Console Lock, so the write stopped: ${sent} of ${total} sent. Write again once it is unlocked to send the rest`,
+      `The unit went into Console Lock, so the write stopped: ${sent} of ${total} sent. Write again once it is unlocked to compare the unit with the plan again and send what differs`,
     // Console Lock during Live sync (core/control/console-lock.ts).
     consoleLocked: tr("The unit is under Console Lock — the app sends it nothing until it is unlocked on the unit"),
     consoleUnlocked: tr("The unit's Console Lock is off — edits are sent to the unit again"),

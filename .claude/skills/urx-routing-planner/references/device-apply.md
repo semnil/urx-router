@@ -70,6 +70,14 @@ since System firmware V1.5, but the device connection refuses a write outside th
 status line names the channels left out, and the unit keeps its own value there. During Live
 sync the Inspector offers 40–118 Hz for the same reason.
 
+A unit under **Console Lock** (SETUP > [Console Lock], System firmware V1.5) gets no write from
+the app. Write to device reads the lock first and writes nothing to a locked unit; a lock that
+arrives while it writes stops it at the next command. Once the unit is unlocked, Write to device
+compares the unit with the plan again and sends what differs then inside the Scope (step 5), which
+includes a setting already sent before the lock and changed on the unit since. During Live sync an edit that would write to the unit is put back
+unsent while it is locked; an edit that writes nothing (a node moved, a note) stands. The app never
+locks or unlocks the unit, so have the user unlock it on the unit itself.
+
 A write carries the input stage (+48V, gain, Clip Safe, HI-Z) of the jacks and sources
 some channel of the plan reads; a jack or source no channel reads keeps what the unit
 holds. On URX44 the jack and source addresses are the URX44V's and are not yet

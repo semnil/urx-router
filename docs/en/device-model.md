@@ -450,6 +450,17 @@ one (a file, a `?plan=` link) is refused at load.
   the device recomputes the 4-band PEQ from the knob, so the tool does **not** author the band values
   (they are device-driven); the EQ tuning screen keeps the band rows reserved out of sight and the write skips the band
   commands.
+- Since System firmware V1.5 each output bus — STEREO, MIX 1 and MIX 2, the buses the official block diagram
+  (revision D0) gives a GEQ block — selects an **EQ Type**: the 4band PEQ above or **Flex12GEQ**, a 31-band graphic
+  EQ on the 1/3-octave series from 20 Hz to 20 kHz. Each side of the bus has its own [GEQ] switch, GEQ Limit
+  (±15 dB, ±12 dB, ±6 dB or −24 to 0 dB) and bands, a GEQ Link copies one side onto the other (L → R or R → L), and
+  the unit's own screen lets at most twelve bands of a side away from 0 dB. Switching a bus's EQ Type on the unit,
+  either way, turns its EQ and both sides' [GEQ] on, flattens the base curve its EQ 1-knob works from and, on a MIX,
+  turns the GEQ Link off (confirmed on a URX44V, System 1.5.0.1). The tool's own switch moves less: to Flex12GEQ it
+  turns the EQ on and, on a MIX, the GEQ Link off, back to 4band PEQ it moves nothing, and either way the
+  plan's [GEQ] switches stay as they were. The input channels have no GEQ. Flex12GEQ runs at 48 kHz and below
+  ("Sample-rate-dependent constraints"), and what the control connection writes of it is in
+  [known-issues.md](known-issues.md).
 - The mono CH and stereo CH structure is fixed (only the count varies per model). A MONO IN pair
   (CH1/2, CH3/4) carries a **Signal Type** (CH SETTING): STEREO links the two adjacent channels,
   MONO × 2 keeps them independent (the default). The tool keeps both nodes and stores the flag on the
@@ -517,5 +528,12 @@ one (a file, a `?plan=` link) is refused at load.
 
 > These are surfaced as **warnings** (an inspector notice plus a dimmed, dashed outline on the
 > affected node); they do not forbid the wiring itself — matching the device, which keeps the
-> routing and merely disables the setting when the rate changes. The sample rate is set per plan
-> and persisted in the plan JSON.
+> routing when the rate changes. The sample rate is set per plan and persisted in the plan JSON.
+
+Two settings go further than a warning, on the unit and in the tool alike. Above its rate limit an
+INS FX is taken off — the unit puts that channel or bus on No Effect — and above 48 kHz an output
+bus's Flex12GEQ (System firmware V1.5; the block diagram's note) goes back to 4band PEQ with every
+GEQ band at 0 dB. Neither comes back when the rate comes down. The tool makes the same change to the
+plan when its rate goes up, in the app or by writing at a unit's higher rate, and says what it took
+off. A plan opened at a rate above 48 kHz keeps its Flex12GEQ values, held read-only until its rate
+is 48 kHz or below.

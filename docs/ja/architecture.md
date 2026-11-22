@@ -3216,7 +3216,7 @@ System ファームウェア V1.5 で、本体の SETUP メニューに **[Conso
 ロック中なら何も尋ねる前に `error.consoleLocked` で断ります (`withDevice` の `writes`)。走っている間はロックの状態の告知に
 登録し (`watchConsoleLock`)、ロックが来たら書き込みの中断用のコントローラを `consoleLockAbort` で止めます。
 キャンセルと同じく、次の 1 件で止まります。「本体へ書き込む」は何件中何件を送ったかを状態行で知らせ
-(`status.writeLocked`)、ロックが外れてからもう一度書き込むと残りが送られます。セルフテストと `--prepare-modified` は
+(`status.writeLocked`)、ロックが外れてからもう一度書き込むと、本体と計画を比べ直して、その時点で違う設定を送ります。セルフテストと `--prepare-modified` は
 自分で接続するので、機種の確認のあとに `watchRun` で同じ監視をします。そのため、機種の違う本体は今までどおり
 読みも書きもしません。
 

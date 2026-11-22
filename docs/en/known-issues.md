@@ -169,8 +169,9 @@ for as long as the lock stands, and never locks or unlocks the unit itself:
   from the unit, and nothing is sent once the unit is unlocked: edit again to send.
 - **Outside a session**, Write to device, Device setup's Apply and the Follow USB badge refuse a
   locked unit. A lock that arrives while one of them is writing stops it at the next command;
-  Write to device says how much it sent, and writing again once the unit is unlocked sends the
-  rest.
+  Write to device says how much it sent. Writing again once the unit is unlocked compares the unit
+  with the plan again and sends what differs then, a setting the part already sent made the unit
+  change included.
 - The device self-test (an `--experimental` launch) does not start on a locked unit. One the lock
   stops after it has written leaves the unit changed, and **Restore after self-test** in the
   Device menu puts it back once the unit is unlocked. Quitting the app before that loses what
@@ -492,8 +493,8 @@ determined by a saved plan either. The HDMI input stays a selectable channel sou
 
 ## The unit's clock cannot be set from a computer
 
-The URX has a real-time clock, and it is what date-stamps microSD recordings. It
-can only be set on the unit itself (SETUP > Date/Time > the Date/Time popup).
+The URX44V and the URX44 have a real-time clock, and it is what date-stamps microSD
+recordings. It can only be set on the unit itself (SETUP > Date/Time > the Date/Time popup).
 
 The unit does **not** take the time from a computer connected over USB, and there
 is no way to write it from the desktop app either — the clock is not exposed as a
@@ -507,20 +508,14 @@ itself is not one of them.
 
 ## The Time Zone list may name a city wrongly
 
-The unit's Time Zone setting is an index into a fixed list of city names held in the
-unit. URX Router reproduces that list so the setting can be shown by name, but the
+The Time Zone setting of the URX44V and the URX44 is an index into a fixed list of city
+names held in the unit. URX Router reproduces that list so the setting can be shown by name, but the
 reproduction was checked against hardware only at a few points, and an entry
 elsewhere in the list may name the wrong city.
 
 The consequence is visible and recoverable: after applying, the unit's own
 Date/Time screen shows the city it actually selected. If it differs from what was
 picked, pick again — nothing else depends on the value.
-
-## The URX22 has no Date/Time menu
-
-The URX22 has no microSD recorder, and the clock exists to date-stamp those
-recordings, so the unit has no Date/Time menu at all. The HDMI page is fitted to the
-URX44V only.
 
 ## The URX does not save device-wide settings in a scene
 

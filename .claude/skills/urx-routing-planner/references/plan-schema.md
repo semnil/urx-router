@@ -205,10 +205,14 @@ or inside a group — is written `true` / `false`: a number there loads converte
   V1.5): 0 = 4band PEQ, 2 = Flex12GEQ. Absent = 4band PEQ. **Flex12GEQ runs at 48 kHz and
   below**: keep 0 in a plan whose `sampleRate` is higher — the unit offers no Flex12GEQ there,
   the app holds the type read-only and writes no type, and a rate raised in the app puts the
-  bus back to 0 with every `geq` band at 0. Switching the type to 2 on the unit or in the app
-  also turns `eqOn` on and, on a MIX, `geq.link` to 0, so a plan meant to match the unit
-  writes those too. While a bus runs one type, the other type's values stay in the plan and
-  do not reach the signal; `eqBands` / `eqOneKnob` are the 4band PEQ's.
+  bus back to 0 with every `geq` band at 0. Switching the type on the unit, either way, also
+  turns `eqOn` and every `geq.sides[].on` on and, on a MIX, `geq.link` to 0. A plan meant to
+  match the unit after a switch to 2 writes those too; after a switch to 0 only `eqOn` reaches
+  the unit, since `geq` is sent only for a Flex12GEQ bus (see `geq`). The app's own switch to 2
+  turns `eqOn` on and, on a MIX, `geq.link` to 0; its switch back to 0 moves nothing, and
+  neither touches `geq.sides[].on`.
+  While a bus runs one type, the other type's values stay in the plan and do not reach the
+  signal; `eqBands` / `eqOneKnob` are the 4band PEQ's.
 - `geq` — that bus's Flex12GEQ: `{ link, sides: [L, R] }`, each side `{ on, limit, bands }`
   and `bands` 31 `{ gain }` from 20 Hz to 20 kHz on the 1/3-octave series (20, 25, 31.5, 40,
   50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1k, 1.25k, 1.6k, 2k, 2.5k,
@@ -219,7 +223,8 @@ or inside a group — is written `true` / `false`: a number there loads converte
   limit. **At most twelve bands of a side away from 0 dB**, as on the unit's own screen. The
   load bounds a gain to its side's limit, and past twelve it takes the bands nearest 0 dB to
   0 dB (the higher band first between two equally far); `plan_tool.py` warns about each. The
-  values are sent only while `eqType` is 2. **On `bus.stereo` only the 20 Hz band
+  values — `link` and each side's `on` and `limit` included — are sent only while `eqType` is
+  2 and `sampleRate` is 48 kHz or below. **On `bus.stereo` only the 20 Hz band
   (`bands[0]`) reaches the unit**: the device connection takes no write to the other thirty,
   so they stay in the plan, the write leaves them out and the unit keeps its own.
 - `gate` — `{ threshold, range (dB), attack, hold, decay (ms) }`; `gateOn` (bool).
