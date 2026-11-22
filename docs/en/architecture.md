@@ -2026,15 +2026,16 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   it and whose read of the second row stays what it was; a pair a scene recall links keeps its rows. The unit
   announces a link made over the link or on its panel and not one a scene recall turns on, so the session puts the
   first row on the second as the unit announces the link, pair by pair, whatever link it last learned for the pair,
-  and takes a link a recall made from the follow read that recall starts, copying nothing. The first row is copied as
+  and takes a link a recall made from a read of the pairs' links it makes at that recall's address-less bulk
+  notification, copying nothing. The first row is copied as
   the unit holds it: a selection this app is writing to it stays out of the copy until the unit answers the write.
-  A read does not change the link of a pair the unit announced while the read was out. After a scene recall's
-  address-less bulk notification, the RECALL SAFE notifies, the answers to this app's writes and the links the unit
-  announces wait for the whole-unit read that recall starts, and are taken once it is in, in the order they came, on
-  the links it found: a recall changes links without announcing them, so a row pressed before that read cannot be
-  told which link it was made under, and the LCD's rows stay as they were until then. A selection made on the LCD in
-  that time is written once they are taken, from the row they leave, and each pair ends on the link the latest
-  recall left it with or the unit announced after that recall. The second row is held over a read
+  A read does not change the link of a pair the unit announced while the read was out, and a read started before
+  the latest recall takes no link. After each recall's bulk notification, the RECALL SAFE notifies, the answers to
+  this app's writes and the links the unit announces wait for that recall's read of the links, and are then taken
+  in the order they came, on the links it found (a pair whose link the unit announced in that time from before the
+  first such announcement): a recall changes links without announcing them, so a row pressed after it cannot be told
+  which link it was made under before then. Each recall has its own wait, taken in turn, and the LCD's rows stay as
+  they were until it is over; a selection made on the LCD in that time is written once it is, from the row it leaves. The second row is held over a read
   of RECALL SAFE until the unit announces it or takes a write of this app's to it; a write Console Lock refuses, or one
   the unit leaves unannounced and whose row reads back as something else, leaves the row as it was. On a linked pair
   the unit puts a row pressed on its panel, or a selection this app wrote to a row, on the other row as well and
@@ -2657,8 +2658,8 @@ written at all:
   written over the link, reaches the other row; the unit announces neither copy, and the other row's read can keep answering what it
   held, so neither a notify nor a read brings it in. The session models the copy (`withLinkCopies` and the link
   notify path in `main.ts`) and holds the copied row over a read until the unit announces it or takes a write to
-  it. A pair a scene recall links keeps its rows, and the unit does not announce that link, which the app takes
-  from the follow read instead (see "SCENE > [Recall Safe]" under "SIM view (the unit's LCD)").
+  it. A pair a scene recall links keeps its rows, and the unit does not announce that link, which the app reads
+  at the recall's bulk notification instead (see "SCENE > [Recall Safe]" under "SIM view (the unit's LCD)").
 
 Which case a parameter falls into is settled on the unit rather than assumed: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being
