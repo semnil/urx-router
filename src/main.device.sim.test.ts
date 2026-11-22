@@ -1968,6 +1968,31 @@ describe("the SIM view over a live session", () => {
     },
   );
 
+  it("takes no link from a recall's read of the links answered after a later recall's", SLOW, async () => {
+    const { shell, reads } = await bootLinkUnit({});
+    onTestFinished(() => reads.releaseAll());
+    reads.hold();
+    // A recall links CH 1/2, a second one unlinks the pair; each one's read of the links is held.
+    await unitSet(LINK, 0, 1);
+    await unitSet(LINK, 1, 1);
+    notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await vi.waitFor(() => expect(reads.asked(), "the premise: the first recall's read is out").toBe(1));
+    await unitSet(LINK, 0, 0);
+    await unitSet(LINK, 1, 0);
+    notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await vi.waitFor(() => expect(reads.asked(), "the premise: the second recall's read is out").toBe(2));
+    // The second recall's read answers first, the first one's after it.
+    reads.releaseLast();
+    await new Promise((r) => setTimeout(r, 50));
+    reads.releaseAll();
+    await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("MONO x 2"), { timeout: 10_000 });
+    // Name pressed on CH 2's row of the unlinked pair stays on it.
+    await unitSet(SELECT, 1, 0x100000);
+    notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100000 }]);
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch2.name")).toEqual([true]));
+    expect(await shownSafe("safe.ch1.name"), "CH 1's row as it was").toEqual([false]);
+  });
+
   it("takes no link from a read of the unit that started before the latest recall", SLOW, async () => {
     const { shell, reads } = await bootLinkUnit({ [`${LINK}/0/0`]: 1, [`${LINK}/0/1`]: 1 });
     onTestFinished(() => reads.releaseAll());

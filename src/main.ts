@@ -1733,19 +1733,22 @@ function takeRecallSafeAnswer(paramId: number, y: number, value: number): void {
 
 /** Read each pair's link as the unit holds it right after a scene recall, which links and unlinks pairs
  *  unannounced, and take it, copying nothing: a pair whose link the unit announced while the read was out
- *  is left to that announcement. A read that fails ends the session, as every read of RECALL SAFE's does,
+ *  is left to that announcement, and a read a later recall overtook takes nothing. A read that fails ends the session, as every read of RECALL SAFE's does,
  *  and one a session that has ended started sends nothing more. */
 async function readRecallLinks(): Promise<void> {
   const session = unitLinks;
   const heard = new Map(linkHeard);
+  const gen = recallGen;
   const model = getModel(modelId);
   try {
     for (const [primary] of model.channelPairs) {
-      if (unitLinks !== session) return;
+      // A later recall's own read takes the links from here.
+      if (unitLinks !== session || recallGen !== gen) return;
       const y = recallSafeRows(model).find((r) => r.node === primary)?.y;
       if (y === undefined) continue;
       const on = (await vdGet(PARAMS.SIGNAL_TYPE.id, 0, y)) !== 0;
-      if (unitLinks === session && linkHeard.get(primary) === heard.get(primary)) takeLink(primary, on, false);
+      if (unitLinks === session && recallGen === gen && linkHeard.get(primary) === heard.get(primary))
+        takeLink(primary, on, false);
     }
   } catch (err) {
     if (unitLinks === session) stopLiveOnError(errorText(err));
