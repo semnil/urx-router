@@ -493,8 +493,8 @@ determined by a saved plan either. The HDMI input stays a selectable channel sou
 
 ## The unit's clock cannot be set from a computer
 
-The URX has a real-time clock, and it is what date-stamps microSD recordings. It
-can only be set on the unit itself (SETUP > Date/Time > the Date/Time popup).
+The URX44V and the URX44 have a real-time clock, and it is what date-stamps microSD
+recordings. It can only be set on the unit itself (SETUP > Date/Time > the Date/Time popup).
 
 The unit does **not** take the time from a computer connected over USB, and there
 is no way to write it from the desktop app either — the clock is not exposed as a
@@ -508,8 +508,8 @@ itself is not one of them.
 
 ## The Time Zone list may name a city wrongly
 
-The unit's Time Zone setting is an index into a fixed list of city names held in the
-unit. URX Router reproduces that list so the setting can be shown by name, but the
+The Time Zone setting of the URX44V and the URX44 is an index into a fixed list of city
+names held in the unit. URX Router reproduces that list so the setting can be shown by name, but the
 reproduction was checked against hardware only at a few points, and an entry
 elsewhere in the list may name the wrong city.
 
