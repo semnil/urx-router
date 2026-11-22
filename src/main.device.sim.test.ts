@@ -1854,18 +1854,161 @@ describe("the SIM view over a live session", () => {
     reads.hold();
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
     await vi.waitFor(() => expect(reads.asked(), "the premise: the read is out").toBe(1), { timeout: 10_000 });
-    // CH 1/2 linked on the unit's panel while the read is out.
+    // CH 1/2 linked on the unit's panel while the read is out: taken once that read is in.
     await unitSet(LINK, 0, 1);
     await unitSet(LINK, 1, 1);
     notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
-    await vi.waitFor(async () => expect(await seconds()).toEqual([true, true, false, false]), { timeout: 10_000 });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await seconds(), "nothing before the read is in").toEqual([false, false, false, false]);
     // CH 3/4 linked by a recall, which announces no link, only the bulk change.
     await unitSet(LINK, 2, 1);
     await unitSet(LINK, 3, 1);
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
     reads.releaseAll();
     await vi.waitFor(async () => expect(await shownLink("ch3")).toBe("STEREO"), { timeout: 10_000 });
-    expect(await seconds(), "the same after the reads").toEqual([true, true, false, false]);
+    await vi.waitFor(async () =>
+      expect(await seconds(), "CH 2 the panel link's, CH 4 the recall's").toEqual([true, true, false, false]),
+    );
+  });
+
+  it(
+    "takes a row pressed on the unit after a recall links its pair under that link, once the recall's read is in",
+    SLOW,
+    async () => {
+      const { shell, reads } = await bootLinkUnit({ [`${SELECT}/0/0`]: 0x100000 });
+      onTestFinished(() => reads.releaseAll());
+      await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name")).toEqual([true]));
+      // A recall links CH 1/2, announcing only the bulk change; its read is held.
+      await unitSet(LINK, 0, 1);
+      await unitSet(LINK, 1, 1);
+      reads.hold();
+      notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await vi.waitFor(() => expect(reads.asked(), "the premise: the read is out").toBe(1), { timeout: 10_000 });
+      // CH Level pressed on CH 2's row: the unit, linked, gives CH 1's row the same.
+      await unitSet(SELECT, 1, 0x1);
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x1 }]);
+      reads.releaseAll();
+      await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("STEREO"), { timeout: 10_000 });
+      await vi.waitFor(async () =>
+        expect(
+          await shownSafe("safe.ch1.name", "safe.ch1.chLevel", "safe.ch2.chLevel"),
+          "CH 2's row on CH 1's",
+        ).toEqual([false, true, true]),
+      );
+    },
+  );
+
+  it(
+    "takes a row pressed on the unit after a recall unlinks its pair as that row alone, once the recall's read is in",
+    SLOW,
+    async () => {
+      const { shell, reads } = await bootLinkUnit({ [`${LINK}/0/0`]: 1, [`${LINK}/0/1`]: 1 });
+      onTestFinished(() => reads.releaseAll());
+      await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("STEREO"));
+      await unitSet(LINK, 0, 0);
+      await unitSet(LINK, 1, 0);
+      reads.hold();
+      notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await vi.waitFor(() => expect(reads.asked(), "the premise: the read is out").toBe(1), { timeout: 10_000 });
+      await unitSet(SELECT, 1, 0x100000);
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100000 }]);
+      reads.releaseAll();
+      await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("MONO x 2"), { timeout: 10_000 });
+      await vi.waitFor(async () => expect(await shownSafe("safe.ch2.name")).toEqual([true]));
+      expect(await shownSafe("safe.ch1.name"), "CH 1's row as it was").toEqual([false]);
+    },
+  );
+
+  it(
+    "puts this app's write the unit answers after a recall links its pair on the other row, once the recall's read is in",
+    SLOW,
+    async () => {
+      const { shell, reads } = await bootLinkUnit({});
+      onTestFinished(() => reads.releaseAll());
+      await unitSet(LINK, 0, 1);
+      await unitSet(LINK, 1, 1);
+      reads.hold();
+      notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await vi.waitFor(() => expect(reads.asked(), "the premise: the read is out").toBe(1), { timeout: 10_000 });
+      await transport().write("safe.ch2.name", true);
+      await vi.waitFor(() => expect(setsOf(shell, SELECT).at(-1)).toEqual([1, 0x100000]), { timeout: 10_000 });
+      // The unit answers CH 2's row and, linked, gives CH 1's the same.
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100000 }]);
+      reads.releaseAll();
+      await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("STEREO"), { timeout: 10_000 });
+      await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name"), "CH 2's row on CH 1's").toEqual([true]));
+    },
+  );
+
+  it(
+    "takes a row pressed after a recall unlinks its pair and before the panel links it again as that row alone",
+    SLOW,
+    async () => {
+      const { shell, reads } = await bootLinkUnit({
+        [`${LINK}/0/0`]: 1,
+        [`${LINK}/0/1`]: 1,
+        [`${SELECT}/0/0`]: 0x100000,
+        [`${SELECT}/0/1`]: 0x2,
+      });
+      onTestFinished(() => reads.releaseAll());
+      await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("STEREO"));
+      // CH 1's row on Name, CH 2's on CH ON. A recall unlinks the pair unannounced; CH Level is pressed on
+      // CH 2's row alone; then the panel links the pair again, putting CH 1's row on CH 2's. The read the
+      // recall started is held throughout.
+      await unitSet(LINK, 0, 0);
+      await unitSet(LINK, 1, 0);
+      reads.hold();
+      notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await vi.waitFor(() => expect(reads.asked(), "the premise: the read is out").toBe(1), { timeout: 10_000 });
+      await unitSet(SELECT, 1, 0x3);
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x3 }]);
+      await unitSet(LINK, 0, 1);
+      await unitSet(LINK, 1, 1);
+      notifyChannel(shell).onmessage([
+        { param_id: LINK, x: 0, y: 0, value: 1 },
+        { param_id: LINK, x: 0, y: 1, value: 1 },
+      ]);
+      reads.releaseAll();
+      const rows = () =>
+        shownSafe(
+          "safe.ch1.name",
+          "safe.ch1.chOn",
+          "safe.ch1.chLevel",
+          "safe.ch2.name",
+          "safe.ch2.chOn",
+          "safe.ch2.chLevel",
+        );
+      expect(await rows(), "the premise: the rows as they started").toEqual([true, false, false, false, true, false]);
+      await vi.waitFor(async () =>
+        expect(await rows(), "CH 1's row as it was, and on CH 2's").toEqual([true, false, false, true, false, false]),
+      );
+    },
+  );
+
+  it("keeps holding a recall's rows over a read that started before that recall", SLOW, async () => {
+    const { shell, reads } = await bootLinkUnit({ [`${SELECT}/0/0`]: 0x100000 });
+    onTestFinished(() => reads.releaseAll());
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name")).toEqual([true]));
+    // The scene the unit is on recalled again: its read is held.
+    reads.hold();
+    notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await vi.waitFor(() => expect(reads.asked(), "the premise: the first read is out").toBe(1), { timeout: 10_000 });
+    // A second recall links CH 1/2 while that read is out; CH Level is pressed on CH 2's row.
+    await unitSet(LINK, 0, 1);
+    await unitSet(LINK, 1, 1);
+    notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await unitSet(SELECT, 1, 0x1);
+    notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x1 }]);
+    // The first read answers the pair unlinked, as the unit held it when asked: the press waits on.
+    reads.releaseOne();
+    await vi.waitFor(() => expect(reads.asked(), "the premise: the second recall's read is out").toBe(2), {
+      timeout: 10_000,
+    });
+    expect(await shownSafe("safe.ch1.name", "safe.ch1.chLevel"), "nothing taken yet").toEqual([true, false]);
+    reads.releaseAll();
+    await vi.waitFor(async () =>
+      expect(await shownSafe("safe.ch1.name", "safe.ch1.chLevel"), "CH 2's row on CH 1's").toEqual([false, true]),
+    );
   });
 
   it("keeps a pair's link the unit announced over a read the unit answered before it", SLOW, async () => {
@@ -1877,11 +2020,12 @@ describe("the SIM view over a live session", () => {
     await unitSet(LINK, 0, 1);
     await unitSet(LINK, 1, 1);
     notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+    // The read answers the pair unlinked, as the unit held it when asked; the link the unit announced
+    // while it was out is taken once it is in, and the next read is held.
+    reads.releaseOne();
     await vi.waitFor(async () => expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([true, true]), {
       timeout: 10_000,
     });
-    // The read answers the pair unlinked, as the unit held it when asked; the next read is held.
-    reads.releaseOne();
     await vi.waitFor(() => expect(reads.asked(), "the premise: the next read is out").toBe(2), { timeout: 10_000 });
     // CH Level pressed on CH 1's row: the unit, still linked, gives CH 2's row the same.
     await unitSet(SELECT, 0, 0x1);
@@ -2144,10 +2288,11 @@ describe("the SIM view over a live session", () => {
         { param_id: LINK, x: 0, y: 0, value: 1 },
         { param_id: LINK, x: 0, y: 1, value: 1 },
       ]);
+      // Taken once the read the recall started is in.
+      reads.releaseAll();
       await vi.waitFor(async () => expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([true, true]), {
         timeout: 10_000,
       });
-      reads.releaseAll();
     },
   );
 

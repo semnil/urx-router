@@ -2028,7 +2028,11 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   first row on the second as the unit announces the link, pair by pair, whatever link it last learned for the pair,
   and takes a link a recall made from the follow read that recall starts, copying nothing. The first row is copied as
   the unit holds it: a selection this app is writing to it stays out of the copy until the unit answers the write.
-  A read does not change the link of a pair the unit announced while the read was out. The second row is held over a read
+  A read does not change the link of a pair the unit announced while the read was out. After a scene recall's
+  address-less bulk notification, the RECALL SAFE notifies, the answers to this app's writes and the links the unit
+  announces wait for the whole-unit read that recall starts, and are taken once it is in, in the order they came, on
+  the links it found: a recall changes links without announcing them, so a row pressed before that read cannot be
+  told which link it was made under, and the LCD's rows stay as they were until then. The second row is held over a read
   of RECALL SAFE until the unit announces it or takes a write of this app's to it; a write Console Lock refuses, or one
   the unit leaves unannounced and whose row reads back as something else, leaves the row as it was. On a linked pair
   the unit puts a row pressed on its panel, or a selection this app wrote to a row, on the other row as well and
