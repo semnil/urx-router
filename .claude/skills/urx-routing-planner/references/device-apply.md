@@ -72,9 +72,11 @@ sync the Inspector offers 40–118 Hz for the same reason.
 
 A unit under **Console Lock** (SETUP > [Console Lock], System firmware V1.5) gets no write from
 the app. Write to device reads the lock first and writes nothing to a locked unit; a lock that
-arrives while it writes stops it at the next command, and writing again once the unit is unlocked
-sends the rest. During Live sync an edit made while the unit is locked is put back unsent. The app
-never locks or unlocks the unit, so have the user unlock it on the unit itself.
+arrives while it writes stops it at the next command. Once the unit is unlocked, Write to device
+compares the unit with the plan again and sends what differs then, which includes anything changed
+on the unit in the meantime. During Live sync an edit that would write to the unit is put back
+unsent while it is locked; an edit that writes nothing (a node moved, a note) stands. The app never
+locks or unlocks the unit, so have the user unlock it on the unit itself.
 
 A write carries the input stage (+48V, gain, Clip Safe, HI-Z) of the jacks and sources
 some channel of the plan reads; a jack or source no channel reads keeps what the unit
