@@ -1309,6 +1309,9 @@ const recallSafeQueued = new Map<string, RecallSafeRow>();
 const recallSafeUnread = new Set<string>();
 let unitLinks: Map<string, boolean> | null = null;
 const linkHeard = new Map<string, number>();
+// The selection each row held before a write of this app's to it that the unit has not answered: what a
+// link puts on the pair's second row while that write is on its way, since the unit has not taken it.
+const recallSafeSending = new Map<string, number>();
 // Raised at each Console Lock: a RECALL SAFE write queued before it sends nothing.
 let recallSafeLocks = 0;
 const clipSafeEngaged = new Set<number>();
@@ -1443,6 +1446,7 @@ function flushRecallSafeWrites(): void {
         recallSafePending.delete(row.node);
         unitRecallSafe = new Map(unitRecallSafe).set(row.node, { ...held, select: raw });
         recallSafeEchoes.note(row.select, row.y, raw);
+        recallSafeSending.set(row.node, held.select);
         const key = safePartKey(row.node, "select");
         // A row the unit copied unannounced, whose read can still answer what it held before the copy:
         // until the unit takes this write, the session's row as it was before it is the unit's.
@@ -1458,26 +1462,26 @@ function flushRecallSafeWrites(): void {
           announced = await writeRecallSafeSelect(row, raw);
         } catch (err) {
           // A write the lock refused leaves the row as the unit held it, copy included.
+          recallSafeSending.delete(row.node);
           if (stoppedByConsoleLock(err)) restore();
           throw err;
         }
-        if (announced) {
-          // The unit took this app's write, which a read answers from now on, and put it on the other row
-          // of a linked pair as it does a press on its panel.
-          recallSafeUnread.delete(key);
-          putOnLinkedPartner(row, "select", raw);
-          simView?.unitStateChanged();
-          return;
-        }
+        // The unit's answer took the write in the order it came (takeUnitStateNotify).
+        if (announced) return;
         // The unit announced no such selection: it held it already, or did not take it. The row is
         // read back, and what the unit announces for it while the read is out is kept instead.
         if (!liveSessionUp || liveEpoch !== epoch) return;
         const since = recallSafeVersions.get(key);
-        const select = await readRecallSafeSelect(row);
+        let select: number;
+        try {
+          select = await readRecallSafeSelect(row);
+        } finally {
+          recallSafeSending.delete(row.node);
+        }
         if (!liveSessionUp || liveEpoch !== epoch || !unitRecallSafe) return;
         if (recallSafeVersions.get(key) !== since) return;
-        if (unread && select !== raw) {
-          // A read that is not this write can be the row before the copy: the row is kept as it was.
+        if (recallSafeUnread.has(key) && select !== raw) {
+          // A read that is not this write can be the row before a copy: the row is kept as it was.
           restore();
         } else {
           recallSafeUnread.delete(key);
@@ -1528,9 +1532,8 @@ function pairLinks(source: Plan): Map<string, boolean> {
  *  panel, and not for one a scene recall makes (`copyLinkedRows`). */
 function takeLink(primary: string, on: boolean, copies: boolean): void {
   if (!unitLinks) return;
-  const was = unitLinks.get(primary);
   unitLinks.set(primary, on);
-  if (copies && on && was === false) copyLinkedRows([primary]);
+  if (copies && on) copyLinkedRows([primary]);
 }
 
 /** Take `source`'s links, of the pairs `taken` names, as the unit's, copying no row: the unit announces a
@@ -1559,7 +1562,9 @@ function observeLinkNotify(p: ParamUpdate): void {
   const primary = node === undefined ? null : pairPrimary(model, node);
   if (primary === null) return;
   linkHeard.set(primary, (linkHeard.get(primary) ?? 0) + 1);
-  takeLink(primary, p.value !== 0, true);
+  // The unit announces a value that changed, so a link announced on is one it has just made, whatever
+  // the session last learned; it announces both channels, and the first one's copies.
+  takeLink(primary, p.value !== 0, node === primary);
   simView?.unitStateChanged();
 }
 
@@ -1568,13 +1573,28 @@ function observeLinkNotify(p: ParamUpdate): void {
 function copyLinkedRows(linked: readonly string[]): void {
   if (!linked.length || !unitRecallSafe) return;
   const model = getModel(modelId);
-  unitRecallSafe = withLinkCopies(model, unitRecallSafe, linked);
+  // A first row this app is writing is copied as the unit holds it, without the selection on its way.
+  const held = new Map(unitRecallSafe);
+  for (const primary of linked) {
+    const row = held.get(primary);
+    const sending = recallSafeSending.get(primary);
+    if (row && sending !== undefined) held.set(primary, { ...row, select: sending });
+  }
+  const copied = withLinkCopies(model, held, linked);
+  const next = new Map(unitRecallSafe);
   for (const primary of linked) {
     const second = partnerChannel(model, primary);
-    if (second === undefined) continue;
-    recallSafeUnread.add(safePartKey(second, "safe"));
-    recallSafeUnread.add(safePartKey(second, "select"));
+    const row = second === undefined ? undefined : copied.get(second);
+    if (second === undefined || !row) continue;
+    next.set(second, row);
+    // A change of the second row's, which a write's answer or read taken before it does not put back.
+    for (const part of ["safe", "select"] as const) {
+      const key = safePartKey(second, part);
+      recallSafeVersions.set(key, (recallSafeVersions.get(key) ?? 0) + 1);
+      recallSafeUnread.add(key);
+    }
   }
+  unitRecallSafe = next;
   simView?.unitStateChanged();
 }
 
@@ -1732,7 +1752,18 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
     const key = safePartKey(safeAt.row.node, safeAt.part);
     recallSafeVersions.set(key, (recallSafeVersions.get(key) ?? 0) + 1);
     if (safeAt.part === "select") {
-      if (recallSafeEchoes.take(paramId, y, value)) return true;
+      if (recallSafeEchoes.take(paramId, y, value)) {
+        // This app's write, taken, which a read of the row answers from now on. The answer to the latest
+        // write is put on the other row of a linked pair, as the unit did, in the order the unit announced
+        // it; an answer to a write the LCD has since replaced moves neither row.
+        recallSafeUnread.delete(key);
+        if (unitRecallSafe?.get(safeAt.row.node)?.select === value) {
+          recallSafeSending.delete(safeAt.row.node);
+          putOnLinkedPartner(safeAt.row, "select", value);
+          simView?.unitStateChanged();
+        }
+        return true;
+      }
       // A selection of the unit's own lands between this app's write and its answer: the answer then
       // carries what the unit holds after both, and is taken rather than swallowed.
       recallSafeEchoes.drop(paramId, y);
@@ -1827,6 +1858,7 @@ function resetUnitSessionState(): void {
   recallSafeUnread.clear();
   unitLinks = null;
   linkHeard.clear();
+  recallSafeSending.clear();
   unitCardIn = null;
   clipSafeEngaged.clear();
   paintClipSafe();

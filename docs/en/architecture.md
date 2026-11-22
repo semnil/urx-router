@@ -2025,14 +2025,15 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   on the unit's panel has its first row, [Safe] and selection, put on its second by the unit, which announces none of
   it and whose read of the second row stays what it was; a pair a scene recall links keeps its rows. The unit
   announces a link made over the link or on its panel and not one a scene recall turns on, so the session puts the
-  first row on the second as the unit announces the link, pair by pair, and takes a link a recall made from the
-  follow read that recall starts, copying nothing. A read does not change the link of a pair the unit announced
-  while the read was out. The second row is held over a read
+  first row on the second as the unit announces the link, pair by pair, whatever link it last learned for the pair,
+  and takes a link a recall made from the follow read that recall starts, copying nothing. The first row is copied as
+  the unit holds it: a selection this app is writing to it stays out of the copy until the unit answers the write.
+  A read does not change the link of a pair the unit announced while the read was out. The second row is held over a read
   of RECALL SAFE until the unit announces it or takes a write of this app's to it; a write Console Lock refuses, or one
   the unit leaves unannounced and whose row reads back as something else, leaves the row as it was. On a linked pair
   the unit puts a row pressed on its panel, or a selection this app wrote to a row, on the other row as well and
   announces that row alone, its read of the other row able to stay what it was, and the session puts it there too,
-  once the unit has taken it, and holds it over a read the same way. A row's [Safe] the unit takes from
+  in the order the unit announced it (a write of this app's, at the unit's answer), and holds it over a read the same way. A row's [Safe] the unit takes from
   no link, so during Live sync the LCD holds it shut (below). No address of the link has been found for Incoming
   Sends and the Others tab, which stay the LCD's own, and with no session the whole screen is, reaching nothing. Which row each
   address belongs to is unconfirmed on the URX44 (known-issues.md).
