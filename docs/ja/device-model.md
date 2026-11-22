@@ -425,6 +425,13 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
   MIX1・STEREO マスターでどの型の書き込みも受理され、TYPE 書き込みはその型の中立点へ level を初期化する。1-knob ON 中に Vocal か Loudness を書くと各バンドの ON も書き換わる (Loudness は 4 バンドとも ON、Vocal は LOW を OFF・残り 3 つを ON)。1-knob ON 時は実機がノブから 4-band PEQ を
   再計算するため、ツールはバンド値を**書き込まない** (実機駆動)。EQ 調整画面はバンドの行を見えないまま
   予約し、書込みもバンドコマンドをスキップする。
+- System ファームウェア V1.5 からは、出力 Bus — STEREO・MIX 1・MIX 2。公式のブロックダイアグラム (D0 版) が
+  GEQ のブロックを付けた Bus — が **EQ Type** を選ぶ: 上の 4band PEQ か、**Flex12GEQ** (20 Hz〜20 kHz の
+  1/3 オクターブの 31 バンドのグラフィック EQ)。Bus の左右がそれぞれ [GEQ] のスイッチ・GEQ Limit
+  (±15 dB・±12 dB・±6 dB・−24〜0 dB)・バンドを持ち、GEQ Link が片側をもう片側へ写す (L → R か R → L)。
+  実機の画面で 0 dB から動かせるのは、片側につき 12 バンドまで。Bus を Flex12GEQ に切り替えると、その EQ が
+  ON になり、MIX では GEQ Link が切になる。入力チャンネルは GEQ を持たない。Flex12GEQ が動くのは 48 kHz 以下
+  (「サンプルレート依存の制約」)。制御リンクがそのうち何を書けるかは [known-issues.md](known-issues.md) にある。
 - モノ CH とステレオ CH の構成は固定 (機種で本数のみ変化)。MONO IN ペア (CH1/2, CH3/4) は
   **Signal Type** (CH SETTING) を持つ: STEREO は隣接 2 ch をリンク、MONO × 2 は独立 (既定)。
   ツールは 2 ノードを維持しフラグをペアの primary (奇数 ch) に保持する (1 ノードに統合しない)。
@@ -488,3 +495,8 @@ STREAMING チャンネルは **DELAY** を持つ (DELAY 画面、STREAMING チ�
 > これらは **警告** として表示し (インスペクタの注記 + 該当ノードの減光・破線表示)、結線自体の
 > 禁止には用いない — 実機もレート変更で結線を消すのではなく設定が無効になるだけで、この挙動と
 > 整合する。サンプルレートは計画ごとに設定し、計画 JSON に保存する。
+
+Flex12GEQ (出力 Bus の EQ Type。System ファームウェア V1.5) が動くのは、ブロックダイアグラムの注記のとおり
+48 kHz 以下。上の制約と違い、こちらは実機が設定そのものを変える: 48 kHz を超えると Bus を 4band PEQ に戻して
+全バンドを 0 dB にし、レートを下げても 4band PEQ のまま。ツールも、計画のレートを上げたときに同じように
+計画を変え、48 kHz を超えるレートでは EQ Type を選ばせない。

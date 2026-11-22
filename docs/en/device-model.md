@@ -450,6 +450,14 @@ one (a file, a `?plan=` link) is refused at load.
   the device recomputes the 4-band PEQ from the knob, so the tool does **not** author the band values
   (they are device-driven); the EQ tuning screen keeps the band rows reserved out of sight and the write skips the band
   commands.
+- Since System firmware V1.5 each output bus — STEREO, MIX 1 and MIX 2, the buses the official block diagram
+  (revision D0) gives a GEQ block — selects an **EQ Type**: the 4band PEQ above or **Flex12GEQ**, a 31-band graphic
+  EQ on the 1/3-octave series from 20 Hz to 20 kHz. Each side of the bus has its own [GEQ] switch, GEQ Limit
+  (±15 dB, ±12 dB, ±6 dB or −24 to 0 dB) and bands, a GEQ Link copies one side onto the other (L → R or R → L), and
+  the unit's own screen lets at most twelve bands of a side away from 0 dB. Switching a bus to Flex12GEQ turns its
+  EQ on and, on a MIX, the GEQ Link off. The input channels have no GEQ. Flex12GEQ runs at 48 kHz and below
+  ("Sample-rate-dependent constraints"), and what the control connection writes of it is in
+  [known-issues.md](known-issues.md).
 - The mono CH and stereo CH structure is fixed (only the count varies per model). A MONO IN pair
   (CH1/2, CH3/4) carries a **Signal Type** (CH SETTING): STEREO links the two adjacent channels,
   MONO × 2 keeps them independent (the default). The tool keeps both nodes and stores the flag on the
@@ -519,3 +527,9 @@ one (a file, a `?plan=` link) is refused at load.
 > affected node); they do not forbid the wiring itself — matching the device, which keeps the
 > routing and merely disables the setting when the rate changes. The sample rate is set per plan
 > and persisted in the plan JSON.
+
+Flex12GEQ (an output bus's EQ Type, System firmware V1.5) runs at 48 kHz and below, as the block
+diagram's note says. Unlike the constraints above, the unit changes the setting itself: above
+48 kHz it puts the bus back to 4band PEQ with every band at 0 dB, and the bus stays on 4band PEQ
+when the rate comes back down. The tool does the same to the plan when its rate is raised, and
+offers no EQ Type above 48 kHz.
