@@ -3780,7 +3780,7 @@ after connecting and refuses a locked unit with `error.consoleLocked` before it 
 `writes` option). While it runs it is registered for the lock state's notify (`watchConsoleLock`), and a lock that arrives
 aborts the write's controller with `consoleLockAbort`, which stops it at its next command the way a cancel does;
 the status line says how far a Write to device got (`status.writeLocked`), and writing again once the unit is
-unlocked sends the rest. The self-test and `--prepare-modified` connect on their own and take the same watch through
+unlocked compares the unit with the plan again and sends what differs then. The self-test and `--prepare-modified` connect on their own and take the same watch through
 `watchRun`, after the model check — so a unit of another model is still neither read nor written.
 
 **A self-test the lock stops** once it has written leaves the unit changed. What its restore needs — the captured

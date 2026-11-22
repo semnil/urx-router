@@ -169,8 +169,9 @@ for as long as the lock stands, and never locks or unlocks the unit itself:
   from the unit, and nothing is sent once the unit is unlocked: edit again to send.
 - **Outside a session**, Write to device, Device setup's Apply and the Follow USB badge refuse a
   locked unit. A lock that arrives while one of them is writing stops it at the next command;
-  Write to device says how much it sent, and writing again once the unit is unlocked sends the
-  rest.
+  Write to device says how much it sent. Writing again once the unit is unlocked compares the unit
+  with the plan again and sends what differs then, a setting the part already sent made the unit
+  change included.
 - The device self-test (an `--experimental` launch) does not start on a locked unit. One the lock
   stops after it has written leaves the unit changed, and **Restore after self-test** in the
   Device menu puts it back once the unit is unlocked. Quitting the app before that loses what
