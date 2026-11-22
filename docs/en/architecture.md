@@ -2023,12 +2023,16 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   a selection made after the unlock goes out in its own turn, behind the writes queued before it. The unit announces its answer to each write,
   and an answer to a write the LCD has since replaced does not move the LCD back. A mono pair linked over the link or
   on the unit's panel has its first row, [Safe] and selection, put on its second by the unit, which announces none of
-  it and whose read of the second row stays what it was. The session puts the first row on the second itself, for a
-  link this app's flush wrote and for one a follow read brings in, and holds the second row over a read of RECALL
-  SAFE until the unit announces it or this app writes it. A link a scene recall made, which the unit's address-less
-  bulk notification announces ahead of the follow read, carries no row, as on the unit. On a linked pair the unit
-  puts a row pressed on its panel on the other row as well and announces the row pressed alone, its read of the other
-  row able to stay what it was, and the session puts it there too and holds it over a read the same way. A row's [Safe] the unit takes from
+  it and whose read of the second row stays what it was; a pair a scene recall links keeps its rows. The unit
+  announces a link made over the link or on its panel and not one a scene recall turns on, so the session puts the
+  first row on the second as the unit announces the link, pair by pair, and takes a link a recall made from the
+  follow read that recall starts, copying nothing. A read does not change the link of a pair the unit announced
+  while the read was out. The second row is held over a read
+  of RECALL SAFE until the unit announces it or takes a write of this app's to it; a write Console Lock refuses, or one
+  the unit leaves unannounced and whose row reads back as something else, leaves the row as it was. On a linked pair
+  the unit puts a row pressed on its panel, or a selection this app wrote to a row, on the other row as well and
+  announces that row alone, its read of the other row able to stay what it was, and the session puts it there too,
+  once the unit has taken it, and holds it over a read the same way. A row's [Safe] the unit takes from
   no link, so during Live sync the LCD holds it shut (below). No address of the link has been found for Incoming
   Sends and the Others tab, which stay the LCD's own, and with no session the whole screen is, reaching nothing. Which row each
   address belongs to is unconfirmed on the URX44 (known-issues.md).
@@ -2641,12 +2645,12 @@ written at all:
   CUE row are read-only, and a
   MIDI control assigned to a CUE is refused.
 - **RECALL SAFE: the unit copies a row it does not announce, outside the plan.** A mono pair linked over the link
-  or on the unit's panel has its first row put on its second, and a row pressed on the panel of a linked pair
-  reaches the other row; the unit announces neither copy, and the other row's read can keep answering what it
-  held, so neither a notify nor a read brings it in. The session models the copy (`withLinkCopies` and the notify
-  path in `main.ts`) and holds the copied row over a read until the unit announces it. A pair a scene recall links
-  keeps its rows, which the app tells apart by the unit's address-less bulk notification ahead of the follow read
-  (see "SCENE > [Recall Safe]" under "SIM view (the unit's LCD)").
+  or on the unit's panel has its first row put on its second, and a row pressed on the panel of a linked pair, or
+  written over the link, reaches the other row; the unit announces neither copy, and the other row's read can keep answering what it
+  held, so neither a notify nor a read brings it in. The session models the copy (`withLinkCopies` and the link
+  notify path in `main.ts`) and holds the copied row over a read until the unit announces it or takes a write to
+  it. A pair a scene recall links keeps its rows, and the unit does not announce that link, which the app takes
+  from the follow read instead (see "SCENE > [Recall Safe]" under "SIM view (the unit's LCD)").
 
 Which case a parameter falls into is settled on the unit rather than assumed: the change is made on the
 unit and the *other* parameters and readouts are observed — especially those downstream of the one being

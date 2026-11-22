@@ -1394,8 +1394,8 @@ test("the LCD's RECALL SAFE is the unit's while Live sync is up, its [Safe] held
 });
 
 // The unit puts a mono pair's first RECALL SAFE row on its second as the pair is linked on its panel,
-// and announces none of it: the LCD shows the row there. A pair a scene recall links, which the unit's
-// address-less bulk notification announces, keeps its rows as they were.
+// and announces none of it: the LCD shows the row there. A pair a scene recall links, a link the unit
+// does not announce, keeps its rows as they were.
 test("the LCD's RECALL SAFE puts a pair's first row on its second when the unit's panel links it, and not when a recall does", async ({
   page,
 }) => {
@@ -1431,10 +1431,9 @@ test("the LCD's RECALL SAFE puts a pair's first row on its second when the unit'
   await expect(cell(2, "Name"), "CH 1's row on CH 2's").toHaveAttribute("aria-pressed", "true");
   await expect(cell(2, "Safe")).toHaveAttribute("aria-pressed", "true");
 
-  // CH 3/4 linked by a scene recall.
+  // CH 3/4 linked by a scene recall, which announces no link, only the bulk change.
   await setDeviceValue(page, LINK, 2, 1);
   await setDeviceValue(page, LINK, 3, 1);
-  await notifyParam(page, LINK, 2, 1);
   await notifyParam(page, 0, -1, 0, -1);
   await expect(screen.locator(".safe-link"), "both pairs linked").toHaveCount(2, { timeout: 15_000 });
   await expect(cell(4, "Name"), "CH 4's row as it was").toHaveAttribute("aria-pressed", "false");
