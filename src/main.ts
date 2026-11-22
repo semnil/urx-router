@@ -1325,7 +1325,20 @@ const recallSafeLastSent = new Map<string, number>();
 type RecallHeldEvent =
   | { kind: "link"; primary: string; on: boolean; copies: boolean }
   | { kind: "row"; paramId: number; y: number; value: number; answer: boolean };
-type RecallStretch = { links: Map<string, boolean> | null; events: RecallHeldEvent[] };
+type RecallStretch = {
+  links: Map<string, boolean> | null;
+  events: RecallHeldEvent[];
+  // Past the wait after its read (RECALL_OVERTAKE_MS), and whether a later recall's bulk notify came first.
+  settled: boolean;
+  overtaken: boolean;
+};
+// How long a recall's stretch waits after its read of the links before it is taken: a recall announces
+// its bulk change up to about 300 ms after it moves the unit, so a later recall that had already changed
+// the links the read found is announced within this wait.
+const RECALL_OVERTAKE_MS = 350;
+// Set while an overtaken stretch is taken: its rows go on their own row alone, since the links it was
+// read on may be the later recall's.
+let recallPartnersUnsure = false;
 let recallStretches: RecallStretch[] = [];
 let recallGen = 0;
 // The reads of the pairs' links in flight, which the session's release waits for before it disconnects,
@@ -1606,7 +1619,9 @@ function observeLinkNotify(p: ParamUpdate): void {
   if (!unitLinks) return;
   if (p.paramId === 0 && p.x === -1 && p.y === -1) {
     recallGen++;
-    const stretch: RecallStretch = { links: null, events: [] };
+    // A stretch still reading or waiting may have read the links this recall made.
+    for (const s of recallStretches) if (!s.settled) s.overtaken = true;
+    const stretch: RecallStretch = { links: null, events: [], settled: false, overtaken: false };
     recallStretches.push(stretch);
     const read = readRecallLinks(stretch);
     recallLinkReads.add(read);
@@ -1770,7 +1785,8 @@ function putOnLinkedPartner(row: RecallSafeRow, part: "safe" | "select", value: 
   const primary = pairPrimary(model, row.node);
   const other = partnerChannel(model, row.node);
   const otherRow = recallSafeRows(model).find((r) => r.node === other);
-  if (primary === null || !otherRow || !unitRecallSafe || unitLinks?.get(primary) !== true) return;
+  if (primary === null || !otherRow || !unitRecallSafe || unitLinks?.get(primary) !== true || recallPartnersUnsure)
+    return;
   const otherKey = safePartKey(otherRow.node, part);
   recallSafeVersions.set(otherKey, (recallSafeVersions.get(otherKey) ?? 0) + 1);
   recallSafeUnread.add(otherKey);
@@ -1794,8 +1810,8 @@ function takeRecallSafeAnswer(paramId: number, y: number, value: number): void {
 }
 
 /** Read each pair's link for the scene recall `stretch` follows, as the unit holds it right after that
- *  recall, and take the stretches whose links are in. A read that fails ends the session, as every read of
- *  RECALL SAFE's does. */
+ *  recall, and take the stretches that are ready once the wait after it is over (RECALL_OVERTAKE_MS). A read
+ *  that fails ends the session, as every read of RECALL SAFE's does. */
 async function readRecallLinks(stretch: RecallStretch): Promise<void> {
   // The session's own map of the links, which the session's start makes and its end drops: a read the
   // start's window took is this session's, and one a session that has ended started sends nothing more.
@@ -1818,16 +1834,22 @@ async function readRecallLinks(stretch: RecallStretch): Promise<void> {
   }
   if (unitLinks !== session || !recallStretches.includes(stretch)) return;
   stretch.links = links;
-  takeRecallStretches();
+  setTimeout(() => {
+    if (unitLinks !== session || !recallStretches.includes(stretch)) return;
+    stretch.settled = true;
+    takeRecallStretches();
+  }, RECALL_OVERTAKE_MS);
 }
 
-/** Take, in order, the stretches whose recall's links are in, each on those links — a pair whose link the
- *  unit announced in the stretch from before the first such announcement, since an announcement is a
- *  change — and then what the unit announced in it, in the order it came. */
+/** Take, in order, the stretches whose recall's links are in and whose wait is over, each on those links — a
+ *  pair whose link the unit announced in the stretch from before the first such announcement, since an
+ *  announcement is a change — and then what the unit announced in it, in the order it came. A stretch a
+ *  later recall overtook puts no row on the other row of its pair. */
 function takeRecallStretches(): void {
   if (!unitLinks) return releaseRecallHoldWaiters();
-  while (recallStretches[0]?.links) {
+  while (recallStretches[0]?.settled) {
     const stretch = recallStretches.shift()!;
+    recallPartnersUnsure = stretch.overtaken;
     for (const [primary, on] of stretch.links!) unitLinks.set(primary, on);
     const first = new Map<string, boolean>();
     for (const e of stretch.events) if (e.kind === "link" && !first.has(e.primary)) first.set(e.primary, e.on);
@@ -1837,6 +1859,7 @@ function takeRecallStretches(): void {
       else if (e.answer) takeRecallSafeAnswer(e.paramId, e.y, e.value);
       else applyRecallSafeNotify(e.paramId, e.y, e.value);
     }
+    recallPartnersUnsure = false;
   }
   simView?.unitStateChanged();
   if (recallStretches.length) return;

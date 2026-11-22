@@ -2067,31 +2067,55 @@ describe("the SIM view over a live session", () => {
     },
   );
 
-  it("takes each row pressed between two recalls under the link the recall before it left", SLOW, async () => {
+  it("takes each row pressed between two recalls apart in time under the link its recall left", SLOW, async () => {
     const { shell, reads } = await bootLinkUnit({});
     onTestFinished(() => reads.releaseAll());
     reads.hold();
-    // A recall links CH 1/2, CH Level is pressed on CH 2's row, a second recall unlinks the pair, and Name
-    // is pressed on CH 2's row: each recall's read of the links is held.
+    // A recall links CH 1/2 and CH Level is pressed on CH 2's row; once that recall is taken, a second
+    // recall unlinks the pair and Name is pressed on CH 2's row.
     await unitSet(LINK, 0, 1);
     await unitSet(LINK, 1, 1);
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
     await vi.waitFor(() => expect(reads.asked(), "the premise: the first recall's read is out").toBe(1));
     await unitSet(SELECT, 1, 0x1);
     notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x1 }]);
+    reads.releaseAll();
+    await vi.waitFor(async () =>
+      expect(await shownSafe("safe.ch1.chLevel"), "the first press on both rows").toEqual([true]),
+    );
     await unitSet(LINK, 0, 0);
     await unitSet(LINK, 1, 0);
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
-    await vi.waitFor(() => expect(reads.asked(), "the premise: the second recall's read is out").toBe(2));
     await unitSet(SELECT, 1, 0x100001);
     notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100001 }]);
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch2.name")).toEqual([true]), { timeout: 10_000 });
+    expect(await shownSafe("safe.ch1.name", "safe.ch1.chLevel"), "the second press on CH 2's alone").toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  it("puts no row on the other row for a recall a later recall may have overtaken", SLOW, async () => {
+    const { shell, reads } = await bootLinkUnit({ [`${LINK}/0/0`]: 1, [`${LINK}/0/1`]: 1 });
+    onTestFinished(() => reads.releaseAll());
+    await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("STEREO"));
+    // A recall unlinks CH 1/2, and CH Level is pressed on CH 2's row alone. A second recall links the
+    // pair again before the first recall's read reaches the unit, so that read answers linked; the
+    // second recall's bulk notify comes after it.
+    await unitSet(LINK, 0, 0);
+    await unitSet(LINK, 1, 0);
+    reads.hold({ late: true });
+    notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await vi.waitFor(() => expect(reads.asked(), "the premise: the first recall's read is out").toBe(1));
+    await unitSet(SELECT, 1, 0x1);
+    notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x1 }]);
+    await unitSet(LINK, 0, 1);
+    await unitSet(LINK, 1, 1);
     reads.releaseAll();
-    await vi.waitFor(async () =>
-      expect(
-        await shownSafe("safe.ch1.name", "safe.ch1.chLevel", "safe.ch2.name", "safe.ch2.chLevel"),
-        "the first press on both rows, the second on CH 2's alone",
-      ).toEqual([false, true, true, true]),
-    );
+    await new Promise((r) => setTimeout(r, 50));
+    notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await vi.waitFor(async () => expect(await shownSafe("safe.ch2.chLevel")).toEqual([true]), { timeout: 10_000 });
+    expect(await shownSafe("safe.ch1.chLevel"), "not put on CH 1's row").toEqual([false]);
   });
 
   it("takes no link from a read of the unit that started before the latest recall", SLOW, async () => {

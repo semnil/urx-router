@@ -2034,8 +2034,11 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   this app's writes and the links the unit announces wait for that recall's read of the links, and are then taken
   in the order they came, on the links it found (a pair whose link the unit announced in that time from before the
   first such announcement): a recall changes links without announcing them, so a row pressed after it cannot be told
-  which link it was made under before then. Each recall has its own wait, taken in turn, and the LCD's rows stay as
-  they were until it is over; a selection made on the LCD in that time is written once it is, from the row it leaves.
+  which link it was made under before then. Each recall has its own wait, taken in turn, which lasts 350 ms past its
+  read, longer than the most a recall's bulk notification was measured to lag behind it (298 ms): a later recall
+  announced within it may already have changed the links the read found, and the rows the earlier recall's wait
+  held are then taken on their own row, put on no other row. The LCD's rows stay as they were until the wait is
+  over; a selection made on the LCD in that time is written once it is, from the row it leaves.
   A recall made while the session is starting is read the same way, and the session's end answers a read of the
   links already on the wire before it disconnects and sends no more. The second row is held over a read
   of RECALL SAFE until the unit announces it or takes a write of this app's to it; a write Console Lock refuses, or one
