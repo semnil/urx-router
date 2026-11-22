@@ -2232,6 +2232,57 @@ describe("the SIM view over a live session", () => {
     },
   );
 
+  it(
+    "copies a first row as it was before this app's write when the write's answer lands in a recall's stretch while the row is read back",
+    SLOW,
+    async () => {
+      const cmds = deviceCommands({ "plugin:dialog|message": "Ok", experimental_enabled: true }, {});
+      const reads = heldLinkReads(cmds);
+      const get = cmds.vd_get as (a: Record<string, unknown>) => unknown;
+      let releaseRow!: () => void;
+      const rowHeld = new Promise<void>((r) => (releaseRow = r));
+      let holdRow = false;
+      let rowAsked = false;
+      cmds.vd_get = (a: Record<string, unknown>) => {
+        if (!holdRow || a.paramId !== SELECT || a.y !== 0) return get(a);
+        rowAsked = true;
+        const value = get(a);
+        return rowHeld.then(() => value);
+      };
+      onTestFinished(() => {
+        releaseRow();
+        reads.releaseAll();
+      });
+      const shell = (await bootApp({ tauri: cmds }))!;
+      await openSim();
+      await goLive();
+      // Name chosen on CH 1's row; the unit takes the write unannounced, so the row is read back, held.
+      holdRow = true;
+      await transport().write("safe.ch1.name", true);
+      await vi.waitFor(() => expect(rowAsked, "the premise: the row is read back").toBe(true), { timeout: 10_000 });
+      // A recall, then the panel links and unlinks the pair, then the write's answer, while the read is out.
+      reads.hold();
+      notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await vi.waitFor(() => expect(reads.asked(), "the premise: the recall's read is out").toBe(1));
+      notifyChannel(shell).onmessage([
+        { param_id: LINK, x: 0, y: 0, value: 1 },
+        { param_id: LINK, x: 0, y: 1, value: 1 },
+      ]);
+      notifyChannel(shell).onmessage([
+        { param_id: LINK, x: 0, y: 0, value: 0 },
+        { param_id: LINK, x: 0, y: 1, value: 0 },
+      ]);
+      notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100000 }]);
+      releaseRow();
+      await new Promise((r) => setTimeout(r, 100));
+      reads.releaseAll();
+      await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name")).toEqual([true]), { timeout: 10_000 });
+      expect(await shownSafe("safe.ch2.name"), "the copy made before the answer").toEqual([false]);
+      await transport().write("safe.ch2.chOn", true);
+      await vi.waitFor(() => expect(setsOf(shell, SELECT).at(-1)).toEqual([1, 0x2]), { timeout: 10_000 });
+    },
+  );
+
   it("keeps a pair's link the unit announced over a read the unit answered before it", SLOW, async () => {
     const { shell, reads } = await bootLinkUnit({ [`${SAFE}/0/0`]: 1, [`${SELECT}/0/0`]: 0x100000 });
     onTestFinished(() => reads.releaseAll());

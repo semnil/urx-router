@@ -1506,6 +1506,12 @@ function flushRecallSafeWrites(): void {
         // until the unit takes this write, the session's row as it was before it is the unit's.
         const unread = recallSafeUnread.has(key);
         const sent = recallSafeVersions.get(key);
+        // The write is settled; the row's selection from before it stays the copy source while a recall's
+        // stretch holds what the unit announced, the answer among it, and goes once that is taken.
+        const settleSending = (): void => {
+          if (recallStretches.length) recallSafeAnsweredHeld.add(row.node);
+          else recallSafeSending.delete(row.node);
+        };
         const restore = (): void => {
           if (!unread || recallSafeVersions.get(key) !== sent || !unitRecallSafe) return;
           const now = unitRecallSafe.get(row.node);
@@ -1516,7 +1522,7 @@ function flushRecallSafeWrites(): void {
           announced = await writeRecallSafeSelect(row, raw);
         } catch (err) {
           // A write the lock refused leaves the row as the unit held it, copy included.
-          recallSafeSending.delete(row.node);
+          settleSending();
           if (stoppedByConsoleLock(err)) restore();
           throw err;
         }
@@ -1524,8 +1530,7 @@ function flushRecallSafeWrites(): void {
         // stretch, it is taken there, in its place among what the unit announced: until then a link in
         // front of it copies the row as the unit held it before this write.
         if (announced) {
-          if (recallStretches.length) recallSafeAnsweredHeld.add(row.node);
-          else recallSafeSending.delete(row.node);
+          settleSending();
           return;
         }
         // The unit announced no such selection: it held it already, or did not take it. The row is
@@ -1536,7 +1541,7 @@ function flushRecallSafeWrites(): void {
         try {
           select = await readRecallSafeSelect(row);
         } finally {
-          recallSafeSending.delete(row.node);
+          settleSending();
         }
         if (!liveSessionUp || liveEpoch !== epoch || !unitRecallSafe) return;
         if (recallSafeVersions.get(key) !== since) return;
