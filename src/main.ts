@@ -1311,55 +1311,15 @@ const recallSafeQueued = new Map<string, RecallSafeRow>();
 const recallSafeUnread = new Set<string>();
 let unitLinks: Map<string, boolean> | null = null;
 const linkHeard = new Map<string, number>();
-// The selection each row held before a write of this app's to it that the unit has not answered: what a
-// link puts on the pair's second row while that write is on its way, since the unit has not taken it.
-const recallSafeSending = new Map<string, number>();
 // The last selection this app sent to each row, which an answer of the unit's is taken for: an answer
 // to a write sent before it is one the LCD has since replaced.
 const recallSafeLastSent = new Map<string, number>();
-// What the unit announced for RECALL SAFE after each scene recall's bulk notify, held until that recall's
-// read of the pairs' links is in: a recall links and unlinks pairs unannounced, so a row announced after
-// it cannot be told which link it was made under before then. Each recall has its own stretch, taken in
-// order on the links read for it (`takeRecallStretches`); `recallGen` counts the bulk notifies, so a read
-// of the unit started before the latest one does not take a link from what it found.
-type RecallHeldEvent =
-  | { kind: "link"; primary: string; on: boolean; copies: boolean }
-  | { kind: "row"; paramId: number; y: number; value: number; answer: boolean };
-type RecallStretch = {
-  links: Map<string, boolean> | null;
-  events: RecallHeldEvent[];
-  // Past the wait after its read (RECALL_OVERTAKE_MS), and whether a later recall's bulk notify came first.
-  settled: boolean;
-  overtaken: boolean;
-};
-// How long a recall's stretch waits after its read of the links before it is taken: a recall announces
-// its bulk change up to about 300 ms after it moves the unit, so a later recall that had already changed
-// the links the read found is announced within this wait.
-const RECALL_OVERTAKE_MS = 350;
-// Set while an overtaken stretch is taken: its rows go on their own row alone, since the links it was
-// read on may be the later recall's.
-let recallPartnersUnsure = false;
-let recallStretches: RecallStretch[] = [];
+// How many scene recalls the unit has announced (its address-less bulk notify): a read of the unit started
+// before the latest one takes no link from what it found, the recall having changed links unannounced.
 let recallGen = 0;
-// The reads of the pairs' links in flight, which the session's release waits for before it disconnects,
-// and the rows whose write the unit answered while a stretch held the answer: their copy source goes once
-// the stretches are taken, the answer with them.
+// The reads of the pairs' links a recall starts that are on the wire, which the session's release waits for
+// before it disconnects.
 const recallLinkReads = new Set<Promise<void>>();
-const recallSafeAnsweredHeld = new Set<string>();
-// The writes from the glass waiting for the stretches to be taken: one made from a row they have not given
-// what the unit announced would write the unit's own changes away.
-let recallHoldWaiters: Array<() => void> = [];
-
-/** Resolve once no recall's rows are held (`takeRecallStretches`, or the session's end). */
-function recallHoldTaken(): Promise<void> {
-  return recallStretches.length ? new Promise((resolve) => recallHoldWaiters.push(resolve)) : Promise.resolve();
-}
-
-function releaseRecallHoldWaiters(): void {
-  const waiters = recallHoldWaiters;
-  recallHoldWaiters = [];
-  for (const resolve of waiters) resolve();
-}
 // Raised at each Console Lock: a RECALL SAFE write queued before it sends nothing.
 let recallSafeLocks = 0;
 const clipSafeEngaged = new Set<number>();
@@ -1486,11 +1446,6 @@ function flushRecallSafeWrites(): void {
         if (!ours()) return;
         await live?.idle();
         if (!ours()) return;
-        // Made from the row once what the unit announced after a recall is in it.
-        while (recallStretches.length) {
-          await recallHoldTaken();
-          if (!ours()) return;
-        }
         const held = unitRecallSafe?.get(row.node);
         const pending = recallSafePending.get(row.node);
         // Nothing left to write: a write queued before this one took what the glass chose.
@@ -1499,19 +1454,12 @@ function flushRecallSafeWrites(): void {
         recallSafePending.delete(row.node);
         unitRecallSafe = new Map(unitRecallSafe).set(row.node, { ...held, select: raw });
         recallSafeEchoes.note(row.select, row.y, raw);
-        recallSafeSending.set(row.node, held.select);
         recallSafeLastSent.set(row.node, raw);
         const key = safePartKey(row.node, "select");
         // A row the unit copied unannounced, whose read can still answer what it held before the copy:
         // until the unit takes this write, the session's row as it was before it is the unit's.
         const unread = recallSafeUnread.has(key);
         const sent = recallSafeVersions.get(key);
-        // The write is settled; the row's selection from before it stays the copy source while a recall's
-        // stretch holds what the unit announced, the answer among it, and goes once that is taken.
-        const settleSending = (): void => {
-          if (recallStretches.length) recallSafeAnsweredHeld.add(row.node);
-          else recallSafeSending.delete(row.node);
-        };
         const restore = (): void => {
           if (!unread || recallSafeVersions.get(key) !== sent || !unitRecallSafe) return;
           const now = unitRecallSafe.get(row.node);
@@ -1522,27 +1470,16 @@ function flushRecallSafeWrites(): void {
           announced = await writeRecallSafeSelect(row, raw);
         } catch (err) {
           // A write the lock refused leaves the row as the unit held it, copy included.
-          settleSending();
           if (stoppedByConsoleLock(err)) restore();
           throw err;
         }
-        // The unit's answer took the write in the order it came (takeUnitStateNotify). Held in a recall's
-        // stretch, it is taken there, in its place among what the unit announced: until then a link in
-        // front of it copies the row as the unit held it before this write.
-        if (announced) {
-          settleSending();
-          return;
-        }
+        // The unit's answer took the write in the order it came (takeUnitStateNotify).
+        if (announced) return;
         // The unit announced no such selection: it held it already, or did not take it. The row is
         // read back, and what the unit announces for it while the read is out is kept instead.
         if (!liveSessionUp || liveEpoch !== epoch) return;
         const since = recallSafeVersions.get(key);
-        let select: number;
-        try {
-          select = await readRecallSafeSelect(row);
-        } finally {
-          settleSending();
-        }
+        const select = await readRecallSafeSelect(row);
         if (!liveSessionUp || liveEpoch !== epoch || !unitRecallSafe) return;
         if (recallSafeVersions.get(key) !== since) return;
         if (recallSafeUnread.has(key) && select !== raw) {
@@ -1624,11 +1561,7 @@ function observeLinkNotify(p: ParamUpdate): void {
   if (!unitLinks) return;
   if (p.paramId === 0 && p.x === -1 && p.y === -1) {
     recallGen++;
-    // A stretch still reading or waiting may have read the links this recall made.
-    for (const s of recallStretches) if (!s.settled) s.overtaken = true;
-    const stretch: RecallStretch = { links: null, events: [], settled: false, overtaken: false };
-    recallStretches.push(stretch);
-    const read = readRecallLinks(stretch);
+    const read = readRecallLinks();
     recallLinkReads.add(read);
     void read.finally(() => recallLinkReads.delete(read));
     return;
@@ -1641,11 +1574,6 @@ function observeLinkNotify(p: ParamUpdate): void {
   linkHeard.set(primary, (linkHeard.get(primary) ?? 0) + 1);
   // The unit announces a value that changed, so a link announced on is one it has just made, whatever
   // the session last learned; it announces both channels, and the first one's copies.
-  const stretch = recallStretches.at(-1);
-  if (stretch) {
-    stretch.events.push({ kind: "link", primary, on: p.value !== 0, copies: node === primary });
-    return;
-  }
   takeLink(primary, p.value !== 0, node === primary);
   simView?.unitStateChanged();
 }
@@ -1655,14 +1583,7 @@ function observeLinkNotify(p: ParamUpdate): void {
 function copyLinkedRows(linked: readonly string[]): void {
   if (!linked.length || !unitRecallSafe) return;
   const model = getModel(modelId);
-  // A first row this app is writing is copied as the unit holds it, without the selection on its way.
-  const held = new Map(unitRecallSafe);
-  for (const primary of linked) {
-    const row = held.get(primary);
-    const sending = recallSafeSending.get(primary);
-    if (row && sending !== undefined) held.set(primary, { ...row, select: sending });
-  }
-  const copied = withLinkCopies(model, held, linked);
+  const copied = withLinkCopies(model, unitRecallSafe, linked);
   const next = new Map(unitRecallSafe);
   for (const primary of linked) {
     const second = partnerChannel(model, primary);
@@ -1774,7 +1695,6 @@ function applyRecallSafeNotify(paramId: number, y: number, value: number): void 
   const safeAt = recallSafeAt(model, paramId, 0, y);
   if (!safeAt) return;
   recallSafeUnread.delete(safePartKey(safeAt.row.node, safeAt.part));
-  if (safeAt.part === "select" && recallSafeSending.has(safeAt.row.node)) recallSafeSending.set(safeAt.row.node, value);
   if (unitRecallSafe) {
     unitRecallSafe = withRecallSafeNotify(unitRecallSafe, safeAt, value);
     putOnLinkedPartner(safeAt.row, safeAt.part, value);
@@ -1790,12 +1710,10 @@ function putOnLinkedPartner(row: RecallSafeRow, part: "safe" | "select", value: 
   const primary = pairPrimary(model, row.node);
   const other = partnerChannel(model, row.node);
   const otherRow = recallSafeRows(model).find((r) => r.node === other);
-  if (primary === null || !otherRow || !unitRecallSafe || unitLinks?.get(primary) !== true || recallPartnersUnsure)
-    return;
+  if (primary === null || !otherRow || !unitRecallSafe || unitLinks?.get(primary) !== true) return;
   const otherKey = safePartKey(otherRow.node, part);
   recallSafeVersions.set(otherKey, (recallSafeVersions.get(otherKey) ?? 0) + 1);
   recallSafeUnread.add(otherKey);
-  if (part === "select" && recallSafeSending.has(otherRow.node)) recallSafeSending.set(otherRow.node, value);
   unitRecallSafe = withRecallSafeNotify(unitRecallSafe, { row: otherRow, part }, value);
 }
 
@@ -1808,69 +1726,30 @@ function takeRecallSafeAnswer(paramId: number, y: number, value: number): void {
   if (!safeAt) return;
   recallSafeUnread.delete(safePartKey(safeAt.row.node, safeAt.part));
   if (recallSafeLastSent.get(safeAt.row.node) !== value || !unitRecallSafe) return;
-  recallSafeSending.delete(safeAt.row.node);
   unitRecallSafe = withRecallSafeNotify(unitRecallSafe, safeAt, value);
   putOnLinkedPartner(safeAt.row, "select", value);
   simView?.unitStateChanged();
 }
 
-/** Read each pair's link for the scene recall `stretch` follows, as the unit holds it right after that
- *  recall, and take the stretches that are ready once the wait after it is over (RECALL_OVERTAKE_MS). A read
- *  that fails ends the session, as every read of RECALL SAFE's does. */
-async function readRecallLinks(stretch: RecallStretch): Promise<void> {
-  // The session's own map of the links, which the session's start makes and its end drops: a read the
-  // start's window took is this session's, and one a session that has ended started sends nothing more.
+/** Read each pair's link as the unit holds it right after a scene recall, which links and unlinks pairs
+ *  unannounced, and take it, copying nothing: a pair whose link the unit announced while the read was out
+ *  is left to that announcement. A read that fails ends the session, as every read of RECALL SAFE's does,
+ *  and one a session that has ended started sends nothing more. */
+async function readRecallLinks(): Promise<void> {
   const session = unitLinks;
+  const heard = new Map(linkHeard);
   const model = getModel(modelId);
-  const links = new Map<string, boolean>();
   try {
     for (const [primary] of model.channelPairs) {
       if (unitLinks !== session) return;
       const y = recallSafeRows(model).find((r) => r.node === primary)?.y;
-      if (y !== undefined) links.set(primary, (await vdGet(PARAMS.SIGNAL_TYPE.id, 0, y)) !== 0);
+      if (y === undefined) continue;
+      const on = (await vdGet(PARAMS.SIGNAL_TYPE.id, 0, y)) !== 0;
+      if (unitLinks === session && linkHeard.get(primary) === heard.get(primary)) takeLink(primary, on, false);
     }
   } catch (err) {
-    if (unitLinks !== session) return;
-    // What the stretch held cannot be told its links: it is dropped with the session the failure ends.
-    recallStretches = recallStretches.filter((s) => s !== stretch);
-    takeRecallStretches();
-    stopLiveOnError(errorText(err));
-    return;
+    if (unitLinks === session) stopLiveOnError(errorText(err));
   }
-  if (unitLinks !== session || !recallStretches.includes(stretch)) return;
-  stretch.links = links;
-  setTimeout(() => {
-    if (unitLinks !== session || !recallStretches.includes(stretch)) return;
-    stretch.settled = true;
-    takeRecallStretches();
-  }, RECALL_OVERTAKE_MS);
-}
-
-/** Take, in order, the stretches whose recall's links are in and whose wait is over, each on those links — a
- *  pair whose link the unit announced in the stretch from before the first such announcement, since an
- *  announcement is a change — and then what the unit announced in it, in the order it came. A stretch a
- *  later recall overtook puts no row on the other row of its pair. */
-function takeRecallStretches(): void {
-  if (!unitLinks) return releaseRecallHoldWaiters();
-  while (recallStretches[0]?.settled) {
-    const stretch = recallStretches.shift()!;
-    recallPartnersUnsure = stretch.overtaken;
-    for (const [primary, on] of stretch.links!) unitLinks.set(primary, on);
-    const first = new Map<string, boolean>();
-    for (const e of stretch.events) if (e.kind === "link" && !first.has(e.primary)) first.set(e.primary, e.on);
-    for (const [primary, on] of first) unitLinks.set(primary, !on);
-    for (const e of stretch.events) {
-      if (e.kind === "link") takeLink(e.primary, e.on, e.copies);
-      else if (e.answer) takeRecallSafeAnswer(e.paramId, e.y, e.value);
-      else applyRecallSafeNotify(e.paramId, e.y, e.value);
-    }
-    recallPartnersUnsure = false;
-  }
-  simView?.unitStateChanged();
-  if (recallStretches.length) return;
-  for (const node of recallSafeAnsweredHeld) recallSafeSending.delete(node);
-  recallSafeAnsweredHeld.clear();
-  releaseRecallHoldWaiters();
 }
 
 function takeUnitStateNotify(paramId: number, y: number, value: number): boolean {
@@ -1916,11 +1795,6 @@ function takeUnitStateNotify(paramId: number, y: number, value: number): boolean
       // A selection of the unit's own lands between this app's write and its answer: the answer then
       // carries what the unit holds after both, and is taken rather than swallowed.
       if (!answer) recallSafeEchoes.drop(paramId, y);
-    }
-    const stretch = recallStretches.at(-1);
-    if (stretch) {
-      stretch.events.push({ kind: "row", paramId, y, value, answer });
-      return true;
     }
     if (answer) takeRecallSafeAnswer(paramId, y, value);
     else applyRecallSafeNotify(paramId, y, value);
@@ -2013,11 +1887,7 @@ function resetUnitSessionState(): void {
   recallSafeUnread.clear();
   unitLinks = null;
   linkHeard.clear();
-  recallSafeSending.clear();
   recallSafeLastSent.clear();
-  recallSafeAnsweredHeld.clear();
-  recallStretches = [];
-  releaseRecallHoldWaiters();
   unitCardIn = null;
   clipSafeEngaged.clear();
   paintClipSafe();

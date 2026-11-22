@@ -2027,20 +2027,10 @@ sync, what it can only read is shown from the unit and takes no write, and what 
   announces a link made over the link or on its panel and not one a scene recall turns on, so the session puts the
   first row on the second as the unit announces the link, pair by pair, whatever link it last learned for the pair,
   and takes a link a recall made from a read of the pairs' links it makes at that recall's address-less bulk
-  notification, copying nothing. The first row is copied as
-  the unit holds it: a selection this app is writing to it stays out of the copy until the unit answers the write.
-  A read does not change the link of a pair the unit announced while the read was out, and a read started before
-  the latest recall takes no link. After each recall's bulk notification, the RECALL SAFE notifies, the answers to
-  this app's writes and the links the unit announces wait for that recall's read of the links, and are then taken
-  in the order they came, on the links it found (a pair whose link the unit announced in that time from before the
-  first such announcement): a recall changes links without announcing them, so a row pressed after it cannot be told
-  which link it was made under before then. Each recall has its own wait, taken in turn, which lasts 350 ms past its
-  read, longer than the most a recall's bulk notification was measured to lag behind it (298 ms): a later recall
-  announced within it may already have changed the links the read found, and the rows the earlier recall's wait
-  held are then taken on their own row, put on no other row. The LCD's rows stay as they were until the wait is
-  over; a selection made on the LCD in that time is written once it is, from the row it leaves.
-  A recall made while the session is starting is read the same way, and the session's end answers a read of the
-  links already on the wire before it disconnects and sends no more. The second row is held over a read
+  notification, copying nothing. A read does not change the link of a pair the unit announced while the read was
+  out, and a read started before the latest recall takes no link. A recall made while the session is starting is
+  read the same way, and the session's end answers a read of the links already on the wire before it disconnects and
+  sends no more. Rows that overlap a recall or a write are taken as they come (known-issues.md). The second row is held over a read
   of RECALL SAFE until the unit announces it or takes a write of this app's to it; a write Console Lock refuses, or one
   the unit leaves unannounced and whose row reads back as something else, leaves the row as it was. On a linked pair
   the unit puts a row pressed on its panel, or a selection this app wrote to a row, on the other row as well and

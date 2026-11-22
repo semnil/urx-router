@@ -392,6 +392,16 @@ connection reaches only part of it:
   nothing.
 - With Live sync off the whole screen is the LCD's own, and reaches nothing. A session's start
   replaces its rows with the unit's.
+- **A linked pair's other row where operations overlap.** The unit copies rows within a linked pair without
+  announcing it, and the app follows each copy as the operation behind it arrives. Where two operations overlap, the
+  app can show the pair's other row differently from the unit until the unit next announces that row, and a selection
+  made on that row on the LCD writes the row as the app shows it:
+  - a row pressed on the unit, or chosen on the LCD, between a scene recall and the app's read of the pairs' links that
+    the recall starts is taken under the link from before the recall;
+  - after two scene recalls made within about a third of a second of each other, the first recall's read can find the
+    second recall's links, and a row pressed between them is taken under those;
+  - a link made on the unit while a selection chosen on the LCD for the pair's first row is on its way to the unit puts
+    that selection on the second row, also when the unit then refuses it.
 - RECALL SAFE is not part of a plan. The unit keeps it for itself as a whole, outside every scene.
 
 > Confirmed on a URX44V and a URX22 (System 1.5.0.1): which row each selection belongs to, a
