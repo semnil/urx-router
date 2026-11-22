@@ -2356,10 +2356,12 @@ describe("Flex12GEQ (V1.5)", () => {
   });
 
   it("writes the link at the L instance before the sides, and each side's limit before its bands", () => {
-    const cmds = planToCommandsUncollapsed(model, withGeq());
+    const p = withGeq();
+    p.nodeParams["bus.mix2"]!.geq!.link = 2; // R -> L
+    const cmds = planToCommandsUncollapsed(model, p);
     expect(named(cmds, "OUT_GEQ_LINK").map((c) => [c.y, c.vdValue])).toEqual([
-      [0, 1],
-      [2, 1],
+      [0, 0],
+      [2, 2],
     ]);
     const limitR = cmds.findIndex((c) => c.name === "OUT_GEQ_LIMIT" && c.y === 1);
     expect(cmds[limitR].vdValue).toBe(2);

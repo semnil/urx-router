@@ -101,8 +101,8 @@ export const GEQ_MAX_RATE = 48000;
 /** The output buses that carry a Flex12GEQ, and the GEQ Link each ships with. */
 export const GEQ_BUSES: Readonly<Record<string, { linkFactory: number }>> = {
   "bus.stereo": { linkFactory: GEQ_LINK_OFF },
-  "bus.mix1": { linkFactory: GEQ_LINK_L_TO_R },
-  "bus.mix2": { linkFactory: GEQ_LINK_L_TO_R },
+  "bus.mix1": { linkFactory: GEQ_LINK_OFF },
+  "bus.mix2": { linkFactory: GEQ_LINK_OFF },
 };
 
 export const hasGeq = (nodeId: string): boolean => nodeId in GEQ_BUSES;
@@ -124,7 +124,7 @@ export interface GeqSideState {
   gains: number[];
 }
 
-/** The factory GEQ of a bus: no link on STEREO, L → R on a MIX, both sides on, ±15 dB, every band 0. */
+/** The factory GEQ of a bus: no link, both sides on, ±15 dB, every band 0. */
 export function geqFactory(nodeId: string): GeqParams {
   const side = (): GeqSide => ({ on: true, limit: GEQ_LIMIT_15, bands: GEQ_BAND_LABELS.map(() => ({ gain: 0 })) });
   return { link: geqLinkFactory(nodeId), sides: [side(), side()] };

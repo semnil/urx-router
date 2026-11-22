@@ -792,10 +792,11 @@ describe("an output bus's Flex12GEQ", () => {
   });
 
   it("moves a band on 0.5 dB steps across its side's limit, and takes the other side along while linked", () => {
+    plan.nodeParams["bus.mix1"]!.geq!.link = GEQ_LINK_L_TO_R;
     const c = bindControl(model, plan, "bus.mix1/gain@geq.l.17")!;
     expect(c.get()).toBe(0.5);
     expect(c.set(1)).toBe(true);
-    expect([gain("bus.mix1", 0, 17), gain("bus.mix1", 1, 17)], "MIX ships linked L → R").toEqual([15, 15]);
+    expect([gain("bus.mix1", 0, 17), gain("bus.mix1", 1, 17)], "linked L → R").toEqual([15, 15]);
     expect(c.alsoWrote?.()).toEqual(["geq.sides.1.bands.17.gain"]);
     plan.nodeParams["bus.mix1"]!.geq!.link = GEQ_LINK_OFF;
     expect(c.set(0.25)).toBe(true);
@@ -839,7 +840,7 @@ describe("an output bus's Flex12GEQ", () => {
   });
 
   it("switches one side's [GEQ] only, whatever the link", () => {
-    expect(plan.nodeParams["bus.mix2"]?.geq?.link).toBe(GEQ_LINK_L_TO_R);
+    plan.nodeParams["bus.mix2"]!.geq!.link = GEQ_LINK_L_TO_R;
     const c = bindControl(model, plan, "bus.mix2/geqOn@geq.r")!;
     expect(c.get()).toBe(1);
     expect(c.set(0)).toBe(true);

@@ -25,7 +25,7 @@ import { dynHost } from "./dyn-screen.test-util";
 import type { DynHost } from "./dyn-screen.test-util";
 import type { DynCtx } from "./dyn-screen";
 import type { DynField } from "../core/control/translate";
-import { EQ_TYPE_GEQ, EQ_TYPE_PEQ, GEQ_BAND_COUNT, geqFactory, geqSideState } from "../core/geq";
+import { EQ_TYPE_GEQ, EQ_TYPE_PEQ, GEQ_BAND_COUNT, GEQ_LINK_L_TO_R, geqFactory, geqSideState } from "../core/geq";
 import type { NodeParams } from "../core/plan";
 import { setLang, t } from "../i18n";
 
@@ -44,10 +44,14 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-/** A bus on Flex12GEQ with these gains on its L side (index → dB), opened on that side. */
-function open(nodeId: string, opts: { gains?: Record<number, number>; live?: boolean; rate?: number } = {}): DynHost {
+/** A bus on Flex12GEQ with these gains on its L side (index → dB) and this GEQ Link, opened on that side. */
+function open(
+  nodeId: string,
+  opts: { gains?: Record<number, number>; live?: boolean; rate?: number; link?: number } = {},
+): DynHost {
   const h = (host = dynHost({ live: opts.live }));
   const geq = geqFactory(nodeId);
+  if (opts.link !== undefined) geq.link = opts.link;
   geq.sides![0].bands = geq.sides![0].bands!.map((b, x) => ({ gain: opts.gains?.[x] ?? b.gain }));
   h.plan.nodeParams[nodeId] = { ...h.plan.nodeParams[nodeId], eqType: EQ_TYPE_GEQ, eqOn: true, geq };
   if (opts.rate) h.plan.sampleRate = opts.rate;
@@ -89,9 +93,9 @@ describe("the faders", () => {
   });
 
   it("write their band, and the GEQ Link takes the write to the other side and names it", () => {
-    open("bus.mix1");
+    open("bus.mix1", { link: GEQ_LINK_L_TO_R });
     move(17, -3);
-    expect([gains("bus.mix1", 0)[17], gains("bus.mix1", 1)[17]], "a MIX ships linked L → R").toEqual([-3, -3]);
+    expect([gains("bus.mix1", 0)[17], gains("bus.mix1", 1)[17]], "linked L → R").toEqual([-3, -3]);
     expect(host!.patches.at(-1)?.written).toEqual(["geq.sides.0.bands.17.gain", "geq.sides.1.bands.17.gain"]);
   });
 
@@ -226,7 +230,7 @@ describe("the rows beside the faders", () => {
   });
 
   it("name both sides as written when Gain Flat runs on a linked bus", () => {
-    open("bus.mix1", { gains: { 7: -3 } });
+    open("bus.mix1", { gains: { 7: -3 }, link: GEQ_LINK_L_TO_R });
     flatButton().click();
     const written = host!.patches.at(-1)?.written ?? [];
     expect(written).toHaveLength(2 * GEQ_BAND_COUNT);

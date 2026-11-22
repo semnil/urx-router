@@ -173,7 +173,7 @@ export interface GeqSide {
 }
 
 // An output bus's Flex12GEQ: the GEQ Link (0 = off, 1 = L → R, 2 = R → L; absent = the bus's
-// factory value, off on STEREO and L → R on a MIX) and the two sides, L then R. Kept whichever EQ
+// factory value, off) and the two sides, L then R. Kept whichever EQ
 // Type the bus has selected, as the unit keeps them.
 export interface GeqParams {
   link?: number;
