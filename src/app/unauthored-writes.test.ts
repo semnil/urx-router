@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { cmdAddr, planToCommands } from "../core/control/translate";
 import { MIC_LINE_JACK_BASE } from "../core/control/params";
-import { setExclusiveConnection } from "../core/plan";
+import { emptyPlan, setExclusiveConnection } from "../core/plan";
+import { planProblems, prepareLoadedPlan } from "../core/plan-validate";
 import {
   connectionContestKey,
   connParamContestKey,
@@ -15,6 +16,7 @@ import { getModel } from "../models";
 import { defaultPlan } from "../models/initial-state";
 import { filledPlan } from "./filled-plan.test-util";
 import { insertFxParamKey } from "../core/control/insert-fx-effect";
+import { fxParams } from "../core/control/fx-effect";
 import { unauthoredWriteNodes } from "./unauthored-writes";
 
 const MODEL = getModel("URX44V");
@@ -515,6 +517,46 @@ describe("a routing wire the load completed", () => {
 // document listed without it. That completion is the fill's, so the strip is named when the level
 // would move the unit — while a level the document wrote, and a wire's param nothing recorded on a
 // wire the operator drew, stay theirs.
+describe("a value the load moved into what the write sends", () => {
+  it.each<[number, boolean]>([
+    [3, true],
+    [1, false],
+  ])("names the strip for a GEQ Link the document carried as %s: %s", (link, reported) => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = { eqType: 2, geq: { link } };
+    prepareLoadedPlan(MODEL, plan, planProblems(MODEL, plan));
+    const at = new Set(
+      planToCommands(MODEL, plan, "all")
+        .filter((c) => c.node === "bus.mix1" && c.name === "OUT_GEQ_LINK")
+        .map(cmdAddr),
+    );
+    expect(at.size, "the premise: the write carries the link").toBeGreaterThan(0);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", at).includes("bus.mix1")).toBe(reported);
+  });
+
+  // A parameter of an effect the channel does not ship with, removed for not being a number: the
+  // load gives it back at the default the write sends, so the confirm can name the channel.
+  it.each<[unknown, boolean]>([
+    [true, true],
+    ["valid", false],
+  ])("names FX 2 for a Ping Pong parameter the document carried as %s: %s", (stored, reported) => {
+    const pingPong = 1025;
+    const desc = fxParams(pingPong)[0]!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = {
+      fxEffect: { type: pingPong, params: { [desc.key]: stored === "valid" ? desc.def : stored } as never },
+    };
+    prepareLoadedPlan(MODEL, plan, planProblems(MODEL, plan));
+    const at = new Set(
+      planToCommands(MODEL, plan, "all")
+        .filter((c) => c.node === "bus.fx2" && c.name === "FX_EFFECT_PARAM" && c.y === desc.slot)
+        .map(cmdAddr),
+    );
+    expect(at.size, "the premise: the write carries the parameter").toBeGreaterThan(0);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", at).includes("bus.fx2")).toBe(reported);
+  });
+});
+
 describe("a send level", () => {
   const SEND = ["ch1:out", "bus.mix1:in"] as const;
   const LEVEL = connParamContestKey(...SEND, "level");

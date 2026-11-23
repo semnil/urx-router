@@ -491,7 +491,8 @@ export interface Plan {
    * moved since is warned about again — which is what the operator would want told.
    *
    *   load    — the document carried this value
-   *   default — the loader completed it from the model's factory values
+   *   default — the loader supplied it: completed from the model's factory values, or moved
+   *             into what the write sends from a value the document carried outside it
    *   manual  — an edit funnel wrote it (a gesture, MIDI, an undo: touched is touched)
    *   device  — read from the unit, or confirmed written to it
    */

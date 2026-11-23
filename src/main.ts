@@ -47,12 +47,7 @@ import {
   supplyRequiredSources,
 } from "./core/plan";
 import { geqAboveRate } from "./core/geq";
-import {
-  applySceneExternal,
-  captureSceneExternal,
-  isSceneExternalConnection,
-  sceneExternalParamNames,
-} from "./core/scene-scope";
+import { applySceneExternal, captureSceneExternal } from "./core/scene-scope";
 import { getSettings } from "./core/settings";
 import type { ConnParams, JackSide, NodeParams, Plan, SerializeOptions } from "./core/plan";
 import { resetDisplayedSides, setDisplayedSide } from "./core/stereo-side";
@@ -60,7 +55,6 @@ import {
   applyPatch,
   clonePlanState,
   connectionContestKey,
-  connParamContestKey,
   diffPlans,
   nodeParamContestPath,
   PlanWriteWitness,
@@ -78,6 +72,7 @@ import {
   paramRangeProblems,
   planProblems,
   prepareLoadedPlan,
+  rangedContestNames,
 } from "./core/plan-validate";
 import { jackName, phantomHiZBothOn, switchAddr, switchOfKey } from "./core/input-lock";
 import type { InputSwitch, SwitchSession } from "./core/input-lock";
@@ -322,6 +317,7 @@ import { boundByRead, confirmedAdoptions } from "./app/adopt-writes";
 import { unauthoredWriteNodes } from "./app/unauthored-writes";
 import {
   markAuthored,
+  inheritSceneExternalRecords,
   markParamSource as markSource,
   noteSeededDefaults,
   type SeededDefault,
@@ -4383,29 +4379,9 @@ function loadFromText(text: string, path?: string): boolean | null {
       supplied.map((p) => connectionContestKey(p.from, p.to)),
       "default",
     );
-    // …and the values a scene-scoped document did not carry are not the document's either:
-    // they were copied off the plan on screen a few lines above, so their provenance is that
-    // plan's. Left as the fill leaves them they would read as "the document wrote this",
-    // which exempts the monitor, phones and oscillator from the write confirm's warning.
-    if (carriedScene) {
-      for (const name of sceneExternalParamNames(next, boundary)) {
-        markSource(next, [name], plan.paramSource?.get(name) ?? "default");
-      }
-      // The same for the device-wide wires, whose record is the one a load completion leaves,
-      // and for the params they carry, which answer to the wire's record where they have none
-      // of their own — so one with no record here has none there either.
-      for (const c of next.connections.filter((c) => isSceneExternalConnection(c, boundary))) {
-        const name = connectionContestKey(c.from, c.to);
-        const from = plan.paramSource?.get(name);
-        if (from !== undefined) markSource(next, [name], from);
-        for (const key of Object.keys(c.params ?? {})) {
-          const leaf = connParamContestKey(c.from, c.to, key);
-          const leafFrom = plan.paramSource?.get(leaf);
-          if (leafFrom !== undefined) markSource(next, [leaf], leafFrom);
-          else next.paramSource?.delete(leaf);
-        }
-      }
-    }
+    // …and the values a scene-scoped document did not carry are not the document's either: they
+    // take the record of the plan on screen they were copied off, but for a value the load repaired.
+    if (carriedScene) inheritSceneExternalRecords(next, plan, boundary, rangedContestNames(ranged));
     const finishLoad = (): boolean | null => {
       // Refused (null: nothing was attempted) or failed to draw (false): loadPlan said so,
       // and the caller must not go on to remember a recent path and announce a document

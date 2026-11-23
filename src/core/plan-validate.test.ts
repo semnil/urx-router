@@ -1299,6 +1299,19 @@ describe("linkedPairProblems", () => {
     ...(params ? { params } : {}),
   });
 
+  // The record follows the value the write sends: a range repair records its value as the fill's,
+  // and the copy then hands the primary's record to the secondary along with the value.
+  it.each<[string, number, number, number, "default" | "load"]>([
+    ["the primary bounded, the secondary copied from it", 39, 100, 40, "default"],
+    ["the secondary bounded, then replaced by the primary's own", 100, 39, 100, "load"],
+    ["the secondary bounded onto what the copy then writes", 40, 39, 40, "load"],
+  ])("records a linked secondary's copied value as the primary's: %s", (_, ch1, ch2, sent, record) => {
+    const plan = doc({ ch1: { stereoLink: true, panBal: PAN_BAL_PAN, hpfFreq: ch1 }, ch2: { hpfFreq: ch2 } });
+    load(plan);
+    expect([plan.nodeParams.ch1?.hpfFreq, plan.nodeParams.ch2?.hpfFreq]).toEqual([sent, sent]);
+    expect(plan.paramSource?.get(nodeParamContestPath("ch2", "hpfFreq"))).toBe(record);
+  });
+
   it("copies the primary's shared values onto a secondary that disagrees, and says which", () => {
     const plan = doc({
       ch1: { stereoLink: true, panBal: PAN_BAL_PAN, gate: { threshold: -50 }, hpfFreq: 100, gain: 20 },
@@ -1867,6 +1880,55 @@ describe("booleanParamProblems", () => {
 describe("prepareLoadedPlan", () => {
   const u44v = getModel("URX44V");
   const load = (plan: Plan) => prepareLoadedPlan(u44v, plan, planProblems(u44v, plan));
+
+  it("records a value it moves into what the write sends as the fill's, and the document's own as the document's", () => {
+    const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = { eqType: 2, geq: { link: 3 } }; // an enum off its menu
+    plan.nodeParams["bus.mix2"] = { eqType: 2, geq: { link: 2 } }; // on its menu
+    plan.nodeParams["ch1"] = { hpfFreq: 601.25 }; // past the knob's last stop
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: lpf.rawMin! - 1, delayHpf: 40 } } };
+    const repairs = load(plan);
+    expect(repairs.ranged.map((p) => [p.node, p.key, p.action]).sort()).toEqual([
+      ["bus.fx2", "delayLpf", "bound"],
+      ["bus.mix1", "geq.link", "bound"],
+      ["ch1", "hpfFreq", "bound"],
+    ]);
+    const source = (node: string, path: string) => plan.paramSource?.get(nodeParamContestPath(node, path));
+    expect([plan.nodeParams["bus.mix1"]!.geq!.link, source("bus.mix1", "geq.link")]).toEqual([0, "default"]);
+    expect([plan.nodeParams["ch1"]!.hpfFreq, source("ch1", "hpfFreq")]).toEqual([600, "default"]);
+    expect(source("bus.fx2", "fxEffect.params.delayLpf")).toBe("default");
+    expect(source("bus.mix2", "geq.link"), "a value the load keeps").toBe("load");
+    expect(source("bus.fx2", "fxEffect.params.delayHpf"), "a value the load keeps").toBe("load");
+  });
+
+  // The factory values carry only the factory effect's parameters, so a parameter of another effect
+  // the load removed is one the fill cannot give back: the load gives it the default the write
+  // would send for it, recorded as the fill's.
+  it.each([
+    ["one parameter of a selected effect the channel does not ship with", "param"],
+    ["the whole parameter map", "map"],
+  ])("gives back %s at its default, as the fill's", (_, shape) => {
+    const pingPong = 1025;
+    const descs = fxParams(pingPong);
+    const first = descs[0]!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = {
+      fxEffect: { type: pingPong, params: (shape === "param" ? { [first.key]: true } : true) as never },
+    };
+    load(plan);
+    const params = plan.nodeParams["bus.fx2"]!.fxEffect!.params!;
+    const record = (key: string) => plan.paramSource?.get(nodeParamContestPath("bus.fx2", `fxEffect.params.${key}`));
+    // A key the factory effect shares with the selected one the fill already gives back, at the
+    // factory effect's value; the rest come back at the selected effect's own default.
+    const factory = new Set(fxParams(1024).map((d) => d.key));
+    for (const d of shape === "param" ? [first] : descs) {
+      expect(params[d.key], d.key).toBeTypeOf("number");
+      if (!factory.has(d.key)) expect(params[d.key], d.key).toBe(d.def);
+      expect(record(d.key), d.key).toBe("default");
+    }
+    expect(factory.has(first.key), "the premise: the removed parameter is one the fill cannot give back").toBe(false);
+  });
 
   it("converts an on/off before the HI-Z rule bounds it", () => {
     const plan = emptyPlan("URX44V");

@@ -17,13 +17,46 @@
 // silences a landed value is the diff: it stops differing from the unit.
 
 import type { ParamSource, Plan } from "../core/plan";
-import { nodeParamContestPath } from "../core/plan-history";
+import { connectionContestKey, connParamContestKey, nodeParamContestPath } from "../core/plan-history";
+import { isSceneExternalConnection, sceneExternalParamNames, type SceneBoundary } from "../core/scene-scope";
 
 /** Record where a set of parameter values came from. A key nobody has named keeps whatever
  *  the load put there, which for a completed document is "default". */
 export function markParamSource(plan: Plan, names: Iterable<string>, source: ParamSource): void {
   const map = (plan.paramSource ??= new Map<string, ParamSource>());
   for (const name of names) map.set(name, source);
+}
+
+/** The records of what a scene-scoped document did not carry. Those values were copied off the plan on
+ *  screen (`current`) before the load, so their provenance is that plan's: left as the fill leaves
+ *  them they would read as "the document wrote this", which exempts the monitor, phones and
+ *  oscillator from the write confirm's warning. A value the load itself repaired (`repaired`, contest
+ *  names) is the exception: what the write sends there is the load's, and the record the load gave it
+ *  stands. The device-wide wires take the current plan's record, and so do the params they carry,
+ *  which answer to the wire's record where they have none of their own — so one with no record there
+ *  has none here either. */
+export function inheritSceneExternalRecords(
+  next: Plan,
+  current: Plan,
+  boundary: SceneBoundary,
+  repaired: Iterable<string>,
+): void {
+  const kept = new Set(repaired);
+  for (const name of sceneExternalParamNames(next, boundary)) {
+    if (kept.has(name)) continue;
+    markParamSource(next, [name], current.paramSource?.get(name) ?? "default");
+  }
+  for (const c of next.connections.filter((c) => isSceneExternalConnection(c, boundary))) {
+    const name = connectionContestKey(c.from, c.to);
+    const from = current.paramSource?.get(name);
+    if (from !== undefined) markParamSource(next, [name], from);
+    for (const key of Object.keys(c.params ?? {})) {
+      const leaf = connParamContestKey(c.from, c.to, key);
+      const leafFrom = current.paramSource?.get(leaf);
+      if (leafFrom !== undefined) markParamSource(next, [leaf], leafFrom);
+      else next.paramSource?.delete(leaf);
+    }
+  }
 }
 
 /** A value an edit put in as a type's default rather than as anything the operator chose — an

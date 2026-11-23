@@ -11,7 +11,7 @@ import { parseRef, ref } from "../models/types";
 import { factoryNodeColors, factoryNodeNames, factoryNodeParams, fillFactoryParams } from "../models/initial-state";
 import { getModel, MODEL_IDS } from "../models";
 import { insertFxCensus } from "./constraints";
-import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
+import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc, resolveFxEffectType } from "./control/fx-effect";
 import {
   COMP_EQ_COMP_FIRST,
   COMP_ONE_KNOB_HELD,
@@ -35,6 +35,7 @@ import {
   nodeColorContestKey,
   nodeNameContestKey,
   nodeParamContestPath,
+  walkParamLeaves,
 } from "./plan-history";
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "./plan";
 import {
@@ -441,6 +442,52 @@ export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void
   }
 }
 
+/** Where a range problem's value sits in its node's params, as the fill walks them: `null` for the
+ *  effect object itself, which is only ever dropped. */
+function rangedLeafPath(p: ParamRangeProblem): string | null {
+  if (p.where === "node") return p.key;
+  if (p.where === "field") return `fxEffect.${p.key}`;
+  if (p.where === "params") return `fxEffect.params.${p.key}`;
+  return null;
+}
+
+/** The contest names of the values a range repair moved (`bound`), removed (`drop`), or either. */
+export function rangedContestNames(problems: ParamRangeProblem[], action?: "bound" | "drop"): string[] {
+  const names: string[] = [];
+  for (const p of problems) {
+    const at = rangedLeafPath(p);
+    if (at !== null && (action === undefined || p.action === action)) names.push(nodeParamContestPath(p.node, at));
+  }
+  return names;
+}
+
+/** Give an FX channel's selected effect each parameter the load removed from it, at the parameter's
+ *  own default — the value the write sends for a key it does not find — so the write confirm can
+ *  name the channel when that default would move the unit. The factory values carry only the
+ *  factory effect's parameters, so a parameter of another effect is one the fill cannot supply.
+ *  A whole parameter map removed gives back every parameter the selected effect has. Returns the
+ *  contest names it set. */
+function completeDroppedFxParams(plan: Plan, ranged: ParamRangeProblem[]): string[] {
+  const names: string[] = [];
+  for (const [node, fxIndex] of Object.entries(FX_CHANNEL_NODE_INDEX)) {
+    const drops = ranged.filter((p) => p.node === node && p.action === "drop");
+    const whole = drops.some((p) => p.where === "field" && p.key === "params");
+    const keys = new Set(drops.filter((p) => p.where === "params").map((p) => p.key));
+    const fx = plan.nodeParams[node]?.fxEffect;
+    if ((!whole && keys.size === 0) || !fx) continue;
+    const params: Record<string, number> = { ...fx.params };
+    let set = 0;
+    for (const d of fxParams(resolveFxEffectType(fxIndex, fx.type))) {
+      if (params[d.key] !== undefined || (!whole && !keys.has(d.key))) continue;
+      params[d.key] = d.def;
+      names.push(nodeParamContestPath(node, `fxEffect.params.${d.key}`));
+      set++;
+    }
+    if (set) plan.nodeParams[node] = { ...plan.nodeParams[node], fxEffect: { ...fx, params } };
+  }
+  return names;
+}
+
 /** A receiver the unit never leaves without a source (`DeviceModel.requiredSources`) that the
  *  document gives no wire. Carries the wire the loader adds: the model's own default source for
  *  that receiver, which is the unit's factory selection.
@@ -617,6 +664,24 @@ export function applyLinkedPairs(model: DeviceModel, plan: Plan, problems: Linke
     const next: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(plan.nodeParams[b] ?? {})) if (!pairCopies(k)) next[k] = v;
     for (const [k, v] of Object.entries(src)) if (pairCopies(k)) next[k] = structuredClone(v);
+    // A copied value takes the primary's record of where it came from, and a secondary value the
+    // copy replaces or removes loses its own: the record follows the value the write sends.
+    if (source) {
+      for (const [k, v] of Object.entries(plan.nodeParams[b] ?? {})) {
+        if (pairCopies(k)) walkParamLeaves(v, (path) => source.delete(nodeParamContestPath(b, path)), [k]);
+      }
+      for (const [k, v] of Object.entries(src)) {
+        if (!pairCopies(k)) continue;
+        walkParamLeaves(
+          v,
+          (path) => {
+            const from = source.get(nodeParamContestPath(a, path));
+            if (from !== undefined) source.set(nodeParamContestPath(b, path), from);
+          },
+          [k],
+        );
+      }
+    }
     plan.nodeParams[b] = next as NodeParams;
     const sendKeys = pairSendKeys(isBalLinkedPair(model, plan, a));
     for (const [ra, rb] of pairSends(model, a, b)) {
@@ -1043,6 +1108,12 @@ export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadP
   applyBooleanParams(plan, booleans);
   const ranged = problems.filter((p) => p.reason === "paramRange");
   applyParamRange(plan, ranged);
+  // A value the load moved into what the write sends is the load's, not the document's: recorded
+  // as the fill's, so the write confirm names its strip when that value would move the unit. Done
+  // here, before the linked-pair copy, which carries a record along with the value it copies. A
+  // value removed is completed from the factory values afterwards, and that completion records it.
+  const source = (plan.paramSource ??= new Map());
+  for (const name of rangedContestNames(ranged, "bound")) source.set(name, "default");
   const supplied = problems.filter((p) => p.reason === "requiredSource");
   applyRequiredSources(model, plan, supplied);
   const sendLevels = problems.filter((p) => p.reason === "sendLevel");
@@ -1134,6 +1205,7 @@ export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: Load
   }
   const repairs = applyLoadRepairs(model, plan, problems);
   fillFactoryParams(model.id, plan);
+  for (const name of completeDroppedFxParams(plan, repairs.ranged)) source.set(name, "default");
   for (const name of completeInsertFxParams(model, plan)) source.set(name, "default");
   for (const name of completeNodeNames(model, plan)) source.set(name, "default");
   for (const name of completeNodeColors(model, plan)) source.set(name, "default");

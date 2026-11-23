@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { nodeParamContestPath } from "../core/plan-history";
+import { connParamContestKey, nodeParamContestPath } from "../core/plan-history";
+import { isSceneExternalConnection } from "../core/scene-scope";
 import type { Plan } from "../core/plan";
 import { filledPlan } from "./filled-plan.test-util";
 import { defaultPlan } from "../models/initial-state";
-import { markAuthored, markParamSource, noteSeededDefaults, type SeededDefault } from "./param-source";
+import {
+  inheritSceneExternalRecords,
+  markAuthored,
+  markParamSource,
+  noteSeededDefaults,
+  type SeededDefault,
+} from "./param-source";
 
 const sourcesOf = (plan: Plan, nodeId: string): Set<string> => {
   const prefix = nodeParamContestPath(nodeId, "");
@@ -75,5 +82,48 @@ describe("markAuthored", () => {
     const { plan } = selected();
     markAuthored(plan, [key(6)], new Map());
     expect(plan.paramSource!.get(key(6))).toBe("manual");
+  });
+});
+
+describe("inheritSceneExternalRecords", () => {
+  // The STREAMING delay's frame rate is outside the scene under the current boundary: a scene-scoped
+  // document does not carry it, and the load copies it off the plan on screen.
+  const FRAME_RATE = nodeParamContestPath("bus.stream", "delay.frameRate");
+  const plans = (): { next: Plan; current: Plan } => {
+    const current = filledPlan();
+    current.paramSource!.set(FRAME_RATE, "load");
+    const next = filledPlan();
+    next.paramSource!.set(FRAME_RATE, "default");
+    expect(next.nodeParams["bus.stream"]?.delay?.frameRate, "the premise: the plan carries a frame rate").toBeDefined();
+    return { next, current };
+  };
+
+  it("gives a value the document did not carry the record of the plan it was copied off", () => {
+    const { next, current } = plans();
+    inheritSceneExternalRecords(next, current, 2, []);
+    expect(next.paramSource!.get(FRAME_RATE)).toBe("load");
+  });
+
+  it("keeps the record the load gave a value it repaired", () => {
+    const { next, current } = plans();
+    inheritSceneExternalRecords(next, current, 2, [FRAME_RATE]);
+    expect(next.paramSource!.get(FRAME_RATE)).toBe("default");
+  });
+
+  // A device-wide wire's param answers to the wire's record where it has none of its own, so one
+  // with no record on screen has none here either; one with a record there takes it.
+  it("gives a device-wide wire's param the record on screen, or none", () => {
+    const { next, current } = plans();
+    const wire = next.connections.find((c) => isSceneExternalConnection(c, 2))!;
+    expect(wire, "the premise: the plan carries a device-wide wire").toBeDefined();
+    wire.params = { ...wire.params, level: -6 };
+    const leaf = connParamContestKey(wire.from, wire.to, "level");
+    next.paramSource!.set(leaf, "default");
+    current.paramSource!.delete(leaf);
+    inheritSceneExternalRecords(next, current, 2, []);
+    expect(next.paramSource!.has(leaf), "no record on screen").toBe(false);
+    current.paramSource!.set(leaf, "manual");
+    inheritSceneExternalRecords(next, current, 2, []);
+    expect(next.paramSource!.get(leaf)).toBe("manual");
   });
 });
