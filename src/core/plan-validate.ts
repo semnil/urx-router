@@ -11,7 +11,7 @@ import { parseRef, ref } from "../models/types";
 import { factoryNodeColors, factoryNodeNames, factoryNodeParams, fillFactoryParams } from "../models/initial-state";
 import { getModel, MODEL_IDS } from "../models";
 import { insertFxCensus } from "./constraints";
-import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc } from "./control/fx-effect";
+import { FX_CHANNEL_NODE_INDEX, fxEffectTypes, fxParams, fxRawForDesc, resolveFxEffectType } from "./control/fx-effect";
 import {
   COMP_EQ_COMP_FIRST,
   COMP_ONE_KNOB_HELD,
@@ -457,6 +457,33 @@ export function rangedContestNames(problems: ParamRangeProblem[], action?: "boun
   for (const p of problems) {
     const at = rangedLeafPath(p);
     if (at !== null && (action === undefined || p.action === action)) names.push(nodeParamContestPath(p.node, at));
+  }
+  return names;
+}
+
+/** Give an FX channel's selected effect each parameter the load removed from it, at the parameter's
+ *  own default — the value the write sends for a key it does not find — so the write confirm can
+ *  name the channel when that default would move the unit. The factory values carry only the
+ *  factory effect's parameters, so a parameter of another effect is one the fill cannot supply.
+ *  A whole parameter map removed gives back every parameter the selected effect has. Returns the
+ *  contest names it set. */
+function completeDroppedFxParams(plan: Plan, ranged: ParamRangeProblem[]): string[] {
+  const names: string[] = [];
+  for (const [node, fxIndex] of Object.entries(FX_CHANNEL_NODE_INDEX)) {
+    const drops = ranged.filter((p) => p.node === node && p.action === "drop");
+    const whole = drops.some((p) => p.where === "field" && p.key === "params");
+    const keys = new Set(drops.filter((p) => p.where === "params").map((p) => p.key));
+    const fx = plan.nodeParams[node]?.fxEffect;
+    if ((!whole && keys.size === 0) || !fx) continue;
+    const params: Record<string, number> = { ...fx.params };
+    let set = 0;
+    for (const d of fxParams(resolveFxEffectType(fxIndex, fx.type))) {
+      if (params[d.key] !== undefined || (!whole && !keys.has(d.key))) continue;
+      params[d.key] = d.def;
+      names.push(nodeParamContestPath(node, `fxEffect.params.${d.key}`));
+      set++;
+    }
+    if (set) plan.nodeParams[node] = { ...plan.nodeParams[node], fxEffect: { ...fx, params } };
   }
   return names;
 }
@@ -1178,6 +1205,7 @@ export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: Load
   }
   const repairs = applyLoadRepairs(model, plan, problems);
   fillFactoryParams(model.id, plan);
+  for (const name of completeDroppedFxParams(plan, repairs.ranged)) source.set(name, "default");
   for (const name of completeInsertFxParams(model, plan)) source.set(name, "default");
   for (const name of completeNodeNames(model, plan)) source.set(name, "default");
   for (const name of completeNodeColors(model, plan)) source.set(name, "default");

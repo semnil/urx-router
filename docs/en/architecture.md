@@ -145,7 +145,10 @@ carries a one-line map of the same directories and points here.
   PEQ's two fixed-peaking bands, is dropped. A bounded value is recorded as the fill's rather than the
   document's, so the write confirm names its strip when that value would move the unit, as it does for a
   value the fill supplied; a linked pair's copy below carries the record along with the value, so the
-  record is the one of the value the write sends. That reaches the oscillator, which is scene-external: under the
+  record is the one of the value the write sends. A dropped parameter of an FX effect the channel does
+  not ship with is one the fill cannot give back, since the factory values carry only the factory
+  effect's parameters, so the load gives it the default the write would send for it, recorded the same
+  way. That reaches the oscillator, which is scene-external: under the
   Scene-only device scope the write does not carry it, while the load still moves it and says so. A drop of
   the effect OBJECT is the one
   repair that changes what is sent, and in the safe direction — see "An FX channel the plan does not

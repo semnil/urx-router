@@ -1902,6 +1902,34 @@ describe("prepareLoadedPlan", () => {
     expect(source("bus.fx2", "fxEffect.params.delayHpf"), "a value the load keeps").toBe("load");
   });
 
+  // The factory values carry only the factory effect's parameters, so a parameter of another effect
+  // the load removed is one the fill cannot give back: the load gives it the default the write
+  // would send for it, recorded as the fill's.
+  it.each([
+    ["one parameter of a selected effect the channel does not ship with", "param"],
+    ["the whole parameter map", "map"],
+  ])("gives back %s at its default, as the fill's", (_, shape) => {
+    const pingPong = 1025;
+    const descs = fxParams(pingPong);
+    const first = descs[0]!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.fx2"] = {
+      fxEffect: { type: pingPong, params: (shape === "param" ? { [first.key]: true } : true) as never },
+    };
+    load(plan);
+    const params = plan.nodeParams["bus.fx2"]!.fxEffect!.params!;
+    const record = (key: string) => plan.paramSource?.get(nodeParamContestPath("bus.fx2", `fxEffect.params.${key}`));
+    // A key the factory effect shares with the selected one the fill already gives back, at the
+    // factory effect's value; the rest come back at the selected effect's own default.
+    const factory = new Set(fxParams(1024).map((d) => d.key));
+    for (const d of shape === "param" ? [first] : descs) {
+      expect(params[d.key], d.key).toBeTypeOf("number");
+      if (!factory.has(d.key)) expect(params[d.key], d.key).toBe(d.def);
+      expect(record(d.key), d.key).toBe("default");
+    }
+    expect(factory.has(first.key), "the premise: the removed parameter is one the fill cannot give back").toBe(false);
+  });
+
   it("converts an on/off before the HI-Z rule bounds it", () => {
     const plan = emptyPlan("URX44V");
     plan.nodeParams["in.micline_3_4"] = { hiZL: 1 as unknown as boolean, phantomL: 1 as unknown as boolean };
