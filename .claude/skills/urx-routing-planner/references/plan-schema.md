@@ -217,7 +217,7 @@ or inside a group — is written `true` / `false`: a number there loads converte
   and `bands` 31 `{ gain }` from 20 Hz to 20 kHz on the 1/3-octave series (20, 25, 31.5, 40,
   50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1k, 1.25k, 1.6k, 2k, 2.5k,
   3.15k, 4k, 5k, 6.3k, 8k, 10k, 12.5k, 16k, 20k). `link` 0 off / 1 L → R / 2 R → L (factory
-  0 on STEREO, 1 on a MIX): while it is on, the unit keeps the two sides' bands and limits
+  0 on every bus): while it is on, the unit keeps the two sides' bands and limits
   equal, so write them equal. `on` is the side's [GEQ] (bool). `limit` 0 = ±15 dB / 1 =
   ±12 dB / 2 = ±6 dB / 3 = −24 … 0 dB. `gain` in dB on 0.5 dB steps inside the side's
   limit. **At most twelve bands of a side away from 0 dB**, as on the unit's own screen. The

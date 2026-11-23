@@ -58,7 +58,7 @@ describe("a document that names less", () => {
   it("reads a side, a link and a limit it does not carry as the unit's factory values", () => {
     expect(geqSideState(undefined, 1)).toEqual({ on: true, limit: 0, gains: Array(GEQ_BAND_COUNT).fill(0) });
     expect(geqSideState({ geq: { sides: [{ bands: [{ gain: -2 }] }] } }, 0).gains.slice(0, 2)).toEqual([-2, 0]);
-    expect(geqLink(undefined, "bus.mix2")).toBe(GEQ_LINK_L_TO_R);
+    expect(geqLink(undefined, "bus.mix2")).toBe(GEQ_LINK_OFF);
     expect(geqLink(undefined, "ch1"), "not a GEQ bus").toBe(GEQ_LINK_OFF);
     expect(geqClamp(20, 9), "a limit off the menu clamps as ±15 dB").toBe(15);
     expect(geqLimitRange(9)).toEqual([-15, 15]);
@@ -67,10 +67,10 @@ describe("a document that names less", () => {
 });
 
 describe("the factory GEQ", () => {
-  it("is off on STEREO and L → R on a MIX, both sides on, ±15 dB, 31 bands at 0", () => {
+  it("is off on STEREO and on each MIX, both sides on, ±15 dB, 31 bands at 0", () => {
     expect(geqFactory("bus.stereo").link).toBe(GEQ_LINK_OFF);
-    expect(geqFactory("bus.mix1").link).toBe(GEQ_LINK_L_TO_R);
-    expect(geqFactory("bus.mix2").link).toBe(GEQ_LINK_L_TO_R);
+    expect(geqFactory("bus.mix1").link).toBe(GEQ_LINK_OFF);
+    expect(geqFactory("bus.mix2").link).toBe(GEQ_LINK_OFF);
     const s = geqFactory("bus.mix1").sides!;
     expect(s.map((x) => [x.on, x.limit, x.bands!.length, x.bands!.every((b) => b.gain === 0)])).toEqual([
       [true, 0, 31, true],

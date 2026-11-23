@@ -22,6 +22,7 @@ const reading = (page: Page, x: number) => card(page, x).locator(".gt-val");
 const available = (page: Page) =>
   box(page).locator(".prefs-row", { hasText: en.dynTuning.geq.available }).locator(".param-val");
 const eqType = (sec: Locator) => sec.locator('.param[data-param-label="EQ Type"] select');
+const linkMenu = (page: Page) => box(page).locator(".prefs-row", { hasText: en.dynTuning.geq.link }).locator("select");
 
 /** The node's EQ section in the Inspector, opened. */
 async function eqSection(page: Page, id: string): Promise<Locator> {
@@ -70,6 +71,28 @@ test("the EQ Type picks the screen a bus's EQ opens, and a fader steps 0.5 dB", 
   await page.locator('[data-dyn-node="bus.mix1"][data-dyn-open="geq"]').click();
   await expect(box(page)).toBeVisible();
   await expect(reading(page, 17)).toHaveText("1.0");
+});
+
+test("a plan that names no GEQ Link opens each bus with it off, as a unit reset to the factory holds it", async ({
+  page,
+}) => {
+  await page.goto(
+    `/?plan=${planParamZ({
+      format: "urx-router-plan",
+      version: 6,
+      modelId: "URX44V",
+      connections: [],
+      nodeParams: { "bus.stereo": { eqType: 2 }, "bus.mix1": { eqType: 2 }, "bus.mix2": { eqType: 2 } },
+    })}`,
+  );
+  await expect(page.locator("#statusbar")).toContainText(en.status.planLoaded);
+  for (const id of ["bus.stereo", "bus.mix1", "bus.mix2"]) {
+    const sec = await eqSection(page, id);
+    await sec.locator("#btn-geq-screen").click();
+    await expect(box(page)).toBeVisible();
+    await expect(linkMenu(page), id).toHaveValue("0");
+    await closeScreen(page);
+  }
 });
 
 test("twelve bands away from 0 dB shut the rest until one returns", async ({ page }) => {
