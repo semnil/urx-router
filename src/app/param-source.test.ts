@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { nodeParamContestPath } from "../core/plan-history";
+import { connParamContestKey, nodeParamContestPath } from "../core/plan-history";
+import { isSceneExternalConnection } from "../core/scene-scope";
 import type { Plan } from "../core/plan";
 import { filledPlan } from "./filled-plan.test-util";
 import { defaultPlan } from "../models/initial-state";
@@ -107,5 +108,22 @@ describe("inheritSceneExternalRecords", () => {
     const { next, current } = plans();
     inheritSceneExternalRecords(next, current, 2, [FRAME_RATE]);
     expect(next.paramSource!.get(FRAME_RATE)).toBe("default");
+  });
+
+  // A device-wide wire's param answers to the wire's record where it has none of its own, so one
+  // with no record on screen has none here either; one with a record there takes it.
+  it("gives a device-wide wire's param the record on screen, or none", () => {
+    const { next, current } = plans();
+    const wire = next.connections.find((c) => isSceneExternalConnection(c, 2))!;
+    expect(wire, "the premise: the plan carries a device-wide wire").toBeDefined();
+    wire.params = { ...wire.params, level: -6 };
+    const leaf = connParamContestKey(wire.from, wire.to, "level");
+    next.paramSource!.set(leaf, "default");
+    current.paramSource!.delete(leaf);
+    inheritSceneExternalRecords(next, current, 2, []);
+    expect(next.paramSource!.has(leaf), "no record on screen").toBe(false);
+    current.paramSource!.set(leaf, "manual");
+    inheritSceneExternalRecords(next, current, 2, []);
+    expect(next.paramSource!.get(leaf)).toBe("manual");
   });
 });
